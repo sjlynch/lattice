@@ -570,10 +570,20 @@ input {
   flex: 1;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.taskboard-scroll {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   gap: 6px;
   padding: 8px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
 }
+.taskboard-scroll::-webkit-scrollbar { width: 8px; }
 .taskboard-footer {
   flex: 0 0 auto;
   padding: 6px 10px 8px 12px;
@@ -590,8 +600,7 @@ input {
   border-radius: 6px;
   background: #181b21;
   overflow: hidden;
-  flex: 1 1 0;
-  min-height: 78px;
+  flex: 0 0 auto;
 }
 .taskboard-lane-head {
   display: flex;
@@ -632,17 +641,12 @@ input {
   box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 2px var(--accent-bg);
 }
 .taskboard-lane-track {
-  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 4px;
   padding: 6px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  min-height: 0;
 }
-.taskboard-lane-track::-webkit-scrollbar { width: 8px; }
 .taskboard-lane-empty {
   display: flex;
   align-items: center;
