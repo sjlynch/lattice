@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TopAppBar } from './components/TopAppBar';
 import { Sidebar } from './components/Sidebar';
 import { ForceGraphView } from './components/ForceGraphView';
@@ -7,6 +7,16 @@ import { Legend } from './components/Legend';
 import { TerminalsProvider } from './TerminalsContext';
 import { fetchDefaultRoot, scanFolder, type ScanResult } from './api';
 
+const SIDEBAR_WIDTH_KEY = 'lattice.sidebarWidth';
+const SIDEBAR_MIN_WIDTH = 240;
+const SIDEBAR_MAX_WIDTH = 1200;
+const SIDEBAR_DEFAULT_WIDTH = 380;
+
+function clampSidebarWidth(w: number) {
+  const cap = Math.min(SIDEBAR_MAX_WIDTH, Math.floor(window.innerWidth * 0.8));
+  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(cap, Math.round(w)));
+}
+
 function App() {
   const [activeFolder, setActiveFolder] = useState<string>('');
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
@@ -14,6 +24,17 @@ function App() {
   // Per-extension visibility, persisted per project. Stored as a list of
   // hidden ext keys (e.g., ['.json', '.md']).
   const [hiddenExts, setHiddenExts] = useState<Set<string>>(new Set());
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+      const n = raw ? Number(raw) : NaN;
+      if (Number.isFinite(n) && n > 0) return clampSidebarWidth(n);
+    } catch {
+      /* ignore */
+    }
+    return SIDEBAR_DEFAULT_WIDTH;
+  });
+  const resizingRef = useRef(false);
 
   const hiddenExtsKey = useMemo(
     () =>
@@ -87,14 +108,81 @@ function App() {
     });
   }, []);
 
+  // Persist sidebar width
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+    } catch {
+      /* ignore */
+    }
+  }, [sidebarWidth]);
+
+  // Re-clamp on window resize so the sidebar can't exceed 80% of viewport
+  useEffect(() => {
+    function onResize() {
+      setSidebarWidth((w) => clampSidebarWidth(w));
+    }
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  const onResizerPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    resizingRef.current = true;
+    const target = e.currentTarget;
+    try {
+      target.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    const prevUserSelect = document.body.style.userSelect;
+    const prevCursor = document.body.style.cursor;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'ew-resize';
+
+    const handleMove = (ev: PointerEvent) => {
+      if (!resizingRef.current) return;
+      setSidebarWidth(clampSidebarWidth(ev.clientX));
+    };
+    const handleUp = (ev: PointerEvent) => {
+      resizingRef.current = false;
+      document.body.style.userSelect = prevUserSelect;
+      document.body.style.cursor = prevCursor;
+      try {
+        target.releasePointerCapture(ev.pointerId);
+      } catch {
+        /* ignore */
+      }
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleUp);
+    };
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleUp);
+  }, []);
+
+  const onResizerDoubleClick = useCallback(() => {
+    setSidebarWidth(clampSidebarWidth(SIDEBAR_DEFAULT_WIDTH));
+  }, []);
+
   return (
     <TerminalsProvider>
       <div className="app-shell">
         <TopAppBar activeFolder={activeFolder} onSelectFolder={setActiveFolder} />
         <div className="app-body">
-          <aside className="app-sidebar">
+          <aside className="app-sidebar" style={{ width: sidebarWidth }}>
             <Sidebar activeFolder={activeFolder} />
           </aside>
+          <div
+            className="app-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+            onPointerDown={onResizerPointerDown}
+            onDoubleClick={onResizerDoubleClick}
+            title="Drag to resize · double-click to reset"
+          />
           <main className="app-graph">
             <ForceGraphView
               data={scanResult}
