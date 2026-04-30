@@ -8,6 +8,7 @@ import {
   X,
   GitMerge,
   AlertTriangle,
+  Pencil,
 } from 'lucide-react';
 import { FloatingPanel } from './FloatingPanel';
 import { useTerminals } from '../TerminalsContext';
@@ -114,6 +115,17 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   async function moveTask(id: string, status: TaskStatus) {
     try {
       await apiUpdateTask(id, { status });
+    } catch (err) {
+      showError((err as Error).message);
+    }
+  }
+
+  async function editTask(
+    id: string,
+    updates: { title?: string; description?: string },
+  ) {
+    try {
+      await apiUpdateTask(id, updates);
     } catch (err) {
       showError((err as Error).message);
     }
@@ -315,6 +327,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 deleteTask(viewing.id);
                 setViewing(null);
               }}
+              onSave={(updates) => editTask(viewing.id, updates)}
               onRun={
                 viewing.status === 'open'
                   ? () => {
@@ -517,14 +530,15 @@ function NewTaskOverlay({
               if (e.key === 'Enter') submit();
             }}
           />
-          <input
-            className="task-card-form-input"
+          <textarea
+            className="task-card-form-input task-card-form-textarea"
             placeholder="Description (optional)"
             value={desc}
             onChange={(e) => setDesc(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') submit();
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
             }}
+            rows={4}
           />
         </div>
         <div className="taskboard-newform-actions">
@@ -549,23 +563,62 @@ function TaskDetailOverlay({
   onClose,
   onMove,
   onDelete,
+  onSave,
   onRun,
 }: {
   task: Task;
   onClose: () => void;
   onMove: (status: TaskStatus) => void;
   onDelete: () => void;
+  onSave: (updates: { title?: string; description?: string }) => void;
   onRun?: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(task.title);
+  const [editDesc, setEditDesc] = useState(task.description ?? '');
+
+  // When the underlying task changes (e.g., WS update), refresh edit fields if
+  // we're not in edit mode — avoid clobbering in-progress edits.
+  useEffect(() => {
+    if (!editing) {
+      setEditTitle(task.title);
+      setEditDesc(task.description ?? '');
+    }
+  }, [task.id, task.title, task.description, editing]);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (editing) setEditing(false);
+        else onClose();
+      }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, editing]);
 
   const lane = LANE_BY_ID[task.status];
+
+  function startEdit() {
+    setEditTitle(task.title);
+    setEditDesc(task.description ?? '');
+    setEditing(true);
+  }
+  function cancelEdit() {
+    setEditTitle(task.title);
+    setEditDesc(task.description ?? '');
+    setEditing(false);
+  }
+  function saveEdit() {
+    const trimmedTitle = editTitle.trim();
+    if (!trimmedTitle) return;
+    const updates: { title?: string; description?: string } = {};
+    if (trimmedTitle !== task.title) updates.title = trimmedTitle;
+    const newDesc = editDesc;
+    if (newDesc !== (task.description ?? '')) updates.description = newDesc;
+    if (Object.keys(updates).length > 0) onSave(updates);
+    setEditing(false);
+  }
 
   return (
     <div className="taskboard-overlay" onMouseDown={onClose}>
@@ -578,7 +631,30 @@ function TaskDetailOverlay({
             className="taskboard-detail-stripe"
             style={{ background: lane.color }}
           />
-          <div className="taskboard-detail-title">{task.title}</div>
+          {editing ? (
+            <input
+              className="task-card-form-input taskboard-detail-title-input"
+              value={editTitle}
+              autoFocus
+              onChange={(e) => setEditTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveEdit();
+              }}
+              placeholder="Title"
+            />
+          ) : (
+            <div className="taskboard-detail-title">{task.title}</div>
+          )}
+          {!editing && (
+            <button
+              className="icon-btn sm"
+              onClick={startEdit}
+              aria-label="Edit task"
+              title="Edit"
+            >
+              <Pencil size={13} />
+            </button>
+          )}
           <button
             className="icon-btn sm"
             onClick={onClose}
@@ -589,7 +665,20 @@ function TaskDetailOverlay({
           </button>
         </div>
         <div className="taskboard-detail-body">
-          {task.description?.trim() || (
+          {editing ? (
+            <textarea
+              className="task-card-form-input task-card-form-textarea taskboard-detail-desc-input"
+              value={editDesc}
+              onChange={(e) => setEditDesc(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveEdit();
+              }}
+              placeholder="Description"
+              rows={6}
+            />
+          ) : task.description?.trim() ? (
+            task.description
+          ) : (
             <span style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
               No description.
             </span>
@@ -621,35 +710,61 @@ function TaskDetailOverlay({
           )}
         </div>
         <div className="taskboard-detail-actions">
-          <button
-            className="btn-ghost"
-            onClick={onDelete}
-            style={{ color: 'var(--danger)' }}
-          >
-            <Trash2 size={12} style={{ marginRight: 4 }} />
-            Delete
-          </button>
-          <span style={{ flex: 1 }} />
-          {task.status !== 'open' && (
-            <button className="btn-ghost" onClick={() => onMove('open')}>
-              Move to Open
-            </button>
-          )}
-          {task.status !== 'qa' && (
-            <button className="btn-ghost" onClick={() => onMove('qa')}>
-              Mark QA
-            </button>
-          )}
-          {task.status !== 'done' && (
-            <button className="btn-ghost" onClick={() => onMove('done')}>
-              Mark Done
-            </button>
-          )}
-          {onRun && (
-            <button className="btn-primary" onClick={onRun}>
-              <Play size={11} fill="currentColor" style={{ marginRight: 4 }} />
-              Run
-            </button>
+          {editing ? (
+            <>
+              <button
+                className="btn-ghost"
+                onClick={onDelete}
+                style={{ color: 'var(--danger)' }}
+              >
+                <Trash2 size={12} style={{ marginRight: 4 }} />
+                Delete
+              </button>
+              <span style={{ flex: 1 }} />
+              <button className="btn-ghost" onClick={cancelEdit}>
+                Cancel
+              </button>
+              <button
+                className="btn-primary"
+                onClick={saveEdit}
+                disabled={!editTitle.trim()}
+              >
+                Save
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                className="btn-ghost"
+                onClick={onDelete}
+                style={{ color: 'var(--danger)' }}
+              >
+                <Trash2 size={12} style={{ marginRight: 4 }} />
+                Delete
+              </button>
+              <span style={{ flex: 1 }} />
+              {task.status !== 'open' && (
+                <button className="btn-ghost" onClick={() => onMove('open')}>
+                  Move to Open
+                </button>
+              )}
+              {task.status !== 'qa' && (
+                <button className="btn-ghost" onClick={() => onMove('qa')}>
+                  Mark QA
+                </button>
+              )}
+              {task.status !== 'done' && (
+                <button className="btn-ghost" onClick={() => onMove('done')}>
+                  Mark Done
+                </button>
+              )}
+              {onRun && (
+                <button className="btn-primary" onClick={onRun}>
+                  <Play size={11} fill="currentColor" style={{ marginRight: 4 }} />
+                  Run
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
