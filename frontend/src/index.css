@@ -216,6 +216,20 @@ input {
   text-transform: uppercase;
   color: var(--text-tertiary);
 }
+.sidebar-new {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.sidebar-new-chevron {
+  width: 16px;
+}
+.sidebar-new-menu {
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 160px;
+}
 .sidebar-tabs {
   display: flex;
   align-items: stretch;
