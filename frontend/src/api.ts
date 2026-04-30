@@ -157,6 +157,14 @@ export async function runTask(id: string): Promise<RunTaskResult> {
   );
 }
 
+export async function resumeTask(id: string): Promise<RunTaskResult> {
+  return asJson<RunTaskResult>(
+    await fetch(`/api/tasks/${encodeURIComponent(id)}/resume`, {
+      method: 'POST',
+    }),
+  );
+}
+
 export type MergeTaskResult =
   | { merged: true }
   | {

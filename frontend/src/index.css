@@ -763,6 +763,8 @@ input {
 .task-card-iconbtn.merge:hover { background: rgba(94, 234, 212, 0.22); color: #88f1da; }
 .task-card-iconbtn.merge.alert { color: #f5a36a; background: rgba(245, 163, 106, 0.14); }
 .task-card-iconbtn.merge.alert:hover { color: #ffba80; background: rgba(245, 163, 106, 0.26); }
+.task-card-iconbtn.resume { color: #e7c986; opacity: 1; background: rgba(231, 201, 134, 0.10); }
+.task-card-iconbtn.resume:hover { background: rgba(231, 201, 134, 0.22); color: #f4dba1; }
 .task-card-iconbtn.danger:hover { color: var(--danger); }
 
 .task-card.conflict { border-left-color: #f5a36a !important; }
@@ -841,6 +843,14 @@ input {
 .lane-runall.merge:hover {
   color: #88f1da;
   background: rgba(94, 234, 212, 0.22);
+}
+.lane-runall.resume {
+  color: #e7c986;
+  background: rgba(231, 201, 134, 0.10);
+}
+.lane-runall.resume:hover {
+  color: #f4dba1;
+  background: rgba(231, 201, 134, 0.22);
 }
 
 /* Task detail overlay */

@@ -17,6 +17,7 @@ import {
   fetchTasks,
   mergeTask as apiMergeTask,
   reorderTasks as apiReorderTasks,
+  resumeTask as apiResumeTask,
   runTask as apiRunTask,
   subscribeTasks,
   updateTask as apiUpdateTask,
@@ -191,6 +192,29 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     }
   }
 
+  async function resumeTaskAction(task: Task) {
+    try {
+      const res = await apiResumeTask(task.id);
+      addTerminal({
+        label: shortLabel(task.title),
+        cwd: res.worktreePath,
+        initialCommand: res.command,
+      });
+    } catch (err) {
+      showError(`Resume failed: ${(err as Error).message}`);
+    }
+  }
+
+  async function resumeAllInProgress() {
+    const list = tasks
+      .filter((t) => t.status === 'in_progress' && !!t.worktreePath)
+      .sort((a, b) => a.createdAt - b.createdAt);
+    for (const t of list) {
+      // eslint-disable-next-line no-await-in-loop
+      await resumeTaskAction(t);
+    }
+  }
+
   async function mergeTaskAction(task: Task): Promise<boolean> {
     try {
       const res = await apiMergeTask(task.id);
@@ -333,10 +357,13 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 onDropAt={dropAt}
                 onDelete={deleteTask}
                 onRun={runTask}
+                onResume={resumeTaskAction}
                 onMerge={mergeTaskAction}
                 onRunAll={
                   lane.id === 'open'
                     ? runAllOpen
+                    : lane.id === 'in_progress'
+                    ? resumeAllInProgress
                     : lane.id === 'ready_to_merge'
                     ? mergeAllReady
                     : undefined
@@ -402,6 +429,7 @@ function Lane({
   onDropAt,
   onDelete,
   onRun,
+  onResume,
   onMerge,
   onRunAll,
   onView,
@@ -416,6 +444,7 @@ function Lane({
   onDropAt: (id: string, status: TaskStatus, index: number) => void;
   onDelete: (id: string) => void;
   onRun: (task: Task) => void;
+  onResume: (task: Task) => void;
   onMerge: (task: Task) => Promise<boolean>;
   onRunAll?: () => void;
   onView: (task: Task) => void;
@@ -499,17 +528,31 @@ function Lane({
           <span className="taskboard-lane-count">{tasks.length}</span>
           {onRunAll && (
             <button
-              className={`lane-runall ${lane.id === 'ready_to_merge' ? 'merge' : ''}`}
+              className={`lane-runall ${
+                lane.id === 'ready_to_merge'
+                  ? 'merge'
+                  : lane.id === 'in_progress'
+                  ? 'resume'
+                  : ''
+              }`}
               onClick={onRunAll}
-              disabled={tasks.length === 0}
+              disabled={
+                lane.id === 'in_progress'
+                  ? tasks.filter((t) => !!t.worktreePath).length === 0
+                  : tasks.length === 0
+              }
               title={
                 lane.id === 'ready_to_merge'
                   ? 'Merge every Ready-to-Merge task (stops on first conflict)'
+                  : lane.id === 'in_progress'
+                  ? 'Resume every In Progress task with an existing worktree'
                   : 'Run every task in Open in a new worktree'
               }
               aria-label={
                 lane.id === 'ready_to_merge'
                   ? 'Merge all ready tasks'
+                  : lane.id === 'in_progress'
+                  ? 'Resume all in-progress tasks'
                   : 'Run all open tasks'
               }
             >
@@ -561,6 +604,11 @@ function Lane({
                   onDragEnd={onDragEnd}
                   onDelete={() => onDelete(t.id)}
                   onRun={lane.id === 'open' ? () => onRun(t) : undefined}
+                  onResume={
+                    lane.id === 'in_progress' && t.worktreePath
+                      ? () => onResume(t)
+                      : undefined
+                  }
                   onMerge={
                     lane.id === 'ready_to_merge'
                       ? () => onMerge(t)
@@ -869,6 +917,7 @@ function TaskCard({
   onDragEnd,
   onDelete,
   onRun,
+  onResume,
   onMerge,
   onView,
 }: {
@@ -879,6 +928,7 @@ function TaskCard({
   onDragEnd: () => void;
   onDelete: () => void;
   onRun?: () => void;
+  onResume?: () => void;
   onMerge?: () => void;
   onView: () => void;
 }) {
@@ -934,6 +984,20 @@ function TaskCard({
             }}
             title="Run in a new worktree with Claude"
             aria-label="Run task"
+            draggable={false}
+          >
+            <Play size={11} fill="currentColor" />
+          </button>
+        )}
+        {onResume && (
+          <button
+            className="task-card-iconbtn resume"
+            onClick={(e) => {
+              e.stopPropagation();
+              onResume();
+            }}
+            title="Resume Claude in the existing worktree"
+            aria-label="Resume task"
             draggable={false}
           >
             <Play size={11} fill="currentColor" />

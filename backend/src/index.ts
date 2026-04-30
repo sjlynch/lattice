@@ -20,6 +20,8 @@ import {
 import {
   setupTaskWorktree,
   buildClaudeCommand,
+  buildResumeCommand,
+  worktreeExists,
   mergeWorktreeInRepo,
   cleanupWorktreeForTask,
   writeMergeInstructions,
@@ -175,6 +177,38 @@ app.post('/api/tasks/:id/run', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
+});
+
+// Resume an in_progress task — re-spawn Claude in the existing worktree
+// with a "continue what's been started" prompt. Useful when a previous
+// Claude session ended without committing (so /complete left the task at
+// in_progress) or when the dev server was restarted mid-task.
+app.post('/api/tasks/:id/resume', async (req, res) => {
+  const task = await getTask(req.params.id);
+  if (!task) return res.status(404).json({ error: 'not found' });
+  if (task.status !== 'in_progress') {
+    return res.status(400).json({
+      error: `task is "${task.status}"; only in_progress tasks can be resumed`,
+    });
+  }
+  if (!task.worktreePath) {
+    return res
+      .status(400)
+      .json({ error: 'task has no worktree path on record' });
+  }
+  if (!(await worktreeExists(task.worktreePath))) {
+    return res.status(400).json({
+      error: `Worktree directory not found at ${task.worktreePath}. The worktree may have been removed manually.`,
+    });
+  }
+  const taskFile = path.join(task.worktreePath, 'LATTICE_TASK.md');
+  const command = buildResumeCommand(taskFile);
+  res.json({
+    worktreePath: task.worktreePath,
+    branch: task.branch,
+    taskFile,
+    command,
+  });
 });
 
 // Hook callback: claude finished a turn → move in_progress → ready_to_merge.

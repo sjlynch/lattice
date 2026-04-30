@@ -138,6 +138,20 @@ export function buildClaudeCommand(taskFile: string): string {
   return `claude --dangerously-skip-permissions "Please read ${fileName} and complete the task described in it."`;
 }
 
+export function buildResumeCommand(taskFile: string): string {
+  const fileName = path.basename(taskFile);
+  return `claude --dangerously-skip-permissions "Please read ${fileName} and continue this task. Run 'git log --oneline -10' and 'git status' first to see any existing progress before deciding what to do next; don't redo work that's already committed."`;
+}
+
+export async function worktreeExists(worktreePath: string): Promise<boolean> {
+  try {
+    await fs.access(worktreePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---------- Merge helpers ----------
 
 export type MergeConflictKind = 'merge' | 'stash-pop';
