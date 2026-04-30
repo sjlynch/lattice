@@ -70,6 +70,7 @@ export type Task = {
   completedAt?: number;
   mergedAt?: number;
   conflict?: boolean;
+  sortOrder?: number;
 };
 
 export type RunTaskResult = {
@@ -122,6 +123,20 @@ export async function updateTask(
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
+    }),
+  );
+}
+
+export async function reorderTasks(
+  projectPath: string,
+  status: TaskStatus,
+  ids: string[],
+): Promise<void> {
+  await asJson<{ ok: true }>(
+    await fetch('/api/tasks/reorder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: projectPath, status, ids }),
     }),
   );
 }

@@ -13,6 +13,7 @@ import {
   createTask,
   updateTask,
   deleteTask,
+  reorderTasksInLane,
   subscribe,
   type TaskStatus,
 } from './tasks.js';
@@ -119,6 +120,24 @@ app.patch('/api/tasks/:id', async (req, res) => {
     const updated = await updateTask(req.params.id, updates);
     if (!updated) return res.status(404).json({ error: 'not found' });
     res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.post('/api/tasks/reorder', async (req, res) => {
+  const { project, status, ids } = (req.body || {}) as {
+    project?: string;
+    status?: TaskStatus;
+    ids?: string[];
+  };
+  if (!project || !status || !Array.isArray(ids)) {
+    return res.status(400).json({ error: 'project, status, ids required' });
+  }
+  try {
+    const ok = await reorderTasksInLane(project, status, ids);
+    if (!ok) return res.status(404).json({ error: 'project not found' });
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
