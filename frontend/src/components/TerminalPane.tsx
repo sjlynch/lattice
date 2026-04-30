@@ -69,56 +69,89 @@ export function TerminalPane({
     fit.fit();
     fitRef.current = fit;
 
-    const params = new URLSearchParams({
-      cwd,
-      cols: String(term.cols),
-      rows: String(term.rows),
-    });
-    if (serverId) params.set('id', serverId);
-    if (initialCommand) params.set('initialCommand', initialCommand);
+    let ws: WebSocket | null = null;
+    let cancelled = false;
+    let attempt = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectingShown = false;
 
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(
-      `${proto}://${window.location.host}/ws/terminal?${params.toString()}`,
-    );
+    function connect() {
+      if (cancelled) return;
+      const params = new URLSearchParams({
+        cwd,
+        cols: String(term.cols),
+        rows: String(term.rows),
+      });
+      if (serverId) params.set('id', serverId);
+      if (initialCommand) params.set('initialCommand', initialCommand);
 
-    ws.onmessage = (ev) => {
-      try {
-        const msg = JSON.parse(ev.data);
-        if (msg.type === 'data') {
-          term.write(msg.data);
-        } else if (msg.type === 'attached') {
-          if (msg.id && msg.id !== serverId) {
-            onServerIdRef.current?.(msg.id);
-          }
-          if (msg.replayed === false) {
-            // Brand new session: clear any leftover xterm content (none on
-            // first mount) so replays are unambiguous.
-            term.clear();
-          } else if (msg.replayed === true) {
-            // Replay buffer follows in subsequent `data` messages.
-          }
-        } else if (msg.type === 'error') {
-          term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
-        } else if (msg.type === 'exit') {
-          term.write(`\r\n\x1b[2m[exited ${msg.exitCode}]\x1b[0m\r\n`);
+      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(
+        `${proto}://${window.location.host}/ws/terminal?${params.toString()}`,
+      );
+
+      ws.onopen = () => {
+        attempt = 0;
+        if (reconnectingShown) {
+          term.write('\r\n\x1b[2m[reconnected]\x1b[0m\r\n');
+          reconnectingShown = false;
         }
-      } catch {
-        /* ignore */
-      }
-    };
+      };
+
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'data') {
+            term.write(msg.data);
+          } else if (msg.type === 'attached') {
+            if (msg.id && msg.id !== serverId) {
+              onServerIdRef.current?.(msg.id);
+            }
+            if (msg.replayed === false) {
+              // Brand new session — clear any leftover xterm content.
+              term.clear();
+            }
+          } else if (msg.type === 'error') {
+            term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
+          } else if (msg.type === 'exit') {
+            term.write(`\r\n\x1b[2m[exited ${msg.exitCode}]\x1b[0m\r\n`);
+          }
+        } catch {
+          /* ignore */
+        }
+      };
+
+      ws.onerror = () => {
+        // onclose will fire too; reconnect is scheduled there.
+      };
+
+      ws.onclose = () => {
+        if (cancelled) return;
+        if (!reconnectingShown) {
+          term.write(
+            '\r\n\x1b[2m[connection lost — reconnecting…]\x1b[0m\r\n',
+          );
+          reconnectingShown = true;
+        }
+        const delay = Math.min(5000, 250 * 2 ** attempt);
+        attempt += 1;
+        retryTimer = setTimeout(connect, delay);
+      };
+    }
 
     term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'input', data }));
       }
     });
 
     term.onResize(({ cols, rows }) => {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'resize', cols, rows }));
       }
     });
+
+    connect();
 
     const ro = new ResizeObserver(() => {
       try {
@@ -130,19 +163,18 @@ export function TerminalPane({
     ro.observe(containerRef.current);
 
     return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       ro.disconnect();
       // Just close the WS — the backend keeps the pty alive so a refresh
       // (or remount) reattaches via the persisted serverId.
       try {
-        ws.close();
+        ws?.close();
       } catch {
         /* ignore */
       }
       term.dispose();
     };
-    // We deliberately depend on cwd + serverId only. initialCommand is read
-    // once at WS open and never re-applied after that (the backend won't
-    // re-apply it on reattach either).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwd, serverId]);
 

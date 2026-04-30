@@ -187,21 +187,50 @@ export function subscribeTasks(
   projectPath: string,
   onUpdate: (tasks: Task[]) => void,
 ): () => void {
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(
-    `${proto}://${window.location.host}/ws/tasks?project=${encodeURIComponent(projectPath)}`,
-  );
-  ws.onmessage = (ev) => {
-    try {
-      const msg = JSON.parse(ev.data) as { type: string; tasks?: Task[] };
-      if (msg.type === 'tasks' && msg.tasks) onUpdate(msg.tasks);
-    } catch {
-      /* ignore */
-    }
-  };
+  // Auto-reconnect with exponential backoff so the subscription survives
+  // a backend restart or the brief boot window when the proxy responds
+  // ECONNREFUSED. The server resends the full task list on every connect,
+  // so reconnecting is the same as a fresh sync.
+  let ws: WebSocket | null = null;
+  let cancelled = false;
+  let attempt = 0;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  function connect() {
+    if (cancelled) return;
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(
+      `${proto}://${window.location.host}/ws/tasks?project=${encodeURIComponent(projectPath)}`,
+    );
+    ws.onopen = () => {
+      attempt = 0;
+    };
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data) as { type: string; tasks?: Task[] };
+        if (msg.type === 'tasks' && msg.tasks) onUpdate(msg.tasks);
+      } catch {
+        /* ignore */
+      }
+    };
+    ws.onerror = () => {
+      // onclose will fire too; reconnect is scheduled there.
+    };
+    ws.onclose = () => {
+      if (cancelled) return;
+      const delay = Math.min(5000, 250 * 2 ** attempt);
+      attempt += 1;
+      timer = setTimeout(connect, delay);
+    };
+  }
+
+  connect();
+
   return () => {
+    cancelled = true;
+    if (timer) clearTimeout(timer);
     try {
-      ws.close();
+      ws?.close();
     } catch {
       /* ignore */
     }

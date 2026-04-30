@@ -81,20 +81,35 @@ function App() {
   useEffect(() => {
     if (!activeFolder) return;
     let cancelled = false;
+    let attempt = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     setLoading(true);
-    scanFolder(activeFolder)
-      .then((r) => {
-        if (!cancelled) setScanResult(r);
-      })
-      .catch((err) => {
-        console.error('scan failed', err);
-        if (!cancelled) setScanResult(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+
+    function tryScan() {
+      if (cancelled) return;
+      scanFolder(activeFolder)
+        .then((r) => {
+          if (cancelled) return;
+          setScanResult(r);
+          setLoading(false);
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          // Backend is probably still starting (boot race) or briefly
+          // restarted. Retry with exponential backoff capped at 5s.
+          // Loading stays true so the user keeps seeing the indicator
+          // until we actually succeed.
+          console.warn('scan failed (retrying)', err);
+          const delay = Math.min(5000, 300 * 2 ** attempt);
+          attempt += 1;
+          timer = setTimeout(tryScan, delay);
+        });
+    }
+
+    tryScan();
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
     };
   }, [activeFolder]);
 
