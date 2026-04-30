@@ -23,6 +23,7 @@ import {
   cleanupWorktreeForTask,
   writeMergeInstructions,
   buildConflictResolveCommand,
+  branchCommitCount,
 } from './worktree.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -158,16 +159,34 @@ app.post('/api/tasks/:id/run', async (req, res) => {
 });
 
 // Hook callback: claude finished a turn → move in_progress → ready_to_merge.
-// (QA is the post-merge manual review step now.)
+// Only flips when there are real commits on the branch — Claude finishing
+// without committing must NOT be reported as ready to merge, since git
+// would silently treat that branch as "Already up to date" and the user
+// would chase a phantom merge.
 app.post('/api/tasks/:id/complete', async (req, res) => {
   const task = await getTask(req.params.id);
   if (!task) return res.status(404).json({ error: 'not found' });
-  if (task.status === 'in_progress') {
-    await updateTask(task.id, {
-      status: 'ready_to_merge',
-      completedAt: Date.now(),
-    });
+  if (task.status !== 'in_progress') {
+    return res.json({ ok: true });
   }
+  if (task.branch && task.projectPath) {
+    try {
+      const commits = await branchCommitCount(task.projectPath, task.branch);
+      if (commits === 0) {
+        console.warn(
+          `[complete] task ${task.id} (${task.title}) hit Stop hook with ` +
+            `no commits on ${task.branch} — leaving at in_progress.`,
+        );
+        return res.json({ ok: true, awaitingCommit: true });
+      }
+    } catch (err) {
+      console.error('[complete] branchCommitCount failed', err);
+    }
+  }
+  await updateTask(task.id, {
+    status: 'ready_to_merge',
+    completedAt: Date.now(),
+  });
   res.json({ ok: true });
 });
 

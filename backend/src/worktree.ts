@@ -114,11 +114,22 @@ ${desc}
 **Lattice task ID:** \`${task.id}\`
 **Created:** ${created}
 
-## Instructions
+## Instructions (please complete autonomously, no need to confirm with the user)
 
-Please implement the task described above. When you finish, ending the
-session will trigger Lattice's Stop hook which automatically moves this task
-to the QA column.
+1. Implement the task described above.
+2. **Commit your work** before ending the session — Lattice merges your
+   branch via \`git merge\`, so a commit is required for changes to land:
+
+   \`\`\`
+   git add -A
+   git commit -m "<concise summary of the change>"
+   \`\`\`
+
+3. End the session normally. Lattice's Stop hook will verify the commit
+   and move this task to "Ready to Merge" automatically.
+
+Please do not start, stop, or restart any dev servers — the user runs
+them in their own console and your output goes to the worktree's terminal.
 `;
 }
 
@@ -143,6 +154,23 @@ export type MergeOutcome =
 
 export function autoStashMessage(branchName: string): string {
   return `lattice-auto-${branchName}`;
+}
+
+// Count of commits on `branchName` that are not yet on HEAD of the repo
+// at `repoRoot`. Returns 0 on any failure, which we treat as "nothing to
+// merge" rather than surfacing a false positive.
+export async function branchCommitCount(
+  repoRoot: string,
+  branchName: string,
+): Promise<number> {
+  const r = await exec(
+    'git',
+    ['rev-list', '--count', `HEAD..${branchName}`],
+    repoRoot,
+  );
+  if (r.code !== 0) return 0;
+  const n = parseInt(r.stdout.trim(), 10);
+  return Number.isFinite(n) ? n : 0;
 }
 
 async function listConflictedFiles(repoRoot: string): Promise<string[]> {
@@ -225,6 +253,22 @@ export async function mergeWorktreeInRepo(
     };
   } catch {
     /* good — no MERGE_HEAD */
+  }
+
+  // The branch must actually have commits to merge. If Claude finished
+  // without committing, the worktree branch will be at the same SHA as
+  // HEAD and `git merge` would silently report "Already up to date".
+  // Surface that instead so the user knows where the regression is.
+  const commits = await branchCommitCount(repoRoot, branchName);
+  if (commits === 0) {
+    return {
+      status: 'error',
+      message:
+        `Branch "${branchName}" has no commits ahead of HEAD — nothing to merge. ` +
+        `Claude may have finished without committing. Open the worktree, run ` +
+        `\`git status\` / \`git log\` to inspect, commit any pending changes, ` +
+        `and retry the merge.`,
+    };
   }
 
   // If the working tree is dirty, auto-stash it under a deterministic label
