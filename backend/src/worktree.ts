@@ -53,14 +53,10 @@ export async function setupTaskWorktree(
     );
   }
   const repoRoot = repoCheck.stdout.trim();
-  const repoName = path.basename(repoRoot);
   const slug = slugify(task.title);
   const shortId = task.id.slice(-6);
   const branchName = `lattice/${slug}-${shortId}`;
-  const worktreesDir = path.join(
-    path.dirname(repoRoot),
-    `${repoName}-worktrees`,
-  );
+  const worktreesDir = path.join(repoRoot, '.lattice', 'worktrees');
   await fs.mkdir(worktreesDir, { recursive: true });
   const worktreePath = path.join(worktreesDir, `${slug}-${shortId}`);
 
