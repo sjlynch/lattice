@@ -895,6 +895,14 @@ input {
   color: #f4dba1;
   background: rgba(231, 201, 134, 0.22);
 }
+.lane-runall.qa-done {
+  color: #c89cff;
+  background: rgba(200, 156, 255, 0.10);
+}
+.lane-runall.qa-done:hover {
+  color: #d8b4ff;
+  background: rgba(200, 156, 255, 0.22);
+}
 
 /* Task detail overlay */
 .taskboard-detail {

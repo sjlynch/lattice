@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   Copy,
   Check,
+  CheckCheck,
 } from 'lucide-react';
 import { FloatingPanel } from './FloatingPanel';
 import { useTerminals } from '../TerminalsContext';
@@ -245,6 +246,11 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     }
   }
 
+  async function markAllQaDone() {
+    const qaTasks = tasks.filter((t) => t.status === 'qa');
+    await Promise.all(qaTasks.map((t) => moveTask(t.id, 'done')));
+  }
+
   const grouped = useMemo(() => {
     const m: Record<TaskStatus, Task[]> = {
       open: [],
@@ -368,6 +374,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                     ? resumeAllInProgress
                     : lane.id === 'ready_to_merge'
                     ? mergeAllReady
+                    : lane.id === 'qa'
+                    ? markAllQaDone
                     : undefined
                 }
                 onView={setViewing}
@@ -537,6 +545,8 @@ function Lane({
                   ? 'merge'
                   : lane.id === 'in_progress'
                   ? 'resume'
+                  : lane.id === 'qa'
+                  ? 'qa-done'
                   : ''
               }`}
               onClick={onRunAll}
@@ -550,6 +560,8 @@ function Lane({
                   ? 'Merge every Ready-to-Merge task (stops on first conflict)'
                   : lane.id === 'in_progress'
                   ? 'Resume every In Progress task with an existing worktree'
+                  : lane.id === 'qa'
+                  ? 'Mark every QA task as Done'
                   : 'Run every task in Open in a new worktree'
               }
               aria-label={
@@ -557,11 +569,15 @@ function Lane({
                   ? 'Merge all ready tasks'
                   : lane.id === 'in_progress'
                   ? 'Resume all in-progress tasks'
+                  : lane.id === 'qa'
+                  ? 'Mark all QA tasks done'
                   : 'Run all open tasks'
               }
             >
               {lane.id === 'ready_to_merge' ? (
                 <GitMerge size={11} />
+              ) : lane.id === 'qa' ? (
+                <CheckCheck size={12} />
               ) : (
                 <Play size={11} fill="currentColor" />
               )}

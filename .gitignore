@@ -37,3 +37,8 @@ coverage/
 
 # Lattice per-project state (tasks.json + future user settings)
 .lattice/
+
+# Per-worktree artifacts that Claude commits inside the worktree but
+# shouldn't land on main when merged.
+LATTICE_TASK.md
+.claude/settings.local.json
