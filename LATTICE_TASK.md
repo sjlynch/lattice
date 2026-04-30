@@ -1,11 +1,11 @@
-# task editing default behavior
+# qa button to move all qa tasks to done
 
-please modify task editing so that when a user clicks on a task, it automatically starts in edit mode, not requiring the user to click the pencil icon, and then also remove that pencil icon
+please modify the qa section in the task board so that a user can press a button to move all qa tasks to the done section
 
 ---
 
-**Lattice task ID:** `t_1777577070352_dpbco`
-**Created:** 2026-04-30T19:24:30.352Z
+**Lattice task ID:** `t_1777578751258_y5ftm`
+**Created:** 2026-04-30T19:52:31.258Z
 
 ## Instructions (please complete autonomously, no need to confirm with the user)
 

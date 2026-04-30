@@ -8,6 +8,7 @@ import {
   X,
   GitMerge,
   AlertTriangle,
+  CheckCheck,
 } from 'lucide-react';
 import { FloatingPanel } from './FloatingPanel';
 import { useTerminals } from '../TerminalsContext';
@@ -190,6 +191,11 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     }
   }
 
+  async function markAllQaDone() {
+    const qaTasks = tasks.filter((t) => t.status === 'qa');
+    await Promise.all(qaTasks.map((t) => moveTask(t.id, 'done')));
+  }
+
   const grouped = useMemo(() => {
     const m: Record<TaskStatus, Task[]> = {
       open: [],
@@ -303,6 +309,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                     ? runAllOpen
                     : lane.id === 'ready_to_merge'
                     ? mergeAllReady
+                    : lane.id === 'qa'
+                    ? markAllQaDone
                     : undefined
                 }
                 onView={setViewing}
@@ -426,16 +434,22 @@ function Lane({
               title={
                 lane.id === 'ready_to_merge'
                   ? 'Merge every Ready-to-Merge task (stops on first conflict)'
+                  : lane.id === 'qa'
+                  ? 'Mark every QA task as Done'
                   : 'Run every task in Open in a new worktree'
               }
               aria-label={
                 lane.id === 'ready_to_merge'
                   ? 'Merge all ready tasks'
+                  : lane.id === 'qa'
+                  ? 'Mark all QA tasks done'
                   : 'Run all open tasks'
               }
             >
               {lane.id === 'ready_to_merge' ? (
                 <GitMerge size={11} />
+              ) : lane.id === 'qa' ? (
+                <CheckCheck size={12} />
               ) : (
                 <Play size={11} fill="currentColor" />
               )}
