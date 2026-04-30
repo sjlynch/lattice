@@ -428,7 +428,13 @@ function Lane({
           <span className="taskboard-lane-count">{tasks.length}</span>
           {onRunAll && (
             <button
-              className={`lane-runall ${lane.id === 'ready_to_merge' ? 'merge' : ''}`}
+              className={`lane-runall ${
+                lane.id === 'ready_to_merge'
+                  ? 'merge'
+                  : lane.id === 'qa'
+                  ? 'qa-done'
+                  : ''
+              }`}
               onClick={onRunAll}
               disabled={tasks.length === 0}
               title={
