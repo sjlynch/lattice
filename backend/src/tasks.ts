@@ -34,6 +34,9 @@ export type Task = {
   completedAt?: number;
   mergedAt?: number;
   conflict?: boolean;
+  // When the conflict was first detected. Drives the "stuck for X min"
+  // indicator on conflict cards so the user can spot a hung resolver.
+  conflictStartedAt?: number;
   // Manual ordering within a lane. Lower values sort first. Tasks without a
   // value fall back to `-createdAt` so newly-created tasks land on top, which
   // matches the pre-reorder behavior.

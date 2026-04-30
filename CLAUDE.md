@@ -42,12 +42,30 @@ Open ──▶── In Progress ──▶── Ready to Merge ──▶── 
 - `In Progress → Ready to Merge`: the in-worktree Claude finishes; Stop hook
   hits `POST /api/tasks/:id/complete` (idempotent — only flips on first call).
 - `Ready to Merge → QA`: ▶ button calls `POST /api/tasks/:id/merge`.
+  Backend merges main INTO the branch *inside the worktree* (so main's
+  working tree never has conflict markers and vite stays alive), then
+  fast-forwards main on success.
   - Clean merge → status flips to `qa`, worktree + branch removed.
-  - Conflict → backend writes `.lattice/merge-<id>.md` with explicit
-    instructions and returns `{conflict, command, cwd}`. The UI spawns a
-    resolver Claude in the main repo; that Claude curls `/merged` (success)
-    or `/merge-aborted` (gave up).
-- `QA → Done`: manual drag-and-drop in the UI.
+  - Conflict → backend writes `MERGE_INSTRUCTIONS.md` inside the worktree
+    and returns `{conflict, command, cwd}`. The UI spawns a resolver
+    Claude in the worktree. When that Claude finishes (commit + Stop),
+    the worktree's existing Stop hook calls `/complete`, which detects
+    the resolved merge and finalizes (FF main + cleanup). `/merged` and
+    `/merge-aborted` are also exposed as explicit fallbacks.
+- `QA → Done`: manual drag-and-drop in the UI, or "mark all QA → Done"
+  button on the QA lane.
+
+### Merge runs (backend-driven "merge all")
+
+`POST /api/merge-runs {project}` starts a backend run that iterates every
+`ready_to_merge` task in `createdAt` order. The run continues past
+conflicts (per-task `conflict: true` flag is set; resolver Claude is
+spawned via the WS). Closing the browser tab does NOT cancel the run —
+it keeps progressing on the backend; on reopen the UI re-syncs via
+`GET /api/merge-runs/active?project=`. One active run per project; a
+second start returns 409. Cancel via `POST /api/merge-runs/:id/cancel`.
+Per-task in-process locks (`mergeLocks.ts`) prevent a manual `/merge`
+click landing on the same task while the run is processing it.
 
 ## HTTP / WS surface
 
@@ -67,8 +85,15 @@ Open ──▶── In Progress ──▶── Ready to Merge ──▶── 
 | POST | `/api/tasks/:id/merge` | Attempt git merge; conflict spawns resolver Claude |
 | POST | `/api/tasks/:id/merged` | Resolver-Claude callback after a successful merge |
 | POST | `/api/tasks/:id/merge-aborted` | Resolver-Claude callback if it gave up |
-| WS | `/ws/terminal?cwd=&cols=&rows=` | xterm proxy via node-pty |
+| POST | `/api/merge-runs` | Body `{project}` — start a merge-all run |
+| GET | `/api/merge-runs/active?project=` | Active run for a project, or `null` |
+| GET | `/api/merge-runs/:id` | Run snapshot |
+| POST | `/api/merge-runs/:id/cancel` | Request cancellation (run finishes current task and stops) |
+| GET | `/api/terminals` | Debug: list active pty sessions |
+| DELETE | `/api/terminals/:id` | Kill a pty session |
+| WS | `/ws/terminal?id=&cwd=&cols=&rows=&initialCommand=` | xterm proxy via node-pty (with replay) |
 | WS | `/ws/tasks?project=` | Live task list updates |
+| WS | `/ws/merge-runs?project=` | Run progress + per-conflict resolver spawn events |
 
 Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
 (`noServer: true`); routing by `pathname` so multiple WSs can coexist.
@@ -106,5 +131,51 @@ For a repo at `<repoRoot>`:
   the gitignored `.lattice/` folder so it stays self-contained)
 - branch: `lattice/<slug>-<shortid>`
 - task instructions inside the worktree: `LATTICE_TASK.md`
-- conflict-resolver instructions in the main repo:
-  `<repoRoot>/.lattice/merge-<task-id>.md`
+- conflict-resolver instructions inside the worktree:
+  `<worktree>/MERGE_INSTRUCTIONS.md`
+
+## Creating tasks via the API (e.g. for testing)
+
+To seed tasks programmatically, POST to `/api/tasks`:
+
+```bash
+curl -s -X POST http://127.0.0.1:5184/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project": "C:\\development\\lattice",
+    "title": "Bump version comment to 1.0.1",
+    "description": "in frontend/src/api.ts at the top of the file, add a comment `// version 1.0.1` (replacing any existing version comment)."
+  }'
+```
+
+The response is the new task with its `id`. Run a task with
+`POST /api/tasks/:id/run`.
+
+### Seeding low-change / high-conflict tasks for end-to-end testing
+
+To stress the merge pipeline, create N tasks that all touch the same one
+or two lines in the same file. Each task in isolation makes a tiny edit;
+when several land at the same time, every merge after the first one
+conflicts on the same hunk — exercising the resolver flow at scale.
+
+Pattern: ask each task to set the same constant to a different value at
+the top of one file. Example for Lattice's own repo, all 5 modifying
+`frontend/src/api.ts`:
+
+```bash
+for i in 1 2 3 4 5; do
+  curl -s -X POST http://127.0.0.1:5184/api/tasks \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"project\": \"C:\\\\development\\\\lattice\",
+      \"title\": \"version stamp ${i}\",
+      \"description\": \"At the very top of frontend/src/api.ts, add or replace a single line that reads exactly: // lattice-test-stamp: ${i}. Do not edit anything else in the file.\"
+    }"
+done
+```
+
+After seeding, click "Run All" on the Open lane to spawn worktree
+Claudes, then "Merge All" on Ready-to-Merge. The first merge will land
+clean; subsequent ones should hit a one-line conflict on the stamp,
+trigger a resolver Claude in each worktree, and (assuming the resolver
+just keeps the incoming side) finalize automatically.

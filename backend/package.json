@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "start": "node dist/index.js",
-    "build": "tsc"
+    "build": "tsc",
+    "test": "node --import tsx --test src/__tests__/*.test.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

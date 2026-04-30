@@ -24,13 +24,19 @@ import {
   worktreeExists,
   isMidMerge,
   mergeWorktreeInRepo,
-  fastForwardMain,
-  cleanupWorktreeForTask,
+  finalizeMergedTask,
   writeMergeInstructions,
   buildConflictResolveCommand,
   branchCommitCount,
 } from './worktree.js';
-import type { Task } from './tasks.js';
+import {
+  startMergeRun,
+  cancelRun,
+  getRun,
+  getActiveRunForProject,
+  subscribe as subscribeMergeRuns,
+} from './mergeRuns.js';
+import { tryAcquire, release } from './mergeLocks.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 5184;
@@ -214,42 +220,17 @@ app.post('/api/tasks/:id/resume', async (req, res) => {
   });
 });
 
-// Shared finalize step: fast-forward main to the worktree branch and
-// clean up. Used both by /merge (clean path) and by /complete or /merged
-// when a resolver Claude finishes a conflict.
-async function finalizeMergedTask(task: Task): Promise<{
-  ok: boolean;
-  error?: string;
-  stashConflict?: string[];
-}> {
-  if (!task.branch || !task.worktreePath) {
-    return { ok: false, error: 'task missing branch/worktree info' };
-  }
-  const ff = await fastForwardMain(task.projectPath, task.branch);
-  if (ff.status === 'error') {
-    return { ok: false, error: ff.message };
-  }
-  if (ff.status === 'conflict') {
-    // Stash-pop conflict during the FF restore. Leave for the user.
-    return { ok: false, stashConflict: ff.conflictedFiles };
-  }
-  try {
-    await cleanupWorktreeForTask(
-      task.projectPath,
-      task.worktreePath,
-      task.branch,
-    );
-  } catch (err) {
-    console.error('[finalize] cleanup failed', err);
-  }
-  await updateTask(task.id, {
-    status: 'qa',
-    mergedAt: Date.now(),
-    worktreePath: undefined,
-    branch: undefined,
-    conflict: undefined,
-  });
-  return { ok: true };
+// finalizeMergedTask now lives in worktree.ts so it's reachable from the
+// merge-run worker too. Convert its discriminated outcome to a flat
+// message string for HTTP responses.
+function finalizeError(
+  fin: Extract<
+    Awaited<ReturnType<typeof finalizeMergedTask>>,
+    { ok: false }
+  >,
+): string {
+  if ('error' in fin) return fin.error;
+  return `Stash-pop conflict on ${fin.stashConflict.length} file(s): ${fin.stashConflict.join(', ')}`;
 }
 
 // Hook callback: claude finished a turn.
@@ -278,8 +259,9 @@ app.post('/api/tasks/:id/complete', async (req, res) => {
     }
     const fin = await finalizeMergedTask(task);
     if (!fin.ok) {
-      console.warn(`[complete] finalize after resolution failed: ${fin.error}`);
-      return res.json({ ok: false, error: fin.error });
+      const msg = finalizeError(fin);
+      console.warn(`[complete] finalize after resolution failed: ${msg}`);
+      return res.json({ ok: false, error: msg });
     }
     return res.json({ ok: true, finalized: true });
   }
@@ -328,10 +310,16 @@ app.post('/api/tasks/:id/merge', async (req, res) => {
       .json({ error: 'task has no worktree branch on record' });
   }
 
-  // If already in a known conflict state, return the existing instructions
-  // rather than re-running git merge (which would refuse anyway).
-  if (task.conflict) {
-    try {
+  if (!tryAcquire(task.id)) {
+    return res
+      .status(409)
+      .json({ error: 'merge already in progress for this task' });
+  }
+
+  try {
+    // If already in a known conflict state, return the existing instructions
+    // rather than re-running git merge (which would refuse anyway).
+    if (task.conflict) {
       const { relativePath } = await writeMergeInstructions(
         task,
         task.branch,
@@ -345,12 +333,8 @@ app.post('/api/tasks/:id/merge', async (req, res) => {
         command: buildConflictResolveCommand(relativePath),
         cwd: task.worktreePath,
       });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
     }
-  }
 
-  try {
     const result = await mergeWorktreeInRepo(
       task.projectPath,
       task.branch,
@@ -359,7 +343,7 @@ app.post('/api/tasks/:id/merge', async (req, res) => {
     if (result.status === 'clean') {
       const fin = await finalizeMergedTask(task);
       if (!fin.ok) {
-        return res.status(500).json({ error: fin.error });
+        return res.status(500).json({ error: finalizeError(fin) });
       }
       return res.json({ merged: true });
     }
@@ -371,7 +355,10 @@ app.post('/api/tasks/:id/merge', async (req, res) => {
         BACKEND_ORIGIN,
         task.worktreePath,
       );
-      await updateTask(task.id, { conflict: true });
+      await updateTask(task.id, {
+        conflict: true,
+        conflictStartedAt: Date.now(),
+      });
       return res.json({
         merged: false,
         conflict: true,
@@ -383,6 +370,8 @@ app.post('/api/tasks/:id/merge', async (req, res) => {
     return res.status(500).json({ error: result.message });
   } catch (err) {
     return res.status(500).json({ error: (err as Error).message });
+  } finally {
+    release(task.id);
   }
 });
 
@@ -404,7 +393,7 @@ app.post('/api/tasks/:id/merged', async (req, res) => {
   }
   const fin = await finalizeMergedTask(task);
   if (!fin.ok) {
-    return res.status(500).json({ error: fin.error });
+    return res.status(500).json({ error: finalizeError(fin) });
   }
   res.json({ ok: true });
 });
@@ -414,7 +403,45 @@ app.post('/api/tasks/:id/merged', async (req, res) => {
 app.post('/api/tasks/:id/merge-aborted', async (req, res) => {
   const task = await getTask(req.params.id);
   if (!task) return res.status(404).json({ error: 'not found' });
-  await updateTask(task.id, { conflict: undefined });
+  await updateTask(task.id, {
+    conflict: undefined,
+    conflictStartedAt: undefined,
+  });
+  res.json({ ok: true });
+});
+
+// ---------- Merge runs (backend-driven merge-all) ----------
+
+app.post('/api/merge-runs', async (req, res) => {
+  const project =
+    typeof req.body?.project === 'string' && req.body.project
+      ? req.body.project
+      : '';
+  if (!project) return res.status(400).json({ error: 'project required' });
+  try {
+    const run = await startMergeRun(project, BACKEND_ORIGIN);
+    res.json(run);
+  } catch (err) {
+    res.status(409).json({ error: (err as Error).message });
+  }
+});
+
+app.get('/api/merge-runs/active', (req, res) => {
+  const project =
+    typeof req.query.project === 'string' ? req.query.project : '';
+  if (!project) return res.status(400).json({ error: 'project required' });
+  res.json(getActiveRunForProject(project));
+});
+
+app.get('/api/merge-runs/:id', (req, res) => {
+  const run = getRun(req.params.id);
+  if (!run) return res.status(404).json({ error: 'not found' });
+  res.json(run);
+});
+
+app.post('/api/merge-runs/:id/cancel', (req, res) => {
+  const ok = cancelRun(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'no active run with that id' });
   res.json({ ok: true });
 });
 
@@ -463,6 +490,30 @@ tasksWss.on('connection', async (ws, req) => {
   ws.on('close', () => unsub());
 });
 
+const mergeRunsWss = new WebSocketServer({ noServer: true });
+mergeRunsWss.on('connection', (ws, req) => {
+  const url = new URL(req.url || '', 'http://localhost');
+  const project = url.searchParams.get('project') || '';
+  if (!project) {
+    ws.close();
+    return;
+  }
+  // Send current active run on connect, if any.
+  const active = getActiveRunForProject(project);
+  if (active && ws.readyState === ws.OPEN) {
+    ws.send(JSON.stringify({ type: 'started', run: active }));
+  }
+  const unsub = subscribeMergeRuns((ev) => {
+    if (ws.readyState !== ws.OPEN) return;
+    // Filter to events for this project.
+    const evProject =
+      'run' in ev ? ev.run.projectPath : ev.projectPath;
+    if (evProject !== project) return;
+    ws.send(JSON.stringify(ev));
+  });
+  ws.on('close', () => unsub());
+});
+
 server.on('upgrade', (req, socket, head) => {
   const pathname = new URL(req.url || '', 'http://localhost').pathname;
   if (pathname === '/ws/terminal') {
@@ -472,6 +523,10 @@ server.on('upgrade', (req, socket, head) => {
   } else if (pathname === '/ws/tasks') {
     tasksWss.handleUpgrade(req, socket, head, (ws) => {
       tasksWss.emit('connection', ws, req);
+    });
+  } else if (pathname === '/ws/merge-runs') {
+    mergeRunsWss.handleUpgrade(req, socket, head, (ws) => {
+      mergeRunsWss.emit('connection', ws, req);
     });
   } else {
     socket.destroy();

@@ -15,15 +15,20 @@ import {
 import { FloatingPanel } from './FloatingPanel';
 import { useTerminals } from '../TerminalsContext';
 import {
+  cancelMergeRun as apiCancelMergeRun,
   createTask as apiCreateTask,
   deleteTask as apiDeleteTask,
   fetchTasks,
+  getActiveMergeRun,
   mergeTask as apiMergeTask,
   reorderTasks as apiReorderTasks,
   resumeTask as apiResumeTask,
   runTask as apiRunTask,
+  startMergeRun as apiStartMergeRun,
+  subscribeMergeRuns,
   subscribeTasks,
   updateTask as apiUpdateTask,
+  type MergeRun,
   type Task,
   type TaskStatus,
 } from '../api';
@@ -58,6 +63,10 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   const [addingTo, setAddingTo] = useState<TaskStatus | null>(null);
   const [viewing, setViewing] = useState<Task | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mergeRun, setMergeRun] = useState<MergeRun | null>(null);
+  const [recentRunSummary, setRecentRunSummary] = useState<MergeRun | null>(
+    null,
+  );
 
   // Filter state — all lanes visible by default.
   const [visibleLanes, setVisibleLanes] = useState<Set<TaskStatus>>(
@@ -86,6 +95,50 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
       unsub();
     };
   }, [activeFolder]);
+
+  // Hydrate the active merge run on mount and subscribe to live events.
+  // Closing the panel/tab doesn't cancel the run — it keeps progressing on
+  // the backend. On reopen we resync via /api/merge-runs/active.
+  useEffect(() => {
+    if (!activeFolder) {
+      setMergeRun(null);
+      return;
+    }
+    let cancelled = false;
+    getActiveMergeRun(activeFolder)
+      .then((r) => {
+        if (!cancelled) setMergeRun(r);
+      })
+      .catch(() => {
+        /* ignore */
+      });
+    const unsub = subscribeMergeRuns(activeFolder, (ev) => {
+      if (cancelled) return;
+      if (ev.type === 'started' || ev.type === 'progress') {
+        setMergeRun(ev.run);
+      } else if (ev.type === 'completed' || ev.type === 'cancelled') {
+        setMergeRun(null);
+        setRecentRunSummary(ev.run);
+        // Auto-clear summary after a few seconds.
+        setTimeout(() => {
+          setRecentRunSummary((cur) => (cur?.id === ev.run.id ? null : cur));
+        }, 8000);
+      } else if (ev.type === 'conflict') {
+        // Spawn the resolver Claude in the worktree. Same flow the per-card
+        // merge button uses; the run worker doesn't have UI access so the
+        // frontend handles the terminal half.
+        addTerminal({
+          label: `merge:${ev.taskId.slice(-6)}`,
+          cwd: ev.cwd,
+          initialCommand: ev.command,
+        });
+      }
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [activeFolder, addTerminal]);
 
   // Keep "viewing" task fresh when underlying list updates.
   useEffect(() => {
@@ -236,13 +289,22 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   }
 
   async function mergeAllReady() {
-    const ready = tasks
-      .filter((t) => t.status === 'ready_to_merge' && !t.conflict)
-      .sort((a, b) => a.createdAt - b.createdAt);
-    for (const t of ready) {
-      // eslint-disable-next-line no-await-in-loop
-      const ok = await mergeTaskAction(t);
-      if (!ok) break; // stop on first conflict so the user can deal with it
+    if (!activeFolder) return;
+    try {
+      await apiStartMergeRun(activeFolder);
+      // Run is now backend-driven; UI subscribes to /ws/merge-runs for
+      // progress and conflict events. Closing the panel/tab won't stop it.
+    } catch (err) {
+      showError(`Merge all failed to start: ${(err as Error).message}`);
+    }
+  }
+
+  async function cancelActiveRun() {
+    if (!mergeRun) return;
+    try {
+      await apiCancelMergeRun(mergeRun.id);
+    } catch (err) {
+      showError(`Cancel failed: ${(err as Error).message}`);
     }
   }
 
@@ -350,6 +412,15 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
             );
           })}
         </div>
+        {(mergeRun || recentRunSummary) && (
+          <MergeRunStrip
+            active={mergeRun}
+            summary={recentRunSummary}
+            tasks={tasks}
+            onCancel={cancelActiveRun}
+            onDismiss={() => setRecentRunSummary(null)}
+          />
+        )}
         <div className="taskboard-body">
           <div className="taskboard-scroll">
             {LANES.filter((l) => visibleLanes.has(l.id)).map((lane) => (
@@ -988,6 +1059,9 @@ function TaskCard({
               <AlertTriangle size={10} /> conflict
             </span>
           )}
+          {isConflict && task.conflictStartedAt && (
+            <StuckPill since={task.conflictStartedAt} />
+          )}
           {task.title}
         </div>
         {task.description && (
@@ -1127,5 +1201,140 @@ function ErrorToast({
         </button>
       </span>
     </div>
+  );
+}
+
+function MergeRunStrip({
+  active,
+  summary,
+  tasks,
+  onCancel,
+  onDismiss,
+}: {
+  active: MergeRun | null;
+  summary: MergeRun | null;
+  tasks: Task[];
+  onCancel: () => void;
+  onDismiss: () => void;
+}) {
+  if (active) {
+    const currentTask = active.current
+      ? tasks.find((t) => t.id === active.current)
+      : null;
+    const pct =
+      active.total > 0 ? Math.round((active.processed / active.total) * 100) : 0;
+    return (
+      <div className="merge-run-strip running" role="status">
+        <span className="merge-run-strip-spinner" />
+        <span className="merge-run-strip-text">
+          Merging {active.processed}/{active.total}
+          {currentTask && (
+            <>
+              {' '}
+              · current: <span className="merge-run-strip-current">
+                {shortLabel(currentTask.title)}
+              </span>
+            </>
+          )}
+          {(active.merged.length > 0 ||
+            active.conflicted.length > 0 ||
+            active.errored.length > 0) && (
+            <>
+              {' '}
+              ·{' '}
+              {active.merged.length > 0 && (
+                <span className="merge-run-stat ok">
+                  {active.merged.length} merged
+                </span>
+              )}
+              {active.conflicted.length > 0 && (
+                <span className="merge-run-stat conflict">
+                  {active.conflicted.length} conflict
+                  {active.conflicted.length === 1 ? '' : 's'}
+                </span>
+              )}
+              {active.errored.length > 0 && (
+                <span className="merge-run-stat error">
+                  {active.errored.length} error
+                  {active.errored.length === 1 ? '' : 's'}
+                </span>
+              )}
+            </>
+          )}
+        </span>
+        <span className="merge-run-strip-pct">{pct}%</span>
+        <button
+          className="merge-run-strip-btn"
+          onClick={onCancel}
+          title="Cancel merge run"
+          aria-label="Cancel merge run"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+  if (summary) {
+    const isCancelled = summary.status === 'cancelled';
+    return (
+      <div
+        className={`merge-run-strip done ${isCancelled ? 'cancelled' : ''}`}
+        role="status"
+      >
+        <span className="merge-run-strip-text">
+          {isCancelled ? 'Cancelled' : 'Merge run complete'} ·{' '}
+          <span className="merge-run-stat ok">{summary.merged.length} merged</span>
+          {summary.conflicted.length > 0 && (
+            <>
+              {' '}
+              ·{' '}
+              <span className="merge-run-stat conflict">
+                {summary.conflicted.length} conflict
+                {summary.conflicted.length === 1 ? '' : 's'}
+              </span>
+            </>
+          )}
+          {summary.errored.length > 0 && (
+            <>
+              {' '}
+              ·{' '}
+              <span className="merge-run-stat error">
+                {summary.errored.length} error
+                {summary.errored.length === 1 ? '' : 's'}
+              </span>
+            </>
+          )}
+        </span>
+        <button
+          className="merge-run-strip-btn"
+          onClick={onDismiss}
+          title="Dismiss"
+          aria-label="Dismiss"
+        >
+          <X size={12} />
+        </button>
+      </div>
+    );
+  }
+  return null;
+}
+
+function StuckPill({ since }: { since: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const minutes = Math.floor((now - since) / 60_000);
+  // Only show after the resolver has had a fair shot to finish.
+  if (minutes < 3) return null;
+  const label = minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h`;
+  return (
+    <span
+      className="task-card-stuck-pill"
+      title={`Resolver has been working for ${label} — may be stuck`}
+    >
+      stuck {label}
+    </span>
   );
 }

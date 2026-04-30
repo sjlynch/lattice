@@ -71,6 +71,7 @@ export type Task = {
   completedAt?: number;
   mergedAt?: number;
   conflict?: boolean;
+  conflictStartedAt?: number;
   sortOrder?: number;
 };
 
@@ -182,6 +183,121 @@ export async function mergeTask(id: string): Promise<MergeTaskResult> {
       method: 'POST',
     }),
   );
+}
+
+// ---------- Merge runs ----------
+
+export type MergeRunStatus =
+  | 'running'
+  | 'completed'
+  | 'cancelled'
+  | 'errored';
+
+export type MergeRun = {
+  id: string;
+  projectPath: string;
+  status: MergeRunStatus;
+  startedAt: number;
+  finishedAt?: number;
+  total: number;
+  processed: number;
+  current?: string;
+  merged: string[];
+  conflicted: string[];
+  errored: { taskId: string; error: string }[];
+  cancelRequested: boolean;
+};
+
+export type MergeRunEvent =
+  | { type: 'started'; run: MergeRun }
+  | { type: 'progress'; run: MergeRun }
+  | {
+      type: 'conflict';
+      runId: string;
+      projectPath: string;
+      taskId: string;
+      command: string;
+      cwd: string;
+      conflictedFiles: string[];
+    }
+  | { type: 'completed'; run: MergeRun }
+  | { type: 'cancelled'; run: MergeRun };
+
+export async function startMergeRun(projectPath: string): Promise<MergeRun> {
+  return asJson<MergeRun>(
+    await fetch('/api/merge-runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: projectPath }),
+    }),
+  );
+}
+
+export async function getActiveMergeRun(
+  projectPath: string,
+): Promise<MergeRun | null> {
+  const r = await fetch(
+    `/api/merge-runs/active?project=${encodeURIComponent(projectPath)}`,
+  );
+  if (!r.ok) return null;
+  return r.json();
+}
+
+export async function cancelMergeRun(runId: string): Promise<void> {
+  await asJson<{ ok: true }>(
+    await fetch(`/api/merge-runs/${encodeURIComponent(runId)}/cancel`, {
+      method: 'POST',
+    }),
+  );
+}
+
+export function subscribeMergeRuns(
+  projectPath: string,
+  onEvent: (ev: MergeRunEvent) => void,
+): () => void {
+  let ws: WebSocket | null = null;
+  let cancelled = false;
+  let attempt = 0;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  function connect() {
+    if (cancelled) return;
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(
+      `${proto}://${window.location.host}/ws/merge-runs?project=${encodeURIComponent(projectPath)}`,
+    );
+    ws.onopen = () => {
+      attempt = 0;
+    };
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data) as MergeRunEvent;
+        onEvent(msg);
+      } catch {
+        /* ignore */
+      }
+    };
+    ws.onerror = () => {
+      /* onclose will reschedule */
+    };
+    ws.onclose = () => {
+      if (cancelled) return;
+      const delay = Math.min(5000, 250 * 2 ** attempt);
+      attempt += 1;
+      timer = setTimeout(connect, delay);
+    };
+  }
+
+  connect();
+  return () => {
+    cancelled = true;
+    if (timer) clearTimeout(timer);
+    try {
+      ws?.close();
+    } catch {
+      /* ignore */
+    }
+  };
 }
 
 export function subscribeTasks(

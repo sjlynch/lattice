@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import type { Task } from './tasks.js';
+import { updateTask, type Task } from './tasks.js';
 
 function slugify(s: string): string {
   return (
@@ -469,8 +469,11 @@ export async function mergeWorktreeInRepo(
   );
 
   if (merge.code === 0) {
-    // Worktree is clean — fast-forward main to the branch's new tip.
-    return fastForwardMain(repoRoot, branchName);
+    // Worktree is clean. The caller is responsible for fastForwardMain
+    // and cleanup via finalizeMergedTask — keeping the steps separate
+    // means the run worker and the /merge endpoint can compose them
+    // without doing the FF twice.
+    return { status: 'clean' };
   }
 
   if (await isMidMerge(worktreePath)) {
@@ -575,4 +578,49 @@ The user can then retry the merge from the Lattice task board.
 
 export function buildConflictResolveCommand(relativeInstructionsPath: string): string {
   return `claude --dangerously-skip-permissions "Please read ${relativeInstructionsPath} and follow the steps to resolve the merge conflict."`;
+}
+
+// ---------- Finalize ----------
+//
+// Shared "I have a clean (post-worktree-merge) branch — bring main up to
+// date and bury the worktree" step. Called from /merge after a clean
+// mergeWorktreeInRepo, from /complete and /merged after a resolver
+// Claude finishes, and from the merge-run worker.
+export type FinalizeOutcome =
+  | { ok: true }
+  | { ok: false; error: string }
+  | { ok: false; stashConflict: string[] };
+
+export async function finalizeMergedTask(task: Task): Promise<FinalizeOutcome> {
+  if (!task.branch || !task.worktreePath) {
+    return { ok: false, error: 'task missing branch/worktree info' };
+  }
+  // FF main if it's behind. fastForwardMain is a no-op when main is
+  // already at the branch tip (git just says "Already up to date") and
+  // still handles the auto-stash + pop dance correctly.
+  const ff = await fastForwardMain(task.projectPath, task.branch);
+  if (ff.status === 'error') {
+    return { ok: false, error: ff.message };
+  }
+  if (ff.status === 'conflict') {
+    return { ok: false, stashConflict: ff.conflictedFiles };
+  }
+  try {
+    await cleanupWorktreeForTask(
+      task.projectPath,
+      task.worktreePath,
+      task.branch,
+    );
+  } catch (err) {
+    console.error('[finalize] cleanup failed', err);
+  }
+  await updateTask(task.id, {
+    status: 'qa',
+    mergedAt: Date.now(),
+    worktreePath: undefined,
+    branch: undefined,
+    conflict: undefined,
+    conflictStartedAt: undefined,
+  });
+  return { ok: true };
 }
