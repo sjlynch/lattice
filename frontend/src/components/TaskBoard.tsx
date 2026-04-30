@@ -285,29 +285,31 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
           })}
         </div>
         <div className="taskboard-body">
-          {LANES.filter((l) => visibleLanes.has(l.id)).map((lane) => (
-            <Lane
-              key={lane.id}
-              lane={lane}
-              tasks={grouped[lane.id]}
-              draggingId={draggingId}
-              onDragStart={setDraggingId}
-              onDragEnd={() => setDraggingId(null)}
-              onAdd={() => setAddingTo(lane.id)}
-              onMove={moveTask}
-              onDelete={deleteTask}
-              onRun={runTask}
-              onMerge={mergeTaskAction}
-              onRunAll={
-                lane.id === 'open'
-                  ? runAllOpen
-                  : lane.id === 'ready_to_merge'
-                  ? mergeAllReady
-                  : undefined
-              }
-              onView={setViewing}
-            />
-          ))}
+          <div className="taskboard-scroll">
+            {LANES.filter((l) => visibleLanes.has(l.id)).map((lane) => (
+              <Lane
+                key={lane.id}
+                lane={lane}
+                tasks={grouped[lane.id]}
+                draggingId={draggingId}
+                onDragStart={setDraggingId}
+                onDragEnd={() => setDraggingId(null)}
+                onAdd={() => setAddingTo(lane.id)}
+                onMove={moveTask}
+                onDelete={deleteTask}
+                onRun={runTask}
+                onMerge={mergeTaskAction}
+                onRunAll={
+                  lane.id === 'open'
+                    ? runAllOpen
+                    : lane.id === 'ready_to_merge'
+                    ? mergeAllReady
+                    : undefined
+                }
+                onView={setViewing}
+              />
+            ))}
+          </div>
           {addingTo && (
             <NewTaskOverlay
               lane={LANE_BY_ID[addingTo]}
