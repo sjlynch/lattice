@@ -2,36 +2,56 @@ import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { Box } from '@mui/material';
 
 type Props = {
   cwd: string;
   active: boolean;
+  initialCommand?: string;
 };
 
-export function TerminalPane({ cwd, active }: Props) {
+export function TerminalPane({ cwd, active, initialCommand }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
 
     const term = new Terminal({
       cursorBlink: true,
-      fontFamily: 'Cascadia Mono, Consolas, Menlo, monospace',
-      fontSize: 13,
+      fontFamily:
+        '"Cascadia Mono", "JetBrains Mono", Consolas, Menlo, monospace',
+      fontSize: 12.5,
+      lineHeight: 1.25,
+      letterSpacing: 0,
+      allowProposedApi: true,
       theme: {
-        background: '#0e0e10',
-        foreground: '#e7e7e7',
+        background: '#0e1014',
+        foreground: '#e3e5e9',
+        cursor: '#6aa9ff',
+        cursorAccent: '#0e1014',
+        selectionBackground: 'rgba(106,169,255,0.30)',
+        black: '#0e1014',
+        brightBlack: '#3d4350',
+        red: '#ff8888',
+        brightRed: '#ffa3a3',
+        green: '#9ed28e',
+        brightGreen: '#bce3ad',
+        yellow: '#e7c986',
+        brightYellow: '#f0d8a4',
+        blue: '#6aa9ff',
+        brightBlue: '#88bcff',
+        magenta: '#c89cff',
+        brightMagenta: '#dab8ff',
+        cyan: '#83d6e3',
+        brightCyan: '#a4e1ec',
+        white: '#cfd2d8',
+        brightWhite: '#ebecef',
       },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(containerRef.current);
     fit.fit();
-    termRef.current = term;
     fitRef.current = fit;
 
     const params = new URLSearchParams({
@@ -43,14 +63,31 @@ export function TerminalPane({ cwd, active }: Props) {
     const ws = new WebSocket(
       `${proto}://${window.location.host}/ws/terminal?${params.toString()}`,
     );
-    wsRef.current = ws;
+
+    let initialSent = false;
+    function maybeSendInitial() {
+      if (initialSent || !initialCommand) return;
+      if (ws.readyState !== WebSocket.OPEN) return;
+      initialSent = true;
+      // Slight delay so the shell prompt is ready before we type.
+      setTimeout(() => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({ type: 'input', data: initialCommand + '\r' }));
+      }, 250);
+    }
+
+    ws.onopen = () => {
+      maybeSendInitial();
+    };
 
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
         if (msg.type === 'data') term.write(msg.data);
-        else if (msg.type === 'error') term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
-        else if (msg.type === 'exit') term.write(`\r\n[exited ${msg.exitCode}]\r\n`);
+        else if (msg.type === 'error')
+          term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
+        else if (msg.type === 'exit')
+          term.write(`\r\n\x1b[2m[exited ${msg.exitCode}]\x1b[0m\r\n`);
       } catch {
         // ignore
       }
@@ -82,7 +119,7 @@ export function TerminalPane({ cwd, active }: Props) {
       ws.close();
       term.dispose();
     };
-  }, [cwd]);
+  }, [cwd, initialCommand]);
 
   useEffect(() => {
     if (active && fitRef.current) {
@@ -94,15 +131,5 @@ export function TerminalPane({ cwd, active }: Props) {
     }
   }, [active]);
 
-  return (
-    <Box
-      ref={containerRef}
-      sx={{
-        width: '100%',
-        height: '100%',
-        bgcolor: '#0e0e10',
-        display: active ? 'block' : 'none',
-      }}
-    />
-  );
+  return <div ref={containerRef} className="term-pane" />;
 }

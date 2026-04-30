@@ -4,13 +4,16 @@ import ignore, { type Ignore } from 'ignore';
 
 const SOURCE_EXTS = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-  '.py', '.go', '.rs', '.java', '.kt', '.scala',
-  '.c', '.cc', '.cpp', '.cxx', '.h', '.hpp',
-  '.cs', '.rb', '.php', '.swift', '.dart',
+  '.py', '.pyi', '.go', '.rs', '.java', '.kt', '.kts', '.scala', '.gradle', '.groovy',
+  '.c', '.cc', '.cpp', '.cxx', '.h', '.hpp', '.zig',
+  '.cs', '.fs', '.fsx', '.rb', '.erb', '.rake', '.gemspec',
+  '.php', '.swift', '.dart',
   '.vue', '.svelte', '.astro',
   '.css', '.scss', '.sass', '.less',
-  '.html', '.json', '.yaml', '.yml', '.toml',
-  '.md', '.sh', '.bash', '.ps1', '.sql',
+  '.html', '.xml', '.json', '.yaml', '.yml', '.toml', '.csv',
+  '.md', '.mdx', '.sh', '.bash', '.zsh', '.ps1', '.sql',
+  '.lua', '.r', '.pl', '.pm', '.ex', '.exs', '.erl',
+  '.clj', '.cljs', '.hs', '.ml', '.mli', '.nim', '.jl', '.v',
 ]);
 
 const ALWAYS_IGNORE = [
@@ -24,6 +27,7 @@ const ALWAYS_IGNORE = [
   '__pycache__',
   '.idea',
   '.vscode',
+  '.lattice',
 ];
 
 export type GraphNode = {

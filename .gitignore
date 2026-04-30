@@ -34,3 +34,6 @@ Thumbs.db
 # misc
 .cache/
 coverage/
+
+# Lattice per-project state (tasks.json + future user settings)
+.lattice/

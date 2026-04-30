@@ -46,3 +46,120 @@ export async function listDir(folderPath?: string): Promise<DirListing> {
   if (!r.ok) throw new Error(`list-dir failed: ${r.status}`);
   return r.json();
 }
+
+// ---------- Tasks ----------
+
+export type TaskStatus =
+  | 'open'
+  | 'in_progress'
+  | 'qa'
+  | 'done'
+  | 'deleted';
+
+export type Task = {
+  id: string;
+  projectPath: string;
+  title: string;
+  description?: string;
+  status: TaskStatus;
+  createdAt: number;
+  worktreePath?: string;
+  branch?: string;
+  startedAt?: number;
+  completedAt?: number;
+};
+
+export type RunTaskResult = {
+  worktreePath: string;
+  branch: string;
+  taskFile: string;
+  command: string;
+};
+
+async function asJson<T>(r: Response): Promise<T> {
+  if (!r.ok) {
+    let msg = `${r.status}`;
+    try {
+      const j = (await r.json()) as { error?: string };
+      if (j.error) msg = j.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return (await r.json()) as T;
+}
+
+export async function fetchTasks(projectPath: string): Promise<Task[]> {
+  return asJson<Task[]>(
+    await fetch(`/api/tasks?project=${encodeURIComponent(projectPath)}`),
+  );
+}
+
+export async function createTask(
+  projectPath: string,
+  title: string,
+  description?: string,
+): Promise<Task> {
+  return asJson<Task>(
+    await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: projectPath, title, description }),
+    }),
+  );
+}
+
+export async function updateTask(
+  id: string,
+  updates: Partial<Pick<Task, 'title' | 'description' | 'status'>>,
+): Promise<Task> {
+  return asJson<Task>(
+    await fetch(`/api/tasks/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    }),
+  );
+}
+
+export async function deleteTask(id: string): Promise<void> {
+  await asJson<{ ok: true }>(
+    await fetch(`/api/tasks/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+  );
+}
+
+export async function runTask(id: string): Promise<RunTaskResult> {
+  return asJson<RunTaskResult>(
+    await fetch(`/api/tasks/${encodeURIComponent(id)}/run`, {
+      method: 'POST',
+    }),
+  );
+}
+
+export function subscribeTasks(
+  projectPath: string,
+  onUpdate: (tasks: Task[]) => void,
+): () => void {
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(
+    `${proto}://${window.location.host}/ws/tasks?project=${encodeURIComponent(projectPath)}`,
+  );
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data) as { type: string; tasks?: Task[] };
+      if (msg.type === 'tasks' && msg.tasks) onUpdate(msg.tasks);
+    } catch {
+      /* ignore */
+    }
+  };
+  return () => {
+    try {
+      ws.close();
+    } catch {
+      /* ignore */
+    }
+  };
+}

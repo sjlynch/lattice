@@ -1,138 +1,91 @@
-import { useState } from 'react';
-import {
-  Box,
-  Tabs,
-  Tab,
-  IconButton,
-  Typography,
-  Tooltip,
-} from '@mui/material';
-import AddIcon from '@mui/icons-material/Add';
-import CloseIcon from '@mui/icons-material/Close';
+import { Plus, X, TerminalSquare } from 'lucide-react';
 import { TerminalPane } from './TerminalPane';
-
-type TerminalTab = {
-  id: string;
-  label: string;
-  cwd: string;
-};
+import { useTerminals } from '../TerminalsContext';
 
 type Props = {
   activeFolder: string;
 };
 
 export function Sidebar({ activeFolder }: Props) {
-  const [terminals, setTerminals] = useState<TerminalTab[]>([]);
-  const [active, setActive] = useState(0);
+  const { terminals, activeId, setActiveId, addTerminal, closeTerminal } =
+    useTerminals();
 
-  function addTerminal() {
-    const id = String(Date.now());
-    const label = `claude ${terminals.length + 1}`;
-    setTerminals((t) => [...t, { id, label, cwd: activeFolder }]);
-    setActive(terminals.length);
-  }
-
-  function closeTerminal(idx: number) {
-    setTerminals((t) => t.filter((_, i) => i !== idx));
-    setActive((a) => Math.max(0, Math.min(a, terminals.length - 2)));
+  function newTerminal() {
+    addTerminal({
+      label: `claude ${terminals.length + 1}`,
+      cwd: activeFolder,
+    });
   }
 
   return (
-    <Box
-      sx={{
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        borderRight: '1px solid',
-        borderColor: 'divider',
-        bgcolor: 'background.paper',
-      }}
-    >
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          px: 1,
-          py: 0.5,
-          borderBottom: '1px solid',
-          borderColor: 'divider',
-        }}
-      >
-        <Typography variant="overline" sx={{ pl: 1 }}>
-          Terminals
-        </Typography>
-        <Tooltip title="New Claude terminal">
-          <IconButton size="small" onClick={addTerminal}>
-            <AddIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      </Box>
+    <>
+      <div className="sidebar-header">
+        <span className="sidebar-title">Terminals</span>
+        <button
+          className="icon-btn sm"
+          onClick={newTerminal}
+          title="New Claude terminal"
+          aria-label="New Claude terminal"
+        >
+          <Plus size={14} />
+        </button>
+      </div>
 
       {terminals.length > 0 && (
-        <Tabs
-          value={active}
-          onChange={(_, v) => setActive(v)}
-          variant="scrollable"
-          scrollButtons="auto"
-          sx={{ minHeight: 32 }}
-        >
-          {terminals.map((t, i) => (
-            <Tab
+        <div className="sidebar-tabs">
+          {terminals.map((t) => (
+            <div
               key={t.id}
-              sx={{ minHeight: 32, py: 0.25, textTransform: 'none' }}
-              label={
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <span>{t.label}</span>
-                  <CloseIcon
-                    fontSize="inherit"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      closeTerminal(i);
-                    }}
-                    sx={{ cursor: 'pointer', opacity: 0.6, '&:hover': { opacity: 1 } }}
-                  />
-                </Box>
-              }
-            />
+              className={`sidebar-tab ${t.id === activeId ? 'active' : ''}`}
+              onClick={() => setActiveId(t.id)}
+              title={t.cwd}
+            >
+              <TerminalSquare size={12} />
+              <span>{t.label}</span>
+              <button
+                className="sidebar-tab-close"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeTerminal(t.id);
+                }}
+                title="Close"
+                aria-label="Close terminal"
+              >
+                <X size={12} />
+              </button>
+            </div>
           ))}
-        </Tabs>
+        </div>
       )}
 
-      <Box sx={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+      <div className="sidebar-content">
         {terminals.length === 0 ? (
-          <Box
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: '100%',
-              color: 'text.secondary',
-              p: 2,
-              textAlign: 'center',
-            }}
-          >
-            <Typography variant="body2">
-              Click + to start a Claude Code terminal in
-              <br />
-              <code>{activeFolder}</code>
-            </Typography>
-          </Box>
+          <div className="sidebar-empty">
+            <div className="sidebar-empty-icon">
+              <TerminalSquare size={22} />
+            </div>
+            <div className="sidebar-empty-title">No terminals yet</div>
+            <div className="sidebar-empty-sub">
+              Click <Plus size={11} style={{ verticalAlign: -1 }} /> above to
+              start a Claude Code shell rooted at <code>{activeFolder}</code>,
+              or hit ▶ on a task to spawn one in a worktree.
+            </div>
+          </div>
         ) : (
-          terminals.map((t, i) => (
-            <Box
+          terminals.map((t) => (
+            <div
               key={t.id}
-              sx={{
-                position: 'absolute',
-                inset: 0,
-                visibility: i === active ? 'visible' : 'hidden',
-              }}
+              className={`sidebar-pane ${t.id === activeId ? '' : 'hidden'}`}
             >
-              <TerminalPane cwd={t.cwd} active={i === active} />
-            </Box>
+              <TerminalPane
+                cwd={t.cwd}
+                active={t.id === activeId}
+                initialCommand={t.initialCommand}
+              />
+            </div>
           ))
         )}
-      </Box>
-    </Box>
+      </div>
+    </>
   );
 }

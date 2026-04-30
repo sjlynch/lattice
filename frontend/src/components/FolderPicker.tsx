@@ -1,22 +1,7 @@
 import { useEffect, useState } from 'react';
-import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  List,
-  ListItemButton,
-  ListItemText,
-  Button,
-  TextField,
-  IconButton,
-  Box,
-  Typography,
-  CircularProgress,
-} from '@mui/material';
-import FolderIcon from '@mui/icons-material/Folder';
-import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
+import { ArrowUp, Folder } from 'lucide-react';
 import { listDir, type DirListing } from '../api';
+import { Modal } from './Modal';
 
 type Props = {
   open: boolean;
@@ -47,62 +32,74 @@ export function FolderPicker({ open, initialPath, onClose, onSelect }: Props) {
 
   useEffect(() => {
     if (open) load(initialPath);
-  }, [open, initialPath]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Select active folder</DialogTitle>
-      <DialogContent dividers>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-          <IconButton
+    <Modal open={open} onClose={onClose}>
+      <div className="modal-header">Select active folder</div>
+      <div className="modal-body">
+        <div className="path-row">
+          <button
+            className="icon-btn"
             onClick={() => listing?.parent && load(listing.parent)}
             disabled={!listing?.parent}
+            title="Up one level"
+            aria-label="Up one level"
           >
-            <ArrowUpwardIcon />
-          </IconButton>
-          <TextField
-            fullWidth
-            size="small"
+            <ArrowUp size={14} />
+          </button>
+          <input
+            className="text-input"
             value={pathInput}
             onChange={(e) => setPathInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') load(pathInput);
             }}
+            spellCheck={false}
           />
-          <Button onClick={() => load(pathInput)}>Go</Button>
-        </Box>
-        {loading && <CircularProgress size={20} />}
-        {error && (
-          <Typography color="error" variant="body2">
-            {error}
-          </Typography>
-        )}
-        {listing && (
-          <List dense sx={{ maxHeight: 360, overflow: 'auto' }}>
-            {listing.entries.length === 0 && (
-              <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-                No subfolders
-              </Typography>
-            )}
-            {listing.entries.map((e) => (
-              <ListItemButton key={e.path} onClick={() => load(e.path)}>
-                <FolderIcon fontSize="small" sx={{ mr: 1 }} />
-                <ListItemText primary={e.name} />
-              </ListItemButton>
+          <button className="btn-ghost" onClick={() => load(pathInput)}>
+            Go
+          </button>
+        </div>
+
+        {error && <div className="error-msg">{error}</div>}
+
+        <div className="dir-list">
+          {loading && !listing && (
+            <div className="dir-list-empty">Loading…</div>
+          )}
+          {listing && listing.entries.length === 0 && (
+            <div className="dir-list-empty">No subfolders here</div>
+          )}
+          {listing &&
+            listing.entries.map((e) => (
+              <div
+                key={e.path}
+                className="dir-row"
+                onClick={() => load(e.path)}
+                onDoubleClick={() => onSelect(e.path)}
+              >
+                <span className="dir-icon">
+                  <Folder size={14} />
+                </span>
+                <span>{e.name}</span>
+              </div>
             ))}
-          </List>
-        )}
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button
-          variant="contained"
+        </div>
+      </div>
+      <div className="modal-footer">
+        <button className="btn-ghost" onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          className="btn-primary"
           disabled={!listing}
           onClick={() => listing && onSelect(listing.path)}
         >
           Select this folder
-        </Button>
-      </DialogActions>
-    </Dialog>
+        </button>
+      </div>
+    </Modal>
   );
 }
