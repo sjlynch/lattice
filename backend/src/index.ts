@@ -22,12 +22,15 @@ import {
   buildClaudeCommand,
   buildResumeCommand,
   worktreeExists,
+  isMidMerge,
   mergeWorktreeInRepo,
+  fastForwardMain,
   cleanupWorktreeForTask,
   writeMergeInstructions,
   buildConflictResolveCommand,
   branchCommitCount,
 } from './worktree.js';
+import type { Task } from './tasks.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 5184;
@@ -211,17 +214,81 @@ app.post('/api/tasks/:id/resume', async (req, res) => {
   });
 });
 
-// Hook callback: claude finished a turn → move in_progress → ready_to_merge.
-// Only flips when there are real commits on the branch — Claude finishing
-// without committing must NOT be reported as ready to merge, since git
-// would silently treat that branch as "Already up to date" and the user
-// would chase a phantom merge.
+// Shared finalize step: fast-forward main to the worktree branch and
+// clean up. Used both by /merge (clean path) and by /complete or /merged
+// when a resolver Claude finishes a conflict.
+async function finalizeMergedTask(task: Task): Promise<{
+  ok: boolean;
+  error?: string;
+  stashConflict?: string[];
+}> {
+  if (!task.branch || !task.worktreePath) {
+    return { ok: false, error: 'task missing branch/worktree info' };
+  }
+  const ff = await fastForwardMain(task.projectPath, task.branch);
+  if (ff.status === 'error') {
+    return { ok: false, error: ff.message };
+  }
+  if (ff.status === 'conflict') {
+    // Stash-pop conflict during the FF restore. Leave for the user.
+    return { ok: false, stashConflict: ff.conflictedFiles };
+  }
+  try {
+    await cleanupWorktreeForTask(
+      task.projectPath,
+      task.worktreePath,
+      task.branch,
+    );
+  } catch (err) {
+    console.error('[finalize] cleanup failed', err);
+  }
+  await updateTask(task.id, {
+    status: 'qa',
+    mergedAt: Date.now(),
+    worktreePath: undefined,
+    branch: undefined,
+    conflict: undefined,
+  });
+  return { ok: true };
+}
+
+// Hook callback: claude finished a turn.
+//
+// Two cases handled here, both driven by the worktree's own Stop hook:
+//   in_progress -> ready_to_merge: the original task's Claude committed.
+//   ready_to_merge + conflict:    the resolver Claude finished resolving.
 app.post('/api/tasks/:id/complete', async (req, res) => {
   const task = await getTask(req.params.id);
   if (!task) return res.status(404).json({ error: 'not found' });
+
+  // Resolver-Claude finished. The merge in the worktree is committed;
+  // fast-forward main and clean up.
+  if (
+    task.status === 'ready_to_merge' &&
+    task.conflict &&
+    task.branch &&
+    task.worktreePath
+  ) {
+    if (await isMidMerge(task.worktreePath)) {
+      // Resolver hasn't committed yet (Stop fired mid-resolution).
+      console.log(
+        `[complete] task ${task.id}: resolver still mid-merge, skipping FF.`,
+      );
+      return res.json({ ok: true, awaitingResolution: true });
+    }
+    const fin = await finalizeMergedTask(task);
+    if (!fin.ok) {
+      console.warn(`[complete] finalize after resolution failed: ${fin.error}`);
+      return res.json({ ok: false, error: fin.error });
+    }
+    return res.json({ ok: true, finalized: true });
+  }
+
   if (task.status !== 'in_progress') {
     return res.json({ ok: true });
   }
+  // Only flip when there are real commits — Claude finishing without
+  // committing must NOT be reported as ready to merge.
   if (task.branch && task.projectPath) {
     try {
       const commits = await branchCommitCount(task.projectPath, task.branch);
@@ -270,12 +337,13 @@ app.post('/api/tasks/:id/merge', async (req, res) => {
         task.branch,
         [],
         BACKEND_ORIGIN,
+        task.worktreePath,
       );
       return res.json({
         merged: false,
         conflict: true,
         command: buildConflictResolveCommand(relativePath),
-        cwd: task.projectPath,
+        cwd: task.worktreePath,
       });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -283,24 +351,16 @@ app.post('/api/tasks/:id/merge', async (req, res) => {
   }
 
   try {
-    const result = await mergeWorktreeInRepo(task.projectPath, task.branch);
+    const result = await mergeWorktreeInRepo(
+      task.projectPath,
+      task.branch,
+      task.worktreePath,
+    );
     if (result.status === 'clean') {
-      try {
-        await cleanupWorktreeForTask(
-          task.projectPath,
-          task.worktreePath,
-          task.branch,
-        );
-      } catch (e) {
-        console.error('[merge] cleanup failed', e);
+      const fin = await finalizeMergedTask(task);
+      if (!fin.ok) {
+        return res.status(500).json({ error: fin.error });
       }
-      await updateTask(task.id, {
-        status: 'qa',
-        mergedAt: Date.now(),
-        worktreePath: undefined,
-        branch: undefined,
-        conflict: undefined,
-      });
       return res.json({ merged: true });
     }
     if (result.status === 'conflict') {
@@ -309,13 +369,14 @@ app.post('/api/tasks/:id/merge', async (req, res) => {
         task.branch,
         result.conflictedFiles,
         BACKEND_ORIGIN,
+        task.worktreePath,
       );
       await updateTask(task.id, { conflict: true });
       return res.json({
         merged: false,
         conflict: true,
         command: buildConflictResolveCommand(relativePath),
-        cwd: task.projectPath,
+        cwd: task.worktreePath,
         conflictedFiles: result.conflictedFiles,
       });
     }
@@ -326,31 +387,25 @@ app.post('/api/tasks/:id/merge', async (req, res) => {
 });
 
 // Resolver Claude reports it has finished the merge → ready_to_merge → qa.
-// Idempotent: a duplicate call after the task has already moved is a no-op.
+// Idempotent: duplicates after the task has already moved are a no-op.
 app.post('/api/tasks/:id/merged', async (req, res) => {
   const task = await getTask(req.params.id);
   if (!task) return res.status(404).json({ error: 'not found' });
   if (task.status !== 'ready_to_merge') {
     return res.json({ ok: true });
   }
-  if (task.worktreePath && task.branch) {
-    try {
-      await cleanupWorktreeForTask(
-        task.projectPath,
-        task.worktreePath,
-        task.branch,
-      );
-    } catch (e) {
-      console.error('[merged] cleanup failed', e);
-    }
+  if (!task.branch || !task.worktreePath) {
+    return res.status(400).json({ error: 'task missing worktree info' });
   }
-  await updateTask(task.id, {
-    status: 'qa',
-    mergedAt: Date.now(),
-    worktreePath: undefined,
-    branch: undefined,
-    conflict: undefined,
-  });
+  if (await isMidMerge(task.worktreePath)) {
+    return res
+      .status(400)
+      .json({ error: 'worktree is still mid-merge — commit first.' });
+  }
+  const fin = await finalizeMergedTask(task);
+  if (!fin.ok) {
+    return res.status(500).json({ error: fin.error });
+  }
   res.json({ ok: true });
 });
 

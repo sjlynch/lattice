@@ -170,6 +170,28 @@ export async function worktreeExists(worktreePath: string): Promise<boolean> {
   }
 }
 
+// Resolve a worktree's git-dir (where MERGE_HEAD etc. live). Worktrees
+// store their per-worktree state under <main-repo>.git/worktrees/<name>,
+// not in <worktree>/.git (which is just a file pointer).
+async function getWorktreeGitDir(worktreePath: string): Promise<string | null> {
+  const r = await exec('git', ['rev-parse', '--git-dir'], worktreePath);
+  if (r.code !== 0) return null;
+  return path.resolve(worktreePath, r.stdout.trim());
+}
+
+// True if the worktree (or main repo) is mid-merge — i.e., a MERGE_HEAD
+// file exists in its git-dir.
+export async function isMidMerge(dir: string): Promise<boolean> {
+  const gitDir = await getWorktreeGitDir(dir);
+  if (!gitDir) return false;
+  try {
+    await fs.access(path.join(gitDir, 'MERGE_HEAD'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---------- Merge helpers ----------
 
 export type MergeConflictKind = 'merge' | 'stash-pop';
@@ -287,71 +309,20 @@ async function popStashByMessage(
   };
 }
 
-export async function mergeWorktreeInRepo(
+// Fast-forward main (in `repoRoot`) to the tip of `branchName`. Auto-
+// stashes a dirty working tree before the FF and pops it afterwards.
+// Used after the in-worktree merge succeeds so the resolved branch tip
+// becomes main's new tip without ever putting conflict markers in main's
+// working files.
+export async function fastForwardMain(
   repoRoot: string,
   branchName: string,
 ): Promise<MergeOutcome> {
-  // Pre-checks
-  const isGit = await exec('git', ['rev-parse', '--show-toplevel'], repoRoot);
-  if (isGit.code !== 0) {
-    return { status: 'error', message: `Not a git repository: ${repoRoot}` };
-  }
-
-  // Already mid-merge? Refuse — stashing wouldn't help here.
-  const mergeHead = path.join(repoRoot, '.git', 'MERGE_HEAD');
-  try {
-    await fs.access(mergeHead);
-    return {
-      status: 'error',
-      message:
-        'Repository is already in a merge state (MERGE_HEAD exists). Resolve or `git merge --abort` first.',
-    };
-  } catch {
-    /* good — no MERGE_HEAD */
-  }
-
-  // Three sub-cases when the branch has 0 commits ahead of HEAD:
-  //   - already-merged: branch is an ancestor of HEAD (commits made it in
-  //     via a previous merge). Treat as a successful no-op merge so the
-  //     UI's "merge all" finishes cleanly.
-  //   - never-committed: branch tip equals HEAD (no commits ever landed).
-  //     Surface that as an actionable error so the user can resume.
-  //   - branch missing entirely: refuse with a clear message.
-  const commits = await branchCommitCount(repoRoot, branchName);
-  if (commits === 0) {
-    const isAncestor = await branchIsAncestorOfHead(repoRoot, branchName);
-    if (isAncestor) {
-      const behind = await countBetween(repoRoot, branchName, 'HEAD');
-      if (behind > 0) {
-        // Branch has been merged previously (HEAD has moved forward
-        // since). Caller will run cleanupWorktreeForTask.
-        return { status: 'clean' };
-      }
-      // behind === 0 means branch tip == HEAD: nothing was ever committed.
-      return {
-        status: 'error',
-        message:
-          `Branch "${branchName}" has no commits — Claude may have finished ` +
-          `without committing. Resume the task to continue, or open the worktree ` +
-          `to inspect with \`git status\` / \`git log\`.`,
-      };
-    }
-    return {
-      status: 'error',
-      message:
-        `Branch "${branchName}" was not found or is not reachable from HEAD ` +
-        `and has no commits ahead. Inspect with \`git branch -a\` and \`git log ${branchName}\`.`,
-    };
-  }
-
-  // If the working tree is dirty, auto-stash it under a deterministic label
-  // so the merge can proceed and the user's in-flight edits stay recoverable
-  // even if anything later fails.
   const status = await exec('git', ['status', '--porcelain'], repoRoot);
   if (status.code !== 0) {
     return {
       status: 'error',
-      message: status.stderr.trim() || 'git status failed',
+      message: status.stderr.trim() || 'git status failed before fast-forward',
     };
   }
   const stashLabel = autoStashMessage(branchName);
@@ -366,59 +337,33 @@ export async function mergeWorktreeInRepo(
       return {
         status: 'error',
         message:
-          'Failed to auto-stash working-tree changes: ' +
+          'Failed to auto-stash before fast-forward: ' +
           (stash.stderr.trim() || stash.stdout.trim() || 'git stash failed'),
       };
     }
     stashRef = stashLabel;
   }
 
-  // Attempt merge
-  const merge = await exec(
+  const ff = await exec(
     'git',
-    ['merge', '--no-ff', '--no-edit', branchName],
+    ['merge', '--ff-only', branchName],
     repoRoot,
   );
-
-  if (merge.code !== 0) {
-    // Conflict has MERGE_HEAD; anything else is a hard error.
-    let isConflict = false;
-    try {
-      await fs.access(mergeHead);
-      isConflict = true;
-    } catch {
-      /* not a conflict */
-    }
-    if (isConflict) {
-      const conflictedFiles = await listConflictedFiles(repoRoot);
-      // Stash stays in place; resolver Claude is told how to reconcile.
-      return {
-        status: 'conflict',
-        conflictKind: 'merge',
-        conflictedFiles,
-        stashRef,
-      };
-    }
-    // Hard error: try to pop the stash back so the user isn't stranded.
+  if (ff.code !== 0) {
     if (stashRef) {
       await popStashByMessage(repoRoot, stashRef).catch(() => undefined);
     }
     return {
       status: 'error',
       message:
-        (merge.stderr.trim() || merge.stdout.trim() || 'git merge failed').slice(
-          0,
-          500,
-        ),
+        `Fast-forward of main to ${branchName} failed: ` +
+        (ff.stderr.trim() || ff.stdout.trim() || 'git merge --ff-only failed'),
     };
   }
 
-  // Merge succeeded. If we stashed, restore those edits now.
   if (stashRef) {
     const popped = await popStashByMessage(repoRoot, stashRef);
     if (popped.kind === 'conflict') {
-      // Merge commit is on main; the conflicts are from the stash applying
-      // on top. Resolver Claude commits the resolved stash as a follow-up.
       return {
         status: 'conflict',
         conflictKind: 'stash-pop',
@@ -432,6 +377,116 @@ export async function mergeWorktreeInRepo(
   }
 
   return { status: 'clean' };
+}
+
+export async function mergeWorktreeInRepo(
+  repoRoot: string,
+  branchName: string,
+  worktreePath: string,
+): Promise<MergeOutcome> {
+  // ------ Pre-checks ------
+
+  const isGit = await exec('git', ['rev-parse', '--show-toplevel'], repoRoot);
+  if (isGit.code !== 0) {
+    return { status: 'error', message: `Not a git repository: ${repoRoot}` };
+  }
+
+  if (await isMidMerge(repoRoot)) {
+    return {
+      status: 'error',
+      message:
+        'Main repo is already in a merge state (MERGE_HEAD exists). ' +
+        'Resolve or `git merge --abort` first.',
+    };
+  }
+
+  if (!(await worktreeExists(worktreePath))) {
+    return {
+      status: 'error',
+      message: `Worktree directory not found at ${worktreePath}.`,
+    };
+  }
+
+  if (await isMidMerge(worktreePath)) {
+    return {
+      status: 'error',
+      message:
+        `Worktree at ${worktreePath} is already in a merge state — a ` +
+        `previous resolver may still be running. Inspect, or run ` +
+        `\`git -C "${worktreePath}" merge --abort\` to retry from scratch.`,
+    };
+  }
+
+  // ------ Branch state checks ------
+
+  const commits = await branchCommitCount(repoRoot, branchName);
+  if (commits === 0) {
+    const isAncestor = await branchIsAncestorOfHead(repoRoot, branchName);
+    if (isAncestor) {
+      const behind = await countBetween(repoRoot, branchName, 'HEAD');
+      if (behind > 0) {
+        // Branch was merged previously; caller will run cleanup.
+        return { status: 'clean' };
+      }
+      return {
+        status: 'error',
+        message:
+          `Branch "${branchName}" has no commits — Claude may have ` +
+          `finished without committing. Resume the task to continue, or ` +
+          `open the worktree to inspect with \`git status\` / \`git log\`.`,
+      };
+    }
+    return {
+      status: 'error',
+      message:
+        `Branch "${branchName}" was not found or is not reachable from HEAD ` +
+        `and has no commits ahead. Inspect with \`git branch -a\` and ` +
+        `\`git log ${branchName}\`.`,
+    };
+  }
+
+  // ------ Merge in the worktree, not in main ------
+  //
+  // Why: running `git merge` in the main repo's working tree puts conflict
+  // markers in source files that vite is watching. The dev server breaks,
+  // even when a resolver Claude is happily working in the background.
+  // Doing the merge in the worktree leaves main's files untouched. After
+  // the worktree's branch absorbs main (cleanly or after resolution), we
+  // fast-forward main to the branch tip — main's tree only ever changes
+  // to a known-good state.
+
+  const mainHeadSha = (
+    await exec('git', ['rev-parse', 'HEAD'], repoRoot)
+  ).stdout.trim();
+  if (!mainHeadSha) {
+    return { status: 'error', message: 'Could not read main HEAD SHA.' };
+  }
+
+  const merge = await exec(
+    'git',
+    ['merge', '--no-ff', '--no-edit', mainHeadSha],
+    worktreePath,
+  );
+
+  if (merge.code === 0) {
+    // Worktree is clean — fast-forward main to the branch's new tip.
+    return fastForwardMain(repoRoot, branchName);
+  }
+
+  if (await isMidMerge(worktreePath)) {
+    const conflictedFiles = await listConflictedFiles(worktreePath);
+    return {
+      status: 'conflict',
+      conflictKind: 'merge',
+      conflictedFiles,
+    };
+  }
+
+  return {
+    status: 'error',
+    message: (merge.stderr.trim() || merge.stdout.trim() || 'git merge failed')
+      .slice(0, 500),
+  };
 }
 
 export async function cleanupWorktreeForTask(
@@ -451,10 +506,13 @@ export async function writeMergeInstructions(
   branch: string,
   conflictedFiles: string[],
   backendOrigin: string,
+  worktreePath: string,
 ): Promise<{ instructionsFile: string; relativePath: string }> {
-  const dir = path.join(task.projectPath, '.lattice');
-  await fs.mkdir(dir, { recursive: true });
-  const file = path.join(dir, `merge-${task.id}.md`);
+  // Write inside the worktree itself so the resolver Claude (which runs
+  // with cwd=worktreePath) reads it via a simple top-level path.
+  await fs.mkdir(worktreePath, { recursive: true });
+  const fileName = 'MERGE_INSTRUCTIONS.md';
+  const file = path.join(worktreePath, fileName);
   const desc = task.description?.trim() || '_(no description provided)_';
   const filesList =
     conflictedFiles.length > 0
@@ -464,6 +522,11 @@ export async function writeMergeInstructions(
 
 **Branch:** \`${branch}\`
 **Task:** ${task.title}
+
+Lattice merged main into this branch and conflicts arose. Your job is to
+resolve them and commit. After you commit and the session ends, Lattice's
+existing Stop hook fires and the backend will fast-forward main and clean
+up automatically.
 
 ## Intent
 
@@ -480,11 +543,15 @@ ${filesList}
 2. Stage the resolved files: \`git add <file> ...\`
 3. Complete the merge: \`git commit\` (Git already prepared a commit message;
    accepting it is fine).
-4. Notify Lattice that the merge is complete:
+4. End the session normally. The Stop hook in
+   \`.claude/settings.local.json\` will notify Lattice automatically.
 
-   \`\`\`
-   curl -s -X POST ${backendOrigin}/api/tasks/${task.id}/merged
-   \`\`\`
+If for any reason the Stop hook doesn't fire, you can call the API
+directly as a fallback:
+
+\`\`\`
+curl -s -X POST ${backendOrigin}/api/tasks/${task.id}/merged
+\`\`\`
 
 ## If you cannot resolve
 
@@ -502,10 +569,7 @@ The user can then retry the merge from the Lattice task board.
   await fs.writeFile(file, md, 'utf8');
   return {
     instructionsFile: file,
-    relativePath: path
-      .relative(task.projectPath, file)
-      .split(path.sep)
-      .join('/'),
+    relativePath: fileName,
   };
 }
 
