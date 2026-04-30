@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import ForceGraph3D, { type ForceGraph3DInstance } from '3d-force-graph';
 import type { ScanResult, GraphNode } from '../api';
@@ -9,6 +9,18 @@ import {
   type ExtStyle,
   type Shape,
 } from '../extensionStyles';
+
+// Lines-of-code thresholds for the "z" view. >1000 = red, >600 = yellow,
+// otherwise green. Kept in sync with the legend chip wording.
+const LOC_RED = '#f57878';
+const LOC_YELLOW = '#f5d76e';
+const LOC_GREEN = '#7ed884';
+
+function locColor(loc: number): string {
+  if (loc > 1000) return LOC_RED;
+  if (loc > 600) return LOC_YELLOW;
+  return LOC_GREEN;
+}
 
 type Props = {
   data: ScanResult | null;
@@ -170,9 +182,110 @@ function spriteFor(node: GraphNode): THREE.Sprite {
   return sprite;
 }
 
+// Cache LOC text-label textures by `text|color` so panning/zooming with
+// `z` held doesn't allocate a fresh canvas every frame.
+const labelTextureCache = new Map<string, THREE.CanvasTexture>();
+
+function buildLabelTexture(text: string, color: string): THREE.CanvasTexture {
+  const key = `${text}|${color}`;
+  const cached = labelTextureCache.get(key);
+  if (cached) return cached;
+  const W = 256;
+  const H = 80;
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d')!;
+  ctx.font = 'bold 44px -apple-system, "Segoe UI", Inter, Roboto, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+  ctx.strokeText(text, W / 2, H / 2);
+  ctx.fillStyle = color;
+  ctx.fillText(text, W / 2, H / 2);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  labelTextureCache.set(key, tex);
+  return tex;
+}
+
+function makeLabelSprite(text: string, color: string): THREE.Sprite {
+  const tex = buildLabelTexture(text, color);
+  const mat = new THREE.SpriteMaterial({
+    map: tex,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+  });
+  const sprite = new THREE.Sprite(mat);
+  // Canvas aspect 256:80 = 3.2; pick a world-space size that reads from
+  // typical orbit distances without being so large it overlaps neighbors.
+  sprite.scale.set(13, 4.0625, 1);
+  // Render label on top so it's never occluded by a sibling sprite.
+  sprite.renderOrder = 999;
+  return sprite;
+}
+
+function locShapeStyle(node: GraphNode, color: string): ExtStyle {
+  const baseShape: Shape =
+    node.kind === 'dir' ? DIR_STYLE.shape : getStyleFor(node.ext).shape;
+  return {
+    ext: `loc:${baseShape}`,
+    label: 'loc',
+    shape: baseShape,
+    color1: color,
+  };
+}
+
+function spriteForLoc(node: GraphNode): THREE.Object3D {
+  // Directories and files we couldn't measure fall back to the normal
+  // shape so the graph still reads as a tree.
+  if (node.kind !== 'file' || node.loc == null) return spriteFor(node);
+
+  const color = locColor(node.loc);
+  const group = new THREE.Group();
+
+  const colorSprite = new THREE.Sprite(materialFor(locShapeStyle(node, color)));
+  colorSprite.scale.set(5.5, 5.5, 1);
+  group.add(colorSprite);
+
+  // Connector starts just above the node sprite and runs up to the label.
+  const lineGeom = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 3, 0),
+    new THREE.Vector3(0, 14, 0),
+  ]);
+  const lineMat = new THREE.LineBasicMaterial({
+    color: new THREE.Color(color),
+    transparent: true,
+    opacity: 0.9,
+  });
+  const line = new THREE.Line(lineGeom, lineMat);
+  group.add(line);
+
+  const label = makeLabelSprite(String(node.loc), color);
+  label.position.set(0, 17, 0);
+  group.add(label);
+
+  return group;
+}
+
 export function ForceGraphView({ data, loading, hiddenExts }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraph3DInstance | null>(null);
+  // Lines-of-code overlay: active while the user holds `z`. Tracked in
+  // both state (for the chip overlay) and a ref (so the nodeThreeObject
+  // accessor — wired into the graph once at mount — reads the live value).
+  const [locMode, setLocMode] = useState(false);
+  const locModeRef = useRef(false);
+
+  useEffect(() => {
+    locModeRef.current = locMode;
+  }, [locMode]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -185,7 +298,10 @@ export function ForceGraphView({ data, loading, hiddenExts }: Props) {
         const node = n as GraphNode;
         return node.kind === 'dir' ? `📁 ${node.name}` : node.name;
       })
-      .nodeThreeObject((n: object) => spriteFor(n as GraphNode))
+      .nodeThreeObject((n: object) => {
+        const node = n as GraphNode;
+        return locModeRef.current ? spriteForLoc(node) : spriteFor(node);
+      })
       .nodeRelSize(1)
       .linkColor(() => 'rgba(220,228,240,0.55)')
       .linkOpacity(0.85)
@@ -246,6 +362,48 @@ export function ForceGraphView({ data, loading, hiddenExts }: Props) {
     });
   }, [data]);
 
+  // Toggle LOC view on/off when the `z` key is held. Keyup also fires on
+  // window blur (Alt-Tab, dev-tools focus) — we can't trust `keyup`
+  // alone, so reset on blur and on visibility loss as well.
+  useEffect(() => {
+    function isTextInput(target: EventTarget | null) {
+      if (!target) return false;
+      const el = target as HTMLElement;
+      const tag = el.tagName?.toLowerCase();
+      return tag === 'input' || tag === 'textarea' || el.isContentEditable;
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'z' && e.key !== 'Z') return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isTextInput(e.target)) return;
+      if (e.repeat) return;
+      setLocMode(true);
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.key === 'z' || e.key === 'Z') setLocMode(false);
+    }
+    function reset() {
+      setLocMode(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', reset);
+    document.addEventListener('visibilitychange', reset);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', reset);
+      document.removeEventListener('visibilitychange', reset);
+    };
+  }, []);
+
+  // Re-render node THREE objects when the LOC overlay toggles. refresh()
+  // re-evaluates nodeThreeObject without restarting the d3 simulation, so
+  // node positions stay put.
+  useEffect(() => {
+    graphRef.current?.refresh?.();
+  }, [locMode]);
+
   // Filter via accessors — does not restart the d3 force simulation.
   useEffect(() => {
     if (!graphRef.current) return;
@@ -295,6 +453,9 @@ export function ForceGraphView({ data, loading, hiddenExts }: Props) {
           <span className="spinner" />
           <span>Scanning…</span>
         </div>
+      )}
+      {locMode && (
+        <div className="loc-view-chip">View: Lines of Code</div>
       )}
       {!loading && data && (
         <div className="graph-overlay bottom-left">

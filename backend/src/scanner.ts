@@ -38,7 +38,28 @@ export type GraphNode = {
   ext?: string;
   size?: number;
   health?: number;
+  loc?: number;
 };
+
+const LOC_MAX_BYTES = 5 * 1024 * 1024;
+
+async function countLines(filePath: string): Promise<number | undefined> {
+  try {
+    const buf = await fs.readFile(filePath);
+    if (buf.length === 0) return 0;
+    if (buf.length > LOC_MAX_BYTES) return undefined;
+    let count = 0;
+    let idx = 0;
+    while ((idx = buf.indexOf(0x0a, idx)) !== -1) {
+      count++;
+      idx++;
+    }
+    if (buf[buf.length - 1] !== 0x0a) count++;
+    return count;
+  } catch {
+    return undefined;
+  }
+}
 
 export type GraphLink = {
   source: string;
@@ -105,6 +126,7 @@ export async function scan(root: string): Promise<ScanResult> {
         } catch {
           // ignore
         }
+        const loc = await countLines(abs);
         nodes.push({
           id: abs,
           name: entry.name,
@@ -113,6 +135,7 @@ export async function scan(root: string): Promise<ScanResult> {
           ext,
           size,
           health: 1,
+          loc,
         });
         links.push({ source: parentId, target: abs });
       }
