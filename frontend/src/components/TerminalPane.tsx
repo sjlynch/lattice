@@ -7,11 +7,25 @@ type Props = {
   cwd: string;
   active: boolean;
   initialCommand?: string;
+  serverId?: string;
+  onServerId?: (id: string) => void;
 };
 
-export function TerminalPane({ cwd, active, initialCommand }: Props) {
+export function TerminalPane({
+  cwd,
+  active,
+  initialCommand,
+  serverId,
+  onServerId,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  // Keep latest callback in a ref so we don't re-establish the WS just
+  // because the parent re-rendered.
+  const onServerIdRef = useRef<typeof onServerId>(onServerId);
+  useEffect(() => {
+    onServerIdRef.current = onServerId;
+  }, [onServerId]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -24,6 +38,7 @@ export function TerminalPane({ cwd, active, initialCommand }: Props) {
       lineHeight: 1.25,
       letterSpacing: 0,
       allowProposedApi: true,
+      scrollback: 5000,
       theme: {
         background: '#0e1014',
         foreground: '#e3e5e9',
@@ -59,37 +74,37 @@ export function TerminalPane({ cwd, active, initialCommand }: Props) {
       cols: String(term.cols),
       rows: String(term.rows),
     });
+    if (serverId) params.set('id', serverId);
+    if (initialCommand) params.set('initialCommand', initialCommand);
+
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(
       `${proto}://${window.location.host}/ws/terminal?${params.toString()}`,
     );
 
-    let initialSent = false;
-    function maybeSendInitial() {
-      if (initialSent || !initialCommand) return;
-      if (ws.readyState !== WebSocket.OPEN) return;
-      initialSent = true;
-      // Slight delay so the shell prompt is ready before we type.
-      setTimeout(() => {
-        if (ws.readyState !== WebSocket.OPEN) return;
-        ws.send(JSON.stringify({ type: 'input', data: initialCommand + '\r' }));
-      }, 250);
-    }
-
-    ws.onopen = () => {
-      maybeSendInitial();
-    };
-
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-        if (msg.type === 'data') term.write(msg.data);
-        else if (msg.type === 'error')
+        if (msg.type === 'data') {
+          term.write(msg.data);
+        } else if (msg.type === 'attached') {
+          if (msg.id && msg.id !== serverId) {
+            onServerIdRef.current?.(msg.id);
+          }
+          if (msg.replayed === false) {
+            // Brand new session: clear any leftover xterm content (none on
+            // first mount) so replays are unambiguous.
+            term.clear();
+          } else if (msg.replayed === true) {
+            // Replay buffer follows in subsequent `data` messages.
+          }
+        } else if (msg.type === 'error') {
           term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
-        else if (msg.type === 'exit')
+        } else if (msg.type === 'exit') {
           term.write(`\r\n\x1b[2m[exited ${msg.exitCode}]\x1b[0m\r\n`);
+        }
       } catch {
-        // ignore
+        /* ignore */
       }
     };
 
@@ -109,24 +124,34 @@ export function TerminalPane({ cwd, active, initialCommand }: Props) {
       try {
         fit.fit();
       } catch {
-        // ignore
+        /* ignore */
       }
     });
     ro.observe(containerRef.current);
 
     return () => {
       ro.disconnect();
-      ws.close();
+      // Just close the WS — the backend keeps the pty alive so a refresh
+      // (or remount) reattaches via the persisted serverId.
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
       term.dispose();
     };
-  }, [cwd, initialCommand]);
+    // We deliberately depend on cwd + serverId only. initialCommand is read
+    // once at WS open and never re-applied after that (the backend won't
+    // re-apply it on reattach either).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cwd, serverId]);
 
   useEffect(() => {
     if (active && fitRef.current) {
       try {
         fitRef.current.fit();
       } catch {
-        // ignore
+        /* ignore */
       }
     }
   }, [active]);

@@ -6,6 +6,8 @@ import {
   GripVertical,
   Play,
   X,
+  GitMerge,
+  AlertTriangle,
 } from 'lucide-react';
 import { FloatingPanel } from './FloatingPanel';
 import { useTerminals } from '../TerminalsContext';
@@ -13,6 +15,7 @@ import {
   createTask as apiCreateTask,
   deleteTask as apiDeleteTask,
   fetchTasks,
+  mergeTask as apiMergeTask,
   runTask as apiRunTask,
   subscribeTasks,
   updateTask as apiUpdateTask,
@@ -23,6 +26,7 @@ import {
 const LANES: { id: TaskStatus; label: string; color: string }[] = [
   { id: 'open', label: 'Open', color: '#6aa9ff' },
   { id: 'in_progress', label: 'In Progress', color: '#e7c986' },
+  { id: 'ready_to_merge', label: 'Ready to Merge', color: '#5eead4' },
   { id: 'qa', label: 'QA', color: '#c89cff' },
   { id: 'done', label: 'Done', color: '#9ed28e' },
   { id: 'deleted', label: 'Deleted', color: '#7c8088' },
@@ -147,10 +151,39 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     }
   }
 
+  async function mergeTaskAction(task: Task): Promise<boolean> {
+    try {
+      const res = await apiMergeTask(task.id);
+      if (res.merged) return true;
+      // Conflict: spawn the resolver Claude in the main repo.
+      addTerminal({
+        label: `merge:${shortLabel(task.title)}`,
+        cwd: res.cwd,
+        initialCommand: res.command,
+      });
+      return false;
+    } catch (err) {
+      showError(`Merge failed: ${(err as Error).message}`);
+      return false;
+    }
+  }
+
+  async function mergeAllReady() {
+    const ready = tasks
+      .filter((t) => t.status === 'ready_to_merge' && !t.conflict)
+      .sort((a, b) => a.createdAt - b.createdAt);
+    for (const t of ready) {
+      // eslint-disable-next-line no-await-in-loop
+      const ok = await mergeTaskAction(t);
+      if (!ok) break; // stop on first conflict so the user can deal with it
+    }
+  }
+
   const grouped = useMemo(() => {
     const m: Record<TaskStatus, Task[]> = {
       open: [],
       in_progress: [],
+      ready_to_merge: [],
       qa: [],
       done: [],
       deleted: [],
@@ -252,7 +285,14 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
               onMove={moveTask}
               onDelete={deleteTask}
               onRun={runTask}
-              onRunAll={lane.id === 'open' ? runAllOpen : undefined}
+              onMerge={mergeTaskAction}
+              onRunAll={
+                lane.id === 'open'
+                  ? runAllOpen
+                  : lane.id === 'ready_to_merge'
+                  ? mergeAllReady
+                  : undefined
+              }
               onView={setViewing}
             />
           ))}
@@ -311,6 +351,7 @@ function Lane({
   onMove,
   onDelete,
   onRun,
+  onMerge,
   onRunAll,
   onView,
 }: {
@@ -323,6 +364,7 @@ function Lane({
   onMove: (id: string, status: TaskStatus) => void;
   onDelete: (id: string) => void;
   onRun: (task: Task) => void;
+  onMerge: (task: Task) => Promise<boolean>;
   onRunAll?: () => void;
   onView: (task: Task) => void;
 }) {
@@ -364,13 +406,25 @@ function Lane({
           <span className="taskboard-lane-count">{tasks.length}</span>
           {onRunAll && (
             <button
-              className="lane-runall"
+              className={`lane-runall ${lane.id === 'ready_to_merge' ? 'merge' : ''}`}
               onClick={onRunAll}
               disabled={tasks.length === 0}
-              title="Run every task in Open in a new worktree"
-              aria-label="Run all open tasks"
+              title={
+                lane.id === 'ready_to_merge'
+                  ? 'Merge every Ready-to-Merge task (stops on first conflict)'
+                  : 'Run every task in Open in a new worktree'
+              }
+              aria-label={
+                lane.id === 'ready_to_merge'
+                  ? 'Merge all ready tasks'
+                  : 'Run all open tasks'
+              }
             >
-              <Play size={11} fill="currentColor" />
+              {lane.id === 'ready_to_merge' ? (
+                <GitMerge size={11} />
+              ) : (
+                <Play size={11} fill="currentColor" />
+              )}
             </button>
           )}
         </span>
@@ -401,6 +455,9 @@ function Lane({
               onDragEnd={onDragEnd}
               onDelete={() => onDelete(t.id)}
               onRun={lane.id === 'open' ? () => onRun(t) : undefined}
+              onMerge={
+                lane.id === 'ready_to_merge' ? () => onMerge(t) : undefined
+              }
               onView={() => onView(t)}
             />
           ))
@@ -608,6 +665,7 @@ function TaskCard({
   onDragEnd,
   onDelete,
   onRun,
+  onMerge,
   onView,
 }: {
   task: Task;
@@ -617,6 +675,7 @@ function TaskCard({
   onDragEnd: () => void;
   onDelete: () => void;
   onRun?: () => void;
+  onMerge?: () => void;
   onView: () => void;
 }) {
   function handleDragStart(e: React.DragEvent) {
@@ -626,9 +685,13 @@ function TaskCard({
     onDragStart();
   }
 
+  const isConflict = !!task.conflict;
+
   return (
     <div
-      className={`task-card ${isDragging ? 'dragging' : ''}`}
+      className={`task-card ${isDragging ? 'dragging' : ''} ${
+        isConflict ? 'conflict' : ''
+      }`}
       draggable
       onDragStart={handleDragStart}
       onDragEnd={onDragEnd}
@@ -642,7 +705,17 @@ function TaskCard({
         onClick={onView}
         title="View task details"
       >
-        <div className="task-card-title">{task.title}</div>
+        <div className="task-card-title">
+          {isConflict && (
+            <span
+              className="task-card-conflict-pill"
+              title="Merge conflict — open the resolver"
+            >
+              <AlertTriangle size={10} /> conflict
+            </span>
+          )}
+          {task.title}
+        </div>
         {task.description && (
           <div className="task-card-desc">{task.description}</div>
         )}
@@ -660,6 +733,28 @@ function TaskCard({
             draggable={false}
           >
             <Play size={11} fill="currentColor" />
+          </button>
+        )}
+        {onMerge && (
+          <button
+            className={`task-card-iconbtn merge ${isConflict ? 'alert' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onMerge();
+            }}
+            title={
+              isConflict
+                ? 'Re-open conflict resolver Claude'
+                : 'Merge worktree branch into this repo'
+            }
+            aria-label="Merge task"
+            draggable={false}
+          >
+            {isConflict ? (
+              <AlertTriangle size={12} />
+            ) : (
+              <GitMerge size={12} />
+            )}
           </button>
         )}
         <button

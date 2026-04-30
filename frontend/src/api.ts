@@ -52,6 +52,7 @@ export async function listDir(folderPath?: string): Promise<DirListing> {
 export type TaskStatus =
   | 'open'
   | 'in_progress'
+  | 'ready_to_merge'
   | 'qa'
   | 'done'
   | 'deleted';
@@ -67,6 +68,8 @@ export type Task = {
   branch?: string;
   startedAt?: number;
   completedAt?: number;
+  mergedAt?: number;
+  conflict?: boolean;
 };
 
 export type RunTaskResult = {
@@ -134,6 +137,24 @@ export async function deleteTask(id: string): Promise<void> {
 export async function runTask(id: string): Promise<RunTaskResult> {
   return asJson<RunTaskResult>(
     await fetch(`/api/tasks/${encodeURIComponent(id)}/run`, {
+      method: 'POST',
+    }),
+  );
+}
+
+export type MergeTaskResult =
+  | { merged: true }
+  | {
+      merged: false;
+      conflict: true;
+      command: string;
+      cwd: string;
+      conflictedFiles?: string[];
+    };
+
+export async function mergeTask(id: string): Promise<MergeTaskResult> {
+  return asJson<MergeTaskResult>(
+    await fetch(`/api/tasks/${encodeURIComponent(id)}/merge`, {
       method: 'POST',
     }),
   );

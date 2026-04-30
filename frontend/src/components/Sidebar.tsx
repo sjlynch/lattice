@@ -1,14 +1,21 @@
 import { Plus, X, TerminalSquare } from 'lucide-react';
 import { TerminalPane } from './TerminalPane';
 import { useTerminals } from '../TerminalsContext';
+import { useCallback } from 'react';
 
 type Props = {
   activeFolder: string;
 };
 
 export function Sidebar({ activeFolder }: Props) {
-  const { terminals, activeId, setActiveId, addTerminal, closeTerminal } =
-    useTerminals();
+  const {
+    terminals,
+    activeId,
+    setActiveId,
+    addTerminal,
+    closeTerminal,
+    setServerId,
+  } = useTerminals();
 
   function newTerminal() {
     addTerminal({
@@ -16,6 +23,11 @@ export function Sidebar({ activeFolder }: Props) {
       cwd: activeFolder,
     });
   }
+
+  const handleServerId = useCallback(
+    (localId: string, srv: string) => setServerId(localId, srv),
+    [setServerId],
+  );
 
   return (
     <>
@@ -81,6 +93,8 @@ export function Sidebar({ activeFolder }: Props) {
                 cwd={t.cwd}
                 active={t.id === activeId}
                 initialCommand={t.initialCommand}
+                serverId={t.serverId}
+                onServerId={(srv) => handleServerId(t.id, srv)}
               />
             </div>
           ))

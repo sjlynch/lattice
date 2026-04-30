@@ -708,7 +708,28 @@ input {
 .task-card-iconbtn:hover { opacity: 1 !important; background: var(--bg-hover); color: var(--text-primary); }
 .task-card-iconbtn.play { color: #9ed28e; opacity: 1; background: rgba(158, 210, 142, 0.10); }
 .task-card-iconbtn.play:hover { background: rgba(158, 210, 142, 0.22); color: #b8e0a8; }
+.task-card-iconbtn.merge { color: #5eead4; opacity: 1; background: rgba(94, 234, 212, 0.10); }
+.task-card-iconbtn.merge:hover { background: rgba(94, 234, 212, 0.22); color: #88f1da; }
+.task-card-iconbtn.merge.alert { color: #f5a36a; background: rgba(245, 163, 106, 0.14); }
+.task-card-iconbtn.merge.alert:hover { color: #ffba80; background: rgba(245, 163, 106, 0.26); }
 .task-card-iconbtn.danger:hover { color: var(--danger); }
+
+.task-card.conflict { border-left-color: #f5a36a !important; }
+.task-card-conflict-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(245, 163, 106, 0.18);
+  color: #ffba80;
+  margin-right: 6px;
+  vertical-align: middle;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 
 /* Filter pills */
 .taskboard-filters {
@@ -761,6 +782,14 @@ input {
   opacity: 0.35;
   cursor: not-allowed;
   background: transparent;
+}
+.lane-runall.merge {
+  color: #5eead4;
+  background: rgba(94, 234, 212, 0.10);
+}
+.lane-runall.merge:hover {
+  color: #88f1da;
+  background: rgba(94, 234, 212, 0.22);
 }
 
 /* Task detail overlay */

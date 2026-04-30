@@ -13,7 +13,13 @@ function projectTasksFile(projectPath: string): string {
   return path.join(projectPath, PROJECT_DIR_NAME, PROJECT_TASKS_FILENAME);
 }
 
-export type TaskStatus = 'open' | 'in_progress' | 'qa' | 'done' | 'deleted';
+export type TaskStatus =
+  | 'open'
+  | 'in_progress'
+  | 'ready_to_merge'
+  | 'qa'
+  | 'done'
+  | 'deleted';
 
 export type Task = {
   id: string;
@@ -26,6 +32,8 @@ export type Task = {
   branch?: string;
   startedAt?: number;
   completedAt?: number;
+  mergedAt?: number;
+  conflict?: boolean;
 };
 
 const projectCache = new Map<string, Task[]>();

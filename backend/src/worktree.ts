@@ -128,5 +128,274 @@ to the QA column.
 
 export function buildClaudeCommand(taskFile: string): string {
   const fileName = path.basename(taskFile);
-  return `claude "Please read ${fileName} and complete the task described in it."`;
+  return `claude --dangerously-skip-permissions "Please read ${fileName} and complete the task described in it."`;
+}
+
+// ---------- Merge helpers ----------
+
+export type MergeConflictKind = 'merge' | 'stash-pop';
+
+export type MergeOutcome =
+  | { status: 'clean' }
+  | {
+      status: 'conflict';
+      conflictKind: MergeConflictKind;
+      conflictedFiles: string[];
+      stashRef?: string;
+    }
+  | { status: 'error'; message: string };
+
+export function autoStashMessage(branchName: string): string {
+  return `lattice-auto-${branchName}`;
+}
+
+async function listConflictedFiles(repoRoot: string): Promise<string[]> {
+  const conflicts = await exec(
+    'git',
+    ['diff', '--name-only', '--diff-filter=U'],
+    repoRoot,
+  );
+  return conflicts.stdout
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// Pop a stash by its message label. The stash list is searched for an entry
+// whose subject matches and that entry is popped explicitly (not blindly
+// `stash@{0}`) so a concurrent stash by the user doesn't get clobbered.
+async function popStashByMessage(
+  repoRoot: string,
+  message: string,
+): Promise<
+  | { kind: 'clean' }
+  | { kind: 'conflict'; conflictedFiles: string[] }
+  | { kind: 'error'; message: string }
+> {
+  const list = await exec('git', ['stash', 'list'], repoRoot);
+  if (list.code !== 0) {
+    return {
+      kind: 'error',
+      message: list.stderr.trim() || 'git stash list failed',
+    };
+  }
+  let ref: string | undefined;
+  for (const line of list.stdout.split(/\r?\n/)) {
+    if (!line.includes(message)) continue;
+    const m = line.match(/^stash@\{\d+\}/);
+    if (m) {
+      ref = m[0];
+      break;
+    }
+  }
+  if (!ref) {
+    // Stash already gone (someone popped it manually) — treat as clean.
+    return { kind: 'clean' };
+  }
+  const pop = await exec('git', ['stash', 'pop', ref], repoRoot);
+  if (pop.code === 0) {
+    return { kind: 'clean' };
+  }
+  // Pop conflict: git leaves the stash in the list and writes conflict markers.
+  const conflictedFiles = await listConflictedFiles(repoRoot);
+  if (conflictedFiles.length > 0) {
+    return { kind: 'conflict', conflictedFiles };
+  }
+  return {
+    kind: 'error',
+    message:
+      pop.stderr.trim() || pop.stdout.trim() || 'git stash pop failed',
+  };
+}
+
+export async function mergeWorktreeInRepo(
+  repoRoot: string,
+  branchName: string,
+): Promise<MergeOutcome> {
+  // Pre-checks
+  const isGit = await exec('git', ['rev-parse', '--show-toplevel'], repoRoot);
+  if (isGit.code !== 0) {
+    return { status: 'error', message: `Not a git repository: ${repoRoot}` };
+  }
+
+  // Already mid-merge? Refuse — stashing wouldn't help here.
+  const mergeHead = path.join(repoRoot, '.git', 'MERGE_HEAD');
+  try {
+    await fs.access(mergeHead);
+    return {
+      status: 'error',
+      message:
+        'Repository is already in a merge state (MERGE_HEAD exists). Resolve or `git merge --abort` first.',
+    };
+  } catch {
+    /* good — no MERGE_HEAD */
+  }
+
+  // If the working tree is dirty, auto-stash it under a deterministic label
+  // so the merge can proceed and the user's in-flight edits stay recoverable
+  // even if anything later fails.
+  const status = await exec('git', ['status', '--porcelain'], repoRoot);
+  if (status.code !== 0) {
+    return {
+      status: 'error',
+      message: status.stderr.trim() || 'git status failed',
+    };
+  }
+  const stashLabel = autoStashMessage(branchName);
+  let stashRef: string | undefined;
+  if (status.stdout.trim().length > 0) {
+    const stash = await exec(
+      'git',
+      ['stash', 'push', '--include-untracked', '-m', stashLabel],
+      repoRoot,
+    );
+    if (stash.code !== 0) {
+      return {
+        status: 'error',
+        message:
+          'Failed to auto-stash working-tree changes: ' +
+          (stash.stderr.trim() || stash.stdout.trim() || 'git stash failed'),
+      };
+    }
+    stashRef = stashLabel;
+  }
+
+  // Attempt merge
+  const merge = await exec(
+    'git',
+    ['merge', '--no-ff', '--no-edit', branchName],
+    repoRoot,
+  );
+
+  if (merge.code !== 0) {
+    // Conflict has MERGE_HEAD; anything else is a hard error.
+    let isConflict = false;
+    try {
+      await fs.access(mergeHead);
+      isConflict = true;
+    } catch {
+      /* not a conflict */
+    }
+    if (isConflict) {
+      const conflictedFiles = await listConflictedFiles(repoRoot);
+      // Stash stays in place; resolver Claude is told how to reconcile.
+      return {
+        status: 'conflict',
+        conflictKind: 'merge',
+        conflictedFiles,
+        stashRef,
+      };
+    }
+    // Hard error: try to pop the stash back so the user isn't stranded.
+    if (stashRef) {
+      await popStashByMessage(repoRoot, stashRef).catch(() => undefined);
+    }
+    return {
+      status: 'error',
+      message:
+        (merge.stderr.trim() || merge.stdout.trim() || 'git merge failed').slice(
+          0,
+          500,
+        ),
+    };
+  }
+
+  // Merge succeeded. If we stashed, restore those edits now.
+  if (stashRef) {
+    const popped = await popStashByMessage(repoRoot, stashRef);
+    if (popped.kind === 'conflict') {
+      // Merge commit is on main; the conflicts are from the stash applying
+      // on top. Resolver Claude commits the resolved stash as a follow-up.
+      return {
+        status: 'conflict',
+        conflictKind: 'stash-pop',
+        conflictedFiles: popped.conflictedFiles,
+        stashRef,
+      };
+    }
+    if (popped.kind === 'error') {
+      return { status: 'error', message: popped.message };
+    }
+  }
+
+  return { status: 'clean' };
+}
+
+export async function cleanupWorktreeForTask(
+  repoRoot: string,
+  worktreePath: string,
+  branchName: string,
+): Promise<void> {
+  // Worktree directory may already be gone; ignore failures of either step.
+  await exec('git', ['worktree', 'remove', '--force', worktreePath], repoRoot);
+  await exec('git', ['branch', '-D', branchName], repoRoot);
+  // Best-effort prune of stale entries
+  await exec('git', ['worktree', 'prune'], repoRoot);
+}
+
+export async function writeMergeInstructions(
+  task: Task,
+  branch: string,
+  conflictedFiles: string[],
+  backendOrigin: string,
+): Promise<{ instructionsFile: string; relativePath: string }> {
+  const dir = path.join(task.projectPath, '.lattice');
+  await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, `merge-${task.id}.md`);
+  const desc = task.description?.trim() || '_(no description provided)_';
+  const filesList =
+    conflictedFiles.length > 0
+      ? conflictedFiles.map((f) => `- \`${f}\``).join('\n')
+      : '_(use `git diff --name-only --diff-filter=U` to list)_';
+  const md = `# Resolve merge conflict for task ${task.id}
+
+**Branch:** \`${branch}\`
+**Task:** ${task.title}
+
+## Intent
+
+${desc}
+
+## Files in conflict
+
+${filesList}
+
+## Steps (please complete autonomously, no need to confirm with the user)
+
+1. Inspect each conflicted file. Resolve all \`<<<<<<<\` / \`=======\` /
+   \`>>>>>>>\` markers, preserving the intent of both branches when possible.
+2. Stage the resolved files: \`git add <file> ...\`
+3. Complete the merge: \`git commit\` (Git already prepared a commit message;
+   accepting it is fine).
+4. Notify Lattice that the merge is complete:
+
+   \`\`\`
+   curl -s -X POST ${backendOrigin}/api/tasks/${task.id}/merged
+   \`\`\`
+
+## If you cannot resolve
+
+If the conflicts cannot be reasonably resolved, abort and report:
+
+\`\`\`
+git merge --abort
+curl -s -X POST ${backendOrigin}/api/tasks/${task.id}/merge-aborted \\
+  -H "Content-Type: application/json" \\
+  -d '{"reason":"<short reason>"}'
+\`\`\`
+
+The user can then retry the merge from the Lattice task board.
+`;
+  await fs.writeFile(file, md, 'utf8');
+  return {
+    instructionsFile: file,
+    relativePath: path
+      .relative(task.projectPath, file)
+      .split(path.sep)
+      .join('/'),
+  };
+}
+
+export function buildConflictResolveCommand(relativeInstructionsPath: string): string {
+  return `claude --dangerously-skip-permissions "Please read ${relativeInstructionsPath} and follow the steps to resolve the merge conflict."`;
 }

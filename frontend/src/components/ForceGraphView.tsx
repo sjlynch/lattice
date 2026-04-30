@@ -137,6 +137,10 @@ function buildShapeTexture(style: ExtStyle): THREE.Texture {
   tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
   tex.anisotropy = 4;
+  // The canvas paints sRGB byte values. Without this hint three.js treats
+  // them as linear, double-encodes on output, and the result is washed out
+  // and brighter than the legend SVG (which goes straight to the DOM).
+  tex.colorSpace = THREE.SRGBColorSpace;
   tex.needsUpdate = true;
   return tex;
 }
@@ -227,27 +231,44 @@ export function ForceGraphView({ data, loading, hiddenExts }: Props) {
     };
   }, []);
 
-  // Apply data + hidden filter
+  // Push the full dataset only when the scan changes. Filtering by
+  // extension goes through nodeVisibility/linkVisibility below, which
+  // keeps the simulation positions stable.
   useEffect(() => {
     if (!graphRef.current) return;
     if (!data) {
       graphRef.current.graphData({ nodes: [], links: [] });
       return;
     }
-    const filteredNodes = data.nodes.filter((n) => {
+    graphRef.current.graphData({
+      nodes: data.nodes.map((n) => ({ ...n })),
+      links: data.links.map((l) => ({ ...l })),
+    });
+  }, [data]);
+
+  // Filter via accessors — does not restart the d3 force simulation.
+  useEffect(() => {
+    if (!graphRef.current) return;
+    function isNodeVisible(n: GraphNode): boolean {
       if (n.kind === 'dir') return true;
       const key = n.ext ? n.ext.toLowerCase() : '*';
       return !hiddenExts.has(key);
-    });
-    const visibleIds = new Set(filteredNodes.map((n) => n.id));
-    const filteredLinks = data.links.filter(
-      (l) => visibleIds.has(l.source) && visibleIds.has(l.target),
-    );
-    graphRef.current.graphData({
-      nodes: filteredNodes.map((n) => ({ ...n })),
-      links: filteredLinks.map((l) => ({ ...l })),
-    });
-  }, [data, hiddenExts]);
+    }
+    graphRef.current
+      .nodeVisibility((n: object) => isNodeVisible(n as GraphNode))
+      .linkVisibility((l: object) => {
+        const link = l as {
+          source: GraphNode | string;
+          target: GraphNode | string;
+        };
+        // After graphData() is applied, source/target are hydrated to
+        // node references. Before that, they're still IDs — show them
+        // until hydration catches up.
+        const s = typeof link.source === 'object' ? link.source : null;
+        const t = typeof link.target === 'object' ? link.target : null;
+        return (!s || isNodeVisible(s)) && (!t || isNodeVisible(t));
+      });
+  }, [hiddenExts]);
 
   const counts = useMemo(() => {
     if (!data) return { files: 0, dirs: 0, hidden: 0 };
