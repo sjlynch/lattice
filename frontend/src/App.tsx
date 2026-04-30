@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TopAppBar } from './components/TopAppBar';
 import { Sidebar } from './components/Sidebar';
 import { ForceGraphView } from './components/ForceGraphView';
-import { TaskBoardLauncher } from './components/TaskBoard';
 import { Legend } from './components/Legend';
 import { TerminalsProvider } from './TerminalsContext';
 import { fetchDefaultRoot, scanFolder, type ScanResult } from './api';
@@ -194,7 +193,6 @@ function App() {
               hiddenExts={hiddenExts}
               onToggleExt={toggleExt}
             />
-            <TaskBoardLauncher activeFolder={activeFolder} />
           </main>
         </div>
       </div>

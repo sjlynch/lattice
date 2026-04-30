@@ -481,31 +481,26 @@ input {
   padding: 6px 4px 4px 8px;
 }
 
-/* Floating action button */
+/* Task board launcher (in the appbar) */
 .fab {
-  position: absolute;
-  bottom: 18px;
-  right: 18px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 14px 9px 12px;
+  gap: 6px;
+  margin-left: 8px;
+  flex-shrink: 0;
+  padding: 5px 12px 5px 10px;
   border-radius: var(--radius-pill);
   background: linear-gradient(135deg, #2a3140 0%, #1c2230 100%);
   border: 1px solid var(--border-strong);
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 500;
-  box-shadow: var(--shadow-md);
-  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
-  z-index: 5;
+  transition: border-color 0.12s ease, background 0.12s ease;
 }
 .fab:hover {
-  transform: translateY(-1px);
   border-color: var(--accent);
   background: linear-gradient(135deg, #2f3a52 0%, #232a3b 100%);
 }
-.fab:active { transform: translateY(0); }
 
 /* Floating panel (draggable + resizable) */
 .floating-panel {
