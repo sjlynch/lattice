@@ -24,9 +24,16 @@ type Session = {
 };
 
 const sessions = new Map<string, Session>();
+let sessionCounter = 0;
 
 function newId(): string {
-  return `tty_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  // Counter + timestamp so two sessions created in the same millisecond
+  // can never collide. Math.random() suffix keeps the id short while
+  // still being unguessable at a glance.
+  sessionCounter += 1;
+  return `tty_${Date.now()}_${sessionCounter}_${Math.random()
+    .toString(36)
+    .slice(2, 6)}`;
 }
 
 function appendBuffer(session: Session, data: string) {
@@ -89,12 +96,18 @@ function createSession(opts: CreateOpts): Session | { error: string } {
     createdAt: Date.now(),
   };
   sessions.set(session.id, session);
+  console.log(
+    `[terminal] created ${session.id} (cwd=${cwd}, shell=${shell}, pid=${term.pid})`,
+  );
 
   term.onData((data) => {
     appendBuffer(session, data);
     broadcast(session, JSON.stringify({ type: 'data', data }));
   });
   term.onExit(({ exitCode }) => {
+    console.log(
+      `[terminal] session ${session.id} exited (code=${exitCode}, cwd=${session.cwd}, subscribers=${session.subscribers.size})`,
+    );
     broadcast(session, JSON.stringify({ type: 'exit', exitCode }));
     for (const ws of session.subscribers) {
       try {
@@ -231,7 +244,13 @@ export function attachTerminal(ws: WebSocket, opts: AttachOpts) {
 
 export function killSession(id: string): boolean {
   const session = sessions.get(id);
-  if (!session) return false;
+  if (!session) {
+    console.warn(`[terminal] killSession: no session with id ${id}`);
+    return false;
+  }
+  console.log(
+    `[terminal] killing session ${id} (cwd=${session.cwd}, subscribers=${session.subscribers.size})`,
+  );
   try {
     session.pty.kill();
   } catch {

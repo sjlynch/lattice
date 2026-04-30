@@ -102,6 +102,18 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
     setTerminals((ts) => {
       const target = ts.find((t) => t.id === id);
       const next = ts.filter((t) => t.id !== id);
+      // Helps diagnose mis-targeted closes if it ever happens — shows
+      // which UI tab + which backend session was actually killed.
+      if (target) {
+        console.log('[lattice] closeTerminal', {
+          localId: target.id,
+          serverId: target.serverId ?? '(none)',
+          label: target.label,
+          cwd: target.cwd,
+        });
+      } else {
+        console.warn('[lattice] closeTerminal called with unknown id', id);
+      }
       // Kill the backend pty when the user explicitly closes.
       if (target?.serverId) {
         void fetch(`/api/terminals/${encodeURIComponent(target.serverId)}`, {

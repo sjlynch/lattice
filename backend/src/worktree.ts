@@ -116,8 +116,26 @@ ${desc}
 
 ## Instructions (please complete autonomously, no need to confirm with the user)
 
-1. Implement the task described above.
-2. **Commit your work** before ending the session — Lattice merges your
+1. **Check existing state first.** This task may have been started in a
+   prior session — Lattice can resume worktrees after a server restart or
+   when Claude finishes without committing. Before doing anything, run:
+
+   \`\`\`
+   git log --oneline -10
+   git status
+   \`\`\`
+
+   - If there are commits on this branch, read them with \`git show <sha>\`
+     to understand what's already been implemented.
+   - If there are uncommitted changes, review them with \`git diff\` and
+     decide whether to keep, amend, or rework them.
+   - Only redo work that's clearly broken or out of scope. Don't restart
+     the implementation from scratch when it's already partially done.
+
+2. Implement the task described above (continuing from the prior state if
+   any).
+
+3. **Commit your work** before ending the session — Lattice merges your
    branch via \`git merge\`, so a commit is required for changes to land:
 
    \`\`\`
@@ -125,7 +143,7 @@ ${desc}
    git commit -m "<concise summary of the change>"
    \`\`\`
 
-3. End the session normally. Lattice's Stop hook will verify the commit
+4. End the session normally. Lattice's Stop hook will verify the commit
    and move this task to "Ready to Merge" automatically.
 
 Please do not start, stop, or restart any dev servers — the user runs
