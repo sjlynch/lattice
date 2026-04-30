@@ -6,6 +6,7 @@ export type GraphNode = {
   ext?: string;
   size?: number;
   health?: number;
+  loc?: number;
 };
 
 export type GraphLink = {

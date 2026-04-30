@@ -1,11 +1,11 @@
-# task editing default behavior
+# lines of code view
 
-please modify task editing so that when a user clicks on a task, it automatically starts in edit mode, not requiring the user to click the pencil icon, and then also remove that pencil icon
+modify the code so that if the user presses the 'z' key, we show a text label above each node that shows the lines of code for that filoe. also color code the nodes and text red yellow green depending on total lines of code, i.e. >1000 would be red, >600 is yellow and the rest would be green. also make it so the text is drawn far above the node with a connecting color coded line that reaches from the node to the LOC text. also add a label to the middle top of the screen that says "View: Lines of Code" in a floating chip while the user is holding down 'z'. later on we will support additional view modes
 
 ---
 
-**Lattice task ID:** `t_1777577070352_dpbco`
-**Created:** 2026-04-30T19:24:30.352Z
+**Lattice task ID:** `t_1777578717235_d12bz`
+**Created:** 2026-04-30T19:51:57.235Z
 
 ## Instructions (please complete autonomously, no need to confirm with the user)
 
