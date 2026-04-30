@@ -188,21 +188,44 @@ export function autoStashMessage(branchName: string): string {
   return `lattice-auto-${branchName}`;
 }
 
-// Count of commits on `branchName` that are not yet on HEAD of the repo
-// at `repoRoot`. Returns 0 on any failure, which we treat as "nothing to
-// merge" rather than surfacing a false positive.
-export async function branchCommitCount(
+// Count of commits in the range `from..to` (i.e., commits reachable from
+// `to` but not from `from`). Returns 0 on any failure.
+async function countBetween(
   repoRoot: string,
-  branchName: string,
+  from: string,
+  to: string,
 ): Promise<number> {
   const r = await exec(
     'git',
-    ['rev-list', '--count', `HEAD..${branchName}`],
+    ['rev-list', '--count', `${from}..${to}`],
     repoRoot,
   );
   if (r.code !== 0) return 0;
   const n = parseInt(r.stdout.trim(), 10);
   return Number.isFinite(n) ? n : 0;
+}
+
+// Count of commits on `branchName` that are not yet on HEAD.
+export async function branchCommitCount(
+  repoRoot: string,
+  branchName: string,
+): Promise<number> {
+  return countBetween(repoRoot, 'HEAD', branchName);
+}
+
+// Returns true if the branch is fully reachable from HEAD — i.e., it
+// has already been merged in (and possibly more commits have happened on
+// HEAD since). `git merge-base --is-ancestor` is exit 0 when ancestor.
+async function branchIsAncestorOfHead(
+  repoRoot: string,
+  branchName: string,
+): Promise<boolean> {
+  const r = await exec(
+    'git',
+    ['merge-base', '--is-ancestor', branchName, 'HEAD'],
+    repoRoot,
+  );
+  return r.code === 0;
 }
 
 async function listConflictedFiles(repoRoot: string): Promise<string[]> {
@@ -287,19 +310,37 @@ export async function mergeWorktreeInRepo(
     /* good — no MERGE_HEAD */
   }
 
-  // The branch must actually have commits to merge. If Claude finished
-  // without committing, the worktree branch will be at the same SHA as
-  // HEAD and `git merge` would silently report "Already up to date".
-  // Surface that instead so the user knows where the regression is.
+  // Three sub-cases when the branch has 0 commits ahead of HEAD:
+  //   - already-merged: branch is an ancestor of HEAD (commits made it in
+  //     via a previous merge). Treat as a successful no-op merge so the
+  //     UI's "merge all" finishes cleanly.
+  //   - never-committed: branch tip equals HEAD (no commits ever landed).
+  //     Surface that as an actionable error so the user can resume.
+  //   - branch missing entirely: refuse with a clear message.
   const commits = await branchCommitCount(repoRoot, branchName);
   if (commits === 0) {
+    const isAncestor = await branchIsAncestorOfHead(repoRoot, branchName);
+    if (isAncestor) {
+      const behind = await countBetween(repoRoot, branchName, 'HEAD');
+      if (behind > 0) {
+        // Branch has been merged previously (HEAD has moved forward
+        // since). Caller will run cleanupWorktreeForTask.
+        return { status: 'clean' };
+      }
+      // behind === 0 means branch tip == HEAD: nothing was ever committed.
+      return {
+        status: 'error',
+        message:
+          `Branch "${branchName}" has no commits — Claude may have finished ` +
+          `without committing. Resume the task to continue, or open the worktree ` +
+          `to inspect with \`git status\` / \`git log\`.`,
+      };
+    }
     return {
       status: 'error',
       message:
-        `Branch "${branchName}" has no commits ahead of HEAD — nothing to merge. ` +
-        `Claude may have finished without committing. Open the worktree, run ` +
-        `\`git status\` / \`git log\` to inspect, commit any pending changes, ` +
-        `and retry the merge.`,
+        `Branch "${branchName}" was not found or is not reachable from HEAD ` +
+        `and has no commits ahead. Inspect with \`git branch -a\` and \`git log ${branchName}\`.`,
     };
   }
 
