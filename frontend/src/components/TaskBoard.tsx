@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Kanban,
   Plus,
@@ -16,6 +16,7 @@ import {
   deleteTask as apiDeleteTask,
   fetchTasks,
   mergeTask as apiMergeTask,
+  reorderTasks as apiReorderTasks,
   runTask as apiRunTask,
   subscribeTasks,
   updateTask as apiUpdateTask,
@@ -119,6 +120,34 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     }
   }
 
+  // Drop handler used by lane drop slots. `targetIndex` is the position in
+  // the destination lane's visible order where the task should land. Computes
+  // the new ID order for the lane and ships it as a single batched reorder.
+  async function dropAt(
+    id: string,
+    targetStatus: TaskStatus,
+    targetIndex: number,
+  ) {
+    if (!activeFolder) return;
+    const task = tasks.find((t) => t.id === id);
+    if (!task) return;
+    const lane = grouped[targetStatus].slice();
+    const fromIdx = lane.findIndex((t) => t.id === id);
+    let insertAt = targetIndex;
+    if (fromIdx !== -1) {
+      lane.splice(fromIdx, 1);
+      if (fromIdx < insertAt) insertAt -= 1;
+    }
+    insertAt = Math.max(0, Math.min(insertAt, lane.length));
+    if (fromIdx === insertAt && task.status === targetStatus) return;
+    lane.splice(insertAt, 0, task);
+    try {
+      await apiReorderTasks(activeFolder, targetStatus, lane.map((t) => t.id));
+    } catch (err) {
+      showError((err as Error).message);
+    }
+  }
+
   async function editTask(
     id: string,
     updates: { title?: string; description?: string },
@@ -201,7 +230,13 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     };
     for (const t of tasks) m[t.status].push(t);
     for (const k of Object.keys(m) as TaskStatus[]) {
-      m[k].sort((a, b) => b.createdAt - a.createdAt);
+      // Tasks with an explicit sortOrder use it directly. Tasks without one
+      // fall back to `-createdAt` so newly-created tasks land at the top of
+      // the lane (matches the prior newest-first behavior).
+      m[k].sort(
+        (a, b) =>
+          (a.sortOrder ?? -a.createdAt) - (b.sortOrder ?? -b.createdAt),
+      );
     }
     return m;
   }, [tasks]);
@@ -295,6 +330,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 onDragEnd={() => setDraggingId(null)}
                 onAdd={() => setAddingTo(lane.id)}
                 onMove={moveTask}
+                onDropAt={dropAt}
                 onDelete={deleteTask}
                 onRun={runTask}
                 onMerge={mergeTaskAction}
@@ -342,8 +378,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
           {error && <div className="task-error-toast">{error}</div>}
         </div>
         <div className="taskboard-footer">
-          {tasks.length} total · drag a task between lanes to move it · click a
-          card to view
+          {tasks.length} total · drag tasks between or within lanes to reorder
+          · click a card to view
         </div>
       </FloatingPanel>
     </>
@@ -363,6 +399,7 @@ function Lane({
   onDragEnd,
   onAdd,
   onMove,
+  onDropAt,
   onDelete,
   onRun,
   onMerge,
@@ -376,6 +413,7 @@ function Lane({
   onDragEnd: () => void;
   onAdd: () => void;
   onMove: (id: string, status: TaskStatus) => void;
+  onDropAt: (id: string, status: TaskStatus, index: number) => void;
   onDelete: (id: string) => void;
   onRun: (task: Task) => void;
   onMerge: (task: Task) => Promise<boolean>;
@@ -383,6 +421,7 @@ function Lane({
   onView: (task: Task) => void;
 }) {
   const [isOver, setIsOver] = useState(false);
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
   function onDragOver(e: React.DragEvent) {
     if (!draggingId) return;
@@ -393,19 +432,59 @@ function Lane({
   function onDragLeave(e: React.DragEvent) {
     if (e.currentTarget.contains(e.relatedTarget as Node)) return;
     setIsOver(false);
+    setHoverIndex(null);
   }
   function onDrop(e: React.DragEvent) {
     e.preventDefault();
     const id =
       e.dataTransfer.getData(DRAG_MIME) ||
       e.dataTransfer.getData('text/plain');
-    if (id) onMove(id, lane.id);
+    if (id) {
+      // Slot drop = explicit position; lane background drop = status-only move
+      // (preserves the previous "drop anywhere on lane to change status"
+      // behavior for users who don't care about position).
+      if (hoverIndex !== null) onDropAt(id, lane.id, hoverIndex);
+      else onMove(id, lane.id);
+    }
     setIsOver(false);
+    setHoverIndex(null);
   }
+
+  function slotProps(idx: number) {
+    return {
+      onDragEnter: (e: React.DragEvent) => {
+        if (!draggingId) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setHoverIndex(idx);
+      },
+      onDragOver: (e: React.DragEvent) => {
+        if (!draggingId) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'move';
+        if (hoverIndex !== idx) setHoverIndex(idx);
+      },
+      onDrop: (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const id =
+          e.dataTransfer.getData(DRAG_MIME) ||
+          e.dataTransfer.getData('text/plain');
+        if (id) onDropAt(id, lane.id, idx);
+        setIsOver(false);
+        setHoverIndex(null);
+      },
+    };
+  }
+
+  const dragging = !!draggingId;
 
   return (
     <div
-      className={`taskboard-lane ${isOver ? 'drop-target' : ''}`}
+      className={`taskboard-lane ${isOver ? 'drop-target' : ''} ${
+        dragging ? 'dragging-active' : ''
+      }`}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
@@ -455,26 +534,50 @@ function Lane({
       </div>
       <div className="taskboard-lane-track">
         {tasks.length === 0 ? (
-          <div className="taskboard-lane-empty">
+          <div
+            className={`taskboard-lane-empty ${
+              dragging && hoverIndex === 0 ? 'slot-active' : ''
+            }`}
+            {...slotProps(0)}
+          >
             {isOver ? 'Drop here' : 'No tasks'}
           </div>
         ) : (
-          tasks.map((t) => (
-            <TaskCard
-              key={t.id}
-              task={t}
-              laneColor={lane.color}
-              isDragging={draggingId === t.id}
-              onDragStart={() => onDragStart(t.id)}
-              onDragEnd={onDragEnd}
-              onDelete={() => onDelete(t.id)}
-              onRun={lane.id === 'open' ? () => onRun(t) : undefined}
-              onMerge={
-                lane.id === 'ready_to_merge' ? () => onMerge(t) : undefined
-              }
-              onView={() => onView(t)}
+          <>
+            <div
+              className={`taskboard-dropslot ${
+                hoverIndex === 0 ? 'active' : ''
+              }`}
+              style={{ ['--lane-color' as string]: lane.color }}
+              {...slotProps(0)}
             />
-          ))
+            {tasks.map((t, i) => (
+              <Fragment key={t.id}>
+                <TaskCard
+                  task={t}
+                  laneColor={lane.color}
+                  isDragging={draggingId === t.id}
+                  onDragStart={() => onDragStart(t.id)}
+                  onDragEnd={onDragEnd}
+                  onDelete={() => onDelete(t.id)}
+                  onRun={lane.id === 'open' ? () => onRun(t) : undefined}
+                  onMerge={
+                    lane.id === 'ready_to_merge'
+                      ? () => onMerge(t)
+                      : undefined
+                  }
+                  onView={() => onView(t)}
+                />
+                <div
+                  className={`taskboard-dropslot ${
+                    hoverIndex === i + 1 ? 'active' : ''
+                  }`}
+                  style={{ ['--lane-color' as string]: lane.color }}
+                  {...slotProps(i + 1)}
+                />
+              </Fragment>
+            ))}
+          </>
         )}
       </div>
     </div>

@@ -34,6 +34,10 @@ export type Task = {
   completedAt?: number;
   mergedAt?: number;
   conflict?: boolean;
+  // Manual ordering within a lane. Lower values sort first. Tasks without a
+  // value fall back to `-createdAt` so newly-created tasks land on top, which
+  // matches the pre-reorder behavior.
+  sortOrder?: number;
 };
 
 const projectCache = new Map<string, Task[]>();
@@ -267,6 +271,37 @@ export async function updateTask(
     return tasks[idx];
   }
   return null;
+}
+
+// Rewrite the order of tasks inside a single lane. `ids` lists the task IDs
+// in their new top-to-bottom order. Each listed task gets its status set to
+// `status` (handles cross-lane drops that pick a position) and its sortOrder
+// rewritten to its position in the array. Tasks not listed are not touched.
+export async function reorderTasksInLane(
+  projectPath: string,
+  status: TaskStatus,
+  ids: string[],
+): Promise<boolean> {
+  await ensureProjectLoaded(projectPath);
+  const tasks = projectCache.get(projectPath);
+  if (!tasks) return false;
+  const byId = new Map<string, Task>();
+  for (const t of tasks) byId.set(t.id, t);
+  let changed = false;
+  ids.forEach((id, i) => {
+    const t = byId.get(id);
+    if (!t) return;
+    if (t.status !== status || t.sortOrder !== i) {
+      t.status = status;
+      t.sortOrder = i;
+      changed = true;
+    }
+  });
+  if (changed) {
+    schedulePersist(projectPath);
+    notify(projectPath);
+  }
+  return true;
 }
 
 export async function deleteTask(id: string): Promise<boolean> {

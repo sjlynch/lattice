@@ -659,6 +659,31 @@ input {
   border-color: var(--accent);
   background: var(--accent-bg);
 }
+.taskboard-lane-empty.slot-active {
+  color: var(--text-primary);
+  border-color: var(--lane-color, var(--accent));
+  background: rgba(255, 255, 255, 0.04);
+}
+/* Reorder drop slots: thin invisible target by default; expand and show a
+   colored line when a drag is in progress / hovering. The slots collapse to
+   zero height when no drag is active so they don't add visual padding. */
+.taskboard-dropslot {
+  height: 0;
+  margin: -2px 0;
+  border-radius: 2px;
+  background: transparent;
+  transition: height 0.08s ease, background 0.08s ease;
+  pointer-events: none;
+}
+.taskboard-lane.dragging-active .taskboard-dropslot {
+  height: 8px;
+  pointer-events: auto;
+}
+.taskboard-lane.dragging-active .taskboard-dropslot.active {
+  height: 10px;
+  background: var(--lane-color, var(--accent));
+  box-shadow: 0 0 0 1px var(--lane-color, var(--accent));
+}
 
 .task-card {
   width: 100%;
