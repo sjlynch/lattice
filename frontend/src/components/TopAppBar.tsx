@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { FolderOpen } from 'lucide-react';
 import { FolderPicker } from './FolderPicker';
+import { TaskBoardLauncher } from './TaskBoard';
 
 type Props = {
   activeFolder: string;
@@ -32,6 +33,7 @@ export function TopAppBar({ activeFolder, onSelectFolder }: Props) {
             {activeFolder}
           </span>
         </div>
+        <TaskBoardLauncher activeFolder={activeFolder} />
       </header>
       <FolderPicker
         open={pickerOpen}
