@@ -948,6 +948,33 @@ input {
   outline: none;
 }
 .task-card-form-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.task-card-form-textarea {
+  background: #15181d;
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  outline: none;
+  resize: vertical;
+  min-height: 64px;
+  width: 100%;
+}
+.task-card-form-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.taskboard-detail-title-input {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 4px 8px;
+}
+.taskboard-detail-desc-input {
+  width: 100%;
+  min-height: 140px;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
 .task-card-form-actions {
   display: flex;
   gap: 6px;
