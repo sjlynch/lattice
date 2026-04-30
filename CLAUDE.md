@@ -36,9 +36,9 @@ Open ──▶── In Progress ──▶── Ready to Merge ──▶── 
 ```
 
 - `Open → In Progress`: ▶ button calls `POST /api/tasks/:id/run`. Backend
-  creates `<repo>-worktrees/<slug>-<id>` on branch `lattice/<slug>-<id>`,
-  writes `LATTICE_TASK.md`, and installs a Claude Stop hook in
-  `.claude/settings.local.json` that POSTs back to `/complete`.
+  creates `<repo>/.lattice/worktrees/<slug>-<id>` on branch
+  `lattice/<slug>-<id>`, writes `LATTICE_TASK.md`, and installs a Claude
+  Stop hook in `.claude/settings.local.json` that POSTs back to `/complete`.
 - `In Progress → Ready to Merge`: the in-worktree Claude finishes; Stop hook
   hits `POST /api/tasks/:id/complete` (idempotent — only flips on first call).
 - `Ready to Merge → QA`: ▶ button calls `POST /api/tasks/:id/merge`.
@@ -102,7 +102,8 @@ to avoid collisions with other local dev servers.
 
 For a repo at `<repoRoot>`:
 
-- worktree dir: `<repoRoot>-worktrees/<slug>-<shortid>`
+- worktree dir: `<repoRoot>/.lattice/worktrees/<slug>-<shortid>` (inside
+  the gitignored `.lattice/` folder so it stays self-contained)
 - branch: `lattice/<slug>-<shortid>`
 - task instructions inside the worktree: `LATTICE_TASK.md`
 - conflict-resolver instructions in the main repo:
