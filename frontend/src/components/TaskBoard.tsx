@@ -8,7 +8,6 @@ import {
   X,
   GitMerge,
   AlertTriangle,
-  Pencil,
 } from 'lucide-react';
 import { FloatingPanel } from './FloatingPanel';
 import { useTerminals } from '../TerminalsContext';
@@ -573,7 +572,7 @@ function TaskDetailOverlay({
   onSave: (updates: { title?: string; description?: string }) => void;
   onRun?: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(true);
   const [editTitle, setEditTitle] = useState(task.title);
   const [editDesc, setEditDesc] = useState(task.description ?? '');
 
@@ -599,11 +598,6 @@ function TaskDetailOverlay({
 
   const lane = LANE_BY_ID[task.status];
 
-  function startEdit() {
-    setEditTitle(task.title);
-    setEditDesc(task.description ?? '');
-    setEditing(true);
-  }
   function cancelEdit() {
     setEditTitle(task.title);
     setEditDesc(task.description ?? '');
@@ -644,16 +638,6 @@ function TaskDetailOverlay({
             />
           ) : (
             <div className="taskboard-detail-title">{task.title}</div>
-          )}
-          {!editing && (
-            <button
-              className="icon-btn sm"
-              onClick={startEdit}
-              aria-label="Edit task"
-              title="Edit"
-            >
-              <Pencil size={13} />
-            </button>
           )}
           <button
             className="icon-btn sm"
