@@ -75,6 +75,8 @@ click landing on the same task while the run is processing it.
 | GET | `/api/default-root` | Default project for the UI |
 | GET | `/api/scan?path=` | Recursive source-file scan, gitignore-aware |
 | GET | `/api/list-dir?path=` | Folder browser (folder picker) |
+| GET | `/api/settings?project=` | Read per-project user settings |
+| PATCH | `/api/settings?project=` | Merge-update per-project user settings |
 | GET | `/api/tasks?project=` | List tasks for a project |
 | GET | `/api/tasks/:id` | Fetch a single task |
 | POST | `/api/tasks` | Create `{project, title, description?}` |
@@ -115,6 +117,10 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
   `linkVisibility` to keep the simulation stable.
 - **Per-project filter / panel state** is persisted under
   `lattice.<thing>.<projectPath>` keys in `localStorage`.
+- **Per-project user settings** (e.g., sidebar width) are stored in
+  `<project>/.lattice/userSettings.json` via `GET /api/settings?project=` and
+  `PATCH /api/settings?project=`. The `UserSettings` type lives in
+  `backend/src/userSettings.ts`; frontend helpers are in `frontend/src/api.ts`.
 - Prefer editing existing files; don't introduce new abstractions for
   one-off tweaks.
 

@@ -79,6 +79,7 @@ import {
   subscribe as subscribeMergeRuns,
 } from './mergeRuns.js';
 import { tryAcquire, release } from './mergeLocks.js';
+import { getUserSettings, patchUserSettings, type UserSettings } from './userSettings.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 5184;
@@ -126,6 +127,21 @@ app.get('/api/list-dir', async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
   }
+});
+
+// ---------- User settings ----------
+
+app.get('/api/settings', async (req, res) => {
+  const project = typeof req.query.project === 'string' ? req.query.project : '';
+  if (!project) return res.status(400).json({ error: 'project required' });
+  res.json(await getUserSettings(project));
+});
+
+app.patch('/api/settings', async (req, res) => {
+  const project = typeof req.query.project === 'string' ? req.query.project : '';
+  if (!project) return res.status(400).json({ error: 'project required' });
+  const partial = (req.body || {}) as Partial<UserSettings>;
+  res.json(await patchUserSettings(project, partial));
 });
 
 // ---------- Tasks ----------

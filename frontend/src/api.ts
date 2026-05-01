@@ -48,6 +48,35 @@ export async function listDir(folderPath?: string): Promise<DirListing> {
   return r.json();
 }
 
+// ---------- User settings ----------
+
+export type UserSettings = {
+  sidebarWidth?: number;
+};
+
+export async function fetchUserSettings(projectPath: string): Promise<UserSettings> {
+  try {
+    const r = await fetch(`/api/settings?project=${encodeURIComponent(projectPath)}`);
+    if (!r.ok) return {};
+    return r.json();
+  } catch {
+    return {};
+  }
+}
+
+export async function patchUserSettings(
+  projectPath: string,
+  partial: Partial<UserSettings>,
+): Promise<UserSettings> {
+  return asJson<UserSettings>(
+    await fetch(`/api/settings?project=${encodeURIComponent(projectPath)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(partial),
+    }),
+  );
+}
+
 // ---------- Tasks ----------
 
 export type TaskStatus =

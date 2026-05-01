@@ -4,9 +4,8 @@ import { Sidebar } from './components/Sidebar';
 import { ForceGraphView } from './components/ForceGraphView';
 import { Legend } from './components/Legend';
 import { TerminalsProvider } from './TerminalsContext';
-import { fetchDefaultRoot, scanFolder, type ScanResult } from './api';
+import { fetchDefaultRoot, scanFolder, fetchUserSettings, patchUserSettings, type ScanResult } from './api';
 
-const SIDEBAR_WIDTH_KEY = 'lattice.sidebarWidth';
 const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 1200;
 const SIDEBAR_DEFAULT_WIDTH = 380;
@@ -23,17 +22,11 @@ function App() {
   // Per-extension visibility, persisted per project. Stored as a list of
   // hidden ext keys (e.g., ['.json', '.md']).
   const [hiddenExts, setHiddenExts] = useState<Set<string>>(new Set());
-  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
-    try {
-      const raw = localStorage.getItem(SIDEBAR_WIDTH_KEY);
-      const n = raw ? Number(raw) : NaN;
-      if (Number.isFinite(n) && n > 0) return clampSidebarWidth(n);
-    } catch {
-      /* ignore */
-    }
-    return SIDEBAR_DEFAULT_WIDTH;
-  });
+  const [sidebarWidth, setSidebarWidth] = useState<number>(SIDEBAR_DEFAULT_WIDTH);
   const resizingRef = useRef(false);
+  // Kept in sync via effect so event-handler closures always read the latest value
+  const activeFolderRef = useRef('');
+  const sidebarWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
 
   const hiddenExtsKey = useMemo(
     () =>
@@ -41,11 +34,26 @@ function App() {
     [activeFolder],
   );
 
+  useEffect(() => { activeFolderRef.current = activeFolder; }, [activeFolder]);
+  useEffect(() => { sidebarWidthRef.current = sidebarWidth; }, [sidebarWidth]);
+
   useEffect(() => {
     fetchDefaultRoot()
       .then(setActiveFolder)
       .catch(() => setActiveFolder(''));
   }, []);
+
+  // Load per-project sidebar width from backend when the active folder changes
+  useEffect(() => {
+    if (!activeFolder) return;
+    fetchUserSettings(activeFolder)
+      .then((s) => {
+        if (typeof s.sidebarWidth === 'number') {
+          setSidebarWidth(clampSidebarWidth(s.sidebarWidth));
+        }
+      })
+      .catch(() => { /* ignore — keep default */ });
+  }, [activeFolder]);
 
   // Load hidden-exts for the active folder
   useEffect(() => {
@@ -122,15 +130,6 @@ function App() {
     });
   }, []);
 
-  // Persist sidebar width
-  useEffect(() => {
-    try {
-      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
-    } catch {
-      /* ignore */
-    }
-  }, [sidebarWidth]);
-
   // Re-clamp on window resize so the sidebar can't exceed 80% of viewport
   useEffect(() => {
     function onResize() {
@@ -170,6 +169,9 @@ function App() {
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
       window.removeEventListener('pointercancel', handleUp);
+      if (activeFolderRef.current) {
+        patchUserSettings(activeFolderRef.current, { sidebarWidth: sidebarWidthRef.current }).catch(() => {});
+      }
     };
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
@@ -177,7 +179,11 @@ function App() {
   }, []);
 
   const onResizerDoubleClick = useCallback(() => {
-    setSidebarWidth(clampSidebarWidth(SIDEBAR_DEFAULT_WIDTH));
+    const w = clampSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+    setSidebarWidth(w);
+    if (activeFolderRef.current) {
+      patchUserSettings(activeFolderRef.current, { sidebarWidth: w }).catch(() => {});
+    }
   }, []);
 
   return (
