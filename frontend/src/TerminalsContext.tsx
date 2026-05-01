@@ -77,6 +77,15 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
       : initial.current.terminals[0]?.id ?? null,
   );
 
+  // Mirror state into a ref so callbacks can read the latest list without
+  // making the side effect run inside a setState updater (React StrictMode
+  // calls updaters twice in dev to detect impurities — a fetch in there
+  // would fire twice and DELETE the pty session twice).
+  const terminalsRef = useRef<TerminalSpec[]>(terminals);
+  useEffect(() => {
+    terminalsRef.current = terminals;
+  }, [terminals]);
+
   // Persist on every change.
   useEffect(() => {
     persist({ terminals, activeId });
@@ -99,37 +108,37 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
   );
 
   const closeTerminal = useCallback((id: string) => {
-    setTerminals((ts) => {
-      const target = ts.find((t) => t.id === id);
-      const next = ts.filter((t) => t.id !== id);
-      // Helps diagnose mis-targeted closes if it ever happens — shows
-      // which UI tab + which backend session was actually killed.
-      if (target) {
-        console.log('[lattice] closeTerminal', {
-          localId: target.id,
-          serverId: target.serverId ?? '(none)',
-          label: target.label,
-          cwd: target.cwd,
-        });
-      } else {
-        console.warn('[lattice] closeTerminal called with unknown id', id);
-      }
-      // Kill the backend pty when the user explicitly closes.
-      if (target?.serverId) {
-        void fetch(`/api/terminals/${encodeURIComponent(target.serverId)}`, {
-          method: 'DELETE',
-        }).catch(() => {
-          /* ignore */
-        });
-      }
-      const idx = ts.findIndex((t) => t.id === id);
-      setActiveIdState((current) => {
-        if (current !== id) return current;
-        if (next.length === 0) return null;
-        const fallbackIdx = Math.min(idx, next.length - 1);
-        return next[fallbackIdx].id;
+    // Read the current spec from a ref BEFORE calling setState. The DELETE
+    // is a side effect; in StrictMode the setState updater would run
+    // twice, which previously fired two DELETEs in <100ms — node-pty's
+    // Windows cleanup path then tripped over its own helper subprocess
+    // crashing and brought the whole backend down.
+    const target = terminalsRef.current.find((t) => t.id === id);
+    if (!target) {
+      console.warn('[lattice] closeTerminal called with unknown id', id);
+      return;
+    }
+    console.log('[lattice] closeTerminal', {
+      localId: target.id,
+      serverId: target.serverId ?? '(none)',
+      label: target.label,
+      cwd: target.cwd,
+    });
+    if (target.serverId) {
+      void fetch(`/api/terminals/${encodeURIComponent(target.serverId)}`, {
+        method: 'DELETE',
+      }).catch(() => {
+        /* ignore */
       });
-      return next;
+    }
+    const idx = terminalsRef.current.findIndex((t) => t.id === id);
+    const next = terminalsRef.current.filter((t) => t.id !== id);
+    setTerminals(next);
+    setActiveIdState((current) => {
+      if (current !== id) return current;
+      if (next.length === 0) return null;
+      const fallbackIdx = Math.min(Math.max(0, idx), next.length - 1);
+      return next[fallbackIdx]?.id ?? null;
     });
   }, []);
 

@@ -21,6 +21,11 @@ type Session = {
   shell: string;
   subscribers: Set<WebSocket>;
   createdAt: number;
+  // Set the moment killSession runs the first time. Guards against
+  // duplicate DELETE arrivals (StrictMode double-fire, double-click,
+  // run-during-cleanup race) calling pty.kill() twice — node-pty's
+  // Windows cleanup is fragile enough on the first call.
+  killing: boolean;
 };
 
 const sessions = new Map<string, Session>();
@@ -94,6 +99,7 @@ function createSession(opts: CreateOpts): Session | { error: string } {
     shell,
     subscribers: new Set(),
     createdAt: Date.now(),
+    killing: false,
   };
   sessions.set(session.id, session);
   console.log(
@@ -248,13 +254,18 @@ export function killSession(id: string): boolean {
     console.warn(`[terminal] killSession: no session with id ${id}`);
     return false;
   }
+  if (session.killing) {
+    console.log(`[terminal] killSession: ${id} already killing, no-op`);
+    return true;
+  }
+  session.killing = true;
   console.log(
     `[terminal] killing session ${id} (cwd=${session.cwd}, subscribers=${session.subscribers.size})`,
   );
   try {
     session.pty.kill();
-  } catch {
-    /* ignore */
+  } catch (err) {
+    console.warn(`[terminal] pty.kill threw for ${id}:`, err);
   }
   return true;
 }
