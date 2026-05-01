@@ -37,6 +37,40 @@ export type WorktreeResult = {
   taskFile: string;
 };
 
+// Parse `git worktree list --porcelain` into an array of {path, branch?}.
+// Each block is separated by a blank line and looks like:
+//
+//   worktree /abs/path
+//   HEAD <sha>
+//   branch refs/heads/<name>          (or 'detached')
+//
+// Used by setupTaskWorktree to recover from stale worktrees that survived
+// a previous half-failed run.
+export type ParsedWorktree = {
+  path: string;
+  branch?: string;
+  detached?: boolean;
+};
+
+export function parseWorktreesPorcelain(out: string): ParsedWorktree[] {
+  const result: ParsedWorktree[] = [];
+  for (const block of out.split(/\r?\n\r?\n/)) {
+    if (!block.trim()) continue;
+    const entry: ParsedWorktree = { path: '' };
+    for (const line of block.split(/\r?\n/)) {
+      if (line.startsWith('worktree ')) {
+        entry.path = line.slice('worktree '.length).trim();
+      } else if (line.startsWith('branch ')) {
+        entry.branch = line.slice('branch '.length).trim();
+      } else if (line === 'detached') {
+        entry.detached = true;
+      }
+    }
+    if (entry.path) result.push(entry);
+  }
+  return result;
+}
+
 export async function setupTaskWorktree(
   repoPath: string,
   task: Task,
@@ -59,6 +93,50 @@ export async function setupTaskWorktree(
   const worktreesDir = path.join(repoRoot, '.lattice', 'worktrees');
   await fs.mkdir(worktreesDir, { recursive: true });
   const worktreePath = path.join(worktreesDir, `${slug}-${shortId}`);
+
+  // Reconcile stale state from a prior half-failed run before creating.
+  // Branch names are deterministic from (slug, shortId), so a leftover
+  // branch/worktree from before will collide with `git worktree add -b`.
+  // Run = fresh start; the explicit Resume path is the one that
+  // preserves prior progress.
+  const branchExists =
+    (
+      await exec(
+        'git',
+        ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}`],
+        repoRoot,
+      )
+    ).code === 0;
+  const targetDirExists = await worktreeExists(worktreePath);
+
+  if (branchExists || targetDirExists) {
+    const wtList = await exec(
+      'git',
+      ['worktree', 'list', '--porcelain'],
+      repoRoot,
+    );
+    const tracked = parseWorktreesPorcelain(wtList.stdout);
+    const onBranch = tracked.find(
+      (w) => w.branch === `refs/heads/${branchName}`,
+    );
+    if (onBranch) {
+      // Tracked worktree on this branch — remove it cleanly first.
+      await exec(
+        'git',
+        ['worktree', 'remove', '--force', onBranch.path],
+        repoRoot,
+      );
+    }
+    if (await worktreeExists(worktreePath)) {
+      // Untracked stray directory at our target path — wipe it.
+      await fs.rm(worktreePath, { recursive: true, force: true });
+    }
+    await exec('git', ['worktree', 'prune'], repoRoot);
+    if (branchExists) {
+      // -D in case it has unmerged commits from a prior abandoned run.
+      await exec('git', ['branch', '-D', branchName], repoRoot);
+    }
+  }
 
   const wt = await exec(
     'git',
