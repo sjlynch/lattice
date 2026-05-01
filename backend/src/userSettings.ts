@@ -4,6 +4,7 @@ import { PROJECT_DIR_NAME } from './tasks.js';
 
 export type UserSettings = {
   sidebarWidth?: number;
+  harness?: 'claude' | 'pi';
 };
 
 function settingsFile(projectPath: string): string {

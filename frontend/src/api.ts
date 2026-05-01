@@ -52,6 +52,7 @@ export async function listDir(folderPath?: string): Promise<DirListing> {
 
 export type UserSettings = {
   sidebarWidth?: number;
+  harness?: 'claude' | 'pi';
 };
 
 export async function fetchUserSettings(projectPath: string): Promise<UserSettings> {
@@ -180,18 +181,22 @@ export async function deleteTask(id: string): Promise<void> {
   );
 }
 
-export async function runTask(id: string): Promise<RunTaskResult> {
+export async function runTask(id: string, harness?: 'claude' | 'pi'): Promise<RunTaskResult> {
   return asJson<RunTaskResult>(
     await fetch(`/api/tasks/${encodeURIComponent(id)}/run`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ harness }),
     }),
   );
 }
 
-export async function resumeTask(id: string): Promise<RunTaskResult> {
+export async function resumeTask(id: string, harness?: 'claude' | 'pi'): Promise<RunTaskResult> {
   return asJson<RunTaskResult>(
     await fetch(`/api/tasks/${encodeURIComponent(id)}/resume`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ harness }),
     }),
   );
 }

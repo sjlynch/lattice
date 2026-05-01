@@ -19,8 +19,10 @@ import {
   createTask as apiCreateTask,
   deleteTask as apiDeleteTask,
   fetchTasks,
+  fetchUserSettings,
   getActiveMergeRun,
   mergeTask as apiMergeTask,
+  patchUserSettings,
   reorderTasks as apiReorderTasks,
   resumeTask as apiResumeTask,
   runTask as apiRunTask,
@@ -67,6 +69,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   const [recentRunSummary, setRecentRunSummary] = useState<MergeRun | null>(
     null,
   );
+  const [harness, setHarness] = useState<'claude' | 'pi'>('claude');
 
   // Filter state — all lanes visible by default.
   const [visibleLanes, setVisibleLanes] = useState<Set<TaskStatus>>(
@@ -94,6 +97,14 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
       cancelled = true;
       unsub();
     };
+  }, [activeFolder]);
+
+  // Load persisted harness preference when the active folder changes.
+  useEffect(() => {
+    if (!activeFolder) return;
+    fetchUserSettings(activeFolder)
+      .then((s) => { if (s.harness) setHarness(s.harness); })
+      .catch(() => { /* keep default */ });
   }, [activeFolder]);
 
   // Hydrate the active merge run on mount and subscribe to live events.
@@ -226,7 +237,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
 
   async function runTask(task: Task) {
     try {
-      const res = await apiRunTask(task.id);
+      const res = await apiRunTask(task.id, harness);
       addTerminal({
         label: shortLabel(task.title),
         cwd: res.worktreePath,
@@ -250,7 +261,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
 
   async function resumeTaskAction(task: Task) {
     try {
-      const res = await apiResumeTask(task.id);
+      const res = await apiResumeTask(task.id, harness);
       addTerminal({
         label: shortLabel(task.title),
         cwd: res.worktreePath,
@@ -348,6 +359,12 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     });
   }
 
+  function toggleHarness() {
+    const next: 'claude' | 'pi' = harness === 'claude' ? 'pi' : 'claude';
+    setHarness(next);
+    if (activeFolder) patchUserSettings(activeFolder, { harness: next }).catch(() => {});
+  }
+
   return (
     <>
       <button
@@ -411,6 +428,14 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
               </button>
             );
           })}
+          <button
+            className="taskboard-filter taskboard-harness-toggle"
+            onClick={toggleHarness}
+            title={harness === 'claude' ? 'Switch to Pi agent coder' : 'Switch to Claude Code'}
+            style={{ marginLeft: 'auto' }}
+          >
+            {harness === 'claude' ? 'Claude' : 'Pi'}
+          </button>
         </div>
         {(mergeRun || recentRunSummary) && (
           <MergeRunStrip

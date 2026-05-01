@@ -63,6 +63,8 @@ import {
   setupTaskWorktree,
   buildClaudeCommand,
   buildResumeCommand,
+  buildPiCommand,
+  buildPiResumeCommand,
   worktreeExists,
   isMidMerge,
   mergeWorktreeInRepo,
@@ -228,7 +230,10 @@ app.post('/api/tasks/:id/run', async (req, res) => {
   }
   try {
     const result = await setupTaskWorktree(task.projectPath, task, BACKEND_ORIGIN);
-    const command = buildClaudeCommand(result.taskFile);
+    const harness = req.body?.harness === 'pi' ? 'pi' : 'claude';
+    const command = harness === 'pi'
+      ? buildPiCommand(result.taskFile)
+      : buildClaudeCommand(result.taskFile);
     await updateTask(task.id, {
       status: 'in_progress',
       worktreePath: result.worktreePath,
@@ -269,7 +274,10 @@ app.post('/api/tasks/:id/resume', async (req, res) => {
     });
   }
   const taskFile = path.join(task.worktreePath, 'LATTICE_TASK.md');
-  const command = buildResumeCommand(taskFile);
+  const harness = req.body?.harness === 'pi' ? 'pi' : 'claude';
+  const command = harness === 'pi'
+    ? buildPiResumeCommand(taskFile)
+    : buildResumeCommand(taskFile);
   res.json({
     worktreePath: task.worktreePath,
     branch: task.branch,
