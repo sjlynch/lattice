@@ -1,4 +1,8 @@
 import express from 'express';
+// Monkey-patches Express 4 to forward async-handler rejections to the
+// error middleware below, so a route that throws never returns a generic
+// non-JSON 500 — the toast always has a real message to show.
+import 'express-async-errors';
 import cors from 'cors';
 import http from 'node:http';
 import path from 'node:path';
@@ -444,6 +448,31 @@ app.post('/api/merge-runs/:id/cancel', (req, res) => {
   if (!ok) return res.status(404).json({ error: 'no active run with that id' });
   res.json({ ok: true });
 });
+
+// ---------- Global JSON error middleware ----------
+//
+// Last route (Express convention: 4-arg handler is treated as error
+// middleware). Catches:
+//   - thrown sync errors from any handler
+//   - rejected promises from async handlers (via express-async-errors)
+//   - explicit next(err) calls
+// Always responds with `{error: "..."}` so the frontend's asJson() helper
+// can extract a useful message into the toast instead of falling back to
+// a bare "500".
+app.use(
+  (
+    err: unknown,
+    _req: express.Request,
+    res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    console.error('[lattice] route error', err);
+    if (res.headersSent) return next(err);
+    const message =
+      err instanceof Error && err.message ? err.message : String(err);
+    res.status(500).json({ error: message });
+  },
+);
 
 // ---------- WebSockets ----------
 //
