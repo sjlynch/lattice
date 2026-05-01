@@ -36,6 +36,7 @@ import {
 } from '../api';
 
 const LANES: { id: TaskStatus; label: string; color: string }[] = [
+  { id: 'backlog', label: 'Backlog', color: '#7a8fa8' },
   { id: 'open', label: 'Open', color: '#6aa9ff' },
   { id: 'in_progress', label: 'In Progress', color: '#e7c986' },
   { id: 'ready_to_merge', label: 'Ready to Merge', color: '#5eead4' },
@@ -326,6 +327,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
 
   const grouped = useMemo(() => {
     const m: Record<TaskStatus, Task[]> = {
+      backlog: [],
       open: [],
       in_progress: [],
       ready_to_merge: [],
@@ -347,7 +349,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   }, [tasks]);
 
   const activeCount = tasks.filter(
-    (t) => t.status !== 'deleted' && t.status !== 'done',
+    (t) =>
+      t.status !== 'deleted' && t.status !== 'done' && t.status !== 'backlog',
   ).length;
 
   function toggleLane(id: TaskStatus) {
@@ -996,6 +999,11 @@ function TaskDetailOverlay({
                 Delete
               </button>
               <span style={{ flex: 1 }} />
+              {task.status !== 'backlog' && task.status !== 'in_progress' && task.status !== 'ready_to_merge' && (
+                <button className="btn-ghost" onClick={() => onMove('backlog')}>
+                  Move to Backlog
+                </button>
+              )}
               {task.status !== 'open' && (
                 <button className="btn-ghost" onClick={() => onMove('open')}>
                   Move to Open

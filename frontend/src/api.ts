@@ -81,6 +81,7 @@ export async function patchUserSettings(
 // ---------- Tasks ----------
 
 export type TaskStatus =
+  | 'backlog'
   | 'open'
   | 'in_progress'
   | 'ready_to_merge'
