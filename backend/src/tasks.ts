@@ -14,6 +14,7 @@ function projectTasksFile(projectPath: string): string {
 }
 
 export type TaskStatus =
+  | 'backlog'
   | 'open'
   | 'in_progress'
   | 'ready_to_merge'
