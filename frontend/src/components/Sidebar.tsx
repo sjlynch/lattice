@@ -2,6 +2,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  GitMerge,
   Plus,
   Search,
   TerminalSquare,
@@ -23,6 +24,7 @@ type Props = {
 };
 
 type ShellKind = 'claude' | 'claude-yolo' | 'terminal';
+type Panel = 'terminals' | 'merging';
 
 const KIND_INITIAL_COMMAND: Record<ShellKind, string | undefined> = {
   claude: 'claude',
@@ -48,6 +50,7 @@ export function Sidebar({ activeFolder }: Props) {
     setServerId,
   } = useTerminals();
 
+  const [activePanel, setActivePanel] = useState<Panel>('terminals');
   const [menuOpen, setMenuOpen] = useState(false);
   const [filter, setFilter] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -58,6 +61,48 @@ export function Sidebar({ activeFolder }: Props) {
   const tabsRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const activeTabRef = useRef<HTMLDivElement>(null);
+
+  const regularTerminals = useMemo(
+    () => terminals.filter((t) => t.kind !== 'merge'),
+    [terminals],
+  );
+  const mergeTerminals = useMemo(
+    () => terminals.filter((t) => t.kind === 'merge'),
+    [terminals],
+  );
+
+  // Auto-switch to Merging panel when a new merge terminal is added.
+  const prevMergeCountRef = useRef(mergeTerminals.length);
+  useEffect(() => {
+    if (mergeTerminals.length > prevMergeCountRef.current) {
+      setActivePanel('merging');
+      const newest = mergeTerminals[mergeTerminals.length - 1];
+      if (newest) setActiveId(newest.id);
+    }
+    prevMergeCountRef.current = mergeTerminals.length;
+  }, [mergeTerminals, setActiveId]);
+
+  // When the Merging panel disappears (all merge terminals closed), fall back.
+  useEffect(() => {
+    if (mergeTerminals.length === 0 && activePanel === 'merging') {
+      setActivePanel('terminals');
+    }
+  }, [mergeTerminals.length, activePanel]);
+
+  const panelTerminals = activePanel === 'merging' ? mergeTerminals : regularTerminals;
+
+  const switchPanel = useCallback(
+    (panel: Panel) => {
+      setActivePanel(panel);
+      setFilter('');
+      setSearchOpen(false);
+      const list = panel === 'merging' ? mergeTerminals : regularTerminals;
+      if (list.length > 0 && !list.find((t) => t.id === activeId)) {
+        setActiveId(list[list.length - 1].id);
+      }
+    },
+    [mergeTerminals, regularTerminals, activeId, setActiveId],
+  );
 
   const newTerminal = useCallback(
     (kind: ShellKind) => {
@@ -73,10 +118,7 @@ export function Sidebar({ activeFolder }: Props) {
   useEffect(() => {
     if (!menuOpen) return;
     function onPointerDown(e: PointerEvent) {
-      if (
-        menuRef.current &&
-        !menuRef.current.contains(e.target as Node)
-      ) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false);
       }
     }
@@ -98,12 +140,12 @@ export function Sidebar({ activeFolder }: Props) {
 
   const trimmedFilter = filter.trim().toLowerCase();
   const visibleTerminals = useMemo(() => {
-    if (!trimmedFilter) return terminals;
-    return terminals.filter((t) => {
+    if (!trimmedFilter) return panelTerminals;
+    return panelTerminals.filter((t) => {
       const haystack = `${t.label} ${t.cwd}`.toLowerCase();
       return haystack.includes(trimmedFilter);
     });
-  }, [terminals, trimmedFilter]);
+  }, [panelTerminals, trimmedFilter]);
 
   const updateScrollState = useCallback(() => {
     const el = tabsRef.current;
@@ -134,9 +176,6 @@ export function Sidebar({ activeFolder }: Props) {
     };
   }, [updateScrollState]);
 
-  // Keep the active tab visible when it changes (e.g. clicking it, or
-  // switching via Run on a task). Use 'nearest' so we only nudge when
-  // it's actually offscreen.
   useEffect(() => {
     const el = activeTabRef.current;
     if (!el) return;
@@ -174,16 +213,35 @@ export function Sidebar({ activeFolder }: Props) {
   return (
     <>
       <div className="sidebar-header">
-        <div className="sidebar-header-left">
-          <span className="sidebar-title">Terminals</span>
-          {terminals.length > 0 && (
-            <div
-              className={`sidebar-search ${searchOpen ? 'open' : ''}`}
+        <div className="sidebar-panel-tabs">
+          <button
+            className={`sidebar-panel-tab ${activePanel === 'terminals' ? 'active' : ''}`}
+            onClick={() => switchPanel('terminals')}
+          >
+            <TerminalSquare size={11} />
+            Terminals
+          </button>
+          {mergeTerminals.length > 0 && (
+            <button
+              className={`sidebar-panel-tab merge ${activePanel === 'merging' ? 'active' : ''}`}
+              onClick={() => switchPanel('merging')}
             >
+              <GitMerge size={11} />
+              Merging
+              {activePanel !== 'merging' && mergeTerminals.length > 0 && (
+                <span className="sidebar-panel-tab-badge">
+                  {mergeTerminals.length}
+                </span>
+              )}
+            </button>
+          )}
+        </div>
+
+        <div className="sidebar-header-actions">
+          {activePanel === 'terminals' && panelTerminals.length > 0 && (
+            <div className={`sidebar-search ${searchOpen ? 'open' : ''}`}>
               <button
-                className={`icon-btn sm ${
-                  searchOpen || filter ? 'active' : ''
-                }`}
+                className={`icon-btn sm ${searchOpen || filter ? 'active' : ''}`}
                 onClick={toggleSearch}
                 title={searchOpen ? 'Close filter' : 'Filter terminals'}
                 aria-label="Filter terminals"
@@ -205,64 +263,58 @@ export function Sidebar({ activeFolder }: Props) {
               )}
             </div>
           )}
-        </div>
-        <div className="sidebar-new" ref={menuRef}>
-          <button
-            className="icon-btn sm"
-            onClick={() => newTerminal('claude')}
-            title="New Claude terminal"
-            aria-label="New Claude terminal"
-          >
-            <Plus size={14} />
-          </button>
-          <button
-            className="icon-btn sm sidebar-new-chevron"
-            onClick={() => setMenuOpen((v) => !v)}
-            title="Choose terminal type"
-            aria-label="Choose terminal type"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-          >
-            <ChevronDown size={12} />
-          </button>
-          {menuOpen && (
-            <div className="popover sidebar-new-menu" role="menu">
-              <div
-                className="popover-item"
-                role="menuitem"
-                onClick={() => {
-                  setMenuOpen(false);
-                  newTerminal('claude');
-                }}
+
+          {activePanel === 'terminals' && (
+            <div className="sidebar-new" ref={menuRef}>
+              <button
+                className="icon-btn sm"
+                onClick={() => newTerminal('claude')}
+                title="New Claude terminal"
+                aria-label="New Claude terminal"
               >
-                Claude
-              </div>
-              <div
-                className="popover-item"
-                role="menuitem"
-                onClick={() => {
-                  setMenuOpen(false);
-                  newTerminal('claude-yolo');
-                }}
+                <Plus size={14} />
+              </button>
+              <button
+                className="icon-btn sm sidebar-new-chevron"
+                onClick={() => setMenuOpen((v) => !v)}
+                title="Choose terminal type"
+                aria-label="Choose terminal type"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
               >
-                Dangerous Claude
-              </div>
-              <div
-                className="popover-item"
-                role="menuitem"
-                onClick={() => {
-                  setMenuOpen(false);
-                  newTerminal('terminal');
-                }}
-              >
-                Terminal
-              </div>
+                <ChevronDown size={12} />
+              </button>
+              {menuOpen && (
+                <div className="popover sidebar-new-menu" role="menu">
+                  <div
+                    className="popover-item"
+                    role="menuitem"
+                    onClick={() => { setMenuOpen(false); newTerminal('claude'); }}
+                  >
+                    Claude
+                  </div>
+                  <div
+                    className="popover-item"
+                    role="menuitem"
+                    onClick={() => { setMenuOpen(false); newTerminal('claude-yolo'); }}
+                  >
+                    Dangerous Claude
+                  </div>
+                  <div
+                    className="popover-item"
+                    role="menuitem"
+                    onClick={() => { setMenuOpen(false); newTerminal('terminal'); }}
+                  >
+                    Terminal
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
       </div>
 
-      {terminals.length > 0 && (
+      {panelTerminals.length > 0 && (
         <div className="sidebar-tabs-row">
           <button
             className="sidebar-tabs-scroll left"
@@ -276,7 +328,7 @@ export function Sidebar({ activeFolder }: Props) {
           <div className="sidebar-tabs" ref={tabsRef}>
             {visibleTerminals.length === 0 ? (
               <div className="sidebar-tabs-empty">
-                No terminals match “{filter}”
+                No terminals match "{filter}"
               </div>
             ) : (
               visibleTerminals.map((t) => (
@@ -287,14 +339,11 @@ export function Sidebar({ activeFolder }: Props) {
                   onClick={() => setActiveId(t.id)}
                   title={t.cwd}
                 >
-                  <TerminalSquare size={12} />
+                  {t.kind === 'merge' ? <GitMerge size={12} /> : <TerminalSquare size={12} />}
                   <span>{t.label}</span>
                   <button
                     className="sidebar-tab-close"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      closeTerminal(t.id);
-                    }}
+                    onClick={(e) => { e.stopPropagation(); closeTerminal(t.id); }}
                     title="Close"
                     aria-label="Close terminal"
                   >
@@ -317,17 +366,21 @@ export function Sidebar({ activeFolder }: Props) {
       )}
 
       <div className="sidebar-content">
-        {terminals.length === 0 ? (
+        {panelTerminals.length === 0 ? (
           <div className="sidebar-empty">
             <div className="sidebar-empty-icon">
-              <TerminalSquare size={22} />
+              {activePanel === 'merging' ? <GitMerge size={22} /> : <TerminalSquare size={22} />}
             </div>
-            <div className="sidebar-empty-title">No terminals yet</div>
-            <div className="sidebar-empty-sub">
-              Click <Plus size={11} style={{ verticalAlign: -1 }} /> above to
-              start a Claude Code shell rooted at <code>{activeFolder}</code>,
-              or hit ▶ on a task to spawn one in a worktree.
+            <div className="sidebar-empty-title">
+              {activePanel === 'merging' ? 'No merge resolvers' : 'No terminals yet'}
             </div>
+            {activePanel === 'terminals' && (
+              <div className="sidebar-empty-sub">
+                Click <Plus size={11} style={{ verticalAlign: -1 }} /> above to
+                start a Claude Code shell rooted at <code>{activeFolder}</code>,
+                or hit ▶ on a task to spawn one in a worktree.
+              </div>
+            )}
           </div>
         ) : (
           terminals.map((t) => (

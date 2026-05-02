@@ -14,6 +14,8 @@ export type TerminalSpec = {
   label: string;
   cwd: string;
   initialCommand?: string;
+  taskId?: string;       // associated task id, for lifecycle management
+  kind?: 'merge';        // merge conflict resolver terminals go in the Merging tab
 };
 
 type Persisted = {
@@ -57,6 +59,7 @@ type Ctx = {
   setActiveId: (id: string | null) => void;
   addTerminal: (spec: Omit<TerminalSpec, 'id'>) => string;
   closeTerminal: (id: string) => void;
+  closeTerminalsForTask: (taskId: string) => void;
   setServerId: (id: string, serverId: string) => void;
 };
 
@@ -148,6 +151,18 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  const closeTerminalsForTask = useCallback(
+    (taskId: string) => {
+      const targets = terminalsRef.current
+        .filter((t) => t.taskId === taskId)
+        .map((t) => t.id);
+      for (const id of targets) {
+        closeTerminal(id);
+      }
+    },
+    [closeTerminal],
+  );
+
   return (
     <TerminalsContext.Provider
       value={{
@@ -156,6 +171,7 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
         setActiveId,
         addTerminal,
         closeTerminal,
+        closeTerminalsForTask,
         setServerId,
       }}
     >

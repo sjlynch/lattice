@@ -133,6 +133,7 @@ export async function startMergeRun(
 
   // Run the worker async. Fire-and-forget; consumers track via WS / GET.
   (async () => {
+    console.log(`[merge-run] ${run.id} started — ${targets.length} task(s) to merge`);
     for (const seed of targets) {
       if (run.cancelRequested) break;
 
@@ -143,22 +144,25 @@ export async function startMergeRun(
       // (manual /merge, user dragging the card to a different lane, etc.).
       const task = await getTask(seed.id);
       if (!task) {
+        console.warn(`[merge-run] task ${seed.id} disappeared — skipping`);
         run.errored.push({ taskId: seed.id, error: 'task disappeared' });
         run.processed += 1;
         continue;
       }
+      console.log(`[merge-run] processing "${task.title.slice(0, 50)}" (${task.id})`);
       if (task.status !== 'ready_to_merge') {
-        // Someone moved it; skip silently.
+        console.log(`[merge-run] task ${task.id} is ${task.status} — skipping`);
         run.processed += 1;
         continue;
       }
       if (task.conflict) {
-        // Already in conflict-resolution; skip and let resolver handle it.
+        console.log(`[merge-run] task ${task.id} already in conflict-resolution — skipping`);
         run.conflicted.push(task.id);
         run.processed += 1;
         continue;
       }
       if (!task.branch || !task.worktreePath) {
+        console.warn(`[merge-run] task ${task.id} has no branch/worktree — skipping`);
         run.errored.push({
           taskId: task.id,
           error: 'task has no worktree branch on record',
@@ -168,7 +172,7 @@ export async function startMergeRun(
       }
 
       if (!tryAcquire(task.id)) {
-        // Manual /merge or another run is touching this task; skip.
+        console.warn(`[merge-run] task ${task.id} lock held — skipping`);
         run.errored.push({
           taskId: task.id,
           error: 'merge lock held by another caller; skipped',
@@ -178,20 +182,33 @@ export async function startMergeRun(
       }
 
       try {
+        console.log(`[merge-run] merging worktree for ${task.id} (branch=${task.branch})`);
         const result = await mergeWorktreeInRepo(
           task.projectPath,
           task.branch,
           task.worktreePath,
         );
+        console.log(`[merge-run] mergeWorktreeInRepo → ${result.status}${result.status === 'conflict' ? ` (${result.conflictedFiles?.join(', ')})` : result.status === 'error' ? `: ${result.message}` : ''}`);
         if (result.status === 'clean') {
-          const fin = await finalizeMergedTask(task);
+          console.log(`[merge-run] finalizing task ${task.id}...`);
+          const fin = await finalizeMergedTask(task, backendOrigin);
+          console.log(`[merge-run] finalize → ${fin.ok ? 'ok' : ('stashConflict' in fin ? `stash-conflict (${fin.stashConflict.join(', ')})` : `error: ${'error' in fin ? fin.error : '?'}`)}`);
           if (fin.ok) {
             run.merged.push(task.id);
-          } else if ('stashConflict' in fin && fin.stashConflict) {
-            run.errored.push({
+          } else if ('stashConflict' in fin) {
+            run.conflicted.push(task.id);
+            notify({
+              type: 'conflict',
+              runId: run.id,
+              projectPath,
               taskId: task.id,
-              error: `stash-pop conflict on ${fin.stashConflict.length} file(s)`,
+              command: fin.resolveCommand,
+              cwd: fin.cwd,
+              conflictedFiles: fin.stashConflict,
             });
+            // Stop the run — subsequent tasks can't FF until the stash conflict
+            // is resolved. /stash-resolved will auto-restart the run.
+            run.cancelRequested = true;
           } else {
             run.errored.push({
               taskId: task.id,
@@ -199,6 +216,7 @@ export async function startMergeRun(
             });
           }
         } else if (result.status === 'conflict') {
+          console.log(`[merge-run] writing merge instructions for ${task.id}`);
           const { relativePath } = await writeMergeInstructions(
             task,
             task.branch,
@@ -224,6 +242,7 @@ export async function startMergeRun(
           run.errored.push({ taskId: task.id, error: result.message });
         }
       } catch (err) {
+        console.error(`[merge-run] uncaught error for task ${task.id}:`, err);
         run.errored.push({
           taskId: task.id,
           error: (err as Error).message ?? 'unknown error',
@@ -235,11 +254,16 @@ export async function startMergeRun(
       run.processed += 1;
       run.current = undefined;
       notify({ type: 'progress', run: snapshot(run) });
+      console.log(`[merge-run] progress: ${run.processed}/${run.total} (merged=${run.merged.length} conflicts=${run.conflicted.length} errors=${run.errored.length})`);
     }
 
     run.status = run.cancelRequested ? 'cancelled' : 'completed';
     run.finishedAt = Date.now();
     run.current = undefined;
+    console.log(`[merge-run] ${run.id} ${run.status} — merged=${run.merged.length} conflicts=${run.conflicted.length} errors=${run.errored.length}`);
+    if (run.errored.length > 0) {
+      for (const e of run.errored) console.error(`[merge-run] error on ${e.taskId}: ${e.error}`);
+    }
     notify({
       type: run.cancelRequested ? 'cancelled' : 'completed',
       run: snapshot(run),

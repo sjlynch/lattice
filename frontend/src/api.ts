@@ -210,6 +210,13 @@ export type MergeTaskResult =
       command: string;
       cwd: string;
       conflictedFiles?: string[];
+    }
+  | {
+      merged: false;
+      stashConflict: true;
+      command: string;
+      cwd: string;
+      conflictedFiles?: string[];
     };
 
 export async function mergeTask(id: string): Promise<MergeTaskResult> {
@@ -256,7 +263,8 @@ export type MergeRunEvent =
       conflictedFiles: string[];
     }
   | { type: 'completed'; run: MergeRun }
-  | { type: 'cancelled'; run: MergeRun };
+  | { type: 'cancelled'; run: MergeRun }
+  | { type: 'idle' };
 
 export async function startMergeRun(projectPath: string): Promise<MergeRun> {
   return asJson<MergeRun>(

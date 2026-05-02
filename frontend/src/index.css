@@ -225,6 +225,69 @@ input {
   color: var(--text-tertiary);
   flex-shrink: 0;
 }
+
+/* ---------- Sidebar panel tabs (Terminals / Merging switcher) ---------- */
+.sidebar-panel-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-panel-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+  white-space: nowrap;
+}
+
+.sidebar-panel-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.sidebar-panel-tab.active {
+  color: var(--text-primary);
+  background: var(--bg-active);
+}
+
+.sidebar-panel-tab.merge.active {
+  color: #5eead4;
+}
+
+.sidebar-panel-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  font-size: 9px;
+  font-weight: 700;
+  background: rgba(94, 234, 212, 0.25);
+  color: #5eead4;
+}
+
+.sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .sidebar-search {
   display: inline-flex;
   align-items: center;
@@ -1389,8 +1452,9 @@ input {
 /* ---------- Merge run progress strip ---------- */
 .merge-run-strip {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 6px 10px;
   margin: 0 8px 4px;
   padding: 7px 10px 7px 12px;
   border-radius: 8px;
@@ -1422,14 +1486,14 @@ input {
 }
 .merge-run-strip-text {
   flex: 1;
+  min-width: 0;
   color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .merge-run-strip-current {
-  font-family: var(--mono);
+  margin-top: 2px;
+  font-size: 11px;
   color: var(--text-secondary);
+  word-break: break-word;
 }
 .merge-run-strip-pct {
   flex: 0 0 auto;

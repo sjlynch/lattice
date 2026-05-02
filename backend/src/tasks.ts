@@ -180,6 +180,26 @@ function schedulePersist(projectPath: string) {
   );
 }
 
+// Bypass the debounce and write the task cache to disk right now.
+// Call this after critical state transitions (merge finalization) so the
+// update survives a backend crash or hot-restart that would otherwise drop
+// the in-memory change before the 100 ms timer fires.
+export async function flushPersist(projectPath: string): Promise<void> {
+  const timer = persistTimers.get(projectPath);
+  if (timer) {
+    clearTimeout(timer);
+    persistTimers.delete(projectPath);
+  }
+  const tasks = projectCache.get(projectPath) ?? [];
+  const file = projectTasksFile(projectPath);
+  try {
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, JSON.stringify(tasks, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[tasks] flushPersist failed for', projectPath, e);
+  }
+}
+
 function notify(projectPath: string) {
   const tasks = projectCache.get(projectPath) ?? [];
   const snapshot = [...tasks];
