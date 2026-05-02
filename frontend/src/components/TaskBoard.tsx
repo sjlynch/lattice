@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Kanban,
   Plus,
@@ -440,15 +440,6 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
             {harness === 'claude' ? 'Claude' : 'Pi'}
           </button>
         </div>
-        {(mergeRun || recentRunSummary) && (
-          <MergeRunStrip
-            active={mergeRun}
-            summary={recentRunSummary}
-            tasks={tasks}
-            onCancel={cancelActiveRun}
-            onDismiss={() => setRecentRunSummary(null)}
-          />
-        )}
         <div className="taskboard-body">
           <div className="taskboard-scroll">
             {LANES.filter((l) => visibleLanes.has(l.id)).map((lane) => (
@@ -478,6 +469,17 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                     : undefined
                 }
                 onView={setViewing}
+                strip={
+                  lane.id === 'ready_to_merge' && (mergeRun || recentRunSummary) ? (
+                    <MergeRunStrip
+                      active={mergeRun}
+                      summary={recentRunSummary}
+                      tasks={tasks}
+                      onCancel={cancelActiveRun}
+                      onDismiss={() => setRecentRunSummary(null)}
+                    />
+                  ) : undefined
+                }
               />
             ))}
           </div>
@@ -544,6 +546,7 @@ function Lane({
   onMerge,
   onRunAll,
   onView,
+  strip,
 }: {
   lane: (typeof LANES)[number];
   tasks: Task[];
@@ -559,6 +562,7 @@ function Lane({
   onMerge: (task: Task) => Promise<boolean>;
   onRunAll?: () => void;
   onView: (task: Task) => void;
+  strip?: ReactNode;
 }) {
   const [isOver, setIsOver] = useState(false);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -694,6 +698,7 @@ function Lane({
           </button>
         </div>
       </div>
+      {strip}
       <div className="taskboard-lane-track">
         {tasks.length === 0 ? (
           <div
