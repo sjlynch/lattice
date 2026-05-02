@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { updateTaskCrashSafe, type Task } from './tasks.js';
+import { proxyKillSessionsByCwd } from './terminalProxy.js';
 
 function slugify(s: string): string {
   return (
@@ -653,11 +654,25 @@ export async function cleanupWorktreeForTask(
   worktreePath: string,
   branchName: string,
 ): Promise<void> {
-  // Worktree directory may already be gone; ignore failures of either step.
+  // Kill any terminal sessions running inside the worktree first.
+  // On Windows a process whose cwd is inside a directory holds a lock that
+  // prevents deletion — killing the PTY releases it before git tries to remove.
+  await proxyKillSessionsByCwd(worktreePath);
+  // Brief pause so the OS has time to release handles after PTY exit.
+  await new Promise<void>((r) => setTimeout(r, 300));
+
   await exec('git', ['worktree', 'remove', '--force', worktreePath], repoRoot);
   await exec('git', ['branch', '-D', branchName], repoRoot);
   // Best-effort prune of stale entries
   await exec('git', ['worktree', 'prune'], repoRoot);
+
+  // Forcibly remove the directory with Node.js as a fallback for cases where
+  // git couldn't delete it (e.g. a process had the directory as its cwd).
+  try {
+    await fs.rm(worktreePath, { recursive: true, force: true });
+  } catch {
+    /* already gone, or still locked — tolerate */
+  }
 }
 
 export async function writeMergeInstructions(

@@ -62,13 +62,21 @@ export function Sidebar({ activeFolder }: Props) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const activeTabRef = useRef<HTMLDivElement>(null);
 
+  // Per-project scoping: terminals are only listed when their projectPath
+  // matches the current activeFolder. Legacy terminals saved without a
+  // projectPath still show (treated as belonging to whatever's active).
+  const projectTerminals = useMemo(
+    () =>
+      terminals.filter((t) => !t.projectPath || t.projectPath === activeFolder),
+    [terminals, activeFolder],
+  );
   const regularTerminals = useMemo(
-    () => terminals.filter((t) => t.kind !== 'merge'),
-    [terminals],
+    () => projectTerminals.filter((t) => t.kind !== 'merge'),
+    [projectTerminals],
   );
   const mergeTerminals = useMemo(
-    () => terminals.filter((t) => t.kind === 'merge'),
-    [terminals],
+    () => projectTerminals.filter((t) => t.kind === 'merge'),
+    [projectTerminals],
   );
 
   // Auto-switch to Merging panel when a new merge terminal is added.
@@ -89,6 +97,20 @@ export function Sidebar({ activeFolder }: Props) {
     }
   }, [mergeTerminals.length, activePanel]);
 
+  // When the active folder changes, the currently-active terminal may
+  // belong to a different project. Pick a terminal from the new project
+  // if available, otherwise clear the selection.
+  useEffect(() => {
+    if (!activeId) return;
+    const current = projectTerminals.find((t) => t.id === activeId);
+    if (current) return;
+    if (projectTerminals.length > 0) {
+      setActiveId(projectTerminals[projectTerminals.length - 1].id);
+    } else {
+      setActiveId(null);
+    }
+  }, [activeFolder, projectTerminals, activeId, setActiveId]);
+
   const panelTerminals = activePanel === 'merging' ? mergeTerminals : regularTerminals;
 
   const switchPanel = useCallback(
@@ -107,12 +129,13 @@ export function Sidebar({ activeFolder }: Props) {
   const newTerminal = useCallback(
     (kind: ShellKind) => {
       addTerminal({
-        label: `${KIND_LABEL_PREFIX[kind]} ${terminals.length + 1}`,
+        label: `${KIND_LABEL_PREFIX[kind]} ${projectTerminals.length + 1}`,
         cwd: activeFolder,
         initialCommand: KIND_INITIAL_COMMAND[kind],
+        projectPath: activeFolder,
       });
     },
-    [addTerminal, activeFolder, terminals.length],
+    [addTerminal, activeFolder, projectTerminals.length],
   );
 
   useEffect(() => {
@@ -383,7 +406,7 @@ export function Sidebar({ activeFolder }: Props) {
             )}
           </div>
         ) : (
-          terminals.map((t) => (
+          projectTerminals.map((t) => (
             <div
               key={t.id}
               className={`sidebar-pane ${t.id === activeId ? '' : 'hidden'}`}
@@ -393,6 +416,7 @@ export function Sidebar({ activeFolder }: Props) {
                 active={t.id === activeId}
                 initialCommand={t.initialCommand}
                 serverId={t.serverId}
+                projectPath={t.projectPath}
                 onServerId={(srv) => handleServerId(t.id, srv)}
               />
             </div>

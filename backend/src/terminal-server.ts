@@ -8,7 +8,7 @@
 import http from 'node:http';
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import { attachTerminal, killSession, listSessions } from './terminal.js';
+import { attachTerminal, killSession, killSessionsByCwd, listSessions } from './terminal.js';
 
 // Same node-pty Windows cleanup guard as the main server. Must be registered
 // before any PTY session can throw asynchronously.
@@ -56,6 +56,15 @@ app.delete('/sessions/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// Kill all sessions whose cwd is inside the given directory.
+// Used before worktree deletion so Windows releases file locks.
+app.delete('/sessions/by-cwd', (req, res) => {
+  const cwd = typeof req.query.cwd === 'string' ? req.query.cwd : '';
+  if (!cwd) return res.status(400).json({ error: 'cwd required' });
+  const count = killSessionsByCwd(cwd);
+  res.json({ ok: true, count });
+});
+
 const server = http.createServer(app);
 
 const wss = new WebSocketServer({ noServer: true });
@@ -66,7 +75,8 @@ wss.on('connection', (ws, req) => {
   const cols = Number(url.searchParams.get('cols')) || 80;
   const rows = Number(url.searchParams.get('rows')) || 24;
   const initialCommand = url.searchParams.get('initialCommand') || undefined;
-  attachTerminal(ws, { id, cwd, cols, rows, initialCommand });
+  const projectPath = url.searchParams.get('projectPath') || undefined;
+  attachTerminal(ws, { id, cwd, cols, rows, initialCommand, projectPath });
 });
 
 server.on('upgrade', (req, socket, head) => {

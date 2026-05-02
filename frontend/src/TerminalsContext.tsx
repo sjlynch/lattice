@@ -16,6 +16,9 @@ export type TerminalSpec = {
   initialCommand?: string;
   taskId?: string;       // associated task id, for lifecycle management
   kind?: 'merge';        // merge conflict resolver terminals go in the Merging tab
+  projectPath?: string;  // active folder this terminal belongs to — used to
+                         // scope the sidebar so terminals from other projects
+                         // are hidden when the user switches active folder
 };
 
 type Persisted = {

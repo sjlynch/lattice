@@ -136,6 +136,19 @@ export async function proxyListSessions(): Promise<unknown[]> {
   }
 }
 
+// Kill all terminal sessions whose cwd is inside `worktreePath`.
+// Call before deleting a worktree directory so Windows releases file locks.
+export async function proxyKillSessionsByCwd(worktreePath: string): Promise<void> {
+  try {
+    await fetch(
+      `${BASE}/sessions/by-cwd?cwd=${encodeURIComponent(worktreePath)}`,
+      { method: 'DELETE' },
+    );
+  } catch {
+    /* terminal server down or no matching sessions — safe to ignore */
+  }
+}
+
 export async function proxyKillSession(id: string): Promise<boolean> {
   try {
     const res = await fetch(

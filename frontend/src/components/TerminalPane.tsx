@@ -8,6 +8,7 @@ type Props = {
   active: boolean;
   initialCommand?: string;
   serverId?: string;
+  projectPath?: string;
   onServerId?: (id: string) => void;
 };
 
@@ -16,6 +17,7 @@ export function TerminalPane({
   active,
   initialCommand,
   serverId,
+  projectPath,
   onServerId,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -84,6 +86,7 @@ export function TerminalPane({
       });
       if (serverId) params.set('id', serverId);
       if (initialCommand) params.set('initialCommand', initialCommand);
+      if (projectPath) params.set('projectPath', projectPath);
 
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
       ws = new WebSocket(

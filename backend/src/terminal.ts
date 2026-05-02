@@ -19,6 +19,10 @@ type Session = {
   rows: number;
   cwd: string;
   shell: string;
+  // The Lattice project (active folder) this session belongs to. Used by
+  // the frontend to scope terminals — when the user switches between
+  // projects, only the active project's terminals are shown.
+  projectPath: string;
   subscribers: Set<WebSocket>;
   createdAt: number;
   // Set the moment killSession runs the first time. Guards against
@@ -65,6 +69,10 @@ type CreateOpts = {
   cols?: number;
   rows?: number;
   initialCommand?: string;
+  // Project (active folder) this terminal belongs to. Falls back to cwd
+  // if not supplied — sessions created before per-project scoping was
+  // wired up still have a projectPath that's at least their working dir.
+  projectPath?: string;
 };
 
 function createSession(opts: CreateOpts): Session | { error: string } {
@@ -97,6 +105,7 @@ function createSession(opts: CreateOpts): Session | { error: string } {
     rows,
     cwd,
     shell,
+    projectPath: opts.projectPath?.trim() || cwd,
     subscribers: new Set(),
     createdAt: Date.now(),
     killing: false,
@@ -144,6 +153,7 @@ export type AttachOpts = {
   cols?: number;
   rows?: number;
   initialCommand?: string;
+  projectPath?: string;
 };
 
 export function attachTerminal(ws: WebSocket, opts: AttachOpts) {
@@ -257,6 +267,21 @@ export function attachTerminal(ws: WebSocket, opts: AttachOpts) {
   });
 }
 
+// Kill all sessions whose cwd is `prefix` or starts with `prefix + sep`.
+// Returns the count of sessions killed.
+export function killSessionsByCwd(prefix: string): number {
+  const norm = prefix.replace(/[\\/]+$/, '').toLowerCase();
+  let count = 0;
+  for (const [, session] of sessions) {
+    const sessionNorm = session.cwd.replace(/[\\/]+$/, '').toLowerCase();
+    if (sessionNorm === norm || sessionNorm.startsWith(norm + '/') || sessionNorm.startsWith(norm + '\\')) {
+      killSession(session.id);
+      count += 1;
+    }
+  }
+  return count;
+}
+
 export function killSession(id: string): boolean {
   const session = sessions.get(id);
   if (!session) {
@@ -285,6 +310,7 @@ export function listSessions(): Array<{
   shell: string;
   cols: number;
   rows: number;
+  projectPath: string;
   createdAt: number;
   subscribers: number;
   bufferSize: number;
@@ -295,6 +321,7 @@ export function listSessions(): Array<{
     shell: s.shell,
     cols: s.cols,
     rows: s.rows,
+    projectPath: s.projectPath,
     createdAt: s.createdAt,
     subscribers: s.subscribers.size,
     bufferSize: s.bufferSize,
