@@ -48,12 +48,18 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { scan } from './scanner.js';
 import { listDir } from './fsbrowse.js';
-import { attachTerminal, killSession, listSessions } from './terminal.js';
+import {
+  ensureTerminalServer,
+  proxyTerminalWs,
+  proxyListSessions,
+  proxyKillSession,
+} from './terminalProxy.js';
 import {
   listTasks,
   getTask,
   createTask,
   updateTask,
+  updateTaskCrashSafe,
   deleteTask,
   reorderTasksInLane,
   subscribe,
@@ -72,15 +78,23 @@ import {
   writeMergeInstructions,
   buildConflictResolveCommand,
   branchCommitCount,
+  cleanupWorktreeForTask,
 } from './worktree.js';
 import {
   startMergeRun,
   cancelRun,
   getRun,
   getActiveRunForProject,
+  completeRunAfterStashResolution,
   subscribe as subscribeMergeRuns,
 } from './mergeRuns.js';
 import { tryAcquire, release } from './mergeLocks.js';
+
+// Tracks projects that currently have a per-card manual merge in flight.
+// Prevents two simultaneous per-card merge clicks from racing on
+// fastForwardMain (which mutates main's HEAD). The merge-run worker is
+// already sequential; this guard covers the manual path.
+const projectMergesActive = new Set<string>();
 import { getUserSettings, patchUserSettings, type UserSettings } from './userSettings.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -111,12 +125,12 @@ app.get('/api/scan', async (req, res) => {
   }
 });
 
-app.get('/api/terminals', (_req, res) => {
-  res.json(listSessions());
+app.get('/api/terminals', async (_req, res) => {
+  res.json(await proxyListSessions());
 });
 
-app.delete('/api/terminals/:id', (req, res) => {
-  const ok = killSession(req.params.id);
+app.delete('/api/terminals/:id', async (req, res) => {
+  const ok = await proxyKillSession(req.params.id);
   if (!ok) return res.status(404).json({ error: 'not found' });
   res.json({ ok: true });
 });
@@ -296,7 +310,7 @@ function finalizeError(
   >,
 ): string {
   if ('error' in fin) return fin.error;
-  return `Stash-pop conflict on ${fin.stashConflict.length} file(s): ${fin.stashConflict.join(', ')}`;
+  return `Stash-pop conflict on ${fin.stashConflict.length} file(s) — Claude resolver spawned`;
 }
 
 // Hook callback: claude finished a turn.
@@ -323,7 +337,7 @@ app.post('/api/tasks/:id/complete', async (req, res) => {
       );
       return res.json({ ok: true, awaitingResolution: true });
     }
-    const fin = await finalizeMergedTask(task);
+    const fin = await finalizeMergedTask(task, BACKEND_ORIGIN);
     if (!fin.ok) {
       const msg = finalizeError(fin);
       console.warn(`[complete] finalize after resolution failed: ${msg}`);
@@ -376,11 +390,24 @@ app.post('/api/tasks/:id/merge', async (req, res) => {
       .json({ error: 'task has no worktree branch on record' });
   }
 
+  if (getActiveRunForProject(task.projectPath)) {
+    return res.status(409).json({
+      error: 'A merge run is in progress for this project — wait for it to finish.',
+    });
+  }
+  if (projectMergesActive.has(task.projectPath)) {
+    return res.status(409).json({
+      error: 'Another merge is already in progress for this project — wait a moment and retry.',
+    });
+  }
+
   if (!tryAcquire(task.id)) {
     return res
       .status(409)
       .json({ error: 'merge already in progress for this task' });
   }
+
+  projectMergesActive.add(task.projectPath);
 
   try {
     // If already in a known conflict state, return the existing instructions
@@ -407,8 +434,17 @@ app.post('/api/tasks/:id/merge', async (req, res) => {
       task.worktreePath,
     );
     if (result.status === 'clean') {
-      const fin = await finalizeMergedTask(task);
+      const fin = await finalizeMergedTask(task, BACKEND_ORIGIN);
       if (!fin.ok) {
+        if ('stashConflict' in fin) {
+          return res.json({
+            merged: false,
+            stashConflict: true,
+            command: fin.resolveCommand,
+            cwd: fin.cwd,
+            conflictedFiles: fin.stashConflict,
+          });
+        }
         return res.status(500).json({ error: finalizeError(fin) });
       }
       return res.json({ merged: true });
@@ -438,6 +474,7 @@ app.post('/api/tasks/:id/merge', async (req, res) => {
     return res.status(500).json({ error: (err as Error).message });
   } finally {
     release(task.id);
+    projectMergesActive.delete(task.projectPath);
   }
 });
 
@@ -457,7 +494,7 @@ app.post('/api/tasks/:id/merged', async (req, res) => {
       .status(400)
       .json({ error: 'worktree is still mid-merge — commit first.' });
   }
-  const fin = await finalizeMergedTask(task);
+  const fin = await finalizeMergedTask(task, BACKEND_ORIGIN);
   if (!fin.ok) {
     return res.status(500).json({ error: finalizeError(fin) });
   }
@@ -472,6 +509,33 @@ app.post('/api/tasks/:id/merge-aborted', async (req, res) => {
   await updateTask(task.id, {
     conflict: undefined,
     conflictStartedAt: undefined,
+  });
+  res.json({ ok: true });
+});
+
+// Claude resolved a stash-pop conflict in the main repo. Finish cleanup
+// and auto-restart the merge run for any remaining ready_to_merge tasks.
+app.post('/api/tasks/:id/stash-resolved', async (req, res) => {
+  const task = await getTask(req.params.id);
+  if (!task) return res.status(404).json({ error: 'not found' });
+  if (task.worktreePath && task.branch) {
+    try {
+      await cleanupWorktreeForTask(task.projectPath, task.worktreePath, task.branch);
+    } catch {
+      /* ignore — worktree may have already been removed */
+    }
+  }
+  await updateTaskCrashSafe(task.id, {
+    status: 'qa',
+    mergedAt: Date.now(),
+    worktreePath: undefined,
+    branch: undefined,
+    conflict: undefined,
+    conflictStartedAt: undefined,
+  });
+  // Auto-restart merge run for any remaining ready_to_merge tasks.
+  startMergeRun(task.projectPath, BACKEND_ORIGIN).catch(() => {
+    /* throws if a run is already active or there are no remaining tasks — both fine */
   });
   res.json({ ok: true });
 });
@@ -511,6 +575,13 @@ app.post('/api/merge-runs/:id/cancel', (req, res) => {
   res.json({ ok: true });
 });
 
+// Claude resolved the post-run stash-pop conflict — complete the run.
+app.post('/api/merge-runs/:id/stash-resolved', (req, res) => {
+  const ok = completeRunAfterStashResolution(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'run not found or not awaiting stash resolution' });
+  res.json({ ok: true });
+});
+
 // ---------- Global JSON error middleware ----------
 //
 // Last route (Express convention: 4-arg handler is treated as error
@@ -546,15 +617,10 @@ app.use(
 const server = http.createServer(app);
 
 const termWss = new WebSocketServer({ noServer: true });
-termWss.on('connection', (ws, req) => {
-  const url = new URL(req.url || '', 'http://localhost');
-  const id = url.searchParams.get('id') || undefined;
-  const cwd = url.searchParams.get('cwd') || undefined;
-  const cols = Number(url.searchParams.get('cols')) || 80;
-  const rows = Number(url.searchParams.get('rows')) || 24;
-  const initialCommand =
-    url.searchParams.get('initialCommand') || undefined;
-  attachTerminal(ws, { id, cwd, cols, rows, initialCommand });
+termWss.on('connection', async (ws, req) => {
+  // Self-heal: restart the terminal server if it crashed while main was running.
+  await ensureTerminalServer().catch(() => {});
+  proxyTerminalWs(ws, req.url ?? undefined);
 });
 
 const tasksWss = new WebSocketServer({ noServer: true });
@@ -589,10 +655,14 @@ mergeRunsWss.on('connection', (ws, req) => {
     ws.close();
     return;
   }
-  // Send current active run on connect, if any.
+  // Always send current state on connect so the UI re-syncs after a WS
+  // reconnect. If no run is active, send 'idle' so the client can clear
+  // any stale run state it was showing before the connection dropped.
   const active = getActiveRunForProject(project);
-  if (active && ws.readyState === ws.OPEN) {
-    ws.send(JSON.stringify({ type: 'started', run: active }));
+  if (ws.readyState === ws.OPEN) {
+    ws.send(
+      JSON.stringify(active ? { type: 'started', run: active } : { type: 'idle' }),
+    );
   }
   const unsub = subscribeMergeRuns((ev) => {
     if (ws.readyState !== ws.OPEN) return;
@@ -624,7 +694,15 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`[lattice-backend] listening on http://localhost:${PORT}`);
-  console.log(`[lattice-backend] default root: ${DEFAULT_ROOT}`);
+async function start() {
+  await ensureTerminalServer();
+  server.listen(PORT, () => {
+    console.log(`[lattice-backend] listening on http://localhost:${PORT}`);
+    console.log(`[lattice-backend] default root: ${DEFAULT_ROOT}`);
+  });
+}
+
+start().catch((err) => {
+  console.error('[lattice-backend] startup error:', err);
+  process.exit(1);
 });

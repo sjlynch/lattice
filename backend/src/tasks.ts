@@ -180,6 +180,71 @@ function schedulePersist(projectPath: string) {
   );
 }
 
+// Write a task update to disk BEFORE touching the in-memory cache, then
+// sync the cache to match. If the server crashes between the disk write
+// and the cache update, the next boot reads the correct state from disk.
+// Use this for critical one-way transitions (e.g. ready_to_merge → qa)
+// where losing the update would leave the system in an inconsistent state.
+export async function updateTaskCrashSafe(
+  id: string,
+  updates: Partial<Omit<Task, 'id' | 'projectPath' | 'createdAt'>>,
+): Promise<Task | null> {
+  await loadAllKnown();
+  for (const [project, tasks] of projectCache.entries()) {
+    const idx = tasks.findIndex((t) => t.id === id);
+    if (idx === -1) continue;
+    const prev = tasks[idx];
+    const updated: Task = {
+      ...prev,
+      ...updates,
+      id: prev.id,
+      projectPath: prev.projectPath,
+      createdAt: prev.createdAt,
+    };
+    // Step 1: write to disk. A crash here leaves disk as it was — safe.
+    const file = projectTasksFile(project);
+    const updatedList = tasks.map((t, i) => (i === idx ? updated : t));
+    try {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, JSON.stringify(updatedList, null, 2), 'utf8');
+    } catch (e) {
+      console.error('[tasks] updateTaskCrashSafe disk write failed:', e);
+      return null;
+    }
+    // Cancel any pending debounce timer — disk is already up to date.
+    const timer = persistTimers.get(project);
+    if (timer) {
+      clearTimeout(timer);
+      persistTimers.delete(project);
+    }
+    // Step 2: sync in-memory cache. A crash here is harmless — disk wins on restart.
+    tasks[idx] = updated;
+    notify(project);
+    return updated;
+  }
+  return null;
+}
+
+// Bypass the debounce and write the task cache to disk right now.
+// Call this after critical state transitions (merge finalization) so the
+// update survives a backend crash or hot-restart that would otherwise drop
+// the in-memory change before the 100 ms timer fires.
+export async function flushPersist(projectPath: string): Promise<void> {
+  const timer = persistTimers.get(projectPath);
+  if (timer) {
+    clearTimeout(timer);
+    persistTimers.delete(projectPath);
+  }
+  const tasks = projectCache.get(projectPath) ?? [];
+  const file = projectTasksFile(projectPath);
+  try {
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, JSON.stringify(tasks, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[tasks] flushPersist failed for', projectPath, e);
+  }
+}
+
 function notify(projectPath: string) {
   const tasks = projectCache.get(projectPath) ?? [];
   const snapshot = [...tasks];

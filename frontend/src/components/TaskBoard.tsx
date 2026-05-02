@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
   Kanban,
   Plus,
@@ -78,7 +79,22 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     () => new Set(LANES.map((l) => l.id)),
   );
 
-  const { addTerminal } = useTerminals();
+  const { addTerminal, closeTerminalsForTask } = useTerminals();
+
+  // Auto-close terminals when their task reaches a terminal state.
+  // Runs on every task update so it also catches stale localStorage
+  // terminals that survive a server restart.
+  useEffect(() => {
+    for (const task of tasks) {
+      if (
+        task.status === 'qa' ||
+        task.status === 'done' ||
+        task.status === 'deleted'
+      ) {
+        closeTerminalsForTask(task.id);
+      }
+    }
+  }, [tasks, closeTerminalsForTask]);
 
   // Initial load + WS subscription per active folder.
   useEffect(() => {
@@ -127,7 +143,11 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
       });
     const unsub = subscribeMergeRuns(activeFolder, (ev) => {
       if (cancelled) return;
-      if (ev.type === 'started' || ev.type === 'progress') {
+      if (ev.type === 'idle') {
+        // Server confirmed no active run — clear any stale state left over
+        // from a run that completed while the WS was disconnected.
+        setMergeRun(null);
+      } else if (ev.type === 'started' || ev.type === 'progress') {
         setMergeRun(ev.run);
       } else if (ev.type === 'completed' || ev.type === 'cancelled') {
         setMergeRun(null);
@@ -144,6 +164,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
           label: `merge:${ev.taskId.slice(-6)}`,
           cwd: ev.cwd,
           initialCommand: ev.command,
+          taskId: ev.taskId,
+          kind: 'merge',
         });
       }
     });
@@ -251,6 +273,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         label: shortLabel(task.title),
         cwd: res.worktreePath,
         initialCommand: res.command,
+        taskId: task.id,
       });
     } catch (err) {
       showError(`Run failed: ${(err as Error).message}`);
@@ -275,6 +298,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         label: shortLabel(task.title),
         cwd: res.worktreePath,
         initialCommand: res.command,
+        taskId: task.id,
       });
     } catch (err) {
       showError(`Resume failed: ${(err as Error).message}`);
@@ -295,11 +319,14 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     try {
       const res = await apiMergeTask(task.id);
       if (res.merged) return true;
-      // Conflict: spawn the resolver Claude in the main repo.
+      // Either a worktree merge conflict or a stash-pop conflict in main —
+      // both are handled by spawning a resolver Claude as a merge terminal.
       addTerminal({
         label: `merge:${shortLabel(task.title)}`,
         cwd: res.cwd,
         initialCommand: res.command,
+        taskId: task.id,
+        kind: 'merge',
       });
       return false;
     } catch (err) {
@@ -450,15 +477,6 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
             <option value="interleave">Interleave</option>
           </select>
         </div>
-        {(mergeRun || recentRunSummary) && (
-          <MergeRunStrip
-            active={mergeRun}
-            summary={recentRunSummary}
-            tasks={tasks}
-            onCancel={cancelActiveRun}
-            onDismiss={() => setRecentRunSummary(null)}
-          />
-        )}
         <div className="taskboard-body">
           <div className="taskboard-scroll">
             {LANES.filter((l) => visibleLanes.has(l.id)).map((lane) => (
@@ -488,6 +506,17 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                     : undefined
                 }
                 onView={setViewing}
+                strip={
+                  lane.id === 'ready_to_merge' && (mergeRun || recentRunSummary) ? (
+                    <MergeRunStrip
+                      active={mergeRun}
+                      summary={recentRunSummary}
+                      tasks={tasks}
+                      onCancel={cancelActiveRun}
+                      onDismiss={() => setRecentRunSummary(null)}
+                    />
+                  ) : undefined
+                }
               />
             ))}
           </div>
@@ -554,6 +583,7 @@ function Lane({
   onMerge,
   onRunAll,
   onView,
+  strip,
 }: {
   lane: (typeof LANES)[number];
   tasks: Task[];
@@ -569,6 +599,7 @@ function Lane({
   onMerge: (task: Task) => Promise<boolean>;
   onRunAll?: () => void;
   onView: (task: Task) => void;
+  strip?: ReactNode;
 }) {
   const [isOver, setIsOver] = useState(false);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -704,6 +735,7 @@ function Lane({
           </button>
         </div>
       </div>
+      {strip}
       <div className="taskboard-lane-track">
         {tasks.length === 0 ? (
           <div
@@ -1264,21 +1296,16 @@ function MergeRunStrip({
     const currentTask = active.current
       ? tasks.find((t) => t.id === active.current)
       : null;
+    // Show 1-indexed position: if a task is actively running it counts as
+    // the "current" task even though processed hasn't incremented yet.
+    const currentPos = active.processed + (active.current ? 1 : 0);
     const pct =
-      active.total > 0 ? Math.round((active.processed / active.total) * 100) : 0;
+      active.total > 0 ? Math.round((currentPos / active.total) * 100) : 0;
     return (
       <div className="merge-run-strip running" role="status">
         <span className="merge-run-strip-spinner" />
         <span className="merge-run-strip-text">
-          Merging {active.processed}/{active.total}
-          {currentTask && (
-            <>
-              {' '}
-              · current: <span className="merge-run-strip-current">
-                {shortLabel(currentTask.title)}
-              </span>
-            </>
-          )}
+          Task {currentPos} of {active.total}
           {(active.merged.length > 0 ||
             active.conflicted.length > 0 ||
             active.errored.length > 0) && (
@@ -1303,6 +1330,11 @@ function MergeRunStrip({
                 </span>
               )}
             </>
+          )}
+          {currentTask && (
+            <div className="merge-run-strip-current">
+              {currentTask.title}
+            </div>
           )}
         </span>
         <span className="merge-run-strip-pct">{pct}%</span>

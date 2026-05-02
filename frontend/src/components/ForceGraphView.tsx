@@ -190,17 +190,17 @@ function buildLabelTexture(text: string, color: string): THREE.CanvasTexture {
   const key = `${text}|${color}`;
   const cached = labelTextureCache.get(key);
   if (cached) return cached;
-  const W = 256;
-  const H = 80;
+  const W = 320;
+  const H = 100;
   const canvas = document.createElement('canvas');
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext('2d')!;
-  ctx.font = 'bold 44px -apple-system, "Segoe UI", Inter, Roboto, sans-serif';
+  ctx.font = 'bold 56px -apple-system, "Segoe UI", Inter, Roboto, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
-  ctx.lineWidth = 8;
+  ctx.lineWidth = 10;
   ctx.strokeStyle = 'rgba(0,0,0,0.85)';
   ctx.strokeText(text, W / 2, H / 2);
   ctx.fillStyle = color;
@@ -214,6 +214,12 @@ function buildLabelTexture(text: string, color: string): THREE.CanvasTexture {
   return tex;
 }
 
+// Canvas aspect ratio for label textures (W:H = 320:100 = 3.2).
+const LABEL_ASPECT = 320 / 100;
+// Base world-space height at the reference camera distance.
+const LABEL_BASE_H = 8;
+const LABEL_REF_DIST = 200;
+
 function makeLabelSprite(text: string, color: string): THREE.Sprite {
   const tex = buildLabelTexture(text, color);
   const mat = new THREE.SpriteMaterial({
@@ -223,11 +229,20 @@ function makeLabelSprite(text: string, color: string): THREE.Sprite {
     depthTest: false,
   });
   const sprite = new THREE.Sprite(mat);
-  // Canvas aspect 256:80 = 3.2; pick a world-space size that reads from
-  // typical orbit distances without being so large it overlaps neighbors.
-  sprite.scale.set(13, 4.0625, 1);
+  sprite.scale.set(LABEL_BASE_H * LABEL_ASPECT, LABEL_BASE_H, 1);
   // Render label on top so it's never occluded by a sibling sprite.
   sprite.renderOrder = 999;
+
+  // Scale the label proportionally to camera distance so it stays readable
+  // at any zoom level — closer camera → smaller sprite, farther → larger.
+  const _pos = new THREE.Vector3();
+  sprite.onBeforeRender = (_r, _s, camera) => {
+    sprite.getWorldPosition(_pos);
+    const d = camera.position.distanceTo(_pos);
+    const s = Math.max(3, Math.min(50, (d / LABEL_REF_DIST) * LABEL_BASE_H));
+    sprite.scale.set(s * LABEL_ASPECT, s, 1);
+  };
+
   return sprite;
 }
 
@@ -257,7 +272,7 @@ function spriteForLoc(node: GraphNode): THREE.Object3D {
   // Connector starts just above the node sprite and runs up to the label.
   const lineGeom = new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(0, 3, 0),
-    new THREE.Vector3(0, 14, 0),
+    new THREE.Vector3(0, 27, 0),
   ]);
   const lineMat = new THREE.LineBasicMaterial({
     color: new THREE.Color(color),
@@ -268,7 +283,7 @@ function spriteForLoc(node: GraphNode): THREE.Object3D {
   group.add(line);
 
   const label = makeLabelSprite(String(node.loc), color);
-  label.position.set(0, 17, 0);
+  label.position.set(0, 30, 0);
   group.add(label);
 
   return group;

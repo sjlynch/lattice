@@ -148,13 +148,22 @@ export type AttachOpts = {
 
 export function attachTerminal(ws: WebSocket, opts: AttachOpts) {
   let session: Session | null = null;
+  // Track whether the client supplied a serverId but we couldn't find the
+  // session (backend restarted and sessions are gone). In that case, create
+  // a clean shell WITHOUT running initialCommand — the user doesn't want
+  // a stale agent command re-executed just because the backend bounced.
+  let staleReconnect = false;
   if (opts.id) {
     session = sessions.get(opts.id) ?? null;
+    if (!session) staleReconnect = true;
   }
 
   let replayed = false;
   if (!session) {
-    const result = createSession(opts);
+    const result = createSession({
+      ...opts,
+      initialCommand: staleReconnect ? undefined : opts.initialCommand,
+    });
     if ('error' in result) {
       try {
         ws.send(JSON.stringify({ type: 'error', message: result.error }));
