@@ -15,7 +15,12 @@ import {
   mergeWorktreeInRepo,
   writeMergeInstructions,
   buildConflictResolveCommand,
+  buildStashResolveCommand,
   finalizeMergedTask,
+  stashForRun,
+  popStashByMessage,
+  writeRunStashResolveInstructions,
+  RUN_STASH_LABEL,
 } from './worktree.js';
 import { getTask, listTasks, updateTask } from './tasks.js';
 import { tryAcquire, release } from './mergeLocks.js';
@@ -134,6 +139,20 @@ export async function startMergeRun(
   // Run the worker async. Fire-and-forget; consumers track via WS / GET.
   (async () => {
     console.log(`[merge-run] ${run.id} started — ${targets.length} task(s) to merge`);
+
+    // Pre-flight: stash the working tree once so every per-task
+    // fastForwardMain call sees a clean tree and never needs to stash.
+    // This eliminates per-task stash-pop conflicts. A fixed label means
+    // a stash left by a cancelled run is found and popped by the next run.
+    let createdStash = false;
+    try {
+      createdStash = await stashForRun(projectPath);
+      if (createdStash) {
+        console.log(`[merge-run] stashed working-tree changes (${RUN_STASH_LABEL})`);
+      }
+    } catch (err) {
+      console.warn('[merge-run] pre-flight stash failed (continuing):', err);
+    }
     for (const seed of targets) {
       if (run.cancelRequested) break;
 
@@ -257,17 +276,46 @@ export async function startMergeRun(
       console.log(`[merge-run] progress: ${run.processed}/${run.total} (merged=${run.merged.length} conflicts=${run.conflicted.length} errors=${run.errored.length})`);
     }
 
-    run.status = run.cancelRequested ? 'cancelled' : 'completed';
-    run.finishedAt = Date.now();
-    run.current = undefined;
-    console.log(`[merge-run] ${run.id} ${run.status} — merged=${run.merged.length} conflicts=${run.conflicted.length} errors=${run.errored.length}`);
-    if (run.errored.length > 0) {
-      for (const e of run.errored) console.error(`[merge-run] error on ${e.taskId}: ${e.error}`);
+    // Post-run stash pop — only when the loop ran to completion (not when
+    // cancelled mid-way by a worktree conflict). Cancelled runs leave the
+    // stash in place; the auto-restarted run will pop it once it finishes.
+    if (createdStash && !run.cancelRequested) {
+      console.log(`[merge-run] popping run stash (${RUN_STASH_LABEL})...`);
+      try {
+        const pop = await popStashByMessage(projectPath, RUN_STASH_LABEL);
+        console.log(`[merge-run] stash pop → ${pop.kind}`);
+        if (pop.kind === 'conflict') {
+          // Working tree has conflict markers. Spawn Claude to resolve,
+          // then /api/merge-runs/:id/stash-resolved will complete the run.
+          const { relativePath } = await writeRunStashResolveInstructions(
+            run.id,
+            pop.conflictedFiles,
+            RUN_STASH_LABEL,
+            backendOrigin,
+            projectPath,
+          );
+          console.log(`[merge-run] stash conflict on: ${pop.conflictedFiles.join(', ')}`);
+          notify({
+            type: 'conflict',
+            runId: run.id,
+            projectPath,
+            taskId: run.id, // synthetic id — no single task is responsible
+            command: buildStashResolveCommand(relativePath),
+            cwd: projectPath,
+            conflictedFiles: pop.conflictedFiles,
+          });
+          // Stay in 'running' state — completion happens in stash-resolved endpoint.
+          return;
+        }
+        if (pop.kind === 'error') {
+          console.warn(`[merge-run] stash pop error: ${pop.message}`);
+        }
+      } catch (err) {
+        console.warn('[merge-run] post-run stash pop failed (continuing):', err);
+      }
     }
-    notify({
-      type: run.cancelRequested ? 'cancelled' : 'completed',
-      run: snapshot(run),
-    });
+
+    finishRun(run);
   })().catch((err) => {
     console.error('[mergeRuns] run worker crashed', err);
     run.status = 'errored';
@@ -276,4 +324,28 @@ export async function startMergeRun(
   });
 
   return snapshot(run);
+}
+
+function finishRun(run: MergeRun): void {
+  run.status = run.cancelRequested ? 'cancelled' : 'completed';
+  run.finishedAt = Date.now();
+  run.current = undefined;
+  console.log(`[merge-run] ${run.id} ${run.status} — merged=${run.merged.length} conflicts=${run.conflicted.length} errors=${run.errored.length}`);
+  if (run.errored.length > 0) {
+    for (const e of run.errored) console.error(`[merge-run] error on ${e.taskId}: ${e.error}`);
+  }
+  notify({
+    type: run.cancelRequested ? 'cancelled' : 'completed',
+    run: snapshot(run),
+  });
+}
+
+// Called by /api/merge-runs/:id/stash-resolved after Claude resolves the
+// post-run stash-pop conflict. Marks the run completed and notifies clients.
+export function completeRunAfterStashResolution(id: string): boolean {
+  const run = runs.get(id);
+  if (!run || run.status !== 'running') return false;
+  console.log(`[merge-run] ${id} completing after stash resolution`);
+  finishRun(run);
+  return true;
 }

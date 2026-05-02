@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { updateTask, flushPersist, type Task } from './tasks.js';
+import { updateTaskCrashSafe, type Task } from './tasks.js';
 
 function slugify(s: string): string {
   return (
@@ -350,10 +350,77 @@ async function listConflictedFiles(repoRoot: string): Promise<string[]> {
     .filter(Boolean);
 }
 
+// Stash label used for the run-level pre-flight stash. Fixed so that a
+// stash created by one run can be found and popped by a subsequent run
+// (e.g. after an auto-restart following a worktree conflict).
+export const RUN_STASH_LABEL = 'lattice-run-stash';
+
+// Stash the working tree once before a merge run so per-task
+// fastForwardMain calls never need to stash (they see a clean tree).
+// Returns true if a stash was created.
+export async function stashForRun(repoRoot: string): Promise<boolean> {
+  const status = await exec('git', ['status', '--porcelain'], repoRoot);
+  if (status.code !== 0 || !status.stdout.trim()) return false;
+  const stash = await exec(
+    'git',
+    ['stash', 'push', '--include-untracked', '-m', RUN_STASH_LABEL],
+    repoRoot,
+  );
+  return stash.code === 0;
+}
+
+// Write conflict-resolution instructions for a run-level stash pop failure.
+export async function writeRunStashResolveInstructions(
+  runId: string,
+  conflictedFiles: string[],
+  stashLabel: string,
+  backendOrigin: string,
+  repoRoot: string,
+): Promise<{ instructionsFile: string; relativePath: string }> {
+  const fileName = 'STASH_CONFLICT_run.md';
+  const file = path.join(repoRoot, fileName);
+  const filesList =
+    conflictedFiles.length > 0
+      ? conflictedFiles.map((f) => `- \`${f}\``).join('\n')
+      : '_(run `git diff --name-only --diff-filter=U` to list)_';
+  const md = `# Resolve working-tree stash conflict
+
+All queued tasks were merged. When Lattice tried to restore your uncommitted
+working-tree changes via \`git stash pop\`, the pop failed with conflicts.
+Resolve them so your working tree is clean again.
+
+## Conflicted files
+
+${filesList}
+
+## Steps (complete autonomously — no need to confirm with the user)
+
+1. Resolve all \`<<<<<<<\` / \`=======\` / \`>>>>>>>\` markers in each file.
+   Keep both sides where possible.
+2. Stage each resolved file: \`git add <file> ...\`
+3. Drop the stash entry (it stays in the list after a failed pop):
+   \`\`\`
+   git stash list          # find the entry labelled "${stashLabel}"
+   git stash drop stash@{N}
+   \`\`\`
+4. Notify Lattice that the conflict is resolved:
+   \`\`\`
+   curl -s -m 5 -X POST ${backendOrigin}/api/merge-runs/${runId}/stash-resolved
+   \`\`\`
+5. Delete this file: \`del ${fileName}\` (Windows) or \`rm ${fileName}\`
+
+## If a file cannot be resolved cleanly
+
+Use \`git checkout --theirs -- <file>\` (or \`--ours\`), stage it, and continue.
+`;
+  await fs.writeFile(file, md, 'utf8');
+  return { instructionsFile: file, relativePath: fileName };
+}
+
 // Pop a stash by its message label. The stash list is searched for an entry
 // whose subject matches and that entry is popped explicitly (not blindly
 // `stash@{0}`) so a concurrent stash by the user doesn't get clobbered.
-async function popStashByMessage(
+export async function popStashByMessage(
   repoRoot: string,
   message: string,
 ): Promise<
@@ -785,8 +852,11 @@ export async function finalizeMergedTask(task: Task, backendOrigin: string): Pro
     } catch (err) {
       console.error('[finalize] cleanup failed (continuing anyway):', err);
     }
-    console.log(`[finalize] updating task ${task.id} to qa...`);
-    await updateTask(task.id, {
+    console.log(`[finalize] writing qa state for task ${task.id} to disk...`);
+    // Disk-first: write the new state to disk before updating the in-memory
+    // cache. If the server crashes after this write, the next boot reads
+    // the correct qa status from disk rather than reverting to ready_to_merge.
+    await updateTaskCrashSafe(task.id, {
       status: 'qa',
       mergedAt: Date.now(),
       worktreePath: undefined,
@@ -794,11 +864,6 @@ export async function finalizeMergedTask(task: Task, backendOrigin: string): Pro
       conflict: undefined,
       conflictStartedAt: undefined,
     });
-    console.log(`[finalize] flushing to disk...`);
-    // Write to disk immediately — don't wait for the 100 ms debounce.
-    // A backend crash or hot-restart before it fires would lose the qa
-    // status and leave the task stuck at ready_to_merge with a gone worktree.
-    await flushPersist(task.projectPath);
     console.log(`[finalize] task ${task.id} → qa ✓`);
     return { ok: true };
   } finally {

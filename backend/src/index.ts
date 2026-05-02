@@ -59,10 +59,10 @@ import {
   getTask,
   createTask,
   updateTask,
+  updateTaskCrashSafe,
   deleteTask,
   reorderTasksInLane,
   subscribe,
-  flushPersist,
   type TaskStatus,
 } from './tasks.js';
 import {
@@ -85,6 +85,7 @@ import {
   cancelRun,
   getRun,
   getActiveRunForProject,
+  completeRunAfterStashResolution,
   subscribe as subscribeMergeRuns,
 } from './mergeRuns.js';
 import { tryAcquire, release } from './mergeLocks.js';
@@ -524,7 +525,7 @@ app.post('/api/tasks/:id/stash-resolved', async (req, res) => {
       /* ignore — worktree may have already been removed */
     }
   }
-  await updateTask(task.id, {
+  await updateTaskCrashSafe(task.id, {
     status: 'qa',
     mergedAt: Date.now(),
     worktreePath: undefined,
@@ -532,7 +533,6 @@ app.post('/api/tasks/:id/stash-resolved', async (req, res) => {
     conflict: undefined,
     conflictStartedAt: undefined,
   });
-  await flushPersist(task.projectPath);
   // Auto-restart merge run for any remaining ready_to_merge tasks.
   startMergeRun(task.projectPath, BACKEND_ORIGIN).catch(() => {
     /* throws if a run is already active or there are no remaining tasks — both fine */
@@ -572,6 +572,13 @@ app.get('/api/merge-runs/:id', (req, res) => {
 app.post('/api/merge-runs/:id/cancel', (req, res) => {
   const ok = cancelRun(req.params.id);
   if (!ok) return res.status(404).json({ error: 'no active run with that id' });
+  res.json({ ok: true });
+});
+
+// Claude resolved the post-run stash-pop conflict — complete the run.
+app.post('/api/merge-runs/:id/stash-resolved', (req, res) => {
+  const ok = completeRunAfterStashResolution(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'run not found or not awaiting stash resolution' });
   res.json({ ok: true });
 });
 
