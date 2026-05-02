@@ -231,6 +231,14 @@ app.post('/api/tasks/reorder', async (req, res) => {
 });
 
 app.delete('/api/tasks/:id', async (req, res) => {
+  const task = await getTask(req.params.id);
+  if (task && task.worktreePath && task.branch) {
+    try {
+      await cleanupWorktreeForTask(task.projectPath, task.worktreePath, task.branch);
+    } catch {
+      /* ignore — worktree may have already been removed manually */
+    }
+  }
   const ok = await deleteTask(req.params.id);
   if (!ok) return res.status(404).json({ error: 'not found' });
   res.json({ ok: true });
