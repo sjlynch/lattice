@@ -4,7 +4,7 @@ import { PROJECT_DIR_NAME } from './tasks.js';
 
 export type UserSettings = {
   sidebarWidth?: number;
-  harness?: 'claude' | 'pi';
+  harness?: 'claude' | 'pi' | 'interleave';
 };
 
 function settingsFile(projectPath: string): string {

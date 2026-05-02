@@ -52,7 +52,7 @@ export async function listDir(folderPath?: string): Promise<DirListing> {
 
 export type UserSettings = {
   sidebarWidth?: number;
-  harness?: 'claude' | 'pi';
+  harness?: 'claude' | 'pi' | 'interleave';
 };
 
 export async function fetchUserSettings(projectPath: string): Promise<UserSettings> {

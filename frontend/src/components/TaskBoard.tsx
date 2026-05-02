@@ -70,7 +70,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   const [recentRunSummary, setRecentRunSummary] = useState<MergeRun | null>(
     null,
   );
-  const [harness, setHarness] = useState<'claude' | 'pi'>('claude');
+  const [harness, setHarness] = useState<'claude' | 'pi' | 'interleave'>('claude');
+  const interleaveNextRef = useRef<'claude' | 'pi'>('claude');
 
   // Filter state — all lanes visible by default.
   const [visibleLanes, setVisibleLanes] = useState<Set<TaskStatus>>(
@@ -236,9 +237,16 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     }
   }
 
+  function resolveHarness(): 'claude' | 'pi' {
+    if (harness !== 'interleave') return harness;
+    const pick = interleaveNextRef.current;
+    interleaveNextRef.current = pick === 'claude' ? 'pi' : 'claude';
+    return pick;
+  }
+
   async function runTask(task: Task) {
     try {
-      const res = await apiRunTask(task.id, harness);
+      const res = await apiRunTask(task.id, resolveHarness());
       addTerminal({
         label: shortLabel(task.title),
         cwd: res.worktreePath,
@@ -262,7 +270,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
 
   async function resumeTaskAction(task: Task) {
     try {
-      const res = await apiResumeTask(task.id, harness);
+      const res = await apiResumeTask(task.id, resolveHarness());
       addTerminal({
         label: shortLabel(task.title),
         cwd: res.worktreePath,
@@ -362,10 +370,10 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     });
   }
 
-  function toggleHarness() {
-    const next: 'claude' | 'pi' = harness === 'claude' ? 'pi' : 'claude';
-    setHarness(next);
-    if (activeFolder) patchUserSettings(activeFolder, { harness: next }).catch(() => {});
+  function handleHarnessChange(val: 'claude' | 'pi' | 'interleave') {
+    setHarness(val);
+    interleaveNextRef.current = 'claude';
+    if (activeFolder) patchUserSettings(activeFolder, { harness: val }).catch(() => {});
   }
 
   return (
@@ -431,14 +439,16 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
               </button>
             );
           })}
-          <button
-            className="taskboard-filter taskboard-harness-toggle"
-            onClick={toggleHarness}
-            title={harness === 'claude' ? 'Switch to Pi agent coder' : 'Switch to Claude Code'}
-            style={{ marginLeft: 'auto' }}
+          <select
+            className="taskboard-harness-select"
+            value={harness}
+            onChange={(e) => handleHarnessChange(e.target.value as 'claude' | 'pi' | 'interleave')}
+            title="Agent harness for running tasks"
           >
-            {harness === 'claude' ? 'Claude' : 'Pi'}
-          </button>
+            <option value="claude">Claude</option>
+            <option value="pi">Pi</option>
+            <option value="interleave">Interleave</option>
+          </select>
         </div>
         {(mergeRun || recentRunSummary) && (
           <MergeRunStrip
