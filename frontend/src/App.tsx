@@ -9,6 +9,15 @@ import { fetchDefaultRoot, scanFolder, fetchUserSettings, patchUserSettings, typ
 const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 1200;
 const SIDEBAR_DEFAULT_WIDTH = 380;
+const ACTIVE_FOLDER_SESSION_KEY = 'lattice.activeFolder';
+
+function readStoredActiveFolder(): string {
+  try {
+    return sessionStorage.getItem(ACTIVE_FOLDER_SESSION_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
 
 function clampSidebarWidth(w: number) {
   const cap = Math.min(SIDEBAR_MAX_WIDTH, Math.floor(window.innerWidth * 0.8));
@@ -37,7 +46,23 @@ function App() {
   useEffect(() => { activeFolderRef.current = activeFolder; }, [activeFolder]);
   useEffect(() => { sidebarWidthRef.current = sidebarWidth; }, [sidebarWidth]);
 
+  // Persist the active folder per-tab so refreshing keeps the chosen project,
+  // letting multiple Lattice tabs each track their own working directory.
   useEffect(() => {
+    try {
+      if (activeFolder) sessionStorage.setItem(ACTIVE_FOLDER_SESSION_KEY, activeFolder);
+      else sessionStorage.removeItem(ACTIVE_FOLDER_SESSION_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, [activeFolder]);
+
+  useEffect(() => {
+    const stored = readStoredActiveFolder();
+    if (stored) {
+      setActiveFolder(stored);
+      return;
+    }
     fetchDefaultRoot()
       .then(setActiveFolder)
       .catch(() => setActiveFolder(''));
