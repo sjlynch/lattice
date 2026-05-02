@@ -260,6 +260,18 @@ export function subscribe(
   };
 }
 
+// Returns all ready_to_merge tasks across every known project that have a
+// branch on record. Used by startup recovery to detect tasks whose branches
+// were deleted (cleanup ran) but whose status was never written to disk.
+export async function listReadyToMergeTasks(): Promise<Task[]> {
+  await loadAllKnown();
+  const result: Task[] = [];
+  for (const tasks of projectCache.values()) {
+    result.push(...tasks.filter((t) => t.status === 'ready_to_merge' && !!t.branch));
+  }
+  return result;
+}
+
 export async function listTasks(projectPath: string): Promise<Task[]> {
   await ensureProjectLoaded(projectPath);
   return [...(projectCache.get(projectPath) ?? [])];

@@ -355,6 +355,15 @@ async function listConflictedFiles(repoRoot: string): Promise<string[]> {
 // (e.g. after an auto-restart following a worktree conflict).
 export const RUN_STASH_LABEL = 'lattice-run-stash';
 
+// Returns true if a local branch with this exact name exists.
+export async function checkBranchExists(
+  repoRoot: string,
+  branchName: string,
+): Promise<boolean> {
+  const r = await exec('git', ['branch', '--list', branchName], repoRoot);
+  return r.stdout.trim().length > 0;
+}
+
 // Stash the working tree once before a merge run so per-task
 // fastForwardMain calls never need to stash (they see a clean tree).
 // Returns true if a stash was created.
@@ -841,21 +850,11 @@ export async function finalizeMergedTask(task: Task, backendOrigin: string): Pro
         cwd: task.projectPath,
       };
     }
-    console.log(`[finalize] cleaning up worktree ${task.worktreePath}...`);
-    try {
-      await cleanupWorktreeForTask(
-        task.projectPath,
-        task.worktreePath,
-        task.branch,
-      );
-      console.log(`[finalize] worktree cleanup done`);
-    } catch (err) {
-      console.error('[finalize] cleanup failed (continuing anyway):', err);
-    }
+    // Write QA status to disk BEFORE cleanup. This is the critical ordering:
+    // if the server crashes after this write, the task is already QA on disk
+    // and will be recovered correctly on restart. A crash between FF and here
+    // still leaves the task at ready_to_merge (recoverable via startup check).
     console.log(`[finalize] writing qa state for task ${task.id} to disk...`);
-    // Disk-first: write the new state to disk before updating the in-memory
-    // cache. If the server crashes after this write, the next boot reads
-    // the correct qa status from disk rather than reverting to ready_to_merge.
     await updateTaskCrashSafe(task.id, {
       status: 'qa',
       mergedAt: Date.now(),
@@ -865,6 +864,19 @@ export async function finalizeMergedTask(task: Task, backendOrigin: string): Pro
       conflictStartedAt: undefined,
     });
     console.log(`[finalize] task ${task.id} → qa ✓`);
+    // Cleanup after status is safe. Failures here are non-fatal — the task
+    // is already QA, and orphaned worktrees are just disk clutter.
+    console.log(`[finalize] cleaning up worktree ${task.worktreePath}...`);
+    try {
+      await cleanupWorktreeForTask(
+        task.projectPath,
+        task.worktreePath,
+        task.branch,
+      );
+      console.log(`[finalize] worktree cleanup done`);
+    } catch (err) {
+      console.error('[finalize] cleanup failed (non-fatal, task already qa):', err);
+    }
     return { ok: true };
   } finally {
     release();
