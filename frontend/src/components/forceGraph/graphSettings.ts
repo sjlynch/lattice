@@ -16,7 +16,7 @@ export type GraphSettings = {
 export const DEFAULT_SETTINGS: GraphSettings = {
   fileNodeSize: 11,
   dirNodeSize: 14,
-  labelSize: 8,
+  labelSize: 3.0,
   dagLevelDistance: 50,
   chargeStrength: -30,
   linkDistance: 30,
