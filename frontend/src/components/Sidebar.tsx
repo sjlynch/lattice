@@ -111,6 +111,18 @@ export function Sidebar({ activeFolder }: Props) {
     }
   }, [activeFolder, projectTerminals, activeId, setActiveId]);
 
+  // If activeId points to a terminal that belongs to the panel we're
+  // not currently viewing (e.g. user clicked the focus-terminal button on
+  // a conflict task while on the regular Terminals panel), switch panels
+  // so its tab is visible.
+  useEffect(() => {
+    if (!activeId) return;
+    const t = projectTerminals.find((p) => p.id === activeId);
+    if (!t) return;
+    const target: Panel = t.kind === 'merge' ? 'merging' : 'terminals';
+    if (target !== activePanel) setActivePanel(target);
+  }, [activeId, projectTerminals, activePanel]);
+
   const panelTerminals = activePanel === 'merging' ? mergeTerminals : regularTerminals;
 
   const switchPanel = useCallback(
