@@ -285,9 +285,9 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
   useEffect(() => {
     if (!locMode) return;
     const tmp = new THREE.Vector3();
-    const MIN_DIST = 22; // world units; below this, labels push apart
-    const PUSH = 0.08;
-    const DAMP = 0.93; // 7% pull toward each label's home offset per frame
+    const MIN_DIST = 55; // world units; below this, labels push apart
+    const PUSH = 0.1;
+    const DAMP = 0.97; // 3% pull toward each label's home offset per frame
     let rafId = 0;
     const tick = () => {
       // Drop entries whose label was detached from the scene graph.

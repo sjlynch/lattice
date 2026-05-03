@@ -71,6 +71,10 @@ export type LocLabelEntry = {
 };
 export const locLabelRegistry = new Set<LocLabelEntry>();
 
+// Multiplier on top of the user's `labelSize` setting for LOC labels —
+// makes them roughly twice as tall as a regular sprite of the same baseH.
+const LOC_LABEL_HEIGHT_MULT = 2;
+
 function makeLabelSprite(
   text: string,
   color: string,
@@ -83,8 +87,9 @@ function makeLabelSprite(
     depthWrite: false,
     depthTest: false,
   });
+  const h = baseH * LOC_LABEL_HEIGHT_MULT;
   const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(baseH * LABEL_ASPECT, baseH, 1);
+  sprite.scale.set(h * LABEL_ASPECT, h, 1);
   // Render label on top so it's never occluded by a sibling sprite.
   sprite.renderOrder = 999;
 
@@ -94,7 +99,7 @@ function makeLabelSprite(
   sprite.onBeforeRender = (_r, _s, camera) => {
     sprite.getWorldPosition(_pos);
     const d = camera.position.distanceTo(_pos);
-    const s = Math.max(3, Math.min(50, (d / LABEL_REF_DIST) * baseH));
+    const s = Math.max(6, Math.min(100, (d / LABEL_REF_DIST) * h));
     sprite.scale.set(s * LABEL_ASPECT, s, 1);
   };
 
