@@ -61,7 +61,19 @@ function buildNameTexture(text: string, color: string): THREE.CanvasTexture {
 }
 
 const LABEL_REF_DIST = 200;
-const LABEL_Y = 90;
+// Pushed up well clear of the node — same offset as the LOC overlay — so
+// dense clusters of labels can fan out without crashing into their nodes.
+export const LABEL_Y = 100;
+
+// Local-space registry of active name-label sprites + their connector
+// lines. The relaxation loop in ForceGraphView walks this each frame to
+// spread overlapping labels apart and to keep the connector's upper
+// endpoint anchored to its label, mirroring the LOC overlay.
+export type LabelEntry = {
+  label: THREE.Sprite;
+  line: THREE.Line;
+};
+export const labelsRegistry = new Set<LabelEntry>();
 
 function makeNameSprite(text: string, color: string, baseH: number): THREE.Sprite {
   const tex = buildNameTexture(text, color);
@@ -113,11 +125,14 @@ export function spriteForLabels(
     transparent: true,
     opacity: 0.7,
   });
-  group.add(new THREE.Line(lineGeom, lineMat));
+  const line = new THREE.Line(lineGeom, lineMat);
+  group.add(line);
 
   const label = makeNameSprite(node.name, color, settings.labelSize);
   label.position.set(0, LABEL_Y, 0);
   group.add(label);
+
+  labelsRegistry.add({ label, line });
 
   return group;
 }
