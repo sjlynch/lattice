@@ -60,7 +60,7 @@ const LABEL_ASPECT = 320 / 100;
 const LABEL_REF_DIST = 200;
 // World-space Y offset of the label sprite above its file node. Pushed up
 // well clear of the node so dense clusters don't overlap their labels.
-export const LABEL_Y = 70;
+export const LABEL_Y = 100;
 
 // Local-space registry of active LOC label sprites. The relaxation loop
 // in ForceGraphView walks this each frame to apply pairwise repulsion and
