@@ -153,6 +153,10 @@ export function materialFor(style: ExtStyle): THREE.SpriteMaterial {
       map: buildShapeTexture(style),
       transparent: true,
       depthWrite: false,
+      // Disable depth testing so the sprite is never occluded by link
+      // lines, which share the transparent pass and can otherwise paint
+      // on top of the billboard depending on camera z-order.
+      depthTest: false,
     });
     materialCache.set(key, mat);
   }
@@ -165,5 +169,8 @@ export function spriteFor(node: GraphNode, settings: GraphSettings): THREE.Sprit
   const size =
     node.kind === 'dir' ? settings.dirNodeSize : settings.fileNodeSize;
   sprite.scale.set(size, size, 1);
+  // Draw after links (default renderOrder 0) so the billboard always
+  // paints over the connection lines.
+  sprite.renderOrder = 1;
   return sprite;
 }
