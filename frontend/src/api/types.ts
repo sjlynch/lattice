@@ -39,6 +39,11 @@ export type UserSettings = {
   harness?: 'claude' | 'pi' | 'interleave';
 };
 
+export type HarnessAvailability = {
+  claude: boolean;
+  pi: boolean;
+};
+
 // ---------- Tasks ----------
 
 export type TaskStatus =

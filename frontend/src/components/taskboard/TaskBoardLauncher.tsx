@@ -6,6 +6,7 @@ import {
   cancelMergeRun as apiCancelMergeRun,
   createTask as apiCreateTask,
   deleteTask as apiDeleteTask,
+  fetchHarnessAvailability,
   fetchTasks,
   fetchUserSettings,
   getActiveMergeRun,
@@ -18,6 +19,7 @@ import {
   subscribeMergeRuns,
   subscribeTasks,
   updateTask as apiUpdateTask,
+  type HarnessAvailability,
   type MergeRun,
   type Task,
   type TaskStatus,
@@ -49,6 +51,10 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   );
   const [harness, setHarness] = useState<'claude' | 'pi' | 'interleave'>('claude');
   const interleaveNextRef = useRef<'claude' | 'pi'>('claude');
+  const [harnessAvail, setHarnessAvail] = useState<HarnessAvailability>({
+    claude: true,
+    pi: false,
+  });
 
   // Filter state — all lanes visible by default.
   const [visibleLanes, setVisibleLanes] = useState<Set<TaskStatus>>(
@@ -93,13 +99,33 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     };
   }, [activeFolder]);
 
+  // Detect once which agent CLIs are installed. Drives whether the Pi /
+  // Interleave options appear in the harness selector.
+  useEffect(() => {
+    let cancelled = false;
+    fetchHarnessAvailability().then((avail) => {
+      if (!cancelled) setHarnessAvail(avail);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   // Load persisted harness preference when the active folder changes.
+  // If Pi isn't installed, coerce a stale `pi` / `interleave` preference
+  // back to `claude` so we never try to spawn an unavailable harness.
   useEffect(() => {
     if (!activeFolder) return;
     fetchUserSettings(activeFolder)
-      .then((s) => { if (s.harness) setHarness(s.harness); })
+      .then((s) => {
+        if (!s.harness) return;
+        if ((s.harness === 'pi' || s.harness === 'interleave') && !harnessAvail.pi) {
+          setHarness('claude');
+          patchUserSettings(activeFolder, { harness: 'claude' }).catch(() => {});
+        } else {
+          setHarness(s.harness);
+        }
+      })
       .catch(() => { /* keep default */ });
-  }, [activeFolder]);
+  }, [activeFolder, harnessAvail.pi]);
 
   // Hydrate the active merge run on mount and subscribe to live events.
   // Closing the panel/tab doesn't cancel the run — it keeps progressing on
@@ -450,16 +476,18 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
               </button>
             );
           })}
-          <select
-            className="taskboard-harness-select"
-            value={harness}
-            onChange={(e) => handleHarnessChange(e.target.value as 'claude' | 'pi' | 'interleave')}
-            title="Agent harness for running tasks"
-          >
-            <option value="claude">Claude</option>
-            <option value="pi">Pi</option>
-            <option value="interleave">Interleave</option>
-          </select>
+          {harnessAvail.pi && (
+            <select
+              className="taskboard-harness-select"
+              value={harness}
+              onChange={(e) => handleHarnessChange(e.target.value as 'claude' | 'pi' | 'interleave')}
+              title="Agent harness for running tasks"
+            >
+              <option value="claude">Claude</option>
+              <option value="pi">Pi</option>
+              <option value="interleave">Interleave</option>
+            </select>
+          )}
         </div>
         <div className="taskboard-body">
           <div className="taskboard-scroll">

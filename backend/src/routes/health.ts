@@ -4,12 +4,18 @@
 import { Router } from 'express';
 import { scan } from '../scanner.js';
 import { listDir } from '../fsbrowse.js';
+import { detectHarnesses, resetHarnessCache } from '../harnessDetect.js';
 
 export function buildHealthRouter(defaultRoot: string): Router {
   const r = Router();
 
   r.get('/api/health', (_req, res) => {
     res.json({ ok: true });
+  });
+
+  r.get('/api/harnesses', async (req, res) => {
+    if (req.query.refresh === '1') resetHarnessCache();
+    res.json(await detectHarnesses());
   });
 
   r.get('/api/default-root', (_req, res) => {

@@ -1,7 +1,17 @@
 // Per-project user settings (sidebar width, harness preference).
 
 import { asJson } from './http';
-import type { UserSettings } from './types';
+import type { HarnessAvailability, UserSettings } from './types';
+
+export async function fetchHarnessAvailability(): Promise<HarnessAvailability> {
+  try {
+    const r = await fetch('/api/harnesses');
+    if (!r.ok) return { claude: true, pi: false };
+    return r.json();
+  } catch {
+    return { claude: true, pi: false };
+  }
+}
 
 export async function fetchUserSettings(projectPath: string): Promise<UserSettings> {
   try {
