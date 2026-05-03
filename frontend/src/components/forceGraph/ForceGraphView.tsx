@@ -7,7 +7,7 @@ import { Modal } from '../Modal';
 import { spriteFor } from './sprites';
 import { withHalo } from './halo';
 import { locLabelRegistry, spriteForLoc } from './locOverlay';
-import { depthFor, spriteForLabels } from './labelsOverlay';
+import { depthFor, labelsRegistry, spriteForLabels } from './labelsOverlay';
 import { MENU_ITEMS, relPath, type MenuItemDef } from './menu';
 import { loadSettings, type GraphSettings } from './graphSettings';
 import { GraphSettingsPanel } from './GraphSettingsPanel';
@@ -183,6 +183,7 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     if (!graphRef.current) return;
     // Stale labels reference Sprites that get replaced on data swap.
     locLabelRegistry.clear();
+    labelsRegistry.clear();
     if (!data) {
       graphRef.current.graphData({ nodes: [], links: [] });
       return;
@@ -250,6 +251,7 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     // Old labels become orphaned when nodeThreeObject is re-evaluated;
     // spriteForLoc repopulates the registry on the way through.
     locLabelRegistry.clear();
+    labelsRegistry.clear();
     graphRef.current?.refresh?.();
   }, [locMode, selected]);
 
@@ -327,12 +329,14 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
 
   // Refresh sprites when labels mode toggles or the active depth changes.
   useEffect(() => {
+    labelsRegistry.clear();
     graphRef.current?.refresh?.();
   }, [labelMode, labelLevel]);
 
   // Re-render sprites when render-only settings (sizes) change.
   useEffect(() => {
     locLabelRegistry.clear();
+    labelsRegistry.clear();
     graphRef.current?.refresh?.();
   }, [settings.fileNodeSize, settings.dirNodeSize, settings.labelSize]);
 
@@ -457,6 +461,71 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
   }, [locMode]);
+
+  // ---------- Labels overlay repulsion loop ----------
+  // Same idea as the LOC loop above: pairwise repulsion in the X/Z plane
+  // so name labels in dense clusters fan out instead of stacking. Wider
+  // MIN_DIST than LOC because file-name text is typically much longer
+  // than a 3-digit LOC count.
+  useEffect(() => {
+    if (!labelMode) return;
+    const tmp = new THREE.Vector3();
+    const MIN_DIST = 90;
+    const PUSH = 0.1;
+    const DAMP = 0.97;
+    let rafId = 0;
+    const tick = () => {
+      for (const e of labelsRegistry) {
+        if (!e.label.parent) labelsRegistry.delete(e);
+      }
+      const entries = Array.from(labelsRegistry);
+      const worldXZ: { x: number; z: number }[] = entries.map((e) => {
+        e.label.getWorldPosition(tmp);
+        return { x: tmp.x, z: tmp.z };
+      });
+      for (let i = 0; i < entries.length; i++) {
+        for (let j = i + 1; j < entries.length; j++) {
+          const a = worldXZ[i];
+          const b = worldXZ[j];
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          const d2 = dx * dx + dz * dz;
+          if (d2 < MIN_DIST * MIN_DIST && d2 > 1e-4) {
+            const d = Math.sqrt(d2);
+            const push = (MIN_DIST - d) * PUSH;
+            const nx = dx / d;
+            const nz = dz / d;
+            entries[i].label.position.x -= nx * push;
+            entries[i].label.position.z -= nz * push;
+            entries[j].label.position.x += nx * push;
+            entries[j].label.position.z += nz * push;
+            worldXZ[i].x -= nx * push;
+            worldXZ[i].z -= nz * push;
+            worldXZ[j].x += nx * push;
+            worldXZ[j].z += nz * push;
+          }
+        }
+      }
+      for (const e of entries) {
+        e.label.position.x *= DAMP;
+        e.label.position.z *= DAMP;
+        const halfH = e.label.scale.y / 2;
+        const attr = (e.line.geometry as THREE.BufferGeometry).getAttribute(
+          'position',
+        ) as THREE.BufferAttribute;
+        attr.setXYZ(
+          1,
+          e.label.position.x,
+          e.label.position.y - halfH,
+          e.label.position.z,
+        );
+        attr.needsUpdate = true;
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [labelMode]);
 
   // Filter via accessors — does not restart the d3 force simulation.
   useEffect(() => {
