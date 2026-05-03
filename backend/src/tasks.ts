@@ -29,11 +29,15 @@ export type Task = {
   description?: string;
   status: TaskStatus;
   createdAt: number;
+  // Timestamp of the most recent mutation (any field). Set by updateTask /
+  // updateTaskCrashSafe; not set by createTask (use createdAt for that).
+  updatedAt?: number;
   worktreePath?: string;
   branch?: string;
   startedAt?: number;
   completedAt?: number;
   mergedAt?: number;
+  doneAt?: number;
   conflict?: boolean;
   // When the conflict was first detected. Drives the "stuck for X min"
   // indicator on conflict cards so the user can spot a hung resolver.
@@ -42,6 +46,11 @@ export type Task = {
   // value fall back to `-createdAt` so newly-created tasks land on top, which
   // matches the pre-reorder behavior.
   sortOrder?: number;
+  // When this task was spawned by a Workflow run, these record the run it
+  // belongs to and which step in that run produced it. The workflow advancer
+  // watches for tagged tasks transitioning to `qa` and creates the next step.
+  workflowRunId?: string;
+  workflowStepIndex?: number;
 };
 
 const projectCache = new Map<string, Task[]>();
@@ -133,6 +142,37 @@ function mergeById(a: Task[], b: Task[]): Task[] {
   return Array.from(map.values());
 }
 
+// Stamp a task update with `updatedAt` and any status-transition timestamp the
+// caller didn't provide explicitly. Keeps the timestamps aligned regardless of
+// which endpoint flipped the status (e.g. /run sets startedAt, but a manual
+// PATCH /api/tasks/:id with status=in_progress would otherwise miss it).
+function stampTimestamps(
+  prev: Task,
+  updates: Partial<Omit<Task, 'id' | 'projectPath' | 'createdAt'>>,
+): Partial<Omit<Task, 'id' | 'projectPath' | 'createdAt'>> {
+  const now = Date.now();
+  const out: Partial<Omit<Task, 'id' | 'projectPath' | 'createdAt'>> = {
+    ...updates,
+    updatedAt: now,
+  };
+  const newStatus = updates.status ?? prev.status;
+  if (newStatus !== prev.status) {
+    if (newStatus === 'in_progress' && updates.startedAt === undefined && !prev.startedAt) {
+      out.startedAt = now;
+    }
+    if (newStatus === 'ready_to_merge' && updates.completedAt === undefined && !prev.completedAt) {
+      out.completedAt = now;
+    }
+    if (newStatus === 'qa' && updates.mergedAt === undefined && !prev.mergedAt) {
+      out.mergedAt = now;
+    }
+    if (newStatus === 'done' && updates.doneAt === undefined && !prev.doneAt) {
+      out.doneAt = now;
+    }
+  }
+  return out;
+}
+
 async function ensureProjectLoaded(projectPath: string): Promise<void> {
   await loadKnownProjects();
   await migrateLegacy();
@@ -194,9 +234,10 @@ export async function updateTaskCrashSafe(
     const idx = tasks.findIndex((t) => t.id === id);
     if (idx === -1) continue;
     const prev = tasks[idx];
+    const stamped = stampTimestamps(prev, updates);
     const updated: Task = {
       ...prev,
-      ...updates,
+      ...stamped,
       id: prev.id,
       projectPath: prev.projectPath,
       createdAt: prev.createdAt,
@@ -323,9 +364,10 @@ export async function updateTask(
     const idx = tasks.findIndex((t) => t.id === id);
     if (idx === -1) continue;
     const prev = tasks[idx];
+    const stamped = stampTimestamps(prev, updates);
     tasks[idx] = {
       ...prev,
-      ...updates,
+      ...stamped,
       id: prev.id,
       projectPath: prev.projectPath,
       createdAt: prev.createdAt,
@@ -340,9 +382,10 @@ export async function updateTask(
     const idx = tasks.findIndex((t) => t.id === id);
     if (idx === -1) continue;
     const prev = tasks[idx];
+    const stamped = stampTimestamps(prev, updates);
     tasks[idx] = {
       ...prev,
-      ...updates,
+      ...stamped,
       id: prev.id,
       projectPath: prev.projectPath,
       createdAt: prev.createdAt,

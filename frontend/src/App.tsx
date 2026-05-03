@@ -233,6 +233,7 @@ function App() {
               data={scanResult}
               loading={loading}
               hiddenExts={hiddenExts}
+              activeFolder={activeFolder}
             />
             <Legend
               data={scanResult}

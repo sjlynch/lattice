@@ -645,6 +645,79 @@ input {
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 
+/* Box-select rectangle drawn on top of the 3D canvas while shift+drag
+   is in progress. pointer-events:none so it never intercepts the
+   underlying canvas mouse events. */
+.graph-select-rect {
+  position: absolute;
+  pointer-events: none;
+  z-index: 8;
+  border: 1px solid rgba(120, 200, 255, 0.85);
+  background: rgba(120, 200, 255, 0.12);
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35) inset;
+}
+
+/* "N files selected · clear" chip, top-right of the graph. */
+.graph-selection-chip {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 9;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: rgba(15, 17, 21, 0.85);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-md);
+  padding: 6px 12px;
+}
+.graph-selection-chip .sep { color: var(--text-tertiary); }
+.graph-selection-chip .link-btn {
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+}
+.graph-selection-chip .link-btn:hover { text-decoration: underline; }
+
+/* Right-click menu over selected nodes. Reuses .popover for chrome. */
+.graph-context-menu {
+  position: fixed;
+  z-index: 1100;
+  min-width: 200px;
+}
+
+/* Floating toast confirming a task was created from the graph. */
+.graph-toast {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: rgba(15, 17, 21, 0.92);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  padding: 8px 16px;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: graph-toast-fade 0.18s ease;
+}
+@keyframes graph-toast-fade {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
 .spinner {
   width: 12px; height: 12px;
   border-radius: 50%;
@@ -1546,6 +1619,287 @@ input {
 .merge-run-stat.ok { color: #9ed28e; }
 .merge-run-stat.conflict { color: #f5a36a; }
 .merge-run-stat.error { color: var(--danger); }
+
+/* ---------- Workflows panel ---------- */
+.workflows-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.workflows-list {
+  display: flex;
+  flex-direction: column;
+  width: 240px;
+  min-width: 200px;
+  border-right: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.12);
+}
+.workflows-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.workflows-list-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.workflows-list-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+.workflows-list-items {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.workflows-empty {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  padding: 14px 10px;
+  line-height: 1.5;
+}
+.workflows-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 36px 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.02);
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+.workflows-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.workflows-item.active {
+  background: rgba(106, 169, 255, 0.10);
+  border-color: rgba(106, 169, 255, 0.35);
+}
+.workflows-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+.workflows-item-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.workflows-item-run {
+  color: #5eead4;
+  font-weight: 500;
+}
+.workflows-item-run-btn {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: rgba(106, 169, 255, 0.16);
+  color: #6aa9ff;
+  border: 1px solid rgba(106, 169, 255, 0.4);
+  cursor: pointer;
+}
+.workflows-item-run-btn:hover:not(:disabled) {
+  background: rgba(106, 169, 255, 0.28);
+}
+.workflows-item-run-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.workflows-templates {
+  border-bottom: 1px solid var(--border);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.18);
+}
+.workflows-templates-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.workflows-template {
+  text-align: left;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+}
+.workflows-template:hover {
+  border-color: var(--accent);
+  background: rgba(106, 169, 255, 0.08);
+}
+.workflows-template-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+.workflows-template-desc {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}
+.workflows-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.workflows-editor-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-tertiary);
+  padding: 24px;
+  text-align: center;
+}
+.workflows-editor-empty-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.workflows-editor-empty-sub {
+  font-size: 12px;
+  max-width: 380px;
+  line-height: 1.5;
+}
+.workflows-editor-empty-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.workflows-editor-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.workflows-editor-name {
+  font-size: 14px;
+  font-weight: 500;
+}
+.workflows-editor-steps {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.workflows-step {
+  position: relative;
+  display: flex;
+  gap: 6px;
+  padding: 8px 8px 8px 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+.workflows-step.drop-top {
+  border-top-color: var(--accent);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.workflows-step.drop-bottom {
+  border-bottom-color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.workflows-step-grip {
+  display: flex;
+  align-items: flex-start;
+  padding-top: 6px;
+  color: var(--text-tertiary);
+  cursor: grab;
+}
+.workflows-step-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.workflows-step-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.workflows-step-index {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+  width: 24px;
+  flex-shrink: 0;
+}
+.workflows-step-title {
+  flex: 1;
+  font-size: 12.5px;
+}
+.workflows-step-mode {
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+}
+.workflows-step-prompt {
+  resize: vertical;
+  min-height: 60px;
+}
+.workflows-add-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.workflows-add-step:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.workflows-editor-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.10);
+}
 
 /* "Stuck for X minutes" indicator on conflict cards */
 .task-card-stuck-pill {

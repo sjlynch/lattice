@@ -90,6 +90,20 @@ import {
   completeRunAfterStashResolution,
   subscribe as subscribeMergeRuns,
 } from './mergeRuns.js';
+import {
+  listWorkflows,
+  createWorkflow,
+  updateWorkflow,
+  deleteWorkflow,
+  subscribe as subscribeWorkflows,
+  type WorkflowStep,
+} from './workflows.js';
+import {
+  startWorkflowRun,
+  startWorkflowAdvancer,
+  getActiveRunsForProject as getActiveWorkflowRunsForProject,
+  subscribe as subscribeWorkflowRuns,
+} from './workflowRuns.js';
 import { tryAcquire, release } from './mergeLocks.js';
 
 // Tracks projects that currently have a per-card manual merge in flight.
@@ -271,6 +285,13 @@ app.post('/api/tasks/:id/run', async (req, res) => {
       command,
     });
   } catch (err) {
+    // Log full context before swallowing into a 500 — without this, transient
+    // git failures (lock contention, stale worktree state, etc.) leave only
+    // a generic toast in the UI and no trace on the server.
+    console.error(
+      `[run] task ${task.id} ("${task.title.slice(0, 60)}") at ${task.projectPath}: setupTaskWorktree failed:`,
+      err,
+    );
     res.status(500).json({ error: (err as Error).message });
   }
 });
@@ -592,6 +613,54 @@ app.post('/api/merge-runs/:id/stash-resolved', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Workflows ----------
+
+app.get('/api/workflows', async (req, res) => {
+  const project = typeof req.query.project === 'string' ? req.query.project : '';
+  if (!project) return res.status(400).json({ error: 'project required' });
+  res.json(await listWorkflows(project));
+});
+
+app.post('/api/workflows', async (req, res) => {
+  const { project, name, steps } = (req.body || {}) as {
+    project?: string;
+    name?: string;
+    steps?: WorkflowStep[];
+  };
+  if (!project) return res.status(400).json({ error: 'project required' });
+  const w = await createWorkflow(project, name ?? '', steps);
+  res.json(w);
+});
+
+app.patch('/api/workflows/:id', async (req, res) => {
+  const updates = (req.body || {}) as { name?: string; steps?: WorkflowStep[] };
+  const w = await updateWorkflow(req.params.id, updates);
+  if (!w) return res.status(404).json({ error: 'not found' });
+  res.json(w);
+});
+
+app.delete('/api/workflows/:id', async (req, res) => {
+  const ok = await deleteWorkflow(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'not found' });
+  res.json({ ok: true });
+});
+
+app.post('/api/workflows/:id/run', async (req, res) => {
+  try {
+    const { run, spawn } = await startWorkflowRun(req.params.id, BACKEND_ORIGIN);
+    res.json({ run, spawn });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+app.get('/api/workflow-runs/active', (req, res) => {
+  const project =
+    typeof req.query.project === 'string' ? req.query.project : '';
+  if (!project) return res.status(400).json({ error: 'project required' });
+  res.json(getActiveWorkflowRunsForProject(project));
+});
+
 // ---------- Global JSON error middleware ----------
 //
 // Last route (Express convention: 4-arg handler is treated as error
@@ -685,6 +754,52 @@ mergeRunsWss.on('connection', (ws, req) => {
   ws.on('close', () => unsub());
 });
 
+const workflowsWss = new WebSocketServer({ noServer: true });
+workflowsWss.on('connection', async (ws, req) => {
+  const url = new URL(req.url || '', 'http://localhost');
+  const project = url.searchParams.get('project') || '';
+  if (!project) {
+    ws.close();
+    return;
+  }
+  try {
+    const initial = await listWorkflows(project);
+    if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({ type: 'workflows', workflows: initial }));
+    }
+  } catch {
+    /* ignore */
+  }
+  const unsub = subscribeWorkflows((updatedProject, updatedWorkflows) => {
+    if (updatedProject !== project) return;
+    if (ws.readyState !== ws.OPEN) return;
+    ws.send(JSON.stringify({ type: 'workflows', workflows: updatedWorkflows }));
+  });
+  ws.on('close', () => unsub());
+});
+
+const workflowRunsWss = new WebSocketServer({ noServer: true });
+workflowRunsWss.on('connection', (ws, req) => {
+  const url = new URL(req.url || '', 'http://localhost');
+  const project = url.searchParams.get('project') || '';
+  if (!project) {
+    ws.close();
+    return;
+  }
+  const active = getActiveWorkflowRunsForProject(project);
+  if (ws.readyState === ws.OPEN) {
+    ws.send(JSON.stringify({ type: 'hello', runs: active }));
+  }
+  const unsub = subscribeWorkflowRuns((ev) => {
+    if (ws.readyState !== ws.OPEN) return;
+    const evProject =
+      'run' in ev ? ev.run.projectPath : ev.projectPath;
+    if (evProject !== project) return;
+    ws.send(JSON.stringify(ev));
+  });
+  ws.on('close', () => unsub());
+});
+
 server.on('upgrade', (req, socket, head) => {
   const pathname = new URL(req.url || '', 'http://localhost').pathname;
   if (pathname === '/ws/terminal') {
@@ -698,6 +813,14 @@ server.on('upgrade', (req, socket, head) => {
   } else if (pathname === '/ws/merge-runs') {
     mergeRunsWss.handleUpgrade(req, socket, head, (ws) => {
       mergeRunsWss.emit('connection', ws, req);
+    });
+  } else if (pathname === '/ws/workflows') {
+    workflowsWss.handleUpgrade(req, socket, head, (ws) => {
+      workflowsWss.emit('connection', ws, req);
+    });
+  } else if (pathname === '/ws/workflow-runs') {
+    workflowRunsWss.handleUpgrade(req, socket, head, (ws) => {
+      workflowRunsWss.emit('connection', ws, req);
     });
   } else {
     socket.destroy();
@@ -736,6 +859,7 @@ async function recoverOrphanedTasks(): Promise<void> {
 async function start() {
   await ensureTerminalServer();
   await recoverOrphanedTasks();
+  startWorkflowAdvancer(BACKEND_ORIGIN);
   server.listen(PORT, () => {
     console.log(`[lattice-backend] listening on http://localhost:${PORT}`);
     console.log(`[lattice-backend] default root: ${DEFAULT_ROOT}`);

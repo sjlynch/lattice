@@ -96,14 +96,18 @@ export type Task = {
   description?: string;
   status: TaskStatus;
   createdAt: number;
+  updatedAt?: number;
   worktreePath?: string;
   branch?: string;
   startedAt?: number;
   completedAt?: number;
   mergedAt?: number;
+  doneAt?: number;
   conflict?: boolean;
   conflictStartedAt?: number;
   sortOrder?: number;
+  workflowRunId?: string;
+  workflowStepIndex?: number;
 };
 
 export type RunTaskResult = {
@@ -340,6 +344,196 @@ export function subscribeMergeRuns(
     } catch {
       /* ignore */
     }
+  };
+}
+
+// ---------- Workflows ----------
+
+export type WorkflowStepMode = 'sequential' | 'parallel';
+
+export type WorkflowStep = {
+  id: string;
+  title: string;
+  prompt: string;
+  mode: WorkflowStepMode;
+};
+
+export type Workflow = {
+  id: string;
+  name: string;
+  projectPath: string;
+  steps: WorkflowStep[];
+  createdAt: number;
+};
+
+export async function fetchWorkflows(projectPath: string): Promise<Workflow[]> {
+  return asJson<Workflow[]>(
+    await fetch(`/api/workflows?project=${encodeURIComponent(projectPath)}`),
+  );
+}
+
+export async function createWorkflow(
+  projectPath: string,
+  name: string,
+  steps: WorkflowStep[],
+): Promise<Workflow> {
+  return asJson<Workflow>(
+    await fetch('/api/workflows', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: projectPath, name, steps }),
+    }),
+  );
+}
+
+export async function updateWorkflow(
+  id: string,
+  updates: { name?: string; steps?: WorkflowStep[] },
+): Promise<Workflow> {
+  return asJson<Workflow>(
+    await fetch(`/api/workflows/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    }),
+  );
+}
+
+export async function deleteWorkflow(id: string): Promise<void> {
+  await asJson<{ ok: true }>(
+    await fetch(`/api/workflows/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+  );
+}
+
+export type WorkflowRunStatus = 'running' | 'completed' | 'errored';
+
+export type WorkflowRun = {
+  id: string;
+  workflowId: string;
+  workflowName: string;
+  projectPath: string;
+  status: WorkflowRunStatus;
+  startedAt: number;
+  finishedAt?: number;
+  totalSteps: number;
+  currentStepIndex: number;
+  taskIdsByStep: string[];
+  error?: string;
+};
+
+export type WorkflowSpawnInfo = {
+  taskId: string;
+  command: string;
+  worktreePath: string;
+  stepIndex: number;
+};
+
+export type WorkflowRunResult = {
+  run: WorkflowRun;
+  spawn: WorkflowSpawnInfo;
+};
+
+export async function startWorkflow(id: string): Promise<WorkflowRunResult> {
+  return asJson<WorkflowRunResult>(
+    await fetch(`/api/workflows/${encodeURIComponent(id)}/run`, {
+      method: 'POST',
+    }),
+  );
+}
+
+export type WorkflowRunEvent =
+  | { type: 'hello'; runs: WorkflowRun[] }
+  | { type: 'started'; run: WorkflowRun }
+  | { type: 'progress'; run: WorkflowRun }
+  | { type: 'completed'; run: WorkflowRun }
+  | { type: 'errored'; run: WorkflowRun }
+  | {
+      type: 'task-spawned';
+      runId: string;
+      projectPath: string;
+      taskId: string;
+      command: string;
+      worktreePath: string;
+      stepIndex: number;
+    };
+
+export function subscribeWorkflows(
+  projectPath: string,
+  onUpdate: (workflows: Workflow[]) => void,
+): () => void {
+  let ws: WebSocket | null = null;
+  let cancelled = false;
+  let attempt = 0;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  function connect() {
+    if (cancelled) return;
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(
+      `${proto}://${window.location.host}/ws/workflows?project=${encodeURIComponent(projectPath)}`,
+    );
+    ws.onopen = () => { attempt = 0; };
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data) as { type: string; workflows?: Workflow[] };
+        if (msg.type === 'workflows' && msg.workflows) onUpdate(msg.workflows);
+      } catch { /* ignore */ }
+    };
+    ws.onerror = () => { /* onclose reschedules */ };
+    ws.onclose = () => {
+      if (cancelled) return;
+      const delay = Math.min(5000, 250 * 2 ** attempt);
+      attempt += 1;
+      timer = setTimeout(connect, delay);
+    };
+  }
+
+  connect();
+  return () => {
+    cancelled = true;
+    if (timer) clearTimeout(timer);
+    try { ws?.close(); } catch { /* ignore */ }
+  };
+}
+
+export function subscribeWorkflowRuns(
+  projectPath: string,
+  onEvent: (ev: WorkflowRunEvent) => void,
+): () => void {
+  let ws: WebSocket | null = null;
+  let cancelled = false;
+  let attempt = 0;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  function connect() {
+    if (cancelled) return;
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(
+      `${proto}://${window.location.host}/ws/workflow-runs?project=${encodeURIComponent(projectPath)}`,
+    );
+    ws.onopen = () => { attempt = 0; };
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data) as WorkflowRunEvent;
+        onEvent(msg);
+      } catch { /* ignore */ }
+    };
+    ws.onerror = () => { /* onclose reschedules */ };
+    ws.onclose = () => {
+      if (cancelled) return;
+      const delay = Math.min(5000, 250 * 2 ** attempt);
+      attempt += 1;
+      timer = setTimeout(connect, delay);
+    };
+  }
+
+  connect();
+  return () => {
+    cancelled = true;
+    if (timer) clearTimeout(timer);
+    try { ws?.close(); } catch { /* ignore */ }
   };
 }
 

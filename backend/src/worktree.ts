@@ -18,17 +18,42 @@ function exec(
   cmd: string,
   args: string[],
   cwd: string,
+  opts?: { timeoutMs?: number },
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd, shell: false, windowsHide: true });
     let stdout = '';
     let stderr = '';
+    let timer: NodeJS.Timeout | undefined;
+    let timedOut = false;
+    if (opts?.timeoutMs && opts.timeoutMs > 0) {
+      timer = setTimeout(() => {
+        timedOut = true;
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* already exited */
+        }
+      }, opts.timeoutMs);
+    }
     child.stdout.on('data', (d) => (stdout += d.toString()));
     child.stderr.on('data', (d) => (stderr += d.toString()));
-    child.on('close', (code) =>
-      resolve({ stdout, stderr, code: code ?? 0 }),
-    );
-    child.on('error', reject);
+    child.on('close', (code) => {
+      if (timer) clearTimeout(timer);
+      if (timedOut) {
+        resolve({
+          stdout,
+          stderr: stderr + `\n[exec] killed after ${opts?.timeoutMs}ms timeout`,
+          code: code ?? 124,
+        });
+      } else {
+        resolve({ stdout, stderr, code: code ?? 0 });
+      }
+    });
+    child.on('error', (err) => {
+      if (timer) clearTimeout(timer);
+      reject(err);
+    });
   });
 }
 
@@ -649,6 +674,11 @@ export async function mergeWorktreeInRepo(
   };
 }
 
+// Timeouts on every git command so a hung process holding the worktree dir
+// open on Windows can never wedge cleanup forever — the run worker would
+// otherwise stall mid-task because finalize awaits cleanup.
+const CLEANUP_GIT_TIMEOUT_MS = 15_000;
+
 export async function cleanupWorktreeForTask(
   repoRoot: string,
   worktreePath: string,
@@ -661,10 +691,10 @@ export async function cleanupWorktreeForTask(
   // Brief pause so the OS has time to release handles after PTY exit.
   await new Promise<void>((r) => setTimeout(r, 300));
 
-  await exec('git', ['worktree', 'remove', '--force', worktreePath], repoRoot);
-  await exec('git', ['branch', '-D', branchName], repoRoot);
+  await exec('git', ['worktree', 'remove', '--force', worktreePath], repoRoot, { timeoutMs: CLEANUP_GIT_TIMEOUT_MS });
+  await exec('git', ['branch', '-D', branchName], repoRoot, { timeoutMs: CLEANUP_GIT_TIMEOUT_MS });
   // Best-effort prune of stale entries
-  await exec('git', ['worktree', 'prune'], repoRoot);
+  await exec('git', ['worktree', 'prune'], repoRoot, { timeoutMs: CLEANUP_GIT_TIMEOUT_MS });
 
   // Forcibly remove the directory with Node.js as a fallback for cases where
   // git couldn't delete it (e.g. a process had the directory as its cwd).
@@ -827,6 +857,38 @@ export type FinalizeOutcome =
 // and would no longer be a fast-forward ancestor of main.
 const finalizeQueues = new Map<string, Promise<void>>();
 
+// Per-project queue for background worktree cleanup. Cleanup runs sequentially
+// per project (so two `git worktree remove` calls don't race on .git/index.lock)
+// but is decoupled from finalize itself: a hung cleanup on Windows (where a
+// process holding the worktree dir open could deadlock `git worktree remove`)
+// must not stall the run worker, since the task is already qa-on-disk.
+const cleanupQueues = new Map<string, Promise<void>>();
+
+function scheduleWorktreeCleanup(
+  projectPath: string,
+  worktreePath: string,
+  branchName: string,
+  taskId: string,
+): void {
+  const prev = cleanupQueues.get(projectPath) ?? Promise.resolve();
+  const next = prev.then(async () => {
+    console.log(`[finalize] cleaning up worktree ${worktreePath}...`);
+    try {
+      await cleanupWorktreeForTask(projectPath, worktreePath, branchName);
+      console.log(`[finalize] worktree cleanup done for ${taskId}`);
+    } catch (err) {
+      console.error(
+        `[finalize] background cleanup failed for ${taskId} (task already qa, leaves orphaned worktree dir):`,
+        err,
+      );
+    }
+  });
+  cleanupQueues.set(projectPath, next);
+  // Detach so an unhandled rejection in this chain never crashes the process —
+  // the .then handler above already swallows errors but belt-and-braces.
+  next.catch(() => {});
+}
+
 export async function finalizeMergedTask(task: Task, backendOrigin: string): Promise<FinalizeOutcome> {
   if (!task.branch || !task.worktreePath) {
     return { ok: false, error: 'task missing branch/worktree info' };
@@ -879,19 +941,17 @@ export async function finalizeMergedTask(task: Task, backendOrigin: string): Pro
       conflictStartedAt: undefined,
     });
     console.log(`[finalize] task ${task.id} → qa ✓`);
-    // Cleanup after status is safe. Failures here are non-fatal — the task
-    // is already QA, and orphaned worktrees are just disk clutter.
-    console.log(`[finalize] cleaning up worktree ${task.worktreePath}...`);
-    try {
-      await cleanupWorktreeForTask(
-        task.projectPath,
-        task.worktreePath,
-        task.branch,
-      );
-      console.log(`[finalize] worktree cleanup done`);
-    } catch (err) {
-      console.error('[finalize] cleanup failed (non-fatal, task already qa):', err);
-    }
+    // Cleanup runs in the background. The task is already qa-on-disk so the
+    // user-visible state is correct; a stuck cleanup must not block this
+    // function (it's awaited by the merge-run worker, which would otherwise
+    // hang mid-iteration with processed/merged stuck below total — exactly
+    // the "100% Task N of N · k merged" stale-progress symptom).
+    scheduleWorktreeCleanup(
+      task.projectPath,
+      task.worktreePath,
+      task.branch,
+      task.id,
+    );
     return { ok: true };
   } finally {
     release();
