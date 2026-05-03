@@ -7,6 +7,7 @@ import { Modal } from '../Modal';
 import { spriteFor } from './sprites';
 import { withHalo } from './halo';
 import { locLabelRegistry, spriteForLoc } from './locOverlay';
+import { depthFor, spriteForLabels } from './labelsOverlay';
 import { MENU_ITEMS, relPath, type MenuItemDef } from './menu';
 import { loadSettings, type GraphSettings } from './graphSettings';
 import { GraphSettingsPanel } from './GraphSettingsPanel';
@@ -33,6 +34,16 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
   const [locMode, setLocMode] = useState(false);
   const locModeRef = useRef(false);
 
+  // Labels overlay: active while the user holds Alt. Shows the name of every
+  // node at `labelLevel` (path depth from the scan root); alt+wheel scrolls
+  // through depths so the user can read one band at a time.
+  const [labelMode, setLabelMode] = useState(false);
+  const labelModeRef = useRef(false);
+  const [labelLevel, setLabelLevel] = useState(1);
+  const labelLevelRef = useRef(1);
+  const maxDepthRef = useRef(0);
+  const nodeDepthsRef = useRef<Map<string, number>>(new Map());
+
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const selectedRef = useRef<Set<string>>(new Set());
   const hiddenExtsRef = useRef<Set<string>>(hiddenExts);
@@ -54,6 +65,8 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => { locModeRef.current = locMode; }, [locMode]);
+  useEffect(() => { labelModeRef.current = labelMode; }, [labelMode]);
+  useEffect(() => { labelLevelRef.current = labelLevel; }, [labelLevel]);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
   useEffect(() => { hiddenExtsRef.current = hiddenExts; }, [hiddenExts]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
@@ -91,7 +104,15 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
       .nodeThreeObject((n: object) => {
         const node = n as GraphNode;
         const s = settingsRef.current;
-        const obj = locModeRef.current ? spriteForLoc(node, s) : spriteFor(node, s);
+        let obj: THREE.Object3D;
+        if (locModeRef.current) {
+          obj = spriteForLoc(node, s);
+        } else if (labelModeRef.current) {
+          const d = nodeDepthsRef.current.get(node.id) ?? 0;
+          obj = spriteForLabels(node, s, labelLevelRef.current, d);
+        } else {
+          obj = spriteFor(node, s);
+        }
         if (selectedRef.current.has(node.id)) {
           const baseSize = node.kind === 'dir' ? s.dirNodeSize : s.fileNodeSize;
           return withHalo(obj, baseSize);
@@ -170,6 +191,18 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
       nodes: data.nodes.map((n) => ({ ...n })),
       links: data.links.map((l) => ({ ...l })),
     });
+    // Recompute path depths for the labels overlay, plus the max depth so
+    // alt+wheel can clamp to the visible range.
+    const depths = new Map<string, number>();
+    let maxD = 0;
+    for (const n of data.nodes) {
+      const d = depthFor(n, data.root);
+      depths.set(n.id, d);
+      if (d > maxD) maxD = d;
+    }
+    nodeDepthsRef.current = depths;
+    maxDepthRef.current = maxD;
+    setLabelLevel((lvl) => Math.min(Math.max(lvl, 1), Math.max(1, maxD)));
     // A new scan invalidates the previous selection (node IDs may differ).
     setSelected(new Set());
   }, [data]);
@@ -219,6 +252,83 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     locLabelRegistry.clear();
     graphRef.current?.refresh?.();
   }, [locMode, selected]);
+
+  // ---------- Labels overlay (Alt held) ----------
+  // Track Alt as a chord-style modifier: keydown enables labels mode,
+  // keyup/blur disables. Alt+wheel cycles the visible depth band instead
+  // of zooming the camera.
+  useEffect(() => {
+    function isTextInput(target: EventTarget | null) {
+      if (!target) return false;
+      const el = target as HTMLElement;
+      const tag = el.tagName?.toLowerCase();
+      return tag === 'input' || tag === 'textarea' || el.isContentEditable;
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Alt') return;
+      if (isTextInput(e.target)) return;
+      if (e.repeat) return;
+      // Browsers focus the menu bar on Alt-up; suppressing the default on
+      // keydown also kills that side-effect when Alt is released alone.
+      e.preventDefault();
+      setLabelMode(true);
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.key === 'Alt') setLabelMode(false);
+    }
+    function reset() {
+      setLabelMode(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', reset);
+    document.addEventListener('visibilitychange', reset);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', reset);
+      document.removeEventListener('visibilitychange', reset);
+    };
+  }, []);
+
+  // Alt+wheel intercept on the canvas: scroll up = shallower depth, scroll
+  // down = deeper. Needs a non-passive listener so preventDefault actually
+  // stops OrbitControls from zooming. deltaY is accumulated so a trackpad
+  // (which fires many small-delta events per swipe) bumps depth one step at
+  // a time instead of racing through every level in a single gesture.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let accum = 0;
+    const STEP = 50;
+    function onWheel(e: WheelEvent) {
+      if (!e.altKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      accum += e.deltaY;
+      if (Math.abs(accum) < STEP) return;
+      const dir = accum > 0 ? 1 : -1;
+      accum = 0;
+      setLabelLevel((lvl) => {
+        const max = Math.max(1, maxDepthRef.current);
+        const next = lvl + dir;
+        if (next < 1) return 1;
+        if (next > max) return max;
+        return next;
+      });
+    }
+    // Capture phase so we run before OrbitControls' canvas-level wheel
+    // listener (which would otherwise zoom the camera before we get the
+    // chance to call preventDefault).
+    container.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    return () =>
+      container.removeEventListener('wheel', onWheel, { capture: true });
+  }, []);
+
+  // Refresh sprites when labels mode toggles or the active depth changes.
+  useEffect(() => {
+    graphRef.current?.refresh?.();
+  }, [labelMode, labelLevel]);
 
   // Re-render sprites when render-only settings (sizes) change.
   useEffect(() => {
@@ -595,6 +705,15 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
       )}
       {locMode && (
         <div className="loc-view-chip">View: Lines of Code</div>
+      )}
+      {labelMode && !locMode && (
+        <div className="loc-view-chip">
+          View: Labels · depth {labelLevel}
+          {maxDepthRef.current > 0 && ` / ${maxDepthRef.current}`}
+          <span style={{ opacity: 0.7, marginLeft: 8 }}>
+            (alt+wheel to scroll)
+          </span>
+        </div>
       )}
       {!loading && data && (
         <div className="graph-overlay bottom-left">
