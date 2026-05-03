@@ -21,6 +21,7 @@ export function Lane({
   onRun,
   onResume,
   onMerge,
+  getFocusTerminal,
   onRunAll,
   onView,
   strip,
@@ -37,6 +38,7 @@ export function Lane({
   onRun: (task: Task) => void;
   onResume: (task: Task) => void;
   onMerge: (task: Task) => Promise<boolean>;
+  getFocusTerminal?: (task: Task) => (() => void) | null;
   onRunAll?: () => void;
   onView: (task: Task) => void;
   strip?: ReactNode;
@@ -183,6 +185,7 @@ export function Lane({
                       ? () => onMerge(t)
                       : undefined
                   }
+                  onFocusTerminal={getFocusTerminal?.(t) ?? undefined}
                   onView={() => onView(t)}
                 />
                 <div

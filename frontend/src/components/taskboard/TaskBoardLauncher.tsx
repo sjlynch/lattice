@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Kanban } from 'lucide-react';
 import { FloatingPanel } from '../FloatingPanel';
 import { useTerminals } from '../../TerminalsContext';
@@ -61,7 +61,35 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     () => new Set(LANES.map((l) => l.id)),
   );
 
-  const { addTerminal, closeTerminalsForTask } = useTerminals();
+  const { addTerminal, closeTerminalsForTask, terminals, setActiveId } =
+    useTerminals();
+
+  // Build a taskId → most-recent-terminal-id map for the focus button.
+  // A merge resolver and a worktree Claude can both exist for the same
+  // task; the merge one is more interesting to focus on, so prefer 'merge'
+  // kind, otherwise fall back to the most recently added terminal.
+  const terminalByTaskId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of terminals) {
+      if (!t.taskId) continue;
+      const existing = m.get(t.taskId);
+      if (!existing) {
+        m.set(t.taskId, t.id);
+        continue;
+      }
+      if (t.kind === 'merge') m.set(t.taskId, t.id);
+    }
+    return m;
+  }, [terminals]);
+
+  const getFocusTerminal = useCallback(
+    (task: Task): (() => void) | null => {
+      const termId = terminalByTaskId.get(task.id);
+      if (!termId) return null;
+      return () => setActiveId(termId);
+    },
+    [terminalByTaskId, setActiveId],
+  );
 
   // Auto-close terminals when their task reaches a terminal state. Runs on
   // every task update so it also catches stale localStorage terminals that
@@ -506,6 +534,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 onRun={runTask}
                 onResume={resumeTaskAction}
                 onMerge={mergeTaskAction}
+                getFocusTerminal={getFocusTerminal}
                 onRunAll={
                   lane.id === 'open'
                     ? runAllOpen

@@ -130,6 +130,9 @@ export function spriteForLoc(
 
   const colorSprite = new THREE.Sprite(materialFor(locShapeStyle(node, color)));
   colorSprite.scale.set(settings.fileNodeSize, settings.fileNodeSize, 1);
+  // Match the regular spriteFor renderOrder so the LOC-tinted shape also
+  // paints on top of the connection lines.
+  colorSprite.renderOrder = 1;
   group.add(colorSprite);
 
   // Connector starts just above the node sprite and runs up to the label.
