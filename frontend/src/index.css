@@ -695,6 +695,107 @@ input {
   min-width: 200px;
 }
 
+/* Floating gear button bottom-right of the graph viewport — opens the
+   graph settings popover. */
+.graph-settings-fab {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 9;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  background: rgba(15, 17, 21, 0.85);
+  border: 1px solid var(--border-strong);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-md);
+  transition: color 0.12s ease, background 0.12s ease, transform 0.12s ease;
+}
+.graph-settings-fab:hover {
+  color: var(--text-primary);
+  background: rgba(35, 39, 46, 0.95);
+}
+.graph-settings-fab.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.graph-settings-panel {
+  position: absolute;
+  right: 14px;
+  bottom: 56px;
+  z-index: 10;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 10px;
+  background: rgba(28, 31, 37, 0.96);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  font-size: 12px;
+  color: var(--text-primary);
+  animation: graph-toast-fade 0.14s ease;
+}
+.graph-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+.graph-settings-header .link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--accent);
+  background: transparent;
+}
+.graph-settings-header .link-btn:hover { text-decoration: underline; }
+.graph-settings-section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+.graph-settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.graph-settings-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.graph-settings-value {
+  color: var(--text-primary);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.graph-settings-row input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.graph-settings-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
 /* Floating toast confirming a task was created from the graph. */
 .graph-toast {
   position: absolute;

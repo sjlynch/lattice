@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import ForceGraph3D, { type ForceGraph3DInstance } from '3d-force-graph';
+import { Settings as SettingsIcon, RotateCcw } from 'lucide-react';
 import { createTask, type ScanResult, type GraphNode } from '../api';
 import { Modal } from './Modal';
 import {
@@ -10,6 +11,41 @@ import {
   type ExtStyle,
   type Shape,
 } from '../extensionStyles';
+
+// User-tweakable graph render + physics settings, persisted per project.
+type GraphSettings = {
+  fileNodeSize: number;
+  dirNodeSize: number;
+  labelSize: number;
+  dagLevelDistance: number;
+  chargeStrength: number;
+  linkDistance: number;
+  velocityDecay: number;
+};
+
+// Defaults: file/dir node sizes are 2× the historical baseline (5.5 / 7) so
+// the graph reads more clearly out of the box.
+const DEFAULT_SETTINGS: GraphSettings = {
+  fileNodeSize: 11,
+  dirNodeSize: 14,
+  labelSize: 8,
+  dagLevelDistance: 50,
+  chargeStrength: -30,
+  linkDistance: 30,
+  velocityDecay: 0.4,
+};
+
+function loadSettings(project: string): GraphSettings {
+  if (!project) return { ...DEFAULT_SETTINGS };
+  try {
+    const raw = localStorage.getItem(`lattice.graphSettings.${project}`);
+    if (!raw) return { ...DEFAULT_SETTINGS };
+    const parsed = JSON.parse(raw) as Partial<GraphSettings>;
+    return { ...DEFAULT_SETTINGS, ...parsed };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
 
 // Lines-of-code thresholds for the "z" view. >1000 = red, >600 = yellow,
 // otherwise green. Kept in sync with the legend chip wording.
@@ -175,11 +211,12 @@ function materialFor(style: ExtStyle): THREE.SpriteMaterial {
   return mat;
 }
 
-function spriteFor(node: GraphNode): THREE.Sprite {
+function spriteFor(node: GraphNode, settings: GraphSettings): THREE.Sprite {
   const style =
     node.kind === 'dir' ? DIR_STYLE : getStyleFor(node.ext);
   const sprite = new THREE.Sprite(materialFor(style));
-  const size = node.kind === 'dir' ? 7 : 5.5;
+  const size =
+    node.kind === 'dir' ? settings.dirNodeSize : settings.fileNodeSize;
   sprite.scale.set(size, size, 1);
   return sprite;
 }
@@ -218,8 +255,8 @@ function buildLabelTexture(text: string, color: string): THREE.CanvasTexture {
 
 // Canvas aspect ratio for label textures (W:H = 320:100 = 3.2).
 const LABEL_ASPECT = 320 / 100;
-// Base world-space height at the reference camera distance.
-const LABEL_BASE_H = 8;
+// Reference camera distance for the LOC label scale curve. Closer →
+// smaller, farther → larger; a `baseH` parameter tunes the absolute size.
 const LABEL_REF_DIST = 200;
 // World-space Y offset of the label sprite above its file node. Pushed up
 // well clear of the node so dense clusters don't overlap their labels.
@@ -233,7 +270,11 @@ type LocLabelEntry = {
 };
 const locLabelRegistry = new Set<LocLabelEntry>();
 
-function makeLabelSprite(text: string, color: string): THREE.Sprite {
+function makeLabelSprite(
+  text: string,
+  color: string,
+  baseH: number,
+): THREE.Sprite {
   const tex = buildLabelTexture(text, color);
   const mat = new THREE.SpriteMaterial({
     map: tex,
@@ -242,7 +283,7 @@ function makeLabelSprite(text: string, color: string): THREE.Sprite {
     depthTest: false,
   });
   const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(LABEL_BASE_H * LABEL_ASPECT, LABEL_BASE_H, 1);
+  sprite.scale.set(baseH * LABEL_ASPECT, baseH, 1);
   // Render label on top so it's never occluded by a sibling sprite.
   sprite.renderOrder = 999;
 
@@ -252,7 +293,7 @@ function makeLabelSprite(text: string, color: string): THREE.Sprite {
   sprite.onBeforeRender = (_r, _s, camera) => {
     sprite.getWorldPosition(_pos);
     const d = camera.position.distanceTo(_pos);
-    const s = Math.max(3, Math.min(50, (d / LABEL_REF_DIST) * LABEL_BASE_H));
+    const s = Math.max(3, Math.min(50, (d / LABEL_REF_DIST) * baseH));
     sprite.scale.set(s * LABEL_ASPECT, s, 1);
   };
 
@@ -270,16 +311,16 @@ function locShapeStyle(node: GraphNode, color: string): ExtStyle {
   };
 }
 
-function spriteForLoc(node: GraphNode): THREE.Object3D {
+function spriteForLoc(node: GraphNode, settings: GraphSettings): THREE.Object3D {
   // Directories and files we couldn't measure fall back to the normal
   // shape so the graph still reads as a tree.
-  if (node.kind !== 'file' || node.loc == null) return spriteFor(node);
+  if (node.kind !== 'file' || node.loc == null) return spriteFor(node, settings);
 
   const color = locColor(node.loc);
   const group = new THREE.Group();
 
   const colorSprite = new THREE.Sprite(materialFor(locShapeStyle(node, color)));
-  colorSprite.scale.set(5.5, 5.5, 1);
+  colorSprite.scale.set(settings.fileNodeSize, settings.fileNodeSize, 1);
   group.add(colorSprite);
 
   // Connector starts just above the node sprite and runs up to the label.
@@ -297,7 +338,7 @@ function spriteForLoc(node: GraphNode): THREE.Object3D {
   const line = new THREE.Line(lineGeom, lineMat);
   group.add(line);
 
-  const label = makeLabelSprite(String(node.loc), color);
+  const label = makeLabelSprite(String(node.loc), color, settings.labelSize);
   label.position.set(0, LABEL_Y, 0);
   group.add(label);
 
@@ -418,6 +459,15 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
   const selectedRef = useRef<Set<string>>(new Set());
   const hiddenExtsRef = useRef<Set<string>>(hiddenExts);
 
+  // Graph render + physics settings, persisted per project. The ref keeps
+  // the latest value visible to THREE callbacks (nodeThreeObject is wired
+  // once at mount) while the state drives the panel UI.
+  const [settings, setSettings] = useState<GraphSettings>(() =>
+    loadSettings(activeFolder),
+  );
+  const settingsRef = useRef<GraphSettings>(settings);
+  const [showSettings, setShowSettings] = useState(false);
+
   const [dragRect, setDragRect] = useState<DragRect | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [modalAction, setModalAction] = useState<MenuItemDef | null>(null);
@@ -438,6 +488,28 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
   }, [hiddenExts]);
 
   useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  // Reload persisted settings when the active project changes.
+  useEffect(() => {
+    setSettings(loadSettings(activeFolder));
+  }, [activeFolder]);
+
+  // Persist settings whenever they change.
+  useEffect(() => {
+    if (!activeFolder) return;
+    try {
+      localStorage.setItem(
+        `lattice.graphSettings.${activeFolder}`,
+        JSON.stringify(settings),
+      );
+    } catch {
+      // ignore quota
+    }
+  }, [activeFolder, settings]);
+
+  useEffect(() => {
     if (!containerRef.current) return;
     const graph = new ForceGraph3D(containerRef.current, {
       controlType: 'orbit',
@@ -450,9 +522,10 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
       })
       .nodeThreeObject((n: object) => {
         const node = n as GraphNode;
-        const obj = locModeRef.current ? spriteForLoc(node) : spriteFor(node);
+        const s = settingsRef.current;
+        const obj = locModeRef.current ? spriteForLoc(node, s) : spriteFor(node, s);
         if (selectedRef.current.has(node.id)) {
-          const baseSize = node.kind === 'dir' ? 7 : 5.5;
+          const baseSize = node.kind === 'dir' ? s.dirNodeSize : s.fileNodeSize;
           return withHalo(obj, baseSize);
         }
         return obj;
@@ -462,7 +535,7 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
       .linkOpacity(0.85)
       .linkWidth(0.7)
       .dagMode('td')
-      .dagLevelDistance(50)
+      .dagLevelDistance(settingsRef.current.dagLevelDistance)
       .showNavInfo(false)
       .onNodeRightClick((n: object, ev: MouseEvent) => {
         const node = n as GraphNode;
@@ -577,6 +650,35 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     locLabelRegistry.clear();
     graphRef.current?.refresh?.();
   }, [locMode, selected]);
+
+  // Re-render sprites when render-only settings (sizes) change.
+  useEffect(() => {
+    locLabelRegistry.clear();
+    graphRef.current?.refresh?.();
+  }, [settings.fileNodeSize, settings.dirNodeSize, settings.labelSize]);
+
+  // Apply physics + DAG settings to the running simulation. Reheats the
+  // d3 sim so changes visibly take effect.
+  useEffect(() => {
+    const g = graphRef.current;
+    if (!g) return;
+    g.dagLevelDistance(settings.dagLevelDistance);
+    g.d3VelocityDecay(settings.velocityDecay);
+    const charge = g.d3Force('charge') as
+      | { strength?: (n: number) => unknown }
+      | undefined;
+    charge?.strength?.(settings.chargeStrength);
+    const link = g.d3Force('link') as
+      | { distance?: (n: number) => unknown }
+      | undefined;
+    link?.distance?.(settings.linkDistance);
+    g.d3ReheatSimulation();
+  }, [
+    settings.dagLevelDistance,
+    settings.velocityDecay,
+    settings.chargeStrength,
+    settings.linkDistance,
+  ]);
 
   // Clear selection / close context menu on Escape.
   useEffect(() => {
@@ -1030,6 +1132,124 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
           {toast}
         </div>
       )}
+
+      {showSettings && (
+        <GraphSettingsPanel
+          settings={settings}
+          onChange={setSettings}
+          onReset={() => setSettings({ ...DEFAULT_SETTINGS })}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      <button
+        className={`graph-settings-fab${showSettings ? ' active' : ''}`}
+        onClick={() => setShowSettings((v) => !v)}
+        aria-label="Graph settings"
+        title="Graph settings"
+      >
+        <SettingsIcon size={16} />
+      </button>
+    </div>
+  );
+}
+
+// ---------- Settings panel ----------
+
+type GraphSettingsPanelProps = {
+  settings: GraphSettings;
+  onChange: (next: GraphSettings) => void;
+  onReset: () => void;
+  onClose: () => void;
+};
+
+type SliderRow = {
+  key: keyof GraphSettings;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  format?: (v: number) => string;
+};
+
+const NODE_ROWS: SliderRow[] = [
+  { key: 'fileNodeSize', label: 'File node size', min: 2, max: 30, step: 0.5 },
+  { key: 'dirNodeSize', label: 'Folder node size', min: 2, max: 30, step: 0.5 },
+  { key: 'labelSize', label: 'Label size', min: 3, max: 24, step: 0.5 },
+];
+
+const PHYSICS_ROWS: SliderRow[] = [
+  { key: 'dagLevelDistance', label: 'DAG level distance', min: 10, max: 200, step: 1 },
+  {
+    key: 'chargeStrength',
+    label: 'Repulsion (charge)',
+    min: -300,
+    max: 0,
+    step: 5,
+  },
+  { key: 'linkDistance', label: 'Link distance', min: 5, max: 200, step: 1 },
+  {
+    key: 'velocityDecay',
+    label: 'Velocity decay',
+    min: 0.05,
+    max: 0.95,
+    step: 0.01,
+    format: (v) => v.toFixed(2),
+  },
+];
+
+function GraphSettingsPanel({
+  settings,
+  onChange,
+  onReset,
+  onClose,
+}: GraphSettingsPanelProps) {
+  const setField = (key: keyof GraphSettings, value: number) =>
+    onChange({ ...settings, [key]: value });
+
+  const renderRow = (row: SliderRow) => {
+    const v = settings[row.key];
+    const formatted = row.format ? row.format(v) : String(v);
+    return (
+      <div className="graph-settings-row" key={row.key}>
+        <div className="graph-settings-label">
+          <span>{row.label}</span>
+          <span className="graph-settings-value">{formatted}</span>
+        </div>
+        <input
+          type="range"
+          min={row.min}
+          max={row.max}
+          step={row.step}
+          value={v}
+          onChange={(e) => setField(row.key, Number(e.target.value))}
+        />
+      </div>
+    );
+  };
+
+  return (
+    <div className="graph-settings-panel" role="dialog" aria-label="Graph settings">
+      <div className="graph-settings-header">
+        <span>Graph settings</span>
+        <button
+          className="link-btn"
+          onClick={onReset}
+          title="Reset to defaults"
+        >
+          <RotateCcw size={11} />
+          <span>Reset</span>
+        </button>
+      </div>
+      <div className="graph-settings-section-title">Sizes</div>
+      {NODE_ROWS.map(renderRow)}
+      <div className="graph-settings-section-title">Physics</div>
+      {PHYSICS_ROWS.map(renderRow)}
+      <div className="graph-settings-footer">
+        <button className="btn-ghost" onClick={onClose}>
+          Close
+        </button>
+      </div>
     </div>
   );
 }
