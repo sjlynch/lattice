@@ -3,6 +3,7 @@ import {
   GitMerge,
   GripVertical,
   Play,
+  TerminalSquare,
   Trash2,
 } from 'lucide-react';
 import type { Task } from '../../api';
@@ -23,6 +24,7 @@ export function TaskCard({
   onRun,
   onResume,
   onMerge,
+  onFocusTerminal,
   onView,
 }: {
   task: Task;
@@ -34,6 +36,7 @@ export function TaskCard({
   onRun?: () => void;
   onResume?: () => void;
   onMerge?: () => void;
+  onFocusTerminal?: () => void;
   onView: () => void;
 }) {
   function handleDragStart(e: React.DragEvent) {
@@ -82,6 +85,20 @@ export function TaskCard({
         )}
       </div>
       <div className="task-card-actions">
+        {onFocusTerminal && (
+          <button
+            className="task-card-iconbtn terminal"
+            onClick={(e) => {
+              e.stopPropagation();
+              onFocusTerminal();
+            }}
+            title="Focus this task's terminal"
+            aria-label="Focus task terminal"
+            draggable={false}
+          >
+            <TerminalSquare size={12} />
+          </button>
+        )}
         {onRun && (
           <button
             className="task-card-iconbtn play"

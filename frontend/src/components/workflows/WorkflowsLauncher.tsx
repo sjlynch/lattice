@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ListChecks, Play, Plus, Trash2, X } from 'lucide-react';
+import { Lightbulb, ListChecks, Play, Plus, Trash2, Wrench, X } from 'lucide-react';
 import { FloatingPanel } from '../FloatingPanel';
 import { useTerminals } from '../../TerminalsContext';
 import {
@@ -29,6 +29,45 @@ import { WorkflowRunStrip } from './WorkflowRunStrip';
 type Props = {
   activeFolder: string;
 };
+
+type DefaultPrompt = {
+  id: string;
+  title: string;
+  label: string;
+  icon: typeof Wrench;
+  prompt: string;
+};
+
+// Quick-insert prompts surfaced as chips at the bottom of the editor. Each
+// click appends a new step seeded with the prompt body. Keep these prompts
+// self-sufficient — they may be the only step a user runs.
+const DEFAULT_PROMPTS: DefaultPrompt[] = [
+  {
+    id: 'refactor',
+    title: 'Refactor',
+    label: 'Refactor',
+    icon: Wrench,
+    prompt:
+      'Refactor the code surface described above without changing its observable behavior. ' +
+      'Look for duplication, unclear naming, tangled responsibilities, and modules that have ' +
+      'drifted past a comfortable size, and tighten them up. Keep public APIs stable, preserve ' +
+      'existing tests, and run a type-check before committing. In the commit message, briefly ' +
+      'explain what was restructured and why — do not list every file touched.',
+  },
+  {
+    id: 'brainstorm',
+    title: 'Brainstorm',
+    label: 'Brainstorm',
+    icon: Lightbulb,
+    prompt:
+      'Brainstorm 3–5 distinct approaches to the problem described above. Do not write any ' +
+      'production code yet. For each approach, sketch the rough shape of the solution, list the ' +
+      'main tradeoffs (complexity, blast radius, ergonomics, performance, reversibility), and ' +
+      'flag any unknowns that need investigation before committing to a direction. Write your ' +
+      'findings to BRAINSTORM.md at the worktree root, end with a recommendation and the ' +
+      'reasoning behind it, and commit the file.',
+  },
+];
 
 // Top-level Workflows panel. Owns workflow list/run state, hydrates from
 // the WS, and routes per-step terminal spawns to the global TerminalsContext.
@@ -253,6 +292,31 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
     }));
   }
 
+  // Append a step seeded from a default-prompt chip. If the editor is empty
+  // (no workflow loaded, no steps), bootstrap a draft so clicking a chip
+  // from the empty state immediately produces something runnable.
+  function addDefaultPromptStep(p: DefaultPrompt) {
+    setEditor((cur) => {
+      const base =
+        cur.workflowId === null && cur.steps.length === 0 && cur.name === ''
+          ? { workflowId: null, name: p.title, steps: [], dirty: true }
+          : cur;
+      return {
+        ...base,
+        steps: [
+          ...base.steps,
+          {
+            id: localStepId(),
+            title: p.title,
+            prompt: p.prompt,
+            mode: 'sequential',
+          },
+        ],
+        dirty: true,
+      };
+    });
+  }
+
   function reorderSteps(fromIdx: number, toIdx: number) {
     setEditor((cur) => {
       if (fromIdx === toIdx) return cur;
@@ -444,6 +508,26 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
                     <ListChecks size={12} /> From template
                   </button>
                 </div>
+                <div className="workflows-default-prompts">
+                  <span className="workflows-default-prompts-label">
+                    Quick add
+                  </span>
+                  {DEFAULT_PROMPTS.map((p) => {
+                    const Icon = p.icon;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className="workflows-prompt-chip"
+                        onClick={() => addDefaultPromptStep(p)}
+                        title={p.prompt}
+                      >
+                        <Icon size={11} />
+                        {p.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             ) : (
               <>
@@ -491,6 +575,26 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
                   <button className="workflows-add-step" onClick={addStep}>
                     <Plus size={12} /> Add step
                   </button>
+                </div>
+                <div className="workflows-default-prompts">
+                  <span className="workflows-default-prompts-label">
+                    Quick add
+                  </span>
+                  {DEFAULT_PROMPTS.map((p) => {
+                    const Icon = p.icon;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className="workflows-prompt-chip"
+                        onClick={() => addDefaultPromptStep(p)}
+                        title={p.prompt}
+                      >
+                        <Icon size={11} />
+                        {p.label}
+                      </button>
+                    );
+                  })}
                 </div>
                 <div className="workflows-editor-actions">
                   {editor.workflowId && (
