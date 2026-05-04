@@ -126,11 +126,11 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
       .dagMode('td')
       .dagLevelDistance(settingsRef.current.dagLevelDistance)
       .showNavInfo(false)
-      .onNodeRightClick((n: object, ev: MouseEvent) => {
-        const node = n as GraphNode;
-        if (!selectedRef.current.has(node.id)) return;
+      .onNodeRightClick((_n: object, ev: MouseEvent) => {
+        // The container-level contextmenu listener already opens the menu;
+        // just suppress the browser's native menu here too in case the
+        // canvas event bubbles differently.
         ev.preventDefault();
-        setContextMenu({ x: ev.clientX, y: ev.clientY });
       });
 
     graphRef.current = graph;
@@ -163,9 +163,17 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     const ro = new ResizeObserver(onResize);
     ro.observe(containerRef.current);
 
-    // Suppress the browser's native context menu over the graph so our
-    // popover can show on right-click of selected nodes without it.
-    const onCtxMenu = (e: MouseEvent) => e.preventDefault();
+    // Right-click anywhere over the graph viewport opens our popover.
+    // Coords are stored relative to the container because the popover is
+    // rendered inside the (position: relative) wrapper and `.popover` falls
+    // back to position: absolute, so viewport coords would land offset by
+    // the sidebar/topbar.
+    const onCtxMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setContextMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    };
     containerRef.current.addEventListener('contextmenu', onCtxMenu);
 
     return () => {

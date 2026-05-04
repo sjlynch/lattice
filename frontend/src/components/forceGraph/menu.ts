@@ -11,7 +11,20 @@ export const MENU_ITEMS: MenuItemDef[] = [
   {
     verb: 'Refactor',
     label: 'Refactor selection…',
-    prefill: 'Refactor the following files. <user instruction>',
+    prefill:
+      'Refactor the following files for clarity and maintainability while preserving existing behavior.\n\n' +
+      'Focus on:\n' +
+      '- Removing duplication and dead code (unused exports, parameters, branches).\n' +
+      '- Renaming identifiers that no longer match what they do.\n' +
+      '- Flattening deeply nested conditionals and breaking up overly long functions.\n' +
+      '- Tightening types — replace `any`/loose unions with the narrowest accurate type.\n' +
+      '- Aligning the code with patterns already used elsewhere in this codebase.\n\n' +
+      'Constraints:\n' +
+      '- Do not change public APIs, exported signatures, or wire formats unless explicitly requested.\n' +
+      '- Do not introduce new abstractions, layers, or dependencies for hypothetical future reuse — three similar lines beat a premature abstraction.\n' +
+      '- Keep the diff focused; do not reformat untouched code.\n' +
+      '- Run the project\'s type-check (and tests, if quick) afterward and fix anything you broke.\n\n' +
+      'Additional instructions: ',
   },
   {
     verb: 'Add tests',
