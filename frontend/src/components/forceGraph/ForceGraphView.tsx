@@ -248,100 +248,65 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     // back to position: absolute, so viewport coords would land offset by
     // the sidebar/topbar.
     //
-    // Right-drag pans the camera (OrbitControls), and the browser still
-    // fires `contextmenu` on release. We want the menu only on a real
-    // click, not after a pan gesture. Two independent signals are
-    // tracked, and either one suppresses the menu:
+    // Right-drag pans the camera (OrbitControls); the browser still fires
+    // `contextmenu` on release, and we want the menu only on a real click.
+    // The two reliable pieces:
     //
-    //   1. Pointer motion: pointermove distance from the right-press
-    //      down position. Listeners are on `window` in capture phase so
-    //      OrbitControls' canvas-level setPointerCapture (retargets
-    //      events) and preventDefault on pointerdown (suppresses *compat*
-    //      mouse events, not pointer events) don't hide them from us.
+    //   1. mousedown/mouseup positions captured at window level in capture
+    //      phase. mousedown/mouseup are compat events that fire for
+    //      pointerType=mouse regardless of pointer preventDefault, and
+    //      window-capture beats anything inside the canvas tree to the
+    //      event. Compare the two at contextmenu time; if the cursor moved
+    //      more than DRAG_THRESHOLD between them, it was a pan.
     //
-    //   2. Camera state: position+target snapshot at right-press, compared
-    //      again at contextmenu. OrbitControls applies pan synchronously
-    //      to camera.position and controls.target inside its own
-    //      pointermove handler, so by the time contextmenu fires the
-    //      values have already shifted by world units. This signal is
-    //      independent of our pointer-event observation working — it
-    //      catches the case even if window-level pointermove never gets
-    //      delivered for some reason on the user's environment.
-    const DRAG_THRESHOLD = 4;
-    const cam = graph.camera() as THREE.Camera & { position: THREE.Vector3 };
-    const ctrlTarget = (controls as unknown as { target?: THREE.Vector3 })
-      .target;
+    //   2. The contextmenu handler also lives on window (capture), gated
+    //      on containerRef.current.contains(e.target). A previous version
+    //      attached it to the container; cleanup used
+    //      `containerRef.current?.removeEventListener(...)`, and the
+    //      optional chaining silently no-op'd across React StrictMode's
+    //      mount/cleanup/remount cycle, leaking an old closure with a
+    //      stale rightUpAt that opened the menu after every right-drag.
+    const DRAG_THRESHOLD = 5;
     let rightDownX = 0;
     let rightDownY = 0;
-    let rightDown = false;
-    let rightDragged = false;
-    let camAtDown: { px: number; py: number; pz: number; tx: number; ty: number; tz: number } | null = null;
-    const onPointerDown = (e: PointerEvent) => {
+    let rightUpX = 0;
+    let rightUpY = 0;
+    let rightUpAt = 0;
+    const onMouseDownWin = (e: MouseEvent) => {
       if (e.button !== 2) return;
-      const target = e.target as Node | null;
-      if (!containerRef.current || !target || !containerRef.current.contains(target)) return;
-      rightDown = true;
-      rightDragged = false;
       rightDownX = e.clientX;
       rightDownY = e.clientY;
-      camAtDown = {
-        px: cam.position.x,
-        py: cam.position.y,
-        pz: cam.position.z,
-        tx: ctrlTarget?.x ?? 0,
-        ty: ctrlTarget?.y ?? 0,
-        tz: ctrlTarget?.z ?? 0,
-      };
     };
-    const onPointerMove = (e: PointerEvent) => {
-      if (!rightDown || rightDragged) return;
-      const dx = e.clientX - rightDownX;
-      const dy = e.clientY - rightDownY;
-      if (dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) rightDragged = true;
-    };
-    const onPointerUp = (e: PointerEvent) => {
+    const onMouseUpWin = (e: MouseEvent) => {
       if (e.button !== 2) return;
-      rightDown = false;
-      // Defer the dragged-flag reset so the contextmenu event that fires
-      // synchronously after this pointerup still sees it.
-      setTimeout(() => { rightDragged = false; }, 0);
+      rightUpX = e.clientX;
+      rightUpY = e.clientY;
+      rightUpAt = performance.now();
     };
     const onCtxMenu = (e: MouseEvent) => {
+      const container = containerRef.current;
+      const target = e.target as Node | null;
+      if (!container || !target || !container.contains(target)) return;
       e.preventDefault();
-      let cameraMoved = false;
-      if (camAtDown) {
-        const dpx = cam.position.x - camAtDown.px;
-        const dpy = cam.position.y - camAtDown.py;
-        const dpz = cam.position.z - camAtDown.pz;
-        const dtx = (ctrlTarget?.x ?? 0) - camAtDown.tx;
-        const dty = (ctrlTarget?.y ?? 0) - camAtDown.ty;
-        const dtz = (ctrlTarget?.z ?? 0) - camAtDown.tz;
-        // A real pan moves by world units; anything below this is float
-        // noise from controls.update() recomputing the same view.
-        cameraMoved =
-          dpx * dpx + dpy * dpy + dpz * dpz + dtx * dtx + dty * dty + dtz * dtz >
-          1e-4;
+      // Recency check so keyboard contextmenu (Shift+F10, menu key) — which
+      // has no paired mouseup — still opens the menu.
+      if (performance.now() - rightUpAt < 500) {
+        const dx = rightUpX - rightDownX;
+        const dy = rightUpY - rightDownY;
+        if (dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) return;
       }
-      camAtDown = null;
-      if (rightDragged || cameraMoved) {
-        rightDragged = false;
-        return;
-      }
-      const rect = containerRef.current?.getBoundingClientRect();
-      if (!rect) return;
+      const rect = container.getBoundingClientRect();
       setContextMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top });
     };
-    window.addEventListener('pointerdown', onPointerDown, { capture: true });
-    window.addEventListener('pointermove', onPointerMove, { capture: true });
-    window.addEventListener('pointerup', onPointerUp, { capture: true });
-    containerRef.current.addEventListener('contextmenu', onCtxMenu);
+    window.addEventListener('mousedown', onMouseDownWin, { capture: true });
+    window.addEventListener('mouseup', onMouseUpWin, { capture: true });
+    window.addEventListener('contextmenu', onCtxMenu, { capture: true });
 
     return () => {
       ro.disconnect();
-      window.removeEventListener('pointerdown', onPointerDown, { capture: true });
-      window.removeEventListener('pointermove', onPointerMove, { capture: true });
-      window.removeEventListener('pointerup', onPointerUp, { capture: true });
-      containerRef.current?.removeEventListener('contextmenu', onCtxMenu);
+      window.removeEventListener('mousedown', onMouseDownWin, { capture: true });
+      window.removeEventListener('mouseup', onMouseUpWin, { capture: true });
+      window.removeEventListener('contextmenu', onCtxMenu, { capture: true });
       graph._destructor?.();
       graphRef.current = null;
     };
