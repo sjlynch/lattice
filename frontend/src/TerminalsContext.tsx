@@ -26,11 +26,17 @@ type Persisted = {
   activeId: string | null;
 };
 
+// Stored in sessionStorage (not localStorage) so each browser tab keeps its
+// own terminal list. Two tabs sharing one localStorage list would race each
+// other on every write — last-writer-wins clobbers the other tab's terminals.
+// sessionStorage survives reloads in the same tab but is per-tab, which is
+// exactly the isolation we want when users open multiple Lattice tabs on
+// different active folders.
 const STORAGE_KEY = 'lattice.terminals';
 
 function loadPersisted(): Persisted {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return { terminals: [], activeId: null };
     const parsed = JSON.parse(raw) as Persisted;
     if (!parsed || !Array.isArray(parsed.terminals)) {
@@ -50,7 +56,7 @@ function loadPersisted(): Persisted {
 
 function persist(state: Persisted) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     /* quota or private mode — ignore */
   }
@@ -69,7 +75,8 @@ type Ctx = {
 const TerminalsContext = createContext<Ctx | null>(null);
 
 export function TerminalsProvider({ children }: { children: ReactNode }) {
-  // Initialize from localStorage so terminals persist across reloads.
+  // Initialize from sessionStorage so terminals persist across reloads in
+  // this tab, but stay isolated from other tabs.
   const initial = useRef<Persisted | null>(null);
   if (initial.current === null) initial.current = loadPersisted();
 

@@ -92,7 +92,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   );
 
   // Auto-close terminals when their task reaches a terminal state. Runs on
-  // every task update so it also catches stale localStorage terminals that
+  // every task update so it also catches stale sessionStorage terminals that
   // survive a server restart.
   useEffect(() => {
     for (const task of tasks) {
