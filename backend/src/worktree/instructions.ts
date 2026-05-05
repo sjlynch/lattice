@@ -11,7 +11,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Task } from '../tasks.js';
 
-export function renderTaskMarkdown(task: Task): string {
+export function renderTaskMarkdown(task: Task, backendOrigin: string): string {
   const created = new Date(task.createdAt).toISOString();
   const desc = task.description?.trim() || '_(no description provided)_';
   return `# ${task.title}
@@ -52,7 +52,21 @@ ${desc}
    git commit -m "<concise summary of the change>"
    \`\`\`
 
-4. End the session normally. Lattice's Stop hook will verify the commit
+4. **Update the Lattice task with a short summary of the changes** so the
+   task board reflects what was actually done once it lands in
+   "Ready to Merge". PATCH the task description:
+
+   \`\`\`
+   curl -s -X PATCH ${backendOrigin}/api/tasks/${task.id} \\
+     -H "Content-Type: application/json" \\
+     -d '{"description":"<1-3 bullet summary of what changed>"}'
+   \`\`\`
+
+   Keep it concise (1-3 bullet points). This replaces the original
+   description; the original task intent is preserved in this
+   \`LATTICE_TASK.md\` file and in the branch's git history.
+
+5. End the session normally. Lattice's Stop hook will verify the commit
    and move this task to "Ready to Merge" automatically.
 
 Please do not start, stop, or restart any dev servers — the user runs

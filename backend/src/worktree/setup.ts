@@ -99,7 +99,7 @@ export async function setupTaskWorktree(
   }
 
   const taskFile = path.join(worktreePath, 'LATTICE_TASK.md');
-  await fs.writeFile(taskFile, renderTaskMarkdown(task), 'utf8');
+  await fs.writeFile(taskFile, renderTaskMarkdown(task, backendOrigin), 'utf8');
 
   await installStopHook(worktreePath, task.id, backendOrigin);
 
