@@ -134,6 +134,10 @@ export async function setupTaskWorktree(
     const taskFile = path.join(candidatePath, 'LATTICE_TASK.md');
     await fs.writeFile(taskFile, renderTaskMarkdown(task, backendOrigin), 'utf8');
     await installStopHook(candidatePath, task.id, backendOrigin);
+    // Keep Lattice-managed files out of `git status` so Claude's `git add .`
+    // never stages them. Writes to the worktree-local exclude (not the repo
+    // .gitignore) so the project's tracked files are untouched.
+    await writeWorktreeExclude(candidatePath, ['LATTICE_TASK.md', 'MERGE_INSTRUCTIONS.md', '.claude/']);
 
     if (attempt > 0) {
       console.log(
@@ -263,6 +267,29 @@ async function tryRmWithRetries(target: string): Promise<boolean> {
     }
   }
   return false;
+}
+
+// Write patterns to the worktree-local git exclude file so these files
+// are invisible to `git status` inside the worktree. The exclude file
+// lives in the worktree's gitdir (resolved from the .git pointer file)
+// and is never committed — unlike .gitignore which is part of the tree.
+async function writeWorktreeExclude(worktreePath: string, patterns: string[]): Promise<void> {
+  try {
+    const gitPointer = await fs.readFile(path.join(worktreePath, '.git'), 'utf8');
+    const gitDirRelative = gitPointer.trim().replace(/^gitdir:\s*/i, '');
+    const gitDir = path.resolve(worktreePath, gitDirRelative);
+    const infoDir = path.join(gitDir, 'info');
+    await fs.mkdir(infoDir, { recursive: true });
+    await fs.appendFile(
+      path.join(infoDir, 'exclude'),
+      `\n# Lattice-managed — do not commit\n${patterns.join('\n')}\n`,
+      'utf8',
+    );
+  } catch (err) {
+    // Non-fatal: the merge path already handles the shelve-and-restore
+    // fallback; this is belt-and-suspenders prevention only.
+    console.warn('[worktree] could not write local exclude file:', err);
+  }
 }
 
 // Claude hook config — Stop hook posts back so the task moves to QA.

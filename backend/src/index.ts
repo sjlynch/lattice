@@ -15,7 +15,6 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureTerminalServer } from './terminalProxy.js';
-import { startWorkflowAdvancer } from './workflowRuns.js';
 import { buildHealthRouter } from './routes/health.js';
 import { buildSettingsRouter } from './routes/settings.js';
 import { buildTerminalsRouter } from './routes/terminals.js';
@@ -72,7 +71,6 @@ attachWebSockets(server);
 async function start() {
   await ensureTerminalServer();
   await recoverOrphanedTasks();
-  startWorkflowAdvancer(BACKEND_ORIGIN);
   server.listen(PORT, () => {
     console.log(`[lattice-backend] listening on http://localhost:${PORT}`);
     console.log(`[lattice-backend] default root: ${DEFAULT_ROOT}`);

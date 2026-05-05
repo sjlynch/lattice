@@ -80,6 +80,7 @@ click landing on the same task while the run is processing it.
 | GET | `/api/tasks?project=` | List tasks for a project |
 | GET | `/api/tasks/:id` | Fetch a single task |
 | POST | `/api/tasks` | Create `{project, title, description?}` |
+| POST | `/api/tasks/batch` | Batch-create `{project, tasks:[{title,description?}]}` — returns array |
 | PATCH | `/api/tasks/:id` | Update `title` / `description` / `status` |
 | DELETE | `/api/tasks/:id` | Remove |
 | POST | `/api/tasks/:id/run` | Spawn worktree + Claude on Open task |
@@ -91,6 +92,9 @@ click landing on the same task while the run is processing it.
 | GET | `/api/merge-runs/active?project=` | Active run for a project, or `null` |
 | GET | `/api/merge-runs/:id` | Run snapshot |
 | POST | `/api/merge-runs/:id/cancel` | Request cancellation (run finishes current task and stops) |
+| POST | `/api/workflows/:id/run` | Start a workflow run (spawns step 0 terminal) |
+| POST | `/api/workflow-runs/:runId/steps/:n/complete` | Stop-hook callback — advances to next step |
+| GET | `/api/workflow-runs/active?project=` | Active workflow runs for a project |
 | GET | `/api/terminals` | Debug: list active pty sessions |
 | DELETE | `/api/terminals/:id` | Kill a pty session |
 | WS | `/ws/terminal?id=&cwd=&cols=&rows=&initialCommand=` | xterm proxy via node-pty (with replay) |

@@ -97,9 +97,7 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
     return () => { cancelled = true; unsub(); };
   }, [activeFolder]);
 
-  // Workflow run events: drive the progress strip + spawn terminals for
-  // auto-advanced steps. The first step's terminal is opened by the run
-  // button click handler; later steps arrive via the 'task-spawned' event.
+  // Workflow run events: drive the progress strip and open step terminals.
   useEffect(() => {
     if (!activeFolder) {
       setActiveRuns({});
@@ -130,12 +128,11 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
             return next;
           });
         }, 10000);
-      } else if (ev.type === 'task-spawned') {
+      } else if (ev.type === 'step-spawned') {
         addTerminal({
-          label: `wf:${ev.taskId.slice(-6)}`,
-          cwd: ev.worktreePath,
+          label: `wf:step${ev.stepIndex + 1}`,
+          cwd: ev.cwd,
           initialCommand: ev.command,
-          taskId: ev.taskId,
           projectPath: activeFolder,
         });
       }
@@ -245,13 +242,6 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
     }
     try {
       const res = await apiStartWorkflow(wf.id);
-      addTerminal({
-        label: `wf:${res.spawn.taskId.slice(-6)}`,
-        cwd: res.spawn.worktreePath,
-        initialCommand: res.spawn.command,
-        taskId: res.spawn.taskId,
-        projectPath: wf.projectPath,
-      });
       setActiveRuns((cur) => ({ ...cur, [res.run.id]: res.run }));
     } catch (err) {
       showError(`Run failed: ${(err as Error).message}`);
@@ -493,9 +483,9 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
                   Build a chain of prompts.
                 </div>
                 <div className="workflows-editor-empty-sub">
-                  Each step becomes a Lattice task. When one finishes (its
-                  branch reaches QA), the next step auto-spawns in a fresh
-                  worktree.
+                  Each step becomes a task on the board. Run each step
+                  manually; when it merges and reaches QA, the next step
+                  appears automatically.
                 </div>
                 <div className="workflows-editor-empty-actions">
                   <button className="btn-primary" onClick={newBlank}>

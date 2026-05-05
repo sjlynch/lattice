@@ -548,8 +548,11 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                     : undefined
                 }
                 onView={setViewing}
-                strip={
-                  lane.id === 'ready_to_merge' && (mergeRun || recentRunSummary) ? (
+                strip={(() => {
+                  if (lane.id !== 'ready_to_merge') return undefined;
+                  const hasConflicts = grouped['ready_to_merge'].some((t) => t.conflict);
+                  if (!mergeRun && !recentRunSummary && !hasConflicts) return undefined;
+                  return (
                     <MergeRunStrip
                       active={mergeRun}
                       summary={recentRunSummary}
@@ -557,8 +560,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                       onCancel={cancelActiveRun}
                       onDismiss={() => setRecentRunSummary(null)}
                     />
-                  ) : undefined
-                }
+                  );
+                })()}
               />
             ))}
           </div>

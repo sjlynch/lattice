@@ -1,6 +1,6 @@
-// Workflow CRUD + run start. Workflow runs themselves are advanced by the
-// in-process advancer in workflowRuns.ts; these endpoints just create/edit
-// definitions and kick off new runs.
+// Workflow CRUD + run start + step-completion callback.
+// Workflow runs are advanced by Stop-hook POSTs to /step-complete —
+// not by watching task state.
 
 import { Router } from 'express';
 import {
@@ -13,6 +13,7 @@ import {
 import {
   getActiveRunsForProject as getActiveWorkflowRunsForProject,
   startWorkflowRun,
+  completeWorkflowStep,
 } from '../workflowRuns.js';
 
 export function buildWorkflowsRouter(backendOrigin: string): Router {
@@ -50,11 +51,19 @@ export function buildWorkflowsRouter(backendOrigin: string): Router {
 
   r.post('/api/workflows/:id/run', async (req, res) => {
     try {
-      const { run, spawn } = await startWorkflowRun(req.params.id, backendOrigin);
-      res.json({ run, spawn });
+      const run = await startWorkflowRun(req.params.id, backendOrigin);
+      res.json({ run });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
     }
+  });
+
+  // Stop-hook callback fired when a workflow step's Claude session exits.
+  r.post('/api/workflow-runs/:runId/steps/:stepIndex/complete', async (req, res) => {
+    const stepIndex = parseInt(req.params.stepIndex, 10);
+    if (isNaN(stepIndex)) return res.status(400).json({ error: 'invalid stepIndex' });
+    await completeWorkflowStep(req.params.runId, stepIndex, backendOrigin);
+    res.json({ ok: true });
   });
 
   r.get('/api/workflow-runs/active', (req, res) => {

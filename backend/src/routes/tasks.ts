@@ -90,6 +90,33 @@ export function buildTasksRouter(backendOrigin: string): Router {
     }
   });
 
+  // Batch-create: accepts { project, tasks: [{title, description?}] }.
+  // Returns the created task array in the same order. Intended for workflow
+  // Claude agents that produce several tasks at once — avoids N round trips
+  // and N separate shell-quoting opportunities.
+  r.post('/api/tasks/batch', async (req, res) => {
+    const { project, tasks } = (req.body || {}) as {
+      project?: string;
+      tasks?: Array<{ title?: string; description?: string }>;
+    };
+    if (!project) return res.status(400).json({ error: 'project required' });
+    if (!Array.isArray(tasks) || tasks.length === 0) {
+      return res.status(400).json({ error: 'tasks must be a non-empty array' });
+    }
+    const invalid = tasks.findIndex((t) => !t.title?.trim());
+    if (invalid !== -1) {
+      return res.status(400).json({ error: `tasks[${invalid}].title is required` });
+    }
+    try {
+      const created = await Promise.all(
+        tasks.map((t) => createTask(project, t.title!, t.description)),
+      );
+      res.json(created);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   r.patch('/api/tasks/:id', async (req, res) => {
     const updates = (req.body || {}) as {
       title?: string;
@@ -234,12 +261,48 @@ export function buildTasksRouter(backendOrigin: string): Router {
         );
         return res.json({ ok: true, awaitingResolution: true });
       }
+      // Re-sync with current main before finalizing. The merge run may have
+      // advanced main (via other tasks) while the resolver was working, making
+      // the branch's merge commit stale relative to main — causing --ff-only
+      // to fail. Merging again absorbs those new main commits; if that also
+      // conflicts we need another resolver pass.
+      const reSync = await mergeWorktreeInRepo(
+        task.projectPath,
+        task.branch,
+        task.worktreePath,
+      );
+      if (reSync.status === 'conflict') {
+        const { relativePath } = await writeMergeInstructions(
+          task,
+          task.branch,
+          reSync.conflictedFiles,
+          backendOrigin,
+          task.worktreePath,
+        );
+        await updateTask(task.id, { conflict: true, conflictStartedAt: Date.now() });
+        console.log(
+          `[complete] task ${task.id}: re-sync with main conflicted — resolver re-queued`,
+        );
+        return res.json({
+          ok: true,
+          requiresReResolution: true,
+          conflictedFiles: reSync.conflictedFiles,
+          command: buildConflictResolveCommand(relativePath),
+          cwd: task.worktreePath,
+        });
+      }
+      if (reSync.status === 'error') {
+        console.warn(`[complete] task ${task.id}: re-sync with main failed: ${reSync.message}`);
+        return res.json({ ok: false, error: reSync.message });
+      }
       const fin = await finalizeMergedTask(task, backendOrigin);
       if (!fin.ok) {
         const msg = finalizeError(fin);
         console.warn(`[complete] finalize after resolution failed: ${msg}`);
         return res.json({ ok: false, error: msg });
       }
+      // Auto-restart the run so any remaining ready_to_merge tasks are picked up.
+      startMergeRun(task.projectPath, backendOrigin).catch(() => {});
       return res.json({ ok: true, finalized: true });
     }
 
@@ -391,10 +454,36 @@ export function buildTasksRouter(backendOrigin: string): Router {
         .status(400)
         .json({ error: 'worktree is still mid-merge — commit first.' });
     }
+    // Re-sync with current main (same reason as /complete — see comment there).
+    const reSync = await mergeWorktreeInRepo(
+      task.projectPath,
+      task.branch,
+      task.worktreePath,
+    );
+    if (reSync.status === 'conflict') {
+      const { relativePath } = await writeMergeInstructions(
+        task,
+        task.branch,
+        reSync.conflictedFiles,
+        backendOrigin,
+        task.worktreePath,
+      );
+      await updateTask(task.id, { conflict: true, conflictStartedAt: Date.now() });
+      return res.status(409).json({
+        error: 'Re-sync with main introduced new conflicts — another resolver needed',
+        command: buildConflictResolveCommand(relativePath),
+        cwd: task.worktreePath,
+        conflictedFiles: reSync.conflictedFiles,
+      });
+    }
+    if (reSync.status === 'error') {
+      return res.status(500).json({ error: `Re-sync with main failed: ${reSync.message}` });
+    }
     const fin = await finalizeMergedTask(task, backendOrigin);
     if (!fin.ok) {
       return res.status(500).json({ error: finalizeError(fin) });
     }
+    startMergeRun(task.projectPath, backendOrigin).catch(() => {});
     res.json({ ok: true });
   });
 

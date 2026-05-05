@@ -199,20 +199,11 @@ export type WorkflowRun = {
   finishedAt?: number;
   totalSteps: number;
   currentStepIndex: number;
-  taskIdsByStep: string[];
   error?: string;
-};
-
-export type WorkflowSpawnInfo = {
-  taskId: string;
-  command: string;
-  worktreePath: string;
-  stepIndex: number;
 };
 
 export type WorkflowRunResult = {
   run: WorkflowRun;
-  spawn: WorkflowSpawnInfo;
 };
 
 export type WorkflowRunEvent =
@@ -222,11 +213,10 @@ export type WorkflowRunEvent =
   | { type: 'completed'; run: WorkflowRun }
   | { type: 'errored'; run: WorkflowRun }
   | {
-      type: 'task-spawned';
+      type: 'step-spawned';
       runId: string;
       projectPath: string;
-      taskId: string;
-      command: string;
-      worktreePath: string;
       stepIndex: number;
+      command: string;
+      cwd: string;
     };

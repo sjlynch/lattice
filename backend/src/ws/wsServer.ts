@@ -136,8 +136,7 @@ function buildWorkflowRunsWss(): WebSocketServer {
     }
     const unsub = subscribeWorkflowRuns((ev) => {
       if (ws.readyState !== ws.OPEN) return;
-      const evProject =
-        'run' in ev ? ev.run.projectPath : ev.projectPath;
+      const evProject = 'run' in ev ? ev.run.projectPath : ev.projectPath;
       if (evProject !== project) return;
       ws.send(JSON.stringify(ev));
     });

@@ -3,6 +3,8 @@
 // watched source files. After the worktree's branch absorbs main (cleanly
 // or after resolution), finalize.ts fast-forwards main to the branch tip.
 
+import path from 'node:path';
+import fs from 'node:fs/promises';
 import { exec } from './exec.js';
 import {
   isMidMerge,
@@ -12,6 +14,50 @@ import {
   listConflictedFiles,
 } from './state.js';
 import { autoStashMessage, popStashByMessage } from './stash.js';
+
+// Files that Lattice writes into every worktree root but must never be
+// committed. If a previous resolver Claude accidentally ran `git add .`
+// and committed one of these, future merges into other worktrees fail with
+// "untracked working tree files would be overwritten by merge." Moving
+// them aside before `git merge` and restoring afterwards sidesteps this.
+const LATTICE_MANAGED_FILES = ['LATTICE_TASK.md', 'MERGE_INSTRUCTIONS.md'];
+
+async function shelveLatticeManagedFiles(worktreePath: string): Promise<string[]> {
+  const shelved: string[] = [];
+  for (const f of LATTICE_MANAGED_FILES) {
+    const src = path.join(worktreePath, f);
+    try {
+      await fs.access(src);
+      await fs.rename(src, `${src}.lattice-bak`);
+      shelved.push(f);
+    } catch { /* file absent — nothing to move */ }
+  }
+  return shelved;
+}
+
+async function restoreLatticeManagedFiles(worktreePath: string, files: string[]): Promise<void> {
+  for (const f of files) {
+    try {
+      await fs.rename(`${path.join(worktreePath, f)}.lattice-bak`, path.join(worktreePath, f));
+    } catch { /* ignore */ }
+  }
+}
+
+// After a clean merge, the merge commit may have brought in LATTICE_TASK.md
+// (or similar) as a tracked file because main had it accidentally committed.
+// Remove it from the index and make a cleanup commit so the removal
+// propagates when this branch is fast-forwarded into main.
+async function untrackLatticeManagedFiles(worktreePath: string, shelved: string[]): Promise<void> {
+  const toRemove: string[] = [];
+  for (const f of shelved) {
+    const check = await exec('git', ['ls-files', f], worktreePath);
+    if (check.stdout.trim()) toRemove.push(f);
+  }
+  if (toRemove.length === 0) return;
+  await exec('git', ['rm', '--cached', ...toRemove], worktreePath);
+  await exec('git', ['commit', '-m', 'Remove accidentally tracked Lattice-managed files [lattice-auto]'], worktreePath);
+  console.log(`[merge] untracked accidentally committed lattice file(s): ${toRemove.join(', ')}`);
+}
 
 export type MergeConflictKind = 'merge' | 'stash-pop';
 
@@ -170,13 +216,29 @@ export async function mergeWorktreeInRepo(
     return { status: 'error', message: 'Could not read main HEAD SHA.' };
   }
 
-  const merge = await exec(
-    'git',
-    ['merge', '--no-ff', '--no-edit', mainHeadSha],
-    worktreePath,
-  );
+  // Lattice-managed files (LATTICE_TASK.md, MERGE_INSTRUCTIONS.md) are
+  // written into each worktree root and must stay untracked. If a prior
+  // resolver Claude accidentally committed one via `git add .`, every
+  // subsequent worktree merge fails with "untracked file would be
+  // overwritten". Move them aside for the duration of the merge so git
+  // doesn't see them, then restore whatever state they were in.
+  const shelved = await shelveLatticeManagedFiles(worktreePath);
+  let merge;
+  try {
+    merge = await exec(
+      'git',
+      ['merge', '--no-ff', '--no-edit', mainHeadSha],
+      worktreePath,
+    );
+  } finally {
+    await restoreLatticeManagedFiles(worktreePath, shelved);
+  }
 
   if (merge.code === 0) {
+    // If the merge brought in tracked Lattice-managed files (LATTICE_TASK.md
+    // etc.) from main — from a prior accidental commit — remove them now and
+    // commit the cleanup so the fix propagates when this branch FFs into main.
+    await untrackLatticeManagedFiles(worktreePath, shelved);
     // Worktree is clean. The caller is responsible for fastForwardMain
     // and cleanup via finalizeMergedTask — keeping the steps separate
     // means the run worker and the /merge endpoint can compose them

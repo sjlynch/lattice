@@ -2,7 +2,10 @@ import { X } from 'lucide-react';
 import type { MergeRun, Task } from '../../api';
 
 // Progress strip rendered above the Ready-to-Merge lane during a backend
-// merge run. Switches to a dismissable summary on completion or cancel.
+// merge run. Priority order:
+//   1. active run → spinner with task progress
+//   2. pending conflicts (resolver Claude still running) → spinner "resolving"
+//   3. completed run summary → dismissable result line
 export function MergeRunStrip({
   active,
   summary,
@@ -16,7 +19,9 @@ export function MergeRunStrip({
   onCancel: () => void;
   onDismiss: () => void;
 }) {
+  const pendingConflicts = tasks.filter((t) => t.conflict);
   if (active) return <ActiveStrip run={active} tasks={tasks} onCancel={onCancel} />;
+  if (pendingConflicts.length > 0) return <ResolvingStrip conflicts={pendingConflicts} />;
   if (summary) return <SummaryStrip run={summary} onDismiss={onDismiss} />;
   return null;
 }
@@ -79,6 +84,26 @@ function ActiveStrip({
       >
         Cancel
       </button>
+    </div>
+  );
+}
+
+function ResolvingStrip({ conflicts }: { conflicts: Task[] }) {
+  const first = conflicts[0];
+  const extra = conflicts.length - 1;
+  return (
+    <div className="merge-run-strip running" role="status">
+      <span className="merge-run-strip-spinner" />
+      <span className="merge-run-strip-text">
+        Resolving{' '}
+        <span className="merge-run-stat conflict">
+          {conflicts.length} conflict{conflicts.length === 1 ? '' : 's'}
+        </span>
+        <div className="merge-run-strip-current">
+          {first.title}
+          {extra > 0 && ` + ${extra} more`}
+        </div>
+      </span>
     </div>
   );
 }
