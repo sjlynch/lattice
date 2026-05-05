@@ -249,38 +249,64 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     // the sidebar/topbar.
     //
     // Right-drag pans the camera (OrbitControls), and the browser still
-    // fires `contextmenu` on release. Suppress the menu when the cursor
-    // moved more than DRAG_THRESHOLD px between mousedown and contextmenu.
-    //
-    // We compare positions directly (down vs. ctx) rather than tracking
-    // movement via mousemove: OrbitControls calls preventDefault() on
-    // pointermove, which suppresses the compatibility mousemove events,
-    // so a mousemove-based heuristic never sees the drag.
-    const DRAG_THRESHOLD = 4;
-    let rightDownAt: { x: number; y: number } | null = null;
-    const onMouseDown = (e: MouseEvent) => {
+    // fires `contextmenu` on release. Earlier attempts to suppress the
+    // menu by tracking mousemove or by comparing mousedown/contextmenu
+    // positions were unreliable: OrbitControls calls setPointerCapture
+    // on the canvas and preventDefault() on pointer events, so the
+    // compatibility mouse events on outer listeners are flaky across
+    // browsers. Instead, listen for OrbitControls' own `change` event,
+    // which fires whenever the camera actually moves — that is the
+    // ground truth for "the user panned". If the camera changed at all
+    // while the right button was held, the contextmenu is from a pan
+    // gesture and we suppress it.
+    let rightDown = false;
+    let cameraMovedWhileRightDown = false;
+    const ctrlDispatcher = controls as unknown as {
+      addEventListener?: (type: string, fn: () => void) => void;
+      removeEventListener?: (type: string, fn: () => void) => void;
+    };
+    const onCameraChange = () => {
+      if (rightDown) cameraMovedWhileRightDown = true;
+    };
+    ctrlDispatcher.addEventListener?.('change', onCameraChange);
+
+    // pointerdown / pointerup on window in capture phase so we observe
+    // the gesture endpoints before OrbitControls' own canvas-level
+    // listeners (which call setPointerCapture and may call
+    // preventDefault, suppressing compat mouse events on bubble-phase
+    // listeners).
+    const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 2) return;
-      rightDownAt = { x: e.clientX, y: e.clientY };
+      const target = e.target as Node | null;
+      if (!containerRef.current || !target || !containerRef.current.contains(target)) return;
+      rightDown = true;
+      cameraMovedWhileRightDown = false;
+    };
+    // Defer the rightDown reset so the synchronously-following
+    // contextmenu event still sees the gesture flag.
+    const onPointerUp = (e: PointerEvent) => {
+      if (e.button !== 2) return;
+      setTimeout(() => { rightDown = false; }, 0);
     };
     const onCtxMenu = (e: MouseEvent) => {
       e.preventDefault();
-      if (rightDownAt) {
-        const dx = e.clientX - rightDownAt.x;
-        const dy = e.clientY - rightDownAt.y;
-        const wasDrag = dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD;
-        rightDownAt = null;
-        if (wasDrag) return;
+      if (cameraMovedWhileRightDown) {
+        cameraMovedWhileRightDown = false;
+        return;
       }
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect) return;
       setContextMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top });
     };
-    containerRef.current.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('pointerdown', onPointerDown, { capture: true });
+    window.addEventListener('pointerup', onPointerUp, { capture: true });
     containerRef.current.addEventListener('contextmenu', onCtxMenu);
 
     return () => {
       ro.disconnect();
-      containerRef.current?.removeEventListener('mousedown', onMouseDown);
+      ctrlDispatcher.removeEventListener?.('change', onCameraChange);
+      window.removeEventListener('pointerdown', onPointerDown, { capture: true });
+      window.removeEventListener('pointerup', onPointerUp, { capture: true });
       containerRef.current?.removeEventListener('contextmenu', onCtxMenu);
       graph._destructor?.();
       graphRef.current = null;
