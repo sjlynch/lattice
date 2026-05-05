@@ -247,16 +247,52 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     // rendered inside the (position: relative) wrapper and `.popover` falls
     // back to position: absolute, so viewport coords would land offset by
     // the sidebar/topbar.
+    //
+    // Right-drag pans the camera (OrbitControls), and the browser still
+    // fires `contextmenu` on release. Track the down-position and suppress
+    // the menu if the cursor moved more than DRAG_THRESHOLD px before
+    // release.
+    const DRAG_THRESHOLD = 4;
+    let rightDownAt: { x: number; y: number } | null = null;
+    let rightDragged = false;
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 2) return;
+      rightDownAt = { x: e.clientX, y: e.clientY };
+      rightDragged = false;
+    };
+    const onMouseMove = (e: MouseEvent) => {
+      if (!rightDownAt) return;
+      const dx = e.clientX - rightDownAt.x;
+      const dy = e.clientY - rightDownAt.y;
+      if (dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) {
+        rightDragged = true;
+      }
+    };
+    const onMouseUp = (e: MouseEvent) => {
+      if (e.button !== 2) return;
+      // Defer reset until after the contextmenu event runs.
+      setTimeout(() => { rightDownAt = null; }, 0);
+    };
     const onCtxMenu = (e: MouseEvent) => {
       e.preventDefault();
+      if (rightDragged) {
+        rightDragged = false;
+        return;
+      }
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect) return;
       setContextMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top });
     };
+    containerRef.current.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
     containerRef.current.addEventListener('contextmenu', onCtxMenu);
 
     return () => {
       ro.disconnect();
+      containerRef.current?.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
       containerRef.current?.removeEventListener('contextmenu', onCtxMenu);
       graph._destructor?.();
       graphRef.current = null;
