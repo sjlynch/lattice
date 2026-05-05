@@ -11,6 +11,15 @@ import type { Task } from '../tasks.js';
 import { exec } from './exec.js';
 import { worktreeExists } from './state.js';
 import { renderTaskMarkdown } from './instructions.js';
+import { proxyKillSessionsByCwd } from '../terminalProxy.js';
+
+// How many alternate worktree paths to try when the canonical path can't be
+// freed (Windows lock that survives PTY kills + retries — usually an Explorer
+// window or the user's editor). 4 retries gives us "-r2" through "-r5",
+// after which the user almost certainly has a runaway process and should be
+// told to look rather than us silently spawning more orphans.
+const MAX_PATH_RETRY_SUFFIXES = 4;
+const RM_RETRY_DELAYS_MS = [150, 400, 900];
 
 function slugify(s: string): string {
   return (
@@ -80,41 +89,89 @@ export async function setupTaskWorktree(
   const repoRoot = repoCheck.stdout.trim();
   const slug = slugify(task.title);
   const shortId = task.id.slice(-6);
-  const branchName = `lattice/${slug}-${shortId}`;
   const worktreesDir = path.join(repoRoot, '.lattice', 'worktrees');
   await fs.mkdir(worktreesDir, { recursive: true });
-  const worktreePath = path.join(worktreesDir, `${slug}-${shortId}`);
 
-  await reconcileStaleState(repoRoot, branchName, worktreePath);
+  // Try the canonical path first; if reconciliation can't free it (Windows
+  // file lock from an Explorer window, editor, etc.), fall through to a
+  // suffixed path so the user isn't blocked. The branch name follows the
+  // same retry suffix so `git worktree add -b` doesn't collide either.
+  for (let attempt = 0; attempt <= MAX_PATH_RETRY_SUFFIXES; attempt += 1) {
+    const suffix = attempt === 0 ? '' : `-r${attempt + 1}`;
+    const candidatePath = path.join(worktreesDir, `${slug}-${shortId}${suffix}`);
+    const candidateBranch = `lattice/${slug}-${shortId}${suffix}`;
 
-  const wt = await exec(
-    'git',
-    ['worktree', 'add', worktreePath, '-b', branchName],
-    repoRoot,
-  );
-  if (wt.code !== 0) {
-    throw new Error(
-      `git worktree add failed: ${wt.stderr.trim() || wt.stdout.trim()}`,
+    const reconciled = await reconcileStaleState(
+      repoRoot,
+      candidateBranch,
+      candidatePath,
     );
+    if (!reconciled) {
+      // Path or branch couldn't be cleaned. Try the next suffix.
+      console.warn(
+        `[worktree] could not reconcile ${candidatePath}; trying next suffix`,
+      );
+      continue;
+    }
+
+    const wt = await exec(
+      'git',
+      ['worktree', 'add', candidatePath, '-b', candidateBranch],
+      repoRoot,
+    );
+    if (wt.code !== 0) {
+      // `git worktree add` itself failed (rare after reconcile). Log and
+      // try the next suffix rather than throwing — same recovery model.
+      console.warn(
+        `[worktree] git worktree add ${candidatePath} -b ${candidateBranch} ` +
+          `(cwd=${repoRoot}) exit ${wt.code}: ` +
+          `${wt.stderr.trim() || wt.stdout.trim() || '(no output)'}; ` +
+          `trying next suffix`,
+      );
+      continue;
+    }
+
+    const taskFile = path.join(candidatePath, 'LATTICE_TASK.md');
+    await fs.writeFile(taskFile, renderTaskMarkdown(task, backendOrigin), 'utf8');
+    await installStopHook(candidatePath, task.id, backendOrigin);
+
+    if (attempt > 0) {
+      console.log(
+        `[worktree] used fallback path ${candidatePath} for task ${task.id} ` +
+          `(canonical was locked; orphan dir at .lattice/worktrees/${slug}-${shortId} ` +
+          `will need manual cleanup once the lock holder is closed)`,
+      );
+    }
+
+    return {
+      worktreePath: candidatePath,
+      branch: candidateBranch,
+      taskFile,
+    };
   }
 
-  const taskFile = path.join(worktreePath, 'LATTICE_TASK.md');
-  await fs.writeFile(taskFile, renderTaskMarkdown(task, backendOrigin), 'utf8');
-
-  await installStopHook(worktreePath, task.id, backendOrigin);
-
-  return { worktreePath, branch: branchName, taskFile };
+  throw new Error(
+    `Could not create a worktree for task "${task.title}" after ` +
+      `${MAX_PATH_RETRY_SUFFIXES + 1} attempts: every candidate path under ` +
+      `.lattice/worktrees/${slug}-${shortId}* is locked or unusable. ` +
+      `Close any process / editor / Explorer window holding those directories ` +
+      `open and try again.`,
+  );
 }
 
 // Branch names are deterministic from (slug, shortId), so a leftover
 // branch/worktree from before will collide with `git worktree add -b`.
 // Run = fresh start; the explicit Resume path is the one that
 // preserves prior progress.
+//
+// Returns true if the (path, branch) pair is now free for `git worktree add`,
+// false if something on disk couldn't be removed (Windows lock that survived
+// PTY kills + retries). Caller falls back to an alternate suffix.
 async function reconcileStaleState(
   repoRoot: string,
   branchName: string,
   worktreePath: string,
-): Promise<void> {
+): Promise<boolean> {
   const branchExists =
     (
       await exec(
@@ -125,7 +182,7 @@ async function reconcileStaleState(
     ).code === 0;
   const targetDirExists = await worktreeExists(worktreePath);
 
-  if (!branchExists && !targetDirExists) return;
+  if (!branchExists && !targetDirExists) return true;
 
   const wtList = await exec(
     'git',
@@ -138,21 +195,74 @@ async function reconcileStaleState(
   );
   if (onBranch) {
     // Tracked worktree on this branch — remove it cleanly first.
-    await exec(
+    // Kill any PTYs whose cwd is inside the dir before git tries to remove it,
+    // otherwise on Windows the cwd lock makes `git worktree remove` fail.
+    await proxyKillSessionsByCwd(onBranch.path);
+    await new Promise<void>((r) => setTimeout(r, 200));
+    const rm = await exec(
       'git',
       ['worktree', 'remove', '--force', onBranch.path],
       repoRoot,
     );
+    if (rm.code !== 0) {
+      console.warn(
+        `[worktree] reconcile: 'git worktree remove --force ${onBranch.path}' ` +
+          `exit ${rm.code}: ${rm.stderr.trim() || rm.stdout.trim()}`,
+      );
+    }
   }
   if (await worktreeExists(worktreePath)) {
-    // Untracked stray directory at our target path — wipe it.
-    await fs.rm(worktreePath, { recursive: true, force: true });
+    // Untracked stray directory at our target path — wipe it. This is the
+    // path most likely to hit EBUSY: the qa-cleanup background job already
+    // tried (and may have failed) once, leaving the dir orphaned. Kill any
+    // PTYs whose cwd is inside, give the OS a beat, then retry the rm a
+    // few times before giving up.
+    await proxyKillSessionsByCwd(worktreePath);
+    await new Promise<void>((r) => setTimeout(r, 200));
+    if (!(await tryRmWithRetries(worktreePath))) {
+      // Caller will move on to a fresh suffix; leave the orphan dir in
+      // place so the user can investigate the lock holder.
+      return false;
+    }
   }
   await exec('git', ['worktree', 'prune'], repoRoot);
   if (branchExists) {
     // -D in case it has unmerged commits from a prior abandoned run.
-    await exec('git', ['branch', '-D', branchName], repoRoot);
+    const del = await exec('git', ['branch', '-D', branchName], repoRoot);
+    if (del.code !== 0) {
+      console.warn(
+        `[worktree] reconcile: 'git branch -D ${branchName}' ` +
+          `exit ${del.code}: ${del.stderr.trim() || del.stdout.trim()}`,
+      );
+      return false;
+    }
   }
+  return true;
+}
+
+// `fs.rm` on Windows fails with EBUSY/EPERM/ENOTEMPTY when something
+// holds a handle on the directory. Most lock holders we care about (PTYs)
+// have already been killed by the caller; this gives the OS a few hundred
+// ms to actually release the handle before declaring defeat.
+async function tryRmWithRetries(target: string): Promise<boolean> {
+  for (let attempt = 0; attempt < RM_RETRY_DELAYS_MS.length + 1; attempt += 1) {
+    try {
+      await fs.rm(target, { recursive: true, force: true });
+      return true;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const transient =
+        code === 'EBUSY' || code === 'EPERM' || code === 'ENOTEMPTY';
+      if (!transient || attempt === RM_RETRY_DELAYS_MS.length) {
+        console.warn(`[worktree] fs.rm ${target} failed (${code ?? 'unknown'}):`, err);
+        return false;
+      }
+      await new Promise<void>((r) =>
+        setTimeout(r, RM_RETRY_DELAYS_MS[attempt]),
+      );
+    }
+  }
+  return false;
 }
 
 // Claude hook config — Stop hook posts back so the task moves to QA.
