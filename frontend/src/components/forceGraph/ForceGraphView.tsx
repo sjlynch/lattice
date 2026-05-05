@@ -249,25 +249,33 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     // the sidebar/topbar.
     //
     // Right-drag pans the camera (OrbitControls), and the browser still
-    // fires `contextmenu` on release. We want the menu only on a "click",
-    // not after a pan gesture, so we track pointer motion between the
-    // right pointerdown and the contextmenu event:
-    //   - All listeners are on `window` in the capture phase. OrbitControls
-    //     calls setPointerCapture on the canvas, which only changes the
-    //     event target — capture-phase listeners on window still see every
-    //     pointer event.
-    //   - OrbitControls calls preventDefault() on pointer events, which
-    //     suppresses the compat mousemove/mouseup events. Pointer events
-    //     are not suppressed; that's why we track pointermove rather than
-    //     mousemove.
-    //   - The `rightDragged` flag is reset asynchronously on pointerup so
-    //     the synchronously-following contextmenu still sees it. The next
-    //     pointerdown also clears it as a belt-and-suspenders reset.
+    // fires `contextmenu` on release. We want the menu only on a real
+    // click, not after a pan gesture. Two independent signals are
+    // tracked, and either one suppresses the menu:
+    //
+    //   1. Pointer motion: pointermove distance from the right-press
+    //      down position. Listeners are on `window` in capture phase so
+    //      OrbitControls' canvas-level setPointerCapture (retargets
+    //      events) and preventDefault on pointerdown (suppresses *compat*
+    //      mouse events, not pointer events) don't hide them from us.
+    //
+    //   2. Camera state: position+target snapshot at right-press, compared
+    //      again at contextmenu. OrbitControls applies pan synchronously
+    //      to camera.position and controls.target inside its own
+    //      pointermove handler, so by the time contextmenu fires the
+    //      values have already shifted by world units. This signal is
+    //      independent of our pointer-event observation working — it
+    //      catches the case even if window-level pointermove never gets
+    //      delivered for some reason on the user's environment.
     const DRAG_THRESHOLD = 4;
+    const cam = graph.camera() as THREE.Camera & { position: THREE.Vector3 };
+    const ctrlTarget = (controls as unknown as { target?: THREE.Vector3 })
+      .target;
     let rightDownX = 0;
     let rightDownY = 0;
     let rightDown = false;
     let rightDragged = false;
+    let camAtDown: { px: number; py: number; pz: number; tx: number; ty: number; tz: number } | null = null;
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 2) return;
       const target = e.target as Node | null;
@@ -276,6 +284,14 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
       rightDragged = false;
       rightDownX = e.clientX;
       rightDownY = e.clientY;
+      camAtDown = {
+        px: cam.position.x,
+        py: cam.position.y,
+        pz: cam.position.z,
+        tx: ctrlTarget?.x ?? 0,
+        ty: ctrlTarget?.y ?? 0,
+        tz: ctrlTarget?.z ?? 0,
+      };
     };
     const onPointerMove = (e: PointerEvent) => {
       if (!rightDown || rightDragged) return;
@@ -292,7 +308,22 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     };
     const onCtxMenu = (e: MouseEvent) => {
       e.preventDefault();
-      if (rightDragged) {
+      let cameraMoved = false;
+      if (camAtDown) {
+        const dpx = cam.position.x - camAtDown.px;
+        const dpy = cam.position.y - camAtDown.py;
+        const dpz = cam.position.z - camAtDown.pz;
+        const dtx = (ctrlTarget?.x ?? 0) - camAtDown.tx;
+        const dty = (ctrlTarget?.y ?? 0) - camAtDown.ty;
+        const dtz = (ctrlTarget?.z ?? 0) - camAtDown.tz;
+        // A real pan moves by world units; anything below this is float
+        // noise from controls.update() recomputing the same view.
+        cameraMoved =
+          dpx * dpx + dpy * dpy + dpz * dpz + dtx * dtx + dty * dty + dtz * dtz >
+          1e-4;
+      }
+      camAtDown = null;
+      if (rightDragged || cameraMoved) {
         rightDragged = false;
         return;
       }
