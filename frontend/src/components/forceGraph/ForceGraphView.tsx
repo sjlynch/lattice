@@ -249,50 +249,38 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     // the sidebar/topbar.
     //
     // Right-drag pans the camera (OrbitControls), and the browser still
-    // fires `contextmenu` on release. Track the down-position and suppress
-    // the menu if the cursor moved more than DRAG_THRESHOLD px before
-    // release.
+    // fires `contextmenu` on release. Suppress the menu when the cursor
+    // moved more than DRAG_THRESHOLD px between mousedown and contextmenu.
+    //
+    // We compare positions directly (down vs. ctx) rather than tracking
+    // movement via mousemove: OrbitControls calls preventDefault() on
+    // pointermove, which suppresses the compatibility mousemove events,
+    // so a mousemove-based heuristic never sees the drag.
     const DRAG_THRESHOLD = 4;
     let rightDownAt: { x: number; y: number } | null = null;
-    let rightDragged = false;
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 2) return;
       rightDownAt = { x: e.clientX, y: e.clientY };
-      rightDragged = false;
-    };
-    const onMouseMove = (e: MouseEvent) => {
-      if (!rightDownAt) return;
-      const dx = e.clientX - rightDownAt.x;
-      const dy = e.clientY - rightDownAt.y;
-      if (dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) {
-        rightDragged = true;
-      }
-    };
-    const onMouseUp = (e: MouseEvent) => {
-      if (e.button !== 2) return;
-      // Defer reset until after the contextmenu event runs.
-      setTimeout(() => { rightDownAt = null; }, 0);
     };
     const onCtxMenu = (e: MouseEvent) => {
       e.preventDefault();
-      if (rightDragged) {
-        rightDragged = false;
-        return;
+      if (rightDownAt) {
+        const dx = e.clientX - rightDownAt.x;
+        const dy = e.clientY - rightDownAt.y;
+        const wasDrag = dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD;
+        rightDownAt = null;
+        if (wasDrag) return;
       }
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect) return;
       setContextMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top });
     };
     containerRef.current.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
     containerRef.current.addEventListener('contextmenu', onCtxMenu);
 
     return () => {
       ro.disconnect();
       containerRef.current?.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
       containerRef.current?.removeEventListener('contextmenu', onCtxMenu);
       graph._destructor?.();
       graphRef.current = null;
