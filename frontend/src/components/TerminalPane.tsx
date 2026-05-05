@@ -71,6 +71,31 @@ export function TerminalPane({
     fit.fit();
     fitRef.current = fit;
 
+    // Ctrl+V (and Ctrl+Shift+V) → paste from clipboard. xterm's default is
+    // to forward ^V as a raw byte to the pty, which is useless in interactive
+    // tools like Claude Code. We intercept and call term.paste() so the
+    // pasted text flows through onData → ws like normal typed input.
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type !== 'keydown') return true;
+      const isPaste =
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        (event.key === 'v' || event.key === 'V');
+      if (isPaste) {
+        navigator.clipboard
+          .readText()
+          .then((text) => {
+            if (text) term.paste(text);
+          })
+          .catch(() => {
+            /* clipboard unavailable — silently ignore */
+          });
+        event.preventDefault();
+        return false;
+      }
+      return true;
+    });
+
     let ws: WebSocket | null = null;
     let cancelled = false;
     let attempt = 0;
