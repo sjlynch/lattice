@@ -249,49 +249,51 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     // the sidebar/topbar.
     //
     // Right-drag pans the camera (OrbitControls), and the browser still
-    // fires `contextmenu` on release. Earlier attempts to suppress the
-    // menu by tracking mousemove or by comparing mousedown/contextmenu
-    // positions were unreliable: OrbitControls calls setPointerCapture
-    // on the canvas and preventDefault() on pointer events, so the
-    // compatibility mouse events on outer listeners are flaky across
-    // browsers. Instead, listen for OrbitControls' own `change` event,
-    // which fires whenever the camera actually moves — that is the
-    // ground truth for "the user panned". If the camera changed at all
-    // while the right button was held, the contextmenu is from a pan
-    // gesture and we suppress it.
+    // fires `contextmenu` on release. We want the menu only on a "click",
+    // not after a pan gesture, so we track pointer motion between the
+    // right pointerdown and the contextmenu event:
+    //   - All listeners are on `window` in the capture phase. OrbitControls
+    //     calls setPointerCapture on the canvas, which only changes the
+    //     event target — capture-phase listeners on window still see every
+    //     pointer event.
+    //   - OrbitControls calls preventDefault() on pointer events, which
+    //     suppresses the compat mousemove/mouseup events. Pointer events
+    //     are not suppressed; that's why we track pointermove rather than
+    //     mousemove.
+    //   - The `rightDragged` flag is reset asynchronously on pointerup so
+    //     the synchronously-following contextmenu still sees it. The next
+    //     pointerdown also clears it as a belt-and-suspenders reset.
+    const DRAG_THRESHOLD = 4;
+    let rightDownX = 0;
+    let rightDownY = 0;
     let rightDown = false;
-    let cameraMovedWhileRightDown = false;
-    const ctrlDispatcher = controls as unknown as {
-      addEventListener?: (type: string, fn: () => void) => void;
-      removeEventListener?: (type: string, fn: () => void) => void;
-    };
-    const onCameraChange = () => {
-      if (rightDown) cameraMovedWhileRightDown = true;
-    };
-    ctrlDispatcher.addEventListener?.('change', onCameraChange);
-
-    // pointerdown / pointerup on window in capture phase so we observe
-    // the gesture endpoints before OrbitControls' own canvas-level
-    // listeners (which call setPointerCapture and may call
-    // preventDefault, suppressing compat mouse events on bubble-phase
-    // listeners).
+    let rightDragged = false;
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 2) return;
       const target = e.target as Node | null;
       if (!containerRef.current || !target || !containerRef.current.contains(target)) return;
       rightDown = true;
-      cameraMovedWhileRightDown = false;
+      rightDragged = false;
+      rightDownX = e.clientX;
+      rightDownY = e.clientY;
     };
-    // Defer the rightDown reset so the synchronously-following
-    // contextmenu event still sees the gesture flag.
+    const onPointerMove = (e: PointerEvent) => {
+      if (!rightDown || rightDragged) return;
+      const dx = e.clientX - rightDownX;
+      const dy = e.clientY - rightDownY;
+      if (dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) rightDragged = true;
+    };
     const onPointerUp = (e: PointerEvent) => {
       if (e.button !== 2) return;
-      setTimeout(() => { rightDown = false; }, 0);
+      rightDown = false;
+      // Defer the dragged-flag reset so the contextmenu event that fires
+      // synchronously after this pointerup still sees it.
+      setTimeout(() => { rightDragged = false; }, 0);
     };
     const onCtxMenu = (e: MouseEvent) => {
       e.preventDefault();
-      if (cameraMovedWhileRightDown) {
-        cameraMovedWhileRightDown = false;
+      if (rightDragged) {
+        rightDragged = false;
         return;
       }
       const rect = containerRef.current?.getBoundingClientRect();
@@ -299,13 +301,14 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
       setContextMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top });
     };
     window.addEventListener('pointerdown', onPointerDown, { capture: true });
+    window.addEventListener('pointermove', onPointerMove, { capture: true });
     window.addEventListener('pointerup', onPointerUp, { capture: true });
     containerRef.current.addEventListener('contextmenu', onCtxMenu);
 
     return () => {
       ro.disconnect();
-      ctrlDispatcher.removeEventListener?.('change', onCameraChange);
       window.removeEventListener('pointerdown', onPointerDown, { capture: true });
+      window.removeEventListener('pointermove', onPointerMove, { capture: true });
       window.removeEventListener('pointerup', onPointerUp, { capture: true });
       containerRef.current?.removeEventListener('contextmenu', onCtxMenu);
       graph._destructor?.();
