@@ -106,10 +106,33 @@ const nodeRun = spawn(
   { stdio: inheritStdio },
 );
 
+// The terminal server (port 5185) is intentionally detached + unref'd by
+// the backend (terminalProxy.ts) so PTYs survive backend restarts. The
+// downside is the orchestrator killing the backend doesn't take it down,
+// so on real shutdown we POST /shutdown ourselves. Without this, every
+// `npm run dev` cycle leaves orphan PTYs (and orphan Claude Code processes
+// inside them) running forever.
+const TERMINAL_PORT = Number(process.env.TERMINAL_PORT) || 5185;
+
+async function shutdownTerminalServer() {
+  try {
+    await fetch(`http://127.0.0.1:${TERMINAL_PORT}/shutdown`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(2500),
+    });
+  } catch {
+    /* terminal server already down */
+  }
+}
+
 let shuttingDown = false;
-function shutdown(signal) {
+async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
+  // Tell the terminal server to kill its PTYs first; if we kill the
+  // backend before this, the backend's spawn-and-detach is gone but the
+  // detached child is still running.
+  await shutdownTerminalServer();
   for (const c of [tscWatch, nodeRun]) {
     try {
       c.kill(signal);
@@ -120,11 +143,11 @@ function shutdown(signal) {
 }
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, () => shutdown(sig));
+  process.on(sig, () => { void shutdown(sig); });
 }
 
-function onExit(code) {
-  shutdown('SIGTERM');
+async function onExit(code) {
+  await shutdown('SIGTERM');
   process.exit(code ?? 0);
 }
 tscWatch.on('exit', onExit);

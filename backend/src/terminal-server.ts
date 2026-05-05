@@ -101,12 +101,35 @@ server.listen(PORT, '127.0.0.1', () => {
 // Clean up PTY sessions before exiting so node-pty child processes don't
 // linger as orphans (especially important on Windows where conpty helpers
 // can outlive their parent if not explicitly killed).
-function shutdown() {
-  for (const { id } of listSessions()) {
+//
+// killSession fires off `taskkill /F /T` asynchronously for grandchildren
+// — we have to give it a beat to actually land before process.exit, or
+// the spawned taskkill commands get killed along with us and the original
+// orphan problem returns.
+let shuttingDown = false;
+async function shutdown(): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const ids = listSessions().map((s) => s.id);
+  console.log(`[lattice-terminal] shutdown: killing ${ids.length} session(s)`);
+  for (const id of ids) {
     killSession(id);
   }
+  // 500 ms is long enough for taskkill /T to walk a small process tree on
+  // a modern Windows box; short enough that Ctrl+C still feels snappy.
+  await new Promise<void>((r) => setTimeout(r, 500));
   process.exit(0);
 }
 
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+// Manual shutdown trigger used by the dev orchestrator (`backend/scripts/dev.mjs`)
+// when the user Ctrl+C's `npm run dev`. Detached PTYs don't naturally see
+// the orchestrator's signals — without this the terminal server (and every
+// PTY inside it) leaks across dev sessions.
+app.post('/shutdown', (_req, res) => {
+  res.json({ ok: true });
+  // Run after the response so the caller doesn't hang on a dropped socket.
+  setImmediate(() => { void shutdown(); });
+});
+
+process.on('SIGTERM', () => { void shutdown(); });
+process.on('SIGINT', () => { void shutdown(); });

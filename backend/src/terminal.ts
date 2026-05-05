@@ -1,8 +1,35 @@
 import os from 'node:os';
+import { spawn } from 'node:child_process';
 import * as pty from 'node-pty';
 import type { WebSocket } from 'ws';
 
 const isWindows = os.platform() === 'win32';
+
+// Windows has no process groups, so `pty.kill()` (which closes the conpty
+// and signals the spawned shell) leaves the shell's children — and their
+// children — running. Powershell exits, but `claude` (a node child) keeps
+// going, and after a few run/qa cycles you have dozens of orphan Claude
+// processes munching CPU/RAM.
+//
+// `taskkill /F /T /PID <pid>` walks and force-kills the whole tree. We
+// fire it AFTER pty.kill so the conpty handle is already torn down, then
+// detach so we don't block the caller waiting for taskkill to finish.
+function killProcessTreeWindows(pid: number): void {
+  if (!isWindows || !pid) return;
+  try {
+    const child = spawn('taskkill', ['/F', '/T', '/PID', String(pid)], {
+      windowsHide: true,
+      stdio: 'ignore',
+      detached: true,
+    });
+    // Detach so we don't keep a handle; swallow the inevitable ENOENT/
+    // exit-1 (PID already gone) without polluting the log.
+    child.on('error', () => { /* ignore */ });
+    child.unref();
+  } catch {
+    /* spawn itself failed — process may already be gone */
+  }
+}
 const defaultShell = isWindows
   ? process.env.COMSPEC || 'powershell.exe'
   : process.env.SHELL || 'bash';
@@ -293,14 +320,19 @@ export function killSession(id: string): boolean {
     return true;
   }
   session.killing = true;
+  const pid = session.pty.pid;
   console.log(
-    `[terminal] killing session ${id} (cwd=${session.cwd}, subscribers=${session.subscribers.size})`,
+    `[terminal] killing session ${id} (cwd=${session.cwd}, pid=${pid}, subscribers=${session.subscribers.size})`,
   );
   try {
     session.pty.kill();
   } catch (err) {
     console.warn(`[terminal] pty.kill threw for ${id}:`, err);
   }
+  // Belt-and-braces: pty.kill closes the conpty but doesn't reach
+  // grandchildren (claude/node spawned by powershell). Force-kill the whole
+  // process tree on Windows so they don't accumulate as orphans.
+  killProcessTreeWindows(pid);
   return true;
 }
 
