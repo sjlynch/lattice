@@ -50,19 +50,22 @@ app.get('/sessions', (_req, res) => {
   res.json(listSessions());
 });
 
-app.delete('/sessions/:id', (req, res) => {
-  const ok = killSession(req.params.id);
-  if (!ok) return res.status(404).json({ error: 'not found' });
-  res.json({ ok: true });
-});
-
 // Kill all sessions whose cwd is inside the given directory.
 // Used before worktree deletion so Windows releases file locks.
+// MUST be registered before `/sessions/:id` — Express matches routes in
+// registration order, and `:id` would otherwise capture the literal
+// `by-cwd` and fall into killSession with id="by-cwd" (404, silent kill skip).
 app.delete('/sessions/by-cwd', (req, res) => {
   const cwd = typeof req.query.cwd === 'string' ? req.query.cwd : '';
   if (!cwd) return res.status(400).json({ error: 'cwd required' });
   const count = killSessionsByCwd(cwd);
   res.json({ ok: true, count });
+});
+
+app.delete('/sessions/:id', (req, res) => {
+  const ok = killSession(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'not found' });
+  res.json({ ok: true });
 });
 
 const server = http.createServer(app);

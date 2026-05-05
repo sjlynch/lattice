@@ -140,10 +140,19 @@ export async function proxyListSessions(): Promise<unknown[]> {
 // Call before deleting a worktree directory so Windows releases file locks.
 export async function proxyKillSessionsByCwd(worktreePath: string): Promise<void> {
   try {
-    await fetch(
+    const res = await fetch(
       `${BASE}/sessions/by-cwd?cwd=${encodeURIComponent(worktreePath)}`,
       { method: 'DELETE' },
     );
+    if (!res.ok) {
+      // A non-OK response means the route didn't kill anything — most likely
+      // a route-ordering regression (`/sessions/:id` capturing `by-cwd`) or
+      // the terminal server is in a degraded state. Either way the PTYs are
+      // leaking; surface it loudly instead of leaving orphans on the box.
+      console.warn(
+        `[terminal-proxy] kill-by-cwd failed: ${res.status} for ${worktreePath}`,
+      );
+    }
   } catch {
     /* terminal server down or no matching sessions — safe to ignore */
   }
