@@ -2,10 +2,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import ForceGraph3D, { type ForceGraph3DInstance } from '3d-force-graph';
 import { Settings as SettingsIcon } from 'lucide-react';
-import { createTask, type ScanResult, type GraphNode } from '../../api';
+import {
+  createTask,
+  fetchGitHistory,
+  type GitHistoryResult,
+  type GraphNode,
+  type ScanResult,
+} from '../../api';
 import { Modal } from '../Modal';
 import { spriteFor } from './sprites';
 import { withHalo } from './halo';
+import { deletedSprite, withChangeRing, type ChangeKind } from './changeRing';
+import {
+  buildGhostGraphData,
+  computeChangeMap,
+  isGhost,
+  relForward,
+} from './timelineDiff';
+import { TimelineScrubber } from './TimelineScrubber';
 import { locLabelRegistry, spriteForLoc } from './locOverlay';
 import { depthFor, labelsRegistry, spriteForLabels } from './labelsOverlay';
 import { MENU_ITEMS, relPath, type MenuItemDef } from './menu';
@@ -57,6 +71,20 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
   const settingsRef = useRef<GraphSettings>(settings);
   const [showSettings, setShowSettings] = useState(false);
 
+  // ---------- Git timeline scrubber ----------
+  // History is fetched once per project; the scrubber range is two
+  // tick indices into [0, commits.length], where commits.length is
+  // the working-tree slot. Defaults to [oldest, WT] so the user sees
+  // every change ringed when they land on the project.
+  const [history, setHistory] = useState<GitHistoryResult | null>(null);
+  const [range, setRange] = useState<{ left: number; right: number }>({ left: 0, right: 0 });
+  // changeMap (rel-path → kind) is recomputed on every range/history
+  // change. Stored in a ref so the nodeThreeObject closure (wired once
+  // at mount) reads the latest map without forcing a re-mount.
+  const changeMapRef = useRef<Map<string, ChangeKind>>(new Map());
+  const ghostsRef = useRef<Set<string>>(new Set()); // node IDs of ghost nodes
+  const dataRef = useRef<ScanResult | null>(null);
+
   const [dragRect, setDragRect] = useState<DragRect | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [modalAction, setModalAction] = useState<MenuItemDef | null>(null);
@@ -70,10 +98,39 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
   useEffect(() => { selectedRef.current = selected; }, [selected]);
   useEffect(() => { hiddenExtsRef.current = hiddenExts; }, [hiddenExts]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
+  useEffect(() => { dataRef.current = data; }, [data]);
 
   // Reload persisted settings when the active project changes.
   useEffect(() => {
     setSettings(loadSettings(activeFolder));
+  }, [activeFolder]);
+
+  // Fetch the last 10 commits + uncommitted status whenever the active
+  // project changes. The scrubber drives ring colors and ghost-node
+  // visibility from the cached result — no per-drag backend traffic.
+  useEffect(() => {
+    if (!activeFolder) {
+      setHistory(null);
+      setRange({ left: 0, right: 0 });
+      return;
+    }
+    let cancelled = false;
+    fetchGitHistory(activeFolder, 10)
+      .then((h) => {
+        if (cancelled) return;
+        setHistory(h);
+        // Default to the full range so every change in the loaded
+        // window is visible at first paint.
+        const last = h.commits.length; // tick index of working-tree slot
+        setRange({ left: 0, right: last });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setHistory({ isRepo: false, commits: [], uncommitted: { changes: [] } });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [activeFolder]);
 
   // Persist settings whenever they change.
@@ -104,6 +161,21 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
       .nodeThreeObject((n: object) => {
         const node = n as GraphNode;
         const s = settingsRef.current;
+        const baseSize = node.kind === 'dir' ? s.dirNodeSize : s.fileNodeSize;
+
+        // Ghost nodes (deleted files surfaced from git history) only
+        // exist in the graph because the scrubber range picks up a
+        // delete event somewhere — render them as a small grey disc
+        // with a red ring instead of running spriteFor on a path that
+        // has no real file behind it.
+        if (isGhost(node)) {
+          let obj: THREE.Object3D = deletedSprite(s.fileNodeSize);
+          if (selectedRef.current.has(node.id)) {
+            obj = withHalo(obj, s.fileNodeSize);
+          }
+          return obj;
+        }
+
         let obj: THREE.Object3D;
         if (locModeRef.current) {
           obj = spriteForLoc(node, s);
@@ -113,8 +185,15 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
         } else {
           obj = spriteFor(node, s);
         }
+        // Apply change ring before halo so the selection halo always
+        // wraps the outermost layer.
+        const root = dataRef.current?.root || '';
+        const rel = node.kind === 'file' ? relForward(node.path, root) : '';
+        const kind = rel ? changeMapRef.current.get(rel) : undefined;
+        if (kind && kind !== 'deleted') {
+          obj = withChangeRing(obj, baseSize, kind);
+        }
         if (selectedRef.current.has(node.id)) {
-          const baseSize = node.kind === 'dir' ? s.dirNodeSize : s.fileNodeSize;
           return withHalo(obj, baseSize);
         }
         return obj;
@@ -184,9 +263,11 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     };
   }, []);
 
-  // Push the full dataset only when the scan changes. Filtering by
-  // extension goes through nodeVisibility/linkVisibility below, which
-  // keeps the simulation positions stable.
+  // Push the full dataset only when the scan or git history changes.
+  // Ghost nodes (deleted files surfaced from git history) are merged
+  // into graphData here so the physics simulation places them once;
+  // scrubbing the timeline only flips visibility/rings afterward and
+  // never causes a graphData restart.
   useEffect(() => {
     if (!graphRef.current) return;
     // Stale labels reference Sprites that get replaced on data swap.
@@ -194,11 +275,28 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     labelsRegistry.clear();
     if (!data) {
       graphRef.current.graphData({ nodes: [], links: [] });
+      ghostsRef.current = new Set();
       return;
     }
+    const ghostIds = new Set<string>();
+    let ghostNodes: GraphNode[] = [];
+    let ghostLinks: { source: string; target: string }[] = [];
+    if (history && history.isRepo) {
+      const built = buildGhostGraphData(data, history.commits, history.uncommitted);
+      ghostNodes = built.ghostNodes;
+      ghostLinks = built.ghostLinks;
+      for (const g of built.ghostNodes) ghostIds.add(g.id);
+    }
+    ghostsRef.current = ghostIds;
     graphRef.current.graphData({
-      nodes: data.nodes.map((n) => ({ ...n })),
-      links: data.links.map((l) => ({ ...l })),
+      nodes: [
+        ...data.nodes.map((n) => ({ ...n })),
+        ...ghostNodes.map((n) => ({ ...n })),
+      ],
+      links: [
+        ...data.links.map((l) => ({ ...l })),
+        ...ghostLinks.map((l) => ({ ...l })),
+      ],
     });
     // Recompute path depths for the labels overlay, plus the max depth so
     // alt+wheel can clamp to the visible range.
@@ -214,7 +312,7 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     setLabelLevel((lvl) => Math.min(Math.max(lvl, 1), Math.max(1, maxD)));
     // A new scan invalidates the previous selection (node IDs may differ).
     setSelected(new Set());
-  }, [data]);
+  }, [data, history]);
 
   // ---------- LOC overlay key handling ----------
   // Toggle LOC view on/off when the `z` key is held. Keyup also fires on
@@ -536,9 +634,18 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
   }, [labelMode]);
 
   // Filter via accessors — does not restart the d3 force simulation.
+  // Ghost nodes are visible only when the active scrubber range marks
+  // their path with a change kind ("deleted" most often, but also
+  // "added" if a file was added inside the window and then later
+  // removed before the user scrubbed).
   useEffect(() => {
     if (!graphRef.current) return;
+    const changeMap = changeMapRef.current;
     function isNodeVisible(n: GraphNode): boolean {
+      if (isGhost(n)) {
+        // Only show ghost nodes whose path is in the current change map.
+        return changeMap.has(n.path);
+      }
       if (n.kind === 'dir') return true;
       const key = n.ext ? n.ext.toLowerCase() : '*';
       return !hiddenExts.has(key);
@@ -557,7 +664,28 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
         const t = typeof link.target === 'object' ? link.target : null;
         return (!s || isNodeVisible(s)) && (!t || isNodeVisible(t));
       });
-  }, [hiddenExts]);
+  }, [hiddenExts, data, history, range]);
+
+  // Recompute the change map when the slider range moves and refresh
+  // sprites so rings update. nodeVisibility above also re-evaluates on
+  // the same dep set, which hides/shows ghost nodes for the new range.
+  useEffect(() => {
+    if (!history) {
+      changeMapRef.current = new Map();
+    } else {
+      changeMapRef.current = computeChangeMap(
+        history.commits,
+        history.uncommitted,
+        range.left,
+        range.right,
+      );
+    }
+    // Sprites cached by spriteFor are reused; refresh() just re-runs
+    // nodeThreeObject so the ring wrapping reflects the new map.
+    locLabelRegistry.clear();
+    labelsRegistry.clear();
+    graphRef.current?.refresh?.();
+  }, [history, range]);
 
   // ---------- Box-select drag ----------
   useEffect(() => {
@@ -565,22 +693,41 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     if (!container) return;
 
     let dragging = false;
+    let activePointerId: number | null = null;
     let startX = 0;
     let startY = 0;
     let altAtStart = false;
     let prevRotate: boolean | undefined;
     let prevPan: boolean | undefined;
 
-    function onMouseDown(e: MouseEvent) {
+    // Capture phase + pointerdown so we run before OrbitControls' canvas-level
+    // pointerdown listener. Without this, shift+left-click immediately
+    // transitions OrbitControls into PAN state, and toggling enablePan
+    // afterward has no effect for the active gesture — the camera pans
+    // through the whole drag and the box-select rect tracks a moving world.
+    //
+    // We use pointer events for the whole gesture (down/move/up). preventDefault
+    // on pointerdown suppresses the matching compat mousemove/mouseup, so a
+    // mixed pointer/mouse handler set would never see the rest of the drag.
+    function onPointerDown(e: PointerEvent) {
       if (!e.shiftKey || e.button !== 0) return;
+      // Stop OrbitControls and 3d-force-graph's own listeners from seeing
+      // this event at all.
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+
       const rect = container!.getBoundingClientRect();
       startX = e.clientX - rect.left;
       startY = e.clientY - rect.top;
       altAtStart = e.altKey;
       dragging = true;
+      activePointerId = e.pointerId;
       setDragRect({ x1: startX, y1: startY, x2: startX, y2: startY });
       setContextMenu(null);
 
+      // Belt-and-suspenders: also disable the controls flags. If anything
+      // slipped past stopPropagation, OrbitControls will bail in its
+      // mouseAction switch instead of starting a pan.
       const ctrl = graphRef.current?.controls() as
         | { enableRotate?: boolean; enablePan?: boolean }
         | undefined;
@@ -593,17 +740,18 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
       e.preventDefault();
     }
 
-    function onMouseMove(e: MouseEvent) {
-      if (!dragging) return;
+    function onPointerMove(e: PointerEvent) {
+      if (!dragging || e.pointerId !== activePointerId) return;
       const rect = container!.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       setDragRect({ x1: startX, y1: startY, x2: x, y2: y });
     }
 
-    function onMouseUp(e: MouseEvent) {
-      if (!dragging) return;
+    function onPointerUp(e: PointerEvent) {
+      if (!dragging || e.pointerId !== activePointerId) return;
       dragging = false;
+      activePointerId = null;
 
       const rect = container!.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -669,13 +817,15 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
       setDragRect(null);
     }
 
-    container.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    container.addEventListener('pointerdown', onPointerDown, { capture: true });
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
     return () => {
-      container.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      container.removeEventListener('pointerdown', onPointerDown, { capture: true });
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
     };
   }, []);
 
@@ -771,8 +921,17 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     setPromptText('');
   }, [submitting]);
 
+  // The bottom-anchored counts chip and gear FAB shift up when the
+  // timeline is visible so the timeline can claim the entire viewport
+  // bottom edge.
+  const hasTimeline =
+    !!history && history.isRepo && history.commits.length > 0;
+
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+    <div
+      className={hasTimeline ? 'has-timeline' : undefined}
+      style={{ position: 'relative', width: '100%', height: '100%' }}
+    >
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
       {loading && (
         <div className="graph-overlay top-left">
@@ -803,6 +962,22 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
               </span>
             )}
           </span>
+        </div>
+      )}
+
+      {history && history.isRepo && history.commits.length > 0 && (
+        <div className="timeline-bar">
+          <TimelineScrubber
+            commits={history.commits}
+            left={range.left}
+            right={range.right}
+            onChange={(l, r) =>
+              setRange((cur) =>
+                cur.left === l && cur.right === r ? cur : { left: l, right: r },
+              )
+            }
+            hasUncommitted={history.uncommitted.changes.length > 0}
+          />
         </div>
       )}
 

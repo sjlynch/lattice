@@ -5,6 +5,7 @@ import { Router } from 'express';
 import { scan } from '../scanner.js';
 import { listDir } from '../fsbrowse.js';
 import { detectHarnesses, resetHarnessCache } from '../harnessDetect.js';
+import { getGitHistory } from '../gitHistory.js';
 
 export function buildHealthRouter(defaultRoot: string): Router {
   const r = Router();
@@ -27,6 +28,18 @@ export function buildHealthRouter(defaultRoot: string): Router {
       typeof req.query.path === 'string' ? req.query.path : defaultRoot;
     try {
       const result = await scan(target);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  r.get('/api/git-history', async (req, res) => {
+    const target =
+      typeof req.query.path === 'string' ? req.query.path : defaultRoot;
+    const limit = Number(req.query.limit) || 10;
+    try {
+      const result = await getGitHistory(target, limit);
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });

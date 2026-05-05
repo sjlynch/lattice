@@ -1,7 +1,7 @@
 // Filesystem-side endpoints: default project root, recursive source scan,
 // and folder browser used by the FolderPicker.
 
-import type { DirListing, ScanResult } from './types';
+import type { DirListing, GitHistoryResult, ScanResult } from './types';
 
 export async function fetchDefaultRoot(): Promise<string> {
   const r = await fetch('/api/default-root');
@@ -12,6 +12,17 @@ export async function fetchDefaultRoot(): Promise<string> {
 export async function scanFolder(folderPath: string): Promise<ScanResult> {
   const r = await fetch(`/api/scan?path=${encodeURIComponent(folderPath)}`);
   if (!r.ok) throw new Error(`scan failed: ${r.status}`);
+  return r.json();
+}
+
+export async function fetchGitHistory(
+  folderPath: string,
+  limit = 10,
+): Promise<GitHistoryResult> {
+  const r = await fetch(
+    `/api/git-history?path=${encodeURIComponent(folderPath)}&limit=${limit}`,
+  );
+  if (!r.ok) throw new Error(`git-history failed: ${r.status}`);
   return r.json();
 }
 

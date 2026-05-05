@@ -743,7 +743,15 @@ input {
   -webkit-backdrop-filter: blur(10px);
   font-size: 12px;
   color: var(--text-primary);
-  animation: graph-toast-fade 0.14s ease;
+  animation: graph-settings-fade 0.14s ease;
+}
+@keyframes graph-settings-fade {
+  /* Anchored to the right edge with `right: 14px`, so the in-animation
+     can't reuse `graph-toast-fade` (which carries a translateX(-50%)
+     centering offset and would briefly shove the panel to the left of
+     the FAB before snapping back into place). */
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 .graph-settings-header {
   display: flex;
@@ -2036,6 +2044,233 @@ input {
   border-color: var(--accent);
   color: var(--accent);
   background: rgba(255, 255, 255, 0.06);
+}
+
+/* Git history timeline scrubber — full-width bottom strip on the graph
+   viewport. Material-style: thin (4px) playbar, circular handles with a
+   soft state-layer halo on hover/drag, dot ticks inset into the track.
+   The track has 11 ticks (10 commits + working-tree slot); two handles
+   carry each other when one is dragged past the other. */
+:root {
+  --timeline-h: 64px;
+}
+
+.timeline-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 8;
+  padding: 10px 28px 14px;
+  background: linear-gradient(
+    to bottom,
+    rgba(15, 17, 21, 0) 0%,
+    rgba(15, 17, 21, 0.78) 28%,
+    rgba(15, 17, 21, 0.95) 100%
+  );
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-top: 1px solid var(--border);
+  pointer-events: auto;
+}
+
+/* When the timeline is present, lift the bottom-left counts chip and
+   the gear FAB above it so the timeline owns the entire bottom edge. */
+.has-timeline .graph-overlay.bottom-left {
+  bottom: calc(var(--timeline-h) + 12px);
+}
+.has-timeline .graph-settings-fab {
+  bottom: calc(var(--timeline-h) + 12px);
+}
+.has-timeline .graph-settings-panel {
+  bottom: calc(var(--timeline-h) + 54px);
+}
+
+.timeline-scrubber {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.timeline-scrubber.empty {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-align: center;
+  padding: 6px 0;
+}
+.timeline-scrubber-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 0 6px;
+  letter-spacing: 0.02em;
+}
+.timeline-scrubber-header .ts-label {
+  white-space: nowrap;
+  text-transform: uppercase;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+.timeline-scrubber-header .ts-dirty {
+  color: #e5c046;
+  font-weight: 600;
+}
+.timeline-scrubber-header .ts-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+.timeline-scrubber-header .ts-range-chip {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 2px 9px;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.timeline-scrubber-header .ts-range-arrow {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.timeline-scrubber-track {
+  position: relative;
+  /* Height is the hit target for pointer events; the visible playbar is
+     a 4px line centered inside this box. */
+  height: 22px;
+  margin: 0 10px;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+}
+/* Thin background rail */
+.timeline-scrubber-track::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 4px;
+  transform: translateY(-50%);
+  background: rgba(255, 255, 255, 0.13);
+  border-radius: 999px;
+  pointer-events: none;
+}
+.ts-track-fill {
+  position: absolute;
+  top: 50%;
+  height: 4px;
+  transform: translateY(-50%);
+  background: var(--accent);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.ts-tick {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 8px;
+  height: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 1;
+}
+.ts-tick-mark {
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+}
+.ts-tick.in-range .ts-tick-mark {
+  /* Dark dot reads against the accent-filled rail */
+  background: rgba(15, 17, 21, 0.85);
+}
+.ts-tick.wt .ts-tick-mark {
+  width: 3px;
+  height: 3px;
+  background: #e5c046;
+}
+.ts-tick.wt.in-range .ts-tick-mark {
+  background: rgba(15, 17, 21, 0.85);
+  box-shadow: 0 0 0 1.5px #e5c046;
+}
+
+.ts-handle {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  /* Sits above ticks (z-index: 1) and the fill so the thumb fully
+     covers in-range tick dots that share its position. */
+  z-index: 3;
+  /* Elevation 1 + a thin dark cuff so the thumb separates from the
+     accent-colored rail beneath it. No state-layer halo on
+     hover/drag — the user prefers a clean thumb. */
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.5),
+    0 2px 6px rgba(0, 0, 0, 0.35),
+    0 0 0 2px rgba(15, 17, 21, 0.85);
+  transition: background 0.12s ease, transform 0.1s ease;
+}
+.ts-handle::after {
+  /* Tiny inner highlight for that "lit ball" feel. */
+  content: '';
+  position: absolute;
+  left: 28%;
+  top: 22%;
+  width: 30%;
+  height: 30%;
+  background: rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.ts-handle:hover {
+  background: var(--accent-hover);
+}
+.ts-handle.dragging {
+  cursor: grabbing;
+  background: var(--accent-hover);
+}
+
+.ts-hover-tip {
+  position: absolute;
+  bottom: 100%;
+  margin-bottom: 12px;
+  transform: translateX(-50%);
+  background: rgba(15, 17, 21, 0.95);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 10.5px;
+  color: var(--text-primary);
+  padding: 4px 8px;
+  white-space: nowrap;
+  pointer-events: none;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: var(--shadow-md);
+  /* Above the handles (z-index: 3) so the commit-message tooltip is
+     never clipped by a thumb sitting at the same tick. */
+  z-index: 4;
 }
 
 /* "Stuck for X minutes" indicator on conflict cards */
