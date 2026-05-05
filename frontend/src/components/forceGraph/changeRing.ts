@@ -11,29 +11,17 @@
 import * as THREE from 'three';
 
 export type ChangeKind = 'added' | 'modified' | 'deleted';
-type RingKind = ChangeKind | 'selected';
 
-const RING_COLORS: Record<RingKind, string> = {
+const RING_COLORS: Record<ChangeKind, string> = {
   added: '#46d27a',
   modified: '#e5c046',
   deleted: '#f57878',
-  selected: '#7ec8ff',
 };
 
-// Ring stroke width as a fraction of canvas size. The selection ring is
-// thinner so it reads as an outline rather than competing visually with
-// the change rings.
-const RING_WIDTHS: Record<RingKind, number> = {
-  added: 0.06,
-  modified: 0.06,
-  deleted: 0.06,
-  selected: 0.035,
-};
+const ringTextureCache = new Map<ChangeKind, THREE.CanvasTexture>();
+const ringMaterialCache = new Map<ChangeKind, THREE.SpriteMaterial>();
 
-const ringTextureCache = new Map<RingKind, THREE.CanvasTexture>();
-const ringMaterialCache = new Map<RingKind, THREE.SpriteMaterial>();
-
-function buildRingTexture(kind: RingKind): THREE.CanvasTexture {
+function buildRingTexture(kind: ChangeKind): THREE.CanvasTexture {
   const cached = ringTextureCache.get(kind);
   if (cached) return cached;
   const SIZE = 128;
@@ -46,7 +34,7 @@ function buildRingTexture(kind: RingKind): THREE.CanvasTexture {
   const cx = SIZE / 2;
   const cy = SIZE / 2;
   const ringR = SIZE * 0.42;
-  const ringW = SIZE * RING_WIDTHS[kind];
+  const ringW = SIZE * 0.06;
 
   const grad = ctx.createRadialGradient(cx, cy, ringR - ringW * 1.5, cx, cy, ringR + ringW * 1.5);
   grad.addColorStop(0, 'rgba(0,0,0,0)');
@@ -72,7 +60,7 @@ function buildRingTexture(kind: RingKind): THREE.CanvasTexture {
   return tex;
 }
 
-function ringMaterial(kind: RingKind): THREE.SpriteMaterial {
+function ringMaterial(kind: ChangeKind): THREE.SpriteMaterial {
   let mat = ringMaterialCache.get(kind);
   if (mat) return mat;
   mat = new THREE.SpriteMaterial({
