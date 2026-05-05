@@ -25,7 +25,12 @@ function clampSidebarWidth(w: number) {
 }
 
 function App() {
-  const [activeFolder, setActiveFolder] = useState<string>('');
+  // Seed from sessionStorage synchronously so the persist effect below doesn't
+  // wipe the stored value before the loader effect reads it. Effects run in
+  // declaration order, and the persist effect fires first — if activeFolder
+  // started as '' it would call sessionStorage.removeItem(...) and the per-tab
+  // active-folder memory would be lost on every mount.
+  const [activeFolder, setActiveFolder] = useState<string>(readStoredActiveFolder);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [loading, setLoading] = useState(false);
   // Per-extension visibility, persisted per project. Stored as a list of
@@ -57,15 +62,17 @@ function App() {
     }
   }, [activeFolder]);
 
+  // If the tab had no stored folder (fresh tab), fall back to the backend's
+  // default project. The stored case is already handled by the useState seed
+  // above, so we only call fetchDefaultRoot when activeFolder is still empty.
   useEffect(() => {
-    const stored = readStoredActiveFolder();
-    if (stored) {
-      setActiveFolder(stored);
-      return;
-    }
+    if (activeFolder) return;
     fetchDefaultRoot()
       .then(setActiveFolder)
       .catch(() => setActiveFolder(''));
+    // Only run on mount — once the user picks a folder we don't want to keep
+    // refetching the default if they later clear it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Load per-project sidebar width from backend when the active folder changes

@@ -159,10 +159,11 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   // Closing the panel/tab doesn't cancel the run — it keeps progressing on
   // the backend. On reopen we resync via /api/merge-runs/active.
   useEffect(() => {
-    if (!activeFolder) {
-      setMergeRun(null);
-      return;
-    }
+    // Reset run state on every folder switch so a summary from project A
+    // doesn't briefly flash when the user opens project B.
+    setMergeRun(null);
+    setRecentRunSummary(null);
+    if (!activeFolder) return;
     let cancelled = false;
     getActiveMergeRun(activeFolder)
       .then((r) => {
