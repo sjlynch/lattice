@@ -187,7 +187,7 @@ export type Workflow = {
   createdAt: number;
 };
 
-export type WorkflowRunStatus = 'running' | 'completed' | 'errored';
+export type WorkflowRunStatus = 'running' | 'completed' | 'errored' | 'cancelled';
 
 export type WorkflowRun = {
   id: string;
@@ -212,6 +212,7 @@ export type WorkflowRunEvent =
   | { type: 'progress'; run: WorkflowRun }
   | { type: 'completed'; run: WorkflowRun }
   | { type: 'errored'; run: WorkflowRun }
+  | { type: 'cancelled'; run: WorkflowRun }
   | {
       type: 'step-spawned';
       runId: string;

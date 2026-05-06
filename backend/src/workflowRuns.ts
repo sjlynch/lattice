@@ -13,7 +13,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { getWorkflow, type Workflow } from './workflows.js';
 
-export type WorkflowRunStatus = 'running' | 'completed' | 'errored';
+export type WorkflowRunStatus = 'running' | 'completed' | 'errored' | 'cancelled';
 
 export type WorkflowRun = {
   id: string;
@@ -33,6 +33,7 @@ export type WorkflowRunEvent =
   | { type: 'progress'; run: WorkflowRun }
   | { type: 'completed'; run: WorkflowRun }
   | { type: 'errored'; run: WorkflowRun }
+  | { type: 'cancelled'; run: WorkflowRun }
   | {
       type: 'step-spawned';
       runId: string;
@@ -363,6 +364,16 @@ export async function startWorkflowRun(
     console.error(`[workflow-run] ${run.id} failed to start step 0:`, err);
     throw err;
   }
+}
+
+export function cancelWorkflowRun(runId: string): boolean {
+  const run = runs.get(runId);
+  if (!run || run.status !== 'running') return false;
+  run.status = 'cancelled';
+  run.finishedAt = Date.now();
+  notify({ type: 'cancelled', run: snapshot(run) });
+  console.log(`[workflow-run] ${run.id} cancelled`);
+  return true;
 }
 
 // Called by the Stop-hook callback. Idempotent: stale hooks (same stepIndex

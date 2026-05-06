@@ -865,6 +865,43 @@ input {
   background: linear-gradient(135deg, #2f3a52 0%, #232a3b 100%);
 }
 
+/* Workflow run status chip in the appbar */
+.wf-run-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(94, 234, 212, 0.35);
+  background: linear-gradient(135deg, #1e2731 0%, #1a2028 100%);
+  font-size: 11px;
+  font-weight: 500;
+  color: #5eead4;
+  cursor: pointer;
+  user-select: none;
+  max-width: 220px;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.wf-run-chip:hover {
+  border-color: rgba(94, 234, 212, 0.65);
+  background: linear-gradient(135deg, #253340 0%, #1e2836 100%);
+}
+.wf-run-chip-spinner {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(94, 234, 212, 0.25);
+  border-top-color: #5eead4;
+  animation: spin 0.8s linear infinite;
+  flex: 0 0 auto;
+}
+.wf-run-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Floating panel (draggable + resizable) */
 .floating-panel {
   position: fixed;

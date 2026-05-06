@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Lightbulb, ListChecks, Play, Plus, Trash2, Wrench, X } from 'lucide-react';
+import { Lightbulb, ListChecks, Play, Plus, Square, Trash2, Wrench, X } from 'lucide-react';
 import { FloatingPanel } from '../FloatingPanel';
 import { useTerminals } from '../../TerminalsContext';
 import {
+  cancelWorkflowRun as apiCancelWorkflowRun,
   createWorkflow as apiCreateWorkflow,
   deleteWorkflow as apiDeleteWorkflow,
   fetchWorkflows,
@@ -112,7 +113,7 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
         setActiveRuns(map);
       } else if (ev.type === 'started' || ev.type === 'progress') {
         setActiveRuns((cur) => ({ ...cur, [ev.run.id]: ev.run }));
-      } else if (ev.type === 'completed' || ev.type === 'errored') {
+      } else if (ev.type === 'completed' || ev.type === 'errored' || ev.type === 'cancelled') {
         setActiveRuns((cur) => {
           const next = { ...cur };
           delete next[ev.run.id];
@@ -248,6 +249,14 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
     }
   }
 
+  async function stopRun(runId: string) {
+    try {
+      await apiCancelWorkflowRun(runId);
+    } catch (err) {
+      showError(`Stop failed: ${(err as Error).message}`);
+    }
+  }
+
   // ---- step editor mutations ----
 
   function patchStep(idx: number, patch: Partial<WorkflowStep>) {
@@ -341,6 +350,8 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
       ]
     : undefined;
 
+  const activeRunList = Object.values(activeRuns);
+
   return (
     <>
       <button
@@ -357,6 +368,26 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
           </span>
         )}
       </button>
+
+      {activeRunList.length > 0 && (
+        <button
+          className="wf-run-chip"
+          onClick={() => setOpen(true)}
+          title="Open workflow editor"
+          aria-label="Workflow runs in progress"
+        >
+          <span className="wf-run-chip-spinner" />
+          <span className="wf-run-chip-text">
+            {activeRunList.length === 1
+              ? (() => {
+                  const run = activeRunList[0];
+                  const pos = Math.min(run.currentStepIndex + 1, run.totalSteps);
+                  return `${run.workflowName} · Step ${pos}/${run.totalSteps}`;
+                })()
+              : `${activeRunList.length} workflows running`}
+          </span>
+        </button>
+      )}
 
       <FloatingPanel
         open={open}
@@ -450,24 +481,36 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
                           </>
                         )}
                       </div>
-                      <button
-                        className="workflows-item-run-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          runWorkflow(w);
-                        }}
-                        disabled={w.steps.length === 0 || !!run}
-                        title={
-                          w.steps.length === 0
-                            ? 'Add steps before running'
-                            : run
-                              ? 'Run already in progress'
+                      {run ? (
+                        <button
+                          className="workflows-item-run-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            stopRun(run.id);
+                          }}
+                          title="Stop workflow run"
+                          aria-label="Stop workflow run"
+                        >
+                          <Square size={10} fill="currentColor" />
+                        </button>
+                      ) : (
+                        <button
+                          className="workflows-item-run-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            runWorkflow(w);
+                          }}
+                          disabled={w.steps.length === 0}
+                          title={
+                            w.steps.length === 0
+                              ? 'Add steps before running'
                               : 'Run workflow'
-                        }
-                        aria-label="Run workflow"
-                      >
-                        <Play size={11} fill="currentColor" />
-                      </button>
+                          }
+                          aria-label="Run workflow"
+                        >
+                          <Play size={11} fill="currentColor" />
+                        </button>
+                      )}
                     </div>
                   );
                 })
@@ -538,6 +581,7 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
                     <WorkflowRunStrip
                       active={runForEditor ?? null}
                       summary={!runForEditor ? recentForEditor ?? null : null}
+                      onStop={runForEditor ? () => stopRun(runForEditor.id) : undefined}
                       onDismiss={() => {
                         if (recentForEditor) {
                           const id = recentForEditor.id;
@@ -609,23 +653,32 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
                   >
                     {editor.workflowId ? 'Save' : 'Create'}
                   </button>
-                  <button
-                    className="btn-primary"
-                    onClick={async () => {
-                      if (!editor.workflowId || editor.dirty) await save();
-                      const id = editor.workflowId;
-                      const fresh =
-                        (id && workflows.find((w) => w.id === id)) ?? null;
-                      if (fresh) await runWorkflow(fresh);
-                    }}
-                    disabled={
-                      editor.steps.length === 0 ||
-                      !!runForEditor ||
-                      !activeFolder
-                    }
-                  >
-                    <Play size={11} fill="currentColor" /> Run
-                  </button>
+                  {runForEditor ? (
+                    <button
+                      className="btn-ghost"
+                      onClick={() => stopRun(runForEditor.id)}
+                      style={{ color: 'var(--danger)' }}
+                    >
+                      <Square size={11} fill="currentColor" /> Stop
+                    </button>
+                  ) : (
+                    <button
+                      className="btn-primary"
+                      onClick={async () => {
+                        if (!editor.workflowId || editor.dirty) await save();
+                        const id = editor.workflowId;
+                        const fresh =
+                          (id && workflows.find((w) => w.id === id)) ?? null;
+                        if (fresh) await runWorkflow(fresh);
+                      }}
+                      disabled={
+                        editor.steps.length === 0 ||
+                        !activeFolder
+                      }
+                    >
+                      <Play size={11} fill="currentColor" /> Run
+                    </button>
+                  )}
                 </div>
               </>
             )}

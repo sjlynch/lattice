@@ -14,6 +14,7 @@ import {
   getActiveRunsForProject as getActiveWorkflowRunsForProject,
   startWorkflowRun,
   completeWorkflowStep,
+  cancelWorkflowRun,
 } from '../workflowRuns.js';
 
 export function buildWorkflowsRouter(backendOrigin: string): Router {
@@ -63,6 +64,12 @@ export function buildWorkflowsRouter(backendOrigin: string): Router {
     const stepIndex = parseInt(req.params.stepIndex, 10);
     if (isNaN(stepIndex)) return res.status(400).json({ error: 'invalid stepIndex' });
     await completeWorkflowStep(req.params.runId, stepIndex, backendOrigin);
+    res.json({ ok: true });
+  });
+
+  r.post('/api/workflow-runs/:runId/cancel', (req, res) => {
+    const ok = cancelWorkflowRun(req.params.runId);
+    if (!ok) return res.status(404).json({ error: 'run not found or already finished' });
     res.json({ ok: true });
   });
 
