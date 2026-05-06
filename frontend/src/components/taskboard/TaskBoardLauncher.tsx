@@ -201,7 +201,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
           taskId: ev.taskId,
           kind: 'merge',
           projectPath: activeFolder,
-        });
+        }, false);
       }
     });
     return () => {
@@ -412,7 +412,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         initialCommand: res.command,
         taskId: task.id,
         projectPath: task.projectPath,
-      });
+      }, false);
     } catch (err) {
       showError(`Run failed: ${(err as Error).message}`);
     }
@@ -438,7 +438,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         initialCommand: res.command,
         taskId: task.id,
         projectPath: task.projectPath,
-      });
+      }, false);
     } catch (err) {
       showError(`Resume failed: ${(err as Error).message}`);
     }
@@ -467,7 +467,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         taskId: task.id,
         kind: 'merge',
         projectPath: task.projectPath,
-      });
+      }, false);
       return false;
     } catch (err) {
       showError(`Merge failed: ${(err as Error).message}`);
