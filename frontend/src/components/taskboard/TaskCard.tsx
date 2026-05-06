@@ -108,18 +108,6 @@ export function TaskCard({
         )}
       </div>
       <div className="task-card-actions">
-        <button
-          className="task-card-iconbtn edit"
-          onClick={(e) => {
-            e.stopPropagation();
-            onView();
-          }}
-          title="View / edit task"
-          aria-label="View task details"
-          draggable={false}
-        >
-          <Pencil size={11} />
-        </button>
         {onFocusTerminal && (
           <button
             className="task-card-iconbtn terminal"
@@ -184,6 +172,18 @@ export function TaskCard({
             )}
           </button>
         )}
+        <button
+          className="task-card-iconbtn edit"
+          onClick={(e) => {
+            e.stopPropagation();
+            onView();
+          }}
+          title="View / edit task"
+          aria-label="View task details"
+          draggable={false}
+        >
+          <Pencil size={11} />
+        </button>
         <button
           className="task-card-iconbtn danger"
           onClick={(e) => {

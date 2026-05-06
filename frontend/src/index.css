@@ -1167,7 +1167,9 @@ input {
 .task-card-iconbtn.resume:hover { background: rgba(231, 201, 134, 0.22); color: #f4dba1; }
 .task-card-iconbtn.terminal { color: #93c5fd; opacity: 1; background: rgba(147, 197, 253, 0.10); }
 .task-card-iconbtn.terminal:hover { background: rgba(147, 197, 253, 0.22); color: #b8d6fc; }
+.task-card-iconbtn.danger { opacity: 1; }
 .task-card-iconbtn.danger:hover { color: var(--danger); }
+.task-card-iconbtn.edit { opacity: 1; }
 .task-card-iconbtn.edit:hover { color: var(--text-primary); }
 
 .task-card.selected {
