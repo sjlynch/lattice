@@ -66,7 +66,7 @@ type Ctx = {
   terminals: TerminalSpec[];
   activeId: string | null;
   setActiveId: (id: string | null) => void;
-  addTerminal: (spec: Omit<TerminalSpec, 'id'>) => string;
+  addTerminal: (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
   closeTerminal: (id: string) => void;
   closeTerminals: (ids: string[]) => void;
   closeTerminalsForTask: (taskId: string) => void;
@@ -110,12 +110,12 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addTerminal = useCallback(
-    (spec: Omit<TerminalSpec, 'id'>): string => {
+    (spec: Omit<TerminalSpec, 'id'>, focus = true): string => {
       const id = `term_${Date.now()}_${Math.random()
         .toString(36)
         .slice(2, 6)}`;
       setTerminals((ts) => [...ts, { ...spec, id }]);
-      setActiveIdState(id);
+      if (focus) setActiveIdState(id);
       return id;
     },
     [],
