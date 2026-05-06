@@ -557,6 +557,7 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     const MIN_DIST = 55; // world units; below this, labels push apart
     const PUSH = 0.1;
     const DAMP = 0.97; // 3% pull toward each label's home offset per frame
+    const SETTLE = 0.005; // stop when max displacement falls below this
     let rafId = 0;
     const tick = () => {
       // Drop entries whose label was detached from the scene graph.
@@ -568,6 +569,7 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
         e.label.getWorldPosition(tmp);
         return { x: tmp.x, z: tmp.z };
       });
+      let maxDisp = 0;
       for (let i = 0; i < entries.length; i++) {
         for (let j = i + 1; j < entries.length; j++) {
           const a = worldXZ[i];
@@ -588,9 +590,11 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
             worldXZ[i].z -= nz * push;
             worldXZ[j].x += nx * push;
             worldXZ[j].z += nz * push;
+            if (push > maxDisp) maxDisp = push;
           }
         }
       }
+      let maxPos = 0;
       for (const e of entries) {
         // Pull each label gently back toward its home (directly above its
         // file node) so they don't drift far in sparse regions.
@@ -610,8 +614,16 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
           e.label.position.z,
         );
         attr.needsUpdate = true;
+        const ax = Math.abs(e.label.position.x);
+        const az = Math.abs(e.label.position.z);
+        if (ax > maxPos) maxPos = ax;
+        if (az > maxPos) maxPos = az;
       }
-      rafId = requestAnimationFrame(tick);
+      // Keep running while labels are still moving; stop once settled so we
+      // don't burn CPU/GPU at 60 FPS indefinitely while nothing is changing.
+      if (maxDisp > SETTLE || maxPos > SETTLE) {
+        rafId = requestAnimationFrame(tick);
+      }
     };
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
@@ -628,6 +640,7 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     const MIN_DIST = 90;
     const PUSH = 0.1;
     const DAMP = 0.97;
+    const SETTLE = 0.005;
     let rafId = 0;
     const tick = () => {
       for (const e of labelsRegistry) {
@@ -638,6 +651,7 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
         e.label.getWorldPosition(tmp);
         return { x: tmp.x, z: tmp.z };
       });
+      let maxDisp = 0;
       for (let i = 0; i < entries.length; i++) {
         for (let j = i + 1; j < entries.length; j++) {
           const a = worldXZ[i];
@@ -658,9 +672,11 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
             worldXZ[i].z -= nz * push;
             worldXZ[j].x += nx * push;
             worldXZ[j].z += nz * push;
+            if (push > maxDisp) maxDisp = push;
           }
         }
       }
+      let maxPos = 0;
       for (const e of entries) {
         e.label.position.x *= DAMP;
         e.label.position.z *= DAMP;
@@ -675,8 +691,14 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
           e.label.position.z,
         );
         attr.needsUpdate = true;
+        const ax = Math.abs(e.label.position.x);
+        const az = Math.abs(e.label.position.z);
+        if (ax > maxPos) maxPos = ax;
+        if (az > maxPos) maxPos = az;
       }
-      rafId = requestAnimationFrame(tick);
+      if (maxDisp > SETTLE || maxPos > SETTLE) {
+        rafId = requestAnimationFrame(tick);
+      }
     };
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);

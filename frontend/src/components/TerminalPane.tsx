@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 
 type Props = {
@@ -68,6 +69,15 @@ export function TerminalPane({
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(containerRef.current);
+    // WebGL renderer must be loaded after open(). Falls back silently to the
+    // DOM renderer if WebGL is unavailable or the context limit is reached.
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      term.loadAddon(webgl);
+    } catch {
+      // DOM renderer remains
+    }
     fit.fit();
     fitRef.current = fit;
 

@@ -57,6 +57,22 @@ export function Sidebar({ activeFolder }: Props) {
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
 
+  // Track which terminal IDs have ever been the active tab. We only mount
+  // <TerminalPane> once a terminal is first viewed — the backend keeps the
+  // pty alive via serverId so the session is intact when we first connect.
+  const [mountedIds, setMountedIds] = useState<ReadonlySet<string>>(
+    () => new Set(activeId ? [activeId] : []),
+  );
+  useEffect(() => {
+    if (!activeId) return;
+    setMountedIds((prev) => {
+      if (prev.has(activeId)) return prev;
+      const next = new Set(prev);
+      next.add(activeId);
+      return next;
+    });
+  }, [activeId]);
+
   const menuRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -423,14 +439,16 @@ export function Sidebar({ activeFolder }: Props) {
               key={t.id}
               className={`sidebar-pane ${t.id === activeId ? '' : 'hidden'}`}
             >
-              <TerminalPane
-                cwd={t.cwd}
-                active={t.id === activeId}
-                initialCommand={t.initialCommand}
-                serverId={t.serverId}
-                projectPath={t.projectPath}
-                onServerId={(srv) => handleServerId(t.id, srv)}
-              />
+              {mountedIds.has(t.id) && (
+                <TerminalPane
+                  cwd={t.cwd}
+                  active={t.id === activeId}
+                  initialCommand={t.initialCommand}
+                  serverId={t.serverId}
+                  projectPath={t.projectPath}
+                  onServerId={(srv) => handleServerId(t.id, srv)}
+                />
+              )}
             </div>
           ))
         )}
