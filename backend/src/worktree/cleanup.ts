@@ -5,17 +5,40 @@
 // the worktree dir open on Windows would otherwise wedge cleanup forever
 // and stall the run worker (which awaits cleanup mid-iteration).
 
+import path from 'node:path';
 import fs from 'node:fs/promises';
 import { exec } from './exec.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
 
 const CLEANUP_GIT_TIMEOUT_MS = 15_000;
 
+// Throws if worktreePath is not a proper subdirectory of
+// <repoRoot>/.lattice/worktrees/. This is the last line of defence before
+// `fs.rm --recursive --force`: git worktree remove cannot remove the main
+// worktree, but fs.rm has no such protection — a bad worktreePath (the repo
+// root itself, an empty string, etc.) would silently delete the entire repo.
+function assertSafeWorktreePath(repoRoot: string, worktreePath: string): void {
+  const resolved = path.resolve(worktreePath);
+  const base = path.resolve(path.join(repoRoot, '.lattice', 'worktrees'));
+  // Must be strictly inside `base` — not base itself, not a sibling path
+  // that shares a prefix (e.g. `.lattice/worktrees-extra`).
+  if (!resolved.startsWith(base + path.sep)) {
+    throw new Error(
+      `[worktree] safety: refusing recursive delete of "${resolved}" — ` +
+        `it is not under "${base}". Check that task.worktreePath is correct.`,
+    );
+  }
+}
+
 export async function cleanupWorktreeForTask(
   repoRoot: string,
   worktreePath: string,
   branchName: string,
 ): Promise<void> {
+  // Guard against catastrophic deletion if worktreePath is somehow the main
+  // repo root or any path outside the expected worktrees directory.
+  assertSafeWorktreePath(repoRoot, worktreePath);
+
   // Kill any terminal sessions running inside the worktree first.
   // On Windows a process whose cwd is inside a directory holds a lock that
   // prevents deletion — killing the PTY releases it before git tries to remove.

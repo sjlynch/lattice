@@ -221,6 +221,19 @@ async function reconcileStaleState(
     // tried (and may have failed) once, leaving the dir orphaned. Kill any
     // PTYs whose cwd is inside, give the OS a beat, then retry the rm a
     // few times before giving up.
+    //
+    // Safety: worktreePath is always candidatePath (path.join(worktreesDir,
+    // ...)) so this check should never trigger under normal operation. It is
+    // here as a belt-and-suspenders guard matching the one in cleanup.ts.
+    const resolvedWt = path.resolve(worktreePath);
+    const resolvedBase = path.resolve(path.join(repoRoot, '.lattice', 'worktrees'));
+    if (!resolvedWt.startsWith(resolvedBase + path.sep)) {
+      console.error(
+        `[worktree] reconcile: refusing rm on "${resolvedWt}" — ` +
+          `not under "${resolvedBase}". Skipping cleanup.`,
+      );
+      return false;
+    }
     await proxyKillSessionsByCwd(worktreePath);
     await new Promise<void>((r) => setTimeout(r, 200));
     if (!(await tryRmWithRetries(worktreePath))) {
