@@ -239,7 +239,13 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
       graph.height(containerRef.current.clientHeight);
     };
     onResize();
-    const ro = new ResizeObserver(onResize);
+    // Debounce so a sidebar drag (60+ events/sec) only triggers one Three.js
+    // resize per settled frame rather than thrashing the GPU every pixel.
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    const ro = new ResizeObserver(() => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(onResize, 150);
+    });
     ro.observe(containerRef.current);
 
     // Right-click anywhere over the graph viewport opens our popover.
@@ -303,6 +309,7 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     window.addEventListener('contextmenu', onCtxMenu, { capture: true });
 
     return () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
       ro.disconnect();
       window.removeEventListener('mousedown', onMouseDownWin, { capture: true });
       window.removeEventListener('mouseup', onMouseUpWin, { capture: true });
@@ -338,14 +345,8 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     }
     ghostsRef.current = ghostIds;
     graphRef.current.graphData({
-      nodes: [
-        ...data.nodes.map((n) => ({ ...n })),
-        ...ghostNodes.map((n) => ({ ...n })),
-      ],
-      links: [
-        ...data.links.map((l) => ({ ...l })),
-        ...ghostLinks.map((l) => ({ ...l })),
-      ],
+      nodes: [...data.nodes, ...ghostNodes],
+      links: [...data.links, ...ghostLinks],
     });
     // Recompute path depths for the labels overlay, plus the max depth so
     // alt+wheel can clamp to the visible range.
@@ -557,44 +558,47 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     const MIN_DIST = 55; // world units; below this, labels push apart
     const PUSH = 0.1;
     const DAMP = 0.97; // 3% pull toward each label's home offset per frame
-    const SETTLE = 0.005; // stop when max displacement falls below this
     let rafId = 0;
+    let frameCount = 0;
     const tick = () => {
+      frameCount++;
       // Drop entries whose label was detached from the scene graph.
       for (const e of locLabelRegistry) {
         if (!e.label.parent) locLabelRegistry.delete(e);
       }
       const entries = Array.from(locLabelRegistry);
-      const worldXZ: { x: number; z: number }[] = entries.map((e) => {
-        e.label.getWorldPosition(tmp);
-        return { x: tmp.x, z: tmp.z };
-      });
-      let maxDisp = 0;
-      for (let i = 0; i < entries.length; i++) {
-        for (let j = i + 1; j < entries.length; j++) {
-          const a = worldXZ[i];
-          const b = worldXZ[j];
-          const dx = b.x - a.x;
-          const dz = b.z - a.z;
-          const d2 = dx * dx + dz * dz;
-          if (d2 < MIN_DIST * MIN_DIST && d2 > 1e-4) {
-            const d = Math.sqrt(d2);
-            const push = (MIN_DIST - d) * PUSH;
-            const nx = dx / d;
-            const nz = dz / d;
-            entries[i].label.position.x -= nx * push;
-            entries[i].label.position.z -= nz * push;
-            entries[j].label.position.x += nx * push;
-            entries[j].label.position.z += nz * push;
-            worldXZ[i].x -= nx * push;
-            worldXZ[i].z -= nz * push;
-            worldXZ[j].x += nx * push;
-            worldXZ[j].z += nz * push;
-            if (push > maxDisp) maxDisp = push;
+      // O(n²) repulsion runs every other frame to halve CPU cost while still
+      // reacting quickly; the loop must always reschedule so it catches labels
+      // that are added asynchronously after locMode first becomes true.
+      if (entries.length > 1 && frameCount % 2 === 0) {
+        const worldXZ: { x: number; z: number }[] = entries.map((e) => {
+          e.label.getWorldPosition(tmp);
+          return { x: tmp.x, z: tmp.z };
+        });
+        for (let i = 0; i < entries.length; i++) {
+          for (let j = i + 1; j < entries.length; j++) {
+            const a = worldXZ[i];
+            const b = worldXZ[j];
+            const dx = b.x - a.x;
+            const dz = b.z - a.z;
+            const d2 = dx * dx + dz * dz;
+            if (d2 < MIN_DIST * MIN_DIST && d2 > 1e-4) {
+              const d = Math.sqrt(d2);
+              const push = (MIN_DIST - d) * PUSH;
+              const nx = dx / d;
+              const nz = dz / d;
+              entries[i].label.position.x -= nx * push;
+              entries[i].label.position.z -= nz * push;
+              entries[j].label.position.x += nx * push;
+              entries[j].label.position.z += nz * push;
+              worldXZ[i].x -= nx * push;
+              worldXZ[i].z -= nz * push;
+              worldXZ[j].x += nx * push;
+              worldXZ[j].z += nz * push;
+            }
           }
         }
       }
-      let maxPos = 0;
       for (const e of entries) {
         // Pull each label gently back toward its home (directly above its
         // file node) so they don't drift far in sparse regions.
@@ -614,16 +618,8 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
           e.label.position.z,
         );
         attr.needsUpdate = true;
-        const ax = Math.abs(e.label.position.x);
-        const az = Math.abs(e.label.position.z);
-        if (ax > maxPos) maxPos = ax;
-        if (az > maxPos) maxPos = az;
       }
-      // Keep running while labels are still moving; stop once settled so we
-      // don't burn CPU/GPU at 60 FPS indefinitely while nothing is changing.
-      if (maxDisp > SETTLE || maxPos > SETTLE) {
-        rafId = requestAnimationFrame(tick);
-      }
+      rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
@@ -640,43 +636,43 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     const MIN_DIST = 90;
     const PUSH = 0.1;
     const DAMP = 0.97;
-    const SETTLE = 0.005;
     let rafId = 0;
+    let frameCount = 0;
     const tick = () => {
+      frameCount++;
       for (const e of labelsRegistry) {
         if (!e.label.parent) labelsRegistry.delete(e);
       }
       const entries = Array.from(labelsRegistry);
-      const worldXZ: { x: number; z: number }[] = entries.map((e) => {
-        e.label.getWorldPosition(tmp);
-        return { x: tmp.x, z: tmp.z };
-      });
-      let maxDisp = 0;
-      for (let i = 0; i < entries.length; i++) {
-        for (let j = i + 1; j < entries.length; j++) {
-          const a = worldXZ[i];
-          const b = worldXZ[j];
-          const dx = b.x - a.x;
-          const dz = b.z - a.z;
-          const d2 = dx * dx + dz * dz;
-          if (d2 < MIN_DIST * MIN_DIST && d2 > 1e-4) {
-            const d = Math.sqrt(d2);
-            const push = (MIN_DIST - d) * PUSH;
-            const nx = dx / d;
-            const nz = dz / d;
-            entries[i].label.position.x -= nx * push;
-            entries[i].label.position.z -= nz * push;
-            entries[j].label.position.x += nx * push;
-            entries[j].label.position.z += nz * push;
-            worldXZ[i].x -= nx * push;
-            worldXZ[i].z -= nz * push;
-            worldXZ[j].x += nx * push;
-            worldXZ[j].z += nz * push;
-            if (push > maxDisp) maxDisp = push;
+      if (entries.length > 1 && frameCount % 2 === 0) {
+        const worldXZ: { x: number; z: number }[] = entries.map((e) => {
+          e.label.getWorldPosition(tmp);
+          return { x: tmp.x, z: tmp.z };
+        });
+        for (let i = 0; i < entries.length; i++) {
+          for (let j = i + 1; j < entries.length; j++) {
+            const a = worldXZ[i];
+            const b = worldXZ[j];
+            const dx = b.x - a.x;
+            const dz = b.z - a.z;
+            const d2 = dx * dx + dz * dz;
+            if (d2 < MIN_DIST * MIN_DIST && d2 > 1e-4) {
+              const d = Math.sqrt(d2);
+              const push = (MIN_DIST - d) * PUSH;
+              const nx = dx / d;
+              const nz = dz / d;
+              entries[i].label.position.x -= nx * push;
+              entries[i].label.position.z -= nz * push;
+              entries[j].label.position.x += nx * push;
+              entries[j].label.position.z += nz * push;
+              worldXZ[i].x -= nx * push;
+              worldXZ[i].z -= nz * push;
+              worldXZ[j].x += nx * push;
+              worldXZ[j].z += nz * push;
+            }
           }
         }
       }
-      let maxPos = 0;
       for (const e of entries) {
         e.label.position.x *= DAMP;
         e.label.position.z *= DAMP;
@@ -691,14 +687,8 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
           e.label.position.z,
         );
         attr.needsUpdate = true;
-        const ax = Math.abs(e.label.position.x);
-        const az = Math.abs(e.label.position.z);
-        if (ax > maxPos) maxPos = ax;
-        if (az > maxPos) maxPos = az;
       }
-      if (maxDisp > SETTLE || maxPos > SETTLE) {
-        rafId = requestAnimationFrame(tick);
-      }
+      rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);

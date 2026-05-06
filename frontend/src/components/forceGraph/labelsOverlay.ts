@@ -22,6 +22,9 @@ export function depthFor(node: GraphNode, root: string): number {
   return n;
 }
 
+// Capped at 256 entries; the oldest entry is disposed and evicted when the
+// cap is hit to prevent unbounded GPU memory growth on large repos.
+const MAX_LABEL_TEXTURES = 256;
 const labelTextureCache = new Map<string, THREE.CanvasTexture>();
 
 function buildNameTexture(text: string, color: string): THREE.CanvasTexture {
@@ -56,6 +59,11 @@ function buildNameTexture(text: string, color: string): THREE.CanvasTexture {
   // Stash aspect on the texture so the sprite can read it without
   // re-measuring.
   (tex as THREE.CanvasTexture & { _aspect?: number })._aspect = W / H;
+  if (labelTextureCache.size >= MAX_LABEL_TEXTURES) {
+    const oldest = labelTextureCache.keys().next().value!;
+    labelTextureCache.get(oldest)?.dispose();
+    labelTextureCache.delete(oldest);
+  }
   labelTextureCache.set(key, tex);
   return tex;
 }

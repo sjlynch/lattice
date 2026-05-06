@@ -219,9 +219,14 @@ export function Sidebar({ activeFolder }: Props) {
     if (!el) return;
     const onScroll = () => updateScrollState();
     el.addEventListener('scroll', onScroll, { passive: true });
-    const ro = new ResizeObserver(() => updateScrollState());
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    const ro = new ResizeObserver(() => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(updateScrollState, 150);
+    });
     ro.observe(el);
     return () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
       el.removeEventListener('scroll', onScroll);
       ro.disconnect();
     };

@@ -22,7 +22,9 @@ export function locColor(loc: number): string {
 }
 
 // Cache LOC text-label textures by `text|color` so panning/zooming with
-// `z` held doesn't allocate a fresh canvas every frame.
+// `z` held doesn't allocate a fresh canvas every frame. Capped at 256
+// entries; the oldest entry is disposed and evicted when the cap is hit.
+const MAX_LOC_TEXTURES = 256;
 const labelTextureCache = new Map<string, THREE.CanvasTexture>();
 
 function buildLabelTexture(text: string, color: string): THREE.CanvasTexture {
@@ -49,6 +51,11 @@ function buildLabelTexture(text: string, color: string): THREE.CanvasTexture {
   tex.magFilter = THREE.LinearFilter;
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.needsUpdate = true;
+  if (labelTextureCache.size >= MAX_LOC_TEXTURES) {
+    const oldest = labelTextureCache.keys().next().value!;
+    labelTextureCache.get(oldest)?.dispose();
+    labelTextureCache.delete(oldest);
+  }
   labelTextureCache.set(key, tex);
   return tex;
 }
