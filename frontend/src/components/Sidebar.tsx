@@ -306,16 +306,26 @@ export function Sidebar({ activeFolder }: Props) {
                 <Search size={12} />
               </button>
               {searchOpen && (
-                <input
-                  ref={searchInputRef}
-                  className="sidebar-search-input"
-                  type="text"
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  onKeyDown={onSearchKeyDown}
-                  placeholder="Filter…"
-                  aria-label="Filter terminals"
-                />
+                <>
+                  <input
+                    ref={searchInputRef}
+                    className="sidebar-search-input"
+                    type="text"
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                    onKeyDown={onSearchKeyDown}
+                    placeholder="Filter…"
+                    aria-label="Filter terminals"
+                  />
+                  <button
+                    className="icon-btn sm"
+                    onClick={toggleSearch}
+                    title="Clear filter"
+                    aria-label="Clear filter"
+                  >
+                    <X size={12} />
+                  </button>
+                </>
               )}
             </div>
           )}
