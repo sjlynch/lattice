@@ -68,6 +68,7 @@ type Ctx = {
   setActiveId: (id: string | null) => void;
   addTerminal: (spec: Omit<TerminalSpec, 'id'>) => string;
   closeTerminal: (id: string) => void;
+  closeTerminals: (ids: string[]) => void;
   closeTerminalsForTask: (taskId: string) => void;
   setServerId: (id: string, serverId: string) => void;
 };
@@ -161,6 +162,31 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  const closeTerminals = useCallback((ids: string[]) => {
+    const idSet = new Set(ids);
+    const current = terminalsRef.current;
+    for (const id of ids) {
+      const target = current.find((t) => t.id === id);
+      if (target?.serverId) {
+        void fetch(`/api/terminals/${encodeURIComponent(target.serverId)}`, {
+          method: 'DELETE',
+        }).catch(() => {});
+      }
+    }
+    const next = current.filter((t) => !idSet.has(t.id));
+    setTerminals(next);
+    setActiveIdState((cur) => {
+      if (!cur || !idSet.has(cur)) return cur;
+      if (next.length === 0) return null;
+      const idx = current.findIndex((t) => t.id === cur);
+      for (let i = idx - 1; i >= 0; i--) {
+        const t = current[i];
+        if (t && !idSet.has(t.id)) return t.id;
+      }
+      return next[0]?.id ?? null;
+    });
+  }, []);
+
   const closeTerminalsForTask = useCallback(
     (taskId: string) => {
       const targets = terminalsRef.current
@@ -181,6 +207,7 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
         setActiveId,
         addTerminal,
         closeTerminal,
+        closeTerminals,
         closeTerminalsForTask,
         setServerId,
       }}

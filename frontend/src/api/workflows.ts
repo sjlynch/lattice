@@ -59,6 +59,14 @@ export async function startWorkflow(id: string): Promise<WorkflowRunResult> {
   );
 }
 
+export async function cancelWorkflowRun(runId: string): Promise<void> {
+  await asJson<{ ok: true }>(
+    await fetch(`/api/workflow-runs/${encodeURIComponent(runId)}/cancel`, {
+      method: 'POST',
+    }),
+  );
+}
+
 export function subscribeWorkflows(
   projectPath: string,
   onUpdate: (workflows: Workflow[]) => void,
