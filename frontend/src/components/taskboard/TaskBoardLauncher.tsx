@@ -268,6 +268,16 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     setAnchorId(id);
   }
 
+  function handleSingleSelect(id: string, laneId: TaskStatus) {
+    if (selectedIds.size === 1 && selectedIds.has(id)) {
+      clearSelection();
+      return;
+    }
+    setSelectedIds(new Set([id]));
+    setSelectionLane(laneId);
+    setAnchorId(id);
+  }
+
   function handleRangeSelect(id: string, laneId: TaskStatus) {
     const anchor = anchorId ? tasks.find((t) => t.id === anchorId) : null;
     if (!anchor || anchor.status !== laneId) {
@@ -631,6 +641,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 onResume={resumeTaskAction}
                 onMerge={mergeTaskAction}
                 getFocusTerminal={getFocusTerminal}
+                onSingleSelect={(id) => handleSingleSelect(id, lane.id)}
                 onToggleSelect={(id) => handleToggleSelect(id, lane.id)}
                 onRangeSelect={(id) => handleRangeSelect(id, lane.id)}
                 onClearSelection={clearSelection}
@@ -698,8 +709,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
           )}
         </div>
         <div className="taskboard-footer">
-          {tasks.length} total · drag to reorder · ctrl+click or shift+click to
-          multi-select · drag selected cards together
+          {tasks.length} total · drag to reorder · click to select · ctrl+click or shift+click to multi-select · pencil to edit
         </div>
       </FloatingPanel>
     </>

@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   GitMerge,
   GripVertical,
+  Pencil,
   Play,
   TerminalSquare,
   Trash2,
@@ -12,8 +13,9 @@ import { StuckPill } from './StuckPill';
 
 // One row in a lane. Shows the task title/description, a conflict pill if
 // the task is in conflict-resolution, and lane-appropriate action buttons
-// (run/resume/merge/delete). Click anywhere on the body to open the
-// detail overlay. Ctrl/Cmd+click and Shift+click trigger multi-select.
+// (run/resume/merge/delete). Click anywhere on the body to highlight that
+// task (single-select); Ctrl/Cmd+click toggles multi-select; Shift+click
+// range-selects. The pencil icon opens the detail overlay.
 export function TaskCard({
   task,
   laneColor,
@@ -28,6 +30,7 @@ export function TaskCard({
   onMerge,
   onFocusTerminal,
   onView,
+  onSelect,
   onToggleSelect,
   onRangeSelect,
 }: {
@@ -44,6 +47,7 @@ export function TaskCard({
   onMerge?: () => void;
   onFocusTerminal?: () => void;
   onView: () => void;
+  onSelect: () => void;
   onToggleSelect: () => void;
   onRangeSelect: () => void;
 }) {
@@ -61,7 +65,7 @@ export function TaskCard({
     } else if (e.shiftKey) {
       onRangeSelect();
     } else {
-      onView();
+      onSelect();
     }
   }
 
@@ -83,7 +87,7 @@ export function TaskCard({
       <div
         className="task-card-body"
         onClick={handleBodyClick}
-        title={isSelected ? 'Ctrl+click to deselect · shift+click to range-select' : 'Click to view · ctrl+click to select'}
+        title={isSelected ? 'Ctrl+click to deselect · shift+click to range-select' : 'Click to select · ctrl+click to multi-select'}
       >
         <div className="task-card-title">
           {isConflict && (
@@ -104,6 +108,18 @@ export function TaskCard({
         )}
       </div>
       <div className="task-card-actions">
+        <button
+          className="task-card-iconbtn edit"
+          onClick={(e) => {
+            e.stopPropagation();
+            onView();
+          }}
+          title="View / edit task"
+          aria-label="View task details"
+          draggable={false}
+        >
+          <Pencil size={11} />
+        </button>
         {onFocusTerminal && (
           <button
             className="task-card-iconbtn terminal"

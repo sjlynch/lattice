@@ -27,6 +27,7 @@ export function Lane({
   getFocusTerminal,
   onRunAll,
   onView,
+  onSingleSelect,
   onToggleSelect,
   onRangeSelect,
   onClearSelection,
@@ -50,6 +51,7 @@ export function Lane({
   getFocusTerminal?: (task: Task) => (() => void) | null;
   onRunAll?: () => void;
   onView: (task: Task) => void;
+  onSingleSelect: (id: string) => void;
   onToggleSelect: (id: string) => void;
   onRangeSelect: (id: string) => void;
   onClearSelection: () => void;
@@ -218,6 +220,7 @@ export function Lane({
                   }
                   onFocusTerminal={getFocusTerminal?.(t) ?? undefined}
                   onView={() => onView(t)}
+                  onSelect={() => onSingleSelect(t.id)}
                   onToggleSelect={() => onToggleSelect(t.id)}
                   onRangeSelect={() => onRangeSelect(t.id)}
                 />
