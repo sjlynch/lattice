@@ -51,6 +51,15 @@ function App() {
   useEffect(() => { activeFolderRef.current = activeFolder; }, [activeFolder]);
   useEffect(() => { sidebarWidthRef.current = sidebarWidth; }, [sidebarWidth]);
 
+  useEffect(() => {
+    if (activeFolder) {
+      const name = activeFolder.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? activeFolder;
+      document.title = `${name} — Lattice`;
+    } else {
+      document.title = 'Lattice';
+    }
+  }, [activeFolder]);
+
   // Persist the active folder per-tab so refreshing keeps the chosen project,
   // letting multiple Lattice tabs each track their own working directory.
   useEffect(() => {
