@@ -45,6 +45,9 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   const [addingTo, setAddingTo] = useState<TaskStatus | null>(null);
   const [viewing, setViewing] = useState<Task | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [anchorId, setAnchorId] = useState<string | null>(null);
+  const [selectionLane, setSelectionLane] = useState<TaskStatus | null>(null);
   const [mergeRun, setMergeRun] = useState<MergeRun | null>(null);
   const [recentRunSummary, setRecentRunSummary] = useState<MergeRun | null>(
     null,
@@ -239,6 +242,95 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   async function moveTask(id: string, status: TaskStatus) {
     try {
       await apiUpdateTask(id, { status });
+    } catch (err) {
+      showError((err as Error).message);
+    }
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+    setAnchorId(null);
+    setSelectionLane(null);
+  }
+
+  function handleToggleSelect(id: string, laneId: TaskStatus) {
+    if (selectionLane !== null && selectionLane !== laneId) {
+      setSelectedIds(new Set([id]));
+      setSelectionLane(laneId);
+      setAnchorId(id);
+      return;
+    }
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
+    setSelectionLane(next.size > 0 ? laneId : null);
+    setAnchorId(id);
+  }
+
+  function handleRangeSelect(id: string, laneId: TaskStatus) {
+    const anchor = anchorId ? tasks.find((t) => t.id === anchorId) : null;
+    if (!anchor || anchor.status !== laneId) {
+      setSelectedIds(new Set([id]));
+      setSelectionLane(laneId);
+      setAnchorId(id);
+      return;
+    }
+    const laneTasks = grouped[laneId];
+    const anchorIdx = laneTasks.findIndex((t) => t.id === anchorId);
+    const targetIdx = laneTasks.findIndex((t) => t.id === id);
+    if (anchorIdx === -1 || targetIdx === -1) {
+      setSelectedIds(new Set([id]));
+      setSelectionLane(laneId);
+      return;
+    }
+    const lo = Math.min(anchorIdx, targetIdx);
+    const hi = Math.max(anchorIdx, targetIdx);
+    setSelectedIds(new Set(laneTasks.slice(lo, hi + 1).map((t) => t.id)));
+    setSelectionLane(laneId);
+  }
+
+  // Move multiple tasks to a lane without a specific slot index (append).
+  async function moveMulti(ids: string[], targetStatus: TaskStatus) {
+    if (!activeFolder) return;
+    const srcTasks = ids
+      .map((id) => tasks.find((t) => t.id === id))
+      .filter((t): t is Task => !!t)
+      .sort((a, b) => (a.sortOrder ?? -a.createdAt) - (b.sortOrder ?? -b.createdAt));
+    if (!srcTasks.length) return;
+    const newLane = grouped[targetStatus].filter((t) => !ids.includes(t.id));
+    newLane.push(...srcTasks);
+    try {
+      await apiReorderTasks(activeFolder, targetStatus, newLane.map((t) => t.id));
+      clearSelection();
+    } catch (err) {
+      showError((err as Error).message);
+    }
+  }
+
+  // Drop multiple tasks at a specific position in the target lane.
+  async function dropAtMulti(
+    ids: string[],
+    targetStatus: TaskStatus,
+    targetIndex: number,
+  ) {
+    if (!activeFolder) return;
+    const srcTasks = ids
+      .map((id) => tasks.find((t) => t.id === id))
+      .filter((t): t is Task => !!t)
+      .sort((a, b) => (a.sortOrder ?? -a.createdAt) - (b.sortOrder ?? -b.createdAt));
+    if (!srcTasks.length) return;
+    const targetLane = grouped[targetStatus].slice();
+    const remaining = targetLane.filter((t) => !ids.includes(t.id));
+    let insertAt = targetIndex;
+    for (let i = 0; i < targetIndex && i < targetLane.length; i++) {
+      if (ids.includes(targetLane[i].id)) insertAt--;
+    }
+    insertAt = Math.max(0, Math.min(insertAt, remaining.length));
+    remaining.splice(insertAt, 0, ...srcTasks);
+    try {
+      await apiReorderTasks(activeFolder, targetStatus, remaining.map((t) => t.id));
+      clearSelection();
     } catch (err) {
       showError((err as Error).message);
     }
@@ -526,16 +618,22 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 lane={lane}
                 tasks={grouped[lane.id]}
                 draggingId={draggingId}
+                selectedIds={selectedIds}
                 onDragStart={setDraggingId}
                 onDragEnd={() => setDraggingId(null)}
                 onAdd={() => setAddingTo(lane.id)}
                 onMove={moveTask}
                 onDropAt={dropAt}
+                onMultiMove={moveMulti}
+                onMultiDropAt={dropAtMulti}
                 onDelete={deleteTask}
                 onRun={runTask}
                 onResume={resumeTaskAction}
                 onMerge={mergeTaskAction}
                 getFocusTerminal={getFocusTerminal}
+                onToggleSelect={(id) => handleToggleSelect(id, lane.id)}
+                onRangeSelect={(id) => handleRangeSelect(id, lane.id)}
+                onClearSelection={clearSelection}
                 onRunAll={
                   lane.id === 'open'
                     ? runAllOpen
@@ -600,8 +698,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
           )}
         </div>
         <div className="taskboard-footer">
-          {tasks.length} total · drag tasks between or within lanes to reorder
-          · click a card to view
+          {tasks.length} total · drag to reorder · ctrl+click or shift+click to
+          multi-select · drag selected cards together
         </div>
       </FloatingPanel>
     </>

@@ -1169,6 +1169,15 @@ input {
 .task-card-iconbtn.terminal:hover { background: rgba(147, 197, 253, 0.22); color: #b8d6fc; }
 .task-card-iconbtn.danger:hover { color: var(--danger); }
 
+.task-card.selected {
+  background: #2a3448;
+  border-color: rgba(106, 169, 255, 0.35);
+  border-left-color: var(--accent) !important;
+}
+.task-card.selected:hover {
+  background: #2e3a52;
+  border-color: rgba(106, 169, 255, 0.50);
+}
 .task-card.conflict { border-left-color: #f5a36a !important; }
 .task-card-conflict-pill {
   display: inline-flex;

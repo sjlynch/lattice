@@ -13,11 +13,13 @@ import { StuckPill } from './StuckPill';
 // One row in a lane. Shows the task title/description, a conflict pill if
 // the task is in conflict-resolution, and lane-appropriate action buttons
 // (run/resume/merge/delete). Click anywhere on the body to open the
-// detail overlay.
+// detail overlay. Ctrl/Cmd+click and Shift+click trigger multi-select.
 export function TaskCard({
   task,
   laneColor,
   isDragging,
+  isSelected,
+  selectedIdsInLane,
   onDragStart,
   onDragEnd,
   onDelete,
@@ -26,10 +28,14 @@ export function TaskCard({
   onMerge,
   onFocusTerminal,
   onView,
+  onToggleSelect,
+  onRangeSelect,
 }: {
   task: Task;
   laneColor: string;
   isDragging: boolean;
+  isSelected: boolean;
+  selectedIdsInLane: string[];
   onDragStart: () => void;
   onDragEnd: () => void;
   onDelete: () => void;
@@ -38,12 +44,25 @@ export function TaskCard({
   onMerge?: () => void;
   onFocusTerminal?: () => void;
   onView: () => void;
+  onToggleSelect: () => void;
+  onRangeSelect: () => void;
 }) {
   function handleDragStart(e: React.DragEvent) {
-    e.dataTransfer.setData(DRAG_MIME, task.id);
+    const ids = isSelected ? selectedIdsInLane : [task.id];
+    e.dataTransfer.setData(DRAG_MIME, JSON.stringify(ids));
     e.dataTransfer.setData('text/plain', task.id);
     e.dataTransfer.effectAllowed = 'move';
     onDragStart();
+  }
+
+  function handleBodyClick(e: React.MouseEvent) {
+    if (e.ctrlKey || e.metaKey) {
+      onToggleSelect();
+    } else if (e.shiftKey) {
+      onRangeSelect();
+    } else {
+      onView();
+    }
   }
 
   const isConflict = !!task.conflict;
@@ -52,7 +71,7 @@ export function TaskCard({
     <div
       className={`task-card ${isDragging ? 'dragging' : ''} ${
         isConflict ? 'conflict' : ''
-      }`}
+      } ${isSelected ? 'selected' : ''}`}
       draggable
       onDragStart={handleDragStart}
       onDragEnd={onDragEnd}
@@ -63,8 +82,8 @@ export function TaskCard({
       </span>
       <div
         className="task-card-body"
-        onClick={onView}
-        title="View task details"
+        onClick={handleBodyClick}
+        title={isSelected ? 'Ctrl+click to deselect · shift+click to range-select' : 'Click to view · ctrl+click to select'}
       >
         <div className="task-card-title">
           {isConflict && (

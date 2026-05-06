@@ -315,6 +315,28 @@ export async function startMergeRun(
       }
     }
 
+    // If tasks became ready_to_merge while this run was processing its
+    // snapshot, they were never in `targets` and are still waiting. Auto-
+    // restart so they get picked up without requiring a manual merge-all click.
+    if (!run.cancelRequested) {
+      try {
+        const allTasks = await listTasks(projectPath);
+        const seenIds = new Set(targets.map((t) => t.id));
+        const newReady = allTasks.filter(
+          (t) => t.status === 'ready_to_merge' && !t.conflict && !seenIds.has(t.id),
+        );
+        if (newReady.length > 0) {
+          console.log(
+            `[merge-run] ${newReady.length} task(s) became ready_to_merge during this run — auto-restarting`,
+          );
+          startMergeRun(projectPath, backendOrigin).catch(() => {});
+        }
+      } catch {
+        // best-effort; failure just means the user sees the remaining tasks
+        // at ready_to_merge and can trigger merge-all manually
+      }
+    }
+
     finishRun(run);
   })().catch((err) => {
     console.error('[mergeRuns] run worker crashed', err);

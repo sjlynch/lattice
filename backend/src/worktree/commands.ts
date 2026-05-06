@@ -16,12 +16,12 @@ export function buildResumeCommand(taskFile: string): string {
 
 export function buildPiCommand(taskFile: string): string {
   const fileName = path.basename(taskFile);
-  return `pi -p "Please read ${fileName} and complete the task described in it."`;
+  return `pi "Please read ${fileName} and complete the task described in it."`;
 }
 
 export function buildPiResumeCommand(taskFile: string): string {
   const fileName = path.basename(taskFile);
-  return `pi -p "Please read ${fileName} and continue this task. Run 'git log --oneline -10' and 'git status' first to see any existing progress before deciding what to do next; don't redo work that's already committed."`;
+  return `pi "Please read ${fileName} and continue this task. Run 'git log --oneline -10' and 'git status' first to see any existing progress before deciding what to do next; don't redo work that's already committed."`;
 }
 
 export function buildConflictResolveCommand(relativeInstructionsPath: string): string {

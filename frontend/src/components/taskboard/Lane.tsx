@@ -1,7 +1,7 @@
 import { Fragment, useState, type ReactNode } from 'react';
 import { CheckCheck, GitMerge, Play, Plus } from 'lucide-react';
 import type { Task, TaskStatus } from '../../api';
-import { DRAG_MIME, type Lane as LaneDef } from './lanes';
+import { DRAG_MIME, parseDragPayload, type Lane as LaneDef } from './lanes';
 import { TaskCard } from './TaskCard';
 
 // One lane in the kanban. Hosts drop targets for cross-lane drops and
@@ -12,11 +12,14 @@ export function Lane({
   lane,
   tasks,
   draggingId,
+  selectedIds,
   onDragStart,
   onDragEnd,
   onAdd,
   onMove,
   onDropAt,
+  onMultiMove,
+  onMultiDropAt,
   onDelete,
   onRun,
   onResume,
@@ -24,16 +27,22 @@ export function Lane({
   getFocusTerminal,
   onRunAll,
   onView,
+  onToggleSelect,
+  onRangeSelect,
+  onClearSelection,
   strip,
 }: {
   lane: LaneDef;
   tasks: Task[];
   draggingId: string | null;
+  selectedIds: Set<string>;
   onDragStart: (id: string) => void;
   onDragEnd: () => void;
   onAdd: () => void;
   onMove: (id: string, status: TaskStatus) => void;
   onDropAt: (id: string, status: TaskStatus, index: number) => void;
+  onMultiMove: (ids: string[], status: TaskStatus) => void;
+  onMultiDropAt: (ids: string[], status: TaskStatus, index: number) => void;
   onDelete: (id: string) => void;
   onRun: (task: Task) => void;
   onResume: (task: Task) => void;
@@ -41,10 +50,16 @@ export function Lane({
   getFocusTerminal?: (task: Task) => (() => void) | null;
   onRunAll?: () => void;
   onView: (task: Task) => void;
+  onToggleSelect: (id: string) => void;
+  onRangeSelect: (id: string) => void;
+  onClearSelection: () => void;
   strip?: ReactNode;
 }) {
   const [isOver, setIsOver] = useState(false);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+
+  // IDs of selected tasks in this lane (preserves lane order for multi-drag).
+  const selectedIdsInLane = tasks.filter(t => selectedIds.has(t.id)).map(t => t.id);
 
   function onDragOver(e: React.DragEvent) {
     if (!draggingId) return;
@@ -59,13 +74,14 @@ export function Lane({
   }
   function onDrop(e: React.DragEvent) {
     e.preventDefault();
-    const id =
-      e.dataTransfer.getData(DRAG_MIME) ||
-      e.dataTransfer.getData('text/plain');
-    if (id) {
-      // Slot drop = explicit position; lane background drop = status-only move.
-      if (hoverIndex !== null) onDropAt(id, lane.id, hoverIndex);
-      else onMove(id, lane.id);
+    const raw = e.dataTransfer.getData(DRAG_MIME) || e.dataTransfer.getData('text/plain');
+    const ids = parseDragPayload(raw);
+    if (ids.length > 1) {
+      if (hoverIndex !== null) onMultiDropAt(ids, lane.id, hoverIndex);
+      else onMultiMove(ids, lane.id);
+    } else if (ids.length === 1) {
+      if (hoverIndex !== null) onDropAt(ids[0], lane.id, hoverIndex);
+      else onMove(ids[0], lane.id);
     }
     setIsOver(false);
     setHoverIndex(null);
@@ -89,10 +105,13 @@ export function Lane({
       onDrop: (e: React.DragEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        const id =
-          e.dataTransfer.getData(DRAG_MIME) ||
-          e.dataTransfer.getData('text/plain');
-        if (id) onDropAt(id, lane.id, idx);
+        const raw = e.dataTransfer.getData(DRAG_MIME) || e.dataTransfer.getData('text/plain');
+        const ids = parseDragPayload(raw);
+        if (ids.length > 1) {
+          onMultiDropAt(ids, lane.id, idx);
+        } else if (ids.length === 1) {
+          onDropAt(ids[0], lane.id, idx);
+        }
         setIsOver(false);
         setHoverIndex(null);
       },
@@ -146,7 +165,12 @@ export function Lane({
         </div>
       </div>
       {strip}
-      <div className="taskboard-lane-track">
+      <div
+        className="taskboard-lane-track"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClearSelection();
+        }}
+      >
         {tasks.length === 0 ? (
           <div
             className={`taskboard-lane-empty ${
@@ -170,7 +194,14 @@ export function Lane({
                 <TaskCard
                   task={t}
                   laneColor={lane.color}
-                  isDragging={draggingId === t.id}
+                  isDragging={
+                    draggingId === t.id ||
+                    (draggingId !== null &&
+                      selectedIds.has(draggingId) &&
+                      selectedIds.has(t.id))
+                  }
+                  isSelected={selectedIds.has(t.id)}
+                  selectedIdsInLane={selectedIdsInLane}
                   onDragStart={() => onDragStart(t.id)}
                   onDragEnd={onDragEnd}
                   onDelete={() => onDelete(t.id)}
@@ -187,6 +218,8 @@ export function Lane({
                   }
                   onFocusTerminal={getFocusTerminal?.(t) ?? undefined}
                   onView={() => onView(t)}
+                  onToggleSelect={() => onToggleSelect(t.id)}
+                  onRangeSelect={() => onRangeSelect(t.id)}
                 />
                 <div
                   className={`taskboard-dropslot ${

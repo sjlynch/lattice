@@ -29,3 +29,14 @@ export function shortLabel(title: string): string {
   const t = title.trim();
   return t.length > 18 ? t.slice(0, 17) + '…' : t;
 }
+
+// Decode a drag payload, which may be a single task ID string or a
+// JSON-encoded array of IDs for multi-select drags.
+export function parseDragPayload(raw: string): string[] {
+  if (!raw) return [];
+  try {
+    const p = JSON.parse(raw);
+    if (Array.isArray(p)) return p as string[];
+  } catch {}
+  return [raw];
+}
