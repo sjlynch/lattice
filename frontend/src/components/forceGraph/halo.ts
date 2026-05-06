@@ -63,7 +63,7 @@ export function withHalo(child: THREE.Object3D, baseSize: number): THREE.Object3
   // scrubber view shows both rings concentrically.
   const s = baseSize * 1.8;
   ring.scale.set(s, s, 1);
-  ring.renderOrder = 0;
+  ring.renderOrder = 11;
   group.add(ring);
   group.add(child);
   return group;

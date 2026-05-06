@@ -169,8 +169,8 @@ export function spriteFor(node: GraphNode, settings: GraphSettings): THREE.Sprit
   const size =
     node.kind === 'dir' ? settings.dirNodeSize : settings.fileNodeSize;
   sprite.scale.set(size, size, 1);
-  // Draw after links (default renderOrder 0) so the billboard always
-  // paints over the connection lines.
-  sprite.renderOrder = 1;
+  // three-forcegraph sets renderOrder=10 on link objects, so sprites must
+  // be higher to render on top. Rings use 11, the node body uses 12.
+  sprite.renderOrder = 12;
   return sprite;
 }
