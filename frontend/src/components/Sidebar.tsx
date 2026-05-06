@@ -47,6 +47,7 @@ export function Sidebar({ activeFolder }: Props) {
     setActiveId,
     addTerminal,
     closeTerminal,
+    closeTerminals,
     setServerId,
   } = useTerminals();
 
@@ -56,6 +57,11 @@ export function Sidebar({ activeFolder }: Props) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
+  const [tabContextMenu, setTabContextMenu] = useState<{
+    x: number;
+    y: number;
+    termId: string;
+  } | null>(null);
 
   // Track which terminal IDs have ever been the active tab. We only mount
   // <TerminalPane> once a terminal is first viewed — the backend keeps the
@@ -77,6 +83,7 @@ export function Sidebar({ activeFolder }: Props) {
   const tabsRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const activeTabRef = useRef<HTMLDivElement>(null);
+  const tabContextMenuRef = useRef<HTMLDivElement>(null);
 
   // Per-project scoping: terminals are only listed when their projectPath
   // matches the current activeFolder. Legacy terminals saved without a
@@ -184,9 +191,40 @@ export function Sidebar({ activeFolder }: Props) {
     };
   }, [menuOpen]);
 
+  useEffect(() => {
+    if (!tabContextMenu) return;
+    function onPointerDown(e: PointerEvent) {
+      if (tabContextMenuRef.current && !tabContextMenuRef.current.contains(e.target as Node)) {
+        setTabContextMenu(null);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setTabContextMenu(null);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [tabContextMenu]);
+
+  useEffect(() => {
+    setTabContextMenu(null);
+  }, [activePanel]);
+
   const handleServerId = useCallback(
     (localId: string, srv: string) => setServerId(localId, srv),
     [setServerId],
+  );
+
+  const handleTabContextMenu = useCallback(
+    (e: React.MouseEvent, termId: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setTabContextMenu({ x: e.clientX, y: e.clientY, termId });
+    },
+    [],
   );
 
   const trimmedFilter = filter.trim().toLowerCase();
@@ -197,6 +235,35 @@ export function Sidebar({ activeFolder }: Props) {
       return haystack.includes(trimmedFilter);
     });
   }, [panelTerminals, trimmedFilter]);
+
+  const handleCloseTabsToLeft = useCallback(
+    (termId: string) => {
+      const idx = visibleTerminals.findIndex((t) => t.id === termId);
+      const toClose = visibleTerminals.slice(0, idx).map((t) => t.id);
+      if (toClose.length > 0) closeTerminals(toClose);
+      setTabContextMenu(null);
+    },
+    [visibleTerminals, closeTerminals],
+  );
+
+  const handleCloseTabsToRight = useCallback(
+    (termId: string) => {
+      const idx = visibleTerminals.findIndex((t) => t.id === termId);
+      const toClose = visibleTerminals.slice(idx + 1).map((t) => t.id);
+      if (toClose.length > 0) closeTerminals(toClose);
+      setTabContextMenu(null);
+    },
+    [visibleTerminals, closeTerminals],
+  );
+
+  const handleCloseOtherTabs = useCallback(
+    (termId: string) => {
+      const toClose = visibleTerminals.filter((t) => t.id !== termId).map((t) => t.id);
+      if (toClose.length > 0) closeTerminals(toClose);
+      setTabContextMenu(null);
+    },
+    [visibleTerminals, closeTerminals],
+  );
 
   const updateScrollState = useCallback(() => {
     const el = tabsRef.current;
@@ -393,6 +460,7 @@ export function Sidebar({ activeFolder }: Props) {
                   ref={t.id === activeId ? activeTabRef : undefined}
                   className={`sidebar-tab ${t.id === activeId ? 'active' : ''}`}
                   onClick={() => setActiveId(t.id)}
+                  onContextMenu={(e) => handleTabContextMenu(e, t.id)}
                   title={t.cwd}
                 >
                   {t.kind === 'merge' ? <GitMerge size={12} /> : <TerminalSquare size={12} />}
@@ -458,6 +526,43 @@ export function Sidebar({ activeFolder }: Props) {
           ))
         )}
       </div>
+
+      {tabContextMenu && (() => {
+        const idx = visibleTerminals.findIndex((t) => t.id === tabContextMenu.termId);
+        const hasLeft = idx > 0;
+        const hasRight = idx >= 0 && idx < visibleTerminals.length - 1;
+        const hasOthers = visibleTerminals.length > 1 && idx >= 0;
+        return (
+          <div
+            ref={tabContextMenuRef}
+            className="popover"
+            style={{ position: 'fixed', left: tabContextMenu.x, top: tabContextMenu.y }}
+            role="menu"
+          >
+            <div
+              className={`popover-item${!hasLeft ? ' disabled' : ''}`}
+              role="menuitem"
+              onClick={hasLeft ? () => handleCloseTabsToLeft(tabContextMenu.termId) : undefined}
+            >
+              Close Tabs to the Left
+            </div>
+            <div
+              className={`popover-item${!hasRight ? ' disabled' : ''}`}
+              role="menuitem"
+              onClick={hasRight ? () => handleCloseTabsToRight(tabContextMenu.termId) : undefined}
+            >
+              Close Tabs to the Right
+            </div>
+            <div
+              className={`popover-item${!hasOthers ? ' disabled' : ''}`}
+              role="menuitem"
+              onClick={hasOthers ? () => handleCloseOtherTabs(tabContextMenu.termId) : undefined}
+            >
+              Close All Other Tabs
+            </div>
+          </div>
+        );
+      })()}
     </>
   );
 }

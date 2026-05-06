@@ -122,7 +122,7 @@ export function withChangeRing(
   // an overlay.
   const s = baseSize * 1.6;
   ring.scale.set(s, s, 1);
-  ring.renderOrder = 0;
+  ring.renderOrder = 11;
   group.add(ring);
   group.add(child);
   return group;
@@ -136,13 +136,13 @@ export function deletedSprite(baseSize: number): THREE.Object3D {
   const ring = new THREE.Sprite(ringMaterial('deleted'));
   const ringScale = baseSize * 1.6 * 0.7;
   ring.scale.set(ringScale, ringScale, 1);
-  ring.renderOrder = 0;
+  ring.renderOrder = 11;
 
   const disc = new THREE.Sprite(ghostMaterial());
   // Smaller than a normal file node so deleted files read at a glance.
   const discScale = baseSize * 0.6;
   disc.scale.set(discScale, discScale, 1);
-  disc.renderOrder = 1;
+  disc.renderOrder = 12;
 
   group.add(ring);
   group.add(disc);
