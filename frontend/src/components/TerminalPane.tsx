@@ -23,6 +23,7 @@ export function TerminalPane({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const termRef = useRef<Terminal | null>(null);
   // Keep latest callback in a ref so we don't re-establish the WS just
   // because the parent re-rendered.
   const onServerIdRef = useRef<typeof onServerId>(onServerId);
@@ -80,6 +81,7 @@ export function TerminalPane({
     }
     fit.fit();
     fitRef.current = fit;
+    termRef.current = term;
 
     // Ctrl+V (and Ctrl+Shift+V) → paste from clipboard. xterm's default is
     // to forward ^V as a raw byte to the pty, which is useless in interactive
@@ -211,18 +213,20 @@ export function TerminalPane({
       } catch {
         /* ignore */
       }
+      termRef.current = null;
       term.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwd, serverId]);
 
   useEffect(() => {
-    if (active && fitRef.current) {
+    if (active) {
       try {
-        fitRef.current.fit();
+        fitRef.current?.fit();
       } catch {
         /* ignore */
       }
+      termRef.current?.focus();
     }
   }, [active]);
 
