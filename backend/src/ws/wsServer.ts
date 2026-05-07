@@ -24,6 +24,7 @@ import {
   getActiveRunsForProject as getActiveWorkflowRunsForProject,
   subscribe as subscribeWorkflowRuns,
 } from '../workflowRuns.js';
+import { subscribeHealth } from '../health/watcher.js';
 
 function parseProject(reqUrl: string | undefined): string {
   const url = new URL(reqUrl || '', 'http://localhost');
@@ -145,12 +146,40 @@ function buildWorkflowRunsWss(): WebSocketServer {
   return wss;
 }
 
+function buildHealthWss(): WebSocketServer {
+  const wss = new WebSocketServer({ noServer: true });
+  wss.on('connection', async (ws, req) => {
+    const project = parseProject(req.url);
+    if (!project) {
+      ws.close();
+      return;
+    }
+    let unsub: (() => void) | null = null;
+    try {
+      unsub = await subscribeHealth(project, (update) => {
+        if (ws.readyState !== ws.OPEN) return;
+        ws.send(JSON.stringify(update));
+      });
+    } catch {
+      // Watcher couldn't start — close gracefully so the client can
+      // retry later instead of getting stuck on a half-open socket.
+      ws.close();
+      return;
+    }
+    ws.on('close', () => {
+      if (unsub) unsub();
+    });
+  });
+  return wss;
+}
+
 export function attachWebSockets(server: http.Server): void {
   const termWss = buildTerminalWss();
   const tasksWss = buildTasksWss();
   const mergeRunsWss = buildMergeRunsWss();
   const workflowsWss = buildWorkflowsWss();
   const workflowRunsWss = buildWorkflowRunsWss();
+  const healthWss = buildHealthWss();
 
   const routes: Array<[string, WebSocketServer]> = [
     ['/ws/terminal', termWss],
@@ -158,6 +187,7 @@ export function attachWebSockets(server: http.Server): void {
     ['/ws/merge-runs', mergeRunsWss],
     ['/ws/workflows', workflowsWss],
     ['/ws/workflow-runs', workflowRunsWss],
+    ['/ws/health', healthWss],
   ];
 
   server.on(

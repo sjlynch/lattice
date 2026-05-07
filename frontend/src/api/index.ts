@@ -8,3 +8,4 @@ export * from './settings';
 export * from './tasks';
 export * from './mergeRuns';
 export * from './workflows';
+export * from './health';

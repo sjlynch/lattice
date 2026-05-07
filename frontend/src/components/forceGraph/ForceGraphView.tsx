@@ -22,6 +22,9 @@ import {
 import { TimelineScrubber } from './TimelineScrubber';
 import { locLabelRegistry, spriteForLoc } from './locOverlay';
 import { depthFor, labelsRegistry, spriteForLabels } from './labelsOverlay';
+import { healthLabelRegistry, spriteForHealth } from './healthOverlay';
+import { HealthTooltip } from './HealthTooltip';
+import { repelLabels } from './labelRepulsion';
 import { MENU_ITEMS, relPath, type MenuItemDef } from './menu';
 import { loadSettings, type GraphSettings } from './graphSettings';
 import { GraphSettingsPanel } from './GraphSettingsPanel';
@@ -31,6 +34,12 @@ type Props = {
   loading: boolean;
   hiddenExts: Set<string>;
   activeFolder: string;
+  // Code-health overlay state. Lifted to App so the Legend can swap to
+  // a health breakdown panel while `h` is held; the keydown listener
+  // still lives in this component and pushes changes back via the
+  // callback below.
+  healthMode: boolean;
+  onHealthModeChange: (mode: boolean) => void;
 };
 
 type DragRect = { x1: number; y1: number; x2: number; y2: number };
@@ -38,7 +47,14 @@ type DragRect = { x1: number; y1: number; x2: number; y2: number };
 // Hosts the 3d-force-graph instance, the LOC overlay (`z` keypress), the
 // shift-drag box-select, the right-click "create task" menu, and the
 // settings panel. Each of those concerns is split into a useEffect below.
-export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Props) {
+export function ForceGraphView({
+  data,
+  loading,
+  hiddenExts,
+  activeFolder,
+  healthMode,
+  onHealthModeChange,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraph3DInstance | null>(null);
 
@@ -47,6 +63,14 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
   // accessor — wired into the graph once at mount — reads the live value).
   const [locMode, setLocMode] = useState(false);
   const locModeRef = useRef(false);
+  // Code-health overlay: active while the user holds `h`. State is owned
+  // by App (so the Legend can react), but mirrored to a ref here so the
+  // nodeThreeObject closure reads the live value.
+  const healthModeRef = useRef(false);
+  // Currently-hovered file node. While healthMode is on, a tooltip in
+  // the parent div shows its score + breakdown.
+  const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);
+  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
 
   // Labels overlay: active while the user holds Alt. Shows the name of every
   // node at `labelLevel` (path depth from the scan root); alt+wheel scrolls
@@ -93,6 +117,7 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => { locModeRef.current = locMode; }, [locMode]);
+  useEffect(() => { healthModeRef.current = healthMode; }, [healthMode]);
   useEffect(() => { labelModeRef.current = labelMode; }, [labelMode]);
   useEffect(() => { labelLevelRef.current = labelLevel; }, [labelLevel]);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
@@ -156,7 +181,13 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
       .nodeId('id')
       .nodeLabel((n: object) => {
         const node = n as GraphNode;
-        return node.kind === 'dir' ? `📁 ${node.name}` : node.name;
+        // For files we always show our richer HealthTooltip on hover
+        // (regardless of whether the `h` key is held), so suppress the
+        // library's native label here to avoid stacking two tooltips
+        // on top of each other. Directories don't have health data,
+        // so they keep the simple library tooltip.
+        if (node.kind === 'file') return '';
+        return `📁 ${node.name}`;
       })
       .nodeThreeObject((n: object) => {
         const node = n as GraphNode;
@@ -177,7 +208,9 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
         }
 
         let obj: THREE.Object3D;
-        if (locModeRef.current) {
+        if (healthModeRef.current) {
+          obj = spriteForHealth(node, s);
+        } else if (locModeRef.current) {
           obj = spriteForLoc(node, s);
         } else if (labelModeRef.current) {
           const d = nodeDepthsRef.current.get(node.id) ?? 0;
@@ -205,6 +238,22 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
       .dagMode('td')
       .dagLevelDistance(settingsRef.current.dagLevelDistance)
       .showNavInfo(false)
+      .onNodeHover((n: object | null) => {
+        // Track the hovered file node so HealthTooltip can render its
+        // breakdown panel. Directories don't have health metrics, so
+        // they never trigger the tooltip even though the listener still
+        // fires for them.
+        if (!n) {
+          setHoverNode(null);
+          return;
+        }
+        const node = n as GraphNode;
+        if (node.kind !== 'file' || node.healthDetails == null) {
+          setHoverNode(null);
+          return;
+        }
+        setHoverNode(node);
+      })
       .onNodeRightClick((_n: object, ev: MouseEvent) => {
         // The container-level contextmenu listener already opens the menu;
         // just suppress the browser's native menu here too in case the
@@ -329,6 +378,7 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     // Stale labels reference Sprites that get replaced on data swap.
     locLabelRegistry.clear();
     labelsRegistry.clear();
+    healthLabelRegistry.clear();
     if (!data) {
       graphRef.current.graphData({ nodes: [], links: [] });
       ghostsRef.current = new Set();
@@ -408,8 +458,58 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     // spriteForLoc repopulates the registry on the way through.
     locLabelRegistry.clear();
     labelsRegistry.clear();
+    healthLabelRegistry.clear();
     graphRef.current?.refresh?.();
   }, [locMode, selected]);
+
+  // ---------- Health overlay key handling ----------
+  // Toggle health view on/off when the `h` key is held. Same chord
+  // pattern as `z` (LOC) — keyup, blur, and visibility-change all reset
+  // so we can't get stuck in an "always on" state if the user
+  // alt-tabs while holding the key.
+  useEffect(() => {
+    function isTextInput(target: EventTarget | null) {
+      if (!target) return false;
+      const el = target as HTMLElement;
+      const tag = el.tagName?.toLowerCase();
+      return tag === 'input' || tag === 'textarea' || el.isContentEditable;
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'h' && e.key !== 'H') return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isTextInput(e.target)) return;
+      if (e.repeat) return;
+      onHealthModeChange(true);
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.key === 'h' || e.key === 'H') onHealthModeChange(false);
+    }
+    function reset() {
+      onHealthModeChange(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', reset);
+    document.addEventListener('visibilitychange', reset);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', reset);
+      document.removeEventListener('visibilitychange', reset);
+    };
+  }, [onHealthModeChange]);
+
+  // Refresh sprites + drop the previous overlay's labels when the
+  // health overlay toggles. Same shape as the `locMode` effect above.
+  // (We deliberately do NOT clear `hoverNode` here — the tooltip is
+  // shown for every file hover regardless of the `h` key, so a
+  // healthMode toggle shouldn't dismiss it.)
+  useEffect(() => {
+    locLabelRegistry.clear();
+    labelsRegistry.clear();
+    healthLabelRegistry.clear();
+    graphRef.current?.refresh?.();
+  }, [healthMode]);
 
   // ---------- Labels overlay (Alt held) ----------
   // Track Alt as a chord-style modifier: keydown enables labels mode,
@@ -493,6 +593,7 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
   useEffect(() => {
     locLabelRegistry.clear();
     labelsRegistry.clear();
+    healthLabelRegistry.clear();
     graphRef.current?.refresh?.();
   }, [settings.fileNodeSize, settings.dirNodeSize, settings.labelSize]);
 
@@ -548,146 +649,78 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
   }, [contextMenu, modalAction, selected]);
 
   // ---------- LOC label repulsion loop ----------
-  // Pairwise repulsion between LOC labels in their parent file nodes' local
-  // X/Z plane. Lets labels in dense clusters spread apart so their text
-  // doesn't overlap, while a gentle pull-back keeps them anchored above
-  // their owning node. Active only while LOC mode is on.
+  // Spread LOC labels apart so their text doesn't overlap in dense
+  // clusters, with a velocity-based settle so the system stops moving
+  // once an equilibrium is reached. Shared physics implementation
+  // lives in labelRepulsion.ts; only the minimum desired separation
+  // differs per overlay (LOC numbers are short, so 55 units is plenty).
   useEffect(() => {
     if (!locMode) return;
-    const tmp = new THREE.Vector3();
-    const MIN_DIST = 55; // world units; below this, labels push apart
-    const PUSH = 0.1;
-    const DAMP = 0.97; // 3% pull toward each label's home offset per frame
     let rafId = 0;
     let frameCount = 0;
     const tick = () => {
       frameCount++;
-      // Drop entries whose label was detached from the scene graph.
-      for (const e of locLabelRegistry) {
-        if (!e.label.parent) locLabelRegistry.delete(e);
-      }
-      const entries = Array.from(locLabelRegistry);
-      // O(n²) repulsion runs every other frame to halve CPU cost while still
-      // reacting quickly; the loop must always reschedule so it catches labels
-      // that are added asynchronously after locMode first becomes true.
-      if (entries.length > 1 && frameCount % 2 === 0) {
-        const worldXZ: { x: number; z: number }[] = entries.map((e) => {
-          e.label.getWorldPosition(tmp);
-          return { x: tmp.x, z: tmp.z };
-        });
-        for (let i = 0; i < entries.length; i++) {
-          for (let j = i + 1; j < entries.length; j++) {
-            const a = worldXZ[i];
-            const b = worldXZ[j];
-            const dx = b.x - a.x;
-            const dz = b.z - a.z;
-            const d2 = dx * dx + dz * dz;
-            if (d2 < MIN_DIST * MIN_DIST && d2 > 1e-4) {
-              const d = Math.sqrt(d2);
-              const push = (MIN_DIST - d) * PUSH;
-              const nx = dx / d;
-              const nz = dz / d;
-              entries[i].label.position.x -= nx * push;
-              entries[i].label.position.z -= nz * push;
-              entries[j].label.position.x += nx * push;
-              entries[j].label.position.z += nz * push;
-              worldXZ[i].x -= nx * push;
-              worldXZ[i].z -= nz * push;
-              worldXZ[j].x += nx * push;
-              worldXZ[j].z += nz * push;
-            }
-          }
-        }
-      }
-      for (const e of entries) {
-        // Pull each label gently back toward its home (directly above its
-        // file node) so they don't drift far in sparse regions.
-        e.label.position.x *= DAMP;
-        e.label.position.z *= DAMP;
-        // Anchor the connector line's upper endpoint to the label's lower
-        // edge — accounting for the camera-adaptive height set in
-        // makeLabelSprite's onBeforeRender — so the line always reaches it.
-        const halfH = e.label.scale.y / 2;
-        const attr = (e.line.geometry as THREE.BufferGeometry).getAttribute(
-          'position',
-        ) as THREE.BufferAttribute;
-        attr.setXYZ(
-          1,
-          e.label.position.x,
-          e.label.position.y - halfH,
-          e.label.position.z,
-        );
-        attr.needsUpdate = true;
-      }
+      repelLabels(locLabelRegistry, 55, frameCount);
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
   }, [locMode]);
 
-  // ---------- Labels overlay repulsion loop ----------
-  // Same idea as the LOC loop above: pairwise repulsion in the X/Z plane
-  // so name labels in dense clusters fan out instead of stacking. Wider
-  // MIN_DIST than LOC because file-name text is typically much longer
-  // than a 3-digit LOC count.
+  // ---------- Health overlay repulsion loop ----------
+  // Same physics as the LOC loop — health labels are also short
+  // numbers, so 55 units of minimum separation is enough.
   useEffect(() => {
-    if (!labelMode) return;
-    const tmp = new THREE.Vector3();
-    const MIN_DIST = 90;
-    const PUSH = 0.1;
-    const DAMP = 0.97;
+    if (!healthMode) return;
     let rafId = 0;
     let frameCount = 0;
     const tick = () => {
       frameCount++;
-      for (const e of labelsRegistry) {
-        if (!e.label.parent) labelsRegistry.delete(e);
-      }
-      const entries = Array.from(labelsRegistry);
-      if (entries.length > 1 && frameCount % 2 === 0) {
-        const worldXZ: { x: number; z: number }[] = entries.map((e) => {
-          e.label.getWorldPosition(tmp);
-          return { x: tmp.x, z: tmp.z };
-        });
-        for (let i = 0; i < entries.length; i++) {
-          for (let j = i + 1; j < entries.length; j++) {
-            const a = worldXZ[i];
-            const b = worldXZ[j];
-            const dx = b.x - a.x;
-            const dz = b.z - a.z;
-            const d2 = dx * dx + dz * dz;
-            if (d2 < MIN_DIST * MIN_DIST && d2 > 1e-4) {
-              const d = Math.sqrt(d2);
-              const push = (MIN_DIST - d) * PUSH;
-              const nx = dx / d;
-              const nz = dz / d;
-              entries[i].label.position.x -= nx * push;
-              entries[i].label.position.z -= nz * push;
-              entries[j].label.position.x += nx * push;
-              entries[j].label.position.z += nz * push;
-              worldXZ[i].x -= nx * push;
-              worldXZ[i].z -= nz * push;
-              worldXZ[j].x += nx * push;
-              worldXZ[j].z += nz * push;
-            }
-          }
-        }
-      }
-      for (const e of entries) {
-        e.label.position.x *= DAMP;
-        e.label.position.z *= DAMP;
-        const halfH = e.label.scale.y / 2;
-        const attr = (e.line.geometry as THREE.BufferGeometry).getAttribute(
-          'position',
-        ) as THREE.BufferAttribute;
-        attr.setXYZ(
-          1,
-          e.label.position.x,
-          e.label.position.y - halfH,
-          e.label.position.z,
-        );
-        attr.needsUpdate = true;
-      }
+      repelLabels(healthLabelRegistry, 55, frameCount);
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [healthMode]);
+
+  // ---------- Health tooltip cursor tracking ----------
+  // Track viewport-space cursor coordinates whenever the cursor is
+  // over the graph container. The HealthTooltip uses position: fixed
+  // (viewport coords) so we pass clientX/clientY through unchanged.
+  // We track unconditionally — the tooltip itself only renders when a
+  // file node is hovered AND has health data, so the listener is
+  // cheap when nothing's hovered.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    function onMove(ev: MouseEvent) {
+      setHoverPos({ x: ev.clientX, y: ev.clientY });
+    }
+    function onLeave() {
+      // Drop the tracked position when the cursor leaves the graph
+      // viewport so a stale tooltip doesn't linger if onNodeHover
+      // doesn't fire its `null` event for some reason.
+      setHoverPos(null);
+    }
+    container.addEventListener('mousemove', onMove);
+    container.addEventListener('mouseleave', onLeave);
+    return () => {
+      container.removeEventListener('mousemove', onMove);
+      container.removeEventListener('mouseleave', onLeave);
+    };
+  }, []);
+
+  // ---------- Labels overlay repulsion loop ----------
+  // Same physics as LOC, with a wider minimum separation because
+  // file-name labels are much longer than 3-digit LOC / health values
+  // and would visibly overlap at 55 units.
+  useEffect(() => {
+    if (!labelMode) return;
+    let rafId = 0;
+    let frameCount = 0;
+    const tick = () => {
+      frameCount++;
+      repelLabels(labelsRegistry, 90, frameCount);
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
@@ -745,6 +778,7 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
     // nodeThreeObject so the ring wrapping reflects the new map.
     locLabelRegistry.clear();
     labelsRegistry.clear();
+    healthLabelRegistry.clear();
     graphRef.current?.refresh?.();
   }, [history, range]);
 
@@ -1000,10 +1034,13 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
           <span>Scanning…</span>
         </div>
       )}
-      {locMode && (
+      {healthMode && (
+        <div className="loc-view-chip">View: Code Health</div>
+      )}
+      {locMode && !healthMode && (
         <div className="loc-view-chip">View: Lines of Code</div>
       )}
-      {labelMode && !locMode && (
+      {labelMode && !locMode && !healthMode && (
         <div className="loc-view-chip">
           View: Labels · depth {labelLevel}
           {maxDepthRef.current > 0 && ` / ${maxDepthRef.current}`}
@@ -1011,6 +1048,9 @@ export function ForceGraphView({ data, loading, hiddenExts, activeFolder }: Prop
             (alt+wheel to scroll)
           </span>
         </div>
+      )}
+      {hoverNode && hoverPos && (
+        <HealthTooltip node={hoverNode} x={hoverPos.x} y={hoverPos.y} />
       )}
       {!loading && data && (
         <div className="graph-overlay bottom-left">

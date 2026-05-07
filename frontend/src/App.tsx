@@ -4,7 +4,14 @@ import { Sidebar } from './components/Sidebar';
 import { ForceGraphView } from './components/ForceGraphView';
 import { Legend } from './components/Legend';
 import { TerminalsProvider } from './TerminalsContext';
-import { fetchDefaultRoot, scanFolder, fetchUserSettings, patchUserSettings, type ScanResult } from './api';
+import {
+  fetchDefaultRoot,
+  scanFolder,
+  fetchUserSettings,
+  patchUserSettings,
+  subscribeHealth,
+  type ScanResult,
+} from './api';
 
 const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 1200;
@@ -36,6 +43,11 @@ function App() {
   // Per-extension visibility, persisted per project. Stored as a list of
   // hidden ext keys (e.g., ['.json', '.md']).
   const [hiddenExts, setHiddenExts] = useState<Set<string>>(new Set());
+  // Code-health overlay (held `h` key). Lifted here — unlike `z` (LOC)
+  // and `Alt` (labels) — so the Legend can swap to a health breakdown
+  // panel while it's active. ForceGraphView still owns the keydown
+  // listener and pushes changes back up via onHealthModeChange.
+  const [healthMode, setHealthMode] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState<number>(SIDEBAR_DEFAULT_WIDTH);
   const resizingRef = useRef(false);
   // Kept in sync via effect so event-handler closures always read the latest value
@@ -162,6 +174,41 @@ function App() {
     };
   }, [activeFolder]);
 
+  // Live health updates from chokidar on the backend. Each event
+  // either patches a single file's metrics in place (on save) or
+  // removes its node entirely (on delete). We patch the existing
+  // scan result rather than re-scanning to keep simulation positions
+  // stable.
+  useEffect(() => {
+    if (!activeFolder) return;
+    return subscribeHealth(activeFolder, (event) => {
+      setScanResult((prev) => {
+        if (!prev) return prev;
+        if (event.type === 'updated') {
+          const idx = prev.nodes.findIndex(
+            (n) => n.kind === 'file' && n.path === event.filePath,
+          );
+          if (idx === -1) return prev;
+          const nextNodes = prev.nodes.slice();
+          nextNodes[idx] = {
+            ...nextNodes[idx],
+            health: event.metrics.score,
+            healthDetails: event.metrics,
+            loc: event.metrics.loc,
+          };
+          return { ...prev, nodes: nextNodes };
+        }
+        // event.type === 'removed' — drop the node + any links to it.
+        const filtered = prev.nodes.filter((n) => n.path !== event.filePath);
+        if (filtered.length === prev.nodes.length) return prev;
+        const nextLinks = prev.links.filter(
+          (l) => l.source !== event.filePath && l.target !== event.filePath,
+        );
+        return { ...prev, nodes: filtered, links: nextLinks };
+      });
+    });
+  }, [activeFolder]);
+
   const toggleExt = useCallback((key: string) => {
     setHiddenExts((cur) => {
       const next = new Set(cur);
@@ -250,11 +297,14 @@ function App() {
               loading={loading}
               hiddenExts={hiddenExts}
               activeFolder={activeFolder}
+              healthMode={healthMode}
+              onHealthModeChange={setHealthMode}
             />
             <Legend
               data={scanResult}
               hiddenExts={hiddenExts}
               onToggleExt={toggleExt}
+              healthMode={healthMode}
             />
           </main>
         </div>
