@@ -4,7 +4,7 @@
 // finishes, and from the merge-run worker.
 
 import { updateTaskCrashSafe, type Task } from '../tasks.js';
-import { fastForwardMain } from './merge.js';
+import { fastForwardMain, mergeWorktreeInRepo } from './merge.js';
 import { buildStashResolveCommand } from './commands.js';
 import { writeStashResolveInstructions } from './instructions.js';
 import { cleanupWorktreeForTask } from './cleanup.js';
@@ -70,8 +70,31 @@ export async function finalizeMergedTask(task: Task, backendOrigin: string): Pro
     // already at the branch tip (git just says "Already up to date") and
     // still handles the auto-stash + pop dance correctly.
     console.log(`[finalize] fast-forwarding main to ${task.branch}...`);
-    const ff = await fastForwardMain(task.projectPath, task.branch);
+    let ff = await fastForwardMain(task.projectPath, task.branch);
     console.log(`[finalize] fastForwardMain → ${ff.status}${ff.status === 'error' ? `: ${ff.message}` : ff.status === 'conflict' ? ` (${ff.conflictedFiles?.join(', ')})` : ''}`);
+    // If FF failed and we have a worktree, a concurrent finalize may have
+    // advanced main past where this branch was last synced (two resolver
+    // Claudes finishing at the same time both re-sync to the same main HEAD,
+    // then one finalize runs first and advances main, leaving the second
+    // branch stale). Re-sync inside the queue so we see the latest HEAD and
+    // retry the fast-forward exactly once.
+    if (ff.status === 'error' && task.worktreePath) {
+      console.log(`[finalize] ${task.id}: FF failed — re-syncing with current main and retrying`);
+      const reSync = await mergeWorktreeInRepo(task.projectPath, task.branch, task.worktreePath);
+      if (reSync.status === 'clean') {
+        ff = await fastForwardMain(task.projectPath, task.branch);
+        console.log(`[finalize] retry FF → ${ff.status}${ff.status === 'error' ? `: ${ff.message}` : ''}`);
+      } else if (reSync.status === 'conflict') {
+        console.log(`[finalize] ${task.id}: re-sync conflict — ${reSync.conflictedFiles.join(', ')}`);
+        return {
+          ok: false,
+          error: `Re-sync with main introduced new conflicts: ${reSync.conflictedFiles.join(', ')}`,
+        };
+      } else {
+        console.log(`[finalize] ${task.id}: re-sync error: ${reSync.message}`);
+        // fall through — original ff error is returned below
+      }
+    }
     if (ff.status === 'error') {
       return { ok: false, error: ff.message };
     }

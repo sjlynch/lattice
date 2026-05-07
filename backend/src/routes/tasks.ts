@@ -370,9 +370,56 @@ export function buildTasksRouter(backendOrigin: string): Router {
     projectMergesActive.add(task.projectPath);
 
     try {
-      // If already in a known conflict state, return the existing instructions
-      // rather than re-running git merge (which would refuse anyway).
+      // If already in a known conflict state, check whether the conflict was
+      // already committed. When a resolver Claude finishes but
+      // finalizeMergedTask fails (e.g. a race where another task's finalize
+      // ran first and advanced main), the worktree has a clean merge commit
+      // but the task is still at ready_to_merge + conflict: true. Detect
+      // this by checking isMidMerge: if the worktree is NOT mid-merge, the
+      // resolver already committed — re-sync with current main and finalize.
       if (task.conflict) {
+        if (task.worktreePath && !(await isMidMerge(task.worktreePath))) {
+          const reSync = await mergeWorktreeInRepo(
+            task.projectPath,
+            task.branch,
+            task.worktreePath,
+          );
+          if (reSync.status === 'clean') {
+            const fin = await finalizeMergedTask(task, backendOrigin);
+            if (fin.ok) {
+              return res.json({ merged: true });
+            }
+            if ('stashConflict' in fin) {
+              return res.json({
+                merged: false,
+                stashConflict: true,
+                command: fin.resolveCommand,
+                cwd: fin.cwd,
+                conflictedFiles: fin.stashConflict,
+              });
+            }
+            return res.status(500).json({ error: finalizeError(fin) });
+          }
+          if (reSync.status === 'conflict') {
+            const { relativePath } = await writeMergeInstructions(
+              task,
+              task.branch,
+              reSync.conflictedFiles,
+              backendOrigin,
+              task.worktreePath,
+            );
+            await updateTask(task.id, { conflict: true, conflictStartedAt: Date.now() });
+            return res.json({
+              merged: false,
+              conflict: true,
+              command: buildConflictResolveCommand(relativePath),
+              cwd: task.worktreePath,
+              conflictedFiles: reSync.conflictedFiles,
+            });
+          }
+          // reSync returned an error — fall through to returning existing
+          // resolver instructions so the user can retry manually
+        }
         const { relativePath } = await writeMergeInstructions(
           task,
           task.branch,
