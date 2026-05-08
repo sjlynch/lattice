@@ -205,12 +205,18 @@ const JAVA_BRANCH_KINDS = [
   'catch_clause',
   'ternary_expression',
 ];
+// Java has BOTH classic `switch_statement` and the Java 14+
+// `switch_expression`. Both dispatch and both deserve the cognitive
+// nesting penalty; registering only `switch_expression` (the
+// original) silently let routine `switch (x) { case A: ... }`
+// statements escape any cognitive cost.
 const JAVA_COGNITIVE_BRANCH_KINDS = [
   'if_statement',
   'for_statement',
   'enhanced_for_statement',
   'while_statement',
   'do_statement',
+  'switch_statement',
   'switch_expression',
   'catch_clause',
   'ternary_expression',
@@ -221,6 +227,7 @@ const JAVA_NESTING_KINDS = [
   'enhanced_for_statement',
   'while_statement',
   'do_statement',
+  'switch_statement',
   'switch_expression',
   'try_statement',
   'catch_clause',
@@ -268,18 +275,23 @@ const CSHARP_NESTING_KINDS = [
 
 // Ruby uses different node names than the C-family grammars: `if`,
 // `unless`, `while`, `until`, `case`, `when`, `rescue`. Method
-// definitions are `method` / `singleton_method`; blocks are `do_block`
-// or brace-style `block`. Ruby has no ternary node — `?:` parses as
-// a conditional expression but is rarely idiomatic; skip it.
-const RUBY_FUNCTION_KINDS = [
-  'method',
-  'singleton_method',
-  'lambda',
-  'do_block',
-  'block',
-];
+// definitions are `method` / `singleton_method`. Ruby has no ternary
+// node — `?:` parses as a conditional expression but is rarely
+// idiomatic; skip it.
+//
+// `do_block` and `block` (the brace/do iteration blocks passed to
+// `each`/`map`/etc.) are NOT treated as separate functions — they're
+// closures that semantically belong to their enclosing method.
+// Treating them as functions inflated `functionCount` wildly (every
+// `arr.each { ... }` was a "function"), reset Sonar nesting in the
+// middle of a method, and ate the enclosing method's `ownLines`.
+// Instead they're registered as nesting kinds so code inside them
+// still picks up a nesting penalty without becoming its own scope.
+// `lambda` (`->(x) { ... }`) stays as an anonymous function since
+// it's used as a real first-class value, not just a local block.
+const RUBY_FUNCTION_KINDS = ['method', 'singleton_method', 'lambda'];
 const RUBY_NAMED_FUNCTION_KINDS = ['method', 'singleton_method'];
-const RUBY_ANONYMOUS_FUNCTION_KINDS = ['lambda', 'do_block', 'block'];
+const RUBY_ANONYMOUS_FUNCTION_KINDS = ['lambda'];
 const RUBY_BRANCH_KINDS = [
   'if',
   'elsif',
@@ -311,6 +323,10 @@ const RUBY_NESTING_KINDS = [
   'begin',
   'rescue',
   'conditional',
+  // Iteration blocks bump nesting depth without becoming their own
+  // function scope (see RUBY_FUNCTION_KINDS comment above).
+  'do_block',
+  'block',
 ];
 
 function buildNodeKinds(grammar: GrammarKey): NodeKinds {

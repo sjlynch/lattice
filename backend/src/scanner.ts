@@ -10,6 +10,7 @@ import {
   type HealthMetrics,
 } from './health/index.js';
 import { loadProjectAliases } from './health/tsconfig.js';
+import { seedWatcherState } from './health/watcher.js';
 
 const SOURCE_EXTS = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
@@ -244,6 +245,15 @@ export async function scan(root: string): Promise<ScanResult> {
   cache.prune(seenFiles);
   // Persist asynchronously — don't block the scan response on disk I/O.
   cache.save().catch(() => { /* best-effort */ });
+
+  // Keep the watcher's in-memory mirror in sync with the freshly-scanned
+  // state. No-op when the watcher hasn't been started for this project
+  // yet; otherwise prevents the watcher from broadcasting cross-file
+  // numbers based on a stale view after a manual rescan, file-tree
+  // change, or cache version bump.
+  const importsByPath = new Map<string, string[]>();
+  for (const fi of fileImports) importsByPath.set(fi.filePath, fi.imports);
+  seedWatcherState(absRoot, importsByPath, metricsByPath);
 
   return { root: absRoot, nodes, links };
 }

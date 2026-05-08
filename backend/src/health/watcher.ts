@@ -69,31 +69,33 @@ const IGNORE_DIR_NAMES = new Set<string>([
   '.terraform',
 ]);
 
-// Predicate fed to chokidar's `ignored` option. The watcher used to
-// only honor IGNORE_DIR_NAMES, which let gitignored source files
+// Predicate body fed to chokidar's `ignored` option. The watcher used
+// to only honor IGNORE_DIR_NAMES, which let gitignored source files
 // (build outputs, generated code, fixtures excluded by the project's
 // .gitignore) leak through and broadcast metrics for files that the
 // scanner never saw — the frontend would then show ghost nodes that
 // disappeared on the next refresh. Loading the project's .gitignore
-// keeps the watcher and the scanner in lock-step.
-function buildIgnorePredicate(
+// keeps the watcher and the scanner in lock-step. The gitignore is
+// passed in by the caller (rather than captured in a closure) so a
+// mid-session reload of .gitignore takes effect on the very next
+// fs event.
+function matchIgnored(
+  filePath: string,
   projectRoot: string,
   gitignore: Ignore,
-): (filePath: string) => boolean {
-  return (filePath: string) => {
-    // Always-ignore segments take precedence over .gitignore so
-    // node_modules / .git / .lattice are blocked even on projects
-    // missing a .gitignore.
-    const segments = filePath.split(/[\\/]+/);
-    for (const seg of segments) {
-      if (IGNORE_DIR_NAMES.has(seg)) return true;
-    }
-    let rel = path.relative(projectRoot, filePath);
-    if (!rel || rel.startsWith('..')) return false;
-    rel = rel.split(path.sep).join('/');
-    if (!rel) return false;
-    return gitignore.ignores(rel);
-  };
+): boolean {
+  // Always-ignore segments take precedence over .gitignore so
+  // node_modules / .git / .lattice are blocked even on projects
+  // missing a .gitignore.
+  const segments = filePath.split(/[\\/]+/);
+  for (const seg of segments) {
+    if (IGNORE_DIR_NAMES.has(seg)) return true;
+  }
+  let rel = path.relative(projectRoot, filePath);
+  if (!rel || rel.startsWith('..')) return false;
+  rel = rel.split(path.sep).join('/');
+  if (!rel) return false;
+  return gitignore.ignores(rel);
 }
 
 async function loadGitignore(projectRoot: string): Promise<Ignore> {
@@ -105,6 +107,36 @@ async function loadGitignore(projectRoot: string): Promise<Ignore> {
     // No .gitignore — fine, we still have IGNORE_DIR_NAMES.
   }
   return ig;
+}
+
+// tsconfig*.json filenames that the alias loader recognizes. Matches
+// `tsconfig.json`, `tsconfig.app.json`, `tsconfig.node.json`, etc. —
+// kept in sync with the regex in `tsconfig.ts`.
+const TSCONFIG_BASENAME_RE = /^tsconfig(?:\..+)?\.json$/;
+
+// If the changed/added/removed path is the project's `.gitignore` or
+// any tsconfig*.json, trigger the matching reload and tell the caller
+// to re-run cross-file analysis. Returns true when a reload happened
+// so the caller can skip the per-file analysis path.
+async function maybeReloadConfig(
+  filePath: string,
+  projectRoot: string,
+  reloadGitignore: () => Promise<void>,
+  reloadAliases: () => Promise<void>,
+): Promise<boolean> {
+  const base = path.basename(filePath);
+  if (base === '.gitignore') {
+    // Only react to the project-root .gitignore, not nested ones.
+    if (path.resolve(filePath) === path.resolve(projectRoot, '.gitignore')) {
+      await reloadGitignore();
+      return true;
+    }
+  }
+  if (TSCONFIG_BASENAME_RE.test(base)) {
+    await reloadAliases();
+    return true;
+  }
+  return false;
 }
 
 const LOC_MAX_BYTES = 5 * 1024 * 1024;
@@ -131,11 +163,40 @@ type ProjectWatcher = {
   // last scan).
   imports: Map<string, string[]>;
   metrics: Map<string, HealthMetrics>;
-  // tsconfig path-alias map (TS/JS only). Loaded once at watcher boot;
-  // changing tsconfig.json requires restarting the dev server.
+  // tsconfig path-alias map (TS/JS only). Reloaded on tsconfig.json
+  // changes so adding/renaming a `paths` entry takes effect mid-
+  // session without restarting the backend.
   aliases: ParsedAlias[];
+  // Mutable .gitignore matcher; the chokidar `ignored` predicate
+  // closes over this via a getter so editing .gitignore mid-session
+  // takes effect without restarting the watcher.
+  gitignore: Ignore;
   subscribers: Set<Subscriber>;
 };
+
+// Snapshot of cross-file fields per file; used to detect which files
+// were affected by a change so we broadcast updates for them too. The
+// previous implementation only broadcast the originally-edited file,
+// which let other files' fanIn/fanOut/inCycle/score drift in the UI
+// (the backend had the right values; the frontend never heard about
+// them) until the next full scan.
+type CrossFileSnapshot = Map<
+  string,
+  { score: number; fanIn: number; fanOut: number; inCycle: boolean }
+>;
+
+function snapshotCrossFile(metrics: Map<string, HealthMetrics>): CrossFileSnapshot {
+  const out: CrossFileSnapshot = new Map();
+  for (const [fp, m] of metrics) {
+    out.set(fp, {
+      score: m.score,
+      fanIn: m.fanIn ?? 0,
+      fanOut: m.fanOut ?? 0,
+      inCycle: m.inCycle ?? false,
+    });
+  }
+  return out;
+}
 
 const watchers = new Map<string, ProjectWatcher>();
 
@@ -174,11 +235,28 @@ async function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
     metricsMap.set(filePath, entry.metrics);
   }
 
-  const [gitignore, aliases] = await Promise.all([
+  const [initialGitignore, initialAliases] = await Promise.all([
     loadGitignore(projectRoot),
     loadProjectAliases(projectRoot),
   ]);
-  const ignored = buildIgnorePredicate(projectRoot, gitignore);
+
+  // Predeclared so the chokidar `ignored` predicate can close over the
+  // *current* gitignore via the proj reference — assigning a new
+  // `Ignore` to `proj.gitignore` after a `.gitignore` edit takes
+  // effect immediately for subsequent fs events.
+  const proj: ProjectWatcher = {
+    root: projectRoot,
+    watcher: undefined as unknown as FSWatcher,
+    cache,
+    imports: importsMap,
+    metrics: metricsMap,
+    aliases: initialAliases,
+    gitignore: initialGitignore,
+    subscribers: new Set(),
+  };
+
+  const ignored = (filePath: string) =>
+    matchIgnored(filePath, projectRoot, proj.gitignore);
 
   const watcher = chokidar.watch(projectRoot, {
     ignored,
@@ -186,6 +264,7 @@ async function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
     ignoreInitial: true,
     awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
   });
+  proj.watcher = watcher;
   // Without an error listener chokidar will emit 'error' events into
   // the void, which Node treats as an unhandled exception on
   // EventEmitter and crashes the whole backend process. Logging and
@@ -195,17 +274,64 @@ async function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
     console.error('[health watcher]', err);
   });
 
-  const proj: ProjectWatcher = {
-    root: projectRoot,
-    watcher,
-    cache,
-    imports: importsMap,
-    metrics: metricsMap,
-    aliases,
-    subscribers: new Set(),
-  };
+  async function reloadGitignore() {
+    proj.gitignore = await loadGitignore(projectRoot);
+  }
+  async function reloadAliases() {
+    proj.aliases = await loadProjectAliases(projectRoot);
+  }
+
+  // Re-run the full project cross-file pass and broadcast every file
+  // whose score / fanIn / fanOut / inCycle changed. Used both after a
+  // single-file edit and after tsconfig/.gitignore reloads (which can
+  // resolve previously-unresolved imports across many files at once).
+  function recomputeAndBroadcast(originatorPath: string | null) {
+    const before = snapshotCrossFile(proj.metrics);
+    const fileImports: FileImports[] = [];
+    for (const [fp, ims] of proj.imports) {
+      fileImports.push({ filePath: fp, imports: ims });
+    }
+    const presentFiles = new Set(proj.metrics.keys());
+    const cross = computeCrossFile(fileImports, presentFiles, proj.aliases);
+    applyCrossFile(proj.metrics, cross);
+
+    // Always broadcast the originator (its smells / score may have
+    // changed even when no cross-file fields did). Then walk the
+    // diff for everyone else.
+    const broadcasted = new Set<string>();
+    if (originatorPath) {
+      const m = proj.metrics.get(originatorPath);
+      if (m) {
+        broadcast(proj, { type: 'updated', filePath: originatorPath, metrics: m });
+        broadcasted.add(originatorPath);
+      }
+    }
+    for (const [fp, m] of proj.metrics) {
+      if (broadcasted.has(fp)) continue;
+      const prev = before.get(fp);
+      if (
+        !prev ||
+        prev.score !== m.score ||
+        prev.fanIn !== (m.fanIn ?? 0) ||
+        prev.fanOut !== (m.fanOut ?? 0) ||
+        prev.inCycle !== (m.inCycle ?? false)
+      ) {
+        broadcast(proj, { type: 'updated', filePath: fp, metrics: m });
+      }
+    }
+  }
 
   async function onAddOrChange(filePath: string) {
+    // tsconfig / .gitignore reloads first — they may rewrite the
+    // alias map or the ignore predicate, which feeds the per-file
+    // analysis below.
+    if (await maybeReloadConfig(filePath, projectRoot, reloadGitignore, reloadAliases)) {
+      // Aliases may have changed — re-run cross-file with the new
+      // alias map so previously-unresolved imports start counting.
+      recomputeAndBroadcast(null);
+      return;
+    }
+
     const ext = path.extname(filePath).toLowerCase();
     if (!SOURCE_EXTS.has(ext)) return;
     let stat;
@@ -237,22 +363,14 @@ async function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
     // for small projects, O(V + E) for SCC; for huge projects we'd
     // want to do an incremental pass, but Lattice's typical project
     // is small enough that a full re-pass is fine (sub-millisecond).
-    const fileImports: FileImports[] = [];
-    for (const [fp, ims] of proj.imports) {
-      fileImports.push({ filePath: fp, imports: ims });
-    }
-    const presentFiles = new Set(proj.metrics.keys());
-    const cross = computeCrossFile(fileImports, presentFiles, proj.aliases);
-    applyCrossFile(proj.metrics, cross);
-
-    // The applyCrossFile call mutated `metrics` in place — fetch it
-    // again from the map to ensure we broadcast the patched version.
-    const finalMetrics = proj.metrics.get(filePath);
-    if (!finalMetrics) return;
-    broadcast(proj, { type: 'updated', filePath, metrics: finalMetrics });
+    recomputeAndBroadcast(filePath);
   }
 
-  function onRemove(filePath: string) {
+  async function onRemove(filePath: string) {
+    if (await maybeReloadConfig(filePath, projectRoot, reloadGitignore, reloadAliases)) {
+      recomputeAndBroadcast(null);
+      return;
+    }
     const ext = path.extname(filePath).toLowerCase();
     if (!SOURCE_EXTS.has(ext)) return;
     proj.imports.delete(filePath);
@@ -262,12 +380,15 @@ async function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
     // across renames during a long-running session.
     proj.cache.delete(filePath);
     proj.cache.save().catch(() => { /* best-effort */ });
+    // Tell subscribers the node is gone, then re-run cross-file so
+    // anyone who imported it sees their fanOut drop.
     broadcast(proj, { type: 'removed', filePath });
+    recomputeAndBroadcast(null);
   }
 
   watcher.on('add', (p) => { onAddOrChange(p).catch(() => { /* ignore */ }); });
   watcher.on('change', (p) => { onAddOrChange(p).catch(() => { /* ignore */ }); });
-  watcher.on('unlink', onRemove);
+  watcher.on('unlink', (p) => { onRemove(p).catch(() => { /* ignore */ }); });
 
   watchers.set(projectRoot, proj);
   return proj;

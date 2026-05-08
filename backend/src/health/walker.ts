@@ -110,7 +110,18 @@ function getFunctionName(node: Node, grammar: GrammarKey): string | null {
       }
       if (parent.type === 'assignment_expression') {
         const left = parent.childForFieldName('left');
-        if (left && left.type === 'identifier') return left.text;
+        if (left) {
+          if (left.type === 'identifier') return left.text;
+          // `Object.foo = () => {}` / `module.exports.bar = () => {}`
+          // — return the leaf property name. Without this the function
+          // is recorded as anonymous and excluded from named-function
+          // counts, god-function detection, and the magic-string
+          // import exclusion.
+          if (left.type === 'member_expression') {
+            const prop = left.childForFieldName('property');
+            if (prop) return prop.text;
+          }
+        }
       }
     }
   }
@@ -174,11 +185,22 @@ function isShortCircuitOperator(node: Node, grammar: GrammarKey): string | null 
 
 function isBooleanParam(node: Node, grammar: GrammarKey): boolean {
   if (grammar === 'python') {
+    // Plain annotation: `def f(x: bool)`.
     if (node.type === 'typed_parameter') {
       const typeNode = node.childForFieldName('type');
       if (typeNode && /\bbool\b/.test(typeNode.text)) return true;
     }
+    // Untyped default: `def f(x=True)`.
     if (node.type === 'default_parameter') {
+      const valueNode = node.childForFieldName('value');
+      if (valueNode && (valueNode.text === 'True' || valueNode.text === 'False')) return true;
+    }
+    // Annotated AND defaulted: `def f(x: bool = True)` — by far the
+    // most common form in real Python code, missed by the original
+    // implementation which only checked the two cases above.
+    if (node.type === 'typed_default_parameter') {
+      const typeNode = node.childForFieldName('type');
+      if (typeNode && /\bbool\b/.test(typeNode.text)) return true;
       const valueNode = node.childForFieldName('value');
       if (valueNode && (valueNode.text === 'True' || valueNode.text === 'False')) return true;
     }
@@ -192,7 +214,9 @@ function isBooleanParam(node: Node, grammar: GrammarKey): boolean {
 }
 
 function isMutableDefaultPython(node: Node): boolean {
-  if (node.type !== 'default_parameter') return false;
+  if (node.type !== 'default_parameter' && node.type !== 'typed_default_parameter') {
+    return false;
+  }
   const value = node.childForFieldName('value');
   if (!value) return false;
   const t = value.type;
@@ -521,13 +545,24 @@ export function analyzeTree(
       }
     }
     if (kinds.string.has(t)) {
-      const raw = node.text;
-      const trimmed = raw.replace(/^['"`]|['"`]$/g, '');
-      if (trimmed.length >= 4 && trimmed.length <= 200 && /\S/.test(trimmed)) {
-        result.stringLiterals.set(
-          trimmed,
-          (result.stringLiterals.get(trimmed) ?? 0) + 1,
-        );
+      // Strings inside import specifiers aren't "magic strings" — a
+      // shared module path like './api' isn't a duplicated literal,
+      // it's just the module being referenced. Without this skip,
+      // every multi-importer of the same module trips the smell.
+      const parentType = node.parent?.type ?? '';
+      const inImport =
+        parentType === 'import_statement' ||
+        parentType === 'import_from_statement' ||
+        parentType === 'export_statement';
+      if (!inImport) {
+        const raw = node.text;
+        const trimmed = raw.replace(/^['"`]|['"`]$/g, '');
+        if (trimmed.length >= 4 && trimmed.length <= 200 && /\S/.test(trimmed)) {
+          result.stringLiterals.set(
+            trimmed,
+            (result.stringLiterals.get(trimmed) ?? 0) + 1,
+          );
+        }
       }
     }
 
@@ -543,12 +578,39 @@ export function analyzeTree(
     ) {
       const isDefault = node.children.some((c) => c?.type === 'default');
       if (isDefault) hasDefaultExport = true;
-      else namedExportCount++;
+      else namedExportCount += countExportBindings(node);
     }
 
     // ----- Function-context complexity tracking + call graph -----
     let pushedNesting = false;
     const fn = currentFn();
+    // Sonar B1: an `if` chained as the `alternative` of another
+    // `if_statement` (i.e. `else if`) is a continuation, not a new
+    // decision. It costs +1 cognitive (no nesting bump) and does NOT
+    // push another nesting level. The previous behavior treated each
+    // else-if as a fresh nested if, so a 4-arm router cost 1+2+3+4=10
+    // cognitive vs. Sonar's 1+1+1+1=4 — routinely tripping the
+    // high_cognitive_complexity threshold on routine dispatch code.
+    //
+    // Tree-sitter-typescript wraps `else` in an `else_clause` node, so
+    // the actual chain looks like:
+    //   if_statement (outer)
+    //     alternative: else_clause
+    //       if_statement (THIS is the else-if)
+    // We detect both that wrapping and the rare unwrapped form.
+    const isElseIf = (() => {
+      if (!isJsFamily || t !== 'if_statement') return false;
+      const parent = node.parent;
+      if (!parent) return false;
+      if (parent.type === 'else_clause') {
+        const grand = parent.parent;
+        return !!grand && grand.type === 'if_statement';
+      }
+      if (parent.type === 'if_statement') {
+        return parent.childForFieldName('alternative')?.id === node.id;
+      }
+      return false;
+    })();
     if (fn) {
       let cyclomaticAdd = 0;
       let cognitiveAdd = 0;
@@ -557,9 +619,13 @@ export function analyzeTree(
         cyclomaticAdd = 1;
       }
       if (kinds.cognitiveBranch.has(t)) {
-        cognitiveAdd = 1 + nesting;
+        cognitiveAdd = isElseIf ? 1 : 1 + nesting;
       }
-      if (kinds.nesting.has(t)) {
+      // Cyclomatic still counts each else-if as a path (McCabe), but
+      // cognitive treats it as a continuation, and we don't increase
+      // the nesting depth for else-if since semantically the chain
+      // lives at the original `if`'s depth.
+      if (kinds.nesting.has(t) && !isElseIf) {
         pushedNesting = true;
         const newDepth = nesting + 1;
         if (newDepth > fn.maxNestingDepth) fn.maxNestingDepth = newDepth;
@@ -576,7 +642,7 @@ export function analyzeTree(
         const callee = node.childForFieldName('function') || node.namedChild(0);
         if (callee) {
           const calleeText = callee.text;
-          if (calleeText.startsWith('console.') && isJsFamily) {
+          if (isJsFamily && isConsoleLogish(calleeText)) {
             result.smellTokens.consoleCalls++;
           }
           if (calleeText === 'eval' || calleeText === 'Function') {
@@ -597,7 +663,7 @@ export function analyzeTree(
       const callee = node.childForFieldName('function') || node.namedChild(0);
       if (callee) {
         const calleeText = callee.text;
-        if (calleeText.startsWith('console.') && isJsFamily) {
+        if (isJsFamily && isConsoleLogish(calleeText)) {
           result.smellTokens.consoleCalls++;
         }
         if (calleeText === 'eval' || calleeText === 'Function') {
@@ -628,6 +694,64 @@ export function analyzeTree(
   void source;
 
   return result;
+}
+
+// `console.log/debug/info/trace` are debug noise and worth flagging.
+// `console.error/warn` are routine production logging on most code
+// bases, so flagging them produces too much noise to be useful.
+const CONSOLE_NOISE = new Set([
+  'console.log',
+  'console.debug',
+  'console.info',
+  'console.trace',
+  'console.dir',
+  'console.table',
+]);
+function isConsoleLogish(calleeText: string): boolean {
+  return CONSOLE_NOISE.has(calleeText);
+}
+
+// Count the number of named bindings introduced by a top-level
+// `export_statement`. The previous mixed-exports smell counted
+// statements, which meant `export { a, b, c, d, e, f }` (a single
+// statement that exports 6 names) never tripped the threshold while
+// six separate `export const X = ...` lines did. Walking into the
+// statement gives the count users intuitively expect.
+function countExportBindings(node: Node): number {
+  let count = 0;
+  for (const c of node.namedChildren) {
+    if (!c) continue;
+    const ct = c.type;
+    if (ct === 'export_clause') {
+      // `export { a, b as c, d }` — one binding per export_specifier.
+      for (const spec of c.namedChildren) {
+        if (spec && spec.type === 'export_specifier') count++;
+      }
+    } else if (
+      ct === 'lexical_declaration' ||
+      ct === 'variable_declaration'
+    ) {
+      // `export const a = 1, b = 2;` — count variable_declarators.
+      for (const decl of c.namedChildren) {
+        if (decl && decl.type === 'variable_declarator') count++;
+      }
+    } else if (
+      ct === 'function_declaration' ||
+      ct === 'generator_function_declaration' ||
+      ct === 'class_declaration' ||
+      ct === 'interface_declaration' ||
+      ct === 'type_alias_declaration' ||
+      ct === 'enum_declaration' ||
+      ct === 'module' ||
+      ct === 'namespace_declaration'
+    ) {
+      count++;
+    }
+  }
+  // `export * from '...'` and re-exports without an export_clause
+  // don't add a known number of bindings; treat as 1 to keep the
+  // statement-count semantics for those edge cases.
+  return count > 0 ? count : 1;
 }
 
 // Get the leaf identifier from an expression like
