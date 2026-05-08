@@ -342,7 +342,7 @@ export function renderStopHookJson(taskId: string, backendOrigin: string): strin
   return JSON.stringify(hookConfig, null, 2);
 }
 
-async function installStopHook(
+export async function installStopHook(
   worktreePath: string,
   taskId: string,
   backendOrigin: string,

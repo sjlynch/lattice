@@ -83,9 +83,10 @@ click landing on the same task while the run is processing it.
 | POST | `/api/tasks/batch` | Batch-create `{project, tasks:[{title,description?}]}` — returns array |
 | PATCH | `/api/tasks/:id` | Update `title` / `description` / `status` |
 | DELETE | `/api/tasks/:id` | Remove |
-| POST | `/api/tasks/:id/run` | Spawn worktree + Claude on Open task |
+| POST | `/api/tasks/:id/run` | Spawn worktree + Claude on Open task; pre-creates pty, returns `serverId` |
+| POST | `/api/tasks/:id/resume` | Re-spawn Claude in existing worktree; pre-creates pty, returns `serverId` |
 | POST | `/api/tasks/:id/complete` | Stop-hook callback (in_progress → ready_to_merge) |
-| POST | `/api/tasks/:id/merge` | Attempt git merge; conflict spawns resolver Claude |
+| POST | `/api/tasks/:id/merge` | Attempt git merge; conflict pre-creates resolver pty, returns `serverId` |
 | POST | `/api/tasks/:id/merged` | Resolver-Claude callback after a successful merge |
 | POST | `/api/tasks/:id/merge-aborted` | Resolver-Claude callback if it gave up |
 | POST | `/api/merge-runs` | Body `{project}` — start a merge-all run |
@@ -127,6 +128,13 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
   `backend/src/userSettings.ts`; frontend helpers are in `frontend/src/api.ts`.
 - Prefer editing existing files; don't introduce new abstractions for
   one-off tweaks.
+- **Terminal pty pre-spawn.** When a task/workflow/conflict spawn would
+  produce a UI terminal, the backend pre-creates the pty via the
+  terminal-server's `POST /sessions` and ships back a `serverId`. The
+  frontend stores it on the `TerminalSpec` and lazy-mounts the
+  `<TerminalPane>` only on first activation. This keeps "Run All" from
+  blowing past Chrome's per-page WebGL context cap, since each xterm
+  WebglAddon allocates its own context.
 
 ## Ports
 

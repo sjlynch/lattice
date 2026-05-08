@@ -193,7 +193,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
       } else if (ev.type === 'conflict') {
         // Spawn the resolver Claude in the worktree. Same flow the per-card
         // merge button uses; the run worker doesn't have UI access so the
-        // frontend handles the terminal half.
+        // frontend handles the terminal half. Backend pre-spawns the pty
+        // and ships the serverId in the event so the pane can lazy-mount.
         addTerminal({
           label: `merge:${ev.taskId.slice(-6)}`,
           cwd: ev.cwd,
@@ -201,6 +202,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
           taskId: ev.taskId,
           kind: 'merge',
           projectPath: activeFolder,
+          serverId: ev.serverId,
         }, false);
       }
     });
@@ -412,6 +414,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         initialCommand: res.command,
         taskId: task.id,
         projectPath: task.projectPath,
+        serverId: res.serverId,
       }, false);
     } catch (err) {
       showError(`Run failed: ${(err as Error).message}`);
@@ -438,6 +441,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         initialCommand: res.command,
         taskId: task.id,
         projectPath: task.projectPath,
+        serverId: res.serverId,
       }, false);
     } catch (err) {
       showError(`Resume failed: ${(err as Error).message}`);
@@ -467,6 +471,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         taskId: task.id,
         kind: 'merge',
         projectPath: task.projectPath,
+        serverId: res.serverId,
       }, false);
       return false;
     } catch (err) {

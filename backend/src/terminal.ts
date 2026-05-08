@@ -174,6 +174,21 @@ function createSession(opts: CreateOpts): Session | { error: string } {
   return session;
 }
 
+// Pre-create a session WITHOUT a WS subscriber. Used by route handlers that
+// want to spawn a pty and return its serverId in the same response, so the
+// frontend can lazy-mount the <TerminalPane> instead of having to mount it
+// immediately just to trigger session creation via WS attach. The pty starts
+// running (initialCommand fires) regardless of whether anyone connects; the
+// 200 KB rolling buffer captures output for replay when a subscriber later
+// attaches via `attachTerminal({ id })`.
+export function precreateSession(
+  opts: CreateOpts,
+): { id: string } | { error: string } {
+  const result = createSession(opts);
+  if ('error' in result) return { error: result.error };
+  return { id: result.id };
+}
+
 export type AttachOpts = {
   id?: string | null;
   cwd?: string;

@@ -14,8 +14,12 @@ import {
   listConflictedFiles,
 } from './state.js';
 import { autoStashMessage, popStashByMessage } from './stash.js';
-import { resolveOwnedFileConflicts } from './conflictResolve.js';
+import {
+  resolveOwnedFileConflicts,
+  resetOwnedFileLocalChanges,
+} from './conflictResolve.js';
 import { LATTICE_OWNED_FILE_PATHS } from './managedFiles.js';
+import { installStopHook } from './setup.js';
 
 // Files that Lattice writes into every worktree root but must never be
 // committed. If a previous resolver Claude accidentally ran `git add .`
@@ -168,6 +172,12 @@ export async function mergeWorktreeInRepo(
   repoRoot: string,
   branchName: string,
   worktreePath: string,
+  // Required for the post-merge Stop-hook restore. We accept them as
+  // params (rather than reading the task here) so this module stays
+  // independent of tasks.ts and so callers that already have the task
+  // object don't pay for an extra lookup.
+  taskId: string,
+  backendOrigin: string,
 ): Promise<MergeOutcome> {
   // ------ Pre-checks ------
 
@@ -246,6 +256,18 @@ export async function mergeWorktreeInRepo(
   // overwritten". Move them aside for the duration of the merge so git
   // doesn't see them, then restore whatever state they were in.
   const shelved = await shelveLatticeManagedFiles(worktreePath);
+  // Reset local changes on tracked owned files so git doesn't abort with
+  // "Your local changes to <file> would be overwritten by merge". The
+  // per-task Stop-hook content is regenerated post-merge by installStopHook.
+  // Distinct from shelving: these are files in the index that the merge
+  // wants to touch; shelving handles untracked files that the merge
+  // wants to materialize.
+  const resetFiles = await resetOwnedFileLocalChanges(worktreePath);
+  if (resetFiles.length > 0) {
+    console.log(
+      `[merge] reset working-tree copy of owned file(s) before merge: ${resetFiles.join(', ')}`,
+    );
+  }
   let merge;
   try {
     merge = await exec(
@@ -262,6 +284,12 @@ export async function mergeWorktreeInRepo(
     // etc.) from main — from a prior accidental commit — remove them now and
     // commit the cleanup so the fix propagates when this branch FFs into main.
     await untrackOwnedFilesPostMerge(worktreePath);
+    // Restore per-task Stop hook content. The pre-merge reset wiped the
+    // working-tree copy back to HEAD's version (a different task's URL),
+    // and the merge itself may have deleted it (if main untracked it).
+    // installStopHook is idempotent, so this is also safe when the merge
+    // didn't touch the file.
+    await installStopHook(worktreePath, taskId, backendOrigin);
     // Worktree is clean. The caller is responsible for fastForwardMain
     // and cleanup via finalizeMergedTask — keeping the steps separate
     // means the run worker and the /merge endpoint can compose them
@@ -304,8 +332,13 @@ export async function mergeWorktreeInRepo(
       // Same post-clean cleanup as the all-clean path: drop any tracked
       // managed files (LATTICE_TASK.md etc.) the merge brought in.
       await untrackOwnedFilesPostMerge(worktreePath);
+      await installStopHook(worktreePath, taskId, backendOrigin);
       return { status: 'clean' };
     }
+    // Real conflicts remain — a resolver Claude is about to be spawned.
+    // Re-install the Stop hook so its callback URL is correct for THIS
+    // task before the resolver bootstraps.
+    await installStopHook(worktreePath, taskId, backendOrigin);
     return {
       status: 'conflict',
       conflictKind: 'merge',

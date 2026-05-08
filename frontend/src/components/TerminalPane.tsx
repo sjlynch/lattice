@@ -24,6 +24,7 @@ export function TerminalPane({
   const containerRef = useRef<HTMLDivElement>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const termRef = useRef<Terminal | null>(null);
+  const webglRef = useRef<WebglAddon | null>(null);
   // Keep latest callback in a ref so we don't re-establish the WS just
   // because the parent re-rendered.
   const onServerIdRef = useRef<typeof onServerId>(onServerId);
@@ -70,15 +71,9 @@ export function TerminalPane({
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(containerRef.current);
-    // WebGL renderer must be loaded after open(). Falls back silently to the
-    // DOM renderer if WebGL is unavailable or the context limit is reached.
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
-      term.loadAddon(webgl);
-    } catch {
-      // DOM renderer remains
-    }
+    // WebglAddon is attached lazily (only while this pane is `active`) — see
+    // the active-prop effect below. Each WebGL context counts toward Chrome's
+    // per-page cap (~16); holding one per terminal made Run-All blow past it.
     fit.fit();
     fitRef.current = fit;
     termRef.current = term;
@@ -122,7 +117,11 @@ export function TerminalPane({
         rows: String(term.rows),
       });
       if (serverId) params.set('id', serverId);
-      if (initialCommand) params.set('initialCommand', initialCommand);
+      // Only forward initialCommand when we're creating a fresh session.
+      // For a known serverId the backend already ran the initial command
+      // when it pre-spawned the pty; passing it again would be a no-op
+      // (terminal.ts ignores it on replay) but it's needless noise.
+      if (!serverId && initialCommand) params.set('initialCommand', initialCommand);
       if (projectPath) params.set('projectPath', projectPath);
 
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -214,19 +213,56 @@ export function TerminalPane({
         /* ignore */
       }
       termRef.current = null;
+      // Dispose any live WebglAddon before tearing down the Terminal so
+      // the GL context is released cleanly.
+      try {
+        webglRef.current?.dispose();
+      } catch {
+        /* ignore */
+      }
+      webglRef.current = null;
       term.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwd, serverId]);
 
+  // Hold a WebGL context only while this pane is the active tab. Inactive
+  // panes fall back to xterm's built-in DOM renderer (no GL resource), so
+  // having many tabs open no longer multiplies WebGL contexts.
   useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
     if (active) {
+      if (!webglRef.current) {
+        try {
+          const webgl = new WebglAddon();
+          webgl.onContextLoss(() => {
+            try {
+              webgl.dispose();
+            } catch {
+              /* ignore */
+            }
+            if (webglRef.current === webgl) webglRef.current = null;
+          });
+          term.loadAddon(webgl);
+          webglRef.current = webgl;
+        } catch {
+          // WebGL unavailable / context limit hit — DOM renderer stays.
+        }
+      }
       try {
         fitRef.current?.fit();
       } catch {
         /* ignore */
       }
-      termRef.current?.focus();
+      term.focus();
+    } else if (webglRef.current) {
+      try {
+        webglRef.current.dispose();
+      } catch {
+        /* ignore */
+      }
+      webglRef.current = null;
     }
   }, [active]);
 

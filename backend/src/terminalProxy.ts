@@ -158,6 +158,34 @@ export async function proxyKillSessionsByCwd(worktreePath: string): Promise<void
   }
 }
 
+// Pre-create a pty session in the terminal-server subprocess. Returns the
+// session id so route handlers can include it in their response and the
+// frontend can attach via that id later (instead of triggering creation by
+// opening a WS).
+export async function proxyCreateSession(opts: {
+  cwd?: string;
+  initialCommand?: string;
+  projectPath?: string;
+  cols?: number;
+  rows?: number;
+}): Promise<{ id: string } | { error: string }> {
+  await ensureTerminalServer();
+  try {
+    const res = await fetch(`${BASE}/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts),
+    });
+    const json = (await res.json()) as { id?: string; error?: string };
+    if (!res.ok || !json.id) {
+      return { error: json.error ?? `terminal-server ${res.status}` };
+    }
+    return { id: json.id };
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+}
+
 export async function proxyKillSession(id: string): Promise<boolean> {
   try {
     const res = await fetch(

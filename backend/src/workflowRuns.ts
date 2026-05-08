@@ -12,6 +12,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { getWorkflow, type Workflow } from './workflows.js';
+import { proxyCreateSession } from './terminalProxy.js';
 
 export type WorkflowRunStatus = 'running' | 'completed' | 'errored' | 'cancelled';
 
@@ -41,6 +42,7 @@ export type WorkflowRunEvent =
       stepIndex: number;
       command: string;
       cwd: string;
+      serverId?: string;
     };
 
 const runs = new Map<string, WorkflowRun>();
@@ -316,6 +318,19 @@ async function spawnWorkflowStep(
 
   const command = `claude --dangerously-skip-permissions "Please read WORKFLOW_STEP.md and complete the workflow step described in it."`;
 
+  // Pre-spawn the pty so the frontend can lazy-mount its terminal pane and
+  // not burn a WebGL context for a step the user may not click into.
+  const sess = await proxyCreateSession({
+    cwd: stepDir,
+    initialCommand: command,
+    projectPath: wf.projectPath,
+  });
+  if ('error' in sess) {
+    console.warn(
+      `[workflow-run] ${run.id} step ${stepIndex}: pre-spawn failed: ${sess.error}`,
+    );
+  }
+
   notify({
     type: 'step-spawned',
     runId: run.id,
@@ -323,6 +338,7 @@ async function spawnWorkflowStep(
     stepIndex,
     command,
     cwd: stepDir,
+    serverId: 'id' in sess ? sess.id : undefined,
   });
   notify({ type: 'progress', run: snapshot(run) });
 

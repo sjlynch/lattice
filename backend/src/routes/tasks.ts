@@ -36,6 +36,7 @@ import {
 } from '../worktree.js';
 import { getActiveRunForProject, startMergeRun } from '../mergeRuns.js';
 import { tryAcquire, release } from '../mergeLocks.js';
+import { proxyCreateSession } from '../terminalProxy.js';
 
 // Tracks projects that currently have a per-card manual merge in flight.
 // Prevents two simultaneous per-card merge clicks from racing on
@@ -186,11 +187,22 @@ export function buildTasksRouter(backendOrigin: string): Router {
         branch: result.branch,
         startedAt: Date.now(),
       });
+      // Pre-spawn the pty so the frontend can lazy-mount its terminal pane
+      // (and avoid burning a WebGL context per task at "Run All" time).
+      const sess = await proxyCreateSession({
+        cwd: result.worktreePath,
+        initialCommand: command,
+        projectPath: task.projectPath,
+      });
+      if ('error' in sess) {
+        console.warn(`[run] task ${task.id}: pre-spawn failed: ${sess.error}`);
+      }
       res.json({
         worktreePath: result.worktreePath,
         branch: result.branch,
         taskFile: result.taskFile,
         command,
+        serverId: 'id' in sess ? sess.id : undefined,
       });
     } catch (err) {
       // Log full context before swallowing into a 500 — without this, transient
@@ -231,11 +243,20 @@ export function buildTasksRouter(backendOrigin: string): Router {
     const command = harness === 'pi'
       ? buildPiResumeCommand(taskFile)
       : buildResumeCommand(taskFile);
+    const sess = await proxyCreateSession({
+      cwd: task.worktreePath,
+      initialCommand: command,
+      projectPath: task.projectPath,
+    });
+    if ('error' in sess) {
+      console.warn(`[resume] task ${task.id}: pre-spawn failed: ${sess.error}`);
+    }
     res.json({
       worktreePath: task.worktreePath,
       branch: task.branch,
       taskFile,
       command,
+      serverId: 'id' in sess ? sess.id : undefined,
     });
   });
 
@@ -272,6 +293,8 @@ export function buildTasksRouter(backendOrigin: string): Router {
         task.projectPath,
         task.branch,
         task.worktreePath,
+        task.id,
+        backendOrigin,
       );
       if (reSync.status === 'conflict') {
         const { relativePath } = await writeMergeInstructions(
@@ -394,6 +417,8 @@ export function buildTasksRouter(backendOrigin: string): Router {
             task.projectPath,
             task.branch,
             task.worktreePath,
+            task.id,
+            backendOrigin,
           );
           if (reSync.status === 'clean') {
             const fin = await finalizeMergedTask(task, backendOrigin);
@@ -401,12 +426,18 @@ export function buildTasksRouter(backendOrigin: string): Router {
               return res.json({ merged: true });
             }
             if ('stashConflict' in fin) {
+              const sess = await proxyCreateSession({
+                cwd: fin.cwd,
+                initialCommand: fin.resolveCommand,
+                projectPath: task.projectPath,
+              });
               return res.json({
                 merged: false,
                 stashConflict: true,
                 command: fin.resolveCommand,
                 cwd: fin.cwd,
                 conflictedFiles: fin.stashConflict,
+                serverId: 'id' in sess ? sess.id : undefined,
               });
             }
             return res.status(500).json({ error: finalizeError(fin) });
@@ -420,12 +451,19 @@ export function buildTasksRouter(backendOrigin: string): Router {
               task.worktreePath,
             );
             await updateTask(task.id, { conflict: true, conflictStartedAt: Date.now() });
+            const command = buildConflictResolveCommand(relativePath);
+            const sess = await proxyCreateSession({
+              cwd: task.worktreePath,
+              initialCommand: command,
+              projectPath: task.projectPath,
+            });
             return res.json({
               merged: false,
               conflict: true,
-              command: buildConflictResolveCommand(relativePath),
+              command,
               cwd: task.worktreePath,
               conflictedFiles: reSync.conflictedFiles,
+              serverId: 'id' in sess ? sess.id : undefined,
             });
           }
           // reSync returned an error — fall through to returning existing
@@ -438,11 +476,18 @@ export function buildTasksRouter(backendOrigin: string): Router {
           backendOrigin,
           task.worktreePath,
         );
+        const command = buildConflictResolveCommand(relativePath);
+        const sess = await proxyCreateSession({
+          cwd: task.worktreePath,
+          initialCommand: command,
+          projectPath: task.projectPath,
+        });
         return res.json({
           merged: false,
           conflict: true,
-          command: buildConflictResolveCommand(relativePath),
+          command,
           cwd: task.worktreePath,
+          serverId: 'id' in sess ? sess.id : undefined,
         });
       }
 
@@ -450,17 +495,25 @@ export function buildTasksRouter(backendOrigin: string): Router {
         task.projectPath,
         task.branch,
         task.worktreePath,
+        task.id,
+        backendOrigin,
       );
       if (result.status === 'clean') {
         const fin = await finalizeMergedTask(task, backendOrigin);
         if (!fin.ok) {
           if ('stashConflict' in fin) {
+            const sess = await proxyCreateSession({
+              cwd: fin.cwd,
+              initialCommand: fin.resolveCommand,
+              projectPath: task.projectPath,
+            });
             return res.json({
               merged: false,
               stashConflict: true,
               command: fin.resolveCommand,
               cwd: fin.cwd,
               conflictedFiles: fin.stashConflict,
+              serverId: 'id' in sess ? sess.id : undefined,
             });
           }
           return res.status(500).json({ error: finalizeError(fin) });
@@ -479,12 +532,19 @@ export function buildTasksRouter(backendOrigin: string): Router {
           conflict: true,
           conflictStartedAt: Date.now(),
         });
+        const command = buildConflictResolveCommand(relativePath);
+        const sess = await proxyCreateSession({
+          cwd: task.worktreePath,
+          initialCommand: command,
+          projectPath: task.projectPath,
+        });
         return res.json({
           merged: false,
           conflict: true,
-          command: buildConflictResolveCommand(relativePath),
+          command,
           cwd: task.worktreePath,
           conflictedFiles: result.conflictedFiles,
+          serverId: 'id' in sess ? sess.id : undefined,
         });
       }
       return res.status(500).json({ error: result.message });
@@ -517,6 +577,8 @@ export function buildTasksRouter(backendOrigin: string): Router {
       task.projectPath,
       task.branch,
       task.worktreePath,
+      task.id,
+      backendOrigin,
     );
     if (reSync.status === 'conflict') {
       const { relativePath } = await writeMergeInstructions(

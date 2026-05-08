@@ -8,7 +8,7 @@
 import http from 'node:http';
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import { attachTerminal, killSession, killSessionsByCwd, listSessions } from './terminal.js';
+import { attachTerminal, killSession, killSessionsByCwd, listSessions, precreateSession } from './terminal.js';
 
 // Same node-pty Windows cleanup guard as the main server. Must be registered
 // before any PTY session can throw asynchronously.
@@ -48,6 +48,28 @@ app.get('/health', (_req, res) => {
 
 app.get('/sessions', (_req, res) => {
   res.json(listSessions());
+});
+
+// Pre-create a pty session without a WS subscriber. The route handlers in
+// the main backend call this so they can return a serverId synchronously;
+// the frontend then lazy-mounts <TerminalPane> and attaches via that id.
+app.post('/sessions', (req, res) => {
+  const body = (req.body || {}) as {
+    cwd?: string;
+    cols?: number;
+    rows?: number;
+    initialCommand?: string;
+    projectPath?: string;
+  };
+  const result = precreateSession({
+    cwd: body.cwd,
+    cols: body.cols,
+    rows: body.rows,
+    initialCommand: body.initialCommand,
+    projectPath: body.projectPath,
+  });
+  if ('error' in result) return res.status(500).json(result);
+  res.json({ id: result.id });
 });
 
 // Kill all sessions whose cwd is inside the given directory.

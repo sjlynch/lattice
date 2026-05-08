@@ -135,6 +135,7 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
           cwd: ev.cwd,
           initialCommand: ev.command,
           projectPath: activeFolder,
+          serverId: ev.serverId,
         });
       }
     });

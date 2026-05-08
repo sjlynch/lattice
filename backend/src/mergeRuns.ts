@@ -22,10 +22,13 @@ import {
   writeRunStashResolveInstructions,
   ensureLatticeGitignore,
   untrackOwnedFilesInRepo,
+  isMidMerge,
   RUN_STASH_LABEL,
 } from './worktree.js';
+import { listConflictedFiles } from './worktree/state.js';
 import { getTask, listTasks, updateTask } from './tasks.js';
 import { tryAcquire, release } from './mergeLocks.js';
+import { proxyCreateSession } from './terminalProxy.js';
 
 export type MergeRunStatus =
   | 'running'
@@ -61,6 +64,7 @@ export type MergeRunEvent =
       command: string;
       cwd: string;
       conflictedFiles: string[];
+      serverId?: string;
     }
   | { type: 'completed'; run: MergeRun }
   | { type: 'cancelled'; run: MergeRun };
@@ -119,8 +123,13 @@ export async function startMergeRun(
     }
   }
   const tasks = await listTasks(projectPath);
+  // Include conflict-flagged tasks too — the per-task loop knows how to
+  // re-attempt them (resolver Claude may have already finished and
+  // committed; Lattice just needs to re-sync and finalize). The old
+  // `&& !t.conflict` filter stranded conflict tasks across server
+  // restarts: a "merge all" click would skip them entirely.
   const targets = tasks
-    .filter((t) => t.status === 'ready_to_merge' && !t.conflict)
+    .filter((t) => t.status === 'ready_to_merge')
     .sort((a, b) => a.createdAt - b.createdAt);
 
   const run: MergeRun = {
@@ -187,12 +196,6 @@ export async function startMergeRun(
         run.processed += 1;
         continue;
       }
-      if (task.conflict) {
-        console.log(`[merge-run] task ${task.id} already in conflict-resolution — skipping`);
-        run.conflicted.push(task.id);
-        run.processed += 1;
-        continue;
-      }
       if (!task.branch || !task.worktreePath) {
         console.warn(`[merge-run] task ${task.id} has no branch/worktree — skipping`);
         run.errored.push({
@@ -201,6 +204,60 @@ export async function startMergeRun(
         });
         run.processed += 1;
         continue;
+      }
+
+      // Already-flagged conflict: two cases.
+      //   - Worktree is mid-merge (resolver Claude died, server restarted,
+      //     or user closed the tab before resolution). Re-spawn the
+      //     resolver session and re-emit the conflict event.
+      //   - Worktree is NOT mid-merge (resolver finished and committed,
+      //     but finalize was interrupted — e.g. server restart, FF race).
+      //     Fall through and let mergeWorktreeInRepo detect the merge is
+      //     already done; the path returns `clean` and we finalize.
+      // Old behavior was a flat skip, which left conflict tasks stranded
+      // forever once the run loop exited.
+      if (task.conflict) {
+        if (await isMidMerge(task.worktreePath)) {
+          console.log(`[merge-run] task ${task.id} mid-merge — re-spawning resolver`);
+          try {
+            const conflictedFiles = await listConflictedFiles(task.worktreePath);
+            const { relativePath } = await writeMergeInstructions(
+              task,
+              task.branch,
+              conflictedFiles,
+              backendOrigin,
+              task.worktreePath,
+            );
+            const command = buildConflictResolveCommand(relativePath);
+            const sess = await proxyCreateSession({
+              cwd: task.worktreePath,
+              initialCommand: command,
+              projectPath: task.projectPath,
+            });
+            run.conflicted.push(task.id);
+            notify({
+              type: 'conflict',
+              runId: run.id,
+              projectPath,
+              taskId: task.id,
+              command,
+              cwd: task.worktreePath,
+              conflictedFiles,
+              serverId: 'id' in sess ? sess.id : undefined,
+            });
+          } catch (err) {
+            console.error(`[merge-run] re-spawn for ${task.id} failed:`, err);
+            run.errored.push({
+              taskId: task.id,
+              error: `re-spawn resolver failed: ${(err as Error).message}`,
+            });
+          }
+          run.processed += 1;
+          continue;
+        }
+        console.log(
+          `[merge-run] task ${task.id} flagged conflict but worktree is clean — re-syncing`,
+        );
       }
 
       if (!tryAcquire(task.id)) {
@@ -219,6 +276,8 @@ export async function startMergeRun(
           task.projectPath,
           task.branch,
           task.worktreePath,
+          task.id,
+          backendOrigin,
         );
         console.log(`[merge-run] mergeWorktreeInRepo → ${result.status}${result.status === 'conflict' ? ` (${result.conflictedFiles?.join(', ')})` : result.status === 'error' ? `: ${result.message}` : ''}`);
         if (result.status === 'clean') {
@@ -229,6 +288,11 @@ export async function startMergeRun(
             run.merged.push(task.id);
           } else if ('stashConflict' in fin) {
             run.conflicted.push(task.id);
+            const sess = await proxyCreateSession({
+              cwd: fin.cwd,
+              initialCommand: fin.resolveCommand,
+              projectPath: task.projectPath,
+            });
             notify({
               type: 'conflict',
               runId: run.id,
@@ -237,6 +301,7 @@ export async function startMergeRun(
               command: fin.resolveCommand,
               cwd: fin.cwd,
               conflictedFiles: fin.stashConflict,
+              serverId: 'id' in sess ? sess.id : undefined,
             });
             // Stop the run — subsequent tasks can't FF until the stash conflict
             // is resolved. /stash-resolved will auto-restart the run.
@@ -261,14 +326,21 @@ export async function startMergeRun(
             conflictStartedAt: Date.now(),
           });
           run.conflicted.push(task.id);
+          const command = buildConflictResolveCommand(relativePath);
+          const sess = await proxyCreateSession({
+            cwd: task.worktreePath,
+            initialCommand: command,
+            projectPath: task.projectPath,
+          });
           notify({
             type: 'conflict',
             runId: run.id,
             projectPath,
             taskId: task.id,
-            command: buildConflictResolveCommand(relativePath),
+            command,
             cwd: task.worktreePath,
             conflictedFiles: result.conflictedFiles,
+            serverId: 'id' in sess ? sess.id : undefined,
           });
         } else {
           run.errored.push({ taskId: task.id, error: result.message });
@@ -308,14 +380,21 @@ export async function startMergeRun(
             projectPath,
           );
           console.log(`[merge-run] stash conflict on: ${pop.conflictedFiles.join(', ')}`);
+          const command = buildStashResolveCommand(relativePath);
+          const sess = await proxyCreateSession({
+            cwd: projectPath,
+            initialCommand: command,
+            projectPath,
+          });
           notify({
             type: 'conflict',
             runId: run.id,
             projectPath,
             taskId: run.id, // synthetic id — no single task is responsible
-            command: buildStashResolveCommand(relativePath),
+            command,
             cwd: projectPath,
             conflictedFiles: pop.conflictedFiles,
+            serverId: 'id' in sess ? sess.id : undefined,
           });
           // Stay in 'running' state — completion happens in stash-resolved endpoint.
           return;

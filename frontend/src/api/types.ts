@@ -210,6 +210,10 @@ export type RunTaskResult = {
   branch: string;
   taskFile: string;
   command: string;
+  // Set when the backend pre-spawned the pty in the terminal-server. The
+  // frontend stores it on the TerminalSpec so the pane can lazy-mount and
+  // attach via this id (replay path) instead of triggering a new session.
+  serverId?: string;
 };
 
 export type MergeTaskResult =
@@ -220,6 +224,7 @@ export type MergeTaskResult =
       command: string;
       cwd: string;
       conflictedFiles?: string[];
+      serverId?: string;
     }
   | {
       merged: false;
@@ -227,6 +232,7 @@ export type MergeTaskResult =
       command: string;
       cwd: string;
       conflictedFiles?: string[];
+      serverId?: string;
     };
 
 // ---------- Merge runs ----------
@@ -263,6 +269,7 @@ export type MergeRunEvent =
       command: string;
       cwd: string;
       conflictedFiles: string[];
+      serverId?: string;
     }
   | { type: 'completed'; run: MergeRun }
   | { type: 'cancelled'; run: MergeRun }
@@ -320,4 +327,5 @@ export type WorkflowRunEvent =
       stepIndex: number;
       command: string;
       cwd: string;
+      serverId?: string;
     };

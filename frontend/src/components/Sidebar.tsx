@@ -64,38 +64,25 @@ export function Sidebar({ activeFolder }: Props) {
   } | null>(null);
 
   // Track which terminal IDs have ever been the active tab. We only mount
-  // <TerminalPane> once a terminal is first viewed — the backend keeps the
-  // pty alive via serverId so the session is intact when we first connect.
-  // EXCEPTION: terminals with no serverId yet (freshly added, e.g. by the
-  // task board with focus=false) must mount eagerly. The backend pty isn't
-  // spawned until the WS connects, so a lazy task-board tab would leave its
-  // initialCommand unrun and stall the task at in_progress until the user
-  // clicked the tab.
+  // <TerminalPane> once a terminal is first viewed — the backend pre-spawns
+  // the pty (so initialCommand runs immediately) and keeps it alive via
+  // serverId, so the session is intact when we first attach. Each mounted
+  // pane allocates its own WebGL context (xterm WebglAddon); deferring mount
+  // until activation is what keeps Run-All from blowing past Chrome's
+  // per-page WebGL context cap.
   const [mountedIds, setMountedIds] = useState<ReadonlySet<string>>(() => {
     const initial = new Set<string>();
     if (activeId) initial.add(activeId);
-    for (const t of terminals) {
-      if (!t.serverId) initial.add(t.id);
-    }
     return initial;
   });
   useEffect(() => {
     setMountedIds((prev) => {
-      let changed = false;
+      if (!activeId || prev.has(activeId)) return prev;
       const next = new Set(prev);
-      if (activeId && !next.has(activeId)) {
-        next.add(activeId);
-        changed = true;
-      }
-      for (const t of terminals) {
-        if (!t.serverId && !next.has(t.id)) {
-          next.add(t.id);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
+      next.add(activeId);
+      return next;
     });
-  }, [activeId, terminals]);
+  }, [activeId]);
 
   const menuRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
