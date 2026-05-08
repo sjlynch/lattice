@@ -9,6 +9,7 @@ import type { HealthMetrics } from './types.js';
 import { computeScore } from './score.js';
 import { bump, type SmellCounter } from './universal.js';
 import { SMELL_LABELS } from './types.js';
+import type { ParsedAlias } from './tsconfig.js';
 
 export type FileImports = {
   filePath: string;
@@ -55,10 +56,56 @@ function normalizePythonRelativeImport(spec: string): string {
   return combined.startsWith('.') ? combined : `./${combined}`;
 }
 
+// Try a target absolute path with all the extensions / index-file
+// fallbacks we'd accept for a real import. Returns the first match
+// in `presentFiles`, or null if nothing landed.
+function tryAllExtensions(
+  target: string,
+  presentFiles: Set<string>,
+): string | null {
+  if (presentFiles.has(target)) return target;
+  for (const ext of RESOLVE_EXTS) {
+    if (presentFiles.has(target + ext)) return target + ext;
+  }
+  for (const indexFile of INDEX_FILES) {
+    const candidate = path.join(target, indexFile);
+    if (presentFiles.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+// Try the import against a tsconfig path-alias map. Aliases are
+// pre-sorted longest-prefix-first in tsconfig.ts so the first match
+// is the most specific.
+function resolveByAlias(
+  spec: string,
+  aliases: readonly ParsedAlias[],
+  presentFiles: Set<string>,
+): string | null {
+  for (const alias of aliases) {
+    let tail: string | null = null;
+    if (alias.isWildcard) {
+      if (spec.startsWith(alias.prefix)) {
+        tail = spec.slice(alias.prefix.length);
+      }
+    } else if (spec === alias.prefix) {
+      tail = '';
+    }
+    if (tail === null) continue;
+    for (const sub of alias.substitutions) {
+      const target = tail ? path.join(sub, tail) : sub;
+      const hit = tryAllExtensions(target, presentFiles);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
 function resolveImport(
   fromFile: string,
   spec: string,
   presentFiles: Set<string>,
+  aliases?: readonly ParsedAlias[],
 ): string | null {
   if (!spec) return null;
   // Python relative imports come through with a leading-dot dotted
@@ -66,6 +113,15 @@ function resolveImport(
   const normalized = fromFile.endsWith('.py') || fromFile.endsWith('.pyi')
     ? normalizePythonRelativeImport(spec)
     : spec;
+
+  // Path-alias check has to come BEFORE the "external package" bail
+  // because aliased specs (like `@/components/Foo`) look identical to
+  // scoped npm packages — only the alias map can tell them apart.
+  if (aliases && aliases.length > 0) {
+    const aliased = resolveByAlias(normalized, aliases, presentFiles);
+    if (aliased) return aliased;
+  }
+
   // External package — `react`, `lodash/fp`, etc.
   if (
     !normalized.startsWith('.') &&
@@ -77,22 +133,7 @@ function resolveImport(
 
   const fromDir = path.dirname(fromFile);
   const target = path.resolve(fromDir, normalized);
-
-  // Direct hit (with the extension already specified).
-  if (presentFiles.has(target)) return target;
-
-  // Try adding common extensions.
-  for (const ext of RESOLVE_EXTS) {
-    if (presentFiles.has(target + ext)) return target + ext;
-  }
-
-  // Try as a directory with an index file.
-  for (const indexFile of INDEX_FILES) {
-    const candidate = path.join(target, indexFile);
-    if (presentFiles.has(candidate)) return candidate;
-  }
-
-  return null;
+  return tryAllExtensions(target, presentFiles);
 }
 
 // Tarjan's strongly-connected components. Returns an array of SCCs;
@@ -158,6 +199,7 @@ export type CrossFileResult = {
 export function computeCrossFile(
   fileImports: FileImports[],
   presentFiles: Set<string>,
+  aliases?: readonly ParsedAlias[],
 ): CrossFileResult {
   const fanIn = new Map<string, number>();
   const fanOut = new Map<string, number>();
@@ -173,7 +215,7 @@ export function computeCrossFile(
     if (!presentFiles.has(fi.filePath)) continue;
     const seen = new Set<string>();
     for (const spec of fi.imports) {
-      const resolved = resolveImport(fi.filePath, spec, presentFiles);
+      const resolved = resolveImport(fi.filePath, spec, presentFiles, aliases);
       if (!resolved || resolved === fi.filePath) continue;
       if (seen.has(resolved)) continue;
       seen.add(resolved);

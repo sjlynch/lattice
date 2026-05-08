@@ -10,6 +10,11 @@ export type HealthLanguage =
   | 'typescript'
   | 'javascript'
   | 'python'
+  | 'go'
+  | 'rust'
+  | 'java'
+  | 'csharp'
+  | 'ruby'
   | 'fallback';
 
 // Smell catalog. Adding a new smell = add an id + label here, emit it

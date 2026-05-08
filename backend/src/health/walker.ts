@@ -555,6 +555,8 @@ export function analyzeTree(
 
       if (kinds.branch.has(t)) {
         cyclomaticAdd = 1;
+      }
+      if (kinds.cognitiveBranch.has(t)) {
         cognitiveAdd = 1 + nesting;
       }
       if (kinds.nesting.has(t)) {

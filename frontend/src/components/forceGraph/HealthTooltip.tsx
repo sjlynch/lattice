@@ -41,6 +41,11 @@ function languageLabel(lang: HealthMetrics['language']): string {
     case 'typescript': return 'TypeScript';
     case 'javascript': return 'JavaScript';
     case 'python': return 'Python';
+    case 'go': return 'Go';
+    case 'rust': return 'Rust';
+    case 'java': return 'Java';
+    case 'csharp': return 'C#';
+    case 'ruby': return 'Ruby';
     case 'fallback': return 'limited analysis';
   }
 }

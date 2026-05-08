@@ -9,6 +9,7 @@ import {
   type FileImports,
   type HealthMetrics,
 } from './health/index.js';
+import { loadProjectAliases } from './health/tsconfig.js';
 
 const SOURCE_EXTS = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
@@ -235,7 +236,8 @@ export async function scan(root: string): Promise<ScanResult> {
   // entries above reference by identity, so the patched fields show
   // up automatically in the scan response.
   if (fileImports.length > 0) {
-    const cross = computeCrossFile(fileImports, seenFiles);
+    const aliases = await loadProjectAliases(absRoot);
+    const cross = computeCrossFile(fileImports, seenFiles, aliases);
     applyCrossFile(metricsByPath, cross);
   }
 

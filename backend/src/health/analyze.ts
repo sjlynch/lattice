@@ -5,7 +5,7 @@
 
 import type { HealthLanguage, HealthMetrics, HealthSmellId } from './types.js';
 import { SMELL_LABELS } from './types.js';
-import { getParser, grammarKeyForExt } from './parser.js';
+import { getParser, grammarKeyForExt, type GrammarKey } from './parser.js';
 import { analyzeTree } from './walker.js';
 import { computeHalstead, computeMaintainabilityIndex } from './halstead.js';
 import {
@@ -27,6 +27,11 @@ function languageForExt(ext: string): HealthLanguage {
   if (TS_EXTS.has(ext)) return 'typescript';
   if (JS_EXTS.has(ext)) return 'javascript';
   if (PY_EXTS.has(ext)) return 'python';
+  if (ext === '.go') return 'go';
+  if (ext === '.rs') return 'rust';
+  if (ext === '.java') return 'java';
+  if (ext === '.cs') return 'csharp';
+  if (ext === '.rb') return 'ruby';
   return 'fallback';
 }
 
@@ -137,7 +142,7 @@ function computeFromTree(
   ext: string,
   totalLoc: number,
   language: HealthLanguage,
-  grammar: 'typescript' | 'tsx' | 'javascript' | 'python',
+  grammar: GrammarKey,
 ): AnalyzeResult {
   const analysis = analyzeTree(tree, grammar, content);
 

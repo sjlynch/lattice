@@ -13,7 +13,7 @@ const CACHE_VERSION = 2;
 const CACHE_DIRNAME = '.lattice';
 const CACHE_FILENAME = 'health-cache.json';
 
-type Entry = {
+export type CacheEntry = {
   mtimeMs: number;
   size: number;
   metrics: HealthMetrics;
@@ -22,6 +22,7 @@ type Entry = {
   // re-parsing every file.
   imports: string[];
 };
+type Entry = CacheEntry;
 
 type CacheFile = {
   version: number;
@@ -40,6 +41,11 @@ export class HealthCache {
   private projectRoot: string;
   private data: CacheFile = emptyCache();
   private dirty = false;
+  // All save() calls chain off this promise so two concurrent writers
+  // can never race on the same JSON file. Each link snapshots `data`
+  // and clears `dirty` before doing the write — concurrent set()s after
+  // the snapshot re-mark dirty and a subsequent save() picks them up.
+  private saveChain: Promise<void> = Promise.resolve();
 
   constructor(projectRoot: string) {
     this.projectRoot = projectRoot;
@@ -81,6 +87,22 @@ export class HealthCache {
     this.dirty = true;
   }
 
+  delete(filePath: string): void {
+    if (this.data.files[filePath]) {
+      delete this.data.files[filePath];
+      this.dirty = true;
+    }
+  }
+
+  // Iterate the loaded entries. Used by the watcher to hydrate its
+  // in-memory cross-file state when a project is opened, so the very
+  // first file save doesn't broadcast bogus fanIn/fanOut numbers.
+  *entries(): IterableIterator<[string, CacheEntry]> {
+    for (const [k, v] of Object.entries(this.data.files)) {
+      yield [k, v];
+    }
+  }
+
   // Remove entries whose paths are no longer present in the scan, so the
   // cache doesn't grow unboundedly across renames/deletes.
   prune(presentPaths: Set<string>): void {
@@ -94,18 +116,29 @@ export class HealthCache {
     if (removed > 0) this.dirty = true;
   }
 
-  async save(): Promise<void> {
+  save(): Promise<void> {
+    // Queue ourselves at the end of the chain so two callers that fire
+    // save() back-to-back don't both end up inside fs.writeFile at the
+    // same time (which can corrupt the JSON). The chain itself never
+    // rejects — _doSave swallows write errors so a transient EBUSY
+    // doesn't poison every subsequent save.
+    this.saveChain = this.saveChain.then(() => this._doSave());
+    return this.saveChain;
+  }
+
+  private async _doSave(): Promise<void> {
     if (!this.dirty) return;
+    // Snapshot before clearing the dirty bit so concurrent set() calls
+    // landing while we're writing get picked up by the next save().
+    const snapshot = JSON.stringify(this.data);
+    this.dirty = false;
     try {
       await fs.mkdir(path.join(this.projectRoot, CACHE_DIRNAME), { recursive: true });
-      await fs.writeFile(
-        cachePath(this.projectRoot),
-        JSON.stringify(this.data),
-        'utf8',
-      );
-      this.dirty = false;
+      await fs.writeFile(cachePath(this.projectRoot), snapshot, 'utf8');
     } catch {
-      // Best-effort cache. Failing to persist is not a scan failure.
+      // Best-effort cache. Re-arm the dirty flag so the next save()
+      // tries again instead of leaving the on-disk file stale.
+      this.dirty = true;
     }
   }
 }

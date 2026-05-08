@@ -7,6 +7,11 @@ export type HealthLanguage =
   | 'typescript'
   | 'javascript'
   | 'python'
+  | 'go'
+  | 'rust'
+  | 'java'
+  | 'csharp'
+  | 'ruby'
   | 'fallback';
 
 export type HealthSmellId =

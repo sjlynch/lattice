@@ -352,7 +352,7 @@ const HEALTH_COMPONENTS: HealthComponent[] = [
       },
       {
         label: 'Languages',
-        body: 'TypeScript, JavaScript, Python.',
+        body: 'TypeScript, JavaScript, Python, Go, Rust, Java, C#, Ruby.',
       },
     ],
   },
@@ -375,7 +375,7 @@ const HEALTH_COMPONENTS: HealthComponent[] = [
       },
       {
         label: 'Languages',
-        body: 'TypeScript, JavaScript, Python.',
+        body: 'TypeScript, JavaScript, Python, Go, Rust, Java, C#, Ruby.',
       },
     ],
   },
@@ -398,7 +398,7 @@ const HEALTH_COMPONENTS: HealthComponent[] = [
       },
       {
         label: 'Languages',
-        body: 'TypeScript, JavaScript, Python.',
+        body: 'TypeScript, JavaScript, Python, Go, Rust, Java, C#, Ruby.',
       },
     ],
   },
@@ -444,7 +444,7 @@ const HEALTH_COMPONENTS: HealthComponent[] = [
       },
       {
         label: 'Languages',
-        body: 'TypeScript, JavaScript, Python.',
+        body: 'TypeScript, JavaScript, Python, Go, Rust, Java, C#, Ruby.',
       },
     ],
   },
@@ -467,7 +467,7 @@ const HEALTH_COMPONENTS: HealthComponent[] = [
       },
       {
         label: 'Languages',
-        body: 'TypeScript, JavaScript, Python.',
+        body: 'TypeScript, JavaScript, Python, Go, Rust, Java, C#, Ruby.',
       },
     ],
   },
@@ -490,7 +490,7 @@ const HEALTH_COMPONENTS: HealthComponent[] = [
       },
       {
         label: 'Languages',
-        body: 'TypeScript, JavaScript, Python.',
+        body: 'TypeScript, JavaScript, Python, Go, Rust, Java, C#, Ruby.',
       },
     ],
   },

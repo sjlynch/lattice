@@ -9,6 +9,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
+import ignore, { type Ignore } from 'ignore';
 import {
   analyzeFile,
   applyCrossFile,
@@ -17,6 +18,7 @@ import {
   type FileImports,
   type HealthMetrics,
 } from './index.js';
+import { loadProjectAliases, type ParsedAlias } from './tsconfig.js';
 
 // Same SOURCE_EXTS list the scanner uses; duplicated here to keep the
 // two files independent. If they drift the watcher might broadcast
@@ -67,16 +69,42 @@ const IGNORE_DIR_NAMES = new Set<string>([
   '.terraform',
 ]);
 
-// Predicate fed to chokidar's `ignored` option. Returns true when the
-// given path should be excluded from watching. We split on both kinds
-// of separators because chokidar passes platform-native paths and we
-// match against bare directory names.
-function shouldIgnorePath(filePath: string): boolean {
-  const segments = filePath.split(/[\\/]+/);
-  for (const seg of segments) {
-    if (IGNORE_DIR_NAMES.has(seg)) return true;
+// Predicate fed to chokidar's `ignored` option. The watcher used to
+// only honor IGNORE_DIR_NAMES, which let gitignored source files
+// (build outputs, generated code, fixtures excluded by the project's
+// .gitignore) leak through and broadcast metrics for files that the
+// scanner never saw — the frontend would then show ghost nodes that
+// disappeared on the next refresh. Loading the project's .gitignore
+// keeps the watcher and the scanner in lock-step.
+function buildIgnorePredicate(
+  projectRoot: string,
+  gitignore: Ignore,
+): (filePath: string) => boolean {
+  return (filePath: string) => {
+    // Always-ignore segments take precedence over .gitignore so
+    // node_modules / .git / .lattice are blocked even on projects
+    // missing a .gitignore.
+    const segments = filePath.split(/[\\/]+/);
+    for (const seg of segments) {
+      if (IGNORE_DIR_NAMES.has(seg)) return true;
+    }
+    let rel = path.relative(projectRoot, filePath);
+    if (!rel || rel.startsWith('..')) return false;
+    rel = rel.split(path.sep).join('/');
+    if (!rel) return false;
+    return gitignore.ignores(rel);
+  };
+}
+
+async function loadGitignore(projectRoot: string): Promise<Ignore> {
+  const ig = ignore();
+  try {
+    const content = await fs.readFile(path.join(projectRoot, '.gitignore'), 'utf8');
+    ig.add(content);
+  } catch {
+    // No .gitignore — fine, we still have IGNORE_DIR_NAMES.
   }
-  return false;
+  return ig;
 }
 
 const LOC_MAX_BYTES = 5 * 1024 * 1024;
@@ -97,10 +125,15 @@ type ProjectWatcher = {
   watcher: FSWatcher;
   cache: HealthCache;
   // Per-project import map kept in memory for cross-file recompute on
-  // every change. Initial state is populated from the cache load on
-  // first event.
+  // every change. Hydrated from the on-disk cache when the watcher
+  // boots so the FIRST file save reports correct fanIn/fanOut instead
+  // of zeros (the cache holds the post-cross-file metrics from the
+  // last scan).
   imports: Map<string, string[]>;
   metrics: Map<string, HealthMetrics>;
+  // tsconfig path-alias map (TS/JS only). Loaded once at watcher boot;
+  // changing tsconfig.json requires restarting the dev server.
+  aliases: ParsedAlias[];
   subscribers: Set<Subscriber>;
 };
 
@@ -130,18 +163,25 @@ async function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
   const cache = new HealthCache(projectRoot);
   await cache.load();
 
-  // Bootstrap our in-memory mirror from the cache. We only get
-  // imports/metrics for files the previous scan analyzed; new files
-  // get added on their first 'add'/'change' event below.
+  // Hydrate our in-memory mirror from the cache. The cache stores the
+  // post-cross-file metrics from the last scanner run, so the very
+  // first file save can compute correct fanIn/fanOut against the full
+  // import graph instead of seeing only itself.
   const importsMap = new Map<string, string[]>();
   const metricsMap = new Map<string, HealthMetrics>();
-  // The HealthCache class doesn't expose its raw map; nothing else
-  // needs it externally so we don't bother prying. Watcher starts
-  // empty and fills as events fire — that's fine since the scan
-  // performs the initial cross-file pass already.
+  for (const [filePath, entry] of cache.entries()) {
+    importsMap.set(filePath, entry.imports ?? []);
+    metricsMap.set(filePath, entry.metrics);
+  }
+
+  const [gitignore, aliases] = await Promise.all([
+    loadGitignore(projectRoot),
+    loadProjectAliases(projectRoot),
+  ]);
+  const ignored = buildIgnorePredicate(projectRoot, gitignore);
 
   const watcher = chokidar.watch(projectRoot, {
-    ignored: shouldIgnorePath,
+    ignored,
     persistent: true,
     ignoreInitial: true,
     awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
@@ -161,6 +201,7 @@ async function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
     cache,
     imports: importsMap,
     metrics: metricsMap,
+    aliases,
     subscribers: new Set(),
   };
 
@@ -201,7 +242,7 @@ async function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
       fileImports.push({ filePath: fp, imports: ims });
     }
     const presentFiles = new Set(proj.metrics.keys());
-    const cross = computeCrossFile(fileImports, presentFiles);
+    const cross = computeCrossFile(fileImports, presentFiles, proj.aliases);
     applyCrossFile(proj.metrics, cross);
 
     // The applyCrossFile call mutated `metrics` in place — fetch it
@@ -216,6 +257,11 @@ async function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
     if (!SOURCE_EXTS.has(ext)) return;
     proj.imports.delete(filePath);
     proj.metrics.delete(filePath);
+    // Drop the on-disk cache entry too — the previous version only
+    // updated the in-memory maps, which let the cache grow unboundedly
+    // across renames during a long-running session.
+    proj.cache.delete(filePath);
+    proj.cache.save().catch(() => { /* best-effort */ });
     broadcast(proj, { type: 'removed', filePath });
   }
 

@@ -54,9 +54,27 @@ const GRAMMAR_BY_EXT: Record<string, string> = {
   '.cjs': 'tree-sitter-javascript.wasm',
   '.py': 'tree-sitter-python.wasm',
   '.pyi': 'tree-sitter-python.wasm',
+  // Tier-2: shipped in @vscode/tree-sitter-wasm but not previously
+  // wired up. These get full AST analysis (CC, cognitive, nesting,
+  // function records); cross-file imports stay unresolved because
+  // each language has its own module system we don't model.
+  '.go': 'tree-sitter-go.wasm',
+  '.rs': 'tree-sitter-rust.wasm',
+  '.java': 'tree-sitter-java.wasm',
+  '.cs': 'tree-sitter-c-sharp.wasm',
+  '.rb': 'tree-sitter-ruby.wasm',
 };
 
-export type GrammarKey = 'typescript' | 'tsx' | 'javascript' | 'python';
+export type GrammarKey =
+  | 'typescript'
+  | 'tsx'
+  | 'javascript'
+  | 'python'
+  | 'go'
+  | 'rust'
+  | 'java'
+  | 'csharp'
+  | 'ruby';
 
 export function grammarKeyForExt(ext: string): GrammarKey | null {
   switch (ext) {
@@ -72,6 +90,16 @@ export function grammarKeyForExt(ext: string): GrammarKey | null {
     case '.py':
     case '.pyi':
       return 'python';
+    case '.go':
+      return 'go';
+    case '.rs':
+      return 'rust';
+    case '.java':
+      return 'java';
+    case '.cs':
+      return 'csharp';
+    case '.rb':
+      return 'ruby';
     default:
       return null;
   }
