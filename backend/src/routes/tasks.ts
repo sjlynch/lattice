@@ -36,7 +36,7 @@ function resolveProject(req: { query: unknown; body: unknown }): string {
 // markdown through *literally*, no escaping at all. This is the
 // difference between a 5-line curl invocation and a 300-line python
 // script when an agent wants to seed many tasks at once.
-function parseMarkdownTasks(md: string): Array<{ title: string; description?: string }> {
+export function parseMarkdownTasks(md: string): Array<{ title: string; description?: string }> {
   const lines = md.split(/\r?\n/);
   const out: Array<{ title: string; description: string[] }> = [];
   let current: { title: string; description: string[] } | null = null;
