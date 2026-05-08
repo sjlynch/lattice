@@ -6,7 +6,7 @@
 //     start so each per-task FF sees a clean tree and never needs its own stash.
 
 import { exec } from './exec.js';
-import { listConflictedFiles } from './state.js';
+import { resolveOwnedFileConflicts } from './conflictResolve.js';
 
 // Stash label used for the run-level pre-flight stash. Fixed so that a
 // stash created by one run can be found and popped by a subsequent run
@@ -67,13 +67,25 @@ export async function popStashByMessage(
     return { kind: 'clean' };
   }
   // Pop conflict: git leaves the stash in the list and writes conflict markers.
-  const conflictedFiles = await listConflictedFiles(repoRoot);
-  if (conflictedFiles.length > 0) {
-    return { kind: 'conflict', conflictedFiles };
+  // Auto-resolve any Lattice-owned files (the worktree's version always
+  // wins). If only owned files conflicted, drop the stash and report
+  // clean — no resolver Claude needed.
+  const { resolved, remaining } = await resolveOwnedFileConflicts(repoRoot, 'stash');
+  if (resolved.length > 0) {
+    console.log(
+      `[stash] auto-resolved ${resolved.length} owned file(s) in stash-pop: ${resolved.join(', ')}`,
+    );
   }
-  return {
-    kind: 'error',
-    message:
-      pop.stderr.trim() || pop.stdout.trim() || 'git stash pop failed',
-  };
+  if (remaining.length === 0) {
+    // Stash-pop leaves the stash in the list when it conflicts; drop it
+    // explicitly now that all conflicts are cleared.
+    const drop = await exec('git', ['stash', 'drop', ref], repoRoot);
+    if (drop.code !== 0) {
+      console.warn(
+        `[stash] auto-resolve drop failed (${ref}): ${drop.stderr.trim() || drop.stdout.trim()}`,
+      );
+    }
+    return { kind: 'clean' };
+  }
+  return { kind: 'conflict', conflictedFiles: remaining };
 }

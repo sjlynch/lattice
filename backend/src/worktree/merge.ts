@@ -14,12 +14,20 @@ import {
   listConflictedFiles,
 } from './state.js';
 import { autoStashMessage, popStashByMessage } from './stash.js';
+import { resolveOwnedFileConflicts } from './conflictResolve.js';
+import { LATTICE_OWNED_FILE_PATHS } from './managedFiles.js';
 
 // Files that Lattice writes into every worktree root but must never be
 // committed. If a previous resolver Claude accidentally ran `git add .`
 // and committed one of these, future merges into other worktrees fail with
 // "untracked working tree files would be overwritten by merge." Moving
 // them aside before `git merge` and restoring afterwards sidesteps this.
+//
+// `.claude/settings.local.json` is intentionally NOT shelved here even
+// though Lattice owns it — it would conflict on merge if tracked, and
+// auto-resolving the conflict (see resolveOwnedFileConflicts below) is
+// cleaner than shelving + restoring (which would just cover up the
+// tracked-file problem instead of fixing it).
 const LATTICE_MANAGED_FILES = ['LATTICE_TASK.md', 'MERGE_INSTRUCTIONS.md'];
 
 async function shelveLatticeManagedFiles(worktreePath: string): Promise<string[]> {
@@ -43,21 +51,36 @@ async function restoreLatticeManagedFiles(worktreePath: string, files: string[])
   }
 }
 
-// After a clean merge, the merge commit may have brought in LATTICE_TASK.md
-// (or similar) as a tracked file because main had it accidentally committed.
-// Remove it from the index and make a cleanup commit so the removal
-// propagates when this branch is fast-forwarded into main.
-async function untrackLatticeManagedFiles(worktreePath: string, shelved: string[]): Promise<void> {
+// After a clean merge, the merge commit may have brought in any owned
+// file (LATTICE_TASK.md, MERGE_INSTRUCTIONS.md, .claude/settings.local.json)
+// as a tracked file because main had it accidentally committed. Remove
+// each from the index and commit the cleanup so the removal propagates
+// when this branch is fast-forwarded into main.
+//
+// Iterates the central owned-file list rather than the shelved subset:
+// `.claude/settings.local.json` isn't shelved (Layer 2 auto-resolves its
+// conflicts instead) but should still be untracked here if main carried
+// it through the merge.
+async function untrackOwnedFilesPostMerge(worktreePath: string): Promise<void> {
   const toRemove: string[] = [];
-  for (const f of shelved) {
+  for (const f of LATTICE_OWNED_FILE_PATHS) {
     const check = await exec('git', ['ls-files', f], worktreePath);
     if (check.stdout.trim()) toRemove.push(f);
   }
   if (toRemove.length === 0) return;
   await exec('git', ['rm', '--cached', ...toRemove], worktreePath);
-  await exec('git', ['commit', '-m', 'Remove accidentally tracked Lattice-managed files [lattice-auto]'], worktreePath);
+  await exec(
+    'git',
+    [
+      'commit',
+      '-m',
+      `Untrack Lattice-managed files [lattice-auto]\n\n${toRemove.map((f) => `- ${f}`).join('\n')}`,
+    ],
+    worktreePath,
+  );
   console.log(`[merge] untracked accidentally committed lattice file(s): ${toRemove.join(', ')}`);
 }
+
 
 export type MergeConflictKind = 'merge' | 'stash-pop';
 
@@ -238,7 +261,7 @@ export async function mergeWorktreeInRepo(
     // If the merge brought in tracked Lattice-managed files (LATTICE_TASK.md
     // etc.) from main — from a prior accidental commit — remove them now and
     // commit the cleanup so the fix propagates when this branch FFs into main.
-    await untrackLatticeManagedFiles(worktreePath, shelved);
+    await untrackOwnedFilesPostMerge(worktreePath);
     // Worktree is clean. The caller is responsible for fastForwardMain
     // and cleanup via finalizeMergedTask — keeping the steps separate
     // means the run worker and the /merge endpoint can compose them
@@ -247,11 +270,46 @@ export async function mergeWorktreeInRepo(
   }
 
   if (await isMidMerge(worktreePath)) {
-    const conflictedFiles = await listConflictedFiles(worktreePath);
+    // Auto-resolve any Lattice-owned files in the conflict set. If they
+    // were the only conflicts, complete the merge ourselves and report
+    // `clean` so the caller can finalize without spawning a resolver
+    // Claude (which would have been bootstrapped against a malformed
+    // .claude/settings.local.json full of conflict markers).
+    const { resolved, remaining } = await resolveOwnedFileConflicts(
+      worktreePath,
+      'merge',
+    );
+    if (resolved.length > 0) {
+      console.log(
+        `[merge] auto-resolved ${resolved.length} owned file(s) in ${worktreePath}: ${resolved.join(', ')}`,
+      );
+    }
+    if (remaining.length === 0) {
+      const commit = await exec(
+        'git',
+        [
+          'commit',
+          '--no-edit',
+          '-m',
+          'Merge with auto-resolved Lattice-owned files [lattice-auto]',
+        ],
+        worktreePath,
+      );
+      if (commit.code !== 0) {
+        return {
+          status: 'error',
+          message: `Auto-resolve commit failed: ${commit.stderr.trim() || commit.stdout.trim()}`.slice(0, 500),
+        };
+      }
+      // Same post-clean cleanup as the all-clean path: drop any tracked
+      // managed files (LATTICE_TASK.md etc.) the merge brought in.
+      await untrackOwnedFilesPostMerge(worktreePath);
+      return { status: 'clean' };
+    }
     return {
       status: 'conflict',
       conflictKind: 'merge',
-      conflictedFiles,
+      conflictedFiles: remaining,
     };
   }
 

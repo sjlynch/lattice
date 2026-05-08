@@ -12,6 +12,11 @@ import { exec } from './exec.js';
 import { worktreeExists } from './state.js';
 import { renderTaskMarkdown } from './instructions.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
+import {
+  LATTICE_EXCLUDE_PATTERNS,
+  LATTICE_GITIGNORE_ENTRIES,
+  LATTICE_OWNED_FILE_PATHS,
+} from './managedFiles.js';
 
 // How many alternate worktree paths to try when the canonical path can't be
 // freed (Windows lock that survives PTY kills + retries — usually an Explorer
@@ -87,6 +92,12 @@ export async function setupTaskWorktree(
     );
   }
   const repoRoot = repoCheck.stdout.trim();
+  // Defend the project against the file-tracking pattern that produces
+  // unresolvable merge conflicts in `.claude/settings.local.json`. Cheap,
+  // idempotent, and runs before each worktree creation so newly-adopted
+  // projects self-heal on first task run.
+  await ensureLatticeGitignore(repoRoot);
+  await untrackOwnedFilesInRepo(repoRoot);
   const slug = slugify(task.title);
   const shortId = task.id.slice(-6);
   const worktreesDir = path.join(repoRoot, '.lattice', 'worktrees');
@@ -137,7 +148,7 @@ export async function setupTaskWorktree(
     // Keep Lattice-managed files out of `git status` so Claude's `git add .`
     // never stages them. Writes to the worktree-local exclude (not the repo
     // .gitignore) so the project's tracked files are untouched.
-    await writeWorktreeExclude(candidatePath, ['LATTICE_TASK.md', 'MERGE_INSTRUCTIONS.md', '.claude/']);
+    await writeWorktreeExclude(candidatePath, [...LATTICE_EXCLUDE_PATTERNS]);
 
     if (attempt > 0) {
       console.log(
@@ -308,13 +319,11 @@ async function writeWorktreeExclude(worktreePath: string, patterns: string[]): P
 // Claude hook config — Stop hook posts back so the task moves to QA.
 // Written into <worktree>/.claude/settings.local.json so it's scoped to
 // just that worktree's Claude session.
-async function installStopHook(
-  worktreePath: string,
-  taskId: string,
-  backendOrigin: string,
-): Promise<void> {
-  const claudeDir = path.join(worktreePath, '.claude');
-  await fs.mkdir(claudeDir, { recursive: true });
+//
+// Exported as `renderStopHookJson` so the validation/repair path in the
+// merge route can rebuild the file from the same template Lattice uses
+// at setup time.
+export function renderStopHookJson(taskId: string, backendOrigin: string): string {
   const hookConfig = {
     hooks: {
       Stop: [
@@ -330,9 +339,137 @@ async function installStopHook(
       ],
     },
   };
-  await fs.writeFile(
-    path.join(claudeDir, 'settings.local.json'),
-    JSON.stringify(hookConfig, null, 2),
-    'utf8',
+  return JSON.stringify(hookConfig, null, 2);
+}
+
+async function installStopHook(
+  worktreePath: string,
+  taskId: string,
+  backendOrigin: string,
+): Promise<void> {
+  const claudeDir = path.join(worktreePath, '.claude');
+  await fs.mkdir(claudeDir, { recursive: true });
+  const file = path.join(claudeDir, 'settings.local.json');
+  const expected = renderStopHookJson(taskId, backendOrigin);
+  // Skip rewrite if the file already matches — keeps `git status` clean
+  // when this worktree is reconciled and recreated against the same task.
+  try {
+    const existing = await fs.readFile(file, 'utf8');
+    if (existing === expected) return;
+  } catch {
+    /* file absent — fall through to write */
+  }
+  await fs.writeFile(file, expected, 'utf8');
+}
+
+// Append `.claude/settings.local.json` to the repo's root .gitignore if
+// it isn't already covered. Idempotent: scans the existing file for
+// either the literal entry or any line that would match it via gitignore
+// pattern semantics. Bails silently if the project has no .gitignore
+// (creating one would surprise the user); the worktree-local exclude
+// still protects merges in that case.
+const LATTICE_GITIGNORE_MARKER = '# lattice-managed (do not remove)';
+
+export async function ensureLatticeGitignore(repoRoot: string): Promise<void> {
+  const ignoreFile = path.join(repoRoot, '.gitignore');
+  let existing: string;
+  try {
+    existing = await fs.readFile(ignoreFile, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    console.warn('[worktree] could not read .gitignore:', err);
+    return;
+  }
+  const lines = existing.split(/\r?\n/).map((l) => l.trim());
+  const missing = LATTICE_GITIGNORE_ENTRIES.filter(
+    (entry) => !lines.some((l) => l === entry || l === `/${entry}`),
+  );
+  if (missing.length === 0) return;
+  const trailingNewline = existing.endsWith('\n') ? '' : '\n';
+  const block =
+    `${trailingNewline}\n${LATTICE_GITIGNORE_MARKER}\n${missing.join('\n')}\n`;
+  try {
+    await fs.appendFile(ignoreFile, block, 'utf8');
+    console.log(
+      `[worktree] appended ${missing.length} entry(ies) to ${ignoreFile}`,
+    );
+  } catch (err) {
+    console.warn('[worktree] could not append to .gitignore:', err);
+  }
+}
+
+// `git rm --cached` any Lattice-owned file that's still tracked in `repoRoot`,
+// then commit the cleanup so it propagates when branches merge. Files stay
+// on disk (rm --cached only touches the index). Idempotent: skips files
+// that aren't tracked, and skips the commit if the index is unchanged.
+//
+// Called at:
+//   - setupTaskWorktree (per-worktree create) — heals projects on first use
+//   - startMergeRun (pre-flight)              — heals before main absorbs branches
+//   - /api/tasks/:id/merge (manual merge)     — heals before a one-off merge
+//
+// Aborts (no-op) if the working tree has uncommitted changes — a commit
+// here would entangle Lattice's cleanup with whatever the user is editing.
+// The auto-resolve path at merge time still handles the conflict case.
+export async function untrackOwnedFilesInRepo(repoRoot: string): Promise<void> {
+  const tracked: string[] = [];
+  for (const f of LATTICE_OWNED_FILE_PATHS) {
+    const ls = await exec('git', ['ls-files', '--error-unmatch', f], repoRoot);
+    if (ls.code === 0 && ls.stdout.trim()) tracked.push(f);
+  }
+  if (tracked.length === 0) return;
+
+  const status = await exec('git', ['status', '--porcelain'], repoRoot);
+  if (status.code !== 0) {
+    console.warn(`[worktree] untrack: git status failed in ${repoRoot}`);
+    return;
+  }
+  // Tolerate the working tree containing only Lattice-owned files (e.g. a
+  // freshly-installed Stop hook). Anything else means real user state we
+  // shouldn't bundle into a Lattice-auto commit.
+  const dirtyOther = status.stdout
+    .split(/\r?\n/)
+    .map((l) => l.slice(3).trim())
+    .filter(Boolean)
+    .filter((p) => !(LATTICE_OWNED_FILE_PATHS as readonly string[]).includes(p));
+  if (dirtyOther.length > 0) {
+    console.log(
+      `[worktree] skipping untrack of [${tracked.join(', ')}] in ${repoRoot} ` +
+        `— working tree has unrelated changes (${dirtyOther.slice(0, 3).join(', ')}${dirtyOther.length > 3 ? ', …' : ''})`,
+    );
+    return;
+  }
+
+  const rm = await exec(
+    'git',
+    ['rm', '--cached', '--quiet', ...tracked],
+    repoRoot,
+  );
+  if (rm.code !== 0) {
+    console.warn(
+      `[worktree] git rm --cached failed in ${repoRoot}: ${rm.stderr.trim()}`,
+    );
+    return;
+  }
+  const commit = await exec(
+    'git',
+    [
+      'commit',
+      '-m',
+      `Untrack Lattice-managed files [lattice-auto]\n\n${tracked.map((f) => `- ${f}`).join('\n')}`,
+    ],
+    repoRoot,
+  );
+  if (commit.code !== 0) {
+    // No commit usually means the index ended up unchanged (race with
+    // another process). Reset the index to keep state coherent.
+    console.warn(
+      `[worktree] commit after rm --cached failed: ${commit.stderr.trim() || commit.stdout.trim()}`,
+    );
+    await exec('git', ['reset', 'HEAD', '--', ...tracked], repoRoot);
+    return;
+  }
+  console.log(
+    `[worktree] untracked Lattice-owned file(s) from ${repoRoot}: ${tracked.join(', ')}`,
   );
 }

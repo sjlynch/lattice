@@ -5,6 +5,9 @@
 export {
   setupTaskWorktree,
   parseWorktreesPorcelain,
+  ensureLatticeGitignore,
+  untrackOwnedFilesInRepo,
+  renderStopHookJson,
   type WorktreeResult,
   type ParsedWorktree,
 } from './worktree/setup.js';

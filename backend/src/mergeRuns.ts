@@ -20,6 +20,8 @@ import {
   stashForRun,
   popStashByMessage,
   writeRunStashResolveInstructions,
+  ensureLatticeGitignore,
+  untrackOwnedFilesInRepo,
   RUN_STASH_LABEL,
 } from './worktree.js';
 import { getTask, listTasks, updateTask } from './tasks.js';
@@ -139,6 +141,17 @@ export async function startMergeRun(
   // Run the worker async. Fire-and-forget; consumers track via WS / GET.
   (async () => {
     console.log(`[merge-run] ${run.id} started — ${targets.length} task(s) to merge`);
+
+    // Pre-flight: heal the project's tracking of Lattice-owned files
+    // BEFORE stashing. If `.claude/settings.local.json` is tracked in main,
+    // every per-task merge will conflict on it; untrack it now (idempotent
+    // no-op if already clean) so the run starts from a known-good state.
+    try {
+      await ensureLatticeGitignore(projectPath);
+      await untrackOwnedFilesInRepo(projectPath);
+    } catch (err) {
+      console.warn('[merge-run] pre-flight untrack failed (continuing):', err);
+    }
 
     // Pre-flight: stash the working tree once so every per-task
     // fastForwardMain call sees a clean tree and never needs to stash.

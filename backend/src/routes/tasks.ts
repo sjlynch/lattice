@@ -31,6 +31,8 @@ import {
   buildConflictResolveCommand,
   branchCommitCount,
   cleanupWorktreeForTask,
+  ensureLatticeGitignore,
+  untrackOwnedFilesInRepo,
 } from '../worktree.js';
 import { getActiveRunForProject, startMergeRun } from '../mergeRuns.js';
 import { tryAcquire, release } from '../mergeLocks.js';
@@ -370,6 +372,15 @@ export function buildTasksRouter(backendOrigin: string): Router {
     projectMergesActive.add(task.projectPath);
 
     try {
+      // Heal the project's tracking of Lattice-owned files before merging.
+      // Idempotent no-op when nothing is tracked. See untrackOwnedFilesInRepo.
+      try {
+        await ensureLatticeGitignore(task.projectPath);
+        await untrackOwnedFilesInRepo(task.projectPath);
+      } catch (err) {
+        console.warn('[merge] pre-flight untrack failed (continuing):', err);
+      }
+
       // If already in a known conflict state, check whether the conflict was
       // already committed. When a resolver Claude finishes but
       // finalizeMergedTask fails (e.g. a race where another task's finalize
