@@ -21,6 +21,7 @@ import { buildSettingsRouter } from './routes/settings.js';
 import { buildTerminalsRouter } from './routes/terminals.js';
 import { buildTasksRouter } from './routes/tasks.js';
 import { buildMergeRunsRouter } from './routes/mergeRuns.js';
+import { buildPushRunsRouter } from './routes/pushRuns.js';
 import { buildWorkflowsRouter } from './routes/workflows.js';
 import { attachWebSockets } from './ws/wsServer.js';
 import { recoverOrphanedTasks } from './recovery.js';
@@ -39,6 +40,7 @@ app.use(buildSettingsRouter());
 app.use(buildTerminalsRouter());
 app.use(buildTasksRouter(BACKEND_ORIGIN));
 app.use(buildMergeRunsRouter(BACKEND_ORIGIN));
+app.use(buildPushRunsRouter(BACKEND_ORIGIN));
 app.use(buildWorkflowsRouter(BACKEND_ORIGIN));
 
 // ---------- Global JSON error middleware ----------

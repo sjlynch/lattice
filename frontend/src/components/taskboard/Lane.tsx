@@ -1,5 +1,5 @@
 import { Fragment, useState, type ReactNode } from 'react';
-import { CheckCheck, GitMerge, Play, Plus } from 'lucide-react';
+import { CheckCheck, GitMerge, Play, Plus, UploadCloud } from 'lucide-react';
 import type { Task, TaskStatus } from '../../api';
 import { DRAG_MIME, parseDragPayload, type Lane as LaneDef } from './lanes';
 import { TaskCard } from './TaskCard';
@@ -26,6 +26,8 @@ export function Lane({
   onMerge,
   getFocusTerminal,
   onRunAll,
+  onPush,
+  pushDisabled,
   onView,
   onSingleSelect,
   onToggleSelect,
@@ -50,6 +52,10 @@ export function Lane({
   onMerge: (task: Task) => Promise<boolean>;
   getFocusTerminal?: (task: Task) => (() => void) | null;
   onRunAll?: () => void;
+  // Lane-level "push to remote" action. The launcher passes this only on the
+  // QA lane today; rendered as a small icon button next to the add (+) one.
+  onPush?: () => void;
+  pushDisabled?: boolean;
   onView: (task: Task) => void;
   onSingleSelect: (id: string) => void;
   onToggleSelect: (id: string) => void;
@@ -156,6 +162,17 @@ export function Lane({
           )}
         </span>
         <div className="taskboard-lane-actions">
+          {onPush && (
+            <button
+              className="icon-btn sm"
+              onClick={onPush}
+              disabled={pushDisabled}
+              title={pushDisabled ? 'Push in progress…' : 'Push project to remote'}
+              aria-label="Push project to remote"
+            >
+              <UploadCloud size={14} />
+            </button>
+          )}
           <button
             className="icon-btn sm"
             onClick={onAdd}

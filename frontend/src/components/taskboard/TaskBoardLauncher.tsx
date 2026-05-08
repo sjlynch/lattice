@@ -4,11 +4,14 @@ import { FloatingPanel } from '../FloatingPanel';
 import { useTerminals } from '../../TerminalsContext';
 import {
   cancelMergeRun as apiCancelMergeRun,
+  checkGit,
   createTask as apiCreateTask,
   deleteTask as apiDeleteTask,
   fetchHarnessAvailability,
+  fetchPushRunStatus,
   fetchTasks,
   fetchUserSettings,
+  forgetPushRun as apiForgetPushRun,
   getActiveMergeRun,
   mergeTask as apiMergeTask,
   patchUserSettings,
@@ -16,6 +19,7 @@ import {
   resumeTask as apiResumeTask,
   runTask as apiRunTask,
   startMergeRun as apiStartMergeRun,
+  startPushRun,
   subscribeMergeRuns,
   subscribeTasks,
   updateTask as apiUpdateTask,
@@ -59,13 +63,21 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     pi: false,
     codex: false,
   });
+  // Active push run, if any. Tracking both ids lets us close the terminal
+  // (local) and forget the run on the backend (server) when the Stop hook
+  // marks it done. Null when no push is in flight; the QA-lane button is
+  // rendered only when activeFolder has a `.git` and disabled while non-null.
+  const [activePush, setActivePush] = useState<
+    { runId: string; terminalId: string } | null
+  >(null);
+  const [hasGit, setHasGit] = useState(false);
 
   // Filter state — all lanes visible by default.
   const [visibleLanes, setVisibleLanes] = useState<Set<TaskStatus>>(
     () => new Set(LANES.map((l) => l.id)),
   );
 
-  const { addTerminal, closeTerminalsForTask, terminals, setActiveId } =
+  const { addTerminal, closeTerminal, closeTerminalsForTask, terminals, setActiveId } =
     useTerminals();
 
   // Build a taskId → most-recent-terminal-id map for the focus button.
@@ -109,6 +121,46 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
       }
     }
   }, [tasks, closeTerminalsForTask]);
+
+  // Probe for `.git` so the QA-lane Push button is hidden in non-git
+  // projects (where the action is meaningless). Re-runs on folder switch.
+  useEffect(() => {
+    if (!activeFolder) {
+      setHasGit(false);
+      return;
+    }
+    let cancelled = false;
+    checkGit(activeFolder)
+      .then((r) => { if (!cancelled) setHasGit(r.hasGit); })
+      .catch(() => { if (!cancelled) setHasGit(false); });
+    return () => { cancelled = true; };
+  }, [activeFolder]);
+
+  // Poll the active push run; when the backend's Stop hook flips it to
+  // `done`, close the local terminal and forget the run. 2 s feels live
+  // without hammering the backend (the Claude session is busy doing git
+  // operations, not running an inner loop).
+  useEffect(() => {
+    if (!activePush) return;
+    let cancelled = false;
+    const tick = async () => {
+      const status = await fetchPushRunStatus(activePush.runId).catch(() => null);
+      if (cancelled) return;
+      // status === null means the run has been forgotten on the server. The
+      // only way that happens is if the user manually closed the terminal,
+      // which already triggered a DELETE; either way, we're done tracking it.
+      if (!status || status.status === 'done') {
+        closeTerminal(activePush.terminalId);
+        apiForgetPushRun(activePush.runId).catch(() => {});
+        setActivePush(null);
+      }
+    };
+    const handle = window.setInterval(() => { void tick(); }, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(handle);
+    };
+  }, [activePush, closeTerminal]);
 
   // Initial load + WS subscription per active folder.
   useEffect(() => {
@@ -509,6 +561,23 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     await Promise.all(qaTasks.map((t) => moveTask(t.id, 'done')));
   }
 
+  async function pushProject() {
+    if (!activeFolder || activePush) return;
+    try {
+      const res = await startPushRun(activeFolder);
+      const terminalId = addTerminal({
+        label: 'push',
+        cwd: res.cwd,
+        initialCommand: res.command,
+        projectPath: activeFolder,
+        serverId: res.serverId,
+      });
+      setActivePush({ runId: res.id, terminalId });
+    } catch (err) {
+      showError(`Push failed to start: ${(err as Error).message}`);
+    }
+  }
+
   // Group + sort tasks per lane. Tasks with an explicit sortOrder use it
   // directly; tasks without one fall back to `-createdAt` so newly-created
   // tasks land at the top of the lane (matches the prior newest-first
@@ -666,6 +735,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                     ? markAllQaDone
                     : undefined
                 }
+                onPush={lane.id === 'qa' && hasGit ? pushProject : undefined}
+                pushDisabled={!!activePush}
                 onView={setViewing}
                 strip={(() => {
                   if (lane.id !== 'ready_to_merge') return undefined;
