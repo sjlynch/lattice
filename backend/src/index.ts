@@ -34,6 +34,12 @@ const BACKEND_ORIGIN = `http://127.0.0.1:${PORT}`;
 const app = express();
 app.use(cors());
 app.use(express.json());
+// Form-encoded bodies are dramatically easier to build from a shell than
+// JSON (no quote-escaping, no backslash gymnastics). Accepting them on
+// task-creation endpoints lets agents send `--data-urlencode title=...`
+// without reaching for jq or python. JSON is still the canonical form
+// for batch/structured payloads.
+app.use(express.urlencoded({ extended: false }));
 
 app.use(buildHealthRouter(DEFAULT_ROOT));
 app.use(buildSettingsRouter());
