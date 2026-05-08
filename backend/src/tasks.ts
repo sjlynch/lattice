@@ -9,9 +9,14 @@ const LEGACY_GLOBAL_TASKS = path.join(LATTICE_HOME, 'tasks.json');
 
 export const PROJECT_DIR_NAME = '.lattice';
 export const PROJECT_TASKS_FILENAME = 'tasks.json';
+export const PROJECT_TASKS_BACKUP_FILENAME = 'tasks.backup.json';
 
 function projectTasksFile(projectPath: string): string {
   return path.join(projectPath, PROJECT_DIR_NAME, PROJECT_TASKS_FILENAME);
+}
+
+function projectTasksBackupFile(projectPath: string): string {
+  return path.join(projectPath, PROJECT_DIR_NAME, PROJECT_TASKS_BACKUP_FILENAME);
 }
 
 export type TaskStatus =
@@ -332,6 +337,68 @@ export function subscribe(
   return () => {
     listeners.delete(fn);
   };
+}
+
+// Snapshot the current on-disk tasks.json to tasks.backup.json. Idempotent:
+// overwrites any previous backup. Validates the source parses before writing,
+// so a corrupt source never produces a corrupt backup. Called at the start of
+// every merge run so a crash that wipes the main file (the .git-deletion
+// incident on 2026-05-08 took out tasks.json along with it) is recoverable
+// on the next backend boot.
+export async function backupTasksFile(projectPath: string): Promise<void> {
+  const key = canonicalProjectPath(projectPath);
+  const src = projectTasksFile(key);
+  const dst = projectTasksBackupFile(key);
+  try {
+    const raw = await fs.readFile(src, 'utf8');
+    JSON.parse(raw);
+    await fs.writeFile(dst, raw, 'utf8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
+    console.warn('[tasks] backup failed for', key, e);
+  }
+}
+
+// Counterpart to backupTasksFile, called from startup recovery: if tasks.json
+// is missing or unparseable but tasks.backup.json is present and parses,
+// restore from backup. Logs loudly so the operator notices the recovery.
+export async function restoreTasksFromBackupIfMissing(
+  projectPath: string,
+): Promise<void> {
+  const key = canonicalProjectPath(projectPath);
+  const src = projectTasksFile(key);
+  const dst = projectTasksBackupFile(key);
+  let needsRestore = false;
+  try {
+    const raw = await fs.readFile(src, 'utf8');
+    JSON.parse(raw);
+  } catch {
+    needsRestore = true;
+  }
+  if (!needsRestore) return;
+  try {
+    const raw = await fs.readFile(dst, 'utf8');
+    JSON.parse(raw);
+    await fs.mkdir(path.dirname(src), { recursive: true });
+    await fs.writeFile(src, raw, 'utf8');
+    console.warn(
+      `[tasks] restored ${src} from ${dst} — main file was missing or corrupt`,
+    );
+  } catch {
+    /* no backup, or backup also corrupt — nothing to do */
+  }
+}
+
+// Iterate every project in the global index and restore each from its
+// per-project backup if its tasks.json is missing/corrupt. Boot recovery
+// calls this BEFORE any other tasks.ts read so the in-memory cache is
+// populated from the restored file.
+export async function restoreAllProjectsFromBackup(): Promise<void> {
+  await loadKnownProjects();
+  for (const proj of knownProjects) {
+    // eslint-disable-next-line no-await-in-loop
+    await restoreTasksFromBackupIfMissing(proj);
+  }
 }
 
 // Returns all ready_to_merge tasks across every known project that have a

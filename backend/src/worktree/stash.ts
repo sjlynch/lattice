@@ -7,6 +7,12 @@
 
 import { exec } from './exec.js';
 import { resolveOwnedFileConflicts } from './conflictResolve.js';
+import { gitDirExists } from './state.js';
+import {
+  ensureLatticeGitignore,
+  ensureLatticeRepoExclude,
+  verifyEssentialExclusions,
+} from './setup.js';
 
 // Stash label used for the run-level pre-flight stash. Fixed so that a
 // stash created by one run can be found and popped by a subsequent run
@@ -17,12 +23,58 @@ export function autoStashMessage(branchName: string): string {
   return `lattice-auto-${branchName}`;
 }
 
+// Preflight gate for any `git stash --include-untracked` against the main
+// repo. Throws if the repo is not in a state where stashing is safe.
+//
+// Two failure modes we are guarding against, both observed in production:
+//
+//   1. `.git` itself is gone (catastrophic state from a prior run). Pressing
+//      on would let `git stash`-style commands run with `git init`-fresh
+//      semantics, or fail in confusing ways that don't surface to the
+//      operator quickly enough. Bail immediately.
+//
+//   2. `.lattice/` or `node_modules/` are not excluded by .gitignore /
+//      .git/info/exclude. `--include-untracked` would scoop them up — the
+//      orphan worktree dirs under `.lattice/worktrees/` are themselves
+//      nested git checkouts, and a stash that contains them is fragile. If
+//      that stash is ever lost (server crash, branch deletion, manual
+//      drop), every untracked file in it is silently deleted from the
+//      working tree. We want the loud failure here, not the silent
+//      deletion later.
+//
+// As a self-heal step we (re)write `.git/info/exclude` to cover `.lattice/`
+// before re-checking — info/exclude is durable across stashes (it lives in
+// the gitdir, never in the working tree). The .gitignore equivalent is also
+// re-applied for completeness, even though it's the less reliable layer.
+export async function assertSafeForStash(repoRoot: string): Promise<void> {
+  if (!(await gitDirExists(repoRoot))) {
+    throw new Error(
+      `Refusing to stash: ${repoRoot}/.git is missing. Restore the repository ` +
+        `before running another merge.`,
+    );
+  }
+  // Self-heal info/exclude (durable) and .gitignore (best-effort).
+  await ensureLatticeRepoExclude(repoRoot);
+  await ensureLatticeGitignore(repoRoot);
+  const v = await verifyEssentialExclusions(repoRoot);
+  if (!v.ok) {
+    throw new Error(
+      `Refusing to stash: paths still not git-ignored after self-heal — ` +
+        `${v.missing.join(', ')}. \`git stash --include-untracked\` would ` +
+        `scoop up these directories and risk losing them on stash failure.`,
+    );
+  }
+}
+
 // Stash the working tree once before a merge run so per-task
 // fastForwardMain calls never need to stash (they see a clean tree).
 // Returns true if a stash was created.
 export async function stashForRun(repoRoot: string): Promise<boolean> {
   const status = await exec('git', ['status', '--porcelain'], repoRoot);
   if (status.code !== 0 || !status.stdout.trim()) return false;
+  // Throws on missing .git or unexcluded essentials — caller in mergeRuns
+  // catches and aborts the run with the message visible in logs.
+  await assertSafeForStash(repoRoot);
   const stash = await exec(
     'git',
     ['stash', 'push', '--include-untracked', '-m', RUN_STASH_LABEL],

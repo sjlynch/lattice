@@ -8,6 +8,7 @@ export {
   ensureLatticeGitignore,
   ensureLatticeRepoExclude,
   untrackOwnedFilesInRepo,
+  verifyEssentialExclusions,
   renderStopHookJson,
   type WorktreeResult,
   type ParsedWorktree,
@@ -29,6 +30,7 @@ export {
   isMidMerge,
   checkBranchExists,
   branchCommitCount,
+  gitDirExists,
 } from './worktree/state.js';
 
 export {
@@ -48,6 +50,7 @@ export {
   stashForRun,
   popStashByMessage,
   autoStashMessage,
+  assertSafeForStash,
   RUN_STASH_LABEL,
 } from './worktree/stash.js';
 

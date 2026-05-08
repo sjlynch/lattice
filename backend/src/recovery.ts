@@ -8,10 +8,21 @@
 import {
   listReadyToMergeTasks,
   updateTaskCrashSafe,
+  restoreAllProjectsFromBackup,
 } from './tasks.js';
 import { checkBranchExists } from './worktree.js';
 
 export async function recoverOrphanedTasks(): Promise<void> {
+  // Phase 1: repair `.lattice/tasks.json` from `.lattice/tasks.backup.json`
+  // for any project where the main file went missing or unparseable. Must
+  // run BEFORE any tasks.ts read so the cache is populated from the
+  // restored file. Logs loudly per project that gets restored.
+  try {
+    await restoreAllProjectsFromBackup();
+  } catch (err) {
+    console.error('[startup] restoreAllProjectsFromBackup failed:', err);
+  }
+
   try {
     const stuckTasks = await listReadyToMergeTasks();
     for (const task of stuckTasks) {

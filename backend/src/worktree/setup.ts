@@ -462,6 +462,39 @@ export async function ensureLatticeRepoExclude(repoRoot: string): Promise<void> 
   }
 }
 
+// Probe whether the essentials Lattice depends on (`.lattice/`,
+// `node_modules/`) are excluded from git — by `.gitignore`, `.git/info/exclude`,
+// or any other source. Uses `git check-ignore` so we don't have to parse the
+// rules ourselves and we honor the same precedence git would.
+//
+// Why this matters: the run-level / per-task `git stash --include-untracked`
+// in stash.ts will scoop up *any* untracked path. If `.lattice/` is not
+// excluded, the stash includes the orphan worktree dirs (themselves nested
+// git checkouts), which puts the stash in a fragile state. A loss of that
+// stash — for any reason, including a server crash before pop — silently
+// deletes the entire `.lattice/` tree from the working copy. Same hazard for
+// `node_modules/`.
+//
+// We probe synthetic paths so the result doesn't depend on which files
+// happen to exist right now.
+export async function verifyEssentialExclusions(
+  repoRoot: string,
+): Promise<{ ok: boolean; missing: string[] }> {
+  const repoCheck = await exec('git', ['rev-parse', '--show-toplevel'], repoRoot);
+  if (repoCheck.code !== 0) {
+    return { ok: false, missing: ['<not a git repository>'] };
+  }
+  const probes = ['.lattice/probe', 'node_modules/probe'];
+  const missing: string[] = [];
+  for (const p of probes) {
+    const r = await exec('git', ['check-ignore', '--quiet', p], repoRoot);
+    // Exit 0 = path is ignored, 1 = not ignored, 128 = error. Treat anything
+    // non-zero as "not properly excluded" so we err on the side of caution.
+    if (r.code !== 0) missing.push(p);
+  }
+  return { ok: missing.length === 0, missing };
+}
+
 // `git rm --cached` any Lattice-owned file that's still tracked in `repoRoot`,
 // then commit the cleanup so it propagates when branches merge. Files stay
 // on disk (rm --cached only touches the index). Idempotent: skips files

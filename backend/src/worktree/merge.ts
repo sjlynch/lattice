@@ -12,8 +12,13 @@ import {
   branchCommitCount,
   branchIsAncestorOfHead,
   listConflictedFiles,
+  gitDirExists,
 } from './state.js';
-import { autoStashMessage, popStashByMessage } from './stash.js';
+import {
+  autoStashMessage,
+  popStashByMessage,
+  assertSafeForStash,
+} from './stash.js';
 import {
   resolveOwnedFileConflicts,
   resetOwnedFileLocalChanges,
@@ -107,6 +112,21 @@ export async function fastForwardMain(
   repoRoot: string,
   branchName: string,
 ): Promise<MergeOutcome> {
+  // Pre-flight: a missing .git is the "we are about to lose user data"
+  // signal. Bail before running any further git command rather than
+  // letting the cascade continue (the worktree merge already passed, so
+  // the worker would otherwise advance to the next task on the next loop
+  // iteration with the repo in a broken state).
+  if (!(await gitDirExists(repoRoot))) {
+    return {
+      status: 'error',
+      message:
+        `Cannot fast-forward: ${repoRoot}/.git is missing. The repository ` +
+        `has been catastrophically corrupted; restore it (e.g. \`git init\` + ` +
+        `\`git fetch origin\` + \`git reset --hard origin/main\`) before ` +
+        `retrying.`,
+    };
+  }
   const status = await exec('git', ['status', '--porcelain'], repoRoot);
   if (status.code !== 0) {
     return {
@@ -117,6 +137,14 @@ export async function fastForwardMain(
   const stashLabel = autoStashMessage(branchName);
   let stashRef: string | undefined;
   if (status.stdout.trim().length > 0) {
+    // Pre-flight identical to stashForRun: refuse to stash when essentials
+    // aren't excluded, since `--include-untracked` would otherwise sweep
+    // them into a fragile stash entry.
+    try {
+      await assertSafeForStash(repoRoot);
+    } catch (err) {
+      return { status: 'error', message: (err as Error).message };
+    }
     const stash = await exec(
       'git',
       ['stash', 'push', '--include-untracked', '-m', stashLabel],

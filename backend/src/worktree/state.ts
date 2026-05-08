@@ -14,6 +14,19 @@ export async function worktreeExists(worktreePath: string): Promise<boolean> {
   }
 }
 
+// Sentinel for catastrophic state: a missing `<repoRoot>/.git` means every
+// subsequent git operation will either fail destructively or be unpredictable.
+// Callers (fastForwardMain, the run-level stash preflight) bail loud on false
+// instead of pressing on into a deletion cascade.
+export async function gitDirExists(repoRoot: string): Promise<boolean> {
+  try {
+    await fs.access(path.join(repoRoot, '.git'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Resolve a worktree's git-dir (where MERGE_HEAD etc. live). Worktrees
 // store their per-worktree state under <main-repo>.git/worktrees/<name>,
 // not in <worktree>/.git (which is just a file pointer).

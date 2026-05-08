@@ -27,7 +27,7 @@ import {
   RUN_STASH_LABEL,
 } from './worktree.js';
 import { listConflictedFiles } from './worktree/state.js';
-import { getTask, listTasks, updateTask } from './tasks.js';
+import { getTask, listTasks, updateTask, backupTasksFile } from './tasks.js';
 import { tryAcquire, release } from './mergeLocks.js';
 import { proxyCreateSession } from './terminalProxy.js';
 import { canonicalProjectPath } from './projectPath.js';
@@ -150,6 +150,16 @@ export async function startMergeRun(
   };
   runs.set(run.id, run);
   notify({ type: 'started', run: snapshot(run) });
+
+  // Snapshot tasks.json before we start touching the repo. Cheap insurance
+  // against the catastrophic-state class of failure where something during
+  // the run wipes `.lattice/tasks.json`. Boot recovery restores from this
+  // backup if the main file is missing on next start.
+  try {
+    await backupTasksFile(projectPath);
+  } catch (err) {
+    console.warn('[merge-run] tasks.json backup failed (continuing):', err);
+  }
 
   // Run the worker async. Fire-and-forget; consumers track via WS / GET.
   (async () => {
