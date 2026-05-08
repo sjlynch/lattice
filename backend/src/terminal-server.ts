@@ -9,6 +9,8 @@ import http from 'node:http';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import { attachTerminal, killSession, killSessionsByCwd, listSessions, precreateSession } from './terminal.js';
+import { computeTerminalFingerprint } from './terminalFingerprint.js';
+import { ensureClaudeConfigValid } from './claudeConfigGuard.js';
 
 // Same node-pty Windows cleanup guard as the main server. Must be registered
 // before any PTY session can throw asynchronously.
@@ -39,11 +41,18 @@ process.on('unhandledRejection', (reason) => {
 
 const PORT = Number(process.env.TERMINAL_PORT) || 5185;
 
+// Content-hash of the terminal-server's own runtime files (computed once at
+// startup, frozen for the process lifetime). Replaces the hand-maintained
+// TERMINAL_API_VERSION constant: any byte-level change to the listed files
+// changes the fingerprint, so a stale orphan ALWAYS looks different from a
+// freshly-spawned server. No human in the loop, no missed bumps.
+const TERMINAL_FINGERPRINT = computeTerminalFingerprint();
+
 const app = express();
 app.use(express.json());
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, fingerprint: TERMINAL_FINGERPRINT });
 });
 
 app.get('/sessions', (_req, res) => {
@@ -90,6 +99,26 @@ app.delete('/sessions/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// JSON-only error surface. The default Express 404 / error handler returns
+// HTML, which then explodes downstream when terminalProxy.ts does
+// `await res.json()`. Force JSON for every unmatched route AND every
+// uncaught throw inside a handler so the proxy gets a parseable body it
+// can act on (and surface a clear error message back to the UI).
+app.use((req, res) => {
+  res.status(404).json({
+    error: `terminal-server: no route for ${req.method} ${req.path}`,
+  });
+});
+app.use(
+  (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[lattice-terminal] route error:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: `terminal-server: ${message}` });
+    }
+  },
+);
+
 const server = http.createServer(app);
 
 const wss = new WebSocketServer({ noServer: true });
@@ -120,8 +149,22 @@ server.on('error', (err: NodeJS.ErrnoException) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`[lattice-terminal] listening on port ${PORT}`);
+  console.log(
+    `[lattice-terminal] listening on port ${PORT} (fingerprint ${TERMINAL_FINGERPRINT})`,
+  );
+  // Backup ~/.claude.json if valid, restore from backup if corrupt. Runs
+  // once on startup so a Claude-prompt-blocking corruption from a previous
+  // session is healed before any new pty is spawned.
+  void ensureClaudeConfigValid({ refreshBackup: true });
 });
+
+// Periodic: refresh the backup while ~/.claude.json is healthy so the
+// known-good copy stays close to current. The 60 s cadence is far slower
+// than Claude's own writes, so we mostly observe stable state.
+const claudeConfigInterval = setInterval(() => {
+  void ensureClaudeConfigValid({ refreshBackup: true });
+}, 60_000);
+claudeConfigInterval.unref();
 
 // Clean up PTY sessions before exiting so node-pty child processes don't
 // linger as orphans (especially important on Windows where conpty helpers

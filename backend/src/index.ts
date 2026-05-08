@@ -15,6 +15,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureTerminalServer } from './terminalProxy.js';
+import { canonicalProjectPath } from './projectPath.js';
 import { buildHealthRouter } from './routes/health.js';
 import { buildSettingsRouter } from './routes/settings.js';
 import { buildTerminalsRouter } from './routes/terminals.js';
@@ -26,7 +27,7 @@ import { recoverOrphanedTasks } from './recovery.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 5184;
-const DEFAULT_ROOT = path.resolve(__dirname, '..', '..');
+const DEFAULT_ROOT = canonicalProjectPath(path.resolve(__dirname, '..', '..'));
 const BACKEND_ORIGIN = `http://127.0.0.1:${PORT}`;
 
 const app = express();

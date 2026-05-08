@@ -6,25 +6,125 @@
 // development), the terminal server keeps running and all Claude agents inside
 // it continue uninterrupted. The main server reconnects on next startup.
 
-import { spawn } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import type { RawData } from 'ws';
+import { computeTerminalFingerprint } from './terminalFingerprint.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TERMINAL_PORT = Number(process.env.TERMINAL_PORT) || 5185;
 const BASE = `http://127.0.0.1:${TERMINAL_PORT}`;
 
-async function isAlive(): Promise<boolean> {
+// Content-hash of the terminal-server's runtime files, computed from the
+// SAME files the spawned terminal-server hashes itself. A running server
+// whose fingerprint differs from this one is built from older bytes and
+// must be respawned. No manual version constant to forget to bump.
+const EXPECTED_TERMINAL_FINGERPRINT = computeTerminalFingerprint();
+
+type ProbeResult = 'ok' | 'stale' | 'dead';
+
+async function probeServer(): Promise<ProbeResult> {
+  let res: Response;
   try {
-    const res = await fetch(`${BASE}/health`, {
+    res = await fetch(`${BASE}/health`, {
       signal: AbortSignal.timeout(500),
     });
-    return res.ok;
   } catch {
-    return false;
+    return 'dead';
   }
+  if (!res.ok) return 'stale';
+  try {
+    const body = (await res.json()) as {
+      ok?: boolean;
+      fingerprint?: string;
+      // Pre-fingerprint health responses include `apiVersion`. Any of those
+      // are by definition stale relative to the current backend.
+      apiVersion?: number;
+    };
+    if (typeof body.fingerprint !== 'string') return 'stale';
+    if (body.fingerprint !== EXPECTED_TERMINAL_FINGERPRINT) return 'stale';
+    return 'ok';
+  } catch {
+    return 'stale';
+  }
+}
+
+async function shutdownStale(): Promise<void> {
+  // The /shutdown endpoint exists on newer servers; older ones 404 it.
+  // Either way we best-effort the call and then poll for port release.
+  try {
+    await fetch(`${BASE}/shutdown`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(1000),
+    });
+  } catch {
+    /* old server may already be dying or never had the endpoint */
+  }
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    await new Promise<void>((r) => setTimeout(r, 150));
+    if ((await probeServer()) === 'dead') return;
+  }
+  // Polite shutdown didn't take. Common causes seen in the wild:
+  //   - orphan was built before /shutdown existed (route 404'd silently)
+  //   - shutdown handler hung on a wedged pty.kill()
+  //   - some other process happens to be squatting on the port
+  // Fall back to a port-targeted force-kill. Without this, EADDRINUSE
+  // blocks every subsequent spawn until the user manually intervenes.
+  console.warn(
+    `[lattice-backend] polite shutdown timed out on ${TERMINAL_PORT} — escalating to force-kill`,
+  );
+  await forceKillByPort(TERMINAL_PORT);
+}
+
+// Find the PID listening on `port` and SIGKILL/taskkill it. Windows-only —
+// POSIX rarely needs this and `lsof | xargs kill -9` against the wrong PID
+// is a worse failure mode than the original symptom. Best-effort: any
+// failure (no listener, parse miss, taskkill rc != 0) is logged and
+// swallowed so the calling spawn gets to try.
+async function forceKillByPort(port: number): Promise<void> {
+  if (process.platform !== 'win32') return;
+  let netstat: string;
+  try {
+    netstat = execSync('netstat -ano -p tcp', {
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+  } catch (err) {
+    console.warn(
+      `[lattice-backend] netstat failed during force-kill: ${(err as Error).message}`,
+    );
+    return;
+  }
+  const pids = new Set<string>();
+  for (const raw of netstat.split('\n')) {
+    const line = raw.trim();
+    if (!/LISTENING/i.test(line)) continue;
+    // "TCP   127.0.0.1:5185   0.0.0.0:0   LISTENING   12345"
+    if (!line.includes(`:${port} `) && !line.includes(`:${port}\t`)) continue;
+    const pid = line.split(/\s+/).pop();
+    if (pid && /^\d+$/.test(pid) && pid !== '0') pids.add(pid);
+  }
+  if (pids.size === 0) return;
+  for (const pid of pids) {
+    try {
+      execSync(`taskkill /F /PID ${pid}`, {
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+      console.warn(
+        `[lattice-backend] force-killed orphan terminal-server pid ${pid} on port ${port}`,
+      );
+    } catch (err) {
+      console.warn(
+        `[lattice-backend] taskkill /F /PID ${pid} failed: ${(err as Error).message}`,
+      );
+    }
+  }
+  // Brief pause so Windows releases the listener before the next bind.
+  await new Promise<void>((r) => setTimeout(r, 500));
 }
 
 // Singleton: concurrent callers share one startup attempt instead of each
@@ -33,18 +133,26 @@ let starting: Promise<void> | null = null;
 
 async function spawnAndWait(): Promise<void> {
   const script = path.join(__dirname, 'terminal-server.js');
+  // LATTICE_API_PORT is forwarded so the detached terminal-server (which
+  // doesn't otherwise know the main backend's port) can stamp the right URL
+  // into the LATTICE_API_URL env var it injects on every pty spawn.
+  const apiPort = Number(process.env.PORT) || 5184;
   const child = spawn(process.execPath, [script], {
     detached: true,
     windowsHide: true,
     stdio: 'ignore',
-    env: { ...process.env, TERMINAL_PORT: String(TERMINAL_PORT) },
+    env: {
+      ...process.env,
+      TERMINAL_PORT: String(TERMINAL_PORT),
+      LATTICE_API_PORT: String(apiPort),
+    },
   });
   child.unref();
 
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     await new Promise<void>((r) => setTimeout(r, 100));
-    if (await isAlive()) {
+    if ((await probeServer()) === 'ok') {
       console.log(
         `[lattice-backend] terminal server started on port ${TERMINAL_PORT}`,
       );
@@ -56,12 +164,22 @@ async function spawnAndWait(): Promise<void> {
   );
 }
 
-// Ensures the terminal server is running. No-ops if already alive.
-// Concurrent callers share a single startup attempt.
+// Ensures a *current-version* terminal server is running. If a stale one
+// (older API version) is responding on the port, shut it down first so a
+// fresh spawn can take over.
 export async function ensureTerminalServer(): Promise<void> {
-  if (await isAlive()) return;
+  const status = await probeServer();
+  if (status === 'ok') return;
   if (!starting) {
-    starting = spawnAndWait().finally(() => {
+    starting = (async () => {
+      if (status === 'stale') {
+        console.warn(
+          `[lattice-backend] stale terminal-server detected (fingerprint mismatch; expected ${EXPECTED_TERMINAL_FINGERPRINT}) — shutting down and respawning`,
+        );
+        await shutdownStale();
+      }
+      await spawnAndWait();
+    })().finally(() => {
       starting = null;
     });
   }
@@ -162,6 +280,12 @@ export async function proxyKillSessionsByCwd(worktreePath: string): Promise<void
 // session id so route handlers can include it in their response and the
 // frontend can attach via that id later (instead of triggering creation by
 // opening a WS).
+//
+// Reads the response body as text first, then parses JSON. A non-JSON body
+// (HTML 404 from a stale terminal-server, or some other process bound to
+// the port) returns a clear error AND triggers a one-shot respawn so the
+// next call goes through. Without this, the user sees the unhelpful "JSON
+// parse: Unexpected token '<'" error and tasks silently fail to spawn.
 export async function proxyCreateSession(opts: {
   cwd?: string;
   initialCommand?: string;
@@ -170,20 +294,70 @@ export async function proxyCreateSession(opts: {
   rows?: number;
 }): Promise<{ id: string } | { error: string }> {
   await ensureTerminalServer();
+  const first = await tryCreateSessionOnce(opts);
+  if ('id' in first) return first;
+  // Retry once if the failure was non-JSON (stale server / unrelated listener
+  // on 5185). respawn() forces a clean restart even if the stale server's
+  // /health currently still answers OK — the symptom proves it isn't really.
+  if (first.recoverable) {
+    console.warn(
+      `[terminal-proxy] non-JSON response from terminal-server — forcing respawn and retrying once. First error: ${first.error}`,
+    );
+    await respawn();
+    const second = await tryCreateSessionOnce(opts);
+    if ('id' in second) return second;
+    return { error: second.error };
+  }
+  return { error: first.error };
+}
+
+type CreateOnce =
+  | { id: string }
+  | { error: string; recoverable: boolean };
+
+async function tryCreateSessionOnce(
+  opts: Parameters<typeof proxyCreateSession>[0],
+): Promise<CreateOnce> {
+  let res: Response;
   try {
-    const res = await fetch(`${BASE}/sessions`, {
+    res = await fetch(`${BASE}/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(opts),
     });
-    const json = (await res.json()) as { id?: string; error?: string };
-    if (!res.ok || !json.id) {
-      return { error: json.error ?? `terminal-server ${res.status}` };
-    }
-    return { id: json.id };
   } catch (err) {
-    return { error: (err as Error).message };
+    // Connection errors (server died between probe and request) are
+    // recoverable — a respawn will restore service.
+    return { error: (err as Error).message, recoverable: true };
   }
+  const text = await res.text().catch(() => '');
+  let parsed: { id?: string; error?: string } | null = null;
+  try {
+    parsed = text ? (JSON.parse(text) as { id?: string; error?: string }) : null;
+  } catch {
+    // HTML / plain-text body → almost certainly a stale terminal-server
+    // (missing route) or a wrong process bound to the port.
+    const preview = text.slice(0, 120).replace(/\s+/g, ' ').trim();
+    return {
+      error: `terminal-server returned non-JSON (status ${res.status}): ${preview}`,
+      recoverable: true,
+    };
+  }
+  if (!res.ok || !parsed?.id) {
+    return {
+      error: parsed?.error ?? `terminal-server ${res.status}`,
+      recoverable: false,
+    };
+  }
+  return { id: parsed.id };
+}
+
+async function respawn(): Promise<void> {
+  await shutdownStale();
+  // Reset the singleton so ensureTerminalServer actually spawns again
+  // instead of awaiting an already-resolved no-op promise.
+  starting = null;
+  await ensureTerminalServer();
 }
 
 export async function proxyKillSession(id: string): Promise<boolean> {

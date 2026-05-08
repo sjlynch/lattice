@@ -2,6 +2,8 @@ import os from 'node:os';
 import { spawn } from 'node:child_process';
 import * as pty from 'node-pty';
 import type { WebSocket } from 'ws';
+import { ensureLatticeApiDoc } from './latticeApiDocs.js';
+import { ensureClaudeConfigValid } from './claudeConfigGuard.js';
 
 const isWindows = os.platform() === 'win32';
 
@@ -107,6 +109,18 @@ function createSession(opts: CreateOpts): Session | { error: string } {
   const cwd = opts.cwd && opts.cwd.trim() ? opts.cwd : os.homedir();
   const cols = opts.cols ?? 80;
   const rows = opts.rows ?? 24;
+  const projectPath = opts.projectPath?.trim() || cwd;
+
+  // Plant breadcrumbs so AI agents running inside this pty can discover the
+  // Lattice API without any user-side config. The vars only exist in this
+  // child process; the user's shell env is untouched.
+  const apiPort = Number(process.env.LATTICE_API_PORT) || 5184;
+  const latticeEnv: Record<string, string> = {
+    LATTICE_API_URL: `http://127.0.0.1:${apiPort}`,
+    LATTICE_PROJECT: projectPath,
+  };
+  const docPath = ensureLatticeApiDoc(projectPath, apiPort);
+  if (docPath) latticeEnv.LATTICE_DOCS = docPath;
 
   let term: pty.IPty;
   try {
@@ -115,7 +129,7 @@ function createSession(opts: CreateOpts): Session | { error: string } {
       cols,
       rows,
       cwd,
-      env: process.env as { [key: string]: string },
+      env: { ...(process.env as { [key: string]: string }), ...latticeEnv },
     });
   } catch (err) {
     return {
@@ -132,7 +146,7 @@ function createSession(opts: CreateOpts): Session | { error: string } {
     rows,
     cwd,
     shell,
-    projectPath: opts.projectPath?.trim() || cwd,
+    projectPath,
     subscribers: new Set(),
     createdAt: Date.now(),
     killing: false,
@@ -161,6 +175,18 @@ function createSession(opts: CreateOpts): Session | { error: string } {
     sessions.delete(session.id);
   });
 
+  // Skill-style hint: a single dim line that names the trigger keywords and
+  // points at the on-disk docs. Keeps the always-on context cost to one
+  // sentence; the body of the API reference is loaded on demand if (and
+  // only if) the AI agent follows the hint and reads $LATTICE_DOCS.
+  // Only emitted for Lattice-managed projects (those that already have a
+  // .lattice/ directory, hence a docPath).
+  if (docPath) {
+    const banner = buildLatticeBanner();
+    session.buffer.push(banner);
+    session.bufferSize += banner.length;
+  }
+
   if (opts.initialCommand) {
     setTimeout(() => {
       try {
@@ -172,6 +198,19 @@ function createSession(opts: CreateOpts): Session | { error: string } {
   }
 
   return session;
+}
+
+function buildLatticeBanner(): string {
+  // Dim cyan so the banner reads as ambient terminal chrome rather than
+  // user-relevant output. \r\n because the pty is in raw mode; a bare \n
+  // would not return the cursor to column 0.
+  const dim = '\x1b[2;36m';
+  const reset = '\x1b[0m';
+  return (
+    '\r\n' +
+    `${dim}[Lattice] AI agents: when the user mentions Lattice / tasks / taskboard / merging / worktrees, read $LATTICE_DOCS for the API reference.${reset}` +
+    '\r\n'
+  );
 }
 
 // Pre-create a session WITHOUT a WS subscriber. Used by route handlers that
@@ -259,14 +298,17 @@ export function attachTerminal(ws: WebSocket, opts: AttachOpts) {
     /* ignore */
   }
 
-  if (replayed) {
-    const full = session.buffer.join('');
-    if (full.length > 0) {
-      try {
-        ws.send(JSON.stringify({ type: 'data', data: full }));
-      } catch {
-        /* ignore */
-      }
+  // Send any buffered output. Covers two cases:
+  //   - replay on reconnect (existing session, scrollback the user had)
+  //   - first attach to a pre-spawned session whose buffer already holds
+  //     the Lattice banner (and any pty output that arrived before the
+  //     subscriber connected).
+  const full = session.buffer.join('');
+  if (full.length > 0) {
+    try {
+      ws.send(JSON.stringify({ type: 'data', data: full }));
+    } catch {
+      /* ignore */
     }
   }
 
@@ -348,6 +390,13 @@ export function killSession(id: string): boolean {
   // grandchildren (claude/node spawned by powershell). Force-kill the whole
   // process tree on Windows so they don't accumulate as orphans.
   killProcessTreeWindows(pid);
+  // taskkill /F gives Claude no chance to flush ~/.claude.json. After it's
+  // landed, validate the file and restore from backup if the kill
+  // truncated a write. Without refreshBackup — the file may still be in
+  // a pending-flush state we don't want to capture as "known good".
+  setTimeout(() => {
+    void ensureClaudeConfigValid();
+  }, 2000);
   return true;
 }
 

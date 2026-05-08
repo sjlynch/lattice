@@ -6,6 +6,7 @@ export {
   setupTaskWorktree,
   parseWorktreesPorcelain,
   ensureLatticeGitignore,
+  ensureLatticeRepoExclude,
   untrackOwnedFilesInRepo,
   renderStopHookJson,
   type WorktreeResult,

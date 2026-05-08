@@ -34,6 +34,7 @@ import {
   branchCommitCount,
   cleanupWorktreeForTask,
   ensureLatticeGitignore,
+  ensureLatticeRepoExclude,
   untrackOwnedFilesInRepo,
 } from '../worktree.js';
 import { getActiveRunForProject, startMergeRun } from '../mergeRuns.js';
@@ -411,6 +412,11 @@ export function buildTasksRouter(backendOrigin: string): Router {
       // Idempotent no-op when nothing is tracked. See untrackOwnedFilesInRepo.
       try {
         await ensureLatticeGitignore(task.projectPath);
+        // See ensureLatticeRepoExclude for why this exists alongside
+        // ensureLatticeGitignore — the repo-local exclude file is what
+        // actually keeps `.lattice/worktrees/<id>/` (a nested git
+        // checkout) out of the auto-stash that fastForwardMain runs.
+        await ensureLatticeRepoExclude(task.projectPath);
         await untrackOwnedFilesInRepo(task.projectPath);
       } catch (err) {
         console.warn('[merge] pre-flight untrack failed (continuing):', err);

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { canonicalProjectPath } from './projectPath.js';
 
 export type DirEntry = {
   name: string;
@@ -14,7 +15,11 @@ export type DirListing = {
 };
 
 export async function listDir(target?: string): Promise<DirListing> {
-  const abs = path.resolve(target && target.trim() ? target : os.homedir());
+  // Canonicalize so the frontend always sees uppercase-drive paths on
+  // Windows. Without this, picking f:\foo vs F:\foo here would diverge from
+  // the canonical task.projectPath produced by the tasks API and the
+  // per-project filter (Sidebar) would hide spawn'd terminals.
+  const abs = canonicalProjectPath(target && target.trim() ? target : os.homedir());
   const stat = await fs.stat(abs);
   if (!stat.isDirectory()) {
     throw new Error(`Not a directory: ${abs}`);

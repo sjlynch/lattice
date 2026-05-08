@@ -33,12 +33,15 @@ export const LATTICE_EXCLUDE_PATTERNS = [
 ] as const;
 
 // .gitignore entries appended to the project's repo-root .gitignore.
-// `.lattice/` would also belong here but is left to the project to
-// declare — it's the Lattice scratch area and projects may want it
-// committed (e.g. if they hand-author tasks.json). The settings file is
-// the only entry Lattice insists on.
+// `.lattice/` is mandatory — its `worktrees/` subdirectory contains
+// nested git checkouts (each with a `.git` pointer file). If `.lattice/`
+// is left untracked-but-not-ignored, `git stash push --include-untracked`
+// (used by the per-task fast-forward) tries to stash the worktree
+// directories and aborts with `error: invalid path
+// '.lattice/worktrees/<id>/'` — breaking every merge in the run.
 export const LATTICE_GITIGNORE_ENTRIES = [
   '.claude/settings.local.json',
+  '.lattice/',
 ] as const;
 
 // Conflict paths that always resolve to "ours" (the worktree's version).

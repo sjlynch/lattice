@@ -12,6 +12,7 @@ import {
   subscribeHealth,
   type ScanResult,
 } from './api';
+import { canonicalProjectPath } from './projectPath';
 
 const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 1200;
@@ -20,7 +21,7 @@ const ACTIVE_FOLDER_SESSION_KEY = 'lattice.activeFolder';
 
 function readStoredActiveFolder(): string {
   try {
-    return sessionStorage.getItem(ACTIVE_FOLDER_SESSION_KEY) ?? '';
+    return canonicalProjectPath(sessionStorage.getItem(ACTIVE_FOLDER_SESSION_KEY) ?? '');
   } catch {
     return '';
   }
@@ -37,7 +38,14 @@ function App() {
   // declaration order, and the persist effect fires first — if activeFolder
   // started as '' it would call sessionStorage.removeItem(...) and the per-tab
   // active-folder memory would be lost on every mount.
-  const [activeFolder, setActiveFolder] = useState<string>(readStoredActiveFolder);
+  const [activeFolder, setActiveFolderRaw] = useState<string>(readStoredActiveFolder);
+  // Always canonicalize what we store as activeFolder so per-project keys
+  // (terminals filter, settings, hidden-exts) match the canonical form the
+  // backend uses for task.projectPath. Keeps a non-canonical path picked
+  // via the folder browser from diverging from a task's projectPath.
+  const setActiveFolder = useCallback((next: string) => {
+    setActiveFolderRaw(canonicalProjectPath(next));
+  }, []);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [loading, setLoading] = useState(false);
   // Per-extension visibility, persisted per project. Stored as a list of

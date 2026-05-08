@@ -21,6 +21,7 @@ import {
   popStashByMessage,
   writeRunStashResolveInstructions,
   ensureLatticeGitignore,
+  ensureLatticeRepoExclude,
   untrackOwnedFilesInRepo,
   isMidMerge,
   RUN_STASH_LABEL,
@@ -160,6 +161,14 @@ export async function startMergeRun(
     // no-op if already clean) so the run starts from a known-good state.
     try {
       await ensureLatticeGitignore(projectPath);
+      // Critical: must run BEFORE stashForRun. The .gitignore append above
+      // is a working-tree mod on a tracked file, so the next
+      // `git stash --include-untracked` would stash and revert it,
+      // un-ignoring `.lattice/` again. The repo-local exclude file lives
+      // in the gitdir and survives any number of stashes — it's what
+      // actually keeps `.lattice/worktrees/<id>/` (a nested git checkout)
+      // from being slurped into the run-level / per-task auto-stash.
+      await ensureLatticeRepoExclude(projectPath);
       await untrackOwnedFilesInRepo(projectPath);
     } catch (err) {
       console.warn('[merge-run] pre-flight untrack failed (continuing):', err);
