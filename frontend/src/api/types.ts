@@ -165,12 +165,13 @@ export type GitHistoryResult = {
 
 export type UserSettings = {
   sidebarWidth?: number;
-  harness?: 'claude' | 'pi' | 'interleave';
+  harness?: 'claude' | 'pi' | 'codex' | 'interleave';
 };
 
 export type HarnessAvailability = {
   claude: boolean;
   pi: boolean;
+  codex: boolean;
 };
 
 // ---------- Tasks ----------

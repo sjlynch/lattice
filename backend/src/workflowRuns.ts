@@ -13,6 +13,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { getWorkflow, type Workflow } from './workflows.js';
 import { proxyCreateSession } from './terminalProxy.js';
+import { canonicalProjectPath } from './projectPath.js';
 
 export type WorkflowRunStatus = 'running' | 'completed' | 'errored' | 'cancelled';
 
@@ -67,9 +68,10 @@ export function getRun(id: string): WorkflowRun | null {
 }
 
 export function getActiveRunsForProject(projectPath: string): WorkflowRun[] {
+  const key = canonicalProjectPath(projectPath);
   const out: WorkflowRun[] = [];
   for (const r of runs.values()) {
-    if (r.projectPath === projectPath && r.status === 'running') {
+    if (r.projectPath === key && r.status === 'running') {
       out.push(snapshot(r));
     }
   }

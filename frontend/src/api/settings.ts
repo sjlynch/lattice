@@ -6,10 +6,10 @@ import type { HarnessAvailability, UserSettings } from './types';
 export async function fetchHarnessAvailability(): Promise<HarnessAvailability> {
   try {
     const r = await fetch('/api/harnesses');
-    if (!r.ok) return { claude: true, pi: false };
+    if (!r.ok) return { claude: true, pi: false, codex: false };
     return r.json();
   } catch {
-    return { claude: true, pi: false };
+    return { claude: true, pi: false, codex: false };
   }
 }
 

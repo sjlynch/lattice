@@ -17,6 +17,8 @@ export {
   buildResumeCommand,
   buildPiCommand,
   buildPiResumeCommand,
+  buildCodexCommand,
+  buildCodexResumeCommand,
   buildConflictResolveCommand,
   buildStashResolveCommand,
 } from './worktree/commands.js';

@@ -1,12 +1,13 @@
-// Detects which agent CLIs (`claude`, `pi`) are on PATH so the UI can hide
-// options that wouldn't actually run. Probed once lazily and cached — the
-// set of installed CLIs doesn't change during a server session.
+// Detects which agent CLIs (`claude`, `pi`, `codex`) are on PATH so the UI
+// can hide options that wouldn't actually run. Probed once lazily and
+// cached — the set of installed CLIs doesn't change during a server session.
 
 import { spawn } from 'node:child_process';
 
 export type HarnessAvailability = {
   claude: boolean;
   pi: boolean;
+  codex: boolean;
 };
 
 let cached: Promise<HarnessAvailability> | null = null;
@@ -44,14 +45,16 @@ function isOnPath(cmd: string): Promise<boolean> {
 
 export function detectHarnesses(): Promise<HarnessAvailability> {
   if (!cached) {
-    cached = Promise.all([isOnPath('claude'), isOnPath('pi')]).then(
-      ([claude, pi]) => ({ claude, pi }),
-    );
+    cached = Promise.all([
+      isOnPath('claude'),
+      isOnPath('pi'),
+      isOnPath('codex'),
+    ]).then(([claude, pi, codex]) => ({ claude, pi, codex }));
   }
   return cached;
 }
 
-// Force a re-probe — useful if the user installs `pi` after the server is
+// Force a re-probe — useful if the user installs a CLI after the server is
 // already running and wants the UI to pick it up without a full restart.
 export function resetHarnessCache(): void {
   cached = null;

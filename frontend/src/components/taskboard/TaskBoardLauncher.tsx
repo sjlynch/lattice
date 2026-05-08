@@ -52,11 +52,12 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   const [recentRunSummary, setRecentRunSummary] = useState<MergeRun | null>(
     null,
   );
-  const [harness, setHarness] = useState<'claude' | 'pi' | 'interleave'>('claude');
+  const [harness, setHarness] = useState<'claude' | 'pi' | 'codex' | 'interleave'>('claude');
   const interleaveNextRef = useRef<'claude' | 'pi'>('claude');
   const [harnessAvail, setHarnessAvail] = useState<HarnessAvailability>({
     claude: true,
     pi: false,
+    codex: false,
   });
 
   // Filter state — all lanes visible by default.
@@ -141,14 +142,17 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   }, []);
 
   // Load persisted harness preference when the active folder changes.
-  // If Pi isn't installed, coerce a stale `pi` / `interleave` preference
-  // back to `claude` so we never try to spawn an unavailable harness.
+  // If the saved harness CLI isn't installed, coerce back to `claude` so we
+  // never try to spawn an unavailable harness.
   useEffect(() => {
     if (!activeFolder) return;
     fetchUserSettings(activeFolder)
       .then((s) => {
         if (!s.harness) return;
-        if ((s.harness === 'pi' || s.harness === 'interleave') && !harnessAvail.pi) {
+        const unavailable =
+          ((s.harness === 'pi' || s.harness === 'interleave') && !harnessAvail.pi) ||
+          (s.harness === 'codex' && !harnessAvail.codex);
+        if (unavailable) {
           setHarness('claude');
           patchUserSettings(activeFolder, { harness: 'claude' }).catch(() => {});
         } else {
@@ -156,7 +160,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         }
       })
       .catch(() => { /* keep default */ });
-  }, [activeFolder, harnessAvail.pi]);
+  }, [activeFolder, harnessAvail.pi, harnessAvail.codex]);
 
   // Hydrate the active merge run on mount and subscribe to live events.
   // Closing the panel/tab doesn't cancel the run — it keeps progressing on
@@ -398,7 +402,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   // Resolve the harness to spawn for this run. In `interleave` mode we
   // alternate claude/pi across consecutive runs so a "Run All" produces a
   // mix; in single-mode the user's choice is used directly.
-  function resolveHarness(): 'claude' | 'pi' {
+  function resolveHarness(): 'claude' | 'pi' | 'codex' {
     if (harness !== 'interleave') return harness;
     const pick = interleaveNextRef.current;
     interleaveNextRef.current = pick === 'claude' ? 'pi' : 'claude';
@@ -543,7 +547,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     });
   }
 
-  function handleHarnessChange(val: 'claude' | 'pi' | 'interleave') {
+  function handleHarnessChange(val: 'claude' | 'pi' | 'codex' | 'interleave') {
     setHarness(val);
     interleaveNextRef.current = 'claude';
     if (activeFolder) patchUserSettings(activeFolder, { harness: val }).catch(() => {});
@@ -612,16 +616,17 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
               </button>
             );
           })}
-          {harnessAvail.pi && (
+          {(harnessAvail.pi || harnessAvail.codex) && (
             <select
               className="taskboard-harness-select"
               value={harness}
-              onChange={(e) => handleHarnessChange(e.target.value as 'claude' | 'pi' | 'interleave')}
+              onChange={(e) => handleHarnessChange(e.target.value as 'claude' | 'pi' | 'codex' | 'interleave')}
               title="Agent harness for running tasks"
             >
               <option value="claude">Claude</option>
-              <option value="pi">Pi</option>
-              <option value="interleave">Interleave</option>
+              {harnessAvail.pi && <option value="pi">Pi</option>}
+              {harnessAvail.codex && <option value="codex">Codex</option>}
+              {harnessAvail.pi && <option value="interleave">Interleave</option>}
             </select>
           )}
         </div>

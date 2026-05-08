@@ -29,6 +29,7 @@ import { listConflictedFiles } from './worktree/state.js';
 import { getTask, listTasks, updateTask } from './tasks.js';
 import { tryAcquire, release } from './mergeLocks.js';
 import { proxyCreateSession } from './terminalProxy.js';
+import { canonicalProjectPath } from './projectPath.js';
 
 export type MergeRunStatus =
   | 'running'
@@ -98,8 +99,9 @@ export function getRun(id: string): MergeRun | null {
 }
 
 export function getActiveRunForProject(projectPath: string): MergeRun | null {
+  const key = canonicalProjectPath(projectPath);
   for (const r of runs.values()) {
-    if (r.projectPath === projectPath && r.status === 'running') {
+    if (r.projectPath === key && r.status === 'running') {
       return snapshot(r);
     }
   }
@@ -117,6 +119,7 @@ export async function startMergeRun(
   projectPath: string,
   backendOrigin: string,
 ): Promise<MergeRun> {
+  projectPath = canonicalProjectPath(projectPath);
   for (const r of runs.values()) {
     if (r.projectPath === projectPath && r.status === 'running') {
       throw new Error('A merge run is already in progress for this project.');

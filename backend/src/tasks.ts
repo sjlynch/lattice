@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { canonicalProjectPath } from './projectPath.js';
 
 const LATTICE_HOME = path.join(os.homedir(), '.lattice');
 const PROJECTS_INDEX = path.join(LATTICE_HOME, 'projects.json');
@@ -64,12 +65,40 @@ let legacyMigrated = false;
 async function loadKnownProjects() {
   if (knownLoaded) return;
   knownLoaded = true;
+  let raw: string;
   try {
-    const raw = await fs.readFile(PROJECTS_INDEX, 'utf8');
-    const list = JSON.parse(raw) as string[];
-    if (Array.isArray(list)) for (const p of list) knownProjects.add(p);
+    raw = await fs.readFile(PROJECTS_INDEX, 'utf8');
   } catch {
-    /* no index yet */
+    return; // no index yet
+  }
+  let list: unknown;
+  try {
+    list = JSON.parse(raw);
+  } catch {
+    return; // corrupt — leave the file alone, start fresh in memory
+  }
+  if (!Array.isArray(list)) return;
+
+  // Canonicalize every entry. If two entries collapse to the same canonical
+  // form (e.g. `f:\rust_etl` and `F:\rust_etl` on Windows), the duplicate is
+  // dropped. Both pointed at the same on-disk tasks.json anyway, so there's
+  // nothing to merge — we're just deduping the index.
+  let dirty = false;
+  for (const p of list) {
+    if (typeof p !== 'string' || !p) {
+      dirty = true;
+      continue;
+    }
+    const canonical = canonicalProjectPath(p);
+    if (canonical !== p) dirty = true;
+    if (knownProjects.has(canonical)) {
+      dirty = true;
+      continue;
+    }
+    knownProjects.add(canonical);
+  }
+  if (dirty) {
+    await persistKnownProjects().catch(() => {});
   }
 }
 
@@ -105,8 +134,10 @@ async function migrateLegacy() {
 
   const byProject = new Map<string, Task[]>();
   for (const t of parsed) {
-    if (!byProject.has(t.projectPath)) byProject.set(t.projectPath, []);
-    byProject.get(t.projectPath)!.push(t);
+    const key = canonicalProjectPath(t.projectPath);
+    t.projectPath = key;
+    if (!byProject.has(key)) byProject.set(key, []);
+    byProject.get(key)!.push(t);
   }
   for (const [proj, tasks] of byProject) {
     try {
@@ -174,20 +205,21 @@ function stampTimestamps(
 }
 
 async function ensureProjectLoaded(projectPath: string): Promise<void> {
+  const key = canonicalProjectPath(projectPath);
   await loadKnownProjects();
   await migrateLegacy();
-  if (!knownProjects.has(projectPath)) {
-    knownProjects.add(projectPath);
+  if (!knownProjects.has(key)) {
+    knownProjects.add(key);
     await persistKnownProjects();
   }
-  if (projectLoaded.get(projectPath)) return;
-  projectLoaded.set(projectPath, true);
+  if (projectLoaded.get(key)) return;
+  projectLoaded.set(key, true);
   try {
-    const raw = await fs.readFile(projectTasksFile(projectPath), 'utf8');
+    const raw = await fs.readFile(projectTasksFile(key), 'utf8');
     const parsed = JSON.parse(raw) as Task[];
-    if (Array.isArray(parsed)) projectCache.set(projectPath, parsed);
+    if (Array.isArray(parsed)) projectCache.set(key, parsed);
   } catch {
-    projectCache.set(projectPath, []);
+    projectCache.set(key, []);
   }
 }
 
@@ -271,18 +303,19 @@ export async function updateTaskCrashSafe(
 // update survives a backend crash or hot-restart that would otherwise drop
 // the in-memory change before the 100 ms timer fires.
 export async function flushPersist(projectPath: string): Promise<void> {
-  const timer = persistTimers.get(projectPath);
+  const key = canonicalProjectPath(projectPath);
+  const timer = persistTimers.get(key);
   if (timer) {
     clearTimeout(timer);
-    persistTimers.delete(projectPath);
+    persistTimers.delete(key);
   }
-  const tasks = projectCache.get(projectPath) ?? [];
-  const file = projectTasksFile(projectPath);
+  const tasks = projectCache.get(key) ?? [];
+  const file = projectTasksFile(key);
   try {
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, JSON.stringify(tasks, null, 2), 'utf8');
   } catch (e) {
-    console.error('[tasks] flushPersist failed for', projectPath, e);
+    console.error('[tasks] flushPersist failed for', key, e);
   }
 }
 
@@ -314,8 +347,9 @@ export async function listReadyToMergeTasks(): Promise<Task[]> {
 }
 
 export async function listTasks(projectPath: string): Promise<Task[]> {
-  await ensureProjectLoaded(projectPath);
-  return [...(projectCache.get(projectPath) ?? [])];
+  const key = canonicalProjectPath(projectPath);
+  await ensureProjectLoaded(key);
+  return [...(projectCache.get(key) ?? [])];
 }
 
 export async function getTask(id: string): Promise<Task | null> {
@@ -339,20 +373,21 @@ export async function createTask(
   title: string,
   description?: string,
 ): Promise<Task> {
-  await ensureProjectLoaded(projectPath);
-  const tasks = projectCache.get(projectPath) ?? [];
+  const key = canonicalProjectPath(projectPath);
+  await ensureProjectLoaded(key);
+  const tasks = projectCache.get(key) ?? [];
   const t: Task = {
     id: `t_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-    projectPath,
+    projectPath: key,
     title: title.trim(),
     description: description?.trim() || undefined,
     status: 'open',
     createdAt: Date.now(),
   };
   tasks.push(t);
-  projectCache.set(projectPath, tasks);
-  schedulePersist(projectPath);
-  notify(projectPath);
+  projectCache.set(key, tasks);
+  schedulePersist(key);
+  notify(key);
   return t;
 }
 
@@ -406,8 +441,9 @@ export async function reorderTasksInLane(
   status: TaskStatus,
   ids: string[],
 ): Promise<boolean> {
-  await ensureProjectLoaded(projectPath);
-  const tasks = projectCache.get(projectPath);
+  const key = canonicalProjectPath(projectPath);
+  await ensureProjectLoaded(key);
+  const tasks = projectCache.get(key);
   if (!tasks) return false;
   const byId = new Map<string, Task>();
   for (const t of tasks) byId.set(t.id, t);
@@ -422,8 +458,8 @@ export async function reorderTasksInLane(
     }
   });
   if (changed) {
-    schedulePersist(projectPath);
-    notify(projectPath);
+    schedulePersist(key);
+    notify(key);
   }
   return true;
 }

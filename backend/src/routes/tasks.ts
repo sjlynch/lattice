@@ -23,6 +23,8 @@ import {
   buildResumeCommand,
   buildPiCommand,
   buildPiResumeCommand,
+  buildCodexCommand,
+  buildCodexResumeCommand,
   worktreeExists,
   isMidMerge,
   mergeWorktreeInRepo,
@@ -177,10 +179,15 @@ export function buildTasksRouter(backendOrigin: string): Router {
     }
     try {
       const result = await setupTaskWorktree(task.projectPath, task, backendOrigin);
-      const harness = req.body?.harness === 'pi' ? 'pi' : 'claude';
-      const command = harness === 'pi'
-        ? buildPiCommand(result.taskFile)
-        : buildClaudeCommand(result.taskFile);
+      const reqHarness = req.body?.harness;
+      const harness: 'claude' | 'pi' | 'codex' =
+        reqHarness === 'pi' || reqHarness === 'codex' ? reqHarness : 'claude';
+      const command =
+        harness === 'pi'
+          ? buildPiCommand(result.taskFile)
+          : harness === 'codex'
+          ? buildCodexCommand(result.taskFile)
+          : buildClaudeCommand(result.taskFile);
       await updateTask(task.id, {
         status: 'in_progress',
         worktreePath: result.worktreePath,
@@ -239,10 +246,15 @@ export function buildTasksRouter(backendOrigin: string): Router {
       });
     }
     const taskFile = path.join(task.worktreePath, 'LATTICE_TASK.md');
-    const harness = req.body?.harness === 'pi' ? 'pi' : 'claude';
-    const command = harness === 'pi'
-      ? buildPiResumeCommand(taskFile)
-      : buildResumeCommand(taskFile);
+    const reqHarness = req.body?.harness;
+    const harness: 'claude' | 'pi' | 'codex' =
+      reqHarness === 'pi' || reqHarness === 'codex' ? reqHarness : 'claude';
+    const command =
+      harness === 'pi'
+        ? buildPiResumeCommand(taskFile)
+        : harness === 'codex'
+        ? buildCodexResumeCommand(taskFile)
+        : buildResumeCommand(taskFile);
     const sess = await proxyCreateSession({
       cwd: task.worktreePath,
       initialCommand: command,

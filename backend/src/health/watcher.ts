@@ -19,6 +19,7 @@ import {
   type HealthMetrics,
 } from './index.js';
 import { loadProjectAliases, type ParsedAlias } from './tsconfig.js';
+import { canonicalProjectPath } from '../projectPath.js';
 
 // Same SOURCE_EXTS list the scanner uses; duplicated here to keep the
 // two files independent. If they drift the watcher might broadcast
@@ -411,7 +412,7 @@ export async function subscribeHealth(
   projectRoot: string,
   cb: Subscriber,
 ): Promise<() => void> {
-  const proj = await ensureWatcher(path.resolve(projectRoot));
+  const proj = await ensureWatcher(canonicalProjectPath(projectRoot));
   proj.subscribers.add(cb);
   return () => proj.subscribers.delete(cb);
 }
@@ -424,7 +425,7 @@ export function seedWatcherState(
   importsByFile: Map<string, string[]>,
   metricsByFile: Map<string, HealthMetrics>,
 ): void {
-  const abs = path.resolve(projectRoot);
+  const abs = canonicalProjectPath(projectRoot);
   const proj = watchers.get(abs);
   if (!proj) return;
   proj.imports.clear();

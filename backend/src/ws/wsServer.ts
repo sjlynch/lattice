@@ -25,10 +25,12 @@ import {
   subscribe as subscribeWorkflowRuns,
 } from '../workflowRuns.js';
 import { subscribeHealth } from '../health/watcher.js';
+import { canonicalProjectPath } from '../projectPath.js';
 
 function parseProject(reqUrl: string | undefined): string {
   const url = new URL(reqUrl || '', 'http://localhost');
-  return url.searchParams.get('project') || '';
+  const raw = url.searchParams.get('project') || '';
+  return raw ? canonicalProjectPath(raw) : '';
 }
 
 function buildTerminalWss(): WebSocketServer {

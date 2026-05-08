@@ -7,6 +7,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { canonicalProjectPath } from './projectPath.js';
 
 const WORKFLOWS_FILENAME = 'workflows.json';
 
@@ -46,7 +47,12 @@ async function ensureLoaded(projectPath: string): Promise<void> {
   try {
     const raw = await fs.readFile(workflowsFile(projectPath), 'utf8');
     const parsed = JSON.parse(raw) as Workflow[];
-    if (Array.isArray(parsed)) cache.set(projectPath, parsed);
+    if (Array.isArray(parsed)) {
+      // Canonicalize the embedded projectPath in each workflow so older
+      // entries written under a non-canonical path get aligned with the cache key.
+      for (const w of parsed) w.projectPath = canonicalProjectPath(w.projectPath);
+      cache.set(projectPath, parsed);
+    }
   } catch {
     cache.set(projectPath, []);
   }
@@ -96,8 +102,9 @@ function normalizeSteps(steps: WorkflowStep[] | undefined): WorkflowStep[] {
 }
 
 export async function listWorkflows(projectPath: string): Promise<Workflow[]> {
-  await ensureLoaded(projectPath);
-  return [...(cache.get(projectPath) ?? [])];
+  const key = canonicalProjectPath(projectPath);
+  await ensureLoaded(key);
+  return [...(cache.get(key) ?? [])];
 }
 
 export async function getWorkflow(id: string): Promise<Workflow | null> {
@@ -113,19 +120,20 @@ export async function createWorkflow(
   name: string,
   steps: WorkflowStep[] | undefined,
 ): Promise<Workflow> {
-  await ensureLoaded(projectPath);
-  const list = cache.get(projectPath) ?? [];
+  const key = canonicalProjectPath(projectPath);
+  await ensureLoaded(key);
+  const list = cache.get(key) ?? [];
   const w: Workflow = {
     id: `wf_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-    projectPath,
+    projectPath: key,
     name: name.trim() || 'Untitled workflow',
     steps: normalizeSteps(steps),
     createdAt: Date.now(),
   };
   list.push(w);
-  cache.set(projectPath, list);
-  schedulePersist(projectPath);
-  notify(projectPath);
+  cache.set(key, list);
+  schedulePersist(key);
+  notify(key);
   return w;
 }
 

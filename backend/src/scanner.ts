@@ -11,6 +11,7 @@ import {
 } from './health/index.js';
 import { loadProjectAliases } from './health/tsconfig.js';
 import { seedWatcherState } from './health/watcher.js';
+import { canonicalProjectPath } from './projectPath.js';
 
 const SOURCE_EXTS = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
@@ -134,7 +135,7 @@ async function loadGitignore(root: string): Promise<Ignore> {
 }
 
 export async function scan(root: string): Promise<ScanResult> {
-  const absRoot = path.resolve(root);
+  const absRoot = canonicalProjectPath(root);
   const ig = await loadGitignore(absRoot);
   const nodes: GraphNode[] = [];
   const links: GraphLink[] = [];

@@ -64,7 +64,7 @@ export async function deleteTask(id: string): Promise<void> {
   );
 }
 
-export async function runTask(id: string, harness?: 'claude' | 'pi'): Promise<RunTaskResult> {
+export async function runTask(id: string, harness?: 'claude' | 'pi' | 'codex'): Promise<RunTaskResult> {
   return asJson<RunTaskResult>(
     await fetch(`/api/tasks/${encodeURIComponent(id)}/run`, {
       method: 'POST',
@@ -74,7 +74,7 @@ export async function runTask(id: string, harness?: 'claude' | 'pi'): Promise<Ru
   );
 }
 
-export async function resumeTask(id: string, harness?: 'claude' | 'pi'): Promise<RunTaskResult> {
+export async function resumeTask(id: string, harness?: 'claude' | 'pi' | 'codex'): Promise<RunTaskResult> {
   return asJson<RunTaskResult>(
     await fetch(`/api/tasks/${encodeURIComponent(id)}/resume`, {
       method: 'POST',
