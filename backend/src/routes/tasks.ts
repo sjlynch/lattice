@@ -90,7 +90,7 @@ import {
 } from '../worktree.js';
 import { getActiveRunForProject, startMergeRun } from '../mergeRuns.js';
 import { tryAcquire, release } from '../mergeLocks.js';
-import { proxyCreateSession } from '../terminalProxy.js';
+import { proxyCreateSession, proxyKillSessionsByCwd } from '../terminalProxy.js';
 
 // Tracks projects that currently have a per-card manual merge in flight.
 // Prevents two simultaneous per-card merge clicks from racing on
@@ -456,6 +456,7 @@ export function buildTasksRouter(backendOrigin: string): Router {
         task.worktreePath,
         task.id,
         backendOrigin,
+        task.title,
       );
       if (reSync.status === 'conflict') {
         const { relativePath } = await writeMergeInstructions(
@@ -516,6 +517,20 @@ export function buildTasksRouter(backendOrigin: string): Router {
       completedAt: Date.now(),
     });
     res.json({ ok: true });
+
+    // The in-worktree Claude has finished its turn and committed; the pty
+    // now just holds an idle Claude waiting for input that will never come.
+    // Kill it so terminal-server resources are released and the worktree's
+    // dir lock is dropped on Windows. Deferred so the curl that called us
+    // (running inside the very pty we're killing) gets to read this response
+    // before the connection is torn down. The Stop hook's `curl -s -m 5`
+    // exits in well under that, so 1s is plenty of slack.
+    const wt = task.worktreePath;
+    if (wt) {
+      setTimeout(() => {
+        proxyKillSessionsByCwd(wt).catch(() => {});
+      }, 1000);
+    }
   });
 
   // Initiate the merge for a ready_to_merge task.
@@ -585,6 +600,7 @@ export function buildTasksRouter(backendOrigin: string): Router {
             task.worktreePath,
             task.id,
             backendOrigin,
+            task.title,
           );
           if (reSync.status === 'clean') {
             const fin = await finalizeMergedTask(task, backendOrigin);
@@ -663,6 +679,7 @@ export function buildTasksRouter(backendOrigin: string): Router {
         task.worktreePath,
         task.id,
         backendOrigin,
+        task.title,
       );
       if (result.status === 'clean') {
         const fin = await finalizeMergedTask(task, backendOrigin);
@@ -745,6 +762,7 @@ export function buildTasksRouter(backendOrigin: string): Router {
       task.worktreePath,
       task.id,
       backendOrigin,
+      task.title,
     );
     if (reSync.status === 'conflict') {
       const { relativePath } = await writeMergeInstructions(

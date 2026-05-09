@@ -206,6 +206,7 @@ export async function mergeWorktreeInRepo(
   // object don't pay for an extra lookup.
   taskId: string,
   backendOrigin: string,
+  taskTitle: string,
 ): Promise<MergeOutcome> {
   // ------ Pre-checks ------
 
@@ -296,11 +297,18 @@ export async function mergeWorktreeInRepo(
       `[merge] reset working-tree copy of owned file(s) before merge: ${resetFiles.join(', ')}`,
     );
   }
+  // Why -m instead of --no-edit: passing a raw SHA as the merge target
+  // makes git auto-generate "Merge commit '<sha>' into <branch>" — useless
+  // in `git log`. Supplying our own message produces "Merge branch 'main'
+  // into <branch>" (the format git uses when you merge a named ref) plus
+  // the task title for archaeology.
+  const mergeMessage =
+    `Merge branch 'main' into ${branchName}\n\nTask: ${taskTitle}`;
   let merge;
   try {
     merge = await exec(
       'git',
-      ['merge', '--no-ff', '--no-edit', mainHeadSha],
+      ['merge', '--no-ff', '-m', mergeMessage, mainHeadSha],
       worktreePath,
     );
   } finally {
@@ -347,7 +355,7 @@ export async function mergeWorktreeInRepo(
           'commit',
           '--no-edit',
           '-m',
-          'Merge with auto-resolved Lattice-owned files [lattice-auto]',
+          `${mergeMessage}\n\n[lattice-auto] auto-resolved owned files: ${resolved.join(', ')}`,
         ],
         worktreePath,
       );
