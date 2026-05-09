@@ -12,6 +12,7 @@ import { exec } from './exec.js';
 import { worktreeExists, assertGitDirIntact } from './state.js';
 import { renderTaskMarkdown } from './instructions.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
+import { assertNotReparsePoint } from './cleanup.js';
 import {
   LATTICE_EXCLUDE_PATTERNS,
   LATTICE_GITIGNORE_ENTRIES,
@@ -274,6 +275,16 @@ async function reconcileStaleState(
 // have already been killed by the caller; this gives the OS a few hundred
 // ms to actually release the handle before declaring defeat.
 async function tryRmWithRetries(target: string): Promise<boolean> {
+  // Reparse-point guard before any retry. If the path is a symlink or
+  // Windows junction, fs.rm would recurse into the target and delete it —
+  // catastrophic if the junction happened to point at the repo root or
+  // its `.git`. Refuse loud and skip the rm entirely.
+  try {
+    await assertNotReparsePoint(target);
+  } catch (err) {
+    console.error((err as Error).message);
+    return false;
+  }
   for (let attempt = 0; attempt < RM_RETRY_DELAYS_MS.length + 1; attempt += 1) {
     try {
       await fs.rm(target, { recursive: true, force: true });

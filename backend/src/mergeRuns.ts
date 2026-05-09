@@ -29,6 +29,11 @@ import { getTask, listTasks, updateTask, backupTasksFile } from './tasks.js';
 import { tryAcquire, release } from './mergeLocks.js';
 import { proxyCreateSession } from './terminalProxy.js';
 import { canonicalProjectPath } from './projectPath.js';
+import {
+  acquireProjectRunLock,
+  ProjectRunLockedError,
+  type ProjectRunLockHandle,
+} from './projectRunLock.js';
 
 export type MergeRunStatus =
   | 'running'
@@ -124,6 +129,22 @@ export async function startMergeRun(
       throw new Error('A merge run is already in progress for this project.');
     }
   }
+
+  // Cross-process gate. If another Lattice process is already merging
+  // this project (the lattice-on-lattice scenario, or two sibling
+  // installations sharing a repo), bail before we begin: holding a stale
+  // run object plus running snapshot/FF concurrently with a sibling
+  // process is the configuration that produced prior `.git` deletions.
+  let projectLock: ProjectRunLockHandle;
+  try {
+    projectLock = await acquireProjectRunLock(projectPath, 'merge-run');
+  } catch (err) {
+    if (err instanceof ProjectRunLockedError) {
+      throw new Error(err.message);
+    }
+    throw err;
+  }
+
   const tasks = await listTasks(projectPath);
   // Include conflict-flagged tasks too — the per-task loop knows how to
   // re-attempt them (resolver Claude may have already finished and
@@ -437,12 +458,14 @@ export async function startMergeRun(
     }
 
     finishRun(run);
-  })().catch((err) => {
-    console.error('[mergeRuns] run worker crashed', err);
-    run.status = 'errored';
-    run.finishedAt = Date.now();
-    notify({ type: 'completed', run: snapshot(run) });
-  });
+  })()
+    .catch((err) => {
+      console.error('[mergeRuns] run worker crashed', err);
+      run.status = 'errored';
+      run.finishedAt = Date.now();
+      notify({ type: 'completed', run: snapshot(run) });
+    })
+    .finally(() => projectLock.release().catch(() => undefined));
 
   return snapshot(run);
 }

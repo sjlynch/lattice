@@ -31,6 +31,62 @@ function assertSafeWorktreePath(repoRoot: string, worktreePath: string): void {
   }
 }
 
+// Reparse-point guard. The lexical assertSafeWorktreePath check is purely
+// string-based — `path.resolve(...).startsWith(safeBase + path.sep)` does
+// not follow symlinks or Windows junctions. If `.lattice/worktrees/foo`
+// were ever a junction pointing at the repo root (or its `.git`), the
+// lexical check would still pass and `fs.rm({recursive: true, force: true})`
+// would walk through the junction and delete the target. Lattice itself
+// never creates junctions, but a user can, and a corrupted git operation
+// can leave one behind.
+//
+// We refuse if the path is a symlink (lstat tells us directly) OR if
+// realpath resolves to a different location (catches junctions / mount
+// points / 8.3 short-name aliases that lstat doesn't flag as symlinks).
+// Caller is expected to swallow ENOENT — the absent case is not unsafe.
+export async function assertNotReparsePoint(target: string): Promise<void> {
+  let stat;
+  try {
+    stat = await fs.lstat(target);
+  } catch (err) {
+    // Caller decides what to do with ENOENT; a missing path is safe.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw err;
+  }
+  if (stat.isSymbolicLink()) {
+    throw new Error(
+      `[worktree] safety: refusing fs.rm on symbolic link: ${target}. ` +
+        `Investigate manually — Lattice never creates symlinks.`,
+    );
+  }
+  // Junctions on Windows often report isDirectory() && !isSymbolicLink(),
+  // so lstat alone isn't enough. realpath resolves the reparse and gives
+  // us the underlying path; if it differs from target after normalization,
+  // something is redirecting and we don't want to follow it with fs.rm.
+  let real;
+  try {
+    real = await fs.realpath(target);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw err;
+  }
+  const normReal = path.resolve(real);
+  const normTarget = path.resolve(target);
+  // Case-insensitive compare on Windows where the FS is case-insensitive
+  // but case-preserving — realpath may return e.g. `C:\Development\` while
+  // the input was `C:\development\`. Don't refuse just on case.
+  const same =
+    process.platform === 'win32'
+      ? normReal.toLowerCase() === normTarget.toLowerCase()
+      : normReal === normTarget;
+  if (!same) {
+    throw new Error(
+      `[worktree] safety: refusing fs.rm on reparse point: ${target} → ${real}. ` +
+        `The path resolves to a different location than expected.`,
+    );
+  }
+}
+
 export async function cleanupWorktreeForTask(
   repoRoot: string,
   worktreePath: string,
@@ -59,9 +115,20 @@ export async function cleanupWorktreeForTask(
 
   // Forcibly remove the directory with Node.js as a fallback for cases where
   // git couldn't delete it (e.g. a process had the directory as its cwd).
+  // Reparse-point guard: refuse to fs.rm a symlink or junction, since
+  // recursive delete would walk through it and destroy the target.
   try {
+    await assertNotReparsePoint(worktreePath);
     await fs.rm(worktreePath, { recursive: true, force: true });
-  } catch {
-    /* already gone, or still locked — tolerate */
+  } catch (err) {
+    // Reparse-point refusal logs and continues — the worktree is left in
+    // place for manual investigation. Other errors (already gone, still
+    // locked) are tolerated as before.
+    if (
+      err instanceof Error &&
+      err.message.includes('[worktree] safety: refusing')
+    ) {
+      console.error(err.message);
+    }
   }
 }

@@ -28,6 +28,10 @@ import {
 import { getActiveRunForProject } from '../../mergeRuns.js';
 import { tryAcquire, release } from '../../mergeLocks.js';
 import { proxyCreateSession } from '../../terminalProxy.js';
+import {
+  acquireProjectRunLock,
+  ProjectRunLockedError,
+} from '../../projectRunLock.js';
 import { finalizeError } from './_shared.js';
 
 // Tracks projects that currently have a per-card manual merge in flight.
@@ -175,6 +179,22 @@ export function buildTaskRunRouter(backendOrigin: string): Router {
       return res
         .status(409)
         .json({ error: 'merge already in progress for this task' });
+    }
+
+    // Cross-process lock: another Lattice process (e.g. the user opened
+    // this project in two Lattice instances, or has Lattice running on
+    // its own repo while a sibling project is merging) could otherwise
+    // race us through git status / snapshot / FF. The in-process gates
+    // above only see this process's state.
+    let projectLock;
+    try {
+      projectLock = await acquireProjectRunLock(task.projectPath, 'manual-merge');
+    } catch (err) {
+      release(task.id);
+      if (err instanceof ProjectRunLockedError) {
+        return res.status(409).json({ error: err.message });
+      }
+      return res.status(500).json({ error: (err as Error).message });
     }
 
     projectMergesActive.add(task.projectPath);
@@ -348,6 +368,7 @@ export function buildTaskRunRouter(backendOrigin: string): Router {
     } finally {
       release(task.id);
       projectMergesActive.delete(task.projectPath);
+      await projectLock.release();
     }
   });
 
