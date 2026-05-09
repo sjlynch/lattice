@@ -115,7 +115,16 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
         .toString(36)
         .slice(2, 6)}`;
       setTerminals((ts) => [...ts, { ...spec, id }]);
-      if (focus) setActiveIdState(id);
+      // Even when the caller opts out of stealing focus (e.g. Run All on the
+      // task board passes focus=false so each subsequent spawn doesn't yank
+      // the user away), the *first* spawn should still focus when there's
+      // nothing focused — otherwise Run All from an empty sidebar leaves
+      // the user staring at the "No terminals yet" empty state.
+      setActiveIdState((current) => {
+        if (focus) return id;
+        if (current === null) return id;
+        return current;
+      });
       return id;
     },
     [],
