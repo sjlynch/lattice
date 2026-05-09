@@ -80,7 +80,7 @@ export async function finalizeMergedTask(task: Task, backendOrigin: string): Pro
     // retry the fast-forward exactly once.
     if (ff.status === 'error' && task.worktreePath) {
       console.log(`[finalize] ${task.id}: FF failed — re-syncing with current main and retrying`);
-      const reSync = await mergeWorktreeInRepo(task.projectPath, task.branch, task.worktreePath, task.id, backendOrigin);
+      const reSync = await mergeWorktreeInRepo(task.projectPath, task.branch, task.worktreePath, task.id, backendOrigin, task.title);
       if (reSync.status === 'clean') {
         ff = await fastForwardMain(task.projectPath, task.branch);
         console.log(`[finalize] retry FF → ${ff.status}${ff.status === 'error' ? `: ${ff.message}` : ''}`);
