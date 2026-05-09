@@ -1,4 +1,5 @@
 import os from 'node:os';
+import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import * as pty from 'node-pty';
 import type { WebSocket } from 'ws';
@@ -38,6 +39,12 @@ const defaultShell = isWindows
 
 const MAX_BUFFER_BYTES = 200_000;
 const INITIAL_COMMAND_DELAY_MS = 250;
+// Hard ceiling on simultaneously-live ptys. Real Lattice usage tops out
+// around a dozen — anything above that is a runaway loop (e.g. a stuck
+// reconnect on the frontend). 50 is generous enough to not bite legit
+// power users while catching a runaway long before it can spawn the
+// 3000+ conhost/pwsh processes that exhaust system memory on Windows.
+const MAX_SESSIONS = 50;
 
 type Session = {
   id: string;
@@ -105,11 +112,40 @@ type CreateOpts = {
 };
 
 function createSession(opts: CreateOpts): Session | { error: string } {
+  // Hard cap so a runaway client (e.g. a stuck reconnect loop) can't
+  // spawn unbounded ptys. Each pty on Windows is ~3 OS processes
+  // (conhost + pwsh + node child); without this cap a runaway took the
+  // whole machine out of memory before any human noticed.
+  if (sessions.size >= MAX_SESSIONS) {
+    console.warn(
+      `[terminal] refusing createSession: ${sessions.size} live sessions (cap ${MAX_SESSIONS}). Likely a runaway client.`,
+    );
+    return {
+      error: `Too many active terminal sessions (${sessions.size}/${MAX_SESSIONS}). Close some terminals before opening another.`,
+    };
+  }
   const shell = opts.shell || defaultShell;
   const cwd = opts.cwd && opts.cwd.trim() ? opts.cwd : os.homedir();
   const cols = opts.cols ?? 80;
   const rows = opts.rows ?? 24;
   const projectPath = opts.projectPath?.trim() || cwd;
+
+  // Refuse to spawn into a non-existent cwd. Without this, pty.spawn
+  // succeeds on Windows but the shell exits immediately — and if a
+  // client is reconnecting in a loop (e.g. after a worktree was
+  // deleted), every cycle spawns a doomed shell. The exit closes the
+  // WS, the client reconnects, repeat forever. A simple existence
+  // check turns that infinite loop into a one-shot error.
+  if (opts.cwd && opts.cwd.trim()) {
+    try {
+      const stat = fs.statSync(opts.cwd);
+      if (!stat.isDirectory()) {
+        return { error: `cwd is not a directory: ${opts.cwd}` };
+      }
+    } catch {
+      return { error: `cwd does not exist: ${opts.cwd}` };
+    }
+  }
 
   // Plant breadcrumbs so AI agents running inside this pty can discover the
   // Lattice API without any user-side config. The vars only exist in this
@@ -239,22 +275,39 @@ export type AttachOpts = {
 
 export function attachTerminal(ws: WebSocket, opts: AttachOpts) {
   let session: Session | null = null;
-  // Track whether the client supplied a serverId but we couldn't find the
-  // session (backend restarted and sessions are gone). In that case, create
-  // a clean shell WITHOUT running initialCommand — the user doesn't want
-  // a stale agent command re-executed just because the backend bounced.
-  let staleReconnect = false;
   if (opts.id) {
     session = sessions.get(opts.id) ?? null;
-    if (!session) staleReconnect = true;
+    if (!session) {
+      // Stale id (terminal-server restarted, or session was killed via
+      // worktree cleanup, or pty exited and was deleted). DO NOT silently
+      // spawn a fresh pty here — the client's reconnect logic would treat
+      // every WS close as "try again" and we'd produce a runaway:
+      //   client.onclose → client.connect(id) → backend creates new pty
+      //   → pty doomed (cwd may be gone, or user expects different state)
+      //   → exit → client.onclose → repeat, forever, ~3 OS procs / cycle.
+      // Sending session_lost lets the frontend mark the terminal as gone
+      // and stop reconnecting. If the user wants a fresh shell they can
+      // close the tab and open a new one — that's an explicit, bounded
+      // action with no feedback loop.
+      console.warn(`[terminal] attach with unknown id ${opts.id} — session_lost`);
+      try {
+        ws.send(
+          JSON.stringify({
+            type: 'session_lost',
+            message: 'Terminal session no longer exists. Close this tab and start a new one if you need a fresh shell.',
+          }),
+        );
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
   }
 
   let replayed = false;
   if (!session) {
-    const result = createSession({
-      ...opts,
-      initialCommand: staleReconnect ? undefined : opts.initialCommand,
-    });
+    const result = createSession(opts);
     if ('error' in result) {
       try {
         ws.send(JSON.stringify({ type: 'error', message: result.error }));

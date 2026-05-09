@@ -108,9 +108,19 @@ export function TerminalPane({
     let attempt = 0;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let reconnectingShown = false;
+    // Once the pty has signalled it is gone (clean exit, or backend says
+    // session_lost), stop reconnecting. Without this, every WS close —
+    // including the one immediately following a clean pty exit — would
+    // trigger a fresh connect, which on a deleted-worktree session
+    // produces a feedback loop that spawns thousands of doomed ptys.
+    let terminated = false;
+    // Cap reconnect attempts. A genuine network blip recovers in 1-2
+    // tries; six attempts (~7 s of backoff total) is plenty before we
+    // declare the connection dead and stop hammering the backend.
+    const MAX_RECONNECT_ATTEMPTS = 6;
 
     function connect() {
-      if (cancelled) return;
+      if (cancelled || terminated) return;
       const params = new URLSearchParams({
         cwd,
         cols: String(term.cols),
@@ -154,6 +164,17 @@ export function TerminalPane({
             term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
           } else if (msg.type === 'exit') {
             term.write(`\r\n\x1b[2m[exited ${msg.exitCode}]\x1b[0m\r\n`);
+            // The pty is gone for good. Mark terminated so the WS close
+            // that follows doesn't trigger a reconnect (which on a
+            // cleaned-up worktree would create a doomed-to-exit pty,
+            // feeding back into another close → another reconnect →
+            // runaway).
+            terminated = true;
+          } else if (msg.type === 'session_lost') {
+            term.write(
+              `\r\n\x1b[2m[${msg.message ?? 'session lost'}]\x1b[0m\r\n`,
+            );
+            terminated = true;
           }
         } catch {
           /* ignore */
@@ -165,7 +186,16 @@ export function TerminalPane({
       };
 
       ws.onclose = () => {
-        if (cancelled) return;
+        if (cancelled || terminated) return;
+        if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+          term.write(
+            '\r\n\x1b[31m[connection lost — gave up after ' +
+              MAX_RECONNECT_ATTEMPTS +
+              ' reconnect attempts. Close this tab and start a new terminal if needed.]\x1b[0m\r\n',
+          );
+          terminated = true;
+          return;
+        }
         if (!reconnectingShown) {
           term.write(
             '\r\n\x1b[2m[connection lost — reconnecting…]\x1b[0m\r\n',
