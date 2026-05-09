@@ -47,7 +47,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     () => new Set(LANES.map((l) => l.id)),
   );
 
-  const { addTerminal, closeTerminal, closeTerminalsForTask, terminals, setActiveId } =
+  const { addTerminal, closeTerminal, closeTerminals, closeTerminalsForTask, terminals, setActiveId } =
     useTerminals();
 
   const { tasks, error, setError, showError } = useTaskList(activeFolder);
@@ -137,6 +137,22 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
       }
     }
   }, [tasks, closeTerminalsForTask]);
+
+  // Close the original worktree-Claude terminal when its task moves to
+  // ready_to_merge — the in-progress agent has committed and the pty is
+  // just sitting idle. Merge-kind terminals (conflict resolvers spawned
+  // *after* the move) are left alone; they get closed by the qa/done/
+  // deleted effect above when the task finalizes.
+  useEffect(() => {
+    const readyIds = new Set(
+      tasks.filter((t) => t.status === 'ready_to_merge').map((t) => t.id),
+    );
+    if (readyIds.size === 0) return;
+    const toClose = terminals
+      .filter((t) => t.taskId && readyIds.has(t.taskId) && t.kind !== 'merge')
+      .map((t) => t.id);
+    if (toClose.length > 0) closeTerminals(toClose);
+  }, [tasks, terminals, closeTerminals]);
 
   // Keep "viewing" task fresh when underlying list updates.
   useEffect(() => {
