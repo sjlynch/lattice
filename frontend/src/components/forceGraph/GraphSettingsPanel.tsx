@@ -17,6 +17,14 @@ const NODE_ROWS: SliderRow[] = [
   { key: 'fileNodeSize', label: 'File node size', min: 2, max: 30, step: 0.5 },
   { key: 'dirNodeSize', label: 'Folder node size', min: 2, max: 30, step: 0.5 },
   { key: 'labelSize', label: 'Label size', min: 3, max: 24, step: 0.5 },
+  {
+    key: 'labelSpread',
+    label: 'Label spread',
+    min: 0.5,
+    max: 3,
+    step: 0.1,
+    format: (v) => `${v.toFixed(1)}×`,
+  },
 ];
 
 const PHYSICS_ROWS: SliderRow[] = [

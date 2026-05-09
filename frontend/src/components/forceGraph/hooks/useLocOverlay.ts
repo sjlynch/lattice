@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { locLabelRegistry } from '../locOverlay';
 import { repelLabels } from '../labelRepulsion';
+import type { GraphSettings } from '../graphSettings';
 import { clearLabelsAndRefresh, isTextInput } from './refresh';
 
 // Lines-of-code overlay: active while the user holds `z`. Tracked in
@@ -13,6 +14,7 @@ import { clearLabelsAndRefresh, isTextInput } from './refresh';
 // on blur and on visibility loss as well.
 export function useLocOverlay(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
+  settingsRef: MutableRefObject<GraphSettings>,
 ) {
   const [locMode, setLocMode] = useState(false);
   const locModeRef = useRef(false);
@@ -58,19 +60,21 @@ export function useLocOverlay(
   // clusters, with a velocity-based settle so the system stops moving
   // once an equilibrium is reached. Shared physics implementation
   // lives in labelRepulsion.ts; only the minimum desired separation
-  // differs per overlay (LOC numbers are short, so 55 units is plenty).
+  // differs per overlay (LOC numbers are short, so the per-overlay
+  // base is 55 units). The user-tweakable `labelSpread` multiplier is
+  // read fresh each tick so dragging the slider feels live.
   useEffect(() => {
     if (!locMode) return;
     let rafId = 0;
     let frameCount = 0;
     const tick = () => {
       frameCount++;
-      repelLabels(locLabelRegistry, 55, frameCount);
+      repelLabels(locLabelRegistry, 55 * settingsRef.current.labelSpread, frameCount);
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [locMode]);
+  }, [locMode, settingsRef]);
 
   return { locMode, locModeRef };
 }

@@ -3,6 +3,7 @@ import type { ForceGraph3DInstance } from '3d-force-graph';
 import type { ScanResult } from '../../../api';
 import { depthFor, labelsRegistry } from '../labelsOverlay';
 import { repelLabels } from '../labelRepulsion';
+import type { GraphSettings } from '../graphSettings';
 import { isTextInput } from './refresh';
 
 // Labels overlay: active while the user holds Alt. Shows the name of
@@ -16,6 +17,7 @@ export function useLabelsOverlay(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   containerRef: MutableRefObject<HTMLDivElement | null>,
   data: ScanResult | null,
+  settingsRef: MutableRefObject<GraphSettings>,
 ) {
   const [labelMode, setLabelMode] = useState(false);
   const labelModeRef = useRef(false);
@@ -119,21 +121,22 @@ export function useLabelsOverlay(
     graphRef.current?.refresh?.();
   }, [labelMode, labelLevel, graphRef]);
 
-  // Same physics as LOC, with a wider minimum separation because
-  // file-name labels are much longer than 3-digit LOC / health values
-  // and would visibly overlap at 55 units.
+  // Same physics as LOC, with a wider per-overlay base because file-name
+  // labels are much longer than 3-digit LOC / health values and would
+  // visibly overlap at 55 units. The `labelSpread` multiplier is read
+  // fresh each tick so the slider takes effect live.
   useEffect(() => {
     if (!labelMode) return;
     let rafId = 0;
     let frameCount = 0;
     const tick = () => {
       frameCount++;
-      repelLabels(labelsRegistry, 90, frameCount);
+      repelLabels(labelsRegistry, 90 * settingsRef.current.labelSpread, frameCount);
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [labelMode]);
+  }, [labelMode, settingsRef]);
 
   return {
     labelMode,
