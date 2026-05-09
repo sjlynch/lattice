@@ -4,30 +4,32 @@ import ForceGraph3D, { type ForceGraph3DInstance } from '3d-force-graph';
 import { Settings as SettingsIcon } from 'lucide-react';
 import {
   createTask,
-  fetchGitHistory,
-  type GitHistoryResult,
   type GraphNode,
   type ScanResult,
 } from '../../api';
 import { Modal } from '../Modal';
 import { spriteFor } from './sprites';
 import { withHalo } from './halo';
-import { deletedSprite, withChangeRing, type ChangeKind } from './changeRing';
-import {
-  buildGhostGraphData,
-  computeChangeMap,
-  isGhost,
-  relForward,
-} from './timelineDiff';
+import { deletedSprite, withChangeRing } from './changeRing';
+import { buildGhostGraphData, isGhost, relForward } from './timelineDiff';
 import { TimelineScrubber } from './TimelineScrubber';
 import { locLabelRegistry, spriteForLoc } from './locOverlay';
-import { depthFor, labelsRegistry, spriteForLabels } from './labelsOverlay';
+import { labelsRegistry, spriteForLabels } from './labelsOverlay';
 import { healthLabelRegistry, spriteForHealth } from './healthOverlay';
 import { HealthTooltip } from './HealthTooltip';
-import { repelLabels } from './labelRepulsion';
 import { MENU_ITEMS, relPath, type MenuItemDef } from './menu';
-import { loadSettings, type GraphSettings } from './graphSettings';
 import { GraphSettingsPanel } from './GraphSettingsPanel';
+import { useRefMirror } from './hooks/useRefMirror';
+import { useGraphSettings } from './hooks/useGraphSettings';
+import { useGitTimeline } from './hooks/useGitTimeline';
+import { useLocOverlay } from './hooks/useLocOverlay';
+import { useHealthOverlay } from './hooks/useHealthOverlay';
+import { useLabelsOverlay } from './hooks/useLabelsOverlay';
+import { useBoxSelect } from './hooks/useBoxSelect';
+import { useNodeContextMenu } from './hooks/useNodeContextMenu';
+import { useGraphFilter } from './hooks/useGraphFilter';
+import { useHoverCursor } from './hooks/useHoverCursor';
+import { clearLabelsAndRefresh } from './hooks/refresh';
 
 type Props = {
   data: ScanResult | null;
@@ -42,11 +44,10 @@ type Props = {
   onHealthModeChange: (mode: boolean) => void;
 };
 
-type DragRect = { x1: number; y1: number; x2: number; y2: number };
-
-// Hosts the 3d-force-graph instance, the LOC overlay (`z` keypress), the
-// shift-drag box-select, the right-click "create task" menu, and the
-// settings panel. Each of those concerns is split into a useEffect below.
+// Hosts the 3d-force-graph instance and stitches together the per-concern
+// hooks under ./hooks/: settings persistence, git timeline, the LOC / health /
+// labels overlays, shift-drag box-select, and the right-click "create task"
+// menu. The mount effect below is the only place THREE.js is wired up.
 export function ForceGraphView({
   data,
   loading,
@@ -58,118 +59,58 @@ export function ForceGraphView({
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraph3DInstance | null>(null);
 
-  // Lines-of-code overlay: active while the user holds `z`. Tracked in
-  // both state (for the chip overlay) and a ref (so the nodeThreeObject
-  // accessor — wired into the graph once at mount — reads the live value).
-  const [locMode, setLocMode] = useState(false);
-  const locModeRef = useRef(false);
-  // Code-health overlay: active while the user holds `h`. State is owned
-  // by App (so the Legend can react), but mirrored to a ref here so the
-  // nodeThreeObject closure reads the live value.
-  const healthModeRef = useRef(false);
   // Currently-hovered file node. While healthMode is on, a tooltip in
   // the parent div shows its score + breakdown.
   const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);
-  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
-
-  // Labels overlay: active while the user holds Alt. Shows the name of every
-  // node at `labelLevel` (path depth from the scan root); alt+wheel scrolls
-  // through depths so the user can read one band at a time.
-  const [labelMode, setLabelMode] = useState(false);
-  const labelModeRef = useRef(false);
-  const [labelLevel, setLabelLevel] = useState(1);
-  const labelLevelRef = useRef(1);
-  const maxDepthRef = useRef(0);
-  const nodeDepthsRef = useRef<Map<string, number>>(new Map());
+  const { hoverPos } = useHoverCursor(containerRef);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const selectedRef = useRef<Set<string>>(new Set());
-  const hiddenExtsRef = useRef<Set<string>>(hiddenExts);
+  const selectedRef = useRefMirror(selected);
+  const hiddenExtsRef = useRefMirror(hiddenExts);
+  const dataRef = useRefMirror(data);
 
-  // Graph render + physics settings, persisted per project. The ref keeps
-  // the latest value visible to THREE callbacks (nodeThreeObject is wired
-  // once at mount) while the state drives the panel UI.
-  const [settings, setSettings] = useState<GraphSettings>(() =>
-    loadSettings(activeFolder),
+  const { settings, setSettings, settingsRef } = useGraphSettings(
+    activeFolder,
+    graphRef,
   );
-  const settingsRef = useRef<GraphSettings>(settings);
   const [showSettings, setShowSettings] = useState(false);
 
-  // ---------- Git timeline scrubber ----------
-  // History is fetched once per project; the scrubber range is two
-  // tick indices into [0, commits.length], where commits.length is
-  // the working-tree slot. Defaults to [oldest, WT] so the user sees
-  // every change ringed when they land on the project.
-  const [history, setHistory] = useState<GitHistoryResult | null>(null);
-  const [range, setRange] = useState<{ left: number; right: number }>({ left: 0, right: 0 });
-  // changeMap (rel-path → kind) is recomputed on every range/history
-  // change. Stored in a ref so the nodeThreeObject closure (wired once
-  // at mount) reads the latest map without forcing a re-mount.
-  const changeMapRef = useRef<Map<string, ChangeKind>>(new Map());
-  const ghostsRef = useRef<Set<string>>(new Set()); // node IDs of ghost nodes
-  const dataRef = useRef<ScanResult | null>(null);
+  const { history, range, setRange, changeMapRef } = useGitTimeline(
+    activeFolder,
+    graphRef,
+  );
 
-  const [dragRect, setDragRect] = useState<DragRect | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const { locMode, locModeRef } = useLocOverlay(graphRef);
+  const { healthModeRef } = useHealthOverlay(
+    healthMode,
+    onHealthModeChange,
+    graphRef,
+  );
+  const {
+    labelMode,
+    labelModeRef,
+    labelLevel,
+    labelLevelRef,
+    maxDepthRef,
+    nodeDepthsRef,
+  } = useLabelsOverlay(graphRef, containerRef, data);
+
+  const { contextMenu, setContextMenu } = useNodeContextMenu(containerRef);
+  const closeContextMenu = useCallback(() => setContextMenu(null), [setContextMenu]);
+  const { dragRect } = useBoxSelect(
+    containerRef,
+    graphRef,
+    hiddenExtsRef,
+    setSelected,
+    closeContextMenu,
+  );
+
+  const ghostsRef = useRef<Set<string>>(new Set());
+
   const [modalAction, setModalAction] = useState<MenuItemDef | null>(null);
   const [promptText, setPromptText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-
-  useEffect(() => { locModeRef.current = locMode; }, [locMode]);
-  useEffect(() => { healthModeRef.current = healthMode; }, [healthMode]);
-  useEffect(() => { labelModeRef.current = labelMode; }, [labelMode]);
-  useEffect(() => { labelLevelRef.current = labelLevel; }, [labelLevel]);
-  useEffect(() => { selectedRef.current = selected; }, [selected]);
-  useEffect(() => { hiddenExtsRef.current = hiddenExts; }, [hiddenExts]);
-  useEffect(() => { settingsRef.current = settings; }, [settings]);
-  useEffect(() => { dataRef.current = data; }, [data]);
-
-  // Reload persisted settings when the active project changes.
-  useEffect(() => {
-    setSettings(loadSettings(activeFolder));
-  }, [activeFolder]);
-
-  // Fetch the last 10 commits + uncommitted status whenever the active
-  // project changes. The scrubber drives ring colors and ghost-node
-  // visibility from the cached result — no per-drag backend traffic.
-  useEffect(() => {
-    if (!activeFolder) {
-      setHistory(null);
-      setRange({ left: 0, right: 0 });
-      return;
-    }
-    let cancelled = false;
-    fetchGitHistory(activeFolder, 10)
-      .then((h) => {
-        if (cancelled) return;
-        setHistory(h);
-        // Default to the full range so every change in the loaded
-        // window is visible at first paint.
-        const last = h.commits.length; // tick index of working-tree slot
-        setRange({ left: 0, right: last });
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setHistory({ isRepo: false, commits: [], uncommitted: { changes: [] } });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeFolder]);
-
-  // Persist settings whenever they change.
-  useEffect(() => {
-    if (!activeFolder) return;
-    try {
-      localStorage.setItem(
-        `lattice.graphSettings.${activeFolder}`,
-        JSON.stringify(settings),
-      );
-    } catch {
-      /* ignore quota */
-    }
-  }, [activeFolder, settings]);
 
   // ---------- Mount: graph + camera + resize observer ----------
   useEffect(() => {
@@ -297,72 +238,9 @@ export function ForceGraphView({
     });
     ro.observe(containerRef.current);
 
-    // Right-click anywhere over the graph viewport opens our popover.
-    // Coords are stored relative to the container because the popover is
-    // rendered inside the (position: relative) wrapper and `.popover` falls
-    // back to position: absolute, so viewport coords would land offset by
-    // the sidebar/topbar.
-    //
-    // Right-drag pans the camera (OrbitControls); the browser still fires
-    // `contextmenu` on release, and we want the menu only on a real click.
-    // The two reliable pieces:
-    //
-    //   1. mousedown/mouseup positions captured at window level in capture
-    //      phase. mousedown/mouseup are compat events that fire for
-    //      pointerType=mouse regardless of pointer preventDefault, and
-    //      window-capture beats anything inside the canvas tree to the
-    //      event. Compare the two at contextmenu time; if the cursor moved
-    //      more than DRAG_THRESHOLD between them, it was a pan.
-    //
-    //   2. The contextmenu handler also lives on window (capture), gated
-    //      on containerRef.current.contains(e.target). A previous version
-    //      attached it to the container; cleanup used
-    //      `containerRef.current?.removeEventListener(...)`, and the
-    //      optional chaining silently no-op'd across React StrictMode's
-    //      mount/cleanup/remount cycle, leaking an old closure with a
-    //      stale rightUpAt that opened the menu after every right-drag.
-    const DRAG_THRESHOLD = 5;
-    let rightDownX = 0;
-    let rightDownY = 0;
-    let rightUpX = 0;
-    let rightUpY = 0;
-    let rightUpAt = 0;
-    const onMouseDownWin = (e: MouseEvent) => {
-      if (e.button !== 2) return;
-      rightDownX = e.clientX;
-      rightDownY = e.clientY;
-    };
-    const onMouseUpWin = (e: MouseEvent) => {
-      if (e.button !== 2) return;
-      rightUpX = e.clientX;
-      rightUpY = e.clientY;
-      rightUpAt = performance.now();
-    };
-    const onCtxMenu = (e: MouseEvent) => {
-      const container = containerRef.current;
-      const target = e.target as Node | null;
-      if (!container || !target || !container.contains(target)) return;
-      e.preventDefault();
-      // Recency check so keyboard contextmenu (Shift+F10, menu key) — which
-      // has no paired mouseup — still opens the menu.
-      if (performance.now() - rightUpAt < 500) {
-        const dx = rightUpX - rightDownX;
-        const dy = rightUpY - rightDownY;
-        if (dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) return;
-      }
-      const rect = container.getBoundingClientRect();
-      setContextMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-    };
-    window.addEventListener('mousedown', onMouseDownWin, { capture: true });
-    window.addEventListener('mouseup', onMouseUpWin, { capture: true });
-    window.addEventListener('contextmenu', onCtxMenu, { capture: true });
-
     return () => {
       if (resizeTimer) clearTimeout(resizeTimer);
       ro.disconnect();
-      window.removeEventListener('mousedown', onMouseDownWin, { capture: true });
-      window.removeEventListener('mouseup', onMouseUpWin, { capture: true });
-      window.removeEventListener('contextmenu', onCtxMenu, { capture: true });
       graph._destructor?.();
       graphRef.current = null;
     };
@@ -398,240 +276,16 @@ export function ForceGraphView({
       nodes: [...data.nodes, ...ghostNodes],
       links: [...data.links, ...ghostLinks],
     });
-    // Recompute path depths for the labels overlay, plus the max depth so
-    // alt+wheel can clamp to the visible range.
-    const depths = new Map<string, number>();
-    let maxD = 0;
-    for (const n of data.nodes) {
-      const d = depthFor(n, data.root);
-      depths.set(n.id, d);
-      if (d > maxD) maxD = d;
-    }
-    nodeDepthsRef.current = depths;
-    maxDepthRef.current = maxD;
-    setLabelLevel((lvl) => Math.min(Math.max(lvl, 1), Math.max(1, maxD)));
     // A new scan invalidates the previous selection (node IDs may differ).
     setSelected(new Set());
   }, [data, history]);
 
-  // ---------- LOC overlay key handling ----------
-  // Toggle LOC view on/off when the `z` key is held. Keyup also fires on
-  // window blur (Alt-Tab, dev-tools focus) — we can't trust `keyup` alone,
-  // so reset on blur and on visibility loss as well.
-  useEffect(() => {
-    function isTextInput(target: EventTarget | null) {
-      if (!target) return false;
-      const el = target as HTMLElement;
-      const tag = el.tagName?.toLowerCase();
-      return tag === 'input' || tag === 'textarea' || el.isContentEditable;
-    }
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key !== 'z' && e.key !== 'Z') return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (isTextInput(e.target)) return;
-      if (e.repeat) return;
-      setLocMode(true);
-    }
-    function onKeyUp(e: KeyboardEvent) {
-      if (e.key === 'z' || e.key === 'Z') setLocMode(false);
-    }
-    function reset() {
-      setLocMode(false);
-    }
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('blur', reset);
-    document.addEventListener('visibilitychange', reset);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('blur', reset);
-      document.removeEventListener('visibilitychange', reset);
-    };
-  }, []);
-
-  // Re-render node THREE objects when the LOC overlay or selection
-  // changes. refresh() re-evaluates nodeThreeObject without restarting
+  // Re-render node THREE objects when the selection changes so halos
+  // update. refresh() re-evaluates nodeThreeObject without restarting
   // the d3 simulation, so node positions stay put.
   useEffect(() => {
-    // Old labels become orphaned when nodeThreeObject is re-evaluated;
-    // spriteForLoc repopulates the registry on the way through.
-    locLabelRegistry.clear();
-    labelsRegistry.clear();
-    healthLabelRegistry.clear();
-    graphRef.current?.refresh?.();
-  }, [locMode, selected]);
-
-  // ---------- Health overlay key handling ----------
-  // Toggle health view on/off when the `h` key is held. Same chord
-  // pattern as `z` (LOC) — keyup, blur, and visibility-change all reset
-  // so we can't get stuck in an "always on" state if the user
-  // alt-tabs while holding the key.
-  useEffect(() => {
-    function isTextInput(target: EventTarget | null) {
-      if (!target) return false;
-      const el = target as HTMLElement;
-      const tag = el.tagName?.toLowerCase();
-      return tag === 'input' || tag === 'textarea' || el.isContentEditable;
-    }
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key !== 'h' && e.key !== 'H') return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (isTextInput(e.target)) return;
-      if (e.repeat) return;
-      onHealthModeChange(true);
-    }
-    function onKeyUp(e: KeyboardEvent) {
-      if (e.key === 'h' || e.key === 'H') onHealthModeChange(false);
-    }
-    function reset() {
-      onHealthModeChange(false);
-    }
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('blur', reset);
-    document.addEventListener('visibilitychange', reset);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('blur', reset);
-      document.removeEventListener('visibilitychange', reset);
-    };
-  }, [onHealthModeChange]);
-
-  // Refresh sprites + drop the previous overlay's labels when the
-  // health overlay toggles. Same shape as the `locMode` effect above.
-  // (We deliberately do NOT clear `hoverNode` here — the tooltip is
-  // shown for every file hover regardless of the `h` key, so a
-  // healthMode toggle shouldn't dismiss it.)
-  useEffect(() => {
-    locLabelRegistry.clear();
-    labelsRegistry.clear();
-    healthLabelRegistry.clear();
-    graphRef.current?.refresh?.();
-  }, [healthMode]);
-
-  // ---------- Labels overlay (Alt held) ----------
-  // Track Alt as a chord-style modifier: keydown enables labels mode,
-  // keyup/blur disables. Alt+wheel cycles the visible depth band instead
-  // of zooming the camera.
-  useEffect(() => {
-    function isTextInput(target: EventTarget | null) {
-      if (!target) return false;
-      const el = target as HTMLElement;
-      const tag = el.tagName?.toLowerCase();
-      return tag === 'input' || tag === 'textarea' || el.isContentEditable;
-    }
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key !== 'Alt') return;
-      if (isTextInput(e.target)) return;
-      if (e.repeat) return;
-      // Browsers focus the menu bar on Alt-up; suppressing the default on
-      // keydown also kills that side-effect when Alt is released alone.
-      e.preventDefault();
-      setLabelMode(true);
-    }
-    function onKeyUp(e: KeyboardEvent) {
-      if (e.key === 'Alt') setLabelMode(false);
-    }
-    function reset() {
-      setLabelMode(false);
-    }
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('blur', reset);
-    document.addEventListener('visibilitychange', reset);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('blur', reset);
-      document.removeEventListener('visibilitychange', reset);
-    };
-  }, []);
-
-  // Alt+wheel intercept on the canvas: scroll up = shallower depth, scroll
-  // down = deeper. Needs a non-passive listener so preventDefault actually
-  // stops OrbitControls from zooming. deltaY is accumulated so a trackpad
-  // (which fires many small-delta events per swipe) bumps depth one step at
-  // a time instead of racing through every level in a single gesture.
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    let accum = 0;
-    const STEP = 50;
-    function onWheel(e: WheelEvent) {
-      if (!e.altKey) return;
-      e.preventDefault();
-      e.stopPropagation();
-      accum += e.deltaY;
-      if (Math.abs(accum) < STEP) return;
-      const dir = accum > 0 ? 1 : -1;
-      accum = 0;
-      setLabelLevel((lvl) => {
-        const max = Math.max(1, maxDepthRef.current);
-        const next = lvl + dir;
-        if (next < 1) return 1;
-        if (next > max) return max;
-        return next;
-      });
-    }
-    // Capture phase so we run before OrbitControls' canvas-level wheel
-    // listener (which would otherwise zoom the camera before we get the
-    // chance to call preventDefault).
-    container.addEventListener('wheel', onWheel, { passive: false, capture: true });
-    return () =>
-      container.removeEventListener('wheel', onWheel, { capture: true });
-  }, []);
-
-  // Refresh sprites when labels mode toggles or the active depth changes.
-  useEffect(() => {
-    labelsRegistry.clear();
-    graphRef.current?.refresh?.();
-  }, [labelMode, labelLevel]);
-
-  // Re-render sprites when render-only settings (sizes) change.
-  useEffect(() => {
-    locLabelRegistry.clear();
-    labelsRegistry.clear();
-    healthLabelRegistry.clear();
-    graphRef.current?.refresh?.();
-  }, [settings.fileNodeSize, settings.dirNodeSize, settings.labelSize]);
-
-  // Apply physics + DAG settings to the running simulation. Reheats so
-  // changes visibly take effect.
-  //
-  // The reheat is deferred to a macrotask. Calling `d3ReheatSimulation()`
-  // synchronously sets `engineRunning = true` via `resetCountdown()`. On
-  // the very first run kapsule's debounced initial update hasn't fired
-  // yet, so `state.layout` is still undefined — the next animation frame
-  // would crash inside `layoutTick` with "Cannot read properties of
-  // undefined (reading 'tick')". A short setTimeout lets kapsule's
-  // ~1ms-debounced digest install `state.layout` before we reheat.
-  useEffect(() => {
-    const g = graphRef.current;
-    if (!g) return;
-    g.dagLevelDistance(settings.dagLevelDistance);
-    g.d3VelocityDecay(settings.velocityDecay);
-    const charge = g.d3Force('charge') as
-      | { strength?: (n: number) => unknown }
-      | undefined;
-    charge?.strength?.(settings.chargeStrength);
-    const link = g.d3Force('link') as
-      | { distance?: (n: number) => unknown }
-      | undefined;
-    link?.distance?.(settings.linkDistance);
-    const timer = setTimeout(() => {
-      if (graphRef.current === g) {
-        g.d3ReheatSimulation();
-      }
-    }, 50);
-    return () => clearTimeout(timer);
-  }, [
-    settings.dagLevelDistance,
-    settings.velocityDecay,
-    settings.chargeStrength,
-    settings.linkDistance,
-  ]);
+    clearLabelsAndRefresh(graphRef.current);
+  }, [selected]);
 
   // Clear selection / close context menu on Escape.
   useEffect(() => {
@@ -646,301 +300,9 @@ export function ForceGraphView({
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [contextMenu, modalAction, selected]);
+  }, [contextMenu, modalAction, selected, setContextMenu]);
 
-  // ---------- LOC label repulsion loop ----------
-  // Spread LOC labels apart so their text doesn't overlap in dense
-  // clusters, with a velocity-based settle so the system stops moving
-  // once an equilibrium is reached. Shared physics implementation
-  // lives in labelRepulsion.ts; only the minimum desired separation
-  // differs per overlay (LOC numbers are short, so 55 units is plenty).
-  useEffect(() => {
-    if (!locMode) return;
-    let rafId = 0;
-    let frameCount = 0;
-    const tick = () => {
-      frameCount++;
-      repelLabels(locLabelRegistry, 55, frameCount);
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [locMode]);
-
-  // ---------- Health overlay repulsion loop ----------
-  // Same physics as the LOC loop — health labels are also short
-  // numbers, so 55 units of minimum separation is enough.
-  useEffect(() => {
-    if (!healthMode) return;
-    let rafId = 0;
-    let frameCount = 0;
-    const tick = () => {
-      frameCount++;
-      repelLabels(healthLabelRegistry, 55, frameCount);
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [healthMode]);
-
-  // ---------- Health tooltip cursor tracking ----------
-  // Track viewport-space cursor coordinates whenever the cursor is
-  // over the graph container. The HealthTooltip uses position: fixed
-  // (viewport coords) so we pass clientX/clientY through unchanged.
-  // We track unconditionally — the tooltip itself only renders when a
-  // file node is hovered AND has health data, so the listener is
-  // cheap when nothing's hovered.
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    function onMove(ev: MouseEvent) {
-      setHoverPos({ x: ev.clientX, y: ev.clientY });
-    }
-    function onLeave() {
-      // Drop the tracked position when the cursor leaves the graph
-      // viewport so a stale tooltip doesn't linger if onNodeHover
-      // doesn't fire its `null` event for some reason.
-      setHoverPos(null);
-    }
-    container.addEventListener('mousemove', onMove);
-    container.addEventListener('mouseleave', onLeave);
-    return () => {
-      container.removeEventListener('mousemove', onMove);
-      container.removeEventListener('mouseleave', onLeave);
-    };
-  }, []);
-
-  // ---------- Labels overlay repulsion loop ----------
-  // Same physics as LOC, with a wider minimum separation because
-  // file-name labels are much longer than 3-digit LOC / health values
-  // and would visibly overlap at 55 units.
-  useEffect(() => {
-    if (!labelMode) return;
-    let rafId = 0;
-    let frameCount = 0;
-    const tick = () => {
-      frameCount++;
-      repelLabels(labelsRegistry, 90, frameCount);
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [labelMode]);
-
-  // Filter via accessors — does not restart the d3 force simulation.
-  // Ghost nodes are visible only when the active scrubber range marks
-  // their path with a change kind ("deleted" most often, but also
-  // "added" if a file was added inside the window and then later
-  // removed before the user scrubbed).
-  useEffect(() => {
-    if (!graphRef.current) return;
-    const changeMap = changeMapRef.current;
-    function isNodeVisible(n: GraphNode): boolean {
-      if (isGhost(n)) {
-        // Only show ghost nodes whose path is in the current change map.
-        return changeMap.has(n.path);
-      }
-      if (n.kind === 'dir') return true;
-      const key = n.ext ? n.ext.toLowerCase() : '*';
-      return !hiddenExts.has(key);
-    }
-    graphRef.current
-      .nodeVisibility((n: object) => isNodeVisible(n as GraphNode))
-      .linkVisibility((l: object) => {
-        const link = l as {
-          source: GraphNode | string;
-          target: GraphNode | string;
-        };
-        // After graphData() is applied, source/target are hydrated to
-        // node references. Before that, they're still IDs — show them
-        // until hydration catches up.
-        const s = typeof link.source === 'object' ? link.source : null;
-        const t = typeof link.target === 'object' ? link.target : null;
-        return (!s || isNodeVisible(s)) && (!t || isNodeVisible(t));
-      });
-  }, [hiddenExts, data, history, range]);
-
-  // Recompute the change map when the slider range moves and refresh
-  // sprites so rings update. nodeVisibility above also re-evaluates on
-  // the same dep set, which hides/shows ghost nodes for the new range.
-  useEffect(() => {
-    if (!history) {
-      changeMapRef.current = new Map();
-    } else {
-      changeMapRef.current = computeChangeMap(
-        history.commits,
-        history.uncommitted,
-        range.left,
-        range.right,
-      );
-    }
-    // Sprites cached by spriteFor are reused; refresh() just re-runs
-    // nodeThreeObject so the ring wrapping reflects the new map.
-    locLabelRegistry.clear();
-    labelsRegistry.clear();
-    healthLabelRegistry.clear();
-    graphRef.current?.refresh?.();
-  }, [history, range]);
-
-  // ---------- Box-select drag ----------
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    let dragging = false;
-    let activePointerId: number | null = null;
-    let startX = 0;
-    let startY = 0;
-    let altAtStart = false;
-    let prevRotate: boolean | undefined;
-    let prevPan: boolean | undefined;
-
-    // Capture phase + pointerdown so we run before OrbitControls' canvas-level
-    // pointerdown listener. Without this, shift+left-click immediately
-    // transitions OrbitControls into PAN state, and toggling enablePan
-    // afterward has no effect for the active gesture — the camera pans
-    // through the whole drag and the box-select rect tracks a moving world.
-    //
-    // We use pointer events for the whole gesture (down/move/up). preventDefault
-    // on pointerdown suppresses the matching compat mousemove/mouseup, so a
-    // mixed pointer/mouse handler set would never see the rest of the drag.
-    function onPointerDown(e: PointerEvent) {
-      if (!e.shiftKey || e.button !== 0) return;
-      // Stop OrbitControls and 3d-force-graph's own listeners from seeing
-      // this event at all.
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-
-      const rect = container!.getBoundingClientRect();
-      startX = e.clientX - rect.left;
-      startY = e.clientY - rect.top;
-      altAtStart = e.altKey;
-      dragging = true;
-      activePointerId = e.pointerId;
-      setDragRect({ x1: startX, y1: startY, x2: startX, y2: startY });
-      setContextMenu(null);
-
-      // Belt-and-suspenders: also disable the controls flags. If anything
-      // slipped past stopPropagation, OrbitControls will bail in its
-      // mouseAction switch instead of starting a pan.
-      const ctrl = graphRef.current?.controls() as
-        | { enableRotate?: boolean; enablePan?: boolean }
-        | undefined;
-      if (ctrl) {
-        prevRotate = ctrl.enableRotate;
-        prevPan = ctrl.enablePan;
-        ctrl.enableRotate = false;
-        ctrl.enablePan = false;
-      }
-      e.preventDefault();
-    }
-
-    function onPointerMove(e: PointerEvent) {
-      if (!dragging || e.pointerId !== activePointerId) return;
-      const rect = container!.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      setDragRect({ x1: startX, y1: startY, x2: x, y2: y });
-    }
-
-    function onPointerUp(e: PointerEvent) {
-      if (!dragging || e.pointerId !== activePointerId) return;
-      dragging = false;
-      activePointerId = null;
-
-      const rect = container!.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const finalRect = {
-        x1: Math.min(startX, x),
-        y1: Math.min(startY, y),
-        x2: Math.max(startX, x),
-        y2: Math.max(startY, y),
-      };
-
-      const ctrl = graphRef.current?.controls() as
-        | { enableRotate?: boolean; enablePan?: boolean }
-        | undefined;
-      if (ctrl) {
-        if (prevRotate !== undefined) ctrl.enableRotate = prevRotate;
-        if (prevPan !== undefined) ctrl.enablePan = prevPan;
-      }
-
-      // Treat a tiny drag as a "click" — clear selection and bail.
-      const isClick =
-        finalRect.x2 - finalRect.x1 < 4 && finalRect.y2 - finalRect.y1 < 4;
-      if (isClick) {
-        setSelected(new Set());
-        setDragRect(null);
-        return;
-      }
-
-      const graph = graphRef.current;
-      if (graph) {
-        const camera = graph.camera() as THREE.Camera;
-        const W = container!.clientWidth;
-        const H = container!.clientHeight;
-        const includeDirs = altAtStart;
-        const next = new Set<string>();
-        const v = new THREE.Vector3();
-        const nodes = graph.graphData().nodes as Array<
-          GraphNode & { x?: number; y?: number; z?: number }
-        >;
-        for (const node of nodes) {
-          if (!includeDirs && node.kind === 'dir') continue;
-          if (node.kind === 'file') {
-            const key = node.ext ? node.ext.toLowerCase() : '*';
-            if (hiddenExtsRef.current.has(key)) continue;
-          }
-          if (node.x == null || node.y == null || node.z == null) continue;
-          v.set(node.x, node.y, node.z).project(camera);
-          // Behind the camera or beyond the far plane — skip.
-          if (v.z < -1 || v.z > 1) continue;
-          const sx = (v.x * 0.5 + 0.5) * W;
-          const sy = (-v.y * 0.5 + 0.5) * H;
-          if (
-            sx >= finalRect.x1 &&
-            sx <= finalRect.x2 &&
-            sy >= finalRect.y1 &&
-            sy <= finalRect.y2
-          ) {
-            next.add(node.id);
-          }
-        }
-        setSelected(next);
-      }
-      setDragRect(null);
-    }
-
-    container.addEventListener('pointerdown', onPointerDown, { capture: true });
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
-    window.addEventListener('pointercancel', onPointerUp);
-    return () => {
-      container.removeEventListener('pointerdown', onPointerDown, { capture: true });
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
-      window.removeEventListener('pointercancel', onPointerUp);
-    };
-  }, []);
-
-  // Close the context menu when clicking outside it.
-  useEffect(() => {
-    if (!contextMenu) return;
-    function onDown(e: MouseEvent) {
-      const target = e.target as HTMLElement | null;
-      if (target && target.closest('.graph-context-menu')) return;
-      setContextMenu(null);
-    }
-    // Defer attachment so the same right-click that opened the menu doesn't immediately close it.
-    const id = window.setTimeout(() => {
-      window.addEventListener('mousedown', onDown);
-    }, 0);
-    return () => {
-      window.clearTimeout(id);
-      window.removeEventListener('mousedown', onDown);
-    };
-  }, [contextMenu]);
+  useGraphFilter(graphRef, hiddenExts, data, history, range, changeMapRef);
 
   // Auto-dismiss toast after a few seconds.
   useEffect(() => {
@@ -982,7 +344,7 @@ export function ForceGraphView({
     setContextMenu(null);
     setPromptText(item.prefill);
     setModalAction(item);
-  }, []);
+  }, [setContextMenu]);
 
   const submitTask = useCallback(async () => {
     if (!modalAction || !activeFolder) return;
