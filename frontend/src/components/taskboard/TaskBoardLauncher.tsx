@@ -1,30 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Kanban } from 'lucide-react';
 import { FloatingPanel } from '../FloatingPanel';
 import { useTerminals } from '../../TerminalsContext';
 import {
   cancelMergeRun as apiCancelMergeRun,
-  checkGit,
   createTask as apiCreateTask,
   deleteTask as apiDeleteTask,
-  fetchHarnessAvailability,
-  fetchPushRunStatus,
-  fetchTasks,
-  fetchUserSettings,
-  forgetPushRun as apiForgetPushRun,
-  getActiveMergeRun,
   mergeTask as apiMergeTask,
-  patchUserSettings,
   reorderTasks as apiReorderTasks,
   resumeTask as apiResumeTask,
   runTask as apiRunTask,
   startMergeRun as apiStartMergeRun,
-  startPushRun,
-  subscribeMergeRuns,
-  subscribeTasks,
   updateTask as apiUpdateTask,
-  type HarnessAvailability,
-  type MergeRun,
   type Task,
   type TaskStatus,
 } from '../../api';
@@ -34,43 +21,26 @@ import { Lane } from './Lane';
 import { MergeRunStrip } from './MergeRunStrip';
 import { NewTaskOverlay } from './NewTaskOverlay';
 import { TaskDetailOverlay } from './TaskDetailOverlay';
+import { useTaskList } from './hooks/useTaskList';
+import { useMergeRunSync } from './hooks/useMergeRunSync';
+import { usePushRun } from './hooks/usePushRun';
+import { useHarnessSelector } from './hooks/useHarnessSelector';
+import { useTaskSelection } from './hooks/useTaskSelection';
 
 type Props = {
   activeFolder: string;
 };
 
-// Top-level Task Board: opens the floating panel, owns task/run state
-// hydration + WebSocket subscriptions, and routes per-action calls
-// (run/resume/merge/etc.) to the API + spawns the right terminal.
+// Top-level Task Board: opens the floating panel and renders the lanes.
+// Data-sync responsibilities (task list + WS, merge-run subscription, push
+// polling, harness selector, multi-selection) live in the hooks under
+// ./hooks; this component routes per-action calls (run/resume/merge/etc.)
+// to the API + spawns the right terminal and owns the JSX shell.
 export function TaskBoardLauncher({ activeFolder }: Props) {
   const [open, setOpen] = useState(false);
-  const [tasks, setTasks] = useState<Task[]>([]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [addingTo, setAddingTo] = useState<TaskStatus | null>(null);
   const [viewing, setViewing] = useState<Task | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [anchorId, setAnchorId] = useState<string | null>(null);
-  const [selectionLane, setSelectionLane] = useState<TaskStatus | null>(null);
-  const [mergeRun, setMergeRun] = useState<MergeRun | null>(null);
-  const [recentRunSummary, setRecentRunSummary] = useState<MergeRun | null>(
-    null,
-  );
-  const [harness, setHarness] = useState<'claude' | 'pi' | 'codex' | 'interleave'>('claude');
-  const interleaveNextRef = useRef<'claude' | 'pi'>('claude');
-  const [harnessAvail, setHarnessAvail] = useState<HarnessAvailability>({
-    claude: true,
-    pi: false,
-    codex: false,
-  });
-  // Active push run, if any. Tracking both ids lets us close the terminal
-  // (local) and forget the run on the backend (server) when the Stop hook
-  // marks it done. Null when no push is in flight; the QA-lane button is
-  // rendered only when activeFolder has a `.git` and disabled while non-null.
-  const [activePush, setActivePush] = useState<
-    { runId: string; terminalId: string } | null
-  >(null);
-  const [hasGit, setHasGit] = useState(false);
 
   // Filter state — all lanes visible by default.
   const [visibleLanes, setVisibleLanes] = useState<Set<TaskStatus>>(
@@ -79,6 +49,52 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
 
   const { addTerminal, closeTerminal, closeTerminalsForTask, terminals, setActiveId } =
     useTerminals();
+
+  const { tasks, error, setError, showError } = useTaskList(activeFolder);
+  const { mergeRun, recentRunSummary, dismissRecent } = useMergeRunSync(
+    activeFolder,
+    addTerminal,
+  );
+  const { activePush, startPush, hasGit } = usePushRun(
+    activeFolder,
+    addTerminal,
+    closeTerminal,
+    showError,
+  );
+  const { harness, setHarness, harnessAvail, pickInterleaveHarness } =
+    useHarnessSelector(activeFolder);
+
+  // Group + sort tasks per lane. Tasks with an explicit sortOrder use it
+  // directly; tasks without one fall back to `-createdAt` so newly-created
+  // tasks land at the top of the lane (matches the prior newest-first
+  // behavior).
+  const grouped = useMemo(() => {
+    const m: Record<TaskStatus, Task[]> = {
+      backlog: [],
+      open: [],
+      in_progress: [],
+      ready_to_merge: [],
+      qa: [],
+      done: [],
+      deleted: [],
+    };
+    for (const t of tasks) m[t.status].push(t);
+    for (const k of Object.keys(m) as TaskStatus[]) {
+      m[k].sort(
+        (a, b) =>
+          (a.sortOrder ?? -a.createdAt) - (b.sortOrder ?? -b.createdAt),
+      );
+    }
+    return m;
+  }, [tasks]);
+
+  const {
+    selectedIds,
+    clearSelection,
+    handleSingleSelect,
+    handleToggleSelect,
+    handleRangeSelect,
+  } = useTaskSelection(tasks, grouped);
 
   // Build a taskId → most-recent-terminal-id map for the focus button.
   // A merge resolver and a worktree Claude can both exist for the same
@@ -122,152 +138,6 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     }
   }, [tasks, closeTerminalsForTask]);
 
-  // Probe for `.git` so the QA-lane Push button is hidden in non-git
-  // projects (where the action is meaningless). Re-runs on folder switch.
-  useEffect(() => {
-    if (!activeFolder) {
-      setHasGit(false);
-      return;
-    }
-    let cancelled = false;
-    checkGit(activeFolder)
-      .then((r) => { if (!cancelled) setHasGit(r.hasGit); })
-      .catch(() => { if (!cancelled) setHasGit(false); });
-    return () => { cancelled = true; };
-  }, [activeFolder]);
-
-  // Poll the active push run; when the backend's Stop hook flips it to
-  // `done`, close the local terminal and forget the run. 2 s feels live
-  // without hammering the backend (the Claude session is busy doing git
-  // operations, not running an inner loop).
-  useEffect(() => {
-    if (!activePush) return;
-    let cancelled = false;
-    const tick = async () => {
-      const status = await fetchPushRunStatus(activePush.runId).catch(() => null);
-      if (cancelled) return;
-      // status === null means the run has been forgotten on the server. The
-      // only way that happens is if the user manually closed the terminal,
-      // which already triggered a DELETE; either way, we're done tracking it.
-      if (!status || status.status === 'done') {
-        closeTerminal(activePush.terminalId);
-        apiForgetPushRun(activePush.runId).catch(() => {});
-        setActivePush(null);
-      }
-    };
-    const handle = window.setInterval(() => { void tick(); }, 2000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(handle);
-    };
-  }, [activePush, closeTerminal]);
-
-  // Initial load + WS subscription per active folder.
-  useEffect(() => {
-    if (!activeFolder) {
-      setTasks([]);
-      return;
-    }
-    let cancelled = false;
-    fetchTasks(activeFolder)
-      .then((ts) => {
-        if (!cancelled) setTasks(ts);
-      })
-      .catch((err) => console.error('fetchTasks', err));
-    const unsub = subscribeTasks(activeFolder, (ts) => {
-      if (!cancelled) setTasks(ts);
-    });
-    return () => {
-      cancelled = true;
-      unsub();
-    };
-  }, [activeFolder]);
-
-  // Detect once which agent CLIs are installed. Drives whether the Pi /
-  // Interleave options appear in the harness selector.
-  useEffect(() => {
-    let cancelled = false;
-    fetchHarnessAvailability().then((avail) => {
-      if (!cancelled) setHarnessAvail(avail);
-    });
-    return () => { cancelled = true; };
-  }, []);
-
-  // Load persisted harness preference when the active folder changes.
-  // If the saved harness CLI isn't installed, coerce back to `claude` so we
-  // never try to spawn an unavailable harness.
-  useEffect(() => {
-    if (!activeFolder) return;
-    fetchUserSettings(activeFolder)
-      .then((s) => {
-        if (!s.harness) return;
-        const unavailable =
-          ((s.harness === 'pi' || s.harness === 'interleave') && !harnessAvail.pi) ||
-          (s.harness === 'codex' && !harnessAvail.codex);
-        if (unavailable) {
-          setHarness('claude');
-          patchUserSettings(activeFolder, { harness: 'claude' }).catch(() => {});
-        } else {
-          setHarness(s.harness);
-        }
-      })
-      .catch(() => { /* keep default */ });
-  }, [activeFolder, harnessAvail.pi, harnessAvail.codex]);
-
-  // Hydrate the active merge run on mount and subscribe to live events.
-  // Closing the panel/tab doesn't cancel the run — it keeps progressing on
-  // the backend. On reopen we resync via /api/merge-runs/active.
-  useEffect(() => {
-    // Reset run state on every folder switch so a summary from project A
-    // doesn't briefly flash when the user opens project B.
-    setMergeRun(null);
-    setRecentRunSummary(null);
-    if (!activeFolder) return;
-    let cancelled = false;
-    getActiveMergeRun(activeFolder)
-      .then((r) => {
-        if (!cancelled) setMergeRun(r);
-      })
-      .catch(() => {
-        /* ignore */
-      });
-    const unsub = subscribeMergeRuns(activeFolder, (ev) => {
-      if (cancelled) return;
-      if (ev.type === 'idle') {
-        // Server confirmed no active run — clear any stale state left over
-        // from a run that completed while the WS was disconnected.
-        setMergeRun(null);
-      } else if (ev.type === 'started' || ev.type === 'progress') {
-        setMergeRun(ev.run);
-      } else if (ev.type === 'completed' || ev.type === 'cancelled') {
-        setMergeRun(null);
-        setRecentRunSummary(ev.run);
-        // Auto-clear summary after a few seconds.
-        setTimeout(() => {
-          setRecentRunSummary((cur) => (cur?.id === ev.run.id ? null : cur));
-        }, 8000);
-      } else if (ev.type === 'conflict') {
-        // Spawn the resolver Claude in the worktree. Same flow the per-card
-        // merge button uses; the run worker doesn't have UI access so the
-        // frontend handles the terminal half. Backend pre-spawns the pty
-        // and ships the serverId in the event so the pane can lazy-mount.
-        addTerminal({
-          label: `merge:${ev.taskId.slice(-6)}`,
-          cwd: ev.cwd,
-          initialCommand: ev.command,
-          taskId: ev.taskId,
-          kind: 'merge',
-          projectPath: activeFolder,
-          serverId: ev.serverId,
-        }, false);
-      }
-    });
-    return () => {
-      cancelled = true;
-      unsub();
-    };
-  }, [activeFolder, addTerminal]);
-
   // Keep "viewing" task fresh when underlying list updates.
   useEffect(() => {
     if (!viewing) return;
@@ -278,11 +148,6 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     }
     if (fresh !== viewing) setViewing(fresh);
   }, [tasks, viewing]);
-
-  function showError(msg: string) {
-    setError(msg);
-    setTimeout(() => setError((cur) => (cur === msg ? null : cur)), 5000);
-  }
 
   async function addTask(status: TaskStatus, title: string, description?: string) {
     if (!activeFolder || !title.trim()) return;
@@ -303,59 +168,6 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     } catch (err) {
       showError((err as Error).message);
     }
-  }
-
-  function clearSelection() {
-    setSelectedIds(new Set());
-    setAnchorId(null);
-    setSelectionLane(null);
-  }
-
-  function handleToggleSelect(id: string, laneId: TaskStatus) {
-    if (selectionLane !== null && selectionLane !== laneId) {
-      setSelectedIds(new Set([id]));
-      setSelectionLane(laneId);
-      setAnchorId(id);
-      return;
-    }
-    const next = new Set(selectedIds);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setSelectedIds(next);
-    setSelectionLane(next.size > 0 ? laneId : null);
-    setAnchorId(id);
-  }
-
-  function handleSingleSelect(id: string, laneId: TaskStatus) {
-    if (selectedIds.size === 1 && selectedIds.has(id)) {
-      clearSelection();
-      return;
-    }
-    setSelectedIds(new Set([id]));
-    setSelectionLane(laneId);
-    setAnchorId(id);
-  }
-
-  function handleRangeSelect(id: string, laneId: TaskStatus) {
-    const anchor = anchorId ? tasks.find((t) => t.id === anchorId) : null;
-    if (!anchor || anchor.status !== laneId) {
-      setSelectedIds(new Set([id]));
-      setSelectionLane(laneId);
-      setAnchorId(id);
-      return;
-    }
-    const laneTasks = grouped[laneId];
-    const anchorIdx = laneTasks.findIndex((t) => t.id === anchorId);
-    const targetIdx = laneTasks.findIndex((t) => t.id === id);
-    if (anchorIdx === -1 || targetIdx === -1) {
-      setSelectedIds(new Set([id]));
-      setSelectionLane(laneId);
-      return;
-    }
-    const lo = Math.min(anchorIdx, targetIdx);
-    const hi = Math.max(anchorIdx, targetIdx);
-    setSelectedIds(new Set(laneTasks.slice(lo, hi + 1).map((t) => t.id)));
-    setSelectionLane(laneId);
   }
 
   // Move multiple tasks to a lane without a specific slot index (append).
@@ -451,19 +263,9 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     }
   }
 
-  // Resolve the harness to spawn for this run. In `interleave` mode we
-  // alternate claude/pi across consecutive runs so a "Run All" produces a
-  // mix; in single-mode the user's choice is used directly.
-  function resolveHarness(): 'claude' | 'pi' | 'codex' {
-    if (harness !== 'interleave') return harness;
-    const pick = interleaveNextRef.current;
-    interleaveNextRef.current = pick === 'claude' ? 'pi' : 'claude';
-    return pick;
-  }
-
   async function runTask(task: Task) {
     try {
-      const res = await apiRunTask(task.id, resolveHarness());
+      const res = await apiRunTask(task.id, pickInterleaveHarness());
       addTerminal({
         label: shortLabel(task.title),
         cwd: res.worktreePath,
@@ -490,7 +292,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
 
   async function resumeTaskAction(task: Task) {
     try {
-      const res = await apiResumeTask(task.id, resolveHarness());
+      const res = await apiResumeTask(task.id, pickInterleaveHarness());
       addTerminal({
         label: shortLabel(task.title),
         cwd: res.worktreePath,
@@ -561,47 +363,6 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     await Promise.all(qaTasks.map((t) => moveTask(t.id, 'done')));
   }
 
-  async function pushProject() {
-    if (!activeFolder || activePush) return;
-    try {
-      const res = await startPushRun(activeFolder);
-      const terminalId = addTerminal({
-        label: 'push',
-        cwd: res.cwd,
-        initialCommand: res.command,
-        projectPath: activeFolder,
-        serverId: res.serverId,
-      });
-      setActivePush({ runId: res.id, terminalId });
-    } catch (err) {
-      showError(`Push failed to start: ${(err as Error).message}`);
-    }
-  }
-
-  // Group + sort tasks per lane. Tasks with an explicit sortOrder use it
-  // directly; tasks without one fall back to `-createdAt` so newly-created
-  // tasks land at the top of the lane (matches the prior newest-first
-  // behavior).
-  const grouped = useMemo(() => {
-    const m: Record<TaskStatus, Task[]> = {
-      backlog: [],
-      open: [],
-      in_progress: [],
-      ready_to_merge: [],
-      qa: [],
-      done: [],
-      deleted: [],
-    };
-    for (const t of tasks) m[t.status].push(t);
-    for (const k of Object.keys(m) as TaskStatus[]) {
-      m[k].sort(
-        (a, b) =>
-          (a.sortOrder ?? -a.createdAt) - (b.sortOrder ?? -b.createdAt),
-      );
-    }
-    return m;
-  }, [tasks]);
-
   const activeCount = tasks.filter(
     (t) =>
       t.status !== 'deleted' && t.status !== 'done' && t.status !== 'backlog',
@@ -614,12 +375,6 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
       else next.add(id);
       return next;
     });
-  }
-
-  function handleHarnessChange(val: 'claude' | 'pi' | 'codex' | 'interleave') {
-    setHarness(val);
-    interleaveNextRef.current = 'claude';
-    if (activeFolder) patchUserSettings(activeFolder, { harness: val }).catch(() => {});
   }
 
   return (
@@ -689,7 +444,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
             <select
               className="taskboard-harness-select"
               value={harness}
-              onChange={(e) => handleHarnessChange(e.target.value as 'claude' | 'pi' | 'codex' | 'interleave')}
+              onChange={(e) => setHarness(e.target.value as 'claude' | 'pi' | 'codex' | 'interleave')}
               title="Agent harness for running tasks"
             >
               <option value="claude">Claude</option>
@@ -735,7 +490,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                     ? markAllQaDone
                     : undefined
                 }
-                onPush={lane.id === 'qa' && hasGit ? pushProject : undefined}
+                onPush={lane.id === 'qa' && hasGit ? startPush : undefined}
                 pushDisabled={!!activePush}
                 onView={setViewing}
                 strip={(() => {
@@ -748,7 +503,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                       summary={recentRunSummary}
                       tasks={tasks}
                       onCancel={cancelActiveRun}
-                      onDismiss={() => setRecentRunSummary(null)}
+                      onDismiss={dismissRecent}
                     />
                   );
                 })()}
