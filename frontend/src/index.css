@@ -267,6 +267,18 @@ input {
   color: #5eead4;
 }
 
+.sidebar-panel-tab.startup.active {
+  color: #9ed28e;
+}
+
+.sidebar-startup-refresh {
+  color: #9ed28e;
+}
+.sidebar-startup-refresh:hover {
+  color: #bce3ad;
+  background: rgba(158, 210, 142, 0.15);
+}
+
 .sidebar-panel-tab-badge {
   display: inline-flex;
   align-items: center;
@@ -539,6 +551,104 @@ input {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* Settings dialog */
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.settings-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: #181b21;
+}
+.settings-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.settings-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.settings-tab.active {
+  color: var(--text-primary);
+  background: var(--bg-active);
+}
+.settings-tab-body {
+  padding: 14px 16px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.settings-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.settings-section-sub {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 3px;
+  max-width: 420px;
+  line-height: 1.45;
+}
+.settings-empty {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-style: italic;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+.startup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.startup-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.startup-label {
+  flex: 0 0 140px;
+  height: 28px;
+  font-size: 11px;
+}
+.startup-command {
+  flex: 1;
+  height: 28px;
+  font-size: 11px;
 }
 
 .path-row {

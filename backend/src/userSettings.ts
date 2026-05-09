@@ -3,9 +3,16 @@ import path from 'node:path';
 import { PROJECT_DIR_NAME } from './tasks.js';
 import { canonicalProjectPath } from './projectPath.js';
 
+export type StartupTerminal = {
+  id: string;
+  label: string;
+  command: string;
+};
+
 export type UserSettings = {
   sidebarWidth?: number;
   harness?: 'claude' | 'pi' | 'codex' | 'interleave';
+  startupTerminals?: StartupTerminal[];
 };
 
 function settingsFile(projectPath: string): string {

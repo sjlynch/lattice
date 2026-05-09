@@ -11,6 +11,7 @@ import {
   patchUserSettings,
   subscribeHealth,
   type ScanResult,
+  type StartupTerminal,
 } from './api';
 import { canonicalProjectPath } from './projectPath';
 
@@ -57,6 +58,10 @@ function App() {
   // listener and pushes changes back up via onHealthModeChange.
   const [healthMode, setHealthMode] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState<number>(SIDEBAR_DEFAULT_WIDTH);
+  // Startup terminals are per-project, loaded from userSettings.json. Sidebar
+  // owns the "ensure spawned" + "restart" lifecycle; App just holds the list
+  // so SettingsDialog can edit it and Sidebar can react to changes.
+  const [startupTerminals, setStartupTerminals] = useState<StartupTerminal[]>([]);
   const resizingRef = useRef(false);
   // Kept in sync via effect so event-handler closures always read the latest value
   const activeFolderRef = useRef('');
@@ -106,12 +111,16 @@ function App() {
 
   // Load per-project sidebar width from backend when the active folder changes
   useEffect(() => {
-    if (!activeFolder) return;
+    if (!activeFolder) {
+      setStartupTerminals([]);
+      return;
+    }
     fetchUserSettings(activeFolder)
       .then((s) => {
         if (typeof s.sidebarWidth === 'number') {
           setSidebarWidth(clampSidebarWidth(s.sidebarWidth));
         }
+        setStartupTerminals(s.startupTerminals ?? []);
       })
       .catch(() => { /* ignore — keep default */ });
   }, [activeFolder]);
@@ -285,10 +294,18 @@ function App() {
   return (
     <TerminalsProvider>
       <div className="app-shell">
-        <TopAppBar activeFolder={activeFolder} onSelectFolder={setActiveFolder} />
+        <TopAppBar
+          activeFolder={activeFolder}
+          onSelectFolder={setActiveFolder}
+          startupTerminals={startupTerminals}
+          onStartupTerminalsChange={setStartupTerminals}
+        />
         <div className="app-body">
           <aside className="app-sidebar" style={{ width: sidebarWidth }}>
-            <Sidebar activeFolder={activeFolder} />
+            <Sidebar
+              activeFolder={activeFolder}
+              startupTerminals={startupTerminals}
+            />
           </aside>
           <div
             className="app-resizer"

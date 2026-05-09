@@ -1,16 +1,26 @@
 import { useState } from 'react';
-import { FolderOpen } from 'lucide-react';
+import { FolderOpen, Settings } from 'lucide-react';
 import { FolderPicker } from './FolderPicker';
 import { TaskBoardLauncher } from './TaskBoard';
 import { WorkflowsLauncher } from './Workflows';
+import { SettingsDialog } from './SettingsDialog';
+import type { StartupTerminal } from '../api';
 
 type Props = {
   activeFolder: string;
   onSelectFolder: (path: string) => void;
+  startupTerminals: StartupTerminal[];
+  onStartupTerminalsChange: (next: StartupTerminal[]) => void;
 };
 
-export function TopAppBar({ activeFolder, onSelectFolder }: Props) {
+export function TopAppBar({
+  activeFolder,
+  onSelectFolder,
+  startupTerminals,
+  onStartupTerminalsChange,
+}: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const folderName = activeFolder
     ? activeFolder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || activeFolder
@@ -36,6 +46,16 @@ export function TopAppBar({ activeFolder, onSelectFolder }: Props) {
         </div>
         <WorkflowsLauncher activeFolder={activeFolder} />
         <TaskBoardLauncher activeFolder={activeFolder} />
+        <button
+          className="icon-btn sm"
+          onClick={() => setSettingsOpen(true)}
+          title="Settings"
+          aria-label="Settings"
+          disabled={!activeFolder}
+          style={{ marginLeft: 4 }}
+        >
+          <Settings size={14} />
+        </button>
       </header>
       <FolderPicker
         open={pickerOpen}
@@ -45,6 +65,13 @@ export function TopAppBar({ activeFolder, onSelectFolder }: Props) {
           setPickerOpen(false);
           onSelectFolder(p);
         }}
+      />
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        activeFolder={activeFolder}
+        startupTerminals={startupTerminals}
+        onStartupTerminalsChange={onStartupTerminalsChange}
       />
     </>
   );

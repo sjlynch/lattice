@@ -15,7 +15,8 @@ export type TerminalSpec = {
   cwd: string;
   initialCommand?: string;
   taskId?: string;       // associated task id, for lifecycle management
-  kind?: 'merge';        // merge conflict resolver terminals go in the Merging tab
+  kind?: 'merge' | 'startup'; // 'merge' → Merging tab, 'startup' → Startup tab
+  startupId?: string;    // id of the StartupTerminal config that spawned this
   projectPath?: string;  // active folder this terminal belongs to — used to
                          // scope the sidebar so terminals from other projects
                          // are hidden when the user switches active folder

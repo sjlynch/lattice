@@ -4,12 +4,15 @@ import {
   ChevronRight,
   GitMerge,
   Plus,
+  RefreshCw,
+  Rocket,
   Search,
   TerminalSquare,
   X,
 } from 'lucide-react';
 import { TerminalPane } from './TerminalPane';
 import { useTerminals } from '../TerminalsContext';
+import type { StartupTerminal } from '../api';
 import {
   useCallback,
   useEffect,
@@ -21,10 +24,11 @@ import {
 
 type Props = {
   activeFolder: string;
+  startupTerminals: StartupTerminal[];
 };
 
 type ShellKind = 'claude' | 'claude-yolo' | 'terminal';
-type Panel = 'terminals' | 'merging';
+type Panel = 'terminals' | 'merging' | 'startup';
 
 const KIND_INITIAL_COMMAND: Record<ShellKind, string | undefined> = {
   claude: 'claude',
@@ -40,7 +44,7 @@ const KIND_LABEL_PREFIX: Record<ShellKind, string> = {
 
 const SCROLL_STEP = 160;
 
-export function Sidebar({ activeFolder }: Props) {
+export function Sidebar({ activeFolder, startupTerminals }: Props) {
   const {
     terminals,
     activeId,
@@ -99,11 +103,15 @@ export function Sidebar({ activeFolder }: Props) {
     [terminals, activeFolder],
   );
   const regularTerminals = useMemo(
-    () => projectTerminals.filter((t) => t.kind !== 'merge'),
+    () => projectTerminals.filter((t) => t.kind !== 'merge' && t.kind !== 'startup'),
     [projectTerminals],
   );
   const mergeTerminals = useMemo(
     () => projectTerminals.filter((t) => t.kind === 'merge'),
+    [projectTerminals],
+  );
+  const startupTerminalsList = useMemo(
+    () => projectTerminals.filter((t) => t.kind === 'startup'),
     [projectTerminals],
   );
 
@@ -123,7 +131,10 @@ export function Sidebar({ activeFolder }: Props) {
     if (mergeTerminals.length === 0 && activePanel === 'merging') {
       setActivePanel('terminals');
     }
-  }, [mergeTerminals.length, activePanel]);
+    if (startupTerminalsList.length === 0 && activePanel === 'startup') {
+      setActivePanel('terminals');
+    }
+  }, [mergeTerminals.length, startupTerminalsList.length, activePanel]);
 
   // When the active folder changes, the currently-active terminal may
   // belong to a different project. Pick a terminal from the new project
@@ -147,23 +158,34 @@ export function Sidebar({ activeFolder }: Props) {
     if (!activeId) return;
     const t = projectTerminals.find((p) => p.id === activeId);
     if (!t) return;
-    const target: Panel = t.kind === 'merge' ? 'merging' : 'terminals';
+    const target: Panel =
+      t.kind === 'merge' ? 'merging' : t.kind === 'startup' ? 'startup' : 'terminals';
     if (target !== activePanel) setActivePanel(target);
   }, [activeId, projectTerminals, activePanel]);
 
-  const panelTerminals = activePanel === 'merging' ? mergeTerminals : regularTerminals;
+  const panelTerminals =
+    activePanel === 'merging'
+      ? mergeTerminals
+      : activePanel === 'startup'
+        ? startupTerminalsList
+        : regularTerminals;
 
   const switchPanel = useCallback(
     (panel: Panel) => {
       setActivePanel(panel);
       setFilter('');
       setSearchOpen(false);
-      const list = panel === 'merging' ? mergeTerminals : regularTerminals;
+      const list =
+        panel === 'merging'
+          ? mergeTerminals
+          : panel === 'startup'
+            ? startupTerminalsList
+            : regularTerminals;
       if (list.length > 0 && !list.find((t) => t.id === activeId)) {
         setActiveId(list[list.length - 1].id);
       }
     },
-    [mergeTerminals, regularTerminals, activeId, setActiveId],
+    [mergeTerminals, regularTerminals, startupTerminalsList, activeId, setActiveId],
   );
 
   const newTerminal = useCallback(
@@ -177,6 +199,91 @@ export function Sidebar({ activeFolder }: Props) {
     },
     [addTerminal, activeFolder, projectTerminals.length],
   );
+
+  // Mirror the latest projectTerminals into a ref so the seeding effect
+  // can detect already-running startup terminals after a page refresh
+  // without re-running every time the terminals list changes.
+  const projectTerminalsRef = useRef(projectTerminals);
+  useEffect(() => {
+    projectTerminalsRef.current = projectTerminals;
+  }, [projectTerminals]);
+
+  // Auto-spawn configured startup terminals on first mount / project change.
+  // Skip ones that are already present (matched by startupId + projectPath)
+  // so a page refresh — which keeps sessionStorage and the backend pty alive
+  // via serverId — doesn't double-spawn them.
+  useEffect(() => {
+    if (!activeFolder) return;
+    const existing = projectTerminalsRef.current;
+    for (const cfg of startupTerminals) {
+      if (!cfg.command.trim()) continue;
+      const already = existing.some(
+        (t) =>
+          t.kind === 'startup' &&
+          t.startupId === cfg.id &&
+          t.projectPath === activeFolder,
+      );
+      if (already) continue;
+      addTerminal(
+        {
+          label: cfg.label || 'startup',
+          cwd: activeFolder,
+          initialCommand: cfg.command,
+          projectPath: activeFolder,
+          kind: 'startup',
+          startupId: cfg.id,
+        },
+        false, // don't steal focus
+      );
+    }
+  }, [activeFolder, startupTerminals, addTerminal]);
+
+  // Stop and restart every startup terminal for the active project. We
+  // explicitly re-add here rather than waiting for the seeding effect: the
+  // effect's deps (activeFolder, startupTerminals) haven't changed, so it
+  // wouldn't fire again on its own.
+  const restartStartupTerminals = useCallback(() => {
+    if (!activeFolder) return;
+    const ids = projectTerminalsRef.current
+      .filter((t) => t.kind === 'startup' && t.projectPath === activeFolder)
+      .map((t) => t.id);
+    if (ids.length > 0) closeTerminals(ids);
+    for (const cfg of startupTerminals) {
+      if (!cfg.command.trim()) continue;
+      addTerminal(
+        {
+          label: cfg.label || 'startup',
+          cwd: activeFolder,
+          initialCommand: cfg.command,
+          projectPath: activeFolder,
+          kind: 'startup',
+          startupId: cfg.id,
+        },
+        false,
+      );
+    }
+  }, [activeFolder, closeTerminals, addTerminal, startupTerminals]);
+
+  // Force-mount startup terminals as soon as they're added, even if they're
+  // not the active tab. The whole point of "Startup Terminals" is that the
+  // configured commands run on page load — without this, the pty would only
+  // boot the first time the user clicked into the tab. The WebGL context is
+  // still only allocated while a pane is the active tab (TerminalPane gates
+  // that internally), so this doesn't burn through Chrome's context cap.
+  useEffect(() => {
+    if (startupTerminalsList.length === 0) return;
+    setMountedIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const t of startupTerminalsList) {
+        if (!next.has(t.id)) {
+          next.add(t.id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [startupTerminalsList]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -363,6 +470,15 @@ export function Sidebar({ activeFolder }: Props) {
               )}
             </button>
           )}
+          {startupTerminalsList.length > 0 && (
+            <button
+              className={`sidebar-panel-tab startup ${activePanel === 'startup' ? 'active' : ''}`}
+              onClick={() => switchPanel('startup')}
+            >
+              <Rocket size={11} />
+              Startup
+            </button>
+          )}
         </div>
 
         <div className="sidebar-header-actions">
@@ -400,6 +516,18 @@ export function Sidebar({ activeFolder }: Props) {
                 </>
               )}
             </div>
+          )}
+
+          {activePanel === 'startup' && (
+            <button
+              className="icon-btn sm sidebar-startup-refresh"
+              onClick={restartStartupTerminals}
+              title="Stop and restart all startup terminals"
+              aria-label="Stop and restart all startup terminals"
+              disabled={startupTerminalsList.length === 0}
+            >
+              <RefreshCw size={12} />
+            </button>
           )}
 
           {activePanel === 'terminals' && (
@@ -478,7 +606,13 @@ export function Sidebar({ activeFolder }: Props) {
                   onContextMenu={(e) => handleTabContextMenu(e, t.id)}
                   title={t.cwd}
                 >
-                  {t.kind === 'merge' ? <GitMerge size={12} /> : <TerminalSquare size={12} />}
+                  {t.kind === 'merge' ? (
+                    <GitMerge size={12} />
+                  ) : t.kind === 'startup' ? (
+                    <Rocket size={12} />
+                  ) : (
+                    <TerminalSquare size={12} />
+                  )}
                   <span>{t.label}</span>
                   <button
                     className="sidebar-tab-close"
@@ -508,16 +642,32 @@ export function Sidebar({ activeFolder }: Props) {
         {panelTerminals.length === 0 ? (
           <div className="sidebar-empty">
             <div className="sidebar-empty-icon">
-              {activePanel === 'merging' ? <GitMerge size={22} /> : <TerminalSquare size={22} />}
+              {activePanel === 'merging' ? (
+                <GitMerge size={22} />
+              ) : activePanel === 'startup' ? (
+                <Rocket size={22} />
+              ) : (
+                <TerminalSquare size={22} />
+              )}
             </div>
             <div className="sidebar-empty-title">
-              {activePanel === 'merging' ? 'No merge resolvers' : 'No terminals yet'}
+              {activePanel === 'merging'
+                ? 'No merge resolvers'
+                : activePanel === 'startup'
+                  ? 'No startup terminals'
+                  : 'No terminals yet'}
             </div>
             {activePanel === 'terminals' && (
               <div className="sidebar-empty-sub">
                 Click <Plus size={11} style={{ verticalAlign: -1 }} /> above to
                 start a Claude Code shell rooted at <code>{activeFolder}</code>,
                 or hit ▶ on a task to spawn one in a worktree.
+              </div>
+            )}
+            {activePanel === 'startup' && (
+              <div className="sidebar-empty-sub">
+                Configure commands that auto-run on page load via the gear
+                icon in the top bar.
               </div>
             )}
           </div>

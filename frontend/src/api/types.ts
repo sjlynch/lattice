@@ -163,9 +163,16 @@ export type GitHistoryResult = {
 
 // ---------- User settings ----------
 
+export type StartupTerminal = {
+  id: string;
+  label: string;
+  command: string;
+};
+
 export type UserSettings = {
   sidebarWidth?: number;
   harness?: 'claude' | 'pi' | 'codex' | 'interleave';
+  startupTerminals?: StartupTerminal[];
 };
 
 export type HarnessAvailability = {
