@@ -18,6 +18,7 @@ import {
   cleanupWorktreeForTask,
 } from '../../worktree.js';
 import { startMergeRun } from '../../mergeRuns.js';
+import { proxyKillSessionsByCwd } from '../../terminalProxy.js';
 import { finalizeError } from './_shared.js';
 
 export function buildTaskHookRouter(backendOrigin: string): Router {
@@ -58,6 +59,7 @@ export function buildTaskHookRouter(backendOrigin: string): Router {
         task.worktreePath,
         task.id,
         backendOrigin,
+        task.title,
       );
       if (reSync.status === 'conflict') {
         const { relativePath } = await writeMergeInstructions(
@@ -118,6 +120,20 @@ export function buildTaskHookRouter(backendOrigin: string): Router {
       completedAt: Date.now(),
     });
     res.json({ ok: true });
+
+    // The in-worktree Claude has finished its turn and committed; the pty
+    // now just holds an idle Claude waiting for input that will never come.
+    // Kill it so terminal-server resources are released and the worktree's
+    // dir lock is dropped on Windows. Deferred so the curl that called us
+    // (running inside the very pty we're killing) gets to read this response
+    // before the connection is torn down. The Stop hook's `curl -s -m 5`
+    // exits in well under that, so 1s is plenty of slack.
+    const wt = task.worktreePath;
+    if (wt) {
+      setTimeout(() => {
+        proxyKillSessionsByCwd(wt).catch(() => {});
+      }, 1000);
+    }
   });
 
   // Resolver Claude reports it has finished the merge → ready_to_merge → qa.
@@ -143,6 +159,7 @@ export function buildTaskHookRouter(backendOrigin: string): Router {
       task.worktreePath,
       task.id,
       backendOrigin,
+      task.title,
     );
     if (reSync.status === 'conflict') {
       const { relativePath } = await writeMergeInstructions(

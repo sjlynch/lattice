@@ -300,6 +300,7 @@ export async function startMergeRun(
           task.worktreePath,
           task.id,
           backendOrigin,
+          task.title,
         );
         console.log(`[merge-run] mergeWorktreeInRepo → ${result.status}${result.status === 'conflict' ? ` (${result.conflictedFiles?.join(', ')})` : result.status === 'error' ? `: ${result.message}` : ''}`);
         if (result.status === 'clean') {

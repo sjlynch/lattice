@@ -210,6 +210,7 @@ export function buildTaskRunRouter(backendOrigin: string): Router {
             task.worktreePath,
             task.id,
             backendOrigin,
+            task.title,
           );
           if (reSync.status === 'clean') {
             const fin = await finalizeMergedTask(task, backendOrigin);
@@ -288,6 +289,7 @@ export function buildTaskRunRouter(backendOrigin: string): Router {
         task.worktreePath,
         task.id,
         backendOrigin,
+        task.title,
       );
       if (result.status === 'clean') {
         const fin = await finalizeMergedTask(task, backendOrigin);
