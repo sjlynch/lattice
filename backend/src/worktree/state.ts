@@ -27,6 +27,23 @@ export async function gitDirExists(repoRoot: string): Promise<boolean> {
   }
 }
 
+// Single helper used at the top of every operation that mutates a project
+// repo (merge, FF, finalize, cleanup, untrack). If `.git` has gone missing
+// since the operation was scheduled, throw before we run any git command —
+// `git` invoked in a directory without `.git` walks up looking for one and
+// can latch onto a *different* repo's gitdir. We've seen the resulting
+// confusion delete files in the wrong repo. Fail loud, fail fast.
+export async function assertGitDirIntact(repoRoot: string): Promise<void> {
+  if (!(await gitDirExists(repoRoot))) {
+    throw new Error(
+      `[lattice] refusing to operate: ${repoRoot}/.git is missing. ` +
+        `The repository may have been corrupted by a prior run. ` +
+        `Restore it (e.g. \`git init\` + \`git fetch origin\` + ` +
+        `\`git reset --hard origin/main\`) before retrying.`,
+    );
+  }
+}
+
 // Resolve a worktree's git-dir (where MERGE_HEAD etc. live). Worktrees
 // store their per-worktree state under <main-repo>.git/worktrees/<name>,
 // not in <worktree>/.git (which is just a file pointer).

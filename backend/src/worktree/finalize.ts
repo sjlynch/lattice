@@ -8,6 +8,7 @@ import { fastForwardMain, mergeWorktreeInRepo } from './merge.js';
 import { buildStashResolveCommand } from './commands.js';
 import { writeStashResolveInstructions } from './instructions.js';
 import { cleanupWorktreeForTask } from './cleanup.js';
+import { assertGitDirIntact } from './state.js';
 
 export type FinalizeOutcome =
   | { ok: true }
@@ -66,6 +67,15 @@ export async function finalizeMergedTask(task: Task, backendOrigin: string): Pro
 
   console.log(`[finalize] ${task.id} — branch=${task.branch}`);
   try {
+    // Bail before any git work if .git went missing — same rationale as in
+    // mergeWorktreeInRepo. Without this, an FF on a deleted repo can
+    // accidentally operate on a *different* repo's gitdir found by walking
+    // up the directory tree.
+    try {
+      await assertGitDirIntact(task.projectPath);
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
     // FF main if it's behind. fastForwardMain is a no-op when main is
     // already at the branch tip (git just says "Already up to date") and
     // still handles the auto-stash + pop dance correctly.

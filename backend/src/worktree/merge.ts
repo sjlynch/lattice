@@ -13,12 +13,10 @@ import {
   branchIsAncestorOfHead,
   listConflictedFiles,
   gitDirExists,
+  assertGitDirIntact,
 } from './state.js';
-import {
-  autoStashMessage,
-  popStashByMessage,
-  assertSafeForStash,
-} from './stash.js';
+import { assertSafeForStash } from './stash.js';
+import { snapshotWorkingTree, restoreSnapshot } from './snapshot.js';
 import {
   resolveOwnedFileConflicts,
   resetOwnedFileLocalChanges,
@@ -134,31 +132,26 @@ export async function fastForwardMain(
       message: status.stderr.trim() || 'git status failed before fast-forward',
     };
   }
-  const stashLabel = autoStashMessage(branchName);
-  let stashRef: string | undefined;
+  // Snapshot the working tree if dirty so the FF sees a clean tree. The
+  // snapshot is a directory copy under ~/.lattice/snapshots, NOT a
+  // `git stash` — see snapshot.ts for why. assertSafeForStash refuses if
+  // .git is missing or essentials aren't excluded.
+  let snapshot;
   if (status.stdout.trim().length > 0) {
-    // Pre-flight identical to stashForRun: refuse to stash when essentials
-    // aren't excluded, since `--include-untracked` would otherwise sweep
-    // them into a fragile stash entry.
     try {
       await assertSafeForStash(repoRoot);
     } catch (err) {
       return { status: 'error', message: (err as Error).message };
     }
-    const stash = await exec(
-      'git',
-      ['stash', 'push', '--include-untracked', '-m', stashLabel],
-      repoRoot,
-    );
-    if (stash.code !== 0) {
+    try {
+      snapshot = await snapshotWorkingTree(repoRoot, `fastfwd-${branchName}`);
+    } catch (err) {
       return {
         status: 'error',
         message:
-          'Failed to auto-stash before fast-forward: ' +
-          (stash.stderr.trim() || stash.stdout.trim() || 'git stash failed'),
+          'Failed to snapshot before fast-forward: ' + (err as Error).message,
       };
     }
-    stashRef = stashLabel;
   }
 
   const ff = await exec(
@@ -167,8 +160,12 @@ export async function fastForwardMain(
     repoRoot,
   );
   if (ff.code !== 0) {
-    if (stashRef) {
-      await popStashByMessage(repoRoot, stashRef).catch(() => undefined);
+    // FF failed. Restore the snapshot so the user's mods come back, then
+    // surface the FF error. We use restore (not discard) because the FF
+    // didn't change anything — the working tree is back at its pre-FF
+    // HEAD, and the user's mods belong on top of that exactly as before.
+    if (snapshot && snapshot.dir) {
+      await restoreSnapshot(snapshot, repoRoot).catch(() => undefined);
     }
     return {
       status: 'error',
@@ -178,19 +175,19 @@ export async function fastForwardMain(
     };
   }
 
-  if (stashRef) {
-    const popped = await popStashByMessage(repoRoot, stashRef);
-    if (popped.kind === 'conflict') {
-      return {
-        status: 'conflict',
-        conflictKind: 'stash-pop',
-        conflictedFiles: popped.conflictedFiles,
-        stashRef,
-      };
-    }
-    if (popped.kind === 'error') {
-      return { status: 'error', message: popped.message };
-    }
+  if (snapshot && snapshot.dir) {
+    // FF succeeded; HEAD has moved. Restore copies the user's snapshotted
+    // versions back over whatever the FF brought in for those paths. This
+    // is last-writer-wins (snapshot wins on overlap) — see snapshot.ts
+    // header for the rationale. No "conflict" outcome here, unlike the
+    // old stash-pop path; if the user really had overlapping changes
+    // they'll see them as a dirty working tree post-restore and can
+    // reconcile with `git diff`.
+    await restoreSnapshot(snapshot, repoRoot).catch((err) => {
+      console.warn(
+        `[fastForwardMain] snapshot restore failed (continuing): ${(err as Error).message}`,
+      );
+    });
   }
 
   return { status: 'clean' };
@@ -209,6 +206,16 @@ export async function mergeWorktreeInRepo(
   taskTitle: string,
 ): Promise<MergeOutcome> {
   // ------ Pre-checks ------
+
+  // Bail before any git command runs if the main repo's .git has gone
+  // missing since the merge was queued. Otherwise git invoked in repoRoot
+  // walks up the dir tree looking for a gitdir and may latch onto an
+  // unrelated repo's .git, with destructive consequences.
+  try {
+    await assertGitDirIntact(repoRoot);
+  } catch (err) {
+    return { status: 'error', message: (err as Error).message };
+  }
 
   const isGit = await exec('git', ['rev-parse', '--show-toplevel'], repoRoot);
   if (isGit.code !== 0) {

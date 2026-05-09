@@ -10,7 +10,7 @@ import {
   updateTaskCrashSafe,
   restoreAllProjectsFromBackup,
 } from './tasks.js';
-import { checkBranchExists } from './worktree.js';
+import { checkBranchExists, recoverPendingSnapshots } from './worktree.js';
 
 export async function recoverOrphanedTasks(): Promise<void> {
   // Phase 1: repair `.lattice/tasks.json` from `.lattice/tasks.backup.json`
@@ -21,6 +21,16 @@ export async function recoverOrphanedTasks(): Promise<void> {
     await restoreAllProjectsFromBackup();
   } catch (err) {
     console.error('[startup] restoreAllProjectsFromBackup failed:', err);
+  }
+
+  // Phase 1b: scan ~/.lattice/snapshots/ for any orphan snapshots from a
+  // crashed run and restore them into their original repos. Replaces the
+  // prior `git stash` based recovery (which depended on the stash entry
+  // surviving across restarts — failure-prone, see snapshot.ts header).
+  try {
+    await recoverPendingSnapshots();
+  } catch (err) {
+    console.error('[startup] recoverPendingSnapshots failed:', err);
   }
 
   try {

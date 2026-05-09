@@ -1,22 +1,105 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { canonicalProjectPath } from './projectPath.js';
+import { canonicalProjectPath, projectHash } from './projectPath.js';
 
 const LATTICE_HOME = path.join(os.homedir(), '.lattice');
 const PROJECTS_INDEX = path.join(LATTICE_HOME, 'projects.json');
 const LEGACY_GLOBAL_TASKS = path.join(LATTICE_HOME, 'tasks.json');
+const PER_PROJECT_BASE = path.join(LATTICE_HOME, 'per-project');
 
 export const PROJECT_DIR_NAME = '.lattice';
 export const PROJECT_TASKS_FILENAME = 'tasks.json';
 export const PROJECT_TASKS_BACKUP_FILENAME = 'tasks.backup.json';
 
+// Where Lattice stores per-project task data. Moved out of
+// `<project>/.lattice/tasks.json` (the legacy location) into
+// `~/.lattice/per-project/<hash>/tasks.json` after the 2026-05-09 incident
+// took out the in-project location for the third time. Living in the
+// home directory means a project-side catastrophe (`.git/` deletion,
+// rogue `rm -rf .lattice`, accidental `git clean -fdx`, etc.) can no
+// longer destroy the task DB.
+//
+// Each per-project directory also contains a `.canonical-path` text file
+// recording the project root the hash maps to, so a developer browsing
+// `~/.lattice/per-project/` can tell which directory belongs to which
+// project without needing the index.
+function homeProjectDir(projectPath: string): string {
+  return path.join(PER_PROJECT_BASE, projectHash(projectPath));
+}
+
 function projectTasksFile(projectPath: string): string {
-  return path.join(projectPath, PROJECT_DIR_NAME, PROJECT_TASKS_FILENAME);
+  return path.join(homeProjectDir(projectPath), PROJECT_TASKS_FILENAME);
 }
 
 function projectTasksBackupFile(projectPath: string): string {
+  return path.join(homeProjectDir(projectPath), PROJECT_TASKS_BACKUP_FILENAME);
+}
+
+// Legacy in-project paths. Read once during migration and otherwise
+// untouched — the legacy file is never deleted (acts as belt-and-braces
+// for users who roll back to a pre-2026-05-09 build).
+function legacyProjectTasksFile(projectPath: string): string {
+  return path.join(projectPath, PROJECT_DIR_NAME, PROJECT_TASKS_FILENAME);
+}
+
+function legacyProjectTasksBackupFile(projectPath: string): string {
   return path.join(projectPath, PROJECT_DIR_NAME, PROJECT_TASKS_BACKUP_FILENAME);
+}
+
+// One-time copy from the legacy in-project location into the home-dir
+// location. Idempotent: skips when the home file already exists, or when
+// no legacy file exists. Writes a `.canonical-path` marker so a later
+// inspector can tell which project the hashed dir came from.
+//
+// The legacy file is NOT deleted — keeping it lets a user roll back to
+// an older Lattice build without losing tasks. Once the user is
+// comfortable, they can delete the legacy `.lattice/tasks.json` files
+// themselves.
+async function migrateInProjectTasksToHome(projectPath: string): Promise<void> {
+  const home = homeProjectDir(projectPath);
+  const homeMain = projectTasksFile(projectPath);
+  const homeBackup = projectTasksBackupFile(projectPath);
+  // Already migrated?
+  let homeExists = false;
+  try {
+    await fs.access(homeMain);
+    homeExists = true;
+  } catch {
+    /* missing — needs migration if legacy exists */
+  }
+  if (homeExists) return;
+  // Try legacy main, then legacy backup.
+  let legacyRaw: string | null = null;
+  let legacySource = '';
+  for (const src of [legacyProjectTasksFile(projectPath), legacyProjectTasksBackupFile(projectPath)]) {
+    try {
+      const raw = await fs.readFile(src, 'utf8');
+      JSON.parse(raw); // sanity-check
+      legacyRaw = raw;
+      legacySource = src;
+      break;
+    } catch {
+      /* try next source */
+    }
+  }
+  if (legacyRaw === null) return;
+  try {
+    await fs.mkdir(home, { recursive: true });
+    await fs.writeFile(homeMain, legacyRaw, 'utf8');
+    await fs.writeFile(homeBackup, legacyRaw, 'utf8');
+    await fs.writeFile(
+      path.join(home, '.canonical-path'),
+      canonicalProjectPath(projectPath),
+      'utf8',
+    );
+    console.warn(
+      `[tasks] migrated ${legacySource} → ${homeMain} (home-dir storage; ` +
+        `legacy file kept in place for rollback safety)`,
+    );
+  } catch (e) {
+    console.error('[tasks] in-project → home migration failed for', projectPath, e);
+  }
 }
 
 export type TaskStatus =
@@ -219,6 +302,9 @@ async function ensureProjectLoaded(projectPath: string): Promise<void> {
   }
   if (projectLoaded.get(key)) return;
   projectLoaded.set(key, true);
+  // First-touch: migrate the legacy `<project>/.lattice/tasks.json` into
+  // the new home-dir location. No-op if already migrated or no legacy.
+  await migrateInProjectTasksToHome(key);
   try {
     const raw = await fs.readFile(projectTasksFile(key), 'utf8');
     const parsed = JSON.parse(raw) as Task[];
@@ -362,10 +448,15 @@ export async function backupTasksFile(projectPath: string): Promise<void> {
 // Counterpart to backupTasksFile, called from startup recovery: if tasks.json
 // is missing or unparseable but tasks.backup.json is present and parses,
 // restore from backup. Logs loudly so the operator notices the recovery.
+//
+// Also runs the legacy → home migration first, so a project whose home
+// file never existed but whose legacy `<project>/.lattice/tasks.json` is
+// present gets pulled in here on boot.
 export async function restoreTasksFromBackupIfMissing(
   projectPath: string,
 ): Promise<void> {
   const key = canonicalProjectPath(projectPath);
+  await migrateInProjectTasksToHome(key);
   const src = projectTasksFile(key);
   const dst = projectTasksBackupFile(key);
   let needsRestore = false;

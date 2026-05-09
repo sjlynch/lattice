@@ -47,11 +47,14 @@ export {
 } from './worktree/merge.js';
 
 export {
-  stashForRun,
-  popStashByMessage,
-  autoStashMessage,
+  snapshotForRun,
+  snapshotWorkingTree,
+  restoreSnapshot,
+  discardSnapshot,
+  recoverPendingSnapshots,
   assertSafeForStash,
   RUN_STASH_LABEL,
+  type SnapshotHandle,
 } from './worktree/stash.js';
 
 export { cleanupWorktreeForTask } from './worktree/cleanup.js';

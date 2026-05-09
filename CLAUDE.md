@@ -9,8 +9,10 @@ force-directed DAG.
 - `backend/` — TypeScript Node.js Express server (`:5184`)
 - `frontend/` — Vite + React + TS + xterm + 3d-force-graph (`:5183`)
 - `package.json` (root) — `concurrently` runs both via `npm run dev`
-- `.lattice/` — per-project state, gitignored: `tasks.json`, `merge-<id>.md`
+- `.lattice/` — per-project scratch (gitignored): `worktrees/`, `workflow-steps/`, `workflows.json`, `userSettings.json`, `health-cache.json`. Tasks themselves now live in `~/.lattice/per-project/<hash>/tasks.json` (see below).
 - `~/.lattice/projects.json` — global index of projects with Lattice tasks
+- `~/.lattice/per-project/<sha1(path)[:12]>/tasks.json` — task DB per project. Moved out of `<project>/.lattice/tasks.json` after the 2026-05-09 catastrophic-deletion incident; legacy in-project files auto-migrate on first read.
+- `~/.lattice/snapshots/<projectHash>/<ts>-<label>/` — copy-based working-tree snapshot (replaces `git stash --include-untracked`, which had a silent-data-loss failure mode). Orphan snapshots from a crashed run are restored on next boot via `recoverPendingSnapshots`.
 
 ## Run
 

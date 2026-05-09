@@ -9,7 +9,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import type { Task } from '../tasks.js';
 import { exec } from './exec.js';
-import { worktreeExists } from './state.js';
+import { worktreeExists, assertGitDirIntact } from './state.js';
 import { renderTaskMarkdown } from './instructions.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
 import {
@@ -509,6 +509,11 @@ export async function verifyEssentialExclusions(
 // here would entangle Lattice's cleanup with whatever the user is editing.
 // The auto-resolve path at merge time still handles the conflict case.
 export async function untrackOwnedFilesInRepo(repoRoot: string): Promise<void> {
+  // Bail before any git work if .git is missing. Other callers in the
+  // merge pipeline already guard at their level, but this function is
+  // also called directly from /merge and the run pre-flight, so we guard
+  // here too.
+  await assertGitDirIntact(repoRoot);
   const tracked: string[] = [];
   for (const f of LATTICE_OWNED_FILE_PATHS) {
     const ls = await exec('git', ['ls-files', '--error-unmatch', f], repoRoot);

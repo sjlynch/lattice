@@ -22,7 +22,6 @@ import {
   finalizeMergedTask,
   writeMergeInstructions,
   buildConflictResolveCommand,
-  ensureLatticeGitignore,
   ensureLatticeRepoExclude,
   untrackOwnedFilesInRepo,
 } from '../../worktree.js';
@@ -183,12 +182,15 @@ export function buildTaskRunRouter(backendOrigin: string): Router {
     try {
       // Heal the project's tracking of Lattice-owned files before merging.
       // Idempotent no-op when nothing is tracked. See untrackOwnedFilesInRepo.
+      //
+      // Deliberately NO ensureLatticeGitignore call here — modifying the
+      // tracked .gitignore mid-merge dirties the working tree and (as the
+      // 2026-05-08/09 incident postmortems showed) creates a path where a
+      // lost stash can silently delete .git/, .lattice/tasks.json, etc.
+      // setupTaskWorktree applies the .gitignore once per project at
+      // worktree-create time, so it's already in place by the time the
+      // user clicks Merge.
       try {
-        await ensureLatticeGitignore(task.projectPath);
-        // See ensureLatticeRepoExclude for why this exists alongside
-        // ensureLatticeGitignore — the repo-local exclude file is what
-        // actually keeps `.lattice/worktrees/<id>/` (a nested git
-        // checkout) out of the auto-stash that fastForwardMain runs.
         await ensureLatticeRepoExclude(task.projectPath);
         await untrackOwnedFilesInRepo(task.projectPath);
       } catch (err) {

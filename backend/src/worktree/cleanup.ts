@@ -9,6 +9,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { exec } from './exec.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
+import { assertGitDirIntact } from './state.js';
 
 const CLEANUP_GIT_TIMEOUT_MS = 15_000;
 
@@ -38,6 +39,11 @@ export async function cleanupWorktreeForTask(
   // Guard against catastrophic deletion if worktreePath is somehow the main
   // repo root or any path outside the expected worktrees directory.
   assertSafeWorktreePath(repoRoot, worktreePath);
+
+  // Bail if main .git has been deleted. `git worktree remove` invoked in a
+  // repoRoot without a gitdir can walk up the file system and find a
+  // different repo's .git, which is exactly how prior incidents started.
+  await assertGitDirIntact(repoRoot);
 
   // Kill any terminal sessions running inside the worktree first.
   // On Windows a process whose cwd is inside a directory holds a lock that

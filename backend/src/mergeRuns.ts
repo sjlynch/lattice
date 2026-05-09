@@ -15,16 +15,14 @@ import {
   mergeWorktreeInRepo,
   writeMergeInstructions,
   buildConflictResolveCommand,
-  buildStashResolveCommand,
   finalizeMergedTask,
-  stashForRun,
-  popStashByMessage,
-  writeRunStashResolveInstructions,
-  ensureLatticeGitignore,
+  snapshotForRun,
+  restoreSnapshot,
   ensureLatticeRepoExclude,
   untrackOwnedFilesInRepo,
   isMidMerge,
   RUN_STASH_LABEL,
+  type SnapshotHandle,
 } from './worktree.js';
 import { listConflictedFiles } from './worktree/state.js';
 import { getTask, listTasks, updateTask, backupTasksFile } from './tasks.js';
@@ -169,33 +167,44 @@ export async function startMergeRun(
     // BEFORE stashing. If `.claude/settings.local.json` is tracked in main,
     // every per-task merge will conflict on it; untrack it now (idempotent
     // no-op if already clean) so the run starts from a known-good state.
+    //
+    // We deliberately do NOT call ensureLatticeGitignore here. Modifying
+    // the tracked .gitignore mid-run dirties the working tree, and prior
+    // catastrophic-state incidents (2026-05-08, 2026-05-09) had a
+    // fingerprint consistent with a stash that included a modified-or-
+    // untracked .gitignore being lost — taking `.lattice/` un-ignored
+    // status (and downstream `.lattice/tasks.json`, `.git/`, etc.) with
+    // it. The .gitignore is already added once per project at
+    // setupTaskWorktree time, so re-applying it here is also redundant.
+    // ensureLatticeRepoExclude writes to .git/info/exclude (gitdir-only,
+    // never stashed) and is what actually keeps `.lattice/` ignored
+    // during a run.
     try {
-      await ensureLatticeGitignore(projectPath);
-      // Critical: must run BEFORE stashForRun. The .gitignore append above
-      // is a working-tree mod on a tracked file, so the next
-      // `git stash --include-untracked` would stash and revert it,
-      // un-ignoring `.lattice/` again. The repo-local exclude file lives
-      // in the gitdir and survives any number of stashes — it's what
-      // actually keeps `.lattice/worktrees/<id>/` (a nested git checkout)
-      // from being slurped into the run-level / per-task auto-stash.
       await ensureLatticeRepoExclude(projectPath);
       await untrackOwnedFilesInRepo(projectPath);
     } catch (err) {
       console.warn('[merge-run] pre-flight untrack failed (continuing):', err);
     }
 
-    // Pre-flight: stash the working tree once so every per-task
-    // fastForwardMain call sees a clean tree and never needs to stash.
-    // This eliminates per-task stash-pop conflicts. A fixed label means
-    // a stash left by a cancelled run is found and popped by the next run.
-    let createdStash = false;
+    // Pre-flight: snapshot the working tree once so every per-task
+    // fastForwardMain call sees a clean tree. The snapshot is a copy on
+    // disk under ~/.lattice/snapshots/<projectHash>/, NOT a `git stash`,
+    // so a server crash can't silently delete the captured paths (the
+    // failure mode behind the 2026-05-08/09 .git deletion incidents).
+    // recoverPendingSnapshots in startup recovery picks up any orphan
+    // snapshot dirs from a crashed run and restores them automatically.
+    let runSnapshot: SnapshotHandle = { dir: '', modifiedTracked: [], untracked: [] };
     try {
-      createdStash = await stashForRun(projectPath);
-      if (createdStash) {
-        console.log(`[merge-run] stashed working-tree changes (${RUN_STASH_LABEL})`);
+      runSnapshot = await snapshotForRun(projectPath);
+      if (runSnapshot.dir) {
+        console.log(
+          `[merge-run] snapshotted working-tree changes ` +
+            `(${runSnapshot.modifiedTracked.length} modified, ` +
+            `${runSnapshot.untracked.length} untracked) → ${runSnapshot.dir}`,
+        );
       }
     } catch (err) {
-      console.warn('[merge-run] pre-flight stash failed (continuing):', err);
+      console.warn('[merge-run] pre-flight snapshot failed (continuing):', err);
     }
     for (const seed of targets) {
       if (run.cancelRequested) break;
@@ -384,49 +393,24 @@ export async function startMergeRun(
       console.log(`[merge-run] progress: ${run.processed}/${run.total} (merged=${run.merged.length} conflicts=${run.conflicted.length} errors=${run.errored.length})`);
     }
 
-    // Post-run stash pop — only when the loop ran to completion (not when
-    // cancelled mid-way by a worktree conflict). Cancelled runs leave the
-    // stash in place; the auto-restarted run will pop it once it finishes.
-    if (createdStash && !run.cancelRequested) {
-      console.log(`[merge-run] popping run stash (${RUN_STASH_LABEL})...`);
+    // Post-run snapshot restore. Only when the loop ran to completion
+    // (not on cancel) — a cancelled run leaves the snapshot in place so
+    // the user's mods aren't blasted with whatever partial state the FFs
+    // left. The snapshot dir survives across server restarts and
+    // recoverPendingSnapshots will restore it on next boot.
+    //
+    // Unlike the prior stash-based path, restore here can never produce a
+    // "conflict" outcome — copy-based restore is last-writer-wins on
+    // overlap. Conservative: the user's snapshotted files always win
+    // over whatever the FF brought in. Worst case is a dirty working
+    // tree the user can review with `git status` / `git diff`.
+    if (runSnapshot.dir && !run.cancelRequested) {
+      console.log(`[merge-run] restoring run snapshot → ${runSnapshot.dir}`);
       try {
-        const pop = await popStashByMessage(projectPath, RUN_STASH_LABEL);
-        console.log(`[merge-run] stash pop → ${pop.kind}`);
-        if (pop.kind === 'conflict') {
-          // Working tree has conflict markers. Spawn Claude to resolve,
-          // then /api/merge-runs/:id/stash-resolved will complete the run.
-          const { relativePath } = await writeRunStashResolveInstructions(
-            run.id,
-            pop.conflictedFiles,
-            RUN_STASH_LABEL,
-            backendOrigin,
-            projectPath,
-          );
-          console.log(`[merge-run] stash conflict on: ${pop.conflictedFiles.join(', ')}`);
-          const command = buildStashResolveCommand(relativePath);
-          const sess = await proxyCreateSession({
-            cwd: projectPath,
-            initialCommand: command,
-            projectPath,
-          });
-          notify({
-            type: 'conflict',
-            runId: run.id,
-            projectPath,
-            taskId: run.id, // synthetic id — no single task is responsible
-            command,
-            cwd: projectPath,
-            conflictedFiles: pop.conflictedFiles,
-            serverId: 'id' in sess ? sess.id : undefined,
-          });
-          // Stay in 'running' state — completion happens in stash-resolved endpoint.
-          return;
-        }
-        if (pop.kind === 'error') {
-          console.warn(`[merge-run] stash pop error: ${pop.message}`);
-        }
+        await restoreSnapshot(runSnapshot, projectPath);
+        console.log(`[merge-run] snapshot restored`);
       } catch (err) {
-        console.warn('[merge-run] post-run stash pop failed (continuing):', err);
+        console.warn('[merge-run] post-run snapshot restore failed (continuing):', err);
       }
     }
 

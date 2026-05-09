@@ -10,6 +10,7 @@
 // On non-Windows platforms this is just `path.resolve`.
 
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 export function canonicalProjectPath(input: string): string {
   if (!input) return input;
@@ -18,4 +19,15 @@ export function canonicalProjectPath(input: string): string {
     return resolved[0].toUpperCase() + resolved.slice(1);
   }
   return resolved;
+}
+
+// Stable per-project key for use as a directory name in shared global
+// state (`~/.lattice/per-project/<hash>/`, `~/.lattice/snapshots/<hash>/`).
+// SHA-1 of the canonical path, truncated to 12 hex chars — collision risk
+// is negligible for the tens-to-hundreds of projects a single user has.
+// Always use this rather than rolling your own; otherwise two consumers
+// can disagree on which directory belongs to which project.
+export function projectHash(projectPath: string): string {
+  const canonical = canonicalProjectPath(projectPath);
+  return crypto.createHash('sha1').update(canonical).digest('hex').slice(0, 12);
 }

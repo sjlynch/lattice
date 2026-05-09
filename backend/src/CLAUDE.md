@@ -8,7 +8,7 @@ Express server (`:5184`) plus a detached PTY subprocess on `:5185`.
 - `routes/` — one router per domain (tasks, mergeRuns, workflows, settings, terminals, health). Each is a `buildXRouter()` factory.
 - `ws/wsServer.ts` — single `upgrade` dispatcher. Adding a WS endpoint = add a route in `attachWebSockets`.
 - `worktree/` — git-worktree subsystem (see its `CLAUDE.md`). The `worktree.ts` shim re-exports the public surface.
-- `tasks.ts` — in-memory cache + 100 ms debounced persist; per-project `.lattice/tasks.json`. `updateTaskCrashSafe` writes to disk before mutating cache.
+- `tasks.ts` — in-memory cache + 100 ms debounced persist. Storage lives at `~/.lattice/per-project/<sha1(canonical-path)[:12]>/tasks.json` (moved out of `<project>/.lattice/` after the 2026-05-09 incident — keeps task data alive when a project-side catastrophe wipes the project dir). On first read of a project, the legacy in-project `<project>/.lattice/tasks.json` is auto-copied into the home location; legacy file is left in place for rollback. `updateTaskCrashSafe` writes to disk before mutating cache.
 - `mergeRuns.ts` / `workflowRuns.ts` — sequential run engines. Singleton WS subscribers (`subscribe`) for live event fan-out.
 - `terminalProxy.ts` / `terminal-server.ts` / `terminal.ts` — PTY lives in a detached child so main-server restarts don't kill running Claude sessions.
 - `processGuards.ts` — swallows node-pty's known Windows cleanup throw; everything else logs and continues.
