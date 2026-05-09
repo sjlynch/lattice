@@ -13,6 +13,9 @@ export type UserSettings = {
   sidebarWidth?: number;
   harness?: 'claude' | 'pi' | 'codex' | 'interleave';
   startupTerminals?: StartupTerminal[];
+  // Per-step collapse state for the workflow editor, keyed by step id.
+  // Only collapsed=true entries are persisted to keep the file tidy.
+  workflowStepsCollapsed?: Record<string, boolean>;
 };
 
 function settingsFile(projectPath: string): string {

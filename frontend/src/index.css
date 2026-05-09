@@ -2142,8 +2142,18 @@ input {
   padding: 3px 6px;
 }
 .workflows-step-prompt {
-  resize: vertical;
-  min-height: 60px;
+  /* Auto-grown to fit content via JS (StepRow.tsx). The native resizer
+     renders as a stark white square against the dark theme whenever the
+     text doesn't fill the box; disabling resize hides it entirely. */
+  resize: none;
+  min-height: 64px;
+  overflow: hidden;
+}
+.workflows-step-collapse {
+  flex-shrink: 0;
+}
+.workflows-step.collapsed .workflows-step-body {
+  gap: 0;
 }
 .workflows-add-step {
   display: inline-flex;

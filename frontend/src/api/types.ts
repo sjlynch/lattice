@@ -173,6 +173,7 @@ export type UserSettings = {
   sidebarWidth?: number;
   harness?: 'claude' | 'pi' | 'codex' | 'interleave';
   startupTerminals?: StartupTerminal[];
+  workflowStepsCollapsed?: Record<string, boolean>;
 };
 
 export type HarnessAvailability = {

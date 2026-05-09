@@ -1,25 +1,46 @@
-import { useState } from 'react';
-import { GripVertical, X } from 'lucide-react';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight, GripVertical, X } from 'lucide-react';
 import type { WorkflowStep, WorkflowStepMode } from '../../api';
 
 export const STEP_DRAG_MIME = 'application/x-lattice-workflow-step';
+
+// Minimum textarea height when expanded — keeps a freshly-added step from
+// rendering as a 1-line strip before the user types anything.
+const PROMPT_MIN_HEIGHT_PX = 64;
 
 // One row in the step editor. Drag-and-drop reorders by index using a
 // custom MIME so generic text drags onto the editor don't trigger reorders.
 export function StepRow({
   step,
   index,
+  collapsed,
   onChange,
   onRemove,
   onReorder,
+  onToggleCollapse,
 }: {
   step: WorkflowStep;
   index: number;
+  collapsed: boolean;
   onChange: (patch: Partial<WorkflowStep>) => void;
   onRemove: () => void;
   onReorder: (fromIdx: number, toIdx: number) => void;
+  onToggleCollapse: () => void;
 }) {
   const [dragOver, setDragOver] = useState<'top' | 'bottom' | null>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-fit the textarea to its content. Keeping the prompt fully visible
+  // by default removes the need for the native resize handle (which Chrome
+  // renders as a stark white square in the bottom-right corner against
+  // the dark theme whenever the text doesn't fill the box).
+  useLayoutEffect(() => {
+    const ta = promptRef.current;
+    if (!ta || collapsed) return;
+    ta.style.height = 'auto';
+    const next = Math.max(PROMPT_MIN_HEIGHT_PX, ta.scrollHeight);
+    ta.style.height = `${next}px`;
+  }, [step.prompt, collapsed]);
 
   function onDragStart(e: React.DragEvent) {
     e.dataTransfer.setData(STEP_DRAG_MIME, String(index));
@@ -48,7 +69,7 @@ export function StepRow({
 
   return (
     <div
-      className={`workflows-step ${dragOver ? `drop-${dragOver}` : ''}`}
+      className={`workflows-step ${dragOver ? `drop-${dragOver}` : ''} ${collapsed ? 'collapsed' : ''}`}
       draggable
       onDragStart={onDragStart}
       onDragOver={onDragOver}
@@ -60,6 +81,16 @@ export function StepRow({
       </span>
       <div className="workflows-step-body">
         <div className="workflows-step-row">
+          <button
+            type="button"
+            className="icon-btn sm workflows-step-collapse"
+            onClick={onToggleCollapse}
+            title={collapsed ? 'Expand step' : 'Collapse step'}
+            aria-label={collapsed ? 'Expand step' : 'Collapse step'}
+            aria-expanded={!collapsed}
+          >
+            {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+          </button>
           <span className="workflows-step-index">#{index + 1}</span>
           <input
             className="task-card-form-input workflows-step-title"
@@ -85,13 +116,15 @@ export function StepRow({
             <X size={12} />
           </button>
         </div>
-        <textarea
-          className="task-card-form-input task-card-form-textarea workflows-step-prompt"
-          placeholder="Prompt — written into LATTICE_TASK.md as the task description."
-          value={step.prompt}
-          onChange={(e) => onChange({ prompt: e.target.value })}
-          rows={4}
-        />
+        {!collapsed && (
+          <textarea
+            ref={promptRef}
+            className="task-card-form-input task-card-form-textarea workflows-step-prompt"
+            placeholder="Prompt — written into LATTICE_TASK.md as the task description."
+            value={step.prompt}
+            onChange={(e) => onChange({ prompt: e.target.value })}
+          />
+        )}
       </div>
     </div>
   );
