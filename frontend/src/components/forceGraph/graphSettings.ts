@@ -5,6 +5,11 @@ export type GraphSettings = {
   fileNodeSize: number;
   dirNodeSize: number;
   labelSize: number;
+  // Multiplier applied to the per-overlay minimum-separation distance
+  // used by the LOC (`z`), labels (Alt), and health (`h`) overlays.
+  // 1 = the historical hard-coded distance; >1 spreads labels further
+  // apart so dense clusters are easier to read.
+  labelSpread: number;
   dagLevelDistance: number;
   chargeStrength: number;
   linkDistance: number;
@@ -12,11 +17,13 @@ export type GraphSettings = {
 };
 
 // Defaults: file/dir node sizes are 2× the historical baseline (5.5 / 7) so
-// the graph reads more clearly out of the box.
+// the graph reads more clearly out of the box. labelSpread defaults to 1.5
+// so all three overlays start with noticeably more label breathing room.
 export const DEFAULT_SETTINGS: GraphSettings = {
   fileNodeSize: 11,
   dirNodeSize: 14,
   labelSize: 3.0,
+  labelSpread: 1.5,
   dagLevelDistance: 50,
   chargeStrength: -30,
   linkDistance: 30,

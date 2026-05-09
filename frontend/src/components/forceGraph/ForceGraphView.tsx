@@ -80,11 +80,12 @@ export function ForceGraphView({
     graphRef,
   );
 
-  const { locMode, locModeRef } = useLocOverlay(graphRef);
+  const { locMode, locModeRef } = useLocOverlay(graphRef, settingsRef);
   const { healthModeRef } = useHealthOverlay(
     healthMode,
     onHealthModeChange,
     graphRef,
+    settingsRef,
   );
   const {
     labelMode,
@@ -93,7 +94,7 @@ export function ForceGraphView({
     labelLevelRef,
     maxDepthRef,
     nodeDepthsRef,
-  } = useLabelsOverlay(graphRef, containerRef, data);
+  } = useLabelsOverlay(graphRef, containerRef, data, settingsRef);
 
   const { contextMenu, setContextMenu } = useNodeContextMenu(containerRef);
   const closeContextMenu = useCallback(() => setContextMenu(null), [setContextMenu]);

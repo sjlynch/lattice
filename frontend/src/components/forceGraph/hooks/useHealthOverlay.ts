@@ -2,6 +2,7 @@ import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { healthLabelRegistry } from '../healthOverlay';
 import { repelLabels } from '../labelRepulsion';
+import type { GraphSettings } from '../graphSettings';
 import { clearLabelsAndRefresh, isTextInput } from './refresh';
 
 // Code-health overlay: active while the user holds `h`. State is owned
@@ -15,6 +16,7 @@ export function useHealthOverlay(
   healthMode: boolean,
   onHealthModeChange: (mode: boolean) => void,
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
+  settingsRef: MutableRefObject<GraphSettings>,
 ) {
   const healthModeRef = useRef(false);
 
@@ -58,19 +60,20 @@ export function useHealthOverlay(
   }, [healthMode, graphRef]);
 
   // Same physics as the LOC loop — health labels are also short
-  // numbers, so 55 units of minimum separation is enough.
+  // numbers, so the per-overlay base is 55 units. The `labelSpread`
+  // multiplier is read each tick so the slider takes effect live.
   useEffect(() => {
     if (!healthMode) return;
     let rafId = 0;
     let frameCount = 0;
     const tick = () => {
       frameCount++;
-      repelLabels(healthLabelRegistry, 55, frameCount);
+      repelLabels(healthLabelRegistry, 55 * settingsRef.current.labelSpread, frameCount);
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [healthMode]);
+  }, [healthMode, settingsRef]);
 
   return { healthModeRef };
 }
