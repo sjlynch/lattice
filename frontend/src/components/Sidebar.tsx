@@ -242,38 +242,84 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
     }
   }, [projectTerminals]);
 
-  // Auto-spawn configured startup terminals on first mount / project change.
-  // Skip ones that are already present (matched by startupId + projectPath)
-  // so a page refresh — which keeps sessionStorage and the backend pty alive
-  // via serverId — doesn't double-spawn them.
+  // Validate persisted serverIds and auto-spawn startup terminals.
+  //
+  // Page reloads keep TerminalSpecs (with serverId) in sessionStorage,
+  // but the backend pty for those ids may be gone — Lattice's shutdown
+  // hook intentionally kills every pty so subsequent dev cycles start
+  // clean. Without this check the stale spec would mount, attach, get
+  // session_lost, and sit there showing the message until the user
+  // closes the tab. We fetch the live session list, drop any spec
+  // whose serverId no longer exists, and respawn startup terminals
+  // whose backing pty is gone so the user's configured commands are
+  // running by the time they look at the sidebar.
   useEffect(() => {
     if (!activeFolder) return;
-    const existing = projectTerminalsRef.current;
-    for (const cfg of startupTerminals) {
-      if (!cfg.command.trim()) continue;
-      const key = `${activeFolder}::${cfg.id}`;
-      if (inFlightStartupRef.current.has(key)) continue;
-      const already = existing.some(
-        (t) =>
-          t.kind === 'startup' &&
-          t.startupId === cfg.id &&
-          t.projectPath === activeFolder,
-      );
-      if (already) continue;
-      inFlightStartupRef.current.add(key);
-      addTerminal(
-        {
-          label: cfg.label || 'startup',
-          cwd: activeFolder,
-          initialCommand: cfg.command,
-          projectPath: activeFolder,
-          kind: 'startup',
-          startupId: cfg.id,
-        },
-        false, // don't steal focus
-      );
-    }
-  }, [activeFolder, startupTerminals, addTerminal]);
+    let cancelled = false;
+    void (async () => {
+      // null = couldn't validate (backend unreachable / non-OK). In that
+      // case we skip the drop-stale step entirely instead of treating
+      // every persisted serverId as dead — a transient failure shouldn't
+      // wipe the user's terminals.
+      let liveIds: Set<string> | null = null;
+      try {
+        const r = await fetch('/api/terminals');
+        if (r.ok) {
+          const sessions: Array<{ id: string }> = await r.json();
+          liveIds = new Set(sessions.map((s) => s.id));
+        }
+      } catch {
+        // Backend unreachable.
+      }
+      if (cancelled) return;
+
+      const existing = projectTerminalsRef.current;
+
+      if (liveIds) {
+        // Drop specs whose serverId is gone. closeTerminals tolerates
+        // a 404 from the DELETE; the local state is what matters here.
+        const liveIdsLocal = liveIds;
+        const staleIds = existing
+          .filter((t) => t.serverId && !liveIdsLocal.has(t.serverId))
+          .map((t) => t.id);
+        if (staleIds.length > 0) closeTerminals(staleIds);
+      }
+
+      // Spawn each configured startup whose spec is either missing OR
+      // whose serverId we just confirmed dead. When liveIds is null
+      // (validation failed) we treat every existing spec as live and
+      // only spawn truly missing ones, falling back to the original
+      // seeding behavior.
+      for (const cfg of startupTerminals) {
+        if (!cfg.command.trim()) continue;
+        const key = `${activeFolder}::${cfg.id}`;
+        if (inFlightStartupRef.current.has(key)) continue;
+        const liveSpec = existing.find(
+          (t) =>
+            t.kind === 'startup' &&
+            t.startupId === cfg.id &&
+            t.projectPath === activeFolder &&
+            (!liveIds || !t.serverId || liveIds.has(t.serverId)),
+        );
+        if (liveSpec) continue;
+        inFlightStartupRef.current.add(key);
+        addTerminal(
+          {
+            label: cfg.label || 'startup',
+            cwd: activeFolder,
+            initialCommand: cfg.command,
+            projectPath: activeFolder,
+            kind: 'startup',
+            startupId: cfg.id,
+          },
+          false, // don't steal focus
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeFolder, startupTerminals, addTerminal, closeTerminals]);
 
   // Stop and restart every startup terminal for the active project. We
   // explicitly re-add here rather than waiting for the seeding effect: the
