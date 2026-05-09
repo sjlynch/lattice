@@ -220,7 +220,18 @@ export function TerminalPane({
       }
     });
 
-    connect();
+    // Defer the actual connect by one task tick so React StrictMode's
+    // synchronous cleanup (which sets cancelled=true) runs before we
+    // initiate the WS handshake. Without this, the first effect run
+    // opens a WS that the backend has already begun upgrading before
+    // the cleanup can abort it — when we lack a serverId (a fresh
+    // startup terminal), the backend creates a pty session that
+    // outlives the cleanup. The second effect run then opens ANOTHER
+    // serverless WS and creates a SECOND pty, both running the same
+    // initialCommand. For port-binding commands like `npm run dev`,
+    // the second fails with "address in use". This delay is also
+    // production-safe — a 0 ms task hop is imperceptible.
+    const connectTimer = setTimeout(connect, 0);
 
     const ro = new ResizeObserver(() => {
       try {
@@ -233,6 +244,7 @@ export function TerminalPane({
 
     return () => {
       cancelled = true;
+      clearTimeout(connectTimer);
       if (retryTimer) clearTimeout(retryTimer);
       ro.disconnect();
       // Just close the WS — the backend keeps the pty alive so a refresh

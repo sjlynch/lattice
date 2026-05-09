@@ -181,7 +181,14 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
           : panel === 'startup'
             ? startupTerminalsList
             : regularTerminals;
-      if (list.length > 0 && !list.find((t) => t.id === activeId)) {
+      if (list.length === 0) {
+        // Empty target panel — must clear activeId, otherwise it still
+        // points at a terminal in some other panel and the
+        // auto-match-panel-to-active-terminal effect above immediately
+        // yanks us back. That made it impossible to switch to the
+        // Terminals tab when only a startup terminal existed.
+        setActiveId(null);
+      } else if (!list.find((t) => t.id === activeId)) {
         setActiveId(list[list.length - 1].id);
       }
     },
@@ -208,6 +215,33 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
     projectTerminalsRef.current = projectTerminals;
   }, [projectTerminals]);
 
+  // Synchronously-updated dedup so React StrictMode's double-fire of the
+  // seeding effect can't add the same startup twice. The existing.some()
+  // check below reads projectTerminalsRef, which is updated by a separate
+  // effect — that effect only fires AFTER a React commit, but StrictMode
+  // double-invokes effects synchronously (run → cleanup → run) BEFORE any
+  // commit, so both runs see the same stale snapshot. Without this, every
+  // configured startup spawns two ptys that race for the same port; with
+  // `npm run dev` the second one fails with "address in use" while the
+  // first invisibly holds it.
+  const inFlightStartupRef = useRef<Set<string>>(new Set());
+
+  // Drop in-flight markers once the corresponding TerminalSpec has actually
+  // committed to state. Without this, closing a startup tab and then
+  // changing settings would refuse to respawn (the ref still has the key).
+  useEffect(() => {
+    if (inFlightStartupRef.current.size === 0) return;
+    const liveKeys = new Set<string>();
+    for (const t of projectTerminals) {
+      if (t.kind === 'startup' && t.startupId && t.projectPath) {
+        liveKeys.add(`${t.projectPath}::${t.startupId}`);
+      }
+    }
+    for (const key of inFlightStartupRef.current) {
+      if (!liveKeys.has(key)) inFlightStartupRef.current.delete(key);
+    }
+  }, [projectTerminals]);
+
   // Auto-spawn configured startup terminals on first mount / project change.
   // Skip ones that are already present (matched by startupId + projectPath)
   // so a page refresh — which keeps sessionStorage and the backend pty alive
@@ -217,6 +251,8 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
     const existing = projectTerminalsRef.current;
     for (const cfg of startupTerminals) {
       if (!cfg.command.trim()) continue;
+      const key = `${activeFolder}::${cfg.id}`;
+      if (inFlightStartupRef.current.has(key)) continue;
       const already = existing.some(
         (t) =>
           t.kind === 'startup' &&
@@ -224,6 +260,7 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
           t.projectPath === activeFolder,
       );
       if (already) continue;
+      inFlightStartupRef.current.add(key);
       addTerminal(
         {
           label: cfg.label || 'startup',
