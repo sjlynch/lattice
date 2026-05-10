@@ -42,3 +42,6 @@ coverage/
 # shouldn't land on main when merged.
 LATTICE_TASK.md
 .claude/settings.local.json
+
+# lattice-managed (do not remove)
+.pi/extensions/lattice-complete.ts

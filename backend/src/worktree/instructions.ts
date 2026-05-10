@@ -59,12 +59,15 @@ async function ensureValidStopHook(
   );
 }
 
-// `harness` controls how step 5 is worded. Claude (the default) ends the
+// `harness` controls a couple of pieces. Claude (the default) ends the
 // session and its Stop hook in `.claude/settings.local.json` POSTs
 // `/complete`. Pi and Codex have no command-hook mechanism, so the model
-// itself must POST `/complete` as its final action — for Pi a worktree-local
-// extension (installPiCompletionExtension) also covers it on session exit as
-// a backstop, but the explicit curl step keeps the markdown self-sufficient.
+// itself must run the whole tail end of the checklist — commit, PATCH the
+// description, POST `/complete` — without stopping to ask. (For Pi a
+// worktree-local extension, installPiCompletionExtension, also POSTs
+// `/complete` on session exit as a backstop, but the model should not rely
+// on it.) The non-Claude variant therefore gets an explicit "this is an
+// autonomous session, finish everything" preamble and a stronger final step.
 export function renderTaskMarkdown(
   task: Task,
   backendOrigin: string,
@@ -72,19 +75,37 @@ export function renderTaskMarkdown(
 ): string {
   const created = new Date(task.createdAt).toISOString();
   const desc = task.description?.trim() || '_(no description provided)_';
+  const autonomyPreamble =
+    harness === 'claude'
+      ? ''
+      : `> **This is an autonomous worktree session — there is no user watching to
+> confirm with, and the turn will not be picked up again.** Work through
+> every step below to the end in this same session, without pausing to ask
+> for permission or approval. In particular you **must** finish steps 3, 4,
+> and 5 yourself: commit your work, PATCH the task description, and POST the
+> \`/complete\` callback. Stopping after "I implemented it" — without
+> committing and calling \`/complete\` — leaves the task stuck in "In
+> Progress" and the work invisible to Lattice. Do not end your turn until
+> you have run the \`/complete\` curl (or deliberately decided there is
+> nothing to commit, per step 5).
+
+`;
   const finalStep =
     harness === 'claude'
       ? `5. End the session normally. Lattice's Stop hook will verify the commit and move this task to "Ready to Merge" automatically.`
-      : `5. **Final step — report completion to Lattice.** Lattice can't auto-detect
-   this session ending, so once you've committed run:
+      : `5. **Final step — tell Lattice you're done (do not skip this).** Lattice
+   can't auto-detect this session ending, so the *last thing you do* must
+   be:
 
    \`\`\`
    curl -s -m 5 -X POST ${backendOrigin}/api/tasks/${task.id}/complete
    \`\`\`
 
-   Only call this if you actually committed something — if there's nothing
-   committed, skip it and Lattice will leave the task In Progress so it can
-   be resumed.`;
+   This is what moves the task to "Ready to Merge". Run it yourself — don't
+   ask the user to, and don't end your turn before running it. The only time
+   you skip it is if there is genuinely nothing committed on this branch (in
+   which case Lattice leaves the task In Progress so it can be resumed);
+   even then, say so explicitly rather than just stopping.`;
   return `# ${task.title}
 
 ${desc}
@@ -96,7 +117,7 @@ ${desc}
 
 ## Instructions (please complete autonomously, no need to confirm with the user)
 
-1. **Check existing state first.** This task may have been started in a
+${autonomyPreamble}1. **Check existing state first.** This task may have been started in a
    prior session — Lattice can resume worktrees after a server restart or
    when Claude finishes without committing. Before doing anything, run:
 
