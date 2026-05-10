@@ -80,14 +80,14 @@ export function renderTaskMarkdown(
       ? ''
       : `> **This is an autonomous worktree session — there is no user watching to
 > confirm with, and the turn will not be picked up again.** Work through
-> every step below to the end in this same session, without pausing to ask
-> for permission or approval. In particular you **must** finish steps 3, 4,
-> and 5 yourself: commit your work, PATCH the task description, and POST the
-> \`/complete\` callback. Stopping after "I implemented it" — without
-> committing and calling \`/complete\` — leaves the task stuck in "In
-> Progress" and the work invisible to Lattice. Do not end your turn until
-> you have run the \`/complete\` curl (or deliberately decided there is
-> nothing to commit, per step 5).
+> the whole checklist below to the end in this same session, without pausing
+> to ask for permission or approval. That includes the wrap-up: commit your
+> work, update the task description, and POST the \`/complete\` callback —
+> these are part of the task, not optional follow-ups. Stopping after "I
+> implemented it" — without committing and calling \`/complete\` — leaves
+> the task stuck in "In Progress" and the work invisible to Lattice. Don't
+> end your turn until you've run the \`/complete\` curl (or deliberately
+> determined there's nothing to commit, in which case say so).
 
 `;
   const finalStep =
