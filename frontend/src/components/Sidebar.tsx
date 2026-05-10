@@ -27,18 +27,20 @@ type Props = {
   startupTerminals: StartupTerminal[];
 };
 
-type ShellKind = 'claude' | 'claude-yolo' | 'terminal';
+type ShellKind = 'claude' | 'claude-yolo' | 'pi' | 'terminal';
 type Panel = 'terminals' | 'merging' | 'startup';
 
 const KIND_INITIAL_COMMAND: Record<ShellKind, string | undefined> = {
   claude: 'claude',
   'claude-yolo': 'claude --dangerously-skip-permissions',
+  pi: 'pi',
   terminal: undefined,
 };
 
 const KIND_LABEL_PREFIX: Record<ShellKind, string> = {
   claude: 'claude',
   'claude-yolo': 'claude!',
+  pi: 'pi',
   terminal: 'terminal',
 };
 
@@ -648,6 +650,13 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
                     onClick={() => { setMenuOpen(false); newTerminal('claude-yolo'); }}
                   >
                     Dangerous Claude
+                  </div>
+                  <div
+                    className="popover-item"
+                    role="menuitem"
+                    onClick={() => { setMenuOpen(false); newTerminal('pi'); }}
+                  >
+                    Pi
                   </div>
                   <div
                     className="popover-item"
