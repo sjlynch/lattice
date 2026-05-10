@@ -9,10 +9,16 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import type { Task } from '../tasks.js';
 import { exec } from './exec.js';
-import { worktreeExists, assertGitDirIntact } from './state.js';
+import { projectGit } from './projectGit.js';
+import {
+  worktreeExists,
+  assertGitDirIntact,
+  parseWorktreesPorcelain,
+} from './state.js';
 import { renderTaskMarkdown } from './instructions.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
 import { assertNotReparsePoint } from './cleanup.js';
+import { homeWorktreesDir } from '../projectPath.js';
 import {
   LATTICE_EXCLUDE_PATTERNS,
   LATTICE_GITIGNORE_ENTRIES,
@@ -43,45 +49,27 @@ export type WorktreeResult = {
   taskFile: string;
 };
 
-export type ParsedWorktree = {
-  path: string;
-  branch?: string;
-  detached?: boolean;
-};
-
-// Parse `git worktree list --porcelain` into an array of {path, branch?}.
-// Each block is separated by a blank line and looks like:
-//
-//   worktree /abs/path
-//   HEAD <sha>
-//   branch refs/heads/<name>          (or 'detached')
-//
-// Used by setupTaskWorktree to recover from stale worktrees that survived
-// a previous half-failed run.
-export function parseWorktreesPorcelain(out: string): ParsedWorktree[] {
-  const result: ParsedWorktree[] = [];
-  for (const block of out.split(/\r?\n\r?\n/)) {
-    if (!block.trim()) continue;
-    const entry: ParsedWorktree = { path: '' };
-    for (const line of block.split(/\r?\n/)) {
-      if (line.startsWith('worktree ')) {
-        entry.path = line.slice('worktree '.length).trim();
-      } else if (line.startsWith('branch ')) {
-        entry.branch = line.slice('branch '.length).trim();
-      } else if (line === 'detached') {
-        entry.detached = true;
-      }
-    }
-    if (entry.path) result.push(entry);
-  }
-  return result;
-}
+// Worktrees live OUTSIDE the project tree, under
+// `~/.lattice/worktrees/<projectHash>/` (see `homeWorktreesDir` in
+// projectPath.ts). Rationale — the headline fix after three `.git`-deletion
+// incidents: when a per-task scratch checkout is nested inside the project
+// (`<repo>/.lattice/worktrees/<id>`), any recursive delete Lattice issues
+// on a worktree path is one bad path component away from resolving to
+// `<repo>/.git`, and `git status` in the project enumerates those nested
+// checkouts (the gitignore-failure that fed the 2026-05-08/09 cascade).
+// Hoisting them out of the project makes the whole class impossible by
+// construction — the same move already made for `tasks.json`. The only
+// thing left inside `<repo>/.git` is the tiny `worktrees/<name>/gitdir`
+// pointer file `git worktree add` writes.
 
 export async function setupTaskWorktree(
   repoPath: string,
   task: Task,
   backendOrigin: string,
 ): Promise<WorktreeResult> {
+  // First call is plain `exec` (not projectGit) so a folder that isn't a
+  // git repo at all gets the clear "run `git init`" message rather than
+  // projectGit's ".git is missing" assertion.
   const repoCheck = await exec(
     'git',
     ['rev-parse', '--show-toplevel'],
@@ -102,7 +90,7 @@ export async function setupTaskWorktree(
   await untrackOwnedFilesInRepo(repoRoot);
   const slug = slugify(task.title);
   const shortId = task.id.slice(-6);
-  const worktreesDir = path.join(repoRoot, '.lattice', 'worktrees');
+  const worktreesDir = homeWorktreesDir(repoRoot);
   await fs.mkdir(worktreesDir, { recursive: true });
 
   // Try the canonical path first; if reconciliation can't free it (Windows
@@ -127,10 +115,9 @@ export async function setupTaskWorktree(
       continue;
     }
 
-    const wt = await exec(
-      'git',
-      ['worktree', 'add', candidatePath, '-b', candidateBranch],
+    const wt = await projectGit(
       repoRoot,
+      ['worktree', 'add', candidatePath, '-b', candidateBranch],
     );
     if (wt.code !== 0) {
       // `git worktree add` itself failed (rare after reconcile). Log and
@@ -155,7 +142,7 @@ export async function setupTaskWorktree(
     if (attempt > 0) {
       console.log(
         `[worktree] used fallback path ${candidatePath} for task ${task.id} ` +
-          `(canonical was locked; orphan dir at .lattice/worktrees/${slug}-${shortId} ` +
+          `(canonical was locked; orphan dir at ${path.join(worktreesDir, `${slug}-${shortId}`)} ` +
           `will need manual cleanup once the lock holder is closed)`,
       );
     }
@@ -170,7 +157,7 @@ export async function setupTaskWorktree(
   throw new Error(
     `Could not create a worktree for task "${task.title}" after ` +
       `${MAX_PATH_RETRY_SUFFIXES + 1} attempts: every candidate path under ` +
-      `.lattice/worktrees/${slug}-${shortId}* is locked or unusable. ` +
+      `${path.join(worktreesDir, `${slug}-${shortId}`)}* is locked or unusable. ` +
       `Close any process / editor / Explorer window holding those directories ` +
       `open and try again.`,
   );
@@ -191,21 +178,16 @@ async function reconcileStaleState(
 ): Promise<boolean> {
   const branchExists =
     (
-      await exec(
-        'git',
-        ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}`],
+      await projectGit(
         repoRoot,
+        ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}`],
       )
     ).code === 0;
   const targetDirExists = await worktreeExists(worktreePath);
 
   if (!branchExists && !targetDirExists) return true;
 
-  const wtList = await exec(
-    'git',
-    ['worktree', 'list', '--porcelain'],
-    repoRoot,
-  );
+  const wtList = await projectGit(repoRoot, ['worktree', 'list', '--porcelain']);
   const tracked = parseWorktreesPorcelain(wtList.stdout);
   const onBranch = tracked.find(
     (w) => w.branch === `refs/heads/${branchName}`,
@@ -216,10 +198,9 @@ async function reconcileStaleState(
     // otherwise on Windows the cwd lock makes `git worktree remove` fail.
     await proxyKillSessionsByCwd(onBranch.path);
     await new Promise<void>((r) => setTimeout(r, 200));
-    const rm = await exec(
-      'git',
-      ['worktree', 'remove', '--force', onBranch.path],
+    const rm = await projectGit(
       repoRoot,
+      ['worktree', 'remove', '--force', onBranch.path],
     );
     if (rm.code !== 0) {
       console.warn(
@@ -235,11 +216,12 @@ async function reconcileStaleState(
     // PTYs whose cwd is inside, give the OS a beat, then retry the rm a
     // few times before giving up.
     //
-    // Safety: worktreePath is always candidatePath (path.join(worktreesDir,
-    // ...)) so this check should never trigger under normal operation. It is
-    // here as a belt-and-suspenders guard matching the one in cleanup.ts.
+    // worktreePath is always a fresh candidate under homeWorktreesDir(repoRoot)
+    // — i.e. ~/.lattice/worktrees/<hash>/… — so this fs.rm is structurally
+    // incapable of touching any project's `.git`. The startsWith guard plus
+    // the reparse-point check in tryRmWithRetries are belt-and-suspenders.
     const resolvedWt = path.resolve(worktreePath);
-    const resolvedBase = path.resolve(path.join(repoRoot, '.lattice', 'worktrees'));
+    const resolvedBase = path.resolve(homeWorktreesDir(repoRoot));
     if (!resolvedWt.startsWith(resolvedBase + path.sep)) {
       console.error(
         `[worktree] reconcile: refusing rm on "${resolvedWt}" — ` +
@@ -255,10 +237,12 @@ async function reconcileStaleState(
       return false;
     }
   }
-  await exec('git', ['worktree', 'prune'], repoRoot);
+  await projectGit(repoRoot, ['worktree', 'prune']);
   if (branchExists) {
     // -D in case it has unmerged commits from a prior abandoned run.
-    const del = await exec('git', ['branch', '-D', branchName], repoRoot);
+    // (branchName is always `lattice/<slug>-<id>` — projectGit's branch-delete
+    // guard requires the `lattice/` prefix.)
+    const del = await projectGit(repoRoot, ['branch', '-D', branchName]);
     if (del.code !== 0) {
       console.warn(
         `[worktree] reconcile: 'git branch -D ${branchName}' ` +
@@ -414,19 +398,13 @@ export async function ensureLatticeGitignore(repoRoot: string): Promise<void> {
 // scratch directory as ignored *immediately and unconditionally*, even
 // when the project's tracked `.gitignore` doesn't (yet) list it.
 //
-// Why this exists separately from `ensureLatticeGitignore`:
-//   - `.gitignore` is a tracked file. If `ensureLatticeGitignore` appends
-//     `.lattice/` and the user hasn't committed it yet, the next `git
-//     stash push --include-untracked` (run-level pre-flight in
-//     mergeRuns.ts and per-task in fastForwardMain) stashes the modified
-//     .gitignore and the working tree reverts to the committed version
-//     without the entry. .lattice/ then shows up as untracked again,
-//     and the very next stash tries to include `.lattice/worktrees/<id>/`
-//     — a nested git checkout — and fails with "invalid path … cannot
-//     add to the index". Every per-task FF in the run errors out.
-//   - `.git/info/exclude` lives inside the gitdir, is never tracked,
-//     and is never touched by stash. So `.lattice/` stays ignored across
-//     the entire run regardless of the .gitignore state.
+// `<repo>/.lattice/` no longer holds the worktree checkouts (those moved
+// to `~/.lattice/worktrees/<hash>/`), but it still holds workflow-steps/,
+// workflows.json, userSettings.json, health-cache.json — live state that
+// must never be committed and must never be swept into a working-tree
+// snapshot. `.git/info/exclude` lives inside the gitdir, is never tracked,
+// and is never touched by snapshots/stash, so `.lattice/` stays ignored
+// regardless of the tracked `.gitignore` state.
 //
 // Idempotent. Bails silently if the gitdir can't be located (worktree
 // without a parent, exotic git layout) — the .gitignore path still
@@ -439,7 +417,7 @@ export async function ensureLatticeRepoExclude(repoRoot: string): Promise<void> 
   // `repoRoot` is a worktree (which has its own per-worktree gitdir). We
   // want the COMMON gitdir because the exclude file there governs every
   // worktree of the repo.
-  const r = await exec('git', ['rev-parse', '--git-common-dir'], repoRoot);
+  const r = await projectGit(repoRoot, ['rev-parse', '--git-common-dir']);
   if (r.code !== 0 || !r.stdout.trim()) return;
   const gitDir = path.resolve(repoRoot, r.stdout.trim());
   const infoDir = path.join(gitDir, 'info');
@@ -478,27 +456,29 @@ export async function ensureLatticeRepoExclude(repoRoot: string): Promise<void> 
 // or any other source. Uses `git check-ignore` so we don't have to parse the
 // rules ourselves and we honor the same precedence git would.
 //
-// Why this matters: the run-level / per-task `git stash --include-untracked`
-// in stash.ts will scoop up *any* untracked path. If `.lattice/` is not
-// excluded, the stash includes the orphan worktree dirs (themselves nested
-// git checkouts), which puts the stash in a fragile state. A loss of that
-// stash — for any reason, including a server crash before pop — silently
-// deletes the entire `.lattice/` tree from the working copy. Same hazard for
-// `node_modules/`.
+// Why this matters: the working-tree snapshot (snapshot.ts) enumerates
+// untracked files via `git status` and copies-then-deletes them so the
+// fast-forward sees a clean tree. If `.lattice/` is not excluded, that
+// would scoop up live workflow/run state from `<repo>/.lattice/`. Same
+// hazard for `node_modules/`. (Pre-2026-05-10 this was even worse — the
+// snapshot's predecessor, `git stash --include-untracked`, would also
+// pull in the nested worktree checkouts that used to live under
+// `.lattice/`, and a lost stash deleted the lot. Worktrees now live
+// outside the project, but the exclusion still matters for the rest.)
 //
 // We probe synthetic paths so the result doesn't depend on which files
 // happen to exist right now.
 export async function verifyEssentialExclusions(
   repoRoot: string,
 ): Promise<{ ok: boolean; missing: string[] }> {
-  const repoCheck = await exec('git', ['rev-parse', '--show-toplevel'], repoRoot);
+  const repoCheck = await projectGit(repoRoot, ['rev-parse', '--show-toplevel']);
   if (repoCheck.code !== 0) {
     return { ok: false, missing: ['<not a git repository>'] };
   }
   const probes = ['.lattice/probe', 'node_modules/probe'];
   const missing: string[] = [];
   for (const p of probes) {
-    const r = await exec('git', ['check-ignore', '--quiet', p], repoRoot);
+    const r = await projectGit(repoRoot, ['check-ignore', '--quiet', p]);
     // Exit 0 = path is ignored, 1 = not ignored, 128 = error. Treat anything
     // non-zero as "not properly excluded" so we err on the side of caution.
     if (r.code !== 0) missing.push(p);
@@ -527,12 +507,12 @@ export async function untrackOwnedFilesInRepo(repoRoot: string): Promise<void> {
   await assertGitDirIntact(repoRoot);
   const tracked: string[] = [];
   for (const f of LATTICE_OWNED_FILE_PATHS) {
-    const ls = await exec('git', ['ls-files', '--error-unmatch', f], repoRoot);
+    const ls = await projectGit(repoRoot, ['ls-files', '--error-unmatch', f]);
     if (ls.code === 0 && ls.stdout.trim()) tracked.push(f);
   }
   if (tracked.length === 0) return;
 
-  const status = await exec('git', ['status', '--porcelain'], repoRoot);
+  const status = await projectGit(repoRoot, ['status', '--porcelain']);
   if (status.code !== 0) {
     console.warn(`[worktree] untrack: git status failed in ${repoRoot}`);
     return;
@@ -553,33 +533,25 @@ export async function untrackOwnedFilesInRepo(repoRoot: string): Promise<void> {
     return;
   }
 
-  const rm = await exec(
-    'git',
-    ['rm', '--cached', '--quiet', ...tracked],
-    repoRoot,
-  );
+  const rm = await projectGit(repoRoot, ['rm', '--cached', '--quiet', ...tracked]);
   if (rm.code !== 0) {
     console.warn(
       `[worktree] git rm --cached failed in ${repoRoot}: ${rm.stderr.trim()}`,
     );
     return;
   }
-  const commit = await exec(
-    'git',
-    [
-      'commit',
-      '-m',
-      `Untrack Lattice-managed files [lattice-auto]\n\n${tracked.map((f) => `- ${f}`).join('\n')}`,
-    ],
-    repoRoot,
-  );
+  const commit = await projectGit(repoRoot, [
+    'commit',
+    '-m',
+    `Untrack Lattice-managed files [lattice-auto]\n\n${tracked.map((f) => `- ${f}`).join('\n')}`,
+  ]);
   if (commit.code !== 0) {
     // No commit usually means the index ended up unchanged (race with
     // another process). Reset the index to keep state coherent.
     console.warn(
       `[worktree] commit after rm --cached failed: ${commit.stderr.trim() || commit.stdout.trim()}`,
     );
-    await exec('git', ['reset', 'HEAD', '--', ...tracked], repoRoot);
+    await projectGit(repoRoot, ['reset', 'HEAD', '--', ...tracked]);
     return;
   }
   console.log(

@@ -10,6 +10,7 @@
 // On non-Windows platforms this is just `path.resolve`.
 
 import path from 'node:path';
+import os from 'node:os';
 import crypto from 'node:crypto';
 
 export function canonicalProjectPath(input: string): string {
@@ -22,7 +23,8 @@ export function canonicalProjectPath(input: string): string {
 }
 
 // Stable per-project key for use as a directory name in shared global
-// state (`~/.lattice/per-project/<hash>/`, `~/.lattice/snapshots/<hash>/`).
+// state (`~/.lattice/per-project/<hash>/`, `~/.lattice/snapshots/<hash>/`,
+// `~/.lattice/worktrees/<hash>/`, `~/.lattice/git-backups/<hash>/`).
 // SHA-1 of the canonical path, truncated to 12 hex chars — collision risk
 // is negligible for the tens-to-hundreds of projects a single user has.
 // Always use this rather than rolling your own; otherwise two consumers
@@ -30,4 +32,12 @@ export function canonicalProjectPath(input: string): string {
 export function projectHash(projectPath: string): string {
   const canonical = canonicalProjectPath(projectPath);
   return crypto.createHash('sha1').update(canonical).digest('hex').slice(0, 12);
+}
+
+// Where Lattice puts the per-task worktree checkouts for a given project:
+// `~/.lattice/worktrees/<projectHash>/`. Deliberately OUTSIDE the project
+// tree — see the comment on `homeWorktreesDir`'s usage in worktree/setup.ts
+// for why (it's the headline fix for the recurring `.git` deletions).
+export function homeWorktreesDir(repoRoot: string): string {
+  return path.join(os.homedir(), '.lattice', 'worktrees', projectHash(repoRoot));
 }

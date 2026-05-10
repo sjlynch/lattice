@@ -21,6 +21,9 @@ import {
   ensureLatticeRepoExclude,
   untrackOwnedFilesInRepo,
   isMidMerge,
+  gitDirExists,
+  backupProjectGitBundle,
+  projectGit,
   RUN_STASH_LABEL,
   type SnapshotHandle,
 } from './worktree.js';
@@ -34,6 +37,49 @@ import {
   ProjectRunLockedError,
   type ProjectRunLockHandle,
 } from './projectRunLock.js';
+
+// Run-level "circuit breaker". Between tasks we verify the project repo
+// hasn't been damaged: `.git` still exists and HEAD has only moved
+// *forward* (a merge run only ever fast-forwards main). If either check
+// fails, the run halts immediately — the remaining ready_to_merge tasks
+// stay where they are rather than each piling more onto a repo that's
+// already in a bad state. Returns `{ ok: false, reason }` on a violation.
+async function checkRepoIntegrity(
+  repoRoot: string,
+  baselineHead: string | null,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (!(await gitDirExists(repoRoot))) {
+    return { ok: false, reason: `${repoRoot}/.git is missing` };
+  }
+  if (!baselineHead) return { ok: true }; // couldn't read it at the start
+  let head: string;
+  try {
+    const r = await projectGit(repoRoot, ['rev-parse', 'HEAD']);
+    if (r.code !== 0) return { ok: false, reason: `cannot read HEAD: ${r.stderr.trim()}` };
+    head = r.stdout.trim();
+  } catch (err) {
+    return { ok: false, reason: `rev-parse HEAD threw: ${(err as Error).message}` };
+  }
+  if (head === baselineHead) return { ok: true };
+  // HEAD moved — it must be a descendant of the baseline (FF), never sideways.
+  try {
+    const anc = await projectGit(repoRoot, [
+      'merge-base',
+      '--is-ancestor',
+      baselineHead,
+      head,
+    ]);
+    if (anc.code !== 0) {
+      return {
+        ok: false,
+        reason: `HEAD moved non-forward: ${baselineHead.slice(0, 10)} → ${head.slice(0, 10)}`,
+      };
+    }
+  } catch (err) {
+    return { ok: false, reason: `merge-base check threw: ${(err as Error).message}` };
+  }
+  return { ok: true };
+}
 
 export type MergeRunStatus =
   | 'running'
@@ -184,6 +230,18 @@ export async function startMergeRun(
   (async () => {
     console.log(`[merge-run] ${run.id} started — ${targets.length} task(s) to merge`);
 
+    // Pre-flight: a `git bundle --all` snapshot of the whole object graph
+    // under ~/.lattice/git-backups/<hash>/. Doesn't prevent damage — the
+    // layered guards do — but turns "catastrophe → re-clone, lose local
+    // commits" into "fetch the bundle, lose nothing". Best-effort; a
+    // failed backup must never block the run.
+    try {
+      const bundlePath = await backupProjectGitBundle(projectPath);
+      if (bundlePath) console.log(`[merge-run] pre-run git bundle → ${bundlePath}`);
+    } catch (err) {
+      console.warn('[merge-run] pre-run git bundle backup failed (continuing):', err);
+    }
+
     // Pre-flight: heal the project's tracking of Lattice-owned files
     // BEFORE stashing. If `.claude/settings.local.json` is tracked in main,
     // every per-task merge will conflict on it; untrack it now (idempotent
@@ -227,6 +285,27 @@ export async function startMergeRun(
     } catch (err) {
       console.warn('[merge-run] pre-flight snapshot failed (continuing):', err);
     }
+
+    // Circuit-breaker baseline: main's HEAD before any task. After each
+    // task we re-check that `.git` is intact and HEAD only moved forward
+    // (a merge run only fast-forwards main). On a violation we stop the
+    // whole run rather than let task N+1 compound the damage.
+    let baselineHead: string | null = null;
+    try {
+      if (await gitDirExists(projectPath)) {
+        const r = await projectGit(projectPath, ['rev-parse', 'HEAD']);
+        if (r.code === 0) baselineHead = r.stdout.trim() || null;
+      } else {
+        console.error(
+          `[merge-run] !!! ${projectPath}/.git is missing before the run even started — aborting.`,
+        );
+        run.errored.push({ taskId: '(run)', error: '.git missing before run start' });
+        run.cancelRequested = true;
+      }
+    } catch (err) {
+      console.warn('[merge-run] could not read baseline HEAD (continuing without it):', err);
+    }
+
     for (const seed of targets) {
       if (run.cancelRequested) break;
 
@@ -412,6 +491,21 @@ export async function startMergeRun(
       run.current = undefined;
       notify({ type: 'progress', run: snapshot(run) });
       console.log(`[merge-run] progress: ${run.processed}/${run.total} (merged=${run.merged.length} conflicts=${run.conflicted.length} errors=${run.errored.length})`);
+
+      // Circuit breaker: bail out of the whole run if the repo looks
+      // damaged. Better to leave the remaining tasks at ready_to_merge
+      // than to keep processing against a broken `.git`.
+      const integrity = await checkRepoIntegrity(projectPath, baselineHead);
+      if (!integrity.ok) {
+        console.error(
+          `[merge-run] !!! INTEGRITY CHECK FAILED after task ${task.id}: ${integrity.reason}. ` +
+            `HALTING RUN — ${run.total - run.processed} task(s) left at ready_to_merge. ` +
+            `Inspect the project repo before retrying.`,
+        );
+        run.errored.push({ taskId: '(run)', error: `halted after ${task.id}: ${integrity.reason}` });
+        run.cancelRequested = true;
+        break;
+      }
     }
 
     // Post-run snapshot restore. Only when the loop ran to completion

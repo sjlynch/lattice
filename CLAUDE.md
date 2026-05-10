@@ -9,10 +9,16 @@ force-directed DAG.
 - `backend/` — TypeScript Node.js Express server (`:5184`)
 - `frontend/` — Vite + React + TS + xterm + 3d-force-graph (`:5183`)
 - `package.json` (root) — `concurrently` runs both via `npm run dev`
-- `.lattice/` — per-project scratch (gitignored): `worktrees/`, `workflow-steps/`, `workflows.json`, `userSettings.json`, `health-cache.json`. Tasks themselves now live in `~/.lattice/per-project/<hash>/tasks.json` (see below).
+- `<project>/.lattice/` — per-project scratch (gitignored): `workflow-steps/`, `workflows.json`, `userSettings.json`, `health-cache.json`. **No longer holds `worktrees/`** — those moved to `~/.lattice/worktrees/<hash>/` (see below). Tasks live in `~/.lattice/per-project/<hash>/tasks.json`.
 - `~/.lattice/projects.json` — global index of projects with Lattice tasks
-- `~/.lattice/per-project/<sha1(path)[:12]>/tasks.json` — task DB per project. Moved out of `<project>/.lattice/tasks.json` after the 2026-05-09 catastrophic-deletion incident; legacy in-project files auto-migrate on first read.
+- `~/.lattice/per-project/<sha1(path)[:12]>/tasks.json` — task DB per project. Moved out of `<project>/.lattice/tasks.json` after the 2026-05-09 catastrophic-deletion incident; legacy in-project files auto-migrate on first read. `run.lock` here is the cross-process per-project merge lock.
+- `~/.lattice/worktrees/<projectHash>/<slug>-<id>/` — per-task git worktree checkout. **Outside the project tree on purpose** (2026-05-10): nesting them inside `<repo>/.lattice/` was the root of three `.git`-deletion incidents (a bad recursive-delete path, or `git status` enumerating the nested checkouts). The only thing left inside `<repo>/.git` is the small `worktrees/<name>/gitdir` pointer.
 - `~/.lattice/snapshots/<projectHash>/<ts>-<label>/` — copy-based working-tree snapshot (replaces `git stash --include-untracked`, which had a silent-data-loss failure mode). Orphan snapshots from a crashed run are restored on next boot via `recoverPendingSnapshots`.
+- `~/.lattice/git-backups/<projectHash>/<ts>.bundle` — `git bundle --all` snapshot taken before each merge run; last 5 kept. Last-resort full-history recovery if `.git` is ever damaged: `git fetch <bundle>`.
+
+### `.git`-deletion defences (read before touching the merge pipeline)
+
+Every prior incident traced to a recursive filesystem delete reaching `.git` (directly via `fs.rm`, or via a lost `git stash --include-untracked`). Layered defences, outermost first: (1) worktrees live outside the project tree; (2) `projectGit()` — all git against the project repo goes through a wrapper that whitelists subcommands (no `clean`/`stash`/`reset --hard`/`update-ref -d`/non-ff `merge`/`branch -D <non-lattice>`/`checkout <branch>`/…); (3) no raw `fs.rm` fallback in worktree cleanup — recursive removal is delegated to `git worktree remove`; (4) copy-based snapshots, never `git stash`; (5) a run circuit breaker that halts the whole merge run if `.git` vanishes or HEAD moves non-forward between tasks; (6) the `git bundle` backup above; (7) reparse-point guards on the remaining `fs.rm` sites, snapshot-manifest path validation, and a cross-process project run lock. See `backend/src/worktree/CLAUDE.md`.
 
 ## Run
 
@@ -38,7 +44,7 @@ Open ──▶── In Progress ──▶── Ready to Merge ──▶── 
 ```
 
 - `Open → In Progress`: ▶ button calls `POST /api/tasks/:id/run`. Backend
-  creates `<repo>/.lattice/worktrees/<slug>-<id>` on branch
+  creates `~/.lattice/worktrees/<projectHash>/<slug>-<id>` on branch
   `lattice/<slug>-<id>`, writes `LATTICE_TASK.md`, and installs a Claude
   Stop hook in `.claude/settings.local.json` that POSTs back to `/complete`.
 - `In Progress → Ready to Merge`: the in-worktree Claude finishes; Stop hook
@@ -145,10 +151,16 @@ to avoid collisions with other local dev servers.
 
 ## Worktree paths
 
-For a repo at `<repoRoot>`:
+For a repo at `<repoRoot>` (with `<hash>` = `sha1(canonicalPath)[:12]`):
 
-- worktree dir: `<repoRoot>/.lattice/worktrees/<slug>-<shortid>` (inside
-  the gitignored `.lattice/` folder so it stays self-contained)
+- worktree dir: `~/.lattice/worktrees/<hash>/<slug>-<shortid>` — **outside**
+  the project tree (see the `.git`-deletion defences above). `git worktree
+  add` records the worktree at `<repoRoot>/.git/worktrees/<name>/` regardless
+  of where the checkout lives.
+  - legacy: worktrees created before 2026-05-10 are at
+    `<repoRoot>/.lattice/worktrees/<slug>-<shortid>`. Those keep working
+    (the task record stores `worktreePath` explicitly); the boot-time
+    `sweepOrphanedWorktrees` reclaims any that outlive their task.
 - branch: `lattice/<slug>-<shortid>`
 - task instructions inside the worktree: `LATTICE_TASK.md`
 - conflict-resolver instructions inside the worktree:

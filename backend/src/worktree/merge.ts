@@ -6,6 +6,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { exec } from './exec.js';
+import { projectGit } from './projectGit.js';
 import {
   isMidMerge,
   worktreeExists,
@@ -125,7 +126,7 @@ export async function fastForwardMain(
         `retrying.`,
     };
   }
-  const status = await exec('git', ['status', '--porcelain'], repoRoot);
+  const status = await projectGit(repoRoot, ['status', '--porcelain']);
   if (status.code !== 0) {
     return {
       status: 'error',
@@ -154,11 +155,7 @@ export async function fastForwardMain(
     }
   }
 
-  const ff = await exec(
-    'git',
-    ['merge', '--ff-only', branchName],
-    repoRoot,
-  );
+  const ff = await projectGit(repoRoot, ['merge', '--ff-only', branchName]);
   if (ff.code !== 0) {
     // FF failed. Restore the snapshot so the user's mods come back, then
     // surface the FF error. We use restore (not discard) because the FF
@@ -217,7 +214,7 @@ export async function mergeWorktreeInRepo(
     return { status: 'error', message: (err as Error).message };
   }
 
-  const isGit = await exec('git', ['rev-parse', '--show-toplevel'], repoRoot);
+  const isGit = await projectGit(repoRoot, ['rev-parse', '--show-toplevel']);
   if (isGit.code !== 0) {
     return { status: 'error', message: `Not a git repository: ${repoRoot}` };
   }
@@ -279,7 +276,7 @@ export async function mergeWorktreeInRepo(
   // to a known-good state.
 
   const mainHeadSha = (
-    await exec('git', ['rev-parse', 'HEAD'], repoRoot)
+    await projectGit(repoRoot, ['rev-parse', 'HEAD'])
   ).stdout.trim();
   if (!mainHeadSha) {
     return { status: 'error', message: 'Could not read main HEAD SHA.' };

@@ -1,0 +1,96 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  assertAllowedProjectGitArgs,
+  DisallowedProjectGitError,
+} from '../worktree/projectGit.js';
+import { isUnderManagedWorktreesDir } from '../worktree/cleanup.js';
+
+function allowed(args: string[]): void {
+  assert.doesNotThrow(() => assertAllowedProjectGitArgs(args), `expected allowed: git ${args.join(' ')}`);
+}
+function denied(args: string[]): void {
+  assert.throws(
+    () => assertAllowedProjectGitArgs(args),
+    DisallowedProjectGitError,
+    `expected denied: git ${args.join(' ')}`,
+  );
+}
+
+test('projectGit policy allows the operations Lattice actually uses', () => {
+  allowed(['rev-parse', '--show-toplevel']);
+  allowed(['rev-parse', 'HEAD']);
+  allowed(['rev-parse', '--git-common-dir']);
+  allowed(['status', '--porcelain']);
+  allowed(['status', '--porcelain=v1', '--untracked-files=all']);
+  allowed(['ls-files', '--error-unmatch', 'LATTICE_TASK.md']);
+  allowed(['check-ignore', '--quiet', '.lattice/probe']);
+  allowed(['merge-base', '--is-ancestor', 'aaa', 'bbb']);
+  allowed(['worktree', 'list', '--porcelain']);
+  allowed(['worktree', 'prune']);
+  allowed(['worktree', 'add', '/home/u/.lattice/worktrees/h/foo-abc', '-b', 'lattice/foo-abc']);
+  allowed(['worktree', 'remove', '--force', '/home/u/.lattice/worktrees/h/foo-abc']);
+  allowed(['merge', '--ff-only', 'lattice/foo-abc']);
+  allowed(['checkout', 'HEAD', '--', 'src/api.ts', 'src/x.ts']);
+  allowed(['checkout', '--ours', '--', '.claude/settings.local.json']);
+  allowed(['rm', '--cached', '--quiet', 'LATTICE_TASK.md']);
+  allowed(['commit', '-m', 'Untrack Lattice-managed files [lattice-auto]']);
+  allowed(['reset', 'HEAD', '--', 'LATTICE_TASK.md']);
+  allowed(['branch', '-D', 'lattice/foo-abc123']);
+  allowed(['branch', '--list', 'lattice/foo']);
+  allowed(['bundle', 'create', '/home/u/.lattice/git-backups/h/2026.bundle', '--all']);
+});
+
+test('projectGit policy refuses everything that could damage the repo', () => {
+  // The classics behind past incidents.
+  denied(['clean', '-fdx']);
+  denied(['clean', '-fd']);
+  denied(['stash', 'push', '--include-untracked']);
+  denied(['stash', 'pop']);
+  denied(['reset', '--hard', 'origin/main']);
+  denied(['reset', '--hard']);
+  denied(['reset', '--soft', 'HEAD~1']);
+  denied(['reset', 'HEAD~1']); // moves HEAD — no `--`
+  denied(['update-ref', '-d', 'refs/heads/main']);
+  // Branch deletion limited to lattice/*.
+  denied(['branch', '-D', 'main']);
+  denied(['branch', '-d', 'develop']);
+  denied(['branch', '-D']); // no target
+  denied(['branch', '-m', 'main', 'old-main']);
+  // A real (non-ff) merge in the project tree would write conflict markers
+  // into vite-watched files.
+  denied(['merge', 'lattice/foo']);
+  denied(['merge', '-X', 'theirs', 'lattice/foo']);
+  // Branch switching / mass discard.
+  denied(['checkout', 'some-branch']);
+  denied(['checkout', '-f']);
+  denied(['checkout', '--', '.']);
+  denied(['checkout', 'HEAD', '--', '.']);
+  denied(['checkout', 'HEAD']); // no `--`
+  // rm without --cached deletes from disk.
+  denied(['rm', '-rf', 'src']);
+  denied(['rm', 'src/api.ts']);
+  // Subcommands not on the list at all.
+  denied(['push', 'origin', 'main', '--force']);
+  denied(['gc', '--prune=now']);
+  denied(['filter-branch', '--all']);
+  denied(['worktree', 'add-bogus']);
+  // Leading global options would let argv escape the declared cwd.
+  denied(['-C', '/some/other/repo', 'status']);
+  denied(['-c', 'core.hooksPath=/tmp', 'status']);
+  // Empty argv.
+  denied([]);
+});
+
+test('isUnderManagedWorktreesDir accepts the home + legacy locations only', () => {
+  const repo = '/home/u/dev/lattice';
+  // We can't predict the projectHash here, so test the legacy in-project
+  // location (deterministic) and a few obvious negatives. The home-location
+  // positive is covered indirectly by the worktree-creation path.
+  assert.equal(isUnderManagedWorktreesDir('/home/u/dev/lattice/.lattice/worktrees/foo-abc', repo), true);
+  assert.equal(isUnderManagedWorktreesDir('/home/u/dev/lattice/.lattice/worktrees', repo), false); // the dir itself, not under it
+  assert.equal(isUnderManagedWorktreesDir('/home/u/dev/lattice', repo), false); // the repo root
+  assert.equal(isUnderManagedWorktreesDir('/home/u/dev/lattice/.git', repo), false);
+  assert.equal(isUnderManagedWorktreesDir('/home/u/dev/lattice/.lattice/worktrees-extra/x', repo), false); // prefix-sibling
+  assert.equal(isUnderManagedWorktreesDir('/some/where/else', repo), false);
+});

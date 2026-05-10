@@ -504,6 +504,14 @@ export async function listReadyToMergeTasks(): Promise<Task[]> {
   return result;
 }
 
+// All project roots Lattice has ever indexed (canonical paths). Used by
+// boot recovery to iterate every known project — e.g. the orphaned-worktree
+// sweep.
+export async function listKnownProjects(): Promise<string[]> {
+  await loadKnownProjects();
+  return Array.from(knownProjects);
+}
+
 export async function listTasks(projectPath: string): Promise<Task[]> {
   const key = canonicalProjectPath(projectPath);
   await ensureProjectLoaded(key);

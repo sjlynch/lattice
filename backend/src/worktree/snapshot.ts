@@ -27,7 +27,7 @@
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
-import { exec } from './exec.js';
+import { projectGit } from './projectGit.js';
 import { projectHash } from '../projectPath.js';
 
 const SNAPSHOTS_BASE = path.join(os.homedir(), '.lattice', 'snapshots');
@@ -89,11 +89,11 @@ export async function snapshotWorkingTree(
   repoRoot: string,
   label: string,
 ): Promise<SnapshotHandle> {
-  const status = await exec(
-    'git',
-    ['status', '--porcelain=v1', '--untracked-files=all'],
-    repoRoot,
-  );
+  const status = await projectGit(repoRoot, [
+    'status',
+    '--porcelain=v1',
+    '--untracked-files=all',
+  ]);
   if (status.code !== 0) {
     throw new Error(
       `[snapshot] git status failed in ${repoRoot}: ` +
@@ -194,11 +194,7 @@ export async function snapshotWorkingTree(
   // follows will fail with a clear error, the caller restores any partial
   // snapshot, and the user's data is intact.
   if (copiedModified.length > 0) {
-    const co = await exec(
-      'git',
-      ['checkout', 'HEAD', '--', ...copiedModified],
-      repoRoot,
-    );
+    const co = await projectGit(repoRoot, ['checkout', 'HEAD', '--', ...copiedModified]);
     if (co.code !== 0) {
       console.warn(
         `[snapshot] git checkout HEAD -- (${copiedModified.length} files) ` +

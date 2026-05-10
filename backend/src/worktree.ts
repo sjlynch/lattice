@@ -4,14 +4,12 @@
 
 export {
   setupTaskWorktree,
-  parseWorktreesPorcelain,
   ensureLatticeGitignore,
   ensureLatticeRepoExclude,
   untrackOwnedFilesInRepo,
   verifyEssentialExclusions,
   renderStopHookJson,
   type WorktreeResult,
-  type ParsedWorktree,
 } from './worktree/setup.js';
 
 export {
@@ -31,7 +29,20 @@ export {
   checkBranchExists,
   branchCommitCount,
   gitDirExists,
+  assertGitDirIntact,
+  parseWorktreesPorcelain,
+  type ParsedWorktree,
 } from './worktree/state.js';
+
+// Narrowed-capability git wrapper for the project repo. Every git call
+// whose cwd is the user's project root should go through `projectGit`.
+export {
+  projectGit,
+  assertAllowedProjectGitArgs,
+  DisallowedProjectGitError,
+} from './worktree/projectGit.js';
+
+export { backupProjectGitBundle } from './worktree/gitBackup.js';
 
 export {
   writeMergeInstructions,
@@ -57,7 +68,11 @@ export {
   type SnapshotHandle,
 } from './worktree/stash.js';
 
-export { cleanupWorktreeForTask } from './worktree/cleanup.js';
+export {
+  cleanupWorktreeForTask,
+  assertNotReparsePoint,
+  isUnderManagedWorktreesDir,
+} from './worktree/cleanup.js';
 
 export {
   finalizeMergedTask,

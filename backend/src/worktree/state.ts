@@ -1,9 +1,45 @@
 // Low-level worktree state checks: existence, git-dir resolution, mid-merge
-// detection. Used by both setup and merge logic.
+// detection, and `git worktree list --porcelain` parsing. Read-only — these
+// helpers run against either the project repo or a worktree, so they stay
+// on the plain `exec` (not `projectGit`, which is project-repo-only).
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { exec } from './exec.js';
+
+export type ParsedWorktree = {
+  path: string;
+  branch?: string;
+  detached?: boolean;
+};
+
+// Parse `git worktree list --porcelain` into an array of {path, branch?}.
+// Each block is separated by a blank line and looks like:
+//
+//   worktree /abs/path
+//   HEAD <sha>
+//   branch refs/heads/<name>          (or 'detached')
+//
+// Used to recover from / sweep stale worktrees that survived a prior
+// half-failed run.
+export function parseWorktreesPorcelain(out: string): ParsedWorktree[] {
+  const result: ParsedWorktree[] = [];
+  for (const block of out.split(/\r?\n\r?\n/)) {
+    if (!block.trim()) continue;
+    const entry: ParsedWorktree = { path: '' };
+    for (const line of block.split(/\r?\n/)) {
+      if (line.startsWith('worktree ')) {
+        entry.path = line.slice('worktree '.length).trim();
+      } else if (line.startsWith('branch ')) {
+        entry.branch = line.slice('branch '.length).trim();
+      } else if (line === 'detached') {
+        entry.detached = true;
+      }
+    }
+    if (entry.path) result.push(entry);
+  }
+  return result;
+}
 
 export async function worktreeExists(worktreePath: string): Promise<boolean> {
   try {
