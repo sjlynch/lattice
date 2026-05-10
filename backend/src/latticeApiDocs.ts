@@ -188,6 +188,7 @@ curl -s -X POST "$LATTICE_API_URL/api/tasks/transition" \\
 | POST   | /api/tasks/batch                   | Create many — JSON \`{tasks:[...]}\` OR \`text/markdown\` body |
 | POST   | /api/tasks/transition              | Bulk status move \`{ids?, fromStatus?, status}\` |
 | PATCH  | /api/tasks/:id                     | Update title / description / status |
+| POST   | /api/tasks/:id/append-summary      | Append a summary section to the existing description |
 | DELETE | /api/tasks/:id                     | Remove a task |
 | POST   | /api/tasks/:id/run                 | Spawn worktree + Claude on an open task |
 | POST   | /api/tasks/:id/resume              | Re-spawn Claude in an existing worktree |

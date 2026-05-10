@@ -257,6 +257,26 @@ export function buildTaskCrudRouter(): Router {
     }
   });
 
+  r.post('/api/tasks/:id/append-summary', async (req, res) => {
+    const { summary } = (req.body || {}) as { summary?: string };
+    if (!summary?.trim()) {
+      return res.status(400).json({ error: 'summary required' });
+    }
+    try {
+      const task = await getTask(req.params.id);
+      if (!task) return res.status(404).json({ error: 'not found' });
+      const existing = task.description?.trim() || '';
+      const appended = existing
+        ? `${existing}\n\n---\n\n**Summary:**\n${summary.trim()}`
+        : summary.trim();
+      const updated = await updateTask(req.params.id, { description: appended });
+      if (!updated) return res.status(404).json({ error: 'not found' });
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   r.delete('/api/tasks/:id', async (req, res) => {
     const task = await getTask(req.params.id);
     if (task && task.worktreePath && task.branch) {

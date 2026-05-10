@@ -82,7 +82,7 @@ export function renderTaskMarkdown(
 > confirm with, and the turn will not be picked up again.** Work through
 > the whole checklist below to the end in this same session, without pausing
 > to ask for permission or approval. That includes the wrap-up: commit your
-> work, update the task description, and POST the \`/complete\` callback —
+> work, append a summary to the task description, and POST the \`/complete\` callback —
 > these are part of the task, not optional follow-ups. Stopping after "I
 > implemented it" — without committing and calling \`/complete\` — leaves
 > the task stuck in "In Progress" and the work invisible to Lattice. Don't
@@ -144,19 +144,18 @@ ${autonomyPreamble}1. **Check existing state first.** This task may have been st
    git commit -m "<concise summary of the change>"
    \`\`\`
 
-4. **Update the Lattice task with a short summary of the changes** so the
-   task board reflects what was actually done once it lands in
-   "Ready to Merge". PATCH the task description:
+4. **Append a short summary of your changes to the task** so the task
+   board reflects what was actually done once it lands in "Ready to
+   Merge":
 
    \`\`\`
-   curl -s -X PATCH ${backendOrigin}/api/tasks/${task.id} \\
+   curl -s -X POST ${backendOrigin}/api/tasks/${task.id}/append-summary \\
      -H "Content-Type: application/json" \\
-     -d '{"description":"<1-3 bullet summary of what changed>"}'
+     -d '{"summary":"<1-3 bullet summary of what changed>"}'
    \`\`\`
 
-   Keep it concise (1-3 bullet points). This replaces the original
-   description; the original task intent is preserved in this
-   \`LATTICE_TASK.md\` file and in the branch's git history.
+   Keep it concise (1-3 bullet points). This appends the summary beneath
+   the original description — both remain visible on the task board.
 
 ${finalStep}
 
