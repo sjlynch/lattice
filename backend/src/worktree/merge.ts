@@ -240,11 +240,10 @@ export async function mergeWorktreeInRepo(
   }
   // Why -m instead of --no-edit: passing a raw SHA as the merge target
   // makes git auto-generate "Merge commit '<sha>' into <branch>" — useless
-  // in `git log`. Supplying our own message produces "Merge branch 'main'
-  // into <branch>" (the format git uses when you merge a named ref) plus
-  // the task title for archaeology.
+  // in `git log`. Supplying our own message puts the task title in the
+  // subject so `git log --oneline` is actually readable.
   const mergeMessage =
-    `Merge branch 'main' into ${branchName}\n\nTask: ${taskTitle}`;
+    `Merge main → ${taskTitle}\n\nBranch: ${branchName}`;
   let merge;
   try {
     merge = await exec(

@@ -207,8 +207,13 @@ ${filesList}
 1. Inspect each conflicted file. Resolve all \`<<<<<<<\` / \`=======\` /
    \`>>>>>>>\` markers, preserving the intent of both branches when possible.
 2. Stage the resolved files: \`git add <file> ...\`
-3. Complete the merge: \`git commit\` (Git already prepared a commit message;
-   accepting it is fine).
+3. Complete the merge with a commit message that names the task and briefly
+   describes how you resolved the conflict — do not just accept git's default:
+   \`\`\`
+   git commit -m "Merge main → ${task.title}: <one-line summary of resolution>"
+   \`\`\`
+   Example summaries: "kept incoming auth refactor over local stub",
+   "merged both sides of config split", "accepted ours on pipeline.rs".
 4. End the session normally. The Stop hook in
    \`.claude/settings.local.json\` will notify Lattice automatically.
 
