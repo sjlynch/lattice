@@ -1,4 +1,4 @@
-import type { NodeKinds } from './index.js';
+import { buildNodeKinds, type NodeKinds } from './base.js';
 
 const CSHARP_FUNCTION_KINDS = [
   'method_declaration',
@@ -40,32 +40,31 @@ const CSHARP_NESTING_KINDS = [
 ];
 
 export function buildCsharpNodeKinds(): NodeKinds {
-  return {
-    function: new Set(CSHARP_FUNCTION_KINDS),
-    namedFunction: new Set([
+  return buildNodeKinds({
+    functionKinds: CSHARP_FUNCTION_KINDS,
+    namedFunctionKinds: [
       'method_declaration',
       'constructor_declaration',
       'local_function_statement',
-    ]),
-    anonymousFunction: new Set([
+    ],
+    anonymousFunctionKinds: [
       'lambda_expression',
       'anonymous_method_expression',
-    ]),
-    class: new Set(['class_declaration', 'struct_declaration', 'record_declaration']),
-    interface: new Set(['interface_declaration']),
-    import: new Set(),
-    branch: new Set(CSHARP_BRANCH_KINDS),
-    cognitiveBranch: new Set(CSHARP_COGNITIVE_BRANCH_KINDS),
-    nesting: new Set(CSHARP_NESTING_KINDS),
-    ternary: new Set(['conditional_expression']),
-    catchClause: new Set(['catch_clause']),
-    call: new Set(['invocation_expression', 'object_creation_expression']),
-    string: new Set([
+    ],
+    classKinds: ['class_declaration', 'struct_declaration', 'record_declaration'],
+    interfaceKinds: ['interface_declaration'],
+    branchKinds: CSHARP_BRANCH_KINDS,
+    cognitiveBranchKinds: CSHARP_COGNITIVE_BRANCH_KINDS,
+    nestingKinds: CSHARP_NESTING_KINDS,
+    ternaryKinds: ['conditional_expression'],
+    catchClauseKinds: ['catch_clause'],
+    callKinds: ['invocation_expression', 'object_creation_expression'],
+    stringKinds: [
       'string_literal',
       'verbatim_string_literal',
       'interpolated_string_expression',
-    ]),
-    comment: new Set(['comment']),
+    ],
+    commentKinds: ['comment'],
     importSourceField: 'name',
-  };
+  });
 }
