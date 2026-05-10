@@ -47,8 +47,16 @@ Open ──▶── In Progress ──▶── Ready to Merge ──▶── 
   creates `~/.lattice/worktrees/<projectHash>/<slug>-<id>` on branch
   `lattice/<slug>-<id>`, writes `LATTICE_TASK.md`, and installs a Claude
   Stop hook in `.claude/settings.local.json` that POSTs back to `/complete`.
-- `In Progress → Ready to Merge`: the in-worktree Claude finishes; Stop hook
-  hits `POST /api/tasks/:id/complete` (idempotent — only flips on first call).
+  The Stop hook is always installed (a Pi/Codex task that later conflicts is
+  resolved by a *Claude* resolver, which needs it). For a Pi-run task it also
+  writes a `.pi/extensions/lattice-complete.ts` extension that POSTs
+  `/complete` on `session_shutdown` — Pi's analogue of the Stop hook — and
+  `LATTICE_TASK.md` is reworded so the model curls `/complete` itself as its
+  final step (the extension is the backstop if it forgets).
+- `In Progress → Ready to Merge`: the in-worktree agent finishes; the Stop
+  hook (Claude) / completion extension (Pi) / explicit curl in
+  `LATTICE_TASK.md` hits `POST /api/tasks/:id/complete` (idempotent — only
+  flips on first call, and only when the branch has a commit).
 - `Ready to Merge → QA`: ▶ button calls `POST /api/tasks/:id/merge`.
   Backend merges main INTO the branch *inside the worktree* (so main's
   working tree never has conflict markers and vite stays alive), then

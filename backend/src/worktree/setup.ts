@@ -1,5 +1,6 @@
 // Worktree creation: takes a Task and produces an isolated git worktree
-// + branch + Claude Stop-hook config + LATTICE_TASK.md brief.
+// + branch + Claude Stop-hook config (+ a Pi completion extension when the
+// task runs under Pi) + LATTICE_TASK.md brief.
 //
 // Reconciles stale state from a prior half-failed run before creating, so
 // that "Run" is always a fresh start. Resume uses a different code path
@@ -66,6 +67,7 @@ export async function setupTaskWorktree(
   repoPath: string,
   task: Task,
   backendOrigin: string,
+  harness: 'claude' | 'pi' | 'codex' = 'claude',
 ): Promise<WorktreeResult> {
   // First call is plain `exec` (not projectGit) so a folder that isn't a
   // git repo at all gets the clear "run `git init`" message rather than
@@ -132,8 +134,16 @@ export async function setupTaskWorktree(
     }
 
     const taskFile = path.join(candidatePath, 'LATTICE_TASK.md');
-    await fs.writeFile(taskFile, renderTaskMarkdown(task, backendOrigin), 'utf8');
+    await fs.writeFile(taskFile, renderTaskMarkdown(task, backendOrigin, harness), 'utf8');
+    // The Claude Stop hook is installed for every worktree regardless of run
+    // harness: a Pi/Codex task that later hits a merge conflict spawns a
+    // *Claude* resolver, which relies on this hook to call `/complete`.
     await installStopHook(candidatePath, task.id, backendOrigin);
+    // Pi has no command-hook mechanism; install its TypeScript-extension
+    // equivalent so the in-worktree Pi session reports completion on exit.
+    if (harness === 'pi') {
+      await installPiCompletionExtension(candidatePath, task.id, backendOrigin);
+    }
     // Keep Lattice-managed files out of `git status` so Claude's `git add .`
     // never stages them. Writes to the worktree-local exclude (not the repo
     // .gitignore) so the project's tracked files are untouched.
@@ -349,6 +359,59 @@ export async function installStopHook(
   const expected = renderStopHookJson(taskId, backendOrigin);
   // Skip rewrite if the file already matches — keeps `git status` clean
   // when this worktree is reconciled and recreated against the same task.
+  try {
+    const existing = await fs.readFile(file, 'utf8');
+    if (existing === expected) return;
+  } catch {
+    /* file absent — fall through to write */
+  }
+  await fs.writeFile(file, expected, 'utf8');
+}
+
+// Pi has no settings-driven command hooks (it's deliberately minimal — no
+// MCP, no permission popups, no command hooks). What it does have is a
+// TypeScript extension system: any `*.ts` under `<cwd>/.pi/extensions/` is
+// auto-loaded — no settings.json entry needed — and runs in Node, so it can
+// `fetch()` the same `/complete` callback the Claude Stop hook curls.
+//
+// We gate on `event.reason === 'quit'` so an in-session `/new`, `/reload`,
+// or `/fork` (which also emit `session_shutdown`) doesn't flip the task
+// early. Even if it did, `/complete` is idempotent and only advances a task
+// that has commits — but flipping also schedules a 1s pty kill, which we
+// don't want yanked out from under an interactive user.
+//
+// This is a backstop: LATTICE_TASK.md already tells the Pi model to POST
+// `/complete` itself as its final step. The extension covers the case where
+// the model errors out or forgets. Both calls landing is harmless.
+export function renderPiCompletionExtension(taskId: string, backendOrigin: string): string {
+  const url = `${backendOrigin}/api/tasks/${taskId}/complete`;
+  return `// Lattice-managed — do not commit. Reports task completion to Lattice when
+// the Pi session exits, mirroring the Claude Stop hook in
+// .claude/settings.local.json.
+export default function (pi) {
+  pi.on("session_shutdown", async (event) => {
+    if (event && event.reason && event.reason !== "quit") return;
+    try {
+      await fetch(${JSON.stringify(url)}, { method: "POST" });
+    } catch {
+      // best-effort, same as the curl-based Stop hook
+    }
+  });
+}
+`;
+}
+
+export async function installPiCompletionExtension(
+  worktreePath: string,
+  taskId: string,
+  backendOrigin: string,
+): Promise<void> {
+  const extDir = path.join(worktreePath, '.pi', 'extensions');
+  await fs.mkdir(extDir, { recursive: true });
+  const file = path.join(extDir, 'lattice-complete.ts');
+  const expected = renderPiCompletionExtension(taskId, backendOrigin);
+  // Skip rewrite if it already matches — keeps `git status` clean when the
+  // worktree is reconciled and recreated against the same task.
   try {
     const existing = await fs.readFile(file, 'utf8');
     if (existing === expected) return;

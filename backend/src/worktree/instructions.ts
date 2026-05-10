@@ -59,9 +59,32 @@ async function ensureValidStopHook(
   );
 }
 
-export function renderTaskMarkdown(task: Task, backendOrigin: string): string {
+// `harness` controls how step 5 is worded. Claude (the default) ends the
+// session and its Stop hook in `.claude/settings.local.json` POSTs
+// `/complete`. Pi and Codex have no command-hook mechanism, so the model
+// itself must POST `/complete` as its final action — for Pi a worktree-local
+// extension (installPiCompletionExtension) also covers it on session exit as
+// a backstop, but the explicit curl step keeps the markdown self-sufficient.
+export function renderTaskMarkdown(
+  task: Task,
+  backendOrigin: string,
+  harness: 'claude' | 'pi' | 'codex' = 'claude',
+): string {
   const created = new Date(task.createdAt).toISOString();
   const desc = task.description?.trim() || '_(no description provided)_';
+  const finalStep =
+    harness === 'claude'
+      ? `5. End the session normally. Lattice's Stop hook will verify the commit and move this task to "Ready to Merge" automatically.`
+      : `5. **Final step — report completion to Lattice.** Lattice can't auto-detect
+   this session ending, so once you've committed run:
+
+   \`\`\`
+   curl -s -m 5 -X POST ${backendOrigin}/api/tasks/${task.id}/complete
+   \`\`\`
+
+   Only call this if you actually committed something — if there's nothing
+   committed, skip it and Lattice will leave the task In Progress so it can
+   be resumed.`;
   return `# ${task.title}
 
 ${desc}
@@ -114,8 +137,7 @@ ${desc}
    description; the original task intent is preserved in this
    \`LATTICE_TASK.md\` file and in the branch's git history.
 
-5. End the session normally. Lattice's Stop hook will verify the commit
-   and move this task to "Ready to Merge" automatically.
+${finalStep}
 
 Please do not start, stop, or restart any dev servers — the user runs
 them in their own console and your output goes to the worktree's terminal.

@@ -53,3 +53,12 @@ test('settings.local.json is in every relevant set', () => {
     ),
   );
 });
+
+test('the Pi completion extension is in every relevant set', () => {
+  const piExt = '.pi/extensions/lattice-complete.ts';
+  assert.ok((LATTICE_OWNED_FILE_PATHS as readonly string[]).includes(piExt));
+  assert.ok((LATTICE_GITIGNORE_ENTRIES as readonly string[]).includes(piExt));
+  assert.ok((LATTICE_EXCLUDE_PATTERNS as readonly string[]).includes(piExt));
+  assert.equal(isLatticeOwnedConflictPath(piExt), true);
+  assert.equal(isLatticeOwnedConflictPath('.pi\\extensions\\lattice-complete.ts'), true);
+});

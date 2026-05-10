@@ -52,10 +52,15 @@ export function buildTaskRunRouter(backendOrigin: string): Router {
         .json({ error: `task is "${task.status}"; only open tasks can be run` });
     }
     try {
-      const result = await setupTaskWorktree(task.projectPath, task, backendOrigin);
       const reqHarness = req.body?.harness;
       const harness: 'claude' | 'pi' | 'codex' =
         reqHarness === 'pi' || reqHarness === 'codex' ? reqHarness : 'claude';
+      const result = await setupTaskWorktree(
+        task.projectPath,
+        task,
+        backendOrigin,
+        harness,
+      );
       const command =
         harness === 'pi'
           ? buildPiCommand(result.taskFile)
