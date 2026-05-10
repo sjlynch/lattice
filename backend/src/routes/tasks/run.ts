@@ -10,12 +10,6 @@ import {
 } from '../../tasks.js';
 import {
   setupTaskWorktree,
-  buildClaudeCommand,
-  buildResumeCommand,
-  buildPiCommand,
-  buildPiResumeCommand,
-  buildCodexCommand,
-  buildCodexResumeCommand,
   worktreeExists,
   isMidMerge,
   mergeWorktreeInRepo,
@@ -33,6 +27,7 @@ import {
   ProjectRunLockedError,
 } from '../../projectRunLock.js';
 import { finalizeError } from './_shared.js';
+import { selectHarnessCommand } from './harnessFactory.js';
 
 // Tracks projects that currently have a per-card manual merge in flight.
 // Prevents two simultaneous per-card merge clicks from racing on
@@ -52,21 +47,16 @@ export function buildTaskRunRouter(backendOrigin: string): Router {
         .json({ error: `task is "${task.status}"; only open tasks can be run` });
     }
     try {
-      const reqHarness = req.body?.harness;
-      const harness: 'claude' | 'pi' | 'codex' =
-        reqHarness === 'pi' || reqHarness === 'codex' ? reqHarness : 'claude';
+      const selectedHarness = selectHarnessCommand(task, {
+        requestedHarness: req.body?.harness,
+        mode: 'run',
+      });
       const result = await setupTaskWorktree(
         task.projectPath,
         task,
         backendOrigin,
-        harness,
+        selectedHarness.harness,
       );
-      const command =
-        harness === 'pi'
-          ? buildPiCommand(result.taskFile)
-          : harness === 'codex'
-          ? buildCodexCommand(result.taskFile)
-          : buildClaudeCommand(result.taskFile);
       await updateTask(task.id, {
         status: 'in_progress',
         worktreePath: result.worktreePath,
@@ -75,20 +65,16 @@ export function buildTaskRunRouter(backendOrigin: string): Router {
       });
       // Pre-spawn the pty so the frontend can lazy-mount its terminal pane
       // (and avoid burning a WebGL context per task at "Run All" time).
-      const sess = await proxyCreateSession({
+      const { command, serverId } = await selectedHarness.createSession({
+        taskFile: result.taskFile,
         cwd: result.worktreePath,
-        initialCommand: command,
-        projectPath: task.projectPath,
       });
-      if ('error' in sess) {
-        console.warn(`[run] task ${task.id}: pre-spawn failed: ${sess.error}`);
-      }
       res.json({
         worktreePath: result.worktreePath,
         branch: result.branch,
         taskFile: result.taskFile,
         command,
-        serverId: 'id' in sess ? sess.id : undefined,
+        serverId,
       });
     } catch (err) {
       // Log full context before swallowing into a 500 — without this, transient
@@ -125,29 +111,20 @@ export function buildTaskRunRouter(backendOrigin: string): Router {
       });
     }
     const taskFile = path.join(task.worktreePath, 'LATTICE_TASK.md');
-    const reqHarness = req.body?.harness;
-    const harness: 'claude' | 'pi' | 'codex' =
-      reqHarness === 'pi' || reqHarness === 'codex' ? reqHarness : 'claude';
-    const command =
-      harness === 'pi'
-        ? buildPiResumeCommand(taskFile)
-        : harness === 'codex'
-        ? buildCodexResumeCommand(taskFile)
-        : buildResumeCommand(taskFile);
-    const sess = await proxyCreateSession({
-      cwd: task.worktreePath,
-      initialCommand: command,
-      projectPath: task.projectPath,
+    const selectedHarness = selectHarnessCommand(task, {
+      requestedHarness: req.body?.harness,
+      mode: 'resume',
     });
-    if ('error' in sess) {
-      console.warn(`[resume] task ${task.id}: pre-spawn failed: ${sess.error}`);
-    }
+    const { command, serverId } = await selectedHarness.createSession({
+      taskFile,
+      cwd: task.worktreePath,
+    });
     res.json({
       worktreePath: task.worktreePath,
       branch: task.branch,
       taskFile,
       command,
-      serverId: 'id' in sess ? sess.id : undefined,
+      serverId,
     });
   });
 
