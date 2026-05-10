@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { ChevronDown, ChevronRight, Eye, EyeOff } from 'lucide-react';
 import {
   EXT_STYLES,
@@ -8,6 +8,7 @@ import {
 import type { ScanResult } from '../api';
 import { ShapePreview } from './legend/ShapePreview';
 import { HealthLegendPanel } from './legend/HealthLegendPanel';
+import { usePersistedToggle } from '../hooks/usePersistedToggle';
 
 type Props = {
   data: ScanResult | null;
@@ -30,35 +31,8 @@ const STORAGE_OPEN = 'lattice.legend.open';
 const STORAGE_ALL = 'lattice.legend.all';
 
 export function Legend({ data, hiddenExts, onToggleExt, healthMode }: Props) {
-  const [open, setOpen] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(STORAGE_OPEN) === '1';
-    } catch {
-      return false;
-    }
-  });
-  const [allOpen, setAllOpen] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(STORAGE_ALL) === '1';
-    } catch {
-      return false;
-    }
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_OPEN, open ? '1' : '0');
-    } catch {
-      // ignore
-    }
-  }, [open]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_ALL, allOpen ? '1' : '0');
-    } catch {
-      // ignore
-    }
-  }, [allOpen]);
+  const [open, toggleOpen] = usePersistedToggle(STORAGE_OPEN, false);
+  const [allOpen, toggleAllOpen] = usePersistedToggle(STORAGE_ALL, false);
 
   // Tally extensions present in the current scan.
   const visibleRows: Row[] = useMemo(() => {
@@ -111,7 +85,7 @@ export function Legend({ data, hiddenExts, onToggleExt, healthMode }: Props) {
     <div className={`legend ${open ? 'open' : ''}`}>
       <button
         className="legend-toggle"
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggleOpen}
         aria-expanded={open}
         aria-label="Legend"
       >
@@ -148,7 +122,7 @@ export function Legend({ data, hiddenExts, onToggleExt, healthMode }: Props) {
 
           <button
             className="legend-section-head clickable"
-            onClick={() => setAllOpen((v) => !v)}
+            onClick={toggleAllOpen}
           >
             {allOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
             <span className="legend-section-title">All known types</span>
