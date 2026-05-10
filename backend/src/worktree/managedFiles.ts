@@ -21,7 +21,7 @@
 //
 // `.pi/extensions/lattice-complete.ts` is written only into worktrees whose
 // task runs under the Pi harness (Pi's analogue of the Claude Stop hook —
-// see installPiCompletionExtension in setup.ts). The exact path (not the
+// see installPiCompletionExtension in stopHook.ts). The exact path (not the
 // whole `.pi/` dir) is listed so a project that legitimately tracks its own
 // `.pi/` settings isn't disturbed.
 export const LATTICE_OWNED_FILE_PATHS = [

@@ -14,6 +14,7 @@ import fs from 'node:fs/promises';
 import { getWorkflow, type Workflow } from './workflows.js';
 import { proxyCreateSession } from './terminalProxy.js';
 import { canonicalProjectPath } from './projectPath.js';
+import { installClaudeStopHook } from './claudeStopHook.js';
 
 export type WorkflowRunStatus = 'running' | 'completed' | 'errored' | 'cancelled';
 
@@ -295,27 +296,9 @@ async function spawnWorkflowStep(
     'utf8',
   );
 
-  const claudeDir = path.join(stepDir, '.claude');
-  await fs.mkdir(claudeDir, { recursive: true });
-  const hookConfig = {
-    hooks: {
-      Stop: [
-        {
-          matcher: '',
-          hooks: [
-            {
-              type: 'command',
-              command: `curl -s -m 5 -X POST ${backendOrigin}/api/workflow-runs/${run.id}/steps/${stepIndex}/complete`,
-            },
-          ],
-        },
-      ],
-    },
-  };
-  await fs.writeFile(
-    path.join(claudeDir, 'settings.local.json'),
-    JSON.stringify(hookConfig, null, 2),
-    'utf8',
+  await installClaudeStopHook(
+    stepDir,
+    `${backendOrigin}/api/workflow-runs/${run.id}/steps/${stepIndex}/complete`,
   );
 
   const command = `claude --dangerously-skip-permissions "Please read WORKFLOW_STEP.md and complete the workflow step described in it."`;
