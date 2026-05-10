@@ -1,4 +1,4 @@
-import type { NodeKinds } from './index.js';
+import { buildNodeKinds, type NodeKinds } from './base.js';
 
 const RUST_FUNCTION_KINDS = ['function_item', 'closure_expression'];
 const RUST_BRANCH_KINDS = [
@@ -22,21 +22,18 @@ const RUST_COGNITIVE_BRANCH_KINDS = [
 const RUST_NESTING_KINDS = RUST_COGNITIVE_BRANCH_KINDS;
 
 export function buildRustNodeKinds(): NodeKinds {
-  return {
-    function: new Set(RUST_FUNCTION_KINDS),
-    namedFunction: new Set(['function_item']),
-    anonymousFunction: new Set(['closure_expression']),
-    class: new Set(['struct_item', 'enum_item']),
-    interface: new Set(['trait_item']),
-    import: new Set(),
-    branch: new Set(RUST_BRANCH_KINDS),
-    cognitiveBranch: new Set(RUST_COGNITIVE_BRANCH_KINDS),
-    nesting: new Set(RUST_NESTING_KINDS),
-    ternary: new Set(),
-    catchClause: new Set(),
-    call: new Set(['call_expression', 'macro_invocation']),
-    string: new Set(['string_literal', 'raw_string_literal']),
-    comment: new Set(['line_comment', 'block_comment']),
+  return buildNodeKinds({
+    functionKinds: RUST_FUNCTION_KINDS,
+    namedFunctionKinds: ['function_item'],
+    anonymousFunctionKinds: ['closure_expression'],
+    classKinds: ['struct_item', 'enum_item'],
+    interfaceKinds: ['trait_item'],
+    branchKinds: RUST_BRANCH_KINDS,
+    cognitiveBranchKinds: RUST_COGNITIVE_BRANCH_KINDS,
+    nestingKinds: RUST_NESTING_KINDS,
+    callKinds: ['call_expression', 'macro_invocation'],
+    stringKinds: ['string_literal', 'raw_string_literal'],
+    commentKinds: ['line_comment', 'block_comment'],
     importSourceField: 'path',
-  };
+  });
 }

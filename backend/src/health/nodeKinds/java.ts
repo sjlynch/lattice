@@ -1,4 +1,4 @@
-import type { NodeKinds } from './index.js';
+import { buildNodeKinds, type NodeKinds } from './base.js';
 
 const JAVA_FUNCTION_KINDS = [
   'method_declaration',
@@ -45,21 +45,20 @@ const JAVA_NESTING_KINDS = [
 ];
 
 export function buildJavaNodeKinds(): NodeKinds {
-  return {
-    function: new Set(JAVA_FUNCTION_KINDS),
-    namedFunction: new Set(['method_declaration', 'constructor_declaration']),
-    anonymousFunction: new Set(['lambda_expression']),
-    class: new Set(['class_declaration', 'enum_declaration', 'record_declaration']),
-    interface: new Set(['interface_declaration']),
-    import: new Set(),
-    branch: new Set(JAVA_BRANCH_KINDS),
-    cognitiveBranch: new Set(JAVA_COGNITIVE_BRANCH_KINDS),
-    nesting: new Set(JAVA_NESTING_KINDS),
-    ternary: new Set(['ternary_expression']),
-    catchClause: new Set(['catch_clause']),
-    call: new Set(['method_invocation', 'object_creation_expression']),
-    string: new Set(['string_literal']),
-    comment: new Set(['line_comment', 'block_comment']),
+  return buildNodeKinds({
+    functionKinds: JAVA_FUNCTION_KINDS,
+    namedFunctionKinds: ['method_declaration', 'constructor_declaration'],
+    anonymousFunctionKinds: ['lambda_expression'],
+    classKinds: ['class_declaration', 'enum_declaration', 'record_declaration'],
+    interfaceKinds: ['interface_declaration'],
+    branchKinds: JAVA_BRANCH_KINDS,
+    cognitiveBranchKinds: JAVA_COGNITIVE_BRANCH_KINDS,
+    nestingKinds: JAVA_NESTING_KINDS,
+    ternaryKinds: ['ternary_expression'],
+    catchClauseKinds: ['catch_clause'],
+    callKinds: ['method_invocation', 'object_creation_expression'],
+    stringKinds: ['string_literal'],
+    commentKinds: ['line_comment', 'block_comment'],
     importSourceField: 'name',
-  };
+  });
 }

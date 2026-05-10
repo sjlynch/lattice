@@ -9,7 +9,7 @@ import {
   type FileImports,
   type HealthMetrics,
 } from './health/index.js';
-import { loadProjectAliases } from './health/tsconfig.js';
+import { loadProjectAliases, type ParsedAlias } from './health/tsconfig.js';
 import { seedWatcherState } from './health/watcher.js';
 import { canonicalProjectPath } from './projectPath.js';
 
@@ -122,6 +122,33 @@ export type ScanResult = {
   links: GraphLink[];
 };
 
+export type TreeAnalysis = ScanResult;
+
+export type FileMetric = {
+  filePath: string;
+  name: string;
+  ext: string;
+  size: number;
+  mtimeMs: number;
+  loc?: number;
+  healthDetails?: HealthMetrics;
+  imports: string[];
+};
+
+export type CouplingMap = ReturnType<typeof computeCrossFile>;
+
+type DirectoryEntry = {
+  id: string;
+  name: string;
+  path: string;
+  parentId: string;
+};
+
+type CollectedSourceTree = {
+  files: string[];
+  directories: DirectoryEntry[];
+};
+
 async function loadGitignore(root: string): Promise<Ignore> {
   const ig = ignore();
   ig.add(ALWAYS_IGNORE);
@@ -134,115 +161,206 @@ async function loadGitignore(root: string): Promise<Ignore> {
   return ig;
 }
 
-export async function scan(root: string): Promise<ScanResult> {
+async function collectSourceTree(
+  root: string,
+  ignoreFilter: Pick<Ignore, 'ignores'>,
+): Promise<CollectedSourceTree> {
   const absRoot = canonicalProjectPath(root);
-  const ig = await loadGitignore(absRoot);
-  const nodes: GraphNode[] = [];
-  const links: GraphLink[] = [];
+  const files: string[] = [];
+  const directories: DirectoryEntry[] = [];
 
-  const cache = new HealthCache(absRoot);
-  await cache.load();
-  const seenFiles = new Set<string>();
-
-  const rootId = absRoot;
-  nodes.push({
-    id: rootId,
-    name: path.basename(absRoot) || absRoot,
-    path: absRoot,
-    kind: 'dir',
-  });
-
-  async function walk(dir: string, parentId: string) {
+  async function walk(dir: string, parentId: string): Promise<void> {
     let entries: import('node:fs').Dirent[];
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
+
     for (const entry of entries) {
       const abs = path.join(dir, entry.name);
       const rel = path.relative(absRoot, abs).split(path.sep).join('/');
       if (!rel) continue;
       const testPath = entry.isDirectory() ? `${rel}/` : rel;
-      if (ig.ignores(testPath)) continue;
+      if (ignoreFilter.ignores(testPath)) continue;
 
       if (entry.isDirectory()) {
-        nodes.push({ id: abs, name: entry.name, path: abs, kind: 'dir' });
-        links.push({ source: parentId, target: abs });
+        directories.push({ id: abs, name: entry.name, path: abs, parentId });
         await walk(abs, abs);
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();
-        if (!SOURCE_EXTS.has(ext)) continue;
-        let size = 0;
-        let mtimeMs = 0;
-        try {
-          const st = await fs.stat(abs);
-          size = st.size;
-          mtimeMs = st.mtimeMs;
-        } catch {
-          // ignore
-        }
-
-        seenFiles.add(abs);
-
-        // Cache hit (matching mtime + size) skips the read + analysis
-        // entirely — the typical scan after a no-op refresh costs only
-        // the directory walk + stat per file.
-        const cached = cache.get(abs, mtimeMs, size);
-        let healthDetails: HealthMetrics | undefined;
-        let imports: string[] = [];
-        let loc: number | undefined;
-        if (cached) {
-          healthDetails = cached.metrics;
-          imports = cached.imports;
-          loc = healthDetails.loc;
-        } else {
-          const read = await readForAnalysis(abs);
-          loc = read.loc;
-          if (read.content !== undefined && loc !== undefined) {
-            const result = await analyzeFile(read.content, ext, loc);
-            healthDetails = result.metrics;
-            imports = result.imports;
-            cache.set(abs, mtimeMs, size, healthDetails, imports);
-          }
-        }
-        if (healthDetails) {
-          fileImports.push({ filePath: abs, imports });
-          metricsByPath.set(abs, healthDetails);
-        }
-
-        nodes.push({
-          id: abs,
-          name: entry.name,
-          path: abs,
-          kind: 'file',
-          ext,
-          size,
-          health: healthDetails?.score,
-          healthDetails,
-          loc,
-        });
-        links.push({ source: parentId, target: abs });
+        if (SOURCE_EXTS.has(ext)) files.push(abs);
       }
     }
   }
 
-  // Cross-file pass requires the full set of analyzed files first.
-  const fileImports: FileImports[] = [];
-  const metricsByPath = new Map<string, HealthMetrics>();
+  await walk(absRoot, absRoot);
+  return { files, directories };
+}
 
-  await walk(absRoot, rootId);
+export async function collectSourceFiles(
+  root: string,
+  ignoreFilter: Pick<Ignore, 'ignores'>,
+): Promise<string[]> {
+  return (await collectSourceTree(root, ignoreFilter)).files;
+}
 
-  // Resolve imports + apply fan-in/fan-out/cycle analysis. Mutates
-  // the HealthMetrics objects in metricsByPath, which the GraphNode
-  // entries above reference by identity, so the patched fields show
-  // up automatically in the scan response.
-  if (fileImports.length > 0) {
-    const aliases = await loadProjectAliases(absRoot);
-    const cross = computeCrossFile(fileImports, seenFiles, aliases);
-    applyCrossFile(metricsByPath, cross);
+export async function computeFileMetrics(
+  files: string[],
+  options: { cache?: HealthCache } = {},
+): Promise<FileMetric[]> {
+  const out: FileMetric[] = [];
+
+  for (const filePath of files) {
+    const name = path.basename(filePath);
+    const ext = path.extname(name).toLowerCase();
+    let size = 0;
+    let mtimeMs = 0;
+    let hasStat = false;
+    try {
+      const st = await fs.stat(filePath);
+      size = st.size;
+      mtimeMs = st.mtimeMs;
+      hasStat = true;
+    } catch {
+      // Keep the file in the graph if the directory walk saw it, but
+      // skip cache hits because the stat tuple is unknown.
+    }
+
+    // Cache hit (matching mtime + size) skips the read + analysis
+    // entirely — the typical scan after a no-op refresh costs only
+    // the directory walk + stat per file.
+    const cached = hasStat ? options.cache?.get(filePath, mtimeMs, size) : undefined;
+    let healthDetails: HealthMetrics | undefined;
+    let imports: string[] = [];
+    let loc: number | undefined;
+    if (cached) {
+      healthDetails = cached.metrics;
+      imports = cached.imports;
+      loc = healthDetails.loc;
+    } else {
+      const read = await readForAnalysis(filePath);
+      loc = read.loc;
+      if (read.content !== undefined && loc !== undefined) {
+        const result = await analyzeFile(read.content, ext, loc);
+        healthDetails = result.metrics;
+        imports = result.imports;
+        if (hasStat) options.cache?.set(filePath, mtimeMs, size, healthDetails, imports);
+      }
+    }
+
+    out.push({ filePath, name, ext, size, mtimeMs, loc, healthDetails, imports });
   }
 
+  return out;
+}
+
+export function computeCoupling(
+  metrics: FileMetric[],
+  aliases?: readonly ParsedAlias[],
+): CouplingMap {
+  const fileImports: FileImports[] = [];
+  const presentFiles = new Set<string>();
+  for (const metric of metrics) {
+    presentFiles.add(metric.filePath);
+    if (metric.healthDetails) {
+      fileImports.push({ filePath: metric.filePath, imports: metric.imports });
+    }
+  }
+  return computeCrossFile(fileImports, presentFiles, aliases);
+}
+
+function commonRoot(files: string[]): string {
+  if (files.length === 0) return process.cwd();
+  let root = path.dirname(files[0]);
+  while (
+    root !== path.dirname(root) &&
+    files.some((file) => path.relative(root, file).startsWith('..'))
+  ) {
+    root = path.dirname(root);
+  }
+  return root;
+}
+
+function ensureDirectoryNode(
+  dir: string,
+  root: string,
+  nodes: GraphNode[],
+  links: GraphLink[],
+  seenDirs: Set<string>,
+): void {
+  if (seenDirs.has(dir)) return;
+  const parent = path.dirname(dir);
+  if (dir !== root) ensureDirectoryNode(parent, root, nodes, links, seenDirs);
+  seenDirs.add(dir);
+  nodes.push({ id: dir, name: path.basename(dir) || dir, path: dir, kind: 'dir' });
+  if (dir !== root) links.push({ source: parent, target: dir });
+}
+
+export function aggregate(
+  metrics: FileMetric[],
+  coupling: CouplingMap,
+  options: { root?: string; directories?: DirectoryEntry[] } = {},
+): TreeAnalysis {
+  const root = options.root ?? commonRoot(metrics.map((metric) => metric.filePath));
+  const nodes: GraphNode[] = [];
+  const links: GraphLink[] = [];
+  const seenDirs = new Set<string>();
+  const metricsByPath = new Map<string, HealthMetrics>();
+
+  for (const metric of metrics) {
+    if (metric.healthDetails) metricsByPath.set(metric.filePath, metric.healthDetails);
+  }
+  applyCrossFile(metricsByPath, coupling);
+
+  ensureDirectoryNode(root, root, nodes, links, seenDirs);
+
+  if (options.directories) {
+    for (const dir of options.directories) {
+      if (seenDirs.has(dir.id)) continue;
+      seenDirs.add(dir.id);
+      nodes.push({ id: dir.id, name: dir.name, path: dir.path, kind: 'dir' });
+      links.push({ source: dir.parentId, target: dir.id });
+    }
+  }
+
+  for (const metric of metrics) {
+    const parent = path.dirname(metric.filePath);
+    ensureDirectoryNode(parent, root, nodes, links, seenDirs);
+    nodes.push({
+      id: metric.filePath,
+      name: metric.name,
+      path: metric.filePath,
+      kind: 'file',
+      ext: metric.ext,
+      size: metric.size,
+      health: metric.healthDetails?.score,
+      healthDetails: metric.healthDetails,
+      loc: metric.loc,
+    });
+    links.push({ source: parent, target: metric.filePath });
+  }
+
+  return { root, nodes, links };
+}
+
+export async function scan(root: string): Promise<ScanResult> {
+  const absRoot = canonicalProjectPath(root);
+  const ig = await loadGitignore(absRoot);
+  const collected = await collectSourceTree(absRoot, ig);
+
+  const cache = new HealthCache(absRoot);
+  await cache.load();
+
+  const metrics = await computeFileMetrics(collected.files, { cache });
+  const aliases = await loadProjectAliases(absRoot);
+  const coupling = computeCoupling(metrics, aliases);
+  const result = aggregate(metrics, coupling, {
+    root: absRoot,
+    directories: collected.directories,
+  });
+
+  const seenFiles = new Set(collected.files);
   cache.prune(seenFiles);
   // Persist asynchronously — don't block the scan response on disk I/O.
   cache.save().catch(() => { /* best-effort */ });
@@ -253,8 +371,13 @@ export async function scan(root: string): Promise<ScanResult> {
   // numbers based on a stale view after a manual rescan, file-tree
   // change, or cache version bump.
   const importsByPath = new Map<string, string[]>();
-  for (const fi of fileImports) importsByPath.set(fi.filePath, fi.imports);
+  const metricsByPath = new Map<string, HealthMetrics>();
+  for (const metric of metrics) {
+    if (!metric.healthDetails) continue;
+    importsByPath.set(metric.filePath, metric.imports);
+    metricsByPath.set(metric.filePath, metric.healthDetails);
+  }
   seedWatcherState(absRoot, importsByPath, metricsByPath);
 
-  return { root: absRoot, nodes, links };
+  return result;
 }
