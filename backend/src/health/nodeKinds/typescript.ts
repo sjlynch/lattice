@@ -1,5 +1,5 @@
 import type { GrammarKey } from '../parser.js';
-import type { NodeKinds } from './index.js';
+import { buildNodeKinds, type NodeKinds } from './base.js';
 
 const TS_FUNCTION_KINDS = [
   'function_declaration',
@@ -65,21 +65,21 @@ export function buildTsLikeNodeKinds(grammar: GrammarKey): NodeKinds {
   // grammar-specific bit is `interface_declaration`, which isn't part
   // of plain JavaScript.
   const isTs = grammar === 'typescript' || grammar === 'tsx';
-  return {
-    function: new Set(TS_FUNCTION_KINDS),
-    namedFunction: new Set(TS_NAMED_FUNCTION_KINDS),
-    anonymousFunction: new Set(['function_expression', 'arrow_function']),
-    class: new Set(TS_CLASS_KINDS),
-    interface: new Set(isTs ? ['interface_declaration'] : []),
-    import: new Set(['import_statement']),
-    branch: new Set(TS_BRANCH_KINDS),
-    cognitiveBranch: new Set(TS_COGNITIVE_BRANCH_KINDS),
-    nesting: new Set(TS_NESTING_KINDS),
-    ternary: new Set(['ternary_expression']),
-    catchClause: new Set(['catch_clause']),
-    call: new Set(TS_CALL_KINDS),
-    string: new Set(TS_STRING_KINDS),
-    comment: new Set(['comment']),
+  return buildNodeKinds({
+    functionKinds: TS_FUNCTION_KINDS,
+    namedFunctionKinds: TS_NAMED_FUNCTION_KINDS,
+    anonymousFunctionKinds: ['function_expression', 'arrow_function'],
+    classKinds: TS_CLASS_KINDS,
+    interfaceKinds: isTs ? ['interface_declaration'] : [],
+    importKinds: ['import_statement'],
+    branchKinds: TS_BRANCH_KINDS,
+    cognitiveBranchKinds: TS_COGNITIVE_BRANCH_KINDS,
+    nestingKinds: TS_NESTING_KINDS,
+    ternaryKinds: ['ternary_expression'],
+    catchClauseKinds: ['catch_clause'],
+    callKinds: TS_CALL_KINDS,
+    stringKinds: TS_STRING_KINDS,
+    commentKinds: ['comment'],
     importSourceField: 'source',
-  };
+  });
 }

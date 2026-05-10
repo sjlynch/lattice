@@ -24,6 +24,7 @@ import os from 'node:os';
 import fs from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import { projectGit } from './projectGit.js';
+import { isPathStrictlyInside } from './paths.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
 import { assertGitDirIntact, worktreeExists } from './state.js';
 import { projectHash } from '../projectPath.js';
@@ -52,8 +53,8 @@ export function isUnderManagedWorktreesDir(
   );
   const legacyBase = path.resolve(path.join(repoRoot, '.lattice', 'worktrees'));
   return (
-    resolved.startsWith(homeBase + path.sep) ||
-    resolved.startsWith(legacyBase + path.sep)
+    isPathStrictlyInside(homeBase, resolved) ||
+    isPathStrictlyInside(legacyBase, resolved)
   );
 }
 
@@ -162,7 +163,7 @@ export async function pruneReparsePointsUnder(
     // linkPath is always built by path.join under rootDir, so this is
     // belt-and-suspenders — but never remove the root itself or anything
     // outside it.
-    if (resolved === realRoot || !resolved.startsWith(realRoot + path.sep)) {
+    if (!isPathStrictlyInside(realRoot, resolved)) {
       console.warn(
         `[worktree] pruneReparsePoints: skipping ${linkPath} — not strictly inside ${rootDir}.`,
       );

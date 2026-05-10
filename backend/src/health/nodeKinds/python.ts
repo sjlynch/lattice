@@ -1,4 +1,4 @@
-import type { NodeKinds } from './index.js';
+import { buildNodeKinds, type NodeKinds } from './base.js';
 
 const PY_FUNCTION_KINDS = ['function_definition', 'lambda'];
 const PY_NAMED_FUNCTION_KINDS = ['function_definition'];
@@ -26,21 +26,20 @@ const PY_NESTING_KINDS = [
 ];
 
 export function buildPythonNodeKinds(): NodeKinds {
-  return {
-    function: new Set(PY_FUNCTION_KINDS),
-    namedFunction: new Set(PY_NAMED_FUNCTION_KINDS),
-    anonymousFunction: new Set(['lambda']),
-    class: new Set(['class_definition']),
-    interface: new Set(),
-    import: new Set(['import_statement', 'import_from_statement']),
-    branch: new Set(PY_BRANCH_KINDS),
-    cognitiveBranch: new Set(PY_COGNITIVE_BRANCH_KINDS),
-    nesting: new Set(PY_NESTING_KINDS),
-    ternary: new Set(['conditional_expression']),
-    catchClause: new Set(['except_clause']),
-    call: new Set(['call']),
-    string: new Set(['string']),
-    comment: new Set(['comment']),
+  return buildNodeKinds({
+    functionKinds: PY_FUNCTION_KINDS,
+    namedFunctionKinds: PY_NAMED_FUNCTION_KINDS,
+    anonymousFunctionKinds: ['lambda'],
+    classKinds: ['class_definition'],
+    importKinds: ['import_statement', 'import_from_statement'],
+    branchKinds: PY_BRANCH_KINDS,
+    cognitiveBranchKinds: PY_COGNITIVE_BRANCH_KINDS,
+    nestingKinds: PY_NESTING_KINDS,
+    ternaryKinds: ['conditional_expression'],
+    catchClauseKinds: ['except_clause'],
+    callKinds: ['call'],
+    stringKinds: ['string'],
+    commentKinds: ['comment'],
     importSourceField: 'name',
-  };
+  });
 }

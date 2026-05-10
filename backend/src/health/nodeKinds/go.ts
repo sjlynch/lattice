@@ -13,7 +13,7 @@
 // would just produce thousands of unresolved specs that pollute
 // fan-out without adding any signal.
 
-import type { NodeKinds } from './index.js';
+import { buildNodeKinds, type NodeKinds } from './base.js';
 
 const GO_FUNCTION_KINDS = ['function_declaration', 'method_declaration', 'func_literal'];
 const GO_BRANCH_KINDS = [
@@ -34,21 +34,16 @@ const GO_COGNITIVE_BRANCH_KINDS = [
 const GO_NESTING_KINDS = GO_COGNITIVE_BRANCH_KINDS;
 
 export function buildGoNodeKinds(): NodeKinds {
-  return {
-    function: new Set(GO_FUNCTION_KINDS),
-    namedFunction: new Set(['function_declaration', 'method_declaration']),
-    anonymousFunction: new Set(['func_literal']),
-    class: new Set(),
-    interface: new Set(),
-    import: new Set(),
-    branch: new Set(GO_BRANCH_KINDS),
-    cognitiveBranch: new Set(GO_COGNITIVE_BRANCH_KINDS),
-    nesting: new Set(GO_NESTING_KINDS),
-    ternary: new Set(),
-    catchClause: new Set(),
-    call: new Set(['call_expression']),
-    string: new Set(['interpreted_string_literal', 'raw_string_literal']),
-    comment: new Set(['comment']),
+  return buildNodeKinds({
+    functionKinds: GO_FUNCTION_KINDS,
+    namedFunctionKinds: ['function_declaration', 'method_declaration'],
+    anonymousFunctionKinds: ['func_literal'],
+    branchKinds: GO_BRANCH_KINDS,
+    cognitiveBranchKinds: GO_COGNITIVE_BRANCH_KINDS,
+    nestingKinds: GO_NESTING_KINDS,
+    callKinds: ['call_expression'],
+    stringKinds: ['interpreted_string_literal', 'raw_string_literal'],
+    commentKinds: ['comment'],
     importSourceField: 'path',
-  };
+  });
 }

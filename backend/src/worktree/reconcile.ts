@@ -4,6 +4,7 @@ import { projectGit } from './projectGit.js';
 import { worktreeExists, parseWorktreesPorcelain } from './state.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
 import { assertNotReparsePoint, pruneReparsePointsUnder } from './cleanup.js';
+import { isPathStrictlyInside } from './paths.js';
 import { homeWorktreesDir } from '../projectPath.js';
 
 // How many alternate worktree paths to try when the canonical path can't be
@@ -79,7 +80,7 @@ export async function reconcileStaleState(
     // the reparse-point check in tryRmWithRetries are belt-and-suspenders.
     const resolvedWt = path.resolve(worktreePath);
     const resolvedBase = path.resolve(homeWorktreesDir(repoRoot));
-    if (!resolvedWt.startsWith(resolvedBase + path.sep)) {
+    if (!isPathStrictlyInside(resolvedBase, resolvedWt)) {
       console.error(
         `[worktree] reconcile: refusing rm on "${resolvedWt}" — ` +
           `not under "${resolvedBase}". Skipping cleanup.`,

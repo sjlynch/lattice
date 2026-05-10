@@ -1,4 +1,4 @@
-import type { NodeKinds } from './index.js';
+import { buildNodeKinds, type NodeKinds } from './base.js';
 
 // Ruby uses different node names than the C-family grammars: `if`,
 // `unless`, `while`, `until`, `case`, `when`, `rescue`. Method
@@ -57,21 +57,19 @@ const RUBY_NESTING_KINDS = [
 ];
 
 export function buildRubyNodeKinds(): NodeKinds {
-  return {
-    function: new Set(RUBY_FUNCTION_KINDS),
-    namedFunction: new Set(RUBY_NAMED_FUNCTION_KINDS),
-    anonymousFunction: new Set(RUBY_ANONYMOUS_FUNCTION_KINDS),
-    class: new Set(['class', 'module']),
-    interface: new Set(),
-    import: new Set(),
-    branch: new Set(RUBY_BRANCH_KINDS),
-    cognitiveBranch: new Set(RUBY_COGNITIVE_BRANCH_KINDS),
-    nesting: new Set(RUBY_NESTING_KINDS),
-    ternary: new Set(['conditional']),
-    catchClause: new Set(['rescue']),
-    call: new Set(['call', 'command', 'command_call', 'method_call']),
-    string: new Set(['string', 'heredoc_body']),
-    comment: new Set(['comment']),
+  return buildNodeKinds({
+    functionKinds: RUBY_FUNCTION_KINDS,
+    namedFunctionKinds: RUBY_NAMED_FUNCTION_KINDS,
+    anonymousFunctionKinds: RUBY_ANONYMOUS_FUNCTION_KINDS,
+    classKinds: ['class', 'module'],
+    branchKinds: RUBY_BRANCH_KINDS,
+    cognitiveBranchKinds: RUBY_COGNITIVE_BRANCH_KINDS,
+    nestingKinds: RUBY_NESTING_KINDS,
+    ternaryKinds: ['conditional'],
+    catchClauseKinds: ['rescue'],
+    callKinds: ['call', 'command', 'command_call', 'method_call'],
+    stringKinds: ['string', 'heredoc_body'],
+    commentKinds: ['comment'],
     importSourceField: 'name',
-  };
+  });
 }
