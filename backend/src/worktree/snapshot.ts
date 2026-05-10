@@ -28,6 +28,7 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import { projectGit } from './projectGit.js';
+import { isPathInsideRepo } from './paths.js';
 import { projectHash } from '../projectPath.js';
 
 const SNAPSHOTS_BASE = path.join(os.homedir(), '.lattice', 'snapshots');
@@ -42,25 +43,6 @@ export type SnapshotHandle = {
 };
 
 const EMPTY_HANDLE: SnapshotHandle = { dir: '', modifiedTracked: [], untracked: [] };
-
-// Refuse paths that, when joined to repoRoot, escape the repo. Catches
-// `..` traversal, absolute paths, and OS-specific aliases. Used both at
-// snapshot creation (`git status` should never produce such paths, but
-// defence in depth) and crucially at restore time, since the manifest
-// is JSON on disk that may be tampered with or corrupted between runs.
-//
-// A bad path here would have `restoreSnapshot` writing to `.git/HEAD`,
-// the user's home directory, or anywhere else with the user's privileges.
-function isPathInsideRepo(file: string, repoRoot: string): boolean {
-  if (typeof file !== 'string' || file.length === 0) return false;
-  if (file.includes('\0')) return false;
-  if (path.isAbsolute(file)) return false;
-  const baseResolved = path.resolve(repoRoot);
-  const joined = path.resolve(baseResolved, file);
-  // Must be strictly inside baseResolved, not equal to it (no overwriting
-  // the repo root itself) and not a sibling that shares a prefix.
-  return joined.startsWith(baseResolved + path.sep);
-}
 
 // Parse `git status --porcelain=v1 -uall` output. We treat anything that
 // isn't '? ?' (untracked) as 'modified' for snapshot purposes — staged,
@@ -109,12 +91,12 @@ export async function snapshotWorkingTree(
   // working tree is left exactly as it was for that path.
   const dropped: string[] = [];
   const modified = rawModified.filter((f) => {
-    if (isPathInsideRepo(f, repoRoot)) return true;
+    if (isPathInsideRepo(repoRoot, f)) return true;
     dropped.push(f);
     return false;
   });
   const untracked = rawUntracked.filter((f) => {
-    if (isPathInsideRepo(f, repoRoot)) return true;
+    if (isPathInsideRepo(repoRoot, f)) return true;
     dropped.push(f);
     return false;
   });
@@ -235,7 +217,7 @@ export async function restoreSnapshot(
   // privileges. Filter unsafe entries and refuse to write them.
   const unsafe: string[] = [];
   const safe = all.filter((f) => {
-    if (isPathInsideRepo(f, repoRoot)) return true;
+    if (isPathInsideRepo(repoRoot, f)) return true;
     unsafe.push(f);
     return false;
   });
@@ -357,7 +339,7 @@ export async function recoverPendingSnapshots(): Promise<void> {
         ...(manifest.untracked ?? []),
       ];
       const safeFiles = allFiles.filter((f) =>
-        isPathInsideRepo(f, manifest!.repoRoot),
+        isPathInsideRepo(manifest!.repoRoot, f),
       );
       if (safeFiles.length !== allFiles.length) {
         console.error(
