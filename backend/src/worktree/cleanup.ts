@@ -80,7 +80,7 @@ function assertSafeWorktreePath(repoRoot: string, worktreePath: string): void {
 }
 
 // Reparse-point guard. Retained for the few fs.rm sites that still exist
-// (the stray-dir cleanup in setup.ts's reconcile path). The lexical
+// (the stray-dir cleanup in reconcile.ts). The lexical
 // startsWith check is purely string-based — it does not follow symlinks or
 // Windows junctions. If a path were ever a junction pointing at the repo
 // root (or its `.git`), the lexical check would still pass and
