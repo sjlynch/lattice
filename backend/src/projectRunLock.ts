@@ -80,6 +80,22 @@ async function readLockBody(file: string): Promise<LockBody | null> {
   }
 }
 
+// Inspect (without acquiring or stealing) the run lock for a project.
+// Returns `{ holder, alive }` — `alive` is whether the owning PID is still
+// running (a lock from another host is conservatively reported alive,
+// since we can't probe a remote PID). `null` when there is no lockfile or
+// it's unparseable. Boot recovery uses this to spot a merge run that a
+// server restart killed mid-flight (lock present, label `merge-run`,
+// owner dead) and resume it.
+export async function inspectProjectRunLock(
+  projectPath: string,
+): Promise<{ holder: LockBody; alive: boolean } | null> {
+  const body = await readLockBody(lockFilePath(projectPath));
+  if (!body) return null;
+  const sameHost = body.hostname === os.hostname();
+  return { holder: body, alive: sameHost ? isProcessAlive(body.pid) : true };
+}
+
 export type ProjectRunLockHandle = { release: () => Promise<void> };
 
 // Acquire the per-project run lock or throw. `label` is logged into the

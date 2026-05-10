@@ -71,6 +71,7 @@ export {
 export {
   cleanupWorktreeForTask,
   assertNotReparsePoint,
+  pruneReparsePointsUnder,
   isUnderManagedWorktreesDir,
 } from './worktree/cleanup.js';
 

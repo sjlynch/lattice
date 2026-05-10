@@ -18,7 +18,7 @@ force-directed DAG.
 
 ### `.git`-deletion defences (read before touching the merge pipeline)
 
-Every prior incident traced to a recursive filesystem delete reaching `.git` (directly via `fs.rm`, or via a lost `git stash --include-untracked`). Layered defences, outermost first: (1) worktrees live outside the project tree; (2) `projectGit()` — all git against the project repo goes through a wrapper that whitelists subcommands (no `clean`/`stash`/`reset --hard`/`update-ref -d`/non-ff `merge`/`branch -D <non-lattice>`/`checkout <branch>`/…); (3) no raw `fs.rm` fallback in worktree cleanup — recursive removal is delegated to `git worktree remove`; (4) copy-based snapshots, never `git stash`; (5) a run circuit breaker that halts the whole merge run if `.git` vanishes or HEAD moves non-forward between tasks; (6) the `git bundle` backup above; (7) reparse-point guards on the remaining `fs.rm` sites, snapshot-manifest path validation, and a cross-process project run lock. See `backend/src/worktree/CLAUDE.md`.
+Every prior incident traced to a recursive filesystem delete reaching `.git` (directly via `fs.rm`, or via a lost `git stash --include-untracked`). Layered defences, outermost first: (1) worktrees live outside the project tree; (2) `projectGit()` — all git against the project repo goes through a wrapper that whitelists subcommands (no `clean`/`stash`/`reset --hard`/`update-ref -d`/non-ff `merge`/`branch -D <non-lattice>`/`checkout <branch>`/…); (3) no raw `fs.rm` fallback in worktree cleanup — recursive removal is delegated to `git worktree remove`; (4) `pruneReparsePointsUnder` strips any junction/symlink *inside* a worktree before that removal, so neither git's recursion nor the reconcile-path `fs.rm` can walk a reparse-point loop (an in-worktree `npm install` of a `file:..` self-dep was the realistic source — and `backend`/`frontend` no longer carry that self-dep); (5) copy-based snapshots, never `git stash`; (6) a run circuit breaker that halts the whole merge run if `.git` vanishes or HEAD moves non-forward between tasks; (7) the `git bundle` backup above; (8) `assertNotReparsePoint` on the remaining `fs.rm` sites, snapshot-manifest path validation, and a cross-process project run lock. See `backend/src/worktree/CLAUDE.md`.
 
 ## Run
 
@@ -82,6 +82,18 @@ it keeps progressing on the backend; on reopen the UI re-syncs via
 second start returns 409. Cancel via `POST /api/merge-runs/:id/cancel`.
 Per-task in-process locks (`mergeLocks.ts`) prevent a manual `/merge`
 click landing on the same task while the run is processing it.
+
+The run executes *inside the backend process*. In dev that process gets
+restarted by `tsc -w` + the dev runner whenever a merged task
+fast-forwards `main` with a `backend/src` change — which would kill the
+run. Two layers keep "merge all" a one-click operation anyway: (1)
+`scripts/dev.mjs` doesn't restart the backend while a per-project
+`run.lock` is held (it defers until the run finishes); (2) if a restart
+happens regardless (a crash, or `dev.mjs` isn't the one running it), the
+next boot's `resumeInterruptedMergeRuns` spots the stale `merge-run`
+`run.lock` and starts a fresh run for whatever's still `ready_to_merge`
+(re-attempts are idempotent on half-done tasks). The merge-run logic must
+therefore stay safely re-runnable.
 
 ## HTTP / WS surface
 

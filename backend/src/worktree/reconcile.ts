@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { projectGit } from './projectGit.js';
 import { worktreeExists, parseWorktreesPorcelain } from './state.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
-import { assertNotReparsePoint } from './cleanup.js';
+import { assertNotReparsePoint, pruneReparsePointsUnder } from './cleanup.js';
 import { homeWorktreesDir } from '../projectPath.js';
 
 // How many alternate worktree paths to try when the canonical path can't be
@@ -49,6 +49,12 @@ export async function reconcileStaleState(
     // otherwise on Windows the cwd lock makes `git worktree remove` fail.
     await proxyKillSessionsByCwd(onBranch.path);
     await new Promise<void>((r) => setTimeout(r, 200));
+    // Strip any junction/symlink loop inside it first (an in-worktree
+    // `npm install` of a `file:..` self-dep) so `git worktree remove`
+    // doesn't choke on Windows. Non-fatal on failure.
+    await pruneReparsePointsUnder(onBranch.path).catch((err) =>
+      console.warn(`[worktree] reconcile: pruneReparsePointsUnder(${onBranch.path}) failed (continuing):`, err),
+    );
     const rm = await projectGit(
       repoRoot,
       ['worktree', 'remove', '--force', onBranch.path],
@@ -120,6 +126,13 @@ export async function tryRmWithRetries(target: string): Promise<boolean> {
     console.error((err as Error).message);
     return false;
   }
+  // `assertNotReparsePoint` only checks `target` itself. A reparse point
+  // *inside* it (e.g. an npm `file:` self-dep junction at
+  // node_modules/<pkg> pointing back at target) would make the recursive
+  // fs.rm below walk a loop. Strip those links first; failure is non-fatal.
+  await pruneReparsePointsUnder(target).catch((err) =>
+    console.warn(`[worktree] pruneReparsePointsUnder(${target}) failed (continuing):`, err),
+  );
   for (let attempt = 0; attempt < RM_RETRY_DELAYS_MS.length + 1; attempt += 1) {
     try {
       await fs.rm(target, { recursive: true, force: true });

@@ -24,7 +24,7 @@ import { buildMergeRunsRouter } from './routes/mergeRuns.js';
 import { buildPushRunsRouter } from './routes/pushRuns.js';
 import { buildWorkflowsRouter } from './routes/workflows.js';
 import { attachWebSockets } from './ws/wsServer.js';
-import { recoverOrphanedTasks } from './recovery.js';
+import { recoverOrphanedTasks, resumeInterruptedMergeRuns } from './recovery.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 5184;
@@ -83,6 +83,12 @@ async function start() {
   server.listen(PORT, () => {
     console.log(`[lattice-backend] listening on http://localhost:${PORT}`);
     console.log(`[lattice-backend] default root: ${DEFAULT_ROOT}`);
+    // Now that the API is up, resume any merge run a previous process was
+    // running when it got restarted (resolver Claudes it may spawn need
+    // the API listening to call back).
+    resumeInterruptedMergeRuns(BACKEND_ORIGIN).catch((err) =>
+      console.error('[startup] resumeInterruptedMergeRuns failed:', err),
+    );
   });
 }
 

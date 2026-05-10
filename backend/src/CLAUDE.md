@@ -4,21 +4,22 @@ Express server (`:5184`) plus a detached PTY subprocess on `:5185`.
 
 ## Layout
 
-- `index.ts` — bootstrap. Mounts route modules from `routes/`, attaches WS via `ws/wsServer.ts`, runs `recovery.ts` before listen.
-- `recovery.ts` — boot recovery: restore tasks.json from backup → restore orphan working-tree snapshots → **`sweepOrphanedWorktrees`** (reclaim worktrees git tracks that no live task owns) → recover ready_to_merge tasks whose branch was deleted.
+- `index.ts` — bootstrap. Mounts route modules from `routes/`, attaches WS via `ws/wsServer.ts`, runs `recovery.ts` before listen, then `resumeInterruptedMergeRuns` after listen.
+- `recovery.ts` — boot recovery: restore tasks.json from backup → restore orphan working-tree snapshots → **`sweepOrphanedWorktrees`** (reclaim worktrees git tracks that no live task owns) → recover ready_to_merge tasks whose branch was deleted. Also exports **`resumeInterruptedMergeRuns(backendOrigin)`** (called from `index.ts` *after* `listen`): a merge run executes in the backend process, so `tsc -w` + the dev restart loop will kill it whenever a merged task fast-forwards `main` with a `backend/src` change (or the run's working-tree snapshot churns an uncommitted `.ts` file) — this spots the stale `merge-run` `run.lock` that leaves behind and starts a fresh run for the remaining `ready_to_merge` tasks (idempotent on partial states). The dev runner *also* tries to avoid the restart in the first place (`scripts/dev.mjs` defers a restart while a `run.lock` is held); this is the backstop for when one happens anyway (or a real crash).
 - `routes/` — one router per domain (tasks, mergeRuns, workflows, settings, terminals, health). Each is a `buildXRouter()` factory.
 - `ws/wsServer.ts` — single `upgrade` dispatcher. Adding a WS endpoint = add a route in `attachWebSockets`.
 - `worktree/` — git-worktree subsystem (see its `CLAUDE.md`). The `worktree.ts` shim re-exports the public surface. Includes `projectGit` (whitelisted git wrapper for the project repo) and `gitBackup` (`git bundle` pre-run backup).
 - `projectPath.ts` — `canonicalProjectPath`, `projectHash`, `homeWorktreesDir` — the single source of truth for per-project paths under `~/.lattice/`.
-- `projectRunLock.ts` — cross-process per-project lock (`~/.lattice/per-project/<hash>/run.lock`, PID-liveness probe). Held for the duration of a merge run / manual `/merge`. The in-process guards (mergeRuns singleton, `mergeLocks`) don't see other Lattice processes; this does.
+- `projectRunLock.ts` — cross-process per-project lock (`~/.lattice/per-project/<hash>/run.lock` = `{pid, hostname, startedAt, label}`, PID-liveness probe). Held for the duration of a merge run (`label: merge-run`) / manual `/merge` (`label: manual-merge`). The in-process guards (mergeRuns singleton, `mergeLocks`) don't see other Lattice processes; this does. `inspectProjectRunLock` reads it without acquiring — used by `recovery.ts` to spot an interrupted merge run, and by `scripts/dev.mjs` to know when to defer a restart.
 - `tasks.ts` — in-memory cache + 100 ms debounced persist. Storage lives at `~/.lattice/per-project/<sha1(canonical-path)[:12]>/tasks.json` (moved out of `<project>/.lattice/` after the 2026-05-09 incident — keeps task data alive when a project-side catastrophe wipes the project dir). On first read of a project, the legacy in-project `<project>/.lattice/tasks.json` is auto-copied into the home location; legacy file is left in place for rollback. `updateTaskCrashSafe` writes to disk before mutating cache.
-- `mergeRuns.ts` / `workflowRuns.ts` — sequential run engines. `mergeRuns` also: takes a `git bundle` backup pre-run, holds the cross-process run lock, and runs a circuit-breaker (`.git`-exists + HEAD-only-forward) between tasks that halts the whole run on a violation. Singleton WS subscribers (`subscribe`) for live event fan-out.
+- `mergeRuns.ts` / `workflowRuns.ts` — sequential run engines. `mergeRuns` also: takes a `git bundle` backup pre-run, holds the cross-process run lock, and runs a circuit-breaker (`.git`-exists + HEAD-only-forward) between tasks that halts the whole run on a violation. Singleton WS subscribers (`subscribe`) for live event fan-out. The run lives in-process, so a backend restart kills it — but it's written to be safely **re-runnable**: `startMergeRun` re-scans `ready_to_merge` (incl. conflict-flagged) tasks and re-attempts each, and a half-done task (worktree merged but `main` not FF'd, finalize interrupted, …) is idempotent on retry. `recovery.ts`'s `resumeInterruptedMergeRuns` leans on this.
 - `terminalProxy.ts` / `terminal-server.ts` / `terminal.ts` — PTY lives in a detached child so main-server restarts don't kill running Claude sessions.
 - `processGuards.ts` — swallows node-pty's known Windows cleanup throw; everything else logs and continues.
 
 ## Key invariants
 
 - **One active merge run per project** — in-process (mergeRuns.ts, second start returns 409) *and* cross-process (`projectRunLock.ts`).
+- **Merge runs survive a backend restart** — they execute in-process (so `tsc -w` + `node --watch`, or a crash, kills them), but `scripts/dev.mjs` defers restarts while a `run.lock` is held, and on boot `resumeInterruptedMergeRuns` restarts any run whose `run.lock` is stale. Net effect: a "merge all" runs to completion from one click. So keep the run re-runnable — `startMergeRun` must tolerate being invoked on a half-processed task set.
 - **Per-task merge lock** (`mergeLocks.ts`) — manual /merge can't race the run worker.
 - **Crash-safe ordering**: `updateTaskCrashSafe` writes disk before cache. Used for `ready_to_merge → qa` transitions.
 - **Merge in worktree, not main** — see `worktree/merge.ts`. Main's tree only ever changes via fast-forward.
@@ -28,3 +29,5 @@ Express server (`:5184`) plus a detached PTY subprocess on `:5185`.
 ## Type-check
 
 `npx tsc --noEmit` from `backend/`. Tests: `npm test` (node:test, runs `src/__tests__/*.test.ts`).
+
+`tsc` only emits `.js` for `.ts`. Non-TS runtime assets under `src/` (right now just `workflowRuns/create-task-template.cjs`, read at boot by `renderHelperScript`) are copied into `dist/` by `scripts/copy-assets.mjs` — run from **both** `npm run build` (`tsc && node scripts/copy-assets.mjs`) and `npm run dev` (`scripts/dev.mjs` runs it right after the initial `tsc`). Add a new asset → add it to `copy-assets.mjs`'s list (one place, both paths). Forgetting this crashes the backend on boot with `ENOENT … dist/…`.
