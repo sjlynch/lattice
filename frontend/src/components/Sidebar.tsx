@@ -1,34 +1,23 @@
-import {
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  GitMerge,
-  Plus,
-  RefreshCw,
-  Rocket,
-  Search,
-  TerminalSquare,
-  X,
-} from 'lucide-react';
-import { TerminalPane } from './TerminalPane';
-import { useTerminals } from '../TerminalsContext';
+import { RefreshCw, Search, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import type { StartupTerminal } from '../api';
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useTerminals } from '../TerminalsContext';
+import { TerminalPane } from './TerminalPane';
+import { NewTerminalDropdown } from './sidebar/NewTerminalDropdown';
+import type { ShellKind } from './sidebar/NewTerminalDropdown';
+import { SidebarEmptyState } from './sidebar/SidebarEmptyState';
+import { SidebarPanelTabs } from './sidebar/SidebarPanelTabs';
+import { SidebarTabsBar } from './sidebar/SidebarTabsBar';
+import { usePanelState } from './sidebar/hooks/usePanelState';
+import { useStartupTerminals } from './sidebar/hooks/useStartupTerminals';
+import { useTabContextMenu } from './sidebar/hooks/useTabContextMenu';
+import { useTabScrolling } from './sidebar/hooks/useTabScrolling';
 
-type Props = {
+export type Props = {
   activeFolder: string;
   startupTerminals: StartupTerminal[];
 };
-
-type ShellKind = 'claude' | 'claude-yolo' | 'pi' | 'terminal';
-type Panel = 'terminals' | 'merging' | 'startup';
 
 const KIND_INITIAL_COMMAND: Record<ShellKind, string | undefined> = {
   claude: 'claude',
@@ -44,8 +33,6 @@ const KIND_LABEL_PREFIX: Record<ShellKind, string> = {
   terminal: 'terminal',
 };
 
-const SCROLL_STEP = 160;
-
 export function Sidebar({ activeFolder, startupTerminals }: Props) {
   const {
     terminals,
@@ -57,17 +44,9 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
     setServerId,
   } = useTerminals();
 
-  const [activePanel, setActivePanel] = useState<Panel>('terminals');
-  const [menuOpen, setMenuOpen] = useState(false);
   const [filter, setFilter] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
-  const [canScrollLeft, setCanScrollLeft] = useState(false);
-  const [canScrollRight, setCanScrollRight] = useState(false);
-  const [tabContextMenu, setTabContextMenu] = useState<{
-    x: number;
-    y: number;
-    termId: string;
-  } | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Track which terminal IDs have ever been the active tab. We only mount
   // <TerminalPane> once a terminal is first viewed — the backend pre-spawns
@@ -90,12 +69,6 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
     });
   }, [activeId]);
 
-  const menuRef = useRef<HTMLDivElement>(null);
-  const tabsRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const activeTabRef = useRef<HTMLDivElement>(null);
-  const tabContextMenuRef = useRef<HTMLDivElement>(null);
-
   // Per-project scoping: terminals are only listed when their projectPath
   // matches the current activeFolder. Legacy terminals saved without a
   // projectPath still show (treated as belonging to whatever's active).
@@ -117,27 +90,6 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
     [projectTerminals],
   );
 
-  // Auto-switch to Merging panel when a new merge terminal is added.
-  const prevMergeCountRef = useRef(mergeTerminals.length);
-  useEffect(() => {
-    if (mergeTerminals.length > prevMergeCountRef.current) {
-      setActivePanel('merging');
-      const newest = mergeTerminals[mergeTerminals.length - 1];
-      if (newest) setActiveId(newest.id);
-    }
-    prevMergeCountRef.current = mergeTerminals.length;
-  }, [mergeTerminals, setActiveId]);
-
-  // When the Merging panel disappears (all merge terminals closed), fall back.
-  useEffect(() => {
-    if (mergeTerminals.length === 0 && activePanel === 'merging') {
-      setActivePanel('terminals');
-    }
-    if (startupTerminalsList.length === 0 && activePanel === 'startup') {
-      setActivePanel('terminals');
-    }
-  }, [mergeTerminals.length, startupTerminalsList.length, activePanel]);
-
   // When the active folder changes, the currently-active terminal may
   // belong to a different project. Pick a terminal from the new project
   // if available, otherwise clear the selection.
@@ -152,202 +104,24 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
     }
   }, [activeFolder, projectTerminals, activeId, setActiveId]);
 
-  // If activeId points to a terminal that belongs to the panel we're
-  // not currently viewing (e.g. user clicked the focus-terminal button on
-  // a conflict task while on the regular Terminals panel), switch panels
-  // so its tab is visible.
-  useEffect(() => {
-    if (!activeId) return;
-    const t = projectTerminals.find((p) => p.id === activeId);
-    if (!t) return;
-    const target: Panel =
-      t.kind === 'merge' ? 'merging' : t.kind === 'startup' ? 'startup' : 'terminals';
-    if (target !== activePanel) setActivePanel(target);
-  }, [activeId, projectTerminals, activePanel]);
+  const { activePanel, panelTerminals, switchPanel } = usePanelState({
+    activeId,
+    setActiveId,
+    projectTerminals,
+    regularTerminals,
+    mergeTerminals,
+    startupTerminalsList,
+    setFilter,
+    setSearchOpen,
+  });
 
-  const panelTerminals =
-    activePanel === 'merging'
-      ? mergeTerminals
-      : activePanel === 'startup'
-        ? startupTerminalsList
-        : regularTerminals;
-
-  const switchPanel = useCallback(
-    (panel: Panel) => {
-      setActivePanel(panel);
-      setFilter('');
-      setSearchOpen(false);
-      const list =
-        panel === 'merging'
-          ? mergeTerminals
-          : panel === 'startup'
-            ? startupTerminalsList
-            : regularTerminals;
-      if (list.length === 0) {
-        // Empty target panel — must clear activeId, otherwise it still
-        // points at a terminal in some other panel and the
-        // auto-match-panel-to-active-terminal effect above immediately
-        // yanks us back. That made it impossible to switch to the
-        // Terminals tab when only a startup terminal existed.
-        setActiveId(null);
-      } else if (!list.find((t) => t.id === activeId)) {
-        setActiveId(list[list.length - 1].id);
-      }
-    },
-    [mergeTerminals, regularTerminals, startupTerminalsList, activeId, setActiveId],
-  );
-
-  const newTerminal = useCallback(
-    (kind: ShellKind) => {
-      addTerminal({
-        label: `${KIND_LABEL_PREFIX[kind]} ${projectTerminals.length + 1}`,
-        cwd: activeFolder,
-        initialCommand: KIND_INITIAL_COMMAND[kind],
-        projectPath: activeFolder,
-      });
-    },
-    [addTerminal, activeFolder, projectTerminals.length],
-  );
-
-  // Mirror the latest projectTerminals into a ref so the seeding effect
-  // can detect already-running startup terminals after a page refresh
-  // without re-running every time the terminals list changes.
-  const projectTerminalsRef = useRef(projectTerminals);
-  useEffect(() => {
-    projectTerminalsRef.current = projectTerminals;
-  }, [projectTerminals]);
-
-  // Synchronously-updated dedup so React StrictMode's double-fire of the
-  // seeding effect can't add the same startup twice. The existing.some()
-  // check below reads projectTerminalsRef, which is updated by a separate
-  // effect — that effect only fires AFTER a React commit, but StrictMode
-  // double-invokes effects synchronously (run → cleanup → run) BEFORE any
-  // commit, so both runs see the same stale snapshot. Without this, every
-  // configured startup spawns two ptys that race for the same port; with
-  // `npm run dev` the second one fails with "address in use" while the
-  // first invisibly holds it.
-  const inFlightStartupRef = useRef<Set<string>>(new Set());
-
-  // Drop in-flight markers once the corresponding TerminalSpec has actually
-  // committed to state. Without this, closing a startup tab and then
-  // changing settings would refuse to respawn (the ref still has the key).
-  useEffect(() => {
-    if (inFlightStartupRef.current.size === 0) return;
-    const liveKeys = new Set<string>();
-    for (const t of projectTerminals) {
-      if (t.kind === 'startup' && t.startupId && t.projectPath) {
-        liveKeys.add(`${t.projectPath}::${t.startupId}`);
-      }
-    }
-    for (const key of inFlightStartupRef.current) {
-      if (!liveKeys.has(key)) inFlightStartupRef.current.delete(key);
-    }
-  }, [projectTerminals]);
-
-  // Validate persisted serverIds and auto-spawn startup terminals.
-  //
-  // Page reloads keep TerminalSpecs (with serverId) in sessionStorage,
-  // but the backend pty for those ids may be gone — Lattice's shutdown
-  // hook intentionally kills every pty so subsequent dev cycles start
-  // clean. Without this check the stale spec would mount, attach, get
-  // session_lost, and sit there showing the message until the user
-  // closes the tab. We fetch the live session list, drop any spec
-  // whose serverId no longer exists, and respawn startup terminals
-  // whose backing pty is gone so the user's configured commands are
-  // running by the time they look at the sidebar.
-  useEffect(() => {
-    if (!activeFolder) return;
-    let cancelled = false;
-    void (async () => {
-      // null = couldn't validate (backend unreachable / non-OK). In that
-      // case we skip the drop-stale step entirely instead of treating
-      // every persisted serverId as dead — a transient failure shouldn't
-      // wipe the user's terminals.
-      let liveIds: Set<string> | null = null;
-      try {
-        const r = await fetch('/api/terminals');
-        if (r.ok) {
-          const sessions: Array<{ id: string }> = await r.json();
-          liveIds = new Set(sessions.map((s) => s.id));
-        }
-      } catch {
-        // Backend unreachable.
-      }
-      if (cancelled) return;
-
-      const existing = projectTerminalsRef.current;
-
-      if (liveIds) {
-        // Drop specs whose serverId is gone. closeTerminals tolerates
-        // a 404 from the DELETE; the local state is what matters here.
-        const liveIdsLocal = liveIds;
-        const staleIds = existing
-          .filter((t) => t.serverId && !liveIdsLocal.has(t.serverId))
-          .map((t) => t.id);
-        if (staleIds.length > 0) closeTerminals(staleIds);
-      }
-
-      // Spawn each configured startup whose spec is either missing OR
-      // whose serverId we just confirmed dead. When liveIds is null
-      // (validation failed) we treat every existing spec as live and
-      // only spawn truly missing ones, falling back to the original
-      // seeding behavior.
-      for (const cfg of startupTerminals) {
-        if (!cfg.command.trim()) continue;
-        const key = `${activeFolder}::${cfg.id}`;
-        if (inFlightStartupRef.current.has(key)) continue;
-        const liveSpec = existing.find(
-          (t) =>
-            t.kind === 'startup' &&
-            t.startupId === cfg.id &&
-            t.projectPath === activeFolder &&
-            (!liveIds || !t.serverId || liveIds.has(t.serverId)),
-        );
-        if (liveSpec) continue;
-        inFlightStartupRef.current.add(key);
-        addTerminal(
-          {
-            label: cfg.label || 'startup',
-            cwd: activeFolder,
-            initialCommand: cfg.command,
-            projectPath: activeFolder,
-            kind: 'startup',
-            startupId: cfg.id,
-          },
-          false, // don't steal focus
-        );
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeFolder, startupTerminals, addTerminal, closeTerminals]);
-
-  // Stop and restart every startup terminal for the active project. We
-  // explicitly re-add here rather than waiting for the seeding effect: the
-  // effect's deps (activeFolder, startupTerminals) haven't changed, so it
-  // wouldn't fire again on its own.
-  const restartStartupTerminals = useCallback(() => {
-    if (!activeFolder) return;
-    const ids = projectTerminalsRef.current
-      .filter((t) => t.kind === 'startup' && t.projectPath === activeFolder)
-      .map((t) => t.id);
-    if (ids.length > 0) closeTerminals(ids);
-    for (const cfg of startupTerminals) {
-      if (!cfg.command.trim()) continue;
-      addTerminal(
-        {
-          label: cfg.label || 'startup',
-          cwd: activeFolder,
-          initialCommand: cfg.command,
-          projectPath: activeFolder,
-          kind: 'startup',
-          startupId: cfg.id,
-        },
-        false,
-      );
-    }
-  }, [activeFolder, closeTerminals, addTerminal, startupTerminals]);
+  const { restartStartupTerminals } = useStartupTerminals({
+    activeFolder,
+    startupTerminals,
+    projectTerminals,
+    addTerminal,
+    closeTerminals,
+  });
 
   // Force-mount startup terminals as soon as they're added, even if they're
   // not the active tab. The whole point of "Startup Terminals" is that the
@@ -370,58 +144,21 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
     });
   }, [startupTerminalsList]);
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    function onPointerDown(e: PointerEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setMenuOpen(false);
-    }
-    document.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [menuOpen]);
-
-  useEffect(() => {
-    if (!tabContextMenu) return;
-    function onPointerDown(e: PointerEvent) {
-      if (tabContextMenuRef.current && !tabContextMenuRef.current.contains(e.target as Node)) {
-        setTabContextMenu(null);
-      }
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setTabContextMenu(null);
-    }
-    document.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [tabContextMenu]);
-
-  useEffect(() => {
-    setTabContextMenu(null);
-  }, [activePanel]);
+  const newTerminal = useCallback(
+    (kind: ShellKind) => {
+      addTerminal({
+        label: `${KIND_LABEL_PREFIX[kind]} ${projectTerminals.length + 1}`,
+        cwd: activeFolder,
+        initialCommand: KIND_INITIAL_COMMAND[kind],
+        projectPath: activeFolder,
+      });
+    },
+    [addTerminal, activeFolder, projectTerminals.length],
+  );
 
   const handleServerId = useCallback(
     (localId: string, srv: string) => setServerId(localId, srv),
     [setServerId],
-  );
-
-  const handleTabContextMenu = useCallback(
-    (e: React.MouseEvent, termId: string) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setTabContextMenu({ x: e.clientX, y: e.clientY, termId });
-    },
-    [],
   );
 
   const trimmedFilter = filter.trim().toLowerCase();
@@ -433,80 +170,22 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
     });
   }, [panelTerminals, trimmedFilter]);
 
-  const handleCloseTabsToLeft = useCallback(
-    (termId: string) => {
-      const idx = visibleTerminals.findIndex((t) => t.id === termId);
-      const toClose = visibleTerminals.slice(0, idx).map((t) => t.id);
-      if (toClose.length > 0) closeTerminals(toClose);
-      setTabContextMenu(null);
-    },
-    [visibleTerminals, closeTerminals],
-  );
+  const {
+    tabsRef,
+    activeTabRef,
+    canScrollLeft,
+    canScrollRight,
+    scrollTabs,
+  } = useTabScrolling({ activeId, visibleTerminals });
 
-  const handleCloseTabsToRight = useCallback(
-    (termId: string) => {
-      const idx = visibleTerminals.findIndex((t) => t.id === termId);
-      const toClose = visibleTerminals.slice(idx + 1).map((t) => t.id);
-      if (toClose.length > 0) closeTerminals(toClose);
-      setTabContextMenu(null);
-    },
-    [visibleTerminals, closeTerminals],
-  );
-
-  const handleCloseOtherTabs = useCallback(
-    (termId: string) => {
-      const toClose = visibleTerminals.filter((t) => t.id !== termId).map((t) => t.id);
-      if (toClose.length > 0) closeTerminals(toClose);
-      setTabContextMenu(null);
-    },
-    [visibleTerminals, closeTerminals],
-  );
-
-  const updateScrollState = useCallback(() => {
-    const el = tabsRef.current;
-    if (!el) {
-      setCanScrollLeft(false);
-      setCanScrollRight(false);
-      return;
-    }
-    const { scrollLeft, scrollWidth, clientWidth } = el;
-    setCanScrollLeft(scrollLeft > 1);
-    setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 1);
-  }, []);
-
-  useLayoutEffect(() => {
-    updateScrollState();
-  }, [visibleTerminals, updateScrollState]);
-
-  useEffect(() => {
-    const el = tabsRef.current;
-    if (!el) return;
-    const onScroll = () => updateScrollState();
-    el.addEventListener('scroll', onScroll, { passive: true });
-    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
-    const ro = new ResizeObserver(() => {
-      if (resizeTimer) clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(updateScrollState, 150);
-    });
-    ro.observe(el);
-    return () => {
-      if (resizeTimer) clearTimeout(resizeTimer);
-      el.removeEventListener('scroll', onScroll);
-      ro.disconnect();
-    };
-  }, [updateScrollState]);
-
-  useEffect(() => {
-    const el = activeTabRef.current;
-    if (!el) return;
-    el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [activeId]);
-
-  const scrollTabs = useCallback((dir: 1 | -1) => {
-    const el = tabsRef.current;
-    if (!el) return;
-    el.scrollBy({ left: dir * SCROLL_STEP, behavior: 'smooth' });
-  }, []);
+  const {
+    tabContextMenu,
+    tabContextMenuRef,
+    handleTabContextMenu,
+    handleCloseTabsToLeft,
+    handleCloseTabsToRight,
+    handleCloseOtherTabs,
+  } = useTabContextMenu({ activePanel, visibleTerminals, closeTerminals });
 
   const toggleSearch = useCallback(() => {
     setSearchOpen((open) => {
@@ -521,7 +200,7 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
   }, [searchOpen]);
 
   const onSearchKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
+    (e: KeyboardEvent<HTMLInputElement>) => {
       if (e.key === 'Escape') {
         setFilter('');
         setSearchOpen(false);
@@ -533,38 +212,12 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
   return (
     <>
       <div className="sidebar-header">
-        <div className="sidebar-panel-tabs">
-          <button
-            className={`sidebar-panel-tab ${activePanel === 'terminals' ? 'active' : ''}`}
-            onClick={() => switchPanel('terminals')}
-          >
-            <TerminalSquare size={11} />
-            Terminals
-          </button>
-          {mergeTerminals.length > 0 && (
-            <button
-              className={`sidebar-panel-tab merge ${activePanel === 'merging' ? 'active' : ''}`}
-              onClick={() => switchPanel('merging')}
-            >
-              <GitMerge size={11} />
-              Merging
-              {activePanel !== 'merging' && mergeTerminals.length > 0 && (
-                <span className="sidebar-panel-tab-badge">
-                  {mergeTerminals.length}
-                </span>
-              )}
-            </button>
-          )}
-          {startupTerminalsList.length > 0 && (
-            <button
-              className={`sidebar-panel-tab startup ${activePanel === 'startup' ? 'active' : ''}`}
-              onClick={() => switchPanel('startup')}
-            >
-              <Rocket size={11} />
-              Startup
-            </button>
-          )}
-        </div>
+        <SidebarPanelTabs
+          activePanel={activePanel}
+          mergeCount={mergeTerminals.length}
+          startupCount={startupTerminalsList.length}
+          switchPanel={switchPanel}
+        />
 
         <div className="sidebar-header-actions">
           {activePanel === 'terminals' && panelTerminals.length > 0 && (
@@ -616,153 +269,30 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
           )}
 
           {activePanel === 'terminals' && (
-            <div className="sidebar-new" ref={menuRef}>
-              <button
-                className="icon-btn sm"
-                onClick={() => newTerminal('claude')}
-                title="New Claude terminal"
-                aria-label="New Claude terminal"
-              >
-                <Plus size={14} />
-              </button>
-              <button
-                className="icon-btn sm sidebar-new-chevron"
-                onClick={() => setMenuOpen((v) => !v)}
-                title="Choose terminal type"
-                aria-label="Choose terminal type"
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-              >
-                <ChevronDown size={12} />
-              </button>
-              {menuOpen && (
-                <div className="popover sidebar-new-menu" role="menu">
-                  <div
-                    className="popover-item"
-                    role="menuitem"
-                    onClick={() => { setMenuOpen(false); newTerminal('claude'); }}
-                  >
-                    Claude
-                  </div>
-                  <div
-                    className="popover-item"
-                    role="menuitem"
-                    onClick={() => { setMenuOpen(false); newTerminal('claude-yolo'); }}
-                  >
-                    Dangerous Claude
-                  </div>
-                  <div
-                    className="popover-item"
-                    role="menuitem"
-                    onClick={() => { setMenuOpen(false); newTerminal('pi'); }}
-                  >
-                    Pi
-                  </div>
-                  <div
-                    className="popover-item"
-                    role="menuitem"
-                    onClick={() => { setMenuOpen(false); newTerminal('terminal'); }}
-                  >
-                    Terminal
-                  </div>
-                </div>
-              )}
-            </div>
+            <NewTerminalDropdown onNewTerminal={newTerminal} />
           )}
         </div>
       </div>
 
       {panelTerminals.length > 0 && (
-        <div className="sidebar-tabs-row">
-          <button
-            className="sidebar-tabs-scroll left"
-            onClick={() => scrollTabs(-1)}
-            disabled={!canScrollLeft}
-            title="Scroll tabs left"
-            aria-label="Scroll tabs left"
-          >
-            <ChevronLeft size={14} />
-          </button>
-          <div className="sidebar-tabs" ref={tabsRef}>
-            {visibleTerminals.length === 0 ? (
-              <div className="sidebar-tabs-empty">
-                No terminals match "{filter}"
-              </div>
-            ) : (
-              visibleTerminals.map((t) => (
-                <div
-                  key={t.id}
-                  ref={t.id === activeId ? activeTabRef : undefined}
-                  className={`sidebar-tab ${t.id === activeId ? 'active' : ''}`}
-                  onClick={() => setActiveId(t.id)}
-                  onContextMenu={(e) => handleTabContextMenu(e, t.id)}
-                  title={t.cwd}
-                >
-                  {t.kind === 'merge' ? (
-                    <GitMerge size={12} />
-                  ) : t.kind === 'startup' ? (
-                    <Rocket size={12} />
-                  ) : (
-                    <TerminalSquare size={12} />
-                  )}
-                  <span>{t.label}</span>
-                  <button
-                    className="sidebar-tab-close"
-                    onClick={(e) => { e.stopPropagation(); closeTerminal(t.id); }}
-                    title="Close"
-                    aria-label="Close terminal"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-          <button
-            className="sidebar-tabs-scroll right"
-            onClick={() => scrollTabs(1)}
-            disabled={!canScrollRight}
-            title="Scroll tabs right"
-            aria-label="Scroll tabs right"
-          >
-            <ChevronRight size={14} />
-          </button>
-        </div>
+        <SidebarTabsBar
+          visibleTerminals={visibleTerminals}
+          filter={filter}
+          activeId={activeId}
+          setActiveId={setActiveId}
+          closeTerminal={closeTerminal}
+          tabsRef={tabsRef}
+          activeTabRef={activeTabRef}
+          canScrollLeft={canScrollLeft}
+          canScrollRight={canScrollRight}
+          scrollTabs={scrollTabs}
+          handleTabContextMenu={handleTabContextMenu}
+        />
       )}
 
       <div className="sidebar-content">
         {panelTerminals.length === 0 ? (
-          <div className="sidebar-empty">
-            <div className="sidebar-empty-icon">
-              {activePanel === 'merging' ? (
-                <GitMerge size={22} />
-              ) : activePanel === 'startup' ? (
-                <Rocket size={22} />
-              ) : (
-                <TerminalSquare size={22} />
-              )}
-            </div>
-            <div className="sidebar-empty-title">
-              {activePanel === 'merging'
-                ? 'No merge resolvers'
-                : activePanel === 'startup'
-                  ? 'No startup terminals'
-                  : 'No terminals yet'}
-            </div>
-            {activePanel === 'terminals' && (
-              <div className="sidebar-empty-sub">
-                Click <Plus size={11} style={{ verticalAlign: -1 }} /> above to
-                start a Claude Code shell rooted at <code>{activeFolder}</code>,
-                or hit ▶ on a task to spawn one in a worktree.
-              </div>
-            )}
-            {activePanel === 'startup' && (
-              <div className="sidebar-empty-sub">
-                Configure commands that auto-run on page load via the gear
-                icon in the top bar.
-              </div>
-            )}
-          </div>
+          <SidebarEmptyState activePanel={activePanel} activeFolder={activeFolder} />
         ) : (
           projectTerminals.map((t) => (
             <div
@@ -823,3 +353,5 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
     </>
   );
 }
+
+export default Sidebar;
