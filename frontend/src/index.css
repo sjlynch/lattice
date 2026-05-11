@@ -1941,7 +1941,7 @@ input {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 8px 36px 8px 10px;
+  padding: 8px 62px 8px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
   cursor: pointer;
@@ -1969,11 +1969,19 @@ input {
   color: #5eead4;
   font-weight: 500;
 }
-.workflows-item-run-btn {
+.workflows-item-queued {
+  color: #facc15;
+  font-weight: 500;
+}
+.workflows-item-actions {
   position: absolute;
   top: 50%;
   right: 6px;
   transform: translateY(-50%);
+  display: inline-flex;
+  gap: 4px;
+}
+.workflows-item-run-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1985,8 +1993,16 @@ input {
   border: 1px solid rgba(106, 169, 255, 0.4);
   cursor: pointer;
 }
+.workflows-item-run-btn.danger {
+  background: rgba(255, 107, 107, 0.12);
+  color: var(--danger);
+  border-color: rgba(255, 107, 107, 0.35);
+}
 .workflows-item-run-btn:hover:not(:disabled) {
   background: rgba(106, 169, 255, 0.28);
+}
+.workflows-item-run-btn.danger:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.22);
 }
 .workflows-item-run-btn:disabled {
   opacity: 0.45;
@@ -2039,6 +2055,135 @@ input {
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+.workflows-runs {
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  min-width: 220px;
+  border-left: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.10);
+}
+.workflows-queue-mode {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 8px 10px 6px;
+}
+.workflows-queue-mode button {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.workflows-queue-mode button.active {
+  border-color: rgba(106, 169, 255, 0.55);
+  background: rgba(106, 169, 255, 0.15);
+  color: var(--accent);
+}
+.workflows-queue-mode button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.workflows-queue-controls {
+  display: flex;
+  gap: 6px;
+  padding: 0 10px 8px;
+}
+.workflows-queue-controls .btn-primary,
+.workflows-queue-controls .btn-ghost {
+  flex: 1;
+  justify-content: center;
+  padding: 5px 8px;
+  font-size: 11px;
+}
+.workflows-queue-status {
+  padding: 0 10px 10px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+  border-bottom: 1px solid var(--border);
+}
+.workflows-runs-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px 8px 0;
+}
+.workflows-runs-section + .workflows-runs-section {
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+.workflows-runs-section-title {
+  padding: 0 2px 6px;
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.workflows-runs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+.workflows-runs-empty {
+  padding: 8px 4px 12px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.workflows-run-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+}
+.workflows-run-card.active {
+  border-color: rgba(94, 234, 212, 0.30);
+  background: rgba(94, 234, 212, 0.06);
+}
+.workflows-run-card.queued {
+  border-color: rgba(250, 204, 21, 0.22);
+}
+.workflows-run-card-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.workflows-run-card-name {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflows-run-card-meta {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.workflows-run-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.workflows-run-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #5eead4;
 }
 .workflows-editor-empty {
   flex: 1;

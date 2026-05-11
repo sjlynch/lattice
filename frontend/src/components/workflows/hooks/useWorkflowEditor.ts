@@ -75,8 +75,8 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
     }
   }, [activeFolder, onError]);
 
-  const save = useCallback(async () => {
-    if (!activeFolder) return;
+  const save = useCallback(async (): Promise<Workflow | null> => {
+    if (!activeFolder) return null;
     const name = editor.name.trim() || 'Untitled workflow';
     const steps = editor.steps.map((s) => ({
       ...s,
@@ -87,12 +87,15 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
       if (editor.workflowId) {
         const w = await apiUpdateWorkflow(editor.workflowId, { name, steps });
         setEditor(fromWorkflow(w));
+        return w;
       } else {
         const w = await apiCreateWorkflow(activeFolder, name, steps);
         setEditor(fromWorkflow(w));
+        return w;
       }
     } catch (err) {
       onError(`Save failed: ${(err as Error).message}`);
+      return null;
     }
   }, [activeFolder, editor.workflowId, editor.name, editor.steps, onError]);
 

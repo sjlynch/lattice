@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ListChecks, Play, Plus, Square, Trash2, X } from 'lucide-react';
 import { FloatingPanel } from '../FloatingPanel';
 import {
   cancelWorkflowRun as apiCancelWorkflowRun,
   startWorkflow as apiStartWorkflow,
   type Workflow,
+  type WorkflowRun,
 } from '../../api';
 import { WORKFLOW_TEMPLATES } from '../../workflowTemplates';
 import { ErrorToast } from '../shared/ErrorToast';
@@ -21,12 +22,20 @@ type Props = {
   activeFolder: string;
 };
 
+type QueueMode = 'sequential' | 'parallel';
+
 // Top-level Workflows panel. Composes list/run/editor hooks and renders the
 // editor shell; per-step terminal spawns are routed through TerminalsContext
 // inside `useWorkflowRuns`.
 export function WorkflowsLauncher({ activeFolder }: Props) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [queueMode, setQueueMode] = useState<QueueMode>('sequential');
+  const [queuedWorkflowIds, setQueuedWorkflowIds] = useState<string[]>([]);
+  const [queueRunning, setQueueRunning] = useState(false);
+  const [queueBusy, setQueueBusy] = useState(false);
+  const [queueActiveRunId, setQueueActiveRunId] = useState<string | null>(null);
+  const queueStartingRef = useRef(false);
 
   function showError(msg: string) {
     setError(msg);
@@ -55,22 +64,130 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
     reorderSteps,
   } = useWorkflowEditor({ workflows, activeFolder, onError: showError });
 
-  async function runWorkflow(wf: Workflow) {
-    if (editor.dirty && editor.workflowId === wf.id) {
-      // Persist before run so the engine sees the latest steps.
-      try {
-        await save();
-      } catch {
-        return;
-      }
-    }
+  const workflowsById = useMemo(() => {
+    const map = new Map<string, Workflow>();
+    for (const wf of workflows) map.set(wf.id, wf);
+    return map;
+  }, [workflows]);
+
+  const activeRunList = useMemo(
+    () => Object.values(activeRuns).sort((a, b) => a.startedAt - b.startedAt),
+    [activeRuns],
+  );
+
+  const queuedWorkflows = queuedWorkflowIds
+    .map((id) => workflowsById.get(id))
+    .filter((wf): wf is Workflow => Boolean(wf));
+
+  const startWorkflowDefinition = useCallback(async (wf: Workflow): Promise<WorkflowRun | null> => {
     try {
       const res = await apiStartWorkflow(wf.id);
       addActiveRun(res.run);
+      return res.run;
     } catch (err) {
       showError(`Run failed: ${(err as Error).message}`);
+      return null;
     }
-  }
+  }, [addActiveRun]);
+
+  const runWorkflow = useCallback(async (wf: Workflow): Promise<WorkflowRun | null> => {
+    let target = wf;
+    if (editor.dirty && editor.workflowId === wf.id) {
+      // Persist before run so the engine sees the latest steps.
+      const saved = await save();
+      if (!saved) return null;
+      target = saved;
+    }
+    return startWorkflowDefinition(target);
+  }, [editor.dirty, editor.workflowId, save, startWorkflowDefinition]);
+
+  const enqueueWorkflow = useCallback((wf: Workflow) => {
+    if (wf.steps.length === 0) return;
+    setQueuedWorkflowIds((cur) => (cur.includes(wf.id) ? cur : [...cur, wf.id]));
+  }, []);
+
+  const removeQueuedWorkflow = useCallback((workflowId: string) => {
+    setQueuedWorkflowIds((cur) => cur.filter((id) => id !== workflowId));
+  }, []);
+
+  const startQueuedWorkflows = useCallback(async () => {
+    if (queuedWorkflowIds.length === 0 || queueBusy) return;
+    if (queueMode === 'sequential') {
+      setQueueRunning(true);
+      return;
+    }
+
+    const ids = [...queuedWorkflowIds];
+    setQueueBusy(true);
+    setQueuedWorkflowIds([]);
+    const results = await Promise.all(
+      ids.map(async (id) => {
+        const wf = workflowsById.get(id);
+        if (!wf) return { id, ok: true };
+        const run = await runWorkflow(wf);
+        return { id, ok: Boolean(run) };
+      }),
+    );
+    const failedIds = results.filter((r) => !r.ok).map((r) => r.id);
+    if (failedIds.length > 0) {
+      setQueuedWorkflowIds((cur) => [...failedIds, ...cur]);
+    }
+    setQueueBusy(false);
+  }, [queueBusy, queueMode, queuedWorkflowIds, runWorkflow, workflowsById]);
+
+  useEffect(() => {
+    if (
+      !queueRunning ||
+      queueMode !== 'sequential' ||
+      queueBusy ||
+      queueStartingRef.current
+    ) {
+      return;
+    }
+
+    queueStartingRef.current = true;
+    void (async () => {
+      let markedBusy = false;
+      try {
+        // Defer state updates out of the effect's synchronous phase; this keeps
+        // React's lint rule happy while still letting active-run updates drive
+        // the sequential queue forward.
+        await Promise.resolve();
+        if (queueActiveRunId && activeRuns[queueActiveRunId]) return;
+
+        const nextId = queuedWorkflowIds[0];
+        if (!nextId) {
+          setQueueRunning(false);
+          setQueueActiveRunId(null);
+          return;
+        }
+
+        const wf = workflowsById.get(nextId);
+        if (!wf) {
+          setQueuedWorkflowIds((cur) => cur.filter((id) => id !== nextId));
+          return;
+        }
+
+        setQueueBusy(true);
+        markedBusy = true;
+        setQueuedWorkflowIds((cur) => (cur[0] === nextId ? cur.slice(1) : cur.filter((id) => id !== nextId)));
+        const run = await runWorkflow(wf);
+        setQueueActiveRunId(run?.id ?? null);
+      } finally {
+        if (markedBusy) setQueueBusy(false);
+        queueStartingRef.current = false;
+      }
+    })();
+  }, [
+    activeRuns,
+    queueActiveRunId,
+    queueBusy,
+    queueMode,
+    queueRunning,
+    queuedWorkflowIds,
+    runWorkflow,
+    workflowsById,
+  ]);
 
   async function stopRun(runId: string) {
     try {
@@ -78,6 +195,26 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
     } catch (err) {
       showError(`Stop failed: ${(err as Error).message}`);
     }
+  }
+
+  async function runEditorWorkflow() {
+    if (!editor.workflowId || editor.dirty) {
+      const saved = await save();
+      if (saved) await startWorkflowDefinition(saved);
+      return;
+    }
+    const fresh = workflows.find((w) => w.id === editor.workflowId);
+    if (fresh) await runWorkflow(fresh);
+  }
+
+  async function enqueueEditorWorkflow() {
+    if (!editor.workflowId || editor.dirty) {
+      const saved = await save();
+      if (saved) enqueueWorkflow(saved);
+      return;
+    }
+    const fresh = workflows.find((w) => w.id === editor.workflowId);
+    if (fresh) enqueueWorkflow(fresh);
   }
 
   // Find any active/recent run for the currently-edited workflow so the
@@ -97,7 +234,16 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
       ]
     : undefined;
 
-  const activeRunList = Object.values(activeRuns);
+  const queueDisabled = queuedWorkflowIds.length === 0 || queueBusy;
+  const queueStatus = queueRunning
+    ? queueActiveRunId && activeRuns[queueActiveRunId]
+      ? 'Running current workflow; next queued item starts when it finishes.'
+      : queueBusy
+        ? 'Starting next queued workflow…'
+        : 'Waiting to start next queued workflow…'
+    : queuedWorkflowIds.length > 0
+      ? `${queuedWorkflowIds.length} workflow${queuedWorkflowIds.length === 1 ? '' : 's'} queued.`
+      : 'Queue saved workflows, then choose sequential or parallel start.';
 
   return (
     <>
@@ -145,8 +291,8 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
             Workflows
           </>
         }
-        defaultSize={{ width: 820, height: 620 }}
-        minSize={{ width: 560, height: 380 }}
+        defaultSize={{ width: 1080, height: 620 }}
+        minSize={{ width: 760, height: 420 }}
         storageKey="lattice.workflows.window"
       >
         <div className="workflows-body">
@@ -206,10 +352,9 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
                 </div>
               ) : (
                 sortedWorkflows.map((w) => {
-                  const run = Object.values(activeRuns).find(
-                    (r) => r.workflowId === w.id,
-                  );
+                  const run = activeRunList.find((r) => r.workflowId === w.id);
                   const isSel = editor.workflowId === w.id;
+                  const queued = queuedWorkflowIds.includes(w.id);
                   return (
                     <div
                       key={w.id}
@@ -219,6 +364,12 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
                       <div className="workflows-item-name">{w.name}</div>
                       <div className="workflows-item-meta">
                         {w.steps.length} step{w.steps.length === 1 ? '' : 's'}
+                        {queued && (
+                          <>
+                            {' · '}
+                            <span className="workflows-item-queued">queued</span>
+                          </>
+                        )}
                         {run && (
                           <>
                             {' · '}
@@ -228,36 +379,52 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
                           </>
                         )}
                       </div>
-                      {run ? (
-                        <button
-                          className="workflows-item-run-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            stopRun(run.id);
-                          }}
-                          title="Stop workflow run"
-                          aria-label="Stop workflow run"
-                        >
-                          <Square size={10} fill="currentColor" />
-                        </button>
-                      ) : (
-                        <button
-                          className="workflows-item-run-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            runWorkflow(w);
-                          }}
-                          disabled={w.steps.length === 0}
-                          title={
-                            w.steps.length === 0
-                              ? 'Add steps before running'
-                              : 'Run workflow'
-                          }
-                          aria-label="Run workflow"
-                        >
-                          <Play size={11} fill="currentColor" />
-                        </button>
-                      )}
+                      <div className="workflows-item-actions">
+                        {run ? (
+                          <button
+                            className="workflows-item-run-btn danger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              stopRun(run.id);
+                            }}
+                            title="Stop workflow run"
+                            aria-label="Stop workflow run"
+                          >
+                            <Square size={10} fill="currentColor" />
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              className="workflows-item-run-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                enqueueWorkflow(w);
+                              }}
+                              disabled={w.steps.length === 0 || queued}
+                              title={queued ? 'Already queued' : 'Add to queue'}
+                              aria-label="Add workflow to queue"
+                            >
+                              <Plus size={12} />
+                            </button>
+                            <button
+                              className="workflows-item-run-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                runWorkflow(w);
+                              }}
+                              disabled={w.steps.length === 0}
+                              title={
+                                w.steps.length === 0
+                                  ? 'Add steps before running'
+                                  : 'Run workflow now'
+                              }
+                              aria-label="Run workflow now"
+                            >
+                              <Play size={11} fill="currentColor" />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
                   );
                 })
@@ -390,10 +557,17 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
                   )}
                   <button
                     className="btn-ghost"
-                    onClick={save}
+                    onClick={() => void save()}
                     disabled={editor.steps.length === 0}
                   >
                     {editor.workflowId ? 'Save' : 'Create'}
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    onClick={() => void enqueueEditorWorkflow()}
+                    disabled={editor.steps.length === 0 || !activeFolder}
+                  >
+                    <Plus size={11} /> Queue
                   </button>
                   {runForEditor ? (
                     <button
@@ -406,13 +580,7 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
                   ) : (
                     <button
                       className="btn-primary"
-                      onClick={async () => {
-                        if (!editor.workflowId || editor.dirty) await save();
-                        const id = editor.workflowId;
-                        const fresh =
-                          (id && workflows.find((w) => w.id === id)) ?? null;
-                        if (fresh) await runWorkflow(fresh);
-                      }}
+                      onClick={() => void runEditorWorkflow()}
                       disabled={
                         editor.steps.length === 0 ||
                         !activeFolder
@@ -425,6 +593,117 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
               </>
             )}
           </section>
+
+          <aside className="workflows-runs">
+            <div className="workflows-list-head">
+              <span className="workflows-list-title">Queue & active</span>
+            </div>
+            <div className="workflows-queue-mode" role="group" aria-label="Workflow queue mode">
+              <button
+                className={queueMode === 'sequential' ? 'active' : ''}
+                onClick={() => setQueueMode('sequential')}
+                disabled={queueRunning}
+                title="Run one queued workflow after the previous one finishes"
+              >
+                Sequential
+              </button>
+              <button
+                className={queueMode === 'parallel' ? 'active' : ''}
+                onClick={() => setQueueMode('parallel')}
+                disabled={queueRunning}
+                title="Start all queued workflows at once"
+              >
+                Parallel
+              </button>
+            </div>
+            <div className="workflows-queue-controls">
+              <button
+                className="btn-primary"
+                onClick={() => void startQueuedWorkflows()}
+                disabled={queueDisabled || queueRunning}
+              >
+                <Play size={11} fill="currentColor" /> Start queue
+              </button>
+              {queueRunning ? (
+                <button className="btn-ghost" onClick={() => setQueueRunning(false)}>
+                  Stop queue
+                </button>
+              ) : (
+                <button
+                  className="btn-ghost"
+                  onClick={() => setQueuedWorkflowIds([])}
+                  disabled={queuedWorkflowIds.length === 0}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div className="workflows-queue-status">{queueStatus}</div>
+
+            <div className="workflows-runs-section">
+              <div className="workflows-runs-section-title">Queued</div>
+              {queuedWorkflows.length === 0 ? (
+                <div className="workflows-runs-empty">No queued workflows.</div>
+              ) : (
+                <div className="workflows-runs-list">
+                  {queuedWorkflows.map((wf, idx) => (
+                    <div key={wf.id} className="workflows-run-card queued">
+                      <div className="workflows-run-card-main">
+                        <span className="workflows-run-card-name">{idx + 1}. {wf.name}</span>
+                        <span className="workflows-run-card-meta">
+                          {wf.steps.length} step{wf.steps.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                      <button
+                        className="icon-btn sm"
+                        onClick={() => removeQueuedWorkflow(wf.id)}
+                        aria-label="Remove from queue"
+                        title="Remove from queue"
+                        disabled={queueRunning && queueBusy}
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="workflows-runs-section">
+              <div className="workflows-runs-section-title">Active</div>
+              {activeRunList.length === 0 ? (
+                <div className="workflows-runs-empty">No active workflow runs.</div>
+              ) : (
+                <div className="workflows-runs-list">
+                  {activeRunList.map((run) => {
+                    const pos = Math.min(run.currentStepIndex + 1, run.totalSteps);
+                    const pct = run.totalSteps > 0 ? Math.round((pos / run.totalSteps) * 100) : 0;
+                    return (
+                      <div key={run.id} className="workflows-run-card active">
+                        <div className="workflows-run-card-main">
+                          <span className="workflows-run-card-name">{run.workflowName}</span>
+                          <span className="workflows-run-card-meta">
+                            Step {pos}/{run.totalSteps} · {pct}%
+                          </span>
+                          <div className="workflows-run-progress" aria-hidden>
+                            <span style={{ width: `${pct}%` }} />
+                          </div>
+                        </div>
+                        <button
+                          className="icon-btn sm danger"
+                          onClick={() => stopRun(run.id)}
+                          aria-label="Stop workflow run"
+                          title="Stop workflow run"
+                        >
+                          <Square size={10} fill="currentColor" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </aside>
         </div>
         {error && (
           <ErrorToast message={error} onDismiss={() => setError(null)} />
