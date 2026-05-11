@@ -151,6 +151,27 @@ export async function branchIsAncestorOfHead(
   return r.code === 0;
 }
 
+// Returns true if the project repo's current HEAD is already an ancestor of
+// the worktree branch's HEAD — i.e., the worktree already incorporates every
+// commit that's on main. When true, a fresh `git merge main` in the worktree
+// would be a no-op, and the branch can be fast-forwarded into main directly
+// without re-merging. Used to short-circuit the "re-sync" path after a
+// conflict resolver has committed and main hasn't moved since.
+export async function mainIsAncestorOfWorktree(
+  repoRoot: string,
+  worktreePath: string,
+): Promise<boolean> {
+  const mainHead = await exec('git', ['rev-parse', 'HEAD'], repoRoot);
+  if (mainHead.code !== 0 || !mainHead.stdout.trim()) return false;
+  const sha = mainHead.stdout.trim();
+  const r = await exec(
+    'git',
+    ['merge-base', '--is-ancestor', sha, 'HEAD'],
+    worktreePath,
+  );
+  return r.code === 0;
+}
+
 export async function listConflictedFiles(repoRoot: string): Promise<string[]> {
   const conflicts = await exec(
     'git',

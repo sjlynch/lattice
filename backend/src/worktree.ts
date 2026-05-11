@@ -31,6 +31,7 @@ export {
   gitDirExists,
   assertGitDirIntact,
   parseWorktreesPorcelain,
+  mainIsAncestorOfWorktree,
   type ParsedWorktree,
 } from './worktree/state.js';
 

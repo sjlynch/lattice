@@ -59,7 +59,7 @@ export async function ensureLatticeGitignore(repoRoot: string): Promise<void> {
 // without a parent, exotic git layout) — the .gitignore path still
 // applies in that case.
 export const LATTICE_REPO_EXCLUDE_MARKER = '# lattice-managed (do not remove)';
-export const LATTICE_REPO_EXCLUDE_ENTRIES = ['.lattice/'] as const;
+export const LATTICE_REPO_EXCLUDE_ENTRIES = ['.lattice/', 'node_modules/'] as const;
 
 export async function ensureLatticeRepoExclude(repoRoot: string): Promise<void> {
   // `--git-common-dir` resolves to the main repo's gitdir even when

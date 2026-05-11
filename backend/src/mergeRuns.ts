@@ -28,6 +28,7 @@ import {
   getActiveRunForProjectFromState,
   getRunFromState,
   notify,
+  signalConflictWaiterInState,
   snapshot,
   subscribeToRunState,
   type MergeRun,
@@ -57,6 +58,15 @@ export function getActiveRunForProject(projectPath: string): MergeRun | null {
 
 export function cancelRun(id: string): boolean {
   return cancelRunInState(runState, id);
+}
+
+// Called by /complete (and /merged) after a resolver Claude finalizes a
+// conflict task. Unblocks the in-process merge run that spawned the resolver
+// so it can continue to the next task with an up-to-date main HEAD.
+// Returns true if a waiter was signalled; false means the run was killed
+// by a backend restart and the caller should start a fresh run instead.
+export function signalConflictWaiter(taskId: string): boolean {
+  return signalConflictWaiterInState(runState, taskId);
 }
 
 async function runTeardown(

@@ -3,6 +3,7 @@ import {
   finalizeMergedTask,
   gitDirExists,
   isMidMerge,
+  mainIsAncestorOfWorktree,
   mergeWorktreeInRepo,
   projectGit,
   writeMergeInstructions,
@@ -12,7 +13,13 @@ import { listConflictedFiles } from '../worktree/state.js';
 import { getTask, updateTask, type Task } from '../tasks.js';
 import { release, tryAcquire } from '../mergeLocks.js';
 import { proxyCreateSession } from '../terminalProxy.js';
-import { notify, snapshot, type MergeRun, type RunState } from './state.js';
+import {
+  notify,
+  registerConflictWaiter,
+  snapshot,
+  type MergeRun,
+  type RunState,
+} from './state.js';
 
 export type ProcessTargetContext = {
   projectPath: string;
@@ -169,6 +176,22 @@ async function handleMergeConflict(
     conflictedFiles: result.conflictedFiles,
     serverId: 'id' in sess ? sess.id : undefined,
   });
+
+  // Fix 2: block the run worker until the resolver's Stop hook fires and
+  // /complete signals us. This keeps conflict resolution sequential so each
+  // subsequent task's merge sees the latest main HEAD — preventing the
+  // "stale resolution" race where resolver B commits against main@v1 and
+  // resolver A's finalize has already advanced main to v2 with overlapping
+  // changes, forcing a second conflict round.
+  //
+  // The signal comes from /complete (via signalConflictWaiter) after
+  // finalizeMergedTask succeeds, or after a re-sync conflict re-queues the
+  // task, or from cancelRunInState on explicit cancellation. In all cases
+  // the run simply continues to the next task; run.cancelRequested is the
+  // definitive halt signal.
+  console.log(`[merge-run] waiting for conflict resolver on task ${task.id}...`);
+  await registerConflictWaiter(runCtx.state, run.id, task.id);
+  console.log(`[merge-run] conflict resolver done for task ${task.id} — resuming run`);
 }
 
 export async function processTarget(
@@ -212,8 +235,10 @@ export async function processTarget(
   //     resolver session and re-emit the conflict event.
   //   - Worktree is NOT mid-merge (resolver finished and committed,
   //     but finalize was interrupted — e.g. server restart, FF race).
-  //     Fall through and let mergeWorktreeInRepo detect the merge is
-  //     already done; the path returns `clean` and we finalize.
+  //     Fix 1: check whether main is already incorporated into the branch.
+  //     If so, finalize directly (no re-merge needed). If not (main
+  //     advanced since the resolver committed), fall through to the
+  //     normal merge path which will re-merge main into the branch.
   // Old behavior was a flat skip, which left conflict tasks stranded
   // forever once the run loop exited.
   if (task.conflict) {
@@ -234,6 +259,66 @@ export async function processTarget(
     console.log(
       `[merge-run] task ${task.id} flagged conflict but worktree is clean — re-syncing`,
     );
+
+    // Fix 1: if main is already an ancestor of the worktree branch HEAD,
+    // the resolver committed against the current main and nothing else has
+    // advanced main since. Skip the re-merge and finalize directly — the
+    // re-merge would be a no-op and can spuriously conflict if main moved
+    // due to a concurrent backend restart (the Lattice-on-itself scenario).
+    let mainAlreadyMerged = false;
+    try {
+      mainAlreadyMerged = await mainIsAncestorOfWorktree(
+        task.projectPath,
+        task.worktreePath,
+      );
+    } catch (err) {
+      console.warn(
+        `[merge-run] ancestor check for ${task.id} failed (will re-merge): ${(err as Error).message}`,
+      );
+    }
+
+    if (mainAlreadyMerged) {
+      console.log(
+        `[merge-run] task ${task.id}: main already incorporated in branch — finalizing directly`,
+      );
+      if (!tryAcquire(task.id)) {
+        console.warn(`[merge-run] task ${task.id} lock held — skipping`);
+        run.errored.push({
+          taskId: task.id,
+          error: 'merge lock held by another caller; skipped',
+        });
+      } else {
+        try {
+          await handleCleanMerge(task, run, runCtx);
+        } catch (err) {
+          console.error(`[merge-run] uncaught error finalizing ${task.id}:`, err);
+          run.errored.push({
+            taskId: task.id,
+            error: (err as Error).message ?? 'unknown error',
+          });
+        } finally {
+          release(task.id);
+        }
+      }
+      run.processed += 1;
+      run.current = undefined;
+      notify(runCtx.state, { type: 'progress', run: snapshot(run) });
+      console.log(`[merge-run] progress: ${run.processed}/${run.total} (merged=${run.merged.length} conflicts=${run.conflicted.length} errors=${run.errored.length})`);
+      const integrityEarly = await checkRepoIntegrity(runCtx.projectPath, runCtx.baselineHead);
+      if (!integrityEarly.ok) {
+        console.error(
+          `[merge-run] !!! INTEGRITY CHECK FAILED after task ${task.id}: ${integrityEarly.reason}. ` +
+            `HALTING RUN — ${run.total - run.processed} task(s) left at ready_to_merge. ` +
+            `Inspect the project repo before retrying.`,
+        );
+        run.errored.push({ taskId: '(run)', error: `halted after ${task.id}: ${integrityEarly.reason}` });
+        run.cancelRequested = true;
+        return 'halt';
+      }
+      return run.cancelRequested ? 'halt' : 'continue';
+    }
+    // main has advanced since the resolver committed; fall through to the
+    // normal merge path to absorb the new commits (may or may not conflict).
   }
 
   if (!tryAcquire(task.id)) {
