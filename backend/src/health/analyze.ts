@@ -21,7 +21,8 @@ const TS_EXTS = new Set(['.ts', '.tsx']);
 const JS_EXTS = new Set(['.js', '.jsx', '.mjs', '.cjs']);
 const PY_EXTS = new Set(['.py', '.pyi']);
 
-const AST_MAX_BYTES = 1024 * 1024;
+export const AST_MAX_BYTES = 1024 * 1024;
+export const LARGE_FILE_LOC_THRESHOLD = 800;
 
 function languageForExt(ext: string): HealthLanguage {
   if (TS_EXTS.has(ext)) return 'typescript';
@@ -60,7 +61,7 @@ function analyzeFallback(content: string, ext: string, totalLoc: number): Analyz
   const commentRatio = denom > 0 ? lineCounts.comment / denom : 0;
 
   const smells = countUniversalSmells(content, syntax);
-  if (totalLoc > 800) bump(smells, 'large_file');
+  if (totalLoc > LARGE_FILE_LOC_THRESHOLD) bump(smells, 'large_file');
   const smellList = smellsToArray(smells);
   let smellCount = 0;
   for (const s of smellList) smellCount += s.count;
@@ -273,7 +274,7 @@ function computeFromTree(
   for (const [id, count] of universal) bump(smells, id, count);
 
   // Aggregate-derived smells (size thresholds).
-  if (totalLoc > 800) bump(smells, 'large_file');
+  if (totalLoc > LARGE_FILE_LOC_THRESHOLD) bump(smells, 'large_file');
   if (namedFunctionCount > 20) bump(smells, 'high_function_count');
   if (analysis.classCount > 1) {
     bump(smells, 'multiple_classes', analysis.classCount - 1);

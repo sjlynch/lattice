@@ -1,50 +1,25 @@
 import os from 'node:os';
 import fs from 'node:fs';
-import { spawn } from 'node:child_process';
 import * as pty from 'node-pty';
 import type { WebSocket } from 'ws';
 import { ensureLatticeApiDoc } from './latticeApiDocs.js';
 import { ensureClaudeConfigValid } from './claudeConfigGuard.js';
+import { createTerminalSessionId } from './ids.js';
+import { killProcessTreeWindows } from './processTree.js';
 
 const isWindows = os.platform() === 'win32';
-
-// Windows has no process groups, so `pty.kill()` (which closes the conpty
-// and signals the spawned shell) leaves the shell's children — and their
-// children — running. Powershell exits, but `claude` (a node child) keeps
-// going, and after a few run/qa cycles you have dozens of orphan Claude
-// processes munching CPU/RAM.
-//
-// `taskkill /F /T /PID <pid>` walks and force-kills the whole tree. We
-// fire it AFTER pty.kill so the conpty handle is already torn down, then
-// detach so we don't block the caller waiting for taskkill to finish.
-function killProcessTreeWindows(pid: number): void {
-  if (!isWindows || !pid) return;
-  try {
-    const child = spawn('taskkill', ['/F', '/T', '/PID', String(pid)], {
-      windowsHide: true,
-      stdio: 'ignore',
-      detached: true,
-    });
-    // Detach so we don't keep a handle; swallow the inevitable ENOENT/
-    // exit-1 (PID already gone) without polluting the log.
-    child.on('error', () => { /* ignore */ });
-    child.unref();
-  } catch {
-    /* spawn itself failed — process may already be gone */
-  }
-}
 const defaultShell = isWindows
   ? process.env.COMSPEC || 'powershell.exe'
   : process.env.SHELL || 'bash';
 
-const MAX_BUFFER_BYTES = 200_000;
-const INITIAL_COMMAND_DELAY_MS = 250;
+const BUFFER_REPLAY_MAX_BYTES = 200_000;
+const INITIAL_COMMAND_WRITE_DELAY_MS = 250;
 // Hard ceiling on simultaneously-live ptys. Real Lattice usage tops out
 // around a dozen — anything above that is a runaway loop (e.g. a stuck
-// reconnect on the frontend). 50 is generous enough to not bite legit
-// power users while catching a runaway long before it can spawn the
-// 3000+ conhost/pwsh processes that exhaust system memory on Windows.
-const MAX_SESSIONS = 50;
+// reconnect on the frontend). MAX_TERMINAL_SESSIONS is generous enough
+// to not bite legit power users while catching a runaway long before it
+// can spawn enough conhost/pwsh processes to exhaust memory on Windows.
+const MAX_TERMINAL_SESSIONS = 50;
 
 type Session = {
   id: string;
@@ -69,23 +44,12 @@ type Session = {
 };
 
 const sessions = new Map<string, Session>();
-let sessionCounter = 0;
-
-function newId(): string {
-  // Counter + timestamp so two sessions created in the same millisecond
-  // can never collide. Math.random() suffix keeps the id short while
-  // still being unguessable at a glance.
-  sessionCounter += 1;
-  return `tty_${Date.now()}_${sessionCounter}_${Math.random()
-    .toString(36)
-    .slice(2, 6)}`;
-}
 
 function appendBuffer(session: Session, data: string) {
   session.buffer.push(data);
   session.bufferSize += data.length;
   while (
-    session.bufferSize > MAX_BUFFER_BYTES &&
+    session.bufferSize > BUFFER_REPLAY_MAX_BYTES &&
     session.buffer.length > 1
   ) {
     const removed = session.buffer.shift();
@@ -111,41 +75,28 @@ type CreateOpts = {
   projectPath?: string;
 };
 
-function createSession(opts: CreateOpts): Session | { error: string } {
-  // Hard cap so a runaway client (e.g. a stuck reconnect loop) can't
-  // spawn unbounded ptys. Each pty on Windows is ~3 OS processes
-  // (conhost + pwsh + node child); without this cap a runaway took the
-  // whole machine out of memory before any human noticed.
-  if (sessions.size >= MAX_SESSIONS) {
-    console.warn(
-      `[terminal] refusing createSession: ${sessions.size} live sessions (cap ${MAX_SESSIONS}). Likely a runaway client.`,
-    );
-    return {
-      error: `Too many active terminal sessions (${sessions.size}/${MAX_SESSIONS}). Close some terminals before opening another.`,
-    };
-  }
+type SessionLaunchContext = {
+  shell: string;
+  cwd: string;
+  cols: number;
+  rows: number;
+  projectPath: string;
+  env: { [key: string]: string };
+  docPath: string | null;
+};
+
+function buildSessionLaunchContext(
+  opts: CreateOpts,
+): SessionLaunchContext | { error: string } {
   const shell = opts.shell || defaultShell;
-  const cwd = opts.cwd && opts.cwd.trim() ? opts.cwd : os.homedir();
+  const requestedCwd = opts.cwd?.trim();
+  const cwd = requestedCwd || os.homedir();
   const cols = opts.cols ?? 80;
   const rows = opts.rows ?? 24;
   const projectPath = opts.projectPath?.trim() || cwd;
 
-  // Refuse to spawn into a non-existent cwd. Without this, pty.spawn
-  // succeeds on Windows but the shell exits immediately — and if a
-  // client is reconnecting in a loop (e.g. after a worktree was
-  // deleted), every cycle spawns a doomed shell. The exit closes the
-  // WS, the client reconnects, repeat forever. A simple existence
-  // check turns that infinite loop into a one-shot error.
-  if (opts.cwd && opts.cwd.trim()) {
-    try {
-      const stat = fs.statSync(opts.cwd);
-      if (!stat.isDirectory()) {
-        return { error: `cwd is not a directory: ${opts.cwd}` };
-      }
-    } catch {
-      return { error: `cwd does not exist: ${opts.cwd}` };
-    }
-  }
+  const cwdError = validateRequestedCwd(requestedCwd);
+  if (cwdError) return cwdError;
 
   // Plant breadcrumbs so AI agents running inside this pty can discover the
   // Lattice API without any user-side config. The vars only exist in this
@@ -158,38 +109,109 @@ function createSession(opts: CreateOpts): Session | { error: string } {
   const docPath = ensureLatticeApiDoc(projectPath, apiPort);
   if (docPath) latticeEnv.LATTICE_DOCS = docPath;
 
+  return {
+    shell,
+    cwd,
+    cols,
+    rows,
+    projectPath,
+    env: { ...(process.env as { [key: string]: string }), ...latticeEnv },
+    docPath,
+  };
+}
+
+function validateRequestedCwd(cwd: string | undefined): { error: string } | null {
+  // Refuse to spawn into a non-existent cwd. Without this, pty.spawn
+  // succeeds on Windows but the shell exits immediately — and if a
+  // client is reconnecting in a loop (e.g. after a worktree was
+  // deleted), every cycle spawns a doomed shell. The exit closes the
+  // WS, the client reconnects, repeat forever. A simple existence
+  // check turns that infinite loop into a one-shot error.
+  if (!cwd) return null;
+  try {
+    const stat = fs.statSync(cwd);
+    if (!stat.isDirectory()) {
+      return { error: `cwd is not a directory: ${cwd}` };
+    }
+  } catch {
+    return { error: `cwd does not exist: ${cwd}` };
+  }
+  return null;
+}
+
+function addLatticeBanner(session: Session, docPath: string | null): void {
+  // Skill-style hint: a single dim line that names the trigger keywords and
+  // points at the on-disk docs. Keeps the always-on context cost to one
+  // sentence; the body of the API reference is loaded on demand if (and
+  // only if) the AI agent follows the hint and reads $LATTICE_DOCS.
+  // Only emitted for Lattice-managed projects (those that already have a
+  // .lattice/ directory, hence a docPath).
+  if (!docPath) return;
+  const banner = buildLatticeBanner();
+  session.buffer.push(banner);
+  session.bufferSize += banner.length;
+}
+
+function scheduleInitialCommand(term: pty.IPty, initialCommand?: string): void {
+  if (!initialCommand) return;
+  setTimeout(() => {
+    try {
+      term.write(initialCommand + '\r');
+    } catch {
+      /* ignore */
+    }
+  }, INITIAL_COMMAND_WRITE_DELAY_MS);
+}
+
+function createSession(opts: CreateOpts): Session | { error: string } {
+  // Hard cap so a runaway client (e.g. a stuck reconnect loop) can't
+  // spawn unbounded ptys. Each pty on Windows is ~3 OS processes
+  // (conhost + pwsh + node child); without this cap a runaway took the
+  // whole machine out of memory before any human noticed.
+  if (sessions.size >= MAX_TERMINAL_SESSIONS) {
+    console.warn(
+      `[terminal] refusing createSession: ${sessions.size} live sessions (cap ${MAX_TERMINAL_SESSIONS}). Likely a runaway client.`,
+    );
+    return {
+      error: `Too many active terminal sessions (${sessions.size}/${MAX_TERMINAL_SESSIONS}). Close some terminals before opening another.`,
+    };
+  }
+
+  const context = buildSessionLaunchContext(opts);
+  if ('error' in context) return context;
+
   let term: pty.IPty;
   try {
-    term = pty.spawn(shell, [], {
+    term = pty.spawn(context.shell, [], {
       name: 'xterm-256color',
-      cols,
-      rows,
-      cwd,
-      env: { ...(process.env as { [key: string]: string }), ...latticeEnv },
+      cols: context.cols,
+      rows: context.rows,
+      cwd: context.cwd,
+      env: context.env,
     });
   } catch (err) {
     return {
-      error: `Failed to spawn shell ${shell}: ${(err as Error).message}`,
+      error: `Failed to spawn shell ${context.shell}: ${(err as Error).message}`,
     };
   }
 
   const session: Session = {
-    id: newId(),
+    id: createTerminalSessionId(),
     pty: term,
     buffer: [],
     bufferSize: 0,
-    cols,
-    rows,
-    cwd,
-    shell,
-    projectPath,
+    cols: context.cols,
+    rows: context.rows,
+    cwd: context.cwd,
+    shell: context.shell,
+    projectPath: context.projectPath,
     subscribers: new Set(),
     createdAt: Date.now(),
     killing: false,
   };
   sessions.set(session.id, session);
   console.log(
-    `[terminal] created ${session.id} (cwd=${cwd}, shell=${shell}, pid=${term.pid})`,
+    `[terminal] created ${session.id} (cwd=${session.cwd}, shell=${session.shell}, pid=${term.pid})`,
   );
 
   term.onData((data) => {
@@ -211,27 +233,8 @@ function createSession(opts: CreateOpts): Session | { error: string } {
     sessions.delete(session.id);
   });
 
-  // Skill-style hint: a single dim line that names the trigger keywords and
-  // points at the on-disk docs. Keeps the always-on context cost to one
-  // sentence; the body of the API reference is loaded on demand if (and
-  // only if) the AI agent follows the hint and reads $LATTICE_DOCS.
-  // Only emitted for Lattice-managed projects (those that already have a
-  // .lattice/ directory, hence a docPath).
-  if (docPath) {
-    const banner = buildLatticeBanner();
-    session.buffer.push(banner);
-    session.bufferSize += banner.length;
-  }
-
-  if (opts.initialCommand) {
-    setTimeout(() => {
-      try {
-        term.write(opts.initialCommand! + '\r');
-      } catch {
-        /* ignore */
-      }
-    }, INITIAL_COMMAND_DELAY_MS);
-  }
+  addLatticeBanner(session, context.docPath);
+  scheduleInitialCommand(term, opts.initialCommand);
 
   return session;
 }
@@ -254,8 +257,8 @@ function buildLatticeBanner(): string {
 // frontend can lazy-mount the <TerminalPane> instead of having to mount it
 // immediately just to trigger session creation via WS attach. The pty starts
 // running (initialCommand fires) regardless of whether anyone connects; the
-// 200 KB rolling buffer captures output for replay when a subscriber later
-// attaches via `attachTerminal({ id })`.
+// BUFFER_REPLAY_MAX_BYTES rolling buffer captures output for replay when a
+// subscriber later attaches via `attachTerminal({ id })`.
 export function precreateSession(
   opts: CreateOpts,
 ): { id: string } | { error: string } {
@@ -273,68 +276,90 @@ export type AttachOpts = {
   projectPath?: string;
 };
 
-export function attachTerminal(ws: WebSocket, opts: AttachOpts) {
-  let session: Session | null = null;
-  if (opts.id) {
-    session = sessions.get(opts.id) ?? null;
-    if (!session) {
-      // Stale id (terminal-server restarted, or session was killed via
-      // worktree cleanup, or pty exited and was deleted). DO NOT silently
-      // spawn a fresh pty here — the client's reconnect logic would treat
-      // every WS close as "try again" and we'd produce a runaway:
-      //   client.onclose → client.connect(id) → backend creates new pty
-      //   → pty doomed (cwd may be gone, or user expects different state)
-      //   → exit → client.onclose → repeat, forever, ~3 OS procs / cycle.
-      // Sending session_lost lets the frontend mark the terminal as gone
-      // and stop reconnecting. If the user wants a fresh shell they can
-      // close the tab and open a new one — that's an explicit, bounded
-      // action with no feedback loop.
-      console.warn(`[terminal] attach with unknown id ${opts.id} — session_lost`);
-      try {
-        ws.send(
-          JSON.stringify({
-            type: 'session_lost',
-            message: 'Terminal session no longer exists. Close this tab and start a new one if you need a fresh shell.',
-          }),
-        );
-        ws.close();
-      } catch {
-        /* ignore */
-      }
-      return;
-    }
-  }
+type AttachResult = {
+  session: Session;
+  replayed: boolean;
+};
 
-  let replayed = false;
+function attachNewSession(ws: WebSocket, opts: AttachOpts): AttachResult | null {
+  const result = createSession(opts);
+  if ('error' in result) {
+    try {
+      ws.send(JSON.stringify({ type: 'error', message: result.error }));
+      ws.close();
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+  return { session: result, replayed: false };
+}
+
+function attachExistingSession(
+  ws: WebSocket,
+  opts: AttachOpts & { id: string },
+): AttachResult | null {
+  const session = sessions.get(opts.id) ?? null;
   if (!session) {
-    const result = createSession(opts);
-    if ('error' in result) {
-      try {
-        ws.send(JSON.stringify({ type: 'error', message: result.error }));
-        ws.close();
-      } catch {
-        /* ignore */
-      }
-      return;
-    }
-    session = result;
-  } else {
-    replayed = true;
-    if (
-      opts.cols &&
-      opts.rows &&
-      (opts.cols !== session.cols || opts.rows !== session.rows)
-    ) {
-      try {
-        session.pty.resize(opts.cols, opts.rows);
-        session.cols = opts.cols;
-        session.rows = opts.rows;
-      } catch {
-        /* ignore */
-      }
-    }
+    sendSessionLost(ws, opts.id);
+    return null;
   }
 
+  resizeSessionForAttach(session, opts);
+  return { session, replayed: true };
+}
+
+function sendSessionLost(ws: WebSocket, id: string): void {
+  // Stale id (terminal-server restarted, or session was killed via
+  // worktree cleanup, or pty exited and was deleted). DO NOT silently
+  // spawn a fresh pty here — the client's reconnect logic would treat
+  // every WS close as "try again" and we'd produce a runaway:
+  //   client.onclose → client.connect(id) → backend creates new pty
+  //   → pty doomed (cwd may be gone, or user expects different state)
+  //   → exit → client.onclose → repeat, forever, ~3 OS procs / cycle.
+  // Sending session_lost lets the frontend mark the terminal as gone
+  // and stop reconnecting. If the user wants a fresh shell they can
+  // close the tab and open a new one — that's an explicit, bounded
+  // action with no feedback loop.
+  console.warn(`[terminal] attach with unknown id ${id} — session_lost`);
+  try {
+    ws.send(
+      JSON.stringify({
+        type: 'session_lost',
+        message: 'Terminal session no longer exists. Close this tab and start a new one if you need a fresh shell.',
+      }),
+    );
+    ws.close();
+  } catch {
+    /* ignore */
+  }
+}
+
+function resizeSessionForAttach(session: Session, opts: AttachOpts): void {
+  if (
+    !opts.cols ||
+    !opts.rows ||
+    (opts.cols === session.cols && opts.rows === session.rows)
+  ) {
+    return;
+  }
+
+  try {
+    session.pty.resize(opts.cols, opts.rows);
+    session.cols = opts.cols;
+    session.rows = opts.rows;
+  } catch {
+    /* ignore */
+  }
+}
+
+export function attachTerminal(ws: WebSocket, opts: AttachOpts) {
+  const attached = opts.id
+    ? attachExistingSession(ws, { ...opts, id: opts.id })
+    : attachNewSession(ws, opts);
+  if (!attached) return;
+
+  const { session, replayed } = attached;
   session.subscribers.add(ws);
 
   try {
@@ -366,7 +391,6 @@ export function attachTerminal(ws: WebSocket, opts: AttachOpts) {
   }
 
   ws.on('message', (raw) => {
-    if (!session) return;
     let msg: { type: string; data?: string; cols?: number; rows?: number };
     try {
       msg = JSON.parse(raw.toString());
@@ -397,7 +421,7 @@ export function attachTerminal(ws: WebSocket, opts: AttachOpts) {
   });
 
   ws.on('close', () => {
-    if (session) session.subscribers.delete(ws);
+    session.subscribers.delete(ws);
     // Intentional: do NOT kill the pty when a client disconnects. The
     // session lives until /api/terminals/:id is DELETEd or the pty exits
     // on its own — that is what makes refresh-recovery work.
