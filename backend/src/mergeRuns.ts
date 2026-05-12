@@ -125,6 +125,7 @@ export async function startMergeRun(
   backendOrigin: string,
 ): Promise<MergeRun> {
   projectPath = canonicalProjectPath(projectPath);
+  await runState.loadProject(projectPath);
   for (const r of runState.runs.values()) {
     if (r.projectPath === projectPath && r.status === 'running') {
       throw new Error('A merge run is already in progress for this project.');
