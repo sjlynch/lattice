@@ -4,7 +4,7 @@ export type WorkflowTemplate = {
   id: string;
   name: string;
   description: string;
-  steps: Omit<WorkflowStep, 'id'>[];
+  steps: (Omit<WorkflowStep, 'id' | 'harness'> & Partial<Pick<WorkflowStep, 'harness'>>)[];
 };
 
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [

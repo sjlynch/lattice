@@ -21,7 +21,7 @@ const NODE_ROWS: SliderRow[] = [
     key: 'labelSpread',
     label: 'Label spread',
     min: 0.5,
-    max: 3,
+    max: 25,
     step: 0.1,
     format: (v) => `${v.toFixed(1)}×`,
   },
