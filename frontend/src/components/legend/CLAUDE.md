@@ -6,8 +6,9 @@ renders is driven by the App-level `healthMode` prop.
 
 ## Files
 
-- `HealthLegendPanel.tsx` — the static health-component breakdown shown while `h`
-  is held: each metric's weight, thresholds, and what it measures
+- `HealthLegendPanel.tsx` — the health legend panel layout shown while `h` is held
+- `healthComponents.ts` — static health-component weights, thresholds, and detail copy
+- `HealthInfoIcon.tsx` — info icon and portal-rendered popover for each health row
 - `ShapePreview.tsx` — small canvas preview of an extension's sprite shape, also
   reused inside the regular Legend's per-extension rows
 
