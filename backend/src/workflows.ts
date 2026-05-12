@@ -16,6 +16,7 @@ function workflowsFile(projectPath: string): string {
 }
 
 export type WorkflowStepMode = 'sequential' | 'parallel';
+export type WorkflowStepHarness = 'claude' | 'pi' | 'codex';
 
 export type WorkflowStep = {
   id: string;
@@ -26,6 +27,7 @@ export type WorkflowStep = {
   // is intentional — UI can author parallel steps so the data is ready when
   // the executor lands.
   mode: WorkflowStepMode;
+  harness: WorkflowStepHarness;
 };
 
 export type Workflow = {
@@ -50,7 +52,11 @@ async function ensureLoaded(projectPath: string): Promise<void> {
     if (Array.isArray(parsed)) {
       // Canonicalize the embedded projectPath in each workflow so older
       // entries written under a non-canonical path get aligned with the cache key.
-      for (const w of parsed) w.projectPath = canonicalProjectPath(w.projectPath);
+      // Also normalize steps so older definitions gain newly-added fields.
+      for (const w of parsed) {
+        w.projectPath = canonicalProjectPath(w.projectPath);
+        w.steps = normalizeSteps(w.steps);
+      }
       cache.set(projectPath, parsed);
     }
   } catch {
@@ -98,6 +104,7 @@ function normalizeSteps(steps: WorkflowStep[] | undefined): WorkflowStep[] {
     title: typeof s.title === 'string' ? s.title : '',
     prompt: typeof s.prompt === 'string' ? s.prompt : '',
     mode: s.mode === 'parallel' ? 'parallel' : 'sequential',
+    harness: s.harness === 'pi' || s.harness === 'codex' ? s.harness : 'claude',
   }));
 }
 

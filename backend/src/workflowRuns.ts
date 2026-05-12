@@ -1,10 +1,11 @@
 // Workflow step runner.
 //
-// Each step spawns a Claude Code terminal session in a lightweight step
+// Each step spawns a selected agent terminal session in a lightweight step
 // directory under .lattice/workflow-steps/<runId>/step-<N>/. The directory
-// contains WORKFLOW_STEP.md (step prompt + task board API docs) and a Stop
-// hook that POSTs back when Claude exits. Sequential advancement is driven
-// entirely by those callbacks — not by watching task state.
+// contains WORKFLOW_STEP.md (step prompt + task board API docs) and completion
+// hooks/instructions that POST back when the agent exits or finishes.
+// Sequential advancement is driven entirely by those callbacks — not by
+// watching task state.
 //
 // 'parallel' steps are accepted in the schema but executed sequentially —
 // the fan-out executor is intentionally deferred.
@@ -15,6 +16,7 @@ import { getWorkflow, type Workflow } from './workflows.js';
 import { proxyCreateSession } from './terminalProxy.js';
 import { canonicalProjectPath } from './projectPath.js';
 import { installClaudeStopHook } from './claudeStopHook.js';
+import { buildClaudeCommand, buildCodexCommand, buildPiCommand } from './worktree/commands.js';
 import { renderHelperScript } from './workflowRuns/renderHelperScript.js';
 
 export type WorkflowRunStatus = 'running' | 'completed' | 'errored' | 'cancelled';
@@ -82,11 +84,27 @@ export function getActiveRunsForProject(projectPath: string): WorkflowRun[] {
 
 function renderStepMarkdown(
   wf: Workflow,
+  runId: string,
   stepIndex: number,
   backendOrigin: string,
 ): string {
   const step = wf.steps[stepIndex];
   const encodedProject = encodeURIComponent(wf.projectPath);
+  const completeUrl = `${backendOrigin}/api/workflow-runs/${runId}/steps/${stepIndex}/complete`;
+  const completionInstructions =
+    step.harness === 'claude'
+      ? [
+          'After creating all the tasks described above, simply stop. Your session',
+          'will be finalized automatically and the next workflow step (if any) will',
+          'be queued.',
+        ]
+      : [
+          'After creating all the tasks described above, POST the completion callback',
+          'yourself as the final action so Lattice can queue the next workflow step:',
+          '```bash',
+          `curl -s -m 5 -X POST ${completeUrl}`,
+          '```',
+        ];
   return [
     `# Workflow Step ${stepIndex + 1} of ${wf.steps.length}: ${step.title}`,
     '',
@@ -139,10 +157,38 @@ function renderStepMarkdown(
     '',
     '## When you are done',
     '',
-    'After creating all the tasks described above, simply stop. Your session',
-    'will be finalized automatically and the next workflow step (if any) will',
-    'be queued.',
+    ...completionInstructions,
   ].join('\n');
+}
+
+function buildWorkflowStepCommand(stepFile: string, harness: Workflow['steps'][number]['harness']): string {
+  if (harness === 'pi') return buildPiCommand(stepFile);
+  if (harness === 'codex') return buildCodexCommand(stepFile);
+  return buildClaudeCommand(stepFile);
+}
+
+async function installPiWorkflowCompletionExtension(
+  stepDir: string,
+  callbackUrl: string,
+): Promise<void> {
+  const extDir = path.join(stepDir, '.pi', 'extensions');
+  await fs.mkdir(extDir, { recursive: true });
+  await fs.writeFile(
+    path.join(extDir, 'lattice-workflow-complete.ts'),
+    `// Lattice-managed — reports workflow-step completion when the Pi session exits.
+export default function (pi) {
+  pi.on("session_shutdown", async (event) => {
+    if (event && event.reason && event.reason !== "quit") return;
+    try {
+      await fetch(${JSON.stringify(callbackUrl)}, { method: "POST" });
+    } catch {
+      // best-effort, same as the curl-based Stop hook
+    }
+  });
+}
+`,
+    'utf8',
+  );
 }
 
 async function spawnWorkflowStep(
@@ -161,21 +207,22 @@ async function spawnWorkflowStep(
   await fs.mkdir(stepDir, { recursive: true });
 
   const stepFile = path.join(stepDir, 'WORKFLOW_STEP.md');
-  await fs.writeFile(stepFile, renderStepMarkdown(wf, stepIndex, backendOrigin), 'utf8');
+  await fs.writeFile(stepFile, renderStepMarkdown(wf, run.id, stepIndex, backendOrigin), 'utf8');
 
-  // Helper script so Claude can create tasks without shell quoting issues.
+  // Helper script so the agent can create tasks without shell quoting issues.
   await fs.writeFile(
     path.join(stepDir, 'create-task.cjs'),
     renderHelperScript(wf.projectPath, backendOrigin),
     'utf8',
   );
 
-  await installClaudeStopHook(
-    stepDir,
-    `${backendOrigin}/api/workflow-runs/${run.id}/steps/${stepIndex}/complete`,
-  );
+  const completionUrl = `${backendOrigin}/api/workflow-runs/${run.id}/steps/${stepIndex}/complete`;
+  await installClaudeStopHook(stepDir, completionUrl);
+  if (wf.steps[stepIndex].harness === 'pi') {
+    await installPiWorkflowCompletionExtension(stepDir, completionUrl);
+  }
 
-  const command = `claude --dangerously-skip-permissions "Please read WORKFLOW_STEP.md and complete the workflow step described in it."`;
+  const command = buildWorkflowStepCommand(stepFile, wf.steps[stepIndex].harness);
 
   // Pre-spawn the pty so the frontend can lazy-mount its terminal pane and
   // not burn a WebGL context for a step the user may not click into.

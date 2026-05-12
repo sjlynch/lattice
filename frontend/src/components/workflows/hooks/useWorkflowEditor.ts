@@ -48,7 +48,7 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
       workflowId: null,
       name: '',
       steps: [
-        { id: localStepId(), title: 'Step 1', prompt: '', mode: 'sequential' },
+        { id: localStepId(), title: 'Step 1', prompt: '', mode: 'sequential', harness: 'claude' },
       ],
       dirty: true,
     });
@@ -66,7 +66,7 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
       const created = await apiCreateWorkflow(
         activeFolder,
         t.name,
-        t.steps.map((s) => ({ ...s, id: localStepId() })),
+        t.steps.map((s) => ({ ...s, id: localStepId(), harness: s.harness ?? 'claude' })),
       );
       setEditor(fromWorkflow(created));
     } catch (err) {
@@ -82,6 +82,7 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
       ...s,
       title: s.title.trim(),
       prompt: s.prompt,
+      harness: s.harness ?? 'claude',
     }));
     try {
       if (editor.workflowId) {
@@ -144,6 +145,7 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
           title: `Step ${cur.steps.length + 1}`,
           prompt: '',
           mode: 'sequential',
+          harness: 'claude',
         },
       ],
       dirty: true,
@@ -168,6 +170,7 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
             title: p.title,
             prompt: p.prompt,
             mode: 'sequential',
+            harness: 'claude',
           },
         ],
         dirty: true,
