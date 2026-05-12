@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, GripVertical, X } from 'lucide-react';
-import type { WorkflowStep, WorkflowStepMode } from '../../api';
+import type { HarnessAvailability, WorkflowStep, WorkflowStepHarness, WorkflowStepMode } from '../../api';
 
 export const STEP_DRAG_MIME = 'application/x-lattice-workflow-step';
 
@@ -14,6 +14,7 @@ export function StepRow({
   step,
   index,
   collapsed,
+  harnessAvail,
   onChange,
   onRemove,
   onReorder,
@@ -22,6 +23,7 @@ export function StepRow({
   step: WorkflowStep;
   index: number;
   collapsed: boolean;
+  harnessAvail: HarnessAvailability;
   onChange: (patch: Partial<WorkflowStep>) => void;
   onRemove: () => void;
   onReorder: (fromIdx: number, toIdx: number) => void;
@@ -67,6 +69,9 @@ export function StepRow({
     onReorder(fromIdx, toIdx);
   }
 
+  const selectedHarness = step.harness ?? 'claude';
+  const showHarnessSelect = harnessAvail.pi || harnessAvail.codex || selectedHarness !== 'claude';
+
   return (
     <div
       className={`workflows-step ${dragOver ? `drop-${dragOver}` : ''} ${collapsed ? 'collapsed' : ''}`}
@@ -107,6 +112,18 @@ export function StepRow({
             <option value="sequential">sequential</option>
             <option value="parallel">parallel</option>
           </select>
+          {showHarnessSelect && (
+            <select
+              className="workflows-step-harness"
+              value={selectedHarness}
+              onChange={(e) => onChange({ harness: e.target.value as WorkflowStepHarness })}
+              title="Agent harness for this workflow step"
+            >
+              <option value="claude">Claude</option>
+              {(harnessAvail.pi || selectedHarness === 'pi') && <option value="pi">Pi</option>}
+              {(harnessAvail.codex || selectedHarness === 'codex') && <option value="codex">Codex</option>}
+            </select>
+          )}
           <button
             className="icon-btn sm"
             onClick={onRemove}
