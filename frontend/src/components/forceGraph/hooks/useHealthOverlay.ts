@@ -65,10 +65,8 @@ export function useHealthOverlay(
   useEffect(() => {
     if (!healthMode) return;
     let rafId = 0;
-    let frameCount = 0;
     const tick = () => {
-      frameCount++;
-      repelLabels(healthLabelRegistry, 55 * settingsRef.current.labelSpread, frameCount);
+      repelLabels(healthLabelRegistry, 55 * settingsRef.current.labelSpread);
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);

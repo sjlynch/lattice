@@ -8,6 +8,11 @@ import { DIR_STYLE, getStyleFor, type ExtStyle, type Shape } from '../../extensi
 import type { GraphNode } from '../../api';
 import { materialFor, spriteFor } from './sprites';
 import type { GraphSettings } from './graphSettings';
+import {
+  disableRaycast,
+  restrictSpriteRaycast,
+  type SpriteUvBounds,
+} from './spritePicking';
 
 // Lines-of-code thresholds for the "z" view. >1000 = red, >600 = yellow,
 // otherwise green. Kept in sync with the legend chip wording.
@@ -25,32 +30,59 @@ export function locColor(loc: number): string {
 // `z` held doesn't allocate a fresh canvas every frame. Capped at 256
 // entries; the oldest entry is disposed and evicted when the cap is hit.
 const MAX_LOC_TEXTURES = 256;
-const labelTextureCache = new Map<string, THREE.CanvasTexture>();
+const LABEL_FONT = 'bold 56px -apple-system, "Segoe UI", Inter, Roboto, sans-serif';
+const LABEL_STROKE_WIDTH = 10;
+const LABEL_H = 96;
+const LABEL_PAD_X = 18;
+const MIN_NUMERIC_LABEL_W = 80;
 
-function buildLabelTexture(text: string, color: string): THREE.CanvasTexture {
+type LocLabelTexture = THREE.CanvasTexture & {
+  _aspect?: number;
+  _hitBounds?: SpriteUvBounds;
+};
+
+const labelTextureCache = new Map<string, LocLabelTexture>();
+
+function measuredTextWidth(metrics: TextMetrics): number {
+  const actual = metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight;
+  return Math.ceil(actual > 0 ? actual : metrics.width);
+}
+
+function buildLabelTexture(text: string, color: string): LocLabelTexture {
   const key = `${text}|${color}`;
   const cached = labelTextureCache.get(key);
   if (cached) return cached;
-  const W = 320;
-  const H = 100;
+  const probe = document.createElement('canvas').getContext('2d')!;
+  probe.font = LABEL_FONT;
+  const measured = measuredTextWidth(probe.measureText(text));
+  const visualW = measured + LABEL_STROKE_WIDTH + 2;
+  const W = Math.max(MIN_NUMERIC_LABEL_W, visualW + LABEL_PAD_X * 2);
   const canvas = document.createElement('canvas');
   canvas.width = W;
-  canvas.height = H;
+  canvas.height = LABEL_H;
   const ctx = canvas.getContext('2d')!;
-  ctx.font = 'bold 56px -apple-system, "Segoe UI", Inter, Roboto, sans-serif';
+  ctx.font = LABEL_FONT;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
-  ctx.lineWidth = 10;
+  ctx.lineWidth = LABEL_STROKE_WIDTH;
   ctx.strokeStyle = 'rgba(0,0,0,0.85)';
-  ctx.strokeText(text, W / 2, H / 2);
+  ctx.strokeText(text, W / 2, LABEL_H / 2);
   ctx.fillStyle = color;
-  ctx.fillText(text, W / 2, H / 2);
-  const tex = new THREE.CanvasTexture(canvas);
+  ctx.fillText(text, W / 2, LABEL_H / 2);
+  const tex = new THREE.CanvasTexture(canvas) as LocLabelTexture;
   tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.needsUpdate = true;
+  tex._aspect = W / LABEL_H;
+  const hitW = Math.min(W, visualW + LABEL_PAD_X);
+  tex._hitBounds = {
+    minU: Math.max(0, (W - hitW) / 2 / W),
+    maxU: Math.min(1, 1 - (W - hitW) / 2 / W),
+    minV: 0.12,
+    maxV: 0.88,
+  };
   if (labelTextureCache.size >= MAX_LOC_TEXTURES) {
     const oldest = labelTextureCache.keys().next().value!;
     labelTextureCache.get(oldest)?.dispose();
@@ -59,9 +91,6 @@ function buildLabelTexture(text: string, color: string): THREE.CanvasTexture {
   labelTextureCache.set(key, tex);
   return tex;
 }
-
-// Canvas aspect ratio for label textures (W:H = 320:100 = 3.2).
-const LABEL_ASPECT = 320 / 100;
 // Reference camera distance for the LOC label scale curve. Closer →
 // smaller, farther → larger; a `baseH` parameter tunes the absolute size.
 const LABEL_REF_DIST = 200;
@@ -88,6 +117,7 @@ function makeLabelSprite(
   baseH: number,
 ): THREE.Sprite {
   const tex = buildLabelTexture(text, color);
+  const aspect = tex._aspect ?? 1;
   const mat = new THREE.SpriteMaterial({
     map: tex,
     transparent: true,
@@ -96,7 +126,13 @@ function makeLabelSprite(
   });
   const h = baseH * LOC_LABEL_HEIGHT_MULT;
   const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(h * LABEL_ASPECT, h, 1);
+  sprite.scale.set(h * aspect, h, 1);
+  restrictSpriteRaycast(sprite, tex._hitBounds ?? {
+    minU: 0,
+    maxU: 1,
+    minV: 0,
+    maxV: 1,
+  });
   // Render label on top so it's never occluded by a sibling sprite.
   sprite.renderOrder = 999;
 
@@ -107,7 +143,7 @@ function makeLabelSprite(
     sprite.getWorldPosition(_pos);
     const d = camera.position.distanceTo(_pos);
     const s = Math.max(6, Math.min(100, (d / LABEL_REF_DIST) * h));
-    sprite.scale.set(s * LABEL_ASPECT, s, 1);
+    sprite.scale.set(s * aspect, s, 1);
   };
 
   return sprite;
@@ -155,6 +191,7 @@ export function spriteForLoc(
     opacity: 0.9,
   });
   const line = new THREE.Line(lineGeom, lineMat);
+  disableRaycast(line);
   group.add(line);
 
   const label = makeLabelSprite(String(node.loc), color, settings.labelSize);

@@ -128,10 +128,8 @@ export function useLabelsOverlay(
   useEffect(() => {
     if (!labelMode) return;
     let rafId = 0;
-    let frameCount = 0;
     const tick = () => {
-      frameCount++;
-      repelLabels(labelsRegistry, 90 * settingsRef.current.labelSpread, frameCount);
+      repelLabels(labelsRegistry, 90 * settingsRef.current.labelSpread);
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);

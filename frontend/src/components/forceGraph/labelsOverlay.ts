@@ -7,6 +7,11 @@ import * as THREE from 'three';
 import type { GraphNode } from '../../api';
 import { spriteFor } from './sprites';
 import type { GraphSettings } from './graphSettings';
+import {
+  disableRaycast,
+  restrictSpriteRaycast,
+  type SpriteUvBounds,
+} from './spritePicking';
 
 // Node depth derived from path: root has depth 0; every path separator past
 // the root prefix bumps the depth by one. Works for both POSIX and Windows
@@ -25,40 +30,62 @@ export function depthFor(node: GraphNode, root: string): number {
 // Capped at 256 entries; the oldest entry is disposed and evicted when the
 // cap is hit to prevent unbounded GPU memory growth on large repos.
 const MAX_LABEL_TEXTURES = 256;
-const labelTextureCache = new Map<string, THREE.CanvasTexture>();
+const LABEL_FONT = 'bold 56px -apple-system, "Segoe UI", Inter, Roboto, sans-serif';
+const LABEL_STROKE_WIDTH = 10;
+const LABEL_H = 96;
+const LABEL_PAD_X = 20;
+const MIN_NAME_LABEL_W = 96;
 
-function buildNameTexture(text: string, color: string): THREE.CanvasTexture {
+type NameLabelTexture = THREE.CanvasTexture & {
+  _aspect?: number;
+  _hitBounds?: SpriteUvBounds;
+};
+
+const labelTextureCache = new Map<string, NameLabelTexture>();
+
+function measuredTextWidth(metrics: TextMetrics): number {
+  const actual = metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight;
+  return Math.ceil(actual > 0 ? actual : metrics.width);
+}
+
+function buildNameTexture(text: string, color: string): NameLabelTexture {
   const key = `${text}|${color}`;
   const cached = labelTextureCache.get(key);
   if (cached) return cached;
-  const H = 96;
-  const padX = 32;
   // Measure once with a throwaway context to size the canvas to the text.
   const probe = document.createElement('canvas').getContext('2d')!;
-  probe.font = 'bold 56px -apple-system, "Segoe UI", Inter, Roboto, sans-serif';
-  const measured = Math.ceil(probe.measureText(text).width);
-  const W = Math.max(160, measured + padX * 2);
+  probe.font = LABEL_FONT;
+  const measured = measuredTextWidth(probe.measureText(text));
+  const visualW = measured + LABEL_STROKE_WIDTH + 2;
+  const W = Math.max(MIN_NAME_LABEL_W, visualW + LABEL_PAD_X * 2);
   const canvas = document.createElement('canvas');
   canvas.width = W;
-  canvas.height = H;
+  canvas.height = LABEL_H;
   const ctx = canvas.getContext('2d')!;
-  ctx.font = 'bold 56px -apple-system, "Segoe UI", Inter, Roboto, sans-serif';
+  ctx.font = LABEL_FONT;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
-  ctx.lineWidth = 10;
+  ctx.lineWidth = LABEL_STROKE_WIDTH;
   ctx.strokeStyle = 'rgba(0,0,0,0.85)';
-  ctx.strokeText(text, W / 2, H / 2);
+  ctx.strokeText(text, W / 2, LABEL_H / 2);
   ctx.fillStyle = color;
-  ctx.fillText(text, W / 2, H / 2);
-  const tex = new THREE.CanvasTexture(canvas);
+  ctx.fillText(text, W / 2, LABEL_H / 2);
+  const tex = new THREE.CanvasTexture(canvas) as NameLabelTexture;
   tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.needsUpdate = true;
-  // Stash aspect on the texture so the sprite can read it without
-  // re-measuring.
-  (tex as THREE.CanvasTexture & { _aspect?: number })._aspect = W / H;
+  // Stash aspect / hit bounds on the texture so the sprite can read them
+  // without re-measuring.
+  tex._aspect = W / LABEL_H;
+  const hitW = Math.min(W, visualW + LABEL_PAD_X);
+  tex._hitBounds = {
+    minU: Math.max(0, (W - hitW) / 2 / W),
+    maxU: Math.min(1, 1 - (W - hitW) / 2 / W),
+    minV: 0.12,
+    maxV: 0.88,
+  };
   if (labelTextureCache.size >= MAX_LABEL_TEXTURES) {
     const oldest = labelTextureCache.keys().next().value!;
     labelTextureCache.get(oldest)?.dispose();
@@ -85,7 +112,7 @@ export const labelsRegistry = new Set<LabelEntry>();
 
 function makeNameSprite(text: string, color: string, baseH: number): THREE.Sprite {
   const tex = buildNameTexture(text, color);
-  const aspect = (tex as THREE.CanvasTexture & { _aspect?: number })._aspect ?? 3;
+  const aspect = tex._aspect ?? 3;
   const mat = new THREE.SpriteMaterial({
     map: tex,
     transparent: true,
@@ -95,6 +122,12 @@ function makeNameSprite(text: string, color: string, baseH: number): THREE.Sprit
   const h = baseH * 1.6;
   const sprite = new THREE.Sprite(mat);
   sprite.scale.set(h * aspect, h, 1);
+  restrictSpriteRaycast(sprite, tex._hitBounds ?? {
+    minU: 0,
+    maxU: 1,
+    minV: 0,
+    maxV: 1,
+  });
   sprite.renderOrder = 999;
 
   const _pos = new THREE.Vector3();
@@ -134,6 +167,7 @@ export function spriteForLabels(
     opacity: 0.7,
   });
   const line = new THREE.Line(lineGeom, lineMat);
+  disableRaycast(line);
   group.add(line);
 
   const label = makeNameSprite(node.name, color, settings.labelSize);

@@ -66,10 +66,8 @@ export function useLocOverlay(
   useEffect(() => {
     if (!locMode) return;
     let rafId = 0;
-    let frameCount = 0;
     const tick = () => {
-      frameCount++;
-      repelLabels(locLabelRegistry, 55 * settingsRef.current.labelSpread, frameCount);
+      repelLabels(locLabelRegistry, 55 * settingsRef.current.labelSpread);
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
