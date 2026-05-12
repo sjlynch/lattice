@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { TopAppBar } from './components/TopAppBar';
 import { Sidebar } from './components/Sidebar';
 import { ForceGraphView } from './components/ForceGraphView';
@@ -7,30 +7,22 @@ import { TerminalsProvider } from './TerminalsContext';
 import {
   fetchDefaultRoot,
   scanFolder,
-  fetchUserSettings,
-  patchUserSettings,
   subscribeHealth,
   type ScanResult,
-  type StartupTerminal,
 } from './api';
+import { APP_CONFIG } from './appConfig';
+import { useSidebarWidth } from './hooks/useSidebarWidth';
+import { useStartupTerminalSync } from './hooks/useStartupTerminalSync';
 import { canonicalProjectPath } from './projectPath';
-
-const SIDEBAR_MIN_WIDTH = 240;
-const SIDEBAR_MAX_WIDTH = 1200;
-const SIDEBAR_DEFAULT_WIDTH = 380;
-const ACTIVE_FOLDER_SESSION_KEY = 'lattice.activeFolder';
 
 function readStoredActiveFolder(): string {
   try {
-    return canonicalProjectPath(sessionStorage.getItem(ACTIVE_FOLDER_SESSION_KEY) ?? '');
+    return canonicalProjectPath(
+      sessionStorage.getItem(APP_CONFIG.storage.activeFolderSessionKey) ?? '',
+    );
   } catch {
     return '';
   }
-}
-
-function clampSidebarWidth(w: number) {
-  const cap = Math.min(SIDEBAR_MAX_WIDTH, Math.floor(window.innerWidth * 0.8));
-  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(cap, Math.round(w)));
 }
 
 function App() {
@@ -57,24 +49,18 @@ function App() {
   // panel while it's active. ForceGraphView still owns the keydown
   // listener and pushes changes back up via onHealthModeChange.
   const [healthMode, setHealthMode] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState<number>(SIDEBAR_DEFAULT_WIDTH);
-  // Startup terminals are per-project, loaded from userSettings.json. Sidebar
-  // owns the "ensure spawned" + "restart" lifecycle; App just holds the list
-  // so SettingsDialog can edit it and Sidebar can react to changes.
-  const [startupTerminals, setStartupTerminals] = useState<StartupTerminal[]>([]);
-  const resizingRef = useRef(false);
-  // Kept in sync via effect so event-handler closures always read the latest value
-  const activeFolderRef = useRef('');
-  const sidebarWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
+  const { sidebarWidth, onResizerPointerDown, onResizerDoubleClick } =
+    useSidebarWidth(activeFolder);
+  const [startupTerminals, setStartupTerminals] =
+    useStartupTerminalSync(activeFolder);
 
   const hiddenExtsKey = useMemo(
     () =>
-      activeFolder ? `lattice.hiddenExts.${activeFolder}` : null,
+      activeFolder
+        ? `${APP_CONFIG.storage.hiddenExtsKeyPrefix}${activeFolder}`
+        : null,
     [activeFolder],
   );
-
-  useEffect(() => { activeFolderRef.current = activeFolder; }, [activeFolder]);
-  useEffect(() => { sidebarWidthRef.current = sidebarWidth; }, [sidebarWidth]);
 
   useEffect(() => {
     if (activeFolder) {
@@ -89,8 +75,11 @@ function App() {
   // letting multiple Lattice tabs each track their own working directory.
   useEffect(() => {
     try {
-      if (activeFolder) sessionStorage.setItem(ACTIVE_FOLDER_SESSION_KEY, activeFolder);
-      else sessionStorage.removeItem(ACTIVE_FOLDER_SESSION_KEY);
+      if (activeFolder) {
+        sessionStorage.setItem(APP_CONFIG.storage.activeFolderSessionKey, activeFolder);
+      } else {
+        sessionStorage.removeItem(APP_CONFIG.storage.activeFolderSessionKey);
+      }
     } catch {
       /* ignore */
     }
@@ -108,22 +97,6 @@ function App() {
     // refetching the default if they later clear it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Load per-project sidebar width from backend when the active folder changes
-  useEffect(() => {
-    if (!activeFolder) {
-      setStartupTerminals([]);
-      return;
-    }
-    fetchUserSettings(activeFolder)
-      .then((s) => {
-        if (typeof s.sidebarWidth === 'number') {
-          setSidebarWidth(clampSidebarWidth(s.sidebarWidth));
-        }
-        setStartupTerminals(s.startupTerminals ?? []);
-      })
-      .catch(() => { /* ignore — keep default */ });
-  }, [activeFolder]);
 
   // Load hidden-exts for the active folder
   useEffect(() => {
@@ -178,7 +151,11 @@ function App() {
           // Loading stays true so the user keeps seeing the indicator
           // until we actually succeed.
           console.warn('scan failed (retrying)', err);
-          const delay = Math.min(5000, 300 * 2 ** attempt);
+          const delay = Math.min(
+            APP_CONFIG.scanRetry.maxDelayMs,
+            APP_CONFIG.scanRetry.initialDelayMs
+              * APP_CONFIG.scanRetry.backoffFactor ** attempt,
+          );
           attempt += 1;
           timer = setTimeout(tryScan, delay);
         });
@@ -235,61 +212,6 @@ function App() {
     });
   }, []);
 
-  // Re-clamp on window resize so the sidebar can't exceed 80% of viewport
-  useEffect(() => {
-    function onResize() {
-      setSidebarWidth((w) => clampSidebarWidth(w));
-    }
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-
-  const onResizerPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    resizingRef.current = true;
-    const target = e.currentTarget;
-    try {
-      target.setPointerCapture(e.pointerId);
-    } catch {
-      /* ignore */
-    }
-    const prevUserSelect = document.body.style.userSelect;
-    const prevCursor = document.body.style.cursor;
-    document.body.style.userSelect = 'none';
-    document.body.style.cursor = 'ew-resize';
-
-    const handleMove = (ev: PointerEvent) => {
-      if (!resizingRef.current) return;
-      setSidebarWidth(clampSidebarWidth(ev.clientX));
-    };
-    const handleUp = (ev: PointerEvent) => {
-      resizingRef.current = false;
-      document.body.style.userSelect = prevUserSelect;
-      document.body.style.cursor = prevCursor;
-      try {
-        target.releasePointerCapture(ev.pointerId);
-      } catch {
-        /* ignore */
-      }
-      window.removeEventListener('pointermove', handleMove);
-      window.removeEventListener('pointerup', handleUp);
-      window.removeEventListener('pointercancel', handleUp);
-      if (activeFolderRef.current) {
-        patchUserSettings(activeFolderRef.current, { sidebarWidth: sidebarWidthRef.current }).catch(() => {});
-      }
-    };
-    window.addEventListener('pointermove', handleMove);
-    window.addEventListener('pointerup', handleUp);
-    window.addEventListener('pointercancel', handleUp);
-  }, []);
-
-  const onResizerDoubleClick = useCallback(() => {
-    const w = clampSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
-    setSidebarWidth(w);
-    if (activeFolderRef.current) {
-      patchUserSettings(activeFolderRef.current, { sidebarWidth: w }).catch(() => {});
-    }
-  }, []);
 
   return (
     <TerminalsProvider>
