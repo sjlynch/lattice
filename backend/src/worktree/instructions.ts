@@ -60,6 +60,30 @@ async function ensureValidStopHook(
   );
 }
 
+const MERGE_FILES_LIST_HINT = '_(use `git diff --name-only --diff-filter=U` to list)_';
+const STASH_FILES_LIST_HINT = '_(run `git diff --name-only --diff-filter=U` to list)_';
+const CONFLICT_MARKERS = '`<<<<<<<` / `=======` / `>>>>>>>`';
+const MERGE_CONFLICT_MARKERS = CONFLICT_MARKERS.replace(' / `>>>>>>>`', ' /\n   `>>>>>>>`');
+const CHECKOUT_THEIRS_FOOTER = `## If a file cannot be resolved cleanly
+
+Use \`git checkout --theirs -- <file>\` (or \`--ours\`), stage it, and continue.
+`;
+
+function renderConflictedFilesList(files: string[], listHint: string): string {
+  return files.length > 0 ? files.map((f) => `- \`${f}\``).join('\n') : listHint;
+}
+
+function renderStashDropSteps(stashLabel: string): string {
+  return `   \`\`\`
+   git stash list          # find the entry labelled "${stashLabel}"
+   git stash drop stash@{N}
+   \`\`\``;
+}
+
+async function renderEnvBlockFor(repoRoot: string): Promise<string> {
+  return renderEnvNotesBlock(await resolveEnvNotesForInstructions(repoRoot));
+}
+
 // `harness` controls a couple of pieces. Claude (the default) ends the
 // session and its Stop hook in `.claude/settings.local.json` POSTs
 // `/complete`. Pi and Codex have no command-hook mechanism, so the model
@@ -183,13 +207,11 @@ export async function writeMergeInstructions(
   const fileName = 'MERGE_INSTRUCTIONS.md';
   const file = path.join(worktreePath, fileName);
   const desc = task.description?.trim() || '_(no description provided)_';
-  const envBlock = renderEnvNotesBlock(
-    await resolveEnvNotesForInstructions(task.projectPath),
+  const envBlock = await renderEnvBlockFor(task.projectPath);
+  const filesList = renderConflictedFilesList(
+    conflictedFiles,
+    MERGE_FILES_LIST_HINT,
   );
-  const filesList =
-    conflictedFiles.length > 0
-      ? conflictedFiles.map((f) => `- \`${f}\``).join('\n')
-      : '_(use `git diff --name-only --diff-filter=U` to list)_';
   const md = `# Resolve merge conflict for task ${task.id}
 
 **Branch:** \`${branch}\`
@@ -210,8 +232,7 @@ ${filesList}
 
 ## Steps (please complete autonomously, no need to confirm with the user)
 
-1. Inspect each conflicted file. Resolve all \`<<<<<<<\` / \`=======\` /
-   \`>>>>>>>\` markers, preserving the intent of both branches when possible.
+1. Inspect each conflicted file. Resolve all ${MERGE_CONFLICT_MARKERS} markers, preserving the intent of both branches when possible.
 2. Stage the resolved files: \`git add <file> ...\`
 3. Complete the merge with a commit message that names the task and briefly
    describes how you resolved the conflict — do not just accept git's default:
@@ -260,11 +281,11 @@ export async function writeStashResolveInstructions(
   const fileName = `STASH_CONFLICT_${task.id.slice(-5)}.md`;
   const file = path.join(repoRoot, fileName);
   const desc = task.description?.trim() || '_(no description)_';
-  const envBlock = renderEnvNotesBlock(await resolveEnvNotesForInstructions(repoRoot));
-  const filesList =
-    conflictedFiles.length > 0
-      ? conflictedFiles.map((f) => `- \`${f}\``).join('\n')
-      : '_(run `git diff --name-only --diff-filter=U` to list)_';
+  const envBlock = await renderEnvBlockFor(repoRoot);
+  const filesList = renderConflictedFilesList(
+    conflictedFiles,
+    STASH_FILES_LIST_HINT,
+  );
   const md = `# Resolve stash-pop conflict for "${task.title}"
 
 **Task ID:** ${task.id}
@@ -283,25 +304,19 @@ ${filesList}
 
 ## Steps (complete autonomously — no need to confirm with the user)
 
-1. For each conflicted file, resolve all \`<<<<<<<\` / \`=======\` / \`>>>>>>>\`
+1. For each conflicted file, resolve all ${CONFLICT_MARKERS}
    markers. Keep both the merged branch's changes AND the original working-tree
    changes wherever possible.
 2. Stage each resolved file: \`git add <file> ...\`
 3. Drop the stash entry — find it by label then drop it:
-   \`\`\`
-   git stash list          # find the entry labelled "${stashLabel}"
-   git stash drop stash@{N}
-   \`\`\`
+${renderStashDropSteps(stashLabel)}
 4. Notify Lattice:
    \`\`\`
    curl -s -m 5 -X POST ${backendOrigin}/api/tasks/${task.id}/stash-resolved
    \`\`\`
 5. Delete this file: \`del ${fileName}\` (Windows) or \`rm ${fileName}\`
 
-## If a file cannot be resolved cleanly
-
-Use \`git checkout --theirs -- <file>\` (or \`--ours\`), stage it, and continue.
-`;
+${CHECKOUT_THEIRS_FOOTER}`;
   await fs.writeFile(file, md, 'utf8');
   return { instructionsFile: file, relativePath: fileName };
 }
@@ -315,11 +330,11 @@ export async function writeRunStashResolveInstructions(
 ): Promise<{ instructionsFile: string; relativePath: string }> {
   const fileName = 'STASH_CONFLICT_run.md';
   const file = path.join(repoRoot, fileName);
-  const envBlock = renderEnvNotesBlock(await resolveEnvNotesForInstructions(repoRoot));
-  const filesList =
-    conflictedFiles.length > 0
-      ? conflictedFiles.map((f) => `- \`${f}\``).join('\n')
-      : '_(run `git diff --name-only --diff-filter=U` to list)_';
+  const envBlock = await renderEnvBlockFor(repoRoot);
+  const filesList = renderConflictedFilesList(
+    conflictedFiles,
+    STASH_FILES_LIST_HINT,
+  );
   const md = `# Resolve working-tree stash conflict
 
 ${envBlock}All queued tasks were merged. When Lattice tried to restore your uncommitted
@@ -332,24 +347,18 @@ ${filesList}
 
 ## Steps (complete autonomously — no need to confirm with the user)
 
-1. Resolve all \`<<<<<<<\` / \`=======\` / \`>>>>>>>\` markers in each file.
+1. Resolve all ${CONFLICT_MARKERS} markers in each file.
    Keep both sides where possible.
 2. Stage each resolved file: \`git add <file> ...\`
 3. Drop the stash entry (it stays in the list after a failed pop):
-   \`\`\`
-   git stash list          # find the entry labelled "${stashLabel}"
-   git stash drop stash@{N}
-   \`\`\`
+${renderStashDropSteps(stashLabel)}
 4. Notify Lattice that the conflict is resolved:
    \`\`\`
    curl -s -m 5 -X POST ${backendOrigin}/api/merge-runs/${runId}/stash-resolved
    \`\`\`
 5. Delete this file: \`del ${fileName}\` (Windows) or \`rm ${fileName}\`
 
-## If a file cannot be resolved cleanly
-
-Use \`git checkout --theirs -- <file>\` (or \`--ours\`), stage it, and continue.
-`;
+${CHECKOUT_THEIRS_FOOTER}`;
   await fs.writeFile(file, md, 'utf8');
   return { instructionsFile: file, relativePath: fileName };
 }
