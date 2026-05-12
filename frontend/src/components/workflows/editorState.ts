@@ -25,7 +25,7 @@ export function fromTemplate(t: WorkflowTemplate): EditorState {
   return {
     workflowId: null,
     name: t.name,
-    steps: t.steps.map((s) => ({ ...s, id: localStepId() })),
+    steps: t.steps.map((s) => ({ ...s, id: localStepId(), harness: s.harness ?? 'claude' })),
     dirty: true,
   };
 }
@@ -34,7 +34,7 @@ export function fromWorkflow(w: Workflow): EditorState {
   return {
     workflowId: w.id,
     name: w.name,
-    steps: w.steps.map((s) => ({ ...s })),
+    steps: w.steps.map((s) => ({ ...s, harness: s.harness ?? 'claude' })),
     dirty: false,
   };
 }

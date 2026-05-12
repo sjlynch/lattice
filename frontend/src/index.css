@@ -2278,13 +2278,17 @@ input {
   flex: 1;
   font-size: 12.5px;
 }
-.workflows-step-mode {
+.workflows-step-mode,
+.workflows-step-harness {
   font-size: 11px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--border);
   color: var(--text-secondary);
   border-radius: var(--radius-sm);
   padding: 3px 6px;
+}
+.workflows-step-harness {
+  min-width: 74px;
 }
 .workflows-step-prompt {
   /* Auto-grown to fit content via JS (StepRow.tsx). The native resizer
