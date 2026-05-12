@@ -287,12 +287,14 @@ export type MergeRunEvent =
 // ---------- Workflows ----------
 
 export type WorkflowStepMode = 'sequential' | 'parallel';
+export type WorkflowStepHarness = 'claude' | 'pi' | 'codex';
 
 export type WorkflowStep = {
   id: string;
   title: string;
   prompt: string;
   mode: WorkflowStepMode;
+  harness: WorkflowStepHarness;
 };
 
 export type Workflow = {

@@ -3,7 +3,9 @@ import { ListChecks, Play, Plus, Square, Trash2, X } from 'lucide-react';
 import { FloatingPanel } from '../FloatingPanel';
 import {
   cancelWorkflowRun as apiCancelWorkflowRun,
+  fetchHarnessAvailability,
   startWorkflow as apiStartWorkflow,
+  type HarnessAvailability,
   type Workflow,
   type WorkflowRun,
 } from '../../api';
@@ -35,12 +37,25 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
   const [queueRunning, setQueueRunning] = useState(false);
   const [queueBusy, setQueueBusy] = useState(false);
   const [queueActiveRunId, setQueueActiveRunId] = useState<string | null>(null);
+  const [harnessAvail, setHarnessAvail] = useState<HarnessAvailability>({
+    claude: true,
+    pi: false,
+    codex: false,
+  });
   const queueStartingRef = useRef(false);
 
   function showError(msg: string) {
     setError(msg);
     setTimeout(() => setError((cur) => (cur === msg ? null : cur)), 5000);
   }
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchHarnessAvailability().then((avail) => {
+      if (!cancelled) setHarnessAvail(avail);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const { isCollapsed, toggleCollapsed } = useCollapsedSteps(activeFolder);
 
@@ -509,6 +524,7 @@ export function WorkflowsLauncher({ activeFolder }: Props) {
                       step={step}
                       index={idx}
                       collapsed={isCollapsed(step.id)}
+                      harnessAvail={harnessAvail}
                       onChange={(patch) => patchStep(idx, patch)}
                       onRemove={() => removeStep(idx)}
                       onReorder={reorderSteps}
