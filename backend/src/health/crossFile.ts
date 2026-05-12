@@ -8,8 +8,8 @@ import path from 'node:path';
 import type { HealthMetrics } from './types.js';
 import { computeScore } from './score.js';
 import { bump, type SmellCounter } from './universal.js';
-import { SMELL_LABELS } from './types.js';
 import type { ParsedAlias } from './tsconfig.js';
+import { smellsToArray } from './utils.js';
 
 export type FileImports = {
   filePath: string;
@@ -263,11 +263,7 @@ export function applyCrossFile(
     if (m.fanIn > 30) bump(smellMap, 'high_fan_in');
 
     // Rebuild smells array in the same shape `analyze.ts` produced.
-    const out: { id: import('./types.js').HealthSmellId; count: number; label: string }[] = [];
-    for (const [id, count] of smellMap) {
-      if (count > 0) out.push({ id, count, label: SMELL_LABELS[id] });
-    }
-    out.sort((a, b) => b.count - a.count);
+    const out = smellsToArray(smellMap);
     m.smells = out;
     let total = 0;
     for (const s of out) total += s.count;

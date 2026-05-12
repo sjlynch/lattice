@@ -11,65 +11,12 @@ import {
 } from './health/index.js';
 import { loadProjectAliases, type ParsedAlias } from './health/tsconfig.js';
 import { seedWatcherState } from './health/watcher.js';
+import {
+  IGNORE_DIR_NAMES,
+  LOC_MAX_BYTES,
+  SOURCE_EXTS,
+} from './health/constants.js';
 import { canonicalProjectPath } from './projectPath.js';
-
-const SOURCE_EXTS = new Set([
-  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-  '.py', '.pyi', '.go', '.rs', '.java', '.kt', '.kts', '.scala', '.gradle', '.groovy',
-  '.c', '.cc', '.cpp', '.cxx', '.h', '.hpp', '.zig',
-  '.cs', '.fs', '.fsx', '.rb', '.erb', '.rake', '.gemspec',
-  '.php', '.swift', '.dart',
-  '.vue', '.svelte', '.astro',
-  '.css', '.scss', '.sass', '.less',
-  '.html', '.xml', '.json', '.yaml', '.yml', '.toml', '.csv',
-  '.md', '.mdx', '.sh', '.bash', '.zsh', '.ps1', '.sql',
-  '.lua', '.r', '.pl', '.pm', '.ex', '.exs', '.erl',
-  '.clj', '.cljs', '.hs', '.ml', '.mli', '.nim', '.jl', '.v',
-]);
-
-// Directories that are always build artifacts / vendor caches and
-// should never be scanned regardless of whether the project's
-// .gitignore lists them. Limited to names that are unambiguously
-// generated — anything that could plausibly contain source (`bin`,
-// `vendor`, `coverage`) is left out so we trust the project's
-// .gitignore for those.
-const ALWAYS_IGNORE = [
-  // Source-control / editor metadata
-  '.git',
-  '.idea',
-  '.vscode',
-  '.lattice',
-  // JS/TS ecosystem
-  'node_modules',
-  'dist',
-  'build',
-  '.next',
-  '.nuxt',
-  '.svelte-kit',
-  '.cache',
-  '.parcel-cache',
-  '.swc',
-  // Python
-  '.venv',
-  'venv',
-  '__pycache__',
-  '.pytest_cache',
-  '.mypy_cache',
-  '.ruff_cache',
-  '.tox',
-  // Rust / JVM (this is the one Rust ETL projects hit hardest: `target/`
-  // regularly contains GBs of incremental-compilation cache with
-  // hundreds of thousands of files. Without this, scanner recursion
-  // never terminates in a reasonable time on a Rust project whose
-  // .gitignore is missing or incomplete.)
-  'target',
-  '.gradle',
-  // iOS / Xcode
-  'Pods',
-  'DerivedData',
-  // Infrastructure
-  '.terraform',
-];
 
 export type GraphNode = {
   id: string;
@@ -82,8 +29,6 @@ export type GraphNode = {
   healthDetails?: HealthMetrics;
   loc?: number;
 };
-
-const LOC_MAX_BYTES = 5 * 1024 * 1024;
 
 type ReadResult = {
   loc?: number;
@@ -151,7 +96,7 @@ type CollectedSourceTree = {
 
 async function loadGitignore(root: string): Promise<Ignore> {
   const ig = ignore();
-  ig.add(ALWAYS_IGNORE);
+  ig.add(Array.from(IGNORE_DIR_NAMES));
   try {
     const content = await fs.readFile(path.join(root, '.gitignore'), 'utf8');
     ig.add(content);

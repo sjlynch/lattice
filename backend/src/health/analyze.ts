@@ -3,8 +3,7 @@
 // fields (fanIn / fanOut / inCycle); crossFile.ts patches those in
 // after the per-file pass for the whole project completes.
 
-import type { HealthLanguage, HealthMetrics, HealthSmellId } from './types.js';
-import { SMELL_LABELS } from './types.js';
+import type { HealthLanguage, HealthMetrics } from './types.js';
 import { getParser, grammarKeyForExt, type GrammarKey } from './parser.js';
 import { analyzeTree } from './walker.js';
 import { computeHalstead, computeMaintainabilityIndex } from './halstead.js';
@@ -16,33 +15,58 @@ import {
   type SmellCounter,
 } from './universal.js';
 import { computeScore } from './score.js';
+import { AST_MAX_BYTES, LARGE_FILE_LOC_THRESHOLD } from './constants.js';
+import { smellsToArray } from './utils.js';
 
-const TS_EXTS = new Set(['.ts', '.tsx']);
-const JS_EXTS = new Set(['.js', '.jsx', '.mjs', '.cjs']);
-const PY_EXTS = new Set(['.py', '.pyi']);
+const LANGUAGE_BY_EXT: Record<string, HealthLanguage> = {
+  '.ts': 'typescript',
+  '.tsx': 'typescript',
+  '.js': 'javascript',
+  '.jsx': 'javascript',
+  '.mjs': 'javascript',
+  '.cjs': 'javascript',
+  '.py': 'python',
+  '.pyi': 'python',
+  '.go': 'go',
+  '.rs': 'rust',
+  '.java': 'java',
+  '.cs': 'csharp',
+  '.rb': 'ruby',
+};
 
-export const AST_MAX_BYTES = 1024 * 1024;
-export const LARGE_FILE_LOC_THRESHOLD = 800;
+type StaticMetricDefaults = Omit<
+  HealthMetrics,
+  | 'score'
+  | 'language'
+  | 'loc'
+  | 'commentRatio'
+  | 'fanIn'
+  | 'fanOut'
+  | 'inCycle'
+  | 'smells'
+  | 'smellCount'
+>;
+
+const DEFAULT_METRICS: StaticMetricDefaults = {
+  cyclomaticMax: 0,
+  cyclomaticTotal: 0,
+  cognitiveMax: 0,
+  cognitiveTotal: 0,
+  maxNestingDepth: 0,
+  halstead: { vocabulary: 0, length: 0, volume: 0, difficulty: 0, effort: 0 },
+  maintainabilityIndex: 100,
+  functionCount: 0,
+  namedFunctionCount: 0,
+  avgFunctionLength: 0,
+  maxFunctionLength: 0,
+  maxParamCount: 0,
+  classCount: 0,
+  callGraphDensity: 0,
+  godFunctionRatio: 0,
+};
 
 function languageForExt(ext: string): HealthLanguage {
-  if (TS_EXTS.has(ext)) return 'typescript';
-  if (JS_EXTS.has(ext)) return 'javascript';
-  if (PY_EXTS.has(ext)) return 'python';
-  if (ext === '.go') return 'go';
-  if (ext === '.rs') return 'rust';
-  if (ext === '.java') return 'java';
-  if (ext === '.cs') return 'csharp';
-  if (ext === '.rb') return 'ruby';
-  return 'fallback';
-}
-
-function smellsToArray(smells: SmellCounter) {
-  const out: { id: HealthSmellId; count: number; label: string }[] = [];
-  for (const [id, count] of smells) {
-    if (count > 0) out.push({ id, count, label: SMELL_LABELS[id] });
-  }
-  out.sort((a, b) => b.count - a.count);
-  return out;
+  return LANGUAGE_BY_EXT[ext] ?? 'fallback';
 }
 
 export type AnalyzeResult = {
@@ -67,23 +91,10 @@ function analyzeFallback(content: string, ext: string, totalLoc: number): Analyz
   for (const s of smellList) smellCount += s.count;
 
   const components = {
+    ...DEFAULT_METRICS,
+    halstead: { ...DEFAULT_METRICS.halstead },
     loc: totalLoc,
     commentRatio,
-    cyclomaticMax: 0,
-    cyclomaticTotal: 0,
-    cognitiveMax: 0,
-    cognitiveTotal: 0,
-    maxNestingDepth: 0,
-    halstead: { vocabulary: 0, length: 0, volume: 0, difficulty: 0, effort: 0 },
-    maintainabilityIndex: 100,
-    functionCount: 0,
-    namedFunctionCount: 0,
-    avgFunctionLength: 0,
-    maxFunctionLength: 0,
-    maxParamCount: 0,
-    classCount: 0,
-    callGraphDensity: 0,
-    godFunctionRatio: 0,
     smells: smellList,
     smellCount,
   };
