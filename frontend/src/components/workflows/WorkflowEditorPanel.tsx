@@ -15,6 +15,7 @@ export function WorkflowEditorPanel({ manager }: Props) {
     runForEditor,
     recentForEditor,
     collapsedSteps,
+    harnessAvail,
     actions,
   } = manager;
 
@@ -91,6 +92,7 @@ export function WorkflowEditorPanel({ manager }: Props) {
                 step={step}
                 index={index}
                 collapsed={collapsedSteps.isCollapsed(step.id)}
+                harnessAvail={harnessAvail}
                 onChange={(patch) => actions.patchStep(index, patch)}
                 onRemove={() => actions.removeStep(index)}
                 onReorder={actions.reorderSteps}

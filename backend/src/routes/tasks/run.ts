@@ -2,11 +2,13 @@
 // build harness commands (claude/pi/codex), pre-create pty sessions, and
 // acquire merge locks.
 
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import path from 'node:path';
 import {
   getTask,
   updateTask,
+  type Task,
+  type TaskStatus,
 } from '../../tasks.js';
 import {
   setupTaskWorktree,
@@ -35,17 +37,60 @@ import { selectHarnessCommand } from './harnessFactory.js';
 // already sequential; this guard covers the manual path.
 const projectMergesActive = new Set<string>();
 
+const STATUS_GUARD_ACTIONS: Partial<Record<TaskStatus, string>> = {
+  open: 'run',
+  in_progress: 'resumed',
+  ready_to_merge: 'merged',
+};
+
+function requireTaskStatus(
+  task: Task,
+  expectedStatus: TaskStatus,
+  res: Response,
+): boolean {
+  if (task.status === expectedStatus) return true;
+
+  res.status(400).json({
+    error: `task is "${task.status}"; only ${expectedStatus} tasks can be ${STATUS_GUARD_ACTIONS[expectedStatus] ?? 'processed'}`,
+  });
+  return false;
+}
+
+type MergeLockResult<T> =
+  | { acquired: false }
+  | { acquired: true; value: T };
+
+async function withMergeLock<T>(
+  taskId: string,
+  callback: () => Promise<T>,
+): Promise<MergeLockResult<T>> {
+  if (!tryAcquire(taskId)) return { acquired: false };
+
+  try {
+    return { acquired: true, value: await callback() };
+  } finally {
+    release(taskId);
+  }
+}
+
+function logTaskRouteError(
+  task: Task,
+  operation: string,
+  error: unknown,
+): void {
+  console.error(
+    `[tasks:${operation}] task ${task.id} ("${task.title.slice(0, 60)}") at ${task.projectPath}:`,
+    error,
+  );
+}
+
 export function buildTaskRunRouter(backendOrigin: string): Router {
   const r = Router();
 
   r.post('/api/tasks/:id/run', async (req, res) => {
     const task = await getTask(req.params.id);
     if (!task) return res.status(404).json({ error: 'not found' });
-    if (task.status !== 'open') {
-      return res
-        .status(400)
-        .json({ error: `task is "${task.status}"; only open tasks can be run` });
-    }
+    if (!requireTaskStatus(task, 'open', res)) return;
     try {
       const selectedHarness = selectHarnessCommand(task, {
         requestedHarness: req.body?.harness,
@@ -77,13 +122,7 @@ export function buildTaskRunRouter(backendOrigin: string): Router {
         serverId,
       });
     } catch (err) {
-      // Log full context before swallowing into a 500 — without this, transient
-      // git failures (lock contention, stale worktree state, etc.) leave only
-      // a generic toast in the UI and no trace on the server.
-      console.error(
-        `[run] task ${task.id} ("${task.title.slice(0, 60)}") at ${task.projectPath}: setupTaskWorktree failed:`,
-        err,
-      );
+      logTaskRouteError(task, 'run setupTaskWorktree failed', err);
       res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -95,11 +134,7 @@ export function buildTaskRunRouter(backendOrigin: string): Router {
   r.post('/api/tasks/:id/resume', async (req, res) => {
     const task = await getTask(req.params.id);
     if (!task) return res.status(404).json({ error: 'not found' });
-    if (task.status !== 'in_progress') {
-      return res.status(400).json({
-        error: `task is "${task.status}"; only in_progress tasks can be resumed`,
-      });
-    }
+    if (!requireTaskStatus(task, 'in_progress', res)) return;
     if (!task.worktreePath) {
       return res
         .status(400)
@@ -135,16 +170,13 @@ export function buildTaskRunRouter(backendOrigin: string): Router {
   r.post('/api/tasks/:id/merge', async (req, res) => {
     const task = await getTask(req.params.id);
     if (!task) return res.status(404).json({ error: 'not found' });
-    if (task.status !== 'ready_to_merge') {
-      return res.status(400).json({
-        error: `task is "${task.status}"; only ready_to_merge tasks can be merged`,
-      });
-    }
+    if (!requireTaskStatus(task, 'ready_to_merge', res)) return;
     if (!task.branch || !task.worktreePath) {
       return res
         .status(400)
         .json({ error: 'task has no worktree branch on record' });
     }
+    const mergeTask = task as Task & { branch: string; worktreePath: string };
 
     if (getActiveRunForProject(task.projectPath)) {
       return res.status(409).json({
@@ -157,70 +189,143 @@ export function buildTaskRunRouter(backendOrigin: string): Router {
       });
     }
 
-    if (!tryAcquire(task.id)) {
-      return res
-        .status(409)
-        .json({ error: 'merge already in progress for this task' });
-    }
+    const lockResult = await withMergeLock(task.id, async () => {
+      const task = mergeTask;
 
-    // Cross-process lock: another Lattice process (e.g. the user opened
-    // this project in two Lattice instances, or has Lattice running on
-    // its own repo while a sibling project is merging) could otherwise
-    // race us through git status / snapshot / FF. The in-process gates
-    // above only see this process's state.
-    let projectLock;
-    try {
-      projectLock = await acquireProjectRunLock(task.projectPath, 'manual-merge');
-    } catch (err) {
-      release(task.id);
-      if (err instanceof ProjectRunLockedError) {
-        return res.status(409).json({ error: err.message });
-      }
-      return res.status(500).json({ error: (err as Error).message });
-    }
-
-    projectMergesActive.add(task.projectPath);
-
-    try {
-      // Heal the project's tracking of Lattice-owned files before merging.
-      // Idempotent no-op when nothing is tracked. See untrackOwnedFilesInRepo.
-      //
-      // Deliberately NO ensureLatticeGitignore call here — modifying the
-      // tracked .gitignore mid-merge dirties the working tree and (as the
-      // 2026-05-08/09 incident postmortems showed) creates a path where a
-      // lost stash can silently delete .git/, .lattice/tasks.json, etc.
-      // setupTaskWorktree applies the .gitignore once per project at
-      // worktree-create time, so it's already in place by the time the
-      // user clicks Merge.
+      // Cross-process lock: another Lattice process (e.g. the user opened
+      // this project in two Lattice instances, or has Lattice running on
+      // its own repo while a sibling project is merging) could otherwise
+      // race us through git status / snapshot / FF. The in-process gates
+      // above only see this process's state.
+      let projectLock;
       try {
-        await ensureLatticeRepoExclude(task.projectPath);
-        await untrackOwnedFilesInRepo(task.projectPath);
+        projectLock = await acquireProjectRunLock(task.projectPath, 'manual-merge');
       } catch (err) {
-        console.warn('[merge] pre-flight untrack failed (continuing):', err);
+        if (err instanceof ProjectRunLockedError) {
+          return res.status(409).json({ error: err.message });
+        }
+        return res.status(500).json({ error: (err as Error).message });
       }
 
-      // If already in a known conflict state, check whether the conflict was
-      // already committed. When a resolver Claude finishes but
-      // finalizeMergedTask fails (e.g. a race where another task's finalize
-      // ran first and advanced main), the worktree has a clean merge commit
-      // but the task is still at ready_to_merge + conflict: true. Detect
-      // this by checking isMidMerge: if the worktree is NOT mid-merge, the
-      // resolver already committed — re-sync with current main and finalize.
-      if (task.conflict) {
-        if (task.worktreePath && !(await isMidMerge(task.worktreePath))) {
-          const reSync = await mergeWorktreeInRepo(
-            task.projectPath,
-            task.branch,
-            task.worktreePath,
-            task.id,
-            backendOrigin,
-            task.title,
-          );
-          if (reSync.status === 'clean') {
-            const fin = await finalizeMergedTask(task, backendOrigin);
-            if (fin.ok) {
-              return res.json({ merged: true });
+      projectMergesActive.add(task.projectPath);
+
+      try {
+        // Heal the project's tracking of Lattice-owned files before merging.
+        // Idempotent no-op when nothing is tracked. See untrackOwnedFilesInRepo.
+        //
+        // Deliberately NO ensureLatticeGitignore call here — modifying the
+        // tracked .gitignore mid-merge dirties the working tree and (as the
+        // 2026-05-08/09 incident postmortems showed) creates a path where a
+        // lost stash can silently delete .git/, .lattice/tasks.json, etc.
+        // setupTaskWorktree applies the .gitignore once per project at
+        // worktree-create time, so it's already in place by the time the
+        // user clicks Merge.
+        try {
+          await ensureLatticeRepoExclude(task.projectPath);
+          await untrackOwnedFilesInRepo(task.projectPath);
+        } catch (err) {
+          console.warn('[merge] pre-flight untrack failed (continuing):', err);
+        }
+
+        // If already in a known conflict state, check whether the conflict was
+        // already committed. When a resolver Claude finishes but
+        // finalizeMergedTask fails (e.g. a race where another task's finalize
+        // ran first and advanced main), the worktree has a clean merge commit
+        // but the task is still at ready_to_merge + conflict: true. Detect
+        // this by checking isMidMerge: if the worktree is NOT mid-merge, the
+        // resolver already committed — re-sync with current main and finalize.
+        if (task.conflict) {
+          if (task.worktreePath && !(await isMidMerge(task.worktreePath))) {
+            const reSync = await mergeWorktreeInRepo(
+              task.projectPath,
+              task.branch,
+              task.worktreePath,
+              task.id,
+              backendOrigin,
+              task.title,
+            );
+            if (reSync.status === 'clean') {
+              const fin = await finalizeMergedTask(task, backendOrigin);
+              if (fin.ok) {
+                return res.json({ merged: true });
+              }
+              if ('stashConflict' in fin) {
+                const sess = await proxyCreateSession({
+                  cwd: fin.cwd,
+                  initialCommand: fin.resolveCommand,
+                  projectPath: task.projectPath,
+                });
+                return res.json({
+                  merged: false,
+                  stashConflict: true,
+                  command: fin.resolveCommand,
+                  cwd: fin.cwd,
+                  conflictedFiles: fin.stashConflict,
+                  serverId: 'id' in sess ? sess.id : undefined,
+                });
+              }
+              return res.status(500).json({ error: finalizeError(fin) });
             }
+            if (reSync.status === 'conflict') {
+              const { relativePath } = await writeMergeInstructions(
+                task,
+                task.branch,
+                reSync.conflictedFiles,
+                backendOrigin,
+                task.worktreePath,
+              );
+              await updateTask(task.id, { conflict: true, conflictStartedAt: Date.now() });
+              const command = buildConflictResolveCommand(relativePath);
+              const sess = await proxyCreateSession({
+                cwd: task.worktreePath,
+                initialCommand: command,
+                projectPath: task.projectPath,
+              });
+              return res.json({
+                merged: false,
+                conflict: true,
+                command,
+                cwd: task.worktreePath,
+                conflictedFiles: reSync.conflictedFiles,
+                serverId: 'id' in sess ? sess.id : undefined,
+              });
+            }
+            // reSync returned an error — fall through to returning existing
+            // resolver instructions so the user can retry manually
+          }
+          const { relativePath } = await writeMergeInstructions(
+            task,
+            task.branch,
+            [],
+            backendOrigin,
+            task.worktreePath,
+          );
+          const command = buildConflictResolveCommand(relativePath);
+          const sess = await proxyCreateSession({
+            cwd: task.worktreePath,
+            initialCommand: command,
+            projectPath: task.projectPath,
+          });
+          return res.json({
+            merged: false,
+            conflict: true,
+            command,
+            cwd: task.worktreePath,
+            serverId: 'id' in sess ? sess.id : undefined,
+          });
+        }
+
+        const result = await mergeWorktreeInRepo(
+          task.projectPath,
+          task.branch,
+          task.worktreePath,
+          task.id,
+          backendOrigin,
+          task.title,
+        );
+        if (result.status === 'clean') {
+          const fin = await finalizeMergedTask(task, backendOrigin);
+          if (!fin.ok) {
             if ('stashConflict' in fin) {
               const sess = await proxyCreateSession({
                 cwd: fin.cwd,
@@ -238,120 +343,51 @@ export function buildTaskRunRouter(backendOrigin: string): Router {
             }
             return res.status(500).json({ error: finalizeError(fin) });
           }
-          if (reSync.status === 'conflict') {
-            const { relativePath } = await writeMergeInstructions(
-              task,
-              task.branch,
-              reSync.conflictedFiles,
-              backendOrigin,
-              task.worktreePath,
-            );
-            await updateTask(task.id, { conflict: true, conflictStartedAt: Date.now() });
-            const command = buildConflictResolveCommand(relativePath);
-            const sess = await proxyCreateSession({
-              cwd: task.worktreePath,
-              initialCommand: command,
-              projectPath: task.projectPath,
-            });
-            return res.json({
-              merged: false,
-              conflict: true,
-              command,
-              cwd: task.worktreePath,
-              conflictedFiles: reSync.conflictedFiles,
-              serverId: 'id' in sess ? sess.id : undefined,
-            });
-          }
-          // reSync returned an error — fall through to returning existing
-          // resolver instructions so the user can retry manually
+          return res.json({ merged: true });
         }
-        const { relativePath } = await writeMergeInstructions(
-          task,
-          task.branch,
-          [],
-          backendOrigin,
-          task.worktreePath,
-        );
-        const command = buildConflictResolveCommand(relativePath);
-        const sess = await proxyCreateSession({
-          cwd: task.worktreePath,
-          initialCommand: command,
-          projectPath: task.projectPath,
-        });
-        return res.json({
-          merged: false,
-          conflict: true,
-          command,
-          cwd: task.worktreePath,
-          serverId: 'id' in sess ? sess.id : undefined,
-        });
+        if (result.status === 'conflict') {
+          const { relativePath } = await writeMergeInstructions(
+            task,
+            task.branch,
+            result.conflictedFiles,
+            backendOrigin,
+            task.worktreePath,
+          );
+          await updateTask(task.id, {
+            conflict: true,
+            conflictStartedAt: Date.now(),
+          });
+          const command = buildConflictResolveCommand(relativePath);
+          const sess = await proxyCreateSession({
+            cwd: task.worktreePath,
+            initialCommand: command,
+            projectPath: task.projectPath,
+          });
+          return res.json({
+            merged: false,
+            conflict: true,
+            command,
+            cwd: task.worktreePath,
+            conflictedFiles: result.conflictedFiles,
+            serverId: 'id' in sess ? sess.id : undefined,
+          });
+        }
+        return res.status(500).json({ error: result.message });
+      } catch (err) {
+        logTaskRouteError(task, 'merge', err);
+        return res.status(500).json({ error: (err as Error).message });
+      } finally {
+        projectMergesActive.delete(task.projectPath);
+        await projectLock.release();
       }
+    });
 
-      const result = await mergeWorktreeInRepo(
-        task.projectPath,
-        task.branch,
-        task.worktreePath,
-        task.id,
-        backendOrigin,
-        task.title,
-      );
-      if (result.status === 'clean') {
-        const fin = await finalizeMergedTask(task, backendOrigin);
-        if (!fin.ok) {
-          if ('stashConflict' in fin) {
-            const sess = await proxyCreateSession({
-              cwd: fin.cwd,
-              initialCommand: fin.resolveCommand,
-              projectPath: task.projectPath,
-            });
-            return res.json({
-              merged: false,
-              stashConflict: true,
-              command: fin.resolveCommand,
-              cwd: fin.cwd,
-              conflictedFiles: fin.stashConflict,
-              serverId: 'id' in sess ? sess.id : undefined,
-            });
-          }
-          return res.status(500).json({ error: finalizeError(fin) });
-        }
-        return res.json({ merged: true });
-      }
-      if (result.status === 'conflict') {
-        const { relativePath } = await writeMergeInstructions(
-          task,
-          task.branch,
-          result.conflictedFiles,
-          backendOrigin,
-          task.worktreePath,
-        );
-        await updateTask(task.id, {
-          conflict: true,
-          conflictStartedAt: Date.now(),
-        });
-        const command = buildConflictResolveCommand(relativePath);
-        const sess = await proxyCreateSession({
-          cwd: task.worktreePath,
-          initialCommand: command,
-          projectPath: task.projectPath,
-        });
-        return res.json({
-          merged: false,
-          conflict: true,
-          command,
-          cwd: task.worktreePath,
-          conflictedFiles: result.conflictedFiles,
-          serverId: 'id' in sess ? sess.id : undefined,
-        });
-      }
-      return res.status(500).json({ error: result.message });
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    } finally {
-      release(task.id);
-      projectMergesActive.delete(task.projectPath);
-      await projectLock.release();
+    if (!lockResult.acquired) {
+      return res
+        .status(409)
+        .json({ error: 'merge already in progress for this task' });
     }
+    return lockResult.value;
   });
 
   return r;

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   cancelWorkflowRun as apiCancelWorkflowRun,
+  fetchHarnessAvailability,
   startWorkflow as apiStartWorkflow,
+  type HarnessAvailability,
   type Workflow,
   type WorkflowRun,
 } from '../../../api';
@@ -24,7 +26,20 @@ export function useWorkflowManager(activeFolder: string) {
   const [queueRunning, setQueueRunning] = useState(false);
   const [queueBusy, setQueueBusy] = useState(false);
   const [queueActiveRunId, setQueueActiveRunId] = useState<string | null>(null);
+  const [harnessAvail, setHarnessAvail] = useState<HarnessAvailability>({
+    claude: true,
+    pi: false,
+    codex: false,
+  });
   const queueStartingRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchHarnessAvailability().then((avail) => {
+      if (!cancelled) setHarnessAvail(avail);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const collapsedSteps = useCollapsedSteps(activeFolder);
   const { workflows, sortedWorkflows } = useWorkflowList(activeFolder);
@@ -261,6 +276,7 @@ export function useWorkflowManager(activeFolder: string) {
     recentForEditor,
     editor,
     pickingTemplate: editorState.pickingTemplate,
+    harnessAvail,
     queue: {
       mode: queueMode,
       queuedWorkflowIds,
