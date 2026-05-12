@@ -6,26 +6,19 @@ import { ensureLatticeApiDoc } from './latticeApiDocs.js';
 import { ensureClaudeConfigValid } from './claudeConfigGuard.js';
 import { createTerminalSessionId } from './ids.js';
 import { killProcessTreeWindows } from './processTree.js';
+import { buildLatticeBanner } from './terminalBanner.js';
+import { SessionBuffer } from './terminalBuffer.js';
+import { TERMINAL_CONFIG } from './terminalConfig.js';
 
 const isWindows = os.platform() === 'win32';
 const defaultShell = isWindows
   ? process.env.COMSPEC || 'powershell.exe'
   : process.env.SHELL || 'bash';
 
-const BUFFER_REPLAY_MAX_BYTES = 200_000;
-const INITIAL_COMMAND_WRITE_DELAY_MS = 250;
-// Hard ceiling on simultaneously-live ptys. Real Lattice usage tops out
-// around a dozen — anything above that is a runaway loop (e.g. a stuck
-// reconnect on the frontend). MAX_TERMINAL_SESSIONS is generous enough
-// to not bite legit power users while catching a runaway long before it
-// can spawn enough conhost/pwsh processes to exhaust memory on Windows.
-const MAX_TERMINAL_SESSIONS = 50;
-
 type Session = {
   id: string;
   pty: pty.IPty;
-  buffer: string[];
-  bufferSize: number;
+  buffer: SessionBuffer;
   cols: number;
   rows: number;
   cwd: string;
@@ -45,21 +38,14 @@ type Session = {
 
 const sessions = new Map<string, Session>();
 
-function appendBuffer(session: Session, data: string) {
-  session.buffer.push(data);
-  session.bufferSize += data.length;
-  while (
-    session.bufferSize > BUFFER_REPLAY_MAX_BYTES &&
-    session.buffer.length > 1
-  ) {
-    const removed = session.buffer.shift();
-    if (removed) session.bufferSize -= removed.length;
-  }
-}
-
-function broadcast(session: Session, payload: string) {
-  for (const ws of session.subscribers) {
-    if (ws.readyState === ws.OPEN) ws.send(payload);
+function broadcastToSubscribers(subscribers: Set<WebSocket>, data: string): void {
+  for (const ws of subscribers) {
+    if (ws.readyState !== ws.OPEN) continue;
+    try {
+      ws.send(data);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -147,9 +133,7 @@ function addLatticeBanner(session: Session, docPath: string | null): void {
   // Only emitted for Lattice-managed projects (those that already have a
   // .lattice/ directory, hence a docPath).
   if (!docPath) return;
-  const banner = buildLatticeBanner();
-  session.buffer.push(banner);
-  session.bufferSize += banner.length;
+  session.buffer.append(buildLatticeBanner());
 }
 
 function scheduleInitialCommand(term: pty.IPty, initialCommand?: string): void {
@@ -160,7 +144,7 @@ function scheduleInitialCommand(term: pty.IPty, initialCommand?: string): void {
     } catch {
       /* ignore */
     }
-  }, INITIAL_COMMAND_WRITE_DELAY_MS);
+  }, TERMINAL_CONFIG.INITIAL_COMMAND_WRITE_DELAY_MS);
 }
 
 function createSession(opts: CreateOpts): Session | { error: string } {
@@ -168,12 +152,12 @@ function createSession(opts: CreateOpts): Session | { error: string } {
   // spawn unbounded ptys. Each pty on Windows is ~3 OS processes
   // (conhost + pwsh + node child); without this cap a runaway took the
   // whole machine out of memory before any human noticed.
-  if (sessions.size >= MAX_TERMINAL_SESSIONS) {
+  if (sessions.size >= TERMINAL_CONFIG.MAX_TERMINAL_SESSIONS) {
     console.warn(
-      `[terminal] refusing createSession: ${sessions.size} live sessions (cap ${MAX_TERMINAL_SESSIONS}). Likely a runaway client.`,
+      `[terminal] refusing createSession: ${sessions.size} live sessions (cap ${TERMINAL_CONFIG.MAX_TERMINAL_SESSIONS}). Likely a runaway client.`,
     );
     return {
-      error: `Too many active terminal sessions (${sessions.size}/${MAX_TERMINAL_SESSIONS}). Close some terminals before opening another.`,
+      error: `Too many active terminal sessions (${sessions.size}/${TERMINAL_CONFIG.MAX_TERMINAL_SESSIONS}). Close some terminals before opening another.`,
     };
   }
 
@@ -198,8 +182,7 @@ function createSession(opts: CreateOpts): Session | { error: string } {
   const session: Session = {
     id: createTerminalSessionId(),
     pty: term,
-    buffer: [],
-    bufferSize: 0,
+    buffer: new SessionBuffer(),
     cols: context.cols,
     rows: context.rows,
     cwd: context.cwd,
@@ -215,14 +198,14 @@ function createSession(opts: CreateOpts): Session | { error: string } {
   );
 
   term.onData((data) => {
-    appendBuffer(session, data);
-    broadcast(session, JSON.stringify({ type: 'data', data }));
+    session.buffer.append(data);
+    broadcastToSubscribers(session.subscribers, JSON.stringify({ type: 'data', data }));
   });
   term.onExit(({ exitCode }) => {
     console.log(
       `[terminal] session ${session.id} exited (code=${exitCode}, cwd=${session.cwd}, subscribers=${session.subscribers.size})`,
     );
-    broadcast(session, JSON.stringify({ type: 'exit', exitCode }));
+    broadcastToSubscribers(session.subscribers, JSON.stringify({ type: 'exit', exitCode }));
     for (const ws of session.subscribers) {
       try {
         ws.close();
@@ -239,25 +222,12 @@ function createSession(opts: CreateOpts): Session | { error: string } {
   return session;
 }
 
-function buildLatticeBanner(): string {
-  // Dim cyan so the banner reads as ambient terminal chrome rather than
-  // user-relevant output. \r\n because the pty is in raw mode; a bare \n
-  // would not return the cursor to column 0.
-  const dim = '\x1b[2;36m';
-  const reset = '\x1b[0m';
-  return (
-    '\r\n' +
-    `${dim}[Lattice] AI agents: when the user mentions Lattice / tasks / taskboard / merging / worktrees, read $LATTICE_DOCS for the API reference.${reset}` +
-    '\r\n'
-  );
-}
-
 // Pre-create a session WITHOUT a WS subscriber. Used by route handlers that
 // want to spawn a pty and return its serverId in the same response, so the
 // frontend can lazy-mount the <TerminalPane> instead of having to mount it
 // immediately just to trigger session creation via WS attach. The pty starts
 // running (initialCommand fires) regardless of whether anyone connects; the
-// BUFFER_REPLAY_MAX_BYTES rolling buffer captures output for replay when a
+// TERMINAL_CONFIG.BUFFER_REPLAY_MAX_BYTES rolling buffer captures output for replay when a
 // subscriber later attaches via `attachTerminal({ id })`.
 export function precreateSession(
   opts: CreateOpts,
@@ -381,7 +351,7 @@ export function attachTerminal(ws: WebSocket, opts: AttachOpts) {
   //   - first attach to a pre-spawned session whose buffer already holds
   //     the Lattice banner (and any pty output that arrived before the
   //     subscriber connected).
-  const full = session.buffer.join('');
+  const full = session.buffer.replay();
   if (full.length > 0) {
     try {
       ws.send(JSON.stringify({ type: 'data', data: full }));
@@ -497,6 +467,6 @@ export function listSessions(): Array<{
     projectPath: s.projectPath,
     createdAt: s.createdAt,
     subscribers: s.subscribers.size,
-    bufferSize: s.bufferSize,
+    bufferSize: s.buffer.size,
   }));
 }
