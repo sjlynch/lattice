@@ -52,6 +52,17 @@ export {
 } from './worktree/instructions.js';
 
 export {
+  detectProjectEnvironments,
+  describeProjectEnvs,
+  resolveEnvNotesForInstructions,
+  defaultEnvNote,
+  renderEnvNotesBlock,
+  type EnvKind,
+  type DetectedEnv,
+  type EnvNoteInfo,
+} from './worktree/envDetect.js';
+
+export {
   mergeWorktreeInRepo,
   fastForwardMain,
   type MergeOutcome,

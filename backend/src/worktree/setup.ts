@@ -12,6 +12,7 @@ import type { Task } from '../tasks.js';
 import { exec } from './exec.js';
 import { projectGit } from './projectGit.js';
 import { renderTaskMarkdown } from './instructions.js';
+import { resolveEnvNotesForInstructions } from './envDetect.js';
 import { homeWorktreesDir } from '../projectPath.js';
 import { LATTICE_EXCLUDE_PATTERNS } from './managedFiles.js';
 import {
@@ -85,6 +86,10 @@ export async function setupTaskWorktree(
   await ensureLatticeGitignore(repoRoot);
   await ensureLatticeRepoExclude(repoRoot);
   await untrackOwnedFilesInRepo(repoRoot);
+  // Env-specific "you're in a throwaway worktree, don't reinstall deps
+  // unless this task needs it" notes — computed once (project-derived, not
+  // per-candidate-path) and prepended to LATTICE_TASK.md. See envDetect.ts.
+  const envNotes = await resolveEnvNotesForInstructions(repoRoot);
   const slug = slugify(task.title);
   const shortId = task.id.slice(-6);
   const worktreesDir = homeWorktreesDir(repoRoot);
@@ -129,7 +134,11 @@ export async function setupTaskWorktree(
     }
 
     const taskFile = path.join(candidatePath, 'LATTICE_TASK.md');
-    await fs.writeFile(taskFile, renderTaskMarkdown(task, backendOrigin, harness), 'utf8');
+    await fs.writeFile(
+      taskFile,
+      renderTaskMarkdown(task, backendOrigin, harness, envNotes),
+      'utf8',
+    );
     // The Claude Stop hook is installed for every worktree regardless of run
     // harness: a Pi/Codex task that later hits a merge conflict spawns a
     // *Claude* resolver, which relies on this hook to call `/complete`.

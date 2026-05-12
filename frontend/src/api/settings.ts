@@ -1,7 +1,11 @@
 // Per-project user settings (sidebar width, harness preference).
 
 import { asJson } from './http';
-import type { HarnessAvailability, UserSettings } from './types';
+import type {
+  HarnessAvailability,
+  ProjectEnvResponse,
+  UserSettings,
+} from './types';
 
 export async function fetchHarnessAvailability(): Promise<HarnessAvailability> {
   try {
@@ -34,4 +38,17 @@ export async function patchUserSettings(
       body: JSON.stringify(partial),
     }),
   );
+}
+
+// Auto-detected package-manager environments for a project, each with the
+// default and effective (post-override) "fresh worktree, don't reinstall"
+// note. Backs the "Agent instructions" tab in the settings dialog.
+export async function fetchProjectEnv(projectPath: string): Promise<ProjectEnvResponse> {
+  try {
+    const r = await fetch(`/api/project-env?project=${encodeURIComponent(projectPath)}`);
+    if (!r.ok) return { environments: [] };
+    return r.json();
+  } catch {
+    return { environments: [] };
+  }
 }

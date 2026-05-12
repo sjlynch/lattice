@@ -5,7 +5,7 @@ One Express `Router` per domain. Each module exports a `buildXRouter(deps)` fact
 ## Modules
 
 - `health.ts` — `/api/health`, `/api/default-root`, `/api/scan`, `/api/list-dir` (read-only).
-- `settings.ts` — `/api/settings` (per-project user settings).
+- `settings.ts` — `/api/settings` (per-project user settings) + `/api/project-env` (read-only: auto-detected package-manager envs + the "fresh worktree, don't reinstall" notes that get prepended to `LATTICE_TASK.md`; see `worktree/envDetect.ts`).
 - `terminals.ts` — `/api/terminals` list/delete (proxies to terminal-server).
 - `tasks.ts` — task CRUD + `/run`, `/resume`, `/complete`, `/merge`, `/merged`, `/merge-aborted`, `/stash-resolved`. The state-machine logic lives here.
 - `mergeRuns.ts` — `/api/merge-runs` start / active / get / cancel / stash-resolved.

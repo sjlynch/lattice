@@ -651,6 +651,62 @@ input {
   font-size: 11px;
 }
 
+/* Settings dialog — "Agent instructions" tab */
+.env-note-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.env-note-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #15181d;
+}
+.env-note-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.env-note-card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.env-note-card-manager {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-active);
+}
+.env-note-card-dir {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+.env-note-textarea {
+  height: auto;
+  padding: 8px 10px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 84px;
+}
+.env-note-card-hint {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
 .path-row {
   display: flex;
   align-items: center;

@@ -16,6 +16,14 @@ export type UserSettings = {
   // Per-step collapse state for the workflow editor, keyed by step id.
   // Only collapsed=true entries are persisted to keep the file tidy.
   workflowStepsCollapsed?: Record<string, boolean>;
+  // Per-environment override of the auto-injected "you're in a fresh
+  // worktree, don't reinstall deps unless the task needs it" note that
+  // Lattice prepends to LATTICE_TASK.md / MERGE_INSTRUCTIONS.md when it
+  // detects a package-manager environment (see worktree/envDetect.ts).
+  // Key = env id ('node' | 'python' | 'rust' | ...). An empty-string value
+  // suppresses the note for that env entirely; a key being absent means
+  // "use the built-in default".
+  worktreeEnvNotes?: Record<string, string>;
 };
 
 function settingsFile(projectPath: string): string {

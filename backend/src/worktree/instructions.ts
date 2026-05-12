@@ -11,6 +11,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Task } from '../tasks.js';
 import { renderStopHookJson } from './setup.js';
+import { renderEnvNotesBlock, resolveEnvNotesForInstructions } from './envDetect.js';
 
 // Validate (and repair if needed) the worktree's Stop-hook config.
 //
@@ -72,9 +73,11 @@ export function renderTaskMarkdown(
   task: Task,
   backendOrigin: string,
   harness: 'claude' | 'pi' | 'codex' = 'claude',
+  envNotes: string[] = [],
 ): string {
   const created = new Date(task.createdAt).toISOString();
   const desc = task.description?.trim() || '_(no description provided)_';
+  const envBlock = renderEnvNotesBlock(envNotes);
   const autonomyPreamble =
     harness === 'claude'
       ? ''
@@ -117,7 +120,7 @@ ${desc}
 
 ## Instructions (please complete autonomously, no need to confirm with the user)
 
-${autonomyPreamble}1. **Check existing state first.** This task may have been started in a
+${autonomyPreamble}${envBlock}1. **Check existing state first.** This task may have been started in a
    prior session — Lattice can resume worktrees after a server restart or
    when Claude finishes without committing. Before doing anything, run:
 
@@ -180,6 +183,9 @@ export async function writeMergeInstructions(
   const fileName = 'MERGE_INSTRUCTIONS.md';
   const file = path.join(worktreePath, fileName);
   const desc = task.description?.trim() || '_(no description provided)_';
+  const envBlock = renderEnvNotesBlock(
+    await resolveEnvNotesForInstructions(task.projectPath),
+  );
   const filesList =
     conflictedFiles.length > 0
       ? conflictedFiles.map((f) => `- \`${f}\``).join('\n')
@@ -189,7 +195,7 @@ export async function writeMergeInstructions(
 **Branch:** \`${branch}\`
 **Task:** ${task.title}
 
-Lattice merged main into this branch and conflicts arose. Your job is to
+${envBlock}Lattice merged main into this branch and conflicts arose. Your job is to
 resolve them and commit. After you commit and the session ends, Lattice's
 existing Stop hook fires and the backend will fast-forward main and clean
 up automatically.
@@ -254,6 +260,7 @@ export async function writeStashResolveInstructions(
   const fileName = `STASH_CONFLICT_${task.id.slice(-5)}.md`;
   const file = path.join(repoRoot, fileName);
   const desc = task.description?.trim() || '_(no description)_';
+  const envBlock = renderEnvNotesBlock(await resolveEnvNotesForInstructions(repoRoot));
   const filesList =
     conflictedFiles.length > 0
       ? conflictedFiles.map((f) => `- \`${f}\``).join('\n')
@@ -262,7 +269,7 @@ export async function writeStashResolveInstructions(
 
 **Task ID:** ${task.id}
 
-Lattice fast-forwarded \`main\` to the merged branch tip, then tried to restore
+${envBlock}Lattice fast-forwarded \`main\` to the merged branch tip, then tried to restore
 your uncommitted working-tree changes via \`git stash pop\`. That pop failed with
 conflicts. Your job is to resolve those conflicts and finish the cleanup.
 
@@ -308,13 +315,14 @@ export async function writeRunStashResolveInstructions(
 ): Promise<{ instructionsFile: string; relativePath: string }> {
   const fileName = 'STASH_CONFLICT_run.md';
   const file = path.join(repoRoot, fileName);
+  const envBlock = renderEnvNotesBlock(await resolveEnvNotesForInstructions(repoRoot));
   const filesList =
     conflictedFiles.length > 0
       ? conflictedFiles.map((f) => `- \`${f}\``).join('\n')
       : '_(run `git diff --name-only --diff-filter=U` to list)_';
   const md = `# Resolve working-tree stash conflict
 
-All queued tasks were merged. When Lattice tried to restore your uncommitted
+${envBlock}All queued tasks were merged. When Lattice tried to restore your uncommitted
 working-tree changes via \`git stash pop\`, the pop failed with conflicts.
 Resolve them so your working tree is clean again.
 
