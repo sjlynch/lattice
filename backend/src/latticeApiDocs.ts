@@ -197,7 +197,7 @@ curl -s -X POST "$LATTICE_API_URL/api/tasks/transition" \\
 | GET    | /api/merge-runs/active?project=    | Active merge run, or \`null\` |
 | POST   | /api/merge-runs/:id/cancel         | Cancel a merge run |
 | GET    | /api/workflow-runs/active?project= | Active workflow runs |
-| POST   | /api/workflows/:id/run             | Start a workflow run |
+| POST   | /api/workflows/:id/run             | Start a workflow run; optional \`{harnessOverride}\` |
 | GET    | /api/settings?project=             | Per-project user settings (read) |
 | PATCH  | /api/settings?project=             | Per-project user settings (update) |
 | GET    | /api/project-env?project=          | Auto-detected package-manager envs + injected worktree notes |

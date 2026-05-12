@@ -17,6 +17,7 @@ function workflowsFile(projectPath: string): string {
 
 export type WorkflowStepMode = 'sequential' | 'parallel';
 export type WorkflowStepHarness = 'claude' | 'pi' | 'codex';
+export type WorkflowRunHarnessOverride = WorkflowStepHarness | null;
 
 export type WorkflowStep = {
   id: string;
@@ -97,6 +98,20 @@ export function subscribe(
   };
 }
 
+export function normalizeWorkflowStepHarness(value: unknown): WorkflowStepHarness {
+  return value === 'pi' || value === 'codex' || value === 'claude'
+    ? value
+    : 'claude';
+}
+
+export function normalizeWorkflowRunHarnessOverride(
+  value: unknown,
+): WorkflowRunHarnessOverride {
+  return value === 'pi' || value === 'codex' || value === 'claude'
+    ? value
+    : null;
+}
+
 function normalizeSteps(steps: WorkflowStep[] | undefined): WorkflowStep[] {
   if (!Array.isArray(steps)) return [];
   return steps.map((s, i) => ({
@@ -104,7 +119,7 @@ function normalizeSteps(steps: WorkflowStep[] | undefined): WorkflowStep[] {
     title: typeof s.title === 'string' ? s.title : '',
     prompt: typeof s.prompt === 'string' ? s.prompt : '',
     mode: s.mode === 'parallel' ? 'parallel' : 'sequential',
-    harness: s.harness === 'pi' || s.harness === 'codex' ? s.harness : 'claude',
+    harness: normalizeWorkflowStepHarness(s.harness),
   }));
 }
 

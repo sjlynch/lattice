@@ -1,5 +1,6 @@
 import { Play, X } from 'lucide-react';
 import type { WorkflowManager } from './hooks/useWorkflowManager';
+import { workflowHarnessOverrideLabel } from './workflowHarnessOverride';
 
 type Props = {
   manager: WorkflowManager;
@@ -44,7 +45,7 @@ export function QueuePanel({ manager }: Props) {
           <button
             className="btn-ghost"
             onClick={actions.clearQueue}
-            disabled={queue.queuedWorkflowIds.length === 0}
+            disabled={queue.queuedEntries.length === 0}
           >
             Clear
           </button>
@@ -54,21 +55,23 @@ export function QueuePanel({ manager }: Props) {
 
       <div className="workflows-runs-section">
         <div className="workflows-runs-section-title">Queued</div>
-        {queue.queuedWorkflows.length === 0 ? (
+        {queue.queuedItems.length === 0 ? (
           <div className="workflows-runs-empty">No queued workflows.</div>
         ) : (
           <div className="workflows-runs-list">
-            {queue.queuedWorkflows.map((workflow, index) => (
-              <div key={workflow.id} className="workflows-run-card queued">
+            {queue.queuedItems.map(({ entry, workflow }, index) => (
+              <div key={entry.id} className="workflows-run-card queued">
                 <div className="workflows-run-card-main">
                   <span className="workflows-run-card-name">{index + 1}. {workflow.name}</span>
                   <span className="workflows-run-card-meta">
                     {workflow.steps.length} step{workflow.steps.length === 1 ? '' : 's'}
+                    {' · '}
+                    Override: {workflowHarnessOverrideLabel(entry.harnessOverride)}
                   </span>
                 </div>
                 <button
                   className="icon-btn sm"
-                  onClick={() => actions.removeQueuedWorkflow(workflow.id)}
+                  onClick={() => actions.removeQueuedWorkflow(entry.id)}
                   aria-label="Remove from queue"
                   title="Remove from queue"
                   disabled={queue.running && queue.busy}

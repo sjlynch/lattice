@@ -7,6 +7,11 @@ export * from './scan';
 export * from './settings';
 export * from './tasks';
 export * from './mergeRuns';
-export * from './pushRuns';
+export {
+  checkGit,
+  fetchPushRunStatus,
+  forgetPushRun,
+  startPushRun,
+} from './pushRuns';
 export * from './workflows';
 export * from './health';

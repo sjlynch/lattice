@@ -12,7 +12,13 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { getWorkflow, type Workflow } from './workflows.js';
+import {
+  getWorkflow,
+  normalizeWorkflowRunHarnessOverride,
+  type Workflow,
+  type WorkflowRunHarnessOverride,
+  type WorkflowStepHarness,
+} from './workflows.js';
 import { proxyCreateSession } from './terminalProxy.js';
 import { canonicalProjectPath } from './projectPath.js';
 import { installClaudeStopHook } from './claudeStopHook.js';
@@ -31,6 +37,7 @@ export type WorkflowRun = {
   finishedAt?: number;
   totalSteps: number;
   currentStepIndex: number;
+  harnessOverride?: WorkflowStepHarness;
   error?: string;
 };
 
@@ -82,17 +89,26 @@ export function getActiveRunsForProject(projectPath: string): WorkflowRun[] {
   return out;
 }
 
+function effectiveStepHarness(
+  wf: Workflow,
+  run: WorkflowRun,
+  stepIndex: number,
+): WorkflowStepHarness {
+  return run.harnessOverride ?? wf.steps[stepIndex].harness ?? 'claude';
+}
+
 function renderStepMarkdown(
   wf: Workflow,
-  runId: string,
+  run: WorkflowRun,
   stepIndex: number,
   backendOrigin: string,
 ): string {
   const step = wf.steps[stepIndex];
+  const harness = effectiveStepHarness(wf, run, stepIndex);
   const encodedProject = encodeURIComponent(wf.projectPath);
-  const completeUrl = `${backendOrigin}/api/workflow-runs/${runId}/steps/${stepIndex}/complete`;
+  const completeUrl = `${backendOrigin}/api/workflow-runs/${run.id}/steps/${stepIndex}/complete`;
   const completionInstructions =
-    step.harness === 'claude'
+    harness === 'claude'
       ? [
           'After creating all the tasks described above, simply stop. Your session',
           'will be finalized automatically and the next workflow step (if any) will',
@@ -115,6 +131,12 @@ function renderStepMarkdown(
     '## About this project',
     '',
     `Project root: \`${wf.projectPath}\``,
+    ...(run.harnessOverride
+      ? [
+          '',
+          `Run harness override: every step in this run is using ${run.harnessOverride}.`,
+        ]
+      : []),
     '',
     'You can inspect the project files at that path if helpful.',
     'Your primary role here is to create tasks on the Lattice board so that',
@@ -207,7 +229,8 @@ async function spawnWorkflowStep(
   await fs.mkdir(stepDir, { recursive: true });
 
   const stepFile = path.join(stepDir, 'WORKFLOW_STEP.md');
-  await fs.writeFile(stepFile, renderStepMarkdown(wf, run.id, stepIndex, backendOrigin), 'utf8');
+  const harness = effectiveStepHarness(wf, run, stepIndex);
+  await fs.writeFile(stepFile, renderStepMarkdown(wf, run, stepIndex, backendOrigin), 'utf8');
 
   // Helper script so the agent can create tasks without shell quoting issues.
   await fs.writeFile(
@@ -218,11 +241,11 @@ async function spawnWorkflowStep(
 
   const completionUrl = `${backendOrigin}/api/workflow-runs/${run.id}/steps/${stepIndex}/complete`;
   await installClaudeStopHook(stepDir, completionUrl);
-  if (wf.steps[stepIndex].harness === 'pi') {
+  if (harness === 'pi') {
     await installPiWorkflowCompletionExtension(stepDir, completionUrl);
   }
 
-  const command = buildWorkflowStepCommand(stepFile, wf.steps[stepIndex].harness);
+  const command = buildWorkflowStepCommand(stepFile, harness);
 
   // Pre-spawn the pty so the frontend can lazy-mount its terminal pane and
   // not burn a WebGL context for a step the user may not click into.
@@ -251,14 +274,20 @@ async function spawnWorkflowStep(
   return { command, cwd: stepDir };
 }
 
+export type StartWorkflowRunOptions = {
+  harnessOverride?: WorkflowRunHarnessOverride;
+};
+
 export async function startWorkflowRun(
   workflowId: string,
   backendOrigin: string,
+  options: StartWorkflowRunOptions = {},
 ): Promise<WorkflowRun> {
   const wf = await getWorkflow(workflowId);
   if (!wf) throw new Error('workflow not found');
   if (wf.steps.length === 0) throw new Error('workflow has no steps');
 
+  const harnessOverride = normalizeWorkflowRunHarnessOverride(options.harnessOverride);
   const run: WorkflowRun = {
     id: `wfrun_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     workflowId: wf.id,
@@ -268,11 +297,12 @@ export async function startWorkflowRun(
     startedAt: Date.now(),
     totalSteps: wf.steps.length,
     currentStepIndex: 0,
+    ...(harnessOverride ? { harnessOverride } : {}),
   };
   runs.set(run.id, run);
   notify({ type: 'started', run: snapshot(run) });
   console.log(
-    `[workflow-run] ${run.id} started (workflow=${wf.id} "${wf.name}", ${wf.steps.length} step(s))`,
+    `[workflow-run] ${run.id} started (workflow=${wf.id} "${wf.name}", ${wf.steps.length} step(s), override=${harnessOverride ?? 'default'})`,
   );
 
   try {

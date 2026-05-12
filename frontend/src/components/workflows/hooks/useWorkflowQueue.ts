@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Workflow, WorkflowRun } from '../../../api';
+import type { Workflow, WorkflowQueueEntry, WorkflowRun } from '../../../api';
 import {
   initialQueueState,
   step,
@@ -9,9 +9,12 @@ import {
 
 type Args = {
   workflowsById: Map<string, Workflow>;
-  // Triggers an HTTP /run for the given workflow. Returns the run record on
-  // success and null on failure (e.g. backend rejected, network error).
-  runWorkflow: (wf: Workflow) => Promise<WorkflowRun | null>;
+  // Triggers an HTTP /run for the given queued entry. Returns the run record
+  // on success and null on failure (e.g. backend rejected, network error).
+  runWorkflow: (
+    wf: Workflow,
+    entry: WorkflowQueueEntry,
+  ) => Promise<WorkflowRun | null>;
   // Current set of runs the backend considers active (driven by the
   // /ws/workflow-runs `hello`/`started`/`progress`/`completed` events).
   activeRuns: Record<string, WorkflowRun>;
@@ -51,19 +54,19 @@ export function useWorkflowQueue({
     stateRef.current = result.state;
     setState(result.state);
 
-    for (const workflowId of result.starts) {
-      const wf = workflowsByIdRef.current.get(workflowId);
+    for (const entry of result.starts) {
+      const wf = workflowsByIdRef.current.get(entry.workflowId);
       if (!wf) {
         // Workflow disappeared between enqueue and start. Recover.
-        dispatch({ type: 'dispatchFailed', workflowId });
+        dispatch({ type: 'dispatchFailed', entryId: entry.id });
         continue;
       }
       void (async () => {
-        const run = await runWorkflowRef.current(wf);
+        const run = await runWorkflowRef.current(wf, entry);
         if (run) {
-          dispatch({ type: 'workflowStarted', workflowId, runId: run.id });
+          dispatch({ type: 'workflowStarted', entryId: entry.id, runId: run.id });
         } else {
-          dispatch({ type: 'dispatchFailed', workflowId });
+          dispatch({ type: 'dispatchFailed', entryId: entry.id });
         }
       })();
     }
