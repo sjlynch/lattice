@@ -1,9 +1,8 @@
 // Health checks, default-root probe, file-system scan, and folder browser.
-// Read-only endpoints — no mutations, no side effects beyond filesystem reads.
 
 import { Router } from 'express';
 import { scan } from '../scanner.js';
-import { listDir } from '../fsbrowse.js';
+import { createDir, listDir } from '../fsbrowse.js';
 import { detectHarnesses, resetHarnessCache } from '../harnessDetect.js';
 import { getGitHistory } from '../gitHistory.js';
 
@@ -50,6 +49,17 @@ export function buildHealthRouter(defaultRoot: string): Router {
     const target = typeof req.query.path === 'string' ? req.query.path : undefined;
     try {
       const result = await listDir(target);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  r.post('/api/create-dir', async (req, res) => {
+    const parent = typeof req.body.parent === 'string' ? req.body.parent : '';
+    const name = typeof req.body.name === 'string' ? req.body.name : '';
+    try {
+      const result = await createDir(parent, name);
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
