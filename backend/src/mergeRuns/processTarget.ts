@@ -1,16 +1,17 @@
 import {
   buildConflictResolveCommand,
-  finalizeMergedTask,
   gitDirExists,
   isMidMerge,
   mainIsAncestorOfWorktree,
-  mergeWorktreeInRepo,
   projectGit,
+  resyncWithMainAndFinalize,
   writeMergeInstructions,
+  type FinalizeOutcome,
   type MergeOutcome,
+  type ResyncOutcome,
 } from '../worktree.js';
 import { listConflictedFiles } from '../worktree/state.js';
-import { getTask, updateTask, type Task } from '../tasks.js';
+import { getTask, type Task } from '../tasks.js';
 import { release, tryAcquire } from '../mergeLocks.js';
 import { proxyCreateSession } from '../terminalProxy.js';
 import {
@@ -27,6 +28,9 @@ export type ProcessTargetContext = {
   baselineHead: string | null;
   state: RunState;
 };
+
+type ProcessTargetResult = 'continue' | 'halt';
+type FlaggedConflictResult = ProcessTargetResult | 'fallthrough';
 
 // Run-level "circuit breaker". Between tasks we verify the project repo
 // hasn't been damaged: `.git` still exists and HEAD has only moved
@@ -71,6 +75,85 @@ async function checkRepoIntegrity(
   return { ok: true };
 }
 
+function formatMergeResult(result: MergeOutcome): string {
+  return `${result.status}${result.status === 'conflict' ? ` (${result.conflictedFiles?.join(', ')})` : result.status === 'error' ? `: ${result.message}` : ''}`;
+}
+
+function formatFinalizeResult(fin: FinalizeOutcome): string {
+  return fin.ok
+    ? 'ok'
+    : ('stashConflict' in fin
+        ? `stash-conflict (${fin.stashConflict.join(', ')})`
+        : `error: ${'error' in fin ? fin.error : '?'}`);
+}
+
+function mergeRunResyncOptions(
+  task: Task,
+  opts: { assumeMainAlreadyIncorporated?: boolean } = {},
+) {
+  return {
+    assumeMainAlreadyIncorporated: opts.assumeMainAlreadyIncorporated,
+    onBeforeMerge: () => {
+      console.log(`[merge-run] merging worktree for ${task.id} (branch=${task.branch})`);
+    },
+    onMergeResult: (result: MergeOutcome) => {
+      console.log(`[merge-run] mergeWorktreeInRepo → ${formatMergeResult(result)}`);
+    },
+    onBeforeWriteMergeInstructions: () => {
+      console.log(`[merge-run] writing merge instructions for ${task.id}`);
+    },
+    onBeforeFinalize: () => {
+      console.log(`[merge-run] finalizing task ${task.id}...`);
+    },
+    onFinalizeResult: (fin: FinalizeOutcome) => {
+      console.log(`[merge-run] finalize → ${formatFinalizeResult(fin)}`);
+    },
+  };
+}
+
+async function spawnResolverAndNotifyConflict({
+  task,
+  run,
+  runCtx,
+  cwd,
+  command,
+  conflictedFiles,
+  recordBeforeSpawn = false,
+}: {
+  task: Task;
+  run: MergeRun;
+  runCtx: ProcessTargetContext;
+  cwd: string;
+  command: string;
+  conflictedFiles: string[];
+  // Preserve the original failure semantics at each call site: some paths
+  // recorded the conflict before spawning the pty, while re-spawn recorded it
+  // only after a session was successfully created.
+  recordBeforeSpawn?: boolean;
+}): Promise<void> {
+  if (recordBeforeSpawn) {
+    run.conflicted.push(task.id);
+  }
+  const sess = await proxyCreateSession({
+    cwd,
+    initialCommand: command,
+    projectPath: task.projectPath,
+  });
+  if (!recordBeforeSpawn) {
+    run.conflicted.push(task.id);
+  }
+  notify(runCtx.state, {
+    type: 'conflict',
+    runId: run.id,
+    projectPath: runCtx.projectPath,
+    taskId: task.id,
+    command,
+    cwd,
+    conflictedFiles,
+    serverId: 'id' in sess ? sess.id : undefined,
+  });
+}
+
 async function respawnResolverForFlaggedConflict(
   task: Task,
   run: MergeRun,
@@ -85,120 +168,188 @@ async function respawnResolverForFlaggedConflict(
     task.worktreePath!,
   );
   const command = buildConflictResolveCommand(relativePath);
-  const sess = await proxyCreateSession({
+  await spawnResolverAndNotifyConflict({
+    task,
+    run,
+    runCtx,
     cwd: task.worktreePath!,
-    initialCommand: command,
-    projectPath: task.projectPath,
-  });
-  run.conflicted.push(task.id);
-  notify(runCtx.state, {
-    type: 'conflict',
-    runId: run.id,
-    projectPath: runCtx.projectPath,
-    taskId: task.id,
     command,
-    cwd: task.worktreePath!,
     conflictedFiles,
-    serverId: 'id' in sess ? sess.id : undefined,
   });
 }
 
-async function handleCleanMerge(
+async function handleResyncOutcome(
   task: Task,
   run: MergeRun,
   runCtx: ProcessTargetContext,
+  outcome: ResyncOutcome,
 ): Promise<void> {
-  console.log(`[merge-run] finalizing task ${task.id}...`);
-  const fin = await finalizeMergedTask(task, runCtx.backendOrigin);
-  console.log(`[merge-run] finalize → ${fin.ok ? 'ok' : ('stashConflict' in fin ? `stash-conflict (${fin.stashConflict.join(', ')})` : `error: ${'error' in fin ? fin.error : '?'}`)}`);
-  if (fin.ok) {
+  if (outcome.kind === 'finalized') {
     run.merged.push(task.id);
-  } else if ('stashConflict' in fin) {
-    run.conflicted.push(task.id);
-    const sess = await proxyCreateSession({
-      cwd: fin.cwd,
-      initialCommand: fin.resolveCommand,
-      projectPath: task.projectPath,
-    });
-    notify(runCtx.state, {
-      type: 'conflict',
-      runId: run.id,
-      projectPath: runCtx.projectPath,
-      taskId: task.id,
-      command: fin.resolveCommand,
-      cwd: fin.cwd,
-      conflictedFiles: fin.stashConflict,
-      serverId: 'id' in sess ? sess.id : undefined,
+    return;
+  }
+
+  if (outcome.kind === 'stash-conflict') {
+    await spawnResolverAndNotifyConflict({
+      task,
+      run,
+      runCtx,
+      cwd: outcome.cwd,
+      command: outcome.resolveCommand,
+      conflictedFiles: outcome.conflictedFiles,
+      recordBeforeSpawn: true,
     });
     // Stop the run — subsequent tasks can't FF until the stash conflict
     // is resolved. /stash-resolved will auto-restart the run.
     run.cancelRequested = true;
-  } else {
-    run.errored.push({
-      taskId: task.id,
-      error: 'error' in fin ? fin.error : 'finalize failed',
-    });
+    return;
   }
+
+  if (outcome.kind === 'merge-conflict') {
+    await spawnResolverAndNotifyConflict({
+      task,
+      run,
+      runCtx,
+      cwd: outcome.cwd,
+      command: outcome.command,
+      conflictedFiles: outcome.conflictedFiles,
+      recordBeforeSpawn: true,
+    });
+
+    // Fix 2: block the run worker until the resolver's Stop hook fires and
+    // /complete signals us. This keeps conflict resolution sequential so each
+    // subsequent task's merge sees the latest main HEAD — preventing the
+    // "stale resolution" race where resolver B commits against main@v1 and
+    // resolver A's finalize has already advanced main to v2 with overlapping
+    // changes, forcing a second conflict round.
+    //
+    // The signal comes from /complete (via signalConflictWaiter) after
+    // finalizeMergedTask succeeds, or after a re-sync conflict re-queues the
+    // task, or from cancelRunInState on explicit cancellation. In all cases
+    // the run simply continues to the next task; run.cancelRequested is the
+    // definitive halt signal.
+    console.log(`[merge-run] waiting for conflict resolver on task ${task.id}...`);
+    await registerConflictWaiter(runCtx.state, run.id, task.id);
+    console.log(`[merge-run] conflict resolver done for task ${task.id} — resuming run`);
+    return;
+  }
+
+  run.errored.push({ taskId: task.id, error: outcome.message });
 }
 
-async function handleMergeConflict(
+async function finishTaskAndCheckIntegrity(
+  run: MergeRun,
+  runCtx: ProcessTargetContext,
+  taskId: string,
+): Promise<ProcessTargetResult> {
+  run.processed += 1;
+  run.current = undefined;
+  notify(runCtx.state, { type: 'progress', run: snapshot(run) });
+  console.log(`[merge-run] progress: ${run.processed}/${run.total} (merged=${run.merged.length} conflicts=${run.conflicted.length} errors=${run.errored.length})`);
+
+  // Circuit breaker: bail out of the whole run if the repo looks
+  // damaged. Better to leave the remaining tasks at ready_to_merge
+  // than to keep processing against a broken `.git`.
+  const integrity = await checkRepoIntegrity(runCtx.projectPath, runCtx.baselineHead);
+  if (!integrity.ok) {
+    console.error(
+      `[merge-run] !!! INTEGRITY CHECK FAILED after task ${taskId}: ${integrity.reason}. ` +
+        `HALTING RUN — ${run.total - run.processed} task(s) left at ready_to_merge. ` +
+        `Inspect the project repo before retrying.`,
+    );
+    run.errored.push({ taskId: '(run)', error: `halted after ${taskId}: ${integrity.reason}` });
+    run.cancelRequested = true;
+    return 'halt';
+  }
+
+  return run.cancelRequested ? 'halt' : 'continue';
+}
+
+async function handleFlaggedConflictTask(
   task: Task,
   run: MergeRun,
-  result: Extract<MergeOutcome, { status: 'conflict' }>,
   runCtx: ProcessTargetContext,
-): Promise<void> {
-  console.log(`[merge-run] writing merge instructions for ${task.id}`);
-  const { relativePath } = await writeMergeInstructions(
-    task,
-    task.branch!,
-    result.conflictedFiles,
-    runCtx.backendOrigin,
-    task.worktreePath!,
-  );
-  await updateTask(task.id, {
-    conflict: true,
-    conflictStartedAt: Date.now(),
-  });
-  run.conflicted.push(task.id);
-  const command = buildConflictResolveCommand(relativePath);
-  const sess = await proxyCreateSession({
-    cwd: task.worktreePath!,
-    initialCommand: command,
-    projectPath: task.projectPath,
-  });
-  notify(runCtx.state, {
-    type: 'conflict',
-    runId: run.id,
-    projectPath: runCtx.projectPath,
-    taskId: task.id,
-    command,
-    cwd: task.worktreePath!,
-    conflictedFiles: result.conflictedFiles,
-    serverId: 'id' in sess ? sess.id : undefined,
-  });
+): Promise<FlaggedConflictResult> {
+  if (!task.conflict) return 'fallthrough';
 
-  // Fix 2: block the run worker until the resolver's Stop hook fires and
-  // /complete signals us. This keeps conflict resolution sequential so each
-  // subsequent task's merge sees the latest main HEAD — preventing the
-  // "stale resolution" race where resolver B commits against main@v1 and
-  // resolver A's finalize has already advanced main to v2 with overlapping
-  // changes, forcing a second conflict round.
-  //
-  // The signal comes from /complete (via signalConflictWaiter) after
-  // finalizeMergedTask succeeds, or after a re-sync conflict re-queues the
-  // task, or from cancelRunInState on explicit cancellation. In all cases
-  // the run simply continues to the next task; run.cancelRequested is the
-  // definitive halt signal.
-  console.log(`[merge-run] waiting for conflict resolver on task ${task.id}...`);
-  await registerConflictWaiter(runCtx.state, run.id, task.id);
-  console.log(`[merge-run] conflict resolver done for task ${task.id} — resuming run`);
+  if (await isMidMerge(task.worktreePath!)) {
+    console.log(`[merge-run] task ${task.id} mid-merge — re-spawning resolver`);
+    try {
+      await respawnResolverForFlaggedConflict(task, run, runCtx);
+    } catch (err) {
+      console.error(`[merge-run] re-spawn for ${task.id} failed:`, err);
+      run.errored.push({
+        taskId: task.id,
+        error: `re-spawn resolver failed: ${(err as Error).message}`,
+      });
+    }
+    run.processed += 1;
+    return 'continue';
+  }
+
+  console.log(
+    `[merge-run] task ${task.id} flagged conflict but worktree is clean — re-syncing`,
+  );
+
+  // Fix 1: if main is already an ancestor of the worktree branch HEAD,
+  // the resolver committed against the current main and nothing else has
+  // advanced main since. Skip the re-merge and finalize directly — the
+  // re-merge would be a no-op and can spuriously conflict if main moved
+  // due to a concurrent backend restart (the Lattice-on-itself scenario).
+  let mainAlreadyMerged = false;
+  try {
+    mainAlreadyMerged = await mainIsAncestorOfWorktree(
+      task.projectPath,
+      task.worktreePath!,
+    );
+  } catch (err) {
+    console.warn(
+      `[merge-run] ancestor check for ${task.id} failed (will re-merge): ${(err as Error).message}`,
+    );
+  }
+
+  if (!mainAlreadyMerged) {
+    // main has advanced since the resolver committed; fall through to the
+    // normal merge path to absorb the new commits (may or may not conflict).
+    return 'fallthrough';
+  }
+
+  console.log(
+    `[merge-run] task ${task.id}: main already incorporated in branch — finalizing directly`,
+  );
+  if (!tryAcquire(task.id)) {
+    console.warn(`[merge-run] task ${task.id} lock held — skipping`);
+    run.errored.push({
+      taskId: task.id,
+      error: 'merge lock held by another caller; skipped',
+    });
+  } else {
+    try {
+      const outcome = await resyncWithMainAndFinalize(
+        task,
+        runCtx.backendOrigin,
+        mergeRunResyncOptions(task, { assumeMainAlreadyIncorporated: true }),
+      );
+      await handleResyncOutcome(task, run, runCtx, outcome);
+    } catch (err) {
+      console.error(`[merge-run] uncaught error finalizing ${task.id}:`, err);
+      run.errored.push({
+        taskId: task.id,
+        error: (err as Error).message ?? 'unknown error',
+      });
+    } finally {
+      release(task.id);
+    }
+  }
+
+  return finishTaskAndCheckIntegrity(run, runCtx, task.id);
 }
 
 export async function processTarget(
   seed: Task,
   run: MergeRun,
   runCtx: ProcessTargetContext,
-): Promise<'continue' | 'halt'> {
+): Promise<ProcessTargetResult> {
   if (run.cancelRequested) return 'halt';
 
   run.current = seed.id;
@@ -241,84 +392,9 @@ export async function processTarget(
   //     normal merge path which will re-merge main into the branch.
   // Old behavior was a flat skip, which left conflict tasks stranded
   // forever once the run loop exited.
-  if (task.conflict) {
-    if (await isMidMerge(task.worktreePath)) {
-      console.log(`[merge-run] task ${task.id} mid-merge — re-spawning resolver`);
-      try {
-        await respawnResolverForFlaggedConflict(task, run, runCtx);
-      } catch (err) {
-        console.error(`[merge-run] re-spawn for ${task.id} failed:`, err);
-        run.errored.push({
-          taskId: task.id,
-          error: `re-spawn resolver failed: ${(err as Error).message}`,
-        });
-      }
-      run.processed += 1;
-      return 'continue';
-    }
-    console.log(
-      `[merge-run] task ${task.id} flagged conflict but worktree is clean — re-syncing`,
-    );
-
-    // Fix 1: if main is already an ancestor of the worktree branch HEAD,
-    // the resolver committed against the current main and nothing else has
-    // advanced main since. Skip the re-merge and finalize directly — the
-    // re-merge would be a no-op and can spuriously conflict if main moved
-    // due to a concurrent backend restart (the Lattice-on-itself scenario).
-    let mainAlreadyMerged = false;
-    try {
-      mainAlreadyMerged = await mainIsAncestorOfWorktree(
-        task.projectPath,
-        task.worktreePath,
-      );
-    } catch (err) {
-      console.warn(
-        `[merge-run] ancestor check for ${task.id} failed (will re-merge): ${(err as Error).message}`,
-      );
-    }
-
-    if (mainAlreadyMerged) {
-      console.log(
-        `[merge-run] task ${task.id}: main already incorporated in branch — finalizing directly`,
-      );
-      if (!tryAcquire(task.id)) {
-        console.warn(`[merge-run] task ${task.id} lock held — skipping`);
-        run.errored.push({
-          taskId: task.id,
-          error: 'merge lock held by another caller; skipped',
-        });
-      } else {
-        try {
-          await handleCleanMerge(task, run, runCtx);
-        } catch (err) {
-          console.error(`[merge-run] uncaught error finalizing ${task.id}:`, err);
-          run.errored.push({
-            taskId: task.id,
-            error: (err as Error).message ?? 'unknown error',
-          });
-        } finally {
-          release(task.id);
-        }
-      }
-      run.processed += 1;
-      run.current = undefined;
-      notify(runCtx.state, { type: 'progress', run: snapshot(run) });
-      console.log(`[merge-run] progress: ${run.processed}/${run.total} (merged=${run.merged.length} conflicts=${run.conflicted.length} errors=${run.errored.length})`);
-      const integrityEarly = await checkRepoIntegrity(runCtx.projectPath, runCtx.baselineHead);
-      if (!integrityEarly.ok) {
-        console.error(
-          `[merge-run] !!! INTEGRITY CHECK FAILED after task ${task.id}: ${integrityEarly.reason}. ` +
-            `HALTING RUN — ${run.total - run.processed} task(s) left at ready_to_merge. ` +
-            `Inspect the project repo before retrying.`,
-        );
-        run.errored.push({ taskId: '(run)', error: `halted after ${task.id}: ${integrityEarly.reason}` });
-        run.cancelRequested = true;
-        return 'halt';
-      }
-      return run.cancelRequested ? 'halt' : 'continue';
-    }
-    // main has advanced since the resolver committed; fall through to the
-    // normal merge path to absorb the new commits (may or may not conflict).
+  const flaggedConflictResult = await handleFlaggedConflictTask(task, run, runCtx);
+  if (flaggedConflictResult !== 'fallthrough') {
+    return flaggedConflictResult;
   }
 
   if (!tryAcquire(task.id)) {
@@ -332,23 +408,12 @@ export async function processTarget(
   }
 
   try {
-    console.log(`[merge-run] merging worktree for ${task.id} (branch=${task.branch})`);
-    const result = await mergeWorktreeInRepo(
-      task.projectPath,
-      task.branch,
-      task.worktreePath,
-      task.id,
+    const outcome = await resyncWithMainAndFinalize(
+      task,
       runCtx.backendOrigin,
-      task.title,
+      mergeRunResyncOptions(task),
     );
-    console.log(`[merge-run] mergeWorktreeInRepo → ${result.status}${result.status === 'conflict' ? ` (${result.conflictedFiles?.join(', ')})` : result.status === 'error' ? `: ${result.message}` : ''}`);
-    if (result.status === 'clean') {
-      await handleCleanMerge(task, run, runCtx);
-    } else if (result.status === 'conflict') {
-      await handleMergeConflict(task, run, result, runCtx);
-    } else {
-      run.errored.push({ taskId: task.id, error: result.message });
-    }
+    await handleResyncOutcome(task, run, runCtx, outcome);
   } catch (err) {
     console.error(`[merge-run] uncaught error for task ${task.id}:`, err);
     run.errored.push({
@@ -359,25 +424,5 @@ export async function processTarget(
     release(task.id);
   }
 
-  run.processed += 1;
-  run.current = undefined;
-  notify(runCtx.state, { type: 'progress', run: snapshot(run) });
-  console.log(`[merge-run] progress: ${run.processed}/${run.total} (merged=${run.merged.length} conflicts=${run.conflicted.length} errors=${run.errored.length})`);
-
-  // Circuit breaker: bail out of the whole run if the repo looks
-  // damaged. Better to leave the remaining tasks at ready_to_merge
-  // than to keep processing against a broken `.git`.
-  const integrity = await checkRepoIntegrity(runCtx.projectPath, runCtx.baselineHead);
-  if (!integrity.ok) {
-    console.error(
-      `[merge-run] !!! INTEGRITY CHECK FAILED after task ${task.id}: ${integrity.reason}. ` +
-        `HALTING RUN — ${run.total - run.processed} task(s) left at ready_to_merge. ` +
-        `Inspect the project repo before retrying.`,
-    );
-    run.errored.push({ taskId: '(run)', error: `halted after ${task.id}: ${integrity.reason}` });
-    run.cancelRequested = true;
-    return 'halt';
-  }
-
-  return run.cancelRequested ? 'halt' : 'continue';
+  return finishTaskAndCheckIntegrity(run, runCtx, task.id);
 }
