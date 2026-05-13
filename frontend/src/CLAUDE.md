@@ -7,7 +7,7 @@ Vite + React + TS. Hand-written CSS in `index.css`; no MUI, no styled-components
 - `App.tsx` — top-level shell: TopAppBar + resizable Sidebar + ForceGraph + Legend. Owns `activeFolder`, scan retry loop, sidebar width.
 - `api/` — every backend call. Domain-grouped (`tasks.ts`, `mergeRuns.ts`, `workflows.ts`, `scan.ts`, `settings.ts`). Generic WS subscriber in `ws.ts`. Components import from `'../api'` which resolves to `api/index.ts`.
 - `components/` — UI. Big launchers live in subdirectories with shim re-exports at the top level (`TaskBoard.tsx` → `taskboard/`, `Workflows.tsx` → `workflows/`, `ForceGraphView.tsx` → `forceGraph/`).
-- `TerminalsContext.tsx` — global terminal-tab state, persisted to sessionStorage (per-tab). `addTerminal({...})` is how features spawn agent sessions.
+- `TerminalsContext.tsx` — global terminal-tab state, persisted to sessionStorage (per-tab). `addTerminal({...})` is how features spawn agent sessions. Reducer/storage/IO helpers live in `terminal/` (see `terminal/CLAUDE.md`); the context file is just React glue around them.
 - `extensionStyles.ts` — single source of truth for sprite shape/color per file extension. Shared by graph + Legend.
 - `workflowTemplates.ts` — built-in templates surfaced in the Workflows picker.
 
