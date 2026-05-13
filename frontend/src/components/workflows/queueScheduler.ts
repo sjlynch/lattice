@@ -10,28 +10,30 @@
 // place). Pulling the decision into a pure reducer makes the invariants
 // explicit and the bugs reachable from tests.
 
+import type { WorkflowQueueEntry } from '../../api';
+
 export type QueueMode = 'sequential' | 'parallel';
 
-// One workflow the queue has dispatched a /run for. `runId` is null while the
-// HTTP request is in flight; once the backend responds with the run object
-// (or, equivalently, the WS `started` event arrives) we tag it with the run
-// id so the run-lifecycle WS events can find this entry to retire it.
-export type StartedEntry = {
-  workflowId: string;
+// One queued entry the scheduler has dispatched a /run for. `runId` is null
+// while the HTTP request is in flight; once the backend responds with the run
+// object (or, equivalently, the WS `started` event arrives) we tag it with the
+// run id so the run-lifecycle WS events can find this entry to retire it.
+export type StartedEntry = WorkflowQueueEntry & {
   runId: string | null;
 };
 
 export type QueueState = {
   mode: QueueMode;
-  // Workflow IDs waiting to be started, in FIFO order.
-  queued: string[];
+  // Independent queued workflow entries waiting to be started, in FIFO order.
+  // The same workflowId may appear multiple times with different overrides.
+  queued: WorkflowQueueEntry[];
   // True iff the user pressed Start queue and the scheduler is responsible
   // for auto-progressing. Flips back to false automatically when the queue
   // drains.
   running: boolean;
-  // Workflows the queue has dispatched /run for, that we still consider
+  // Queue entries the queue has dispatched /run for, that we still consider
   // in-flight or active. Sequential mode keeps this at length <= 1; parallel
-  // fills it with the whole batch until each run finishes.
+  // fills it with the whole batch until each run dispatch is confirmed.
   started: StartedEntry[];
 };
 
@@ -44,23 +46,23 @@ export const initialQueueState: QueueState = {
 
 export type QueueAction =
   | { type: 'setMode'; mode: QueueMode }
-  | { type: 'enqueue'; workflowId: string }
-  | { type: 'removeFromQueue'; workflowId: string }
+  | { type: 'enqueue'; entry: WorkflowQueueEntry }
+  | { type: 'removeFromQueue'; entryId: string }
   | { type: 'clearQueue' }
   | { type: 'startQueue' }
   | { type: 'stopQueue' }
-  // Optimistically mark a workflow as in-flight. Removes it from queued
+  // Optimistically mark a queued entry as in-flight. Removes it from queued
   // immediately so a second tick of the scheduler doesn't pick it again.
-  | { type: 'dispatchStart'; workflowId: string }
+  | { type: 'dispatchStart'; entryId: string }
   // The /run HTTP succeeded (or WS `started` arrived first — same outcome):
   // attach the runId to the in-flight entry so a later runFinished can match.
-  | { type: 'workflowStarted'; workflowId: string; runId: string }
+  | { type: 'workflowStarted'; entryId: string; runId: string }
   // The /run HTTP errored or threw client-side. The run never existed
   // server-side from the queue's perspective.
-  | { type: 'dispatchFailed'; workflowId: string }
+  | { type: 'dispatchFailed'; entryId: string }
   // A run finished server-side (WS completed/cancelled/errored). Matched by
-  // runId because workflowId alone is ambiguous if the same workflow was
-  // queued + run multiple times.
+  // runId because workflowId alone is ambiguous when the same workflow is
+  // queued multiple times.
   | { type: 'runFinished'; runId: string };
 
 // Pure reducer. No I/O, no side effects.
@@ -76,20 +78,14 @@ export function reduceQueue(state: QueueState, action: QueueAction): QueueState 
     }
 
     case 'enqueue': {
-      if (state.queued.includes(action.workflowId)) return state;
-      // Don't re-queue a workflow that's currently in-flight. Avoids a
-      // second /run getting dispatched the moment the first one finishes.
-      if (state.started.some((s) => s.workflowId === action.workflowId)) {
-        return state;
-      }
-      return { ...state, queued: [...state.queued, action.workflowId] };
+      return { ...state, queued: [...state.queued, action.entry] };
     }
 
     case 'removeFromQueue': {
-      if (!state.queued.includes(action.workflowId)) return state;
+      if (!state.queued.some((entry) => entry.id === action.entryId)) return state;
       return {
         ...state,
-        queued: state.queued.filter((id) => id !== action.workflowId),
+        queued: state.queued.filter((entry) => entry.id !== action.entryId),
       };
     }
 
@@ -110,46 +106,38 @@ export function reduceQueue(state: QueueState, action: QueueAction): QueueState 
     }
 
     case 'dispatchStart': {
-      // Idempotent: already in-flight = no-op. This is the synchronous gate
-      // that prevents the React layer from dispatching /run twice for the
-      // same workflow id, even if pendingStarts is called more than once
-      // before state propagates.
-      if (state.started.some((s) => s.workflowId === action.workflowId)) {
+      // Idempotent by queue-entry id: already in-flight = no-op. This is the
+      // synchronous gate that prevents the React layer from dispatching /run
+      // twice for the same queued entry, while still allowing the same
+      // workflowId to be queued in another independent entry.
+      if (state.started.some((entry) => entry.id === action.entryId)) {
         return state;
       }
+      const entry = state.queued.find((queued) => queued.id === action.entryId);
+      if (!entry) return state;
       return {
         ...state,
-        queued: state.queued.filter((id) => id !== action.workflowId),
+        queued: state.queued.filter((queued) => queued.id !== action.entryId),
         started: [
           ...state.started,
-          { workflowId: action.workflowId, runId: null },
+          { ...entry, runId: null },
         ],
       };
     }
 
     case 'workflowStarted': {
-      // Attach the runId to the matching in-flight entry. Match by
-      // workflowId + runId=null because the same workflowId could
-      // theoretically appear twice in parallel mode (the enqueue guard
-      // prevents this today, but the reducer shouldn't rely on it).
-      let attached = false;
-      const next = state.started.map((s) => {
-        if (attached) return s;
-        if (s.workflowId === action.workflowId && s.runId === null) {
-          attached = true;
-          return { ...s, runId: action.runId };
-        }
-        return s;
-      });
-      if (!attached) return state;
-      return { ...state, started: next };
+      const idx = state.started.findIndex(
+        (entry) => entry.id === action.entryId && entry.runId === null,
+      );
+      if (idx === -1) return state;
+      const started = [...state.started];
+      started[idx] = { ...started[idx], runId: action.runId };
+      return { ...state, started };
     }
 
     case 'dispatchFailed': {
-      // Remove the most recent in-flight entry for this workflow. Only one
-      // can exist at a time given the dispatchStart guard.
       const idx = state.started.findIndex(
-        (s) => s.workflowId === action.workflowId && s.runId === null,
+        (entry) => entry.id === action.entryId && entry.runId === null,
       );
       if (idx === -1) return state;
       const started = [...state.started];
@@ -158,7 +146,7 @@ export function reduceQueue(state: QueueState, action: QueueAction): QueueState 
     }
 
     case 'runFinished': {
-      const idx = state.started.findIndex((s) => s.runId === action.runId);
+      const idx = state.started.findIndex((entry) => entry.runId === action.runId);
       if (idx === -1) return state;
       const started = [...state.started];
       started.splice(idx, 1);
@@ -170,17 +158,17 @@ export function reduceQueue(state: QueueState, action: QueueAction): QueueState 
 // What the scheduler wants the React layer to start *now*. Pure — safe to
 // call after every action.
 //
-// Sequential: at most one workflow may be in-flight or active at a time.
-// Parallel: every queued workflow not already in-flight should fire now.
-export function pendingStarts(state: QueueState): string[] {
+// Sequential: at most one queued entry may be in-flight or active at a time.
+// Parallel: every queued entry not already in-flight should fire now.
+export function pendingStarts(state: QueueState): WorkflowQueueEntry[] {
   if (!state.running) return [];
   if (state.queued.length === 0) return [];
   if (state.mode === 'sequential') {
     if (state.started.length > 0) return [];
     return [state.queued[0]];
   }
-  const startedSet = new Set(state.started.map((s) => s.workflowId));
-  return state.queued.filter((id) => !startedSet.has(id));
+  const startedIds = new Set(state.started.map((entry) => entry.id));
+  return state.queued.filter((entry) => !startedIds.has(entry.id));
 }
 
 // Whether the queue has nothing left to do. Used by the runtime to flip
@@ -196,7 +184,7 @@ export function shouldAutoStop(state: QueueState): boolean {
   // Parallel mode is fire-and-forget: as soon as every queued workflow has
   // either dispatched successfully (runId attached) or failed-and-cleared,
   // the queue's job is done. Outstanding runs continue independently.
-  return state.started.every((s) => s.runId !== null);
+  return state.started.every((entry) => entry.runId !== null);
 }
 
 // Convenience: apply one action and return both the new state and the
@@ -204,7 +192,7 @@ export function shouldAutoStop(state: QueueState): boolean {
 // either fires the returned starts (HTTP /run) or auto-stops.
 export type Step = {
   state: QueueState;
-  starts: string[];
+  starts: WorkflowQueueEntry[];
   autoStop: boolean;
 };
 
@@ -213,8 +201,8 @@ export function step(state: QueueState, action: QueueAction): Step {
   const starts = pendingStarts(next);
   // Apply the dispatchStart optimistic updates synchronously so the caller's
   // next call to `step` doesn't re-emit them.
-  for (const workflowId of starts) {
-    next = reduceQueue(next, { type: 'dispatchStart', workflowId });
+  for (const entry of starts) {
+    next = reduceQueue(next, { type: 'dispatchStart', entryId: entry.id });
   }
   let autoStop = false;
   if (shouldAutoStop(next)) {

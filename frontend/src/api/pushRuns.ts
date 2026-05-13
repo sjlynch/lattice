@@ -3,15 +3,8 @@
 // terminal once Claude's Stop hook has fired on the backend.
 
 import { asJson } from './http';
-
-export type StartPushRunResult = {
-  id: string;
-  command: string;
-  cwd: string;
-  serverId?: string;
-};
-
-export type PushRunStatus = 'running' | 'done';
+import type { PushRunStatus, StartPushRunResult } from './types';
+export type { PushRunStatus, StartPushRunResult } from './types';
 
 export async function checkGit(projectPath: string): Promise<{ hasGit: boolean }> {
   return asJson<{ hasGit: boolean }>(

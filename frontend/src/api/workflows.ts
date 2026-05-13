@@ -7,6 +7,7 @@ import type {
   Workflow,
   WorkflowRunEvent,
   WorkflowRunResult,
+  WorkflowRunStartOptions,
   WorkflowStep,
 } from './types';
 
@@ -51,10 +52,21 @@ export async function deleteWorkflow(id: string): Promise<void> {
   );
 }
 
-export async function startWorkflow(id: string): Promise<WorkflowRunResult> {
+export async function startWorkflow(
+  id: string,
+  options: WorkflowRunStartOptions = {},
+): Promise<WorkflowRunResult> {
+  const harnessOverride = options.harnessOverride ?? options.modelOverride ?? null;
+  const body = harnessOverride ? JSON.stringify({ harnessOverride }) : undefined;
   return asJson<WorkflowRunResult>(
     await fetch(`/api/workflows/${encodeURIComponent(id)}/run`, {
       method: 'POST',
+      ...(body
+        ? {
+            headers: { 'Content-Type': 'application/json' },
+            body,
+          }
+        : {}),
     }),
   );
 }

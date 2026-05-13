@@ -7,6 +7,7 @@ import {
   createWorkflow,
   deleteWorkflow,
   listWorkflows,
+  normalizeWorkflowRunHarnessOverride,
   updateWorkflow,
   type WorkflowStep,
 } from '../workflows.js';
@@ -52,7 +53,15 @@ export function buildWorkflowsRouter(backendOrigin: string): Router {
 
   r.post('/api/workflows/:id/run', async (req, res) => {
     try {
-      const run = await startWorkflowRun(req.params.id, backendOrigin);
+      const body = req.body || {};
+      const rawOverride = body.harnessOverride ?? body.modelOverride ?? null;
+      const harnessOverride = normalizeWorkflowRunHarnessOverride(rawOverride);
+      if (rawOverride !== null && harnessOverride === null) {
+        return res.status(400).json({ error: 'invalid workflow harness override' });
+      }
+      const run = await startWorkflowRun(req.params.id, backendOrigin, {
+        harnessOverride,
+      });
       res.json({ run });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });

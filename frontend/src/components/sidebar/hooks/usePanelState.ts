@@ -10,8 +10,6 @@ type UsePanelStateArgs = {
   regularTerminals: TerminalSpec[];
   mergeTerminals: TerminalSpec[];
   startupTerminalsList: TerminalSpec[];
-  setFilter: (value: string) => void;
-  setSearchOpen: (value: boolean) => void;
 };
 
 export function usePanelState({
@@ -21,8 +19,6 @@ export function usePanelState({
   regularTerminals,
   mergeTerminals,
   startupTerminalsList,
-  setFilter,
-  setSearchOpen,
 }: UsePanelStateArgs) {
   const [activePanel, setActivePanel] = useState<Panel>('terminals');
 
@@ -70,8 +66,6 @@ export function usePanelState({
   const switchPanel = useCallback(
     (panel: Panel) => {
       setActivePanel(panel);
-      setFilter('');
-      setSearchOpen(false);
       const list =
         panel === 'merging'
           ? mergeTerminals
@@ -89,7 +83,7 @@ export function usePanelState({
         setActiveId(list[list.length - 1].id);
       }
     },
-    [mergeTerminals, regularTerminals, startupTerminalsList, activeId, setActiveId, setFilter, setSearchOpen],
+    [mergeTerminals, regularTerminals, startupTerminalsList, activeId, setActiveId],
   );
 
   return { activePanel, panelTerminals, switchPanel };
