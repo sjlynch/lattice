@@ -14,12 +14,12 @@ import {
   setupTaskWorktree,
   worktreeExists,
   isMidMerge,
-  mergeWorktreeInRepo,
-  finalizeMergedTask,
   writeMergeInstructions,
   buildConflictResolveCommand,
   ensureLatticeRepoExclude,
   untrackOwnedFilesInRepo,
+  resyncWithMainAndFinalize,
+  type ResyncOutcome,
 } from '../../worktree.js';
 import { getActiveRunForProject } from '../../mergeRuns.js';
 import { tryAcquire, release } from '../../mergeLocks.js';
@@ -28,7 +28,6 @@ import {
   acquireProjectRunLock,
   ProjectRunLockedError,
 } from '../../projectRunLock.js';
-import { finalizeError } from './_shared.js';
 import { selectHarnessCommand } from './harnessFactory.js';
 
 // Tracks projects that currently have a per-card manual merge in flight.
@@ -82,6 +81,121 @@ function logTaskRouteError(
     `[tasks:${operation}] task ${task.id} ("${task.title.slice(0, 60)}") at ${task.projectPath}:`,
     error,
   );
+}
+
+type MergeReadyTask = Task & { branch: string; worktreePath: string };
+
+async function respondResolverSession(
+  res: Response,
+  task: MergeReadyTask,
+  payload: {
+    stashConflict?: true;
+    command: string;
+    cwd: string;
+    conflictedFiles?: string[];
+  },
+) {
+  const sess = await proxyCreateSession({
+    cwd: payload.cwd,
+    initialCommand: payload.command,
+    projectPath: task.projectPath,
+  });
+  if (payload.stashConflict) {
+    return res.json({
+      merged: false,
+      stashConflict: true,
+      command: payload.command,
+      cwd: payload.cwd,
+      conflictedFiles: payload.conflictedFiles,
+      serverId: 'id' in sess ? sess.id : undefined,
+    });
+  }
+  if (payload.conflictedFiles) {
+    return res.json({
+      merged: false,
+      conflict: true,
+      command: payload.command,
+      cwd: payload.cwd,
+      conflictedFiles: payload.conflictedFiles,
+      serverId: 'id' in sess ? sess.id : undefined,
+    });
+  }
+  return res.json({
+    merged: false,
+    conflict: true,
+    command: payload.command,
+    cwd: payload.cwd,
+    serverId: 'id' in sess ? sess.id : undefined,
+  });
+}
+
+async function respondMergeOutcome(
+  res: Response,
+  task: MergeReadyTask,
+  outcome: ResyncOutcome,
+) {
+  if (outcome.kind === 'finalized') {
+    return res.json({ merged: true });
+  }
+  if (outcome.kind === 'stash-conflict') {
+    return respondResolverSession(res, task, {
+      stashConflict: true,
+      command: outcome.resolveCommand,
+      cwd: outcome.cwd,
+      conflictedFiles: outcome.conflictedFiles,
+    });
+  }
+  if (outcome.kind === 'merge-conflict') {
+    return respondResolverSession(res, task, {
+      command: outcome.command,
+      cwd: outcome.cwd,
+      conflictedFiles: outcome.conflictedFiles,
+    });
+  }
+  return res.status(500).json({ error: outcome.message });
+}
+
+async function respondExistingConflictInstructions(
+  res: Response,
+  task: MergeReadyTask,
+  backendOrigin: string,
+) {
+  const { relativePath } = await writeMergeInstructions(
+    task,
+    task.branch,
+    [],
+    backendOrigin,
+    task.worktreePath,
+  );
+  return respondResolverSession(res, task, {
+    command: buildConflictResolveCommand(relativePath),
+    cwd: task.worktreePath,
+  });
+}
+
+async function handleAlreadyConflictedMerge(
+  task: MergeReadyTask,
+  backendOrigin: string,
+  res: Response,
+) {
+  if (!(await isMidMerge(task.worktreePath))) {
+    const outcome = await resyncWithMainAndFinalize(task, backendOrigin);
+    // A re-sync error here falls back to returning the existing resolver
+    // instructions, matching the old manual /merge behavior.
+    if (!(outcome.kind === 'error' && outcome.phase === 'merge')) {
+      return respondMergeOutcome(res, task, outcome);
+    }
+  }
+  return respondExistingConflictInstructions(res, task, backendOrigin);
+}
+
+async function runFreshMerge(
+  task: MergeReadyTask,
+  backendOrigin: string,
+  res: Response,
+) {
+  const outcome = await resyncWithMainAndFinalize(task, backendOrigin);
+  return respondMergeOutcome(res, task, outcome);
 }
 
 export function buildTaskRunRouter(backendOrigin: string): Router {
@@ -235,144 +349,10 @@ export function buildTaskRunRouter(backendOrigin: string): Router {
         // this by checking isMidMerge: if the worktree is NOT mid-merge, the
         // resolver already committed — re-sync with current main and finalize.
         if (task.conflict) {
-          if (task.worktreePath && !(await isMidMerge(task.worktreePath))) {
-            const reSync = await mergeWorktreeInRepo(
-              task.projectPath,
-              task.branch,
-              task.worktreePath,
-              task.id,
-              backendOrigin,
-              task.title,
-            );
-            if (reSync.status === 'clean') {
-              const fin = await finalizeMergedTask(task, backendOrigin);
-              if (fin.ok) {
-                return res.json({ merged: true });
-              }
-              if ('stashConflict' in fin) {
-                const sess = await proxyCreateSession({
-                  cwd: fin.cwd,
-                  initialCommand: fin.resolveCommand,
-                  projectPath: task.projectPath,
-                });
-                return res.json({
-                  merged: false,
-                  stashConflict: true,
-                  command: fin.resolveCommand,
-                  cwd: fin.cwd,
-                  conflictedFiles: fin.stashConflict,
-                  serverId: 'id' in sess ? sess.id : undefined,
-                });
-              }
-              return res.status(500).json({ error: finalizeError(fin) });
-            }
-            if (reSync.status === 'conflict') {
-              const { relativePath } = await writeMergeInstructions(
-                task,
-                task.branch,
-                reSync.conflictedFiles,
-                backendOrigin,
-                task.worktreePath,
-              );
-              await updateTask(task.id, { conflict: true, conflictStartedAt: Date.now() });
-              const command = buildConflictResolveCommand(relativePath);
-              const sess = await proxyCreateSession({
-                cwd: task.worktreePath,
-                initialCommand: command,
-                projectPath: task.projectPath,
-              });
-              return res.json({
-                merged: false,
-                conflict: true,
-                command,
-                cwd: task.worktreePath,
-                conflictedFiles: reSync.conflictedFiles,
-                serverId: 'id' in sess ? sess.id : undefined,
-              });
-            }
-            // reSync returned an error — fall through to returning existing
-            // resolver instructions so the user can retry manually
-          }
-          const { relativePath } = await writeMergeInstructions(
-            task,
-            task.branch,
-            [],
-            backendOrigin,
-            task.worktreePath,
-          );
-          const command = buildConflictResolveCommand(relativePath);
-          const sess = await proxyCreateSession({
-            cwd: task.worktreePath,
-            initialCommand: command,
-            projectPath: task.projectPath,
-          });
-          return res.json({
-            merged: false,
-            conflict: true,
-            command,
-            cwd: task.worktreePath,
-            serverId: 'id' in sess ? sess.id : undefined,
-          });
+          return handleAlreadyConflictedMerge(task, backendOrigin, res);
         }
 
-        const result = await mergeWorktreeInRepo(
-          task.projectPath,
-          task.branch,
-          task.worktreePath,
-          task.id,
-          backendOrigin,
-          task.title,
-        );
-        if (result.status === 'clean') {
-          const fin = await finalizeMergedTask(task, backendOrigin);
-          if (!fin.ok) {
-            if ('stashConflict' in fin) {
-              const sess = await proxyCreateSession({
-                cwd: fin.cwd,
-                initialCommand: fin.resolveCommand,
-                projectPath: task.projectPath,
-              });
-              return res.json({
-                merged: false,
-                stashConflict: true,
-                command: fin.resolveCommand,
-                cwd: fin.cwd,
-                conflictedFiles: fin.stashConflict,
-                serverId: 'id' in sess ? sess.id : undefined,
-              });
-            }
-            return res.status(500).json({ error: finalizeError(fin) });
-          }
-          return res.json({ merged: true });
-        }
-        if (result.status === 'conflict') {
-          const { relativePath } = await writeMergeInstructions(
-            task,
-            task.branch,
-            result.conflictedFiles,
-            backendOrigin,
-            task.worktreePath,
-          );
-          await updateTask(task.id, {
-            conflict: true,
-            conflictStartedAt: Date.now(),
-          });
-          const command = buildConflictResolveCommand(relativePath);
-          const sess = await proxyCreateSession({
-            cwd: task.worktreePath,
-            initialCommand: command,
-            projectPath: task.projectPath,
-          });
-          return res.json({
-            merged: false,
-            conflict: true,
-            command,
-            cwd: task.worktreePath,
-            conflictedFiles: result.conflictedFiles,
-            serverId: 'id' in sess ? sess.id : undefined,
-          });
-        }
-        return res.status(500).json({ error: result.message });
+        return runFreshMerge(task, backendOrigin, res);
       } catch (err) {
         logTaskRouteError(task, 'merge', err);
         return res.status(500).json({ error: (err as Error).message });
