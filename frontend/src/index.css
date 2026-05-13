@@ -504,6 +504,7 @@ input {
   transition: background 0.12s ease, color 0.12s ease;
 }
 .btn-ghost:hover { background: var(--bg-hover); color: var(--text-primary); }
+.btn-ghost:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* Modal */
 .modal-backdrop {
@@ -711,6 +712,56 @@ input {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.drive-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.drive-row-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.drive-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.drive-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #15181d;
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: 11px;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.drive-chip:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.drive-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.create-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.create-folder-input {
+  min-width: 0;
 }
 .text-input {
   flex: 1;
