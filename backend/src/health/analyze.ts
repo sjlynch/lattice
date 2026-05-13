@@ -3,9 +3,9 @@
 // fields (fanIn / fanOut / inCycle); crossFile.ts patches those in
 // after the per-file pass for the whole project completes.
 
-import type { HealthLanguage, HealthMetrics } from './types.js';
+import type { HealthLanguage, HealthMetrics, HealthSmell } from './types.js';
 import { getParser, grammarKeyForExt, type GrammarKey } from './parser.js';
-import { analyzeTree } from './walker.js';
+import { analyzeTree, type FileAnalysis, type FnRecord } from './walker.js';
 import { computeHalstead, computeMaintainabilityIndex } from './halstead.js';
 import {
   COMMENT_BY_EXT,
@@ -15,7 +15,19 @@ import {
   type SmellCounter,
 } from './universal.js';
 import { computeScore } from './score.js';
-import { AST_MAX_BYTES, LARGE_FILE_LOC_THRESHOLD } from './constants.js';
+import {
+  AST_MAX_BYTES,
+  LARGE_FILE_LOC_THRESHOLD,
+  HIGH_FUNCTION_COUNT,
+  HIGH_COMPLEXITY_THRESHOLD,
+  DEEP_NESTING_THRESHOLD,
+  LONG_FUNCTION_LOC,
+  LONG_PARAM_LIST,
+  LOW_MAINTAINABILITY_MI,
+  MAGIC_STRING_MIN_OCCURRENCES,
+  GOD_FUNCTION_MIN_OTHERS,
+  GOD_FUNCTION_CALL_FRACTION,
+} from './constants.js';
 import { smellsToArray } from './utils.js';
 
 const LANGUAGE_BY_EXT: Record<string, HealthLanguage> = {
@@ -148,102 +160,153 @@ export async function analyzeFile(
   }
 }
 
-function computeFromTree(
-  tree: import('web-tree-sitter').Tree,
-  content: string,
-  ext: string,
-  totalLoc: number,
-  language: HealthLanguage,
-  grammar: GrammarKey,
-): AnalyzeResult {
-  const analysis = analyzeTree(tree, grammar, content);
+type FunctionMetricAggregates = {
+  functionCount: number;
+  cyclomaticMax: number;
+  cyclomaticTotal: number;
+  cognitiveMax: number;
+  cognitiveTotal: number;
+  maxNestingDepth: number;
+  namedFunctionCount: number;
+  avgFunctionLength: number;
+  maxFunctionLength: number;
+  maxParamCount: number;
+  booleanParamCount: number;
+  mixedSyncAsyncCount: number;
+  missingDocstringCount: number;
+};
 
-  // ---- Per-function aggregates ----
-  let cycMax = 0;
-  let cycTotal = 0;
-  let cogMax = 0;
-  let cogTotal = 0;
-  let lenMax = 0;
-  let lenTotal = 0;
-  let paramMax = 0;
-  let nestMax = 0;
-  let booleanParams = 0;
-  let mixedSyncAsync = 0;
-  let missingDocstrings = 0;
+type CallGraphMetrics = {
+  callGraphDensity: number;
+  godFunctionRatio: number;
+  godFunctionCount: number;
+};
+
+type AssembleSmellsInput = {
+  smellTokens: FileAnalysis['smellTokens'];
+  stringLiterals: FileAnalysis['stringLiterals'];
+  content: string;
+  ext: string;
+  totalLoc: number;
+  aggregates: FunctionMetricAggregates;
+  callGraph: CallGraphMetrics;
+  maintainabilityIndex: number;
+  classCount: number;
+};
+
+function aggregateFunctionMetrics(
+  functions: FnRecord[],
+  grammar: GrammarKey,
+): FunctionMetricAggregates {
+  let cyclomaticMax = 0;
+  let cyclomaticTotal = 0;
+  let cognitiveMax = 0;
+  let cognitiveTotal = 0;
+  let maxFunctionLength = 0;
+  let functionLengthTotal = 0;
+  let maxParamCount = 0;
+  let maxNestingDepth = 0;
+  let booleanParamCount = 0;
+  let mixedSyncAsyncCount = 0;
+  let missingDocstringCount = 0;
   let namedFunctionCount = 0;
 
-  for (const fn of analysis.functions) {
+  for (const fn of functions) {
     if (!fn.isAnonymous) namedFunctionCount++;
-    if (fn.cyclomatic > cycMax) cycMax = fn.cyclomatic;
-    cycTotal += fn.cyclomatic;
-    if (fn.cognitive > cogMax) cogMax = fn.cognitive;
-    cogTotal += fn.cognitive;
+    if (fn.cyclomatic > cyclomaticMax) cyclomaticMax = fn.cyclomatic;
+    cyclomaticTotal += fn.cyclomatic;
+    if (fn.cognitive > cognitiveMax) cognitiveMax = fn.cognitive;
+    cognitiveTotal += fn.cognitive;
     // Use ownLines for the "function length" metric — see walker.ts.
     const len = Math.max(1, fn.ownLines);
-    if (len > lenMax) lenMax = len;
-    lenTotal += len;
-    if (fn.paramCount > paramMax) paramMax = fn.paramCount;
-    if (fn.maxNestingDepth > nestMax) nestMax = fn.maxNestingDepth;
-    booleanParams += fn.booleanParamCount;
-    if (fn.isAsync && !fn.hasAwait) mixedSyncAsync++;
+    if (len > maxFunctionLength) maxFunctionLength = len;
+    functionLengthTotal += len;
+    if (fn.paramCount > maxParamCount) maxParamCount = fn.paramCount;
+    if (fn.maxNestingDepth > maxNestingDepth) {
+      maxNestingDepth = fn.maxNestingDepth;
+    }
+    booleanParamCount += fn.booleanParamCount;
+    if (fn.isAsync && !fn.hasAwait) mixedSyncAsyncCount++;
     if (
       grammar === 'python' &&
       !fn.hasDocstring &&
       fn.name &&
       !fn.name.startsWith('_')
     ) {
-      missingDocstrings++;
+      missingDocstringCount++;
     }
   }
 
-  const avgLen = analysis.functions.length > 0 ? lenTotal / analysis.functions.length : 0;
+  const functionCount = functions.length;
+  return {
+    functionCount,
+    cyclomaticMax,
+    cyclomaticTotal,
+    cognitiveMax,
+    cognitiveTotal,
+    maxNestingDepth,
+    namedFunctionCount,
+    avgFunctionLength: functionCount > 0 ? functionLengthTotal / functionCount : 0,
+    maxFunctionLength,
+    maxParamCount,
+    booleanParamCount,
+    mixedSyncAsyncCount,
+    missingDocstringCount,
+  };
+}
 
-  // ---- Halstead + Maintainability Index ----
-  const halstead = computeHalstead(tree);
-  const avgCyc = analysis.functions.length > 0 ? cycTotal / analysis.functions.length : 0;
-  const maintainabilityIndex = computeMaintainabilityIndex(
-    halstead.volume,
-    avgCyc,
-    Math.max(1, totalLoc),
-  );
-
-  // ---- Comment ratio ----
-  const lineCounts = countLineKinds(content, COMMENT_BY_EXT[ext] ?? { line: ['//'] });
-  const denom = lineCounts.code + lineCounts.comment;
-  const commentRatio = denom > 0 ? lineCounts.comment / denom : 0;
-
-  // ---- Within-file call graph density ----
+function computeCallGraph(functions: FnRecord[]): CallGraphMetrics {
   // For each function, count how many of its calls resolve to another
   // function defined in this file. Sum / functionCount = density.
   // Range: 0 (functions don't call each other) to ~1 (each function
   // calls every other function — god-function pattern).
   const fnNamesInFile = new Set<string>();
-  for (const fn of analysis.functions) {
+  for (const fn of functions) {
     if (fn.name) fnNamesInFile.add(fn.name);
   }
+
   let internalCallTotal = 0;
-  let godishCount = 0;
-  for (const fn of analysis.functions) {
+  let godFunctionCount = 0;
+  for (const fn of functions) {
     let internal = 0;
     for (const c of fn.calls) {
       if (fnNamesInFile.has(c)) internal++;
     }
     internalCallTotal += internal;
-    // "god function" heuristic: calls 50%+ of the other functions in
-    // the file, and there are at least 4 other functions.
+
+    // "god function" heuristic: calls a configured share of other
+    // functions, once the file has enough other functions to compare.
     const others = fnNamesInFile.size - (fn.name ? 1 : 0);
-    if (others >= 4 && internal >= Math.max(4, Math.floor(others * 0.5))) {
-      godishCount++;
+    const godFunctionCallThreshold = Math.max(
+      GOD_FUNCTION_MIN_OTHERS,
+      Math.floor(others * GOD_FUNCTION_CALL_FRACTION),
+    );
+    if (others >= GOD_FUNCTION_MIN_OTHERS && internal >= godFunctionCallThreshold) {
+      godFunctionCount++;
     }
   }
-  const callGraphDensity =
-    analysis.functions.length > 0 ? internalCallTotal / analysis.functions.length : 0;
-  const godFunctionRatio =
-    analysis.functions.length > 0 ? godishCount / analysis.functions.length : 0;
 
-  // ---- Smells (merge AST tokens + universal regex + aggregate-derived) ----
+  const functionCount = functions.length;
+  return {
+    callGraphDensity: functionCount > 0 ? internalCallTotal / functionCount : 0,
+    godFunctionRatio: functionCount > 0 ? godFunctionCount / functionCount : 0,
+    godFunctionCount,
+  };
+}
+
+function assembleSmells({
+  smellTokens,
+  stringLiterals,
+  content,
+  ext,
+  totalLoc,
+  aggregates,
+  callGraph,
+  maintainabilityIndex,
+  classCount,
+}: AssembleSmellsInput): { smells: HealthSmell[]; smellCount: number } {
   const smells: SmellCounter = new Map();
-  const t = analysis.smellTokens;
+  const t = smellTokens;
   if (t.anyType) bump(smells, 'any_type', t.anyType);
   if (t.typeAssertion) bump(smells, 'type_assertion', t.typeAssertion);
   if (t.nonNullAssertion) bump(smells, 'non_null_assertion', t.nonNullAssertion);
@@ -265,14 +328,20 @@ function computeFromTree(
   if (t.eslintDisable) bump(smells, 'eslint_disable', t.eslintDisable);
   if (t.mixedExports) bump(smells, 'mixed_exports', t.mixedExports);
 
-  if (booleanParams > 0) bump(smells, 'boolean_param', booleanParams);
-  if (mixedSyncAsync > 0) bump(smells, 'mixed_sync_async', mixedSyncAsync);
-  if (missingDocstrings > 0) bump(smells, 'missing_docstring', missingDocstrings);
+  if (aggregates.booleanParamCount > 0) {
+    bump(smells, 'boolean_param', aggregates.booleanParamCount);
+  }
+  if (aggregates.mixedSyncAsyncCount > 0) {
+    bump(smells, 'mixed_sync_async', aggregates.mixedSyncAsyncCount);
+  }
+  if (aggregates.missingDocstringCount > 0) {
+    bump(smells, 'missing_docstring', aggregates.missingDocstringCount);
+  }
 
-  // Magic strings: literals appearing 3+ times.
+  // Magic strings: literals repeated at least MAGIC_STRING_MIN_OCCURRENCES times.
   let magicStrings = 0;
-  for (const count of analysis.stringLiterals.values()) {
-    if (count >= 3) magicStrings++;
+  for (const count of stringLiterals.values()) {
+    if (count >= MAGIC_STRING_MIN_OCCURRENCES) magicStrings++;
   }
   if (magicStrings > 0) bump(smells, 'magic_string', magicStrings);
 
@@ -286,41 +355,92 @@ function computeFromTree(
 
   // Aggregate-derived smells (size thresholds).
   if (totalLoc > LARGE_FILE_LOC_THRESHOLD) bump(smells, 'large_file');
-  if (namedFunctionCount > 20) bump(smells, 'high_function_count');
-  if (analysis.classCount > 1) {
-    bump(smells, 'multiple_classes', analysis.classCount - 1);
+  if (aggregates.namedFunctionCount > HIGH_FUNCTION_COUNT) {
+    bump(smells, 'high_function_count');
   }
-  if (cycMax > 15) bump(smells, 'high_complexity');
-  if (cogMax > 15) bump(smells, 'high_cognitive_complexity');
-  if (nestMax > 5) bump(smells, 'deep_nesting');
-  if (lenMax > 75) bump(smells, 'long_function');
-  if (paramMax > 5) bump(smells, 'long_param_list');
-  if (maintainabilityIndex < 65) bump(smells, 'low_maintainability');
-  if (godishCount > 0) bump(smells, 'god_function', godishCount);
+  if (classCount > 1) {
+    bump(smells, 'multiple_classes', classCount - 1);
+  }
+  if (aggregates.cyclomaticMax > HIGH_COMPLEXITY_THRESHOLD) {
+    bump(smells, 'high_complexity');
+  }
+  if (aggregates.cognitiveMax > HIGH_COMPLEXITY_THRESHOLD) {
+    bump(smells, 'high_cognitive_complexity');
+  }
+  if (aggregates.maxNestingDepth > DEEP_NESTING_THRESHOLD) {
+    bump(smells, 'deep_nesting');
+  }
+  if (aggregates.maxFunctionLength > LONG_FUNCTION_LOC) bump(smells, 'long_function');
+  if (aggregates.maxParamCount > LONG_PARAM_LIST) bump(smells, 'long_param_list');
+  if (maintainabilityIndex < LOW_MAINTAINABILITY_MI) {
+    bump(smells, 'low_maintainability');
+  }
+  if (callGraph.godFunctionCount > 0) {
+    bump(smells, 'god_function', callGraph.godFunctionCount);
+  }
 
   const smellList = smellsToArray(smells);
   let smellCount = 0;
   for (const s of smellList) smellCount += s.count;
+  return { smells: smellList, smellCount };
+}
+
+function computeFromTree(
+  tree: import('web-tree-sitter').Tree,
+  content: string,
+  ext: string,
+  totalLoc: number,
+  language: HealthLanguage,
+  grammar: GrammarKey,
+): AnalyzeResult {
+  const analysis = analyzeTree(tree, grammar, content);
+  const aggregates = aggregateFunctionMetrics(analysis.functions, grammar);
+  const callGraph = computeCallGraph(analysis.functions);
+
+  const halstead = computeHalstead(tree);
+  const avgCyclomatic =
+    aggregates.functionCount > 0 ? aggregates.cyclomaticTotal / aggregates.functionCount : 0;
+  const maintainabilityIndex = computeMaintainabilityIndex(
+    halstead.volume,
+    avgCyclomatic,
+    Math.max(1, totalLoc),
+  );
+
+  const lineCounts = countLineKinds(content, COMMENT_BY_EXT[ext] ?? { line: ['//'] });
+  const denom = lineCounts.code + lineCounts.comment;
+  const commentRatio = denom > 0 ? lineCounts.comment / denom : 0;
+
+  const { smells, smellCount } = assembleSmells({
+    smellTokens: analysis.smellTokens,
+    stringLiterals: analysis.stringLiterals,
+    content,
+    ext,
+    totalLoc,
+    aggregates,
+    callGraph,
+    maintainabilityIndex,
+    classCount: analysis.classCount,
+  });
 
   const components = {
     loc: totalLoc,
     commentRatio,
-    cyclomaticMax: cycMax,
-    cyclomaticTotal: cycTotal,
-    cognitiveMax: cogMax,
-    cognitiveTotal: cogTotal,
-    maxNestingDepth: nestMax,
+    cyclomaticMax: aggregates.cyclomaticMax,
+    cyclomaticTotal: aggregates.cyclomaticTotal,
+    cognitiveMax: aggregates.cognitiveMax,
+    cognitiveTotal: aggregates.cognitiveTotal,
+    maxNestingDepth: aggregates.maxNestingDepth,
     halstead,
     maintainabilityIndex,
-    functionCount: analysis.functions.length,
-    namedFunctionCount,
-    avgFunctionLength: avgLen,
-    maxFunctionLength: lenMax,
-    maxParamCount: paramMax,
+    functionCount: aggregates.functionCount,
+    namedFunctionCount: aggregates.namedFunctionCount,
+    avgFunctionLength: aggregates.avgFunctionLength,
+    maxFunctionLength: aggregates.maxFunctionLength,
+    maxParamCount: aggregates.maxParamCount,
     classCount: analysis.classCount,
-    callGraphDensity,
-    godFunctionRatio,
-    smells: smellList,
+    callGraphDensity: callGraph.callGraphDensity,
+    godFunctionRatio: callGraph.godFunctionRatio,
+    smells,
     smellCount,
   };
 
