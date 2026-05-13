@@ -3,6 +3,15 @@ import type { Ignore } from 'ignore';
 
 export const AST_MAX_BYTES = 1024 * 1024;
 export const LARGE_FILE_LOC_THRESHOLD = 800;
+export const HIGH_FUNCTION_COUNT = 20;
+export const HIGH_COMPLEXITY_THRESHOLD = 15;
+export const DEEP_NESTING_THRESHOLD = 5;
+export const LONG_FUNCTION_LOC = 75;
+export const LONG_PARAM_LIST = 5;
+export const LOW_MAINTAINABILITY_MI = 65;
+export const MAGIC_STRING_MIN_OCCURRENCES = 3;
+export const GOD_FUNCTION_MIN_OTHERS = 4;
+export const GOD_FUNCTION_CALL_FRACTION = 0.5;
 export const LOC_MAX_BYTES = 5 * 1024 * 1024;
 
 export const SOURCE_EXTS = new Set([

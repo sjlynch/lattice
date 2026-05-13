@@ -91,3 +91,9 @@ export {
   finalizeMergedTask,
   type FinalizeOutcome,
 } from './worktree/finalize.js';
+
+export {
+  resyncWithMainAndFinalize,
+  type ResyncFinalizeOptions,
+  type ResyncOutcome,
+} from './worktree/resyncFinalize.js';

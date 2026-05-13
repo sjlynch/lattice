@@ -1,0 +1,55 @@
+import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs/promises';
+
+export const SNAPSHOTS_BASE = path.join(os.homedir(), '.lattice', 'snapshots');
+export const SNAPSHOT_MANIFEST_FILENAME = '_lattice-snapshot.json';
+
+export type SnapshotHandle = {
+  // Absolute path to the snapshot directory. Empty string when no files
+  // needed snapshotting (clean working tree); callers should treat that
+  // case as a no-op.
+  dir: string;
+  modifiedTracked: string[];
+  untracked: string[];
+};
+
+export type SnapshotManifest = {
+  version: number;
+  repoRoot: string;
+  label: string;
+  createdAt: number;
+  modifiedTracked: string[];
+  untracked: string[];
+};
+
+export const EMPTY_HANDLE: SnapshotHandle = { dir: '', modifiedTracked: [], untracked: [] };
+
+export function snapshotManifestPath(snapshotDir: string): string {
+  return path.join(snapshotDir, SNAPSHOT_MANIFEST_FILENAME);
+}
+
+export function isSupportedSnapshotManifest(manifest: unknown): manifest is SnapshotManifest {
+  return !!manifest && (manifest as { version?: unknown }).version === 1;
+}
+
+export async function readSnapshotManifest(manifestPath: string): Promise<SnapshotManifest | null> {
+  try {
+    const raw = await fs.readFile(manifestPath, 'utf8');
+    const manifest = JSON.parse(raw);
+    return isSupportedSnapshotManifest(manifest) ? manifest : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeSnapshotManifest(
+  snapshotDir: string,
+  manifest: SnapshotManifest,
+): Promise<void> {
+  await fs.writeFile(
+    snapshotManifestPath(snapshotDir),
+    JSON.stringify(manifest, null, 2),
+    'utf8',
+  );
+}
