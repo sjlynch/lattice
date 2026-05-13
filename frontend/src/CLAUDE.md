@@ -4,7 +4,7 @@ Vite + React + TS. Hand-written CSS in `index.css`; no MUI, no styled-components
 
 ## Layout
 
-- `App.tsx` — top-level shell: TopAppBar + resizable Sidebar + ForceGraph + Legend. Owns `activeFolder`, scan retry loop, sidebar width.
+- `App.tsx` — top-level shell: TopAppBar + resizable Sidebar + ForceGraph + Legend. Project-scoped state is split across `hooks/` (`useActiveFolder`, `useProjectScan`, `useHiddenExtensions`, `useSidebarWidth`, `useStartupTerminalSync`); App itself is layout + wiring.
 - `api/` — every backend call. Domain-grouped (`tasks.ts`, `mergeRuns.ts`, `workflows.ts`, `scan.ts`, `settings.ts`). Generic WS subscriber in `ws.ts`. Components import from `'../api'` which resolves to `api/index.ts`.
 - `components/` — UI. Big launchers live in subdirectories with shim re-exports at the top level (`TaskBoard.tsx` → `taskboard/`, `Workflows.tsx` → `workflows/`, `ForceGraphView.tsx` → `forceGraph/`).
 - `TerminalsContext.tsx` — global terminal-tab state, persisted to sessionStorage (per-tab). `addTerminal({...})` is how features spawn agent sessions.
