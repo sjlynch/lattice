@@ -62,10 +62,13 @@ async function shutdownStale(): Promise<void> {
   } catch {
     /* old server may already be dying or never had the endpoint */
   }
+  // Poll the kernel directly for port release, not probeServer — a wedged
+  // /health times out and returns 'dead' too, which would make the loop
+  // exit prematurely while the port is still held.
   const deadline = Date.now() + 3000;
   while (Date.now() < deadline) {
     await new Promise<void>((r) => setTimeout(r, 150));
-    if ((await probeServer()) === 'dead') return;
+    if (!isPortListening(TERMINAL_PORT)) return;
   }
   // Polite shutdown didn't take. Common causes seen in the wild:
   //   - orphan was built before /shutdown existed (route 404'd silently)
@@ -77,6 +80,31 @@ async function shutdownStale(): Promise<void> {
     `[lattice-backend] polite shutdown timed out on ${TERMINAL_PORT} — escalating to force-kill`,
   );
   await forceKillByPort(TERMINAL_PORT);
+}
+
+// Asks the kernel whether anything has the port bound in LISTENING state.
+// Distinct from probeServer: probeServer asks "does /health respond with
+// the right fingerprint within 500 ms?" — and a wedged event loop fails
+// that probe even though the port is very much held. Used before spawn
+// to decide whether to force-kill an orphan we couldn't reach via HTTP.
+// Windows-only for now; on POSIX an EADDRINUSE from spawn is loud enough
+// to debug from logs that we haven't needed the same self-heal.
+function isPortListening(port: number): boolean {
+  if (process.platform !== 'win32') return false;
+  try {
+    const netstat = execSync('netstat -ano -p tcp', {
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    for (const raw of netstat.split('\n')) {
+      const line = raw.trim();
+      if (!/LISTENING/i.test(line)) continue;
+      if (line.includes(`:${port} `) || line.includes(`:${port}\t`)) return true;
+    }
+  } catch {
+    /* if netstat itself fails, miss the wedge rather than crash startup */
+  }
+  return false;
 }
 
 // Find the PID listening on `port` and SIGKILL/taskkill it. Windows-only —
@@ -177,6 +205,19 @@ export async function ensureTerminalServer(): Promise<void> {
           `[lattice-backend] stale terminal-server detected (fingerprint mismatch; expected ${EXPECTED_TERMINAL_FINGERPRINT}) — shutting down and respawning`,
         );
         await shutdownStale();
+      } else if (isPortListening(TERMINAL_PORT)) {
+        // probeServer returned 'dead' (no usable /health response within
+        // 500 ms) but the port is bound — almost always a previous
+        // terminal-server whose event loop is wedged enough that /health
+        // times out. Without this branch the next spawnAndWait
+        // EADDRINUSE-crashes silently (stdio: 'ignore') and we log the
+        // confusing "did not start in 5 s" while the orphan keeps holding
+        // the port forever. Force-kill matches what shutdownStale does as
+        // its fallback for unresponsive stale orphans.
+        console.warn(
+          `[lattice-backend] port ${TERMINAL_PORT} bound but /health unresponsive — force-killing orphan terminal-server before spawn`,
+        );
+        await forceKillByPort(TERMINAL_PORT);
       }
       await spawnAndWait();
     })().finally(() => {
