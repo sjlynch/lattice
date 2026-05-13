@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   cancelWorkflowRun as apiCancelWorkflowRun,
-  fetchHarnessAvailability,
   startWorkflow as apiStartWorkflow,
+  subscribeHarnesses,
   type HarnessAvailability,
   type Workflow,
   type WorkflowQueueEntry,
@@ -37,12 +37,14 @@ export function useWorkflowManager(activeFolder: string) {
     Record<string, WorkflowRunHarnessOverride>
   >({});
 
+  // Live harness-availability subscription — auto-reconnects so the UI
+  // catches up the moment the backend finishes its CLI probe, even when
+  // the page was loaded before the server was listening.
   useEffect(() => {
-    let cancelled = false;
-    fetchHarnessAvailability().then((avail) => {
-      if (!cancelled) setHarnessAvail(avail);
+    const unsub = subscribeHarnesses((avail) => {
+      setHarnessAvail(avail);
     });
-    return () => { cancelled = true; };
+    return unsub;
   }, []);
 
   const collapsedSteps = useCollapsedSteps(activeFolder);
