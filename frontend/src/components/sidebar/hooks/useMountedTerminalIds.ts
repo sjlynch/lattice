@@ -4,6 +4,7 @@ import type { TerminalSpec } from '../../../TerminalsContext';
 export function useMountedTerminalIds(
   activeId: string | null,
   startupTerminalsList: TerminalSpec[],
+  projectTerminals: TerminalSpec[],
 ): ReadonlySet<string> {
   // Track which terminal IDs have ever been the active tab. We only mount
   // <TerminalPane> once a terminal is first viewed — the backend pre-spawns
@@ -47,6 +48,30 @@ export function useMountedTerminalIds(
       return changed ? next : prev;
     });
   }, [startupTerminalsList]);
+
+  // Force-mount terminals that have no serverId yet. A spec without a
+  // serverId means the backend pre-spawn didn't happen or failed — the
+  // pty doesn't exist server-side, and the only thing that can create
+  // it is a WS attach from a mounted <TerminalPane> (which then runs
+  // the initialCommand on the freshly-created session). Without this
+  // fallback, a Run-All task whose pre-spawn errored sits silent in the
+  // tab list until the user clicks it. Successful pre-spawn → serverId
+  // set → lazy-mount as designed; failed pre-spawn → no serverId →
+  // mount immediately so the user-facing behavior degrades to a small
+  // startup latency instead of a hung task.
+  useEffect(() => {
+    setMountedIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const t of projectTerminals) {
+        if (!t.serverId && !next.has(t.id)) {
+          next.add(t.id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [projectTerminals]);
 
   return mountedIds;
 }

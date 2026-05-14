@@ -17,12 +17,10 @@
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
-import { projectHash } from './projectPath.js';
-
-const LATTICE_HOME = path.join(os.homedir(), '.lattice');
+import { homeProjectDir } from './projectPath.js';
 
 function lockFilePath(projectPath: string): string {
-  return path.join(LATTICE_HOME, 'per-project', projectHash(projectPath), 'run.lock');
+  return path.join(homeProjectDir(projectPath), 'run.lock');
 }
 
 type LockBody = {

@@ -7,7 +7,7 @@ renders is driven by the App-level `healthMode` prop.
 ## Files
 
 - `HealthLegendPanel.tsx` — the health legend panel layout shown while `h` is held
-- `healthComponents.ts` — static health-component weights, thresholds, and detail copy
+- `healthComponents.ts` — ordered health-component ids, weights, thresholds, and detail copy (ids mirror backend `scoreModel.ts`)
 - `HealthInfoIcon.tsx` — info icon and portal-rendered popover for each health row
 - `ShapePreview.tsx` — small canvas preview of an extension's sprite shape, also
   reused inside the regular Legend's per-extension rows
