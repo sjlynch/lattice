@@ -20,14 +20,13 @@
 // and stall the run worker (which awaits cleanup mid-iteration).
 
 import path from 'node:path';
-import os from 'node:os';
 import fs from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import { projectGit } from './projectGit.js';
 import { isPathStrictlyInside } from './paths.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
 import { assertGitDirIntact, worktreeExists } from './state.js';
-import { projectHash } from '../projectPath.js';
+import { homeWorktreesDir } from '../projectPath.js';
 
 const CLEANUP_GIT_TIMEOUT_MS = 15_000;
 
@@ -48,9 +47,7 @@ export function isUnderManagedWorktreesDir(
   repoRoot: string,
 ): boolean {
   const resolved = path.resolve(worktreePath);
-  const homeBase = path.resolve(
-    path.join(os.homedir(), '.lattice', 'worktrees', projectHash(repoRoot)),
-  );
+  const homeBase = path.resolve(homeWorktreesDir(repoRoot));
   const legacyBase = path.resolve(path.join(repoRoot, '.lattice', 'worktrees'));
   return (
     isPathStrictlyInside(homeBase, resolved) ||
