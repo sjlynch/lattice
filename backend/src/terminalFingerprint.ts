@@ -26,6 +26,7 @@ const FINGERPRINT_FILES = [
   'terminal-server.js',
   'terminal.js',
   'latticeApiDocs.js',
+  'latticeApiDocs/LATTICE_API.template.md',
   'claudeConfigGuard.js',
 ];
 

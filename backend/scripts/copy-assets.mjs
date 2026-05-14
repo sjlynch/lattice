@@ -10,6 +10,10 @@ const assets = [
     from: path.join(backendRoot, 'src', 'workflowRuns', 'create-task-template.cjs'),
     to: path.join(backendRoot, 'dist', 'workflowRuns', 'create-task-template.cjs'),
   },
+  {
+    from: path.join(backendRoot, 'src', 'latticeApiDocs', 'LATTICE_API.template.md'),
+    to: path.join(backendRoot, 'dist', 'latticeApiDocs', 'LATTICE_API.template.md'),
+  },
 ];
 
 for (const { from, to } of assets) {
