@@ -16,7 +16,22 @@ const assets = [
   },
 ];
 
+// Idempotent: skip the copy when the destination already matches the
+// source byte-for-byte. fs.copyFile unconditionally updates mtime, which
+// the dev runner's fs.watch('dist') picks up as a change — that would
+// restart the backend, which calls copy-assets again, infinite loop.
+// Compare contents to break the cycle.
+async function readIfExists(p) {
+  try {
+    return await fs.readFile(p);
+  } catch {
+    return null;
+  }
+}
+
 for (const { from, to } of assets) {
+  const [src, dst] = await Promise.all([fs.readFile(from), readIfExists(to)]);
+  if (dst && dst.equals(src)) continue;
   await fs.mkdir(path.dirname(to), { recursive: true });
-  await fs.copyFile(from, to);
+  await fs.writeFile(to, src);
 }

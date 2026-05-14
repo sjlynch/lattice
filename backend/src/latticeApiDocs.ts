@@ -27,27 +27,68 @@ const VERSION_SUFFIX = ' -->';
 // LATTICE_API.template.md is a runtime asset copied next to the compiled JS.
 // It uses this documented placeholder where the current API port should appear.
 const API_PORT_PLACEHOLDER = '{{API_PORT}}';
-const TEMPLATE_PATH = fileURLToPath(
-  new URL('./latticeApiDocs/LATTICE_API.template.md', import.meta.url),
-);
 
-// Template literals normalized CRLF source line endings to LF. Keep that stable
-// now that the body lives in a text asset that Git may check out with CRLF.
-const TEMPLATE = fs.readFileSync(TEMPLATE_PATH, 'utf8').replace(/\r\n?/g, '\n');
-if (!TEMPLATE.includes(API_PORT_PLACEHOLDER)) {
-  throw new Error(`Missing ${API_PORT_PLACEHOLDER} in ${TEMPLATE_PATH}`);
+// We try the dist-adjacent path first, then fall back to the src tree. The
+// fallback exists because a merge that introduces a new runtime asset can
+// land in main before the dev runner's one-shot copy-assets has copied it
+// into dist/ — without the fallback, this module crashes at import time
+// (sync fs.readFileSync below) and takes the terminal-server child down
+// with it, which is the failure mode we hit during a 30-task merge-all.
+const TEMPLATE_CANDIDATES = [
+  fileURLToPath(new URL('./latticeApiDocs/LATTICE_API.template.md', import.meta.url)),
+  fileURLToPath(new URL('../src/latticeApiDocs/LATTICE_API.template.md', import.meta.url)),
+];
+
+// Lazy: read the template on first ensureLatticeApiDoc call, not at module
+// import. If every candidate is missing we cache `null` and disable doc
+// generation for the process lifetime, so a missing asset is a graceful
+// degradation rather than a fatal import failure.
+let cachedTemplate: string | null | undefined;
+let warnedMissing = false;
+
+function loadTemplate(): string | null {
+  if (cachedTemplate !== undefined) return cachedTemplate;
+  for (const candidate of TEMPLATE_CANDIDATES) {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(candidate, 'utf8').replace(/\r\n?/g, '\n');
+    } catch {
+      continue;
+    }
+    if (!raw.includes(API_PORT_PLACEHOLDER)) {
+      console.warn(
+        `[latticeApiDocs] template at ${candidate} missing ${API_PORT_PLACEHOLDER} — skipping`,
+      );
+      continue;
+    }
+    cachedTemplate = raw;
+    return cachedTemplate;
+  }
+  cachedTemplate = null;
+  if (!warnedMissing) {
+    warnedMissing = true;
+    console.warn(
+      `[latticeApiDocs] no template found at any of:\n  ${TEMPLATE_CANDIDATES.join(
+        '\n  ',
+      )}\nLATTICE_API.md generation is disabled for this process.`,
+    );
+  }
+  return null;
 }
 
-function renderBody(apiPort: number): string {
-  return TEMPLATE.replaceAll(API_PORT_PLACEHOLDER, String(apiPort));
+function renderBody(apiPort: number, template: string): string {
+  return template.replaceAll(API_PORT_PLACEHOLDER, String(apiPort));
 }
 
 function hashContent(body: string): string {
   return crypto.createHash('sha256').update(body).digest('hex').slice(0, 12);
 }
 
-function renderLatticeApiDoc(apiPort: number): { content: string; hash: string } {
-  const body = renderBody(apiPort);
+function renderLatticeApiDoc(
+  apiPort: number,
+  template: string,
+): { content: string; hash: string } {
+  const body = renderBody(apiPort, template);
   const hash = hashContent(body);
   return {
     content: `${VERSION_PREFIX}${hash}${VERSION_SUFFIX}\n${body}`,
@@ -70,6 +111,8 @@ export function ensureLatticeApiDoc(
   apiPort: number,
 ): string | null {
   if (!projectPath) return null;
+  const template = loadTemplate();
+  if (!template) return null;
   const latticeDir = path.join(projectPath, LATTICE_DIR);
   try {
     if (!fs.existsSync(latticeDir)) return null;
@@ -77,7 +120,7 @@ export function ensureLatticeApiDoc(
     return null;
   }
   const docPath = path.join(latticeDir, LATTICE_API_DOC_FILENAME);
-  const { content, hash } = renderLatticeApiDoc(apiPort);
+  const { content, hash } = renderLatticeApiDoc(apiPort, template);
   try {
     if (fs.existsSync(docPath)) {
       const existing = fs.readFileSync(docPath, 'utf8');

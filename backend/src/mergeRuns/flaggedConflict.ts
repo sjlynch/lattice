@@ -42,7 +42,18 @@ export async function tryRespawnMidMergeResolver(
   console.log(`[merge-run] task ${task.id} mid-merge — re-spawning resolver`);
   let outcome: ProcessOutcome = { kind: 'spawned-resolver' };
   try {
-    await respawnResolverForFlaggedConflict(task, run, runCtx);
+    const result = await respawnResolverForFlaggedConflict(task, run, runCtx);
+    if (result.kind === 'spawn-error') {
+      // terminal-server is unavailable — no resolver was actually spawned.
+      // Surface as an error so the run moves on (task stays at
+      // ready_to_merge + conflict:true; retrying once terminals are back
+      // will pick it up).
+      run.errored.push({
+        taskId: task.id,
+        error: `resolver spawn failed (terminals unavailable): ${result.error}`,
+      });
+      outcome = { kind: 'errored' };
+    }
   } catch (err) {
     console.error(`[merge-run] re-spawn for ${task.id} failed:`, err);
     run.errored.push({

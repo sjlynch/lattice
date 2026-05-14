@@ -24,7 +24,7 @@
 //          when its transitive deps drift in node_modules.
 //      Compiling once and running plain Node sidesteps both.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
@@ -115,8 +115,10 @@ if (initialCode !== 0) {
 // a task introduced create-task-template.cjs, dist/ recompiled without it,
 // and the next `node --watch` restart died with ENOENT.
 //
-// Assets are copied once here. They're effectively static; if you edit one
-// while `npm run dev` is up, restart it.
+// We re-run copy-assets on every backend respawn (see spawnBackend below),
+// so a merge that *introduces* a new src asset gets it copied into dist/
+// at the next restart instead of waiting for the next session. The initial
+// run here is just so the first spawn already has everything.
 const copyAssetsScript = fileURLToPath(new URL('./copy-assets.mjs', import.meta.url));
 const copyAssetsCode = await runOnce(process.execPath, [copyAssetsScript], {
   stdio: 'inherit',
@@ -199,6 +201,23 @@ let shuttingDown = false;
 let deferredSince = 0; // ms ts of the first deferred restart, or 0
 
 function spawnBackend() {
+  // Re-copy static assets first. If a merge while this session was up
+  // introduced a new runtime asset (e.g. src/latticeApiDocs/LATTICE_API.template.md),
+  // it isn't in dist/ yet; the next spawn would crash any module that
+  // reads it at import time (terminal-server has hit this twice now).
+  // Synchronous + cheap (a couple fs.copyFile calls in a child) so we
+  // keep spawnBackend a sync function — the existing callers store the
+  // ChildProcess directly and call .kill() on it.
+  try {
+    const r = spawnSync(process.execPath, [copyAssetsScript], { stdio: 'inherit' });
+    if (r.status !== 0) {
+      console.warn(
+        `[lattice-backend] copy-assets exited ${r.status} before respawn — proceeding anyway (dist may be incomplete).`,
+      );
+    }
+  } catch (err) {
+    console.warn('[lattice-backend] copy-assets threw before respawn (continuing):', err);
+  }
   restartingBackend = false;
   const c = spawn(process.execPath, ['dist/index.js'], { stdio: inheritStdio });
   c.on('exit', (code, signal) => {

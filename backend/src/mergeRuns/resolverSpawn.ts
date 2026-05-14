@@ -25,6 +25,10 @@ type ResolverSpawnInput = {
   conflictedFiles: string[];
 };
 
+export type ResolverSpawnResult =
+  | { kind: 'spawned'; serverId: string | undefined }
+  | { kind: 'spawn-error'; error: string };
+
 async function spawnResolverAndNotifyConflict({
   task,
   run,
@@ -33,12 +37,25 @@ async function spawnResolverAndNotifyConflict({
   command,
   conflictedFiles,
   onBeforeNotify,
-}: ResolverSpawnInput & { onBeforeNotify?: () => void }): Promise<void> {
+}: ResolverSpawnInput & { onBeforeNotify?: () => void }): Promise<ResolverSpawnResult> {
   const sess = await proxyCreateSession({
     cwd,
     initialCommand: command,
     projectPath: task.projectPath,
   });
+  // proxyCreateSession returns { error } when the terminal-server can't
+  // start (we hit this when a missing dist asset killed terminal-server's
+  // boot mid-merge-run). Without surfacing this, the caller would still
+  // notify(conflict) and registerConflictWaiter — blocking the run forever
+  // on a resolver Claude that was never actually spawned. Fail the task
+  // instead so the run can move on / be retried after terminal-server is
+  // healthy again.
+  if ('error' in sess) {
+    console.error(
+      `[merge-run] resolver spawn failed for task ${task.id}: ${sess.error}`,
+    );
+    return { kind: 'spawn-error', error: sess.error };
+  }
   onBeforeNotify?.();
   notify(runCtx.state, {
     type: 'conflict',
@@ -48,12 +65,15 @@ async function spawnResolverAndNotifyConflict({
     command,
     cwd,
     conflictedFiles,
-    serverId: 'id' in sess ? sess.id : undefined,
+    serverId: sess.id,
   });
+  return { kind: 'spawned', serverId: sess.id };
 }
 
-export async function spawnAndRecord(input: ResolverSpawnInput): Promise<void> {
-  await spawnResolverAndNotifyConflict({
+export async function spawnAndRecord(
+  input: ResolverSpawnInput,
+): Promise<ResolverSpawnResult> {
+  return spawnResolverAndNotifyConflict({
     ...input,
     onBeforeNotify: () => {
       input.run.conflicted.push(input.task.id);
@@ -61,16 +81,24 @@ export async function spawnAndRecord(input: ResolverSpawnInput): Promise<void> {
   });
 }
 
-export async function recordAndSpawn(input: ResolverSpawnInput): Promise<void> {
-  input.run.conflicted.push(input.task.id);
-  await spawnResolverAndNotifyConflict(input);
+export async function recordAndSpawn(
+  input: ResolverSpawnInput,
+): Promise<ResolverSpawnResult> {
+  const result = await spawnResolverAndNotifyConflict(input);
+  // Only mark the task conflicted on a successful spawn — a spawn-error
+  // is bubbled up as a run error so the conflict counter doesn't double
+  // up with the errored counter for the same task.
+  if (result.kind === 'spawned') {
+    input.run.conflicted.push(input.task.id);
+  }
+  return result;
 }
 
 export async function respawnResolverForFlaggedConflict(
   task: Task,
   run: MergeRun,
   runCtx: ProcessTargetContext,
-): Promise<void> {
+): Promise<ResolverSpawnResult> {
   const conflictedFiles = await listConflictedFiles(task.worktreePath!);
   const { relativePath } = await writeMergeInstructions(
     task,
@@ -80,7 +108,7 @@ export async function respawnResolverForFlaggedConflict(
     task.worktreePath!,
   );
   const command = buildConflictResolveCommand(relativePath);
-  await spawnAndRecord({
+  return spawnAndRecord({
     task,
     run,
     runCtx,
@@ -88,6 +116,18 @@ export async function respawnResolverForFlaggedConflict(
     command,
     conflictedFiles,
   });
+}
+
+function recordSpawnError(
+  run: MergeRun,
+  task: Task,
+  error: string,
+): ProcessOutcome {
+  run.errored.push({
+    taskId: task.id,
+    error: `resolver spawn failed (terminals unavailable): ${error}`,
+  });
+  return { kind: 'errored' };
 }
 
 export async function handleResyncOutcome(
@@ -102,7 +142,7 @@ export async function handleResyncOutcome(
   }
 
   if (outcome.kind === 'stash-conflict') {
-    await recordAndSpawn({
+    const spawn = await recordAndSpawn({
       task,
       run,
       runCtx,
@@ -110,6 +150,13 @@ export async function handleResyncOutcome(
       command: outcome.resolveCommand,
       conflictedFiles: outcome.conflictedFiles,
     });
+    if (spawn.kind === 'spawn-error') {
+      // Stash conflict with no resolver is unrecoverable mid-run (main
+      // can't FF until the stash is resolved). Halt the run and record
+      // the error so the user sees what went wrong.
+      run.cancelRequested = true;
+      return recordSpawnError(run, task, spawn.error);
+    }
     // Stop the run — subsequent tasks can't FF until the stash conflict
     // is resolved. /stash-resolved will auto-restart the run.
     run.cancelRequested = true;
@@ -117,7 +164,7 @@ export async function handleResyncOutcome(
   }
 
   if (outcome.kind === 'merge-conflict') {
-    await recordAndSpawn({
+    const spawn = await recordAndSpawn({
       task,
       run,
       runCtx,
@@ -125,6 +172,15 @@ export async function handleResyncOutcome(
       command: outcome.command,
       conflictedFiles: outcome.conflictedFiles,
     });
+    if (spawn.kind === 'spawn-error') {
+      // No resolver Claude is running — registering a conflict waiter
+      // would block the run forever (the /complete callback that would
+      // signal it can only come from a Stop hook on a real session).
+      // Skip the task and let the run continue; the task stays at
+      // ready_to_merge + conflict:true and a fresh merge-all retry can
+      // pick it back up once terminals are working.
+      return recordSpawnError(run, task, spawn.error);
+    }
 
     // Fix 2: block the run worker until the resolver's Stop hook fires and
     // /complete signals us. This keeps conflict resolution sequential so each
