@@ -5,6 +5,7 @@ Components behind the Tasks button. `TaskBoard.tsx` (parent dir) is a re-export 
 ## Modules
 
 - `TaskBoardLauncher.tsx` — top-level component that owns panel-only UI state and wires taskboard hooks to JSX.
+- `TaskBoardFilters.tsx` — lane visibility chips plus the task harness selector.
 - `Lane.tsx` — one kanban column. Drop slots between cards for explicit positioning; lane background drop = status-only move. Per-lane "run all" config in `laneRunAllConfig`.
 - `TaskCard.tsx` — single row. Surfaces conflict pill + StuckPill + lane-appropriate action buttons.
 - `NewTaskOverlay.tsx` — modal for creating a task in a specific lane.
