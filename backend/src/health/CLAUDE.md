@@ -8,11 +8,26 @@ Halstead token counts and a Maintainability Index, and folded into a composite
 ## Files
 
 - `parser.ts` — grammar load/cache; `grammarKeyForExt` maps extensions to grammars
-- `nodeKinds.ts` — per-language node-kind sets (function/branch/loop/etc.)
-- `walker.ts` — single AST pass producing a `FileAnalysis`
+- `nodeKinds.ts` — re-export shim for `./nodeKinds/`, which holds per-language
+  node-kind sets (function/branch/loop/etc.) — `base.ts` plus one file per
+  language (`typescript.ts`, `python.ts`, `go.ts`, …)
+- `walker.ts` — re-export shim for `./walker/`, which holds the single AST
+  pass (`index.ts`) plus its sub-passes (`complexity.ts`, `depth.ts`,
+  `functionRecord.ts`, `smells.ts`) producing a `FileAnalysis`
 - `halstead.ts` — operator/operand tokenization + Maintainability Index
 - `universal.ts` — regex helpers for fallback languages + line-kind counter
-- `analyze.ts` — top-level `analyzeFile` entry point
+- `analyze.ts` — top-level `analyzeFile` entry point + `computeFromTree`
+  orchestrator. Delegates to `./analyze/`:
+  - `analyze/language.ts` — `languageForExt` (extension → `HealthLanguage`)
+  - `analyze/fallback.ts` — `analyzeFallback` + `DEFAULT_METRICS` (used for
+    unsupported languages, oversize files, parser/parse failures)
+  - `analyze/functionMetrics.ts` — `aggregateFunctionMetrics` (per-function
+    rollups: complexity max/total, function length, param counts, docstring/
+    boolean-param/mixed-sync-async tallies) and `computeCallGraph` (internal
+    call density + god-function heuristic)
+  - `analyze/smells.ts` — `assembleSmells` (folds AST smell tokens, magic
+    strings, universal regex smells, and threshold-derived smells into the
+    final `HealthSmell[]`)
 - `crossFile.ts` — fanIn/fanOut/inCycle patch-in pass over the file set
 - `score.ts` — metric weighting + final score
 - `watcher.ts` — chokidar watcher rebroadcasting changed-file metrics
