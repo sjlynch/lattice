@@ -25,6 +25,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FINGERPRINT_FILES = [
   'terminal-server.js',
   'terminal.js',
+  'terminal/sessionTypes.js',
+  'terminal/sessionStore.js',
+  'terminal/createSession.js',
+  'terminal/attach.js',
+  'terminal/kill.js',
   'latticeApiDocs.js',
   'claudeConfigGuard.js',
 ];
