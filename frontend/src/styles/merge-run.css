@@ -1,0 +1,77 @@
+/* ---------- Merge run progress strip ---------- */
+.merge-run-strip {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 0 8px 4px;
+  padding: 7px 10px 7px 12px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  border: 1px solid var(--border-strong);
+  user-select: text;
+}
+.merge-run-strip.running {
+  background: linear-gradient(180deg, #1e2731 0%, #1a2028 100%);
+  border-color: rgba(94, 234, 212, 0.40);
+}
+.merge-run-strip.done {
+  background: #18221b;
+  border-color: rgba(158, 210, 142, 0.45);
+}
+.merge-run-strip.done.cancelled {
+  background: #221d18;
+  border-color: rgba(231, 201, 134, 0.45);
+}
+.merge-run-strip-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(94, 234, 212, 0.25);
+  border-top-color: #5eead4;
+  animation: spin 0.8s linear infinite;
+  flex: 0 0 auto;
+}
+.merge-run-strip-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+}
+.merge-run-strip-current {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+.merge-run-strip-pct {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: #5eead4;
+}
+.merge-run-strip-btn {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.merge-run-strip-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+.merge-run-stat {
+  display: inline-block;
+  font-weight: 500;
+}
+.merge-run-stat.ok { color: #9ed28e; }
+.merge-run-stat.conflict { color: #f5a36a; }
+.merge-run-stat.error { color: var(--danger); }
