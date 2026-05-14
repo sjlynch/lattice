@@ -25,6 +25,12 @@ export type UserSettings = {
   // suppresses the note for that env entirely; a key being absent means
   // "use the built-in default".
   worktreeEnvNotes?: Record<string, string>;
+  // File extensions (leading dot, lowercase) to skip when rendering the
+  // LOC overlay (`z`) and the code-health overlay (`h`). Matching files
+  // fall back to the normal sprite — no colored treatment, no LOC/score
+  // label. Absent = use the default `['.json']`; an empty array means
+  // "ignore nothing".
+  metricsIgnoredExts?: string[];
 };
 
 function settingsFile(projectPath: string): string {
