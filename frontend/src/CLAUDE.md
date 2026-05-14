@@ -1,6 +1,8 @@
 # frontend/src
 
-Vite + React + TS. Hand-written CSS in `index.css`; no MUI, no styled-components.
+Vite + React + TS. Hand-written CSS — `index.css` is an ordered `@import`
+list, with feature-scoped stylesheets in `styles/` (see
+`components/CLAUDE.md` for the style map). No MUI, no styled-components.
 
 ## Layout
 
