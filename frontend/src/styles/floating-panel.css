@@ -1,0 +1,56 @@
+/* Floating panel (draggable + resizable) */
+.floating-panel {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  z-index: 900;
+  min-width: 280px;
+  min-height: 200px;
+}
+.floating-panel-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 8px 7px 12px;
+  background: linear-gradient(180deg, #232830 0%, #1c2027 100%);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  cursor: move;
+  flex: 0 0 auto;
+}
+.floating-panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.floating-panel-body {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.floating-panel-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background-image: linear-gradient(
+    135deg,
+    transparent 0 50%,
+    rgba(255, 255, 255, 0.22) 50% 56%,
+    transparent 56% 70%,
+    rgba(255, 255, 255, 0.22) 70% 76%,
+    transparent 76% 100%
+  );
+}

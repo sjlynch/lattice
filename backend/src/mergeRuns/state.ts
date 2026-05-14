@@ -1,14 +1,11 @@
 import path from 'node:path';
-import os from 'node:os';
-import { canonicalProjectPath, projectHash } from '../projectPath.js';
+import { canonicalProjectPath, homeProjectDir } from '../projectPath.js';
 import { ProjectStateManager } from '../projectStateManager.js';
 
-const LATTICE_HOME = path.join(os.homedir(), '.lattice');
-const PER_PROJECT_BASE = path.join(LATTICE_HOME, 'per-project');
 const MERGE_RUNS_FILENAME = 'merge-runs.json';
 
 function projectMergeRunsFile(projectPath: string): string {
-  return path.join(PER_PROJECT_BASE, projectHash(projectPath), MERGE_RUNS_FILENAME);
+  return path.join(homeProjectDir(projectPath), MERGE_RUNS_FILENAME);
 }
 
 export type MergeRunStatus = 'running' | 'completed' | 'cancelled' | 'errored';

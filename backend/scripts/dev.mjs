@@ -106,9 +106,9 @@ if (initialCode !== 0) {
 // ---- Step 2b: copy non-TS static assets into dist/ ----
 //
 // `tsc` only emits .js for .ts inputs. Runtime assets that live under src/
-// (currently just src/workflowRuns/create-task-template.cjs, read at boot
-// by renderHelperScript) won't be in dist/ otherwise — and the backend
-// then crashes on startup the moment it tries to read one. `npm run build`
+// (for example src/workflowRuns/create-task-template.cjs and
+// src/latticeApiDocs/LATTICE_API.template.md) won't be in dist/ otherwise —
+// and the backend then crashes on startup the moment it tries to read one. `npm run build`
 // already does this (`tsc && node scripts/copy-assets.mjs`); the dev runner
 // must run the *same* asset-copy step, or `npm run dev` and `npm run build`
 // produce different dist/ trees. This is what failed during a "merge all":

@@ -15,6 +15,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureTerminalServer } from './terminalProxy.js';
+import { detectHarnesses } from './harnessDetect.js';
 import { canonicalProjectPath } from './projectPath.js';
 import { buildHealthRouter } from './routes/health.js';
 import { buildSettingsRouter } from './routes/settings.js';
@@ -78,6 +79,10 @@ const server = http.createServer(app);
 attachWebSockets(server);
 
 async function start() {
+  // Kick off harness CLI detection now so its result is ready when the
+  // frontend's /ws/harnesses connection lands. Probe failures are
+  // swallowed inside the module's cache.
+  detectHarnesses().catch(() => {});
   await ensureTerminalServer();
   await recoverOrphanedTasks();
   server.listen(PORT, () => {

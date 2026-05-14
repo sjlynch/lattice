@@ -3,7 +3,7 @@
 //
 //   - crud.ts   : list / summary / get / create / batch / transition /
 //                 patch / reorder / delete
-//   - run.ts    : run / resume / merge (worktree spawning + orchestration)
+//   - run.ts    : composes runRoute / resumeRoute / mergeRoute
 //   - hooks.ts  : complete / merged / merge-aborted / stash-resolved
 //                 (worktree Stop-hook callbacks)
 //
@@ -18,7 +18,7 @@ import { buildTaskHookRouter } from './tasks/hooks.js';
 
 // Re-exported for backend/src/__tests__/tasksApi.test.ts which imports it
 // from this module path.
-export { parseMarkdownTasks } from './tasks/crud.js';
+export { parseMarkdownTasks } from './tasks/markdownBatch.js';
 
 export function buildTasksRouter(backendOrigin: string): Router {
   const r = Router();

@@ -1,7 +1,138 @@
 import { useEffect, useState } from 'react';
 import { Play, Trash2, X } from 'lucide-react';
 import type { Task, TaskStatus } from '../../api';
-import { LANE_BY_ID } from './lanes';
+import { LANE_BY_ID, type Lane } from './lanes';
+
+type MoveTarget = {
+  status: TaskStatus;
+  label: string;
+  shouldShow: (status: TaskStatus) => boolean;
+};
+
+const MOVE_TARGETS: MoveTarget[] = [
+  {
+    status: 'backlog',
+    label: 'Move to Backlog',
+    shouldShow: (status) =>
+      status !== 'backlog' &&
+      status !== 'in_progress' &&
+      status !== 'ready_to_merge',
+  },
+  {
+    status: 'open',
+    label: 'Move to Open',
+    shouldShow: (status) => status !== 'open',
+  },
+  {
+    status: 'qa',
+    label: 'Mark QA',
+    shouldShow: (status) => status !== 'qa',
+  },
+  {
+    status: 'done',
+    label: 'Mark Done',
+    shouldShow: (status) => status !== 'done',
+  },
+];
+
+type TaskDetailMetaProps = {
+  task: Task;
+  lane: Lane;
+};
+
+function TaskDetailMeta({ task, lane }: TaskDetailMetaProps) {
+  return (
+    <div className="taskboard-detail-meta">
+      <span>
+        Status:{' '}
+        <span style={{ color: lane.color, fontWeight: 600 }}>{lane.label}</span>
+      </span>
+      <span>Created: {new Date(task.createdAt).toLocaleString()}</span>
+      {task.startedAt && (
+        <span>Started: {new Date(task.startedAt).toLocaleString()}</span>
+      )}
+      {task.completedAt && (
+        <span>Completed: {new Date(task.completedAt).toLocaleString()}</span>
+      )}
+      {task.branch && (
+        <span>
+          Branch: <code>{task.branch}</code>
+        </span>
+      )}
+      {task.worktreePath && (
+        <span>
+          Worktree: <code>{task.worktreePath}</code>
+        </span>
+      )}
+    </div>
+  );
+}
+
+type TaskDetailActionsProps = {
+  task: Task;
+  editing: boolean;
+  canSave: boolean;
+  onSave: () => void;
+  onCancel: () => void;
+  onDelete: () => void;
+  onMove: (status: TaskStatus) => void;
+  onRun?: () => void;
+};
+
+function TaskDetailActions({
+  task,
+  editing,
+  canSave,
+  onSave,
+  onCancel,
+  onDelete,
+  onMove,
+  onRun,
+}: TaskDetailActionsProps) {
+  return (
+    <div className="taskboard-detail-actions">
+      <button
+        className="btn-ghost"
+        onClick={onDelete}
+        style={{ color: 'var(--danger)' }}
+      >
+        <Trash2 size={12} style={{ marginRight: 4 }} />
+        Delete
+      </button>
+      <span style={{ flex: 1 }} />
+      {editing ? (
+        <>
+          <button className="btn-ghost" onClick={onCancel}>
+            Cancel
+          </button>
+          <button className="btn-primary" onClick={onSave} disabled={!canSave}>
+            Save
+          </button>
+        </>
+      ) : (
+        <>
+          {MOVE_TARGETS.filter((target) =>
+            target.shouldShow(task.status),
+          ).map((target) => (
+            <button
+              key={target.status}
+              className="btn-ghost"
+              onClick={() => onMove(target.status)}
+            >
+              {target.label}
+            </button>
+          ))}
+          {onRun && (
+            <button className="btn-primary" onClick={onRun}>
+              <Play size={11} fill="currentColor" style={{ marginRight: 4 }} />
+              Run
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 // Detail/edit overlay for a single task. Edit mode is on by default so the
 // title input takes focus; cancel reverts edits, save patches the task.
@@ -64,6 +195,40 @@ export function TaskDetailOverlay({
     setEditing(false);
   }
 
+  const titleSlot = editing ? (
+    <input
+      className="task-card-form-input taskboard-detail-title-input"
+      value={editTitle}
+      autoFocus
+      onChange={(e) => setEditTitle(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') saveEdit();
+      }}
+      placeholder="Title"
+    />
+  ) : (
+    <div className="taskboard-detail-title">{task.title}</div>
+  );
+
+  const bodySlot = editing ? (
+    <textarea
+      className="task-card-form-input task-card-form-textarea taskboard-detail-desc-input"
+      value={editDesc}
+      onChange={(e) => setEditDesc(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveEdit();
+      }}
+      placeholder="Description"
+      rows={6}
+    />
+  ) : task.description?.trim() ? (
+    task.description
+  ) : (
+    <span style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+      No description.
+    </span>
+  );
+
   return (
     <div className="taskboard-overlay" onMouseDown={onClose}>
       <div
@@ -75,20 +240,7 @@ export function TaskDetailOverlay({
             className="taskboard-detail-stripe"
             style={{ background: lane.color }}
           />
-          {editing ? (
-            <input
-              className="task-card-form-input taskboard-detail-title-input"
-              value={editTitle}
-              autoFocus
-              onChange={(e) => setEditTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') saveEdit();
-              }}
-              placeholder="Title"
-            />
-          ) : (
-            <div className="taskboard-detail-title">{task.title}</div>
-          )}
+          {titleSlot}
           <button
             className="icon-btn sm"
             onClick={onClose}
@@ -98,114 +250,18 @@ export function TaskDetailOverlay({
             <X size={14} />
           </button>
         </div>
-        <div className="taskboard-detail-body">
-          {editing ? (
-            <textarea
-              className="task-card-form-input task-card-form-textarea taskboard-detail-desc-input"
-              value={editDesc}
-              onChange={(e) => setEditDesc(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveEdit();
-              }}
-              placeholder="Description"
-              rows={6}
-            />
-          ) : task.description?.trim() ? (
-            task.description
-          ) : (
-            <span style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-              No description.
-            </span>
-          )}
-        </div>
-        <div className="taskboard-detail-meta">
-          <span>
-            Status:{' '}
-            <span style={{ color: lane.color, fontWeight: 600 }}>
-              {lane.label}
-            </span>
-          </span>
-          <span>Created: {new Date(task.createdAt).toLocaleString()}</span>
-          {task.startedAt && (
-            <span>Started: {new Date(task.startedAt).toLocaleString()}</span>
-          )}
-          {task.completedAt && (
-            <span>Completed: {new Date(task.completedAt).toLocaleString()}</span>
-          )}
-          {task.branch && (
-            <span>
-              Branch: <code>{task.branch}</code>
-            </span>
-          )}
-          {task.worktreePath && (
-            <span>
-              Worktree: <code>{task.worktreePath}</code>
-            </span>
-          )}
-        </div>
-        <div className="taskboard-detail-actions">
-          {editing ? (
-            <>
-              <button
-                className="btn-ghost"
-                onClick={onDelete}
-                style={{ color: 'var(--danger)' }}
-              >
-                <Trash2 size={12} style={{ marginRight: 4 }} />
-                Delete
-              </button>
-              <span style={{ flex: 1 }} />
-              <button className="btn-ghost" onClick={cancelEdit}>
-                Cancel
-              </button>
-              <button
-                className="btn-primary"
-                onClick={saveEdit}
-                disabled={!editTitle.trim()}
-              >
-                Save
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                className="btn-ghost"
-                onClick={onDelete}
-                style={{ color: 'var(--danger)' }}
-              >
-                <Trash2 size={12} style={{ marginRight: 4 }} />
-                Delete
-              </button>
-              <span style={{ flex: 1 }} />
-              {task.status !== 'backlog' && task.status !== 'in_progress' && task.status !== 'ready_to_merge' && (
-                <button className="btn-ghost" onClick={() => onMove('backlog')}>
-                  Move to Backlog
-                </button>
-              )}
-              {task.status !== 'open' && (
-                <button className="btn-ghost" onClick={() => onMove('open')}>
-                  Move to Open
-                </button>
-              )}
-              {task.status !== 'qa' && (
-                <button className="btn-ghost" onClick={() => onMove('qa')}>
-                  Mark QA
-                </button>
-              )}
-              {task.status !== 'done' && (
-                <button className="btn-ghost" onClick={() => onMove('done')}>
-                  Mark Done
-                </button>
-              )}
-              {onRun && (
-                <button className="btn-primary" onClick={onRun}>
-                  <Play size={11} fill="currentColor" style={{ marginRight: 4 }} />
-                  Run
-                </button>
-              )}
-            </>
-          )}
-        </div>
+        <div className="taskboard-detail-body">{bodySlot}</div>
+        <TaskDetailMeta task={task} lane={lane} />
+        <TaskDetailActions
+          task={task}
+          editing={editing}
+          canSave={Boolean(editTitle.trim())}
+          onSave={saveEdit}
+          onCancel={cancelEdit}
+          onDelete={onDelete}
+          onMove={onMove}
+          onRun={onRun}
+        />
       </div>
     </div>
   );
