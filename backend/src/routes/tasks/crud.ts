@@ -1,7 +1,7 @@
 // Plain CRUD / list / batch / transition / reorder routes for tasks.
 // No worktree spawning, no merge orchestration — just data manipulation.
 
-import { Router, text as textBodyParser } from 'express';
+import { Router, text as textBodyParser, type Request, type Response } from 'express';
 import {
   listTasks,
   getTask,
@@ -12,56 +12,119 @@ import {
   type TaskStatus,
 } from '../../tasks.js';
 import { cleanupWorktreeForTask } from '../../worktree.js';
+import { parseMarkdownTasks } from './markdownBatch.js';
+import {
+  isValidTaskStatus,
+  resolveProject,
+  statusValidationError,
+} from './requestUtils.js';
 
-const VALID_STATUSES: TaskStatus[] = [
-  'backlog', 'open', 'in_progress', 'ready_to_merge', 'qa', 'done', 'deleted',
-];
+type TaskDraft = { title: string; description?: string };
+type JsonBatchTask = { title?: string; description?: string };
 
-// Resolve `project` from query string first (preferred — keeps the body
-// pure data) then fall back to the body. Lets shell agents put project
-// in the URL where it's easy to URL-encode and stop wrestling JSON for
-// it on every call.
-function resolveProject(req: { query: unknown; body: unknown }): string {
-  const q = req.query as Record<string, unknown> | null;
-  const b = req.body as Record<string, unknown> | string | null;
-  if (q && typeof q.project === 'string' && q.project) return q.project;
-  if (b && typeof b === 'object' && typeof (b as Record<string, unknown>).project === 'string') {
-    return (b as Record<string, string>).project;
+async function handleTaskSummary(req: Request, res: Response): Promise<void> {
+  const project = typeof req.query.project === 'string' ? req.query.project : '';
+  if (!project) {
+    res.status(400).json({ error: 'project required' });
+    return;
   }
-  return '';
+  try {
+    const all = await listTasks(project);
+    const counts: Record<string, number> = {};
+    for (const t of all) counts[t.status] = (counts[t.status] ?? 0) + 1;
+    res.json({ total: all.length, byStatus: counts });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
 }
 
-// Parse a markdown body into a list of {title, description?} tasks. Each
-// `# ` heading starts a new task; lines below it (until the next heading)
-// are the description. Lines before the first heading are ignored.
-//
-// Why this exists: building a JSON array of tasks with multi-line
-// descriptions in a shell is brutal — every backslash, quote, and
-// newline needs escaping. A heredoc with single-quoted EOF passes
-// markdown through *literally*, no escaping at all. This is the
-// difference between a 5-line curl invocation and a 300-line python
-// script when an agent wants to seed many tasks at once.
-export function parseMarkdownTasks(md: string): Array<{ title: string; description?: string }> {
-  const lines = md.split(/\r?\n/);
-  const out: Array<{ title: string; description: string[] }> = [];
-  let current: { title: string; description: string[] } | null = null;
-  for (const line of lines) {
-    const heading = /^#\s+(.+?)\s*$/.exec(line);
-    if (heading) {
-      if (current) out.push(current);
-      current = { title: heading[1], description: [] };
-    } else if (current) {
-      current.description.push(line);
-    }
-    // pre-heading lines are dropped intentionally
+async function handleTaskBatchCreate(req: Request, res: Response): Promise<void> {
+  const project = resolveProject(req);
+  if (!project) {
+    res.status(400).json({ error: 'project required (query string or JSON body)' });
+    return;
   }
-  if (current) out.push(current);
-  return out
-    .filter((t) => t.title.trim())
-    .map((t) => {
-      const desc = t.description.join('\n').trim();
-      return desc ? { title: t.title, description: desc } : { title: t.title };
+  let parsed: TaskDraft[];
+  if (typeof req.body === 'string') {
+    parsed = parseMarkdownTasks(req.body);
+    if (parsed.length === 0) {
+      res.status(400).json({
+        error: 'no tasks parsed from markdown body — use `# Heading` lines to mark each task',
+      });
+      return;
+    }
+  } else {
+    const body = (req.body || {}) as { tasks?: JsonBatchTask[] };
+    // Allow a bare array as the body (when project comes from query).
+    const arr = Array.isArray(req.body) ? req.body : body.tasks;
+    if (!Array.isArray(arr) || arr.length === 0) {
+      res.status(400).json({ error: 'tasks must be a non-empty array' });
+      return;
+    }
+    const invalid = arr.findIndex((t: JsonBatchTask) => !t.title?.trim());
+    if (invalid !== -1) {
+      res.status(400).json({ error: `tasks[${invalid}].title is required` });
+      return;
+    }
+    parsed = arr.map((t: JsonBatchTask) => ({
+      title: t.title!.trim(),
+      description: t.description,
+    }));
+  }
+  try {
+    const created = await Promise.all(
+      parsed.map((t) => createTask(project, t.title, t.description)),
+    );
+    res.json(created);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+}
+
+async function handleTaskTransition(req: Request, res: Response): Promise<void> {
+  const body = (req.body || {}) as {
+    ids?: string[];
+    status?: unknown;
+    fromStatus?: unknown;
+  };
+  const project = resolveProject(req);
+  const status = body.status;
+  const fromStatus = body.fromStatus;
+  if (!isValidTaskStatus(status)) {
+    res.status(400).json({
+      error: statusValidationError('status'),
     });
+    return;
+  }
+  let ids: string[];
+  if (Array.isArray(body.ids) && body.ids.length > 0) {
+    ids = body.ids;
+  } else if (fromStatus && project) {
+    if (!isValidTaskStatus(fromStatus)) {
+      res.status(400).json({ error: statusValidationError('fromStatus') });
+      return;
+    }
+    const all = await listTasks(project);
+    ids = all.filter((t) => t.status === fromStatus).map((t) => t.id);
+  } else {
+    res.status(400).json({
+      error: 'provide either { ids: [...] } or { fromStatus, project }',
+    });
+    return;
+  }
+  if (ids.length === 0) {
+    res.json({ updated: 0, missing: [], ids: [] });
+    return;
+  }
+  try {
+    const results = await Promise.all(ids.map((id) => updateTask(id, { status })));
+    const updated: string[] = [];
+    const missing: string[] = [];
+    results.forEach((r, i) => (r ? updated.push(r.id) : missing.push(ids[i])));
+    res.json({ updated: updated.length, missing, ids: updated });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
 }
 
 export function buildTaskCrudRouter(): Router {
@@ -89,18 +152,7 @@ export function buildTaskCrudRouter(): Router {
   // when they just want to know what's on the board.
   // MUST be registered before `/api/tasks/:id`, which would otherwise
   // capture `summary` as an :id and 404.
-  r.get('/api/tasks/summary', async (req, res) => {
-    const project = typeof req.query.project === 'string' ? req.query.project : '';
-    if (!project) return res.status(400).json({ error: 'project required' });
-    try {
-      const all = await listTasks(project);
-      const counts: Record<string, number> = {};
-      for (const t of all) counts[t.status] = (counts[t.status] ?? 0) + 1;
-      res.json({ total: all.length, byStatus: counts });
-    } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
-    }
-  });
+  r.get('/api/tasks/summary', handleTaskSummary);
 
   r.get('/api/tasks/:id', async (req, res) => {
     const task = await getTask(req.params.id);
@@ -138,44 +190,7 @@ export function buildTaskCrudRouter(): Router {
   r.post(
     '/api/tasks/batch',
     textBodyParser({ type: 'text/markdown', limit: '1mb' }),
-    async (req, res) => {
-      const project = resolveProject(req);
-      if (!project) {
-        return res.status(400).json({ error: 'project required (query string or JSON body)' });
-      }
-      let parsed: Array<{ title: string; description?: string }>;
-      if (typeof req.body === 'string') {
-        parsed = parseMarkdownTasks(req.body);
-        if (parsed.length === 0) {
-          return res.status(400).json({
-            error: 'no tasks parsed from markdown body — use `# Heading` lines to mark each task',
-          });
-        }
-      } else {
-        const body = (req.body || {}) as { tasks?: Array<{ title?: string; description?: string }> };
-        // Allow a bare array as the body (when project comes from query).
-        const arr = Array.isArray(req.body) ? req.body : body.tasks;
-        if (!Array.isArray(arr) || arr.length === 0) {
-          return res.status(400).json({ error: 'tasks must be a non-empty array' });
-        }
-        const invalid = arr.findIndex((t: { title?: string }) => !t.title?.trim());
-        if (invalid !== -1) {
-          return res.status(400).json({ error: `tasks[${invalid}].title is required` });
-        }
-        parsed = arr.map((t: { title?: string; description?: string }) => ({
-          title: t.title!.trim(),
-          description: t.description,
-        }));
-      }
-      try {
-        const created = await Promise.all(
-          parsed.map((t) => createTask(project, t.title, t.description)),
-        );
-        res.json(created);
-      } catch (err) {
-        res.status(500).json({ error: (err as Error).message });
-      }
-    },
+    handleTaskBatchCreate,
   );
 
   // Bulk status transition. Saves agents from N PATCH round trips when
@@ -183,46 +198,7 @@ export function buildTaskCrudRouter(): Router {
   // after reviewing the lane). Either explicit `ids` OR `fromStatus` +
   // `project` to target everything in a lane. Idempotent: tasks already
   // at the target status are no-op.
-  r.post('/api/tasks/transition', async (req, res) => {
-    const body = (req.body || {}) as {
-      ids?: string[];
-      status?: TaskStatus;
-      fromStatus?: TaskStatus;
-    };
-    const project = resolveProject(req);
-    const status = body.status;
-    if (!status || !VALID_STATUSES.includes(status)) {
-      return res.status(400).json({
-        error: `status must be one of: ${VALID_STATUSES.join(', ')}`,
-      });
-    }
-    let ids: string[];
-    if (Array.isArray(body.ids) && body.ids.length > 0) {
-      ids = body.ids;
-    } else if (body.fromStatus && project) {
-      if (!VALID_STATUSES.includes(body.fromStatus)) {
-        return res.status(400).json({ error: `fromStatus must be one of: ${VALID_STATUSES.join(', ')}` });
-      }
-      const all = await listTasks(project);
-      ids = all.filter((t) => t.status === body.fromStatus).map((t) => t.id);
-    } else {
-      return res.status(400).json({
-        error: 'provide either { ids: [...] } or { fromStatus, project }',
-      });
-    }
-    if (ids.length === 0) {
-      return res.json({ updated: 0, missing: [], ids: [] });
-    }
-    try {
-      const results = await Promise.all(ids.map((id) => updateTask(id, { status })));
-      const updated: string[] = [];
-      const missing: string[] = [];
-      results.forEach((r, i) => (r ? updated.push(r.id) : missing.push(ids[i])));
-      res.json({ updated: updated.length, missing, ids: updated });
-    } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
-    }
-  });
+  r.post('/api/tasks/transition', handleTaskTransition);
 
   r.patch('/api/tasks/:id', async (req, res) => {
     const updates = (req.body || {}) as {
