@@ -1,28 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { Settings as SettingsIcon } from 'lucide-react';
-import {
-  createTask,
-  type GraphNode,
-  type ScanResult,
-} from '../../api';
-import { Modal } from '../Modal';
-import { buildGhostGraphData } from './timelineDiff';
-import { TimelineScrubber } from './TimelineScrubber';
-import { locLabelRegistry } from './locOverlay';
-import { labelsRegistry } from './labelsOverlay';
-import { healthLabelRegistry } from './healthOverlay';
-import { HealthTooltip } from './HealthTooltip';
-import { MENU_ITEMS, relPath, type MenuItemDef } from './menu';
+import type { GraphNode, ScanResult } from '../../api';
+import { GraphContextMenu } from './GraphContextMenu';
+import { GraphHud } from './GraphHud';
+import { GraphSelectionChip } from './GraphSelectionChip';
 import { GraphSettingsPanel } from './GraphSettingsPanel';
-import { useRefMirror } from './hooks/useRefMirror';
+import { GraphTaskModal } from './GraphTaskModal';
+import { TimelineScrubber } from './TimelineScrubber';
 import { useBoxSelect } from './hooks/useBoxSelect';
-import { useNodeContextMenu } from './hooks/useNodeContextMenu';
-import { useHoverCursor } from './hooks/useHoverCursor';
-import { clearLabelsAndRefresh } from './hooks/refresh';
 import { useForceGraphInitialization } from './hooks/useForceGraphInitialization';
-import { useGraphOverlayState } from './hooks/useGraphOverlayState';
+import { useGraphDataSync } from './hooks/useGraphDataSync';
 import { useGraphOverlays } from './hooks/useGraphOverlays';
+import { useGraphTaskCreation } from './hooks/useGraphTaskCreation';
+import { useHoverCursor } from './hooks/useHoverCursor';
+import { useNodeContextMenu } from './hooks/useNodeContextMenu';
+import { useRefMirror } from './hooks/useRefMirror';
+import { clearLabelsAndRefresh } from './hooks/refresh';
 
 type Props = {
   data: ScanResult | null;
@@ -40,7 +34,8 @@ type Props = {
 // Hosts the 3d-force-graph instance and stitches together the per-concern
 // hooks under ./hooks/: graph initialization, settings persistence, git
 // timeline, LOC / health / labels overlays, shift-drag box-select, and the
-// right-click "create task" menu.
+// right-click "create task" menu. Render-only chrome lives in the
+// Graph*.tsx siblings.
 export function ForceGraphView({
   data,
   loading,
@@ -52,26 +47,14 @@ export function ForceGraphView({
   // ----- Phase 1: shared refs and overlay state -----
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraph3DInstance | null>(null);
-  const ghostsRef = useRef<Set<string>>(new Set());
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+
   const selectedRef = useRefMirror(selected);
   const hiddenExtsRef = useRefMirror(hiddenExts);
   const dataRef = useRefMirror(data);
-  const [showSettings, setShowSettings] = useState(false);
-
-  const {
-    hoverNode,
-    setHoverNode,
-    modalAction,
-    setModalAction,
-    promptText,
-    setPromptText,
-    submitting,
-    setSubmitting,
-    toast,
-    setToast,
-  } = useGraphOverlayState();
 
   const { hoverPos } = useHoverCursor(containerRef);
 
@@ -116,6 +99,15 @@ export function ForceGraphView({
     onHoverNodeChange: setHoverNode,
   });
 
+  const resetSelection = useCallback(() => setSelected(new Set()), []);
+
+  useGraphDataSync({
+    graphRef,
+    data,
+    history,
+    onResetSelection: resetSelection,
+  });
+
   const { contextMenu, setContextMenu } = useNodeContextMenu(containerRef);
   const closeContextMenu = useCallback(() => setContextMenu(null), [setContextMenu]);
   const { dragRect } = useBoxSelect(
@@ -126,39 +118,23 @@ export function ForceGraphView({
     closeContextMenu,
   );
 
-  // Push the full dataset only when the scan or git history changes.
-  // Ghost nodes (deleted files surfaced from git history) are merged
-  // into graphData here so the physics simulation places them once;
-  // scrubbing the timeline only flips visibility/rings afterward and
-  // never causes a graphData restart.
-  useEffect(() => {
-    if (!graphRef.current) return;
-    // Stale labels reference Sprites that get replaced on data swap.
-    locLabelRegistry.clear();
-    labelsRegistry.clear();
-    healthLabelRegistry.clear();
-    if (!data) {
-      graphRef.current.graphData({ nodes: [], links: [] });
-      ghostsRef.current = new Set();
-      return;
-    }
-    const ghostIds = new Set<string>();
-    let ghostNodes: GraphNode[] = [];
-    let ghostLinks: { source: string; target: string }[] = [];
-    if (history && history.isRepo) {
-      const built = buildGhostGraphData(data, history.commits, history.uncommitted);
-      ghostNodes = built.ghostNodes;
-      ghostLinks = built.ghostLinks;
-      for (const g of built.ghostNodes) ghostIds.add(g.id);
-    }
-    ghostsRef.current = ghostIds;
-    graphRef.current.graphData({
-      nodes: [...data.nodes, ...ghostNodes],
-      links: [...data.links, ...ghostLinks],
-    });
-    // A new scan invalidates the previous selection (node IDs may differ).
-    setSelected(new Set());
-  }, [data, history]);
+  const {
+    modalAction,
+    promptText,
+    setPromptText,
+    submitting,
+    toast,
+    selectedFiles,
+    openMenuItem,
+    submitTask,
+    closeModal,
+  } = useGraphTaskCreation({
+    data,
+    activeFolder,
+    selected,
+    setSelected,
+    closeContextMenu,
+  });
 
   // Re-render node THREE objects when the selection changes so halos
   // update. refresh() re-evaluates nodeThreeObject without restarting
@@ -200,66 +176,6 @@ export function ForceGraphView({
     return { files, dirs, hidden };
   }, [data, hiddenExts]);
 
-  // Files actually selected (filter out anything no longer in the dataset)
-  const selectedFiles = useMemo(() => {
-    if (!data || selected.size === 0) return [] as GraphNode[];
-    const byId = new Map(data.nodes.map((n) => [n.id, n]));
-    const out: GraphNode[] = [];
-    for (const id of selected) {
-      const n = byId.get(id);
-      if (n) out.push(n);
-    }
-    return out;
-  }, [data, selected]);
-
-  const openMenuItem = useCallback((item: MenuItemDef) => {
-    setContextMenu(null);
-    setPromptText(item.prefill);
-    setModalAction(item);
-  }, [setContextMenu, setModalAction, setPromptText]);
-
-  const submitTask = useCallback(async () => {
-    if (!modalAction || !activeFolder) return;
-    const trimmed = promptText.trim();
-    if (!trimmed) return;
-    const titleSnippet = trimmed.replace(/\s+/g, ' ').slice(0, 60);
-    const title = `${modalAction.verb}: ${titleSnippet}`;
-    const root = data?.root || activeFolder;
-    const fileLines = selectedFiles
-      .map((n) => `- ${relPath(n.path, root)}`)
-      .join('\n');
-    const description = `${trimmed}\n\n## Files\n${fileLines}`;
-    setSubmitting(true);
-    try {
-      await createTask(activeFolder, title, description);
-      setToast('Task created — open the board to run it');
-      setSelected(new Set());
-      setModalAction(null);
-      setPromptText('');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setToast(`Failed to create task: ${msg}`);
-    } finally {
-      setSubmitting(false);
-    }
-  }, [
-    modalAction,
-    promptText,
-    activeFolder,
-    data,
-    selectedFiles,
-    setModalAction,
-    setPromptText,
-    setSubmitting,
-    setToast,
-  ]);
-
-  const closeModal = useCallback(() => {
-    if (submitting) return;
-    setModalAction(null);
-    setPromptText('');
-  }, [submitting, setModalAction, setPromptText]);
-
   // The bottom-anchored counts chip and gear FAB shift up when the
   // timeline is visible so the timeline can claim the entire viewport
   // bottom edge.
@@ -272,43 +188,19 @@ export function ForceGraphView({
       style={{ position: 'relative', width: '100%', height: '100%' }}
     >
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
-      {loading && (
-        <div className="graph-overlay top-left">
-          <span className="spinner" />
-          <span>Scanning…</span>
-        </div>
-      )}
-      {healthMode && (
-        <div className="loc-view-chip">View: Code Health</div>
-      )}
-      {locMode && !healthMode && (
-        <div className="loc-view-chip">View: Lines of Code</div>
-      )}
-      {labelMode && !locMode && !healthMode && (
-        <div className="loc-view-chip">
-          View: Labels · depth {labelLevel}
-          {maxDepthRef.current > 0 && ` / ${maxDepthRef.current}`}
-          <span style={{ opacity: 0.7, marginLeft: 8 }}>
-            (alt+wheel to scroll)
-          </span>
-        </div>
-      )}
-      {hoverNode && hoverPos && (
-        <HealthTooltip node={hoverNode} x={hoverPos.x} y={hoverPos.y} />
-      )}
-      {!loading && data && (
-        <div className="graph-overlay bottom-left">
-          <span>
-            {counts.files} files · {counts.dirs} dirs
-            {counts.hidden > 0 && (
-              <span style={{ color: 'var(--text-tertiary)' }}>
-                {' '}
-                · {counts.hidden} hidden
-              </span>
-            )}
-          </span>
-        </div>
-      )}
+
+      <GraphHud
+        loading={loading}
+        data={data}
+        counts={counts}
+        healthMode={healthMode}
+        locMode={locMode}
+        labelMode={labelMode}
+        labelLevel={labelLevel}
+        maxDepth={maxDepthRef.current}
+        hoverNode={hoverNode}
+        hoverPos={hoverPos}
+      />
 
       {history && history.isRepo && history.commits.length > 0 && (
         <div className="timeline-bar">
@@ -338,93 +230,20 @@ export function ForceGraphView({
         />
       )}
 
-      {selected.size > 0 && (
-        <div className="graph-selection-chip">
-          <span>
-            {selected.size} {selected.size === 1 ? 'file' : 'files'} selected
-          </span>
-          <span className="sep">·</span>
-          <button
-            className="link-btn"
-            onClick={() => setSelected(new Set())}
-            title="Clear selection (Esc)"
-          >
-            clear
-          </button>
-        </div>
-      )}
+      <GraphSelectionChip count={selected.size} onClear={resetSelection} />
 
-      {contextMenu && (
-        <div
-          className="popover graph-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          role="menu"
-        >
-          {MENU_ITEMS.map((item) => (
-            <div
-              key={item.verb}
-              className="popover-item"
-              role="menuitem"
-              onClick={() => openMenuItem(item)}
-            >
-              {item.label}
-            </div>
-          ))}
-        </div>
-      )}
+      <GraphContextMenu position={contextMenu} onPick={openMenuItem} />
 
-      <Modal open={!!modalAction} onClose={closeModal}>
-        <div className="modal-header">
-          {modalAction?.label.replace(/…$/, '')} ({selectedFiles.length}{' '}
-          {selectedFiles.length === 1 ? 'file' : 'files'})
-        </div>
-        <div className="modal-body">
-          <textarea
-            className="task-card-form-textarea"
-            value={promptText}
-            onChange={(e) => setPromptText(e.target.value)}
-            placeholder="Describe what Claude should do…"
-            rows={6}
-            autoFocus
-          />
-          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
-            Files (relative to project root):
-          </div>
-          <div
-            style={{
-              maxHeight: 160,
-              overflow: 'auto',
-              border: '1px solid var(--border)',
-              borderRadius: 'var(--radius-sm)',
-              padding: '6px 8px',
-              fontFamily: 'var(--mono)',
-              fontSize: 11,
-              color: 'var(--text-secondary)',
-              background: '#15181d',
-            }}
-          >
-            {selectedFiles.length === 0 ? (
-              <em>No files selected.</em>
-            ) : (
-              selectedFiles.map((n) => (
-                <div key={n.id}>{relPath(n.path, data?.root || activeFolder)}</div>
-              ))
-            )}
-          </div>
-        </div>
-        <div className="modal-footer">
-          <button className="btn-ghost" onClick={closeModal} disabled={submitting}>
-            Cancel
-          </button>
-          <button
-            className="btn-primary"
-            onClick={submitTask}
-            disabled={submitting || !promptText.trim() || selectedFiles.length === 0}
-          >
-            {submitting ? 'Creating…' : 'Create task'}
-          </button>
-        </div>
-      </Modal>
+      <GraphTaskModal
+        action={modalAction}
+        promptText={promptText}
+        onPromptChange={setPromptText}
+        submitting={submitting}
+        selectedFiles={selectedFiles}
+        rootPath={data?.root || activeFolder}
+        onSubmit={submitTask}
+        onClose={closeModal}
+      />
 
       {toast && (
         <div className="graph-toast" role="status">
