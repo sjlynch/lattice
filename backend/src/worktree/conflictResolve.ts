@@ -89,8 +89,10 @@ export type ResolveMode = 'merge' | 'stash';
 export async function resolveOwnedFileConflicts(
   repoOrWorktreePath: string,
   mode: ResolveMode,
+  conflictedFiles?: string[],
 ): Promise<{ resolved: string[]; remaining: string[] }> {
-  const conflicted = await listConflictedFiles(repoOrWorktreePath);
+  const conflicted =
+    conflictedFiles ?? (await listConflictedFiles(repoOrWorktreePath));
   const resolved: string[] = [];
   const remaining: string[] = [];
   for (const file of conflicted) {
