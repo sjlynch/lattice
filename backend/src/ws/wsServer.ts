@@ -11,6 +11,7 @@ import {
   ensureTerminalServer,
   proxyTerminalWs,
 } from '../terminalProxy.js';
+import { detectHarnesses } from '../harnessDetect.js';
 import { listTasks, subscribe as subscribeTasks } from '../tasks.js';
 import {
   getActiveRunForProject,
@@ -206,6 +207,23 @@ function buildHealthWss(): WebSocketServer {
   });
 }
 
+// Push harness availability once detection completes. Lets the UI render
+// the Pi/Codex/Interleave options as soon as the backend knows, even when
+// the frontend was loaded before the server finished booting — the WS
+// auto-reconnects, so the eventual `detectHarnesses()` resolution reaches
+// the client without a manual refresh.
+function buildHarnessesWss(): WebSocketServer {
+  const wss = new WebSocketServer({ noServer: true });
+  wss.on('connection', (ws) => {
+    detectHarnesses()
+      .then((avail) => {
+        sendJson(ws, avail);
+      })
+      .catch(() => { /* leave client on its default */ });
+  });
+  return wss;
+}
+
 export function attachWebSockets(server: http.Server): void {
   const termWss = buildTerminalWss();
   const tasksWss = buildTasksWss();
@@ -213,6 +231,7 @@ export function attachWebSockets(server: http.Server): void {
   const workflowsWss = buildWorkflowsWss();
   const workflowRunsWss = buildWorkflowRunsWss();
   const healthWss = buildHealthWss();
+  const harnessesWss = buildHarnessesWss();
 
   const routes: Array<[string, WebSocketServer]> = [
     ['/ws/terminal', termWss],
@@ -221,6 +240,7 @@ export function attachWebSockets(server: http.Server): void {
     ['/ws/workflows', workflowsWss],
     ['/ws/workflow-runs', workflowRunsWss],
     ['/ws/health', healthWss],
+    ['/ws/harnesses', harnessesWss],
   ];
 
   server.on(

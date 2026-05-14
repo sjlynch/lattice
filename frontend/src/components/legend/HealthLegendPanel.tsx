@@ -30,7 +30,7 @@ export function HealthLegendPanel() {
         </div>
         <div className="health-legend-rows">
           {HEALTH_COMPONENTS.map((c) => (
-            <div className="health-legend-row" key={c.label}>
+            <div className="health-legend-row" key={c.id}>
               <div className="health-legend-row-head">
                 <span className="health-legend-row-label">{c.label}</span>
                 <HealthInfoIcon component={c} />

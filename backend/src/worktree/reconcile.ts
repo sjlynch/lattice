@@ -3,7 +3,8 @@ import fs from 'node:fs/promises';
 import { projectGit } from './projectGit.js';
 import { worktreeExists, parseWorktreesPorcelain } from './state.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
-import { assertNotReparsePoint, pruneReparsePointsUnder } from './cleanup.js';
+import { assertNotReparsePoint } from './cleanupSafety.js';
+import { pruneReparsePointsUnder } from './reparsePoints.js';
 import { isPathStrictlyInside } from './paths.js';
 import { homeWorktreesDir } from '../projectPath.js';
 

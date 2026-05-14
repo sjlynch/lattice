@@ -1,6 +1,10 @@
 // Worktree lifecycle hook callbacks. Called by the in-worktree Claude's
 // Stop hook (`/complete`, `/merged`, `/merge-aborted`, `/stash-resolved`).
-// Logic here is dense — re-sync with main, finalize, conflict re-resolution.
+//
+// The resolver-finished branch of `/complete` and the entirety of `/merged`
+// share the same "re-sync with main, finalize, requeue on conflict" flow —
+// extracted into `finalizeResolvedTask` (./finalizeResolved.ts). Each route
+// only renders the discriminated result into its own HTTP shape.
 
 import { Router } from 'express';
 import {
@@ -9,19 +13,12 @@ import {
   updateTaskCrashSafe,
 } from '../../tasks.js';
 import {
-  isMidMerge,
   branchCommitCount,
   cleanupWorktreeForTask,
-  resyncWithMainAndFinalize,
 } from '../../worktree.js';
-import { signalConflictWaiter, startMergeRun } from '../../mergeRuns.js';
+import { startMergeRun } from '../../mergeRuns.js';
 import { proxyKillSessionsByCwd } from '../../terminalProxy.js';
-
-function signalOrRestartMergeRun(task: { id: string; projectPath: string }, backendOrigin: string): void {
-  if (!signalConflictWaiter(task.id)) {
-    startMergeRun(task.projectPath, backendOrigin).catch(() => {});
-  }
-}
+import { finalizeResolvedTask } from './finalizeResolved.js';
 
 export function buildTaskHookRouter(backendOrigin: string): Router {
   const r = Router();
@@ -30,7 +27,8 @@ export function buildTaskHookRouter(backendOrigin: string): Router {
   //
   // Two cases handled here, both driven by the worktree's own Stop hook:
   //   in_progress -> ready_to_merge: the original task's Claude committed.
-  //   ready_to_merge + conflict:    the resolver Claude finished resolving.
+  //   ready_to_merge + conflict:    the resolver Claude finished resolving
+  //                                 (delegated to finalizeResolvedTask).
   r.post('/api/tasks/:id/complete', async (req, res) => {
     const task = await getTask(req.params.id);
     if (!task) return res.status(404).json({ error: 'not found' });
@@ -43,54 +41,22 @@ export function buildTaskHookRouter(backendOrigin: string): Router {
       task.branch &&
       task.worktreePath
     ) {
-      if (await isMidMerge(task.worktreePath)) {
-        // Resolver hasn't committed yet (Stop fired mid-resolution).
-        console.log(
-          `[complete] task ${task.id}: resolver still mid-merge, skipping FF.`,
-        );
+      const result = await finalizeResolvedTask(task, backendOrigin, 'complete');
+      if (result.kind === 'mid-merge') {
         return res.json({ ok: true, awaitingResolution: true });
       }
-      // Re-sync with current main before finalizing. The merge run may have
-      // advanced main (via other tasks) while the resolver was working, making
-      // the branch's merge commit stale relative to main — causing --ff-only
-      // to fail. Merging again absorbs those new main commits; if that also
-      // conflicts we need another resolver pass. If main is already an ancestor
-      // of the worktree branch, skip the re-sync.
-      const outcome = await resyncWithMainAndFinalize(task, backendOrigin, {
-        skipIfMainAncestor: true,
-        onMainAlreadyIncorporated: () => {
-          console.log(`[complete] task ${task.id}: main already incorporated — skipping re-sync`);
-        },
-      });
-      if (outcome.kind === 'merge-conflict') {
-        console.log(
-          `[complete] task ${task.id}: re-sync with main conflicted — resolver re-queued`,
-        );
-        // Unblock any waiting merge run so it can move on to the next task;
-        // this task stays conflicted and will be picked up on the next merge-all.
-        signalOrRestartMergeRun(task, backendOrigin);
+      if (result.kind === 'merge-conflict') {
         return res.json({
           ok: true,
           requiresReResolution: true,
-          conflictedFiles: outcome.conflictedFiles,
-          command: outcome.command,
-          cwd: outcome.cwd,
+          conflictedFiles: result.conflictedFiles,
+          command: result.command,
+          cwd: result.cwd,
         });
       }
-      if (outcome.kind === 'error' || outcome.kind === 'stash-conflict') {
-        const msg = outcome.message;
-        if (outcome.kind === 'error' && outcome.phase === 'merge') {
-          console.warn(`[complete] task ${task.id}: re-sync with main failed: ${msg}`);
-        } else {
-          console.warn(`[complete] finalize after resolution failed: ${msg}`);
-        }
-        return res.json({ ok: false, error: msg });
+      if (result.kind === 'error') {
+        return res.json({ ok: false, error: result.message });
       }
-      // Signal the in-process merge run that spawned this resolver so it can
-      // continue to the next task with the updated main HEAD. If no run is
-      // waiting (e.g. the run was killed by a backend restart), start a fresh
-      // one to pick up any remaining ready_to_merge tasks.
-      signalOrRestartMergeRun(task, backendOrigin);
       return res.json({ ok: true, finalized: true });
     }
 
@@ -145,39 +111,27 @@ export function buildTaskHookRouter(backendOrigin: string): Router {
     if (!task.branch || !task.worktreePath) {
       return res.status(400).json({ error: 'task missing worktree info' });
     }
-    if (await isMidMerge(task.worktreePath)) {
+    const result = await finalizeResolvedTask(task, backendOrigin, 'merged');
+    if (result.kind === 'mid-merge') {
       return res
         .status(400)
         .json({ error: 'worktree is still mid-merge — commit first.' });
     }
-    // Re-sync with current main (same reason as /complete — see comment there),
-    // unless main is already an ancestor of the branch.
-    const outcome = await resyncWithMainAndFinalize(task, backendOrigin, {
-      skipIfMainAncestor: true,
-      onMainAlreadyIncorporated: () => {
-        console.log(`[merged] task ${task.id}: main already incorporated — skipping re-sync`);
-      },
-    });
-    if (outcome.kind === 'merge-conflict') {
-      signalOrRestartMergeRun(task, backendOrigin);
+    if (result.kind === 'merge-conflict') {
       return res.status(409).json({
         error: 'Re-sync with main introduced new conflicts — another resolver needed',
-        command: outcome.command,
-        cwd: outcome.cwd,
-        conflictedFiles: outcome.conflictedFiles,
+        command: result.command,
+        cwd: result.cwd,
+        conflictedFiles: result.conflictedFiles,
       });
     }
-    if (outcome.kind === 'error') {
+    if (result.kind === 'error') {
       const error =
-        outcome.phase === 'merge'
-          ? `Re-sync with main failed: ${outcome.message}`
-          : outcome.message;
+        result.phase === 'merge'
+          ? `Re-sync with main failed: ${result.message}`
+          : result.message;
       return res.status(500).json({ error });
     }
-    if (outcome.kind === 'stash-conflict') {
-      return res.status(500).json({ error: outcome.message });
-    }
-    signalOrRestartMergeRun(task, backendOrigin);
     res.json({ ok: true });
   });
 

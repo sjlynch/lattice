@@ -4,7 +4,7 @@ import {
   assertAllowedProjectGitArgs,
   DisallowedProjectGitError,
 } from '../worktree/projectGit.js';
-import { isUnderManagedWorktreesDir } from '../worktree/cleanup.js';
+import { isUnderManagedWorktreesDir } from '../worktree/cleanupSafety.js';
 
 function allowed(args: string[]): void {
   assert.doesNotThrow(() => assertAllowedProjectGitArgs(args), `expected allowed: git ${args.join(' ')}`);
@@ -26,6 +26,7 @@ test('projectGit policy allows the operations Lattice actually uses', () => {
   allowed(['ls-files', '--error-unmatch', 'LATTICE_TASK.md']);
   allowed(['check-ignore', '--quiet', '.lattice/probe']);
   allowed(['merge-base', '--is-ancestor', 'aaa', 'bbb']);
+  allowed(['symbolic-ref', '--short', 'HEAD']);
   allowed(['worktree', 'list', '--porcelain']);
   allowed(['worktree', 'prune']);
   allowed(['worktree', 'add', '/home/u/.lattice/worktrees/h/foo-abc', '-b', 'lattice/foo-abc']);
@@ -41,6 +42,29 @@ test('projectGit policy allows the operations Lattice actually uses', () => {
   allowed(['bundle', 'create', '/home/u/.lattice/git-backups/h/2026.bundle', '--all']);
 });
 
+test('projectGit policy covers each mutating subcommand validator', () => {
+  allowed(['worktree', 'repair']);
+  denied(['worktree', 'remove', '--force']);
+
+  allowed(['branch', '-d', 'lattice/old']);
+  denied(['branch', '--copy', 'main', 'main-copy']);
+
+  allowed(['merge', '--abort']);
+  allowed(['merge', '--continue']);
+  denied(['merge', '--no-ff', 'lattice/foo']);
+
+  allowed(['checkout', '--theirs', '--', 'src/api.ts']);
+  denied(['checkout', 'HEAD', '--']);
+  denied(['checkout', 'HEAD', '--', '/']);
+
+  allowed(['reset', '--', 'src/api.ts']);
+  denied(['reset', 'HEAD', '--']);
+  denied(['reset', 'HEAD~1', '--', 'src/api.ts']);
+
+  allowed(['rm', '--cached', 'src/api.ts']);
+  denied(['rm', '--quiet', 'src/api.ts']);
+});
+
 test('projectGit policy refuses everything that could damage the repo', () => {
   // The classics behind past incidents.
   denied(['clean', '-fdx']);
@@ -52,6 +76,7 @@ test('projectGit policy refuses everything that could damage the repo', () => {
   denied(['reset', '--soft', 'HEAD~1']);
   denied(['reset', 'HEAD~1']); // moves HEAD — no `--`
   denied(['update-ref', '-d', 'refs/heads/main']);
+  denied(['symbolic-ref', 'HEAD', 'refs/heads/main']);
   // Branch deletion limited to lattice/*.
   denied(['branch', '-D', 'main']);
   denied(['branch', '-d', 'develop']);
