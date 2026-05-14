@@ -1,0 +1,84 @@
+// Git-history endpoint backing the timeline scrubber. We shell out to
+// `git log` once per request with `--name-status` so the frontend gets
+// commits and their changed-file lists in a single round trip; the
+// scrubber can then derive the per-range change map purely client-side
+// without re-hitting the backend on every drag.
+
+import path from 'node:path';
+import { exec } from '../worktree/exec.js';
+import { gitLogFormat, parseGitLogNameStatus } from './parseLog.js';
+import { parseGitStatusPorcelain } from './parseStatus.js';
+import type { GitCommit, GitHistoryResult, GitUncommitted } from './types.js';
+
+export type {
+  GitCommit,
+  GitCommitChange,
+  GitFileStatus,
+  GitHistoryResult,
+  GitUncommitted,
+} from './types.js';
+
+function clampLogLimit(limit: number): number {
+  return Math.max(1, Math.min(50, Math.floor(limit)));
+}
+
+async function isGitRepo(repoRoot: string): Promise<boolean> {
+  const r = await exec('git', ['rev-parse', '--is-inside-work-tree'], repoRoot, {
+    timeoutMs: 4000,
+  });
+  return r.code === 0 && r.stdout.trim() === 'true';
+}
+
+async function readCommits(repoRoot: string, limit: number): Promise<GitCommit[]> {
+  // `--format` emits one header line per commit (with the parser's
+  // sentinels), followed by the name-status block, terminated with a blank
+  // line. Staying line-oriented is simpler and plenty fast for ~10 commits.
+  const r = await exec(
+    'git',
+    [
+      'log',
+      `-${clampLogLimit(limit)}`,
+      '--no-merges',
+      '--name-status',
+      // -M turns on rename detection so renamed files surface as `R…`
+      // entries (which we decompose into delete + add); without it git
+      // emits add/delete pairs instead, which is fine — we just lose the
+      // oldPath linkage. `--no-renames=false` is invalid syntax.
+      '-M',
+      `--format=${gitLogFormat()}`,
+    ],
+    repoRoot,
+    { timeoutMs: 6000 },
+  );
+  if (r.code !== 0) {
+    // No commits yet, shallow repo with no history, etc. — return empty.
+    return [];
+  }
+
+  return parseGitLogNameStatus(r.stdout);
+}
+
+async function readUncommitted(repoRoot: string): Promise<GitUncommitted> {
+  const r = await exec('git', ['status', '--porcelain=v1', '-z'], repoRoot, {
+    timeoutMs: 4000,
+  });
+  if (r.code !== 0) return { changes: [] };
+
+  return parseGitStatusPorcelain(r.stdout);
+}
+
+export async function getGitHistory(
+  repoRoot: string,
+  limit: number,
+): Promise<GitHistoryResult> {
+  const abs = path.resolve(repoRoot);
+  if (!(await isGitRepo(abs))) {
+    return { isRepo: false, commits: [], uncommitted: { changes: [] } };
+  }
+  // Fetch in parallel — they're independent git invocations.
+  const [commits, uncommitted] = await Promise.all([
+    readCommits(abs, limit),
+    readUncommitted(abs),
+  ]);
+  return { isRepo: true, commits, uncommitted };
+}
