@@ -27,59 +27,36 @@
 
 import { exec, type ExecResult } from './exec.js';
 import { assertGitDirIntact } from './state.js';
+import {
+  DisallowedProjectGitError,
+  SAFE_READ_OR_INDEX_ONLY,
+} from './projectGit/policy.js';
+import { assertAllowedBranchArgs } from './projectGit/validators/branch.js';
+import { assertAllowedCheckoutArgs } from './projectGit/validators/checkout.js';
+import { assertAllowedMergeArgs } from './projectGit/validators/merge.js';
+import { assertAllowedResetArgs } from './projectGit/validators/reset.js';
+import { assertAllowedRmArgs } from './projectGit/validators/rm.js';
+import { assertAllowedWorktreeArgs } from './projectGit/validators/worktree.js';
 
-// Branches Lattice is allowed to delete in the project repo. Anything not
-// matching this is refused — deleting `main`/`master`/a user branch is
-// never something Lattice should do.
-const LATTICE_BRANCH_RE = /^lattice\//;
+export { DisallowedProjectGitError } from './projectGit/policy.js';
 
-// Subcommands that cannot mutate repo structure at all (reads, or
-// index-only writes that the working tree / `.git` survive regardless).
-const SAFE_READ_OR_INDEX_ONLY = new Set([
-  'rev-parse',
-  'status',
-  'ls-files',
-  'check-ignore',
-  'diff',
-  'rev-list',
-  'merge-base',
-  'log',
-  'show',
-  'cat-file',
-  'name-rev',
-  'describe',
-  'shortlog',
-  'for-each-ref',
-  'symbolic-ref', // read form only (see below)
-  'add', // index only — never touches .git structure or deletes files
-  'commit', // creates a commit; cannot delete .git
-  'bundle', // read-only w.r.t. the repo (used by the backup)
-  'version',
-  'help',
+type ProjectGitSubcommandValidator = (rest: string[]) => void;
+
+const MUTATING_SUBCOMMAND_VALIDATORS = new Map<string, ProjectGitSubcommandValidator>([
+  ['worktree', assertAllowedWorktreeArgs],
+  ['branch', assertAllowedBranchArgs],
+  ['merge', assertAllowedMergeArgs],
+  ['checkout', assertAllowedCheckoutArgs],
+  ['reset', assertAllowedResetArgs],
+  ['rm', assertAllowedRmArgs],
 ]);
 
-function hasFlag(args: string[], ...flags: string[]): boolean {
-  return args.some((a) => flags.includes(a));
-}
-
-// Index of the `--` separator, or -1.
-function dashDashIndex(args: string[]): number {
-  return args.indexOf('--');
-}
-
-// Last argument that doesn't look like a flag (used to find the "target"
-// of e.g. `worktree remove [--force] <target>` or `branch -D <name>`).
-function lastNonFlag(args: string[]): string | undefined {
-  for (let i = args.length - 1; i >= 0; i -= 1) {
-    if (!args[i].startsWith('-')) return args[i];
-  }
-  return undefined;
-}
-
-export class DisallowedProjectGitError extends Error {
-  constructor(message: string) {
-    super(`[projectGit] refusing to run in the project repo: ${message}`);
-    this.name = 'DisallowedProjectGitError';
+function assertAllowedSymbolicRefArgs(rest: string[]): void {
+  // `git symbolic-ref HEAD <ref>` writes; the read form is `symbolic-ref
+  // [-q] [--short] <name>`. Forbid the 2-positional-arg write form.
+  const positionals = rest.filter((a) => !a.startsWith('-'));
+  if (positionals.length >= 2) {
+    throw new DisallowedProjectGitError('symbolic-ref write form is not allowed');
   }
 }
 
@@ -99,115 +76,25 @@ export function assertAllowedProjectGitArgs(args: string[]): void {
   const rest = args.slice(1);
 
   if (SAFE_READ_OR_INDEX_ONLY.has(sub)) {
-    // `git symbolic-ref HEAD <ref>` writes; the read form is `symbolic-ref
-    // [-q] [--short] <name>`. Forbid the 2-positional-arg write form.
-    if (sub === 'symbolic-ref') {
-      const positionals = rest.filter((a) => !a.startsWith('-'));
-      if (positionals.length >= 2) {
-        throw new DisallowedProjectGitError('symbolic-ref write form is not allowed');
-      }
-    }
+    if (sub === 'symbolic-ref') assertAllowedSymbolicRefArgs(rest);
     return;
   }
 
-  switch (sub) {
-    case 'worktree': {
-      const op = rest[0];
-      if (!op || !['list', 'prune', 'add', 'remove', 'repair', 'lock', 'unlock', 'move'].includes(op)) {
-        throw new DisallowedProjectGitError(`worktree subcommand "${op ?? '(none)'}" not allowed`);
-      }
-      // `worktree remove <target>` — git itself refuses to remove the main
-      // worktree, but bail loudly here too rather than rely on that.
-      if (op === 'remove') {
-        const target = lastNonFlag(rest.slice(1));
-        if (!target) throw new DisallowedProjectGitError('worktree remove with no target');
-      }
-      return;
-    }
-    case 'branch': {
-      // Deletion: only `lattice/*` branches.
-      if (hasFlag(rest, '-D', '-d', '--delete', '--delete=force')) {
-        const target = lastNonFlag(rest);
-        if (!target || !LATTICE_BRANCH_RE.test(target)) {
-          throw new DisallowedProjectGitError(
-            `branch delete target "${target ?? '(none)'}" is not a lattice/* branch`,
-          );
-        }
-        return;
-      }
-      // Rename / copy could clobber an existing branch (incl. main) — never
-      // something Lattice does.
-      if (hasFlag(rest, '-m', '-M', '--move', '-c', '-C', '--copy')) {
-        throw new DisallowedProjectGitError('branch move/copy is not allowed');
-      }
-      // Otherwise it's a list (`branch`, `branch --list`, `branch -a`, …) or
-      // a create (`branch <name> [<start>]`). Both are harmless w.r.t. `.git`.
-      return;
-    }
-    case 'merge': {
-      // Only fast-forward, or operating on an in-progress merge state.
-      if (hasFlag(rest, '--ff-only', '--abort', '--continue', '--quit')) return;
-      throw new DisallowedProjectGitError(
-        'a non-fast-forward `git merge` in the project repo is forbidden ' +
-          '(Lattice merges inside the worktree and only fast-forwards main)',
-      );
-    }
-    case 'checkout': {
-      // Permit only the path-restoring form: `checkout <ref|--ours|--theirs> -- <paths…>`
-      // with at least one explicit path that isn't `.`/`*`. Forbid branch
-      // switching (`checkout <branch>`), which rewrites the whole tree, and
-      // `checkout -- .` (mass discard).
-      const dd = dashDashIndex(rest);
-      if (dd < 0) {
-        throw new DisallowedProjectGitError('checkout without `--` (branch switch) is not allowed');
-      }
-      const paths = rest.slice(dd + 1);
-      if (paths.length === 0) {
-        throw new DisallowedProjectGitError('checkout with `--` but no paths is not allowed');
-      }
-      if (paths.some((p) => p === '.' || p === '*' || p === '' || p === '/')) {
-        throw new DisallowedProjectGitError('checkout with a wildcard/dot path is not allowed');
-      }
-      return;
-    }
-    case 'reset': {
-      // Only `reset [HEAD] -- <paths…>` (unstage). Forbid all positional-mode
-      // resets (`reset <commit>` moves HEAD) and every mode flag, including
-      // `--soft` which still moves HEAD.
-      if (hasFlag(rest, '--hard', '--soft', '--mixed', '--merge', '--keep', '-N', '--patch', '-p')) {
-        throw new DisallowedProjectGitError('reset with a mode flag is not allowed');
-      }
-      const dd = dashDashIndex(rest);
-      if (dd < 0) {
-        throw new DisallowedProjectGitError('reset without `--` (would move HEAD) is not allowed');
-      }
-      if (rest.slice(dd + 1).length === 0) {
-        throw new DisallowedProjectGitError('reset with `--` but no paths is not allowed');
-      }
-      // Anything before `--` must be `HEAD` (or nothing). A SHA there would
-      // be a soft reset to that commit.
-      const beforeDD = rest.slice(0, dd).filter((a) => !a.startsWith('-'));
-      if (beforeDD.length > 1 || (beforeDD.length === 1 && beforeDD[0] !== 'HEAD')) {
-        throw new DisallowedProjectGitError(`reset target "${beforeDD.join(' ')}" must be HEAD or omitted`);
-      }
-      return;
-    }
-    case 'rm': {
-      // Only `rm --cached` (index only — never deletes from the working tree).
-      if (!hasFlag(rest, '--cached')) {
-        throw new DisallowedProjectGitError('`git rm` without --cached (would delete files) is not allowed');
-      }
-      return;
-    }
-    case 'fetch':
-      // Network read into the object store; cannot delete `.git`. Allowed
-      // even though Lattice doesn't currently use it — harmless and useful.
-      return;
-    default:
-      throw new DisallowedProjectGitError(
-        `subcommand "${sub}" is not in the allowed set`,
-      );
+  const validator = MUTATING_SUBCOMMAND_VALIDATORS.get(sub);
+  if (validator) {
+    validator(rest);
+    return;
   }
+
+  if (sub === 'fetch') {
+    // Network read into the object store; cannot delete `.git`. Allowed
+    // even though Lattice doesn't currently use it — harmless and useful.
+    return;
+  }
+
+  throw new DisallowedProjectGitError(
+    `subcommand "${sub}" is not in the allowed set`,
+  );
 }
 
 // Run `git <args…>` in the project repo, after asserting `.git` is intact
