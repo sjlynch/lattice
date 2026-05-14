@@ -4,7 +4,7 @@ import {
   assertAllowedProjectGitArgs,
   DisallowedProjectGitError,
 } from '../worktree/projectGit.js';
-import { isUnderManagedWorktreesDir } from '../worktree/cleanup.js';
+import { isUnderManagedWorktreesDir } from '../worktree/cleanupSafety.js';
 
 function allowed(args: string[]): void {
   assert.doesNotThrow(() => assertAllowedProjectGitArgs(args), `expected allowed: git ${args.join(' ')}`);
