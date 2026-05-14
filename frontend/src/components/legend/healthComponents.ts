@@ -3,22 +3,44 @@
 // Per-file scores live in the on-graph hover tooltip; this panel only
 // describes what the score means and how it's weighted.
 
+// Keep these ids aligned with backend/src/health/scoreModel.ts.
+export type HealthComponentId =
+  | 'cognitive_complexity'
+  | 'cyclomatic_complexity'
+  | 'maintainability_index'
+  | 'nesting_depth'
+  | 'function_length'
+  | 'smell_density'
+  | 'call_graph_density'
+  | 'file_size'
+  | 'fan_out'
+  | 'fan_in'
+  | 'circular_dependency';
+
 // Structured tooltip detail. Rendering puts the bolded label on its
 // own line followed by the body text, so users get a readable list
 // rather than a wall of prose.
 export type DetailEntry = { label: string; body: string };
 
 export type HealthComponent = {
+  id: HealthComponentId;
   label: string;
   weight: number;
+  healthyThreshold: number;
+  unhealthyThreshold: number;
+  higherIsWorse: boolean;
   note: string;
   detail: DetailEntry[];
 };
 
 export const HEALTH_COMPONENTS: HealthComponent[] = [
   {
+    id: 'cognitive_complexity',
     label: 'Cognitive complexity (max)',
     weight: 20,
+    healthyThreshold: 5,
+    unhealthyThreshold: 30,
+    higherIsWorse: true,
     note: 'green ≤5 · red ≥30',
     detail: [
       {
@@ -40,9 +62,13 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
     ],
   },
   {
+    id: 'cyclomatic_complexity',
     label: 'Cyclomatic complexity (max)',
     weight: 15,
-    note: 'green ≤10 · red ≥25',
+    healthyThreshold: 5,
+    unhealthyThreshold: 25,
+    higherIsWorse: true,
+    note: 'green ≤5 · red ≥25',
     detail: [
       {
         label: 'Measures',
@@ -54,7 +80,7 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
       },
       {
         label: 'Threshold',
-        body: '≤10 simple · 11–20 moderate · 21+ usually needs refactoring.',
+        body: '≤5 no score penalty · 6–20 moderate · ≥25 has the full score penalty.',
       },
       {
         label: 'Languages',
@@ -63,8 +89,12 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
     ],
   },
   {
+    id: 'maintainability_index',
     label: 'Maintainability Index',
     weight: 12,
+    healthyThreshold: 85,
+    unhealthyThreshold: 0,
+    higherIsWorse: false,
     note: 'Microsoft formula · ≥85 healthy',
     detail: [
       {
@@ -86,8 +116,12 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
     ],
   },
   {
+    id: 'smell_density',
     label: 'Smell density',
     weight: 10,
+    healthyThreshold: 0,
+    unhealthyThreshold: 0.05,
+    higherIsWorse: true,
     note: 'detected smells / LOC',
     detail: [
       {
@@ -109,9 +143,13 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
     ],
   },
   {
+    id: 'nesting_depth',
     label: 'Nesting depth (max)',
     weight: 10,
-    note: 'green ≤3 · red ≥8',
+    healthyThreshold: 2,
+    unhealthyThreshold: 8,
+    higherIsWorse: true,
+    note: 'green ≤2 · red ≥8',
     detail: [
       {
         label: 'Measures',
@@ -123,7 +161,7 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
       },
       {
         label: 'Threshold',
-        body: '≤3 readable · 4–5 dense · ≥6 usually means missing guard clauses or early returns.',
+        body: '≤2 no score penalty · 3–5 dense · ≥8 has the full score penalty.',
       },
       {
         label: 'Languages',
@@ -132,8 +170,12 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
     ],
   },
   {
+    id: 'function_length',
     label: 'Max function length',
     weight: 8,
+    healthyThreshold: 30,
+    unhealthyThreshold: 250,
+    higherIsWorse: true,
     note: 'green ≤30 · red ≥250 lines',
     detail: [
       {
@@ -155,8 +197,12 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
     ],
   },
   {
+    id: 'call_graph_density',
     label: 'Call graph density',
     weight: 5,
+    healthyThreshold: 0.3,
+    unhealthyThreshold: 1.5,
+    higherIsWorse: true,
     note: 'within-file calls per function',
     detail: [
       {
@@ -178,9 +224,13 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
     ],
   },
   {
+    id: 'file_size',
     label: 'File size (LOC)',
     weight: 5,
-    note: 'green ≤300 · red ≥1500',
+    healthyThreshold: 200,
+    unhealthyThreshold: 1500,
+    higherIsWorse: true,
+    note: 'green ≤200 · red ≥1500',
     detail: [
       {
         label: 'Measures',
@@ -188,7 +238,7 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
       },
       {
         label: 'Threshold',
-        body: '≤300 healthy · 300–800 normal · >800 tends to mix concerns and resist code review.',
+        body: '≤200 no score penalty · 300–800 normal · >800 tends to mix concerns and resist code review.',
       },
       {
         label: 'Special cases',
@@ -197,8 +247,12 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
     ],
   },
   {
+    id: 'fan_out',
     label: 'Fan-out (imports made)',
     weight: 5,
+    healthyThreshold: 8,
+    unhealthyThreshold: 30,
+    higherIsWorse: true,
     note: 'green ≤8 · red ≥30',
     detail: [
       {
@@ -216,8 +270,12 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
     ],
   },
   {
+    id: 'fan_in',
     label: 'Fan-in (importers)',
     weight: 5,
+    healthyThreshold: 15,
+    unhealthyThreshold: 50,
+    higherIsWorse: true,
     note: 'green ≤15 · red ≥50',
     detail: [
       {
@@ -235,8 +293,12 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
     ],
   },
   {
+    id: 'circular_dependency',
     label: 'Circular dependency',
     weight: 5,
+    healthyThreshold: 0,
+    unhealthyThreshold: 1,
+    higherIsWorse: true,
     note: 'binary · file is in a cycle',
     detail: [
       {
