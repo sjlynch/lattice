@@ -18,7 +18,7 @@ import { buildTaskHookRouter } from './tasks/hooks.js';
 
 // Re-exported for backend/src/__tests__/tasksApi.test.ts which imports it
 // from this module path.
-export { parseMarkdownTasks } from './tasks/crud.js';
+export { parseMarkdownTasks } from './tasks/markdownBatch.js';
 
 export function buildTasksRouter(backendOrigin: string): Router {
   const r = Router();

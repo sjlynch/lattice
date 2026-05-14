@@ -1,8 +1,10 @@
-import os from 'node:os';
 import path from 'node:path';
-import { projectHash } from '../projectPath.js';
+import {
+  homeProjectDir as sharedHomeProjectDir,
+  latticeHomeDir,
+} from '../projectPath.js';
 
-export const LATTICE_HOME = path.join(os.homedir(), '.lattice');
+export const LATTICE_HOME = latticeHomeDir();
 export const PROJECTS_INDEX = path.join(LATTICE_HOME, 'projects.json');
 export const LEGACY_GLOBAL_TASKS = path.join(LATTICE_HOME, 'tasks.json');
 export const PER_PROJECT_BASE = path.join(LATTICE_HOME, 'per-project');
@@ -24,7 +26,7 @@ export const PROJECT_TASKS_BACKUP_FILENAME = 'tasks.backup.json';
 // `~/.lattice/per-project/` can tell which directory belongs to which
 // project without needing the index.
 export function homeProjectDir(projectPath: string): string {
-  return path.join(PER_PROJECT_BASE, projectHash(projectPath));
+  return sharedHomeProjectDir(projectPath);
 }
 
 export function projectTasksFile(projectPath: string): string {
