@@ -1,0 +1,82 @@
+.path-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.drive-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.drive-row-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.drive-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.drive-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #15181d;
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: 11px;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.drive-chip:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.drive-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.create-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.create-folder-input {
+  min-width: 0;
+}
+
+.dir-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #15181d;
+  max-height: 300px;
+  overflow: auto;
+  padding: 4px;
+}
+.dir-list-empty {
+  padding: 16px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+.dir-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.dir-row:hover { background: var(--bg-hover); }
+.dir-row .dir-icon { color: var(--text-tertiary); display: inline-flex; }
