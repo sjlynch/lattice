@@ -3,6 +3,11 @@ import type {
   WorkflowRunHarnessOverride,
   WorkflowStepHarness,
 } from '../../api';
+import {
+  availableAgentHarnesses,
+  harnessLabel,
+  isAgentHarness,
+} from '../../harnesses';
 
 export const DEFAULT_WORKFLOW_HARNESS_VALUE = 'default';
 
@@ -15,26 +20,18 @@ export function serializeWorkflowHarnessOverride(
 export function parseWorkflowHarnessOverride(
   value: string,
 ): WorkflowRunHarnessOverride {
-  return value === 'claude' || value === 'pi' || value === 'codex'
-    ? value
-    : null;
+  return isAgentHarness(value) ? value : null;
 }
 
 export function workflowHarnessOverrideLabel(
   value: WorkflowRunHarnessOverride | undefined,
 ): string {
-  if (value === 'claude') return 'Claude';
-  if (value === 'pi') return 'Pi';
-  if (value === 'codex') return 'Codex';
-  return 'Default';
+  return harnessLabel(value);
 }
 
 export function availableWorkflowHarnessOptions(
   harnessAvail: HarnessAvailability,
   selected: WorkflowRunHarnessOverride,
 ): WorkflowStepHarness[] {
-  const options: WorkflowStepHarness[] = ['claude'];
-  if (harnessAvail.pi || selected === 'pi') options.push('pi');
-  if (harnessAvail.codex || selected === 'codex') options.push('codex');
-  return options;
+  return availableAgentHarnesses(harnessAvail, selected) as WorkflowStepHarness[];
 }

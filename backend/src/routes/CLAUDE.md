@@ -9,7 +9,7 @@ One Express `Router` per domain. Each module exports a `buildXRouter(deps)` fact
 - `terminals.ts` — `/api/terminals` list/delete (proxies to terminal-server).
 - `tasks.ts` — task CRUD + `/run`, `/resume`, `/complete`, `/merge`, `/merged`, `/merge-aborted`, `/stash-resolved`. The state-machine logic lives here.
 - `mergeRuns.ts` — `/api/merge-runs` start / active / get / cancel / stash-resolved.
-- `workflows.ts` — workflow CRUD + `/run` + `/api/workflow-runs/active`.
+- `workflows.ts` — workflow CRUD + `/run` + `/api/workflow-runs/active`, plus workflow prompt-customization start/status/callback endpoints.
 
 ## Why factories?
 

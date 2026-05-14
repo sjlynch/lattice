@@ -123,6 +123,9 @@ therefore stay safely re-runnable.
 | GET | `/api/merge-runs/:id` | Run snapshot |
 | POST | `/api/merge-runs/:id/cancel` | Request cancellation (run finishes current task and stops) |
 | POST | `/api/workflows/:id/run` | Start a workflow run (spawns step 0 terminal) |
+| POST | `/api/workflow-prompt-customizations` | Spawn selected harness to tailor a workflow step prompt |
+| GET | `/api/workflow-prompt-customizations/:id` | Poll prompt-customization status/result |
+| POST | `/api/workflow-prompt-customizations/:id/complete` | Harness callback with customized prompt |
 | POST | `/api/workflow-runs/:runId/steps/:n/complete` | Stop-hook callback — advances to next step |
 | GET | `/api/workflow-runs/active?project=` | Active workflow runs for a project |
 | GET | `/api/terminals` | Debug: list active pty sessions |

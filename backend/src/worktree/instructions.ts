@@ -10,6 +10,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Task } from '../tasks.js';
+import type { AgentHarness } from '../harnesses.js';
 import { renderStopHookJson } from './setup.js';
 import { renderEnvNotesBlock, resolveEnvNotesForInstructions } from './envDetect.js';
 
@@ -96,7 +97,7 @@ async function renderEnvBlockFor(repoRoot: string): Promise<string> {
 export function renderTaskMarkdown(
   task: Task,
   backendOrigin: string,
-  harness: 'claude' | 'pi' | 'codex' = 'claude',
+  harness: AgentHarness = 'claude',
   envNotes: string[] = [],
 ): string {
   const created = new Date(task.createdAt).toISOString();

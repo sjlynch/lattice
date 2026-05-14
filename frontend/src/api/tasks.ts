@@ -8,6 +8,7 @@ import type {
   Task,
   TaskStatus,
 } from './types';
+import type { AgentHarness } from '../harnesses';
 
 export async function fetchTasks(projectPath: string): Promise<Task[]> {
   return asJson<Task[]>(
@@ -64,7 +65,7 @@ export async function deleteTask(id: string): Promise<void> {
   );
 }
 
-export async function runTask(id: string, harness?: 'claude' | 'pi' | 'codex'): Promise<RunTaskResult> {
+export async function runTask(id: string, harness?: AgentHarness): Promise<RunTaskResult> {
   return asJson<RunTaskResult>(
     await fetch(`/api/tasks/${encodeURIComponent(id)}/run`, {
       method: 'POST',
@@ -74,7 +75,7 @@ export async function runTask(id: string, harness?: 'claude' | 'pi' | 'codex'): 
   );
 }
 
-export async function resumeTask(id: string, harness?: 'claude' | 'pi' | 'codex'): Promise<RunTaskResult> {
+export async function resumeTask(id: string, harness?: AgentHarness): Promise<RunTaskResult> {
   return asJson<RunTaskResult>(
     await fetch(`/api/tasks/${encodeURIComponent(id)}/resume`, {
       method: 'POST',

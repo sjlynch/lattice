@@ -10,6 +10,7 @@ Vite + React + TS. Hand-written CSS in `index.css`; no MUI, no styled-components
 - `TerminalsContext.tsx` — global terminal-tab state, persisted to sessionStorage (per-tab). `addTerminal({...})` is how features spawn agent sessions.
 - `extensionStyles.ts` — single source of truth for sprite shape/color per file extension. Shared by graph + Legend.
 - `workflowTemplates.ts` — built-in templates surfaced in the Workflows picker.
+- `harnesses.ts` — shared frontend vocabulary/helpers for agent harness strings, labels, and availability-filtered option lists.
 
 ## Per-project state keys
 

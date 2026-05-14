@@ -8,8 +8,9 @@ import {
 } from '../../worktree.js';
 import { proxyCreateSession } from '../../terminalProxy.js';
 import type { Task } from '../../tasks.js';
+import { normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
 
-export type TaskHarness = 'claude' | 'pi' | 'codex';
+export type TaskHarness = AgentHarness;
 export type HarnessMode = 'run' | 'resume';
 
 type CommandBuilder = (taskFile: string) => string;
@@ -27,12 +28,6 @@ export type SelectedHarnessCommand = {
     cwd: string;
   }) => Promise<{ command: string; serverId?: string }>;
 };
-
-function normalizeHarness(requestedHarness: unknown): TaskHarness {
-  return requestedHarness === 'pi' || requestedHarness === 'codex'
-    ? requestedHarness
-    : 'claude';
-}
 
 function getCommandBuilder(harness: TaskHarness, mode: HarnessMode): CommandBuilder {
   if (mode === 'resume') {
@@ -54,7 +49,7 @@ export function selectHarnessCommand(
   task: Task,
   options: SelectHarnessCommandOptions,
 ): SelectedHarnessCommand {
-  const harness = normalizeHarness(options.requestedHarness);
+  const harness = normalizeAgentHarness(options.requestedHarness);
   const commandBuilder = getCommandBuilder(harness, options.mode);
 
   return {

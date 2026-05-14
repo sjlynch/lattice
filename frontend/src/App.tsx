@@ -221,6 +221,7 @@ function App() {
           onSelectFolder={setActiveFolder}
           startupTerminals={startupTerminals}
           onStartupTerminalsChange={setStartupTerminals}
+          scanResult={scanResult}
         />
         <div className="app-body">
           <aside className="app-sidebar" style={{ width: sidebarWidth }}>

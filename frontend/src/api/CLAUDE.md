@@ -11,7 +11,7 @@ Backend bindings, grouped by domain. `import { ... } from '../api'` resolves to 
 - `settings.ts` — per-project `UserSettings`.
 - `tasks.ts` — task CRUD + `runTask`, `resumeTask`, `mergeTask`, `subscribeTasks`.
 - `mergeRuns.ts` — `startMergeRun`, `getActiveMergeRun`, `cancelMergeRun`, `subscribeMergeRuns`.
-- `workflows.ts` — workflow CRUD + `startWorkflow`, `subscribeWorkflows`, `subscribeWorkflowRuns`.
+- `workflows.ts` — workflow CRUD + `startWorkflow`, prompt-customization start/status helpers, `subscribeWorkflows`, `subscribeWorkflowRuns`.
 
 ## Adding an endpoint
 

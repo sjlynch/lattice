@@ -1,3 +1,5 @@
+import type { HarnessAvailability, HarnessChoice } from '../../harnesses';
+
 export type StartupTerminal = {
   id: string;
   label: string;
@@ -6,7 +8,7 @@ export type StartupTerminal = {
 
 export type UserSettings = {
   sidebarWidth?: number;
-  harness?: 'claude' | 'pi' | 'codex' | 'interleave';
+  harness?: HarnessChoice;
   startupTerminals?: StartupTerminal[];
   workflowStepsCollapsed?: Record<string, boolean>;
   // Per-env override of the auto-injected "fresh worktree, don't reinstall"
@@ -43,8 +45,4 @@ export type ProjectEnvResponse = {
   environments: ProjectEnvInfo[];
 };
 
-export type HarnessAvailability = {
-  claude: boolean;
-  pi: boolean;
-  codex: boolean;
-};
+export type { HarnessAvailability };

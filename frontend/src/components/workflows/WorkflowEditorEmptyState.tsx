@@ -1,5 +1,6 @@
 import { ListChecks, Plus } from 'lucide-react';
 import { DEFAULT_PROMPTS } from './defaultPrompts';
+import { promptsWithProjectVariants } from './projectPromptVariants';
 import type { WorkflowManager } from './hooks/useWorkflowManager';
 
 type Props = {
@@ -7,7 +8,8 @@ type Props = {
 };
 
 export function WorkflowEditorEmptyState({ manager }: Props) {
-  const { actions } = manager;
+  const { actions, projectProfile } = manager;
+  const projectPrompts = promptsWithProjectVariants(DEFAULT_PROMPTS, projectProfile);
 
   return (
     <div className="workflows-editor-empty">
@@ -32,7 +34,7 @@ export function WorkflowEditorEmptyState({ manager }: Props) {
       </div>
       <div className="workflows-default-prompts">
         <span className="workflows-default-prompts-label">Quick add</span>
-        {DEFAULT_PROMPTS.map((prompt) => {
+        {projectPrompts.map((prompt) => {
           const Icon = prompt.icon;
           return (
             <button

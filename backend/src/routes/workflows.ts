@@ -17,6 +17,12 @@ import {
   completeWorkflowStep,
   cancelWorkflowRun,
 } from '../workflowRuns.js';
+import {
+  completeWorkflowPromptCustomization,
+  getWorkflowPromptCustomization,
+  startWorkflowPromptCustomization,
+  type WorkflowPromptTemplateId,
+} from '../workflowPromptCustomizations.js';
 
 export function buildWorkflowsRouter(backendOrigin: string): Router {
   const r = Router();
@@ -87,6 +93,50 @@ export function buildWorkflowsRouter(backendOrigin: string): Router {
       typeof req.query.project === 'string' ? req.query.project : '';
     if (!project) return res.status(400).json({ error: 'project required' });
     res.json(getActiveWorkflowRunsForProject(project));
+  });
+
+  r.post('/api/workflow-prompt-customizations', async (req, res) => {
+    try {
+      const body = (req.body || {}) as {
+        project?: string;
+        stepTitle?: string;
+        prompt?: string;
+        templateId?: WorkflowPromptTemplateId;
+        templateTitle?: string;
+        customInstructions?: string;
+        harness?: unknown;
+      };
+      const request = await startWorkflowPromptCustomization(
+        {
+          project: body.project ?? '',
+          stepTitle: body.stepTitle,
+          prompt: body.prompt ?? '',
+          templateId: body.templateId,
+          templateTitle: body.templateTitle,
+          customInstructions: body.customInstructions,
+          harness: body.harness,
+        },
+        backendOrigin,
+      );
+      res.json(request);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  r.get('/api/workflow-prompt-customizations/:id', (req, res) => {
+    const request = getWorkflowPromptCustomization(req.params.id);
+    if (!request) return res.status(404).json({ error: 'not found' });
+    res.json(request);
+  });
+
+  r.post('/api/workflow-prompt-customizations/:id/complete', async (req, res) => {
+    const request = await completeWorkflowPromptCustomization(
+      req.params.id,
+      (req.body || {}).prompt,
+    );
+    if (!request) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true });
   });
 
   return r;

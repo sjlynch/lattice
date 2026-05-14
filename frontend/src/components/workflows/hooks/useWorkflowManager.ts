@@ -2,13 +2,19 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   cancelWorkflowRun as apiCancelWorkflowRun,
   fetchHarnessAvailability,
+  getWorkflowPromptCustomization,
   startWorkflow as apiStartWorkflow,
+  startWorkflowPromptCustomization,
   type HarnessAvailability,
+  type ScanResult,
   type Workflow,
+  type WorkflowPromptTemplateId,
   type WorkflowQueueEntry,
   type WorkflowRun,
   type WorkflowRunHarnessOverride,
 } from '../../../api';
+import { useTerminals } from '../../../TerminalsContext';
+import { normalizeAgentHarness } from '../../../harnesses';
 import { fromWorkflow } from '../editorState';
 import { useCollapsedSteps } from './useCollapsedSteps';
 import { useWorkflowEditor } from './useWorkflowEditor';
@@ -16,6 +22,11 @@ import { useWorkflowErrorHandler } from './useWorkflowErrorHandler';
 import { useWorkflowList } from './useWorkflowList';
 import { useWorkflowQueue } from './useWorkflowQueue';
 import { useWorkflowRuns } from './useWorkflowRuns';
+import {
+  detectProjectPromptProfile,
+  inferPromptTemplateId,
+  promptTemplateTitle,
+} from '../projectPromptVariants';
 
 export type QueueMode = 'sequential' | 'parallel';
 
@@ -23,11 +34,16 @@ function nextQueueEntryId(): string {
   return `wfq_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // Composes the workflow feature's data hooks into one interface for the UI.
 // Components render state from here and dispatch intent-level actions such as
 // `runWorkflow(id)` rather than knowing which API/editor hooks must chain.
-export function useWorkflowManager(activeFolder: string) {
+export function useWorkflowManager(activeFolder: string, scanResult: ScanResult | null) {
   const { error, showError, clearError } = useWorkflowErrorHandler();
+  const { addTerminal } = useTerminals();
   const [harnessAvail, setHarnessAvail] = useState<HarnessAvailability>({
     claude: true,
     pi: false,
@@ -36,6 +52,15 @@ export function useWorkflowManager(activeFolder: string) {
   const [workflowHarnessOverrides, setWorkflowHarnessOverrides] = useState<
     Record<string, WorkflowRunHarnessOverride>
   >({});
+  const [customizingSteps, setCustomizingSteps] = useState<Record<string, string>>({});
+
+  const projectProfile = useMemo(
+    () => detectProjectPromptProfile(
+      activeFolder,
+      scanResult?.root === activeFolder ? scanResult : null,
+    ),
+    [activeFolder, scanResult],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -242,6 +267,95 @@ export function useWorkflowManager(activeFolder: string) {
     }));
   }, [setEditor]);
 
+  const customizeStepPrompt = useCallback(async (index: number) => {
+    if (!activeFolder) {
+      showError('Choose an active project before customizing a workflow prompt.');
+      return;
+    }
+    const step = editor.steps[index];
+    if (!step) return;
+
+    const inferredTemplateId = step.prompt.trim()
+      ? (inferPromptTemplateId(step) as WorkflowPromptTemplateId | null)
+      : null;
+    let customInstructions: string | undefined;
+    if (!inferredTemplateId) {
+      const response = window.prompt(
+        'How should this custom workflow step be tailored to the active project?',
+      );
+      if (response === null) return;
+      customInstructions = response.trim();
+      if (!customInstructions) {
+        showError('Customization instructions are required for non-template steps.');
+        return;
+      }
+    }
+
+    const harness = normalizeAgentHarness(step.harness);
+    setCustomizingSteps((cur) => ({ ...cur, [step.id]: 'starting' }));
+    try {
+      const request = await startWorkflowPromptCustomization({
+        project: activeFolder,
+        stepTitle: step.title.trim() || `Step ${index + 1}`,
+        prompt: step.prompt,
+        ...(inferredTemplateId ? { templateId: inferredTemplateId } : {}),
+        ...(promptTemplateTitle(inferredTemplateId)
+          ? { templateTitle: promptTemplateTitle(inferredTemplateId) }
+          : {}),
+        ...(customInstructions ? { customInstructions } : {}),
+        harness,
+      });
+      setCustomizingSteps((cur) => ({ ...cur, [step.id]: request.id }));
+      addTerminal({
+        label: `customize:${step.title.trim() || index + 1}`,
+        cwd: request.cwd,
+        initialCommand: request.command,
+        projectPath: activeFolder,
+        serverId: request.serverId,
+      });
+
+      void (async () => {
+        try {
+          for (let attempt = 0; attempt < 180; attempt += 1) {
+            await sleep(2000);
+            const latest = await getWorkflowPromptCustomization(request.id);
+            if (latest.status === 'completed' && latest.resultPrompt) {
+              setEditor((cur) => {
+                const idx = cur.steps.findIndex((candidate) => candidate.id === step.id);
+                if (idx === -1) return cur;
+                const steps = cur.steps.map((candidate, i) =>
+                  i === idx ? { ...candidate, prompt: latest.resultPrompt! } : candidate,
+                );
+                return { ...cur, steps, dirty: true };
+              });
+              return;
+            }
+            if (latest.status === 'errored') {
+              showError(`Prompt customization failed: ${latest.error ?? 'unknown error'}`);
+              return;
+            }
+          }
+          showError('Prompt customization is still running; check the customization terminal.');
+        } catch (err) {
+          showError(`Prompt customization polling failed: ${(err as Error).message}`);
+        } finally {
+          setCustomizingSteps((cur) => {
+            const next = { ...cur };
+            delete next[step.id];
+            return next;
+          });
+        }
+      })();
+    } catch (err) {
+      setCustomizingSteps((cur) => {
+        const next = { ...cur };
+        delete next[step.id];
+        return next;
+      });
+      showError(`Prompt customization failed: ${(err as Error).message}`);
+    }
+  }, [activeFolder, addTerminal, editor.steps, setEditor, showError]);
+
   // Find any active/recent run for the currently-edited workflow so the
   // strip in the editor head reflects the right run.
   const runForEditor = editor.workflowId
@@ -294,6 +408,8 @@ export function useWorkflowManager(activeFolder: string) {
     harnessAvail,
     workflowHarnessOverrides,
     getWorkflowHarnessOverride,
+    projectProfile,
+    customizingSteps,
     queue: {
       mode: queueState.mode,
       queuedEntries: queueState.queued,
@@ -319,6 +435,7 @@ export function useWorkflowManager(activeFolder: string) {
       reorderSteps: editorState.reorderSteps,
       selectWorkflow,
       updateEditorName,
+      customizeStepPrompt,
       setWorkflowHarnessOverride,
       runWorkflow,
       runEditorWorkflow,

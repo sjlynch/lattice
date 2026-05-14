@@ -1,0 +1,5 @@
+Analyze the codebase and look for opportunities to refactor the code so that it is easier for LLMs to navigate and understand. Break down large source files that handle too many concerns into focused clean submodules, untangle dependencies, simplify long functions or classes, replace magic numbers with variables, remove duplication and also make sure that we update claude.md files as necessary, adding new ones within subfolders if context would be crucially helpful to LLMs, but keeping all claude.md files succinct. It is important that the refactored code does not change the original code's observable behavior.
+
+Keep public APIs stable, preserve existing tests, and run a type-check before committing. In the commit message, briefly explain what was restructured and why — do not list every file touched.
+
+For each refactoring opportunity, add a task to the Lattice task board for this active project.

@@ -15,6 +15,11 @@ import { useHarnessSelector } from './hooks/useHarnessSelector';
 import { useTaskActions } from './hooks/useTaskActions';
 import { useTaskBoardState } from './hooks/useTaskBoardState';
 import { buildTerminalMap } from '../../utils/terminalMap';
+import {
+  availableHarnessChoices,
+  harnessLabel,
+  type HarnessChoice,
+} from '../../harnesses';
 
 type Props = {
   activeFolder: string;
@@ -68,6 +73,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   );
   const { harness, setHarness, harnessAvail, pickInterleaveHarness } =
     useHarnessSelector(activeFolder);
+  const harnessOptions = availableHarnessChoices(harnessAvail, harness);
   const {
     addTask,
     moveTask,
@@ -230,21 +236,18 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
               </button>
             );
           })}
-          {(harnessAvail.pi || harnessAvail.codex) && (
+          {harnessOptions.length > 1 && (
             <select
               className="taskboard-harness-select"
               value={harness}
-              onChange={(e) =>
-                setHarness(
-                  e.target.value as 'claude' | 'pi' | 'codex' | 'interleave',
-                )
-              }
+              onChange={(e) => setHarness(e.target.value as HarnessChoice)}
               title="Agent harness for running tasks"
             >
-              <option value="claude">Claude</option>
-              {harnessAvail.pi && <option value="pi">Pi</option>}
-              {harnessAvail.codex && <option value="codex">Codex</option>}
-              {harnessAvail.pi && <option value="interleave">Interleave</option>}
+              {harnessOptions.map((option) => (
+                <option key={option} value={option}>
+                  {harnessLabel(option)}
+                </option>
+              ))}
             </select>
           )}
         </div>

@@ -5,16 +5,17 @@ import {
   patchUserSettings,
   type HarnessAvailability,
 } from '../../../api';
+import { isHarnessChoice, type AgentHarness, type HarnessChoice } from '../../../harnesses';
 
-export type HarnessChoice = 'claude' | 'pi' | 'codex' | 'interleave';
-export type ResolvedHarness = 'claude' | 'pi' | 'codex';
+export type { HarnessChoice };
+export type ResolvedHarness = AgentHarness;
 
 // Owns the harness selector dropdown: which agent CLIs are installed,
 // the persisted per-project preference, and the round-robin pick used in
 // `interleave` mode so a "Run All" produces a mix.
 export function useHarnessSelector(activeFolder: string) {
   const [harness, setHarnessState] = useState<HarnessChoice>('claude');
-  const interleaveNextRef = useRef<'claude' | 'pi'>('claude');
+  const interleaveNextRef = useRef<AgentHarness>('claude');
   const [harnessAvail, setHarnessAvail] = useState<HarnessAvailability>({
     claude: true,
     pi: false,
@@ -38,7 +39,7 @@ export function useHarnessSelector(activeFolder: string) {
     if (!activeFolder) return;
     fetchUserSettings(activeFolder)
       .then((s) => {
-        if (!s.harness) return;
+        if (!isHarnessChoice(s.harness)) return;
         const unavailable =
           ((s.harness === 'pi' || s.harness === 'interleave') && !harnessAvail.pi) ||
           (s.harness === 'codex' && !harnessAvail.codex);

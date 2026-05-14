@@ -9,6 +9,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import type { Task } from '../tasks.js';
+import type { AgentHarness } from '../harnesses.js';
 import { exec } from './exec.js';
 import { projectGit } from './projectGit.js';
 import { renderTaskMarkdown } from './instructions.js';
@@ -63,7 +64,7 @@ export async function setupTaskWorktree(
   repoPath: string,
   task: Task,
   backendOrigin: string,
-  harness: 'claude' | 'pi' | 'codex' = 'claude',
+  harness: AgentHarness = 'claude',
 ): Promise<WorktreeResult> {
   // First call is plain `exec` (not projectGit) so a folder that isn't a
   // git repo at all gets the clear "run `git init`" message rather than

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { PROJECT_DIR_NAME } from './tasks.js';
 import { canonicalProjectPath } from './projectPath.js';
+import type { AgentHarness } from './harnesses.js';
 
 export type StartupTerminal = {
   id: string;
@@ -11,7 +12,7 @@ export type StartupTerminal = {
 
 export type UserSettings = {
   sidebarWidth?: number;
-  harness?: 'claude' | 'pi' | 'codex' | 'interleave';
+  harness?: AgentHarness | 'interleave';
   startupTerminals?: StartupTerminal[];
   // Per-step collapse state for the workflow editor, keyed by step id.
   // Only collapsed=true entries are persisted to keep the file tidy.

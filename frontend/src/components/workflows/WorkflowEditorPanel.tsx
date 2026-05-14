@@ -1,5 +1,6 @@
 import { Play, Plus, Square, Trash2 } from 'lucide-react';
 import { DEFAULT_PROMPTS } from './defaultPrompts';
+import { promptsWithProjectVariants } from './projectPromptVariants';
 import type { WorkflowManager } from './hooks/useWorkflowManager';
 import { StepRow } from './StepRow';
 import { WorkflowEditorEmptyState } from './WorkflowEditorEmptyState';
@@ -17,13 +18,17 @@ export function WorkflowEditorPanel({ manager }: Props) {
     recentForEditor,
     collapsedSteps,
     harnessAvail,
+    projectProfile,
+    customizingSteps,
     actions,
   } = manager;
+
+  const projectPrompts = promptsWithProjectVariants(DEFAULT_PROMPTS, projectProfile);
 
   const quickAddPrompts = (
     <div className="workflows-default-prompts">
       <span className="workflows-default-prompts-label">Quick add</span>
-      {DEFAULT_PROMPTS.map((prompt) => {
+      {projectPrompts.map((prompt) => {
         const Icon = prompt.icon;
         return (
           <button
@@ -77,6 +82,8 @@ export function WorkflowEditorPanel({ manager }: Props) {
                 onRemove={() => actions.removeStep(index)}
                 onReorder={actions.reorderSteps}
                 onToggleCollapse={() => collapsedSteps.toggleCollapsed(step.id)}
+                onCustomize={() => void actions.customizeStepPrompt(index)}
+                customizing={Boolean(customizingSteps[step.id])}
               />
             ))}
             <button className="workflows-add-step" onClick={actions.addStep}>

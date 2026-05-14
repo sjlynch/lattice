@@ -7,17 +7,19 @@ import { WorkflowRunChip } from './WorkflowRunChip';
 import { WorkflowRunsAside } from './WorkflowRunsAside';
 import { WorkflowsSavedList } from './WorkflowsSavedList';
 import { useWorkflowManager } from './hooks/useWorkflowManager';
+import type { ScanResult } from '../../api';
 
 type Props = {
   activeFolder: string;
+  scanResult: ScanResult | null;
 };
 
 // Top-level Workflows panel. Owns panel visibility and composes the saved-list,
 // editor, queue, and runs sub-panels; workflow state and actions live in
 // `useWorkflowManager`.
-export function WorkflowsLauncher({ activeFolder }: Props) {
+export function WorkflowsLauncher({ activeFolder, scanResult }: Props) {
   const [open, setOpen] = useState(false);
-  const manager = useWorkflowManager(activeFolder);
+  const manager = useWorkflowManager(activeFolder, scanResult);
 
   return (
     <>

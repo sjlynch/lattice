@@ -4,13 +4,14 @@ import { FolderPicker } from './FolderPicker';
 import { TaskBoardLauncher } from './TaskBoard';
 import { WorkflowsLauncher } from './Workflows';
 import { SettingsDialog } from './SettingsDialog';
-import type { StartupTerminal } from '../api';
+import type { ScanResult, StartupTerminal } from '../api';
 
 type Props = {
   activeFolder: string;
   onSelectFolder: (path: string) => void;
   startupTerminals: StartupTerminal[];
   onStartupTerminalsChange: (next: StartupTerminal[]) => void;
+  scanResult: ScanResult | null;
 };
 
 export function TopAppBar({
@@ -18,6 +19,7 @@ export function TopAppBar({
   onSelectFolder,
   startupTerminals,
   onStartupTerminalsChange,
+  scanResult,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -44,7 +46,7 @@ export function TopAppBar({
             {activeFolder}
           </span>
         </div>
-        <WorkflowsLauncher activeFolder={activeFolder} />
+        <WorkflowsLauncher activeFolder={activeFolder} scanResult={scanResult} />
         <TaskBoardLauncher activeFolder={activeFolder} />
         <button
           className="icon-btn sm"

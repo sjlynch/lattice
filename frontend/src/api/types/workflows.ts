@@ -1,5 +1,7 @@
+import type { AgentHarness } from '../../harnesses';
+
 export type WorkflowStepMode = 'sequential' | 'parallel';
-export type WorkflowStepHarness = 'claude' | 'pi' | 'codex';
+export type WorkflowStepHarness = AgentHarness;
 
 // Null/undefined means "Default": use each step's stored harness. A concrete
 // value overrides every step for that run or queued entry.
@@ -51,6 +53,47 @@ export type WorkflowQueueEntry = {
   id: string;
   workflowId: string;
   harnessOverride: WorkflowRunHarnessOverride;
+};
+
+export type WorkflowPromptTemplateId =
+  | 'refactor'
+  | 'bug-catcher'
+  | 'combine-tasks'
+  | 'pmf'
+  | 'brainstorm';
+
+export type WorkflowPromptCustomizationStatus =
+  | 'running'
+  | 'completed'
+  | 'errored';
+
+export type WorkflowPromptCustomization = {
+  id: string;
+  projectPath: string;
+  stepTitle: string;
+  originalPrompt: string;
+  templateId?: WorkflowPromptTemplateId;
+  templateTitle?: string;
+  customInstructions?: string;
+  harness: WorkflowStepHarness;
+  status: WorkflowPromptCustomizationStatus;
+  createdAt: number;
+  finishedAt?: number;
+  resultPrompt?: string;
+  error?: string;
+  command: string;
+  cwd: string;
+  serverId?: string;
+};
+
+export type StartWorkflowPromptCustomizationInput = {
+  project: string;
+  stepTitle: string;
+  prompt: string;
+  templateId?: WorkflowPromptTemplateId;
+  templateTitle?: string;
+  customInstructions?: string;
+  harness: WorkflowStepHarness;
 };
 
 export type WorkflowRunEvent =

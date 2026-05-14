@@ -1,0 +1,5 @@
+Analyze the Lattice task board for this active project and identify tasks that heavily overlap or are likely to produce merge conflicts when run in parallel — same files, same functions, related concerns, or descriptions that imply the same underlying change. The goal is to reduce merge conflicts during the merge-all run by collapsing redundancy before any worktrees are spawned.
+
+For each cluster you find, combine the tasks into a single new task whose description covers all of the original work, then delete the originals. Preserve any nuance from the merged descriptions; do not silently drop requirements. Leave tasks that are genuinely independent alone — combining unrelated work is worse than the conflicts it would avoid.
+
+Use the Lattice task board API for this active project to read, create, and delete tasks.

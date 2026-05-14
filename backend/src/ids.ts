@@ -2,6 +2,10 @@ export function generateTaskId(): string {
   return `t_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
+export function generateWorkflowId(): string {
+  return `wf_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
 let terminalSessionCounter = 0;
 
 export function createTerminalSessionId(): string {
@@ -16,4 +20,8 @@ export function createTerminalSessionId(): string {
 
 export function generateMergeRunId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+export function generateWorkflowPromptCustomizationId(): string {
+  return `wfpc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 }

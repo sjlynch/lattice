@@ -3,12 +3,9 @@
 // cached — the set of installed CLIs doesn't change during a server session.
 
 import { spawn } from 'node:child_process';
+import { ALL_AGENT_HARNESSES, type AgentHarness } from './harnesses.js';
 
-export type HarnessAvailability = {
-  claude: boolean;
-  pi: boolean;
-  codex: boolean;
-};
+export type HarnessAvailability = Record<AgentHarness, boolean>;
 
 let cached: Promise<HarnessAvailability> | null = null;
 
@@ -45,11 +42,12 @@ function isOnPath(cmd: string): Promise<boolean> {
 
 export function detectHarnesses(): Promise<HarnessAvailability> {
   if (!cached) {
-    cached = Promise.all([
-      isOnPath('claude'),
-      isOnPath('pi'),
-      isOnPath('codex'),
-    ]).then(([claude, pi, codex]) => ({ claude, pi, codex }));
+    cached = Promise.all(ALL_AGENT_HARNESSES.map((harness) => isOnPath(harness)))
+      .then((available) => ({
+        claude: available[0] ?? false,
+        pi: available[1] ?? false,
+        codex: available[2] ?? false,
+      }));
   }
   return cached;
 }

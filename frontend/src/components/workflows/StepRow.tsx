@@ -1,6 +1,11 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, GripVertical, X } from 'lucide-react';
-import type { HarnessAvailability, WorkflowStep, WorkflowStepHarness, WorkflowStepMode } from '../../api';
+import { ChevronDown, ChevronRight, GripVertical, Wand2, X } from 'lucide-react';
+import type { HarnessAvailability, WorkflowStep, WorkflowStepMode } from '../../api';
+import {
+  availableAgentHarnesses,
+  harnessLabel,
+  normalizeAgentHarness,
+} from '../../harnesses';
 
 export const STEP_DRAG_MIME = 'application/x-lattice-workflow-step';
 
@@ -19,6 +24,8 @@ export function StepRow({
   onRemove,
   onReorder,
   onToggleCollapse,
+  onCustomize,
+  customizing,
 }: {
   step: WorkflowStep;
   index: number;
@@ -28,6 +35,8 @@ export function StepRow({
   onRemove: () => void;
   onReorder: (fromIdx: number, toIdx: number) => void;
   onToggleCollapse: () => void;
+  onCustomize: () => void;
+  customizing: boolean;
 }) {
   const [dragOver, setDragOver] = useState<'top' | 'bottom' | null>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -69,8 +78,9 @@ export function StepRow({
     onReorder(fromIdx, toIdx);
   }
 
-  const selectedHarness = step.harness ?? 'claude';
-  const showHarnessSelect = harnessAvail.pi || harnessAvail.codex || selectedHarness !== 'claude';
+  const selectedHarness = normalizeAgentHarness(step.harness);
+  const harnessOptions = availableAgentHarnesses(harnessAvail, selectedHarness);
+  const showHarnessSelect = harnessOptions.length > 1 || selectedHarness !== 'claude';
 
   return (
     <div
@@ -116,14 +126,25 @@ export function StepRow({
             <select
               className="workflows-step-harness"
               value={selectedHarness}
-              onChange={(e) => onChange({ harness: e.target.value as WorkflowStepHarness })}
+              onChange={(e) => onChange({ harness: normalizeAgentHarness(e.target.value) })}
               title="Agent harness for this workflow step"
             >
-              <option value="claude">Claude</option>
-              {(harnessAvail.pi || selectedHarness === 'pi') && <option value="pi">Pi</option>}
-              {(harnessAvail.codex || selectedHarness === 'codex') && <option value="codex">Codex</option>}
+              {harnessOptions.map((harness) => (
+                <option key={harness} value={harness}>
+                  {harnessLabel(harness)}
+                </option>
+              ))}
             </select>
           )}
+          <button
+            className="icon-btn sm"
+            onClick={onCustomize}
+            disabled={customizing}
+            title={`Customize this prompt for the active project using ${harnessLabel(selectedHarness)}`}
+            aria-label="Customize prompt for active project"
+          >
+            <Wand2 size={12} />
+          </button>
           <button
             className="icon-btn sm"
             onClick={onRemove}
