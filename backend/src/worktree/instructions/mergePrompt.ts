@@ -1,0 +1,90 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import type { Task } from '../../tasks.js';
+import { ensureValidStopHook } from './stopHookRepair.js';
+import {
+  MERGE_CONFLICT_MARKERS,
+  MERGE_FILES_LIST_HINT,
+  renderConflictedFilesList,
+  renderEnvBlockFor,
+} from './shared.js';
+
+export async function writeMergeInstructions(
+  task: Task,
+  branch: string,
+  conflictedFiles: string[],
+  backendOrigin: string,
+  worktreePath: string,
+): Promise<{ instructionsFile: string; relativePath: string }> {
+  // Write inside the worktree itself so the resolver Claude (which runs
+  // with cwd=worktreePath) reads it via a simple top-level path.
+  await fs.mkdir(worktreePath, { recursive: true });
+  // Last-line-of-defense: make sure the resolver Claude's settings.json
+  // is parseable before we tell the UI to spawn it.
+  await ensureValidStopHook(worktreePath, task.id, backendOrigin);
+  const fileName = 'MERGE_INSTRUCTIONS.md';
+  const file = path.join(worktreePath, fileName);
+  const desc = task.description?.trim() || '_(no description provided)_';
+  const envBlock = await renderEnvBlockFor(task.projectPath);
+  const filesList = renderConflictedFilesList(
+    conflictedFiles,
+    MERGE_FILES_LIST_HINT,
+  );
+  const md = `# Resolve merge conflict for task ${task.id}
+
+**Branch:** \`${branch}\`
+**Task:** ${task.title}
+
+${envBlock}Lattice merged main into this branch and conflicts arose. Your job is to
+resolve them and commit. After you commit and the session ends, Lattice's
+existing Stop hook fires and the backend will fast-forward main and clean
+up automatically.
+
+## Intent
+
+${desc}
+
+## Files in conflict
+
+${filesList}
+
+## Steps (please complete autonomously, no need to confirm with the user)
+
+1. Inspect each conflicted file. Resolve all ${MERGE_CONFLICT_MARKERS} markers, preserving the intent of both branches when possible.
+2. Stage the resolved files: \`git add <file> ...\`
+3. Complete the merge with a commit message that names the task and briefly
+   describes how you resolved the conflict — do not just accept git's default:
+   \`\`\`
+   git commit -m "Merge main → ${task.title}: <one-line summary of resolution>"
+   \`\`\`
+   Example summaries: "kept incoming auth refactor over local stub",
+   "merged both sides of config split", "accepted ours on pipeline.rs".
+4. End the session normally. The Stop hook in
+   \`.claude/settings.local.json\` will notify Lattice automatically.
+
+If for any reason the Stop hook doesn't fire, you can call the API
+directly as a fallback:
+
+\`\`\`
+curl -s -X POST ${backendOrigin}/api/tasks/${task.id}/merged
+\`\`\`
+
+## If you cannot resolve
+
+If the conflicts cannot be reasonably resolved, abort and report:
+
+\`\`\`
+git merge --abort
+curl -s -X POST ${backendOrigin}/api/tasks/${task.id}/merge-aborted \\
+  -H "Content-Type: application/json" \\
+  -d '{"reason":"<short reason>"}'
+\`\`\`
+
+The user can then retry the merge from the Lattice task board.
+`;
+  await fs.writeFile(file, md, 'utf8');
+  return {
+    instructionsFile: file,
+    relativePath: fileName,
+  };
+}

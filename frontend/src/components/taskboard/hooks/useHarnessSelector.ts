@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  fetchHarnessAvailability,
   fetchUserSettings,
   patchUserSettings,
+  subscribeHarnesses,
   type HarnessAvailability,
 } from '../../../api';
 import { isHarnessChoice, type AgentHarness, type HarnessChoice } from '../../../harnesses';
@@ -21,15 +21,22 @@ export function useHarnessSelector(activeFolder: string) {
     pi: false,
     codex: false,
   });
+  // Until the backend has told us which CLIs are installed, defer the
+  // coerce-unavailable logic below — otherwise a slow-booting server
+  // would let us overwrite the saved `pi`/`codex` preference with
+  // `claude` and persist that to disk.
+  const [harnessAvailLoaded, setHarnessAvailLoaded] = useState(false);
 
-  // Detect once which agent CLIs are installed. Drives whether the Pi /
-  // Interleave options appear in the harness selector.
+  // Live harness-availability subscription. The backend pushes the
+  // current `{claude, pi, codex}` map as soon as CLI detection
+  // completes; the WS auto-reconnects so this also handles the case
+  // where the page was loaded before the server was listening.
   useEffect(() => {
-    let cancelled = false;
-    fetchHarnessAvailability().then((avail) => {
-      if (!cancelled) setHarnessAvail(avail);
+    const unsub = subscribeHarnesses((avail) => {
+      setHarnessAvail(avail);
+      setHarnessAvailLoaded(true);
     });
-    return () => { cancelled = true; };
+    return unsub;
   }, []);
 
   // Load persisted harness preference when the active folder changes.
@@ -37,6 +44,7 @@ export function useHarnessSelector(activeFolder: string) {
   // never try to spawn an unavailable harness.
   useEffect(() => {
     if (!activeFolder) return;
+    if (!harnessAvailLoaded) return;
     fetchUserSettings(activeFolder)
       .then((s) => {
         if (!isHarnessChoice(s.harness)) return;
@@ -51,7 +59,7 @@ export function useHarnessSelector(activeFolder: string) {
         }
       })
       .catch(() => { /* keep default */ });
-  }, [activeFolder, harnessAvail.pi, harnessAvail.codex]);
+  }, [activeFolder, harnessAvailLoaded, harnessAvail.pi, harnessAvail.codex]);
 
   const setHarness = useCallback((val: HarnessChoice) => {
     setHarnessState(val);

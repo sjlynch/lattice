@@ -9,6 +9,7 @@ import type { ShellKind } from './sidebar/NewTerminalDropdown';
 import { SidebarEmptyState } from './sidebar/SidebarEmptyState';
 import { SidebarPanelTabs } from './sidebar/SidebarPanelTabs';
 import { SidebarTabsBar } from './sidebar/SidebarTabsBar';
+import { TabContextMenu } from './sidebar/TabContextMenu';
 import { useMountedTerminalIds } from './sidebar/hooks/useMountedTerminalIds';
 import { usePanelState } from './sidebar/hooks/usePanelState';
 import { useStartupTerminals } from './sidebar/hooks/useStartupTerminals';
@@ -39,7 +40,7 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
     mergeTerminals,
     startupTerminalsList,
   } = useTerminalGroups(terminals, activeFolder);
-  const mountedIds = useMountedTerminalIds(activeId, startupTerminalsList);
+  const mountedIds = useMountedTerminalIds(activeId, startupTerminalsList, projectTerminals);
 
   // When the active folder changes, the currently-active terminal may
   // belong to a different project. Pick a terminal from the new project
@@ -229,42 +230,14 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
         )}
       </div>
 
-      {tabContextMenu && (() => {
-        const idx = visibleTerminals.findIndex((t) => t.id === tabContextMenu.termId);
-        const hasLeft = idx > 0;
-        const hasRight = idx >= 0 && idx < visibleTerminals.length - 1;
-        const hasOthers = visibleTerminals.length > 1 && idx >= 0;
-        return (
-          <div
-            ref={tabContextMenuRef}
-            className="popover"
-            style={{ position: 'fixed', left: tabContextMenu.x, top: tabContextMenu.y }}
-            role="menu"
-          >
-            <div
-              className={`popover-item${!hasLeft ? ' disabled' : ''}`}
-              role="menuitem"
-              onClick={hasLeft ? () => handleCloseTabsToLeft(tabContextMenu.termId) : undefined}
-            >
-              Close Tabs to the Left
-            </div>
-            <div
-              className={`popover-item${!hasRight ? ' disabled' : ''}`}
-              role="menuitem"
-              onClick={hasRight ? () => handleCloseTabsToRight(tabContextMenu.termId) : undefined}
-            >
-              Close Tabs to the Right
-            </div>
-            <div
-              className={`popover-item${!hasOthers ? ' disabled' : ''}`}
-              role="menuitem"
-              onClick={hasOthers ? () => handleCloseOtherTabs(tabContextMenu.termId) : undefined}
-            >
-              Close All Other Tabs
-            </div>
-          </div>
-        );
-      })()}
+      <TabContextMenu
+        menu={tabContextMenu}
+        menuRef={tabContextMenuRef}
+        visibleTerminals={visibleTerminals}
+        onCloseTabsToLeft={handleCloseTabsToLeft}
+        onCloseTabsToRight={handleCloseTabsToRight}
+        onCloseOtherTabs={handleCloseOtherTabs}
+      />
     </>
   );
 }

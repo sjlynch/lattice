@@ -10,7 +10,13 @@ Components behind the Workflows button. `Workflows.tsx` (parent dir) is a re-exp
 - `WorkflowEditorPanel.tsx` — populated editor body, quick-add prompts, prompt-customization button wiring, save/queue/run actions.
 - `QueuePanel.tsx` — queue mode, controls, and queued workflow list.
 - `WorkflowRunsAside.tsx` — right rail wrapper with active run cards (`WorkflowRunsPanel.tsx` is a compatibility alias).
-- `hooks/useWorkflowManager.ts` — composes list/run/editor/collapse hooks, workflow run callbacks, queue state, and error handling into the interface consumed by the panels.
+- `hooks/useWorkflowManager.ts` — thin composition layer over the smaller workflow hooks below; assembles the `WorkflowManager` interface the panels render.
+- `hooks/useWorkflowList.ts` / `hooks/useWorkflowRuns.ts` / `hooks/useWorkflowEditor.ts` / `hooks/useCollapsedSteps.ts` / `hooks/useWorkflowErrorHandler.ts` — saved-list, live-run, editor, step-collapse, and toast state.
+- `hooks/useWorkflowHarnessOverrides.ts` — harness availability fetch + per-workflow harness-override map.
+- `hooks/useWorkflowRunActions.ts` — `startWorkflowDefinition` / `runWorkflow` / `runEditorWorkflow` / `stopRun` (saves before run when the editor is dirty).
+- `hooks/useWorkflowQueue.ts` — React adapter for `queueScheduler` (state + dispatch + lifecycle-WS diff).
+- `hooks/useWorkflowQueueActions.ts` — enqueue/remove/clear/start/stop/setMode callbacks; `enqueueEditorWorkflow` saves first when the editor is dirty.
+- `hooks/useWorkflowQueueSelectors.ts` — derives `queuedItems`, `busy`, `disabled`, and the status string consumed by the queue panel.
 - `StepRow.tsx` — one row in the editor. Drag-and-drop reorder uses MIME `application/x-lattice-workflow-step` (constant in this file).
 - `WorkflowRunStrip.tsx` — progress / summary strip above the editor name input.
 - `editorState.ts` — `EditorState` type + `emptyEditor`, `localStepId`, `fromTemplate`, `fromWorkflow`. Editor keeps a `dirty` flag so unsaved changes show "Discard"/"Save".
@@ -20,6 +26,6 @@ Components behind the Workflows button. `Workflows.tsx` (parent dir) is a re-exp
 ## Run flow
 
 1. `runWorkflow(wf)` saves first if `editor.dirty`, then `apiStartWorkflow(wf.id, { harnessOverride })`. `null` override means each step uses its stored harness.
-2. Backend creates the first step's task + worktree and returns `{run, spawn}`.
-3. We `addTerminal({...spawn})` for step 0.
-4. Subsequent steps land via the `task-spawned` WS event when the prior step reaches `qa`.
+2. Backend creates the run, materializes the first step's directory, and returns `{run}`. `useWorkflowRuns` stashes the run in `activeRuns`.
+3. Per step, the backend emits a `step-spawned` event on `/ws/workflow-runs` with `{stepIndex, cwd, command, serverId}`. `useWorkflowRuns` turns each one into an `addTerminal({...})` call so the step opens as a terminal tab in that step's working directory.
+4. The next step's `step-spawned` arrives when the prior step finishes — workflow steps are sibling terminal sessions in step directories, not task-board worktrees.

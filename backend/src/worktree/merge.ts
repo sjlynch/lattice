@@ -3,29 +3,19 @@
 // watched source files. After the worktree's branch absorbs main (cleanly
 // or after resolution), finalize.ts fast-forwards main to the branch tip.
 
-import { exec } from './exec.js';
 import { projectGit } from './projectGit.js';
-import {
-  isMidMerge,
-  worktreeExists,
-  branchCommitCount,
-  branchIsAncestorOfHead,
-  listConflictedFiles,
-  gitDirExists,
-  assertGitDirIntact,
-} from './state.js';
+import { isMidMerge, gitDirExists } from './state.js';
 import { assertSafeForStash } from './stash.js';
 import { snapshotWorkingTree, restoreSnapshot } from './snapshot.js';
-import {
-  resolveOwnedFileConflicts,
-  resetOwnedFileLocalChanges,
-} from './conflictResolve.js';
-import {
-  shelveLatticeManagedFiles,
-  restoreLatticeManagedFiles,
-  untrackOwnedFilesPostMerge,
-} from './mergeOwnedFiles.js';
+import { untrackOwnedFilesPostMerge } from './mergeOwnedFiles.js';
 import { installStopHook } from './setup.js';
+import {
+  checkBranchState,
+  emptyBranchOutcome,
+} from './merge/branchState.js';
+import { handleMergeConflict } from './merge/conflict.js';
+import { preflightWorktreeMerge } from './merge/preflight.js';
+import { runWorktreeMerge } from './merge/runWorktreeMerge.js';
 
 export type MergeConflictKind = 'merge' | 'stash-pop';
 
@@ -139,67 +129,23 @@ export async function mergeWorktreeInRepo(
   backendOrigin: string,
   taskTitle: string,
 ): Promise<MergeOutcome> {
-  // ------ Pre-checks ------
+  const preflight = await preflightWorktreeMerge(
+    repoRoot,
+    branchName,
+    worktreePath,
+  );
+  if (!preflight.ok) return preflight.outcome;
 
-  // Bail before any git command runs if the main repo's .git has gone
-  // missing since the merge was queued. Otherwise git invoked in repoRoot
-  // walks up the dir tree looking for a gitdir and may latch onto an
-  // unrelated repo's .git, with destructive consequences.
-  try {
-    await assertGitDirIntact(repoRoot);
-  } catch (err) {
-    return { status: 'error', message: (err as Error).message };
-  }
-
-  const isGit = await projectGit(repoRoot, ['rev-parse', '--show-toplevel']);
-  if (isGit.code !== 0) {
-    return { status: 'error', message: `Not a git repository: ${repoRoot}` };
-  }
-
-  if (await isMidMerge(repoRoot)) {
-    return {
-      status: 'error',
-      message:
-        'Main repo is already in a merge state (MERGE_HEAD exists). ' +
-        'Resolve or `git merge --abort` first.',
-    };
-  }
-
-  if (!(await worktreeExists(worktreePath))) {
-    return {
-      status: 'error',
-      message: `Worktree directory not found at ${worktreePath}.`,
-    };
-  }
-
-  if (await isMidMerge(worktreePath)) {
-    return {
-      status: 'error',
-      message:
-        `Worktree at ${worktreePath} is already in a merge state — a ` +
-        `previous resolver may still be running. Inspect, or run ` +
-        `\`git -C "${worktreePath}" merge --abort\` to retry from scratch.`,
-    };
-  }
-
-  // ------ Branch state checks ------
-
-  const commits = await branchCommitCount(repoRoot, branchName);
-  if (commits === 0) {
-    const isAncestor = await branchIsAncestorOfHead(repoRoot, branchName);
-    if (isAncestor) {
-      // All branch commits are already in main — it was previously merged
-      // (including the case where main was fast-forwarded exactly to the
-      // branch tip, making `behind` = 0). Caller should run cleanup.
+  const branchState = await checkBranchState(repoRoot, branchName);
+  switch (branchState.kind) {
+    case 'already-merged':
       return { status: 'clean' };
-    }
-    return {
-      status: 'error',
-      message:
-        `Branch "${branchName}" was not found or is not reachable from HEAD ` +
-        `and has no commits ahead. Inspect with \`git branch -a\` and ` +
-        `\`git log ${branchName}\`.`,
-    };
+    case 'empty':
+      return emptyBranchOutcome(branchName);
+    case 'error':
+      return branchState.outcome;
+    case 'ahead':
+      break;
   }
 
   // ------ Merge in the worktree, not in main ------
@@ -211,49 +157,14 @@ export async function mergeWorktreeInRepo(
   // the worktree's branch absorbs main (cleanly or after resolution), we
   // fast-forward main to the branch tip — main's tree only ever changes
   // to a known-good state.
-
-  const mainHeadSha = (
-    await projectGit(repoRoot, ['rev-parse', 'HEAD'])
-  ).stdout.trim();
-  if (!mainHeadSha) {
-    return { status: 'error', message: 'Could not read main HEAD SHA.' };
-  }
-
-  // Lattice-managed files (LATTICE_TASK.md, MERGE_INSTRUCTIONS.md) are
-  // written into each worktree root and must stay untracked. If a prior
-  // resolver Claude accidentally committed one via `git add .`, every
-  // subsequent worktree merge fails with "untracked file would be
-  // overwritten". Move them aside for the duration of the merge so git
-  // doesn't see them, then restore whatever state they were in.
-  const shelved = await shelveLatticeManagedFiles(worktreePath);
-  // Reset local changes on tracked owned files so git doesn't abort with
-  // "Your local changes to <file> would be overwritten by merge". The
-  // per-task Stop-hook content is regenerated post-merge by installStopHook.
-  // Distinct from shelving: these are files in the index that the merge
-  // wants to touch; shelving handles untracked files that the merge
-  // wants to materialize.
-  const resetFiles = await resetOwnedFileLocalChanges(worktreePath);
-  if (resetFiles.length > 0) {
-    console.log(
-      `[merge] reset working-tree copy of owned file(s) before merge: ${resetFiles.join(', ')}`,
-    );
-  }
-  // Why -m instead of --no-edit: passing a raw SHA as the merge target
-  // makes git auto-generate "Merge commit '<sha>' into <branch>" — useless
-  // in `git log`. Supplying our own message puts the task title in the
-  // subject so `git log --oneline` is actually readable.
   const mergeMessage =
     `Merge main → ${taskTitle}\n\nBranch: ${branchName}`;
-  let merge;
-  try {
-    merge = await exec(
-      'git',
-      ['merge', '--no-ff', '-m', mergeMessage, mainHeadSha],
-      worktreePath,
-    );
-  } finally {
-    await restoreLatticeManagedFiles(worktreePath, shelved);
-  }
+  const merge = await runWorktreeMerge(
+    worktreePath,
+    branchName,
+    preflight.mainHeadSha,
+    mergeMessage,
+  );
 
   if (merge.code === 0) {
     // If the merge brought in tracked Lattice-managed files (LATTICE_TASK.md
@@ -274,52 +185,13 @@ export async function mergeWorktreeInRepo(
   }
 
   if (await isMidMerge(worktreePath)) {
-    // Auto-resolve any Lattice-owned files in the conflict set. If they
-    // were the only conflicts, complete the merge ourselves and report
-    // `clean` so the caller can finalize without spawning a resolver
-    // Claude (which would have been bootstrapped against a malformed
-    // .claude/settings.local.json full of conflict markers).
-    const { resolved, remaining } = await resolveOwnedFileConflicts(
+    return handleMergeConflict(
       worktreePath,
-      'merge',
+      mergeMessage,
+      undefined,
+      taskId,
+      backendOrigin,
     );
-    if (resolved.length > 0) {
-      console.log(
-        `[merge] auto-resolved ${resolved.length} owned file(s) in ${worktreePath}: ${resolved.join(', ')}`,
-      );
-    }
-    if (remaining.length === 0) {
-      const commit = await exec(
-        'git',
-        [
-          'commit',
-          '--no-edit',
-          '-m',
-          `${mergeMessage}\n\n[lattice-auto] auto-resolved owned files: ${resolved.join(', ')}`,
-        ],
-        worktreePath,
-      );
-      if (commit.code !== 0) {
-        return {
-          status: 'error',
-          message: `Auto-resolve commit failed: ${commit.stderr.trim() || commit.stdout.trim()}`.slice(0, 500),
-        };
-      }
-      // Same post-clean cleanup as the all-clean path: drop any tracked
-      // managed files (LATTICE_TASK.md etc.) the merge brought in.
-      await untrackOwnedFilesPostMerge(worktreePath);
-      await installStopHook(worktreePath, taskId, backendOrigin);
-      return { status: 'clean' };
-    }
-    // Real conflicts remain — a resolver Claude is about to be spawned.
-    // Re-install the Stop hook so its callback URL is correct for THIS
-    // task before the resolver bootstraps.
-    await installStopHook(worktreePath, taskId, backendOrigin);
-    return {
-      status: 'conflict',
-      conflictKind: 'merge',
-      conflictedFiles: remaining,
-    };
   }
 
   return {

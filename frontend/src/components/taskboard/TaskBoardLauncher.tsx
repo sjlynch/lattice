@@ -6,8 +6,9 @@ import { type Task, type TaskStatus } from '../../api';
 import { ErrorToast } from '../shared/ErrorToast';
 import { LANE_BY_ID, LANES } from './lanes';
 import { Lane } from './Lane';
-import { MergeRunStrip } from './MergeRunStrip';
+import { mergeRunStripFor } from './MergeRunStrip';
 import { NewTaskOverlay } from './NewTaskOverlay';
+import { TaskBoardFilters } from './TaskBoardFilters';
 import { TaskDetailOverlay } from './TaskDetailOverlay';
 import { useMergeRunSync } from './hooks/useMergeRunSync';
 import { usePushRun } from './hooks/usePushRun';
@@ -15,11 +16,6 @@ import { useHarnessSelector } from './hooks/useHarnessSelector';
 import { useTaskActions } from './hooks/useTaskActions';
 import { useTaskBoardState } from './hooks/useTaskBoardState';
 import { buildTerminalMap } from '../../utils/terminalMap';
-import {
-  availableHarnessChoices,
-  harnessLabel,
-  type HarnessChoice,
-} from '../../harnesses';
 
 type Props = {
   activeFolder: string;
@@ -73,7 +69,6 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   );
   const { harness, setHarness, harnessAvail, pickInterleaveHarness } =
     useHarnessSelector(activeFolder);
-  const harnessOptions = availableHarnessChoices(harnessAvail, harness);
   const {
     addTask,
     moveTask,
@@ -209,48 +204,15 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         minSize={{ width: 460, height: 380 }}
         storageKey="lattice.taskboard.window"
       >
-        <div className="taskboard-filters">
-          {LANES.map((lane) => {
-            const on = visibleLanes.has(lane.id);
-            return (
-              <button
-                key={lane.id}
-                className={`taskboard-filter ${on ? '' : 'off'}`}
-                onClick={() => toggleLane(lane.id)}
-                title={on ? `Hide ${lane.label}` : `Show ${lane.label}`}
-              >
-                <span
-                  className="taskboard-lane-dot"
-                  style={{ background: lane.color }}
-                />
-                {lane.label}
-                <span
-                  style={{
-                    fontSize: 10,
-                    color: 'var(--text-tertiary)',
-                    marginLeft: 2,
-                  }}
-                >
-                  {grouped[lane.id].length}
-                </span>
-              </button>
-            );
-          })}
-          {harnessOptions.length > 1 && (
-            <select
-              className="taskboard-harness-select"
-              value={harness}
-              onChange={(e) => setHarness(e.target.value as HarnessChoice)}
-              title="Agent harness for running tasks"
-            >
-              {harnessOptions.map((option) => (
-                <option key={option} value={option}>
-                  {harnessLabel(option)}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
+        <TaskBoardFilters
+          lanes={LANES}
+          visibleLanes={visibleLanes}
+          grouped={grouped}
+          harness={harness}
+          setHarness={setHarness}
+          harnessAvail={harnessAvail}
+          onToggleLane={toggleLane}
+        />
         <div className="taskboard-body">
           <div className="taskboard-scroll">
             {LANES.filter((lane) => visibleLanes.has(lane.id)).map((lane) => (
@@ -290,22 +252,15 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 onPush={lane.id === 'qa' && hasGit ? startPush : undefined}
                 pushDisabled={!!activePush}
                 onView={setViewing}
-                strip={(() => {
-                  if (lane.id !== 'ready_to_merge') return undefined;
-                  const hasConflicts = grouped.ready_to_merge.some(
-                    (task) => task.conflict,
-                  );
-                  if (!mergeRun && !recentRunSummary && !hasConflicts) return undefined;
-                  return (
-                    <MergeRunStrip
-                      active={mergeRun}
-                      summary={recentRunSummary}
-                      tasks={tasks}
-                      onCancel={cancelActiveRun}
-                      onDismiss={dismissRecent}
-                    />
-                  );
-                })()}
+                strip={mergeRunStripFor(
+                  lane,
+                  grouped[lane.id],
+                  mergeRun,
+                  recentRunSummary,
+                  tasks,
+                  cancelActiveRun,
+                  dismissRecent,
+                )}
               />
             ))}
           </div>
