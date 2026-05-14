@@ -1,4 +1,13 @@
 import { TaskCacheManager } from './manager.js';
+import { TaskMigrations } from './migrations.js';
+import { ProjectsIndex } from './projectsIndex.js';
+import {
+  backupTasksFile as recoverBackupTasksFile,
+  listKnownProjects as recoverListKnownProjects,
+  listReadyToMergeTasks as recoverListReadyToMergeTasks,
+  restoreAllProjectsFromBackup as recoverRestoreAllProjectsFromBackup,
+  restoreTasksFromBackupIfMissing as recoverRestoreTasksFromBackupIfMissing,
+} from './recovery.js';
 import type { Task, TaskStatus, TaskSubscriber, TaskUpdates } from './types.js';
 
 export { TaskCacheManager } from './manager.js';
@@ -9,7 +18,9 @@ export {
 } from './paths.js';
 export type { Task, TaskStatus, TaskSubscriber, TaskUpdates } from './types.js';
 
-const taskCache = new TaskCacheManager();
+const projectsIndex = new ProjectsIndex();
+const migrations = new TaskMigrations(projectsIndex);
+const taskCache = new TaskCacheManager({ projectsIndex, migrations });
 
 export function subscribe(fn: TaskSubscriber): () => void {
   return taskCache.subscribe(fn);
@@ -31,25 +42,25 @@ export async function flushPersist(projectPath: string): Promise<void> {
 }
 
 export async function backupTasksFile(projectPath: string): Promise<void> {
-  return taskCache.backupTasksFile(projectPath);
+  return recoverBackupTasksFile(projectPath);
 }
 
 export async function restoreTasksFromBackupIfMissing(
   projectPath: string,
 ): Promise<void> {
-  return taskCache.restoreTasksFromBackupIfMissing(projectPath);
+  return recoverRestoreTasksFromBackupIfMissing(projectPath, migrations);
 }
 
 export async function restoreAllProjectsFromBackup(): Promise<void> {
-  return taskCache.restoreAllProjectsFromBackup();
+  return recoverRestoreAllProjectsFromBackup(projectsIndex, migrations);
 }
 
 export async function listReadyToMergeTasks(): Promise<Task[]> {
-  return taskCache.listReadyToMergeTasks();
+  return recoverListReadyToMergeTasks(taskCache);
 }
 
 export async function listKnownProjects(): Promise<string[]> {
-  return taskCache.listKnownProjects();
+  return recoverListKnownProjects(projectsIndex);
 }
 
 export async function listTasks(projectPath: string): Promise<Task[]> {

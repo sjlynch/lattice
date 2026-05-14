@@ -1,5 +1,30 @@
 import { X } from 'lucide-react';
+import type { ReactNode } from 'react';
 import type { MergeRun, Task } from '../../api';
+import type { Lane as LaneDef } from './lanes';
+
+export function mergeRunStripFor(
+  lane: LaneDef,
+  laneTasks: Task[],
+  mergeRun: MergeRun | null,
+  recentRunSummary: MergeRun | null,
+  tasks: Task[],
+  onCancel: () => void,
+  onDismiss: () => void,
+): ReactNode | undefined {
+  if (lane.id !== 'ready_to_merge') return undefined;
+  const hasConflicts = laneTasks.some((task) => task.conflict);
+  if (!mergeRun && !recentRunSummary && !hasConflicts) return undefined;
+  return (
+    <MergeRunStrip
+      active={mergeRun}
+      summary={recentRunSummary}
+      tasks={tasks}
+      onCancel={onCancel}
+      onDismiss={onDismiss}
+    />
+  );
+}
 
 // Progress strip rendered above the Ready-to-Merge lane during a backend
 // merge run. Priority order:

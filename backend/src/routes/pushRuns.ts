@@ -1,6 +1,7 @@
-// Push-run lifecycle: spawn a Claude terminal that commits any pending
-// changes and pushes the project to its remote, then automatically closes
-// itself when Claude stops (via a settings.local.json Stop hook).
+// Push-run lifecycle: spawn a Claude terminal from home-scoped scratch that
+// commits any pending project changes and pushes to the remote, then
+// automatically closes itself when Claude stops (via a settings.local.json
+// Stop hook).
 
 import { Router } from 'express';
 import path from 'node:path';
@@ -91,8 +92,8 @@ export function buildPushRunsRouter(backendOrigin: string): Router {
     const run = getPushRun(req.params.id);
     if (!run) return res.json({ ok: true });
     markPushRunDone(run.id);
-    // Cleanup the temp dir off the response path so a slow Windows fs.rm
-    // doesn't keep the curl call open past its 5s timeout.
+    // Cleanup the home-scoped scratch dir off the response path so a slow
+    // Windows fs.rm doesn't keep the curl call open past its 5s timeout.
     void cleanupPushSession(run.projectPath, run.id);
     res.json({ ok: true });
   });

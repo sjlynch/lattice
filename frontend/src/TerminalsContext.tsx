@@ -7,72 +7,22 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import type { Ctx, Persisted, TerminalSpec } from './terminal/terminalTypes';
+import { loadPersisted, persist } from './terminal/terminalStorage';
+import {
+  addTerminalToList,
+  newTerminalId,
+  pickActiveAfterAdd,
+  pickActiveAfterClose,
+  pickActiveAfterCloseMany,
+  pickInitialActiveId,
+  removeTerminalFromList,
+  removeTerminalsFromList,
+  setServerIdInList,
+} from './terminal/terminalState';
+import { deleteBackendSession } from './terminal/terminalApi';
 
-export type TerminalSpec = {
-  id: string;            // local UI id
-  serverId?: string;     // backend session id, set after WS attaches
-  label: string;
-  cwd: string;
-  initialCommand?: string;
-  taskId?: string;       // associated task id, for lifecycle management
-  kind?: 'merge' | 'startup'; // 'merge' → Merging tab, 'startup' → Startup tab
-  startupId?: string;    // id of the StartupTerminal config that spawned this
-  projectPath?: string;  // active folder this terminal belongs to — used to
-                         // scope the sidebar so terminals from other projects
-                         // are hidden when the user switches active folder
-};
-
-type Persisted = {
-  terminals: TerminalSpec[];
-  activeId: string | null;
-};
-
-// Stored in sessionStorage (not localStorage) so each browser tab keeps its
-// own terminal list. Two tabs sharing one localStorage list would race each
-// other on every write — last-writer-wins clobbers the other tab's terminals.
-// sessionStorage survives reloads in the same tab but is per-tab, which is
-// exactly the isolation we want when users open multiple Lattice tabs on
-// different active folders.
-const STORAGE_KEY = 'lattice.terminals';
-
-function loadPersisted(): Persisted {
-  try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) return { terminals: [], activeId: null };
-    const parsed = JSON.parse(raw) as Persisted;
-    if (!parsed || !Array.isArray(parsed.terminals)) {
-      return { terminals: [], activeId: null };
-    }
-    return {
-      terminals: parsed.terminals.filter(
-        (t): t is TerminalSpec =>
-          !!t && typeof t.id === 'string' && typeof t.cwd === 'string',
-      ),
-      activeId: typeof parsed.activeId === 'string' ? parsed.activeId : null,
-    };
-  } catch {
-    return { terminals: [], activeId: null };
-  }
-}
-
-function persist(state: Persisted) {
-  try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    /* quota or private mode — ignore */
-  }
-}
-
-type Ctx = {
-  terminals: TerminalSpec[];
-  activeId: string | null;
-  setActiveId: (id: string | null) => void;
-  addTerminal: (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
-  closeTerminal: (id: string) => void;
-  closeTerminals: (ids: string[]) => void;
-  closeTerminalsForTask: (taskId: string) => void;
-  setServerId: (id: string, serverId: string) => void;
-};
+export type { TerminalSpec };
 
 const TerminalsContext = createContext<Ctx | null>(null);
 
@@ -86,10 +36,7 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
     initial.current.terminals,
   );
   const [activeId, setActiveIdState] = useState<string | null>(
-    initial.current.activeId &&
-      initial.current.terminals.some((t) => t.id === initial.current!.activeId)
-      ? initial.current.activeId
-      : initial.current.terminals[0]?.id ?? null,
+    pickInitialActiveId(initial.current),
   );
 
   // Mirror state into a ref so callbacks can read the latest list without
@@ -112,20 +59,9 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
 
   const addTerminal = useCallback(
     (spec: Omit<TerminalSpec, 'id'>, focus = true): string => {
-      const id = `term_${Date.now()}_${Math.random()
-        .toString(36)
-        .slice(2, 6)}`;
-      setTerminals((ts) => [...ts, { ...spec, id }]);
-      // Even when the caller opts out of stealing focus (e.g. Run All on the
-      // task board passes focus=false so each subsequent spawn doesn't yank
-      // the user away), the *first* spawn should still focus when there's
-      // nothing focused — otherwise Run All from an empty sidebar leaves
-      // the user staring at the "No terminals yet" empty state.
-      setActiveIdState((current) => {
-        if (focus) return id;
-        if (current === null) return id;
-        return current;
-      });
+      const id = newTerminalId();
+      setTerminals((ts) => addTerminalToList(ts, spec, id));
+      setActiveIdState((current) => pickActiveAfterAdd(current, id, focus));
       return id;
     },
     [],
@@ -137,7 +73,8 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
     // twice, which previously fired two DELETEs in <100ms — node-pty's
     // Windows cleanup path then tripped over its own helper subprocess
     // crashing and brought the whole backend down.
-    const target = terminalsRef.current.find((t) => t.id === id);
+    const prev = terminalsRef.current;
+    const target = prev.find((t) => t.id === id);
     if (!target) {
       console.warn('[lattice] closeTerminal called with unknown id', id);
       return;
@@ -148,53 +85,30 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
       label: target.label,
       cwd: target.cwd,
     });
-    if (target.serverId) {
-      void fetch(`/api/terminals/${encodeURIComponent(target.serverId)}`, {
-        method: 'DELETE',
-      }).catch(() => {
-        /* ignore */
-      });
-    }
-    const idx = terminalsRef.current.findIndex((t) => t.id === id);
-    const next = terminalsRef.current.filter((t) => t.id !== id);
+    if (target.serverId) deleteBackendSession(target.serverId);
+    const next = removeTerminalFromList(prev, id);
     setTerminals(next);
-    setActiveIdState((current) => {
-      if (current !== id) return current;
-      if (next.length === 0) return null;
-      const fallbackIdx = Math.min(Math.max(0, idx), next.length - 1);
-      return next[fallbackIdx]?.id ?? null;
-    });
+    setActiveIdState((current) =>
+      pickActiveAfterClose(prev, next, id, current),
+    );
   }, []);
 
   const setServerId = useCallback((id: string, serverId: string) => {
-    setTerminals((ts) =>
-      ts.map((t) => (t.id === id ? { ...t, serverId } : t)),
-    );
+    setTerminals((ts) => setServerIdInList(ts, id, serverId));
   }, []);
 
   const closeTerminals = useCallback((ids: string[]) => {
     const idSet = new Set(ids);
-    const current = terminalsRef.current;
+    const prev = terminalsRef.current;
     for (const id of ids) {
-      const target = current.find((t) => t.id === id);
-      if (target?.serverId) {
-        void fetch(`/api/terminals/${encodeURIComponent(target.serverId)}`, {
-          method: 'DELETE',
-        }).catch(() => {});
-      }
+      const target = prev.find((t) => t.id === id);
+      if (target?.serverId) deleteBackendSession(target.serverId);
     }
-    const next = current.filter((t) => !idSet.has(t.id));
+    const next = removeTerminalsFromList(prev, idSet);
     setTerminals(next);
-    setActiveIdState((cur) => {
-      if (!cur || !idSet.has(cur)) return cur;
-      if (next.length === 0) return null;
-      const idx = current.findIndex((t) => t.id === cur);
-      for (let i = idx - 1; i >= 0; i--) {
-        const t = current[i];
-        if (t && !idSet.has(t.id)) return t.id;
-      }
-      return next[0]?.id ?? null;
-    });
+    setActiveIdState((current) =>
+      pickActiveAfterCloseMany(prev, next, idSet, current),
+    );
   }, []);
 
   const closeTerminalsForTask = useCallback(

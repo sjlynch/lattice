@@ -1,0 +1,77 @@
+// Crash-recovery sweep run on every backend boot.
+//
+// Detects ready_to_merge tasks whose branch no longer exists. This happens
+// when finalizeMergedTask completed FF + cleanup but the server crashed
+// before writing the qa status. The branch being gone is the reliable
+// indicator: cleanup ran, so the task is already in main.
+
+import {
+  listReadyToMergeTasks,
+  restoreAllProjectsFromBackup,
+  updateTaskCrashSafe,
+  type Task,
+} from '../tasks.js';
+import { checkBranchExists, recoverPendingSnapshots } from '../worktree.js';
+import { sweepOrphanedWorktrees } from './worktreeSweep.js';
+
+export { resumeInterruptedMergeRuns } from './mergeRunResume.js';
+export { sweepOrphanedWorktrees } from './worktreeSweep.js';
+
+export async function recoverOrphanedTasks(): Promise<void> {
+  // Phase 1: repair `.lattice/tasks.json` from `.lattice/tasks.backup.json`
+  // for any project where the main file went missing or unparseable. Must
+  // run BEFORE any tasks.ts read so the cache is populated from the
+  // restored file. Logs loudly per project that gets restored.
+  await runStartupRecoveryStep('restoreAllProjectsFromBackup', () => restoreAllProjectsFromBackup());
+
+  // Phase 1b: scan ~/.lattice/snapshots/ for any orphan snapshots from a
+  // crashed run and restore them into their original repos. Replaces the
+  // prior `git stash` based recovery (which depended on the stash entry
+  // surviving across restarts — failure-prone, see snapshot.ts header).
+  await runStartupRecoveryStep('recoverPendingSnapshots', () => recoverPendingSnapshots());
+
+  // Phase 1c: reclaim orphaned worktrees (failed background cleanups,
+  // crashed runs, legacy in-project worktrees). cleanup.ts deliberately
+  // leaves a worktree dir in place when `git worktree remove` fails
+  // mid-run; this is the retry that makes it converge.
+  await runStartupRecoveryStep('sweepOrphanedWorktrees', () => sweepOrphanedWorktrees());
+
+  await runStartupRecoveryStep('recoverOrphanedTasks', () => recoverReadyTasksWithDeletedBranches());
+}
+
+async function runStartupRecoveryStep(
+  label: string,
+  step: () => Promise<void>,
+): Promise<void> {
+  try {
+    await step();
+  } catch (err) {
+    console.error(`[startup] ${label} failed:`, err);
+  }
+}
+
+async function recoverReadyTasksWithDeletedBranches(): Promise<void> {
+  const stuckTasks = await listReadyToMergeTasks();
+  for (const task of stuckTasks) {
+    await recoverTaskIfBranchWasDeleted(task);
+  }
+}
+
+async function recoverTaskIfBranchWasDeleted(task: Task): Promise<void> {
+  if (!task.branch) return;
+
+  const exists = await checkBranchExists(task.projectPath, task.branch);
+  if (exists) return;
+
+  console.log(
+    `[startup] task ${task.id} ("${task.title.slice(0, 40)}") branch deleted but status is ready_to_merge — recovering to qa`,
+  );
+  await updateTaskCrashSafe(task.id, {
+    status: 'qa',
+    mergedAt: task.mergedAt ?? Date.now(),
+    worktreePath: undefined,
+    branch: undefined,
+    conflict: undefined,
+    conflictStartedAt: undefined,
+  });
+}
