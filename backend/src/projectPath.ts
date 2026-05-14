@@ -34,10 +34,29 @@ export function projectHash(projectPath: string): string {
   return crypto.createHash('sha1').update(canonical).digest('hex').slice(0, 12);
 }
 
+export function latticeHomeDir(): string {
+  return path.join(os.homedir(), '.lattice');
+}
+
+// Shared per-project home state/scratch root:
+// `~/.lattice/per-project/<projectHash>/`. Use this for project-scoped data
+// that must survive project-tree damage and must not be recursively deleted
+// from inside the repo.
+export function homeProjectDir(projectPath: string): string {
+  return path.join(latticeHomeDir(), 'per-project', projectHash(projectPath));
+}
+
+export function homeProjectScratchDir(
+  projectPath: string,
+  ...segments: string[]
+): string {
+  return path.join(homeProjectDir(projectPath), ...segments);
+}
+
 // Where Lattice puts the per-task worktree checkouts for a given project:
 // `~/.lattice/worktrees/<projectHash>/`. Deliberately OUTSIDE the project
 // tree — see the comment on `homeWorktreesDir`'s usage in worktree/setup.ts
 // for why (it's the headline fix for the recurring `.git` deletions).
 export function homeWorktreesDir(repoRoot: string): string {
-  return path.join(os.homedir(), '.lattice', 'worktrees', projectHash(repoRoot));
+  return path.join(latticeHomeDir(), 'worktrees', projectHash(repoRoot));
 }

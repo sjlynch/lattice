@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pruneReparsePointsUnder } from '../worktree/cleanup.js';
+import { pruneReparsePointsUnder } from '../worktree/reparsePoints.js';
 
 // Reproduces the shape that wedged a real "merge all": an in-worktree
 // `npm install` of a `file:..` self-dependency leaves `node_modules/<pkg>`
