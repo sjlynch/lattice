@@ -1,39 +1,27 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { canonicalProjectPath } from './projectPath.js';
-import type { Task } from './tasks.js';
+import { canonicalProjectPath } from '../projectPath.js';
+import {
+  LEGACY_GLOBAL_TASKS,
+  PROJECT_DIR_NAME,
+  PROJECT_TASKS_BACKUP_FILENAME,
+  PROJECT_TASKS_FILENAME,
+  homeProjectDir,
+  projectTasksBackupFile,
+  projectTasksFile,
+} from './paths.js';
+import { ProjectsIndex } from './projectsIndex.js';
+import type { Task } from './types.js';
 
-export type TaskMigrationContext = {
-  legacyGlobalTasks: string;
-  projectDirName: string;
-  projectTasksFilename: string;
-  projectTasksBackupFilename: string;
-  homeProjectDir: (projectPath: string) => string;
-  projectTasksFile: (projectPath: string) => string;
-  projectTasksBackupFile: (projectPath: string) => string;
-  knownProjects: Set<string>;
-  persistKnownProjects: () => Promise<void>;
-};
-
-// Legacy in-project paths. Read once during migration and otherwise
-// untouched — the legacy file is never deleted (acts as belt-and-braces
-// for users who roll back to a pre-2026-05-09 build).
-function legacyProjectTasksFile(
-  projectPath: string,
-  ctx: TaskMigrationContext,
-): string {
-  return path.join(projectPath, ctx.projectDirName, ctx.projectTasksFilename);
+// Legacy in-project task paths. Read once during first-touch migration and
+// otherwise untouched — the legacy file is never deleted (acts as
+// belt-and-braces for users who roll back to a pre-2026-05-09 build).
+function legacyProjectTasksFile(projectPath: string): string {
+  return path.join(projectPath, PROJECT_DIR_NAME, PROJECT_TASKS_FILENAME);
 }
 
-function legacyProjectTasksBackupFile(
-  projectPath: string,
-  ctx: TaskMigrationContext,
-): string {
-  return path.join(
-    projectPath,
-    ctx.projectDirName,
-    ctx.projectTasksBackupFilename,
-  );
+function legacyProjectTasksBackupFile(projectPath: string): string {
+  return path.join(projectPath, PROJECT_DIR_NAME, PROJECT_TASKS_BACKUP_FILENAME);
 }
 
 // One-time copy from the legacy in-project location into the home-dir
@@ -45,14 +33,10 @@ function legacyProjectTasksBackupFile(
 // an older Lattice build without losing tasks. Once the user is
 // comfortable, they can delete the legacy `.lattice/tasks.json` files
 // themselves.
-export async function migrateInProjectTasksToHome(
-  projectPath: string,
-  ctx: TaskMigrationContext,
-): Promise<void> {
-  const home = ctx.homeProjectDir(projectPath);
-  const homeMain = ctx.projectTasksFile(projectPath);
-  const homeBackup = ctx.projectTasksBackupFile(projectPath);
-  // Already migrated?
+export async function migrateInProjectTasksToHome(projectPath: string): Promise<void> {
+  const home = homeProjectDir(projectPath);
+  const homeMain = projectTasksFile(projectPath);
+  const homeBackup = projectTasksBackupFile(projectPath);
   let homeExists = false;
   try {
     await fs.access(homeMain);
@@ -61,16 +45,15 @@ export async function migrateInProjectTasksToHome(
     /* missing — needs migration if legacy exists */
   }
   if (homeExists) return;
-  // Try legacy main, then legacy backup.
   let legacyRaw: string | null = null;
   let legacySource = '';
   for (const src of [
-    legacyProjectTasksFile(projectPath, ctx),
-    legacyProjectTasksBackupFile(projectPath, ctx),
+    legacyProjectTasksFile(projectPath),
+    legacyProjectTasksBackupFile(projectPath),
   ]) {
     try {
       const raw = await fs.readFile(src, 'utf8');
-      JSON.parse(raw); // sanity-check
+      JSON.parse(raw);
       legacyRaw = raw;
       legacySource = src;
       break;
@@ -97,9 +80,17 @@ export async function migrateInProjectTasksToHome(
   }
 }
 
-export async function migrateLegacy(ctx: TaskMigrationContext): Promise<void> {
-  const LEGACY_GLOBAL_TASKS = ctx.legacyGlobalTasks;
-  const { projectTasksFile, knownProjects, persistKnownProjects } = ctx;
+function mergeById(a: Task[], b: Task[]): Task[] {
+  const map = new Map<string, Task>();
+  for (const t of a) map.set(t.id, t);
+  for (const t of b) map.set(t.id, t);
+  return Array.from(map.values());
+}
+
+// One-time global migration from ~/.lattice/tasks.json into per-project
+// per-project files. Mutates `projectsIndex` by adding any discovered
+// projects and persists it once at the end.
+export async function migrateLegacy(projectsIndex: ProjectsIndex): Promise<void> {
   let raw: string;
   try {
     raw = await fs.readFile(LEGACY_GLOBAL_TASKS, 'utf8');
@@ -134,12 +125,12 @@ export async function migrateLegacy(ctx: TaskMigrationContext): Promise<void> {
       }
       const merged = mergeById(existing, tasks);
       await fs.writeFile(file, JSON.stringify(merged, null, 2), 'utf8');
-      knownProjects.add(proj);
+      projectsIndex.add(proj);
     } catch (e) {
       console.error('[tasks] legacy migration failed for', proj, e);
     }
   }
-  await persistKnownProjects();
+  await projectsIndex.persistKnownProjects();
   await fs.unlink(LEGACY_GLOBAL_TASKS).catch(() => {});
   if (parsed.length > 0) {
     console.log(
@@ -148,9 +139,24 @@ export async function migrateLegacy(ctx: TaskMigrationContext): Promise<void> {
   }
 }
 
-function mergeById(a: Task[], b: Task[]): Task[] {
-  const map = new Map<string, Task>();
-  for (const t of a) map.set(t.id, t);
-  for (const t of b) map.set(t.id, t);
-  return Array.from(map.values());
+// Manager-side glue: owns the once-per-process "legacy migration done"
+// flag, holds the projectsIndex reference, and exposes the two high-level
+// entry points the cache calls on every project load.
+export class TaskMigrations {
+  private legacyMigrated = false;
+
+  constructor(private readonly projectsIndex: ProjectsIndex) {}
+
+  // Run the legacy global → per-project migration at most once per process.
+  async runLegacyOnce(): Promise<void> {
+    if (this.legacyMigrated) return;
+    this.legacyMigrated = true;
+    await migrateLegacy(this.projectsIndex);
+  }
+
+  // First-touch in-project → home-dir migration for a single project.
+  // No-op if the home file already exists, or if no legacy file is found.
+  async runFirstTouch(projectKey: string): Promise<void> {
+    await migrateInProjectTasksToHome(projectKey);
+  }
 }

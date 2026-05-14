@@ -17,3 +17,7 @@ export function createTerminalSessionId(): string {
 export function generateMergeRunId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 }
+
+export function generateWorkflowRunId(): string {
+  return `wfrun_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+}

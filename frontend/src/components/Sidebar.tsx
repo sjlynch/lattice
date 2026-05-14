@@ -39,7 +39,7 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
     mergeTerminals,
     startupTerminalsList,
   } = useTerminalGroups(terminals, activeFolder);
-  const mountedIds = useMountedTerminalIds(activeId, startupTerminalsList);
+  const mountedIds = useMountedTerminalIds(activeId, startupTerminalsList, projectTerminals);
 
   // When the active folder changes, the currently-active terminal may
   // belong to a different project. Pick a terminal from the new project

@@ -80,12 +80,14 @@ export {
   type SnapshotHandle,
 } from './worktree/stash.js';
 
+export { cleanupWorktreeForTask } from './worktree/cleanup.js';
+
 export {
-  cleanupWorktreeForTask,
-  assertNotReparsePoint,
-  pruneReparsePointsUnder,
   isUnderManagedWorktreesDir,
-} from './worktree/cleanup.js';
+  assertNotReparsePoint,
+} from './worktree/cleanupSafety.js';
+
+export { pruneReparsePointsUnder } from './worktree/reparsePoints.js';
 
 export {
   finalizeMergedTask,

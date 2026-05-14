@@ -6,15 +6,17 @@ import type {
   ProjectEnvResponse,
   UserSettings,
 } from './types';
+import { subscribeWs } from './ws';
 
-export async function fetchHarnessAvailability(): Promise<HarnessAvailability> {
-  try {
-    const r = await fetch('/api/harnesses');
-    if (!r.ok) return { claude: true, pi: false, codex: false };
-    return r.json();
-  } catch {
-    return { claude: true, pi: false, codex: false };
-  }
+// Live harness-availability subscription. The backend pushes the
+// `{claude, pi, codex}` map once `detectHarnesses()` resolves and on
+// every reconnect, so the UI picks up the Pi/Codex/Interleave options
+// the moment the backend finishes its CLI probe — even when the page
+// was loaded before the server was listening.
+export function subscribeHarnesses(
+  onUpdate: (avail: HarnessAvailability) => void,
+): () => void {
+  return subscribeWs<HarnessAvailability>('/ws/harnesses', onUpdate);
 }
 
 export async function fetchUserSettings(projectPath: string): Promise<UserSettings> {

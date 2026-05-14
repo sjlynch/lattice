@@ -1,0 +1,318 @@
+/* ---------- Health overlay (held `h`): legend swap + hover tooltip ---------- */
+
+/* Health legend — replaces the regular extension legend while `h` is held.
+   Shares chrome with .legend so positioning stays identical, just with a
+   different body. */
+.health-legend .health-legend-head {
+  cursor: default;
+}
+.health-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+}
+.health-legend-hint {
+  margin-left: auto;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.25);
+}
+.health-legend-scale {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px 6px;
+}
+.health-legend-scale-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.health-legend-swatch {
+  width: 16px;
+  height: 8px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5) inset;
+}
+.health-legend-rows {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 4px 4px;
+  overflow-y: auto;
+  max-height: 36vh;
+}
+.health-legend-row {
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+}
+.health-legend-row + .health-legend-row {
+  border-top: 1px dashed rgba(255, 255, 255, 0.05);
+}
+.health-legend-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-primary);
+}
+.health-legend-row-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.health-legend-row-weight {
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Inline (i) info marker next to each health-legend metric. The popover
+   itself is rendered into document.body via a React portal — see
+   HealthInfoIcon — because the legend establishes multiple overflow /
+   scroll contexts that would clip an in-tree popover. */
+.health-legend-info-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  cursor: help;
+  color: var(--text-tertiary);
+  border-radius: 999px;
+  outline: none;
+  flex: 0 0 auto;
+}
+.health-legend-info-wrap:hover,
+.health-legend-info-wrap:focus-visible {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+.health-legend-info-icon { display: block; }
+
+/* Portaled popover body. left/top come inline from JS; we use
+   position: fixed so those coords are interpreted as viewport coords,
+   and the transform centers it vertically on the icon. */
+.health-legend-info-popover {
+  position: fixed;
+  width: 320px;
+  transform: translateY(-50%);
+  background: rgba(15, 17, 21, 0.96);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  box-shadow: var(--shadow-md);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  z-index: 1300;
+  pointer-events: none;
+  text-align: left;
+  white-space: normal;
+  animation: health-info-fade 0.08s ease;
+}
+@keyframes health-info-fade {
+  from { opacity: 0; transform: translateY(-50%) translateX(4px); }
+  to { opacity: 1; transform: translateY(-50%) translateX(0); }
+}
+.health-legend-info-popover-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.health-legend-info-popover-body {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.health-legend-info-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.health-legend-info-entry dt {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  margin: 0;
+}
+.health-legend-info-entry dd {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  margin: 0;
+}
+.health-legend-row-note {
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  margin-top: 1px;
+}
+.health-legend-foot {
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  padding: 8px 10px 10px;
+  line-height: 1.4;
+  border-top: 1px solid var(--border);
+}
+
+/* On-graph hover tooltip — shown whenever the cursor is over a file
+   node. Positioned via `position: fixed` (viewport coords) with a
+   measure + clamp pass in HealthTooltip.tsx so it never clips off
+   any edge of the viewport. */
+.health-tooltip {
+  position: fixed;
+  z-index: 1200;
+  pointer-events: none;
+  background: rgba(15, 17, 21, 0.94);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-md);
+  color: var(--text-primary);
+  padding: 10px 12px 8px;
+  font-size: 11.5px;
+  animation: health-tooltip-fade 0.08s ease;
+}
+@keyframes health-tooltip-fade {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.health-tooltip-head {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 6px 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.health-tooltip-score {
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.health-tooltip-grade {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+}
+.health-tooltip-titlewrap {
+  min-width: 0;
+}
+.health-tooltip-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.health-tooltip-lang {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+.health-tooltip-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+  padding: 8px 0 6px;
+}
+.health-tooltip-metric {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.health-tooltip-metric-label {
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+}
+.health-tooltip-metric-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.health-tooltip-metric-suffix {
+  color: var(--text-tertiary);
+  font-weight: 400;
+  font-size: 10px;
+}
+.health-tooltip-smells {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 6px;
+}
+.health-tooltip-smells-head {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.health-tooltip-smells-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.health-tooltip-smells-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.health-tooltip-smell-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: #ffb0b0;
+  min-width: 14px;
+  text-align: right;
+}
+.health-tooltip-smell-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.health-tooltip-smell-more {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
