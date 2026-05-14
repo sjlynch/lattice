@@ -1,9 +1,7 @@
 import fs from 'node:fs/promises';
 import { assertSafePushSessionPath } from './paths.js';
-import {
-  assertNotReparsePoint,
-  pruneReparsePointsUnder,
-} from '../worktree/cleanup.js';
+import { assertNotReparsePoint } from '../worktree/cleanupSafety.js';
+import { pruneReparsePointsUnder } from '../worktree/reparsePoints.js';
 
 export async function cleanupPushSession(projectPath: string, id: string): Promise<void> {
   try {
