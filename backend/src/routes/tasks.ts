@@ -3,7 +3,7 @@
 //
 //   - crud.ts   : list / summary / get / create / batch / transition /
 //                 patch / reorder / delete
-//   - run.ts    : run / resume / merge (worktree spawning + orchestration)
+//   - run.ts    : composes runRoute / resumeRoute / mergeRoute
 //   - hooks.ts  : complete / merged / merge-aborted / stash-resolved
 //                 (worktree Stop-hook callbacks)
 //
