@@ -1,6 +1,6 @@
 # backend/src/routes
 
-One Express `Router` per domain. Each module exports a `buildXRouter(deps)` factory; `index.ts` mounts them all.
+One Express `Router` per domain. Each module exports a `buildXRouter(deps)` factory; `server/app.ts` mounts them all.
 
 ## Modules
 
@@ -13,10 +13,10 @@ One Express `Router` per domain. Each module exports a `buildXRouter(deps)` fact
 
 ## Why factories?
 
-Routes need `BACKEND_ORIGIN` (for the curl callback in worktree Stop hooks) which is computed in `index.ts`. Passing it in keeps the router pure-ish and avoids a global.
+Routes need `BACKEND_ORIGIN` (for the curl callback in worktree Stop hooks) which is computed by `server/config.ts` and passed through `server/app.ts`. Passing it in keeps the router pure-ish and avoids a global.
 
 ## Adding a route
 
 1. Add a handler to the right module (or create a new one if none fit).
-2. If new module: export a `buildXRouter()` and `app.use(buildXRouter(...))` from `index.ts`.
-3. Errors thrown synchronously OR from async handlers are caught by the global error middleware in `index.ts` (express-async-errors patch). Always responds `{error: ...}` JSON.
+2. If new module: export a `buildXRouter()` and `app.use(buildXRouter(...))` from `server/app.ts`.
+3. Errors thrown synchronously OR from async handlers are caught by the global error middleware in `server/app.ts` (express-async-errors patch). Always responds `{error: ...}` JSON.
