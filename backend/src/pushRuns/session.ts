@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { ensureTrustedClaudeDir } from '../claudeTrust.js';
 import { renderPushInstructions } from './instructions.js';
 import { assertSafePushSessionPath, createPushSessionId } from './paths.js';
 import { installPushStopHook } from './stopHook.js';
@@ -15,6 +16,10 @@ export async function setupPushSession(
   const id = createPushSessionId();
   const cwd = assertSafePushSessionPath(projectPath, id);
   await fs.mkdir(cwd, { recursive: true });
+
+  // Pre-accept the workspace-trust dialog for this brand-new dir; otherwise
+  // Claude prompts on first launch and blocks the unattended push flow.
+  await ensureTrustedClaudeDir(cwd);
 
   await installPushStopHook(cwd, id, backendOrigin);
 
