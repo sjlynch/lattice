@@ -1,18 +1,5 @@
+import { applyHigherPriorityStatus, normalizeGitPath } from './parserShared.js';
 import type { GitCommitChange, GitFileStatus, GitUncommitted } from './types.js';
-
-function toForwardSlashes(p: string): string {
-  return p.split('\\').join('/');
-}
-
-function rankStatus(x: GitFileStatus): number {
-  return x === 'D' ? 3 : x === 'A' ? 2 : x === 'R' ? 2 : 1;
-}
-
-function bumpStatus(byPath: Map<string, GitFileStatus>, p: string, s: GitFileStatus): void {
-  const cur = byPath.get(p);
-  // Priority: D > A > M (more "structural" change wins).
-  if (!cur || rankStatus(s) > rankStatus(cur)) byPath.set(p, s);
-}
 
 export function parseGitStatusPorcelain(out: string): GitUncommitted {
   // `git status --porcelain=v1 -z` gives a NUL-separated stream of
@@ -29,7 +16,7 @@ export function parseGitStatusPorcelain(out: string): GitUncommitted {
     if (!t) continue;
     if (t.length < 3) continue;
     const xy = t.slice(0, 2);
-    const filePath = t.slice(3); // skip "XY "
+    const filePath = normalizeGitPath(t.slice(3)); // skip "XY "
     const x = xy[0];
     const y = xy[1];
     // Renames: porcelain emits `R  newPath\0oldPath`. Consume the next
@@ -37,23 +24,25 @@ export function parseGitStatusPorcelain(out: string): GitUncommitted {
     if (x === 'R' || y === 'R') {
       const oldPath = tokens[i + 1] ?? '';
       i += 1;
-      if (oldPath) bumpStatus(byPath, toForwardSlashes(oldPath), 'D');
-      bumpStatus(byPath, toForwardSlashes(filePath), 'A');
+      if (oldPath) {
+        applyHigherPriorityStatus(byPath, normalizeGitPath(oldPath), 'D');
+      }
+      applyHigherPriorityStatus(byPath, filePath, 'A');
       continue;
     }
     if (x === '?' || y === '?') {
-      bumpStatus(byPath, toForwardSlashes(filePath), 'A');
+      applyHigherPriorityStatus(byPath, filePath, 'A');
       continue;
     }
     if (x === 'D' || y === 'D') {
-      bumpStatus(byPath, toForwardSlashes(filePath), 'D');
+      applyHigherPriorityStatus(byPath, filePath, 'D');
       continue;
     }
     if (x === 'A' || y === 'A') {
-      bumpStatus(byPath, toForwardSlashes(filePath), 'A');
+      applyHigherPriorityStatus(byPath, filePath, 'A');
       continue;
     }
-    bumpStatus(byPath, toForwardSlashes(filePath), 'M');
+    applyHigherPriorityStatus(byPath, filePath, 'M');
   }
 
   const changes: GitCommitChange[] = [];

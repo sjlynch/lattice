@@ -1,0 +1,66 @@
+
+/* Task detail overlay */
+.taskboard-detail {
+  width: min(520px, calc(100% - 28px));
+  height: min(560px, calc(100% - 28px));
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.taskboard-detail-head {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.taskboard-detail-stripe {
+  flex: 0 0 auto;
+  width: 4px;
+  align-self: stretch;
+  border-radius: 2px;
+  margin-top: 2px;
+}
+.taskboard-detail-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.3;
+  flex: 1;
+  word-break: break-word;
+}
+.taskboard-detail-body {
+  padding: 12px 14px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  font-size: 12.5px;
+  color: #c9ced7;
+  line-height: 1.55;
+}
+.taskboard-detail-meta {
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  padding: 6px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid var(--border);
+}
+.taskboard-detail-meta code {
+  font-family: var(--mono);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  word-break: break-all;
+}
+.taskboard-detail-actions {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
