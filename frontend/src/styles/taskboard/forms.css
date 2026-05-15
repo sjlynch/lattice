@@ -1,0 +1,108 @@
+
+.task-card-add {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: left;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.task-card-add:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+/* Add-task overlay — modal-in-modal */
+.taskboard-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 10, 14, 0.55);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  animation: modal-fade 0.1s ease;
+}
+.taskboard-newform {
+  width: min(360px, calc(100% - 28px));
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+}
+.taskboard-newform-head {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.taskboard-newform-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.taskboard-newform-actions {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.task-card-form-input {
+  background: #15181d;
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.task-card-form-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.task-card-form-textarea {
+  background: #15181d;
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  outline: none;
+  resize: vertical;
+  min-height: 64px;
+  width: 100%;
+}
+.task-card-form-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.taskboard-detail-title-input {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 4px 8px;
+}
+.taskboard-detail-desc-input {
+  width: 100%;
+  min-height: 140px;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.task-card-form-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}

@@ -44,10 +44,10 @@ modules after.
 | `graph.css` | `.graph-overlay`, `.loc-view-chip`, `.graph-select-rect`, `.graph-selection-chip`, `.graph-context-menu`, `.graph-settings-fab/panel`, `.graph-toast` (+ overlay `@keyframes`) |
 | `terminal.css` | `.term-pane` |
 | `floating-panel.css` | `.floating-panel*` (titlebar, body, resize grip) |
-| `taskboard.css` | `.taskboard-*`, `.task-card*`, `.task-card-stuck-pill`, `.task-card-conflict-pill`, `.lane-runall*`, `.task-error-toast*` (+ `@keyframes toast-in`), `.taskboard-overlay`, `.taskboard-newform*`, `.taskboard-detail*`, `.task-card-form-*` |
+| `taskboard.css` | Taskboard aggregator. Ordered partials live under `styles/taskboard/`: `shell`, `lanes`, `cards`, `filters`, `lane-actions`, `detail`, `toast`, `forms` |
 | `legend.css` | `.legend*`, `.swatch*` |
 | `merge-run.css` | `.merge-run-strip*`, `.merge-run-stat*` |
-| `workflows.css` | `.workflows-*` (list, editor, runs panel, steps, prompt chips) |
+| `workflows.css` | Workflows aggregator. Ordered partials live under `styles/workflows/`: `shell`, `list`, `templates`, `editor-shell`, `runs-shell`, `queue`, `runs`, `editor-empty`, `editor`, `steps`, `actions`, `chips` |
 | `timeline.css` | Timeline scrubber: `.timeline-bar`, `.has-timeline` overrides, `.timeline-scrubber*`, `.ts-*` (+ `--timeline-h` token) |
 | `health-overlay.css` | `.health-legend*` (incl. info popover), `.health-tooltip*` (+ health `@keyframes`) |
 

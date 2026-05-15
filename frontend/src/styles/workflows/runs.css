@@ -1,0 +1,78 @@
+.workflows-runs-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px 8px 0;
+}
+.workflows-runs-section + .workflows-runs-section {
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+.workflows-runs-section-title {
+  padding: 0 2px 6px;
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.workflows-runs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+.workflows-runs-empty {
+  padding: 8px 4px 12px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.workflows-run-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+}
+.workflows-run-card.active {
+  border-color: rgba(94, 234, 212, 0.30);
+  background: rgba(94, 234, 212, 0.06);
+}
+.workflows-run-card.queued {
+  border-color: rgba(250, 204, 21, 0.22);
+}
+.workflows-run-card-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.workflows-run-card-name {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflows-run-card-meta {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.workflows-run-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.workflows-run-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #5eead4;
+}
