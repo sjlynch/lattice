@@ -1,9 +1,19 @@
 import { useEffect, useState, type MutableRefObject } from 'react';
-import * as THREE from 'three';
 import type { ForceGraph3DInstance } from '3d-force-graph';
-import type { GraphNode } from '../../../api';
-
-type DragRect = { x1: number; y1: number; x2: number; y2: number };
+import type { Camera } from 'three';
+import {
+  isTinyDrag,
+  normalizeDragRect,
+  selectNodesInRect,
+  type DragRect,
+  type PositionedGraphNode,
+  type ScreenPoint,
+} from './boxSelectGeometry';
+import {
+  disableOrbitControls,
+  type OrbitControlsLock,
+  type OrbitControlsLockTarget,
+} from './orbitControlLock';
 
 // Shift-drag a rectangle over the viewport to select every visible
 // file node whose projected screen position lands inside it. Alt
@@ -27,11 +37,19 @@ export function useBoxSelect(
 
     let dragging = false;
     let activePointerId: number | null = null;
-    let startX = 0;
-    let startY = 0;
+    let start: ScreenPoint = { x: 0, y: 0 };
     let altAtStart = false;
-    let prevRotate: boolean | undefined;
-    let prevPan: boolean | undefined;
+    let controlsLock: OrbitControlsLock | null = null;
+
+    function pointerPoint(e: PointerEvent): ScreenPoint {
+      const rect = container!.getBoundingClientRect();
+      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    }
+
+    function restoreControls() {
+      controlsLock?.restore();
+      controlsLock = null;
+    }
 
     // Capture phase + pointerdown so we run before OrbitControls' canvas-level
     // pointerdown listener. Without this, shift+left-click immediately
@@ -49,36 +67,26 @@ export function useBoxSelect(
       e.stopPropagation();
       e.stopImmediatePropagation();
 
-      const rect = container!.getBoundingClientRect();
-      startX = e.clientX - rect.left;
-      startY = e.clientY - rect.top;
+      start = pointerPoint(e);
       altAtStart = e.altKey;
       dragging = true;
       activePointerId = e.pointerId;
-      setDragRect({ x1: startX, y1: startY, x2: startX, y2: startY });
+      setDragRect({ x1: start.x, y1: start.y, x2: start.x, y2: start.y });
       closeContextMenu();
 
       // Belt-and-suspenders: also disable the controls flags. If anything
       // slipped past stopPropagation, OrbitControls will bail in its
       // mouseAction switch instead of starting a pan.
-      const ctrl = graphRef.current?.controls() as
-        | { enableRotate?: boolean; enablePan?: boolean }
-        | undefined;
-      if (ctrl) {
-        prevRotate = ctrl.enableRotate;
-        prevPan = ctrl.enablePan;
-        ctrl.enableRotate = false;
-        ctrl.enablePan = false;
-      }
+      controlsLock = disableOrbitControls(
+        graphRef.current?.controls() as OrbitControlsLockTarget | undefined,
+      );
       e.preventDefault();
     }
 
     function onPointerMove(e: PointerEvent) {
       if (!dragging || e.pointerId !== activePointerId) return;
-      const rect = container!.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      setDragRect({ x1: startX, y1: startY, x2: x, y2: y });
+      const point = pointerPoint(e);
+      setDragRect({ x1: start.x, y1: start.y, x2: point.x, y2: point.y });
     }
 
     function onPointerUp(e: PointerEvent) {
@@ -86,28 +94,12 @@ export function useBoxSelect(
       dragging = false;
       activePointerId = null;
 
-      const rect = container!.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const finalRect = {
-        x1: Math.min(startX, x),
-        y1: Math.min(startY, y),
-        x2: Math.max(startX, x),
-        y2: Math.max(startY, y),
-      };
-
-      const ctrl = graphRef.current?.controls() as
-        | { enableRotate?: boolean; enablePan?: boolean }
-        | undefined;
-      if (ctrl) {
-        if (prevRotate !== undefined) ctrl.enableRotate = prevRotate;
-        if (prevPan !== undefined) ctrl.enablePan = prevPan;
-      }
+      const point = pointerPoint(e);
+      const finalRect = normalizeDragRect(start, point);
+      restoreControls();
 
       // Treat a tiny drag as a "click" — clear selection and bail.
-      const isClick =
-        finalRect.x2 - finalRect.x1 < 4 && finalRect.y2 - finalRect.y1 < 4;
-      if (isClick) {
+      if (isTinyDrag(finalRect)) {
         setSelected(new Set());
         setDragRect(null);
         return;
@@ -115,37 +107,17 @@ export function useBoxSelect(
 
       const graph = graphRef.current;
       if (graph) {
-        const camera = graph.camera() as THREE.Camera;
-        const W = container!.clientWidth;
-        const H = container!.clientHeight;
-        const includeDirs = altAtStart;
-        const next = new Set<string>();
-        const v = new THREE.Vector3();
-        const nodes = graph.graphData().nodes as Array<
-          GraphNode & { x?: number; y?: number; z?: number }
-        >;
-        for (const node of nodes) {
-          if (!includeDirs && node.kind === 'dir') continue;
-          if (node.kind === 'file') {
-            const key = node.ext ? node.ext.toLowerCase() : '*';
-            if (hiddenExtsRef.current.has(key)) continue;
-          }
-          if (node.x == null || node.y == null || node.z == null) continue;
-          v.set(node.x, node.y, node.z).project(camera);
-          // Behind the camera or beyond the far plane — skip.
-          if (v.z < -1 || v.z > 1) continue;
-          const sx = (v.x * 0.5 + 0.5) * W;
-          const sy = (-v.y * 0.5 + 0.5) * H;
-          if (
-            sx >= finalRect.x1 &&
-            sx <= finalRect.x2 &&
-            sy >= finalRect.y1 &&
-            sy <= finalRect.y2
-          ) {
-            next.add(node.id);
-          }
-        }
-        setSelected(next);
+        const camera = graph.camera() as Camera;
+        const nodes = graph.graphData().nodes as PositionedGraphNode[];
+        setSelected(
+          selectNodesInRect(nodes, {
+            rect: finalRect,
+            camera,
+            viewport: { width: container!.clientWidth, height: container!.clientHeight },
+            includeDirs: altAtStart,
+            hiddenExts: hiddenExtsRef.current,
+          }),
+        );
       }
       setDragRect(null);
     }
@@ -155,6 +127,7 @@ export function useBoxSelect(
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerUp);
     return () => {
+      restoreControls();
       container.removeEventListener('pointerdown', onPointerDown, { capture: true });
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);

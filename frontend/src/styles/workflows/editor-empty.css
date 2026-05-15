@@ -1,0 +1,26 @@
+.workflows-editor-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-tertiary);
+  padding: 24px;
+  text-align: center;
+}
+.workflows-editor-empty-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.workflows-editor-empty-sub {
+  font-size: 12px;
+  max-width: 380px;
+  line-height: 1.5;
+}
+.workflows-editor-empty-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}

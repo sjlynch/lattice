@@ -46,6 +46,10 @@
   `useGraphFilter` so ForceGraphView gets one overlay setup point.
 - `useNodeContextMenu` / `useBoxSelect` / `useHoverCursor` / `useRefMirror` /
   `refresh.ts` — small focused helpers consumed directly by the coordinator.
+- `hooks/boxSelectGeometry.ts` — pure rectangle/projection hit-testing helpers
+  for shift-drag selection; covered by node tests (no DOM/WebGL needed).
+- `hooks/orbitControlLock.ts` — tiny disable/restore wrapper for OrbitControls
+  rotate/pan flags during box-select gestures.
 
 ## Render-vs-physics splits
 
