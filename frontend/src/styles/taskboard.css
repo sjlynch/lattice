@@ -352,8 +352,8 @@
 
 /* Task detail overlay */
 .taskboard-detail {
-  width: min(420px, calc(100% - 28px));
-  max-height: calc(100% - 28px);
+  width: min(520px, calc(100% - 28px));
+  height: min(560px, calc(100% - 28px));
   background: var(--bg-elev);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
@@ -387,12 +387,11 @@
 .taskboard-detail-body {
   padding: 12px 14px;
   flex: 1;
-  overflow: auto;
+  min-height: 0;
+  display: flex;
   font-size: 12.5px;
   color: #c9ced7;
   line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 .taskboard-detail-meta {
   font-size: 10.5px;
@@ -575,7 +574,9 @@
 }
 .taskboard-detail-desc-input {
   width: 100%;
-  min-height: 140px;
+  flex: 1;
+  min-height: 0;
+  resize: none;
   font-size: 12.5px;
   line-height: 1.55;
 }
