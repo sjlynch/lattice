@@ -6,6 +6,7 @@ import { Legend } from './components/Legend';
 import { TerminalsProvider } from './TerminalsContext';
 import { useActiveFolder } from './hooks/useActiveFolder';
 import { useHiddenExtensions } from './hooks/useHiddenExtensions';
+import { useMetricsIgnoredExts } from './hooks/useMetricsIgnoredExts';
 import { useProjectScan } from './hooks/useProjectScan';
 import { useSidebarWidth } from './hooks/useSidebarWidth';
 import { useStartupTerminalSync } from './hooks/useStartupTerminalSync';
@@ -23,6 +24,8 @@ function App() {
     useSidebarWidth(activeFolder);
   const [startupTerminals, setStartupTerminals] =
     useStartupTerminalSync(activeFolder);
+  const [metricsIgnoredExts, saveMetricsIgnoredExts] =
+    useMetricsIgnoredExts(activeFolder);
 
   return (
     <TerminalsProvider>
@@ -32,6 +35,8 @@ function App() {
           onSelectFolder={setActiveFolder}
           startupTerminals={startupTerminals}
           onStartupTerminalsChange={setStartupTerminals}
+          metricsIgnoredExts={metricsIgnoredExts}
+          onMetricsIgnoredExtsChange={saveMetricsIgnoredExts}
           scanResult={scanResult}
         />
         <div className="app-body">
@@ -55,6 +60,7 @@ function App() {
               data={scanResult}
               loading={loading}
               hiddenExts={hiddenExts}
+              metricsIgnoredExts={metricsIgnoredExts}
               activeFolder={activeFolder}
               healthMode={healthMode}
               onHealthModeChange={setHealthMode}
