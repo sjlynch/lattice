@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Kanban } from 'lucide-react';
 import { FloatingPanel } from '../FloatingPanel';
 import { useTerminals } from '../../TerminalsContext';
@@ -15,6 +15,8 @@ import { usePushRun } from './hooks/usePushRun';
 import { useHarnessSelector } from './hooks/useHarnessSelector';
 import { useTaskActions } from './hooks/useTaskActions';
 import { useTaskBoardState } from './hooks/useTaskBoardState';
+import { useTaskTerminalCleanup } from './hooks/useTaskTerminalCleanup';
+import { useSyncedViewedTask } from './hooks/useSyncedViewedTask';
 import { buildTerminalMap } from '../../utils/terminalMap';
 
 type Props = {
@@ -28,7 +30,6 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   const [open, setOpen] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [addingTo, setAddingTo] = useState<TaskStatus | null>(null);
-  const [viewing, setViewing] = useState<Task | null>(null);
 
   // Filter state — all lanes visible by default.
   const [visibleLanes, setVisibleLanes] = useState<Set<TaskStatus>>(
@@ -110,54 +111,23 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     [terminalByTaskId, setActiveId],
   );
 
-  // Auto-close terminals when their task reaches a terminal state. Runs on
-  // every task update so it also catches stale sessionStorage terminals that
-  // survive a server restart.
-  useEffect(() => {
-    for (const task of tasks) {
-      if (
-        task.status === 'qa' ||
-        task.status === 'done' ||
-        task.status === 'deleted'
-      ) {
-        closeTerminalsForTask(task.id);
-      }
-    }
-  }, [tasks, closeTerminalsForTask]);
+  useTaskTerminalCleanup(
+    tasks,
+    terminals,
+    closeTerminalsForTask,
+    closeTerminals,
+  );
+  const [viewing, setViewing] = useSyncedViewedTask(tasks);
 
-  // Close the original worktree-Claude terminal when its task moves to
-  // ready_to_merge — the in-progress agent has committed and the pty is
-  // just sitting idle. Merge-kind terminals (conflict resolvers spawned
-  // *after* the move) are left alone; they get closed by the qa/done/
-  // deleted effect above when the task finalizes.
-  useEffect(() => {
-    const readyIds = new Set(
-      tasks
-        .filter((task) => task.status === 'ready_to_merge')
-        .map((task) => task.id),
-    );
-    if (readyIds.size === 0) return;
-    const toClose = terminals
-      .filter(
-        (terminal) =>
-          terminal.taskId &&
-          readyIds.has(terminal.taskId) &&
-          terminal.kind !== 'merge',
-      )
-      .map((terminal) => terminal.id);
-    if (toClose.length > 0) closeTerminals(toClose);
-  }, [tasks, terminals, closeTerminals]);
-
-  // Keep "viewing" task fresh when underlying list updates.
-  useEffect(() => {
-    if (!viewing) return;
-    const fresh = tasks.find((task) => task.id === viewing.id);
-    if (!fresh) {
-      setViewing(null);
-      return;
-    }
-    if (fresh !== viewing) setViewing(fresh);
-  }, [tasks, viewing]);
+  const runAllActionByLane = useMemo<Partial<Record<TaskStatus, () => void>>>(
+    () => ({
+      open: runAllOpen,
+      in_progress: resumeAllInProgress,
+      ready_to_merge: mergeAllReady,
+      qa: markAllQaDone,
+    }),
+    [runAllOpen, resumeAllInProgress, mergeAllReady, markAllQaDone],
+  );
 
   function toggleLane(id: TaskStatus) {
     setVisibleLanes((cur) => {
@@ -238,17 +208,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 onToggleSelect={(id) => toggleSelect(id, lane.id)}
                 onRangeSelect={(id) => rangeSelect(id, lane.id)}
                 onClearSelection={clearSelection}
-                onRunAll={
-                  lane.id === 'open'
-                    ? runAllOpen
-                    : lane.id === 'in_progress'
-                    ? resumeAllInProgress
-                    : lane.id === 'ready_to_merge'
-                    ? mergeAllReady
-                    : lane.id === 'qa'
-                    ? markAllQaDone
-                    : undefined
-                }
+                onRunAll={runAllActionByLane[lane.id]}
                 onPush={lane.id === 'qa' && hasGit ? startPush : undefined}
                 pushDisabled={!!activePush}
                 onView={setViewing}

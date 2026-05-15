@@ -5,7 +5,7 @@ Private hooks behind the Workflows feature. Components should import
 there.
 
 - `useWorkflowManager.ts` — feature-level composer: saved-list/editor/run/queue
-  state, harness overrides, and intent-level actions for the panels.
+  state, harness overrides, prompt-customization state/actions, and intent-level actions for the panels.
 - `useWorkflowList.ts` — hydrate/sort saved workflows and stay synced via
   `/ws/workflows`.
 - `useWorkflowEditor.ts` — mutable editor draft plus save/discard/delete,
@@ -17,3 +17,6 @@ there.
 - `useCollapsedSteps.ts` — persisted per-step collapse state in
   `userSettings.workflowStepsCollapsed`.
 - `useWorkflowErrorHandler.ts` — shared auto-dismissing error toast state.
+- `useWorkflowPromptCustomization.ts` — owns per-step customization state,
+  custom-step instruction prompting, terminal creation, polling, editor patching,
+  and prompt-customization errors.

@@ -44,7 +44,11 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   `apply.ts` (patch fanIn/fanOut/inCycle smells back into `HealthMetrics`)
 - `crossFileAnalyzer.ts` — watcher-facing diff/broadcast wrapper around the
   cross-file pass
-- `scoreModel.ts` — score component ids, weights, thresholds, and metric extractors
+- `scoreMetadata.ts` — serializable source of truth for score component ids,
+  ordering, weights, thresholds, and direction. The frontend health legend imports
+  this file directly; do not duplicate score metadata in UI code.
+- `scoreModel.ts` — backend-only adapter that adds metric extractor functions to
+  `scoreMetadata.ts` components for scoring
 - `score.ts` + `constants.ts` — final score calculation over the score model; shared thresholds
 - `watcher.ts` + `watcher/` — chokidar wiring plus extracted watcher helpers:
   `cacheHydration.ts` (cache → in-memory graph mirror), `fileAnalysis.ts`
