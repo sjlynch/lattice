@@ -8,7 +8,7 @@
 - `Legend.tsx` — per-extension toggles. Sources `extensionStyles.ts`.
 - `FloatingPanel.tsx` — draggable, resizable, persists size/pos under `lattice.<thing>.window`.
 - `Modal.tsx` — generic backdrop overlay used by ForceGraph's "create task" flow.
-- `FolderPicker.tsx` — backend-paged folder browser.
+- `FolderPicker.tsx` + `folderPicker/` — backend-paged folder browser, with state in `useFolderPickerState` and focused row/list components.
 
 ## Big launchers (split into subdirs)
 
