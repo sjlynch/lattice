@@ -22,6 +22,10 @@ type Props = {
   data: ScanResult | null;
   loading: boolean;
   hiddenExts: Set<string>;
+  // Extensions (leading dot, lowercase) skipped by the LOC and code-health
+  // overlays. Files with a matching extension fall back to their normal
+  // sprite — no colored tint, no numeric label.
+  metricsIgnoredExts: string[];
   activeFolder: string;
   // Code-health overlay state. Lifted to App so the Legend can swap to
   // a health breakdown panel while `h` is held; the keydown listener
@@ -40,6 +44,7 @@ export function ForceGraphView({
   data,
   loading,
   hiddenExts,
+  metricsIgnoredExts,
   activeFolder,
   healthMode,
   onHealthModeChange,
@@ -55,6 +60,14 @@ export function ForceGraphView({
   const selectedRef = useRefMirror(selected);
   const hiddenExtsRef = useRefMirror(hiddenExts);
   const dataRef = useRefMirror(data);
+
+  // Build a Set once per change so the lookup is O(1) per node. Lowercased
+  // for case-insensitive matching against `node.ext`.
+  const metricsIgnoredExtsSet = useMemo(
+    () => new Set(metricsIgnoredExts.map((e) => e.toLowerCase())),
+    [metricsIgnoredExts],
+  );
+  const metricsIgnoredExtsRef = useRefMirror(metricsIgnoredExtsSet);
 
   const { hoverPos } = useHoverCursor(containerRef);
 
@@ -96,6 +109,7 @@ export function ForceGraphView({
     labelLevelRef,
     nodeDepthsRef,
     changeMapRef,
+    metricsIgnoredExtsRef,
     onHoverNodeChange: setHoverNode,
   });
 
@@ -142,6 +156,12 @@ export function ForceGraphView({
   useEffect(() => {
     clearLabelsAndRefresh(graphRef.current);
   }, [selected]);
+
+  // Same when the LOC/health ignore list changes — re-render so the new
+  // filter takes effect without touching the d3 simulation.
+  useEffect(() => {
+    clearLabelsAndRefresh(graphRef.current);
+  }, [metricsIgnoredExtsSet]);
 
   // Clear selection / close context menu on Escape.
   useEffect(() => {

@@ -1,0 +1,19 @@
+.workflows-editor-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.workflows-editor-name {
+  font-size: 14px;
+  font-weight: 500;
+}
+.workflows-editor-steps {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
