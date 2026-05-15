@@ -1,6 +1,18 @@
 import path from 'node:path';
 import { canonicalProjectPath, homeProjectDir } from '../projectPath.js';
 import { ProjectStateManager } from '../projectStateManager.js';
+import { ConflictWaiterRegistry } from './conflictWaiters.js';
+import { normalizeLoadedRuns } from './normalization.js';
+import { snapshotRun } from './snapshot.js';
+import type { MergeRun, MergeRunEvent } from './types.js';
+
+export type {
+  ConflictWaiterEntry,
+  MergeRun,
+  MergeRunErrorEntry,
+  MergeRunEvent,
+  MergeRunStatus,
+} from './types.js';
 
 const MERGE_RUNS_FILENAME = 'merge-runs.json';
 
@@ -8,125 +20,14 @@ function projectMergeRunsFile(projectPath: string): string {
   return path.join(homeProjectDir(projectPath), MERGE_RUNS_FILENAME);
 }
 
-export type MergeRunStatus = 'running' | 'completed' | 'cancelled' | 'errored';
-
-export type MergeRunErrorEntry = { taskId: string; error: string };
-
-export type MergeRun = {
-  id: string;
-  projectPath: string;
-  status: MergeRunStatus;
-  startedAt: number;
-  finishedAt?: number;
-  total: number;
-  processed: number;
-  current?: string;
-  merged: string[];
-  conflicted: string[];
-  errored: MergeRunErrorEntry[];
-  cancelRequested: boolean;
-};
-
-export type MergeRunEvent =
-  | { type: 'started'; run: MergeRun }
-  | { type: 'progress'; run: MergeRun }
-  | {
-      type: 'conflict';
-      runId: string;
-      projectPath: string;
-      taskId: string;
-      command: string;
-      cwd: string;
-      conflictedFiles: string[];
-      serverId?: string;
-    }
-  | { type: 'completed'; run: MergeRun }
-  | { type: 'cancelled'; run: MergeRun };
-
-export type ConflictWaiterEntry = { runId: string; resolve: () => void };
-
 type MergeRunSubscriber = (ev: MergeRunEvent) => void;
-
-function snapshotRun(run: MergeRun): MergeRun {
-  return {
-    ...run,
-    merged: [...run.merged],
-    conflicted: [...run.conflicted],
-    errored: run.errored.map((e) => ({ ...e })),
-  };
-}
-
-function normalizeLoadedRuns(raw: unknown, projectPath: string): MergeRun[] {
-  if (!Array.isArray(raw)) return [];
-  const now = Date.now();
-  const runs: MergeRun[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== 'object') continue;
-    const candidate = item as Partial<MergeRun>;
-    if (typeof candidate.id !== 'string' || !candidate.id) continue;
-    if (typeof candidate.startedAt !== 'number') continue;
-    const status: MergeRunStatus =
-      candidate.status === 'completed' ||
-      candidate.status === 'cancelled' ||
-      candidate.status === 'errored'
-        ? candidate.status
-        : 'errored';
-    const run: MergeRun = {
-      id: candidate.id,
-      projectPath: canonicalProjectPath(candidate.projectPath ?? projectPath),
-      status,
-      startedAt: candidate.startedAt,
-      finishedAt:
-        typeof candidate.finishedAt === 'number'
-          ? candidate.finishedAt
-          : status === 'errored'
-            ? now
-            : undefined,
-      total: typeof candidate.total === 'number' ? candidate.total : 0,
-      processed: typeof candidate.processed === 'number' ? candidate.processed : 0,
-      current: typeof candidate.current === 'string' ? candidate.current : undefined,
-      merged: Array.isArray(candidate.merged)
-        ? candidate.merged.filter((id): id is string => typeof id === 'string')
-        : [],
-      conflicted: Array.isArray(candidate.conflicted)
-        ? candidate.conflicted.filter((id): id is string => typeof id === 'string')
-        : [],
-      errored: Array.isArray(candidate.errored)
-        ? candidate.errored
-            .filter(
-              (e): e is MergeRunErrorEntry =>
-                !!e &&
-                typeof e === 'object' &&
-                typeof (e as MergeRunErrorEntry).taskId === 'string' &&
-                typeof (e as MergeRunErrorEntry).error === 'string',
-            )
-            .map((e) => ({ ...e }))
-        : [],
-      cancelRequested: !!candidate.cancelRequested || status !== candidate.status,
-    };
-    if (status === 'errored' && candidate.status === 'running') {
-      run.current = undefined;
-      run.errored.push({
-        taskId: '(run)',
-        error: 'merge run was interrupted by backend restart',
-      });
-    }
-    runs.push(run);
-  }
-  return runs;
-}
 
 export class MergeRunStateManager extends ProjectStateManager<
   MergeRun[],
   MergeRunSubscriber
 > {
   public readonly runs = new Map<string, MergeRun>();
-  // Keyed by taskId. A run worker registers here (keyed by the specific
-  // conflict task's ID) when it spawns a resolver and wants to block until
-  // that resolver's Stop hook fires (/complete). Keying by taskId (not runId)
-  // prevents a mid-merge resolver finishing for task A from accidentally
-  // unblocking a waiter registered for a different task B.
-  public readonly conflictWaiters = new Map<string, ConflictWaiterEntry>();
+  private readonly conflictWaiters = new ConflictWaiterRegistry();
 
   constructor() {
     super({
@@ -191,17 +92,16 @@ export class MergeRunStateManager extends ProjectStateManager<
     if (!run || run.status !== 'running') return false;
     run.cancelRequested = true;
     this.syncProjectFromRunMap(run.projectPath);
-    // Unblock any resolver waiter registered by this run so the run loop
-    // can exit cleanly rather than hanging indefinitely. Waiters are keyed
-    // by taskId; we find ours by matching the runId stored in the entry.
-    for (const [taskId, entry] of this.conflictWaiters) {
-      if (entry.runId === id) {
-        this.conflictWaiters.delete(taskId);
-        entry.resolve();
-        break; // at most one waiter per run (sequential resolution)
-      }
-    }
+    this.conflictWaiters.unblockRun(id);
     return true;
+  }
+
+  public registerConflictWaiter(runId: string, taskId: string): Promise<void> {
+    return this.conflictWaiters.register(runId, taskId);
+  }
+
+  public signalConflictWaiter(taskId: string): boolean {
+    return this.conflictWaiters.signal(taskId);
   }
 }
 
@@ -219,9 +119,7 @@ export function registerConflictWaiter(
   runId: string,
   taskId: string,
 ): Promise<void> {
-  return new Promise<void>((resolve) => {
-    state.conflictWaiters.set(taskId, { runId, resolve });
-  });
+  return state.registerConflictWaiter(runId, taskId);
 }
 
 // Called by /complete (or /merged) after finalizeMergedTask succeeds, or
@@ -233,11 +131,7 @@ export function signalConflictWaiterInState(
   state: RunState,
   taskId: string,
 ): boolean {
-  const entry = state.conflictWaiters.get(taskId);
-  if (!entry) return false;
-  state.conflictWaiters.delete(taskId);
-  entry.resolve();
-  return true;
+  return state.signalConflictWaiter(taskId);
 }
 
 export function snapshot(run: MergeRun): MergeRun {

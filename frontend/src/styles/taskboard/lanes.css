@@ -1,0 +1,97 @@
+.taskboard-lane {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #181b21;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.taskboard-lane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: #1d2128;
+  user-select: none;
+  flex: 0 0 auto;
+}
+.taskboard-lane-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+}
+.taskboard-lane-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+}
+.taskboard-lane-count {
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+.taskboard-lane-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.taskboard-lane.drop-target {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 2px var(--accent-bg);
+}
+.taskboard-lane-track {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px;
+}
+.taskboard-lane-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  font-style: italic;
+  padding: 6px 10px;
+  border: 1px dashed transparent;
+  border-radius: 6px;
+}
+.taskboard-lane.drop-target .taskboard-lane-empty {
+  color: var(--text-secondary);
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.taskboard-lane-empty.slot-active {
+  color: var(--text-primary);
+  border-color: var(--lane-color, var(--accent));
+  background: rgba(255, 255, 255, 0.04);
+}
+/* Reorder drop slots: thin invisible target by default; expand and show a
+   colored line when a drag is in progress / hovering. The slots collapse to
+   zero height when no drag is active so they don't add visual padding. */
+.taskboard-dropslot {
+  height: 0;
+  margin: -2px 0;
+  border-radius: 2px;
+  background: transparent;
+  transition: height 0.08s ease, background 0.08s ease;
+  pointer-events: none;
+}
+.taskboard-lane.dragging-active .taskboard-dropslot {
+  height: 8px;
+  pointer-events: auto;
+}
+.taskboard-lane.dragging-active .taskboard-dropslot.active {
+  height: 10px;
+  background: var(--lane-color, var(--accent));
+  box-shadow: 0 0 0 1px var(--lane-color, var(--accent));
+}
+
