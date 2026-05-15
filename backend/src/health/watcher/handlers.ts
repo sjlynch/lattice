@@ -23,8 +23,11 @@ async function handleAddOrChange(
   // tsconfig / .gitignore reloads first — they may rewrite the alias map or the
   // ignore predicate, which feeds the per-file analysis below.
   if (await proj.config.reloadForPath(filePath)) {
-    // Aliases may have changed — re-run cross-file with the new alias map so
-    // previously-unresolved imports start counting.
+    // Aliases / ignores may have changed. Ask the frontend to refresh the full
+    // scan (the visible tree can change), then re-run cross-file with the new
+    // alias map so previously-unresolved imports start counting.
+    broadcast(proj, { type: 'rescan', reason: 'config', path: filePath });
+    proj.watcher.add(proj.root);
     proj.crossFile.recomputeAndBroadcast(null);
     return;
   }
@@ -47,6 +50,8 @@ async function handleAddOrChange(
 
 async function handleRemove(proj: ProjectWatcher, filePath: string): Promise<void> {
   if (await proj.config.reloadForPath(filePath)) {
+    broadcast(proj, { type: 'rescan', reason: 'config', path: filePath });
+    proj.watcher.add(proj.root);
     proj.crossFile.recomputeAndBroadcast(null);
     return;
   }

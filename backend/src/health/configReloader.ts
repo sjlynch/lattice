@@ -25,8 +25,13 @@ export class ConfigReloader {
     return this.projectAliases;
   }
 
-  isIgnored(filePath: string): boolean {
-    return matchIgnoredSourcePath(filePath, this.projectRoot, this.gitignoreMatcher);
+  isIgnored(filePath: string, isDirectory = false): boolean {
+    return matchIgnoredSourcePath(
+      filePath,
+      this.projectRoot,
+      this.gitignoreMatcher,
+      isDirectory,
+    );
   }
 
   async reload(): Promise<void> {

@@ -70,7 +70,10 @@ function createChokidarWatcher(
   proj: ProjectWatcher,
 ): FSWatcher {
   return chokidar.watch(projectRoot, {
-    ignored: (filePath) => proj.config.isIgnored(filePath),
+    ignored: (filePath, stats) => proj.config.isIgnored(
+      filePath,
+      stats?.isDirectory() ?? false,
+    ),
     persistent: true,
     ignoreInitial: true,
     awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
@@ -90,6 +93,12 @@ function wireWatcherEvents(proj: ProjectWatcher, watcher: FSWatcher): void {
   watcher.on('add', (p) => { onAddOrChange(p).catch(() => { /* ignore */ }); });
   watcher.on('change', (p) => { onAddOrChange(p).catch(() => { /* ignore */ }); });
   watcher.on('unlink', (p) => { onRemove(p).catch(() => { /* ignore */ }); });
+  watcher.on('addDir', (p) => {
+    if (p !== proj.root) broadcast(proj, { type: 'rescan', reason: 'directory', path: p });
+  });
+  watcher.on('unlinkDir', (p) => {
+    if (p !== proj.root) broadcast(proj, { type: 'rescan', reason: 'directory', path: p });
+  });
 }
 
 // Subscribe to live health updates for a project. The watcher is lazily started

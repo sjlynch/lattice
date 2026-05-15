@@ -1,7 +1,7 @@
 // Live health-update subscription. The backend's /ws/health endpoint
-// pushes a HealthUpdate per file save; the App applies it to the
-// current scan result so the graph reflects the new score without a
-// full re-scan.
+// pushes a HealthUpdate per file save / tree change; the App applies
+// metrics patches in place and only re-scans when the visible file tree
+// changed.
 
 import type { HealthUpdate } from './types';
 import { subscribeWs } from './ws';
