@@ -24,86 +24,24 @@
 //          when its transitive deps drift in node_modules.
 //      Compiling once and running plain Node sidesteps both.
 
-import { spawn, spawnSync } from 'node:child_process';
-import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-
-const require = createRequire(import.meta.url);
-const inheritStdio = ['inherit', 'inherit', 'inherit'];
+import { createBackendLifecycle, shutdownTerminalServer } from './dev/backendLifecycle.mjs';
+import {
+  copyAssetsBeforeRespawn,
+  copyAssetsScript,
+  resolveTscBin,
+  runInitialCompile,
+  runInitialCopyAssets,
+  startTscWatch,
+} from './dev/compileAssets.mjs';
+import { selfHealDeps } from './dev/deps.mjs';
+import { watchDist } from './dev/distWatcher.mjs';
+import { createRestartPolicy } from './dev/restartPolicy.mjs';
 
 // ---- Step 1: self-heal deps if needed ----
 
-const REQUIRED_PKGS = [
-  'typescript',
-  'express',
-  'cors',
-  'ws',
-  'node-pty',
-  'ignore',
-  'chokidar',
-];
+await selfHealDeps();
 
-function hasPkg(name) {
-  try {
-    require.resolve(name);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function npmCmd() {
-  // .cmd shim on Windows can't be spawned without a shell since Node 20.
-  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
-}
-
-function runOnce(cmd, args, opts = {}) {
-  return new Promise((resolve) => {
-    const c = spawn(cmd, args, opts);
-    c.on('exit', (code) => resolve(code ?? 0));
-    c.on('error', (err) => {
-      console.error(err);
-      resolve(1);
-    });
-  });
-}
-
-const missing = REQUIRED_PKGS.filter((p) => !hasPkg(p));
-if (missing.length > 0) {
-  console.log(
-    `[lattice-backend] missing ${missing.length} dep(s) (${missing.join(', ')}) — running 'npm install' to repair...`,
-  );
-  const code = await runOnce(npmCmd(), ['install'], {
-    stdio: inheritStdio,
-    shell: process.platform === 'win32',
-  });
-  if (code !== 0) {
-    console.error(
-      `[lattice-backend] 'npm install' exited with ${code}. Resolve manually and retry.`,
-    );
-    process.exit(code);
-  }
-}
-
-// ---- Step 2: initial compile ----
-
-const tscBin = require.resolve('typescript/lib/tsc.js');
-
-console.log('[lattice-backend] initial compile...');
-const initialCode = await runOnce(process.execPath, [tscBin], {
-  stdio: 'inherit',
-});
-if (initialCode !== 0) {
-  console.error(
-    `[lattice-backend] initial tsc exited ${initialCode}. Fix type errors and retry.`,
-  );
-  process.exit(initialCode);
-}
-
-// ---- Step 2b: copy non-TS static assets into dist/ ----
+// ---- Step 2: initial compile + static assets ----
 //
 // `tsc` only emits .js for .ts inputs. Runtime assets that live under src/
 // (for example src/workflowRuns/create-task-template.cjs and
@@ -115,20 +53,14 @@ if (initialCode !== 0) {
 // a task introduced create-task-template.cjs, dist/ recompiled without it,
 // and the next `node --watch` restart died with ENOENT.
 //
-// We re-run copy-assets on every backend respawn (see spawnBackend below),
+// We re-run copy-assets on every backend respawn (see backendLifecycle.mjs),
 // so a merge that *introduces* a new src asset gets it copied into dist/
 // at the next restart instead of waiting for the next session. The initial
 // run here is just so the first spawn already has everything.
-const copyAssetsScript = fileURLToPath(new URL('./copy-assets.mjs', import.meta.url));
-const copyAssetsCode = await runOnce(process.execPath, [copyAssetsScript], {
-  stdio: 'inherit',
-});
-if (copyAssetsCode !== 0) {
-  console.error(
-    `[lattice-backend] copy-assets exited ${copyAssetsCode}. The backend would crash on boot — aborting.`,
-  );
-  process.exit(copyAssetsCode);
-}
+
+const tscBin = resolveTscBin();
+await runInitialCompile(tscBin);
+await runInitialCopyAssets(copyAssetsScript);
 
 // ---- Step 3: watch + run ----
 //
@@ -143,200 +75,13 @@ if (copyAssetsCode !== 0) {
 // (not a deliberate restart) we behave like `node --watch`: stay up and
 // wait for the next dist/ change to retry.
 
-const tscWatch = spawn(
-  process.execPath,
-  [tscBin, '-w', '--preserveWatchOutput'],
-  { stdio: inheritStdio },
-);
+const tscWatch = startTscWatch(tscBin);
 
-const PER_PROJECT_DIR = path.join(os.homedir(), '.lattice', 'per-project');
-const RESTART_DEBOUNCE_MS = 250;
-const DEFERRED_RESTART_POLL_MS = 3000;
-// Don't defer a restart forever if a run somehow wedges with the lock
-// held — after this long, restart anyway (the run is interrupted, then
-// auto-resumed on the next boot).
-const MAX_DEFER_MS = 15 * 60 * 1000;
-const TERMINAL_PORT = Number(process.env.TERMINAL_PORT) || 5185;
-
-function pidAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return Boolean(err) && err.code !== 'ESRCH'; // EPERM etc → assume alive
-  }
-}
-
-// True if any Lattice process holds a per-project run.lock (a merge run
-// or a manual /merge). Cheap — only read on a dist/ change or the poll.
-function repoOperationInFlight() {
-  let hashes;
-  try {
-    hashes = fs.readdirSync(PER_PROJECT_DIR);
-  } catch {
-    return false; // dir doesn't exist yet → nothing running
-  }
-  for (const h of hashes) {
-    let raw;
-    try {
-      raw = fs.readFileSync(path.join(PER_PROJECT_DIR, h, 'run.lock'), 'utf8');
-    } catch {
-      continue;
-    }
-    let body;
-    try {
-      body = JSON.parse(raw);
-    } catch {
-      continue;
-    }
-    if (body && typeof body.pid === 'number' && pidAlive(body.pid)) return true;
-  }
-  return false;
-}
-
-let backendChild = null;
-let restartingBackend = false; // true between a restart kill and the respawn
 let shuttingDown = false;
-let deferredSince = 0; // ms ts of the first deferred restart, or 0
-
-function spawnBackend() {
-  // Re-copy static assets first. If a merge while this session was up
-  // introduced a new runtime asset (e.g. src/latticeApiDocs/LATTICE_API.template.md),
-  // it isn't in dist/ yet; the next spawn would crash any module that
-  // reads it at import time (terminal-server has hit this twice now).
-  // Synchronous + cheap (a couple fs.copyFile calls in a child) so we
-  // keep spawnBackend a sync function — the existing callers store the
-  // ChildProcess directly and call .kill() on it.
-  try {
-    const r = spawnSync(process.execPath, [copyAssetsScript], { stdio: 'inherit' });
-    if (r.status !== 0) {
-      console.warn(
-        `[lattice-backend] copy-assets exited ${r.status} before respawn — proceeding anyway (dist may be incomplete).`,
-      );
-    }
-  } catch (err) {
-    console.warn('[lattice-backend] copy-assets threw before respawn (continuing):', err);
-  }
-  restartingBackend = false;
-  const c = spawn(process.execPath, ['dist/index.js'], { stdio: inheritStdio });
-  c.on('exit', (code, signal) => {
-    if (restartingBackend) {
-      restartingBackend = false;
-      backendChild = spawnBackend();
-      return;
-    }
-    if (shuttingDown) {
-      void onExit(code ?? 0);
-      return;
-    }
-    // Exited on its own (a crash, or a fatal startup error) — mirror
-    // `node --watch`: stay up and wait for the next dist/ change to retry.
-    console.error(
-      `[lattice-backend] dist/index.js exited (${signal ? `signal ${signal}` : `code ${code}`}) — ` +
-        `waiting for a dist/ change to retry...`,
-    );
-    backendChild = null;
-  });
-  return c;
-}
-
-function restartBackend(reason) {
-  if (restartingBackend) return; // a restart is already in flight
-  deferredSince = 0;
-  if (!backendChild) {
-    console.log(`[lattice-backend] starting dist/index.js — ${reason}`);
-    backendChild = spawnBackend();
-    return;
-  }
-  console.log(`[lattice-backend] restarting dist/index.js — ${reason}`);
-  restartingBackend = true;
-  try {
-    backendChild.kill();
-  } catch {
-    restartingBackend = false;
-    backendChild = spawnBackend();
-  }
-}
-
-function onDistChanged() {
-  if (repoOperationInFlight()) {
-    if (!deferredSince) {
-      deferredSince = Date.now();
-      console.log(
-        '[lattice-backend] dist/ changed during a merge/merge-all run — deferring restart until it finishes ' +
-          '(the deferred-restart poll applies it once the run.lock clears).',
-      );
-    }
-    return; // the poll below handles "run finished" and the long-defer backstop
-  }
-  restartBackend(deferredSince ? 'merge run finished — applying deferred restart' : 'dist/ changed');
-}
-
-// Debounce dist/ change bursts — one tsc compile emits many files.
-let distDebounceTimer = null;
-function scheduleDistChanged() {
-  if (distDebounceTimer) clearTimeout(distDebounceTimer);
-  distDebounceTimer = setTimeout(() => {
-    distDebounceTimer = null;
-    onDistChanged();
-  }, RESTART_DEBOUNCE_MS);
-}
-
-async function watchDist() {
-  // fs.watch({recursive}) covers Windows + macOS. On Linux it throws
-  // ERR_FEATURE_UNAVAILABLE_ON_PLATFORM — fall back to chokidar there.
-  try {
-    const w = fs.watch('dist', { recursive: true }, () => scheduleDistChanged());
-    console.log('[lattice-backend] watching dist/ (fs.watch)');
-    return () => {
-      try {
-        w.close();
-      } catch {
-        /* ignore */
-      }
-    };
-  } catch {
-    /* fall through */
-  }
-  try {
-    const mod = await import('chokidar');
-    const watch = mod.watch ?? mod.default?.watch ?? mod.default;
-    const w = watch('dist', { ignoreInitial: true });
-    w.on('all', () => scheduleDistChanged());
-    console.log('[lattice-backend] watching dist/ (chokidar)');
-    return () => {
-      void w.close();
-    };
-  } catch (err) {
-    console.warn(
-      '[lattice-backend] could not watch dist/ — auto-restart disabled; restart `npm run dev` after backend changes.',
-      err,
-    );
-    return () => {};
-  }
-}
-
-// The terminal server (port 5185) is intentionally detached + unref'd by
-// the backend (terminalProxy.ts) so PTYs survive backend restarts. The
-// downside is the orchestrator killing the backend doesn't take it down,
-// so on real shutdown we POST /shutdown ourselves. (NOT on a plain
-// restart — that would kill every PTY on each HMR cycle.) Without this,
-// every `npm run dev` cycle leaves orphan PTYs (and orphan Claude Code
-// processes inside them) running forever.
-async function shutdownTerminalServer() {
-  try {
-    await fetch(`http://127.0.0.1:${TERMINAL_PORT}/shutdown`, {
-      method: 'POST',
-      signal: AbortSignal.timeout(2500),
-    });
-  } catch {
-    /* terminal server already down */
-  }
-}
-
 let closeDistWatch = () => {};
-let deferPollTimer = null;
+
+let backendLifecycle;
+let restartPolicy;
 
 async function shutdown(signal) {
   if (shuttingDown) return;
@@ -346,9 +91,9 @@ async function shutdown(signal) {
   } catch {
     /* ignore */
   }
-  if (deferPollTimer) clearInterval(deferPollTimer);
+  restartPolicy.stopDeferredPoll();
   await shutdownTerminalServer();
-  for (const c of [tscWatch, backendChild]) {
+  for (const c of [tscWatch]) {
     if (!c) continue;
     try {
       c.kill(signal);
@@ -356,7 +101,23 @@ async function shutdown(signal) {
       /* ignore */
     }
   }
+  backendLifecycle.kill(signal);
 }
+
+async function onExit(code) {
+  await shutdown('SIGTERM');
+  process.exit(code ?? 0);
+}
+
+backendLifecycle = createBackendLifecycle({
+  copyAssetsBeforeRespawn: () => copyAssetsBeforeRespawn(copyAssetsScript),
+  isShuttingDown: () => shuttingDown,
+  onExitDuringShutdown: onExit,
+});
+
+restartPolicy = createRestartPolicy({
+  restartBackend: backendLifecycle.restartBackend,
+});
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
@@ -364,29 +125,9 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   });
 }
 
-async function onExit(code) {
-  await shutdown('SIGTERM');
-  process.exit(code ?? 0);
-}
 // If tsc -w dies, that's fatal (no more incremental compiles) — bail.
 tscWatch.on('exit', onExit);
 
-backendChild = spawnBackend();
-closeDistWatch = await watchDist();
-// Once a restart is deferred, the dist/ watcher won't necessarily fire
-// again, so poll: apply the deferred restart as soon as the run.lock
-// clears, and — as a backstop against a wedged run holding the lock
-// forever — force it after MAX_DEFER_MS regardless.
-deferPollTimer = setInterval(() => {
-  if (!deferredSince) return;
-  if (!repoOperationInFlight()) {
-    restartBackend('merge run finished — applying deferred restart');
-  } else if (Date.now() - deferredSince > MAX_DEFER_MS) {
-    console.warn(
-      `[lattice-backend] restart deferred for ${Math.round((Date.now() - deferredSince) / 60000)} min — ` +
-        `forcing it (an in-flight run will be interrupted and auto-resumed on the next boot).`,
-    );
-    restartBackend('forced after a long defer');
-  }
-}, DEFERRED_RESTART_POLL_MS);
-deferPollTimer.unref();
+backendLifecycle.start();
+closeDistWatch = await watchDist(restartPolicy.scheduleDistChanged);
+restartPolicy.startDeferredPoll();

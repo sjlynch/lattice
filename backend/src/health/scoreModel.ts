@@ -1,122 +1,39 @@
 import type { HealthMetrics } from './types.js';
+import {
+  SCORE_COMPONENT_METADATA,
+  type ScoreComponentId,
+  type ScoreComponentMetadata,
+} from './scoreMetadata.js';
 
 export type ScoreInput = Omit<HealthMetrics, 'score' | 'language'>;
+export type { ScoreComponentId, ScoreComponentMetadata };
 
-export type ScoreComponentId =
-  | 'cognitive_complexity'
-  | 'cyclomatic_complexity'
-  | 'maintainability_index'
-  | 'nesting_depth'
-  | 'function_length'
-  | 'smell_density'
-  | 'call_graph_density'
-  | 'file_size'
-  | 'fan_out'
-  | 'fan_in'
-  | 'circular_dependency';
-
-export type ScoreModelComponent = {
-  id: ScoreComponentId;
-  // Fraction of the 0-100 score this component can subtract.
-  weight: number;
-  // Boundary where this component starts losing points.
-  healthyThreshold: number;
-  // Boundary where this component has lost its full weight.
-  unhealthyThreshold: number;
-  higherIsWorse: boolean;
+export type ScoreModelComponent = ScoreComponentMetadata & {
   value: (metrics: ScoreInput) => number | null | undefined;
 };
 
-export const SCORE_MODEL_COMPONENTS: readonly ScoreModelComponent[] = [
-  {
-    id: 'cognitive_complexity',
-    weight: 0.20,
-    healthyThreshold: 5,
-    unhealthyThreshold: 30,
-    higherIsWorse: true,
-    value: (m) => m.cognitiveMax,
-  },
-  {
-    id: 'cyclomatic_complexity',
-    weight: 0.15,
-    healthyThreshold: 5,
-    unhealthyThreshold: 25,
-    higherIsWorse: true,
-    value: (m) => m.cyclomaticMax,
-  },
-  {
-    id: 'maintainability_index',
-    weight: 0.12,
-    healthyThreshold: 85,
-    unhealthyThreshold: 0,
-    higherIsWorse: false,
-    value: (m) => m.maintainabilityIndex,
-  },
-  {
-    id: 'nesting_depth',
-    weight: 0.10,
-    healthyThreshold: 2,
-    unhealthyThreshold: 8,
-    higherIsWorse: true,
-    value: (m) => m.maxNestingDepth,
-  },
-  {
-    id: 'function_length',
-    weight: 0.08,
-    healthyThreshold: 30,
-    unhealthyThreshold: 250,
-    higherIsWorse: true,
-    value: (m) => m.maxFunctionLength,
-  },
-  {
-    id: 'smell_density',
-    weight: 0.10,
-    healthyThreshold: 0,
-    unhealthyThreshold: 0.05,
-    higherIsWorse: true,
-    value: (m) => (m.loc > 0 ? m.smellCount / m.loc : 0),
-  },
-  {
-    id: 'call_graph_density',
-    weight: 0.05,
-    healthyThreshold: 0.3,
-    unhealthyThreshold: 1.5,
-    higherIsWorse: true,
-    value: (m) => m.callGraphDensity,
-  },
-  {
-    id: 'file_size',
-    weight: 0.05,
-    healthyThreshold: 200,
-    unhealthyThreshold: 1500,
-    higherIsWorse: true,
-    value: (m) => m.loc,
-  },
-  {
-    id: 'fan_out',
-    weight: 0.05,
-    healthyThreshold: 8,
-    unhealthyThreshold: 30,
-    higherIsWorse: true,
-    value: (m) => m.fanOut,
-  },
-  {
-    id: 'fan_in',
-    weight: 0.05,
-    healthyThreshold: 15,
-    unhealthyThreshold: 50,
-    higherIsWorse: true,
-    value: (m) => m.fanIn,
-  },
-  {
-    id: 'circular_dependency',
-    weight: 0.05,
-    healthyThreshold: 0,
-    unhealthyThreshold: 1,
-    higherIsWorse: true,
-    value: (m) => (m.inCycle ? 1 : 0),
-  },
-];
+const SCORE_COMPONENT_VALUES: Record<
+  ScoreComponentId,
+  (metrics: ScoreInput) => number | null | undefined
+> = {
+  cognitive_complexity: (m) => m.cognitiveMax,
+  cyclomatic_complexity: (m) => m.cyclomaticMax,
+  maintainability_index: (m) => m.maintainabilityIndex,
+  nesting_depth: (m) => m.maxNestingDepth,
+  function_length: (m) => m.maxFunctionLength,
+  smell_density: (m) => (m.loc > 0 ? m.smellCount / m.loc : 0),
+  call_graph_density: (m) => m.callGraphDensity,
+  file_size: (m) => m.loc,
+  fan_out: (m) => m.fanOut,
+  fan_in: (m) => m.fanIn,
+  circular_dependency: (m) => (m.inCycle ? 1 : 0),
+};
+
+export const SCORE_MODEL_COMPONENTS: readonly ScoreModelComponent[] =
+  SCORE_COMPONENT_METADATA.map((component) => ({
+    ...component,
+    value: SCORE_COMPONENT_VALUES[component.id],
+  }));
 
 export function scoreComponentLoss(
   component: ScoreModelComponent,

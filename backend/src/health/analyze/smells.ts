@@ -1,4 +1,4 @@
-import type { HealthSmell } from '../types.js';
+import type { HealthSmell, HealthSmellId } from '../types.js';
 import type { FileAnalysis } from '../walker.js';
 import {
   COMMENT_BY_EXT,
@@ -31,6 +31,50 @@ export type AssembleSmellsInput = {
   classCount: number;
 };
 
+type SmellTokenKey = keyof FileAnalysis['smellTokens'];
+
+type TokenSmellRule = {
+  key: SmellTokenKey;
+  id: HealthSmellId;
+  transform?: (count: number) => number;
+};
+
+// Keep this in the same order the old if-chain inserted into the Map so
+// `smellsToArray` remains stable for equal-count smells.
+const TOKEN_SMELL_RULES: readonly TokenSmellRule[] = [
+  { key: 'anyType', id: 'any_type' },
+  { key: 'typeAssertion', id: 'type_assertion' },
+  { key: 'nonNullAssertion', id: 'non_null_assertion' },
+  { key: 'debuggerStmt', id: 'debugger_stmt' },
+  { key: 'consoleCalls', id: 'console_log' },
+  { key: 'evalCalls', id: 'eval_call' },
+  { key: 'varDecls', id: 'var_keyword' },
+  { key: 'looseEquality', id: 'loose_equality' },
+  { key: 'emptyCatch', id: 'empty_catch' },
+  { key: 'deepOptionalChain', id: 'deep_optional_chain' },
+  { key: 'deepTernary', id: 'deep_ternary' },
+  { key: 'emptyInterface', id: 'empty_interface' },
+  { key: 'printCalls', id: 'print_call' },
+  { key: 'bareExcept', id: 'bare_except' },
+  { key: 'wildcardImport', id: 'wildcard_import' },
+  { key: 'mutableDefaultArg', id: 'mutable_default_arg' },
+  { key: 'globalKeyword', id: 'global_keyword' },
+  { key: 'tsIgnore', id: 'ts_ignore' },
+  { key: 'eslintDisable', id: 'eslint_disable' },
+  { key: 'mixedExports', id: 'mixed_exports' },
+];
+
+function foldTokenSmells(
+  smells: SmellCounter,
+  tokens: FileAnalysis['smellTokens'],
+): void {
+  for (const rule of TOKEN_SMELL_RULES) {
+    const raw = tokens[rule.key];
+    const count = rule.transform ? rule.transform(raw) : raw;
+    if (count > 0) bump(smells, rule.id, count);
+  }
+}
+
 export function assembleSmells({
   smellTokens,
   stringLiterals,
@@ -43,27 +87,7 @@ export function assembleSmells({
   classCount,
 }: AssembleSmellsInput): { smells: HealthSmell[]; smellCount: number } {
   const smells: SmellCounter = new Map();
-  const t = smellTokens;
-  if (t.anyType) bump(smells, 'any_type', t.anyType);
-  if (t.typeAssertion) bump(smells, 'type_assertion', t.typeAssertion);
-  if (t.nonNullAssertion) bump(smells, 'non_null_assertion', t.nonNullAssertion);
-  if (t.debuggerStmt) bump(smells, 'debugger_stmt', t.debuggerStmt);
-  if (t.consoleCalls) bump(smells, 'console_log', t.consoleCalls);
-  if (t.evalCalls) bump(smells, 'eval_call', t.evalCalls);
-  if (t.varDecls) bump(smells, 'var_keyword', t.varDecls);
-  if (t.looseEquality) bump(smells, 'loose_equality', t.looseEquality);
-  if (t.emptyCatch) bump(smells, 'empty_catch', t.emptyCatch);
-  if (t.deepOptionalChain) bump(smells, 'deep_optional_chain', t.deepOptionalChain);
-  if (t.deepTernary) bump(smells, 'deep_ternary', t.deepTernary);
-  if (t.emptyInterface) bump(smells, 'empty_interface', t.emptyInterface);
-  if (t.printCalls) bump(smells, 'print_call', t.printCalls);
-  if (t.bareExcept) bump(smells, 'bare_except', t.bareExcept);
-  if (t.wildcardImport) bump(smells, 'wildcard_import', t.wildcardImport);
-  if (t.mutableDefaultArg) bump(smells, 'mutable_default_arg', t.mutableDefaultArg);
-  if (t.globalKeyword) bump(smells, 'global_keyword', t.globalKeyword);
-  if (t.tsIgnore) bump(smells, 'ts_ignore', t.tsIgnore);
-  if (t.eslintDisable) bump(smells, 'eslint_disable', t.eslintDisable);
-  if (t.mixedExports) bump(smells, 'mixed_exports', t.mixedExports);
+  foldTokenSmells(smells, smellTokens);
 
   if (aggregates.booleanParamCount > 0) {
     bump(smells, 'boolean_param', aggregates.booleanParamCount);
