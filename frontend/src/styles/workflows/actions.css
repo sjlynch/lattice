@@ -1,0 +1,24 @@
+.workflows-editor-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.10);
+}
+.workflows-default-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+.workflows-default-prompts-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-right: 2px;
+}

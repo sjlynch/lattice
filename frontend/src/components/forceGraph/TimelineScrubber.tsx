@@ -4,8 +4,14 @@
 // the rightmost tick is "WT" — including it in the range surfaces
 // uncommitted changes as rings on the graph.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { GitCommit } from '../../api';
+import {
+  formatTimelineTickLabel,
+  lastTickIndex,
+  tickPositionsForCount,
+} from './timelineRange';
+import { useTimelineScrubberDrag } from './useTimelineScrubberDrag';
 
 type Props = {
   commits: GitCommit[];
@@ -17,19 +23,6 @@ type Props = {
   hasUncommitted: boolean;
 };
 
-type Handle = 'left' | 'right' | null;
-
-function fmtAge(ts: number): string {
-  const dt = Date.now() - ts;
-  const m = Math.floor(dt / 60000);
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  return `${d}d ago`;
-}
-
 export function TimelineScrubber({
   commits,
   left,
@@ -38,60 +31,26 @@ export function TimelineScrubber({
   hasUncommitted,
 }: Props) {
   const trackRef = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState<Handle>(null);
   const [hover, setHover] = useState<number | null>(null);
 
   // Tick count = commits + 1 working-tree slot.
   const tickCount = commits.length + 1;
-  const lastIdx = Math.max(0, tickCount - 1);
+  const lastIdx = lastTickIndex(tickCount);
+  const {
+    activeHandle,
+    indexFromClientX,
+    startHandleDrag,
+    onTrackPointerDown,
+  } = useTimelineScrubberDrag(trackRef, left, right, tickCount, onChange);
 
-  // Compute the tick index from a clientX position over the track.
-  const idxFromClientX = useCallback(
-    (clientX: number): number => {
-      const rect = trackRef.current?.getBoundingClientRect();
-      if (!rect || tickCount <= 1) return 0;
-      const ratio = (clientX - rect.left) / rect.width;
-      const raw = Math.round(ratio * (tickCount - 1));
-      return Math.max(0, Math.min(lastIdx, raw));
-    },
-    [lastIdx, tickCount],
+  const tickPositions = useMemo(
+    () => tickPositionsForCount(tickCount),
+    [tickCount],
   );
-
-  // Pointer-driven drag. The active handle "carries" the other when it
-  // would otherwise cross over.
-  useEffect(() => {
-    if (!drag) return;
-    function onMove(e: PointerEvent) {
-      const idx = idxFromClientX(e.clientX);
-      if (drag === 'left') {
-        // If left has passed right, push right along with it.
-        if (idx > right) onChange(idx, idx);
-        else onChange(idx, right);
-      } else {
-        if (idx < left) onChange(idx, idx);
-        else onChange(left, idx);
-      }
-    }
-    function onUp() {
-      setDrag(null);
-    }
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    window.addEventListener('pointercancel', onUp);
-    return () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('pointercancel', onUp);
-    };
-  }, [drag, idxFromClientX, left, right, onChange]);
-
-  const tickPositions = useMemo(() => {
-    const out: number[] = [];
-    for (let i = 0; i < tickCount; i++) {
-      out.push(tickCount === 1 ? 50 : (i / (tickCount - 1)) * 100);
-    }
-    return out;
-  }, [tickCount]);
+  const labelFor = useCallback(
+    (idx: number): string => formatTimelineTickLabel(idx, commits, hasUncommitted),
+    [commits, hasUncommitted],
+  );
 
   if (commits.length === 0) {
     return (
@@ -100,38 +59,6 @@ export function TimelineScrubber({
       </div>
     );
   }
-
-  const labelFor = (idx: number): string => {
-    if (idx === lastIdx) {
-      return hasUncommitted ? 'Working tree (uncommitted)' : 'Working tree (clean)';
-    }
-    const c = commits[idx];
-    if (!c) return '';
-    return `${c.shortSha} · ${c.subject} · ${fmtAge(c.date)}`;
-  };
-
-  const startDrag = (h: 'left' | 'right') => (e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDrag(h);
-  };
-
-  // Click on a tick: snap whichever handle is closer to that index.
-  const onTrackPointerDown = (e: React.PointerEvent) => {
-    if (drag) return;
-    const idx = idxFromClientX(e.clientX);
-    const distLeft = Math.abs(idx - left);
-    const distRight = Math.abs(idx - right);
-    if (distLeft <= distRight) {
-      if (idx > right) onChange(idx, idx);
-      else onChange(idx, right);
-      setDrag('left');
-    } else {
-      if (idx < left) onChange(idx, idx);
-      else onChange(left, idx);
-      setDrag('right');
-    }
-  };
 
   const leftPct = tickPositions[left] ?? 0;
   const rightPct = tickPositions[right] ?? 100;
@@ -155,8 +82,8 @@ export function TimelineScrubber({
         onPointerDown={onTrackPointerDown}
         onPointerLeave={() => setHover(null)}
         onPointerMove={(e) => {
-          if (drag) return;
-          setHover(idxFromClientX(e.clientX));
+          if (activeHandle) return;
+          setHover(indexFromClientX(e.clientX));
         }}
       >
         <div
@@ -177,9 +104,9 @@ export function TimelineScrubber({
           );
         })}
         <div
-          className={`ts-handle ts-handle-left${drag === 'left' ? ' dragging' : ''}`}
+          className={`ts-handle ts-handle-left${activeHandle === 'left' ? ' dragging' : ''}`}
           style={{ left: `${leftPct}%` }}
-          onPointerDown={startDrag('left')}
+          onPointerDown={startHandleDrag('left')}
           role="slider"
           aria-label="Range start"
           aria-valuemin={0}
@@ -188,9 +115,9 @@ export function TimelineScrubber({
           tabIndex={0}
         />
         <div
-          className={`ts-handle ts-handle-right${drag === 'right' ? ' dragging' : ''}`}
+          className={`ts-handle ts-handle-right${activeHandle === 'right' ? ' dragging' : ''}`}
           style={{ left: `${rightPct}%` }}
-          onPointerDown={startDrag('right')}
+          onPointerDown={startHandleDrag('right')}
           role="slider"
           aria-label="Range end"
           aria-valuemin={0}
@@ -198,7 +125,7 @@ export function TimelineScrubber({
           aria-valuenow={right}
           tabIndex={0}
         />
-        {hover !== null && drag === null && (
+        {hover !== null && activeHandle === null && (
           <div
             className="ts-hover-tip"
             style={{ left: `${tickPositions[hover] ?? 0}%` }}
