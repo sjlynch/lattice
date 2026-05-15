@@ -1,0 +1,47 @@
+
+/* Run-all button next to lane title */
+.lane-runall {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  margin-left: 4px;
+  color: #9ed28e;
+  background: rgba(158, 210, 142, 0.10);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.lane-runall:hover {
+  background: rgba(158, 210, 142, 0.22);
+  color: #b8e0a8;
+}
+.lane-runall:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  background: transparent;
+}
+.lane-runall.merge {
+  color: #5eead4;
+  background: rgba(94, 234, 212, 0.10);
+}
+.lane-runall.merge:hover {
+  color: #88f1da;
+  background: rgba(94, 234, 212, 0.22);
+}
+.lane-runall.resume {
+  color: #e7c986;
+  background: rgba(231, 201, 134, 0.10);
+}
+.lane-runall.resume:hover {
+  color: #f4dba1;
+  background: rgba(231, 201, 134, 0.22);
+}
+.lane-runall.qa-done {
+  color: #c89cff;
+  background: rgba(200, 156, 255, 0.10);
+}
+.lane-runall.qa-done:hover {
+  color: #d8b4ff;
+  background: rgba(200, 156, 255, 0.22);
+}

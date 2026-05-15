@@ -5,13 +5,18 @@
 
 import * as THREE from 'three';
 import type { GraphNode } from '../../api';
-import { spriteFor } from './sprites';
 import type { GraphSettings } from './graphSettings';
 import {
-  disableRaycast,
-  restrictSpriteRaycast,
-  type SpriteUvBounds,
-} from './spritePicking';
+  type FloatingLabelEntry,
+  makeConnectorLine,
+  makeFloatingLabelSprite,
+} from './floatingLabelSprite';
+import {
+  buildMeasuredLabelTexture,
+  createLabelTextureCache,
+  type LabelTextureOptions,
+} from './labelTexture';
+import { spriteFor } from './sprites';
 
 // Node depth derived from path: root has depth 0; every path separator past
 // the root prefix bumps the depth by one. Works for both POSIX and Windows
@@ -22,80 +27,21 @@ export function depthFor(node: GraphNode, root: string): number {
   let n = 0;
   for (let i = 0; i < rest.length; i++) {
     const ch = rest.charCodeAt(i);
-    if (ch === 47 /* / */ || ch === 92 /* \ */) n++;
+    if (ch === 47 /* / */ || ch === 92 /* \\ */) n++;
   }
   return n;
 }
 
-// Capped at 256 entries; the oldest entry is disposed and evicted when the
-// cap is hit to prevent unbounded GPU memory growth on large repos.
-const MAX_LABEL_TEXTURES = 256;
-const LABEL_FONT = 'bold 56px -apple-system, "Segoe UI", Inter, Roboto, sans-serif';
-const LABEL_STROKE_WIDTH = 10;
-const LABEL_H = 96;
-const LABEL_PAD_X = 20;
-const MIN_NAME_LABEL_W = 96;
-
-type NameLabelTexture = THREE.CanvasTexture & {
-  _aspect?: number;
-  _hitBounds?: SpriteUvBounds;
+const NAME_LABEL_TEXTURE_OPTIONS: LabelTextureOptions = {
+  font: 'bold 56px -apple-system, "Segoe UI", Inter, Roboto, sans-serif',
+  strokeWidth: 10,
+  height: 96,
+  padX: 20,
+  minWidth: 96,
+  maxEntries: 256,
 };
+const nameLabelTextureCache = createLabelTextureCache();
 
-const labelTextureCache = new Map<string, NameLabelTexture>();
-
-function measuredTextWidth(metrics: TextMetrics): number {
-  const actual = metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight;
-  return Math.ceil(actual > 0 ? actual : metrics.width);
-}
-
-function buildNameTexture(text: string, color: string): NameLabelTexture {
-  const key = `${text}|${color}`;
-  const cached = labelTextureCache.get(key);
-  if (cached) return cached;
-  // Measure once with a throwaway context to size the canvas to the text.
-  const probe = document.createElement('canvas').getContext('2d')!;
-  probe.font = LABEL_FONT;
-  const measured = measuredTextWidth(probe.measureText(text));
-  const visualW = measured + LABEL_STROKE_WIDTH + 2;
-  const W = Math.max(MIN_NAME_LABEL_W, visualW + LABEL_PAD_X * 2);
-  const canvas = document.createElement('canvas');
-  canvas.width = W;
-  canvas.height = LABEL_H;
-  const ctx = canvas.getContext('2d')!;
-  ctx.font = LABEL_FONT;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = LABEL_STROKE_WIDTH;
-  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
-  ctx.strokeText(text, W / 2, LABEL_H / 2);
-  ctx.fillStyle = color;
-  ctx.fillText(text, W / 2, LABEL_H / 2);
-  const tex = new THREE.CanvasTexture(canvas) as NameLabelTexture;
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  // Stash aspect / hit bounds on the texture so the sprite can read them
-  // without re-measuring.
-  tex._aspect = W / LABEL_H;
-  const hitW = Math.min(W, visualW + LABEL_PAD_X);
-  tex._hitBounds = {
-    minU: Math.max(0, (W - hitW) / 2 / W),
-    maxU: Math.min(1, 1 - (W - hitW) / 2 / W),
-    minV: 0.12,
-    maxV: 0.88,
-  };
-  if (labelTextureCache.size >= MAX_LABEL_TEXTURES) {
-    const oldest = labelTextureCache.keys().next().value!;
-    labelTextureCache.get(oldest)?.dispose();
-    labelTextureCache.delete(oldest);
-  }
-  labelTextureCache.set(key, tex);
-  return tex;
-}
-
-const LABEL_REF_DIST = 200;
 // Pushed up well clear of the node — same offset as the LOC overlay — so
 // dense clusters of labels can fan out without crashing into their nodes.
 export const LABEL_Y = 100;
@@ -104,41 +50,21 @@ export const LABEL_Y = 100;
 // lines. The relaxation loop in ForceGraphView walks this each frame to
 // spread overlapping labels apart and to keep the connector's upper
 // endpoint anchored to its label, mirroring the LOC overlay.
-export type LabelEntry = {
-  label: THREE.Sprite;
-  line: THREE.Line;
-};
+export type LabelEntry = FloatingLabelEntry;
 export const labelsRegistry = new Set<LabelEntry>();
 
 function makeNameSprite(text: string, color: string, baseH: number): THREE.Sprite {
-  const tex = buildNameTexture(text, color);
-  const aspect = tex._aspect ?? 3;
-  const mat = new THREE.SpriteMaterial({
-    map: tex,
-    transparent: true,
-    depthWrite: false,
-    depthTest: false,
+  const texture = buildMeasuredLabelTexture(
+    nameLabelTextureCache,
+    text,
+    color,
+    NAME_LABEL_TEXTURE_OPTIONS,
+  );
+  return makeFloatingLabelSprite(texture, baseH, {
+    heightMultiplier: 1.6,
+    maxScale: 120,
+    aspectFallback: 3,
   });
-  const h = baseH * 1.6;
-  const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(h * aspect, h, 1);
-  restrictSpriteRaycast(sprite, tex._hitBounds ?? {
-    minU: 0,
-    maxU: 1,
-    minV: 0,
-    maxV: 1,
-  });
-  sprite.renderOrder = 999;
-
-  const _pos = new THREE.Vector3();
-  sprite.onBeforeRender = (_r, _s, camera) => {
-    sprite.getWorldPosition(_pos);
-    const d = camera.position.distanceTo(_pos);
-    const s = Math.max(6, Math.min(120, (d / LABEL_REF_DIST) * h));
-    sprite.scale.set(s * aspect, s, 1);
-  };
-
-  return sprite;
 }
 
 // Build a node object for labels mode. If the node sits at the active
@@ -157,17 +83,11 @@ export function spriteForLabels(
   group.add(base);
 
   const color = node.kind === 'dir' ? '#e6c07b' : '#dce4f0';
-  const lineGeom = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(0, 3, 0),
-    new THREE.Vector3(0, LABEL_Y - 4, 0),
-  ]);
-  const lineMat = new THREE.LineBasicMaterial({
-    color: new THREE.Color(color),
-    transparent: true,
+  const line = makeConnectorLine({
+    color,
+    labelY: LABEL_Y,
     opacity: 0.7,
   });
-  const line = new THREE.Line(lineGeom, lineMat);
-  disableRaycast(line);
   group.add(line);
 
   const label = makeNameSprite(node.name, color, settings.labelSize);
