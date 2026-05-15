@@ -23,6 +23,10 @@ export type NodeObjectRefs = {
   labelLevelRef: MutableRefObject<number>;
   nodeDepthsRef: MutableRefObject<Map<string, number>>;
   changeMapRef: MutableRefObject<Map<string, ChangeKind>>;
+  // Extensions (lowercased, leading-dot) that the LOC and code-health
+  // overlays should skip — matching files render as their normal sprite
+  // instead of a tinted shape with a numeric label.
+  metricsIgnoredExtsRef: MutableRefObject<Set<string>>;
 };
 
 // Picks the THREE.Object3D that represents a node in the current frame.
@@ -46,10 +50,19 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
     return obj;
   }
 
+  // For the LOC and health overlays, fall back to the plain sprite when
+  // the file's extension is on the per-project ignore list — e.g.
+  // `.json` by default. Directories aren't measured by either overlay
+  // anyway, so the check is file-only.
+  const ignored =
+    node.kind === 'file' &&
+    !!node.ext &&
+    refs.metricsIgnoredExtsRef.current.has(node.ext.toLowerCase());
+
   let obj: THREE.Object3D;
-  if (refs.healthModeRef.current) {
+  if (refs.healthModeRef.current && !ignored) {
     obj = spriteForHealth(node, s);
-  } else if (refs.locModeRef.current) {
+  } else if (refs.locModeRef.current && !ignored) {
     obj = spriteForLoc(node, s);
   } else if (refs.labelModeRef.current) {
     const d = refs.nodeDepthsRef.current.get(node.id) ?? 0;
