@@ -20,8 +20,15 @@
   the selection chip, the right-click popover, and the create-task modal.
 - `sprites.ts` — `spriteFor(node, settings)`. Per-style `SpriteMaterial` cache so
   the simulation only allocates one material per (ext, shape, color) tuple.
-- `locOverlay.ts` — LOC overlay sprites + `locLabelRegistry` (RAF loop in
-  ForceGraphView walks this for pairwise repulsion).
+- `labelTexture.ts` / `floatingLabelSprite.ts` / `metricOverlayFactory.ts` —
+  shared canvas-label texture caches, camera-scaled label sprites, connector
+  lines, and metric-overlay assembly used by LOC, health, and Alt labels.
+- `locOverlay.ts` / `healthOverlay.ts` / `labelsOverlay.ts` — thin overlay
+  configs + registries (`locLabelRegistry`, `healthLabelRegistry`,
+  `labelsRegistry`) walked by the RAF loop for pairwise repulsion.
+- `labelRepulsion.ts` — named cleanup, world-snapshot, force accumulation,
+  velocity/rest integration, and connector endpoint helpers behind
+  `repelLabels(registry, minDist)`.
 - `halo.ts` — `withHalo(child, baseSize)` wraps a sprite in a thin light-blue
   ring for the selection state (drawn the same way as `changeRing.ts`).
 - `menu.ts` — right-click `MENU_ITEMS` (Refactor/Add tests/Document/Find dead
@@ -50,8 +57,9 @@
 ## Render-vs-physics splits
 
 Three useEffects (inside the overlay sub-hooks) react to settings changes:
-- Sizes (`fileNodeSize`/`dirNodeSize`/`labelSize`): clear `locLabelRegistry`,
-  call `graph.refresh()` (re-evaluates `nodeThreeObject`, no sim restart).
+- Sizes (`fileNodeSize`/`dirNodeSize`/`labelSize`): clear the LOC, health, and
+  Alt-label registries, then call `graph.refresh()` (re-evaluates
+  `nodeThreeObject`, no sim restart).
 - Physics (`dagLevelDistance`/`charge`/`link`/`velocityDecay`): poke
   `d3Force` strengths + `d3ReheatSimulation()`.
 - Filter (`hiddenExts`): swap `nodeVisibility`/`linkVisibility` accessors.
