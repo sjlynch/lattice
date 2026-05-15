@@ -15,7 +15,38 @@ export type UserSettings = {
   // note in task instructions. Key = env id; '' suppresses the note;
   // absent key = use the built-in default. See backend worktree/envDetect.ts.
   worktreeEnvNotes?: Record<string, string>;
+  // Extensions (leading dot, lowercase) to skip when rendering the LOC
+  // (`z`) and code-health (`h`) overlays. Absent = `DEFAULT_METRICS_IGNORED_EXTS`.
+  metricsIgnoredExts?: string[];
 };
+
+// Extensions Lattice ignores by default in the LOC and code-health overlays.
+// `.json` files are mostly configuration / generated payloads — their line
+// counts and "smell" scores tend to drown out the meaningful signal from
+// real source files.
+export const DEFAULT_METRICS_IGNORED_EXTS: readonly string[] = ['.json'];
+
+// Coerce a raw extension entry to its canonical form (lowercased, single
+// leading dot). Returns null for empties so callers can drop them.
+export function normalizeIgnoredExt(raw: string): string | null {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return null;
+  return trimmed.startsWith('.') ? trimmed : `.${trimmed}`;
+}
+
+// Resolves the saved value to the list that should actually be applied:
+// `undefined` → the built-in default; everything else → normalized + deduped.
+export function effectiveMetricsIgnoredExts(
+  saved: string[] | undefined,
+): string[] {
+  if (saved === undefined) return [...DEFAULT_METRICS_IGNORED_EXTS];
+  const seen = new Set<string>();
+  for (const raw of saved) {
+    const ext = normalizeIgnoredExt(raw);
+    if (ext) seen.add(ext);
+  }
+  return [...seen];
+}
 
 export type ProjectEnvKind =
   | 'node'

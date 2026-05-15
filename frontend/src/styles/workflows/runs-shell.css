@@ -1,0 +1,8 @@
+.workflows-runs {
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  min-width: 220px;
+  border-left: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.10);
+}

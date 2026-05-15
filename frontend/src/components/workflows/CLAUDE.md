@@ -25,6 +25,10 @@ Components behind the Workflows button. `Workflows.tsx` (parent dir) is a re-exp
 - `defaultPrompts.ts` + `prompts/*.md` — quick-add prompt metadata and raw markdown prompt assets. Keep existing raw prompt bytes stable when moving/editing prompt bodies.
 - `projectPromptVariants.ts` — project-stack heuristics and project-aware variants for the refactor / bug-catcher prompt templates only.
 
+## Styles
+
+Workflow CSS is split under `frontend/src/styles/workflows/`; `styles/workflows.css` is the ordered aggregator with comments for `shell`, `list`, `templates`, `editor-shell`, `runs-shell`, `queue`, `runs`, `editor-empty`, `editor`, `steps`, `actions`, and `chips`.
+
 ## Run flow
 
 1. `runWorkflow(wf)` saves first if `editor.dirty`, then `apiStartWorkflow(wf.id, { harnessOverride })`. `null` override means each step uses its stored harness.

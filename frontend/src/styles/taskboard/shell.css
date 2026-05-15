@@ -1,0 +1,29 @@
+/* Task board */
+.taskboard-body {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.taskboard-scroll {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+.taskboard-scroll::-webkit-scrollbar { width: 8px; }
+.taskboard-footer {
+  flex: 0 0 auto;
+  padding: 6px 10px 8px 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+}
