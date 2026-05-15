@@ -6,7 +6,7 @@
 - `Sidebar.tsx` + `sidebar/` — terminal tabs/panels + new-shell tray; `Sidebar.tsx` composes the split components/hooks and reads `useTerminals()`.
 - `TerminalPane.tsx` — xterm.js + WS to `/ws/terminal` (proxied to `:5185`). The WebglAddon is attached only while `active=true` and disposed on deactivate so each tab doesn't permanently hold a WebGL context.
 - `Legend.tsx` — per-extension toggles. Sources `extensionStyles.ts`.
-- `FloatingPanel.tsx` — draggable, resizable, persists size/pos under `lattice.<thing>.window`.
+- `FloatingPanel.tsx` + `floatingPanel/` — portal markup plus extracted geometry/state/drag/resize helpers; persists size/pos under `lattice.<thing>.window`.
 - `Modal.tsx` — generic backdrop overlay used by ForceGraph's "create task" flow.
 - `FolderPicker.tsx` — backend-paged folder browser.
 
