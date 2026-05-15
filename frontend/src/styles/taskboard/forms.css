@@ -97,7 +97,9 @@
 }
 .taskboard-detail-desc-input {
   width: 100%;
-  min-height: 140px;
+  flex: 1;
+  min-height: 0;
+  resize: none;
   font-size: 12.5px;
   line-height: 1.55;
 }
