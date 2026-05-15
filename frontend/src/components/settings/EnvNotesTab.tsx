@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import {
   fetchProjectEnv,
@@ -16,70 +16,158 @@ export type EnvNotesTabHandle = {
   getWorktreeEnvNotesPatch: () => Record<string, string> | undefined;
 };
 
+type EnvNotesDraft = {
+  envs: ProjectEnvInfo[];
+  envDraft: Record<string, string>;
+  envLoading: boolean;
+  getWorktreeEnvNotesPatch: () => Record<string, string> | undefined;
+  resetEnvDraft: (env: ProjectEnvInfo) => void;
+  updateEnvDraft: (id: string, text: string) => void;
+};
+
+function useEnvNotesDraft(open: boolean, activeFolder: string): EnvNotesDraft {
+  // `envs` is what the backend detected (+ default and effective notes);
+  // `envDraft` is the editable text keyed by env id; `existingOverrides` is
+  // the raw saved map so we don't clobber overrides for envs that aren't
+  // currently detected.
+  const [envs, setEnvs] = useState<ProjectEnvInfo[]>([]);
+  const [envDraft, setEnvDraft] = useState<Record<string, string>>({});
+  const [existingOverrides, setExistingOverrides] = useState<Record<string, string>>({});
+  const [envLoading, setEnvLoading] = useState(false);
+  // Guards against saving (and clobbering) `worktreeEnvNotes` before the
+  // fetch that seeds `existingOverrides` / `envDraft` has completed.
+  const [envLoaded, setEnvLoaded] = useState(false);
+
+  // Fetch detected environments + current overrides each time the dialog
+  // opens (cheap, and keeps it fresh if the user just `npm install`ed).
+  useEffect(() => {
+    if (!open || !activeFolder) return;
+    let cancelled = false;
+    setEnvLoading(true);
+    setEnvLoaded(false);
+    Promise.all([fetchProjectEnv(activeFolder), fetchUserSettings(activeFolder)])
+      .then(([envResp, settings]) => {
+        if (cancelled) return;
+        const overrides = settings.worktreeEnvNotes ?? {};
+        setEnvs(envResp.environments);
+        setExistingOverrides(overrides);
+        setEnvDraft(
+          Object.fromEntries(envResp.environments.map((e) => [e.id, e.effectiveNote])),
+        );
+        setEnvLoaded(true);
+      })
+      .finally(() => {
+        if (!cancelled) setEnvLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, activeFolder]);
+
+  const updateEnvDraft = useCallback((id: string, text: string) => {
+    setEnvDraft((draft) => ({ ...draft, [id]: text }));
+  }, []);
+
+  const resetEnvDraft = useCallback((env: ProjectEnvInfo) => {
+    setEnvDraft((draft) => ({ ...draft, [env.id]: env.defaultNote }));
+  }, []);
+
+  // Build the `worktreeEnvNotes` map to persist: start from whatever's
+  // already saved (so overrides for undetected envs survive), then for each
+  // detected env drop the key when the text equals the built-in default,
+  // otherwise store the edited text (an empty string deliberately suppresses
+  // the note for that env).
+  const buildEnvNotesPatch = useCallback((): Record<string, string> => {
+    const next: Record<string, string> = { ...existingOverrides };
+    for (const env of envs) {
+      const text = envDraft[env.id] ?? env.effectiveNote;
+      if (text.trim() === env.defaultNote.trim()) {
+        delete next[env.id];
+      } else {
+        next[env.id] = text;
+      }
+    }
+    return next;
+  }, [existingOverrides, envDraft, envs]);
+
+  const getWorktreeEnvNotesPatch = useCallback(
+    () => (envLoaded ? buildEnvNotesPatch() : undefined),
+    [buildEnvNotesPatch, envLoaded],
+  );
+
+  return {
+    envs,
+    envDraft,
+    envLoading,
+    getWorktreeEnvNotesPatch,
+    resetEnvDraft,
+    updateEnvDraft,
+  };
+}
+
+type EnvNoteCardProps = {
+  env: ProjectEnvInfo;
+  text: string;
+  onReset: (env: ProjectEnvInfo) => void;
+  onTextChange: (id: string, text: string) => void;
+};
+
+function EnvNoteCard({ env, text, onReset, onTextChange }: EnvNoteCardProps) {
+  const isDefault = text.trim() === env.defaultNote.trim();
+  const disabled = text.trim().length === 0;
+
+  return (
+    <div className="env-note-card">
+      <div className="env-note-card-header">
+        <div className="env-note-card-title">
+          {env.label}
+          <span className="env-note-card-manager">{env.manager}</span>
+          <span className="env-note-card-dir">{env.heavyDir}/</span>
+        </div>
+        <button
+          className="btn-ghost"
+          disabled={isDefault}
+          onClick={() => onReset(env)}
+          title="Reset to Lattice's default note"
+        >
+          <RotateCcw size={12} />
+          Reset
+        </button>
+      </div>
+      <textarea
+        className="text-input env-note-textarea"
+        value={text}
+        spellCheck={false}
+        rows={5}
+        placeholder="(empty — no note will be added for this environment)"
+        onChange={(e) => onTextChange(env.id, e.target.value)}
+      />
+      <div className="env-note-card-hint">
+        {disabled
+          ? 'Disabled — nothing will be injected for this environment.'
+          : isDefault
+            ? 'Using Lattice’s default note.'
+            : 'Customized.'}
+      </div>
+    </div>
+  );
+}
+
 export const EnvNotesTab = forwardRef<EnvNotesTabHandle, Props>(
   function EnvNotesTab({ active, open, activeFolder }, ref) {
-    // `envs` is what the backend detected (+ default and effective notes);
-    // `envDraft` is the editable text keyed by env id; `existingOverrides` is
-    // the raw saved map so we don't clobber overrides for envs that aren't
-    // currently detected.
-    const [envs, setEnvs] = useState<ProjectEnvInfo[]>([]);
-    const [envDraft, setEnvDraft] = useState<Record<string, string>>({});
-    const [existingOverrides, setExistingOverrides] = useState<Record<string, string>>({});
-    const [envLoading, setEnvLoading] = useState(false);
-    // Guards against saving (and clobbering) `worktreeEnvNotes` before the
-    // fetch that seeds `existingOverrides` / `envDraft` has completed.
-    const [envLoaded, setEnvLoaded] = useState(false);
-
-    // Fetch detected environments + current overrides each time the dialog
-    // opens (cheap, and keeps it fresh if the user just `npm install`ed).
-    useEffect(() => {
-      if (!open || !activeFolder) return;
-      let cancelled = false;
-      setEnvLoading(true);
-      setEnvLoaded(false);
-      Promise.all([fetchProjectEnv(activeFolder), fetchUserSettings(activeFolder)])
-        .then(([envResp, settings]) => {
-          if (cancelled) return;
-          const overrides = settings.worktreeEnvNotes ?? {};
-          setEnvs(envResp.environments);
-          setExistingOverrides(overrides);
-          setEnvDraft(
-            Object.fromEntries(envResp.environments.map((e) => [e.id, e.effectiveNote])),
-          );
-          setEnvLoaded(true);
-        })
-        .finally(() => {
-          if (!cancelled) setEnvLoading(false);
-        });
-      return () => {
-        cancelled = true;
-      };
-    }, [open, activeFolder]);
-
-    // Build the `worktreeEnvNotes` map to persist: start from whatever's
-    // already saved (so overrides for undetected envs survive), then for each
-    // detected env drop the key when the text equals the built-in default,
-    // otherwise store the edited text (an empty string deliberately suppresses
-    // the note for that env).
-    const buildEnvNotesPatch = (): Record<string, string> => {
-      const next: Record<string, string> = { ...existingOverrides };
-      for (const env of envs) {
-        const text = envDraft[env.id] ?? env.effectiveNote;
-        if (text.trim() === env.defaultNote.trim()) {
-          delete next[env.id];
-        } else {
-          next[env.id] = text;
-        }
-      }
-      return next;
-    };
+    const {
+      envs,
+      envDraft,
+      envLoading,
+      getWorktreeEnvNotesPatch,
+      resetEnvDraft,
+      updateEnvDraft,
+    } = useEnvNotesDraft(open, activeFolder);
 
     useImperativeHandle(
       ref,
-      () => ({
-        getWorktreeEnvNotesPatch: () => (envLoaded ? buildEnvNotesPatch() : undefined),
-      }),
-      [envLoaded, existingOverrides, envs, envDraft],
+      () => ({ getWorktreeEnvNotesPatch }),
+      [getWorktreeEnvNotesPatch],
     );
 
     if (!active) return null;
@@ -111,50 +199,15 @@ export const EnvNotesTab = forwardRef<EnvNotesTabHandle, Props>(
           </div>
         ) : (
           <div className="env-note-list">
-            {envs.map((env) => {
-              const text = envDraft[env.id] ?? env.effectiveNote;
-              const isDefault = text.trim() === env.defaultNote.trim();
-              const disabled = text.trim().length === 0;
-              return (
-                <div key={env.id} className="env-note-card">
-                  <div className="env-note-card-header">
-                    <div className="env-note-card-title">
-                      {env.label}
-                      <span className="env-note-card-manager">{env.manager}</span>
-                      <span className="env-note-card-dir">{env.heavyDir}/</span>
-                    </div>
-                    <button
-                      className="btn-ghost"
-                      disabled={isDefault}
-                      onClick={() =>
-                        setEnvDraft((d) => ({ ...d, [env.id]: env.defaultNote }))
-                      }
-                      title="Reset to Lattice's default note"
-                    >
-                      <RotateCcw size={12} />
-                      Reset
-                    </button>
-                  </div>
-                  <textarea
-                    className="text-input env-note-textarea"
-                    value={text}
-                    spellCheck={false}
-                    rows={5}
-                    placeholder="(empty — no note will be added for this environment)"
-                    onChange={(e) =>
-                      setEnvDraft((d) => ({ ...d, [env.id]: e.target.value }))
-                    }
-                  />
-                  <div className="env-note-card-hint">
-                    {disabled
-                      ? 'Disabled — nothing will be injected for this environment.'
-                      : isDefault
-                        ? 'Using Lattice’s default note.'
-                        : 'Customized.'}
-                  </div>
-                </div>
-              );
-            })}
+            {envs.map((env) => (
+              <EnvNoteCard
+                key={env.id}
+                env={env}
+                text={envDraft[env.id] ?? env.effectiveNote}
+                onReset={resetEnvDraft}
+                onTextChange={updateEnvDraft}
+              />
+            ))}
           </div>
         )}
       </div>

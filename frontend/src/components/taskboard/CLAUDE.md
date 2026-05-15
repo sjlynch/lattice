@@ -22,6 +22,10 @@ Components behind the Tasks button. `TaskBoard.tsx` (parent dir) is a re-export 
 - `hooks/useTaskMergeActions.ts` — `mergeTaskAction` (with resolver-Claude spawn on conflict), `mergeAllReady`, `cancelActiveRun`, `markAllQaDone`.
 - `hooks/useLaneDropTargets.ts` — `isOver` + `hoverIndex` state, lane-background `onDragOver/onDragLeave/onDrop`, and `slotProps(idx)` factory used by `Lane.tsx`. Lane-background drops do status-only moves; slot drops set both status and position.
 
+## Styles
+
+Taskboard CSS is split under `frontend/src/styles/taskboard/`; `styles/taskboard.css` is the ordered aggregator with comments for `shell`, `lanes`, `cards`, `filters`, `lane-actions`, `detail`, `toast`, and `forms`.
+
 ## Drag MIME
 
 Cards use `application/x-lattice-task` (defined in `lanes.ts`). Setting both that and `text/plain` keeps the drag readable for non-task drop targets.

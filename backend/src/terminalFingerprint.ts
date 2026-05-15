@@ -24,10 +24,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // is reproducible.
 const FINGERPRINT_FILES = [
   'terminal-server.js',
+  'terminalServer/processGuards.js',
+  'terminalServer/routes.js',
+  'terminalServer/shutdown.js',
+  'terminalServer/websocket.js',
   'terminal.js',
   'terminal/sessionTypes.js',
   'terminal/sessionStore.js',
   'terminal/createSession.js',
+  'terminal/launchContext.js',
+  'terminal/broadcast.js',
+  'terminal/sessionLifecycle.js',
   'terminal/attach.js',
   'terminal/kill.js',
   'latticeApiDocs.js',

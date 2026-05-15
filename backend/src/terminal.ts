@@ -1,8 +1,11 @@
 // Facade re-exporting the terminal-server core split across `terminal/`:
 //   - terminal/sessionTypes.ts — Session, CreateOpts, AttachOpts types
 //   - terminal/sessionStore.ts — sessions map, snapshot/list helpers
-//   - terminal/createSession.ts — launch context, pty.spawn, banner,
-//     initialCommand, onData/onExit wiring, precreate helper
+//   - terminal/launchContext.ts — shell/cwd/default size/env/doc setup
+//   - terminal/broadcast.ts + terminal/sessionLifecycle.ts — subscriber
+//     broadcasts, pty onData/onExit wiring, banner, initialCommand
+//   - terminal/createSession.ts — session cap, pty.spawn orchestration,
+//     session registration, precreate helper
 //   - terminal/attach.ts — attachTerminal, session_lost, resize-on-attach,
 //     WS message handling
 //   - terminal/kill.ts — killSession, killSessionsByCwd, post-kill
