@@ -9,6 +9,7 @@
 - `FloatingPanel.tsx` — draggable, resizable, persists size/pos under `lattice.<thing>.window`.
 - `Modal.tsx` — generic backdrop overlay used by ForceGraph's "create task" flow.
 - `FolderPicker.tsx` — backend-paged folder browser.
+- `SettingsDialog.tsx` + `settings/` — settings modal tabs; keep the ref handles as thin save adapters and put per-tab draft state in focused `use*Draft` hooks.
 
 ## Big launchers (split into subdirs)
 
