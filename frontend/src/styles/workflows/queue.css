@@ -1,0 +1,43 @@
+.workflows-queue-mode {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 8px 10px 6px;
+}
+.workflows-queue-mode button {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.workflows-queue-mode button.active {
+  border-color: rgba(106, 169, 255, 0.55);
+  background: rgba(106, 169, 255, 0.15);
+  color: var(--accent);
+}
+.workflows-queue-mode button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.workflows-queue-controls {
+  display: flex;
+  gap: 6px;
+  padding: 0 10px 8px;
+}
+.workflows-queue-controls .btn-primary,
+.workflows-queue-controls .btn-ghost {
+  flex: 1;
+  justify-content: center;
+  padding: 5px 8px;
+  font-size: 11px;
+}
+.workflows-queue-status {
+  padding: 0 10px 10px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+  border-bottom: 1px solid var(--border);
+}

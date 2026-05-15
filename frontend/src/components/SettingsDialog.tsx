@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { TerminalSquare, FileText } from 'lucide-react';
+import { TerminalSquare, FileText, BarChart3 } from 'lucide-react';
 import { Modal } from './Modal';
 import {
   patchUserSettings,
@@ -15,6 +15,10 @@ import {
   EnvNotesTab,
   type EnvNotesTabHandle,
 } from './settings/EnvNotesTab';
+import {
+  MetricsIgnoredExtsTab,
+  type MetricsIgnoredExtsTabHandle,
+} from './settings/MetricsIgnoredExtsTab';
 
 type Props = {
   open: boolean;
@@ -22,9 +26,11 @@ type Props = {
   activeFolder: string;
   startupTerminals: StartupTerminal[];
   onStartupTerminalsChange: (next: StartupTerminal[]) => void;
+  metricsIgnoredExts: string[];
+  onMetricsIgnoredExtsChange: (next: string[]) => void | Promise<void>;
 };
 
-type Tab = 'terminals' | 'env';
+type Tab = 'terminals' | 'env' | 'metrics';
 
 export function SettingsDialog({
   open,
@@ -32,12 +38,15 @@ export function SettingsDialog({
   activeFolder,
   startupTerminals,
   onStartupTerminalsChange,
+  metricsIgnoredExts,
+  onMetricsIgnoredExtsChange,
 }: Props) {
   const [tab, setTab] = useState<Tab>('terminals');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const startupTerminalsRef = useRef<StartupTerminalsTabHandle>(null);
   const envNotesRef = useRef<EnvNotesTabHandle>(null);
+  const metricsIgnoredExtsRef = useRef<MetricsIgnoredExtsTabHandle>(null);
 
   useEffect(() => {
     if (open) setError(null);
@@ -56,8 +65,16 @@ export function SettingsDialog({
       // overwrite the saved overrides with an empty map.
       const envNotesPatch = envNotesRef.current?.getWorktreeEnvNotesPatch();
       if (envNotesPatch !== undefined) patch.worktreeEnvNotes = envNotesPatch;
+      const metricsExtsPatch =
+        metricsIgnoredExtsRef.current?.getMetricsIgnoredExtsPatch();
+      if (metricsExtsPatch !== undefined) {
+        patch.metricsIgnoredExts = metricsExtsPatch;
+      }
       await patchUserSettings(activeFolder, patch);
       onStartupTerminalsChange(cleaned);
+      if (metricsExtsPatch !== undefined) {
+        await onMetricsIgnoredExtsChange(metricsExtsPatch);
+      }
       onClose();
     } catch (err) {
       setError((err as Error).message || 'Failed to save settings');
@@ -85,6 +102,13 @@ export function SettingsDialog({
             <FileText size={12} />
             Agent instructions
           </button>
+          <button
+            className={`settings-tab ${tab === 'metrics' ? 'active' : ''}`}
+            onClick={() => setTab('metrics')}
+          >
+            <BarChart3 size={12} />
+            Metrics
+          </button>
         </div>
         <div className="settings-tab-body">
           <StartupTerminalsTab
@@ -98,6 +122,12 @@ export function SettingsDialog({
             active={tab === 'env'}
             open={open}
             activeFolder={activeFolder}
+          />
+          <MetricsIgnoredExtsTab
+            ref={metricsIgnoredExtsRef}
+            active={tab === 'metrics'}
+            open={open}
+            metricsIgnoredExts={metricsIgnoredExts}
           />
         </div>
       </div>

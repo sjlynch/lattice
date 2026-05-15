@@ -1,10 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseGitLogNameStatus } from '../gitHistory/parseLog.js';
+import { gitLogFormat, parseGitLogNameStatus } from '../gitHistory/parseLog.js';
 import { parseGitStatusPorcelain } from '../gitHistory/parseStatus.js';
-
-const COMMIT_HEAD = '␃COMMIT␃';
-const FIELD_SEP = '␟';
+import { GIT_LOG_COMMIT_HEADER, GIT_LOG_FIELD_SEPARATOR } from '../gitHistory/parserShared.js';
 
 function commitHeader(
   sha: string,
@@ -13,8 +11,21 @@ function commitHeader(
   atSec: number,
   subject: string,
 ): string {
-  return `${COMMIT_HEAD}${sha}${FIELD_SEP}${shortSha}${FIELD_SEP}${authorName}${FIELD_SEP}${atSec}${FIELD_SEP}${subject}`;
+  return [
+    `${GIT_LOG_COMMIT_HEADER}${sha}`,
+    shortSha,
+    authorName,
+    String(atSec),
+    subject,
+  ].join(GIT_LOG_FIELD_SEPARATOR);
 }
+
+test('gitLogFormat emits the shared parser sentinels', () => {
+  assert.equal(
+    gitLogFormat(),
+    [`${GIT_LOG_COMMIT_HEADER}%H`, '%h', '%an', '%at', '%s'].join(GIT_LOG_FIELD_SEPARATOR),
+  );
+});
 
 test('parseGitLogNameStatus parses A/M/D records, blank lines, and oldest-to-newest order', () => {
   const out =
@@ -59,18 +70,18 @@ test('parseGitLogNameStatus parses rename and copy records as delete/add pairs',
   ]);
 });
 
-test('parseGitStatusPorcelain parses untracked, added, modified, and deleted files', () => {
+test('parseGitStatusPorcelain parses untracked, added, modified, deleted, and backslash paths', () => {
   const result = parseGitStatusPorcelain(
     `?? untracked.ts\0` +
       `A  added.ts\0` +
-      ` M modified.ts\0` +
+      ` M nested\\modified.ts\0` +
       ` D deleted.ts\0`,
   );
 
   assert.deepEqual(result.changes, [
     { path: 'untracked.ts', status: 'A' },
     { path: 'added.ts', status: 'A' },
-    { path: 'modified.ts', status: 'M' },
+    { path: 'nested/modified.ts', status: 'M' },
     { path: 'deleted.ts', status: 'D' },
   ]);
 });
