@@ -1,17 +1,47 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useRef } from 'react';
 import { ChevronDown, ChevronRight, GripVertical, Wand2, X } from 'lucide-react';
 import type { HarnessAvailability, WorkflowStep, WorkflowStepMode } from '../../api';
 import {
   availableAgentHarnesses,
   harnessLabel,
   normalizeAgentHarness,
+  type AgentHarness,
 } from '../../harnesses';
+import {
+  useAutosizedTextarea,
+  useWorkflowStepDragDrop,
+} from './StepRowHooks';
 
-export const STEP_DRAG_MIME = 'application/x-lattice-workflow-step';
+export { PROMPT_MIN_HEIGHT_PX, STEP_DRAG_MIME } from './StepRowHooks';
 
-// Minimum textarea height when expanded — keeps a freshly-added step from
-// rendering as a 1-line strip before the user types anything.
-const PROMPT_MIN_HEIGHT_PX = 64;
+function StepHarnessSelect({
+  harnessAvail,
+  selectedHarness,
+  onChange,
+}: {
+  harnessAvail: HarnessAvailability;
+  selectedHarness: AgentHarness;
+  onChange: (harness: AgentHarness) => void;
+}) {
+  const harnessOptions = availableAgentHarnesses(harnessAvail, selectedHarness);
+  const showHarnessSelect = harnessOptions.length > 1 || selectedHarness !== 'claude';
+  if (!showHarnessSelect) return null;
+
+  return (
+    <select
+      className="workflows-step-harness"
+      value={selectedHarness}
+      onChange={(e) => onChange(normalizeAgentHarness(e.target.value))}
+      title="Agent harness for this workflow step"
+    >
+      {harnessOptions.map((harness) => (
+        <option key={harness} value={harness}>
+          {harnessLabel(harness)}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 // One row in the step editor. Drag-and-drop reorders by index using a
 // custom MIME so generic text drags onto the editor don't trigger reorders.
@@ -38,49 +68,12 @@ export function StepRow({
   onCustomize: () => void;
   customizing: boolean;
 }) {
-  const [dragOver, setDragOver] = useState<'top' | 'bottom' | null>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
-
-  // Auto-fit the textarea to its content. Keeping the prompt fully visible
-  // by default removes the need for the native resize handle (which Chrome
-  // renders as a stark white square in the bottom-right corner against
-  // the dark theme whenever the text doesn't fill the box).
-  useLayoutEffect(() => {
-    const ta = promptRef.current;
-    if (!ta || collapsed) return;
-    ta.style.height = 'auto';
-    const next = Math.max(PROMPT_MIN_HEIGHT_PX, ta.scrollHeight);
-    ta.style.height = `${next}px`;
-  }, [step.prompt, collapsed]);
-
-  function onDragStart(e: React.DragEvent) {
-    e.dataTransfer.setData(STEP_DRAG_MIME, String(index));
-    e.dataTransfer.setData('text/plain', String(index));
-    e.dataTransfer.effectAllowed = 'move';
-  }
-  function onDragOver(e: React.DragEvent) {
-    if (!e.dataTransfer.types.includes(STEP_DRAG_MIME)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const half = rect.top + rect.height / 2;
-    setDragOver(e.clientY < half ? 'top' : 'bottom');
-  }
-  function onDragLeave() { setDragOver(null); }
-  function onDrop(e: React.DragEvent) {
-    const fromStr = e.dataTransfer.getData(STEP_DRAG_MIME);
-    setDragOver(null);
-    if (!fromStr) return;
-    e.preventDefault();
-    const fromIdx = Number(fromStr);
-    if (Number.isNaN(fromIdx)) return;
-    const toIdx = dragOver === 'bottom' ? index + 1 : index;
-    onReorder(fromIdx, toIdx);
-  }
+  const { dragOver, onDragStart, onDragOver, onDragLeave, onDrop } =
+    useWorkflowStepDragDrop(index, onReorder);
+  useAutosizedTextarea(promptRef, step.prompt, collapsed);
 
   const selectedHarness = normalizeAgentHarness(step.harness);
-  const harnessOptions = availableAgentHarnesses(harnessAvail, selectedHarness);
-  const showHarnessSelect = harnessOptions.length > 1 || selectedHarness !== 'claude';
 
   return (
     <div
@@ -122,20 +115,11 @@ export function StepRow({
             <option value="sequential">sequential</option>
             <option value="parallel">parallel</option>
           </select>
-          {showHarnessSelect && (
-            <select
-              className="workflows-step-harness"
-              value={selectedHarness}
-              onChange={(e) => onChange({ harness: normalizeAgentHarness(e.target.value) })}
-              title="Agent harness for this workflow step"
-            >
-              {harnessOptions.map((harness) => (
-                <option key={harness} value={harness}>
-                  {harnessLabel(harness)}
-                </option>
-              ))}
-            </select>
-          )}
+          <StepHarnessSelect
+            harnessAvail={harnessAvail}
+            selectedHarness={selectedHarness}
+            onChange={(harness) => onChange({ harness })}
+          />
           <button
             className="icon-btn sm"
             onClick={onCustomize}
