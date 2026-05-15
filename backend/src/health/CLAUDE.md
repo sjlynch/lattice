@@ -18,7 +18,8 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   `handleFileStructure`, `handleImportsAndStrings`, `handleAstSmells`,
   `handleExportTracking`, `updateComplexity`, `handleAwaitExpression`,
   `handleCallExpression`), which in turn delegate to the sub-passes
-  `complexity.ts`, `depth.ts`, `functionRecord.ts`, and `smells.ts`
+  `complexity.ts`, `depth.ts`, `functionRecord.ts`, `functionNames.ts`,
+  `parameters.ts`, `docstrings.ts`, and `smells.ts`
 - `halstead.ts` — operator/operand tokenization + Maintainability Index
 - `universal.ts` + `universal/` — shim plus focused universal text helpers:
   `commentSyntax.ts` (per-language line/block comment markers),
@@ -34,13 +35,21 @@ Halstead token counts and a Maintainability Index, and folded into a composite
     rollups: complexity max/total, function length, param counts, docstring/
     boolean-param/mixed-sync-async tallies) and `computeCallGraph` (internal
     call density + god-function heuristic)
-  - `analyze/smells.ts` — `assembleSmells` (folds AST smell tokens, magic
-    strings, universal regex smells, and threshold-derived smells into the
+  - `analyze/smells.ts` — `assembleSmells` (table-folds AST smell tokens,
+    magic strings, universal regex smells, and threshold-derived smells into the
     final `HealthSmell[]`)
-- `crossFile.ts` / `crossFileAnalyzer.ts` — fanIn/fanOut/inCycle patch-in pass over the file set
+- `crossFile.ts` + `crossFile/` — shim plus focused cross-file modules:
+  `resolveImport.ts` (extension/index/alias/Python-relative resolution),
+  `graph.ts` (edge construction, duplicate de-duping, Tarjan SCCs), and
+  `apply.ts` (patch fanIn/fanOut/inCycle smells back into `HealthMetrics`)
+- `crossFileAnalyzer.ts` — watcher-facing diff/broadcast wrapper around the
+  cross-file pass
 - `scoreModel.ts` — score component ids, weights, thresholds, and metric extractors
 - `score.ts` + `constants.ts` — final score calculation over the score model; shared thresholds
-- `watcher.ts` — chokidar watcher rebroadcasting changed-file metrics
+- `watcher.ts` + `watcher/` — chokidar wiring plus extracted watcher helpers:
+  `cacheHydration.ts` (cache → in-memory graph mirror), `fileAnalysis.ts`
+  (read/LOC count/cache-or-analyze), `handlers.ts` (add/change/remove event
+  handlers), `subscribers.ts` (broadcast-safe subscriber fan-out), and `types.ts`
 - `cache.ts` — LRU file-content cache; `tsconfig.ts` — tsconfig alias resolution
 - `types.ts` — `HealthMetrics` / `HealthSmellId` definitions
 

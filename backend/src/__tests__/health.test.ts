@@ -1,6 +1,48 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeFile } from '../health/index.js';
+import path from 'node:path';
+import { analyzeFile, computeCrossFile } from '../health/index.js';
+import type { HealthMetrics } from '../health/index.js';
+import type { ParsedAlias } from '../health/tsconfig.js';
+import type { CacheEntry } from '../health/cache.js';
+import { hydrateWatcherState } from '../health/watcher/cacheHydration.js';
+
+function smellCount(metrics: HealthMetrics, id: string): number {
+  return metrics.smells.find((s) => s.id === id)?.count ?? 0;
+}
+
+function minimalMetrics(overrides: Partial<HealthMetrics> = {}): HealthMetrics {
+  return {
+    score: 100,
+    language: 'typescript',
+    loc: 1,
+    commentRatio: 0,
+    cyclomaticMax: 1,
+    cyclomaticTotal: 1,
+    cognitiveMax: 0,
+    cognitiveTotal: 0,
+    maxNestingDepth: 0,
+    halstead: {
+      vocabulary: 0,
+      length: 0,
+      volume: 0,
+      difficulty: 0,
+      effort: 0,
+    },
+    maintainabilityIndex: 100,
+    functionCount: 0,
+    namedFunctionCount: 0,
+    avgFunctionLength: 0,
+    maxFunctionLength: 0,
+    maxParamCount: 0,
+    classCount: 0,
+    callGraphDensity: 0,
+    godFunctionRatio: 0,
+    smells: [],
+    smellCount: 0,
+    ...overrides,
+  };
+}
 
 // A switch with N cases used to cost N*(1+nesting) cognitive points
 // because every switch_case fired the cognitive penalty. The Sonar
@@ -311,4 +353,141 @@ public class Dispatcher {
     r.metrics.cognitiveMax >= 1,
     `expected cognitiveMax >= 1, got ${r.metrics.cognitiveMax}`,
   );
+});
+
+test('cross-file analysis resolves aliases, Python relatives, duplicates, and self loops', () => {
+  const root = path.resolve('health-cross-file-fixture');
+  const app = path.join(root, 'src', 'app.ts');
+  const util = path.join(root, 'src', 'util.ts');
+  const pyMain = path.join(root, 'pkg', 'mod', 'main.py');
+  const pyHelper = path.join(root, 'pkg', 'shared', 'helper.py');
+  const self = path.join(root, 'src', 'self.ts');
+  const present = new Set([app, util, pyMain, pyHelper, self]);
+  const aliases: ParsedAlias[] = [
+    { prefix: '@/', isWildcard: true, substitutions: [path.join(root, 'src')] },
+  ];
+
+  const cross = computeCrossFile([
+    { filePath: app, imports: ['@/util', './util', './util.ts'] },
+    { filePath: pyMain, imports: ['..shared.helper'] },
+    { filePath: self, imports: ['./self'] },
+  ], present, aliases);
+
+  assert.equal(cross.fanOut.get(app), 1, 'duplicate imports should de-dupe');
+  assert.equal(cross.fanIn.get(util), 1, 'alias and relative specs land once');
+  assert.equal(cross.fanOut.get(pyMain), 1, 'Python relative import resolves');
+  assert.equal(cross.fanIn.get(pyHelper), 1, 'Python helper receives fan-in');
+  assert.equal(cross.fanOut.get(self), 0, 'self imports do not inflate fan-out');
+  assert.equal(cross.fanIn.get(self), 0, 'self imports do not inflate fan-in');
+  assert.equal(cross.inCycle.has(self), true, 'self import is marked cyclic');
+});
+
+test('watcher cache hydration keeps imports and metrics mirrors aligned', () => {
+  const filePath = path.resolve('health-watch-cache', 'a.ts');
+  const metrics = minimalMetrics({ loc: 12, fanIn: 3, fanOut: 1 });
+  const entry: CacheEntry = { mtimeMs: 1, size: 2, metrics, imports: ['./b'] };
+  const cache = {
+    *entries(): IterableIterator<[string, CacheEntry]> {
+      yield [filePath, entry];
+    },
+  };
+
+  const hydrated = hydrateWatcherState(cache);
+  assert.deepEqual(hydrated.imports.get(filePath), ['./b']);
+  assert.equal(hydrated.metrics.get(filePath), metrics);
+});
+
+test('TS any/type assertion/non-null smells are preserved', async () => {
+  const src = `
+function f(value: any) {
+  const name = value as string;
+  return name!.length;
+}
+`;
+  const r = await analyzeFile(src, '.ts', src.split('\n').length);
+  assert.equal(smellCount(r.metrics, 'any_type'), 1);
+  assert.equal(smellCount(r.metrics, 'type_assertion'), 1);
+  assert.equal(smellCount(r.metrics, 'non_null_assertion'), 1);
+});
+
+test('TS required and optional boolean parameters are counted', async () => {
+  const src = `
+function flags(required: boolean, optional?: boolean, name?: string) {
+  return required && !!optional && !!name;
+}
+`;
+  const r = await analyzeFile(src, '.ts', src.split('\n').length);
+  assert.equal(r.metrics.maxParamCount, 3);
+  assert.equal(smellCount(r.metrics, 'boolean_param'), 2);
+});
+
+test('Python default parameters drive boolean and mutable-default smells', async () => {
+  const src = `
+def configure(enabled=True, debug=False, items=[], options: dict = {}):
+    pass
+`;
+  const r = await analyzeFile(src, '.py', src.split('\n').length);
+  assert.equal(smellCount(r.metrics, 'boolean_param'), 2);
+  assert.equal(smellCount(r.metrics, 'mutable_default_arg'), 2);
+});
+
+test('Python bare except and global statement smells are preserved', async () => {
+  const src = `
+def update():
+    global state
+    try:
+        state = 1
+    except:
+        pass
+`;
+  const r = await analyzeFile(src, '.py', src.split('\n').length);
+  assert.equal(smellCount(r.metrics, 'bare_except'), 1);
+  assert.equal(smellCount(r.metrics, 'global_keyword'), 1);
+});
+
+test('Python docstring detection still suppresses only documented public functions', async () => {
+  const src = `
+def documented():
+    """docs"""
+    return 1
+
+def undocumented():
+    return 2
+
+def _private():
+    return 3
+`;
+  const r = await analyzeFile(src, '.py', src.split('\n').length);
+  assert.equal(smellCount(r.metrics, 'missing_docstring'), 1);
+});
+
+test('deep optional chains and nested ternaries are preserved', async () => {
+  const src = `
+function f(a: any, b: boolean, c: boolean, d: boolean) {
+  const chain = a?.b?.c?.d?.e?.f;
+  return b ? (c ? (d ? 1 : 2) : 3) : 4;
+}
+`;
+  const r = await analyzeFile(src, '.ts', src.split('\n').length);
+  assert.equal(smellCount(r.metrics, 'deep_optional_chain'), 1);
+  assert.equal(smellCount(r.metrics, 'deep_ternary'), 1);
+});
+
+test('aggregate threshold smells are preserved', async () => {
+  const manyFunctions = Array.from(
+    { length: 21 },
+    (_, i) => `function f${i}() { return ${i}; }`,
+  ).join('\n');
+  const src = `
+${manyFunctions}
+function tooMany(a: number, b: number, c: number, d: number, e: number, f: number) {
+  return a + b + c + d + e + f;
+}
+class First {}
+class Second {}
+`;
+  const r = await analyzeFile(src, '.ts', src.split('\n').length);
+  assert.equal(smellCount(r.metrics, 'high_function_count'), 1);
+  assert.equal(smellCount(r.metrics, 'long_param_list'), 1);
+  assert.equal(smellCount(r.metrics, 'multiple_classes'), 1);
 });

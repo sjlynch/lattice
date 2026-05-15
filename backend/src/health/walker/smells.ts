@@ -21,8 +21,36 @@ export function detectAstSmells(
   isTs: boolean,
   isJsFamily: boolean,
 ): void {
-  if (isTs && t === 'predefined_type') {
-    if (node.text === 'any') smellTokens.anyType++;
+  const ctx: AstSmellContext = {
+    node,
+    t,
+    smellTokens,
+    kinds,
+    grammar,
+    isTs,
+    isJsFamily,
+  };
+
+  detectTsJsSmells(ctx);
+  detectPythonSmells(ctx);
+  detectGenericStructureSmells(ctx);
+}
+
+type AstSmellContext = {
+  node: Node;
+  t: string;
+  smellTokens: FileAnalysis['smellTokens'];
+  kinds: NodeKinds;
+  grammar: GrammarKey;
+  isTs: boolean;
+  isJsFamily: boolean;
+};
+
+function detectTsJsSmells(ctx: AstSmellContext): void {
+  const { node, t, smellTokens } = ctx;
+
+  if (ctx.isTs && t === 'predefined_type' && node.text === 'any') {
+    smellTokens.anyType++;
   }
   if (t === 'as_expression' || t === 'type_assertion') {
     smellTokens.typeAssertion++;
@@ -37,55 +65,75 @@ export function detectAstSmells(
     // var keyword (let/const → lexical_declaration).
     smellTokens.varDecls++;
   }
-  if (t === 'binary_expression') {
-    for (const c of node.children) {
-      if (c && (c.type === '==' || c.type === '!=')) {
-        smellTokens.looseEquality++;
-        break;
-      }
-    }
+  if (t === 'binary_expression' && hasLooseEqualityOperator(node)) {
+    smellTokens.looseEquality++;
   }
-  if (t === 'catch_clause') {
-    const body =
-      node.childForFieldName('body') ||
-      node.namedChildren.find((c) => c?.type === 'statement_block');
-    if (body && body.namedChildCount === 0) {
-      smellTokens.emptyCatch++;
-    }
+  if (t === 'catch_clause' && isEmptyCatchClause(node)) {
+    smellTokens.emptyCatch++;
   }
-  if (grammar === 'python' && t === 'except_clause') {
-    // Bare except: only the `except` keyword + `:` + block as
-    // children, no exception type.
-    let hasType = false;
-    for (const c of node.children) {
-      if (!c) continue;
-      const ct = c.type;
-      if (
-        ct !== 'except' &&
-        ct !== ':' &&
-        ct !== 'block' &&
-        ct !== 'comment'
-      ) {
-        hasType = true;
-        break;
-      }
-    }
-    if (!hasType) smellTokens.bareExcept++;
-  }
-  if (grammar === 'python' && t === 'global_statement') {
-    smellTokens.globalKeyword++;
-  }
-  if (
-    isJsFamily &&
-    (t === 'member_expression' || t === 'subscript_expression' || t === 'call_expression')
-  ) {
+  if (ctx.isJsFamily && isOptionalChainCarrier(t)) {
     const depth = countOptionalChainDepth(node);
     if (depth > 4) smellTokens.deepOptionalChain++;
   }
-  if (kinds.ternary.has(t)) {
-    const depth = countTernaryDepth(node, kinds);
-    if (depth >= 3) smellTokens.deepTernary++;
+}
+
+function detectPythonSmells(ctx: AstSmellContext): void {
+  const { node, t, smellTokens } = ctx;
+  if (ctx.grammar !== 'python') return;
+
+  if (t === 'except_clause' && isBareExceptClause(node)) {
+    smellTokens.bareExcept++;
   }
+  if (t === 'global_statement') {
+    smellTokens.globalKeyword++;
+  }
+}
+
+function detectGenericStructureSmells(ctx: AstSmellContext): void {
+  if (!ctx.kinds.ternary.has(ctx.t)) return;
+
+  const depth = countTernaryDepth(ctx.node, ctx.kinds);
+  if (depth >= 3) ctx.smellTokens.deepTernary++;
+}
+
+function hasLooseEqualityOperator(node: Node): boolean {
+  for (const c of node.children) {
+    if (c && (c.type === '==' || c.type === '!=')) return true;
+  }
+  return false;
+}
+
+function isEmptyCatchClause(node: Node): boolean {
+  const body =
+    node.childForFieldName('body') ||
+    node.namedChildren.find((c) => c?.type === 'statement_block');
+  return !!body && body.namedChildCount === 0;
+}
+
+function isBareExceptClause(node: Node): boolean {
+  // Bare except: only the `except` keyword + `:` + block as children, no
+  // exception type.
+  for (const c of node.children) {
+    if (!c) continue;
+    const ct = c.type;
+    if (
+      ct !== 'except' &&
+      ct !== ':' &&
+      ct !== 'block' &&
+      ct !== 'comment'
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isOptionalChainCarrier(t: string): boolean {
+  return (
+    t === 'member_expression' ||
+    t === 'subscript_expression' ||
+    t === 'call_expression'
+  );
 }
 
 // Strings inside import specifiers aren't "magic strings" — a
