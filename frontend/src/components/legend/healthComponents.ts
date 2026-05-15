@@ -2,25 +2,28 @@
 // regular extensions legend while the user holds `h` in the graph view.
 // Per-file scores live in the on-graph hover tooltip; this panel only
 // describes what the score means and how it's weighted.
+//
+// Score ids, order, weights, thresholds, and direction come from the
+// backend's serializable score metadata so the legend cannot drift from
+// computeScore. UI labels/detail copy intentionally live here.
 
-// Keep these ids aligned with backend/src/health/scoreModel.ts.
-export type HealthComponentId =
-  | 'cognitive_complexity'
-  | 'cyclomatic_complexity'
-  | 'maintainability_index'
-  | 'nesting_depth'
-  | 'function_length'
-  | 'smell_density'
-  | 'call_graph_density'
-  | 'file_size'
-  | 'fan_out'
-  | 'fan_in'
-  | 'circular_dependency';
+import {
+  SCORE_COMPONENT_METADATA,
+  type ScoreComponentId,
+} from '../../../../backend/src/health/scoreMetadata';
+
+export type HealthComponentId = ScoreComponentId;
 
 // Structured tooltip detail. Rendering puts the bolded label on its
 // own line followed by the body text, so users get a readable list
 // rather than a wall of prose.
 export type DetailEntry = { label: string; body: string };
+
+type HealthComponentCopy = {
+  label: string;
+  note: string;
+  detail: DetailEntry[];
+};
 
 export type HealthComponent = {
   id: HealthComponentId;
@@ -33,14 +36,9 @@ export type HealthComponent = {
   detail: DetailEntry[];
 };
 
-export const HEALTH_COMPONENTS: HealthComponent[] = [
-  {
-    id: 'cognitive_complexity',
+const HEALTH_COMPONENT_COPY = {
+  cognitive_complexity: {
     label: 'Cognitive complexity (max)',
-    weight: 20,
-    healthyThreshold: 5,
-    unhealthyThreshold: 30,
-    higherIsWorse: true,
     note: 'green ≤5 · red ≥30',
     detail: [
       {
@@ -61,13 +59,8 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
       },
     ],
   },
-  {
-    id: 'cyclomatic_complexity',
+  cyclomatic_complexity: {
     label: 'Cyclomatic complexity (max)',
-    weight: 15,
-    healthyThreshold: 5,
-    unhealthyThreshold: 25,
-    higherIsWorse: true,
     note: 'green ≤5 · red ≥25',
     detail: [
       {
@@ -88,13 +81,8 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
       },
     ],
   },
-  {
-    id: 'maintainability_index',
+  maintainability_index: {
     label: 'Maintainability Index',
-    weight: 12,
-    healthyThreshold: 85,
-    unhealthyThreshold: 0,
-    higherIsWorse: false,
     note: 'Microsoft formula · ≥85 healthy',
     detail: [
       {
@@ -115,40 +103,8 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
       },
     ],
   },
-  {
-    id: 'smell_density',
-    label: 'Smell density',
-    weight: 10,
-    healthyThreshold: 0,
-    unhealthyThreshold: 0.05,
-    higherIsWorse: true,
-    note: 'detected smells / LOC',
-    detail: [
-      {
-        label: 'Measures',
-        body: 'Total detected smells divided by LOC. A high density means concentrated technical debt, regardless of file size.',
-      },
-      {
-        label: 'Universal smells',
-        body: 'TODO/FIXME comments, magic numbers, magic strings (literals duplicated 3+ times), long string literals, commented-out code blocks.',
-      },
-      {
-        label: 'TS/JS smells',
-        body: 'any types, as casts, non-null !, @ts-ignore, console.*, debugger, eval, var keyword, ==/!=, deep optional chains, deep ternaries, mixed sync/async, boolean parameters, mixed default + named exports.',
-      },
-      {
-        label: 'Python smells',
-        body: 'print(), bare except, import *, mutable default arguments, global keyword, missing docstrings.',
-      },
-    ],
-  },
-  {
-    id: 'nesting_depth',
+  nesting_depth: {
     label: 'Nesting depth (max)',
-    weight: 10,
-    healthyThreshold: 2,
-    unhealthyThreshold: 8,
-    higherIsWorse: true,
     note: 'green ≤2 · red ≥8',
     detail: [
       {
@@ -169,13 +125,8 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
       },
     ],
   },
-  {
-    id: 'function_length',
+  function_length: {
     label: 'Max function length',
-    weight: 8,
-    healthyThreshold: 30,
-    unhealthyThreshold: 250,
-    higherIsWorse: true,
     note: 'green ≤30 · red ≥250 lines',
     detail: [
       {
@@ -196,13 +147,30 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
       },
     ],
   },
-  {
-    id: 'call_graph_density',
+  smell_density: {
+    label: 'Smell density',
+    note: 'detected smells / LOC',
+    detail: [
+      {
+        label: 'Measures',
+        body: 'Total detected smells divided by LOC. A high density means concentrated technical debt, regardless of file size.',
+      },
+      {
+        label: 'Universal smells',
+        body: 'TODO/FIXME comments, magic numbers, magic strings (literals duplicated 3+ times), long string literals, commented-out code blocks.',
+      },
+      {
+        label: 'TS/JS smells',
+        body: 'any types, as casts, non-null !, @ts-ignore, console.*, debugger, eval, var keyword, ==/!=, deep optional chains, deep ternaries, mixed sync/async, boolean parameters, mixed default + named exports.',
+      },
+      {
+        label: 'Python smells',
+        body: 'print(), bare except, import *, mutable default arguments, global keyword, missing docstrings.',
+      },
+    ],
+  },
+  call_graph_density: {
     label: 'Call graph density',
-    weight: 5,
-    healthyThreshold: 0.3,
-    unhealthyThreshold: 1.5,
-    higherIsWorse: true,
     note: 'within-file calls per function',
     detail: [
       {
@@ -223,13 +191,8 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
       },
     ],
   },
-  {
-    id: 'file_size',
+  file_size: {
     label: 'File size (LOC)',
-    weight: 5,
-    healthyThreshold: 200,
-    unhealthyThreshold: 1500,
-    higherIsWorse: true,
     note: 'green ≤200 · red ≥1500',
     detail: [
       {
@@ -246,13 +209,8 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
       },
     ],
   },
-  {
-    id: 'fan_out',
+  fan_out: {
     label: 'Fan-out (imports made)',
-    weight: 5,
-    healthyThreshold: 8,
-    unhealthyThreshold: 30,
-    higherIsWorse: true,
     note: 'green ≤8 · red ≥30',
     detail: [
       {
@@ -269,13 +227,8 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
       },
     ],
   },
-  {
-    id: 'fan_in',
+  fan_in: {
     label: 'Fan-in (importers)',
-    weight: 5,
-    healthyThreshold: 15,
-    unhealthyThreshold: 50,
-    higherIsWorse: true,
     note: 'green ≤15 · red ≥50',
     detail: [
       {
@@ -292,13 +245,8 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
       },
     ],
   },
-  {
-    id: 'circular_dependency',
+  circular_dependency: {
     label: 'Circular dependency',
-    weight: 5,
-    healthyThreshold: 0,
-    unhealthyThreshold: 1,
-    higherIsWorse: true,
     note: 'binary · file is in a cycle',
     detail: [
       {
@@ -315,4 +263,12 @@ export const HEALTH_COMPONENTS: HealthComponent[] = [
       },
     ],
   },
-];
+} satisfies Record<HealthComponentId, HealthComponentCopy>;
+
+export const HEALTH_COMPONENTS: HealthComponent[] = SCORE_COMPONENT_METADATA.map(
+  (component) => ({
+    ...component,
+    ...HEALTH_COMPONENT_COPY[component.id],
+    weight: Math.round(component.weight * 100),
+  }),
+);

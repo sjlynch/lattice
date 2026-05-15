@@ -18,6 +18,10 @@
 - `GraphHud.tsx` / `GraphSelectionChip.tsx` / `GraphContextMenu.tsx` /
   `GraphTaskModal.tsx` — render-only overlays for the spinner+view chip+counts,
   the selection chip, the right-click popover, and the create-task modal.
+- `HealthTooltip.tsx` — measurement/composition wrapper for file health hover;
+  positioning lives in `tooltipPosition.ts`, metric row construction in
+  `healthTooltipMetrics.ts`, and render-only sections in
+  `HealthTooltipSections.tsx`.
 - `sprites.ts` — `spriteFor(node, settings)`. Per-style `SpriteMaterial` cache so
   the simulation only allocates one material per (ext, shape, color) tuple.
 - `locOverlay.ts` — LOC overlay sprites + `locLabelRegistry` (RAF loop in

@@ -5,7 +5,7 @@
 - `TopAppBar.tsx` — folder picker + workflow/taskboard launchers.
 - `Sidebar.tsx` + `sidebar/` — terminal tabs/panels + new-shell tray; `Sidebar.tsx` composes the split components/hooks and reads `useTerminals()`.
 - `TerminalPane.tsx` — xterm.js + WS to `/ws/terminal` (proxied to `:5185`). The WebglAddon is attached only while `active=true` and disposed on deactivate so each tab doesn't permanently hold a WebGL context.
-- `Legend.tsx` — per-extension toggles. Sources `extensionStyles.ts`.
+- `Legend.tsx` — composition layer for per-extension toggles. Row derivation lives in `legend/useLegendRows.ts`, rendering in `legend/LegendRow.tsx`, and shapes/colors still source from `extensionStyles.ts`.
 - `FloatingPanel.tsx` — draggable, resizable, persists size/pos under `lattice.<thing>.window`.
 - `Modal.tsx` — generic backdrop overlay used by ForceGraph's "create task" flow.
 - `FolderPicker.tsx` — backend-paged folder browser.

@@ -38,7 +38,11 @@ Halstead token counts and a Maintainability Index, and folded into a composite
     strings, universal regex smells, and threshold-derived smells into the
     final `HealthSmell[]`)
 - `crossFile.ts` / `crossFileAnalyzer.ts` — fanIn/fanOut/inCycle patch-in pass over the file set
-- `scoreModel.ts` — score component ids, weights, thresholds, and metric extractors
+- `scoreMetadata.ts` — serializable source of truth for score component ids,
+  ordering, weights, thresholds, and direction. The frontend health legend imports
+  this file directly; do not duplicate score metadata in UI code.
+- `scoreModel.ts` — backend-only adapter that adds metric extractor functions to
+  `scoreMetadata.ts` components for scoring
 - `score.ts` + `constants.ts` — final score calculation over the score model; shared thresholds
 - `watcher.ts` — chokidar watcher rebroadcasting changed-file metrics
 - `cache.ts` — LRU file-content cache; `tsconfig.ts` — tsconfig alias resolution
