@@ -65,21 +65,37 @@ export type QueueAction =
   // queued multiple times.
   | { type: 'runFinished'; runId: string };
 
-// Pure reducer. No I/O, no side effects.
-export function reduceQueue(state: QueueState, action: QueueAction): QueueState {
-  switch (action.type) {
-    case 'setMode': {
-      // Disallow mid-flight mode changes — semantics would be murky
-      // (mid-parallel switching to sequential, or vice versa). The UI also
-      // disables the buttons while running, so this is a defensive check.
-      if (state.running || state.started.length > 0) return state;
-      if (state.mode === action.mode) return state;
-      return { ...state, mode: action.mode };
-    }
+type QueueMutationAction = Extract<
+  QueueAction,
+  { type: 'enqueue' | 'removeFromQueue' | 'clearQueue' }
+>;
+type RunningModeAction = Extract<QueueAction, { type: 'setMode' | 'startQueue' | 'stopQueue' }>;
+type DispatchLifecycleAction = Extract<
+  QueueAction,
+  { type: 'dispatchStart' | 'workflowStarted' | 'dispatchFailed' }
+>;
+type RunLifecycleAction = Extract<QueueAction, { type: 'runFinished' }>;
 
-    case 'enqueue': {
+function replaceStartedEntry(
+  started: StartedEntry[],
+  idx: number,
+  entry: StartedEntry,
+): StartedEntry[] {
+  const next = [...started];
+  next[idx] = entry;
+  return next;
+}
+
+function removeStartedEntry(started: StartedEntry[], idx: number): StartedEntry[] {
+  const next = [...started];
+  next.splice(idx, 1);
+  return next;
+}
+
+function reduceQueueMutation(state: QueueState, action: QueueMutationAction): QueueState {
+  switch (action.type) {
+    case 'enqueue':
       return { ...state, queued: [...state.queued, action.entry] };
-    }
 
     case 'removeFromQueue': {
       if (!state.queued.some((entry) => entry.id === action.entryId)) return state;
@@ -89,39 +105,49 @@ export function reduceQueue(state: QueueState, action: QueueAction): QueueState 
       };
     }
 
-    case 'clearQueue': {
+    case 'clearQueue':
       if (state.queued.length === 0) return state;
       return { ...state, queued: [] };
-    }
+  }
+}
 
-    case 'startQueue': {
+function reduceRunningMode(state: QueueState, action: RunningModeAction): QueueState {
+  switch (action.type) {
+    case 'setMode':
+      // Disallow mid-flight mode changes — semantics would be murky
+      // (mid-parallel switching to sequential, or vice versa). The UI also
+      // disables the buttons while running, so this is a defensive check.
+      if (state.running || state.started.length > 0) return state;
+      if (state.mode === action.mode) return state;
+      return { ...state, mode: action.mode };
+
+    case 'startQueue':
       if (state.running) return state;
       if (state.queued.length === 0) return state;
       return { ...state, running: true };
-    }
 
-    case 'stopQueue': {
+    case 'stopQueue':
       if (!state.running) return state;
       return { ...state, running: false };
-    }
+  }
+}
 
+function reduceDispatchLifecycle(state: QueueState, action: DispatchLifecycleAction): QueueState {
+  switch (action.type) {
     case 'dispatchStart': {
       // Idempotent by queue-entry id: already in-flight = no-op. This is the
       // synchronous gate that prevents the React layer from dispatching /run
       // twice for the same queued entry, while still allowing the same
       // workflowId to be queued in another independent entry.
-      if (state.started.some((entry) => entry.id === action.entryId)) {
-        return state;
-      }
+      if (state.started.some((entry) => entry.id === action.entryId)) return state;
+
       const entry = state.queued.find((queued) => queued.id === action.entryId);
       if (!entry) return state;
+
       return {
         ...state,
         queued: state.queued.filter((queued) => queued.id !== action.entryId),
-        started: [
-          ...state.started,
-          { ...entry, runId: null },
-        ],
+        started: [...state.started, { ...entry, runId: null }],
       };
     }
 
@@ -130,9 +156,14 @@ export function reduceQueue(state: QueueState, action: QueueAction): QueueState 
         (entry) => entry.id === action.entryId && entry.runId === null,
       );
       if (idx === -1) return state;
-      const started = [...state.started];
-      started[idx] = { ...started[idx], runId: action.runId };
-      return { ...state, started };
+
+      return {
+        ...state,
+        started: replaceStartedEntry(state.started, idx, {
+          ...state.started[idx],
+          runId: action.runId,
+        }),
+      };
     }
 
     case 'dispatchFailed': {
@@ -140,19 +171,48 @@ export function reduceQueue(state: QueueState, action: QueueAction): QueueState 
         (entry) => entry.id === action.entryId && entry.runId === null,
       );
       if (idx === -1) return state;
-      const started = [...state.started];
-      started.splice(idx, 1);
-      return { ...state, started };
-    }
-
-    case 'runFinished': {
-      const idx = state.started.findIndex((entry) => entry.runId === action.runId);
-      if (idx === -1) return state;
-      const started = [...state.started];
-      started.splice(idx, 1);
-      return { ...state, started };
+      return { ...state, started: removeStartedEntry(state.started, idx) };
     }
   }
+}
+
+function reduceRunLifecycle(state: QueueState, action: RunLifecycleAction): QueueState {
+  const idx = state.started.findIndex((entry) => entry.runId === action.runId);
+  if (idx === -1) return state;
+  return { ...state, started: removeStartedEntry(state.started, idx) };
+}
+
+// Pure reducer. No I/O, no side effects.
+export function reduceQueue(state: QueueState, action: QueueAction): QueueState {
+  switch (action.type) {
+    case 'enqueue':
+    case 'removeFromQueue':
+    case 'clearQueue':
+      return reduceQueueMutation(state, action);
+
+    case 'setMode':
+    case 'startQueue':
+    case 'stopQueue':
+      return reduceRunningMode(state, action);
+
+    case 'dispatchStart':
+    case 'workflowStarted':
+    case 'dispatchFailed':
+      return reduceDispatchLifecycle(state, action);
+
+    case 'runFinished':
+      return reduceRunLifecycle(state, action);
+  }
+}
+
+function pendingSequentialStarts(state: QueueState): WorkflowQueueEntry[] {
+  if (state.started.length > 0) return [];
+  return [state.queued[0]];
+}
+
+function pendingParallelStarts(state: QueueState): WorkflowQueueEntry[] {
+  const startedIds = new Set(state.started.map((entry) => entry.id));
+  return state.queued.filter((entry) => !startedIds.has(entry.id));
 }
 
 // What the scheduler wants the React layer to start *now*. Pure — safe to
@@ -163,12 +223,20 @@ export function reduceQueue(state: QueueState, action: QueueAction): QueueState 
 export function pendingStarts(state: QueueState): WorkflowQueueEntry[] {
   if (!state.running) return [];
   if (state.queued.length === 0) return [];
-  if (state.mode === 'sequential') {
-    if (state.started.length > 0) return [];
-    return [state.queued[0]];
-  }
-  const startedIds = new Set(state.started.map((entry) => entry.id));
-  return state.queued.filter((entry) => !startedIds.has(entry.id));
+  if (state.mode === 'sequential') return pendingSequentialStarts(state);
+  return pendingParallelStarts(state);
+}
+
+function sequentialQueueDrained(state: QueueState): boolean {
+  // Drained iff no workflow is in-flight or active.
+  return state.started.length === 0;
+}
+
+function parallelDispatchesSettled(state: QueueState): boolean {
+  // Parallel mode is fire-and-forget: as soon as every queued workflow has
+  // either dispatched successfully (runId attached) or failed-and-cleared,
+  // the queue's job is done. Outstanding runs continue independently.
+  return state.started.every((entry) => entry.runId !== null);
 }
 
 // Whether the queue has nothing left to do. Used by the runtime to flip
@@ -177,14 +245,8 @@ export function pendingStarts(state: QueueState): WorkflowQueueEntry[] {
 export function shouldAutoStop(state: QueueState): boolean {
   if (!state.running) return false;
   if (state.queued.length > 0) return false;
-  if (state.mode === 'sequential') {
-    // Drained iff no workflow is in-flight or active.
-    return state.started.length === 0;
-  }
-  // Parallel mode is fire-and-forget: as soon as every queued workflow has
-  // either dispatched successfully (runId attached) or failed-and-cleared,
-  // the queue's job is done. Outstanding runs continue independently.
-  return state.started.every((entry) => entry.runId !== null);
+  if (state.mode === 'sequential') return sequentialQueueDrained(state);
+  return parallelDispatchesSettled(state);
 }
 
 // Convenience: apply one action and return both the new state and the
@@ -196,18 +258,28 @@ export type Step = {
   autoStop: boolean;
 };
 
-export function step(state: QueueState, action: QueueAction): Step {
-  let next = reduceQueue(state, action);
-  const starts = pendingStarts(next);
+function reserveDispatches(state: QueueState, starts: WorkflowQueueEntry[]): QueueState {
+  let next = state;
   // Apply the dispatchStart optimistic updates synchronously so the caller's
   // next call to `step` doesn't re-emit them.
   for (const entry of starts) {
-    next = reduceQueue(next, { type: 'dispatchStart', entryId: entry.id });
+    next = reduceDispatchLifecycle(next, { type: 'dispatchStart', entryId: entry.id });
   }
-  let autoStop = false;
-  if (shouldAutoStop(next)) {
-    next = reduceQueue(next, { type: 'stopQueue' });
-    autoStop = true;
-  }
-  return { state: next, starts, autoStop };
+  return next;
+}
+
+function stopIfDrained(state: QueueState): Pick<Step, 'state' | 'autoStop'> {
+  if (!shouldAutoStop(state)) return { state, autoStop: false };
+  return {
+    state: reduceRunningMode(state, { type: 'stopQueue' }),
+    autoStop: true,
+  };
+}
+
+export function step(state: QueueState, action: QueueAction): Step {
+  const reduced = reduceQueue(state, action);
+  const starts = pendingStarts(reduced);
+  const reserved = reserveDispatches(reduced, starts);
+  const stopped = stopIfDrained(reserved);
+  return { ...stopped, starts };
 }

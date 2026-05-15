@@ -11,6 +11,8 @@ type Props = {
   onSelectFolder: (path: string) => void;
   startupTerminals: StartupTerminal[];
   onStartupTerminalsChange: (next: StartupTerminal[]) => void;
+  metricsIgnoredExts: string[];
+  onMetricsIgnoredExtsChange: (next: string[]) => void | Promise<void>;
   scanResult: ScanResult | null;
 };
 
@@ -19,6 +21,8 @@ export function TopAppBar({
   onSelectFolder,
   startupTerminals,
   onStartupTerminalsChange,
+  metricsIgnoredExts,
+  onMetricsIgnoredExtsChange,
   scanResult,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -74,6 +78,8 @@ export function TopAppBar({
         activeFolder={activeFolder}
         startupTerminals={startupTerminals}
         onStartupTerminalsChange={onStartupTerminalsChange}
+        metricsIgnoredExts={metricsIgnoredExts}
+        onMetricsIgnoredExtsChange={onMetricsIgnoredExtsChange}
       />
     </>
   );
