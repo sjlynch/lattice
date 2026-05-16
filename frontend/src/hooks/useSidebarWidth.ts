@@ -19,20 +19,42 @@ export function useSidebarWidth(activeFolder: string) {
   const [sidebarWidth, setSidebarWidth] = useState<number>(
     APP_CONFIG.sidebar.defaultWidth,
   );
+  const [sidebarSettingsLoaded, setSidebarSettingsLoaded] = useState(
+    () => !activeFolder,
+  );
   const resizingRef = useRef(false);
   const activeFolderRef = useSyncedRef(activeFolder);
   const sidebarWidthRef = useSyncedRef(sidebarWidth);
 
   // Load per-project sidebar width from backend when the active folder changes.
+  // While this is pending, callers can avoid mounting width-sensitive terminal
+  // panes so xterm opens only after the saved preference has been applied.
   useEffect(() => {
-    if (!activeFolder) return;
+    let cancelled = false;
+
+    if (!activeFolder) {
+      setSidebarSettingsLoaded(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setSidebarSettingsLoaded(false);
     fetchUserSettings(activeFolder)
       .then((settings) => {
+        if (cancelled) return;
         if (typeof settings.sidebarWidth === 'number') {
           setSidebarWidth(clampSidebarWidth(settings.sidebarWidth));
         }
       })
-      .catch(() => { /* ignore — keep current width */ });
+      .catch(() => { /* ignore — keep current width */ })
+      .finally(() => {
+        if (!cancelled) setSidebarSettingsLoaded(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [activeFolder]);
 
   // Re-clamp on window resize so the sidebar can't exceed its viewport cap.
@@ -93,5 +115,10 @@ export function useSidebarWidth(activeFolder: string) {
     }
   }, [activeFolderRef]);
 
-  return { sidebarWidth, onResizerPointerDown, onResizerDoubleClick };
+  return {
+    sidebarWidth,
+    sidebarSettingsLoaded,
+    onResizerPointerDown,
+    onResizerDoubleClick,
+  };
 }

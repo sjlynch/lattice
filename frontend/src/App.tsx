@@ -20,8 +20,12 @@ function App() {
   // panel while it's active. ForceGraphView still owns the keydown
   // listener and pushes changes back up via onHealthModeChange.
   const [healthMode, setHealthMode] = useState(false);
-  const { sidebarWidth, onResizerPointerDown, onResizerDoubleClick } =
-    useSidebarWidth(activeFolder);
+  const {
+    sidebarWidth,
+    sidebarSettingsLoaded,
+    onResizerPointerDown,
+    onResizerDoubleClick,
+  } = useSidebarWidth(activeFolder);
   const [startupTerminals, setStartupTerminals] =
     useStartupTerminalSync(activeFolder);
   const [metricsIgnoredExts, saveMetricsIgnoredExts] =
@@ -40,21 +44,25 @@ function App() {
           scanResult={scanResult}
         />
         <div className="app-body">
-          <aside className="app-sidebar" style={{ width: sidebarWidth }}>
-            <Sidebar
-              activeFolder={activeFolder}
-              startupTerminals={startupTerminals}
-            />
-          </aside>
-          <div
-            className="app-resizer"
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize sidebar"
-            onPointerDown={onResizerPointerDown}
-            onDoubleClick={onResizerDoubleClick}
-            title="Drag to resize · double-click to reset"
-          />
+          {sidebarSettingsLoaded && (
+            <>
+              <aside className="app-sidebar" style={{ width: sidebarWidth }}>
+                <Sidebar
+                  activeFolder={activeFolder}
+                  startupTerminals={startupTerminals}
+                />
+              </aside>
+              <div
+                className="app-resizer"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize sidebar"
+                onPointerDown={onResizerPointerDown}
+                onDoubleClick={onResizerDoubleClick}
+                title="Drag to resize · double-click to reset"
+              />
+            </>
+          )}
           <main className="app-graph">
             <ForceGraphView
               data={scanResult}
