@@ -52,8 +52,8 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
 
   // For the LOC and health overlays, fall back to the plain sprite when
   // the file's extension is on the per-project ignore list — e.g.
-  // `.json` by default. Directories aren't measured by either overlay
-  // anyway, so the check is file-only.
+  // config/prose files by default. Directories aren't measured by either
+  // overlay anyway, so the check is file-only.
   const ignored =
     node.kind === 'file' &&
     !!node.ext &&

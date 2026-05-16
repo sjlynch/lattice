@@ -28,7 +28,8 @@ export type UserSettings = {
   // File extensions (leading dot, lowercase) to skip when rendering the
   // LOC overlay (`z`) and the code-health overlay (`h`). Matching files
   // fall back to the normal sprite — no colored treatment, no LOC/score
-  // label. Absent = use the default `['.json']`; an empty array means
+  // label. Absent = use the frontend's DEFAULT_METRICS_IGNORED_EXTS
+  // (JSON plus common prose/text extensions); an empty array means
   // "ignore nothing".
   metricsIgnoredExts?: string[];
 };

@@ -21,10 +21,15 @@ export type UserSettings = {
 };
 
 // Extensions Lattice ignores by default in the LOC and code-health overlays.
-// `.json` files are mostly configuration / generated payloads — their line
-// counts and "smell" scores tend to drown out the meaningful signal from
-// real source files.
-export const DEFAULT_METRICS_IGNORED_EXTS: readonly string[] = ['.json'];
+// Config/data and prose files are often long but not meaningful code-health
+// signal, so their line counts and fallback "smell" scores stay out of the
+// metric overlays unless a project explicitly opts them back in.
+export const DEFAULT_METRICS_IGNORED_EXTS: readonly string[] = [
+  '.json',
+  '.md',
+  '.mdx',
+  '.txt',
+];
 
 // Coerce a raw extension entry to its canonical form (lowercased, single
 // leading dot). Returns null for empties so callers can drop them.
