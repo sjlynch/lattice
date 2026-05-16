@@ -24,6 +24,12 @@ const METRIC_LABEL_TEXTURE_OPTIONS: LabelTextureOptions = {
 };
 
 const METRIC_LABEL_HEIGHT_MULT = 2;
+const METRIC_LABEL_HIT_BOUNDS = {
+  minU: 0,
+  maxU: 1,
+  minV: 0,
+  maxV: 1,
+};
 
 export type MetricOverlayConfig = {
   overlayKey: string;
@@ -82,6 +88,10 @@ export function createMetricOverlaySpriteFactory(
       heightMultiplier: METRIC_LABEL_HEIGHT_MULT,
       maxScale: 100,
       aspectFallback: 1,
+      // Numeric metric labels are already measured tightly. Let the whole
+      // sprite quad count as hoverable so health-score labels reliably anchor
+      // the health tooltip after the shared-label refactor.
+      hitBounds: METRIC_LABEL_HIT_BOUNDS,
     });
     label.position.set(0, config.labelY, 0);
     group.add(label);
