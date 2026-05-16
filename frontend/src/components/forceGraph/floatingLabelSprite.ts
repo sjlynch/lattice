@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import type { MeasuredLabelTexture } from './labelTexture';
-import { disableRaycast, restrictSpriteRaycast } from './spritePicking';
+import {
+  disableRaycast,
+  restrictSpriteRaycast,
+  type SpriteUvBounds,
+} from './spritePicking';
 
 const DEFAULT_HIT_BOUNDS = {
   minU: 0,
@@ -16,6 +20,7 @@ export type FloatingLabelSpriteConfig = {
   minScale?: number;
   refDistance?: number;
   renderOrder?: number;
+  hitBounds?: SpriteUvBounds;
 };
 
 export type ConnectorLineConfig = {
@@ -46,7 +51,10 @@ export function makeFloatingLabelSprite(
   const h = baseH * config.heightMultiplier;
   const sprite = new THREE.Sprite(mat);
   sprite.scale.set(h * aspect, h, 1);
-  restrictSpriteRaycast(sprite, texture._hitBounds ?? DEFAULT_HIT_BOUNDS);
+  restrictSpriteRaycast(
+    sprite,
+    config.hitBounds ?? texture._hitBounds ?? DEFAULT_HIT_BOUNDS,
+  );
   sprite.renderOrder = config.renderOrder ?? 999;
 
   const minScale = config.minScale ?? 6;

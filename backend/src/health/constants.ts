@@ -70,14 +70,18 @@ export function matchIgnoredSourcePath(
   filePath: string,
   projectRoot: string,
   gitignore: Pick<Ignore, 'ignores'>,
+  isDirectory = false,
 ): boolean {
-  // Always-ignore segments take precedence over .gitignore so node_modules /
-  // .git / .lattice are blocked even on projects missing a .gitignore.
-  if (hasIgnoredPathSegment(filePath)) return true;
-
   let rel = path.relative(projectRoot, filePath);
   if (!rel || rel.startsWith('..')) return false;
   rel = rel.split(path.sep).join('/');
   if (!rel) return false;
-  return gitignore.ignores(rel);
+
+  // Always-ignore segments take precedence over .gitignore so node_modules /
+  // .git / .lattice are blocked even on projects missing a .gitignore. Check
+  // the project-relative path so repos that live under ~/.lattice/worktrees are
+  // still watchable.
+  if (hasIgnoredPathSegment(rel)) return true;
+  if (gitignore.ignores(rel)) return true;
+  return isDirectory ? gitignore.ignores(`${rel}/`) : false;
 }

@@ -95,4 +95,5 @@ export type HealthMetrics = {
 
 export type HealthUpdate =
   | { type: 'updated'; filePath: string; metrics: HealthMetrics }
-  | { type: 'removed'; filePath: string };
+  | { type: 'removed'; filePath: string }
+  | { type: 'rescan'; reason: 'config' | 'directory'; path: string };

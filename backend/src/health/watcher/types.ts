@@ -11,6 +11,12 @@ export type HealthUpdate = {
 } | {
   type: 'removed';
   filePath: string;
+} | {
+  // Structural tree/config changes that cannot be represented as a single
+  // metrics patch. Frontend subscribers should refresh /api/scan.
+  type: 'rescan';
+  reason: 'config' | 'directory';
+  path: string;
 };
 
 export type Subscriber = (update: HealthUpdate) => void;
