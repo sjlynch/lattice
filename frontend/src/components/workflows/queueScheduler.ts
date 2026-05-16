@@ -35,13 +35,27 @@ export type QueueState = {
   // in-flight or active. Sequential mode keeps this at length <= 1; parallel
   // fills it with the whole batch until each run dispatch is confirmed.
   started: StartedEntry[];
+  // Run IDs whose `runFinished` action arrived before `workflowStarted` could
+  // attach them to a started entry — i.e. the run finished server-side faster
+  // than the /run HTTP response made it back. `workflowStarted` consumes
+  // these to retire the entry immediately rather than attaching a runId that
+  // is already dead. Without this, sequential queues stall after the first
+  // workflow when the run completes (or is cancelled) before /run resolves.
+  preFinishedRunIds: string[];
 };
+
+// Cap on preFinishedRunIds. The set should normally drain immediately when
+// workflowStarted fires, but a manual run completing while the queue is also
+// active will push an unmatched runId in. Bounding the list prevents
+// long-lived queues from accumulating without limit.
+const PRE_FINISHED_CAP = 16;
 
 export const initialQueueState: QueueState = {
   mode: 'sequential',
   queued: [],
   running: false,
   started: [],
+  preFinishedRunIds: [],
 };
 
 export type QueueAction =
@@ -88,6 +102,12 @@ function replaceStartedEntry(
 
 function removeStartedEntry(started: StartedEntry[], idx: number): StartedEntry[] {
   const next = [...started];
+  next.splice(idx, 1);
+  return next;
+}
+
+function removeAt<T>(list: T[], idx: number): T[] {
+  const next = [...list];
   next.splice(idx, 1);
   return next;
 }
@@ -157,6 +177,17 @@ function reduceDispatchLifecycle(state: QueueState, action: DispatchLifecycleAct
       );
       if (idx === -1) return state;
 
+      const preIdx = state.preFinishedRunIds.indexOf(action.runId);
+      if (preIdx !== -1) {
+        // The run already finished server-side before we could attach the
+        // runId. Skip attachment and retire the entry now.
+        return {
+          ...state,
+          started: removeStartedEntry(state.started, idx),
+          preFinishedRunIds: removeAt(state.preFinishedRunIds, preIdx),
+        };
+      }
+
       return {
         ...state,
         started: replaceStartedEntry(state.started, idx, {
@@ -178,7 +209,20 @@ function reduceDispatchLifecycle(state: QueueState, action: DispatchLifecycleAct
 
 function reduceRunLifecycle(state: QueueState, action: RunLifecycleAction): QueueState {
   const idx = state.started.findIndex((entry) => entry.runId === action.runId);
-  if (idx === -1) return state;
+  if (idx === -1) {
+    // The runId hasn't been attached yet (race: WS completed/cancelled
+    // arrived before /run HTTP resolved) or it belongs to a manual run we
+    // never tracked. Remember it so a later workflowStarted can retire the
+    // entry instead of attaching a dead runId; an unmatched id ages out via
+    // PRE_FINISHED_CAP.
+    if (state.preFinishedRunIds.includes(action.runId)) return state;
+    const next = [...state.preFinishedRunIds, action.runId];
+    return {
+      ...state,
+      preFinishedRunIds:
+        next.length > PRE_FINISHED_CAP ? next.slice(next.length - PRE_FINISHED_CAP) : next,
+    };
+  }
   return { ...state, started: removeStartedEntry(state.started, idx) };
 }
 

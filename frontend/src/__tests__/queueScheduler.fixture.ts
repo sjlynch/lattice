@@ -32,6 +32,7 @@ export function queueState(overrides: Partial<QueueState> = {}): QueueState {
     queued: [],
     running: false,
     started: [],
+    preFinishedRunIds: [],
     ...overrides,
   };
 }

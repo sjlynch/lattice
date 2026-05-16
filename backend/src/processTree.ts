@@ -10,18 +10,28 @@ const isWindows = os.platform() === 'win32';
 // processes munching CPU/RAM.
 //
 // `taskkill /F /T /PID <pid>` walks and force-kills the whole tree. We
-// fire it AFTER pty.kill so the conpty handle is already torn down, then
-// detach so we don't block the caller waiting for taskkill to finish.
+// fire it AFTER pty.kill so the conpty handle is already torn down.
+//
+// No `detached: true` on purpose. taskkill.exe is a console-subsystem app;
+// `detached: true` requests a new console session for the child, and the
+// `DETACHED_PROCESS` + `CREATE_NO_WINDOW` combination Windows ends up
+// with is racy — the new console briefly flashes on screen before being
+// hidden. The terminal-server is itself spawned detached/stdio:ignore
+// from the main backend, so it has no attached console; a child spawned
+// without `detached: true` inherits that "no console" state and Windows
+// never allocates one at all. `stdio: 'ignore'` + `child.unref()` is
+// what actually keeps the caller from blocking on taskkill's exit;
+// `detached` controls OS-level process grouping, not JS-level waiting.
 export function killProcessTreeWindows(pid: number): void {
   if (!isWindows || !pid) return;
   try {
     const child = spawn('taskkill', ['/F', '/T', '/PID', String(pid)], {
       windowsHide: true,
       stdio: 'ignore',
-      detached: true,
     });
-    // Detach so we don't keep a handle; swallow the inevitable ENOENT/
-    // exit-1 (PID already gone) without polluting the log.
+    // Swallow the inevitable ENOENT / exit-1 (PID already gone) without
+    // polluting the log, and drop the handle from the event loop so the
+    // parent doesn't wait on it.
     child.on('error', () => { /* ignore */ });
     child.unref();
   } catch {
