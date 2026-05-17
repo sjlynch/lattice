@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Kanban } from 'lucide-react';
+import { Kanban, Search, X } from 'lucide-react';
 import { FloatingPanel } from '../FloatingPanel';
 import { useTerminals } from '../../TerminalsContext';
 import { type Task, type TaskStatus } from '../../api';
@@ -14,7 +14,7 @@ import { useMergeRunSync } from './hooks/useMergeRunSync';
 import { usePushRun } from './hooks/usePushRun';
 import { useHarnessSelector } from './hooks/useHarnessSelector';
 import { useTaskActions } from './hooks/useTaskActions';
-import { useTaskBoardState } from './hooks/useTaskBoardState';
+import { groupTasksByStatus, useTaskBoardState } from './hooks/useTaskBoardState';
 import { useTaskTerminalCleanup } from './hooks/useTaskTerminalCleanup';
 import { useSyncedViewedTask } from './hooks/useSyncedViewedTask';
 import { buildTerminalMap } from '../../utils/terminalMap';
@@ -23,6 +23,11 @@ type Props = {
   activeFolder: string;
 };
 
+function taskContainsSearchText(task: Task, searchText: string): boolean {
+  const haystack = `${task.title}\n${task.description ?? ''}`.toLowerCase();
+  return haystack.includes(searchText);
+}
+
 // Top-level Task Board: opens the floating panel and renders the lanes.
 // Data-sync/state responsibilities live in hooks under ./hooks; this
 // component wires those hooks to the JSX shell and keeps UI-only state local.
@@ -30,6 +35,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   const [open, setOpen] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [addingTo, setAddingTo] = useState<TaskStatus | null>(null);
+  const [taskSearch, setTaskSearch] = useState('');
 
   // Filter state — all lanes visible by default.
   const [visibleLanes, setVisibleLanes] = useState<Set<TaskStatus>>(
@@ -96,6 +102,20 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     pickInterleaveHarness,
     showError,
   });
+
+  const searchText = taskSearch.trim().toLowerCase();
+  const searchActive = searchText.length > 0;
+  const filteredTasks = useMemo(
+    () =>
+      searchActive
+        ? tasks.filter((task) => taskContainsSearchText(task, searchText))
+        : tasks,
+    [searchActive, searchText, tasks],
+  );
+  const filteredGrouped = useMemo(
+    () => groupTasksByStatus(filteredTasks),
+    [filteredTasks],
+  );
 
   const terminalByTaskId = useMemo(
     () => buildTerminalMap(terminals, tasks),
@@ -167,7 +187,34 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         title={
           <>
             <Kanban size={13} />
-            Task board
+            <span>Task board</span>
+            <div className="taskboard-search fp-no-drag">
+              <Search size={12} aria-hidden />
+              <input
+                className="taskboard-search-input"
+                value={taskSearch}
+                onChange={(e) => setTaskSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape' && taskSearch) {
+                    e.stopPropagation();
+                    setTaskSearch('');
+                  }
+                }}
+                placeholder="Search tasks"
+                aria-label="Search tasks"
+              />
+              {taskSearch && (
+                <button
+                  type="button"
+                  className="taskboard-search-clear"
+                  onClick={() => setTaskSearch('')}
+                  title="Clear search"
+                  aria-label="Clear search"
+                >
+                  <X size={11} />
+                </button>
+              )}
+            </div>
           </>
         }
         defaultSize={{ width: 720, height: 620 }}
@@ -177,7 +224,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         <TaskBoardFilters
           lanes={LANES}
           visibleLanes={visibleLanes}
-          grouped={grouped}
+          grouped={filteredGrouped}
           harness={harness}
           setHarness={setHarness}
           harnessAvail={harnessAvail}
@@ -189,7 +236,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
               <Lane
                 key={lane.id}
                 lane={lane}
-                tasks={grouped[lane.id]}
+                tasks={filteredGrouped[lane.id]}
                 draggingId={draggingId}
                 selectedIds={selectedIds}
                 onDragStart={setDraggingId}
@@ -208,13 +255,15 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 onToggleSelect={(id) => toggleSelect(id, lane.id)}
                 onRangeSelect={(id) => rangeSelect(id, lane.id)}
                 onClearSelection={clearSelection}
-                onRunAll={runAllActionByLane[lane.id]}
+                onRunAll={
+                  searchActive ? undefined : runAllActionByLane[lane.id]
+                }
                 onPush={lane.id === 'qa' && hasGit ? startPush : undefined}
                 pushDisabled={!!activePush}
                 onView={setViewing}
                 strip={mergeRunStripFor(
                   lane,
-                  grouped[lane.id],
+                  filteredGrouped[lane.id],
                   mergeRun,
                   recentRunSummary,
                   tasks,
@@ -259,7 +308,10 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
           )}
         </div>
         <div className="taskboard-footer">
-          {tasks.length} total · drag to reorder · click to select · ctrl+click or shift+click to multi-select · pencil to edit
+          {searchActive
+            ? `${filteredTasks.length} of ${tasks.length} matching`
+            : `${tasks.length} total`}{' '}
+          · drag to reorder · click to select · ctrl+click or shift+click to multi-select · pencil to edit
         </div>
       </FloatingPanel>
     </>
