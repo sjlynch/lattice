@@ -37,6 +37,7 @@ const FINGERPRINT_FILES = [
   'terminal/sessionLifecycle.js',
   'terminal/attach.js',
   'terminal/kill.js',
+  'processTree.js',
   'latticeApiDocs.js',
   'latticeApiDocs/LATTICE_API.template.md',
   'claudeConfigGuard.js',
