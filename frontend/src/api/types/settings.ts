@@ -1,4 +1,4 @@
-import type { HarnessAvailability, HarnessChoice } from '../../harnesses';
+import type { AgentHarness, HarnessAvailability, HarnessChoice } from '../../harnesses';
 
 export type StartupTerminal = {
   id: string;
@@ -6,10 +6,19 @@ export type StartupTerminal = {
   command: string;
 };
 
+export type TerminalDefaultHarness = AgentHarness | 'terminal';
+
+export type TerminalLaunchSettings = {
+  terminalDefaultHarness: TerminalDefaultHarness;
+  terminalClaudeSkipPermissions: boolean;
+};
+
 export type UserSettings = {
   sidebarWidth?: number;
   harness?: HarnessChoice;
   startupTerminals?: StartupTerminal[];
+  terminalDefaultHarness?: TerminalDefaultHarness;
+  terminalClaudeSkipPermissions?: boolean;
   workflowStepsCollapsed?: Record<string, boolean>;
   // Per-env override of the auto-injected "fresh worktree, don't reinstall"
   // note in task instructions. Key = env id; '' suppresses the note;
@@ -30,6 +39,35 @@ export const DEFAULT_METRICS_IGNORED_EXTS: readonly string[] = [
   '.mdx',
   '.txt',
 ];
+
+export function isTerminalDefaultHarness(
+  value: unknown,
+): value is TerminalDefaultHarness {
+  return (
+    value === 'claude' ||
+    value === 'pi' ||
+    value === 'codex' ||
+    value === 'terminal'
+  );
+}
+
+export function normalizeTerminalLaunchSettings(
+  settings: Pick<
+    UserSettings,
+    'terminalDefaultHarness' | 'terminalClaudeSkipPermissions'
+  > | null | undefined,
+): TerminalLaunchSettings {
+  const defaultHarness = settings?.terminalDefaultHarness;
+  return {
+    terminalDefaultHarness: isTerminalDefaultHarness(defaultHarness)
+      ? defaultHarness
+      : 'claude',
+    terminalClaudeSkipPermissions:
+      typeof settings?.terminalClaudeSkipPermissions === 'boolean'
+        ? settings.terminalClaudeSkipPermissions
+        : true,
+  };
+}
 
 // Coerce a raw extension entry to its canonical form (lowercased, single
 // leading dot). Returns null for empties so callers can drop them.
