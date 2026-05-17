@@ -8,7 +8,15 @@ import { computeFileMetrics } from './fileMetrics.js';
 import { computeCoupling } from './coupling.js';
 import { aggregate, type ScanResult } from './graphAggregate.js';
 
-export async function scan(root: string): Promise<ScanResult> {
+export type ScanOptions = {
+  // Cooperative cancellation: when true, the per-file analysis loop
+  // throws ScanCancelledError on its next yield. The /api/scan route
+  // wires this to req.on('close') so a browser refresh mid-scan stops
+  // wasting CPU on a response no one will read.
+  isCancelled?: () => boolean;
+};
+
+export async function scan(root: string, options: ScanOptions = {}): Promise<ScanResult> {
   const absRoot = canonicalProjectPath(root);
   const ig = await loadGitignore(absRoot);
   const collected = await collectSourceTree(absRoot, ig);
@@ -16,7 +24,10 @@ export async function scan(root: string): Promise<ScanResult> {
   const cache = new HealthCache(absRoot);
   await cache.load();
 
-  const metrics = await computeFileMetrics(collected.files, { cache });
+  const metrics = await computeFileMetrics(collected.files, {
+    cache,
+    isCancelled: options.isCancelled,
+  });
   const aliases = await loadProjectAliases(absRoot);
   const coupling = computeCoupling(metrics, aliases);
   const result = aggregate(metrics, coupling, {

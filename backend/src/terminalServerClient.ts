@@ -15,11 +15,21 @@ export async function proxyListSessions(): Promise<unknown[]> {
 
 // Kill all terminal sessions whose cwd is inside `worktreePath`.
 // Call before deleting a worktree directory so Windows releases file locks.
+// Hard-timeouts the request so a wedged terminal-server (an old orphan
+// whose event loop is stuck on a sync subprocess, an exhausted handle,
+// etc.) can't hang the boot-time push-session sweep or any worktree
+// teardown — both call this in a loop, and an indefinite-hang here
+// would freeze recovery and prevent the backend from ever listening.
+const KILL_BY_CWD_TIMEOUT_MS = 3_000;
+
 export async function proxyKillSessionsByCwd(worktreePath: string): Promise<void> {
   try {
     const res = await fetch(
       `${BASE}/sessions/by-cwd?cwd=${encodeURIComponent(worktreePath)}`,
-      { method: 'DELETE' },
+      {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(KILL_BY_CWD_TIMEOUT_MS),
+      },
     );
     if (!res.ok) {
       // A non-OK response means the route didn't kill anything — most likely
@@ -30,8 +40,16 @@ export async function proxyKillSessionsByCwd(worktreePath: string): Promise<void
         `[terminal-proxy] kill-by-cwd failed: ${res.status} for ${worktreePath}`,
       );
     }
-  } catch {
-    /* terminal server down or no matching sessions — safe to ignore */
+  } catch (err) {
+    // Terminal server down, wedged, or no matching sessions — best-effort.
+    // Log just enough to distinguish "no server" from "timed out" so a
+    // wedged terminal-server is visible in the logs without spam.
+    const name = (err as { name?: string })?.name;
+    if (name === 'TimeoutError' || name === 'AbortError') {
+      console.warn(
+        `[terminal-proxy] kill-by-cwd timed out (>${KILL_BY_CWD_TIMEOUT_MS}ms) for ${worktreePath} — terminal-server may be wedged`,
+      );
+    }
   }
 }
 

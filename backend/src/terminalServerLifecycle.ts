@@ -80,6 +80,15 @@ export async function spawnAndWait(): Promise<void> {
   // doesn't otherwise know the main backend's port) can stamp the right URL
   // into the LATTICE_API_URL env var it injects on every pty spawn.
   const apiPort = Number(process.env.PORT) || 5184;
+  // BACKEND_PARENT_PID lets the detached terminal-server self-terminate
+  // when the backend that spawned it is gone (orchestrator shell closed,
+  // Task Manager kill, OS reboot interrupt). Without this, the orphan
+  // outlives the backend indefinitely — same content fingerprint as the
+  // next boot, so the lifecycle check treats it as "healthy" and reuses
+  // a process that may be wedged. We use `process.ppid` so dev-runner
+  // restarts of `dist/index.js` (whose PID changes) don't re-trigger the
+  // termination — only the orchestrator going away does.
+  const parentPid = process.ppid || process.pid;
   const child = spawn(process.execPath, [script], {
     detached: true,
     windowsHide: true,
@@ -88,6 +97,7 @@ export async function spawnAndWait(): Promise<void> {
       ...process.env,
       TERMINAL_PORT: String(TERMINAL_PORT),
       LATTICE_API_PORT: String(apiPort),
+      BACKEND_PARENT_PID: String(parentPid),
     },
   });
   child.unref();

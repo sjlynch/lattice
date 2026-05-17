@@ -1,6 +1,6 @@
 import os from 'node:os';
 import fs from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { ensureLatticeApiDoc } from '../latticeApiDocs.js';
 import type { CreateOpts } from './sessionTypes.js';
 
@@ -59,17 +59,35 @@ export function buildSessionLaunchContext(
   };
 }
 
-// On Windows, replace the inherited PATH with one read live from the
-// registry (HKLM + HKCU `Environment\Path`), merged with any runtime-only
-// entries already in `process.env.PATH`. The terminal-server is detached
-// and long-lived, so without this its ptys keep inheriting the PATH that
-// was current when it was first spawned — a tool installed afterwards
+// On Windows, replace the inherited PATH with one read from the registry
+// (HKLM + HKCU `Environment\Path`), merged with any runtime-only entries
+// already in `process.env.PATH`. The terminal-server is detached and
+// long-lived, so without this its ptys keep inheriting the PATH that was
+// current when it was first spawned — a tool installed afterwards
 // (winget, MSI installers, ...) is invisible until the terminal-server
-// is killed. Refreshing per spawn (rather than at module load) means a
-// freshly-installed tool shows up in the *next* terminal the user opens.
+// is killed.
+//
+// The lookup runs OFF the spawn path: a single in-flight async refresh
+// updates `cachedRegistryPath`, and `pty.spawn` only ever consumes the
+// cached string. `execFileSync('reg.exe', ...)` blocked the
+// terminal-server's event loop for the duration of two subprocess calls
+// on every WS attach — under "Run All" or just a slow reg.exe (AV
+// scanning, registry pressure) that produced "completely empty" terminal
+// panes because the upgrade handler couldn't even finish wiring the pty.
+// First spawn after boot uses the inherited PATH; the next spawn after
+// the background read completes (typically <200 ms later) picks up the
+// fresh registry value. A 30 s TTL keeps newly-installed tools visible
+// within half a minute without paying the cost on every spawn.
+const REGISTRY_PATH_TTL_MS = 30_000;
+const REGISTRY_QUERY_TIMEOUT_MS = 5_000;
+let cachedRegistryPath: string | null = null;
+let cachedRegistryPathAt = 0;
+let registryReadInFlight: Promise<void> | null = null;
+
 function applyFreshWindowsPath(env: { [key: string]: string }): void {
   if (!isWindows) return;
-  const registryPath = readWindowsRegistryPath();
+  maybeRefreshRegistryPath();
+  const registryPath = cachedRegistryPath;
   if (!registryPath) return;
 
   // Node on Windows exposes PATH under whatever case the OS gave it
@@ -94,36 +112,48 @@ function applyFreshWindowsPath(env: { [key: string]: string }): void {
   env.Path = out.join(';');
 }
 
-function readWindowsRegistryPath(): string | null {
-  try {
-    const machine = queryRegPath(
-      'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment',
-    );
-    const user = queryRegPath('HKCU\\Environment');
-    const combined = [machine, user].filter(Boolean).join(';');
-    return combined || null;
-  } catch {
-    return null;
-  }
+function maybeRefreshRegistryPath(): void {
+  if (registryReadInFlight) return;
+  const age = Date.now() - cachedRegistryPathAt;
+  if (cachedRegistryPath !== null && age < REGISTRY_PATH_TTL_MS) return;
+
+  registryReadInFlight = readWindowsRegistryPathAsync()
+    .then((value) => {
+      cachedRegistryPath = value;
+      cachedRegistryPathAt = Date.now();
+    })
+    .catch(() => {
+      // Keep whatever we had; just back off so we don't hammer reg.exe.
+      cachedRegistryPathAt = Date.now();
+    })
+    .finally(() => {
+      registryReadInFlight = null;
+    });
 }
 
-function queryRegPath(key: string): string {
-  let output: string;
-  try {
-    output = execFileSync('reg.exe', ['query', key, '/v', 'Path'], {
-      encoding: 'utf8',
-      timeout: 5000,
-      windowsHide: true,
-    });
-  } catch {
-    return '';
-  }
-  // reg.exe output:
-  //   HKEY_...
-  //       Path    REG_EXPAND_SZ    C:\...;...
-  const match = output.match(/^\s*Path\s+REG_(?:EXPAND_)?SZ\s+(.+?)\s*$/m);
-  if (!match) return '';
-  return expandEnvRefs(match[1]);
+async function readWindowsRegistryPathAsync(): Promise<string> {
+  const [machine, user] = await Promise.all([
+    queryRegPathAsync(
+      'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment',
+    ),
+    queryRegPathAsync('HKCU\\Environment'),
+  ]);
+  return [machine, user].filter(Boolean).join(';');
+}
+
+function queryRegPathAsync(key: string): Promise<string> {
+  return new Promise((resolve) => {
+    execFile(
+      'reg.exe',
+      ['query', key, '/v', 'Path'],
+      { encoding: 'utf8', timeout: REGISTRY_QUERY_TIMEOUT_MS, windowsHide: true },
+      (_err, stdout) => {
+        if (!stdout) return resolve('');
+        const match = stdout.match(/^\s*Path\s+REG_(?:EXPAND_)?SZ\s+(.+?)\s*$/m);
+        resolve(match ? expandEnvRefs(match[1]) : '');
+      },
+    );
+  });
 }
 
 function expandEnvRefs(value: string): string {

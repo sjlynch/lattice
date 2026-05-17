@@ -13,9 +13,11 @@ import {
 } from '../tasks.js';
 import { checkBranchExists, recoverPendingSnapshots } from '../worktree.js';
 import { sweepOrphanedWorktrees } from './worktreeSweep.js';
+import { sweepOrphanedPushSessions } from './pushSessionSweep.js';
 
 export { resumeInterruptedMergeRuns } from './mergeRunResume.js';
 export { sweepOrphanedWorktrees } from './worktreeSweep.js';
+export { sweepOrphanedPushSessions } from './pushSessionSweep.js';
 
 export async function recoverOrphanedTasks(): Promise<void> {
   // Phase 1: repair `.lattice/tasks.json` from `.lattice/tasks.backup.json`
@@ -35,6 +37,12 @@ export async function recoverOrphanedTasks(): Promise<void> {
   // leaves a worktree dir in place when `git worktree remove` fails
   // mid-run; this is the retry that makes it converge.
   await runStartupRecoveryStep('sweepOrphanedWorktrees', () => sweepOrphanedWorktrees());
+
+  // Phase 1d: reclaim orphaned push-session scratch dirs left behind by
+  // a /done cleanup that lost its EBUSY race with the still-shutting-down
+  // PTY (the in-memory registry is empty at boot, so anything still on
+  // disk is by definition stale). Mirrors sweepOrphanedWorktrees.
+  await runStartupRecoveryStep('sweepOrphanedPushSessions', () => sweepOrphanedPushSessions());
 
   await runStartupRecoveryStep('recoverOrphanedTasks', () => recoverReadyTasksWithDeletedBranches());
 }

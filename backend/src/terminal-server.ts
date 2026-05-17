@@ -19,6 +19,7 @@ import {
   attachTerminalWebSocketUpgrade,
   createTerminalWebSocketServer,
 } from './terminalServer/websocket.js';
+import { watchParentProcess } from './terminalServer/parentWatch.js';
 
 installTerminalProcessGuards();
 
@@ -68,3 +69,18 @@ const claudeConfigInterval = setInterval(() => {
 claudeConfigInterval.unref();
 
 wireTerminalShutdownSignals(shutdown);
+
+// Self-terminate if the spawning backend disappears. Forwarded by the
+// main server's terminalServerLifecycle as `BACKEND_PARENT_PID`. Without
+// this, an ungracefully-killed backend (Task Manager, parent-shell exit,
+// OS reboot interrupt) leaves the detached terminal-server running with
+// no one polling /shutdown and no fingerprint mismatch to trigger a
+// respawn — exactly the "stray node process" symptom that requires
+// killing all node processes by hand.
+const parentPid = Number(process.env.BACKEND_PARENT_PID);
+if (parentPid) {
+  watchParentProcess(parentPid, () => {
+    // Reuse the normal shutdown path so PTYs get reaped before exit.
+    void shutdown();
+  });
+}

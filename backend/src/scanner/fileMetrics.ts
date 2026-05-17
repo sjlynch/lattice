@@ -19,9 +19,28 @@ type ReadResult = {
   content?: string;
 };
 
+// A file is treated as minified/generated when its average line length
+// exceeds this. Real source rarely averages >400 chars/line even in
+// long-line styles; minified bundles routinely hit thousands. We pair
+// this with a minimum size threshold so tiny single-line scripts
+// (a one-liner config) don't get falsely flagged.
+const MINIFIED_AVG_LINE_LEN = 400;
+const MINIFIED_MIN_BYTES = 64 * 1024;
+
 // Read the file once, count newlines, and return the decoded content
-// when small enough for the health analyzer. Files past LOC_MAX_BYTES
-// (5 MB) skip both LOC and health to keep the scan fast.
+// when small enough for the health analyzer. Two cutoffs:
+//   - LOC_MAX_BYTES (5 MB): skip both LOC and health entirely.
+//   - minified-bundle heuristic: keep the LOC count (newline counting
+//     is fast) but DROP the content so analyzeFile / the universal
+//     smell regexes never see it. LONG_STRING_RE has a {200,} quantifier
+//     over a negative-lookahead alternation, and MAGIC_NUM_RE matches
+//     every numeric literal — both cause catastrophic backtracking /
+//     millions of matches on a multi-MB minified bundle and can pin a
+//     CPU core for minutes, starving every other concurrent scan / WS /
+//     API request. A tracked bundle drop-in at the repo root (e.g.
+//     a 2.6 MB `tle-api.js`) is the realistic case. The file still
+//     appears as a graph node — it just has no health metrics, which
+//     it couldn't meaningfully produce anyway.
 export async function readForAnalysis(filePath: string): Promise<ReadResult> {
   try {
     const buf = await fs.readFile(filePath);
@@ -34,19 +53,58 @@ export async function readForAnalysis(filePath: string): Promise<ReadResult> {
       idx++;
     }
     if (buf[buf.length - 1] !== 0x0a) count++;
+
+    if (
+      buf.length >= MINIFIED_MIN_BYTES &&
+      buf.length / Math.max(1, count) >= MINIFIED_AVG_LINE_LEN
+    ) {
+      return { loc: count };
+    }
+
     return { loc: count, content: buf.toString('utf8') };
   } catch {
     return {};
   }
 }
 
+// How often to yield to the event loop during analysis. tree-sitter
+// parse + AST walk is fully synchronous CPU work; without periodic
+// yields a scan over a few thousand files starves every other request
+// (other projects' /api/scan, /api/settings, WS upgrades) for the entire
+// scan duration — a 30 s scan over project A locks out a freshly-opened
+// tab on project B for the same 30 s. setImmediate at this cadence
+// costs almost nothing per file but keeps the express loop processing.
+const YIELD_EVERY_N_FILES = 25;
+
+export type ComputeFileMetricsOptions = {
+  cache?: HealthCache;
+  // Optional cooperative cancellation. /api/scan sets this true when the
+  // client (browser tab) disconnects mid-scan; without it we burn CPU
+  // serializing a giant JSON response no subscriber will ever read,
+  // which is the typical case when a user refreshes mid-scan.
+  isCancelled?: () => boolean;
+};
+
+export class ScanCancelledError extends Error {
+  constructor() {
+    super('scan cancelled');
+    this.name = 'ScanCancelledError';
+  }
+}
+
 export async function computeFileMetrics(
   files: string[],
-  options: { cache?: HealthCache } = {},
+  options: ComputeFileMetricsOptions = {},
 ): Promise<FileMetric[]> {
   const out: FileMetric[] = [];
 
-  for (const filePath of files) {
+  for (let i = 0; i < files.length; i += 1) {
+    if (i > 0 && i % YIELD_EVERY_N_FILES === 0) {
+      await new Promise<void>((r) => setImmediate(r));
+      if (options.isCancelled?.()) throw new ScanCancelledError();
+    }
+
+    const filePath = files[i];
     const name = path.basename(filePath);
     const ext = path.extname(name).toLowerCase();
     let size = 0;

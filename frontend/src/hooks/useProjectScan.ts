@@ -57,13 +57,27 @@ function removeFile(prev: ScanResult, filePath: string): ScanResult {
 
 export function useProjectScan(activeFolder: string) {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  // `loading` reflects ONLY the initial scan for this project. Background
+  // rescans triggered by watcher events refresh `scanResult` silently —
+  // flipping `loading` back to true on every rescan trigger turned any
+  // burst of chokidar events (common on Windows just after a watcher
+  // starts up: AV scans, dev-server writes, …) into a permanent spinner
+  // because the 150 ms rescan debounce kept resetting before `runRescan`
+  // ever fired.
   const [loading, setLoading] = useState(false);
   const scanRequestIdRef = useRef(0);
   const scanResultRef = useRef<ScanResult | null>(null);
+  // Health events that arrive before the initial scan completes are
+  // dropped — the scan itself produces the authoritative state, so
+  // re-running it because of a watcher event during boot would just
+  // ping-pong forever on a slow Windows box. Once we have a scan, live
+  // events take over.
+  const initialScanCompleteRef = useRef(false);
 
   useEffect(() => {
     if (!activeFolder) {
       scanResultRef.current = null;
+      initialScanCompleteRef.current = false;
       setScanResult(null);
       setLoading(false);
       return;
@@ -72,6 +86,7 @@ export function useProjectScan(activeFolder: string) {
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
     scanResultRef.current = null;
+    initialScanCompleteRef.current = false;
     setLoading(true);
 
     function tryScan() {
@@ -81,6 +96,7 @@ export function useProjectScan(activeFolder: string) {
         .then((r) => {
           if (cancelled || requestId !== scanRequestIdRef.current) return;
           scanResultRef.current = r;
+          initialScanCompleteRef.current = true;
           setScanResult(r);
           setLoading(false);
         })
@@ -111,7 +127,8 @@ export function useProjectScan(activeFolder: string) {
   // Live health updates from chokidar on the backend. Regular file saves patch
   // metrics in place to keep the force simulation stable. Structural changes
   // (new source files, removed files/dirs, .gitignore/tsconfig changes) trigger
-  // a debounced full scan so the visible graph tree matches disk.
+  // a debounced full scan so the visible graph tree matches disk — silently,
+  // without touching `loading`.
   useEffect(() => {
     if (!activeFolder) return;
 
@@ -128,7 +145,6 @@ export function useProjectScan(activeFolder: string) {
           rescanAttempt = 0;
           scanResultRef.current = r;
           setScanResult(r);
-          setLoading(false);
         })
         .catch((err) => {
           if (cancelled || requestId !== scanRequestIdRef.current) return;
@@ -144,7 +160,6 @@ export function useProjectScan(activeFolder: string) {
     };
 
     function scheduleRescan(delay: number) {
-      setLoading(true);
       if (rescanTimer) clearTimeout(rescanTimer);
       rescanTimer = setTimeout(runRescan, delay);
     }
@@ -155,16 +170,18 @@ export function useProjectScan(activeFolder: string) {
     };
 
     const unsubscribe = subscribeHealth(activeFolder, (event) => {
+      // Until the initial scan lands, the authoritative state is "what
+      // the scan returns" — drop watcher events instead of scheduling
+      // competing rescans that just keep loading=true forever.
+      if (!initialScanCompleteRef.current) return;
+
       if (event.type === 'rescan') {
         requestRescan();
         return;
       }
 
       const prev = scanResultRef.current;
-      if (!prev) {
-        requestRescan();
-        return;
-      }
+      if (!prev) return;
 
       if (event.type === 'updated') {
         const next = patchUpdatedFile(prev, event.filePath, event.metrics);

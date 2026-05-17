@@ -129,5 +129,26 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 tscWatch.on('exit', onExit);
 
 backendLifecycle.start();
-closeDistWatch = await watchDist(restartPolicy.scheduleDistChanged);
-restartPolicy.startDeferredPoll();
+
+// Don't arm the dist/ watcher until tsc -w has finished its initial
+// compile. Without this, every cold boot looks like:
+//   1. runInitialCompile populates dist/
+//   2. backend spawns (serves from current dist/)
+//   3. tsc -w finishes its FIRST watch-mode compile and re-emits dist/
+//      (bumps mtimes even when the bytes are identical)
+//   4. dist/ watcher fires → backend forced-restart
+//   5. The user's browser, opened in step 2-4, races into the restart
+//      gap and gets a stream of ECONNREFUSED / 502 from the proxy —
+//      surfacing as "stuck on scanning" because /api/scan keeps failing.
+// startTscWatch attaches a `tscSettledPromise` that resolves on the
+// "Watching for file changes." line tsc -w prints after every compile.
+await tscWatch.tscSettledPromise;
+
+// If shutdown signalled while we were waiting, the tsc-exit handler
+// resolved the promise — bail before arming the watcher, otherwise we'd
+// start a watcher that might fire a restart against an already-shutting-
+// down backend lifecycle.
+if (!shuttingDown) {
+  closeDistWatch = await watchDist(restartPolicy.scheduleDistChanged);
+  restartPolicy.startDeferredPoll();
+}

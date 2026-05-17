@@ -27,8 +27,15 @@ export function useSidebarWidth(activeFolder: string) {
   const sidebarWidthRef = useSyncedRef(sidebarWidth);
 
   // Load per-project sidebar width from backend when the active folder changes.
-  // While this is pending, callers can avoid mounting width-sensitive terminal
-  // panes so xterm opens only after the saved preference has been applied.
+  // Only gates the FIRST mount: once the sidebar has shown for any project,
+  // subsequent project switches keep it mounted and just update the width
+  // in place. Flipping `sidebarSettingsLoaded` back to false on every
+  // activeFolder change tore down the whole sidebar (and every TerminalPane
+  // inside it) mid-session, which on Windows abandoned the in-flight WS
+  // attach for any just-created terminal — the user saw a tab but never
+  // got a shell. Keeping it mounted means the previous width stays put for
+  // a moment until the new project's value arrives; a brief width hold is
+  // strictly less disruptive than a full sidebar remount.
   useEffect(() => {
     let cancelled = false;
 
@@ -39,7 +46,6 @@ export function useSidebarWidth(activeFolder: string) {
       };
     }
 
-    setSidebarSettingsLoaded(false);
     fetchUserSettings(activeFolder)
       .then((settings) => {
         if (cancelled) return;
