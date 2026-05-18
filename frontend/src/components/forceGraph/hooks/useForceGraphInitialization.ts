@@ -68,6 +68,8 @@ export function useForceGraphInitialization(
           health: node.health,
         });
         if (node.kind !== 'file') {
+          // eslint-disable-next-line no-console
+          console.log('[lattice/graph] onNodeHover -> null (not a file)');
           onHoverNodeChange(null);
           return;
         }

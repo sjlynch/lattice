@@ -32,6 +32,8 @@ type Props = {
 
 export function HealthTooltip({ node }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line no-console
+  console.log('[lattice/graph] HealthTooltip render:', node.name);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -47,6 +49,19 @@ export function HealthTooltip({ node }: Props) {
       // Reveal only once positioned so the first paint never shows the
       // tooltip at (0,0) before the layout effect fires.
       el.style.visibility = 'visible';
+      // eslint-disable-next-line no-console
+      console.log('[lattice/graph] HealthTooltip place:', {
+        cursor: { x: clientX, y: clientY },
+        measuredHeight,
+        pos,
+        domTransform: el.style.transform,
+        domVisibility: el.style.visibility,
+        offsetHeight: el.offsetHeight,
+        offsetWidth: el.offsetWidth,
+        computedDisplay: getComputedStyle(el).display,
+        computedOpacity: getComputedStyle(el).opacity,
+        boundingRect: el.getBoundingClientRect(),
+      });
     }
 
     // Initial placement: use the last cached cursor so the tooltip
@@ -58,6 +73,8 @@ export function HealthTooltip({ node }: Props) {
       node: node.name,
       hasHealthDetails: node.healthDetails != null,
       cached,
+      elementInDom: el.isConnected,
+      elementParent: el.parentElement?.tagName,
     });
     if (cached) {
       place(cached.clientX, cached.clientY);
