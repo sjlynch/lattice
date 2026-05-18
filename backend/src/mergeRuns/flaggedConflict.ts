@@ -11,7 +11,7 @@ import {
   handleResyncOutcome,
   respawnResolverForFlaggedConflict,
 } from './resolverSpawn.js';
-import { type MergeRun } from './state.js';
+import { registerConflictWaiter, type MergeRun } from './state.js';
 import type {
   ProcessOutcome,
   ProcessTargetContext,
@@ -40,7 +40,8 @@ export async function tryRespawnMidMergeResolver(
   runCtx: ProcessTargetContext,
 ): Promise<ProcessOutcome> {
   console.log(`[merge-run] task ${task.id} mid-merge — re-spawning resolver`);
-  let outcome: ProcessOutcome = { kind: 'spawned-resolver' };
+  let outcome: ProcessOutcome = { kind: 'awaiting-resolver' };
+  let spawned = false;
   try {
     const result = await respawnResolverForFlaggedConflict(task, run, runCtx);
     if (result.kind === 'spawn-error') {
@@ -53,6 +54,8 @@ export async function tryRespawnMidMergeResolver(
         error: `resolver spawn failed (terminals unavailable): ${result.error}`,
       });
       outcome = { kind: 'errored' };
+    } else {
+      spawned = true;
     }
   } catch (err) {
     console.error(`[merge-run] re-spawn for ${task.id} failed:`, err);
@@ -63,6 +66,20 @@ export async function tryRespawnMidMergeResolver(
     outcome = { kind: 'errored' };
   }
   run.processed += 1;
+
+  if (spawned) {
+    // Block the run until the re-spawned resolver finishes — same contract
+    // as the fresh-conflict path in resolverSpawn.handleResyncOutcome.
+    // Without this, an upstream caller (the workflow Merge step's drain
+    // loop) sees the task still in ready_to_merge after the merge run
+    // completes, starts another merge run, and respawns a second resolver
+    // for the same task. The signal comes from /complete (via
+    // signalConflictWaiter) once the resolver finishes finalizing, or from
+    // cancelRun on explicit cancellation.
+    console.log(`[merge-run] waiting for re-spawned conflict resolver on task ${task.id}...`);
+    await registerConflictWaiter(runCtx.state, run.id, task.id);
+    console.log(`[merge-run] re-spawned conflict resolver done for task ${task.id} — resuming run`);
+  }
   return outcome;
 }
 

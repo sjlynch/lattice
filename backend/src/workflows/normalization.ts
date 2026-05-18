@@ -9,7 +9,16 @@ import type {
   WorkflowRunHarnessOverride,
   WorkflowStep,
   WorkflowStepHarness,
+  WorkflowStepKind,
 } from './types.js';
+
+const STEP_KINDS = new Set<WorkflowStepKind>(['agent', 'start', 'merge', 'push']);
+
+function normalizeStepKind(value: unknown): WorkflowStepKind {
+  return typeof value === 'string' && STEP_KINDS.has(value as WorkflowStepKind)
+    ? (value as WorkflowStepKind)
+    : 'agent';
+}
 
 export function normalizeWorkflowStepHarness(value: unknown): WorkflowStepHarness {
   return normalizeAgentHarness(value);
@@ -32,6 +41,7 @@ export function normalizeSteps(steps: unknown): WorkflowStep[] {
       prompt: typeof step.prompt === 'string' ? step.prompt : '',
       mode: step.mode === 'parallel' ? 'parallel' : 'sequential',
       harness: normalizeWorkflowStepHarness(step.harness),
+      kind: normalizeStepKind(step.kind),
     };
   });
 }

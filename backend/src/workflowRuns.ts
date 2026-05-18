@@ -1,19 +1,27 @@
 // Workflow step runner — public facade.
 //
-// Sequential advancement is driven entirely by Stop-hook / extension
-// callbacks (POST /api/workflow-runs/:runId/steps/:n/complete) — not by
-// watching task state. 'parallel' steps are accepted in the schema but
-// executed sequentially; the fan-out executor is intentionally deferred.
+// Sequential advancement is driven by:
+//   - Agent steps:    Stop-hook / extension callbacks (POST
+//                     /api/workflow-runs/:runId/steps/:n/complete) — never by
+//                     watching task state.
+//   - Control steps:  the step's own async worker calls completeWorkflowStep
+//                     when its condition is met (Start finishes spawning
+//                     tasks, Merge drains lanes, Push session reports done).
+//
+// 'parallel' is accepted in the schema but executed sequentially; the
+// fan-out executor is intentionally deferred.
 //
 // Implementation lives in workflowRuns/:
 //   - state.ts         registry + WS event fan-out
 //   - stepMarkdown.ts  WORKFLOW_STEP.md rendering
-//   - stepSpawner.ts   per-step disk setup + pty pre-spawn
-// This file owns just the orchestration: start, cancel, advance.
+//   - stepSpawner.ts   per-agent-step disk setup + pty pre-spawn
+//   - controlStep.ts   start/merge/push executors
+// This file owns just the orchestration: start, cancel, advance, kind-dispatch.
 
 import {
   getWorkflow,
   normalizeWorkflowRunHarnessOverride,
+  type Workflow,
   type WorkflowRunHarnessOverride,
 } from './workflows.js';
 import { generateWorkflowRunId } from './ids.js';
@@ -24,6 +32,7 @@ import {
   type WorkflowRun,
 } from './workflowRuns/state.js';
 import { spawnWorkflowStep } from './workflowRuns/stepSpawner.js';
+import { executeControlStep } from './workflowRuns/controlStep.js';
 
 export type {
   WorkflowRun,
@@ -39,6 +48,32 @@ export {
 export type StartWorkflowRunOptions = {
   harnessOverride?: WorkflowRunHarnessOverride;
 };
+
+// Picks the right executor for a step. Agent steps run through the existing
+// pty-pre-spawn path; control steps (start/merge/push) run through the
+// headless control-step worker, which calls completeWorkflowStep itself when
+// finished (we pass it in to avoid a circular import).
+async function dispatchStep(
+  wf: Workflow,
+  run: WorkflowRun,
+  stepIndex: number,
+  backendOrigin: string,
+): Promise<void> {
+  const kind = wf.steps[stepIndex].kind ?? 'agent';
+  if (kind === 'agent') {
+    await spawnWorkflowStep(wf, run, stepIndex, backendOrigin);
+    return;
+  }
+  // Agent steps emit `progress` from stepSpawner once their pty is ready;
+  // control steps have no such moment, so the run-strip would otherwise
+  // never see the new `currentStepIndex` until the control step finishes.
+  // Emit progress here so the UI advances as soon as the control step
+  // begins.
+  notify({ type: 'progress', run: snapshot(run) });
+  // Fire-and-forget. The control step's worker calls completeWorkflowStep
+  // when its async work finishes (or marks the run errored on failure).
+  executeControlStep(wf, run, stepIndex, backendOrigin, completeWorkflowStep);
+}
 
 export async function startWorkflowRun(
   workflowId: string,
@@ -68,7 +103,7 @@ export async function startWorkflowRun(
   );
 
   try {
-    await spawnWorkflowStep(wf, run, 0, backendOrigin);
+    await dispatchStep(wf, run, 0, backendOrigin);
     return snapshot(run);
   } catch (err) {
     run.status = 'errored';
@@ -123,7 +158,7 @@ export async function completeWorkflowStep(
       return;
     }
     console.log(`[workflow-run] ${run.id} advancing step ${stepIndex} → ${nextIndex}`);
-    await spawnWorkflowStep(wf, run, nextIndex, backendOrigin);
+    await dispatchStep(wf, run, nextIndex, backendOrigin);
   } catch (err) {
     run.status = 'errored';
     run.finishedAt = Date.now();

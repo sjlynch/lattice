@@ -10,7 +10,7 @@
 // place). Pulling the decision into a pure reducer makes the invariants
 // explicit and the bugs reachable from tests.
 
-import type { WorkflowQueueEntry } from '../../api';
+import type { WorkflowQueueEntry, WorkflowRunStatus } from '../../api';
 
 export type QueueMode = 'sequential' | 'parallel';
 
@@ -76,8 +76,12 @@ export type QueueAction =
   | { type: 'dispatchFailed'; entryId: string }
   // A run finished server-side (WS completed/cancelled/errored). Matched by
   // runId because workflowId alone is ambiguous when the same workflow is
-  // queued multiple times.
-  | { type: 'runFinished'; runId: string };
+  // queued multiple times. `status` lets sequential mode bail when a
+  // workflow errored or was cancelled instead of cascading into the next
+  // queued workflow as if nothing went wrong. Optional for backward-compat
+  // with callers (and tests) that don't track status; missing defaults to
+  // 'completed'.
+  | { type: 'runFinished'; runId: string; status?: WorkflowRunStatus };
 
 type QueueMutationAction = Extract<
   QueueAction,
@@ -208,6 +212,7 @@ function reduceDispatchLifecycle(state: QueueState, action: DispatchLifecycleAct
 }
 
 function reduceRunLifecycle(state: QueueState, action: RunLifecycleAction): QueueState {
+  const status = action.status ?? 'completed';
   const idx = state.started.findIndex((entry) => entry.runId === action.runId);
   if (idx === -1) {
     // The runId hasn't been attached yet (race: WS completed/cancelled
@@ -223,7 +228,18 @@ function reduceRunLifecycle(state: QueueState, action: RunLifecycleAction): Queu
         next.length > PRE_FINISHED_CAP ? next.slice(next.length - PRE_FINISHED_CAP) : next,
     };
   }
-  return { ...state, started: removeStartedEntry(state.started, idx) };
+  const cleared: QueueState = {
+    ...state,
+    started: removeStartedEntry(state.started, idx),
+  };
+  // Sequential queues must NOT cascade into the next queued workflow when a
+  // workflow errored or was cancelled — otherwise one bad run takes down the
+  // rest of the pipeline silently. Stop running; the remaining queued
+  // entries stay so the user can inspect and resume.
+  if (cleared.mode === 'sequential' && status !== 'completed' && cleared.running) {
+    return reduceRunningMode(cleared, { type: 'stopQueue' });
+  }
+  return cleared;
 }
 
 // Pure reducer. No I/O, no side effects.

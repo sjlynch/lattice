@@ -18,6 +18,7 @@ export type {
   WorkflowRunHarnessOverride,
   WorkflowStep,
   WorkflowStepHarness,
+  WorkflowStepKind,
   WorkflowStepMode,
   WorkflowSubscriber,
 } from './workflows/types.js';
