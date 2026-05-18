@@ -36,6 +36,10 @@ export function HealthTooltip({ node }: Props) {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
+    // eslint-disable-next-line no-console
+    console.debug('[lattice/graph] HealthTooltip mount/update:', node.name, {
+      hasHealthDetails: node.healthDetails != null,
+    });
 
     function place(clientX: number, clientY: number) {
       if (!el) return;

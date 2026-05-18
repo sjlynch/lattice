@@ -56,6 +56,37 @@ export function ForceGraphView({
   const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
+  // When labels are dense or still moving the raycaster can blip in and
+  // out of label hitboxes every other frame, firing `(file, null, file,
+  // null, …)`. Each null transition would unmount HealthTooltip and a
+  // fresh mount restarts the opacity fade-in from zero — if the flicker
+  // is faster than ~80 ms the tooltip is invisible at all times. Debounce
+  // null transitions so a fresh hover within the window cancels the
+  // pending unmount; the user only loses the tooltip if their cursor is
+  // genuinely off all labels for longer than NULL_HOVER_DEBOUNCE_MS.
+  const NULL_HOVER_DEBOUNCE_MS = 220;
+  const nullClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debouncedSetHoverNode = useCallback((node: GraphNode | null) => {
+    if (node !== null) {
+      if (nullClearTimerRef.current) {
+        clearTimeout(nullClearTimerRef.current);
+        nullClearTimerRef.current = null;
+      }
+      setHoverNode(node);
+      return;
+    }
+    if (nullClearTimerRef.current) return;
+    nullClearTimerRef.current = setTimeout(() => {
+      nullClearTimerRef.current = null;
+      setHoverNode(null);
+    }, NULL_HOVER_DEBOUNCE_MS);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (nullClearTimerRef.current) clearTimeout(nullClearTimerRef.current);
+    };
+  }, []);
+
   const selectedRef = useRefMirror(selected);
   const hiddenExtsRef = useRefMirror(hiddenExts);
   const dataRef = useRefMirror(data);
@@ -107,7 +138,7 @@ export function ForceGraphView({
     nodeDepthsRef,
     changeMapRef,
     metricsIgnoredExtsRef,
-    onHoverNodeChange: setHoverNode,
+    onHoverNodeChange: debouncedSetHoverNode,
   });
 
   const resetSelection = useCallback(() => setSelected(new Set()), []);

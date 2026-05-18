@@ -3,7 +3,6 @@ import type { ForceGraph3DInstance } from '3d-force-graph';
 import { getIdleController } from '../idleController';
 import { locLabelRegistry } from '../locOverlay';
 import { repelLabels } from '../labelRepulsion';
-import { subscribeRepulsionWake } from '../labelRepulsionWake';
 import type { GraphSettings } from '../graphSettings';
 import { clearLabelsAndRefresh, isTextInput } from './refresh';
 
@@ -67,8 +66,8 @@ export function useLocOverlay(
   // read fresh each tick so dragging the slider feels live.
   useEffect(() => {
     if (!locMode) return;
-    // See `useHealthOverlay` for the settle-and-stop pattern shared by
-    // all three repulsion-driven overlays.
+    // See `useHealthOverlay` for the always-running RAF pattern shared
+    // by all three repulsion-driven overlays.
     const idle = getIdleController(graphRef.current);
     let rafId = 0;
     let stopped = false;
@@ -76,28 +75,14 @@ export function useLocOverlay(
     idle?.acquireLabelPhysics();
 
     const tick = () => {
-      const settled = repelLabels(
-        locLabelRegistry,
-        55 * settingsRef.current.labelSpread,
-      );
-      if (settled) {
-        rafId = 0;
-        return;
-      }
+      if (stopped) return;
+      repelLabels(locLabelRegistry, 55 * settingsRef.current.labelSpread);
       rafId = requestAnimationFrame(tick);
     };
-
-    const wake = () => {
-      if (stopped) return;
-      if (!rafId) rafId = requestAnimationFrame(tick);
-    };
-
-    wake();
-    const unsubscribe = subscribeRepulsionWake(wake);
+    rafId = requestAnimationFrame(tick);
 
     return () => {
       stopped = true;
-      unsubscribe();
       if (rafId) cancelAnimationFrame(rafId);
       idle?.releaseLabelPhysics();
     };

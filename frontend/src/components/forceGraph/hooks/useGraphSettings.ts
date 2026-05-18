@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { loadSettings, type GraphSettings } from '../graphSettings';
 import { getIdleController } from '../idleController';
-import { wakeAllRepulsion } from '../labelRepulsionWake';
 import { clearLabelsAndRefresh } from './refresh';
 
 // Owns the GraphSettings state, mirrored ref, and per-project
@@ -48,15 +47,10 @@ export function useGraphSettings(
     clearLabelsAndRefresh(graphRef.current);
   }, [settings.fileNodeSize, settings.dirNodeSize, settings.labelSize, graphRef]);
 
-  // labelSpread is the only render-time setting that doesn't require a
-  // sprite rebuild — the overlay RAFs read it fresh from `settingsRef`
-  // each tick. But those RAFs self-stop once labels settle, so a slider
-  // change with no other refresh trigger would be invisible until the
-  // next refresh. Wake the repulsion loops so the new minDist takes
-  // effect immediately.
-  useEffect(() => {
-    wakeAllRepulsion();
-  }, [settings.labelSpread]);
+  // labelSpread doesn't need its own effect: the overlay RAFs run
+  // continuously while their key is held and read
+  // `settingsRef.current.labelSpread` fresh every tick, so the new
+  // minDist takes effect on the next frame after the slider moves.
 
   // Apply physics + DAG settings to the running simulation. Reheats so
   // changes visibly take effect.

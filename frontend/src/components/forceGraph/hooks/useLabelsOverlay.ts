@@ -4,7 +4,6 @@ import type { ScanResult } from '../../../api';
 import { getIdleController } from '../idleController';
 import { depthFor, labelsRegistry } from '../labelsOverlay';
 import { repelLabels } from '../labelRepulsion';
-import { subscribeRepulsionWake } from '../labelRepulsionWake';
 import type { GraphSettings } from '../graphSettings';
 import { isTextInput } from './refresh';
 
@@ -129,8 +128,8 @@ export function useLabelsOverlay(
   // fresh each tick so the slider takes effect live.
   useEffect(() => {
     if (!labelMode) return;
-    // See `useHealthOverlay` for the settle-and-stop pattern shared by
-    // all three repulsion-driven overlays.
+    // See `useHealthOverlay` for the always-running RAF pattern shared
+    // by all three repulsion-driven overlays.
     const idle = getIdleController(graphRef.current);
     let rafId = 0;
     let stopped = false;
@@ -138,28 +137,14 @@ export function useLabelsOverlay(
     idle?.acquireLabelPhysics();
 
     const tick = () => {
-      const settled = repelLabels(
-        labelsRegistry,
-        90 * settingsRef.current.labelSpread,
-      );
-      if (settled) {
-        rafId = 0;
-        return;
-      }
+      if (stopped) return;
+      repelLabels(labelsRegistry, 90 * settingsRef.current.labelSpread);
       rafId = requestAnimationFrame(tick);
     };
-
-    const wake = () => {
-      if (stopped) return;
-      if (!rafId) rafId = requestAnimationFrame(tick);
-    };
-
-    wake();
-    const unsubscribe = subscribeRepulsionWake(wake);
+    rafId = requestAnimationFrame(tick);
 
     return () => {
       stopped = true;
-      unsubscribe();
       if (rafId) cancelAnimationFrame(rafId);
       idle?.releaseLabelPhysics();
     };

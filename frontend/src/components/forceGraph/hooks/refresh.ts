@@ -3,7 +3,6 @@ import { locLabelRegistry } from '../locOverlay';
 import { labelsRegistry } from '../labelsOverlay';
 import { healthLabelRegistry } from '../healthOverlay';
 import { getIdleController } from '../idleController';
-import { wakeAllRepulsion } from '../labelRepulsionWake';
 
 // Sprites cached by spriteFor are reused; refresh() just re-runs
 // nodeThreeObject. Any overlay swap orphans previously-registered
@@ -30,11 +29,6 @@ export function clearLabelsAndRefresh(graph: ForceGraph3DInstance | null) {
     graph.enablePointerInteraction(true);
   }
   getIdleController(graph)?.wakeForRefresh();
-  // The repulsion RAF stops itself once labels settle. A refresh()
-  // tears down those label sprites (the registries above were just
-  // cleared) and `buildNodeObject` re-registers fresh ones at their
-  // home position — those need the RAF to run again to repel apart.
-  wakeAllRepulsion();
 }
 
 export function isTextInput(target: EventTarget | null): boolean {

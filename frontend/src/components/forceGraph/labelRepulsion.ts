@@ -13,9 +13,11 @@
 // label only checks its 3×3 neighbourhood — O(N·k) where k is the
 // average cluster density. All per-frame scratch arrays are reused at
 // module scope to keep GC pressure flat. `repelLabels` returns whether
-// every label has settled; the caller stops its RAF and releases the
-// `labelPhysics` reason on the idle controller when that returns true,
-// and `subscribeRepulsionWake` lets external triggers restart the loop.
+// every label has settled (kept for use by callers that want to skip
+// per-frame work when the system is at rest; the overlay hooks
+// currently leave the RAF running continuously while the overlay key
+// is held so labelSpread / refresh changes always propagate without
+// extra wake plumbing).
 
 import * as THREE from 'three';
 
@@ -308,10 +310,9 @@ export function updateConnectorEndpoint(entry: RepulsionEntry): boolean {
 
 // ---- Main per-frame entry point ---------------------------------------
 
-// Returns `true` when every label is at rest. The owning hook uses that
-// to stop its RAF and release the `labelPhysics` reason on the idle
-// controller (which lets the renderer pause). Anything that invalidates
-// the equilibrium calls `wakeAllRepulsion()` to restart it.
+// Returns `true` when every label is at rest. Currently unused by the
+// overlay hooks (they leave the RAF running) but the test suite asserts
+// the integration math and the rest detection.
 export function repelLabels(
   registry: Set<RepulsionEntry>,
   minDist: number,

@@ -3,7 +3,6 @@ import type { ForceGraph3DInstance } from '3d-force-graph';
 import { healthLabelRegistry } from '../healthOverlay';
 import { getIdleController } from '../idleController';
 import { repelLabels } from '../labelRepulsion';
-import { subscribeRepulsionWake } from '../labelRepulsionWake';
 import type { GraphSettings } from '../graphSettings';
 import { clearLabelsAndRefresh, isTextInput } from './refresh';
 
@@ -66,14 +65,14 @@ export function useHealthOverlay(
   // multiplier is read each tick so the slider takes effect live.
   useEffect(() => {
     if (!healthMode) return;
-    // Hold the `labelPhysics` reason on the idle controller for the
-    // entire duration the overlay is active: the renderer needs to keep
-    // running so the library's raycaster can fire hover events while
-    // the user has `h` held. The RAF, on the other hand, self-stops as
-    // soon as `repelLabels` reports the labels have reached
-    // equilibrium — there's no work to do per-frame after that — and
-    // restarts via `subscribeRepulsionWake` when anything (a refresh,
-    // a labelSpread change) invalidates the layout.
+    // Hold `labelPhysics` for the duration the overlay is active so the
+    // renderer keeps running for hover raycasts. The repulsion RAF runs
+    // continuously and reads `settingsRef.current.labelSpread` fresh
+    // every tick — the spatial-grid pairwise loop makes the per-frame
+    // cost small enough that there's no need to suspend on settle, and
+    // an always-running tick removes a class of stale-state bugs where
+    // a labelSpread or labelMode change wasn't reaching the loop after
+    // a self-stop.
     const idle = getIdleController(graphRef.current);
     let rafId = 0;
     let stopped = false;
@@ -81,28 +80,14 @@ export function useHealthOverlay(
     idle?.acquireLabelPhysics();
 
     const tick = () => {
-      const settled = repelLabels(
-        healthLabelRegistry,
-        55 * settingsRef.current.labelSpread,
-      );
-      if (settled) {
-        rafId = 0;
-        return;
-      }
+      if (stopped) return;
+      repelLabels(healthLabelRegistry, 55 * settingsRef.current.labelSpread);
       rafId = requestAnimationFrame(tick);
     };
-
-    const wake = () => {
-      if (stopped) return;
-      if (!rafId) rafId = requestAnimationFrame(tick);
-    };
-
-    wake();
-    const unsubscribe = subscribeRepulsionWake(wake);
+    rafId = requestAnimationFrame(tick);
 
     return () => {
       stopped = true;
-      unsubscribe();
       if (rafId) cancelAnimationFrame(rafId);
       idle?.releaseLabelPhysics();
     };
