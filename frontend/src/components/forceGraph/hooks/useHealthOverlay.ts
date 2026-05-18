@@ -66,28 +66,19 @@ export function useHealthOverlay(
   // multiplier is read each tick so the slider takes effect live.
   useEffect(() => {
     if (!healthMode) return;
-    // Run the repulsion loop only while labels are still moving toward
-    // equilibrium. The RAF stops itself when `repelLabels` reports
-    // every label has settled, releasing the `labelPhysics` reason on
-    // the idle controller so the renderer can pause too. Anything that
-    // invalidates the equilibrium (a refresh, a settings change) calls
-    // `wakeAllRepulsion()`, which routes through `subscribeRepulsionWake`
-    // here and restarts the RAF.
+    // Hold the `labelPhysics` reason on the idle controller for the
+    // entire duration the overlay is active: the renderer needs to keep
+    // running so the library's raycaster can fire hover events while
+    // the user has `h` held. The RAF, on the other hand, self-stops as
+    // soon as `repelLabels` reports the labels have reached
+    // equilibrium — there's no work to do per-frame after that — and
+    // restarts via `subscribeRepulsionWake` when anything (a refresh,
+    // a labelSpread change) invalidates the layout.
     const idle = getIdleController(graphRef.current);
     let rafId = 0;
-    let physicsHeld = false;
     let stopped = false;
 
-    const acquire = () => {
-      if (physicsHeld) return;
-      physicsHeld = true;
-      idle?.acquireLabelPhysics();
-    };
-    const release = () => {
-      if (!physicsHeld) return;
-      physicsHeld = false;
-      idle?.releaseLabelPhysics();
-    };
+    idle?.acquireLabelPhysics();
 
     const tick = () => {
       const settled = repelLabels(
@@ -96,7 +87,6 @@ export function useHealthOverlay(
       );
       if (settled) {
         rafId = 0;
-        release();
         return;
       }
       rafId = requestAnimationFrame(tick);
@@ -104,7 +94,6 @@ export function useHealthOverlay(
 
     const wake = () => {
       if (stopped) return;
-      acquire();
       if (!rafId) rafId = requestAnimationFrame(tick);
     };
 
@@ -115,7 +104,7 @@ export function useHealthOverlay(
       stopped = true;
       unsubscribe();
       if (rafId) cancelAnimationFrame(rafId);
-      release();
+      idle?.releaseLabelPhysics();
     };
   }, [healthMode, settingsRef, graphRef]);
 

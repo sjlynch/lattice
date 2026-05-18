@@ -71,19 +71,9 @@ export function useLocOverlay(
     // all three repulsion-driven overlays.
     const idle = getIdleController(graphRef.current);
     let rafId = 0;
-    let physicsHeld = false;
     let stopped = false;
 
-    const acquire = () => {
-      if (physicsHeld) return;
-      physicsHeld = true;
-      idle?.acquireLabelPhysics();
-    };
-    const release = () => {
-      if (!physicsHeld) return;
-      physicsHeld = false;
-      idle?.releaseLabelPhysics();
-    };
+    idle?.acquireLabelPhysics();
 
     const tick = () => {
       const settled = repelLabels(
@@ -92,7 +82,6 @@ export function useLocOverlay(
       );
       if (settled) {
         rafId = 0;
-        release();
         return;
       }
       rafId = requestAnimationFrame(tick);
@@ -100,7 +89,6 @@ export function useLocOverlay(
 
     const wake = () => {
       if (stopped) return;
-      acquire();
       if (!rafId) rafId = requestAnimationFrame(tick);
     };
 
@@ -111,7 +99,7 @@ export function useLocOverlay(
       stopped = true;
       unsubscribe();
       if (rafId) cancelAnimationFrame(rafId);
-      release();
+      idle?.releaseLabelPhysics();
     };
   }, [locMode, settingsRef, graphRef]);
 

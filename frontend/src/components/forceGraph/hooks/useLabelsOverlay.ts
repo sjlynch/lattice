@@ -133,19 +133,9 @@ export function useLabelsOverlay(
     // all three repulsion-driven overlays.
     const idle = getIdleController(graphRef.current);
     let rafId = 0;
-    let physicsHeld = false;
     let stopped = false;
 
-    const acquire = () => {
-      if (physicsHeld) return;
-      physicsHeld = true;
-      idle?.acquireLabelPhysics();
-    };
-    const release = () => {
-      if (!physicsHeld) return;
-      physicsHeld = false;
-      idle?.releaseLabelPhysics();
-    };
+    idle?.acquireLabelPhysics();
 
     const tick = () => {
       const settled = repelLabels(
@@ -154,7 +144,6 @@ export function useLabelsOverlay(
       );
       if (settled) {
         rafId = 0;
-        release();
         return;
       }
       rafId = requestAnimationFrame(tick);
@@ -162,7 +151,6 @@ export function useLabelsOverlay(
 
     const wake = () => {
       if (stopped) return;
-      acquire();
       if (!rafId) rafId = requestAnimationFrame(tick);
     };
 
@@ -173,7 +161,7 @@ export function useLabelsOverlay(
       stopped = true;
       unsubscribe();
       if (rafId) cancelAnimationFrame(rafId);
-      release();
+      idle?.releaseLabelPhysics();
     };
   }, [labelMode, settingsRef, graphRef]);
 
