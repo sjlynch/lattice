@@ -200,8 +200,12 @@
   animation: health-tooltip-fade 0.08s ease;
 }
 @keyframes health-tooltip-fade {
-  from { opacity: 0; transform: translateY(-2px); }
-  to { opacity: 1; transform: translateY(0); }
+  /* Only fade opacity — the tooltip's inline `transform: translate3d(...)`
+     is what positions it under the cursor, so animating `transform` here
+     would briefly snap the tooltip to the upper-left (left:0, top:0) for
+     the duration of the animation. */
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 .health-tooltip-head {
   display: grid;

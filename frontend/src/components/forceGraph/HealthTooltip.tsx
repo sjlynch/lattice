@@ -53,6 +53,12 @@ export function HealthTooltip({ node }: Props) {
     // appears at the cursor even if the user hasn't moved since the
     // hover started.
     const cached = getLastCursor();
+    // eslint-disable-next-line no-console
+    console.log('[lattice/graph] HealthTooltip mount:', {
+      node: node.name,
+      hasHealthDetails: node.healthDetails != null,
+      cached,
+    });
     if (cached) {
       place(cached.clientX, cached.clientY);
     }
