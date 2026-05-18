@@ -1,7 +1,23 @@
 import { X } from 'lucide-react';
 import type { ReactNode } from 'react';
-import type { MergeRun, Task } from '../../api';
+import type { MergeRun, MergeRunErrorEntry, Task } from '../../api';
 import type { Lane as LaneDef } from './lanes';
+
+// Build a multi-line tooltip listing per-task merge errors, resolving
+// each taskId to its title (falls back to a short id). Used by the
+// "N errors" chip — hovering reveals what actually went wrong.
+function buildErrorsTooltip(
+  entries: MergeRunErrorEntry[],
+  tasks: Task[],
+): string {
+  return entries
+    .map((entry) => {
+      const task = tasks.find((t) => t.id === entry.taskId);
+      const label = task?.title?.trim() || entry.taskId.slice(-6);
+      return `${label}: ${entry.error}`;
+    })
+    .join('\n');
+}
 
 export function mergeRunStripFor(
   lane: LaneDef,
@@ -47,7 +63,7 @@ export function MergeRunStrip({
   const pendingConflicts = tasks.filter((t) => t.conflict);
   if (active) return <ActiveStrip run={active} tasks={tasks} onCancel={onCancel} />;
   if (pendingConflicts.length > 0) return <ResolvingStrip conflicts={pendingConflicts} />;
-  if (summary) return <SummaryStrip run={summary} onDismiss={onDismiss} />;
+  if (summary) return <SummaryStrip run={summary} tasks={tasks} onDismiss={onDismiss} />;
   return null;
 }
 
@@ -89,7 +105,10 @@ function ActiveStrip({
               </span>
             )}
             {run.errored.length > 0 && (
-              <span className="merge-run-stat error">
+              <span
+                className="merge-run-stat error"
+                title={buildErrorsTooltip(run.errored, tasks)}
+              >
                 {run.errored.length} error
                 {run.errored.length === 1 ? '' : 's'}
               </span>
@@ -135,9 +154,11 @@ function ResolvingStrip({ conflicts }: { conflicts: Task[] }) {
 
 function SummaryStrip({
   run,
+  tasks,
   onDismiss,
 }: {
   run: MergeRun;
+  tasks: Task[];
   onDismiss: () => void;
 }) {
   const isCancelled = run.status === 'cancelled';
@@ -161,7 +182,10 @@ function SummaryStrip({
         {run.errored.length > 0 && (
           <>
             {' '}·{' '}
-            <span className="merge-run-stat error">
+            <span
+              className="merge-run-stat error"
+              title={buildErrorsTooltip(run.errored, tasks)}
+            >
               {run.errored.length} error
               {run.errored.length === 1 ? '' : 's'}
             </span>

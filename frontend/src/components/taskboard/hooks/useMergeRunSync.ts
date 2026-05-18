@@ -1,12 +1,34 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  fetchTasks,
   getActiveMergeRun,
   subscribeMergeRuns,
   type MergeRun,
+  type MergeRunErrorEntry,
 } from '../../../api';
 import type { TerminalSpec } from '../../../TerminalsContext';
 
 type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
+type ShowError = (msg: string) => void;
+
+// Build a user-facing label for a per-task merge-run error. Resolves the
+// task title at call time so a fresh fetch isn't needed in the common case
+// (the task list is already in the tab's state via subscribeTasks).
+async function buildErrorMessage(
+  projectPath: string,
+  entry: MergeRunErrorEntry,
+): Promise<string> {
+  try {
+    const tasks = await fetchTasks(projectPath);
+    const task = tasks.find((t) => t.id === entry.taskId);
+    const title = task?.title?.trim();
+    return title
+      ? `Merge failed for "${title}": ${entry.error}`
+      : `Merge failed for task ${entry.taskId}: ${entry.error}`;
+  } catch {
+    return `Merge failed for task ${entry.taskId}: ${entry.error}`;
+  }
+}
 
 // Hydrates and live-syncs the active merge-run for a project. The run is
 // backend-driven; closing the panel/tab doesn't cancel it, so on every folder
@@ -14,22 +36,57 @@ type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
 // progress + conflict events. Conflict events spawn the resolver Claude as a
 // merge-kind terminal (mirrors the per-card merge-button flow — the run
 // worker has no UI access, so the frontend handles the terminal half).
-export function useMergeRunSync(activeFolder: string, addTerminal: AddTerminal) {
+//
+// Errors arrive in `run.errored[]` on progress/completed events. We diff
+// against the last-seen set and toast each new entry via `showError` so the
+// user actually sees what went wrong instead of just a "N errors" chip.
+export function useMergeRunSync(
+  activeFolder: string,
+  addTerminal: AddTerminal,
+  showError?: ShowError,
+) {
   const [mergeRun, setMergeRun] = useState<MergeRun | null>(null);
   const [recentRunSummary, setRecentRunSummary] = useState<MergeRun | null>(
     null,
   );
+
+  // Toasted error keys (runId + taskId + error) so each unique failure
+  // only toasts once even though it appears in every subsequent progress
+  // event for the rest of the run.
+  const toastedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     // Reset run state on every folder switch so a summary from project A
     // doesn't briefly flash when the user opens project B.
     setMergeRun(null);
     setRecentRunSummary(null);
+    toastedRef.current = new Set();
     if (!activeFolder) return;
     let cancelled = false;
+
+    function maybeToastErrors(run: MergeRun): void {
+      if (!showError) return;
+      for (const entry of run.errored) {
+        const key = `${run.id}:${entry.taskId}:${entry.error}`;
+        if (toastedRef.current.has(key)) continue;
+        toastedRef.current.add(key);
+        buildErrorMessage(activeFolder, entry)
+          .then((msg) => {
+            if (!cancelled) showError(msg);
+          })
+          .catch(() => {
+            if (!cancelled) {
+              showError(`Merge failed for task ${entry.taskId}: ${entry.error}`);
+            }
+          });
+      }
+    }
+
     getActiveMergeRun(activeFolder)
       .then((r) => {
-        if (!cancelled) setMergeRun(r);
+        if (cancelled) return;
+        setMergeRun(r);
+        if (r) maybeToastErrors(r);
       })
       .catch(() => {
         /* ignore */
@@ -42,9 +99,11 @@ export function useMergeRunSync(activeFolder: string, addTerminal: AddTerminal) 
         setMergeRun(null);
       } else if (ev.type === 'started' || ev.type === 'progress') {
         setMergeRun(ev.run);
+        maybeToastErrors(ev.run);
       } else if (ev.type === 'completed' || ev.type === 'cancelled') {
         setMergeRun(null);
         setRecentRunSummary(ev.run);
+        maybeToastErrors(ev.run);
         // Auto-clear summary after a few seconds.
         setTimeout(() => {
           setRecentRunSummary((cur) => (cur?.id === ev.run.id ? null : cur));
@@ -69,7 +128,7 @@ export function useMergeRunSync(activeFolder: string, addTerminal: AddTerminal) 
       cancelled = true;
       unsub();
     };
-  }, [activeFolder, addTerminal]);
+  }, [activeFolder, addTerminal, showError]);
 
   const dismissRecent = useCallback(() => setRecentRunSummary(null), []);
 
