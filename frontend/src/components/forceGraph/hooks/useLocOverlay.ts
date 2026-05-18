@@ -3,6 +3,7 @@ import type { ForceGraph3DInstance } from '3d-force-graph';
 import { getIdleController } from '../idleController';
 import { locLabelRegistry } from '../locOverlay';
 import { repelLabels } from '../labelRepulsion';
+import { subscribeRepulsionWake } from '../labelRepulsionWake';
 import type { GraphSettings } from '../graphSettings';
 import { clearLabelsAndRefresh, isTextInput } from './refresh';
 
@@ -66,18 +67,51 @@ export function useLocOverlay(
   // read fresh each tick so dragging the slider feels live.
   useEffect(() => {
     if (!locMode) return;
-    // Hold the render loop open while the repulsion physics is running.
+    // See `useHealthOverlay` for the settle-and-stop pattern shared by
+    // all three repulsion-driven overlays.
     const idle = getIdleController(graphRef.current);
-    idle?.acquireLabelPhysics();
     let rafId = 0;
+    let physicsHeld = false;
+    let stopped = false;
+
+    const acquire = () => {
+      if (physicsHeld) return;
+      physicsHeld = true;
+      idle?.acquireLabelPhysics();
+    };
+    const release = () => {
+      if (!physicsHeld) return;
+      physicsHeld = false;
+      idle?.releaseLabelPhysics();
+    };
+
     const tick = () => {
-      repelLabels(locLabelRegistry, 55 * settingsRef.current.labelSpread);
+      const settled = repelLabels(
+        locLabelRegistry,
+        55 * settingsRef.current.labelSpread,
+      );
+      if (settled) {
+        rafId = 0;
+        release();
+        return;
+      }
       rafId = requestAnimationFrame(tick);
     };
-    rafId = requestAnimationFrame(tick);
+
+    const wake = () => {
+      if (stopped) return;
+      acquire();
+      if (!rafId) rafId = requestAnimationFrame(tick);
+    };
+
+    wake();
+    const unsubscribe = subscribeRepulsionWake(wake);
+
     return () => {
-      cancelAnimationFrame(rafId);
-      idle?.releaseLabelPhysics();
+      stopped = true;
+      unsubscribe();
+      if (rafId) cancelAnimationFrame(rafId);
+      release();
     };
   }, [locMode, settingsRef, graphRef]);
 

@@ -3,6 +3,7 @@ import type { ForceGraph3DInstance } from '3d-force-graph';
 import { healthLabelRegistry } from '../healthOverlay';
 import { getIdleController } from '../idleController';
 import { repelLabels } from '../labelRepulsion';
+import { subscribeRepulsionWake } from '../labelRepulsionWake';
 import type { GraphSettings } from '../graphSettings';
 import { clearLabelsAndRefresh, isTextInput } from './refresh';
 
@@ -65,19 +66,56 @@ export function useHealthOverlay(
   // multiplier is read each tick so the slider takes effect live.
   useEffect(() => {
     if (!healthMode) return;
-    // Keep the render loop running while the user holds `h` so hover
-    // raycasting against the freshly-built health sprites stays live.
+    // Run the repulsion loop only while labels are still moving toward
+    // equilibrium. The RAF stops itself when `repelLabels` reports
+    // every label has settled, releasing the `labelPhysics` reason on
+    // the idle controller so the renderer can pause too. Anything that
+    // invalidates the equilibrium (a refresh, a settings change) calls
+    // `wakeAllRepulsion()`, which routes through `subscribeRepulsionWake`
+    // here and restarts the RAF.
     const idle = getIdleController(graphRef.current);
-    idle?.acquireLabelPhysics();
     let rafId = 0;
+    let physicsHeld = false;
+    let stopped = false;
+
+    const acquire = () => {
+      if (physicsHeld) return;
+      physicsHeld = true;
+      idle?.acquireLabelPhysics();
+    };
+    const release = () => {
+      if (!physicsHeld) return;
+      physicsHeld = false;
+      idle?.releaseLabelPhysics();
+    };
+
     const tick = () => {
-      repelLabels(healthLabelRegistry, 55 * settingsRef.current.labelSpread);
+      const settled = repelLabels(
+        healthLabelRegistry,
+        55 * settingsRef.current.labelSpread,
+      );
+      if (settled) {
+        rafId = 0;
+        release();
+        return;
+      }
       rafId = requestAnimationFrame(tick);
     };
-    rafId = requestAnimationFrame(tick);
+
+    const wake = () => {
+      if (stopped) return;
+      acquire();
+      if (!rafId) rafId = requestAnimationFrame(tick);
+    };
+
+    wake();
+    const unsubscribe = subscribeRepulsionWake(wake);
+
     return () => {
-      cancelAnimationFrame(rafId);
-      idle?.releaseLabelPhysics();
+      stopped = true;
+      unsubscribe();
+      if (rafId) cancelAnimationFrame(rafId);
+      release();
     };
   }, [healthMode, settingsRef, graphRef]);
 
