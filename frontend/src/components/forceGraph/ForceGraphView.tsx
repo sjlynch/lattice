@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { Settings as SettingsIcon } from 'lucide-react';
 import type { GraphNode, ScanResult } from '../../api';
@@ -72,7 +73,13 @@ export function ForceGraphView({
         clearTimeout(nullClearTimerRef.current);
         nullClearTimerRef.current = null;
       }
-      setHoverNode(node);
+      // 3d-force-graph emits hover changes from its RAF, outside
+      // React's event system. While the health overlay is also running
+      // RAF work, normal-priority commits can be delayed until the user
+      // releases `h`, which made the tooltip appear only as the mode was
+      // turning off. Hover-in changes are infrequent (raycast-throttled),
+      // so flush this small state update synchronously.
+      flushSync(() => setHoverNode(node));
       return;
     }
     if (nullClearTimerRef.current) return;

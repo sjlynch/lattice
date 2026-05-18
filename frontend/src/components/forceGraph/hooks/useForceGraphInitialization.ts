@@ -53,17 +53,10 @@ export function useForceGraphInitialization(
         // here was racing with `graph.refresh()` after the `h` keydown
         // and silently dropping legitimate hovers.
         if (!n) {
-          // eslint-disable-next-line no-console
-          console.debug('[lattice/graph] onNodeHover: null');
           onHoverNodeChange(null);
           return;
         }
         const node = n as GraphNode;
-        // eslint-disable-next-line no-console
-        console.debug('[lattice/graph] onNodeHover:', node.name, {
-          kind: node.kind,
-          hasHealthDetails: node.healthDetails != null,
-        });
         if (node.kind !== 'file') {
           onHoverNodeChange(null);
           return;

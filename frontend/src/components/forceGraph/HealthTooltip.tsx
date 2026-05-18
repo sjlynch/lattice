@@ -30,44 +30,39 @@ type Props = {
   node: GraphNode;
 };
 
+function placeTooltip(el: HTMLDivElement, clientX: number, clientY: number) {
+  const measuredHeight = el.offsetHeight || ESTIMATED_HEIGHT;
+  const pos = clampPosition(clientX, clientY, TOOLTIP_WIDTH, measuredHeight);
+  // translate3d so the position update stays on the compositor and
+  // never invalidates layout for the rest of the page.
+  el.style.transform = `translate3d(${pos.left}px, ${pos.top}px, 0)`;
+  // Reveal only once positioned so the first paint never shows the
+  // tooltip at (0,0) before the layout effect fires.
+  el.style.visibility = 'visible';
+}
+
 export function HealthTooltip({ node }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
+    // The element starts hidden until we have cursor coordinates. Same-file
+    // hover refreshes and overlay-mode renders (for example when `h`
+    // toggles) don't necessarily change `node.path`, so a dependency-limited
+    // effect can miss the placement/reveal pass. Re-place/reveal after every
+    // commit; this is just one cached cursor read plus a transform write.
     const el = ref.current;
-    if (!el) return;
-    // eslint-disable-next-line no-console
-    console.debug('[lattice/graph] HealthTooltip mount/update:', node.name, {
-      hasHealthDetails: node.healthDetails != null,
-    });
-
-    function place(clientX: number, clientY: number) {
-      if (!el) return;
-      const measuredHeight = el.offsetHeight || ESTIMATED_HEIGHT;
-      const pos = clampPosition(clientX, clientY, TOOLTIP_WIDTH, measuredHeight);
-      // translate3d so the position update stays on the compositor and
-      // never invalidates layout for the rest of the page.
-      el.style.transform = `translate3d(${pos.left}px, ${pos.top}px, 0)`;
-      // Reveal only once positioned so the first paint never shows the
-      // tooltip at (0,0) before the layout effect fires.
-      el.style.visibility = 'visible';
-    }
-
-    // Initial placement: use the last cached cursor so the tooltip
-    // appears at the cursor even if the user hasn't moved since the
-    // hover started.
     const cached = getLastCursor();
-    if (cached) {
-      place(cached.clientX, cached.clientY);
-    }
-    // If no cursor was seen yet, leave the tooltip `visibility: hidden`
-    // (its inline style on the JSX element below). The first pointermove
-    // will reveal it via `place()`.
+    if (el && cached) placeTooltip(el, cached.clientX, cached.clientY);
+  });
 
-    const onMove = (ev: PointerEvent) => place(ev.clientX, ev.clientY);
+  useLayoutEffect(() => {
+    const onMove = (ev: PointerEvent) => {
+      const el = ref.current;
+      if (el) placeTooltip(el, ev.clientX, ev.clientY);
+    };
     window.addEventListener('pointermove', onMove, { passive: true });
     return () => window.removeEventListener('pointermove', onMove);
-  }, [node.path, node.healthDetails?.smellCount]);
+  }, []);
 
   const m = node.healthDetails;
   if (!m) return null;
