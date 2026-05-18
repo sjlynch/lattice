@@ -1,17 +1,18 @@
-// Hover tooltip shown on the graph view when the cursor is over a
-// file node. Renders the file's overall health score, a per-metric
-// breakdown, and a list of detected smells with their counts.
+// Hover tooltip shown on the graph view when the cursor is over a file
+// node with health metrics. The tooltip owns its own cursor tracking:
+// it reads the cached cursor position on mount, then subscribes to
+// `pointermove` and writes directly to its element's `transform` —
+// re-rendering the React tree per pixel was previously the second
+// biggest source of idle CPU after the perpetual 3D render loop.
 //
-// Positioning uses `position: fixed` (viewport coords) and a
-// useLayoutEffect-measured rect so we can clamp the tooltip inside
-// the viewport without ever clipping it. Default placement is to the
-// right of the cursor; if that would overflow we flip left, then if
-// neither fits we anchor to the closest edge. Vertically we anchor to
-// the top of the viewport when the tooltip is taller than the space
-// below the cursor.
+// Returning null when `healthDetails` is missing keeps the tooltip safe
+// even though `onNodeHover` no longer pre-filters on that field (the
+// pre-filter was racing with `graph.refresh()` while the user was
+// holding `h`, dropping legitimate hovers).
 
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import type { GraphNode } from '../../api';
+import { getLastCursor } from './cursorTracker';
 import { healthColor } from './healthOverlay';
 import {
   ESTIMATED_HEIGHT,
@@ -26,42 +27,64 @@ import {
 } from './HealthTooltipSections';
 
 type Props = {
-  // Cursor coords are in viewport space (event.clientX/clientY).
   node: GraphNode;
-  x: number;
-  y: number;
 };
 
-export function HealthTooltip({ node, x, y }: Props) {
+export function HealthTooltip({ node }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  // Cache the measured height across cursor moves so we re-position
-  // smoothly without remeasuring every frame. The height only changes
-  // when the hovered NODE changes (different smells / metrics fill in
-  // a different number of rows) — so we re-measure on node identity.
-  const [measuredHeight, setMeasuredHeight] = useState(ESTIMATED_HEIGHT);
 
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const h = el.offsetHeight;
-    if (h > 0 && h !== measuredHeight) setMeasuredHeight(h);
-    // Re-measure when the hovered file's content changes; cursor
-    // movement alone doesn't need a new measurement.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    function place(clientX: number, clientY: number) {
+      if (!el) return;
+      const measuredHeight = el.offsetHeight || ESTIMATED_HEIGHT;
+      const pos = clampPosition(clientX, clientY, TOOLTIP_WIDTH, measuredHeight);
+      // translate3d so the position update stays on the compositor and
+      // never invalidates layout for the rest of the page.
+      el.style.transform = `translate3d(${pos.left}px, ${pos.top}px, 0)`;
+      // Reveal only once positioned so the first paint never shows the
+      // tooltip at (0,0) before the layout effect fires.
+      el.style.visibility = 'visible';
+    }
+
+    // Initial placement: use the last cached cursor so the tooltip
+    // appears at the cursor even if the user hasn't moved since the
+    // hover started.
+    const cached = getLastCursor();
+    if (cached) {
+      place(cached.clientX, cached.clientY);
+    }
+    // If no cursor was seen yet, leave the tooltip `visibility: hidden`
+    // (its inline style on the JSX element below). The first pointermove
+    // will reveal it via `place()`.
+
+    const onMove = (ev: PointerEvent) => place(ev.clientX, ev.clientY);
+    window.addEventListener('pointermove', onMove, { passive: true });
+    return () => window.removeEventListener('pointermove', onMove);
   }, [node.path, node.healthDetails?.smellCount]);
 
   const m = node.healthDetails;
   if (!m) return null;
 
   const color = healthColor(m.score);
-  const pos = clampPosition(x, y, TOOLTIP_WIDTH, measuredHeight);
   const metricRows = buildHealthMetricRows(m);
 
   return (
     <div
       ref={ref}
       className="health-tooltip"
-      style={{ left: pos.left, top: pos.top, width: TOOLTIP_WIDTH }}
+      // `left`/`top` are zeroed; positioning lives in `transform` so we
+      // can update it from the imperative pointermove handler above
+      // without touching React state. `visibility: hidden` prevents the
+      // (0,0) flash before useLayoutEffect places + reveals.
+      style={{
+        left: 0,
+        top: 0,
+        width: TOOLTIP_WIDTH,
+        visibility: 'hidden',
+      }}
     >
       <HealthTooltipHeader node={node} metrics={m} color={color} />
       <MetricGrid rows={metricRows} />

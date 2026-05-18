@@ -11,6 +11,21 @@ const MAX_POLAR_ANGLE = Math.PI * 0.75;
 // thrashing the GPU every pixel.
 const RESIZE_DEBOUNCE_MS = 150;
 
+// Cap WebGL's pixel ratio. On 4K / HiDPI displays the default devicePixelRatio
+// can be 2+, which makes the fragment shader 4× more expensive for no visible
+// gain on this kind of sprite-heavy scene.
+const MAX_PIXEL_RATIO = 1.5;
+
+// Tighten Three.js' WebGLRenderer so a still scene costs less per frame.
+// Called once after `new ForceGraph3D(...)`. Safe to call again — every
+// setter is idempotent.
+export function configureRenderer(graph: ForceGraph3DInstance) {
+  const renderer = graph.renderer();
+  if (!renderer) return;
+  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+  renderer.setPixelRatio(Math.min(dpr, MAX_PIXEL_RATIO));
+}
+
 // Locks the world up vector and clamps OrbitControls so the camera never
 // flips over and the root stays on top. Idempotent — safe to call right
 // after `new ForceGraph3D(...)`.

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
+import { getIdleController } from '../idleController';
 import { locLabelRegistry } from '../locOverlay';
 import { repelLabels } from '../labelRepulsion';
 import type { GraphSettings } from '../graphSettings';
@@ -65,14 +66,20 @@ export function useLocOverlay(
   // read fresh each tick so dragging the slider feels live.
   useEffect(() => {
     if (!locMode) return;
+    // Hold the render loop open while the repulsion physics is running.
+    const idle = getIdleController(graphRef.current);
+    idle?.acquireLabelPhysics();
     let rafId = 0;
     const tick = () => {
       repelLabels(locLabelRegistry, 55 * settingsRef.current.labelSpread);
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [locMode, settingsRef]);
+    return () => {
+      cancelAnimationFrame(rafId);
+      idle?.releaseLabelPhysics();
+    };
+  }, [locMode, settingsRef, graphRef]);
 
   return { locMode, locModeRef };
 }

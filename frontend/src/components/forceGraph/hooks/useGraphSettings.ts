@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { loadSettings, type GraphSettings } from '../graphSettings';
+import { getIdleController } from '../idleController';
 import { clearLabelsAndRefresh } from './refresh';
 
 // Owns the GraphSettings state, mirrored ref, and per-project
@@ -72,6 +73,7 @@ export function useGraphSettings(
     const timer = setTimeout(() => {
       if (graphRef.current === g) {
         g.d3ReheatSimulation();
+        getIdleController(g)?.engineStarted();
       }
     }, 50);
     return () => clearTimeout(timer);

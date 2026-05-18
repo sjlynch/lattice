@@ -1,6 +1,7 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { healthLabelRegistry } from '../healthOverlay';
+import { getIdleController } from '../idleController';
 import { repelLabels } from '../labelRepulsion';
 import type { GraphSettings } from '../graphSettings';
 import { clearLabelsAndRefresh, isTextInput } from './refresh';
@@ -64,14 +65,21 @@ export function useHealthOverlay(
   // multiplier is read each tick so the slider takes effect live.
   useEffect(() => {
     if (!healthMode) return;
+    // Keep the render loop running while the user holds `h` so hover
+    // raycasting against the freshly-built health sprites stays live.
+    const idle = getIdleController(graphRef.current);
+    idle?.acquireLabelPhysics();
     let rafId = 0;
     const tick = () => {
       repelLabels(healthLabelRegistry, 55 * settingsRef.current.labelSpread);
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [healthMode, settingsRef]);
+    return () => {
+      cancelAnimationFrame(rafId);
+      idle?.releaseLabelPhysics();
+    };
+  }, [healthMode, settingsRef, graphRef]);
 
   return { healthModeRef };
 }

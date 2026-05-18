@@ -2,6 +2,7 @@ import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import type { GitHistoryResult, GraphLink, GraphNode, ScanResult } from '../../../api';
 import { healthLabelRegistry } from '../healthOverlay';
+import { getIdleController } from '../idleController';
 import { labelsRegistry } from '../labelsOverlay';
 import { locLabelRegistry } from '../locOverlay';
 import { buildGhostGraphData } from '../timelineDiff';
@@ -146,6 +147,9 @@ export function useGraphDataSync({
       [...data.nodes, ...ghostNodes],
       [...data.links, ...ghostLinks],
     ));
+    // graphData() restarts the d3 force engine — let the idle controller
+    // know so it keeps the render loop running until onEngineStop fires.
+    getIdleController(graph)?.engineStarted();
     // A new scan invalidates the previous selection (node IDs may differ).
     onResetSelection();
   }, [data, history]);

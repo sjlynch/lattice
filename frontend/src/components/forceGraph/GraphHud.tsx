@@ -13,7 +13,6 @@ type Props = {
   labelLevel: number;
   maxDepth: number;
   hoverNode: GraphNode | null;
-  hoverPos: { x: number; y: number } | null;
 };
 
 // Render-only overlays: scan spinner (top-left), the active-view chip
@@ -29,7 +28,6 @@ export function GraphHud({
   labelLevel,
   maxDepth,
   hoverNode,
-  hoverPos,
 }: Props) {
   return (
     <>
@@ -52,9 +50,7 @@ export function GraphHud({
           </span>
         </div>
       )}
-      {hoverNode && hoverPos && (
-        <HealthTooltip node={hoverNode} x={hoverPos.x} y={hoverPos.y} />
-      )}
+      {hoverNode && <HealthTooltip node={hoverNode} />}
       {!loading && data && (
         <div className="graph-overlay bottom-left">
           <span>

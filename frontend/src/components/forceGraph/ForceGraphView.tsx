@@ -13,7 +13,6 @@ import { useForceGraphInitialization } from './hooks/useForceGraphInitialization
 import { useGraphDataSync } from './hooks/useGraphDataSync';
 import { useGraphOverlays } from './hooks/useGraphOverlays';
 import { useGraphTaskCreation } from './hooks/useGraphTaskCreation';
-import { useHoverCursor } from './hooks/useHoverCursor';
 import { useNodeContextMenu } from './hooks/useNodeContextMenu';
 import { useRefMirror } from './hooks/useRefMirror';
 import { clearLabelsAndRefresh } from './hooks/refresh';
@@ -68,8 +67,6 @@ export function ForceGraphView({
     [metricsIgnoredExts],
   );
   const metricsIgnoredExtsRef = useRefMirror(metricsIgnoredExtsSet);
-
-  const { hoverPos } = useHoverCursor(containerRef);
 
   // ----- Phase 2: graph initialization + overlays -----
   const {
@@ -219,7 +216,6 @@ export function ForceGraphView({
         labelLevel={labelLevel}
         maxDepth={maxDepthRef.current}
         hoverNode={hoverNode}
-        hoverPos={hoverPos}
       />
 
       {history && history.isRepo && history.commits.length > 0 && (

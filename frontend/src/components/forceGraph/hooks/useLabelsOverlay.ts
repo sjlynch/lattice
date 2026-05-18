@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import type { ScanResult } from '../../../api';
+import { getIdleController } from '../idleController';
 import { depthFor, labelsRegistry } from '../labelsOverlay';
 import { repelLabels } from '../labelRepulsion';
 import type { GraphSettings } from '../graphSettings';
@@ -127,14 +128,19 @@ export function useLabelsOverlay(
   // fresh each tick so the slider takes effect live.
   useEffect(() => {
     if (!labelMode) return;
+    const idle = getIdleController(graphRef.current);
+    idle?.acquireLabelPhysics();
     let rafId = 0;
     const tick = () => {
       repelLabels(labelsRegistry, 90 * settingsRef.current.labelSpread);
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [labelMode, settingsRef]);
+    return () => {
+      cancelAnimationFrame(rafId);
+      idle?.releaseLabelPhysics();
+    };
+  }, [labelMode, settingsRef, graphRef]);
 
   return {
     labelMode,
