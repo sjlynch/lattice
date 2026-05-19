@@ -13,8 +13,9 @@ side effect can each be reasoned about (and changed) on their own.
   (`addTerminalToList`, `removeTerminalFromList`, `removeTerminalsFromList`,
   `setServerIdInList`), and active-id selection policies
   (`pickInitialActiveId`, `pickActiveAfterAdd`, `pickActiveAfterClose`,
-  `pickActiveAfterCloseMany`). Single-close clamps the prior index into the
-  new list; multi-close walks backward to the first survivor.
+  `pickActiveAfterCloseMany`). Close fallbacks stay inside the closed
+  terminal's project-scoped panel; single-close clamps the prior index there,
+  while multi-close walks backward to the first survivor.
 - `terminalApi.ts` — `deleteBackendSession(serverId)`. The one side effect
   out of band. Kept out of any setState updater on purpose: StrictMode dev
   re-runs updaters and would fire two DELETEs in <100ms, which on Windows

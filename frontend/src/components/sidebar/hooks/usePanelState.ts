@@ -33,15 +33,25 @@ export function usePanelState({
     prevMergeCountRef.current = mergeTerminals.length;
   }, [mergeTerminals, setActiveId]);
 
-  // When the Merging/Startup panel disappears, fall back.
+  // When the Merging/Startup panel disappears, fall back to regular terminals.
   useEffect(() => {
-    if (mergeTerminals.length === 0 && activePanel === 'merging') {
-      setActivePanel('terminals');
+    const panelDisappeared =
+      (mergeTerminals.length === 0 && activePanel === 'merging') ||
+      (startupTerminalsList.length === 0 && activePanel === 'startup');
+    if (!panelDisappeared) return;
+
+    setActivePanel('terminals');
+    if (!activeId && regularTerminals.length > 0) {
+      setActiveId(regularTerminals[regularTerminals.length - 1].id);
     }
-    if (startupTerminalsList.length === 0 && activePanel === 'startup') {
-      setActivePanel('terminals');
-    }
-  }, [mergeTerminals.length, startupTerminalsList.length, activePanel]);
+  }, [
+    activeId,
+    activePanel,
+    mergeTerminals.length,
+    regularTerminals,
+    setActiveId,
+    startupTerminalsList.length,
+  ]);
 
   // If activeId points to a terminal that belongs to the panel we're
   // not currently viewing (e.g. user clicked the focus-terminal button on
