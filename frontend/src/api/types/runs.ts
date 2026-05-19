@@ -4,6 +4,8 @@ export type MergeRunStatus =
   | 'cancelled'
   | 'errored';
 
+export type MergeRunErrorEntry = { taskId: string; error: string };
+
 export type MergeRun = {
   id: string;
   projectPath: string;
@@ -15,7 +17,7 @@ export type MergeRun = {
   current?: string;
   merged: string[];
   conflicted: string[];
-  errored: { taskId: string; error: string }[];
+  errored: MergeRunErrorEntry[];
   cancelRequested: boolean;
 };
 

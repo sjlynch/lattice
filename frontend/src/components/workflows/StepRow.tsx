@@ -1,6 +1,20 @@
 import { useRef } from 'react';
-import { ChevronDown, ChevronRight, GripVertical, Wand2, X } from 'lucide-react';
-import type { HarnessAvailability, WorkflowStep, WorkflowStepMode } from '../../api';
+import {
+  ChevronDown,
+  ChevronRight,
+  GitMerge,
+  GripVertical,
+  Play,
+  UploadCloud,
+  Wand2,
+  X,
+} from 'lucide-react';
+import type {
+  HarnessAvailability,
+  WorkflowStep,
+  WorkflowStepKind,
+  WorkflowStepMode,
+} from '../../api';
 import {
   availableAgentHarnesses,
   harnessLabel,
@@ -13,6 +27,32 @@ import {
 } from './StepRowHooks';
 
 export { PROMPT_MIN_HEIGHT_PX, STEP_DRAG_MIME } from './StepRowHooks';
+
+// Per-kind copy for the compact control-step row. Title is what shows in the
+// editor row label; hint is the tooltip explaining behavior.
+const CONTROL_STEP_META: Record<
+  Exclude<WorkflowStepKind, 'agent'>,
+  { icon: typeof Play; defaultTitle: string; hint: string }
+> = {
+  start: {
+    icon: Play,
+    defaultTitle: 'Start all open tasks',
+    hint:
+      'Moves every Open task to In Progress and spawns its worktree agent. Skips silently if Open is empty.',
+  },
+  merge: {
+    icon: GitMerge,
+    defaultTitle: 'Merge all tasks',
+    hint:
+      'Waits for In Progress to drain, then merges every Ready-to-Merge task into main (resolving conflicts via resolver agents as needed).',
+  },
+  push: {
+    icon: UploadCloud,
+    defaultTitle: 'Push to remote',
+    hint:
+      'Waits for Ready-to-Merge to drain, then spawns a push session — same as the cloud icon on the Task Board.',
+  },
+};
 
 function StepHarnessSelect({
   harnessAvail,
@@ -45,7 +85,64 @@ function StepHarnessSelect({
 
 // One row in the step editor. Drag-and-drop reorders by index using a
 // custom MIME so generic text drags onto the editor don't trigger reorders.
+//
+// Agent steps render the full title/mode/harness/prompt editor. Control
+// steps (start/merge/push) render a compact, fixed-behavior row: title plus
+// an info tooltip explaining what the step does. They don't have a prompt or
+// a harness, but they still reorder, collapse (no-op), and can be removed.
 export function StepRow({
+  step,
+  index,
+  collapsed,
+  harnessAvail,
+  onChange,
+  onRemove,
+  onReorder,
+  onToggleCollapse,
+  onCustomize,
+  customizing,
+}: {
+  step: WorkflowStep;
+  index: number;
+  collapsed: boolean;
+  harnessAvail: HarnessAvailability;
+  onChange: (patch: Partial<WorkflowStep>) => void;
+  onRemove: () => void;
+  onReorder: (fromIdx: number, toIdx: number) => void;
+  onToggleCollapse: () => void;
+  onCustomize: () => void;
+  customizing: boolean;
+}) {
+  const kind = step.kind ?? 'agent';
+  if (kind !== 'agent') {
+    return (
+      <ControlStepRow
+        step={step}
+        index={index}
+        kind={kind}
+        onChange={onChange}
+        onRemove={onRemove}
+        onReorder={onReorder}
+      />
+    );
+  }
+  return (
+    <AgentStepRow
+      step={step}
+      index={index}
+      collapsed={collapsed}
+      harnessAvail={harnessAvail}
+      onChange={onChange}
+      onRemove={onRemove}
+      onReorder={onReorder}
+      onToggleCollapse={onToggleCollapse}
+      onCustomize={onCustomize}
+      customizing={customizing}
+    />
+  );
+}
+
+function AgentStepRow({
   step,
   index,
   collapsed,
@@ -147,6 +244,71 @@ export function StepRow({
             onChange={(e) => onChange({ prompt: e.target.value })}
           />
         )}
+      </div>
+    </div>
+  );
+}
+
+function ControlStepRow({
+  step,
+  index,
+  kind,
+  onChange,
+  onRemove,
+  onReorder,
+}: {
+  step: WorkflowStep;
+  index: number;
+  kind: Exclude<WorkflowStepKind, 'agent'>;
+  onChange: (patch: Partial<WorkflowStep>) => void;
+  onRemove: () => void;
+  onReorder: (fromIdx: number, toIdx: number) => void;
+}) {
+  const { dragOver, onDragStart, onDragOver, onDragLeave, onDrop } =
+    useWorkflowStepDragDrop(index, onReorder);
+  const meta = CONTROL_STEP_META[kind];
+  const Icon = meta.icon;
+  return (
+    <div
+      className={`workflows-step workflows-step-control workflows-step-control-${kind} ${dragOver ? `drop-${dragOver}` : ''} collapsed`}
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      <span className="workflows-step-grip" aria-hidden>
+        <GripVertical size={12} />
+      </span>
+      <div className="workflows-step-body">
+        <div className="workflows-step-row">
+          <span
+            className="workflows-step-control-icon"
+            aria-hidden
+            title={meta.hint}
+          >
+            <Icon size={12} />
+          </span>
+          <span className="workflows-step-index">#{index + 1}</span>
+          <input
+            className="task-card-form-input workflows-step-title"
+            placeholder={meta.defaultTitle}
+            value={step.title}
+            onChange={(e) => onChange({ title: e.target.value })}
+            title={meta.hint}
+          />
+          <span className="workflows-step-control-tag" title={meta.hint}>
+            {kind}
+          </span>
+          <button
+            className="icon-btn sm"
+            onClick={onRemove}
+            title="Remove step"
+            aria-label="Remove step"
+          >
+            <X size={12} />
+          </button>
+        </div>
       </div>
     </div>
   );

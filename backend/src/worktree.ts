@@ -26,6 +26,7 @@ export {
 export {
   worktreeExists,
   isMidMerge,
+  abortWorktreeMerge,
   checkBranchExists,
   branchCommitCount,
   gitDirExists,

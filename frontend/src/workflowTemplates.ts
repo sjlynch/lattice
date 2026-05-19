@@ -9,6 +9,39 @@ export type WorkflowTemplate = {
 
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   {
+    id: 'plan-build-ship',
+    name: 'Plan → Build → Ship',
+    description:
+      'Autonomous pipeline: an agent plans and creates tasks, then Start/Merge/Push drive the entire board through to a remote push without further input.',
+    steps: [
+      {
+        title: 'Plan tasks',
+        prompt:
+          'Read the project and produce a small batch of Lattice tasks (typically 3–8) that together accomplish the goal described above. Use the create-task.cjs helper. Each task should be self-contained, scoped to one concern, and committable on its own. Do not write code in this step — only create tasks.',
+        mode: 'sequential',
+        kind: 'agent',
+      },
+      {
+        title: 'Start all open tasks',
+        prompt: '',
+        mode: 'sequential',
+        kind: 'start',
+      },
+      {
+        title: 'Merge all tasks',
+        prompt: '',
+        mode: 'sequential',
+        kind: 'merge',
+      },
+      {
+        title: 'Push to remote',
+        prompt: '',
+        mode: 'sequential',
+        kind: 'push',
+      },
+    ],
+  },
+  {
     id: 'refactor-test-document',
     name: 'Refactor → Test → Document',
     description:

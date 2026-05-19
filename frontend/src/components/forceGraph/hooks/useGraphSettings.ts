@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { loadSettings, type GraphSettings } from '../graphSettings';
+import { getIdleController } from '../idleController';
 import { clearLabelsAndRefresh } from './refresh';
 
 // Owns the GraphSettings state, mirrored ref, and per-project
@@ -46,6 +47,11 @@ export function useGraphSettings(
     clearLabelsAndRefresh(graphRef.current);
   }, [settings.fileNodeSize, settings.dirNodeSize, settings.labelSize, graphRef]);
 
+  // labelSpread doesn't need its own effect: the overlay RAFs run
+  // continuously while their key is held and read
+  // `settingsRef.current.labelSpread` fresh every tick, so the new
+  // minDist takes effect on the next frame after the slider moves.
+
   // Apply physics + DAG settings to the running simulation. Reheats so
   // changes visibly take effect.
   //
@@ -72,6 +78,7 @@ export function useGraphSettings(
     const timer = setTimeout(() => {
       if (graphRef.current === g) {
         g.d3ReheatSimulation();
+        getIdleController(g)?.engineStarted();
       }
     }, 50);
     return () => clearTimeout(timer);

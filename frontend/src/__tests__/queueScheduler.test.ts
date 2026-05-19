@@ -305,6 +305,57 @@ test('runFinished matches by runId, not duplicate workflow id', () => {
   assert.deepEqual(state.started, [started('q1', 'wf1', 'run1')]);
 });
 
+// A workflow that errored or was cancelled must NOT cascade into the next
+// queued sequential workflow — one bad run shouldn't drag the rest of the
+// pipeline down with it. The user can re-trigger the queue after inspecting.
+test('runFinished with errored status stops the sequential queue', () => {
+  const state = reduceQueue(
+    queueState({
+      mode: 'sequential',
+      queued: [queued('q2', 'wf2')],
+      running: true,
+      started: [started('q1', 'wf1', 'run1')],
+    }),
+    { type: 'runFinished', runId: 'run1', status: 'errored' },
+  );
+
+  assert.equal(state.running, false, 'queue stops on errored');
+  assert.deepEqual(state.queued, [queued('q2', 'wf2')], 'remaining queued entries survive');
+  assert.deepEqual(state.started, [], 'q1 cleared from started');
+});
+
+test('runFinished with cancelled status stops the sequential queue', () => {
+  const state = reduceQueue(
+    queueState({
+      mode: 'sequential',
+      queued: [queued('q2', 'wf2')],
+      running: true,
+      started: [started('q1', 'wf1', 'run1')],
+    }),
+    { type: 'runFinished', runId: 'run1', status: 'cancelled' },
+  );
+
+  assert.equal(state.running, false);
+  assert.deepEqual(state.queued, [queued('q2', 'wf2')]);
+});
+
+test('runFinished with errored status in parallel mode does NOT stop the queue', () => {
+  // Parallel mode is "fire-and-forget every queued entry, then auto-stop".
+  // A single failure shouldn't kill in-flight siblings the user already
+  // launched on purpose.
+  const state = reduceQueue(
+    queueState({
+      mode: 'parallel',
+      running: true,
+      started: [started('q1', 'wf1', 'run1'), started('q2', 'wf2', 'run2')],
+    }),
+    { type: 'runFinished', runId: 'run1', status: 'errored' },
+  );
+
+  assert.equal(state.running, true);
+  assert.deepEqual(state.started, [started('q2', 'wf2', 'run2')]);
+});
+
 test('shouldAutoStop returns false while items remain or a run is in flight', () => {
   assert.equal(shouldAutoStop(initialQueueState), false);
   assert.equal(

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { Settings as SettingsIcon } from 'lucide-react';
 import type { GraphNode, ScanResult } from '../../api';
@@ -13,7 +14,6 @@ import { useForceGraphInitialization } from './hooks/useForceGraphInitialization
 import { useGraphDataSync } from './hooks/useGraphDataSync';
 import { useGraphOverlays } from './hooks/useGraphOverlays';
 import { useGraphTaskCreation } from './hooks/useGraphTaskCreation';
-import { useHoverCursor } from './hooks/useHoverCursor';
 import { useNodeContextMenu } from './hooks/useNodeContextMenu';
 import { useRefMirror } from './hooks/useRefMirror';
 import { clearLabelsAndRefresh } from './hooks/refresh';
@@ -57,6 +57,43 @@ export function ForceGraphView({
   const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
+  // When labels are dense or still moving the raycaster can blip in and
+  // out of label hitboxes every other frame, firing `(file, null, file,
+  // null, …)`. Each null transition would unmount HealthTooltip and a
+  // fresh mount restarts the opacity fade-in from zero — if the flicker
+  // is faster than ~80 ms the tooltip is invisible at all times. Debounce
+  // null transitions so a fresh hover within the window cancels the
+  // pending unmount; the user only loses the tooltip if their cursor is
+  // genuinely off all labels for longer than NULL_HOVER_DEBOUNCE_MS.
+  const NULL_HOVER_DEBOUNCE_MS = 220;
+  const nullClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debouncedSetHoverNode = useCallback((node: GraphNode | null) => {
+    if (node !== null) {
+      if (nullClearTimerRef.current) {
+        clearTimeout(nullClearTimerRef.current);
+        nullClearTimerRef.current = null;
+      }
+      // 3d-force-graph emits hover changes from its RAF, outside
+      // React's event system. While the health overlay is also running
+      // RAF work, normal-priority commits can be delayed until the user
+      // releases `h`, which made the tooltip appear only as the mode was
+      // turning off. Hover-in changes are infrequent (raycast-throttled),
+      // so flush this small state update synchronously.
+      flushSync(() => setHoverNode(node));
+      return;
+    }
+    if (nullClearTimerRef.current) return;
+    nullClearTimerRef.current = setTimeout(() => {
+      nullClearTimerRef.current = null;
+      setHoverNode(null);
+    }, NULL_HOVER_DEBOUNCE_MS);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (nullClearTimerRef.current) clearTimeout(nullClearTimerRef.current);
+    };
+  }, []);
+
   const selectedRef = useRefMirror(selected);
   const hiddenExtsRef = useRefMirror(hiddenExts);
   const dataRef = useRefMirror(data);
@@ -68,8 +105,6 @@ export function ForceGraphView({
     [metricsIgnoredExts],
   );
   const metricsIgnoredExtsRef = useRefMirror(metricsIgnoredExtsSet);
-
-  const { hoverPos } = useHoverCursor(containerRef);
 
   // ----- Phase 2: graph initialization + overlays -----
   const {
@@ -110,7 +145,7 @@ export function ForceGraphView({
     nodeDepthsRef,
     changeMapRef,
     metricsIgnoredExtsRef,
-    onHoverNodeChange: setHoverNode,
+    onHoverNodeChange: debouncedSetHoverNode,
   });
 
   const resetSelection = useCallback(() => setSelected(new Set()), []);
@@ -219,7 +254,6 @@ export function ForceGraphView({
         labelLevel={labelLevel}
         maxDepth={maxDepthRef.current}
         hoverNode={hoverNode}
-        hoverPos={hoverPos}
       />
 
       {history && history.isRepo && history.commits.length > 0 && (

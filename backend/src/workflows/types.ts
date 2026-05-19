@@ -4,6 +4,18 @@ export type WorkflowStepMode = 'sequential' | 'parallel';
 export type WorkflowStepHarness = AgentHarness;
 export type WorkflowRunHarnessOverride = WorkflowStepHarness | null;
 
+// 'agent' is a regular AI-agent step (Claude/Pi/Codex spawned in a terminal
+// against WORKFLOW_STEP.md). The other kinds are control-flow primitives the
+// backend executes directly against the task pipeline:
+//   - 'start' moves every Open task to In Progress and runs each one;
+//   - 'merge' waits for In Progress to drain, then merges every Ready-to-Merge
+//     task into main (handing each via the existing mergeRuns engine);
+//   - 'push' waits for Ready-to-Merge to drain, then spawns a push session
+//     (same code path as the Task Board cloud icon).
+// These step kinds don't use `prompt` / `harness`; the fields are retained on
+// disk for schema uniformity but ignored at execution time.
+export type WorkflowStepKind = 'agent' | 'start' | 'merge' | 'push';
+
 export type WorkflowStep = {
   id: string;
   title: string;
@@ -14,6 +26,8 @@ export type WorkflowStep = {
   // the executor lands.
   mode: WorkflowStepMode;
   harness: WorkflowStepHarness;
+  // Defaults to 'agent' (legacy steps that have no `kind` field on disk).
+  kind?: WorkflowStepKind;
 };
 
 export type Workflow = {

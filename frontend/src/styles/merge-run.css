@@ -74,4 +74,10 @@
 }
 .merge-run-stat.ok { color: #9ed28e; }
 .merge-run-stat.conflict { color: #f5a36a; }
-.merge-run-stat.error { color: var(--danger); }
+.merge-run-stat.error {
+  color: var(--danger);
+  cursor: help;
+  text-decoration: underline dotted;
+  text-decoration-color: rgba(244, 96, 100, 0.4);
+  text-underline-offset: 2px;
+}

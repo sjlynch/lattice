@@ -39,6 +39,17 @@ export function createSession(opts: CreateOpts): Session | { error: string } {
       rows: context.rows,
       cwd: context.cwd,
       env: context.env,
+      // Use node-pty's bundled conpty.dll instead of the system one. The
+      // system path's `pty.kill()` does a `child_process.fork()` of
+      // `conpty_console_list_agent.js` (node-pty's
+      // lib/windowsPtyAgent.js:184) to enumerate the conpty's process
+      // list — that fork spawns a fresh node.exe without `windowsHide`,
+      // briefly flashing a console window every time a terminal closes.
+      // The DLL path skips the fork entirely (windowsPtyAgent.js:153
+      // branch); enumeration happens in-process. `taskkill` (without
+      // `detached: true`) still runs afterwards to reap grandchildren
+      // (Claude under pwsh), but with windowsHide it doesn't flash.
+      useConptyDll: true,
     });
   } catch (err) {
     return {

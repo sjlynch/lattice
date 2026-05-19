@@ -7,14 +7,12 @@ import { Router } from 'express';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { canonicalProjectPath } from '../projectPath.js';
-import { proxyCreateSession } from '../terminalProxy.js';
 import {
   cleanupPushSession,
   forgetPushRun,
   getPushRun,
   markPushRunDone,
-  recordPushRun,
-  setupPushSession,
+  startPushSession,
 } from '../pushRuns.js';
 
 export function buildPushRunsRouter(backendOrigin: string): Router {
@@ -50,29 +48,12 @@ export function buildPushRunsRouter(backendOrigin: string): Router {
     }
 
     try {
-      const session = await setupPushSession(project, backendOrigin);
-      const command = `claude --dangerously-skip-permissions "Please read PUSH_INSTRUCTIONS.md in this directory and follow it."`;
-      const sess = await proxyCreateSession({
-        cwd: session.cwd,
-        initialCommand: command,
-        projectPath: project,
-      });
-      if ('error' in sess) {
-        await cleanupPushSession(project, session.id);
-        return res.status(500).json({ error: sess.error });
-      }
-      recordPushRun({
-        id: session.id,
-        projectPath: project,
-        cwd: session.cwd,
-        status: 'running',
-        createdAt: Date.now(),
-      });
+      const started = await startPushSession(project, backendOrigin);
       res.json({
-        id: session.id,
-        command,
-        cwd: session.cwd,
-        serverId: sess.id,
+        id: started.id,
+        command: started.command,
+        cwd: started.cwd,
+        serverId: started.serverId,
       });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
