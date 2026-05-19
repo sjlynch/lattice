@@ -5,6 +5,7 @@ import {
   updateWorkflow as apiUpdateWorkflow,
   type Workflow,
   type WorkflowStep,
+  type WorkflowStepKind,
 } from '../../../api';
 import type { WorkflowTemplate } from '../../../workflowTemplates';
 import {
@@ -48,7 +49,14 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
       workflowId: null,
       name: '',
       steps: [
-        { id: localStepId(), title: 'Step 1', prompt: '', mode: 'sequential', harness: 'claude' },
+        {
+          id: localStepId(),
+          title: 'Step 1',
+          prompt: '',
+          mode: 'sequential',
+          harness: 'claude',
+          kind: 'agent',
+        },
       ],
       dirty: true,
     });
@@ -146,6 +154,34 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
           prompt: '',
           mode: 'sequential',
           harness: 'claude',
+          kind: 'agent',
+        },
+      ],
+      dirty: true,
+    }));
+  }, []);
+
+  // Append a headless control-flow step (Start/Merge/Push). These have no
+  // prompt or harness — they drive Lattice's own task pipeline server-side
+  // and are the building blocks for highly autonomous workflows.
+  const addControlStep = useCallback((kind: WorkflowStepKind) => {
+    const titleByKind: Record<WorkflowStepKind, string> = {
+      agent: 'Step',
+      start: 'Start all open tasks',
+      merge: 'Merge all tasks',
+      push: 'Push to remote',
+    };
+    setEditor((cur) => ({
+      ...cur,
+      steps: [
+        ...cur.steps,
+        {
+          id: localStepId(),
+          title: titleByKind[kind],
+          prompt: '',
+          mode: 'sequential',
+          harness: 'claude',
+          kind,
         },
       ],
       dirty: true,
@@ -171,6 +207,7 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
             prompt: p.prompt,
             mode: 'sequential',
             harness: 'claude',
+            kind: 'agent',
           },
         ],
         dirty: true,
@@ -203,6 +240,7 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
     patchStep,
     removeStep,
     addStep,
+    addControlStep,
     addDefaultPromptStep,
     reorderSteps,
   };

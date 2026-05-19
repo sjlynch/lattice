@@ -1,6 +1,6 @@
 import { RefreshCw, Search, X } from 'lucide-react';
 import { useCallback, useEffect } from 'react';
-import type { StartupTerminal } from '../api';
+import type { StartupTerminal, TerminalLaunchSettings } from '../api';
 import { useTerminals } from '../TerminalsContext';
 import { TerminalPane } from './TerminalPane';
 import { createTerminalSpec } from './sidebar/constants';
@@ -21,9 +21,21 @@ import { useTerminalSearch } from './sidebar/hooks/useTerminalSearch';
 export type Props = {
   activeFolder: string;
   startupTerminals: StartupTerminal[];
+  terminalLaunchSettings: TerminalLaunchSettings;
 };
 
-export function Sidebar({ activeFolder, startupTerminals }: Props) {
+function defaultShellKind(settings: TerminalLaunchSettings): ShellKind {
+  if (settings.terminalDefaultHarness === 'claude') {
+    return settings.terminalClaudeSkipPermissions ? 'claude-yolo' : 'claude';
+  }
+  return settings.terminalDefaultHarness;
+}
+
+export function Sidebar({
+  activeFolder,
+  startupTerminals,
+  terminalLaunchSettings,
+}: Props) {
   const {
     terminals,
     activeId,
@@ -185,7 +197,10 @@ export function Sidebar({ activeFolder, startupTerminals }: Props) {
           )}
 
           {activePanel === 'terminals' && (
-            <NewTerminalDropdown onNewTerminal={newTerminal} />
+            <NewTerminalDropdown
+              defaultKind={defaultShellKind(terminalLaunchSettings)}
+              onNewTerminal={newTerminal}
+            />
           )}
         </div>
       </div>

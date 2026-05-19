@@ -8,6 +8,9 @@ export {
   getPushRun,
   markPushRunDone,
   recordPushRun,
+  subscribePushRuns,
 } from './pushRuns/registry.js';
-export { setupPushSession } from './pushRuns/session.js';
+export type { PushRunEvent } from './pushRuns/registry.js';
+export { setupPushSession, startPushSession } from './pushRuns/session.js';
+export type { StartedPushSession } from './pushRuns/session.js';
 export { cleanupPushSession } from './pushRuns/cleanup.js';

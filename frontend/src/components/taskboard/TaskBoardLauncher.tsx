@@ -67,6 +67,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   const { mergeRun, recentRunSummary, dismissRecent } = useMergeRunSync(
     activeFolder,
     addTerminal,
+    showError,
   );
   const { activePush, startPush, hasGit } = usePushRun(
     activeFolder,

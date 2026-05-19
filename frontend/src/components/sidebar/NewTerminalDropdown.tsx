@@ -1,13 +1,22 @@
 import { ChevronDown, Plus } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-export type ShellKind = 'claude' | 'claude-yolo' | 'pi' | 'terminal';
+export type ShellKind = 'claude' | 'claude-yolo' | 'pi' | 'codex' | 'terminal';
+
+const SHELL_KIND_BUTTON_TITLES: Record<ShellKind, string> = {
+  claude: 'New Claude terminal',
+  'claude-yolo': 'New Dangerous Claude terminal',
+  pi: 'New Pi terminal',
+  codex: 'New Codex terminal',
+  terminal: 'New terminal',
+};
 
 type Props = {
+  defaultKind: ShellKind;
   onNewTerminal: (kind: ShellKind) => void;
 };
 
-export function NewTerminalDropdown({ onNewTerminal }: Props) {
+export function NewTerminalDropdown({ defaultKind, onNewTerminal }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -41,9 +50,9 @@ export function NewTerminalDropdown({ onNewTerminal }: Props) {
     <div className="sidebar-new" ref={menuRef}>
       <button
         className="icon-btn sm"
-        onClick={() => onNewTerminal('claude')}
-        title="New Claude terminal"
-        aria-label="New Claude terminal"
+        onClick={() => onNewTerminal(defaultKind)}
+        title={SHELL_KIND_BUTTON_TITLES[defaultKind]}
+        aria-label={SHELL_KIND_BUTTON_TITLES[defaultKind]}
       >
         <Plus size={14} />
       </button>
@@ -79,6 +88,13 @@ export function NewTerminalDropdown({ onNewTerminal }: Props) {
             onClick={() => choose('pi')}
           >
             Pi
+          </div>
+          <div
+            className="popover-item"
+            role="menuitem"
+            onClick={() => choose('codex')}
+          >
+            Codex
           </div>
           <div
             className="popover-item"

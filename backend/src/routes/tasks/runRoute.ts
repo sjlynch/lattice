@@ -1,8 +1,7 @@
 import { Router } from 'express';
-import { getTask, updateTask } from '../../tasks.js';
-import { setupTaskWorktree } from '../../worktree.js';
+import { getTask } from '../../tasks.js';
 import { logTaskRouteError, requireTaskStatus } from './_shared.js';
-import { selectHarnessCommand } from './harnessFactory.js';
+import { startTaskById } from './startTask.js';
 
 export function buildTaskRunRoute(backendOrigin: string): Router {
   const r = Router();
@@ -12,34 +11,17 @@ export function buildTaskRunRoute(backendOrigin: string): Router {
     if (!task) return res.status(404).json({ error: 'not found' });
     if (!requireTaskStatus(task, 'open', res)) return;
     try {
-      const selectedHarness = selectHarnessCommand(task, {
-        requestedHarness: req.body?.harness,
-        mode: 'run',
-      });
-      const result = await setupTaskWorktree(
-        task.projectPath,
-        task,
-        backendOrigin,
-        selectedHarness.harness,
-      );
-      await updateTask(task.id, {
-        status: 'in_progress',
-        worktreePath: result.worktreePath,
-        branch: result.branch,
-        startedAt: Date.now(),
-      });
       // Pre-spawn the pty so the frontend can lazy-mount its terminal pane
       // (and avoid burning a WebGL context per task at "Run All" time).
-      const { command, serverId } = await selectedHarness.createSession({
-        taskFile: result.taskFile,
-        cwd: result.worktreePath,
+      const result = await startTaskById(task.id, backendOrigin, {
+        requestedHarness: req.body?.harness,
       });
       res.json({
         worktreePath: result.worktreePath,
         branch: result.branch,
         taskFile: result.taskFile,
-        command,
-        serverId,
+        command: result.command,
+        serverId: result.serverId,
       });
     } catch (err) {
       logTaskRouteError(task, 'run setupTaskWorktree failed', err);

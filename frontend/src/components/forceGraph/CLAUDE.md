@@ -18,10 +18,19 @@
 - `GraphHud.tsx` / `GraphSelectionChip.tsx` / `GraphContextMenu.tsx` /
   `GraphTaskModal.tsx` — render-only overlays for the spinner+view chip+counts,
   the selection chip, the right-click popover, and the create-task modal.
-- `HealthTooltip.tsx` — measurement/composition wrapper for file health hover;
+- `HealthTooltip.tsx` — measurement/composition wrapper for file health hover.
+  Owns its own `pointermove` listener and writes directly to the element's
+  `transform` so per-pixel cursor moves don't re-render the React tree;
   positioning lives in `tooltipPosition.ts`, metric row construction in
   `healthTooltipMetrics.ts`, and render-only sections in
-  `HealthTooltipSections.tsx`.
+  `HealthTooltipSections.tsx`. `cursorTracker.ts` caches the latest viewport
+  cursor coords so the tooltip can render at the right place on mount.
+- `idleController.ts` — reference-counted wrapper around the library's
+  `pauseAnimation`/`resumeAnimation`. Pauses the RAF render loop when the
+  d3 engine has settled, no overlay RAF is active, the user isn't
+  interacting, or the tab is hidden. Attached to the graph instance so
+  `clearLabelsAndRefresh` and the overlay hooks can reach it without
+  threading another ref through the React tree.
 - `sprites.ts` — `spriteFor(node, settings)`. Per-style `SpriteMaterial` cache so
   the simulation only allocates one material per (ext, shape, color) tuple.
 - `labelTexture.ts` / `floatingLabelSprite.ts` / `metricOverlayFactory.ts` —
@@ -55,7 +64,7 @@
 - `useGraphOverlays` — composes `useGraphSettings` + `useGitTimeline` +
   `useLocOverlay` + `useHealthOverlay` + `useLabelsOverlay` +
   `useGraphFilter` so ForceGraphView gets one overlay setup point.
-- `useNodeContextMenu` / `useBoxSelect` / `useHoverCursor` / `useRefMirror` /
+- `useNodeContextMenu` / `useBoxSelect` / `useRefMirror` /
   `refresh.ts` — small focused helpers consumed directly by the coordinator.
 - `hooks/boxSelectGeometry.ts` — pure rectangle/projection hit-testing helpers
   for shift-drag selection; covered by node tests (no DOM/WebGL needed).

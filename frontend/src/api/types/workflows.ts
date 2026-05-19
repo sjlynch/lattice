@@ -8,12 +8,18 @@ export type WorkflowStepHarness = AgentHarness;
 export type WorkflowRunHarnessOverride = WorkflowStepHarness | null;
 export type WorkflowRunModelOverride = WorkflowRunHarnessOverride;
 
+// Mirrors backend WorkflowStepKind. 'agent' is a normal AI-agent step;
+// 'start' / 'merge' / 'push' are headless control-flow steps the backend
+// executes against the task pipeline.
+export type WorkflowStepKind = 'agent' | 'start' | 'merge' | 'push';
+
 export type WorkflowStep = {
   id: string;
   title: string;
   prompt: string;
   mode: WorkflowStepMode;
   harness: WorkflowStepHarness;
+  kind?: WorkflowStepKind;
 };
 
 export type Workflow = {
@@ -111,4 +117,25 @@ export type WorkflowRunEvent =
       command: string;
       cwd: string;
       serverId?: string;
+    }
+  | {
+      type: 'workflow-task-spawned';
+      runId: string;
+      projectPath: string;
+      stepIndex: number;
+      taskId: string;
+      title: string;
+      command: string;
+      cwd: string;
+      serverId?: string;
+    }
+  | {
+      type: 'step-control-progress';
+      runId: string;
+      projectPath: string;
+      stepIndex: number;
+      kind: WorkflowStepKind;
+      current: number;
+      total: number;
+      message?: string;
     };

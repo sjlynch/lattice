@@ -1,5 +1,6 @@
 import { projectGit } from '../projectGit.js';
 import {
+  abortWorktreeMerge,
   assertGitDirIntact,
   isMidMerge,
   worktreeExists,
@@ -7,7 +8,7 @@ import {
 import type { MergeOutcome } from '../merge.js';
 
 export type WorktreeMergePreflightResult =
-  | { ok: true; mainHeadSha: string }
+  | { ok: true; mainHeadSha: string; recoveredFromOrphanMerge: boolean }
   | { ok: false; outcome: MergeOutcome };
 
 export async function preflightWorktreeMerge(
@@ -61,17 +62,36 @@ export async function preflightWorktreeMerge(
     };
   }
 
+  // Orphan-mid-merge auto-recovery. Reaching here means the caller has
+  // asked for a fresh merge attempt (the conflict-resolver paths take a
+  // different branch via `handleFlaggedConflictTask` / the routes' early
+  // mid-merge checks). A worktree-side MERGE_HEAD with no live resolver
+  // is residue from a prior crashed attempt — backend killed mid-merge by
+  // `tsc -w`, OS signal, or a resolver Claude that curled `/merge-aborted`
+  // without actually running `git merge --abort` first. The branch's own
+  // commits are preserved by `git merge --abort`; only the half-done merge
+  // is discarded. Pre-fix this was an error that blocked the user with no
+  // UI recovery action — see hooks.ts `/merge-aborted` for the upstream
+  // hardening that now prevents the false-clear case.
+  let recoveredFromOrphanMerge = false;
   if (await isMidMerge(worktreePath)) {
-    return {
-      ok: false,
-      outcome: {
-        status: 'error',
-        message:
-          `Worktree at ${worktreePath} is already in a merge state — a ` +
-          `previous resolver may still be running. Inspect, or run ` +
-          `\`git -C "${worktreePath}" merge --abort\` to retry from scratch.`,
-      },
-    };
+    console.warn(
+      `[merge] orphan MERGE_HEAD detected at ${worktreePath} — auto-aborting before retry`,
+    );
+    const aborted = await abortWorktreeMerge(worktreePath);
+    if (!aborted.ok) {
+      return {
+        ok: false,
+        outcome: {
+          status: 'error',
+          message:
+            `Worktree at ${worktreePath} was in a stuck merge state and ` +
+            `auto-abort failed: ${aborted.message}. Run ` +
+            `\`git -C "${worktreePath}" merge --abort\` manually.`,
+        },
+      };
+    }
+    recoveredFromOrphanMerge = true;
   }
 
   const mainHeadSha = (
@@ -84,5 +104,5 @@ export async function preflightWorktreeMerge(
     };
   }
 
-  return { ok: true, mainHeadSha };
+  return { ok: true, mainHeadSha, recoveredFromOrphanMerge };
 }

@@ -102,6 +102,24 @@ export async function isMidMerge(dir: string): Promise<boolean> {
   }
 }
 
+// `git merge --abort` in a worktree. Safe to call only after confirming
+// isMidMerge — aborting when not mid-merge would error out. Returns
+// `{ok:false, message}` so callers can fold the failure into their
+// existing error path. Worktree-side, so it goes through plain `exec`,
+// not projectGit (which forbids `merge` against the project repo).
+export async function abortWorktreeMerge(
+  worktreePath: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const r = await exec('git', ['merge', '--abort'], worktreePath);
+  if (r.code !== 0) {
+    return {
+      ok: false,
+      message: (r.stderr.trim() || r.stdout.trim() || 'git merge --abort failed').slice(0, 500),
+    };
+  }
+  return { ok: true };
+}
+
 // Returns true if a local branch with this exact name exists.
 export async function checkBranchExists(
   repoRoot: string,

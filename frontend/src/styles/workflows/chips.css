@@ -16,3 +16,23 @@
   color: var(--accent);
   background: rgba(255, 255, 255, 0.06);
 }
+/* Control-step chips read as primitives — slightly more saturated so the
+   user can tell them apart from agent-step quick-adds at a glance. */
+.workflows-prompt-chip-control {
+  border-color: rgba(120, 160, 255, 0.35);
+  background: rgba(120, 160, 255, 0.08);
+  color: rgba(200, 220, 255, 0.95);
+}
+.workflows-prompt-chip-control:hover {
+  border-color: rgba(160, 200, 255, 0.85);
+  color: rgba(220, 230, 255, 1);
+  background: rgba(120, 160, 255, 0.16);
+}
+.workflows-default-prompts-separator {
+  display: inline-block;
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 4px;
+  align-self: center;
+}

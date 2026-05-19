@@ -19,6 +19,19 @@ import {
   ProjectRunLockedError,
   type ProjectRunLockHandle,
 } from './projectRunLock.js';
+
+// Lock-acquisition policy for startMergeRun.
+//   - 'acquire' (default): grab the cross-process project run-lock for the
+//     duration of the run; release in the worker's finally.
+//   - 'inherit': caller already holds the lock and is responsible for
+//     releasing it. Used by the workflow Merge control step, which holds
+//     the lock for the whole step (Phase A + Phase B) and passes through
+//     here so this call doesn't deadlock against itself.
+export type MergeRunLockMode = 'acquire' | 'inherit';
+
+export type StartMergeRunOptions = {
+  lockMode?: MergeRunLockMode;
+};
 import { generateMergeRunId } from './ids.js';
 import { processTarget } from './mergeRuns/processTarget.js';
 import { runPreflight } from './mergeRuns/preflight.js';
@@ -75,6 +88,7 @@ async function runTeardown(
   runSnapshot: SnapshotHandle,
   targets: Task[],
   backendOrigin: string,
+  lockMode: MergeRunLockMode,
 ): Promise<void> {
   // Post-run snapshot restore. Only when the loop ran to completion
   // (not on cancel) — a cancelled run leaves the snapshot in place so
@@ -100,7 +114,13 @@ async function runTeardown(
   // If tasks became ready_to_merge while this run was processing its
   // snapshot, they were never in `targets` and are still waiting. Auto-
   // restart so they get picked up without requiring a manual merge-all click.
-  if (!run.cancelRequested) {
+  //
+  // Skip the auto-restart when this run inherited its lock — the workflow
+  // Merge control step holds the lock and is responsible for looping through
+  // any remaining ready_to_merge tasks itself. A fire-and-forget restart here
+  // would try to acquire its own lock (with the default 'acquire' mode) and
+  // fail since the workflow still holds it.
+  if (!run.cancelRequested && lockMode !== 'inherit') {
     try {
       const allTasks = await listTasks(projectPath);
       const seenIds = new Set(targets.map((t) => t.id));
@@ -123,6 +143,7 @@ async function runTeardown(
 export async function startMergeRun(
   projectPath: string,
   backendOrigin: string,
+  options: StartMergeRunOptions = {},
 ): Promise<MergeRun> {
   projectPath = canonicalProjectPath(projectPath);
   await runState.loadProject(projectPath);
@@ -137,14 +158,20 @@ export async function startMergeRun(
   // installations sharing a repo), bail before we begin: holding a stale
   // run object plus running snapshot/FF concurrently with a sibling
   // process is the configuration that produced prior `.git` deletions.
-  let projectLock: ProjectRunLockHandle;
-  try {
-    projectLock = await acquireProjectRunLock(projectPath, 'merge-run');
-  } catch (err) {
-    if (err instanceof ProjectRunLockedError) {
-      throw new Error(err.message);
+  //
+  // When lockMode is 'inherit' (workflow Merge control step), the caller
+  // already holds the lock for the whole step — skip both acquire and
+  // release here so we don't deadlock or release someone else's lock.
+  let projectLock: ProjectRunLockHandle | null = null;
+  if (options.lockMode !== 'inherit') {
+    try {
+      projectLock = await acquireProjectRunLock(projectPath, 'merge-run');
+    } catch (err) {
+      if (err instanceof ProjectRunLockedError) {
+        throw new Error(err.message);
+      }
+      throw err;
     }
-    throw err;
   }
 
   const tasks = await listTasks(projectPath);
@@ -189,7 +216,14 @@ export async function startMergeRun(
       if (action === 'halt') break;
     }
 
-    await runTeardown(projectPath, run, runSnapshot, targets, backendOrigin);
+    await runTeardown(
+      projectPath,
+      run,
+      runSnapshot,
+      targets,
+      backendOrigin,
+      options.lockMode ?? 'acquire',
+    );
     finishRun(run);
   })()
     .catch((err) => {
@@ -198,7 +232,7 @@ export async function startMergeRun(
       run.finishedAt = Date.now();
       notify(runState, { type: 'completed', run: snapshot(run) });
     })
-    .finally(() => projectLock.release().catch(() => undefined));
+    .finally(() => projectLock?.release().catch(() => undefined));
 
   return snapshot(run);
 }

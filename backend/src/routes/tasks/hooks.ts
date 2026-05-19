@@ -13,8 +13,10 @@ import {
   updateTaskCrashSafe,
 } from '../../tasks.js';
 import {
+  abortWorktreeMerge,
   branchCommitCount,
   cleanupWorktreeForTask,
+  isMidMerge,
 } from '../../worktree.js';
 import { startMergeRun } from '../../mergeRuns.js';
 import { proxyKillSessionsByCwd } from '../../terminalProxy.js';
@@ -135,11 +137,33 @@ export function buildTaskHookRouter(backendOrigin: string): Router {
     res.json({ ok: true });
   });
 
-  // Resolver Claude gave up (after `git merge --abort`). Clear the in-flight
-  // flag so the user can retry the merge.
+  // Resolver Claude gave up. Originally trusted the resolver to have
+  // already run `git merge --abort` and just cleared the conflict flag —
+  // but a resolver that curled this without aborting first (or that
+  // aborted in some other unexpected state) would leave MERGE_HEAD set
+  // with conflict:false, the orphan-mid-merge state that used to wedge
+  // the next /merge attempt. Now we abort ourselves if needed; preflight
+  // also auto-recovers, so this is belt + braces.
   r.post('/api/tasks/:id/merge-aborted', async (req, res) => {
     const task = await getTask(req.params.id);
     if (!task) return res.status(404).json({ error: 'not found' });
+    if (task.worktreePath) {
+      try {
+        if (await isMidMerge(task.worktreePath)) {
+          const aborted = await abortWorktreeMerge(task.worktreePath);
+          if (!aborted.ok) {
+            console.warn(
+              `[merge-aborted] task ${task.id}: git merge --abort failed: ${aborted.message}`,
+            );
+          }
+        }
+      } catch (err) {
+        console.warn(
+          `[merge-aborted] task ${task.id}: abort check threw (continuing):`,
+          err,
+        );
+      }
+    }
     await updateTask(task.id, {
       conflict: undefined,
       conflictStartedAt: undefined,

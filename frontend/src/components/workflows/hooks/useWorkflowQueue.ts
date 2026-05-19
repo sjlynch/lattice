@@ -18,6 +18,11 @@ type Args = {
   // Current set of runs the backend considers active (driven by the
   // /ws/workflow-runs `hello`/`started`/`progress`/`completed` events).
   activeRuns: Record<string, WorkflowRun>;
+  // Lingering recently-finished runs (~10s window) — used to look up the
+  // final status of a run that just disappeared from activeRuns so we can
+  // tell the scheduler whether to cascade into the next workflow (only on
+  // success) or stop (on errored/cancelled).
+  recentRuns: Record<string, WorkflowRun>;
 };
 
 // React adapter for the pure `queueScheduler`. The hook owns the reducer
@@ -32,6 +37,7 @@ export function useWorkflowQueue({
   workflowsById,
   runWorkflow,
   activeRuns,
+  recentRuns,
 }: Args): { state: QueueState; dispatch: (action: QueueAction) => void } {
   const [state, setState] = useState<QueueState>(initialQueueState);
 
@@ -41,9 +47,11 @@ export function useWorkflowQueue({
   const stateRef = useRef(state);
   const workflowsByIdRef = useRef(workflowsById);
   const runWorkflowRef = useRef(runWorkflow);
+  const recentRunsRef = useRef(recentRuns);
   stateRef.current = state;
   workflowsByIdRef.current = workflowsById;
   runWorkflowRef.current = runWorkflow;
+  recentRunsRef.current = recentRuns;
 
   const dispatch = useCallback((action: QueueAction) => {
     const result = step(stateRef.current, action);
@@ -77,13 +85,19 @@ export function useWorkflowQueue({
   // scheduler can pick up the next queued workflow (sequential) or auto-stop
   // (parallel). runFinished against an id we never tracked is a no-op in the
   // reducer, so a manually-started run leaving activeRuns is harmless.
+  //
+  // Look up the run's final status in `recentRuns` (populated in the same WS
+  // event that removed it from `activeRuns`) so the scheduler can decide
+  // whether to cascade into the next sequential workflow (only on
+  // 'completed') or stop the queue (on 'errored'/'cancelled').
   const prevActiveRef = useRef(activeRuns);
   useEffect(() => {
     const prev = prevActiveRef.current;
     if (prev !== activeRuns) {
       for (const id of Object.keys(prev)) {
         if (!activeRuns[id]) {
-          dispatch({ type: 'runFinished', runId: id });
+          const status = recentRunsRef.current[id]?.status ?? 'completed';
+          dispatch({ type: 'runFinished', runId: id, status });
         }
       }
       prevActiveRef.current = activeRuns;

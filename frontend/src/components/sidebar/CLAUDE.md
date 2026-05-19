@@ -3,7 +3,7 @@
 Implementation pieces for `../Sidebar.tsx`.
 
 - `NewTerminalDropdown.tsx` — plus/chevron menu for Claude, dangerous Claude,
-  Pi, and plain terminal sessions; command defaults live in `constants.ts`.
+  Pi, Codex, and plain terminal sessions; command defaults live in `constants.ts`.
 - `SidebarPanelTabs.tsx` — Terminals / Merging / Startup panel switcher.
 - `SidebarTabsBar.tsx` — scrollable terminal tabs, close buttons, and the
   right-click entry point.

@@ -1,4 +1,4 @@
-import { Play, Plus, Square, Trash2 } from 'lucide-react';
+import { GitMerge, Play, Plus, Square, Trash2, UploadCloud } from 'lucide-react';
 import { DEFAULT_PROMPTS } from './defaultPrompts';
 import { promptsWithProjectVariants } from './projectPromptVariants';
 import type { WorkflowManager } from './hooks/useWorkflowManager';
@@ -15,6 +15,7 @@ export function WorkflowEditorPanel({ manager }: Props) {
     activeFolder,
     editor,
     runForEditor,
+    controlProgressForEditor,
     recentForEditor,
     collapsedSteps,
     harnessAvail,
@@ -28,6 +29,34 @@ export function WorkflowEditorPanel({ manager }: Props) {
   const quickAddPrompts = (
     <div className="workflows-default-prompts">
       <span className="workflows-default-prompts-label">Quick add</span>
+      <button
+        type="button"
+        className="workflows-prompt-chip workflows-prompt-chip-control"
+        onClick={() => actions.addControlStep('start')}
+        title="Moves every Open task to In Progress and runs each one. Skips silently if Open is empty."
+      >
+        <Play size={11} />
+        Start
+      </button>
+      <button
+        type="button"
+        className="workflows-prompt-chip workflows-prompt-chip-control"
+        onClick={() => actions.addControlStep('merge')}
+        title="Waits for In Progress to drain, then merges every Ready-to-Merge task to QA."
+      >
+        <GitMerge size={11} />
+        Merge
+      </button>
+      <button
+        type="button"
+        className="workflows-prompt-chip workflows-prompt-chip-control"
+        onClick={() => actions.addControlStep('push')}
+        title="Waits for Ready-to-Merge to drain, then pushes to remote (same as the Task Board cloud icon)."
+      >
+        <UploadCloud size={11} />
+        Push
+      </button>
+      <span className="workflows-default-prompts-separator" aria-hidden />
       {projectPrompts.map((prompt) => {
         const Icon = prompt.icon;
         return (
@@ -62,6 +91,7 @@ export function WorkflowEditorPanel({ manager }: Props) {
             {(runForEditor || recentForEditor) && (
               <WorkflowRunStrip
                 active={runForEditor ?? null}
+                controlProgress={controlProgressForEditor ?? null}
                 summary={!runForEditor ? recentForEditor ?? null : null}
                 onStop={runForEditor ? () => void actions.stopRun(runForEditor.id) : undefined}
                 onDismiss={() => {

@@ -72,6 +72,52 @@
 .workflows-step.collapsed .workflows-step-body {
   gap: 0;
 }
+/* Control steps (start/merge/push) are headless: no prompt textarea, no
+   harness selector. Render a compact single-row layout that stands out
+   visually so they read as primitives rather than agent steps. */
+.workflows-step-control {
+  background: rgba(120, 160, 255, 0.05);
+  border-color: rgba(120, 160, 255, 0.25);
+}
+.workflows-step-control .workflows-step-body {
+  gap: 0;
+}
+.workflows-step-control-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  background: rgba(120, 160, 255, 0.15);
+  color: rgba(180, 200, 255, 0.95);
+  flex-shrink: 0;
+}
+.workflows-step-control-start .workflows-step-control-icon {
+  background: rgba(120, 220, 140, 0.18);
+  color: rgba(170, 230, 180, 0.95);
+}
+.workflows-step-control-merge .workflows-step-control-icon {
+  background: rgba(200, 150, 255, 0.18);
+  color: rgba(220, 190, 255, 0.95);
+}
+.workflows-step-control-push .workflows-step-control-icon {
+  background: rgba(255, 180, 100, 0.18);
+  color: rgba(255, 210, 150, 0.95);
+}
+.workflows-step-control-tag {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
 .workflows-add-step {
   display: inline-flex;
   align-items: center;

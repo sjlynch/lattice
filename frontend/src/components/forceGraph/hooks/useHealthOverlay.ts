@@ -1,6 +1,7 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { healthLabelRegistry } from '../healthOverlay';
+import { getIdleController } from '../idleController';
 import { repelLabels } from '../labelRepulsion';
 import type { GraphSettings } from '../graphSettings';
 import { clearLabelsAndRefresh, isTextInput } from './refresh';
@@ -64,14 +65,33 @@ export function useHealthOverlay(
   // multiplier is read each tick so the slider takes effect live.
   useEffect(() => {
     if (!healthMode) return;
+    // Hold `labelPhysics` for the duration the overlay is active so the
+    // renderer keeps running for hover raycasts. The repulsion RAF runs
+    // continuously and reads `settingsRef.current.labelSpread` fresh
+    // every tick — the spatial-grid pairwise loop makes the per-frame
+    // cost small enough that there's no need to suspend on settle, and
+    // an always-running tick removes a class of stale-state bugs where
+    // a labelSpread or labelMode change wasn't reaching the loop after
+    // a self-stop.
+    const idle = getIdleController(graphRef.current);
     let rafId = 0;
+    let stopped = false;
+
+    idle?.acquireLabelPhysics();
+
     const tick = () => {
+      if (stopped) return;
       repelLabels(healthLabelRegistry, 55 * settingsRef.current.labelSpread);
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [healthMode, settingsRef]);
+
+    return () => {
+      stopped = true;
+      if (rafId) cancelAnimationFrame(rafId);
+      idle?.releaseLabelPhysics();
+    };
+  }, [healthMode, settingsRef, graphRef]);
 
   return { healthModeRef };
 }

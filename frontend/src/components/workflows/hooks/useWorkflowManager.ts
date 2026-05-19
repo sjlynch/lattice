@@ -45,7 +45,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
 
   const collapsedSteps = useCollapsedSteps(activeFolder);
   const { workflows, sortedWorkflows } = useWorkflowList(activeFolder);
-  const { activeRuns, recentRuns, addActiveRun, dismissRecent } =
+  const { activeRuns, recentRuns, controlProgress, addActiveRun, dismissRecent } =
     useWorkflowRuns(activeFolder);
   const editorState = useWorkflowEditor({
     workflows,
@@ -92,6 +92,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     workflowsById,
     runWorkflow: runQueuedWorkflow,
     activeRuns,
+    recentRuns,
   });
 
   const queueActions = useWorkflowQueueActions({
@@ -129,6 +130,9 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
         ) ?? ''
       ]
     : undefined;
+  const controlProgressForEditor = runForEditor
+    ? controlProgress[runForEditor.id]
+    : undefined;
   const recentForEditor = editor.workflowId
     ? recentRuns[
         Object.keys(recentRuns).find(
@@ -147,6 +151,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     activeRunList,
     recentRuns,
     runForEditor,
+    controlProgressForEditor,
     recentForEditor,
     editor,
     pickingTemplate: editorState.pickingTemplate,
@@ -176,6 +181,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
       patchStep: editorState.patchStep,
       removeStep: editorState.removeStep,
       addStep: editorState.addStep,
+      addControlStep: editorState.addControlStep,
       addDefaultPromptStep: editorState.addDefaultPromptStep,
       reorderSteps: editorState.reorderSteps,
       selectWorkflow,
