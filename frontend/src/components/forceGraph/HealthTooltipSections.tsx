@@ -1,4 +1,8 @@
 import type { GraphNode, HealthMetrics, HealthSmell } from '../../api';
+import {
+  formatPointsLost,
+  type HealthScoreContribution,
+} from './healthScoreContributions';
 import type { MetricRowModel } from './healthTooltipMetrics';
 
 const SMELL_LIMIT = 8;
@@ -51,26 +55,48 @@ export function HealthTooltipHeader({
 }
 
 export function MetricGrid({ rows }: { rows: readonly MetricRowModel[] }) {
+  const hasContributions = rows.some((row) => row.contribution);
+
   return (
-    <div className="health-tooltip-grid">
-      {rows.map((row) => (
-        <MetricRow key={row.label} row={row} />
-      ))}
-    </div>
+    <>
+      <div className="health-tooltip-grid">
+        {rows.map((row) => (
+          <MetricRow key={row.label} row={row} />
+        ))}
+      </div>
+      {hasContributions && (
+        <div className="health-tooltip-impact-note">
+          Badges show direct score points lost.
+        </div>
+      )}
+    </>
   );
 }
 
 export function MetricRow({ row }: { row: MetricRowModel }) {
   return (
     <div className="health-tooltip-metric">
-      <span className="health-tooltip-metric-label">{row.label}</span>
+      <span className="health-tooltip-metric-label">
+        {row.label}
+        {row.contribution && <ContributionBadge contribution={row.contribution} />}
+      </span>
       <span className="health-tooltip-metric-value">
         {row.value}
         {row.suffix && (
-          <span className="health-tooltip-metric-suffix"> {row.suffix}</span>
+          <span className="health-tooltip-metric-suffix">{row.suffix}</span>
         )}
       </span>
     </div>
+  );
+}
+
+function ContributionBadge({ contribution }: { contribution: HealthScoreContribution }) {
+  return (
+    <span
+      className={`health-tooltip-metric-loss health-tooltip-metric-loss--${contribution.severity}`}
+    >
+      {formatPointsLost(contribution)}
+    </span>
   );
 }
 
