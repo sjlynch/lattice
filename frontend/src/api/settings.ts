@@ -1,4 +1,4 @@
-// Per-project user settings (sidebar width, harness preference).
+// Per-project user settings (sidebar width, harness preferences, terminal defaults).
 
 import { asJson } from './http';
 import type {

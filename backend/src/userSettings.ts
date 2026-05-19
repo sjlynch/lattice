@@ -10,10 +10,14 @@ export type StartupTerminal = {
   command: string;
 };
 
+export type TerminalDefaultHarness = AgentHarness | 'terminal';
+
 export type UserSettings = {
   sidebarWidth?: number;
   harness?: AgentHarness | 'interleave';
   startupTerminals?: StartupTerminal[];
+  terminalDefaultHarness?: TerminalDefaultHarness;
+  terminalClaudeSkipPermissions?: boolean;
   // Per-step collapse state for the workflow editor, keyed by step id.
   // Only collapsed=true entries are persisted to keep the file tidy.
   workflowStepsCollapsed?: Record<string, boolean>;

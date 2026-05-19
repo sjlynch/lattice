@@ -1,3 +1,55 @@
+/* Header search */
+.taskboard-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: 220px;
+  height: 22px;
+  margin-left: 8px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--text-tertiary);
+  cursor: text;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.taskboard-search:focus-within {
+  border-color: var(--accent);
+  background: var(--bg-elev);
+}
+.taskboard-search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  user-select: text;
+}
+.taskboard-search-input::placeholder {
+  color: var(--text-tertiary);
+}
+.taskboard-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.taskboard-search-clear:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 /* Filter pills */
 .taskboard-filters {
   display: flex;

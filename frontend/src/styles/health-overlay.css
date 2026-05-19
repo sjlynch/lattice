@@ -258,13 +258,42 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 .health-tooltip-metric-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
   font-size: 10.5px;
   color: var(--text-tertiary);
   letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.health-tooltip-metric-loss {
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.health-tooltip-metric-loss--none,
+.health-tooltip-metric-loss--low {
+  color: #7ed884;
+}
+.health-tooltip-metric-loss--none {
+  opacity: 0.72;
+}
+.health-tooltip-metric-loss--medium {
+  color: #f5d76e;
+}
+.health-tooltip-metric-loss--high {
+  color: #f57878;
 }
 .health-tooltip-metric-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
   font-size: 11.5px;
   color: var(--text-primary);
@@ -274,6 +303,13 @@
   color: var(--text-tertiary);
   font-weight: 400;
   font-size: 10px;
+}
+.health-tooltip-impact-note {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.35;
+  margin-top: -2px;
+  padding-bottom: 4px;
 }
 .health-tooltip-smells {
   border-top: 1px solid var(--border);
