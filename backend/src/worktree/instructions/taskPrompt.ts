@@ -1,5 +1,6 @@
 import type { Task } from '../../tasks.js';
 import type { AgentHarness } from '../../harnesses.js';
+import { canonicalProjectPath } from '../../projectPath.js';
 import { renderEnvNotesBlock } from '../envDetect.js';
 
 // `harness` controls a couple of pieces. Claude (the default) ends the
@@ -51,6 +52,7 @@ export function renderTaskMarkdown(
    you skip it is if there is genuinely nothing committed on this branch (in
    which case Lattice leaves the task In Progress so it can be resumed);
    even then, say so explicitly rather than just stopping.`;
+  const projectPath = canonicalProjectPath(task.projectPath);
   return `# ${task.title}
 
 ${desc}
@@ -58,7 +60,13 @@ ${desc}
 ---
 
 **Lattice task ID:** \`${task.id}\`
+**Project:** \`${projectPath}\`
 **Created:** ${created}
+
+> You are working on this single task. You should not need to query the
+> Lattice task board to complete it — but if you do, pass exactly the
+> project path above as \`project=\`, and see \`$LATTICE_DOCS\`
+> (\`.lattice/LATTICE_API.md\`) for the API.
 
 ## Instructions (please complete autonomously, no need to confirm with the user)
 

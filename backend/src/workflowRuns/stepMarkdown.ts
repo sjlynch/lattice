@@ -5,6 +5,7 @@
 // relies on its session_shutdown extension *plus* an explicit curl as a
 // backstop, codex always curls itself.
 
+import { canonicalProjectPath } from '../projectPath.js';
 import type { Workflow, WorkflowStepHarness } from '../workflows.js';
 import type { WorkflowRun } from './state.js';
 
@@ -24,7 +25,8 @@ export function renderStepMarkdown(
 ): string {
   const step = wf.steps[stepIndex];
   const harness = effectiveStepHarness(wf, run, stepIndex);
-  const encodedProject = encodeURIComponent(wf.projectPath);
+  const canonicalProject = canonicalProjectPath(wf.projectPath);
+  const encodedProject = encodeURIComponent(canonicalProject);
   const completeUrl = `${backendOrigin}/api/workflow-runs/${run.id}/steps/${stepIndex}/complete`;
   const completionInstructions =
     harness === 'claude'
@@ -47,9 +49,15 @@ export function renderStepMarkdown(
     '',
     step.prompt,
     '',
-    '## About this project',
+    '## Active project (use ONLY this one)',
     '',
-    `Project root: \`${wf.projectPath}\``,
+    `\`${canonicalProject}\``,
+    '',
+    'Every Lattice API call you make must be for this project. The helper',
+    'script below has the project baked in — prefer it over raw curl so you',
+    "can't accidentally hit a different project's board. If you do use curl,",
+    'verify the response\'s `canonicalProject` field matches the path above',
+    'before acting on the data.',
     ...(run.harnessOverride
       ? [
           '',
@@ -64,7 +72,8 @@ export function renderStepMarkdown(
     '## Creating tasks — use the helper script',
     '',
     'A `create-task.cjs` script is in this directory. It handles JSON serialization',
-    'for you so you never need to escape quotes, backticks, or special characters.',
+    "for you so you never need to escape quotes, backticks, or special characters,",
+    "and every command targets only this project's board.",
     '',
     '**Single task (inline description):**',
     '```bash',
@@ -91,9 +100,21 @@ export function renderStepMarkdown(
     'node create-task.cjs --batch tasks.json',
     '```',
     '',
-    '### List existing tasks',
+    '### Read the board (always project-safe)',
+    '```bash',
+    'node create-task.cjs --list                  # every task on this project',
+    'node create-task.cjs --list open             # one lane',
+    'node create-task.cjs --list open,in_progress # multiple lanes',
+    'node create-task.cjs --summary               # counts by status',
+    '```',
+    '',
+    'If you ever need a raw curl, the response is an envelope — assert',
+    '`.canonicalProject` matches the project path above before iterating',
+    '`.tasks`:',
+    '',
     '```bash',
     `curl -s "${backendOrigin}/api/tasks?project=${encodedProject}"`,
+    '# → { project, canonicalProject, hash, count, mismatched, tasks: [...] }',
     '```',
     '',
     '## When you are done',

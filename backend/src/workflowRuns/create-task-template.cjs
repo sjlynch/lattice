@@ -1,26 +1,24 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * create-task.cjs — Lattice task creation helper.
+ * create-task.cjs — Lattice task creation/read helper.
  *
- * Handles JSON serialization so you never have to worry about shell
- * quoting, backticks, or special characters in descriptions.
+ * All commands operate on THIS workflow's project — no project string to
+ * type, no chance of hitting the wrong board.
  *
- * Single task (description from second arg):
+ * Create one task (description from second arg or stdin):
  *   node create-task.cjs "Task title" "Short description"
- *
- * Single task (description from stdin — pipe or redirect file):
  *   node create-task.cjs "Task title" < description.md
- *   echo "My description" | node create-task.cjs "Task title"
  *
- * Multiple tasks at once (recommended for 3+ tasks):
+ * Batch-create (recommended for 3+ tasks):
  *   node create-task.cjs --batch tasks.json
+ *   # tasks.json: [{ "title": "...", "description": "..." }, ...]
  *
- * tasks.json format:
- *   [
- *     { "title": "First task",  "description": "What to do" },
- *     { "title": "Second task", "description": "..." }
- *   ]
+ * Read the board (defaults to this project; never queries another):
+ *   node create-task.cjs --list                    # every task
+ *   node create-task.cjs --list open               # one lane
+ *   node create-task.cjs --list open,in_progress   # multiple lanes
+ *   node create-task.cjs --summary                 # counts by status
  */
 
 const http = require('http');
@@ -29,20 +27,21 @@ const fs   = require('fs');
 const PROJECT  = '__LATTICE_PROJECT__';
 const API_BASE = '__LATTICE_API_BASE__';
 
-function post(urlStr, body) {
+function request(method, urlStr, body) {
   return new Promise((resolve, reject) => {
     const url     = new URL(urlStr);
-    const payload = typeof body === 'string' ? body : JSON.stringify(body);
+    const payload = body == null ? null : (typeof body === 'string' ? body : JSON.stringify(body));
+    const headers = payload == null ? {} : {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload),
+    };
     const req = http.request(
       {
         hostname: url.hostname,
         port: Number(url.port) || 80,
         path: url.pathname + url.search,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(payload),
-        },
+        method,
+        headers,
       },
       (res) => {
         let data = '';
@@ -54,9 +53,32 @@ function post(urlStr, body) {
       },
     );
     req.on('error', reject);
-    req.write(payload);
+    if (payload != null) req.write(payload);
     req.end();
   });
+}
+
+function post(urlStr, body) { return request('POST', urlStr, body); }
+function get(urlStr)        { return request('GET',  urlStr, null); }
+
+function projectQuery() {
+  return 'project=' + encodeURIComponent(PROJECT);
+}
+
+// Defence in depth: even though the API canonicalizes and filters server-side,
+// re-check that the envelope's canonicalProject matches PROJECT (case-insensitive
+// drive letter) before acting on the data.
+function assertEnvelopeMatchesProject(envelope) {
+  if (!envelope || typeof envelope !== 'object') {
+    throw new Error('unexpected response shape from Lattice API');
+  }
+  const got = String(envelope.canonicalProject || '');
+  if (got.toLowerCase() !== PROJECT.toLowerCase()) {
+    throw new Error(
+      'Lattice API returned data for the wrong project — got "' + got +
+        '", expected "' + PROJECT + '". Refusing to act on it.',
+    );
+  }
 }
 
 function readStdin() {
@@ -80,8 +102,46 @@ async function createOne(title, description) {
   throw new Error('API ' + result.status + ': ' + msg);
 }
 
+async function listTasks(statusCsv) {
+  const q = projectQuery() + (statusCsv ? '&status=' + encodeURIComponent(statusCsv) : '');
+  const result = await get(API_BASE + '/api/tasks?' + q);
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error('API ' + result.status + ': ' + JSON.stringify(result.body));
+  }
+  assertEnvelopeMatchesProject(result.body);
+  const { tasks, count, mismatched } = result.body;
+  if (!Array.isArray(tasks)) throw new Error('unexpected tasks shape: ' + JSON.stringify(result.body));
+  if (mismatched > 0) {
+    console.error('[warn] ' + mismatched + ' foreign task(s) filtered server-side (see backend log)');
+  }
+  console.log('Project: ' + PROJECT + '  (' + count + ' task' + (count === 1 ? '' : 's') + (statusCsv ? ', filter=' + statusCsv : '') + ')');
+  for (const t of tasks) console.log(t.id + '  ' + t.status.padEnd(15) + '  ' + t.title);
+}
+
+async function summary() {
+  const result = await get(API_BASE + '/api/tasks/summary?' + projectQuery());
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error('API ' + result.status + ': ' + JSON.stringify(result.body));
+  }
+  assertEnvelopeMatchesProject(result.body);
+  console.log(JSON.stringify({
+    project: result.body.canonicalProject,
+    total:   result.body.total,
+    byStatus: result.body.byStatus,
+  }, null, 2));
+}
+
 async function main() {
   const args = process.argv.slice(2);
+
+  if (args[0] === '--list') {
+    await listTasks(args[1] || '');
+    return;
+  }
+  if (args[0] === '--summary') {
+    await summary();
+    return;
+  }
 
   if (args[0] === '--batch') {
     const file = args[1];
@@ -108,6 +168,8 @@ async function main() {
     console.error('Usage: node create-task.cjs "Title" ["Description"]');
     console.error('       node create-task.cjs "Title" < description.md');
     console.error('       node create-task.cjs --batch tasks.json');
+    console.error('       node create-task.cjs --list [statuses]');
+    console.error('       node create-task.cjs --summary');
     process.exit(1);
   }
   const description = args[1] !== undefined ? args[1] : await readStdin();

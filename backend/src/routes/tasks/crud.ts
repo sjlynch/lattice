@@ -3,6 +3,7 @@
 
 import { Router, text as textBodyParser } from 'express';
 import {
+  handleProjectsList,
   handleTaskAppendSummary,
   handleTaskBatchCreate,
   handleTaskCreate,
@@ -17,6 +18,10 @@ import {
 
 export function buildTaskCrudRouter(): Router {
   const r = Router();
+
+  // Project roots Lattice has indexed. Cheap "what projects exist" probe
+  // for harness-spawned agents in ambiguous cwds.
+  r.get('/api/projects', handleProjectsList);
 
   r.get('/api/tasks', handleTaskList);
 

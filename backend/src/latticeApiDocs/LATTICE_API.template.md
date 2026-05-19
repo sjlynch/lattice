@@ -5,6 +5,7 @@ This terminal has these env vars set (this session only — not your global env)
 
 - `$LATTICE_API_URL` — API base URL (default `http://127.0.0.1:{{API_PORT}}`)
 - `$LATTICE_PROJECT` — active project's absolute path
+- `$LATTICE_PROJECT_HASH` — 12-char project hash (compare against the `hash` field in API responses)
 - `$LATTICE_DOCS` — absolute path to this file
 
 If the user mentions tasks / taskboard / merging / worktrees, drive the
@@ -21,6 +22,12 @@ HTTP API below directly — don't ask how to reach it.
    `F:/rust_etl` and `F:\\rust_etl` to the same project, so the
    forward-slash form sidesteps every JSON / shell escape headache.
    For URL query strings, let the HTTP client URL-encode the raw value.
+3. **The `project` you pass must be `$LATTICE_PROJECT`.** Don't
+   hardcode a path, don't infer from the cwd, don't reuse one from an
+   earlier session. `/api/tasks` and `/api/tasks/summary` return an
+   envelope with a `canonicalProject` field — if it doesn't match
+   `$LATTICE_PROJECT` (or the `hash` doesn't match `$LATTICE_PROJECT_HASH`),
+   stop and tell the user, don't act on the data.
 
 ## Recipes
 
@@ -56,28 +63,55 @@ curl -X POST "$LATTICE_API_URL/api/tasks?project=$LATTICE_PROJECT" \
 
 ### List & count (no script needed)
 
+Both endpoints return an envelope, not a bare array. Always read
+`.canonicalProject` first and confirm it matches `$LATTICE_PROJECT`
+before iterating `.tasks` (or trusting `.byStatus`).
+
 PowerShell — `Invoke-RestMethod` (alias `irm`) handles JSON automatically:
 ```pwsh
-# all open tasks
 $proj = $env:LATTICE_PROJECT.Replace('\','/')
-irm "$env:LATTICE_API_URL/api/tasks?project=$([uri]::EscapeDataString($proj))&status=open"
+
+# all open tasks
+$resp = irm "$env:LATTICE_API_URL/api/tasks?project=$([uri]::EscapeDataString($proj))&status=open"
+if ($resp.canonicalProject -ne $env:LATTICE_PROJECT) { throw "wrong project: $($resp.canonicalProject)" }
+$resp.tasks   # ← the actual task list
 
 # counts by status (one round trip, no client-side tally)
-irm "$env:LATTICE_API_URL/api/tasks/summary?project=$([uri]::EscapeDataString($proj))"
-# → @{ total = 36; byStatus = @{ open = 8; done = 28 } }
+$sum = irm "$env:LATTICE_API_URL/api/tasks/summary?project=$([uri]::EscapeDataString($proj))"
+if ($sum.canonicalProject -ne $env:LATTICE_PROJECT) { throw "wrong project: $($sum.canonicalProject)" }
+$sum.byStatus  # → @{ open = 8; done = 28; ... }
 ```
 
-bash — `curl --data-urlencode` does the encoding for you:
+bash — `curl --data-urlencode` does the encoding for you. Pipe the body
+through `jq` to assert the project and extract `.tasks`:
 ```bash
 curl -sG "$LATTICE_API_URL/api/tasks" \
   --data-urlencode "project=$LATTICE_PROJECT" \
-  --data-urlencode "status=open"
+  --data-urlencode "status=open" \
+  | jq --arg p "$LATTICE_PROJECT" '
+      if .canonicalProject == $p then .tasks
+      else error("wrong project: " + .canonicalProject) end'
 
 curl -sG "$LATTICE_API_URL/api/tasks/summary" \
-  --data-urlencode "project=$LATTICE_PROJECT"
+  --data-urlencode "project=$LATTICE_PROJECT" \
+  | jq --arg p "$LATTICE_PROJECT" '
+      if .canonicalProject == $p then {total, byStatus}
+      else error("wrong project: " + .canonicalProject) end'
 ```
 
 You can also pass multiple statuses: `?status=open,in_progress`.
+
+Response envelope shape:
+```jsonc
+{
+  "project":          "C:\\dev\\my-app",   // exactly what you passed
+  "canonicalProject": "C:\\dev\\my-app",   // ← MUST match $LATTICE_PROJECT
+  "hash":             "3f9a2b1c8e7d",       // ← MUST match $LATTICE_PROJECT_HASH
+  "count":            36,
+  "mismatched":       0,                    // foreign tasks server-filtered; > 0 = corruption signal
+  "tasks":            [ /* ... */ ]
+}
+```
 
 ### Create one task
 
@@ -155,8 +189,9 @@ curl -s -X POST "$LATTICE_API_URL/api/tasks/transition" \
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET    | /api/tasks?project=&status=        | List tasks; `status` optional, comma-separated |
-| GET    | /api/tasks/summary?project=        | `{ total, byStatus }` counts |
+| GET    | /api/projects                      | List indexed project roots: `[{ path, hash }, ...]` |
+| GET    | /api/tasks?project=&status=        | List tasks (envelope: `{project, canonicalProject, hash, count, mismatched, tasks}`); `status` optional, comma-separated |
+| GET    | /api/tasks/summary?project=        | Counts envelope: `{project, canonicalProject, hash, total, mismatched, byStatus}` |
 | GET    | /api/tasks/:id                     | Fetch one task |
 | POST   | /api/tasks                         | Create one (JSON, form-encoded, or query-string `project`) |
 | POST   | /api/tasks/batch                   | Create many — JSON `{tasks:[...]}` OR `text/markdown` body |

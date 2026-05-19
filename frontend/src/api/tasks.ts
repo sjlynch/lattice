@@ -10,10 +10,24 @@ import type {
 } from './types';
 import type { AgentHarness } from '../harnesses';
 
+// `/api/tasks` returns an envelope ({project, canonicalProject, hash, count,
+// mismatched, tasks}) so agents can detect "these aren't my tasks." The UI
+// just unwraps `.tasks`; the envelope's filter is server-side defence in
+// depth that we don't need to surface here.
+type TasksEnvelope = {
+  project: string;
+  canonicalProject: string;
+  hash: string;
+  count: number;
+  mismatched: number;
+  tasks: Task[];
+};
+
 export async function fetchTasks(projectPath: string): Promise<Task[]> {
-  return asJson<Task[]>(
+  const env = await asJson<TasksEnvelope>(
     await fetch(`/api/tasks?project=${encodeURIComponent(projectPath)}`),
   );
+  return env.tasks;
 }
 
 export async function createTask(

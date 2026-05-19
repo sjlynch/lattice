@@ -2,6 +2,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import { ensureLatticeApiDoc } from '../latticeApiDocs.js';
+import { canonicalProjectPath, projectHash } from '../projectPath.js';
 import type { CreateOpts } from './sessionTypes.js';
 
 const isWindows = os.platform() === 'win32';
@@ -36,9 +37,11 @@ export function buildSessionLaunchContext(
   // Lattice API without any user-side config. The vars only exist in this
   // child process; the user's shell env is untouched.
   const apiPort = Number(process.env.LATTICE_API_PORT) || 5184;
+  const canonicalProject = canonicalProjectPath(projectPath);
   const latticeEnv: Record<string, string> = {
     LATTICE_API_URL: `http://127.0.0.1:${apiPort}`,
-    LATTICE_PROJECT: projectPath,
+    LATTICE_PROJECT: canonicalProject,
+    LATTICE_PROJECT_HASH: projectHash(canonicalProject),
   };
   const docPath = ensureLatticeApiDoc(projectPath, apiPort);
   if (docPath) latticeEnv.LATTICE_DOCS = docPath;
