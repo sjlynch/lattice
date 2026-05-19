@@ -5,6 +5,7 @@ const KIND_INITIAL_COMMAND: Record<ShellKind, string | undefined> = {
   claude: 'claude',
   'claude-yolo': 'claude --dangerously-skip-permissions',
   pi: 'pi',
+  codex: 'codex',
   terminal: undefined,
 };
 
@@ -12,6 +13,7 @@ const KIND_LABEL_PREFIX: Record<ShellKind, string> = {
   claude: 'claude',
   'claude-yolo': 'claude!',
   pi: 'pi',
+  codex: 'codex',
   terminal: 'terminal',
 };
 

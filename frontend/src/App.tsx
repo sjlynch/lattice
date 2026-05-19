@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { TopAppBar } from './components/TopAppBar';
 import { Sidebar } from './components/Sidebar';
 import { ForceGraphView } from './components/ForceGraphView';
@@ -10,6 +10,11 @@ import { useMetricsIgnoredExts } from './hooks/useMetricsIgnoredExts';
 import { useProjectScan } from './hooks/useProjectScan';
 import { useSidebarWidth } from './hooks/useSidebarWidth';
 import { useStartupTerminalSync } from './hooks/useStartupTerminalSync';
+import {
+  fetchUserSettings,
+  normalizeTerminalLaunchSettings,
+  type TerminalLaunchSettings,
+} from './api';
 
 function App() {
   const [activeFolder, setActiveFolder] = useActiveFolder();
@@ -28,8 +33,22 @@ function App() {
   } = useSidebarWidth(activeFolder);
   const [startupTerminals, setStartupTerminals] =
     useStartupTerminalSync(activeFolder);
+  const [terminalLaunchSettings, setTerminalLaunchSettings] =
+    useState<TerminalLaunchSettings>(normalizeTerminalLaunchSettings(null));
   const [metricsIgnoredExts, saveMetricsIgnoredExts] =
     useMetricsIgnoredExts(activeFolder);
+
+  useEffect(() => {
+    if (!activeFolder) {
+      setTerminalLaunchSettings(normalizeTerminalLaunchSettings(null));
+      return;
+    }
+    fetchUserSettings(activeFolder)
+      .then((settings) => {
+        setTerminalLaunchSettings(normalizeTerminalLaunchSettings(settings));
+      })
+      .catch(() => { /* keep current setting */ });
+  }, [activeFolder]);
 
   return (
     <TerminalsProvider>
@@ -39,6 +58,8 @@ function App() {
           onSelectFolder={setActiveFolder}
           startupTerminals={startupTerminals}
           onStartupTerminalsChange={setStartupTerminals}
+          terminalLaunchSettings={terminalLaunchSettings}
+          onTerminalLaunchSettingsChange={setTerminalLaunchSettings}
           metricsIgnoredExts={metricsIgnoredExts}
           onMetricsIgnoredExtsChange={saveMetricsIgnoredExts}
           scanResult={scanResult}
@@ -50,6 +71,7 @@ function App() {
                 <Sidebar
                   activeFolder={activeFolder}
                   startupTerminals={startupTerminals}
+                  terminalLaunchSettings={terminalLaunchSettings}
                 />
               </aside>
               <div

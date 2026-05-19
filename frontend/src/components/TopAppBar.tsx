@@ -4,13 +4,15 @@ import { FolderPicker } from './FolderPicker';
 import { TaskBoardLauncher } from './TaskBoard';
 import { WorkflowsLauncher } from './Workflows';
 import { SettingsDialog } from './SettingsDialog';
-import type { ScanResult, StartupTerminal } from '../api';
+import type { ScanResult, StartupTerminal, TerminalLaunchSettings } from '../api';
 
 type Props = {
   activeFolder: string;
   onSelectFolder: (path: string) => void;
   startupTerminals: StartupTerminal[];
   onStartupTerminalsChange: (next: StartupTerminal[]) => void;
+  terminalLaunchSettings: TerminalLaunchSettings;
+  onTerminalLaunchSettingsChange: (next: TerminalLaunchSettings) => void;
   metricsIgnoredExts: string[];
   onMetricsIgnoredExtsChange: (next: string[]) => void | Promise<void>;
   scanResult: ScanResult | null;
@@ -21,6 +23,8 @@ export function TopAppBar({
   onSelectFolder,
   startupTerminals,
   onStartupTerminalsChange,
+  terminalLaunchSettings,
+  onTerminalLaunchSettingsChange,
   metricsIgnoredExts,
   onMetricsIgnoredExtsChange,
   scanResult,
@@ -78,6 +82,8 @@ export function TopAppBar({
         activeFolder={activeFolder}
         startupTerminals={startupTerminals}
         onStartupTerminalsChange={onStartupTerminalsChange}
+        terminalLaunchSettings={terminalLaunchSettings}
+        onTerminalLaunchSettingsChange={onTerminalLaunchSettingsChange}
         metricsIgnoredExts={metricsIgnoredExts}
         onMetricsIgnoredExtsChange={onMetricsIgnoredExtsChange}
       />
