@@ -1,6 +1,11 @@
 import type http from 'node:http';
 import { detectHarnesses } from '../harnessDetect.js';
-import { recoverOrphanedTasks, resumeInterruptedMergeRuns } from '../recovery.js';
+import {
+  recoverOrphanedTasks,
+  resumeInterruptedMergeRuns,
+  resumeQueuedTaskRuns,
+} from '../recovery.js';
+import { startSpawnQueue } from '../spawnQueue.js';
 import { ensureTerminalServer } from '../terminalProxy.js';
 import { createBackendApp } from './app.js';
 import {
@@ -16,7 +21,7 @@ export async function startBackend(
   startHarnessDetection();
   await runPreListenStartupRecovery();
   await listenForRequests(server, config);
-  resumeMergeRunsAfterListen(config.backendOrigin);
+  resumeRunsAfterListen(config.backendOrigin);
   return server;
 }
 
@@ -39,6 +44,11 @@ export function startHarnessDetection(): void {
 
 export async function runPreListenStartupRecovery(): Promise<void> {
   await ensureTerminalServer();
+  // Prime the spawn queue's session accounting (one /sessions poll) before
+  // any recovery phase enqueues work, so the first spawn admits immediately.
+  await startSpawnQueue().catch((err) =>
+    console.error('[startup] startSpawnQueue failed:', err),
+  );
   await recoverOrphanedTasks();
 }
 
@@ -62,11 +72,18 @@ export function listenForRequests(
   });
 }
 
-export function resumeMergeRunsAfterListen(backendOrigin: string): void {
+export function resumeRunsAfterListen(backendOrigin: string): void {
   // Now that the API is up, resume any merge run a previous process was
   // running when it got restarted (resolver Claudes it may spawn need
   // the API listening to call back).
   resumeInterruptedMergeRuns(backendOrigin).catch((err) =>
     console.error('[startup] resumeInterruptedMergeRuns failed:', err),
+  );
+  // Re-enqueue task runs that were waiting in the spawn queue when the
+  // backend stopped (their `runQueued` flag is persisted on the task).
+  // Runs post-listen and after the pre-listen orphan-worktree sweep so a
+  // half-created worktree is reconciled rather than reclaimed.
+  resumeQueuedTaskRuns(backendOrigin).catch((err) =>
+    console.error('[startup] resumeQueuedTaskRuns failed:', err),
   );
 }

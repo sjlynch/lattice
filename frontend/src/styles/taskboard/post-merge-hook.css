@@ -1,0 +1,200 @@
+/* Post-merge hook row — sits below the lanes inside the taskboard body.
+   Deliberately visually distinct from a lane: dashed accent border, no
+   rounded-tile silhouette, hook icon instead of a colored dot. */
+
+.post-merge-hook-row {
+  flex: 0 0 auto;
+  margin: 6px 4px 0;
+  padding: 0;
+  border: 1px dashed var(--accent, #6c8cff);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #6c8cff) 6%, transparent);
+  display: flex;
+  flex-direction: column;
+}
+
+.post-merge-hook-row.running {
+  border-color: var(--warn, #f0a000);
+  background: color-mix(in srgb, var(--warn, #f0a000) 8%, transparent);
+}
+
+.post-merge-hook-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  min-height: 28px;
+}
+
+.post-merge-hook-strip:hover {
+  background: color-mix(in srgb, var(--accent, #6c8cff) 4%, transparent);
+  border-radius: 7px;
+}
+
+.post-merge-hook-label {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.post-merge-hook-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.post-merge-hook-chip-running {
+  background: var(--warn, #f0a000);
+  color: #1b1408;
+  animation: post-merge-hook-pulse 1.4s ease-in-out infinite;
+}
+
+.post-merge-hook-chip-ok {
+  background: color-mix(in srgb, var(--accent, #6c8cff) 18%, var(--surface-2));
+  color: var(--text-primary);
+}
+
+.post-merge-hook-chip-warn {
+  background: color-mix(in srgb, var(--danger, #d05050) 25%, var(--surface-2));
+  color: var(--text-primary);
+}
+
+.post-merge-hook-chip-idle {
+  background: color-mix(in srgb, var(--accent, #6c8cff) 12%, var(--surface-2));
+  color: var(--text-secondary);
+}
+
+.post-merge-hook-chip-off {
+  background: var(--surface-2);
+  color: var(--text-tertiary);
+}
+
+.post-merge-hook-preview {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.post-merge-hook-saving {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-left: auto;
+  font-style: italic;
+}
+
+.post-merge-hook-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px dashed color-mix(in srgb, var(--warn, #f0a000) 50%, transparent);
+  font-size: 11px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--warn, #f0a000) 5%, transparent);
+}
+
+.post-merge-hook-banner > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.post-merge-hook-btn-ghost,
+.post-merge-hook-btn-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border, #2c2c3a);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.post-merge-hook-btn-danger {
+  border-color: color-mix(in srgb, var(--danger, #d05050) 60%, transparent);
+  color: var(--danger, #d05050);
+}
+
+.post-merge-hook-btn-ghost:hover,
+.post-merge-hook-btn-danger:hover {
+  background: var(--surface-2);
+}
+
+.post-merge-hook-form {
+  padding: 8px 10px 10px;
+  border-top: 1px dashed color-mix(in srgb, var(--accent, #6c8cff) 40%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.post-merge-hook-textarea {
+  width: 100%;
+  resize: vertical;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  border: 1px solid var(--border, #2c2c3a);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  box-sizing: border-box;
+}
+
+.post-merge-hook-textarea:focus {
+  outline: none;
+  border-color: var(--accent, #6c8cff);
+}
+
+.post-merge-hook-form-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.post-merge-hook-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.post-merge-hook-field select {
+  background: var(--surface-1);
+  color: var(--text-primary);
+  border: 1px solid var(--border, #2c2c3a);
+  border-radius: 5px;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+
+.post-merge-hook-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+@keyframes post-merge-hook-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.65; }
+}

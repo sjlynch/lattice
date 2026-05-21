@@ -11,6 +11,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { proxyCreateSession } from '../terminalProxy.js';
+import { enqueueSpawn, SpawnCapacityError } from '../spawnQueue.js';
 import { installClaudeStopHook } from '../claudeStopHook.js';
 import { buildClaudeCommand, buildCodexCommand, buildPiCommand } from '../worktree/commands.js';
 import type { Workflow } from '../workflows.js';
@@ -85,26 +86,49 @@ export async function spawnWorkflowStep(
 
   const command = buildWorkflowStepCommand(stepFile, harness);
 
-  const sess = await proxyCreateSession({
-    cwd: stepDir,
-    initialCommand: command,
-    projectPath: wf.projectPath,
+  // Route the pty allocation through the spawn queue (fire-and-forget, like
+  // task runs): the step dir is materialized above, only the pty waits for
+  // concurrency headroom. `step-spawned` fires from inside the thunk so it
+  // naturally lands when the queue admits the step, and the frontend
+  // (useWorkflowRuns) lazy-mounts the terminal off that event — exactly the
+  // pre-queue flow, just deferred.
+  const { done } = enqueueSpawn<void>({
+    kind: 'workflow-step',
+    priority: 'batch',
+    dedupeKey: `wf-step:${run.id}:${stepIndex}`,
+    thunk: async () => {
+      const sess = await proxyCreateSession({
+        cwd: stepDir,
+        initialCommand: command,
+        projectPath: wf.projectPath,
+      });
+      if ('error' in sess) {
+        if (sess.code === 'CAP') {
+          throw new SpawnCapacityError(
+            `workflow step ${run.id}/${stepIndex}: terminal-server hard cap`,
+          );
+        }
+        console.warn(
+          `[workflow-run] ${run.id} step ${stepIndex}: pre-spawn failed: ${sess.error}`,
+        );
+      }
+      notify({
+        type: 'step-spawned',
+        runId: run.id,
+        projectPath: wf.projectPath,
+        stepIndex,
+        command,
+        cwd: stepDir,
+        serverId: 'id' in sess ? sess.id : undefined,
+      });
+    },
   });
-  if ('error' in sess) {
-    console.warn(
-      `[workflow-run] ${run.id} step ${stepIndex}: pre-spawn failed: ${sess.error}`,
-    );
-  }
+  // Fire-and-forget: the thunk handles its own errors (CAP is retried inside
+  // the queue). Swallow the rejection so it is not an unhandled rejection.
+  done.catch(() => {});
 
-  notify({
-    type: 'step-spawned',
-    runId: run.id,
-    projectPath: wf.projectPath,
-    stepIndex,
-    command,
-    cwd: stepDir,
-    serverId: 'id' in sess ? sess.id : undefined,
-  });
+  // Emit progress now — the step is the run's current step whether its pty
+  // is spawning immediately or waiting in the queue.
   notify({ type: 'progress', run: snapshot(run) });
 
   return { command, cwd: stepDir };

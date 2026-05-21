@@ -27,6 +27,9 @@ export type UserSettings = {
   // Extensions (leading dot, lowercase) to skip when rendering the LOC
   // (`z`) and code-health (`h`) overlays. Absent = `DEFAULT_METRICS_IGNORED_EXTS`.
   metricsIgnoredExts?: string[];
+  // Optional post-merge hook. See backend userSettings.ts.
+  postMergeHookPrompt?: string;
+  postMergeHookHarness?: AgentHarness;
 };
 
 // Extensions Lattice ignores by default in the LOC and code-health overlays.

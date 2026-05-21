@@ -13,6 +13,25 @@ export async function proxyListSessions(): Promise<unknown[]> {
   }
 }
 
+// Authoritative live-session count for the spawn queue's accounting.
+// Returns `null` (NOT 0) when the terminal-server is unreachable or answers
+// unparseably — the queue must distinguish "can't tell" from a real empty
+// terminal-server and freeze admissions rather than over-admit.
+const COUNT_SESSIONS_TIMEOUT_MS = 3_000;
+
+export async function proxyCountSessions(): Promise<number | null> {
+  try {
+    const res = await fetch(`${BASE}/sessions`, {
+      signal: AbortSignal.timeout(COUNT_SESSIONS_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data) ? data.length : null;
+  } catch {
+    return null;
+  }
+}
+
 // Kill all terminal sessions whose cwd is inside `worktreePath`.
 // Call before deleting a worktree directory so Windows releases file locks.
 // Hard-timeouts the request so a wedged terminal-server (an old orphan
@@ -61,11 +80,16 @@ export type CreateSessionOptions = {
   rows?: number;
 };
 
-export type CreateSessionResult = { id: string } | { error: string };
+// `code: 'CAP'` ⇒ the failure was the terminal-server's hard session cap.
+// The spawn queue keys its over-admit back-off on this; any other failure
+// is a genuine error.
+export type CreateSessionResult =
+  | { id: string }
+  | { error: string; code?: 'CAP' };
 
 type CreateOnce =
   | { id: string }
-  | { error: string; recoverable: boolean };
+  | { error: string; recoverable: boolean; code?: 'CAP' };
 
 // Pre-create a pty session in the terminal-server subprocess. Returns the
 // session id so route handlers can include it in their response and the
@@ -93,9 +117,9 @@ export async function proxyCreateSession(
     await respawn();
     const second = await tryCreateSessionOnce(opts);
     if ('id' in second) return second;
-    return { error: second.error };
+    return { error: second.error, code: second.code };
   }
-  return { error: first.error };
+  return { error: first.error, code: first.code };
 }
 
 export async function tryCreateSessionOnce(
@@ -114,9 +138,10 @@ export async function tryCreateSessionOnce(
     return { error: (err as Error).message, recoverable: true };
   }
   const text = await res.text().catch(() => '');
-  let parsed: { id?: string; error?: string } | null = null;
+  type SessionBody = { id?: string; error?: string; code?: 'CAP' };
+  let parsed: SessionBody | null = null;
   try {
-    parsed = text ? (JSON.parse(text) as { id?: string; error?: string }) : null;
+    parsed = text ? (JSON.parse(text) as SessionBody) : null;
   } catch {
     // HTML / plain-text body → almost certainly a stale terminal-server
     // (missing route) or a wrong process bound to the port.
@@ -130,6 +155,7 @@ export async function tryCreateSessionOnce(
     return {
       error: parsed?.error ?? `terminal-server ${res.status}`,
       recoverable: false,
+      code: parsed?.code,
     };
   }
   return { id: parsed.id };

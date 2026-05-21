@@ -1,5 +1,5 @@
 import type { Response } from 'express';
-import { proxyCreateSession } from '../../terminalProxy.js';
+import { queuedCreateSession } from '../../queuedCreateSession.js';
 import {
   buildConflictResolveCommand,
   writeMergeInstructions,
@@ -19,10 +19,17 @@ export async function respondResolverSession(
   task: MergeReadyTask,
   payload: ResolverSessionPayload,
 ): Promise<Response> {
-  const sess = await proxyCreateSession({
-    cwd: payload.cwd,
-    initialCommand: payload.command,
-    projectPath: task.projectPath,
+  // `priority` band — a manual-merge conflict resolver, like a merge-run
+  // resolver, may use PRIORITY_RESERVE headroom above softCap.
+  const sess = await queuedCreateSession({
+    kind: 'manual-merge-resolver',
+    priority: 'priority',
+    dedupeKey: `mm-resolver:${task.id}`,
+    opts: {
+      cwd: payload.cwd,
+      initialCommand: payload.command,
+      projectPath: task.projectPath,
+    },
   });
   if (payload.stashConflict) {
     return res.json({

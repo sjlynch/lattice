@@ -24,6 +24,7 @@
 
 import { projectGit } from './projectGit.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
+import { notifySessionsFreed } from '../spawnQueue.js';
 import { assertGitDirIntact, worktreeExists } from './state.js';
 import { assertSafeWorktreePath } from './cleanupSafety.js';
 import { pruneReparsePointsUnder } from './reparsePoints.js';
@@ -50,6 +51,8 @@ export async function cleanupWorktreeForTask(
   // Windows a process whose cwd is inside a directory holds a lock that
   // prevents deletion — killing the PTY releases it before git removes.
   await proxyKillSessionsByCwd(worktreePath);
+  // Killing the worktree's ptys freed slots — let the spawn queue reuse them.
+  notifySessionsFreed();
   // Brief pause so the OS has time to release handles after PTY exit.
   await new Promise<void>((r) => setTimeout(r, 300));
 

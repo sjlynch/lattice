@@ -23,3 +23,6 @@
 
 /* Forms and overlays: add-card affordance, new-task modal, shared form fields. */
 @import './taskboard/forms.css';
+
+/* Post-merge hook row — collapsible config strip below the lanes. */
+@import './taskboard/post-merge-hook.css';

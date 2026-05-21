@@ -15,5 +15,5 @@ export async function inspectProjectRunLock(
 ): Promise<ProjectRunLockInspection | null> {
   const body = await readLockBody(projectRunLockFilePath(projectPath));
   if (!body) return null;
-  return { holder: body, alive: isLockHolderAlive(body) };
+  return { holder: body, alive: await isLockHolderAlive(body) };
 }

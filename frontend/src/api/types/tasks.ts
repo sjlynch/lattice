@@ -26,17 +26,32 @@ export type Task = {
   sortOrder?: number;
   workflowRunId?: string;
   workflowStepIndex?: number;
+  // True while an Open task's run is waiting in the backend spawn queue
+  // (concurrency softCap was full when it was requested). Status stays
+  // `open`; the card renders a "queued" badge. Cleared when the run is
+  // admitted and the task flips to in_progress.
+  runQueued?: boolean;
+  runQueuedAt?: number;
 };
 
+// `/api/tasks/:id/run` and `/resume` no longer return the pty synchronously
+// — the run may be deferred by the spawn queue. They acknowledge acceptance;
+// the terminal arrives later via the `task-spawned` WS event.
 export type RunTaskResult = {
-  worktreePath: string;
-  branch: string;
-  taskFile: string;
+  accepted: boolean;
+  // true ⇒ deferred (no concurrency headroom); false ⇒ spawning now.
+  queued: boolean;
+};
+
+// Pushed on `/ws/tasks` when a queued task's pty spawns. The frontend
+// lazy-mounts the task's terminal from it (mirrors workflow `step-spawned`).
+export type TaskSpawnedEvent = {
+  taskId: string;
+  title: string;
   command: string;
-  // Set when the backend pre-spawned the pty in the terminal-server. The
-  // frontend stores it on the TerminalSpec so the pane can lazy-mount and
-  // attach via this id (replay path) instead of triggering a new session.
-  serverId?: string;
+  worktreePath: string;
+  serverId: string;
+  projectPath: string;
 };
 
 export type MergeTaskResult =

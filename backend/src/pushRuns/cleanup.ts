@@ -3,6 +3,7 @@ import { assertSafePushSessionPath } from './paths.js';
 import { assertNotReparsePoint } from '../worktree/cleanupSafety.js';
 import { pruneReparsePointsUnder } from '../worktree/reparsePoints.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
+import { notifySessionsFreed } from '../spawnQueue.js';
 
 // `fs.rm` on Windows fails with EBUSY/EPERM/ENOTEMPTY when something
 // still holds a handle on the directory — typically the PTY whose cwd is
@@ -24,6 +25,8 @@ export async function cleanupPushSession(projectPath: string, id: string): Promi
     // worktree/cleanup.ts.) Best-effort: the terminal server may already
     // have reaped the session by the time we get here.
     await proxyKillSessionsByCwd(dir).catch(() => undefined);
+    // Killing the push session's pty freed a slot — poke the spawn queue.
+    notifySessionsFreed();
     // Brief pause so the OS has time to release handles after PTY exit.
     await new Promise<void>((r) => setTimeout(r, 300));
 

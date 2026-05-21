@@ -9,6 +9,7 @@ Boot-time crash recovery for project/task state. `../recovery.ts` is only the st
 3. `sweepOrphanedWorktrees` (`worktreeSweep.ts`) — remove only Lattice-managed worktrees that no active task owns.
 4. Branch repair (`index.ts`) — `ready_to_merge` tasks whose branch is gone are marked `qa` because finalize cleanup already ran.
 5. `resumeInterruptedMergeRuns` (`mergeRunResume.ts`) — called after HTTP listen so spawned resolvers can call the API.
+6. `resumeQueuedTaskRuns` (`queuedRunResume.ts`) — also called after HTTP listen. Re-enqueues task runs that were waiting in the in-memory spawn queue when the backend stopped (found via the persisted `Task.runQueued` flag). Runs *after* `sweepOrphanedWorktrees` so a worktree half-created by an interrupted run is reconciled by the re-run, not reclaimed as an orphan.
 
 ## Safety invariants
 

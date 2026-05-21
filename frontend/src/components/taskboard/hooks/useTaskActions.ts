@@ -44,7 +44,6 @@ export function useTaskActions({
   });
   const lifecycle = useTaskLifecycleActions({
     tasks,
-    addTerminal,
     pickInterleaveHarness,
     showError,
   });

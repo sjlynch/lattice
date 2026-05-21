@@ -2,20 +2,27 @@ import { useCallback, useMemo, useState } from 'react';
 import { Kanban, Search, X } from 'lucide-react';
 import { FloatingPanel } from '../FloatingPanel';
 import { useTerminals } from '../../TerminalsContext';
-import { type Task, type TaskStatus } from '../../api';
+import {
+  type Task,
+  type TaskSpawnedEvent,
+  type TaskStatus,
+} from '../../api';
 import { ErrorToast } from '../shared/ErrorToast';
-import { LANE_BY_ID, LANES } from './lanes';
+import { LANE_BY_ID, LANES, shortLabel } from './lanes';
 import { Lane } from './Lane';
 import { mergeRunStripFor } from './MergeRunStrip';
 import { NewTaskOverlay } from './NewTaskOverlay';
+import { PostMergeHookRow } from './PostMergeHookRow';
 import { TaskBoardFilters } from './TaskBoardFilters';
 import { TaskDetailOverlay } from './TaskDetailOverlay';
 import { useMergeRunSync } from './hooks/useMergeRunSync';
+import { usePostMergeHook } from './hooks/usePostMergeHook';
 import { usePushRun } from './hooks/usePushRun';
 import { useHarnessSelector } from './hooks/useHarnessSelector';
 import { useTaskActions } from './hooks/useTaskActions';
 import { groupTasksByStatus, useTaskBoardState } from './hooks/useTaskBoardState';
 import { useTaskTerminalCleanup } from './hooks/useTaskTerminalCleanup';
+import { useTaskTerminalReattach } from './hooks/useTaskTerminalReattach';
 import { useSyncedViewedTask } from './hooks/useSyncedViewedTask';
 import { buildTerminalMap } from '../../utils/terminalMap';
 
@@ -51,6 +58,27 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     setActiveId,
   } = useTerminals();
 
+  // A queued task's run has no pty at request time; when the spawn queue
+  // admits it the backend emits `task-spawned` over /ws/tasks. Mount the
+  // task's terminal here (lazy — the pane only renders on activation). Every
+  // tab watching the project mounts it, matching the workflow step model.
+  const handleTaskSpawned = useCallback(
+    (event: TaskSpawnedEvent) => {
+      addTerminal(
+        {
+          label: shortLabel(event.title),
+          cwd: event.worktreePath,
+          initialCommand: event.command,
+          taskId: event.taskId,
+          projectPath: event.projectPath,
+          serverId: event.serverId,
+        },
+        false,
+      );
+    },
+    [addTerminal],
+  );
+
   const {
     tasks,
     grouped,
@@ -63,7 +91,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     selectSingle,
     toggleSelect,
     rangeSelect,
-  } = useTaskBoardState(activeFolder);
+  } = useTaskBoardState(activeFolder, handleTaskSpawned);
   const { mergeRun, recentRunSummary, dismissRecent } = useMergeRunSync(
     activeFolder,
     addTerminal,
@@ -77,6 +105,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   );
   const { harness, setHarness, harnessAvail, pickInterleaveHarness } =
     useHarnessSelector(activeFolder);
+  const postMergeHook = usePostMergeHook(activeFolder, addTerminal, showError);
   const {
     addTask,
     moveTask,
@@ -138,6 +167,10 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     closeTerminalsForTask,
     closeTerminals,
   );
+  // Re-mount terminals for in_progress tasks whose pty is still alive but
+  // was never delivered to this tab (queued task admitted while all tabs
+  // were closed; fresh tab after a backend restart).
+  useTaskTerminalReattach(activeFolder, tasks, terminals, addTerminal);
   const [viewing, setViewing] = useSyncedViewedTask(tasks);
 
   const runAllActionByLane = useMemo<Partial<Record<TaskStatus, () => void>>>(
@@ -274,6 +307,27 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
               />
             ))}
           </div>
+          <PostMergeHookRow
+            prompt={postMergeHook.form.prompt}
+            harness={postMergeHook.form.harness}
+            harnessAvail={harnessAvail}
+            active={postMergeHook.active}
+            recent={postMergeHook.recent}
+            saving={postMergeHook.saving}
+            onSavePrompt={postMergeHook.savePrompt}
+            onSaveHarness={postMergeHook.saveHarness}
+            onAbort={postMergeHook.abort}
+            onFocusActiveTerminal={
+              postMergeHook.active?.serverId
+                ? () => {
+                    const t = terminals.find(
+                      (term) => term.serverId === postMergeHook.active?.serverId,
+                    );
+                    if (t) setActiveId(t.id);
+                  }
+                : null
+            }
+          />
           {addingTo && (
             <NewTaskOverlay
               lane={LANE_BY_ID[addingTo]}

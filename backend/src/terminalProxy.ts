@@ -8,6 +8,7 @@
 
 export { ensureTerminalServer } from './terminalServerLifecycle.js';
 export {
+  proxyCountSessions,
   proxyCreateSession,
   proxyKillSession,
   proxyKillSessionsByCwd,

@@ -1,9 +1,8 @@
 import { Router } from 'express';
-import path from 'node:path';
 import { getTask } from '../../tasks.js';
 import { worktreeExists } from '../../worktree.js';
 import { requireTaskStatus } from './_shared.js';
-import { selectHarnessCommand } from './harnessFactory.js';
+import { enqueueTaskResume } from './queuedSpawn.js';
 
 export function buildTaskResumeRoute(): Router {
   const r = Router();
@@ -12,6 +11,9 @@ export function buildTaskResumeRoute(): Router {
   // with a "continue what's been started" prompt. Useful when a previous
   // Claude session ended without committing (so /complete left the task at
   // in_progress) or when the dev server was restarted mid-task.
+  //
+  // The pre-checks here give fast 400 feedback; the spawn-queue thunk
+  // re-validates before spawning (the worktree could vanish while queued).
   r.post('/api/tasks/:id/resume', async (req, res) => {
     const task = await getTask(req.params.id);
     if (!task) return res.status(404).json({ error: 'not found' });
@@ -26,22 +28,11 @@ export function buildTaskResumeRoute(): Router {
         error: `Worktree directory not found at ${task.worktreePath}. The worktree may have been removed manually.`,
       });
     }
-    const taskFile = path.join(task.worktreePath, 'LATTICE_TASK.md');
-    const selectedHarness = selectHarnessCommand(task, {
-      requestedHarness: req.body?.harness,
-      mode: 'resume',
-    });
-    const { command, serverId } = await selectedHarness.createSession({
-      taskFile,
-      cwd: task.worktreePath,
-    });
-    res.json({
-      worktreePath: task.worktreePath,
-      branch: task.branch,
-      taskFile,
-      command,
-      serverId,
-    });
+
+    // Route through the spawn queue (see runRoute.ts). The terminal is
+    // delivered via the `task-spawned` WS event when the pty spawns.
+    const { queued } = await enqueueTaskResume(task.id, req.body?.harness);
+    res.json({ accepted: true, queued });
   });
 
   return r;

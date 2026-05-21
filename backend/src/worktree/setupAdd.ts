@@ -21,6 +21,7 @@ export async function addWorktreeWithRetries(
   // file lock from an Explorer window, editor, etc.), fall through to a
   // suffixed path so the user isn't blocked. The branch name follows the
   // same retry suffix so `git worktree add -b` doesn't collide either.
+  let lastFailure = '';
   for (const candidate of plan.candidates) {
     const reconciled = await reconcileStaleState(
       repoRoot,
@@ -32,6 +33,7 @@ export async function addWorktreeWithRetries(
       console.warn(
         `[worktree] could not reconcile ${candidate.candidatePath}; trying next suffix`,
       );
+      lastFailure = `could not reconcile ${candidate.candidatePath}`;
       continue;
     }
 
@@ -40,14 +42,27 @@ export async function addWorktreeWithRetries(
       ['worktree', 'add', candidate.candidatePath, '-b', candidate.candidateBranch],
     );
     if (wt.code !== 0) {
+      const detail = wt.stderr.trim() || wt.stdout.trim() || '(no output)';
+      // An empty repo (`git init` with no commits) has no HEAD to branch
+      // from, so `git worktree add -b` fails with the same deterministic
+      // error on every suffix. Retrying 5 times is pointless and the
+      // generic "path locked" message is flat-out wrong — surface the
+      // real cause and bail immediately so the user knows to commit.
+      if (/not a valid object name:?\s*'?HEAD'?/i.test(detail)) {
+        throw new Error(
+          `Cannot create a worktree for task "${taskTitle}": the repository ` +
+            `at ${repoRoot} has no commits yet (no HEAD to branch from). ` +
+            `Make an initial commit (e.g. ` +
+            `\`git commit --allow-empty -m "init"\`) before running tasks.`,
+        );
+      }
       // `git worktree add` itself failed (rare after reconcile). Log and
       // try the next suffix rather than throwing — same recovery model.
       console.warn(
         `[worktree] git worktree add ${candidate.candidatePath} -b ${candidate.candidateBranch} ` +
-          `(cwd=${repoRoot}) exit ${wt.code}: ` +
-          `${wt.stderr.trim() || wt.stdout.trim() || '(no output)'}; ` +
-          `trying next suffix`,
+          `(cwd=${repoRoot}) exit ${wt.code}: ${detail}; trying next suffix`,
       );
+      lastFailure = detail;
       continue;
     }
 
@@ -56,10 +71,10 @@ export async function addWorktreeWithRetries(
 
   throw new Error(
     `Could not create a worktree for task "${taskTitle}" after ` +
-      `${MAX_PATH_RETRY_SUFFIXES + 1} attempts: every candidate path under ` +
-      `${canonicalWorktreePath(plan)}* is locked or unusable. ` +
-      `Close any process / editor / Explorer window holding those directories ` +
-      `open and try again.`,
+      `${MAX_PATH_RETRY_SUFFIXES + 1} attempts under ` +
+      `${canonicalWorktreePath(plan)}*. Last git error: ${lastFailure || '(unknown)'}. ` +
+      `If a candidate path is locked, close any process / editor / Explorer ` +
+      `window holding those directories open and try again.`,
   );
 }
 

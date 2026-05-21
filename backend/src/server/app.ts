@@ -6,6 +6,7 @@ import 'express-async-errors';
 import cors from 'cors';
 import { buildHealthRouter } from '../routes/health.js';
 import { buildMergeRunsRouter } from '../routes/mergeRuns.js';
+import { buildPostMergeHooksRouter } from '../routes/postMergeHooks.js';
 import { buildPushRunsRouter } from '../routes/pushRuns.js';
 import { buildSettingsRouter } from '../routes/settings.js';
 import { buildTasksRouter } from '../routes/tasks.js';
@@ -45,6 +46,7 @@ export function mountRouteFactories(
   app.use(buildTerminalsRouter());
   app.use(buildTasksRouter(options.backendOrigin));
   app.use(buildMergeRunsRouter(options.backendOrigin));
+  app.use(buildPostMergeHooksRouter());
   app.use(buildPushRunsRouter(options.backendOrigin));
   app.use(buildWorkflowsRouter(options.backendOrigin));
 }

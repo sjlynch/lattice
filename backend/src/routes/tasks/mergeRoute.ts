@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getTask } from '../../tasks.js';
 import { getActiveRunForProject } from '../../mergeRuns.js';
+import { getActiveHookForProject } from '../../postMergeHooks.js';
 import { requireTaskStatus } from './_shared.js';
 import { isProjectManualMergeActive } from './manualMergeGuards.js';
 import { withManualMergeLock } from './manualMergeLocks.js';
@@ -33,6 +34,11 @@ export function buildTaskMergeRoute(backendOrigin: string): Router {
     if (isProjectManualMergeActive(task.projectPath)) {
       return res.status(409).json({
         error: 'Another merge is already in progress for this project — wait a moment and retry.',
+      });
+    }
+    if (getActiveHookForProject(task.projectPath)) {
+      return res.status(409).json({
+        error: 'A post-merge hook is still running for this project — wait for it to finish (or abort it).',
       });
     }
 

@@ -9,6 +9,8 @@ import {
   getRun,
   startMergeRun,
 } from '../mergeRuns.js';
+import { getActiveHookForProject } from '../postMergeHooks.js';
+import { canonicalProjectPath } from '../projectPath.js';
 
 export function buildMergeRunsRouter(backendOrigin: string): Router {
   const r = Router();
@@ -19,6 +21,11 @@ export function buildMergeRunsRouter(backendOrigin: string): Router {
         ? req.body.project
         : '';
     if (!project) return res.status(400).json({ error: 'project required' });
+    if (getActiveHookForProject(canonicalProjectPath(project))) {
+      return res.status(409).json({
+        error: 'A post-merge hook is still running for this project — wait for it to finish (or abort it).',
+      });
+    }
     try {
       const run = await startMergeRun(project, backendOrigin);
       res.json(run);

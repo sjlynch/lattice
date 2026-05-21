@@ -85,8 +85,21 @@ async function runControlStepWorker(
     lock = await acquireProjectRunLock(wf.projectPath, lockLabel);
   } catch (err) {
     if (err instanceof ProjectRunLockedError) {
+      // Log loud — historically this is the most common reason a workflow
+      // appears to "abort right after step N": a previous run's lock
+      // wasn't cleared (dev restart, stuck hook, etc.). The wrapped
+      // message goes into run.error and is also surfaced via WS.
+      console.warn(
+        `[workflow-run] ${run.id} step ${stepIndex} (${kind}) ` +
+          `could not acquire project run lock: ${err.message}`,
+      );
       workerError = new Error(err.message);
     } else {
+      console.error(
+        `[workflow-run] ${run.id} step ${stepIndex} (${kind}) ` +
+          `acquire threw:`,
+        err,
+      );
       workerError = err as Error;
     }
   }
@@ -158,13 +171,20 @@ async function runStartStep(
     .sort((a, b) => a.createdAt - b.createdAt);
 
   if (open.length === 0) {
+    console.log(
+      `[workflow-run] ${run.id} start step: no open tasks for ${wf.projectPath} — skipping`,
+    );
     emitControlProgress(run, stepIndex, 'start', 0, 0, 'no open tasks; skipping');
     return;
   }
 
+  console.log(
+    `[workflow-run] ${run.id} start step: moving ${open.length} open task(s) → in_progress`,
+  );
   const harness = normalizeAgentHarness(run.harnessOverride);
   let started = 0;
   let failed = 0;
+  let firstError: string | null = null;
   emitControlProgress(
     run,
     stepIndex,
@@ -197,10 +217,17 @@ async function runStartStep(
         serverId: spawned.serverId,
       });
       started += 1;
+      console.log(
+        `[workflow-run] ${run.id} start step: task ${task.id} ("${task.title.slice(0, 60)}") → in_progress`,
+      );
     } catch (err) {
       failed += 1;
-      console.warn(
-        `[workflow-run] ${run.id} start: task ${task.id} ("${task.title.slice(0, 60)}") failed:`,
+      const message = err instanceof Error ? err.message : String(err);
+      if (firstError === null) firstError = message;
+      // console.error (not warn): a task that can't be started is the whole
+      // point of this step failing — make it loud in the backend log.
+      console.error(
+        `[workflow-run] ${run.id} start step: task ${task.id} ("${task.title.slice(0, 60)}") failed to start:`,
         err,
       );
     }
@@ -213,6 +240,28 @@ async function runStartStep(
       failed > 0
         ? `${started}/${open.length} started, ${failed} failed`
         : `${started}/${open.length} started`,
+    );
+  }
+
+  // If the step had open tasks but moved NONE of them to in_progress, it
+  // accomplished nothing — throw so the workflow errors with the real
+  // underlying message (e.g. a worktree-creation failure) instead of
+  // silently advancing to merge/push, which then find nothing to do and the
+  // whole run "succeeds" having done no work. That silent-success path is
+  // exactly the "workflow runs through but the start step never moved my
+  // tasks" symptom — the failure was swallowed into a console.warn.
+  if (started === 0 && failed > 0) {
+    throw new Error(
+      `start step: all ${failed} task(s) failed to move from open → in_progress. ` +
+        `First failure: ${firstError ?? 'unknown error'}`,
+    );
+  }
+  // Partial failure: the started tasks still proceed; just log it loudly so
+  // the dropped tasks aren't invisible.
+  if (failed > 0) {
+    console.warn(
+      `[workflow-run] ${run.id} start step finished with ${started} started, ${failed} failed — ` +
+        `the ${failed} failed task(s) remain in the open lane`,
     );
   }
 }

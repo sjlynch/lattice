@@ -12,6 +12,7 @@ import {
 } from '../../tasks.js';
 import { canonicalProjectPath, projectHash } from '../../projectPath.js';
 import { cleanupWorktreeForTask } from '../../worktree.js';
+import { cancelQueuedTaskSpawns } from './queuedSpawn.js';
 import { parseMarkdownTasks } from './markdownBatch.js';
 import {
   isValidTaskStatus,
@@ -350,6 +351,9 @@ export async function handleTaskDelete(
   res: Response,
 ): Promise<void> {
   const task = await getTask(req.params.id);
+  // Drop any still-pending queued run/resume so the spawn queue does not
+  // later try to spawn a worktree for a task that no longer exists.
+  cancelQueuedTaskSpawns(req.params.id);
   if (task && task.worktreePath && task.branch) {
     try {
       await cleanupWorktreeForTask(task.projectPath, task.worktreePath, task.branch);

@@ -36,6 +36,14 @@ export type UserSettings = {
   // (JSON plus common prose/text extensions); an empty array means
   // "ignore nothing".
   metricsIgnoredExts?: string[];
+  // Optional post-merge hook. When `postMergeHookPrompt` is non-empty,
+  // every successful merge (per-task or "Merge All") spawns a coding
+  // harness in the project root with this prompt as its task, and the
+  // merge isn't considered finished until the harness's Stop hook (or
+  // its explicit curl) fires the hook-complete callback. This blocks the
+  // workflow Merge control step from advancing as well.
+  postMergeHookPrompt?: string;
+  postMergeHookHarness?: AgentHarness;
 };
 
 function settingsFile(projectPath: string): string {

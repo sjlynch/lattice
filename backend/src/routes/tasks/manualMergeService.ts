@@ -4,12 +4,15 @@ import {
   ensureLatticeRepoExclude,
   untrackOwnedFilesInRepo,
   resyncWithMainAndFinalize,
+  type ResyncOutcome,
 } from '../../worktree.js';
 import {
   acquireProjectRunLock,
   ProjectRunLockedError,
   type ProjectRunLockHandle,
 } from '../../projectRunLock.js';
+import { getActiveRunForProject } from '../../mergeRuns.js';
+import { runPostMergeHookGate } from '../../postMergeHooks.js';
 import { logTaskRouteError } from './_shared.js';
 import {
   clearProjectManualMergeActive,
@@ -21,6 +24,31 @@ import {
   respondMergeOutcome,
 } from './mergeResponses.js';
 
+// If the manual merge actually transitioned the task to qa, gate the
+// HTTP response on the post-merge hook so the UI (and any workflow waiting
+// on the merge step) sees "merged" only after the hook agent has run. A
+// merge run owns its own end-of-run hook fire, so skip if one is active.
+async function awaitPostMergeHookIfFinalized(
+  task: MergeReadyTask,
+  outcome: ResyncOutcome,
+  backendOrigin: string,
+): Promise<void> {
+  if (outcome.kind !== 'finalized') return;
+  if (getActiveRunForProject(task.projectPath)) return;
+  try {
+    await runPostMergeHookGate({
+      projectPath: task.projectPath,
+      backendOrigin,
+      trigger: 'manual-merge',
+    });
+  } catch (err) {
+    console.warn(
+      '[merge] post-merge hook gate threw (returning merged anyway):',
+      err,
+    );
+  }
+}
+
 async function handleAlreadyConflictedMerge(
   task: MergeReadyTask,
   backendOrigin: string,
@@ -31,6 +59,7 @@ async function handleAlreadyConflictedMerge(
     // A re-sync error here falls back to returning the existing resolver
     // instructions, matching the old manual /merge behavior.
     if (!(outcome.kind === 'error' && outcome.phase === 'merge')) {
+      await awaitPostMergeHookIfFinalized(task, outcome, backendOrigin);
       return respondMergeOutcome(res, task, outcome);
     }
   }
@@ -43,6 +72,7 @@ async function runFreshMerge(
   res: Response,
 ): Promise<Response> {
   const outcome = await resyncWithMainAndFinalize(task, backendOrigin);
+  await awaitPostMergeHookIfFinalized(task, outcome, backendOrigin);
   return respondMergeOutcome(res, task, outcome);
 }
 

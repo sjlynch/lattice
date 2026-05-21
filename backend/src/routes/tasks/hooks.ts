@@ -18,9 +18,35 @@ import {
   cleanupWorktreeForTask,
   isMidMerge,
 } from '../../worktree.js';
-import { startMergeRun } from '../../mergeRuns.js';
+import { getActiveRunForProject, startMergeRun } from '../../mergeRuns.js';
+import { runPostMergeHookGate } from '../../postMergeHooks.js';
 import { proxyKillSessionsByCwd } from '../../terminalProxy.js';
+import { notifySessionsFreed } from '../../spawnQueue.js';
 import { finalizeResolvedTask } from './finalizeResolved.js';
+
+// Resolver-finished tasks transition to qa, which counts as a "merge" for
+// the purposes of the post-merge hook. Skip when a merge run is active: the
+// run owns its own end-of-run hook fire, and double-firing would deadlock
+// the run on its own gate (the per-task await holds the gate, the run can't
+// reach finishRun until it returns).
+async function awaitPostMergeHookOutsideRun(
+  projectPath: string,
+  backendOrigin: string,
+): Promise<void> {
+  if (getActiveRunForProject(projectPath)) return;
+  try {
+    await runPostMergeHookGate({
+      projectPath,
+      backendOrigin,
+      trigger: 'manual-merge',
+    });
+  } catch (err) {
+    console.warn(
+      '[task-hook] post-merge hook gate threw (continuing):',
+      err,
+    );
+  }
+}
 
 export function buildTaskHookRouter(backendOrigin: string): Router {
   const r = Router();
@@ -59,6 +85,7 @@ export function buildTaskHookRouter(backendOrigin: string): Router {
       if (result.kind === 'error') {
         return res.json({ ok: false, error: result.message });
       }
+      await awaitPostMergeHookOutsideRun(task.projectPath, backendOrigin);
       return res.json({ ok: true, finalized: true });
     }
 
@@ -97,7 +124,11 @@ export function buildTaskHookRouter(backendOrigin: string): Router {
     const wt = task.worktreePath;
     if (wt) {
       setTimeout(() => {
-        proxyKillSessionsByCwd(wt).catch(() => {});
+        proxyKillSessionsByCwd(wt)
+          // The kill freed a pty slot — poke the spawn queue so a deferred
+          // spawn reuses it now instead of waiting for the next poll.
+          .then(() => notifySessionsFreed())
+          .catch(() => {});
       }, 1000);
     }
   });
@@ -134,6 +165,7 @@ export function buildTaskHookRouter(backendOrigin: string): Router {
           : result.message;
       return res.status(500).json({ error });
     }
+    await awaitPostMergeHookOutsideRun(task.projectPath, backendOrigin);
     res.json({ ok: true });
   });
 
@@ -191,10 +223,20 @@ export function buildTaskHookRouter(backendOrigin: string): Router {
       conflict: undefined,
       conflictStartedAt: undefined,
     });
-    // Auto-restart merge run for any remaining ready_to_merge tasks.
-    startMergeRun(task.projectPath, backendOrigin).catch(() => {
-      /* throws if a run is already active or there are no remaining tasks — both fine */
-    });
+    // Auto-restart merge run for any remaining ready_to_merge tasks. If a
+    // new run picks tasks up it'll fire the post-merge hook at its end; if
+    // not (no remaining work, or a run is already active), fire the hook
+    // ourselves so the stash-resolved-driven qa transition blocks the merge
+    // step like any other per-task merge does.
+    let startedRun: { total: number } | null = null;
+    try {
+      startedRun = await startMergeRun(task.projectPath, backendOrigin);
+    } catch {
+      /* throws if a run is already active — that run owns the hook */
+    }
+    if (!startedRun || startedRun.total === 0) {
+      await awaitPostMergeHookOutsideRun(task.projectPath, backendOrigin);
+    }
     res.json({ ok: true });
   });
 

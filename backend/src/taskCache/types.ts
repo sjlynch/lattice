@@ -36,6 +36,13 @@ export type Task = {
   // watches for tagged tasks transitioning to `qa` and creates the next step.
   workflowRunId?: string;
   workflowStepIndex?: number;
+  // Set while an Open task's run is waiting in the spawn queue (the
+  // terminal-server's concurrency softCap was full when it was requested).
+  // Status stays `open`; the card just renders a "Queued" badge. Cleared
+  // when the spawn-queue thunk admits the run and flips it to in_progress.
+  // Persisted so boot recovery can re-enqueue a run interrupted by a restart.
+  runQueued?: boolean;
+  runQueuedAt?: number;
 };
 
 export type TaskUpdates = Partial<

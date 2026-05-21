@@ -20,7 +20,7 @@ export async function clearStaleLockOrThrow(file: string): Promise<void> {
     throw new ProjectRunLockedError(holder);
   }
 
-  if (!isLockHolderAlive(holder)) {
+  if (!(await isLockHolderAlive(holder))) {
     console.warn(
       `[projectRunLock] stealing dead lock held by pid=${holder.pid} ` +
         `(label=${holder.label}, started ${new Date(holder.startedAt).toISOString()})`,

@@ -6,6 +6,7 @@ import type {
   MergeTaskResult,
   RunTaskResult,
   Task,
+  TaskSpawnedEvent,
   TaskStatus,
 } from './types';
 import type { AgentHarness } from '../harnesses';
@@ -107,14 +108,23 @@ export async function mergeTask(id: string): Promise<MergeTaskResult> {
   );
 }
 
+// `/ws/tasks` carries two message types: the full task-list snapshot and,
+// for queued runs, a `task-spawned` event delivering the pty. `onSpawned`
+// fires for the latter so the caller can lazy-mount the task's terminal.
+type TasksWsMessage =
+  | { type: 'tasks'; tasks: Task[] }
+  | ({ type: 'task-spawned' } & TaskSpawnedEvent);
+
 export function subscribeTasks(
   projectPath: string,
   onUpdate: (tasks: Task[]) => void,
+  onSpawned?: (event: TaskSpawnedEvent) => void,
 ): () => void {
-  return subscribeWs<{ type: string; tasks?: Task[] }>(
+  return subscribeWs<TasksWsMessage>(
     `/ws/tasks?project=${encodeURIComponent(projectPath)}`,
     (msg) => {
-      if (msg.type === 'tasks' && msg.tasks) onUpdate(msg.tasks);
+      if (msg.type === 'tasks') onUpdate(msg.tasks);
+      else if (msg.type === 'task-spawned') onSpawned?.(msg);
     },
   );
 }

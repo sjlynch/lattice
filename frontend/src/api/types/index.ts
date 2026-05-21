@@ -7,4 +7,5 @@ export * from './gitHistory';
 export * from './settings';
 export * from './tasks';
 export * from './runs';
+export * from './postMergeHooks';
 export * from './workflows';

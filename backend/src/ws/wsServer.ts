@@ -10,6 +10,7 @@ import type { WebSocketServer } from 'ws';
 import { buildHarnessesWss } from './endpoints/harnesses.js';
 import { buildHealthWss } from './endpoints/health.js';
 import { buildMergeRunsWss } from './endpoints/mergeRuns.js';
+import { buildPostMergeHooksWss } from './endpoints/postMergeHooks.js';
 import { buildTasksWss } from './endpoints/tasks.js';
 import { buildTerminalWss } from './endpoints/terminal.js';
 import { buildWorkflowRunsWss } from './endpoints/workflowRuns.js';
@@ -22,6 +23,7 @@ function buildWebSocketRoutes(): WebSocketRoute[] {
     ['/ws/terminal', buildTerminalWss()],
     ['/ws/tasks', buildTasksWss()],
     ['/ws/merge-runs', buildMergeRunsWss()],
+    ['/ws/post-merge-hooks', buildPostMergeHooksWss()],
     ['/ws/workflows', buildWorkflowsWss()],
     ['/ws/workflow-runs', buildWorkflowRunsWss()],
     ['/ws/health', buildHealthWss()],

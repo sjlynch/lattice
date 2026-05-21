@@ -14,6 +14,7 @@
 import { restoreSnapshot, type SnapshotHandle } from './worktree.js';
 import { listTasks, type Task } from './tasks.js';
 import { canonicalProjectPath } from './projectPath.js';
+import { runPostMergeHookGate } from './postMergeHooks.js';
 import {
   acquireProjectRunLock,
   ProjectRunLockedError,
@@ -224,6 +225,26 @@ export async function startMergeRun(
       backendOrigin,
       options.lockMode ?? 'acquire',
     );
+
+    // Post-merge hook gate. Fires once per merge run when at least one task
+    // actually landed in qa, the run wasn't cancelled, and the user has a
+    // hook prompt configured. Blocks `finishRun` (and therefore any WS
+    // subscriber / workflow merge step awaiting 'completed') until the hook
+    // agent calls back. A no-op if the hook isn't configured.
+    if (!run.cancelRequested && run.merged.length > 0) {
+      try {
+        await runPostMergeHookGate({
+          projectPath,
+          backendOrigin,
+          trigger: 'merge-run',
+        });
+      } catch (err) {
+        console.warn(
+          '[merge-run] post-merge hook gate threw (continuing to finish run):',
+          err,
+        );
+      }
+    }
     finishRun(run);
   })()
     .catch((err) => {

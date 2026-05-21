@@ -80,7 +80,24 @@ export function snapshot(run: WorkflowRun): WorkflowRun {
 }
 
 export function notify(ev: WorkflowRunEvent): void {
-  for (const fn of listeners) fn(ev);
+  // Per-listener isolation. notify() is called inline from `dispatchStep`
+  // (and other advance points) — if a single subscriber throws, the
+  // exception used to bubble up to `completeWorkflowStep`'s try/catch and
+  // error the workflow run mid-advance (symptom: workflow aborts the
+  // instant we'd transition from an agent step into a control step,
+  // because that path runs `notify({type:'progress'})` synchronously
+  // before scheduling the control-step worker). A WS race, a closed
+  // socket whose `ws.send` throws between the `readyState` check and
+  // the send, or any future-added subscriber that throws under load
+  // could silently break the entire workflow engine. Per-listener
+  // try/catch breaks that cascade.
+  for (const fn of listeners) {
+    try {
+      fn(ev);
+    } catch (err) {
+      console.error('[workflow-run] subscriber threw (isolated):', err);
+    }
+  }
 }
 
 export function subscribe(fn: (ev: WorkflowRunEvent) => void): () => void {

@@ -16,6 +16,7 @@ import { sweepOrphanedWorktrees } from './worktreeSweep.js';
 import { sweepOrphanedPushSessions } from './pushSessionSweep.js';
 
 export { resumeInterruptedMergeRuns } from './mergeRunResume.js';
+export { resumeQueuedTaskRuns } from './queuedRunResume.js';
 export { sweepOrphanedWorktrees } from './worktreeSweep.js';
 export { sweepOrphanedPushSessions } from './pushSessionSweep.js';
 

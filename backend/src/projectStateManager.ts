@@ -137,11 +137,28 @@ export class ProjectStateManager<
     const key = this.canonicalize(projectPath);
     const state = this.snapshot(this.cache.get(key) ?? this.defaultState(key));
     for (const fn of this.listeners) {
-      (fn as unknown as ProjectStateSubscriber<TState>)(key, state);
+      try {
+        (fn as unknown as ProjectStateSubscriber<TState>)(key, state);
+      } catch (err) {
+        console.error(`[${this.name}] subscriber threw (isolated):`, err);
+      }
     }
   }
 
+  // Per-listener isolation. notify() / emitToSubscribers is called inline
+  // from worker code (e.g. mergeRun finishRun, dispatchStep) — if a single
+  // subscriber throws, the exception used to bubble up and break the
+  // caller's control flow (errored workflow run, aborted merge worker,
+  // etc.). A WS race that hits `ws.send` between the `readyState` check
+  // and the send is the realistic source. Per-listener try/catch breaks
+  // that cascade.
   protected emitToSubscribers(invoke: (fn: TSubscriber) => void): void {
-    for (const fn of this.listeners) invoke(fn);
+    for (const fn of this.listeners) {
+      try {
+        invoke(fn);
+      } catch (err) {
+        console.error(`[${this.name}] subscriber threw (isolated):`, err);
+      }
+    }
   }
 }

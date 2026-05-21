@@ -1,4 +1,4 @@
-import { proxyCreateSession } from '../terminalProxy.js';
+import { queuedCreateSession } from '../queuedCreateSession.js';
 import type { AgentHarness } from '../harnesses.js';
 import {
   buildClaudeCommand,
@@ -19,10 +19,16 @@ export function buildCustomizationCommand(
 export async function preSpawnCustomizationSession(
   request: WorkflowPromptCustomization,
 ): Promise<void> {
-  const sess = await proxyCreateSession({
-    cwd: request.cwd,
-    initialCommand: request.command,
-    projectPath: request.projectPath,
+  // `interactive` band — user-initiated, infrequent.
+  const sess = await queuedCreateSession({
+    kind: 'workflow-prompt-customization',
+    priority: 'interactive',
+    dedupeKey: `wf-prompt:${request.id}`,
+    opts: {
+      cwd: request.cwd,
+      initialCommand: request.command,
+      projectPath: request.projectPath,
+    },
   });
   if ('error' in sess) {
     console.warn(

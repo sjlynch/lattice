@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { Task, TaskStatus } from '../../../api';
+import type { Task, TaskSpawnedEvent, TaskStatus } from '../../../api';
 import { useTaskList } from './useTaskList';
 import { useTaskSelection } from './useTaskSelection';
 
@@ -28,8 +28,16 @@ export function groupTasksByStatus(tasks: Task[]): GroupedTasks {
 
 // Combines task list syncing, lane grouping/sorting, derived board counts,
 // and multi-selection into the single state shape consumed by the launcher.
-export function useTaskBoardState(activeFolder: string) {
-  const { tasks, error, setError, showError } = useTaskList(activeFolder);
+// `onTaskSpawned` is threaded straight to useTaskList so the launcher can
+// lazy-mount a queued task's terminal when its pty spawns.
+export function useTaskBoardState(
+  activeFolder: string,
+  onTaskSpawned?: (event: TaskSpawnedEvent) => void,
+) {
+  const { tasks, error, setError, showError } = useTaskList(
+    activeFolder,
+    onTaskSpawned,
+  );
   const grouped = useMemo(() => groupTasksByStatus(tasks), [tasks]);
   const selection = useTaskSelection(tasks, grouped);
   const activeCount = useMemo(

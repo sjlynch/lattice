@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   GitMerge,
   GripVertical,
+  Hourglass,
   Pencil,
   Play,
   TerminalSquare,
@@ -160,6 +161,14 @@ function TaskCardBody({
     >
       <div className="task-card-title">
         <TaskCardConflictBadges task={task} isConflict={isConflict} />
+        {task.runQueued && (
+          <span
+            className="task-card-queued-pill"
+            title="Waiting for a free agent slot — runs automatically when one frees up"
+          >
+            <Hourglass size={9} /> queued
+          </span>
+        )}
         {task.title}
       </div>
       {task.description && (

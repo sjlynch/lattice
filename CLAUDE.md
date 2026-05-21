@@ -113,8 +113,8 @@ therefore stay safely re-runnable.
 | POST | `/api/tasks/batch` | Batch-create `{project, tasks:[{title,description?}]}` — returns array |
 | PATCH | `/api/tasks/:id` | Update `title` / `description` / `status` |
 | DELETE | `/api/tasks/:id` | Remove |
-| POST | `/api/tasks/:id/run` | Spawn worktree + Claude on Open task; pre-creates pty, returns `serverId` |
-| POST | `/api/tasks/:id/resume` | Re-spawn Claude in existing worktree; pre-creates pty, returns `serverId` |
+| POST | `/api/tasks/:id/run` | Enqueue an Open task's run on the spawn queue; returns `{accepted, queued}` (pty delivered later via the `task-spawned` WS event) |
+| POST | `/api/tasks/:id/resume` | Enqueue a re-spawn in the existing worktree; returns `{accepted, queued}` |
 | POST | `/api/tasks/:id/complete` | Stop-hook callback (in_progress → ready_to_merge) |
 | POST | `/api/tasks/:id/merge` | Attempt git merge; conflict pre-creates resolver pty, returns `serverId` |
 | POST | `/api/tasks/:id/merged` | Resolver-Claude callback after a successful merge |
@@ -131,8 +131,9 @@ therefore stay safely re-runnable.
 | GET | `/api/workflow-runs/active?project=` | Active workflow runs for a project |
 | GET | `/api/terminals` | Debug: list active pty sessions |
 | DELETE | `/api/terminals/:id` | Kill a pty session |
+| GET | `/api/spawn-queue` | Debug: spawn-queue snapshot (pending/in-flight/reserved, softCap) |
 | WS | `/ws/terminal?id=&cwd=&cols=&rows=&initialCommand=` | xterm proxy via node-pty (with replay) |
-| WS | `/ws/tasks?project=` | Live task list updates |
+| WS | `/ws/tasks?project=` | Live task list updates + `task-spawned` events (a queued run's pty spawned) |
 | WS | `/ws/merge-runs?project=` | Run progress + per-conflict resolver spawn events |
 
 Both WS endpoints share the HTTP server via a single `upgrade` dispatcher

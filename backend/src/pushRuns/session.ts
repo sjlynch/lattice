@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ensureTrustedClaudeDir } from '../claudeTrust.js';
-import { proxyCreateSession } from '../terminalProxy.js';
+import { queuedCreateSession } from '../queuedCreateSession.js';
 import { renderPushInstructions } from './instructions.js';
 import { assertSafePushSessionPath, createPushSessionId } from './paths.js';
 import { recordPushRun } from './registry.js';
@@ -50,10 +50,13 @@ export async function startPushSession(
 ): Promise<StartedPushSession> {
   const session = await setupPushSession(projectPath, backendOrigin);
   const command = `claude --dangerously-skip-permissions "Please read PUSH_INSTRUCTIONS.md in this directory and follow it."`;
-  const sess = await proxyCreateSession({
-    cwd: session.cwd,
-    initialCommand: command,
-    projectPath,
+  // `interactive` band — user-initiated, infrequent; may use PRIORITY_RESERVE
+  // headroom so a push is not stuck behind a full batch lane.
+  const sess = await queuedCreateSession({
+    kind: 'push-run',
+    priority: 'interactive',
+    dedupeKey: `push:${session.id}`,
+    opts: { cwd: session.cwd, initialCommand: command, projectPath },
   });
   if ('error' in sess) {
     await cleanupPushSession(projectPath, session.id);

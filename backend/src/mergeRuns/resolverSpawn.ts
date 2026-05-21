@@ -5,7 +5,7 @@ import {
 } from '../worktree.js';
 import { listConflictedFiles } from '../worktree/state.js';
 import { type Task } from '../tasks.js';
-import { proxyCreateSession } from '../terminalProxy.js';
+import { queuedCreateSession } from '../queuedCreateSession.js';
 import {
   notify,
   registerConflictWaiter,
@@ -38,12 +38,18 @@ async function spawnResolverAndNotifyConflict({
   conflictedFiles,
   onBeforeNotify,
 }: ResolverSpawnInput & { onBeforeNotify?: () => void }): Promise<ResolverSpawnResult> {
-  const sess = await proxyCreateSession({
-    cwd,
-    initialCommand: command,
-    projectPath: task.projectPath,
+  // Routed through the spawn queue on the `priority` band: a resolver may
+  // dip into PRIORITY_RESERVE headroom above softCap, so an in-flight merge
+  // run can always get its resolver even when batch slots are full. A CAP
+  // rejection is retried inside the queue (await simply takes longer); only
+  // a genuine terminal-server failure surfaces as `{ error }` below.
+  const sess = await queuedCreateSession({
+    kind: 'merge-run-resolver',
+    priority: 'priority',
+    dedupeKey: `mr-resolver:${task.id}`,
+    opts: { cwd, initialCommand: command, projectPath: task.projectPath },
   });
-  // proxyCreateSession returns { error } when the terminal-server can't
+  // queuedCreateSession returns { error } when the terminal-server can't
   // start (we hit this when a missing dist asset killed terminal-server's
   // boot mid-merge-run). Without surfacing this, the caller would still
   // notify(conflict) and registerConflictWaiter — blocking the run forever

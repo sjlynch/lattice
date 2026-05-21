@@ -20,13 +20,23 @@ type SelectHarnessCommandOptions = {
   mode: HarnessMode;
 };
 
+export type CreateSessionOutcome = {
+  command: string;
+  serverId?: string;
+  // True when the spawn was rejected by the terminal-server's hard cap.
+  // The queue path turns this into a SpawnCapacityError so the spawn is
+  // re-queued; the un-queued workflow control-step path ignores it and
+  // proceeds without a terminal (today's behaviour).
+  capHit?: boolean;
+};
+
 export type SelectedHarnessCommand = {
   harness: TaskHarness;
   commandBuilder: CommandBuilder;
   createSession: (args: {
     taskFile: string;
     cwd: string;
-  }) => Promise<{ command: string; serverId?: string }>;
+  }) => Promise<CreateSessionOutcome>;
 };
 
 function getCommandBuilder(harness: TaskHarness, mode: HarnessMode): CommandBuilder {
@@ -66,11 +76,9 @@ export function selectHarnessCommand(
         console.warn(
           `[${options.mode}] task ${task.id}: pre-spawn failed: ${sess.error}`,
         );
+        return { command, capHit: sess.code === 'CAP' };
       }
-      return {
-        command,
-        serverId: 'id' in sess ? sess.id : undefined,
-      };
+      return { command, serverId: sess.id };
     },
   };
 }

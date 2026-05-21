@@ -35,7 +35,12 @@ export function registerTerminalRoutes(
       initialCommand: body.initialCommand,
       projectPath: body.projectPath,
     });
-    if ('error' in result) return res.status(500).json(result);
+    if ('error' in result) {
+      // A hard-cap refusal is 503 ("at capacity") so the backend proxy can
+      // distinguish it from a 500 shell-spawn failure; the `code` field is
+      // the authoritative signal either way.
+      return res.status(result.code === 'CAP' ? 503 : 500).json(result);
+    }
     res.json({ id: result.id });
   });
 

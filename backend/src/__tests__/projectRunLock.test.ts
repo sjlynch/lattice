@@ -120,9 +120,11 @@ test('acquire refuses a live same-host holder', async () => {
   });
   try {
     assert.ok(child.pid);
+    // The child was spawned just above, so a lock stamped `now` post-dates
+    // the holder's start — a genuine live holder, not a recycled PID.
     await writeLock(
       fixture.lockFile,
-      holder({ pid: child.pid, label: 'live-holder' }),
+      holder({ pid: child.pid, startedAt: Date.now(), label: 'live-holder' }),
     );
 
     const err = await expectLocked(() =>
@@ -131,6 +133,41 @@ test('acquire refuses a live same-host holder', async () => {
     assert.equal(err.holder.pid, child.pid);
     assert.equal(err.holder.label, 'live-holder');
     assert.equal((await readLockBody(fixture.lockFile))?.label, 'live-holder');
+  } finally {
+    await stopChild(child);
+    await fixture.cleanup();
+  }
+});
+
+test('acquire steals a lock whose PID was recycled by a younger process', async () => {
+  const fixture = await createFixture();
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    stdio: 'ignore',
+  });
+  try {
+    assert.ok(child.pid);
+    // The PID is alive, but the lock claims to predate this process by a
+    // full day — so the PID was recycled and the original holder is long
+    // dead. The lock must be stealable (the react-chorus stale-lock bug).
+    await writeLock(
+      fixture.lockFile,
+      holder({
+        pid: child.pid,
+        startedAt: Date.now() - 24 * 60 * 60 * 1000,
+        label: 'recycled-pid-holder',
+      }),
+    );
+
+    const inspected = await inspectProjectRunLock(fixture.projectPath);
+    assert.equal(inspected?.alive, false);
+
+    const handle = await acquireProjectRunLock(fixture.projectPath, 'after-recycle');
+    const current = await readLockBody(fixture.lockFile);
+    assert.equal(current?.pid, process.pid);
+    assert.equal(current?.label, 'after-recycle');
+
+    await handle.release();
+    assert.equal(await readLockBody(fixture.lockFile), null);
   } finally {
     await stopChild(child);
     await fixture.cleanup();

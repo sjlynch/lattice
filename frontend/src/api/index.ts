@@ -13,5 +13,10 @@ export {
   forgetPushRun,
   startPushRun,
 } from './pushRuns';
+export {
+  abortPostMergeHook,
+  getActivePostMergeHook,
+  subscribePostMergeHooks,
+} from './postMergeHooks';
 export * from './workflows';
 export * from './health';

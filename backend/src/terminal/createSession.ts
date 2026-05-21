@@ -13,11 +13,20 @@ import {
 
 export { broadcastToSubscribers } from './broadcast.js';
 
-export function createSession(opts: CreateOpts): Session | { error: string } {
+// 'CAP' tags a refusal caused by the hard session ceiling specifically (as
+// opposed to a shell-spawn failure). The spawn queue keys its over-admit
+// back-off on this code, so it must round-trip backend ⇆ terminal-server.
+export type SessionErrorResult = { error: string; code?: 'CAP' };
+
+export function createSession(
+  opts: CreateOpts,
+): Session | SessionErrorResult {
   // Hard cap so a runaway client (e.g. a stuck reconnect loop) can't
   // spawn unbounded ptys. Each pty on Windows is ~3 OS processes
   // (conhost + pwsh + node child); without this cap a runaway took the
-  // whole machine out of memory before any human noticed.
+  // whole machine out of memory before any human noticed. The spawn queue
+  // governs normal concurrency well below this — a CAP refusal here means
+  // either a runaway or a transient queue-accounting drift it self-corrects.
   const live = sessionCount();
   if (live >= TERMINAL_CONFIG.MAX_TERMINAL_SESSIONS) {
     console.warn(
@@ -25,6 +34,7 @@ export function createSession(opts: CreateOpts): Session | { error: string } {
     );
     return {
       error: `Too many active terminal sessions (${live}/${TERMINAL_CONFIG.MAX_TERMINAL_SESSIONS}). Close some terminals before opening another.`,
+      code: 'CAP',
     };
   }
 
@@ -91,8 +101,12 @@ export function createSession(opts: CreateOpts): Session | { error: string } {
 // subscriber later attaches via `attachTerminal({ id })`.
 export function precreateSession(
   opts: CreateOpts,
-): { id: string } | { error: string } {
+): { id: string } | SessionErrorResult {
   const result = createSession(opts);
-  if ('error' in result) return { error: result.error };
+  if ('error' in result) {
+    return result.code
+      ? { error: result.error, code: result.code }
+      : { error: result.error };
+  }
   return { id: result.id };
 }
