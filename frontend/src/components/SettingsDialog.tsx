@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { TerminalSquare, FileText, BarChart3 } from 'lucide-react';
+import { TerminalSquare, FileText, BarChart3, Cpu } from 'lucide-react';
 import { Modal } from './Modal';
 import {
+  patchGlobalSettings,
   patchUserSettings,
   type StartupTerminal,
   type TerminalDefaultHarness,
@@ -21,6 +22,7 @@ import {
   MetricsIgnoredExtsTab,
   type MetricsIgnoredExtsTabHandle,
 } from './settings/MetricsIgnoredExtsTab';
+import { AgentsTab, type AgentsTabHandle } from './settings/AgentsTab';
 
 type Props = {
   open: boolean;
@@ -34,7 +36,7 @@ type Props = {
   onMetricsIgnoredExtsChange: (next: string[]) => void | Promise<void>;
 };
 
-type Tab = 'terminals' | 'env' | 'metrics';
+type Tab = 'terminals' | 'env' | 'metrics' | 'agents';
 
 const TERMINAL_DEFAULT_OPTIONS: { value: TerminalDefaultHarness; label: string }[] = [
   { value: 'claude', label: 'Claude' },
@@ -122,6 +124,7 @@ export function SettingsDialog({
   const startupTerminalsRef = useRef<StartupTerminalsTabHandle>(null);
   const envNotesRef = useRef<EnvNotesTabHandle>(null);
   const metricsIgnoredExtsRef = useRef<MetricsIgnoredExtsTabHandle>(null);
+  const agentsRef = useRef<AgentsTabHandle>(null);
 
   useEffect(() => {
     if (open) setError(null);
@@ -161,6 +164,11 @@ export function SettingsDialog({
         patch.metricsIgnoredExts = metricsExtsPatch;
       }
       await patchUserSettings(activeFolder, patch);
+      // Machine-global settings go to a separate endpoint, not userSettings.
+      const maxAgentsPatch = agentsRef.current?.getMaxConcurrentAgentsPatch();
+      if (maxAgentsPatch !== undefined) {
+        await patchGlobalSettings({ maxConcurrentAgents: maxAgentsPatch });
+      }
       onStartupTerminalsChange(cleaned);
       onTerminalLaunchSettingsChange(terminalLaunchPatch);
       if (metricsExtsPatch !== undefined) {
@@ -200,6 +208,13 @@ export function SettingsDialog({
             <BarChart3 size={12} />
             Metrics
           </button>
+          <button
+            className={`settings-tab ${tab === 'agents' ? 'active' : ''}`}
+            onClick={() => setTab('agents')}
+          >
+            <Cpu size={12} />
+            Agents
+          </button>
         </div>
         <div className="settings-tab-body">
           {tab === 'terminals' && (
@@ -228,6 +243,7 @@ export function SettingsDialog({
             open={open}
             metricsIgnoredExts={metricsIgnoredExts}
           />
+          <AgentsTab ref={agentsRef} active={tab === 'agents'} open={open} />
         </div>
       </div>
       {error && <div className="error-msg" style={{ margin: '0 16px' }}>{error}</div>}

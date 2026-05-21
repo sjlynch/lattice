@@ -127,7 +127,7 @@ export class SpawnQueueState {
       liveCount: this.accounting.getLiveCount(),
       effectiveLive: this.accounting.effectiveLive(),
       pollHealthy: this.accounting.isPollHealthy(),
-      softCap: SPAWN_QUEUE_CONFIG.softCap,
+      softCap: this.accounting.getSoftCap(),
     };
   }
 }

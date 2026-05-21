@@ -116,3 +116,13 @@ export function cancelQueuedTaskSpawns(taskId: string): void {
   cancelSpawn(taskRunDedupeKey(taskId));
   cancelSpawn(taskResumeDedupeKey(taskId));
 }
+
+// Remove a task's queued run: drop the still-pending spawn (if it has not
+// been admitted yet) and clear the persisted runQueued flag so the card
+// stops showing the badge and boot recovery won't re-enqueue it. Best-effort
+// — if the run was already admitted the spawn proceeds and the thunk clears
+// the flag itself on completion.
+export async function dequeueTaskRun(taskId: string): Promise<void> {
+  cancelSpawn(taskRunDedupeKey(taskId));
+  await updateTask(taskId, { runQueued: undefined, runQueuedAt: undefined });
+}

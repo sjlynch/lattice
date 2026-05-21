@@ -5,6 +5,7 @@
 export * from './types';
 export * from './scan';
 export * from './settings';
+export * from './globalSettings';
 export * from './tasks';
 export * from './mergeRuns';
 export {

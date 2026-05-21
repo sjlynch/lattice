@@ -9,6 +9,7 @@
 // Implementation is split under spawnQueue/ (mirrors the mergeRuns.ts +
 // mergeRuns/ convention). See spawnQueue/CLAUDE.md for the contract.
 
+import { getGlobalSettings } from './globalSettings.js';
 import { drainQueue } from './spawnQueue/drain.js';
 import { ensurePolling, pokePoll, pollOnce } from './spawnQueue/poll.js';
 import { queueState } from './spawnQueue/state.js';
@@ -72,10 +73,28 @@ export function getSpawnQueueSnapshot(): SpawnQueueSnapshot {
   return queueState.snapshot();
 }
 
-// Boot hook: prime the accounting with one /sessions poll so the first
-// enqueue after startup admits immediately instead of waiting a poll cycle.
-// Best-effort — if the terminal-server is briefly unreachable the first
-// enqueue simply waits for the poll loop to succeed.
+// Update the concurrency governor (softCap) at runtime — called by
+// PATCH /api/global-settings. Raising it creates headroom, so drain any
+// deferred spawns into it immediately.
+export function setSpawnQueueSoftCap(softCap: number): void {
+  queueState.accounting.setSoftCap(softCap);
+  drainQueue();
+}
+
+// Boot hook: apply the persisted softCap from global settings, then prime
+// the accounting with one /sessions poll so the first enqueue after startup
+// admits immediately instead of waiting a poll cycle. Best-effort — if the
+// terminal-server is briefly unreachable the first enqueue simply waits for
+// the poll loop to succeed.
 export async function startSpawnQueue(): Promise<void> {
+  try {
+    const settings = await getGlobalSettings();
+    queueState.accounting.setSoftCap(settings.maxConcurrentAgents);
+  } catch (err) {
+    console.error(
+      '[spawn-queue] could not load global settings; using default softCap:',
+      err,
+    );
+  }
   await pollOnce();
 }

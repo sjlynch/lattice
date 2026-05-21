@@ -12,7 +12,7 @@ import {
 } from '../../tasks.js';
 import { canonicalProjectPath, projectHash } from '../../projectPath.js';
 import { cleanupWorktreeForTask } from '../../worktree.js';
-import { cancelQueuedTaskSpawns } from './queuedSpawn.js';
+import { cancelQueuedTaskSpawns, dequeueTaskRun } from './queuedSpawn.js';
 import { parseMarkdownTasks } from './markdownBatch.js';
 import {
   isValidTaskStatus,
@@ -344,6 +344,23 @@ export async function handleTaskAppendSummary(
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
+}
+
+// Cancel a queued task run: drop it from the spawn queue and clear the
+// runQueued flag so it reverts to a plain Open task. Idempotent — a no-op
+// for a task that is not queued.
+export async function handleTaskCancelQueuedRun(
+  req: TaskIdRequest,
+  res: Response,
+): Promise<void> {
+  const task = await getTask(req.params.id);
+  if (!task) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  await dequeueTaskRun(req.params.id);
+  const updated = await getTask(req.params.id);
+  res.json(updated ?? { ok: true });
 }
 
 export async function handleTaskDelete(

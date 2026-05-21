@@ -6,6 +6,7 @@ import {
   handleProjectsList,
   handleTaskAppendSummary,
   handleTaskBatchCreate,
+  handleTaskCancelQueuedRun,
   handleTaskCreate,
   handleTaskDelete,
   handleTaskGet,
@@ -66,6 +67,9 @@ export function buildTaskCrudRouter(): Router {
   r.post('/api/tasks/reorder', handleTaskReorder);
 
   r.post('/api/tasks/:id/append-summary', handleTaskAppendSummary);
+
+  // Drop a queued task run back to a plain Open task.
+  r.post('/api/tasks/:id/cancel-queued-run', handleTaskCancelQueuedRun);
 
   r.delete('/api/tasks/:id', handleTaskDelete);
 

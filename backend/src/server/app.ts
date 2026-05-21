@@ -4,6 +4,7 @@ import express, { type ErrorRequestHandler, type Express } from 'express';
 // non-JSON 500 — the toast always has a real message to show.
 import 'express-async-errors';
 import cors from 'cors';
+import { buildGlobalSettingsRouter } from '../routes/globalSettings.js';
 import { buildHealthRouter } from '../routes/health.js';
 import { buildMergeRunsRouter } from '../routes/mergeRuns.js';
 import { buildPostMergeHooksRouter } from '../routes/postMergeHooks.js';
@@ -43,6 +44,7 @@ export function mountRouteFactories(
 ): void {
   app.use(buildHealthRouter(options.defaultRoot));
   app.use(buildSettingsRouter());
+  app.use(buildGlobalSettingsRouter());
   app.use(buildTerminalsRouter());
   app.use(buildTasksRouter(options.backendOrigin));
   app.use(buildMergeRunsRouter(options.backendOrigin));

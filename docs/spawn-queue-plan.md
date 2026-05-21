@@ -1,7 +1,8 @@
 # Spawn Queue — Implementation Plan
 
-> Status: **Phases 1 & 2 COMPLETE** (2026-05-21) — backend + frontend
-> type-check clean, 123 backend tests pass. Phase 3 (UI & tuning) still planned.
+> Status: **COMPLETE** — all three phases shipped (2026-05-21). Backend +
+> frontend type-check clean, 123 backend tests pass. Only the optional
+> fake-terminal-server integration test (§12) is left unbuilt.
 > Context: under heavy "Run All" / multi-workflow fan-out, agent spawns hit the
 > terminal-server's hard session cap and were **dropped** (a workflow step
 > errored out; tasks silently failed to spawn). This plan replaces that hard
@@ -49,13 +50,23 @@
 > `components/taskboard/hooks/{useTaskLifecycleActions,useTaskActions,useTaskList,useTaskBoardState}.ts`,
 > `styles/taskboard/cards.css`.
 >
-> ### Still not done after Phases 1 & 2
+> ### Phase 3 — files delivered
+
+> New: `backend/src/globalSettings.ts`, `backend/src/routes/globalSettings.ts`,
+> `frontend/src/api/globalSettings.ts`, `frontend/src/components/settings/AgentsTab.tsx`.
+> Modified backend: `spawnQueue.ts` (`setSpawnQueueSoftCap`, boot reads global
+> settings), `spawnQueue/{accounting,state}.ts` (mutable softCap),
+> `server/app.ts`, `routes/tasks/{queuedSpawn,crud,crudHandlers}.ts`
+> (`dequeueTaskRun` + `POST /api/tasks/:id/cancel-queued-run`).
+> Modified frontend: `api/{index,tasks}.ts`, `components/SettingsDialog.tsx`,
+> `components/taskboard/{TaskCard,Lane,TaskBoardLauncher}.tsx`,
+> `components/taskboard/hooks/useTaskLifecycleActions.ts`,
+> `styles/taskboard/{cards,shell}.css`.
+>
+> ### Still not done
 >
 > - The fake-terminal-server **integration test** (§12) — the accounting
 >   unit tests cover the race-prone core; the drain/poll glue is straightforward.
-> - Phase 3: global-settings file + `GET/PATCH /api/global-settings` +
->   SettingsDialog `maxConcurrentAgents` control; "N running · M queued"
->   board indicator; cancel-queued affordance.
 
 ---
 
@@ -321,9 +332,11 @@ Each wraps its `proxyCreateSession` (or its whole spawn helper) in
     frontend) fires from inside the thunk on admission — same model as task
     runs. Resolvers/hook/push/prompt-customization **await** the queue
     because their caller needs the session result.
-- **Phase 3 — UI & tuning.** Global settings file + route + SettingsDialog
-  `maxConcurrentAgents` control; "N running · M queued" board indicator;
-  cancel-queued affordance.
+- **Phase 3 — UI & tuning. ✅ DONE (2026-05-21).** `~/.lattice/globalSettings.json`
+  + `GET/PATCH /api/global-settings` + a SettingsDialog "Agents" tab with the
+  `maxConcurrentAgents` control (applies live — no restart); "N running ·
+  M queued" taskboard footer indicator; cancel-queued affordance (a Ban
+  button on queued cards → `POST /api/tasks/:id/cancel-queued-run`).
 
 ## 12. Testing
 

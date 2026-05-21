@@ -36,9 +36,21 @@ export class SpawnAccounting {
   private nextId = 1;
 
   constructor(
-    private readonly softCap: number,
+    // softCap is mutable: the global setting `maxConcurrentAgents` can be
+    // changed at runtime via PATCH /api/global-settings.
+    private softCap: number,
     private readonly priorityReserve: number,
   ) {}
+
+  // Update the concurrency governor. Lowering it below effectiveLive simply
+  // stops new admissions until sessions free — live sessions are untouched.
+  setSoftCap(softCap: number): void {
+    this.softCap = Math.max(1, Math.floor(softCap));
+  }
+
+  getSoftCap(): number {
+    return this.softCap;
+  }
 
   // Reserve a slot for a spawn the drain just admitted.
   reserve(now: number): number {

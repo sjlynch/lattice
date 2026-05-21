@@ -106,6 +106,8 @@ therefore stay safely re-runnable.
 | GET | `/api/list-dir?path=` | Folder browser (folder picker) |
 | GET | `/api/settings?project=` | Read per-project user settings |
 | PATCH | `/api/settings?project=` | Merge-update per-project user settings |
+| GET | `/api/global-settings` | Read machine-global settings (`maxConcurrentAgents`) |
+| PATCH | `/api/global-settings` | Update machine-global settings (applies the spawn-queue softCap live) |
 | GET | `/api/project-env?project=` | Auto-detected package-manager envs + the "fresh worktree, don't reinstall" notes (default + effective) |
 | GET | `/api/tasks?project=` | List tasks for a project |
 | GET | `/api/tasks/:id` | Fetch a single task |
@@ -113,6 +115,7 @@ therefore stay safely re-runnable.
 | POST | `/api/tasks/batch` | Batch-create `{project, tasks:[{title,description?}]}` — returns array |
 | PATCH | `/api/tasks/:id` | Update `title` / `description` / `status` |
 | DELETE | `/api/tasks/:id` | Remove |
+| POST | `/api/tasks/:id/cancel-queued-run` | Drop a queued run back to a plain Open task |
 | POST | `/api/tasks/:id/run` | Enqueue an Open task's run on the spawn queue; returns `{accepted, queued}` (pty delivered later via the `task-spawned` WS event) |
 | POST | `/api/tasks/:id/resume` | Enqueue a re-spawn in the existing worktree; returns `{accepted, queued}` |
 | POST | `/api/tasks/:id/complete` | Stop-hook callback (in_progress → ready_to_merge) |

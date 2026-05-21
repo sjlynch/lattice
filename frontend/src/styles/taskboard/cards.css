@@ -78,6 +78,8 @@
 .task-card-iconbtn.merge.alert:hover { color: #ffba80; background: rgba(245, 163, 106, 0.26); }
 .task-card-iconbtn.resume { color: #e7c986; opacity: 1; background: rgba(231, 201, 134, 0.10); }
 .task-card-iconbtn.resume:hover { background: rgba(231, 201, 134, 0.22); color: #f4dba1; }
+.task-card-iconbtn.cancel-queued { color: #bcd6fb; opacity: 1; background: rgba(147, 197, 253, 0.10); }
+.task-card-iconbtn.cancel-queued:hover { background: rgba(147, 197, 253, 0.22); color: #d4e4fc; }
 .task-card-iconbtn.terminal { color: #93c5fd; opacity: 1; background: rgba(147, 197, 253, 0.10); }
 .task-card-iconbtn.terminal:hover { background: rgba(147, 197, 253, 0.22); color: #b8d6fc; }
 .task-card-iconbtn.danger { opacity: 1; }

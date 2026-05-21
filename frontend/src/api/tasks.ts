@@ -100,6 +100,15 @@ export async function resumeTask(id: string, harness?: AgentHarness): Promise<Ru
   );
 }
 
+// Drop a queued task run back to a plain Open task. Returns the updated task.
+export async function cancelQueuedRun(id: string): Promise<Task> {
+  return asJson<Task>(
+    await fetch(`/api/tasks/${encodeURIComponent(id)}/cancel-queued-run`, {
+      method: 'POST',
+    }),
+  );
+}
+
 export async function mergeTask(id: string): Promise<MergeTaskResult> {
   return asJson<MergeTaskResult>(
     await fetch(`/api/tasks/${encodeURIComponent(id)}/merge`, {

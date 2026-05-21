@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import {
+  cancelQueuedRun as apiCancelQueuedRun,
   resumeTask as apiResumeTask,
   runTask as apiRunTask,
   type Task,
@@ -43,6 +44,19 @@ export function useTaskLifecycleActions({
     for (const task of openTasks) void runTask(task);
   }, [runTask, tasks]);
 
+  // Drop a queued run back to a plain Open task. The card's WS update
+  // clears the "queued" badge once the backend persists it.
+  const cancelQueuedRun = useCallback(
+    async (task: Task) => {
+      try {
+        await apiCancelQueuedRun(task.id);
+      } catch (err) {
+        showError(`Cancel failed: ${(err as Error).message}`);
+      }
+    },
+    [showError],
+  );
+
   const resumeTaskAction = useCallback(
     async (task: Task) => {
       try {
@@ -61,5 +75,11 @@ export function useTaskLifecycleActions({
     for (const task of list) void resumeTaskAction(task);
   }, [resumeTaskAction, tasks]);
 
-  return { runTask, runAllOpen, resumeTaskAction, resumeAllInProgress };
+  return {
+    runTask,
+    runAllOpen,
+    cancelQueuedRun,
+    resumeTaskAction,
+    resumeAllInProgress,
+  };
 }

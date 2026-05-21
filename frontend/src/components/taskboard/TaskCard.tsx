@@ -1,6 +1,7 @@
 import type { DragEvent, MouseEvent, ReactNode } from 'react';
 import {
   AlertTriangle,
+  Ban,
   GitMerge,
   GripVertical,
   Hourglass,
@@ -31,6 +32,7 @@ export type TaskCardProps = {
   onDragEnd: () => void;
   onDelete: () => void;
   onRun?: () => void;
+  onCancelQueuedRun?: () => void;
   onResume?: () => void;
   onMerge?: () => void;
   onFocusTerminal?: () => void;
@@ -73,6 +75,7 @@ export function TaskCard({
   onDragEnd,
   onDelete,
   onRun,
+  onCancelQueuedRun,
   onResume,
   onMerge,
   onFocusTerminal,
@@ -129,6 +132,7 @@ export function TaskCard({
         isConflict={isConflict}
         onDelete={onDelete}
         onRun={onRun}
+        onCancelQueuedRun={onCancelQueuedRun}
         onResume={onResume}
         onMerge={onMerge}
         onFocusTerminal={onFocusTerminal}
@@ -212,6 +216,7 @@ function TaskCardActions({
   isConflict,
   onDelete,
   onRun,
+  onCancelQueuedRun,
   onResume,
   onMerge,
   onFocusTerminal,
@@ -220,6 +225,7 @@ function TaskCardActions({
   TaskCardProps,
   | 'onDelete'
   | 'onRun'
+  | 'onCancelQueuedRun'
   | 'onResume'
   | 'onMerge'
   | 'onFocusTerminal'
@@ -248,6 +254,17 @@ function TaskCardActions({
       title: 'Run in a new worktree with Claude',
       ariaLabel: 'Run task',
       icon: <Play size={11} fill="currentColor" />,
+    });
+  }
+
+  if (onCancelQueuedRun) {
+    actions.push({
+      key: 'cancel-queued',
+      className: 'task-card-iconbtn cancel-queued',
+      onClick: onCancelQueuedRun,
+      title: 'Cancel queued run — drop back to Open',
+      ariaLabel: 'Cancel queued run',
+      icon: <Ban size={12} />,
     });
   }
 

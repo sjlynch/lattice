@@ -116,6 +116,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     deleteTask,
     runTask,
     runAllOpen,
+    cancelQueuedRun,
     resumeTaskAction,
     resumeAllInProgress,
     mergeTaskAction,
@@ -191,6 +192,11 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
       return next;
     });
   }
+
+  // Spawn-queue activity for the footer indicator: how many agents are
+  // running vs. waiting for a free slot.
+  const runningCount = tasks.filter((t) => t.status === 'in_progress').length;
+  const queuedCount = tasks.filter((t) => t.runQueued).length;
 
   return (
     <>
@@ -282,6 +288,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 onMultiDropAt={dropAtMulti}
                 onDelete={deleteTask}
                 onRun={runTask}
+                onCancelQueuedRun={cancelQueuedRun}
                 onResume={resumeTaskAction}
                 onMerge={mergeTaskAction}
                 getFocusTerminal={getFocusTerminal}
@@ -365,7 +372,13 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         <div className="taskboard-footer">
           {searchActive
             ? `${filteredTasks.length} of ${tasks.length} matching`
-            : `${tasks.length} total`}{' '}
+            : `${tasks.length} total`}
+          {queuedCount > 0 && (
+            <span className="taskboard-footer-queue">
+              {' · '}
+              {runningCount} running · {queuedCount} queued
+            </span>
+          )}{' '}
           · drag to reorder · click to select · ctrl+click or shift+click to multi-select · pencil to edit
         </div>
       </FloatingPanel>

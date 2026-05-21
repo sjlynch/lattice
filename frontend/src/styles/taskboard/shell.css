@@ -27,3 +27,9 @@
   font-size: 10.5px;
   color: var(--text-tertiary);
 }
+/* Spawn-queue activity ("N running · M queued") — emphasized so the user
+   can see why requested runs are waiting rather than starting. */
+.taskboard-footer-queue {
+  color: #bcd6fb;
+  font-weight: 600;
+}

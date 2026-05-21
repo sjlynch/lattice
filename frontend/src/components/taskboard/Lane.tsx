@@ -24,6 +24,7 @@ export function Lane({
   onMultiDropAt,
   onDelete,
   onRun,
+  onCancelQueuedRun,
   onResume,
   onMerge,
   getFocusTerminal,
@@ -50,6 +51,7 @@ export function Lane({
   onMultiDropAt: (ids: string[], status: TaskStatus, index: number) => void;
   onDelete: (id: string) => void;
   onRun: (task: Task) => void;
+  onCancelQueuedRun: (task: Task) => void;
   onResume: (task: Task) => void;
   onMerge: (task: Task) => Promise<boolean>;
   getFocusTerminal?: (task: Task) => (() => void) | null;
@@ -131,7 +133,16 @@ export function Lane({
                   onDragStart={() => onDragStart(t.id)}
                   onDragEnd={onDragEnd}
                   onDelete={() => onDelete(t.id)}
-                  onRun={lane.id === 'open' ? () => onRun(t) : undefined}
+                  onRun={
+                    lane.id === 'open' && !t.runQueued
+                      ? () => onRun(t)
+                      : undefined
+                  }
+                  onCancelQueuedRun={
+                    lane.id === 'open' && t.runQueued
+                      ? () => onCancelQueuedRun(t)
+                      : undefined
+                  }
                   onResume={
                     lane.id === 'in_progress' && t.worktreePath
                       ? () => onResume(t)
