@@ -1,6 +1,7 @@
 import express from 'express';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { killSession, killSessionsByCwd, listSessions, precreateSession } from '../terminal.js';
+import { ensureTrustedClaudeDir } from '../claudeTrust.js';
 import type { TerminalShutdown } from './shutdown.js';
 
 export function registerTerminalRoutes(
@@ -20,7 +21,12 @@ export function registerTerminalRoutes(
   // Pre-create a pty session without a WS subscriber. The route handlers in
   // the main backend call this so they can return a serverId synchronously;
   // the frontend then lazy-mounts <TerminalPane> and attaches via that id.
-  app.post('/sessions', (req, res) => {
+  // `async` so it can re-seed Claude trust before spawning — but Express 4
+  // does NOT forward an async rejection to the error middleware, so the body
+  // is wrapped and any throw is handed to `next` explicitly (preserving the
+  // JSON-only error surface this file guarantees).
+  app.post('/sessions', async (req, res, next) => {
+   try {
     const body = (req.body || {}) as {
       cwd?: string;
       cols?: number;
@@ -28,6 +34,20 @@ export function registerTerminalRoutes(
       initialCommand?: string;
       projectPath?: string;
     };
+    // Re-seed Claude's workspace-trust entry for `cwd` here, microseconds
+    // before pty.spawn. The spawn sites already pre-seed at session-setup
+    // time, but a queued spawn can sit in the admission queue for minutes
+    // before reaching here — and during that gap any *other* Claude process
+    // exiting rewrites the whole `~/.claude.json` from its own stale
+    // in-memory snapshot, silently dropping the trust entry we added (Claude
+    // never takes Lattice's mutex). Seeding again at this chokepoint shrinks
+    // the clobber window to near zero so an agent never stalls on the "Do you
+    // trust the files in this folder?" dialog. Best-effort + Claude-only:
+    // `ensureTrustedClaudeDir` swallows its own errors, and pi/codex have no
+    // such gate so seeding for them would just churn the config file.
+    if (body.cwd && /^\s*claude\b/.test(body.initialCommand ?? '')) {
+      await ensureTrustedClaudeDir(body.cwd);
+    }
     const result = precreateSession({
       cwd: body.cwd,
       cols: body.cols,
@@ -42,6 +62,9 @@ export function registerTerminalRoutes(
       return res.status(result.code === 'CAP' ? 503 : 500).json(result);
     }
     res.json({ id: result.id });
+   } catch (err) {
+    next(err);
+   }
   });
 
   // Kill all sessions whose cwd is inside the given directory.

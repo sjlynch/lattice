@@ -14,6 +14,18 @@
 // Read-mutate-write is serialized through a mkdir-based mutex because Claude
 // itself rewrites this file on shutdown (lastCost, lastSessionId, etc.) and
 // we'd otherwise lost-update each other.
+//
+// The mutex only orders writes that overlap *in time*. It cannot stop the
+// slower lost-update: Claude reads `~/.claude.json` once at startup, holds it
+// in memory for the whole session, and writes the entire object back on
+// shutdown. A trust entry added between that read and that write is silently
+// reverted. With many concurrent Lattice agents this happens routinely, so a
+// single pre-seed at session-setup time is not enough — a queued spawn can
+// sit in the admission queue while other agents exit and clobber it. The
+// terminal-server's `POST /sessions` handler therefore calls
+// `ensureTrustedClaudeDir` again, microseconds before `pty.spawn`, to shrink
+// that clobber window to near zero. The setup-time calls stay as an early
+// first layer; the spawn-time call is the one that actually closes the race.
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
