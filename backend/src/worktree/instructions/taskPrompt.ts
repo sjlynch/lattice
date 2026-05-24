@@ -44,7 +44,7 @@ export function renderTaskMarkdown(
    be:
 
    \`\`\`
-   curl -s -m 5 -X POST ${backendOrigin}/api/tasks/${task.id}/complete
+   curl -s -m 5 -X POST "${backendOrigin}/api/tasks/${task.id}/complete?source=model-explicit-curl"
    \`\`\`
 
    This is what moves the task to "Ready to Merge". Run it yourself — don't

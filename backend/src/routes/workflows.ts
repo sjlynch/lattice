@@ -75,9 +75,16 @@ export function buildWorkflowsRouter(backendOrigin: string): Router {
   });
 
   // Stop-hook callback fired when a workflow step's Claude session exits.
+  // `?source=` tagged by the caller (Claude Stop hook curl, Pi extension
+  // fetch, model explicit curl) so a duplicate or out-of-band fire can be
+  // traced to its origin in the logs.
   r.post('/api/workflow-runs/:runId/steps/:stepIndex/complete', async (req, res) => {
+    const source = typeof req.query.source === 'string' ? req.query.source : 'unknown';
     const stepIndex = parseInt(req.params.stepIndex, 10);
     if (isNaN(stepIndex)) return res.status(400).json({ error: 'invalid stepIndex' });
+    console.log(
+      `[workflow-step-complete] run=${req.params.runId} step=${stepIndex} source=${source}`,
+    );
     await completeWorkflowStep(req.params.runId, stepIndex, backendOrigin);
     res.json({ ok: true });
   });
@@ -131,10 +138,15 @@ export function buildWorkflowsRouter(backendOrigin: string): Router {
   });
 
   r.post('/api/workflow-prompt-customizations/:id/complete', async (req, res) => {
-    const request = await completeWorkflowPromptCustomization(
-      req.params.id,
-      (req.body || {}).prompt,
+    const source = typeof req.query.source === 'string' ? req.query.source : 'unknown';
+    const error = typeof req.query.error === 'string' ? req.query.error : undefined;
+    const prompt = (req.body || {}).prompt;
+    const promptLen = typeof prompt === 'string' ? prompt.length : 0;
+    console.log(
+      `[workflow-customization-complete] id=${req.params.id} source=${source} promptBytes=${promptLen}` +
+        (error ? ` backstop-error=${JSON.stringify(error)}` : ''),
     );
+    const request = await completeWorkflowPromptCustomization(req.params.id, prompt);
     if (!request) return res.status(404).json({ error: 'not found' });
     res.json({ ok: true });
   });

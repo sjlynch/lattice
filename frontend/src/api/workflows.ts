@@ -7,6 +7,7 @@ import type {
   StartWorkflowPromptCustomizationInput,
   Workflow,
   WorkflowPromptCustomization,
+  WorkflowRun,
   WorkflowRunEvent,
   WorkflowRunResult,
   WorkflowRunStartOptions,
@@ -70,6 +71,28 @@ export async function startWorkflow(
           }
         : {}),
     }),
+  );
+}
+
+// HTTP fallback for the active workflow runs of a project. Authoritative
+// snapshot of in-memory server state at the moment of the request. The
+// `/ws/workflow-runs` subscription's `hello` event covers the same thing on
+// connect — this exists so `useWorkflowRuns` can additively reconcile after
+// page mount / tab-visibility transitions where a WS event could have been
+// lost (e.g. backend restart with no resume; future-proofing for layer-2
+// run persistence).
+//
+// IMPORTANT: callers should treat the returned list as additive only — do
+// not remove runs from local state that the fetch omits, because the fetch
+// can race with a `completed` WS event that arrives in between query and
+// response. Removal is the WS's job.
+export async function fetchActiveWorkflowRuns(
+  projectPath: string,
+): Promise<WorkflowRun[]> {
+  return asJson<WorkflowRun[]>(
+    await fetch(
+      `/api/workflow-runs/active?project=${encodeURIComponent(projectPath)}`,
+    ),
   );
 }
 

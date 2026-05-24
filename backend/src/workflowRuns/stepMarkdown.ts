@@ -28,6 +28,12 @@ export function renderStepMarkdown(
   const canonicalProject = canonicalProjectPath(wf.projectPath);
   const encodedProject = encodeURIComponent(canonicalProject);
   const completeUrl = `${backendOrigin}/api/workflow-runs/${run.id}/steps/${stepIndex}/complete`;
+  // Pi/Codex completion instructions intentionally mirror LATTICE_TASK.md's
+  // strong autonomy framing: the workflow is sequential and the run will not
+  // advance to the next step until /complete fires. Pi gets a brief note that
+  // a session_shutdown extension is installed as a backstop — useful so the
+  // model knows abnormal exits won't strand the run, but it's not framed as a
+  // permission to skip the explicit curl (the backstop is best-effort).
   const completionInstructions =
     harness === 'claude'
       ? [
@@ -36,17 +42,44 @@ export function renderStepMarkdown(
           'be queued.',
         ]
       : [
-          'After creating all the tasks described above, POST the completion callback',
-          'yourself as the final action so Lattice can queue the next workflow step:',
+          '**Final step — tell Lattice this step is done (do not skip this).**',
+          'The workflow will not advance to the next step until this URL is POSTed.',
+          'Run this as your *last* action — do not end your turn before it succeeds:',
+          '',
           '```bash',
-          `curl -s -m 5 -X POST ${completeUrl}`,
+          `curl -s -m 5 -X POST "${completeUrl}?source=model-explicit-curl"`,
           '```',
+          ...(harness === 'pi'
+            ? [
+                '',
+                'A `session_shutdown` extension (`.pi/extensions/lattice-complete.ts`)',
+                'in this directory will fire the same callback as a backstop if your',
+                "session exits without running the curl — but it's best-effort, so",
+                'always run the curl yourself.',
+              ]
+            : []),
         ];
+  const autonomyPreamble =
+    harness === 'claude'
+      ? ''
+      : [
+          '> **This is an autonomous workflow-step session — there is no user',
+          '> watching to confirm with, and the run will not be picked up again',
+          "> if you stop early.** Work through the whole step to completion in",
+          '> this same session, without pausing to ask for permission or approval.',
+          '> That includes the wrap-up: create the tasks described below and POST',
+          "> the `/complete` callback at the very end. Stopping after \"I created",
+          "> the tasks\" — without calling `/complete` — leaves the workflow run",
+          "> stuck on this step and the next step never spawns. Don't end your",
+          "> turn until you've run the curl below.",
+          '',
+        ].join('\n');
   return [
     `# Workflow Step ${stepIndex + 1} of ${wf.steps.length}: ${step.title}`,
     '',
     '## Your Task',
     '',
+    autonomyPreamble,
     step.prompt,
     '',
     '## Active project (use ONLY this one)',
@@ -58,6 +91,15 @@ export function renderStepMarkdown(
     "can't accidentally hit a different project's board. If you do use curl,",
     'verify the response\'s `canonicalProject` field matches the path above',
     'before acting on the data.',
+    '',
+    '## Reading the board — query the API, not local files',
+    '',
+    'The live task DB is the API. **Do not read `tasks.json`, `tasks-current.json`,',
+    '`combined-tasks.json`, `lattice_tasks.json`, or any similar file you find',
+    'in this directory or sibling workflow-step directories** — those are stale',
+    'scratch dumps left by previous agents and they will mislead you (the canonical',
+    "example: they often miss whole lanes like 'qa' or 'ready_to_merge'). Always",
+    "use `node create-task.cjs --list` or the API; that's the source of truth.",
     ...(run.harnessOverride
       ? [
           '',

@@ -34,11 +34,17 @@ export async function writePostAddWorktreeFiles(
   // harness: a Pi/Codex task that later hits a merge conflict spawns a
   // *Claude* resolver, which relies on this hook to call `/complete`.
   await installStopHook(worktreePath, task.id, backendOrigin);
-  // Pi has no command-hook mechanism; install its TypeScript-extension
-  // equivalent so the in-worktree Pi session reports completion on exit.
-  if (harness === 'pi') {
-    await installPiCompletionExtension(worktreePath, task.id, backendOrigin);
-  }
+  // Always install the Pi completion extension too (defence-in-depth):
+  // historically gated on harness === 'pi', but installing unconditionally
+  // means a mid-task harness switch (resume under a different harness,
+  // operator opening a Pi prompt in the worktree) still has the backstop.
+  // Pi auto-loads `.pi/extensions/*.ts`; nothing else sees the file. The
+  // file is excluded from `git status` via writeWorktreeExclude below.
+  await installPiCompletionExtension(worktreePath, task.id, backendOrigin);
+  console.log(
+    `[task-worktree] installed Claude+Pi backstops for task ${task.id} ` +
+      `(active harness=${harness}, worktree=${worktreePath})`,
+  );
   // Keep Lattice-managed files out of `git status` so Claude's `git add .`
   // never stages them. Writes to the worktree-local exclude (not the repo
   // .gitignore) so the project's tracked files are untouched.

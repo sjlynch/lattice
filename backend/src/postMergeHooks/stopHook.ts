@@ -1,28 +1,6 @@
-import path from 'node:path';
-import fs from 'node:fs/promises';
 import { installClaudeStopHook } from '../claudeStopHook.js';
 import type { AgentHarness } from '../harnesses.js';
-
-// Pi extension content for the hook scratch dir. Mirrors
-// worktree/stopHook.ts:renderPiCompletionExtension, except it points at the
-// post-merge-hook callback rather than a task /complete URL. Inlined (vs.
-// re-using the worktree helper with a URL swap) so byte changes to the
-// extension contract stay co-located with the hook surface.
-function renderPostMergeHookPiExtension(callbackUrl: string): string {
-  return `// Lattice-managed — do not commit. Reports post-merge-hook completion to
-// Lattice when the Pi session exits.
-export default function (pi) {
-  pi.on("session_shutdown", async (event) => {
-    if (event && event.reason && event.reason !== "quit") return;
-    try {
-      await fetch(${JSON.stringify(callbackUrl)}, { method: "POST" });
-    } catch {
-      // best-effort, same as the curl-based Stop hook
-    }
-  });
-}
-`;
-}
+import { installPiCompletionExtension } from '../piExtension.js';
 
 export function postMergeHookCallbackUrl(
   id: string,
@@ -43,29 +21,42 @@ export function postMergeHookCallbackUrl(
 // agent, so Claude picks up the scratch `.claude/settings.local.json` while
 // the model still operates against the project repo via explicit absolute
 // paths in POST_MERGE_HOOK.md.
+//
+// Defence-in-depth (the "always install both" rule, see piExtension.ts):
+// we always install the Claude Stop hook AND the Pi extension regardless
+// of harness, so a mid-run harness switch (e.g. the user respawns under a
+// different harness) doesn't lose the backstop. The unused hook is inert
+// — only the harness that actually runs reads it. Codex still has no
+// backstop and must explicitly curl per POST_MERGE_HOOK.md.
+//
+// Pi gate: this site has no PTY-kill side effect, so we disable the
+// `reason === 'quit'` gate — abnormal exits should still produce a
+// callback or the merge-run stays blocked forever.
 export async function installPostMergeHookStopHook(args: {
   scratchDir: string;
   id: string;
   backendOrigin: string;
+  // `harness` is retained for logging/observability but is no longer used
+  // to gate installation — see the defence-in-depth note above.
   harness: AgentHarness;
 }): Promise<void> {
   const { scratchDir, id, backendOrigin, harness } = args;
   const callbackUrl = postMergeHookCallbackUrl(id, backendOrigin);
-  if (harness === 'claude') {
-    await installClaudeStopHook(scratchDir, callbackUrl);
-    return;
-  }
-  if (harness === 'pi') {
-    const extDir = path.join(scratchDir, '.pi', 'extensions');
-    await fs.mkdir(extDir, { recursive: true });
-    await fs.writeFile(
-      path.join(extDir, 'lattice-complete.ts'),
-      renderPostMergeHookPiExtension(callbackUrl),
-      'utf8',
-    );
-    return;
-  }
-  // Codex: no Stop hook / extension. POST_MERGE_HOOK.md tells the model to
-  // curl the callback itself, and Lattice has no other backstop. The user
-  // accepts that risk by selecting Codex for the hook harness.
+  // Stop-hook URL carries `?source=` so the /complete log line can identify
+  // the firing mechanism (Stop hook curl vs Pi extension fetch vs model
+  // explicit curl). Pi extension does the same via piExtension.ts.
+  await installClaudeStopHook(
+    scratchDir,
+    `${callbackUrl}?source=claude-stop-hook-post-merge-hook-complete`,
+  );
+  await installPiCompletionExtension({
+    dir: scratchDir,
+    callbackUrl,
+    site: 'post-merge-hook-complete',
+    respectQuitGate: false,
+  });
+  console.log(
+    `[post-merge-hook] installed Claude+Pi backstops for ${id} ` +
+      `(active harness=${harness}, scratch=${scratchDir})`,
+  );
 }

@@ -85,6 +85,5 @@ export {
 export {
   installPiCompletionExtension,
   installStopHook,
-  renderPiCompletionExtension,
   renderStopHookJson,
 } from './stopHook.js';

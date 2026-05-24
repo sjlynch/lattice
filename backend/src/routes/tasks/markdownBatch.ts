@@ -1,32 +1,172 @@
-// Parse a markdown body into a list of {title, description?} tasks. Each
-// `# ` heading starts a new task; lines below it (until the next heading)
-// are the description. Lines before the first heading are ignored.
+// Markdown ↔ tasks grammar. Shared by /api/tasks/batch (legacy create),
+// PATCH /api/tasks/:id, /append-summary, GET ?format=markdown, and
+// POST /api/tasks/upsert.
+//
+// Grammar:
+//   <!-- lattice: project=..., hash=..., status=... -->     (optional frontmatter)
+//   # {id=t_abc, status=open} Title text                    (metadata block optional)
+//   description body lines...
+//   # Next task title
+//   description...
+//
+// The metadata block `{key=value, ...}` accepts `,` or whitespace as the
+// separator between fields. Only the first level-1 heading (`#` not `##`)
+// starts a new task; subheadings inside a description are body content.
+// Lines inside fenced code blocks (``` or ~~~) are body even if they look
+// like headings. Lines before the first heading (after the optional
+// frontmatter) are ignored.
 //
 // Why this exists: building a JSON array of tasks with multi-line
-// descriptions in a shell is brutal — every backslash, quote, and
-// newline needs escaping. A heredoc with single-quoted EOF passes
-// markdown through *literally*, no escaping at all. This is the
-// difference between a 5-line curl invocation and a 300-line python
-// script when an agent wants to seed many tasks at once.
-export function parseMarkdownTasks(md: string): Array<{ title: string; description?: string }> {
-  const lines = md.split(/\r?\n/);
-  const out: Array<{ title: string; description: string[] }> = [];
-  let current: { title: string; description: string[] } | null = null;
-  for (const line of lines) {
-    const heading = /^#\s+(.+?)\s*$/.exec(line);
-    if (heading) {
-      if (current) out.push(current);
-      current = { title: heading[1], description: [] };
-    } else if (current) {
-      current.description.push(line);
-    }
-    // pre-heading lines are dropped intentionally
+// descriptions in a shell is brutal — every backslash, quote, and newline
+// needs escaping. A heredoc with single-quoted EOF passes markdown through
+// literally, no escaping at all.
+
+export interface ParsedTaskBlock {
+  /** From `{id=...}` in the heading metadata block. */
+  id?: string;
+  /** From `{status=...}` in the heading metadata block. */
+  status?: string;
+  title: string;
+  description?: string;
+}
+
+export interface ParsedMarkdownDoc {
+  /** From `<!-- lattice: project=... -->` frontmatter, if present. */
+  project?: string;
+  /** From `<!-- lattice: ... hash=... -->` frontmatter, if present. */
+  hash?: string;
+  tasks: ParsedTaskBlock[];
+}
+
+const FRONTMATTER_RE = /^<!--\s*lattice:\s*(.+?)\s*-->\s*$/;
+const HEADING_RE = /^#\s+(?:\{([^}]*)\}\s*)?(.+?)\s*$/;
+const FENCE_RE = /^(?:```|~~~)/;
+
+function parseMetadataBlock(raw: string): Record<string, string> {
+  // Accept `,` or whitespace as separator: `id=t_abc, status=open` or `id=t_abc status=open`.
+  const out: Record<string, string> = {};
+  for (const part of raw.split(/[,\s]+/)) {
+    if (!part) continue;
+    const eq = part.indexOf('=');
+    if (eq <= 0) continue;
+    const key = part.slice(0, eq).trim();
+    const value = part.slice(eq + 1).trim();
+    if (key) out[key] = value;
   }
-  if (current) out.push(current);
-  return out
-    .filter((t) => t.title.trim())
-    .map((t) => {
-      const desc = t.description.join('\n').trim();
-      return desc ? { title: t.title, description: desc } : { title: t.title };
-    });
+  return out;
+}
+
+export function parseMarkdownDoc(md: string): ParsedMarkdownDoc {
+  const lines = md.split(/\r?\n/);
+  const doc: ParsedMarkdownDoc = { tasks: [] };
+  let current: { meta: Record<string, string>; title: string; body: string[] } | null = null;
+  let inFence = false;
+  let sawFirstNonBlank = false;
+
+  for (const line of lines) {
+    // Optional frontmatter — only honored as the first non-blank line.
+    if (!sawFirstNonBlank && line.trim()) {
+      sawFirstNonBlank = true;
+      const fm = FRONTMATTER_RE.exec(line);
+      if (fm) {
+        const fields = parseMetadataBlock(fm[1]);
+        if (fields.project) doc.project = fields.project;
+        if (fields.hash) doc.hash = fields.hash;
+        continue;
+      }
+    } else if (!sawFirstNonBlank) {
+      // leading blank lines: skip
+      continue;
+    }
+
+    if (FENCE_RE.test(line)) {
+      inFence = !inFence;
+      if (current) current.body.push(line);
+      continue;
+    }
+    if (!inFence) {
+      const h = HEADING_RE.exec(line);
+      if (h) {
+        if (current) doc.tasks.push(finalizeBlock(current));
+        const meta = h[1] ? parseMetadataBlock(h[1]) : {};
+        current = { meta, title: h[2], body: [] };
+        continue;
+      }
+    }
+    if (current) current.body.push(line);
+    // pre-first-heading lines are dropped intentionally
+  }
+  if (current) doc.tasks.push(finalizeBlock(current));
+  return doc;
+}
+
+function finalizeBlock(b: {
+  meta: Record<string, string>;
+  title: string;
+  body: string[];
+}): ParsedTaskBlock {
+  const description = b.body.join('\n').trim();
+  const out: ParsedTaskBlock = { title: b.title.trim() };
+  if (b.meta.id) out.id = b.meta.id;
+  if (b.meta.status) out.status = b.meta.status;
+  if (description) out.description = description;
+  return out;
+}
+
+// Back-compat: the original markdown-batch path only needs {title, description?}.
+export function parseMarkdownTasks(md: string): Array<{ title: string; description?: string }> {
+  return parseMarkdownDoc(md)
+    .tasks.filter((t) => t.title)
+    .map((t) => (t.description ? { title: t.title, description: t.description } : { title: t.title }));
+}
+
+export interface SerializableTask {
+  id: string;
+  title: string;
+  description?: string;
+  status: string;
+}
+
+export interface SerializeMeta {
+  project?: string;
+  canonicalProject?: string;
+  hash?: string;
+  /** Comma-joined status filter the caller passed (echoed in frontmatter). */
+  statusFilter?: string;
+}
+
+export function serializeTasksAsMarkdown(
+  tasks: SerializableTask[],
+  meta?: SerializeMeta,
+): string {
+  const parts: string[] = [];
+  const fmFields: string[] = [];
+  if (meta?.canonicalProject) fmFields.push(`project=${meta.canonicalProject}`);
+  if (meta?.hash) fmFields.push(`hash=${meta.hash}`);
+  if (meta?.statusFilter) fmFields.push(`status=${meta.statusFilter}`);
+  if (fmFields.length > 0) {
+    parts.push(`<!-- lattice: ${fmFields.join(', ')} -->`);
+    parts.push('');
+    parts.push(
+      '<!-- Edit titles/descriptions freely, then POST back to /api/tasks/upsert -->',
+    );
+    parts.push(
+      '<!-- Headings with {id=...} update existing tasks; headings without an id create new ones -->',
+    );
+    parts.push('');
+  }
+  if (tasks.length === 0) {
+    parts.push('<!-- no tasks -->');
+    return parts.join('\n') + '\n';
+  }
+  for (const t of tasks) {
+    const metaBlock = `{id=${t.id}, status=${t.status}}`;
+    parts.push(`# ${metaBlock} ${t.title}`);
+    if (t.description && t.description.trim()) {
+      parts.push('');
+      parts.push(t.description.trimEnd());
+    }
+    parts.push('');
+  }
+  return parts.join('\n');
 }

@@ -36,11 +36,18 @@ export function buildPostMergeHooksRouter(): Router {
 
   r.post('/api/post-merge-hooks/:id/complete', (req, res) => {
     const id = req.params.id;
+    const source =
+      typeof req.query.source === 'string' ? req.query.source : 'unknown';
     const errParam =
       typeof req.query.error === 'string' && req.query.error.trim()
         ? req.query.error.trim().slice(0, 500)
         : undefined;
     const existing = getPostMergeHook(id);
+    console.log(
+      `[post-merge-hook-complete] id=${id} source=${source}` +
+        (errParam ? ` error=${JSON.stringify(errParam)}` : '') +
+        (existing ? '' : ' (idempotent: already finished/forgotten)'),
+    );
     if (!existing) {
       // Idempotent — a duplicate POST after the hook has been forgotten is a
       // no-op. The harness may have curled twice (explicit + Stop hook).

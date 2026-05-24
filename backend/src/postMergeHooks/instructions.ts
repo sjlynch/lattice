@@ -64,7 +64,7 @@ When you're done (success **or** failure), curl this URL exactly once before
 exiting:
 
 \`\`\`
-curl -s -m 5 -X POST ${callbackUrl}
+curl -s -m 5 -X POST "${callbackUrl}?source=model-explicit-curl"
 \`\`\`
 
 ${stopHookNote}
@@ -74,7 +74,7 @@ If something went wrong and you cannot finish, still call the URL — pass
 instead of leaving the merge run blocked. Example:
 
 \`\`\`
-curl -s -m 5 -X POST "${callbackUrl}?error=tests%20failed"
+curl -s -m 5 -X POST "${callbackUrl}?source=model-explicit-curl&error=tests%20failed"
 \`\`\`
 `;
 }

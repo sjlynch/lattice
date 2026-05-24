@@ -31,6 +31,15 @@ HTTP API below directly — don't ask how to reach it.
 
 ## Recipes
 
+### Anti-pattern: don't trust `.lattice/**/tasks*.json` files
+
+If you find files like `.lattice/workflow-steps/*/tasks.json`,
+`tasks-current.json`, `combined-tasks.json`, `lattice_tasks.json`, etc.,
+**those are stale scratch from previous agents — not the source of
+truth.** The live task DB is the API. Always query
+`$LATTICE_API_URL/api/tasks?project=$LATTICE_PROJECT`. Don't grep the
+filesystem to "find" tasks.
+
 ### Seeding many tasks at once — markdown body (any shell, zero escaping)
 
 The simplest way to batch-create tasks. A heredoc with single-quoted
@@ -157,14 +166,101 @@ irm -Method Post -Uri "$env:LATTICE_API_URL/api/tasks/batch" -ContentType 'appli
 
 ### Update a task
 
+For a single field (like flipping status), JSON is fine:
+```bash
+curl -s -X PATCH "$LATTICE_API_URL/api/tasks/$id" \
+  -H "Content-Type: application/json" -d '{"status":"qa"}'
+```
+
 ```pwsh
 irm -Method Patch -Uri "$env:LATTICE_API_URL/api/tasks/$id" `
     -ContentType 'application/json' -Body (@{ status = 'qa' } | ConvertTo-Json)
 ```
 
+### Replace a task's description with markdown — heredoc, zero escaping
+
+This is the killer ergonomics path for refining long task descriptions.
+The body is taken literally; if you include a `# Heading` it becomes the
+new title and the lines below it become the new description. No heading?
+The whole body just replaces the description.
+
 ```bash
 curl -s -X PATCH "$LATTICE_API_URL/api/tasks/$id" \
-  -H "Content-Type: application/json" -d '{"status":"qa"}'
+  -H "Content-Type: text/markdown" --data-binary @- <<'EOF'
+# Refined task title
+
+Use react-flow (MIT-licensed) for the node/canvas mode. Specifically:
+- Custom node renderer wired to the existing sprite extension styles.
+- Edge type "smoothstep"; preserve the OrbitControls polar clamp.
+- Drag-to-pan, scroll-to-zoom, pinch on touch devices.
+
+Avoid d3-zoom directly — react-flow already wraps it.
+EOF
+```
+
+PowerShell — single-quoted here-string passes the body through literally:
+```pwsh
+$body = @'
+# Refined task title
+
+Use react-flow (MIT-licensed) for the node/canvas mode.
+Multi-line is fine. "Quotes" and \backslashes\ pass through untouched.
+'@
+irm -Method Patch -Uri "$env:LATTICE_API_URL/api/tasks/$id" `
+    -ContentType 'text/markdown' -Body $body
+```
+
+### Update many tasks at once
+
+Two paths, pick whichever fits your flow.
+
+**JSON bulk-update** — one round trip, N patches, no shell loop:
+```bash
+curl -s -X POST "$LATTICE_API_URL/api/tasks/bulk-update" \
+  -H "Content-Type: application/json" -d '{
+    "updates": [
+      { "id": "t_abc", "description": "new description here" },
+      { "id": "t_def", "title": "new title", "status": "qa" }
+    ]
+  }'
+```
+
+**Markdown round-trip** — when you want to refine many long descriptions
+and/or mix in brand-new tasks. The natural flow is:
+
+```bash
+# 1. Fetch the lane as a markdown document
+curl -sG "$LATTICE_API_URL/api/tasks" \
+  --data-urlencode "project=$LATTICE_PROJECT" \
+  --data-urlencode "status=backlog" \
+  --data-urlencode "format=markdown" > /tmp/backlog.md
+
+# 2. Edit /tmp/backlog.md however you like:
+#    - Keep `# {id=t_abc, status=backlog} ...` headings on tasks you want
+#      to UPDATE (edit the title or body freely).
+#    - Add new `# Title` headings (no {id=...}) for tasks to CREATE.
+#    - Leave tasks you don't want to touch out of the doc entirely.
+
+# 3. POST it back
+curl -s -X POST "$LATTICE_API_URL/api/tasks/upsert?project=$LATTICE_PROJECT" \
+  -H "Content-Type: text/markdown" --data-binary @/tmp/backlog.md
+```
+
+The upsert is **additive only** — tasks NOT in the document are left
+untouched. To delete a task, use `DELETE /api/tasks/:id` explicitly.
+
+Document shape (what GET emits and POST accepts):
+```markdown
+<!-- lattice: project=C:/dev/foo, hash=3f9a2b1c8e7d, status=backlog -->
+
+# {id=t_abc, status=backlog} An existing task
+its description, multi-line, code fences, whatever.
+
+# {id=t_def, status=open} Another existing task
+description here. Change `status=open` to `status=qa` to move it.
+
+# A brand-new task
+description for the new task. No {id=...} → create.
 ```
 
 ### Bulk status transition
@@ -190,14 +286,16 @@ curl -s -X POST "$LATTICE_API_URL/api/tasks/transition" \
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET    | /api/projects                      | List indexed project roots: `[{ path, hash }, ...]` |
-| GET    | /api/tasks?project=&status=        | List tasks (envelope: `{project, canonicalProject, hash, count, mismatched, tasks}`); `status` optional, comma-separated |
+| GET    | /api/tasks?project=&status=&format= | List tasks (envelope: `{project, canonicalProject, hash, count, mismatched, tasks}`); `status` optional, comma-separated; `format=markdown` returns a round-trippable doc for `/upsert` |
 | GET    | /api/tasks/summary?project=        | Counts envelope: `{project, canonicalProject, hash, total, mismatched, byStatus}` |
 | GET    | /api/tasks/:id                     | Fetch one task |
 | POST   | /api/tasks                         | Create one (JSON, form-encoded, or query-string `project`) |
 | POST   | /api/tasks/batch                   | Create many — JSON `{tasks:[...]}` OR `text/markdown` body |
+| POST   | /api/tasks/upsert                  | Markdown round-trip: `{id=...}` headings update, no-id headings create. Additive (never deletes) |
+| POST   | /api/tasks/bulk-update             | JSON `{updates:[{id, title?, description?, status?}]}` — N patches, one round trip |
 | POST   | /api/tasks/transition              | Bulk status move `{ids?, fromStatus?, status}` |
-| PATCH  | /api/tasks/:id                     | Update title / description / status |
-| POST   | /api/tasks/:id/append-summary      | Append a summary section to the existing description |
+| PATCH  | /api/tasks/:id                     | Update title / description / status. Accepts JSON OR `text/markdown` body (replaces description; `# Heading` replaces title too) |
+| POST   | /api/tasks/:id/append-summary      | Append a summary section. JSON `{summary}` OR `text/markdown` body |
 | DELETE | /api/tasks/:id                     | Remove a task |
 | POST   | /api/tasks/:id/run                 | Spawn worktree + Claude on an open task |
 | POST   | /api/tasks/:id/resume              | Re-spawn Claude in an existing worktree |

@@ -3,6 +3,7 @@ import { ListChecks } from 'lucide-react';
 import { FloatingPanel } from '../FloatingPanel';
 import { ErrorToast } from '../shared/ErrorToast';
 import { WorkflowEditorPanel } from './WorkflowEditorPanel';
+import { WorkflowRecentFailureChip } from './WorkflowRecentFailureChip';
 import { WorkflowRunChip } from './WorkflowRunChip';
 import { WorkflowRunsAside } from './WorkflowRunsAside';
 import { WorkflowsSavedList } from './WorkflowsSavedList';
@@ -40,6 +41,11 @@ export function WorkflowsLauncher({ activeFolder, scanResult }: Props) {
 
       <WorkflowRunChip
         activeRunList={manager.activeRunList}
+        onOpen={() => setOpen(true)}
+      />
+
+      <WorkflowRecentFailureChip
+        failedRuns={manager.recentFailedRunList}
         onOpen={() => setOpen(true)}
       />
 

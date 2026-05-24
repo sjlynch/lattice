@@ -15,3 +15,15 @@ export function submitScriptFile(cwd: string): string {
 export function submittedPromptFile(cwd: string): string {
   return path.join(cwd, 'CUSTOMIZED_PROMPT.submitted.md');
 }
+
+// CJS helper invoked by the Claude Stop hook as a fail-soft backstop —
+// reads `CUSTOMIZED_PROMPT.md` and POSTs it as JSON, falling back to a
+// `?error=` POST if the file is missing so the request leaves `running`.
+// See backstopScripts.ts.
+export function backstopScriptFile(cwd: string): string {
+  return path.join(cwd, 'lattice-customization-backstop.cjs');
+}
+
+export function customizedPromptFile(cwd: string): string {
+  return path.join(cwd, 'CUSTOMIZED_PROMPT.md');
+}

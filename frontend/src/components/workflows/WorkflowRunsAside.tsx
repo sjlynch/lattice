@@ -1,4 +1,4 @@
-import { Square } from 'lucide-react';
+import { Square, X } from 'lucide-react';
 import type { WorkflowManager } from './hooks/useWorkflowManager';
 import { QueuePanel } from './QueuePanel';
 import { workflowHarnessOverrideLabel } from './workflowHarnessOverride';
@@ -8,7 +8,7 @@ type Props = {
 };
 
 export function WorkflowRunsAside({ manager }: Props) {
-  const { activeRunList, actions } = manager;
+  const { activeRunList, recentFailedRunList, actions } = manager;
 
   return (
     <aside className="workflows-runs">
@@ -54,6 +54,39 @@ export function WorkflowRunsAside({ manager }: Props) {
           </div>
         )}
       </div>
+
+      {recentFailedRunList.length > 0 && (
+        // Recently-failed runs (errored or cancelled) linger ~5min in the
+        // recent-runs map so a user who looked away from the screen still
+        // sees them when they return. Per-run dismiss removes them sooner.
+        <div className="workflows-runs-section">
+          <div className="workflows-runs-section-title">Recently failed</div>
+          <div className="workflows-runs-list">
+            {recentFailedRunList.map((run) => {
+              const label = run.status === 'errored' ? 'Errored' : 'Cancelled';
+              return (
+                <div key={run.id} className="workflows-run-card failed">
+                  <div className="workflows-run-card-main">
+                    <span className="workflows-run-card-name">{run.workflowName}</span>
+                    <span className="workflows-run-card-meta">
+                      {label}
+                      {run.error ? ` — ${run.error}` : ''}
+                    </span>
+                  </div>
+                  <button
+                    className="icon-btn sm"
+                    onClick={() => actions.dismissRecent(run.id)}
+                    aria-label="Dismiss"
+                    title="Dismiss"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

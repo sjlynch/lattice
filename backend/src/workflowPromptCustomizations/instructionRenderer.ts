@@ -7,9 +7,48 @@ export function renderCustomizationInstructions(
     ? `Template type: ${request.templateTitle ?? request.templateId}`
     : 'Template type: custom user-authored workflow step';
   const customInstructions = request.customInstructions?.trim();
+  // Non-Claude harnesses get the same strong autonomy preamble as
+  // LATTICE_TASK.md / WORKFLOW_STEP.md: this is an unwatched session, the
+  // turn won't be picked up again, run the submit script as the final
+  // action. Claude relies on its Stop hook (which now invokes the
+  // backstop script — see backstopScripts.ts) so its preamble stays light.
+  const autonomyPreamble =
+    request.harness === 'claude'
+      ? ''
+      : [
+          '> **This is an autonomous prompt-customization session — no user is',
+          "> watching to confirm with, and the turn won't be picked up again.**",
+          '> Inspect the project, write `CUSTOMIZED_PROMPT.md`, and run the',
+          '> submit script as your final action. The UI is blocked on this',
+          '> callback — stopping after "I wrote the file" without submitting',
+          '> leaves the customization stuck in "running" forever.',
+          '',
+        ].join('\n');
+  const backstopNote =
+    request.harness === 'claude'
+      ? [
+          '> Backstop: a Stop hook in `.claude/settings.local.json` will invoke',
+          '> the backstop script automatically when your session exits — but',
+          '> still run the submit script yourself so the callback fires while',
+          '> the user is watching the UI rather than at session-exit time.',
+        ].join('\n')
+      : request.harness === 'pi'
+      ? [
+          '> Backstop: a `session_shutdown` extension in',
+          '> `.pi/extensions/lattice-complete.ts` will read',
+          '> `CUSTOMIZED_PROMPT.md` and POST it for you if your session exits',
+          '> without running the submit script — best-effort only, so always',
+          '> run the submit script as your final action.',
+        ].join('\n')
+      : [
+          '> No automatic backstop is installed for this harness — you MUST',
+          '> run the submit script yourself or the customization will hang',
+          '> in "running" forever.',
+        ].join('\n');
   return [
     `# Customize workflow prompt: ${request.stepTitle || 'Untitled step'}`,
     '',
+    autonomyPreamble,
     'You are customizing a Lattice workflow step prompt for the active project.',
     'Do not edit project files, do not create tasks, and do not commit anything.',
     '',
@@ -49,5 +88,7 @@ export function renderCustomizationInstructions(
     '```',
     '',
     'After the callback succeeds, stop. The browser will update the workflow step automatically.',
+    '',
+    backstopNote,
   ].join('\n');
 }

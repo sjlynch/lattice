@@ -99,3 +99,20 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Failure variant — recently-errored/cancelled workflow runs.
+   Distinct color so a user returning to the screen instantly notices it
+   sitting alongside the (possibly absent) active-runs chip. */
+.wf-run-chip.failure {
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #fda4af;
+  background: linear-gradient(135deg, #2a1d22 0%, #211b20 100%);
+}
+.wf-run-chip.failure:hover {
+  border-color: rgba(248, 113, 113, 0.7);
+  background: linear-gradient(135deg, #3a242d 0%, #2a1e25 100%);
+}
+.wf-run-chip-failure-icon {
+  flex: 0 0 auto;
+  color: #fda4af;
+}

@@ -6,6 +6,7 @@ import {
   handleProjectsList,
   handleTaskAppendSummary,
   handleTaskBatchCreate,
+  handleTaskBulkUpdate,
   handleTaskCancelQueuedRun,
   handleTaskCreate,
   handleTaskDelete,
@@ -15,7 +16,16 @@ import {
   handleTaskSummary,
   handleTaskTransition,
   handleTaskUpdate,
+  handleTaskUpsert,
 } from './crudHandlers.js';
+
+// Body parser shared by every route that accepts markdown OR plain-text
+// bodies in addition to JSON. Lets agents pipe heredocs through curl with
+// zero JSON escaping.
+const textOrMarkdownBody = textBodyParser({
+  type: ['text/markdown', 'text/plain'],
+  limit: '1mb',
+});
 
 export function buildTaskCrudRouter(): Router {
   const r = Router();
@@ -45,11 +55,16 @@ export function buildTaskCrudRouter(): Router {
   // Markdown is the killer ergonomics path for shell agents: a heredoc
   // with single-quoted 'EOF' passes the body through with zero escaping.
   // Returns the created tasks in declaration order.
-  r.post(
-    '/api/tasks/batch',
-    textBodyParser({ type: 'text/markdown', limit: '1mb' }),
-    handleTaskBatchCreate,
-  );
+  r.post('/api/tasks/batch', textOrMarkdownBody, handleTaskBatchCreate);
+
+  // Bulk update — N {id, patch} updates in one round trip. JSON only;
+  // multi-line descriptions go through the markdown upsert path below.
+  r.post('/api/tasks/bulk-update', handleTaskBulkUpdate);
+
+  // Upsert from markdown (or JSON). Headings with `{id=...}` update
+  // existing tasks; headings without an id create new ones. The natural
+  // partner to GET /api/tasks?format=markdown for round-trip editing.
+  r.post('/api/tasks/upsert', textOrMarkdownBody, handleTaskUpsert);
 
   // Bulk status transition. Saves agents from N PATCH round trips when
   // they're shepherding a batch of tasks (e.g. "mark every qa task done"
@@ -62,11 +77,16 @@ export function buildTaskCrudRouter(): Router {
 
   r.get('/api/tasks/:id', handleTaskGet);
 
-  r.patch('/api/tasks/:id', handleTaskUpdate);
+  // PATCH accepts JSON or text/markdown / text/plain. Markdown body
+  // replaces the description (and the title, if a `# Heading` is present).
+  // Avoids JSON quoting hell for multi-line description refinements.
+  r.patch('/api/tasks/:id', textOrMarkdownBody, handleTaskUpdate);
 
   r.post('/api/tasks/reorder', handleTaskReorder);
 
-  r.post('/api/tasks/:id/append-summary', handleTaskAppendSummary);
+  // /append-summary accepts JSON ({summary}) or text/markdown / text/plain
+  // (whole body becomes the summary).
+  r.post('/api/tasks/:id/append-summary', textOrMarkdownBody, handleTaskAppendSummary);
 
   // Drop a queued task run back to a plain Open task.
   r.post('/api/tasks/:id/cancel-queued-run', handleTaskCancelQueuedRun);

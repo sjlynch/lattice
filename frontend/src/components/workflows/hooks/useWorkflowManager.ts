@@ -73,6 +73,19 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     [activeRuns],
   );
 
+  // Recently-finished runs that ended in failure (errored or cancelled). These
+  // linger ~5min in `recentRuns` (vs ~10s for completed) so the user has a
+  // chance to spot a failure they otherwise wouldn't have seen — see
+  // `useWorkflowRuns` for the linger policy. Surfaced as a small navbar chip
+  // and a section in the runs aside.
+  const recentFailedRunList = useMemo(
+    () =>
+      Object.values(recentRuns)
+        .filter((r) => r.status === 'errored' || r.status === 'cancelled')
+        .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0)),
+    [recentRuns],
+  );
+
   const runActions = useWorkflowRunActions({
     editor,
     workflowsById,
@@ -150,6 +163,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     activeRuns,
     activeRunList,
     recentRuns,
+    recentFailedRunList,
     runForEditor,
     controlProgressForEditor,
     recentForEditor,

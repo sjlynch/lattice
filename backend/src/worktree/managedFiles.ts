@@ -34,12 +34,17 @@ export const LATTICE_OWNED_FILE_PATHS = [
 // Patterns for the worktree-local exclude file. STASH_CONFLICT_*.md is a
 // glob (one per task plus a `_run.md` for run-level stashes), so a
 // pattern is needed rather than an exact path.
+//
+// `.pi/extensions/lattice-last-shutdown.json` is the sentinel audit log
+// written by the hardened Pi completion extension (see piExtension.ts) —
+// regenerated on each Pi session_shutdown, never tracked.
 export const LATTICE_EXCLUDE_PATTERNS = [
   'LATTICE_TASK.md',
   'MERGE_INSTRUCTIONS.md',
   'STASH_CONFLICT_*.md',
   '.claude/settings.local.json',
   '.pi/extensions/lattice-complete.ts',
+  '.pi/extensions/lattice-last-shutdown.json',
 ] as const;
 
 // .gitignore entries appended to the project's repo-root .gitignore.
@@ -53,6 +58,7 @@ export const LATTICE_GITIGNORE_ENTRIES = [
   '.claude/settings.local.json',
   '.lattice/',
   '.pi/extensions/lattice-complete.ts',
+  '.pi/extensions/lattice-last-shutdown.json',
 ] as const;
 
 // Conflict paths that always resolve to "ours" (the worktree's version).

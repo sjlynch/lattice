@@ -57,9 +57,25 @@ export function buildTaskHookRouter(backendOrigin: string): Router {
   //   in_progress -> ready_to_merge: the original task's Claude committed.
   //   ready_to_merge + conflict:    the resolver Claude finished resolving
   //                                 (delegated to finalizeResolvedTask).
+  //
+  // Source attribution: every callback site (Claude Stop hook curl, Pi
+  // extension fetch, model explicit curl) appends `?source=<tag>` so a
+  // failed/duplicate fire can be traced to its origin in the logs. Plain
+  // `?source=` is absent only for very-old workers that pre-date the
+  // hardened extension; their callbacks still work, they just log as
+  // "unknown".
   r.post('/api/tasks/:id/complete', async (req, res) => {
+    const source = typeof req.query.source === 'string' ? req.query.source : 'unknown';
     const task = await getTask(req.params.id);
-    if (!task) return res.status(404).json({ error: 'not found' });
+    if (!task) {
+      console.warn(
+        `[complete] task ${req.params.id} not found (source=${source})`,
+      );
+      return res.status(404).json({ error: 'not found' });
+    }
+    console.log(
+      `[complete] task ${task.id} (status=${task.status}, conflict=${!!task.conflict}, source=${source})`,
+    );
 
     // Resolver-Claude finished. The merge in the worktree is committed;
     // fast-forward main and clean up.

@@ -4,6 +4,7 @@ import {
   recoverOrphanedTasks,
   resumeInterruptedMergeRuns,
   resumeQueuedTaskRuns,
+  startInProgressSweepLoop,
 } from '../recovery.js';
 import { startSpawnQueue } from '../spawnQueue.js';
 import { ensureTerminalServer } from '../terminalProxy.js';
@@ -86,4 +87,10 @@ export function resumeRunsAfterListen(backendOrigin: string): void {
   resumeQueuedTaskRuns(backendOrigin).catch((err) =>
     console.error('[startup] resumeQueuedTaskRuns failed:', err),
   );
+  // Periodic staleness sweep for `in_progress` tasks whose PTY has died
+  // and whose branch has commits (the Pi extension / model curl failed
+  // for some reason). Complements the boot-time `recoverOrphanedTasks`,
+  // which only catches `ready_to_merge` tasks with deleted branches.
+  // See recovery/inProgressSweep.ts for the criteria.
+  startInProgressSweepLoop();
 }

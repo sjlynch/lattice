@@ -19,6 +19,12 @@ export { resumeInterruptedMergeRuns } from './mergeRunResume.js';
 export { resumeQueuedTaskRuns } from './queuedRunResume.js';
 export { sweepOrphanedWorktrees } from './worktreeSweep.js';
 export { sweepOrphanedPushSessions } from './pushSessionSweep.js';
+export {
+  startInProgressSweepLoop,
+  stopInProgressSweepLoop,
+  sweepStuckInProgressTasks,
+  IN_PROGRESS_SWEEP_INTERVAL_MS,
+} from './inProgressSweep.js';
 
 export async function recoverOrphanedTasks(): Promise<void> {
   // Phase 1: repair `.lattice/tasks.json` from `.lattice/tasks.backup.json`
