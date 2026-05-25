@@ -41,6 +41,8 @@ export const DEFAULT_METRICS_IGNORED_EXTS: readonly string[] = [
   '.md',
   '.mdx',
   '.txt',
+  '.yaml',
+  '.yml',
 ];
 
 export function isTerminalDefaultHarness(

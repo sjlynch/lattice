@@ -33,7 +33,7 @@ export type UserSettings = {
   // LOC overlay (`z`) and the code-health overlay (`h`). Matching files
   // fall back to the normal sprite — no colored treatment, no LOC/score
   // label. Absent = use the frontend's DEFAULT_METRICS_IGNORED_EXTS
-  // (JSON plus common prose/text extensions); an empty array means
+  // (JSON/YAML plus common prose/text extensions); an empty array means
   // "ignore nothing".
   metricsIgnoredExts?: string[];
   // Optional post-merge hook. When `postMergeHookPrompt` is non-empty,
