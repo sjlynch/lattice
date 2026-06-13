@@ -44,6 +44,7 @@ export function Sidebar({
     closeTerminal,
     closeTerminals,
     setServerId,
+    renameTerminal,
   } = useTerminals();
 
   const {
@@ -83,10 +84,8 @@ export function Sidebar({
 
   const {
     filter,
-    searchOpen,
     searchInputRef,
     visibleTerminals,
-    toggle: toggleSearch,
     onKeyDown: onSearchKeyDown,
     setFilter,
     reset: resetSearch,
@@ -147,43 +146,33 @@ export function Sidebar({
           switchPanel={switchPanel}
         />
 
-        <div className="sidebar-header-actions">
-          {activePanel === 'terminals' && panelTerminals.length > 0 && (
-            <div className={`sidebar-search ${searchOpen ? 'open' : ''}`}>
+        {panelTerminals.length > 0 && (
+          <div className="sidebar-search">
+            <Search size={12} className="sidebar-search-icon" />
+            <input
+              ref={searchInputRef}
+              className="sidebar-search-input"
+              type="text"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              onKeyDown={onSearchKeyDown}
+              placeholder="Search terminals…"
+              aria-label="Search terminals"
+            />
+            {filter && (
               <button
-                className={`icon-btn sm ${searchOpen || filter ? 'active' : ''}`}
-                onClick={toggleSearch}
-                title={searchOpen ? 'Close filter' : 'Filter terminals'}
-                aria-label="Filter terminals"
-                aria-expanded={searchOpen}
+                className="icon-btn sm sidebar-search-clear"
+                onClick={() => setFilter('')}
+                title="Clear search"
+                aria-label="Clear search"
               >
-                <Search size={12} />
+                <X size={12} />
               </button>
-              {searchOpen && (
-                <>
-                  <input
-                    ref={searchInputRef}
-                    className="sidebar-search-input"
-                    type="text"
-                    value={filter}
-                    onChange={(e) => setFilter(e.target.value)}
-                    onKeyDown={onSearchKeyDown}
-                    placeholder="Filter…"
-                    aria-label="Filter terminals"
-                  />
-                  <button
-                    className="icon-btn sm"
-                    onClick={toggleSearch}
-                    title="Clear filter"
-                    aria-label="Clear filter"
-                  >
-                    <X size={12} />
-                  </button>
-                </>
-              )}
-            </div>
-          )}
+            )}
+          </div>
+        )}
 
+        <div className="sidebar-header-actions">
           {activePanel === 'startup' && (
             <button
               className="icon-btn sm sidebar-startup-refresh"
@@ -212,6 +201,7 @@ export function Sidebar({
           activeId={activeId}
           setActiveId={setActiveId}
           closeTerminal={closeTerminal}
+          renameTerminal={renameTerminal}
           tabsRef={tabsRef}
           activeTabRef={activeTabRef}
           canScrollLeft={canScrollLeft}

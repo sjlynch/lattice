@@ -34,6 +34,14 @@ export function setServerIdInList(
   return terminals.map((t) => (t.id === id ? { ...t, serverId } : t));
 }
 
+export function renameTerminalInList(
+  terminals: TerminalSpec[],
+  id: string,
+  label: string,
+): TerminalSpec[] {
+  return terminals.map((t) => (t.id === id ? { ...t, label } : t));
+}
+
 // Active-id selection policies. Kept separate so the policy can be reasoned
 // about without React state. Close fallbacks stay within the closed terminal's
 // project-scoped panel (regular / merge / startup), so closing the last regular

@@ -18,6 +18,7 @@ import {
   pickInitialActiveId,
   removeTerminalFromList,
   removeTerminalsFromList,
+  renameTerminalInList,
   setServerIdInList,
 } from './terminal/terminalState';
 import { deleteBackendSession } from './terminal/terminalApi';
@@ -97,6 +98,16 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
     setTerminals((ts) => setServerIdInList(ts, id, serverId));
   }, []);
 
+  // Rename a tab's label. Purely a UI label change — the new name is
+  // persisted to sessionStorage like any other spec field and feeds the
+  // sidebar search haystack. Empty/whitespace names are ignored so a tab
+  // can never become unlabelled.
+  const renameTerminal = useCallback((id: string, label: string) => {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    setTerminals((ts) => renameTerminalInList(ts, id, trimmed));
+  }, []);
+
   const closeTerminals = useCallback((ids: string[]) => {
     const idSet = new Set(ids);
     const prev = terminalsRef.current;
@@ -134,6 +145,7 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
         closeTerminals,
         closeTerminalsForTask,
         setServerId,
+        renameTerminal,
       }}
     >
       {children}
