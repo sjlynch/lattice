@@ -13,7 +13,20 @@ there.
 - `useWorkflowQueue.ts` — React adapter around the pure `queueScheduler`; starts
   queued runs and advances from active-run diffs.
 - `useWorkflowRuns.ts` — `/ws/workflow-runs` state, recent-run linger, and
-  per-step terminal spawning through `TerminalsContext`.
+  per-step terminal spawning through `TerminalsContext`. Thin wiring over the
+  three helpers below.
+- `workflowRunSync.ts` — pure, side-effect-free state transitions + linger
+  constants for the active/recent/control-progress maps (`activeRunsFromHello`,
+  `upsertRun`, `removeKey`, `clearStaleControlProgress`, `setControlProgress`,
+  `mergeFetchedActiveRuns` additive reconcile, `recentDismissalDelayMs`). Also
+  the home of the `ControlProgress` type (re-exported from `useWorkflowRuns`
+  for back-compat). Unit-tested in `src/__tests__/workflowRunSync.test.ts`.
+- `recentDismissalScheduler.ts` — `createRecentDismissalScheduler(onDismiss)`:
+  the linger-timer bookkeeping (one timer per run id, replace-on-reschedule,
+  `cancelAll` on cleanup); delay policy comes from `recentDismissalDelayMs`.
+- `workflowTerminalSpawns.ts` — maps `step-spawned` / `workflow-task-spawned`
+  WS events to `addTerminal` args (`{ spec, focus }`); steps focus, fanned-out
+  tasks don't.
 - `useCollapsedSteps.ts` — persisted per-step collapse state in
   `userSettings.workflowStepsCollapsed`.
 - `useWorkflowErrorHandler.ts` — shared auto-dismissing error toast state.
