@@ -33,6 +33,8 @@ const FINGERPRINT_FILES = [
   'terminal/sessionStore.js',
   'terminal/createSession.js',
   'terminal/launchContext.js',
+  'terminal/windowsPath.js',
+  'terminal/envSetup.js',
   'terminal/broadcast.js',
   'terminal/sessionLifecycle.js',
   'terminal/attach.js',
