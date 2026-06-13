@@ -1,0 +1,44 @@
+// POST /api/tasks/:id/merged — resolver Claude reports it has finished the
+// merge → ready_to_merge → qa. Idempotent: duplicates after the task has
+// already moved are a no-op.
+
+import type { Request, Response } from 'express';
+import { getTask } from '../../../tasks.js';
+import { finalizeResolvedTask } from '../finalizeResolved.js';
+import { awaitPostMergeHookOutsideRun } from './postMergeHookHelper.js';
+
+export function handleTaskMerged(backendOrigin: string) {
+  return async (req: Request<{ id: string }>, res: Response): Promise<Response | void> => {
+    const task = await getTask(req.params.id);
+    if (!task) return res.status(404).json({ error: 'not found' });
+    if (task.status !== 'ready_to_merge') {
+      return res.json({ ok: true });
+    }
+    if (!task.branch || !task.worktreePath) {
+      return res.status(400).json({ error: 'task missing worktree info' });
+    }
+    const result = await finalizeResolvedTask(task, backendOrigin, 'merged');
+    if (result.kind === 'mid-merge') {
+      return res
+        .status(400)
+        .json({ error: 'worktree is still mid-merge — commit first.' });
+    }
+    if (result.kind === 'merge-conflict') {
+      return res.status(409).json({
+        error: 'Re-sync with main introduced new conflicts — another resolver needed',
+        command: result.command,
+        cwd: result.cwd,
+        conflictedFiles: result.conflictedFiles,
+      });
+    }
+    if (result.kind === 'error') {
+      const error =
+        result.phase === 'merge'
+          ? `Re-sync with main failed: ${result.message}`
+          : result.message;
+      return res.status(500).json({ error });
+    }
+    await awaitPostMergeHookOutsideRun(task.projectPath, backendOrigin);
+    res.json({ ok: true });
+  };
+}

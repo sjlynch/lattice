@@ -4,8 +4,8 @@
 //   - crud.ts   : list / summary / get / create / batch / transition /
 //                 patch / reorder / delete
 //   - run.ts    : composes runRoute / resumeRoute / mergeRoute
-//   - hooks.ts  : complete / merged / merge-aborted / stash-resolved
-//                 (worktree Stop-hook callbacks)
+//   - hooks/    : complete / merged / merge-aborted / stash-resolved
+//                 (worktree Stop-hook callbacks; one handler module each)
 //
 // `/api/tasks/summary` MUST stay registered before `/api/tasks/:id` to
 // avoid `summary` being captured as an :id — both live in crud.ts which
@@ -14,7 +14,7 @@
 import { Router } from 'express';
 import { buildTaskCrudRouter } from './tasks/crud.js';
 import { buildTaskRunRouter } from './tasks/run.js';
-import { buildTaskHookRouter } from './tasks/hooks.js';
+import { buildTaskHookRouter } from './tasks/hooks/index.js';
 import { buildTaskActivityRouter } from './tasks/activity.js';
 
 // Re-exported for backend/src/__tests__/tasksApi.test.ts which imports it
