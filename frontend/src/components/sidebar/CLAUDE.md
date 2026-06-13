@@ -6,9 +6,12 @@ Implementation pieces for `../Sidebar.tsx`.
   Pi, Codex, and plain terminal sessions; command defaults live in `constants.ts`.
 - `SidebarPanelTabs.tsx` — Terminals / Merging / Startup panel switcher.
 - `SidebarTabsBar.tsx` — scrollable terminal tabs, close buttons, the
-  right-click entry point, and double-click-to-rename (inline `<input>`;
-  Enter/blur commits, Escape cancels). The label doubles as the searchable
-  session name (see `useTerminalSearch`).
+  right-click entry point, double-click-to-rename (inline `<input>`;
+  Enter/blur commits, Escape cancels; the label doubles as the searchable
+  session name — see `useTerminalSearch`), and HTML5 drag-and-drop reordering
+  (drop a tab on another to reorder; calls `reorderTerminal` from
+  `TerminalsContext`, which reorders the full persisted list by id so it's
+  correct under panel/search filtering).
 - `SidebarEmptyState.tsx` — per-panel empty messaging.
 - `hooks/useTerminalGroups.ts` — project-scoped regular/merge/startup grouping.
 - `hooks/usePanelState.ts` — active panel + `activeId` reconciliation and

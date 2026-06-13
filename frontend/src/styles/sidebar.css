@@ -248,6 +248,11 @@
   color: var(--text-secondary);
 }
 .sidebar-tab-close:hover { opacity: 1; background: var(--bg-active); color: var(--text-primary); }
+.sidebar-tab.dragging { opacity: 0.4; }
+.sidebar-tab.drag-over {
+  background: var(--bg-hover);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
 
 .sidebar-content {
   flex: 1;

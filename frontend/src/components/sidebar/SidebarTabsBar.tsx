@@ -1,6 +1,5 @@
 import { ChevronLeft, ChevronRight, GitMerge, Rocket, TerminalSquare, X } from 'lucide-react';
-import { useState } from 'react';
-import type { MouseEvent, RefObject } from 'react';
+import { useState, type DragEvent, type MouseEvent, type RefObject } from 'react';
 import type { TerminalSpec } from '../../TerminalsContext';
 
 type Props = {
@@ -16,6 +15,7 @@ type Props = {
   canScrollRight: boolean;
   scrollTabs: (dir: 1 | -1) => void;
   handleTabContextMenu: (e: MouseEvent, termId: string) => void;
+  reorderTerminal: (draggedId: string, targetId: string) => void;
 };
 
 export function SidebarTabsBar({
@@ -31,6 +31,7 @@ export function SidebarTabsBar({
   canScrollRight,
   scrollTabs,
   handleTabContextMenu,
+  reorderTerminal,
 }: Props) {
   // Inline rename: double-click a tab to edit its (searchable) label.
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -45,6 +46,37 @@ export function SidebarTabsBar({
     setEditingId(null);
   };
   const cancelRename = () => setEditingId(null);
+
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  const onDragStart = (e: DragEvent, id: string) => {
+    setDraggingId(id);
+    e.dataTransfer.effectAllowed = 'move';
+    // Firefox requires data to be set for the drag to start.
+    e.dataTransfer.setData('text/plain', id);
+  };
+
+  const onDragOver = (e: DragEvent, id: string) => {
+    if (draggingId === null || draggingId === id) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverId !== id) setDragOverId(id);
+  };
+
+  const onDrop = (e: DragEvent, id: string) => {
+    e.preventDefault();
+    if (draggingId !== null && draggingId !== id) {
+      reorderTerminal(draggingId, id);
+    }
+    setDraggingId(null);
+    setDragOverId(null);
+  };
+
+  const onDragEnd = () => {
+    setDraggingId(null);
+    setDragOverId(null);
+  };
 
   return (
     <div className="sidebar-tabs-row">
@@ -67,10 +99,17 @@ export function SidebarTabsBar({
             <div
               key={t.id}
               ref={t.id === activeId ? activeTabRef : undefined}
-              className={`sidebar-tab ${t.id === activeId ? 'active' : ''}`}
+              className={`sidebar-tab ${t.id === activeId ? 'active' : ''} ${
+                t.id === draggingId ? 'dragging' : ''
+              } ${t.id === dragOverId ? 'drag-over' : ''}`}
+              draggable
               onClick={() => setActiveId(t.id)}
               onDoubleClick={(e) => { e.stopPropagation(); startRename(t); }}
               onContextMenu={(e) => handleTabContextMenu(e, t.id)}
+              onDragStart={(e) => onDragStart(e, t.id)}
+              onDragOver={(e) => onDragOver(e, t.id)}
+              onDrop={(e) => onDrop(e, t.id)}
+              onDragEnd={onDragEnd}
               title={editingId === t.id ? undefined : `${t.cwd}\nDouble-click to rename`}
             >
               {t.kind === 'merge' ? (

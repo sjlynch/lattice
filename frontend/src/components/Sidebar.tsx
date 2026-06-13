@@ -45,6 +45,7 @@ export function Sidebar({
     closeTerminals,
     setServerId,
     renameTerminal,
+    reorderTerminal,
   } = useTerminals();
 
   const {
@@ -208,6 +209,7 @@ export function Sidebar({
           canScrollRight={canScrollRight}
           scrollTabs={scrollTabs}
           handleTabContextMenu={handleTabContextMenu}
+          reorderTerminal={reorderTerminal}
         />
       )}
 
