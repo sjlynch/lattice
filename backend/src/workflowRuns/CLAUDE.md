@@ -18,14 +18,26 @@ explicit-curl callbacks — never by polling task state.
   and `effectiveStepHarness` (run override → step harness → `'claude'`).
   Completion instructions branch on harness: Claude relies on its silent
   Stop hook; Pi/codex get an explicit curl line as a backstop.
-- `stepSpawner.ts` — `spawnWorkflowStep`: creates
+- `stepSpawner.ts` — `spawnWorkflowStep`: the coordinator. Creates
   `<project>/.lattice/workflow-steps/<runId>/step-<N>/`, writes
   `WORKFLOW_STEP.md` + `create-task.cjs`, installs the Claude Stop hook
-  (always) and the Pi `session_shutdown` extension (Pi only), builds the
-  harness command, asks the terminal-server to allocate a pty, then
-  notifies `step-spawned` + `progress`. Pre-spawning the pty is what lets
-  the frontend lazy-mount terminals so a multi-step run doesn't burn a
-  WebGL context per pane.
+  (always) and the Pi `session_shutdown` extension (Pi only), then delegates
+  scratch management, command assembly, and pty spawn to the modules below.
+  It re-exports `writeScratchReadme` / `pruneOldWorkflowRuns` /
+  `workflowStepAgentId` so existing importers keep resolving them here.
+- `scratchDirectory.ts` — scratch-dir lifecycle: `writeScratchReadme`
+  (tags the run dir as not-the-source-of-truth, idempotent) and
+  `pruneOldWorkflowRuns` (keeps the newest `WORKFLOW_RUN_RETENTION` runs,
+  always preserves the active run; the recursive delete is path- and
+  reparse-point-bounded so it can't walk a junction loop into `.git`).
+- `commandBuilder.ts` — `buildWorkflowStepCommand`: harness→builder dispatch
+  over the pure per-harness builders in `worktree/commands.ts`.
+- `sessionSpawner.ts` — `workflowStepAgentId` + `enqueueWorkflowStepSession`:
+  routes the pty allocation through the spawn queue (fire-and-forget),
+  registers the orange agent-session presence node for a Claude step, and
+  fans out `step-spawned`. Pre-spawning the pty is what lets the frontend
+  lazy-mount terminals so a multi-step run doesn't burn a WebGL context per
+  pane.
 - `projectDirtyState.ts` — `getProjectDirtyState` (probe `git status
   --porcelain` of the project repo) + `renderDirtyStateWarning` (render a
   markdown banner listing the diverged paths). `stepSpawner` calls the
@@ -45,7 +57,7 @@ explicit-curl callbacks — never by polling task state.
 ## Adding a step-completion harness
 
 1. Add the harness to `WorkflowStepHarness` (in `workflows.ts`).
-2. Extend `buildWorkflowStepCommand` in `stepSpawner.ts` for the new
+2. Extend `buildWorkflowStepCommand` in `commandBuilder.ts` for the new
    command shape.
 3. If the harness can't reliably curl the completion URL itself, install
    a callback shim alongside the Stop hook in `spawnWorkflowStep` (mirror
