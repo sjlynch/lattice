@@ -24,9 +24,9 @@ export {
   subscribePostMergeHooks,
   waitForPostMergeHook,
 } from './postMergeHooks/registry.js';
+export { runPostMergeHookGate } from './postMergeHooks/session.js';
 export {
-  runPostMergeHookGate,
   triggerPostMergeHook,
   type TriggerPostMergeHookOptions,
   type TriggerPostMergeHookOutcome,
-} from './postMergeHooks/session.js';
+} from './postMergeHooks/trigger.js';
