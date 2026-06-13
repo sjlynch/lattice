@@ -28,7 +28,7 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
 }
 
@@ -97,31 +97,57 @@
   flex-shrink: 0;
 }
 
+/* Always-visible search field, inline with the panel tabs. Grows to fill
+   the space between the tabs and the header actions; shrinks (min-width:0)
+   on a narrow sidebar so the new-terminal button is never pushed off. */
 .sidebar-search {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  flex: 1 1 auto;
   min-width: 0;
+  height: 24px;
+  padding: 0 5px 0 7px;
+  border-radius: var(--radius-sm);
+  background: #15181d;
+  border: 1px solid var(--border-strong);
 }
-.sidebar-search .icon-btn.active {
-  color: var(--accent);
-  background: var(--accent-bg);
+.sidebar-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-bg);
+}
+.sidebar-search-icon {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
 }
 .sidebar-search-input {
   flex: 1;
   min-width: 0;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: var(--radius-sm);
-  background: #15181d;
-  border: 1px solid var(--border-strong);
+  height: 100%;
+  padding: 0;
+  background: transparent;
+  border: none;
   color: var(--text-primary);
   font-size: 11px;
   outline: none;
 }
-.sidebar-search-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-bg);
+.sidebar-search-clear {
+  flex-shrink: 0;
+}
+
+/* Inline tab rename (double-click a tab) */
+.sidebar-tab-rename {
+  width: 110px;
+  max-width: 150px;
+  min-width: 60px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: #15181d;
+  border: 1px solid var(--accent);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
 }
 .sidebar-new {
   position: relative;
@@ -222,6 +248,11 @@
   color: var(--text-secondary);
 }
 .sidebar-tab-close:hover { opacity: 1; background: var(--bg-active); color: var(--text-primary); }
+.sidebar-tab.dragging { opacity: 0.4; }
+.sidebar-tab.drag-over {
+  background: var(--bg-hover);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
 
 .sidebar-content {
   flex: 1;

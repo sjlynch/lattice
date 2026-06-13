@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight, GitMerge, Rocket, TerminalSquare, X } from 'lucide-react';
-import type { MouseEvent, RefObject } from 'react';
+import { useState, type DragEvent, type MouseEvent, type RefObject } from 'react';
 import type { TerminalSpec } from '../../TerminalsContext';
 
 type Props = {
@@ -8,12 +8,14 @@ type Props = {
   activeId: string | null;
   setActiveId: (id: string) => void;
   closeTerminal: (id: string) => void;
+  renameTerminal: (id: string, label: string) => void;
   tabsRef: RefObject<HTMLDivElement | null>;
   activeTabRef: RefObject<HTMLDivElement | null>;
   canScrollLeft: boolean;
   canScrollRight: boolean;
   scrollTabs: (dir: 1 | -1) => void;
   handleTabContextMenu: (e: MouseEvent, termId: string) => void;
+  reorderTerminal: (draggedId: string, targetId: string) => void;
 };
 
 export function SidebarTabsBar({
@@ -22,13 +24,60 @@ export function SidebarTabsBar({
   activeId,
   setActiveId,
   closeTerminal,
+  renameTerminal,
   tabsRef,
   activeTabRef,
   canScrollLeft,
   canScrollRight,
   scrollTabs,
   handleTabContextMenu,
+  reorderTerminal,
 }: Props) {
+  // Inline rename: double-click a tab to edit its (searchable) label.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+
+  const startRename = (t: TerminalSpec) => {
+    setEditingId(t.id);
+    setDraft(t.label);
+  };
+  const commitRename = () => {
+    if (editingId) renameTerminal(editingId, draft);
+    setEditingId(null);
+  };
+  const cancelRename = () => setEditingId(null);
+
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  const onDragStart = (e: DragEvent, id: string) => {
+    setDraggingId(id);
+    e.dataTransfer.effectAllowed = 'move';
+    // Firefox requires data to be set for the drag to start.
+    e.dataTransfer.setData('text/plain', id);
+  };
+
+  const onDragOver = (e: DragEvent, id: string) => {
+    if (draggingId === null || draggingId === id) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverId !== id) setDragOverId(id);
+  };
+
+  const onDrop = (e: DragEvent, id: string) => {
+    e.preventDefault();
+    if (draggingId !== null && draggingId !== id) {
+      reorderTerminal(draggingId, id);
+    }
+    setDraggingId(null);
+    setDragOverId(null);
+  };
+
+  const onDragEnd = () => {
+    setDraggingId(null);
+    setDragOverId(null);
+  };
+
   return (
     <div className="sidebar-tabs-row">
       <button
@@ -50,10 +99,18 @@ export function SidebarTabsBar({
             <div
               key={t.id}
               ref={t.id === activeId ? activeTabRef : undefined}
-              className={`sidebar-tab ${t.id === activeId ? 'active' : ''}`}
+              className={`sidebar-tab ${t.id === activeId ? 'active' : ''} ${
+                t.id === draggingId ? 'dragging' : ''
+              } ${t.id === dragOverId ? 'drag-over' : ''}`}
+              draggable
               onClick={() => setActiveId(t.id)}
+              onDoubleClick={(e) => { e.stopPropagation(); startRename(t); }}
               onContextMenu={(e) => handleTabContextMenu(e, t.id)}
-              title={t.cwd}
+              onDragStart={(e) => onDragStart(e, t.id)}
+              onDragOver={(e) => onDragOver(e, t.id)}
+              onDrop={(e) => onDrop(e, t.id)}
+              onDragEnd={onDragEnd}
+              title={editingId === t.id ? undefined : `${t.cwd}\nDouble-click to rename`}
             >
               {t.kind === 'merge' ? (
                 <GitMerge size={12} />
@@ -62,7 +119,25 @@ export function SidebarTabsBar({
               ) : (
                 <TerminalSquare size={12} />
               )}
-              <span>{t.label}</span>
+              {editingId === t.id ? (
+                <input
+                  className="sidebar-tab-rename"
+                  value={draft}
+                  autoFocus
+                  onClick={(e) => e.stopPropagation()}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+                    else if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+                  }}
+                  aria-label="Rename terminal"
+                />
+              ) : (
+                <span>{t.label}</span>
+              )}
               <button
                 className="sidebar-tab-close"
                 onClick={(e) => { e.stopPropagation(); closeTerminal(t.id); }}

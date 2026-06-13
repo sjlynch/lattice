@@ -26,4 +26,6 @@ export type Ctx = {
   closeTerminals: (ids: string[]) => void;
   closeTerminalsForTask: (taskId: string) => void;
   setServerId: (id: string, serverId: string) => void;
+  renameTerminal: (id: string, label: string) => void;
+  reorderTerminal: (draggedId: string, targetId: string) => void;
 };
