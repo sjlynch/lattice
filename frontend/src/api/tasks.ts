@@ -3,11 +3,15 @@
 import { asJson } from './http';
 import { subscribeWs } from './ws';
 import type {
+  AgentActivityEvent,
+  AgentSession,
   MergeTaskResult,
   RunTaskResult,
   Task,
+  TaskActivityEvent,
   TaskSpawnedEvent,
   TaskStatus,
+  WorktreeModifiedTask,
 } from './types';
 import type { AgentHarness } from '../harnesses';
 
@@ -117,23 +121,61 @@ export async function mergeTask(id: string): Promise<MergeTaskResult> {
   );
 }
 
-// `/ws/tasks` carries two message types: the full task-list snapshot and,
-// for queued runs, a `task-spawned` event delivering the pty. `onSpawned`
-// fires for the latter so the caller can lazy-mount the task's terminal.
+// `/ws/tasks` carries four message types: the full task-list snapshot; for
+// queued runs a `task-spawned` event delivering the pty; `task-activity`
+// events naming the file a Claude worktree agent is touching; and
+// `agent-activity` events naming the file a Claude session OUTSIDE a worktree
+// is touching. `onSpawned` lazy-mounts the terminal; `onActivity` /
+// `onAgentActivity` drive the graph focus beams.
 type TasksWsMessage =
   | { type: 'tasks'; tasks: Task[] }
-  | ({ type: 'task-spawned' } & TaskSpawnedEvent);
+  | ({ type: 'task-spawned' } & TaskSpawnedEvent)
+  | ({ type: 'task-activity' } & TaskActivityEvent)
+  | ({ type: 'agent-activity' } & AgentActivityEvent);
 
 export function subscribeTasks(
   projectPath: string,
   onUpdate: (tasks: Task[]) => void,
   onSpawned?: (event: TaskSpawnedEvent) => void,
+  onActivity?: (event: TaskActivityEvent) => void,
+  onAgentActivity?: (event: AgentActivityEvent) => void,
 ): () => void {
   return subscribeWs<TasksWsMessage>(
     `/ws/tasks?project=${encodeURIComponent(projectPath)}`,
     (msg) => {
       if (msg.type === 'tasks') onUpdate(msg.tasks);
       else if (msg.type === 'task-spawned') onSpawned?.(msg);
+      else if (msg.type === 'task-activity') onActivity?.(msg);
+      else if (msg.type === 'agent-activity') onAgentActivity?.(msg);
     },
   );
+}
+
+// Presence of Claude sessions running OUTSIDE a task worktree (push /
+// workflow step / post-merge hook). Each gets an orange node on the graph.
+export function subscribeAgentSessions(
+  projectPath: string,
+  onUpdate: (sessions: AgentSession[]) => void,
+): () => void {
+  return subscribeWs<{ type: 'agent-sessions'; sessions: AgentSession[] }>(
+    `/ws/agent-sessions?project=${encodeURIComponent(projectPath)}`,
+    (msg) => {
+      if (msg.type === 'agent-sessions') onUpdate(msg.sessions);
+    },
+  );
+}
+
+// Files changed by every not-yet-merged task (in_progress + ready_to_merge),
+// for the `W` worktree-highlight overlay. Recomputed server-side from git on
+// each call, so callers should fetch on demand (e.g. when `W` is pressed)
+// rather than poll.
+export async function fetchWorktreeModified(
+  projectPath: string,
+): Promise<WorktreeModifiedTask[]> {
+  const env = await asJson<{ tasks: WorktreeModifiedTask[] }>(
+    await fetch(
+      `/api/tasks/worktree-modified?project=${encodeURIComponent(projectPath)}`,
+    ),
+  );
+  return env.tasks;
 }

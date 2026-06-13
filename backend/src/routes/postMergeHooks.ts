@@ -19,6 +19,8 @@ import {
 } from '../postMergeHooks.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { proxyKillSession } from '../terminalProxy.js';
+import { postMergeHookAgentId } from '../postMergeHooks/stopHook.js';
+import { unregisterAgentSession } from '../agentSessions.js';
 
 export function buildPostMergeHooksRouter(): Router {
   const r = Router();
@@ -43,6 +45,8 @@ export function buildPostMergeHooksRouter(): Router {
         ? req.query.error.trim().slice(0, 500)
         : undefined;
     const existing = getPostMergeHook(id);
+    // Drop the graph node regardless of tracking state.
+    unregisterAgentSession(postMergeHookAgentId(id));
     console.log(
       `[post-merge-hook-complete] id=${id} source=${source}` +
         (errParam ? ` error=${JSON.stringify(errParam)}` : '') +
@@ -59,6 +63,7 @@ export function buildPostMergeHooksRouter(): Router {
 
   r.post('/api/post-merge-hooks/:id/abort', async (req, res) => {
     const id = req.params.id;
+    unregisterAgentSession(postMergeHookAgentId(id));
     const existing = getPostMergeHook(id);
     if (!existing) return res.json({ ok: true });
     // Best-effort kill the pty so the user gets immediate feedback.

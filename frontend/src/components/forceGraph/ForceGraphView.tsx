@@ -10,13 +10,17 @@ import { GraphSettingsPanel } from './GraphSettingsPanel';
 import { GraphTaskModal } from './GraphTaskModal';
 import { TimelineScrubber } from './TimelineScrubber';
 import { useBoxSelect } from './hooks/useBoxSelect';
+import { useAgentOverlay } from './hooks/useAgentOverlay';
 import { useForceGraphInitialization } from './hooks/useForceGraphInitialization';
 import { useGraphDataSync } from './hooks/useGraphDataSync';
 import { useGraphOverlays } from './hooks/useGraphOverlays';
 import { useGraphTaskCreation } from './hooks/useGraphTaskCreation';
 import { useNodeContextMenu } from './hooks/useNodeContextMenu';
+import { useWorktreeHighlight } from './hooks/useWorktreeHighlight';
 import { useRefMirror } from './hooks/useRefMirror';
+import { getIdleController } from './idleController';
 import { clearLabelsAndRefresh } from './hooks/refresh';
+import { applySelectionHaloDelta } from './selectionHaloSync';
 
 type Props = {
   data: ScanResult | null;
@@ -157,6 +161,12 @@ export function ForceGraphView({
     onResetSelection: resetSelection,
   });
 
+  // Claude agent nodes + focus beams (in-progress Claude tasks), and the
+  // `W`-hold worktree-modified file outline. Both read live task data over
+  // their own `/ws/tasks` subscription and draw straight into the scene.
+  useAgentOverlay(graphRef, settingsRef, activeFolder);
+  useWorktreeHighlight(graphRef, settingsRef, activeFolder);
+
   const { contextMenu, setContextMenu } = useNodeContextMenu(containerRef);
   const closeContextMenu = useCallback(() => setContextMenu(null), [setContextMenu]);
   const { dragRect } = useBoxSelect(
@@ -185,12 +195,23 @@ export function ForceGraphView({
     closeContextMenu,
   });
 
-  // Re-render node THREE objects when the selection changes so halos
-  // update. refresh() re-evaluates nodeThreeObject without restarting
-  // the d3 simulation, so node positions stay put.
+  // Targeted halo updates — toggle the halo Sprite on only the affected
+  // node ids instead of calling `graph.refresh()`, which re-runs
+  // `nodeThreeObject` for every node in the scene. On a 1000-file
+  // project this turns a 50–200 ms commit per click into <1 ms.
+  const prevSelectedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    clearLabelsAndRefresh(graphRef.current);
-  }, [selected]);
+    const graph = graphRef.current;
+    if (!graph) {
+      prevSelectedRef.current = selected;
+      return;
+    }
+    applySelectionHaloDelta(graph, prevSelectedRef.current, selected, settings);
+    prevSelectedRef.current = selected;
+    // Drive a few render frames so the new halo paints — the render
+    // loop is otherwise paused while the engine is settled.
+    getIdleController(graph)?.wakeForRefresh();
+  }, [selected, settings]);
 
   // Same when the LOC/health ignore list changes — re-render so the new
   // filter takes effect without touching the d3 simulation.

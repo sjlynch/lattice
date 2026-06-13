@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { GraphNode, ScanResult } from '../../api';
 import { deletedSprite, withChangeRing, type ChangeKind } from './changeRing';
 import type { GraphSettings } from './graphSettings';
-import { withHalo } from './halo';
+import { setNodeHalo } from './halo';
 import { spriteForHealth } from './healthOverlay';
 import { spriteForLabels } from './labelsOverlay';
 import { spriteForLoc } from './locOverlay';
@@ -33,9 +33,18 @@ export type NodeObjectRefs = {
 // The overlay/selection decision tree lives here so the initialization
 // hook reads like lifecycle wiring; sprite materials themselves are
 // cached inside the individual overlay modules.
+//
+// The return value is **always a `THREE.Group`** acting as a stable
+// per-node "root". The base composite (sprite / overlay group / ghost)
+// is child[0]; the halo, when selected, is a sibling child added by
+// `setNodeHalo`. Keeping this shape uniform lets the selection-change
+// handler add/remove halos without calling `graph.refresh()` — see
+// `useSelectionHaloSync`.
 export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Object3D {
   const s = refs.settingsRef.current;
   const baseSize = node.kind === 'dir' ? s.dirNodeSize : s.fileNodeSize;
+  const root = new THREE.Group();
+  root.userData['lattice:nodeRoot'] = true;
 
   // Ghost nodes (deleted files surfaced from git history) only exist in
   // the graph because the scrubber range picks up a delete event
@@ -43,11 +52,11 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
   // instead of running spriteFor on a path that has no real file behind
   // it.
   if (isGhost(node)) {
-    let obj: THREE.Object3D = deletedSprite(s.fileNodeSize);
+    root.add(deletedSprite(s.fileNodeSize));
     if (refs.selectedRef.current.has(node.id)) {
-      obj = withHalo(obj, s.fileNodeSize);
+      setNodeHalo(root, true, s.fileNodeSize);
     }
-    return obj;
+    return root;
   }
 
   // For the LOC and health overlays, fall back to the plain sprite when
@@ -59,30 +68,33 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
     !!node.ext &&
     refs.metricsIgnoredExtsRef.current.has(node.ext.toLowerCase());
 
-  let obj: THREE.Object3D;
+  let base: THREE.Object3D;
   if (refs.healthModeRef.current && !ignored) {
-    obj = spriteForHealth(node, s);
+    base = spriteForHealth(node, s);
   } else if (refs.locModeRef.current && !ignored) {
-    obj = spriteForLoc(node, s);
+    base = spriteForLoc(node, s);
   } else if (refs.labelModeRef.current) {
     const d = refs.nodeDepthsRef.current.get(node.id) ?? 0;
-    obj = spriteForLabels(node, s, refs.labelLevelRef.current, d);
+    base = spriteForLabels(node, s, refs.labelLevelRef.current, d);
   } else {
-    obj = spriteFor(node, s);
+    base = spriteFor(node, s);
   }
 
-  // Apply change ring before halo so the selection halo always wraps
-  // the outermost layer.
-  const root = refs.dataRef.current?.root || '';
-  const rel = node.kind === 'file' ? relForward(node.path, root) : '';
+  // Apply change ring before halo so the selection halo (drawn as a
+  // sibling of the root) reads as the outermost element regardless of
+  // whether the base has a change ring or not.
+  const rootData = refs.dataRef.current?.root || '';
+  const rel = node.kind === 'file' ? relForward(node.path, rootData) : '';
   const kind = rel ? refs.changeMapRef.current.get(rel) : undefined;
   if (kind && kind !== 'deleted') {
-    obj = withChangeRing(obj, baseSize, kind);
+    base = withChangeRing(base, baseSize, kind);
   }
+  root.add(base);
+
   if (refs.selectedRef.current.has(node.id)) {
-    return withHalo(obj, baseSize);
+    setNodeHalo(root, true, baseSize);
   }
-  return obj;
+  return root;
 }
 
 // Native 3d-force-graph hover label. Files always defer to HealthTooltip

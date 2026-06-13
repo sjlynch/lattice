@@ -143,6 +143,12 @@ export function buildShapeTexture(style: ExtStyle): THREE.Texture {
   return tex;
 }
 
+// Unbounded by line count but **structurally bounded**: the key is
+// `styleKey(ExtStyle)` which is "extension + shape + colors", and that
+// tuple is enumerated by `extensionStyles.ts` plus the
+// per-overlay-color variants minted by `metricOverlayFactory`. In
+// practice the cache caps at ~40 entries across a session and never
+// grows with the file count. No LRU needed.
 const materialCache = new Map<string, THREE.SpriteMaterial>();
 
 export function materialFor(style: ExtStyle): THREE.SpriteMaterial {

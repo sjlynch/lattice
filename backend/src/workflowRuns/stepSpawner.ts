@@ -12,8 +12,13 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { proxyCreateSession } from '../terminalProxy.js';
 import { enqueueSpawn, SpawnCapacityError } from '../spawnQueue.js';
-import { installClaudeStopHook } from '../claudeStopHook.js';
+import { installClaudeHooks } from '../claudeStopHook.js';
 import { installPiCompletionExtension } from '../piExtension.js';
+import { buildAgentActivityUrl } from '../agentActivity.js';
+import {
+  registerAgentSession,
+  unregisterAgentSession,
+} from '../agentSessions.js';
 import { buildClaudeCommand, buildCodexCommand, buildPiCommand } from '../worktree/commands.js';
 import { assertNotReparsePoint } from '../worktree/cleanupSafety.js';
 import { isPathStrictlyInside } from '../worktree/paths.js';
@@ -21,6 +26,7 @@ import { pruneReparsePointsUnder } from '../worktree/reparsePoints.js';
 import type { Workflow } from '../workflows.js';
 import { renderHelperScript } from './renderHelperScript.js';
 import { effectiveStepHarness, renderStepMarkdown } from './stepMarkdown.js';
+import { getProjectDirtyState } from './projectDirtyState.js';
 import { notify, snapshot, type WorkflowRun } from './state.js';
 
 // Keep this many most-recent workflow-run dirs; older ones get pruned when
@@ -122,6 +128,12 @@ export async function pruneOldWorkflowRuns(workflowStepsRoot: string, keepRunId:
   }
 }
 
+// Stable graph-node id for a workflow-step session. A new id per step, so
+// advancing the run swaps one node for the next.
+export function workflowStepAgentId(runId: string, stepIndex: number): string {
+  return `wf:${runId}:${stepIndex}`;
+}
+
 function buildWorkflowStepCommand(
   stepFile: string,
   harness: Workflow['steps'][number]['harness'],
@@ -151,7 +163,26 @@ export async function spawnWorkflowStep(
 
   const stepFile = path.join(stepDir, 'WORKFLOW_STEP.md');
   const harness = effectiveStepHarness(wf, run, stepIndex);
-  await fs.writeFile(stepFile, renderStepMarkdown(wf, run, stepIndex, backendOrigin), 'utf8');
+  // Best-effort working-tree-drift probe — if the project repo has
+  // uncommitted changes, the rendered WORKFLOW_STEP.md gets a warning
+  // banner so the planner doesn't synthesize tasks against paths that
+  // only exist on disk (worktrees check out HEAD, not the working tree).
+  // Probe failures resolve to `null` and just suppress the banner.
+  const dirtyState = await getProjectDirtyState(wf.projectPath);
+  if (dirtyState) {
+    const total =
+      dirtyState.modified.length + dirtyState.deleted.length + dirtyState.untracked.length;
+    console.log(
+      `[workflow-step] ${run.id} step ${stepIndex}: project working tree is dirty ` +
+        `(${dirtyState.modified.length}M / ${dirtyState.deleted.length}D / ${dirtyState.untracked.length}?? = ${total} paths); ` +
+        `injecting divergence warning into WORKFLOW_STEP.md`,
+    );
+  }
+  await fs.writeFile(
+    stepFile,
+    renderStepMarkdown(wf, run, stepIndex, backendOrigin, dirtyState),
+    'utf8',
+  );
 
   // Helper script so the agent can create tasks without shell quoting issues.
   await fs.writeFile(
@@ -170,10 +201,14 @@ export async function spawnWorkflowStep(
   // The Claude Stop hook URL carries `?source=` so the /complete log line
   // can identify the firing mechanism; the Pi extension does the same via
   // piExtension.ts.
-  await installClaudeStopHook(
-    stepDir,
-    `${completionUrl}?source=claude-stop-hook-workflow-step-complete`,
-  );
+  await installClaudeHooks(stepDir, {
+    completeUrl: `${completionUrl}?source=claude-stop-hook-workflow-step-complete`,
+    activityUrl: buildAgentActivityUrl(backendOrigin, {
+      agentId: workflowStepAgentId(run.id, stepIndex),
+      projectPath: wf.projectPath,
+      label: `workflow step ${stepIndex + 1}`,
+    }),
+  });
   await installPiCompletionExtension({
     dir: stepDir,
     callbackUrl: completionUrl,
@@ -213,6 +248,17 @@ export async function spawnWorkflowStep(
           `[workflow-run] ${run.id} step ${stepIndex}: pre-spawn failed: ${sess.error}`,
         );
       }
+      if ('id' in sess && harness === 'claude') {
+        // Presence: orange Claude node for this non-worktree session. Claude
+        // only — a Pi/codex step isn't a "Claude session" and never fires the
+        // activity hooks, so it gets no node.
+        registerAgentSession({
+          agentId: workflowStepAgentId(run.id, stepIndex),
+          projectPath: wf.projectPath,
+          label: `workflow step ${stepIndex + 1}`,
+        });
+      }
+
       notify({
         type: 'step-spawned',
         runId: run.id,

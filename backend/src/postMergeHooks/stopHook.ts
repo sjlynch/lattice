@@ -1,12 +1,18 @@
-import { installClaudeStopHook } from '../claudeStopHook.js';
+import { installClaudeHooks } from '../claudeStopHook.js';
 import type { AgentHarness } from '../harnesses.js';
 import { installPiCompletionExtension } from '../piExtension.js';
+import { buildAgentActivityUrl } from '../agentActivity.js';
 
 export function postMergeHookCallbackUrl(
   id: string,
   backendOrigin: string,
 ): string {
   return `${backendOrigin}/api/post-merge-hooks/${id}/complete`;
+}
+
+// Stable graph-node id for a post-merge-hook session.
+export function postMergeHookAgentId(id: string): string {
+  return `pmh:${id}`;
 }
 
 // Installs the harness-specific completion plumbing into the hook scratch
@@ -36,19 +42,25 @@ export async function installPostMergeHookStopHook(args: {
   scratchDir: string;
   id: string;
   backendOrigin: string;
+  projectPath: string;
   // `harness` is retained for logging/observability but is no longer used
   // to gate installation — see the defence-in-depth note above.
   harness: AgentHarness;
 }): Promise<void> {
-  const { scratchDir, id, backendOrigin, harness } = args;
+  const { scratchDir, id, backendOrigin, harness, projectPath } = args;
   const callbackUrl = postMergeHookCallbackUrl(id, backendOrigin);
   // Stop-hook URL carries `?source=` so the /complete log line can identify
   // the firing mechanism (Stop hook curl vs Pi extension fetch vs model
-  // explicit curl). Pi extension does the same via piExtension.ts.
-  await installClaudeStopHook(
-    scratchDir,
-    `${callbackUrl}?source=claude-stop-hook-post-merge-hook-complete`,
-  );
+  // explicit curl). Pi extension does the same via piExtension.ts. The
+  // activity hooks feed the graph's orange node + focus beams.
+  await installClaudeHooks(scratchDir, {
+    completeUrl: `${callbackUrl}?source=claude-stop-hook-post-merge-hook-complete`,
+    activityUrl: buildAgentActivityUrl(backendOrigin, {
+      agentId: postMergeHookAgentId(id),
+      projectPath,
+      label: 'post-merge hook',
+    }),
+  });
   await installPiCompletionExtension({
     dir: scratchDir,
     callbackUrl,

@@ -5,8 +5,9 @@ import { queuedCreateSession } from '../queuedCreateSession.js';
 import { renderPushInstructions } from './instructions.js';
 import { assertSafePushSessionPath, createPushSessionId } from './paths.js';
 import { recordPushRun } from './registry.js';
-import { installPushStopHook } from './stopHook.js';
+import { installPushStopHook, pushAgentId } from './stopHook.js';
 import { cleanupPushSession } from './cleanup.js';
+import { registerAgentSession } from '../agentSessions.js';
 import type { PushSession } from './types.js';
 
 // Materialize the per-session directory in home-scoped scratch: writes the
@@ -24,7 +25,7 @@ export async function setupPushSession(
   // Claude prompts on first launch and blocks the unattended push flow.
   await ensureTrustedClaudeDir(cwd);
 
-  await installPushStopHook(cwd, id, backendOrigin);
+  await installPushStopHook(cwd, id, backendOrigin, projectPath);
 
   const instructionsFile = path.join(cwd, 'PUSH_INSTRUCTIONS.md');
   await fs.writeFile(instructionsFile, renderPushInstructions(projectPath), 'utf8');
@@ -68,6 +69,12 @@ export async function startPushSession(
     cwd: session.cwd,
     status: 'running',
     createdAt: Date.now(),
+  });
+  // Presence: show an orange Claude node for this non-worktree session.
+  registerAgentSession({
+    agentId: pushAgentId(session.id),
+    projectPath,
+    label: 'push',
   });
   return {
     id: session.id,

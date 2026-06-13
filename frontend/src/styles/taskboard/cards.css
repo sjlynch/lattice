@@ -18,6 +18,17 @@
   border-color: rgba(255, 255, 255, 0.18);
   border-left-color: var(--lane-color, #5b9bff);
 }
+/* Active-lane cards carry a distinct per-task accent (matching the task's
+   Claude node + worktree rings on the graph) instead of the shared lane
+   stripe. A slightly wider bar makes the unique color read at a glance.
+   `.selected` / `.conflict` still override via their `!important` rules. */
+.task-card.has-task-accent {
+  border-left-width: 4px;
+  border-left-color: var(--task-color, var(--lane-color));
+}
+.task-card.has-task-accent:hover {
+  border-left-color: var(--task-color, var(--lane-color));
+}
 .task-card:active { cursor: grabbing; }
 .task-card.dragging { opacity: 0.45; }
 .task-card-grip {

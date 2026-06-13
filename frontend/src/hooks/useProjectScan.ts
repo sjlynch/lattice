@@ -3,6 +3,16 @@ import { scanFolder, subscribeHealth, type ScanResult } from '../api';
 import { APP_CONFIG } from '../appConfig';
 
 const STRUCTURAL_RESCAN_DEBOUNCE_MS = 150;
+// Coalesce a burst of `removed` events into a single follow-up rescan.
+// We already prune the file from the local ScanResult immediately for
+// instant UI feedback, so the rescan only exists to drop now-empty
+// parent dirs. A longer debounce here means renaming a folder or
+// deleting a build directory doesn't fire 50 rescans → 50 force-engine
+// reheats while the watcher drains. The fast-patch path in
+// useGraphDataSync also short-circuits same-shape rescans, but the
+// debounce lets us avoid even running the (synchronous, fs-walking)
+// scan on the backend in the first place.
+const REMOVED_RESCAN_DEBOUNCE_MS = 1500;
 
 type RuntimeLink = { source: unknown; target: unknown };
 
@@ -164,9 +174,9 @@ export function useProjectScan(activeFolder: string) {
       rescanTimer = setTimeout(runRescan, delay);
     }
 
-    const requestRescan = () => {
+    const requestRescan = (delay: number = STRUCTURAL_RESCAN_DEBOUNCE_MS) => {
       rescanAttempt = 0;
-      scheduleRescan(STRUCTURAL_RESCAN_DEBOUNCE_MS);
+      scheduleRescan(delay);
     };
 
     const unsubscribe = subscribeHealth(activeFolder, (event) => {
@@ -196,15 +206,18 @@ export function useProjectScan(activeFolder: string) {
         return;
       }
 
-      // event.type === 'removed' — drop the file immediately, then refresh the
-      // full tree to prune now-empty directory nodes and pick up any batched fs
-      // changes that happened around the delete.
+      // event.type === 'removed' — drop the file immediately so the UI
+      // updates without waiting for the rescan, then schedule a delayed
+      // tree refresh to prune now-empty directory nodes. The long debounce
+      // (REMOVED_RESCAN_DEBOUNCE_MS) collapses a burst of deletes (e.g.
+      // `rm -rf` of a build dir) into a single backend scan instead of one
+      // per file event.
       const next = removeFile(prev, event.filePath);
       if (next !== prev) {
         scanResultRef.current = next;
         setScanResult(next);
       }
-      requestRescan();
+      requestRescan(REMOVED_RESCAN_DEBOUNCE_MS);
     });
 
     return () => {

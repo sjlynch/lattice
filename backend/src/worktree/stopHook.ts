@@ -1,8 +1,8 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import {
-  installClaudeStopHook,
-  renderClaudeStopHookConfig,
+  installClaudeHooks,
+  renderClaudeHooksConfig,
 } from '../claudeStopHook.js';
 import {
   installPiCompletionExtension as installPiCompletionExtensionShared,
@@ -45,10 +45,25 @@ function taskCompleteUrlForStopHook(taskId: string, backendOrigin: string): stri
   return `${backendOrigin}/api/tasks/${taskId}/complete?source=claude-stop-hook-task-complete`;
 }
 
+// PreToolUse/PostToolUse activity callback. The worktree agent POSTs the
+// hook JSON here so the graph can draw a focus beam to the file it's
+// touching. `.claude/settings.local.json` is only read by Claude, so this
+// is installed for every worktree (a Pi/Codex primary task simply never
+// fires it; a Claude conflict-resolver in any worktree does). The frontend
+// scopes the visible Claude node to `harness === 'claude'` tasks.
+function taskActivityUrlForHook(taskId: string, backendOrigin: string): string {
+  return `${backendOrigin}/api/tasks/${taskId}/activity?source=claude-tool-hook`;
+}
+
+function hookUrls(taskId: string, backendOrigin: string) {
+  return {
+    completeUrl: taskCompleteUrlForStopHook(taskId, backendOrigin),
+    activityUrl: taskActivityUrlForHook(taskId, backendOrigin),
+  };
+}
+
 export function renderStopHookJson(taskId: string, backendOrigin: string): string {
-  return renderClaudeStopHookConfig(
-    taskCompleteUrlForStopHook(taskId, backendOrigin),
-  );
+  return renderClaudeHooksConfig(hookUrls(taskId, backendOrigin));
 }
 
 export async function installStopHook(
@@ -56,10 +71,7 @@ export async function installStopHook(
   taskId: string,
   backendOrigin: string,
 ): Promise<void> {
-  await installClaudeStopHook(
-    worktreePath,
-    taskCompleteUrlForStopHook(taskId, backendOrigin),
-  );
+  await installClaudeHooks(worktreePath, hookUrls(taskId, backendOrigin));
 }
 
 // Pi has no settings-driven command hooks (it's deliberately minimal — no

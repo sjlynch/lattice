@@ -4,6 +4,7 @@ import express, { type ErrorRequestHandler, type Express } from 'express';
 // non-JSON 500 — the toast always has a real message to show.
 import 'express-async-errors';
 import cors from 'cors';
+import { buildAgentActivityRouter } from '../routes/agentActivity.js';
 import { buildGlobalSettingsRouter } from '../routes/globalSettings.js';
 import { buildHealthRouter } from '../routes/health.js';
 import { buildMergeRunsRouter } from '../routes/mergeRuns.js';
@@ -29,7 +30,11 @@ export function createBackendApp(options: BackendAppOptions): Express {
 
 export function mountBaseMiddleware(app: Express): void {
   app.use(cors());
-  app.use(express.json());
+  // 25mb so a Claude PreToolUse/PostToolUse hook can POST a large `Write`
+  // tool_input (the whole file body) to /api/tasks/:id/activity without
+  // tripping the default 100kb limit. Localhost-only personal tool; the
+  // generous limit is not an exposure concern.
+  app.use(express.json({ limit: '25mb' }));
   // Form-encoded bodies are dramatically easier to build from a shell than
   // JSON (no quote-escaping, no backslash gymnastics). Accepting them on
   // task-creation endpoints lets agents send `--data-urlencode title=...`
@@ -47,6 +52,7 @@ export function mountRouteFactories(
   app.use(buildGlobalSettingsRouter());
   app.use(buildTerminalsRouter());
   app.use(buildTasksRouter(options.backendOrigin));
+  app.use(buildAgentActivityRouter());
   app.use(buildMergeRunsRouter(options.backendOrigin));
   app.use(buildPostMergeHooksRouter());
   app.use(buildPushRunsRouter(options.backendOrigin));

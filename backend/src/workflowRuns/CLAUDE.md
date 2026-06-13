@@ -26,6 +26,17 @@ explicit-curl callbacks — never by polling task state.
   notifies `step-spawned` + `progress`. Pre-spawning the pty is what lets
   the frontend lazy-mount terminals so a multi-step run doesn't burn a
   WebGL context per pane.
+- `projectDirtyState.ts` — `getProjectDirtyState` (probe `git status
+  --porcelain` of the project repo) + `renderDirtyStateWarning` (render a
+  markdown banner listing the diverged paths). `stepSpawner` calls the
+  probe before rendering and passes the result to `renderStepMarkdown`,
+  which injects the banner at the very top of `WORKFLOW_STEP.md` when
+  non-empty. Reason: task worktrees check out from HEAD, so a planner that
+  inspects the dirty working tree and writes tasks against a WIP refactor
+  produces tasks whose paths the executors can't find — looks like
+  hallucinated codebase, is actually a working-tree mismatch. Probe is
+  best-effort: a non-git project / status failure resolves to `null` and
+  no banner is rendered.
 - `renderHelperScript.ts` + `create-task-template.cjs` — interpolated
   Node CJS helper script copied into each step dir so the agent can
   create tasks without shell-quoting headaches. The `.cjs` template is a

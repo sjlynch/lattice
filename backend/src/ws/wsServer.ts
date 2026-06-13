@@ -7,6 +7,7 @@
 import type http from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { WebSocketServer } from 'ws';
+import { buildAgentSessionsWss } from './endpoints/agentSessions.js';
 import { buildHarnessesWss } from './endpoints/harnesses.js';
 import { buildHealthWss } from './endpoints/health.js';
 import { buildMergeRunsWss } from './endpoints/mergeRuns.js';
@@ -22,6 +23,7 @@ function buildWebSocketRoutes(): WebSocketRoute[] {
   return [
     ['/ws/terminal', buildTerminalWss()],
     ['/ws/tasks', buildTasksWss()],
+    ['/ws/agent-sessions', buildAgentSessionsWss()],
     ['/ws/merge-runs', buildMergeRunsWss()],
     ['/ws/post-merge-hooks', buildPostMergeHooksWss()],
     ['/ws/workflows', buildWorkflowsWss()],

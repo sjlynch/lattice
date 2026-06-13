@@ -11,8 +11,17 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { Task } from '../../api';
+import { taskColor } from '../../taskColors';
 import { DRAG_MIME } from './lanes';
 import { StuckPill } from './StuckPill';
+
+// Lanes whose cards show the per-task accent color (matching the task's
+// Claude node + worktree rings on the graph). Other lanes keep the plain
+// lane-color stripe.
+const ACCENT_STATUSES: ReadonlySet<Task['status']> = new Set([
+  'in_progress',
+  'ready_to_merge',
+]);
 
 export type SelectionClickIntent = 'select' | 'toggle' | 'range';
 
@@ -85,6 +94,9 @@ export function TaskCard({
   onRangeSelect,
 }: TaskCardProps) {
   const isConflict = !!task.conflict;
+  // Distinct per-task accent for the active lanes — same color the task's
+  // Claude node / worktree rings use on the graph.
+  const accentColor = ACCENT_STATUSES.has(task.status) ? taskColor(task) : null;
 
   function handleDragStart(e: DragEvent<HTMLDivElement>) {
     const ids = getTaskDragPayloadIds(
@@ -113,11 +125,14 @@ export function TaskCard({
     <div
       className={`task-card ${isDragging ? 'dragging' : ''} ${
         isConflict ? 'conflict' : ''
-      } ${isSelected ? 'selected' : ''}`}
+      } ${isSelected ? 'selected' : ''} ${accentColor ? 'has-task-accent' : ''}`}
       draggable
       onDragStart={handleDragStart}
       onDragEnd={onDragEnd}
-      style={{ ['--lane-color' as string]: laneColor }}
+      style={{
+        ['--lane-color' as string]: laneColor,
+        ...(accentColor ? { ['--task-color' as string]: accentColor } : {}),
+      }}
     >
       <span className="task-card-grip" aria-hidden>
         <GripVertical size={12} />

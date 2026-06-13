@@ -5,6 +5,22 @@ import { computeChangeMap } from '../timelineDiff';
 import type { ChangeKind } from '../changeRing';
 import { clearLabelsAndRefresh } from './refresh';
 
+// Two change maps are equal when they cover the same paths with the
+// same kinds. Tracked as a 1-pass walk over the larger map; both ring
+// maps are O(commits·changes) so this comparison is cheap relative to
+// the full sprite-rebuild it replaces.
+function changeMapsEqual(
+  a: Map<string, ChangeKind>,
+  b: Map<string, ChangeKind>,
+): boolean {
+  if (a === b) return true;
+  if (a.size !== b.size) return false;
+  for (const [path, kind] of a) {
+    if (b.get(path) !== kind) return false;
+  }
+  return true;
+}
+
 // History is fetched once per project; the scrubber range is two
 // tick indices into [0, commits.length], where commits.length is
 // the working-tree slot. Defaults to [oldest, WT] so the user sees
@@ -55,19 +71,25 @@ export function useGitTimeline(
   // Recompute the change map when the slider range moves and refresh
   // sprites so rings update. nodeVisibility (in the parent) also
   // re-evaluates on the same dep set, which hides/shows ghost nodes
-  // for the new range.
+  // for the new range. The scrubber emits range changes continuously
+  // while dragging; many adjacent ticks share the exact same change
+  // set, so we only refresh when the per-path ring kind actually
+  // flipped — otherwise we'd rebuild every node's THREE object on
+  // every scrubber pixel.
   useEffect(() => {
-    if (!history) {
-      changeMapRef.current = new Map();
-    } else {
-      changeMapRef.current = computeChangeMap(
-        history.commits,
-        history.uncommitted,
-        range.left,
-        range.right,
-      );
+    const prev = changeMapRef.current;
+    const next = history
+      ? computeChangeMap(
+          history.commits,
+          history.uncommitted,
+          range.left,
+          range.right,
+        )
+      : new Map<string, ChangeKind>();
+    changeMapRef.current = next;
+    if (!changeMapsEqual(prev, next)) {
+      clearLabelsAndRefresh(graphRef.current);
     }
-    clearLabelsAndRefresh(graphRef.current);
   }, [history, range, graphRef]);
 
   return { history, range, setRange, changeMapRef };

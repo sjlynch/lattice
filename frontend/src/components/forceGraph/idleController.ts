@@ -14,6 +14,9 @@
 //   - `labelPhysics`  : an overlay (LOC / health / labels) is running its
 //                       per-frame repulsion loop. Acquired/released by the
 //                       owning hook.
+//   - `agents`        : one or more Claude agent nodes / focus beams are on
+//                       screen and being animated. Held by `useAgentOverlay`
+//                       so the node easing + beam fades actually paint.
 //
 // Tab visibility is a negative gate: when the tab is hidden the loop is
 // fully paused regardless of held reasons.
@@ -27,12 +30,21 @@ import type { ForceGraph3DInstance } from '3d-force-graph';
 const INTERACT_IDLE_MS = 350;
 const POINTER_LEAVE_TAIL_MS = 80;
 const REFRESH_TAIL_MS = 120;
+// Belt-and-braces auto-release for the `engine` reason. The library
+// normally fires `onEngineStop` within `cooldownTime` (now 8 s, see
+// useForceGraphInitialization), but on the off chance an upstream
+// change ever drops or swallows the callback we don't want the render
+// loop pinned forever. Sized comfortably above cooldownTime + a margin
+// for the warmup ticks.
+const ENGINE_SAFETY_TIMEOUT_MS = 20000;
 
 export type IdleController = {
   engineStarted(): void;
   engineStopped(): void;
   acquireLabelPhysics(): void;
   releaseLabelPhysics(): void;
+  acquireAgents(): void;
+  releaseAgents(): void;
   wakeForRefresh(): void;
   destroy(): void;
 };
@@ -42,13 +54,20 @@ type Counts = {
   interact: number;
   refresh: number;
   labelPhysics: number;
+  agents: number;
 };
 
 export function createIdleController(
   graph: ForceGraph3DInstance,
   container: HTMLElement,
 ): IdleController {
-  const counts: Counts = { engine: 0, interact: 0, refresh: 0, labelPhysics: 0 };
+  const counts: Counts = {
+    engine: 0,
+    interact: 0,
+    refresh: 0,
+    labelPhysics: 0,
+    agents: 0,
+  };
   let hidden = document.visibilityState === 'hidden';
   let running = true; // 3d-force-graph starts its own RAF on construction
 
@@ -58,7 +77,8 @@ export function createIdleController(
       counts.engine > 0 ||
       counts.interact > 0 ||
       counts.refresh > 0 ||
-      counts.labelPhysics > 0
+      counts.labelPhysics > 0 ||
+      counts.agents > 0
     );
   }
 
@@ -72,16 +92,43 @@ export function createIdleController(
 
   // ---- engine (boolean, mirrors three-forcegraph's engineRunning) -------
   let engineHeld = false;
+  let engineSafetyTimer: ReturnType<typeof setTimeout> | null = null;
+  function clearEngineSafety() {
+    if (engineSafetyTimer) {
+      clearTimeout(engineSafetyTimer);
+      engineSafetyTimer = null;
+    }
+  }
+  function armEngineSafety() {
+    clearEngineSafety();
+    engineSafetyTimer = setTimeout(() => {
+      engineSafetyTimer = null;
+      // Library failed to fire onEngineStop within the cooldown window.
+      // Force-release so the render loop can suspend.
+      if (engineHeld) {
+        engineHeld = false;
+        counts.engine--;
+        sync();
+      }
+    }, ENGINE_SAFETY_TIMEOUT_MS);
+  }
   function engineStarted() {
-    if (engineHeld) return;
+    if (engineHeld) {
+      // Already held — just rearm the safety timer because the d3
+      // engine was just re-warmed (graphData() swap or explicit reheat).
+      armEngineSafety();
+      return;
+    }
     engineHeld = true;
     counts.engine++;
+    armEngineSafety();
     sync();
   }
   function engineStopped() {
     if (!engineHeld) return;
     engineHeld = false;
     counts.engine--;
+    clearEngineSafety();
     sync();
   }
 
@@ -92,6 +139,16 @@ export function createIdleController(
   }
   function releaseLabelPhysics() {
     if (counts.labelPhysics > 0) counts.labelPhysics--;
+    sync();
+  }
+
+  // ---- agents (Claude node + focus beams animating) ---------------------
+  function acquireAgents() {
+    counts.agents++;
+    sync();
+  }
+  function releaseAgents() {
+    if (counts.agents > 0) counts.agents--;
     sync();
   }
 
@@ -154,6 +211,7 @@ export function createIdleController(
     document.removeEventListener('visibilitychange', onVisibility);
     if (interactTimer) clearTimeout(interactTimer);
     if (refreshTimer) clearTimeout(refreshTimer);
+    clearEngineSafety();
   }
 
   // Reflect the initial visibility state on construction.
@@ -164,6 +222,8 @@ export function createIdleController(
     engineStopped,
     acquireLabelPhysics,
     releaseLabelPhysics,
+    acquireAgents,
+    releaseAgents,
     wakeForRefresh,
     destroy,
   };

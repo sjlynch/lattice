@@ -1,10 +1,15 @@
-// Selection ring. Wraps a selected node's sprite in a thin light-blue
-// ring drawn the same way as the timeline scrubber change rings, so the
-// selection state reads as another ring color rather than a bloom glow.
+// Selection ring. Drawn as a sibling child of the node's root Group so
+// it can be toggled in/out per-id without rebuilding the node's THREE
+// objects — see `setNodeHalo` below. The ring is a single shared
+// material so a graph with N selected nodes still allocates exactly one
+// GPU resource for the halo.
 
 import * as THREE from 'three';
 
 const RING_COLOR = '#7ad0ff';
+// Tag used on the halo Sprite's `userData` so `setNodeHalo(off)` can
+// locate the existing ring without iterating the whole child list.
+const HALO_TAG = 'lattice:halo';
 
 let _ringTexture: THREE.CanvasTexture | null = null;
 function ringTexture(): THREE.CanvasTexture {
@@ -56,15 +61,41 @@ function ringMaterial(): THREE.SpriteMaterial {
   return _ringMaterial;
 }
 
-export function withHalo(child: THREE.Object3D, baseSize: number): THREE.Object3D {
-  const group = new THREE.Group();
+function buildHaloSprite(baseSize: number): THREE.Sprite {
   const ring = new THREE.Sprite(ringMaterial());
   // Slightly larger than the change rings so a node selected during a
   // scrubber view shows both rings concentrically.
   const s = baseSize * 1.8;
   ring.scale.set(s, s, 1);
   ring.renderOrder = 11;
-  group.add(ring);
-  group.add(child);
-  return group;
+  ring.userData[HALO_TAG] = true;
+  return ring;
+}
+
+function findHaloChild(root: THREE.Object3D): THREE.Object3D | null {
+  // child counts are tiny (root + base + optional halo); a direct scan
+  // beats keeping a side map and the userData check is O(1).
+  for (const child of root.children) {
+    if (child.userData[HALO_TAG]) return child;
+  }
+  return null;
+}
+
+// Toggle a halo ring as a sibling child of the node's root Group. Called
+// from the selection-change handler instead of `graph.refresh()` — we
+// touch only the affected nodes' THREE objects, so the cost is O(delta)
+// not O(nodes).
+export function setNodeHalo(
+  root: THREE.Object3D,
+  selected: boolean,
+  baseSize: number,
+): void {
+  const existing = findHaloChild(root);
+  if (selected) {
+    if (existing) return;
+    root.add(buildHaloSprite(baseSize));
+  } else {
+    if (!existing) return;
+    root.remove(existing);
+  }
 }

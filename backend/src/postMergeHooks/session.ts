@@ -18,8 +18,10 @@ import {
 } from './registry.js';
 import {
   installPostMergeHookStopHook,
+  postMergeHookAgentId,
   postMergeHookCallbackUrl,
 } from './stopHook.js';
+import { registerAgentSession } from '../agentSessions.js';
 import type { PostMergeHookRun, PostMergeHookSession } from './types.js';
 
 export type TriggerPostMergeHookOptions = {
@@ -55,6 +57,7 @@ async function setupPostMergeHookSession(args: {
     scratchDir: cwd,
     id,
     backendOrigin,
+    projectPath,
     harness,
   });
 
@@ -154,6 +157,16 @@ export async function triggerPostMergeHook(
     }
 
     const updated = patchPostMergeHook(session.id, { serverId: sess.id });
+    // Presence: orange Claude node for this non-worktree session. Only for
+    // Claude — a Pi/codex hook isn't a "Claude session" and has no activity
+    // hooks, so it gets no node.
+    if (harness === 'claude') {
+      registerAgentSession({
+        agentId: postMergeHookAgentId(session.id),
+        projectPath,
+        label: 'post-merge hook',
+      });
+    }
     return { kind: 'started', run: updated ?? run, serverId: sess.id };
   } catch (err) {
     const message = (err as Error).message;

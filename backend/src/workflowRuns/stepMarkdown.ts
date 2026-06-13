@@ -8,6 +8,10 @@
 import { canonicalProjectPath } from '../projectPath.js';
 import type { Workflow, WorkflowStepHarness } from '../workflows.js';
 import type { WorkflowRun } from './state.js';
+import {
+  renderDirtyStateWarning,
+  type DirtyStateSummary,
+} from './projectDirtyState.js';
 
 export function effectiveStepHarness(
   wf: Workflow,
@@ -22,6 +26,7 @@ export function renderStepMarkdown(
   run: WorkflowRun,
   stepIndex: number,
   backendOrigin: string,
+  dirtyState: DirtyStateSummary | null = null,
 ): string {
   const step = wf.steps[stepIndex];
   const harness = effectiveStepHarness(wf, run, stepIndex);
@@ -74,9 +79,15 @@ export function renderStepMarkdown(
           "> turn until you've run the curl below.",
           '',
         ].join('\n');
+  // If the project tree is dirty, surface the divergence at the very top
+  // so the planner reads it before the step prompt. Worktree-mismatch is
+  // the single biggest source of "task references a path that doesn't
+  // exist" failures; see projectDirtyState.ts.
+  const dirtyWarning = dirtyState ? renderDirtyStateWarning(dirtyState) : '';
   return [
     `# Workflow Step ${stepIndex + 1} of ${wf.steps.length}: ${step.title}`,
     '',
+    ...(dirtyWarning ? [dirtyWarning] : []),
     '## Your Task',
     '',
     autonomyPreamble,

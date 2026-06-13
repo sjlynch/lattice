@@ -1,3 +1,5 @@
+import type { AgentHarness } from '../../harnesses';
+
 export type TaskStatus =
   | 'backlog'
   | 'open'
@@ -32,6 +34,13 @@ export type Task = {
   // admitted and the task flips to in_progress.
   runQueued?: boolean;
   runQueuedAt?: number;
+  // The harness that ran this task's worktree agent (recorded at spawn). The
+  // graph's Claude-agent overlay scopes itself to `claude` tasks.
+  harness?: AgentHarness;
+  // Stable palette slot assigned at spawn; drives the per-task accent color
+  // (card left edge, Claude node, `W` worktree rings). Absent on legacy /
+  // never-run tasks — callers fall back to hashing the id.
+  colorIndex?: number;
 };
 
 // `/api/tasks/:id/run` and `/resume` no longer return the pty synchronously
@@ -52,6 +61,50 @@ export type TaskSpawnedEvent = {
   worktreePath: string;
   serverId: string;
   projectPath: string;
+};
+
+// Pushed on `/ws/tasks` while a Claude worktree agent reads/modifies a file.
+// The graph draws a focus beam from the task's Claude node to that file.
+export type TaskActivityEvent = {
+  taskId: string;
+  projectPath: string;
+  // Project-absolute path of the touched file (matches a graph node `path`).
+  file: string;
+  // 'start' = PreToolUse, 'end' = PostToolUse.
+  phase: 'start' | 'end';
+  tool: string;
+  ts: number;
+};
+
+// One task's not-yet-merged file set, from `GET /api/tasks/worktree-modified`.
+// Drives the `W` worktree-highlight overlay.
+export type WorktreeModifiedTask = {
+  taskId: string;
+  colorIndex?: number;
+  // Project-absolute paths.
+  files: string[];
+};
+
+// Pushed on `/ws/tasks` while a Claude session OUTSIDE a worktree (push /
+// workflow step / post-merge hook) touches a file. Drives the focus beam on
+// that session's orange node.
+export type AgentActivityEvent = {
+  agentId: string;
+  projectPath: string;
+  label: string;
+  file: string;
+  phase: 'start' | 'end';
+  tool: string;
+  ts: number;
+};
+
+// Presence snapshot entry from `/ws/agent-sessions`. One orange Claude node
+// is shown per active non-worktree session.
+export type AgentSession = {
+  agentId: string;
+  projectPath: string;
+  label: string;
+  startedAt: number;
 };
 
 export type MergeTaskResult =

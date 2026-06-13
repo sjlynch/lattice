@@ -23,6 +23,8 @@ import {
   startWorkflowPromptCustomization,
   type WorkflowPromptTemplateId,
 } from '../workflowPromptCustomizations.js';
+import { workflowStepAgentId } from '../workflowRuns/stepSpawner.js';
+import { unregisterAgentSession } from '../agentSessions.js';
 
 export function buildWorkflowsRouter(backendOrigin: string): Router {
   const r = Router();
@@ -85,6 +87,8 @@ export function buildWorkflowsRouter(backendOrigin: string): Router {
     console.log(
       `[workflow-step-complete] run=${req.params.runId} step=${stepIndex} source=${source}`,
     );
+    // Drop this step's graph node; the next step (if any) registers its own.
+    unregisterAgentSession(workflowStepAgentId(req.params.runId, stepIndex));
     await completeWorkflowStep(req.params.runId, stepIndex, backendOrigin);
     res.json({ ok: true });
   });

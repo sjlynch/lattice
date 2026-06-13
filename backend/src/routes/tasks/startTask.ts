@@ -5,11 +5,12 @@
 // (setupTaskWorktree → pre-spawn pty → flip to in_progress) without going
 // through an HTTP hop or duplicating the logic.
 
-import { getTask, updateTask, type Task } from '../../tasks.js';
+import { getTask, listTasks, updateTask, type Task } from '../../tasks.js';
 import { setupTaskWorktree } from '../../worktree.js';
 import { SpawnCapacityError } from '../../spawnQueue.js';
 import type { AgentHarness } from '../../harnesses.js';
 import { selectHarnessCommand } from './harnessFactory.js';
+import { assignColorSlot } from './colorSlot.js';
 
 export type StartTaskByIdResult = {
   task: Task;
@@ -71,11 +72,21 @@ export async function startTaskById(
       `task ${taskId}: no terminal slot (terminal-server hard cap)`,
     );
   }
+  // Assign a stable palette slot once. Keep any existing index (a re-run of
+  // a task that already has one — e.g. a CAP-rejected first pass — must not
+  // jump colors). Computed against the live task list so concurrent spawns
+  // land on distinct slots.
+  const colorIndex =
+    typeof task.colorIndex === 'number'
+      ? task.colorIndex
+      : assignColorSlot(await listTasks(task.projectPath), task.id);
   const updated = await updateTask(task.id, {
     status: 'in_progress',
     worktreePath: result.worktreePath,
     branch: result.branch,
     startedAt: Date.now(),
+    harness: selectedHarness.harness,
+    colorIndex,
     runQueued: undefined,
     runQueuedAt: undefined,
   });

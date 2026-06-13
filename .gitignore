@@ -45,3 +45,6 @@ LATTICE_TASK.md
 
 # lattice-managed (do not remove)
 .pi/extensions/lattice-complete.ts
+
+# lattice-managed (do not remove)
+.pi/extensions/lattice-last-shutdown.json

@@ -42,8 +42,30 @@
 - `labelRepulsion.ts` — named cleanup, world-snapshot, force accumulation,
   velocity/rest integration, and connector endpoint helpers behind
   `repelLabels(registry, minDist)`.
-- `halo.ts` — `withHalo(child, baseSize)` wraps a sprite in a thin light-blue
-  ring for the selection state (drawn the same way as `changeRing.ts`).
+- `halo.ts` — `setNodeHalo(root, on, baseSize)` adds/removes a light-blue
+  ring as a sibling child of the node's root Group (drawn the same way as
+  `changeRing.ts`). Designed for in-place toggling: a selection click
+  walks only the affected ids and calls `setNodeHalo`, never
+  `graph.refresh()`.
+- `selectionHaloSync.ts` — `applySelectionHaloDelta(graph, prev, next,
+  settings)` is the entry point for that in-place toggle. Reads each
+  affected sim node's `__threeObj` (three-forcegraph's default
+  `objBindAttr`) and routes the call to `setNodeHalo`.
+- `claudeNodeSprite.ts` — `makeClaudeNode(color, size)`: the free-floating
+  filled disc + soft glow drawn for each in-progress Claude agent. Material
+  cached per color.
+- `agentOverlay.ts` — `AgentOverlay`: a `THREE.Group` added straight to
+  `graph.scene()` (NOT via `graphData`, so an agent appearing/finishing
+  never reheats the sim or distorts the DAG). Holds one Claude node per live
+  agent plus TTL-fading focus beams (`THREE.Line`) to the files it touches.
+  `tick()` eases each node toward the centroid of its active files (or a
+  parked orbit slot when idle) and refreshes beam endpoints from the file
+  nodes' live positions. Path→node index rebuilt only on a structural
+  `graphData` swap. Driven by `useAgentOverlay`.
+- `worktreeRing.ts` — `setNodeWorktreeRing(root, on, color, baseSize)`: a
+  double concentric ring (distinct from the single selection halo / change
+  rings) colored by the owning task. Same sibling-child toggle as `halo.ts`;
+  driven by the `W` overlay. Textures/materials cached per color.
 - `menu.ts` — right-click `MENU_ITEMS` (Refactor/Add tests/Document/Find dead
   code) + `relPath(full, root)`.
 - `graphSettings.ts` — `GraphSettings` shape, `DEFAULT_SETTINGS`,
@@ -57,13 +79,34 @@
   only; accessor closures delegate to `nodeObjectFactory` and the resize/camera
   setup lives in `sceneSetup`.
 - `useGraphDataSync` — pushes ScanResult + ghost history into `graphData`,
-  clears the label registries on each swap, resets selection.
+  clears the label registries on each *structural* swap, resets selection.
+  A new ScanResult ref that doesn't change the set of node ids and link
+  endpoints (e.g. a single-file health update from the chokidar watcher)
+  takes the **fast-patch path** instead: per-node `health`/`healthDetails`/
+  `loc`/`size` fields are written onto the in-place sim nodes and
+  `graph.refresh()` is called. The d3 force engine is *not* reheated, so
+  the idle controller can keep the render loop paused. The full-swap path
+  pins `engineStarted` for the duration of the new warmup and is now
+  hard-bounded by `cooldownTicks: 400` + `cooldownTime: 8000` +
+  `d3AlphaMin: 0.005` (set once in `useForceGraphInitialization`).
 - `useGraphTaskCreation` — modal action, prompt text, submitting + toast
   state, derived `selectedFiles`, plus `openMenuItem` / `submitTask` /
   `closeModal` actions.
 - `useGraphOverlays` — composes `useGraphSettings` + `useGitTimeline` +
   `useLocOverlay` + `useHealthOverlay` + `useLabelsOverlay` +
   `useGraphFilter` so ForceGraphView gets one overlay setup point.
+- `useAgentOverlay` — owns the Claude-agent overlay, unified by the overlay's
+  string agent id from two sources: in-progress `harness === 'claude'` tasks
+  (task-colored node) and non-worktree Claude sessions from
+  `/ws/agent-sessions` (orange `CLAUDE_ORANGE` node — push / workflow step /
+  post-merge hook). Beams arrive as `task-activity` (taskId) and
+  `agent-activity` (agentId) on `/ws/tasks`. Owns the `AgentOverlay`
+  lifecycle and the RAF; holds the idle controller's `agents` reason while
+  anything is on screen, releases it when none remain.
+- `useWorktreeHighlight` — the `W`-hold overlay. Same keydown/keyup chord
+  pattern as `h`/`z` (blur + visibilitychange reset). On press, fetches
+  `GET /api/tasks/worktree-modified` and rings each changed file in its
+  task's color via `setNodeWorktreeRing`; strips them on release.
 - `useNodeContextMenu` / `useBoxSelect` / `useRefMirror` /
   `refresh.ts` — small focused helpers consumed directly by the coordinator.
 - `hooks/boxSelectGeometry.ts` — pure rectangle/projection hit-testing helpers

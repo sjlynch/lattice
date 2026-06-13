@@ -14,6 +14,8 @@ import {
   markPushRunDone,
   startPushSession,
 } from '../pushRuns.js';
+import { pushAgentId } from '../pushRuns/stopHook.js';
+import { unregisterAgentSession } from '../agentSessions.js';
 
 export function buildPushRunsRouter(backendOrigin: string): Router {
   const r = Router();
@@ -71,6 +73,8 @@ export function buildPushRunsRouter(backendOrigin: string): Router {
   // forgotten just no-ops.
   r.post('/api/push-runs/:id/done', async (req, res) => {
     const run = getPushRun(req.params.id);
+    // Drop the graph node regardless of whether the run is still tracked.
+    unregisterAgentSession(pushAgentId(req.params.id));
     if (!run) return res.json({ ok: true });
     markPushRunDone(run.id);
     // Cleanup the home-scoped scratch dir off the response path so a slow

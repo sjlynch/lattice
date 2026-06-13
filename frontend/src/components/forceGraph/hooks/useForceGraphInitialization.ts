@@ -44,6 +44,17 @@ export function useForceGraphInitialization(
       .linkWidth(0.7)
       .dagMode('td')
       .dagLevelDistance(nodeRefs.settingsRef.current.dagLevelDistance)
+      // Engine settle bounds. The library defaults to
+      // `cooldownTime: 15000`, `cooldownTicks: Infinity`, `d3AlphaMin: 0`
+      // — which means the *only* stop condition is 15 s of wall clock
+      // from the last graphData()/reheat. On a busy dev box (vite HMR,
+      // tsc emit, AV scans) ScanResult re-pushes arrive faster than 15 s
+      // and the engine never settles, defeating the idle controller.
+      // We bound by ticks AND alpha so a reheat reliably ends in 2–4 s
+      // of real motion regardless of wall-clock interruptions.
+      .cooldownTicks(400)
+      .cooldownTime(8000)
+      .d3AlphaMin(0.005)
       .showNavInfo(false)
       .onNodeHover((n: object | null) => {
         // Track the hovered file node so HealthTooltip can render its

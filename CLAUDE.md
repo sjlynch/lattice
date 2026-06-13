@@ -110,6 +110,7 @@ therefore stay safely re-runnable.
 | PATCH | `/api/global-settings` | Update machine-global settings (applies the spawn-queue softCap live) |
 | GET | `/api/project-env?project=` | Auto-detected package-manager envs + the "fresh worktree, don't reinstall" notes (default + effective) |
 | GET | `/api/tasks?project=` | List tasks for a project |
+| GET | `/api/tasks/worktree-modified?project=` | Files changed by each not-yet-merged task (in_progress + ready_to_merge); drives the graph's `W` worktree-highlight |
 | GET | `/api/tasks/:id` | Fetch a single task |
 | POST | `/api/tasks` | Create `{project, title, description?}` |
 | POST | `/api/tasks/batch` | Batch-create `{project, tasks:[{title,description?}]}` — returns array |
@@ -119,6 +120,8 @@ therefore stay safely re-runnable.
 | POST | `/api/tasks/:id/run` | Enqueue an Open task's run on the spawn queue; returns `{accepted, queued}` (pty delivered later via the `task-spawned` WS event) |
 | POST | `/api/tasks/:id/resume` | Enqueue a re-spawn in the existing worktree; returns `{accepted, queued}` |
 | POST | `/api/tasks/:id/complete` | Stop-hook callback (in_progress → ready_to_merge) |
+| POST | `/api/tasks/:id/activity` | Claude PreToolUse/PostToolUse hook callback — reports the file the agent is touching; emits a `task-activity` WS event for the graph focus beam (204, body ignored) |
+| POST | `/api/agent-activity/:token` | Same, for a Claude session OUTSIDE a worktree (push / workflow step / post-merge hook). The token encodes agent id + project + label; emits an `agent-activity` WS event (204, body ignored) |
 | POST | `/api/tasks/:id/merge` | Attempt git merge; conflict pre-creates resolver pty, returns `serverId` |
 | POST | `/api/tasks/:id/merged` | Resolver-Claude callback after a successful merge |
 | POST | `/api/tasks/:id/merge-aborted` | Resolver-Claude callback if it gave up |
@@ -136,7 +139,8 @@ therefore stay safely re-runnable.
 | DELETE | `/api/terminals/:id` | Kill a pty session |
 | GET | `/api/spawn-queue` | Debug: spawn-queue snapshot (pending/in-flight/reserved, softCap) |
 | WS | `/ws/terminal?id=&cwd=&cols=&rows=&initialCommand=` | xterm proxy via node-pty (with replay) |
-| WS | `/ws/tasks?project=` | Live task list updates + `task-spawned` events (a queued run's pty spawned) |
+| WS | `/ws/tasks?project=` | Live task list updates + `task-spawned` events (a queued run's pty spawned) + `task-activity` (worktree Claude agent's current file) + `agent-activity` (non-worktree Claude session's current file) for the graph focus beams |
+| WS | `/ws/agent-sessions?project=` | Presence snapshots of Claude sessions running outside a worktree (push / workflow step / post-merge hook); one orange graph node each |
 | WS | `/ws/merge-runs?project=` | Run progress + per-conflict resolver spawn events |
 
 Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
@@ -149,6 +153,28 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
 - **Sprite shapes/colors per file extension** are defined in
   `frontend/src/extensionStyles.ts` — single source of truth shared by the
   3D graph and the Legend overlay. To add a language, add an entry there.
+- **Per-task accent colors** are in `frontend/src/taskColors.ts` (single
+  source of truth: card left edge, graph Claude node, `W` worktree rings).
+  Each running task gets a stable palette *slot* (`Task.colorIndex`,
+  assigned at spawn by `backend/src/routes/tasks/colorSlot.ts` — smallest
+  index free among active tasks) mapped through a golden-angle palette, so
+  30–80 concurrent agents stay maximally distinct and colors never
+  reshuffle when a sibling finishes.
+- **Claude agent overlay (graph).** Each in-progress *Claude* task shows a
+  free-floating filled "Claude node"; while its agent reads/modifies files
+  (PreToolUse/PostToolUse hooks → `/activity` → `task-activity` WS) a TTL-
+  fading focus beam links the node to each file node. Holding **`W`**
+  outlines every file changed by a not-yet-merged task in that task's color.
+  Claude-only for now (Codex/Pi lack the activity hooks). See
+  `frontend/src/components/forceGraph/CLAUDE.md`.
+- **Non-worktree Claude sessions** (push runs, workflow steps, post-merge
+  hooks) get the *same* node + beams, but a fixed Claude-orange
+  (`CLAUDE_ORANGE`) since they have no task color. Presence is registry-
+  driven (`backend/src/agentSessions.ts` → `/ws/agent-sessions`): a node
+  appears at spawn and disappears at the session's completion callback;
+  beams come from the `/api/agent-activity/:token` hook
+  (`backend/src/agentActivity.ts`). Claude-only (Pi/codex sessions get no
+  node).
 - **Tasks store** is in-memory keyed by project path with debounced JSON
   persistence; the global `~/.lattice/projects.json` index is consulted
   lazily so Stop-hook callbacks resolve task IDs across sessions.

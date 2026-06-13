@@ -7,6 +7,8 @@ export type TaskStatus =
   | 'done'
   | 'deleted';
 
+import type { AgentHarness } from '../harnesses.js';
+
 export type Task = {
   id: string;
   projectPath: string;
@@ -43,6 +45,17 @@ export type Task = {
   // Persisted so boot recovery can re-enqueue a run interrupted by a restart.
   runQueued?: boolean;
   runQueuedAt?: number;
+  // The harness that actually ran this task's worktree agent, recorded at
+  // spawn time (startTask). The graph's Claude-agent overlay reads this to
+  // scope itself to `claude` tasks — Codex/Pi have no PreToolUse/PostToolUse
+  // activity hooks yet, so they get no live focus beams.
+  harness?: AgentHarness;
+  // A stable palette slot assigned at spawn time (smallest index free among
+  // the project's currently-active tasks). Drives the per-task accent color
+  // shared by the card's left edge, the Claude node, and the `W` worktree
+  // rings. Persisted so the color never reshuffles as sibling tasks finish;
+  // freed for reuse once this task leaves the active lanes.
+  colorIndex?: number;
 };
 
 export type TaskUpdates = Partial<
