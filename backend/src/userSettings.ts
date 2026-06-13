@@ -36,6 +36,14 @@ export type UserSettings = {
   // (JSON/YAML plus common prose/text extensions); an empty array means
   // "ignore nothing".
   metricsIgnoredExts?: string[];
+  // Extra entry-point globs for the dead-code (`D`) overlay's reachability
+  // pass, project-relative with `**`/`*`/`?` support (e.g. `src/routes/**`,
+  // `**/*.stories.tsx`). Files matching these are treated as live roots even
+  // when nothing imports them — the escape hatch for framework magic
+  // (file-based routing, DI registries, plugin globs) that static import
+  // resolution can't see. Conventional entry points (index/main/server/
+  // *.config.*/tests) are detected automatically and don't need listing.
+  deadCodeEntryGlobs?: string[];
   // Optional post-merge hook. When `postMergeHookPrompt` is non-empty,
   // every successful merge (per-task or "Merge All") spawns a coding
   // harness in the project root with this prompt as its task, and the
@@ -44,6 +52,13 @@ export type UserSettings = {
   // workflow Merge control step from advancing as well.
   postMergeHookPrompt?: string;
   postMergeHookHarness?: AgentHarness;
+  // When true (the default — absent counts as true), Lattice merges activity
+  // hooks into this project's `.claude/settings.local.json` so ANY Claude
+  // session working in the project tree (even ones Lattice didn't launch)
+  // shows as an orange node on the graph. Turning it off strips Lattice's
+  // hook entries (the user's own config is preserved). See
+  // `projectClaudeHooks.ts`.
+  instrumentProjectClaudeSessions?: boolean;
 };
 
 function settingsFile(projectPath: string): string {

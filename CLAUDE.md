@@ -122,6 +122,8 @@ therefore stay safely re-runnable.
 | POST | `/api/tasks/:id/complete` | Stop-hook callback (in_progress → ready_to_merge) |
 | POST | `/api/tasks/:id/activity` | Claude PreToolUse/PostToolUse hook callback — reports the file the agent is touching; emits a `task-activity` WS event for the graph focus beam (204, body ignored) |
 | POST | `/api/agent-activity/:token` | Same, for a Claude session OUTSIDE a worktree (push / workflow step / post-merge hook). The token encodes agent id + project + label; emits an `agent-activity` WS event (204, body ignored) |
+| POST | `/api/project-instrumentation` | Body `{project}` — install (or remove, per the `instrumentProjectClaudeSessions` setting) Lattice's activity hooks in `<project>/.claude/settings.local.json` so ANY Claude session in the project tree shows on the graph. Called on project open + when the toggle changes |
+| POST | `/api/project-activity/:token` | SessionStart/SessionEnd/PreToolUse/PostToolUse callback for a project-instrumented Claude session (any session, not just Lattice-spawned). Keyed by Claude's `session_id`; drives the orange node + beams (204, body ignored) |
 | POST | `/api/tasks/:id/merge` | Attempt git merge; conflict pre-creates resolver pty, returns `serverId` |
 | POST | `/api/tasks/:id/merged` | Resolver-Claude callback after a successful merge |
 | POST | `/api/tasks/:id/merge-aborted` | Resolver-Claude callback if it gave up |
@@ -160,6 +162,17 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
   index free among active tasks) mapped through a golden-angle palette, so
   30–80 concurrent agents stay maximally distinct and colors never
   reshuffle when a sibling finishes.
+- **Graph overlays (hold-key).** Momentary recolors of the file graph, each on
+  the same chord pattern (keyup/blur/visibilitychange reset): **`H`** code
+  health, **`Z`** lines of code, **`D`** dead code, **`W`** worktree-modified
+  files, **`Alt`** name labels. The **`D`** dead-code view colors each file by
+  reachability from detected entry points — green = reachable, red =
+  dead/orphaned, grey = entry point or uncertain (asset / unsupported language /
+  dynamic-only). Classification is computed in `backend/src/health/crossFile/`
+  (reachability from roots, *not* `fanIn===0`) and rides on each node's
+  `healthDetails.deadCode`. Extra roots for framework magic go in
+  `userSettings.deadCodeEntryGlobs`. Complements (doesn't replace) the
+  right-click "Find dead code" agent action.
 - **Claude agent overlay (graph).** Each in-progress *Claude* task shows a
   free-floating filled "Claude node"; while its agent reads/modifies files
   (PreToolUse/PostToolUse hooks → `/activity` → `task-activity` WS) a TTL-
@@ -175,6 +188,18 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
   beams come from the `/api/agent-activity/:token` hook
   (`backend/src/agentActivity.ts`). Claude-only (Pi/codex sessions get no
   node).
+- **Any Claude session in an opened project** (even ones Lattice didn't
+  launch — a `claude` you start in your own terminal) also gets an orange
+  node. On project open Lattice merges `PreToolUse`/`PostToolUse` +
+  `SessionStart`/`SessionEnd` hooks into the project's own
+  `.claude/settings.local.json` (`backend/src/projectClaudeHooks.ts`,
+  preserving the user's config; opt-out via the
+  `instrumentProjectClaudeSessions` setting). Those fire
+  `/api/project-activity/:token` (`routes/projectClaude.ts`), keyed by
+  Claude's `session_id`, feeding the same registry/beam path with a 5-min
+  idle TTL (covers a missed `SessionEnd`). Sessions in `.lattice/` /
+  `~/.lattice/` scratch are skipped (handled by their own machinery). A
+  session must be (re)started to pick up newly-installed hooks.
 - **Tasks store** is in-memory keyed by project path with debounced JSON
   persistence; the global `~/.lattice/projects.json` index is consulted
   lazily so Stop-hook callbacks resolve task IDs across sessions.

@@ -12,7 +12,16 @@ import type { ParsedAlias } from '../tsconfig.js';
 //
 // This isn't a full module resolver — we don't read package.json — but it's
 // accurate enough for fan-in/fan-out signals on well-organized projects.
-export const RESOLVE_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py'];
+// JS/TS/Python first (the common case + correct precedence when a `./foo`
+// has both a `.ts` and a sibling asset). The trailing asset/component
+// extensions let an extensionless import of a non-code file still resolve to
+// an edge, so the imported asset isn't mistaken for dead code. Imports that
+// already carry an extension match exactly via `presentFiles.has(target)`
+// before this list is consulted.
+export const RESOLVE_EXTS = [
+  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py',
+  '.vue', '.svelte', '.json',
+];
 export const INDEX_FILES = [
   'index.ts',
   'index.tsx',

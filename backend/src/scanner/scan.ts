@@ -1,6 +1,12 @@
-import { HealthCache, type HealthMetrics } from '../health/index.js';
+import {
+  HealthCache,
+  detectRoots,
+  readPackageJsonRoots,
+  type HealthMetrics,
+} from '../health/index.js';
 import { loadProjectAliases } from '../health/tsconfig.js';
 import { seedWatcherState } from '../health/watcher.js';
+import { getUserSettings } from '../userSettings.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { loadGitignore } from './ignore.js';
 import { collectSourceTree } from './collectSourceTree.js';
@@ -29,7 +35,20 @@ export async function scan(root: string, options: ScanOptions = {}): Promise<Sca
     isCancelled: options.isCancelled,
   });
   const aliases = await loadProjectAliases(absRoot);
-  const coupling = computeCoupling(metrics, aliases);
+
+  // Entry-point roots for the dead-code / reachability pass: conventional
+  // filenames + user-configured globs + package.json entry targets. Anything
+  // not reachable from a root is flagged for the `D` overlay.
+  const presentFiles = new Set(metrics.map((m) => m.filePath));
+  const entryGlobs = (await getUserSettings(absRoot)).deadCodeEntryGlobs ?? [];
+  const packageRoots = await readPackageJsonRoots(absRoot, presentFiles);
+  const roots = detectRoots(presentFiles, {
+    projectRoot: absRoot,
+    entryGlobs,
+    extraRoots: packageRoots,
+  });
+
+  const coupling = computeCoupling(metrics, aliases, roots);
   const result = aggregate(metrics, coupling, {
     root: absRoot,
     directories: collected.directories,

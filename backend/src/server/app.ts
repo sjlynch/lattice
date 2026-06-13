@@ -5,6 +5,7 @@ import express, { type ErrorRequestHandler, type Express } from 'express';
 import 'express-async-errors';
 import cors from 'cors';
 import { buildAgentActivityRouter } from '../routes/agentActivity.js';
+import { buildProjectClaudeRouter } from '../routes/projectClaude.js';
 import { buildGlobalSettingsRouter } from '../routes/globalSettings.js';
 import { buildHealthRouter } from '../routes/health.js';
 import { buildMergeRunsRouter } from '../routes/mergeRuns.js';
@@ -53,6 +54,7 @@ export function mountRouteFactories(
   app.use(buildTerminalsRouter());
   app.use(buildTasksRouter(options.backendOrigin));
   app.use(buildAgentActivityRouter());
+  app.use(buildProjectClaudeRouter(options.backendOrigin));
   app.use(buildMergeRunsRouter(options.backendOrigin));
   app.use(buildPostMergeHooksRouter());
   app.use(buildPushRunsRouter(options.backendOrigin));

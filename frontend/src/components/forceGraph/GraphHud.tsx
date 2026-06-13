@@ -9,6 +9,7 @@ type Props = {
   counts: Counts;
   healthMode: boolean;
   locMode: boolean;
+  deadMode: boolean;
   labelMode: boolean;
   labelLevel: number;
   maxDepth: number;
@@ -24,6 +25,7 @@ export function GraphHud({
   counts,
   healthMode,
   locMode,
+  deadMode,
   labelMode,
   labelLevel,
   maxDepth,
@@ -41,7 +43,15 @@ export function GraphHud({
       {locMode && !healthMode && (
         <div className="loc-view-chip">View: Lines of Code</div>
       )}
-      {labelMode && !locMode && !healthMode && (
+      {deadMode && !locMode && !healthMode && (
+        <div className="loc-view-chip">
+          View: Dead Code
+          <span style={{ opacity: 0.7, marginLeft: 8 }}>
+            (green reachable · red dead · grey entry/uncertain)
+          </span>
+        </div>
+      )}
+      {labelMode && !deadMode && !locMode && !healthMode && (
         <div className="loc-view-chip">
           View: Labels · depth {labelLevel}
           {maxDepth > 0 && ` / ${maxDepth}`}

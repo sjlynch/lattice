@@ -1,5 +1,7 @@
 import type { ParsedAlias } from '../tsconfig.js';
+import type { DeadCodeStatus } from '../types.js';
 import { resolveImport } from './resolveImport.js';
+import { RESOLVABLE_IMPORT_EXTS } from './roots.js';
 
 export type FileImports = {
   filePath: string;
@@ -10,8 +12,19 @@ export type CrossFileResult = {
   fanIn: Map<string, number>;
   fanOut: Map<string, number>;
   inCycle: Set<string>;
+  // Reachability from the root set, when one is supplied. `reachable` is the
+  // transitive closure of imports from the roots; `deadCode` is the per-file
+  // classification derived from it. Both empty when no roots are passed.
+  reachable: Set<string>;
+  deadCode: Map<string, DeadCodeStatus>;
   // For introspection / debugging.
   totalEdges: number;
+};
+
+export type ComputeCrossFileOptions = {
+  // Entry-point files. When provided, reachability + dead-code classification
+  // run; when omitted they're skipped and the maps come back empty.
+  roots?: Set<string>;
 };
 
 export type ImportGraph = {
@@ -25,17 +38,82 @@ export function computeCrossFile(
   fileImports: FileImports[],
   presentFiles: Set<string>,
   aliases?: readonly ParsedAlias[],
+  options: ComputeCrossFileOptions = {},
 ): CrossFileResult {
   const graph = buildImportGraph(fileImports, presentFiles, aliases);
   const sccs = tarjan(Array.from(presentFiles), graph.edges);
   const inCycle = cyclicNodes(sccs, graph.edges);
 
+  let reachable = new Set<string>();
+  let deadCode = new Map<string, DeadCodeStatus>();
+  if (options.roots) {
+    reachable = computeReachability(graph.edges, options.roots);
+    deadCode = classifyDeadCode(presentFiles, options.roots, reachable);
+  }
+
   return {
     fanIn: graph.fanIn,
     fanOut: graph.fanOut,
     inCycle,
+    reachable,
+    deadCode,
     totalEdges: graph.totalEdges,
   };
+}
+
+// Forward reachability: every file transitively imported by a root. `edges`
+// maps a file to the set of files it imports, so a DFS from the roots over
+// `edges` is exactly "what does the live program pull in".
+export function computeReachability(
+  edges: Map<string, Set<string>>,
+  roots: Iterable<string>,
+): Set<string> {
+  const reachable = new Set<string>();
+  const stack: string[] = [];
+  for (const r of roots) {
+    if (!reachable.has(r)) {
+      reachable.add(r);
+      stack.push(r);
+    }
+  }
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    const outs = edges.get(cur);
+    if (!outs) continue;
+    for (const next of outs) {
+      if (!reachable.has(next)) {
+        reachable.add(next);
+        stack.push(next);
+      }
+    }
+  }
+  return reachable;
+}
+
+function classifyDeadCode(
+  presentFiles: Set<string>,
+  roots: Set<string>,
+  reachable: Set<string>,
+): Map<string, DeadCodeStatus> {
+  const out = new Map<string, DeadCodeStatus>();
+  for (const f of presentFiles) {
+    if (roots.has(f)) {
+      out.set(f, 'entry');
+    } else if (reachable.has(f)) {
+      out.set(f, 'live');
+    } else {
+      const ext = extLower(f);
+      out.set(f, RESOLVABLE_IMPORT_EXTS.has(ext) ? 'dead' : 'uncertain');
+    }
+  }
+  return out;
+}
+
+function extLower(filePath: string): string {
+  const dot = filePath.lastIndexOf('.');
+  const slash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+  if (dot <= slash) return '';
+  return filePath.slice(dot).toLowerCase();
 }
 
 export function buildImportGraph(

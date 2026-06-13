@@ -122,6 +122,8 @@ export function ForceGraphView({
     locMode,
     locModeRef,
     healthModeRef,
+    deadMode,
+    deadModeRef,
     labelMode,
     labelModeRef,
     labelLevel,
@@ -144,6 +146,7 @@ export function ForceGraphView({
     dataRef,
     locModeRef,
     healthModeRef,
+    deadModeRef,
     labelModeRef,
     labelLevelRef,
     nodeDepthsRef,
@@ -271,6 +274,7 @@ export function ForceGraphView({
         counts={counts}
         healthMode={healthMode}
         locMode={locMode}
+        deadMode={deadMode}
         labelMode={labelMode}
         labelLevel={labelLevel}
         maxDepth={maxDepthRef.current}

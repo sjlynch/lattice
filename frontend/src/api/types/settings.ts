@@ -30,6 +30,11 @@ export type UserSettings = {
   // Optional post-merge hook. See backend userSettings.ts.
   postMergeHookPrompt?: string;
   postMergeHookHarness?: AgentHarness;
+  // When true (default — absent counts as true), Lattice instruments the
+  // project's `.claude/settings.local.json` so any Claude session working in
+  // the project tree shows as an orange node on the graph. See backend
+  // projectClaudeHooks.ts.
+  instrumentProjectClaudeSessions?: boolean;
 };
 
 // Extensions Lattice ignores by default in the LOC and code-health overlays.

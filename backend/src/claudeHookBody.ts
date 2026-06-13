@@ -41,3 +41,21 @@ export function cwdFromHookBody(body: unknown): string | null {
       : undefined;
   return typeof c === 'string' && c ? c : null;
 }
+
+// Claude's stable per-session id (present in every hook event of a session).
+export function sessionIdFromHookBody(body: unknown): string | null {
+  const s =
+    body && typeof body === 'object'
+      ? (body as Record<string, unknown>).session_id
+      : undefined;
+  return typeof s === 'string' && s ? s : null;
+}
+
+// The raw hook event name (e.g. 'SessionStart', 'PreToolUse').
+export function hookEventName(body: unknown): string {
+  const n =
+    body && typeof body === 'object'
+      ? (body as Record<string, unknown>).hook_event_name
+      : undefined;
+  return typeof n === 'string' ? n : '';
+}

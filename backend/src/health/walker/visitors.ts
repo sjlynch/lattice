@@ -124,6 +124,17 @@ export function handleExportTracking(
     return;
   }
 
+  // Re-exports (`export { x } from './m'`, `export * from './m'`) are import
+  // edges for reachability purposes — the file pulls in `./m`. The plain
+  // import visitor doesn't see them (they're export_statements), so capture
+  // the source here. Without this, files reached only through a barrel index
+  // look orphaned to the dead-code pass.
+  const source = node.childForFieldName('source');
+  if (source) {
+    const spec = source.text.replace(/^[\'"`]|[\'"`]$/g, '');
+    if (spec) ctx.result.imports.push(spec);
+  }
+
   const isDefault = node.children.some((c) => c?.type === 'default');
   if (isDefault) ctx.exportState.hasDefaultExport = true;
   else ctx.exportState.namedExportCount += countExportBindings(node);
@@ -173,6 +184,21 @@ export function handleCallExpression(
   if (!callee) return;
 
   const calleeText = callee.text;
+
+  // Dynamic imports / requires (`import('./m')`, `require('./m')`) with a
+  // string-literal specifier are real import edges — capture them for the
+  // dead-code reachability pass so lazily-loaded route components aren't
+  // mistaken for orphans. Only string literals are resolvable; computed
+  // specifiers (`import(path)`) are left to the "uncertain" bucket.
+  if (ctx.isJsFamily && (calleeText === 'import' || calleeText === 'require')) {
+    const args = node.childForFieldName('arguments');
+    const first = args?.namedChild(0);
+    if (first && first.type === 'string') {
+      const spec = first.text.replace(/^[\'"`]|[\'"`]$/g, '');
+      if (spec) ctx.result.imports.push(spec);
+    }
+  }
+
   if (ctx.isJsFamily && isConsoleLogish(calleeText)) {
     ctx.result.smellTokens.consoleCalls++;
   }

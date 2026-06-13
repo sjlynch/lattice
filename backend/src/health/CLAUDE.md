@@ -40,8 +40,18 @@ Halstead token counts and a Maintainability Index, and folded into a composite
     final `HealthSmell[]`)
 - `crossFile.ts` + `crossFile/` — shim plus focused cross-file modules:
   `resolveImport.ts` (extension/index/alias/Python-relative resolution),
-  `graph.ts` (edge construction, duplicate de-duping, Tarjan SCCs), and
-  `apply.ts` (patch fanIn/fanOut/inCycle smells back into `HealthMetrics`)
+  `graph.ts` (edge construction, duplicate de-duping, Tarjan SCCs, and
+  reachability/dead-code classification when given a root set), `roots.ts`
+  (entry-point detection: conventional filenames + user `deadCodeEntryGlobs` +
+  package.json entry targets; `RESOLVABLE_IMPORT_EXTS`), and `apply.ts` (patch
+  fanIn/fanOut/inCycle smells + the `deadCode` status back into `HealthMetrics`).
+  The dead-code pass is reachability-from-roots, not raw `fanIn===0`, so dead
+  islands/cycles and entry points classify correctly; it is deliberately kept
+  out of `computeScore` (orphan status is a signal, not a penalty). Edge
+  capture includes `export … from` re-exports and string-literal dynamic
+  `import()`/`require()` (see `walker/visitors.ts`) so barrels and lazy routes
+  aren't mistaken for orphans. Roots come from the scan (`scanner/scan.ts`) and
+  the watcher (`crossFileAnalyzer.ts`); the `D` overlay consumes the result.
 - `crossFileAnalyzer.ts` — watcher-facing diff/broadcast wrapper around the
   cross-file pass
 - `scoreMetadata.ts` — serializable source of truth for score component ids,

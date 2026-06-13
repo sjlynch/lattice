@@ -21,7 +21,8 @@ import { isManaged } from './tasks/activity.js';
 // path the scanner emits. These sessions act on the repo via absolute paths
 // (or relative to their own cwd), so we resolve then require the result to
 // sit inside the project root. Edits to scratch / managed files return null.
-function mapFileToProject(
+// Exported for the project-instrumentation route, which maps the same way.
+export function mapFileToProject(
   projectPath: string,
   rawFile: string,
   hookCwd: string | null,

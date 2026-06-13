@@ -2,8 +2,10 @@ export { applyCrossFile } from './apply.js';
 export {
   buildImportGraph,
   computeCrossFile,
+  computeReachability,
   cyclicNodes,
   tarjan,
+  type ComputeCrossFileOptions,
   type CrossFileResult,
   type FileImports,
   type ImportGraph,
@@ -16,3 +18,10 @@ export {
   resolveImport,
   tryAllExtensions,
 } from './resolveImport.js';
+export {
+  RESOLVABLE_IMPORT_EXTS,
+  detectRoots,
+  isConventionalRoot,
+  matchesEntryGlob,
+  readPackageJsonRoots,
+} from './roots.js';

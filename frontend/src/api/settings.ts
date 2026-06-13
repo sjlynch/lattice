@@ -42,6 +42,24 @@ export async function patchUserSettings(
   );
 }
 
+// Ensure (or, when the per-project setting is off, remove) Lattice's activity
+// hooks in the project's `.claude/settings.local.json`. Fire-and-forget on
+// project open and after the toggle changes; the backend reads the saved
+// setting to decide install vs. remove. Best-effort — never throws.
+export async function ensureProjectInstrumentation(
+  projectPath: string,
+): Promise<void> {
+  try {
+    await fetch('/api/project-instrumentation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: projectPath }),
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
 // Auto-detected package-manager environments for a project, each with the
 // default and effective (post-override) "fresh worktree, don't reinstall"
 // note. Backs the "Agent instructions" tab in the settings dialog.

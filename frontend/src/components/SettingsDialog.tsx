@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { TerminalSquare, FileText, BarChart3, Cpu } from 'lucide-react';
 import { Modal } from './Modal';
 import {
+  ensureProjectInstrumentation,
+  fetchUserSettings,
   patchGlobalSettings,
   patchUserSettings,
   type StartupTerminal,
@@ -103,6 +105,42 @@ function TerminalDefaultSettingsSection({
   );
 }
 
+type ClaudeInstrumentationSectionProps = {
+  enabled: boolean;
+  onChange: (value: boolean) => void;
+};
+
+function ClaudeInstrumentationSection({
+  enabled,
+  onChange,
+}: ClaudeInstrumentationSectionProps) {
+  return (
+    <div className="settings-section">
+      <div className="settings-section-header">
+        <div>
+          <div className="settings-section-title">Show Claude sessions on the graph</div>
+          <div className="settings-section-sub">
+            Adds activity hooks to this project’s{' '}
+            <code>.claude/settings.local.json</code> so any Claude session
+            working in this project — even ones you launch yourself in a
+            terminal — appears as an orange node with focus beams. Your own
+            Claude config is preserved; turning this off removes Lattice’s
+            hooks. Sessions must be (re)started to pick up the change.
+          </div>
+        </div>
+      </div>
+      <label className="settings-checkbox-row">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <span>Instrument Claude sessions in this project</span>
+      </label>
+    </div>
+  );
+}
+
 export function SettingsDialog({
   open,
   onClose,
@@ -121,6 +159,8 @@ export function SettingsDialog({
     useState<TerminalDefaultHarness>(terminalLaunchSettings.terminalDefaultHarness);
   const [terminalClaudeSkipPermissionsDraft, setTerminalClaudeSkipPermissionsDraft] =
     useState(terminalLaunchSettings.terminalClaudeSkipPermissions);
+  // Default ON (opt-out) — absent setting counts as enabled.
+  const [instrumentClaudeDraft, setInstrumentClaudeDraft] = useState(true);
   const startupTerminalsRef = useRef<StartupTerminalsTabHandle>(null);
   const envNotesRef = useRef<EnvNotesTabHandle>(null);
   const metricsIgnoredExtsRef = useRef<MetricsIgnoredExtsTabHandle>(null);
@@ -138,6 +178,21 @@ export function SettingsDialog({
     );
   }, [open, terminalLaunchSettings]);
 
+  // The instrument toggle isn't part of terminalLaunchSettings, so fetch it
+  // fresh when the dialog opens.
+  useEffect(() => {
+    if (!open || !activeFolder) return;
+    let cancelled = false;
+    fetchUserSettings(activeFolder)
+      .then((s) => {
+        if (!cancelled) {
+          setInstrumentClaudeDraft(s.instrumentProjectClaudeSessions !== false);
+        }
+      })
+      .catch(() => { /* keep current draft */ });
+    return () => { cancelled = true; };
+  }, [open, activeFolder]);
+
   const save = async () => {
     if (!activeFolder) return;
     setSaving(true);
@@ -153,6 +208,7 @@ export function SettingsDialog({
       const patch: Partial<UserSettings> = {
         startupTerminals: cleaned,
         ...terminalLaunchPatch,
+        instrumentProjectClaudeSessions: instrumentClaudeDraft,
       };
       // Only touch worktreeEnvNotes if the env fetch finished — otherwise we'd
       // overwrite the saved overrides with an empty map.
@@ -164,6 +220,8 @@ export function SettingsDialog({
         patch.metricsIgnoredExts = metricsExtsPatch;
       }
       await patchUserSettings(activeFolder, patch);
+      // Apply the install/remove of project hooks per the just-saved toggle.
+      void ensureProjectInstrumentation(activeFolder);
       // Machine-global settings go to a separate endpoint, not userSettings.
       const maxAgentsPatch = agentsRef.current?.getMaxConcurrentAgentsPatch();
       if (maxAgentsPatch !== undefined) {
@@ -218,12 +276,18 @@ export function SettingsDialog({
         </div>
         <div className="settings-tab-body">
           {tab === 'terminals' && (
-            <TerminalDefaultSettingsSection
-              terminalDefaultHarness={terminalDefaultHarnessDraft}
-              terminalClaudeSkipPermissions={terminalClaudeSkipPermissionsDraft}
-              onTerminalDefaultHarnessChange={setTerminalDefaultHarnessDraft}
-              onTerminalClaudeSkipPermissionsChange={setTerminalClaudeSkipPermissionsDraft}
-            />
+            <>
+              <TerminalDefaultSettingsSection
+                terminalDefaultHarness={terminalDefaultHarnessDraft}
+                terminalClaudeSkipPermissions={terminalClaudeSkipPermissionsDraft}
+                onTerminalDefaultHarnessChange={setTerminalDefaultHarnessDraft}
+                onTerminalClaudeSkipPermissionsChange={setTerminalClaudeSkipPermissionsDraft}
+              />
+              <ClaudeInstrumentationSection
+                enabled={instrumentClaudeDraft}
+                onChange={setInstrumentClaudeDraft}
+              />
+            </>
           )}
           <StartupTerminalsTab
             ref={startupTerminalsRef}

@@ -9,8 +9,10 @@
 import chokidar, { type FSWatcher } from 'chokidar';
 import { HealthCache } from './cache.js';
 import type { HealthMetrics } from './types.js';
+import { readPackageJsonRoots } from './crossFile.js';
 import { ConfigReloader } from './configReloader.js';
 import { CrossFileAnalyzer } from './crossFileAnalyzer.js';
+import { getUserSettings } from '../userSettings.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { hydrateWatcherState } from './watcher/cacheHydration.js';
 import { createWatcherHandlers } from './watcher/handlers.js';
@@ -35,6 +37,16 @@ async function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
   const hydrated = hydrateWatcherState(cache);
   const config = await ConfigReloader.create(projectRoot);
 
+  // Dead-code root inputs. Conventional roots are recomputed per cross-file
+  // pass (cheap); the user's entry globs + package.json entry targets are read
+  // once here. Best-effort — a missing settings file / package.json just means
+  // fewer explicit roots, which conventional detection mostly covers anyway.
+  const entryGlobs = (await getUserSettings(projectRoot)).deadCodeEntryGlobs ?? [];
+  const packageRoots = await readPackageJsonRoots(
+    projectRoot,
+    new Set(hydrated.metrics.keys()),
+  );
+
   // Predeclared so the chokidar `ignored` predicate and cross-file broadcast
   // callback can close over the shared project state.
   const proj: ProjectWatcher = {
@@ -55,6 +67,9 @@ async function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
     broadcastUpdated: (filePath, metrics) => {
       broadcast(proj, { type: 'updated', filePath, metrics });
     },
+    projectRoot,
+    entryGlobs,
+    packageRoots,
   });
 
   const watcher = createChokidarWatcher(projectRoot, proj);

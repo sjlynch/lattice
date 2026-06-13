@@ -9,9 +9,11 @@
   composes the small `Graph*` overlay components below. Each remaining
   `useEffect` is one concern: selection-refresh, Escape key, counts memo.
 - `nodeObjectFactory.ts` — `buildNodeObject(node, refs)` + `nativeNodeLabel(node)`.
-  The decision tree for ghost vs health vs LOC vs labels vs base sprite (+
-  change-ring and selection-halo wrap order) lives here; the init hook just
-  hands the closure to `ForceGraph3D.nodeThreeObject`.
+  The decision tree for ghost vs health vs LOC vs dead-code vs labels vs base
+  sprite (+ change-ring and selection-halo wrap order) lives here; the init hook
+  just hands the closure to `ForceGraph3D.nodeThreeObject`. Precedence is
+  health > loc > dead > labels; health/loc skip `metricsIgnoredExts`, dead-code
+  does not (it recolors every file).
 - `sceneSetup.ts` — `configureCameraControls(graph)` locks `camera.up` and
   clamps OrbitControls polar to `[0, 0.75π]`. `createResizeObserver(graph, el)`
   installs the 150ms-debounced resize loop and returns a teardown.
@@ -39,6 +41,10 @@
 - `locOverlay.ts` / `healthOverlay.ts` / `labelsOverlay.ts` — thin overlay
   configs + registries (`locLabelRegistry`, `healthLabelRegistry`,
   `labelsRegistry`) walked by the RAF loop for pairwise repulsion.
+- `deadCodeOverlay.ts` — `spriteForDeadCode(node, settings)` for the `D`-hold
+  overlay. A pure recolor (no label/connector, so no registry/RAF) keyed off
+  `node.healthDetails.deadCode`: green=reachable, red=dead, grey=entry/uncertain
+  (`DEAD_CODE_COLORS`). Reuses the shared `materialFor` cache.
 - `labelRepulsion.ts` — named cleanup, world-snapshot, force accumulation,
   velocity/rest integration, and connector endpoint helpers behind
   `repelLabels(registry, minDist)`.
@@ -58,9 +64,14 @@
   `graph.scene()` (NOT via `graphData`, so an agent appearing/finishing
   never reheats the sim or distorts the DAG). Holds one Claude node per live
   agent plus TTL-fading focus beams (`THREE.Line`) to the files it touches.
-  `tick()` eases each node toward the centroid of its active files (or a
-  parked orbit slot when idle) and refreshes beam endpoints from the file
-  nodes' live positions. Path→node index rebuilt only on a structural
+  Each node **hovers above the graph at a steady height**: `tick()` eases its
+  X/Z toward the centroid of the files in play (so it sits over the region
+  it's working in) while pinning Y to a low-pass-filtered hover line just
+  above the graph's top (`graphBounds`/`updateHoverY`), so the height stays
+  stable as the layout settles. A camera-scaled **file label** (reusing
+  `labelTexture` + `floatingLabelSprite`) sits beside each node showing the
+  basename it's currently reading/editing. Beams drop from the elevated node
+  down to the file nodes. Path→node index rebuilt only on a structural
   `graphData` swap. Driven by `useAgentOverlay`.
 - `worktreeRing.ts` — `setNodeWorktreeRing(root, on, color, baseSize)`: a
   double concentric ring (distinct from the single selection halo / change
@@ -93,8 +104,13 @@
   state, derived `selectedFiles`, plus `openMenuItem` / `submitTask` /
   `closeModal` actions.
 - `useGraphOverlays` — composes `useGraphSettings` + `useGitTimeline` +
-  `useLocOverlay` + `useHealthOverlay` + `useLabelsOverlay` +
-  `useGraphFilter` so ForceGraphView gets one overlay setup point.
+  `useLocOverlay` + `useHealthOverlay` + `useDeadCodeOverlay` +
+  `useLabelsOverlay` + `useGraphFilter` so ForceGraphView gets one overlay
+  setup point.
+- `useDeadCodeOverlay` — the `D`-hold overlay. Same keydown/keyup chord pattern
+  as `h`/`z`/`w` (blur + visibilitychange reset); recolors by reachability
+  (`deadCode` field on each node's `healthDetails`). No labels/RAF — just a
+  `clearLabelsAndRefresh` on toggle.
 - `useAgentOverlay` — owns the Claude-agent overlay, unified by the overlay's
   string agent id from two sources: in-progress `harness === 'claude'` tasks
   (task-colored node) and non-worktree Claude sessions from

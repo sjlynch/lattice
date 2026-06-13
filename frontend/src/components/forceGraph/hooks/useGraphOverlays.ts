@@ -1,6 +1,7 @@
 import type { MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import type { ScanResult } from '../../../api';
+import { useDeadCodeOverlay } from './useDeadCodeOverlay';
 import { useGitTimeline } from './useGitTimeline';
 import { useGraphFilter } from './useGraphFilter';
 import { useGraphSettings } from './useGraphSettings';
@@ -48,6 +49,7 @@ export function useGraphOverlays({
     graphRef,
     settingsRef,
   );
+  const { deadMode, deadModeRef } = useDeadCodeOverlay(graphRef);
   const labels = useLabelsOverlay(graphRef, containerRef, data, settingsRef);
 
   useGraphFilter(graphRef, hiddenExts, data, history, range, changeMapRef);
@@ -63,6 +65,8 @@ export function useGraphOverlays({
     locMode,
     locModeRef,
     healthModeRef,
+    deadMode,
+    deadModeRef,
     ...labels,
   };
 }

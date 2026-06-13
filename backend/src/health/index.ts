@@ -10,12 +10,16 @@ export type {
   HealthSmellId,
   HealthLanguage,
   HalsteadMetrics,
+  DeadCodeStatus,
 } from './types.js';
 export { SMELL_LABELS } from './types.js';
 export { HealthCache } from './cache.js';
 export {
   computeCrossFile,
   applyCrossFile,
+  detectRoots,
+  readPackageJsonRoots,
+  type ComputeCrossFileOptions,
   type FileImports,
   type CrossFileResult,
 } from './crossFile.js';

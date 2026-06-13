@@ -91,9 +91,24 @@ export function buildHealthMetricRows(m: HealthMetrics): MetricRowModel[] {
       value: 'yes',
     }));
   }
+  if (m.deadCode && m.deadCode !== 'live') {
+    rows.push({ label: 'Reachability', value: DEAD_CODE_TOOLTIP[m.deadCode] });
+  }
 
   return rows;
 }
+
+// Surfaced in the hover tooltip (any overlay) so a node flagged by the `D`
+// view explains itself. `live` is omitted — the common case needs no callout.
+const DEAD_CODE_TOOLTIP: Record<
+  NonNullable<HealthMetrics['deadCode']>,
+  string
+> = {
+  live: 'reachable',
+  dead: 'dead — no path from an entry point',
+  entry: 'entry point',
+  uncertain: 'uncertain (asset / dynamic / unsupported)',
+};
 
 function scoreRow(
   contributions: Record<ScoreComponentId, HealthScoreContribution>,

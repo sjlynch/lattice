@@ -1,8 +1,9 @@
-import type { HealthMetrics } from './types.js';
+import type { DeadCodeStatus, HealthMetrics } from './types.js';
 import type { ParsedAlias } from './tsconfig.js';
 import {
   applyCrossFile,
   computeCrossFile,
+  detectRoots,
   type FileImports,
 } from './crossFile.js';
 
@@ -10,7 +11,13 @@ import {
 // affected by a change so the watcher can broadcast updates for them too.
 type CrossFileSnapshot = Map<
   string,
-  { score: number; fanIn: number; fanOut: number; inCycle: boolean }
+  {
+    score: number;
+    fanIn: number;
+    fanOut: number;
+    inCycle: boolean;
+    deadCode: DeadCodeStatus | undefined;
+  }
 >;
 
 export function snapshotCrossFile(metrics: Map<string, HealthMetrics>): CrossFileSnapshot {
@@ -21,6 +28,7 @@ export function snapshotCrossFile(metrics: Map<string, HealthMetrics>): CrossFil
       fanIn: m.fanIn ?? 0,
       fanOut: m.fanOut ?? 0,
       inCycle: m.inCycle ?? false,
+      deadCode: m.deadCode,
     });
   }
   return out;
@@ -33,6 +41,13 @@ export class CrossFileAnalyzer {
       metrics: Map<string, HealthMetrics>;
       getAliases: () => readonly ParsedAlias[];
       broadcastUpdated: (filePath: string, metrics: HealthMetrics) => void;
+      // Project root + dead-code root inputs. `entryGlobs` is the user's
+      // `deadCodeEntryGlobs`; `packageRoots` are package.json entry targets
+      // resolved once at watcher boot (conventional roots are recomputed from
+      // the present files on every pass since that's cheap and pure).
+      projectRoot: string;
+      entryGlobs: readonly string[];
+      packageRoots: Set<string>;
     },
   ) {}
 
@@ -49,7 +64,12 @@ export class CrossFileAnalyzer {
     }
 
     const presentFiles = new Set(metrics.keys());
-    const cross = computeCrossFile(fileImports, presentFiles, getAliases());
+    const roots = detectRoots(presentFiles, {
+      projectRoot: this.options.projectRoot,
+      entryGlobs: this.options.entryGlobs,
+      extraRoots: this.options.packageRoots,
+    });
+    const cross = computeCrossFile(fileImports, presentFiles, getAliases(), { roots });
     applyCrossFile(metrics, cross);
 
     // Always broadcast the originator (its smells / score may have changed even
@@ -71,7 +91,8 @@ export class CrossFileAnalyzer {
         prev.score !== m.score ||
         prev.fanIn !== (m.fanIn ?? 0) ||
         prev.fanOut !== (m.fanOut ?? 0) ||
-        prev.inCycle !== (m.inCycle ?? false)
+        prev.inCycle !== (m.inCycle ?? false) ||
+        prev.deadCode !== m.deadCode
       ) {
         broadcastUpdated(fp, m);
       }

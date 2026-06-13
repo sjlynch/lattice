@@ -2,6 +2,7 @@ import type { MutableRefObject } from 'react';
 import * as THREE from 'three';
 import type { GraphNode, ScanResult } from '../../api';
 import { deletedSprite, withChangeRing, type ChangeKind } from './changeRing';
+import { spriteForDeadCode } from './deadCodeOverlay';
 import type { GraphSettings } from './graphSettings';
 import { setNodeHalo } from './halo';
 import { spriteForHealth } from './healthOverlay';
@@ -19,6 +20,7 @@ export type NodeObjectRefs = {
   dataRef: MutableRefObject<ScanResult | null>;
   locModeRef: MutableRefObject<boolean>;
   healthModeRef: MutableRefObject<boolean>;
+  deadModeRef: MutableRefObject<boolean>;
   labelModeRef: MutableRefObject<boolean>;
   labelLevelRef: MutableRefObject<number>;
   nodeDepthsRef: MutableRefObject<Map<string, number>>;
@@ -73,6 +75,11 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
     base = spriteForHealth(node, s);
   } else if (refs.locModeRef.current && !ignored) {
     base = spriteForLoc(node, s);
+  } else if (refs.deadModeRef.current) {
+    // Not gated on `ignored`: dead-code is about reachability, not metrics, so
+    // every file gets the green/red/grey treatment (config/prose files just
+    // resolve to neutral "uncertain" rather than falling back to ext color).
+    base = spriteForDeadCode(node, s);
   } else if (refs.labelModeRef.current) {
     const d = refs.nodeDepthsRef.current.get(node.id) ?? 0;
     base = spriteForLabels(node, s, refs.labelLevelRef.current, d);

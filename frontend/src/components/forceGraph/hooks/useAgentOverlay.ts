@@ -60,7 +60,10 @@ export function useAgentOverlay(
     const overlay = overlayRef.current;
     const graph = graphRef.current;
     if (overlay && graph) {
-      overlay.setNodeSize(settingsRef.current.fileNodeSize);
+      overlay.setSizes(
+        settingsRef.current.fileNodeSize,
+        settingsRef.current.labelSize,
+      );
       overlay.tick(performance.now(), graph);
       if (overlay.isActive()) {
         rafRef.current = requestAnimationFrame(loop);

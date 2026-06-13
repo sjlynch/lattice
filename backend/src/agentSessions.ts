@@ -16,28 +16,51 @@
 import { canonicalProjectPath } from './projectPath.js';
 
 export type AgentSession = {
-  // Namespaced session id (`push:<id>`, `wf:<runId>:<step>`, `pmh:<id>`) —
-  // also the graph node key, so it never collides with a task id.
+  // Namespaced session id (`push:<id>`, `wf:<runId>:<step>`, `pmh:<id>`, or
+  // `claude:<session_id>` for a project-instrumented session) — also the
+  // graph node key, so it never collides with a task id.
   agentId: string;
   projectPath: string;
   label: string;
   startedAt: number;
 };
 
+// Internal record carries liveness metadata not sent to the frontend.
+type SessionRecord = AgentSession & {
+  // Last time we saw any signal from this session (register or activity).
+  lastSeen: number;
+  // When set, the session is expired after this many ms with no signal —
+  // used by project-instrumented sessions (lazy presence, may miss
+  // SessionEnd). Lifecycle sessions (push/wf/pmh) leave this undefined and
+  // rely on their completion callback + the absolute age safety.
+  idleTtlMs?: number;
+};
+
 type Listener = (projectPath: string, sessions: AgentSession[]) => void;
 
-const sessions = new Map<string, AgentSession>();
+const sessions = new Map<string, SessionRecord>();
 const listeners = new Set<Listener>();
 
-// Safety net only — normal teardown is the completion callback. Sized well
-// above any realistic non-worktree session runtime.
+// Absolute safety net for lifecycle sessions whose completion callback never
+// fired. Sized well above any realistic session runtime.
 const MAX_AGE_MS = 30 * 60 * 1000;
-const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+const SWEEP_INTERVAL_MS = 60 * 1000;
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
+
+function publicView(r: SessionRecord): AgentSession {
+  return {
+    agentId: r.agentId,
+    projectPath: r.projectPath,
+    label: r.label,
+    startedAt: r.startedAt,
+  };
+}
 
 export function listAgentSessions(projectPath: string): AgentSession[] {
   const canonical = canonicalProjectPath(projectPath);
-  return [...sessions.values()].filter((s) => s.projectPath === canonical);
+  return [...sessions.values()]
+    .filter((s) => s.projectPath === canonical)
+    .map(publicView);
 }
 
 export function subscribeAgentSessions(listener: Listener): () => void {
@@ -60,16 +83,38 @@ export function registerAgentSession(input: {
   agentId: string;
   projectPath: string;
   label: string;
+  idleTtlMs?: number;
 }): void {
+  const now = Date.now();
+  const existing = sessions.get(input.agentId);
+  if (existing) {
+    // Already present (e.g. a tool-use after SessionStart) — just refresh
+    // liveness. No re-emit: the node is already on the graph and its
+    // startedAt/label shouldn't change.
+    existing.lastSeen = now;
+    return;
+  }
   const projectPath = canonicalProjectPath(input.projectPath);
   sessions.set(input.agentId, {
     agentId: input.agentId,
     projectPath,
     label: input.label,
-    startedAt: Date.now(),
+    startedAt: now,
+    lastSeen: now,
+    idleTtlMs: input.idleTtlMs,
   });
   ensureSweepTimer();
   emit(projectPath);
+}
+
+// Refresh a session's liveness without creating one. Returns whether it
+// existed. Used by the project-activity route on each tool-use so an active
+// session never idle-expires.
+export function touchAgentSession(agentId: string): boolean {
+  const existing = sessions.get(agentId);
+  if (!existing) return false;
+  existing.lastSeen = Date.now();
+  return true;
 }
 
 export function unregisterAgentSession(agentId: string): void {
@@ -82,10 +127,13 @@ export function unregisterAgentSession(agentId: string): void {
 function ensureSweepTimer(): void {
   if (sweepTimer) return;
   sweepTimer = setInterval(() => {
-    const cutoff = Date.now() - MAX_AGE_MS;
+    const now = Date.now();
+    const ageCutoff = now - MAX_AGE_MS;
     const staleProjects = new Set<string>();
     for (const [id, s] of sessions) {
-      if (s.startedAt < cutoff) {
+      const idleExpired =
+        s.idleTtlMs !== undefined && now - s.lastSeen > s.idleTtlMs;
+      if (idleExpired || s.startedAt < ageCutoff) {
         sessions.delete(id);
         staleProjects.add(s.projectPath);
       }

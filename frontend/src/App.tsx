@@ -11,6 +11,7 @@ import { useProjectScan } from './hooks/useProjectScan';
 import { useSidebarWidth } from './hooks/useSidebarWidth';
 import { useStartupTerminalSync } from './hooks/useStartupTerminalSync';
 import {
+  ensureProjectInstrumentation,
   fetchUserSettings,
   normalizeTerminalLaunchSettings,
   type TerminalLaunchSettings,
@@ -48,6 +49,9 @@ function App() {
         setTerminalLaunchSettings(normalizeTerminalLaunchSettings(settings));
       })
       .catch(() => { /* keep current setting */ });
+    // Install (or remove, per the saved setting) Lattice's project-level
+    // Claude hooks so any session working in this project shows on the graph.
+    void ensureProjectInstrumentation(activeFolder);
   }, [activeFolder]);
 
   return (

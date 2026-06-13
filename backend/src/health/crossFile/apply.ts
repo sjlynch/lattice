@@ -14,6 +14,11 @@ export function applyCrossFile(
     m.fanIn = cross.fanIn.get(filePath) ?? 0;
     m.fanOut = cross.fanOut.get(filePath) ?? 0;
     m.inCycle = cross.inCycle.has(filePath);
+    // Reachability classification (only present when the pass was given a root
+    // set). Intentionally NOT fed into computeScore below — dead status is a
+    // separate signal, not a maintainability penalty.
+    const dc = cross.deadCode.get(filePath);
+    if (dc) m.deadCode = dc;
 
     // Patch the smells list to reflect cross-file findings.
     const smellMap: SmellCounter = new Map();

@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { analyzeFile, computeCrossFile } from '../health/index.js';
+import { analyzeFile, computeCrossFile, detectRoots } from '../health/index.js';
+import { isConventionalRoot } from '../health/crossFile/roots.js';
 import type { HealthMetrics } from '../health/index.js';
 import type { ParsedAlias } from '../health/tsconfig.js';
 import type { CacheEntry } from '../health/cache.js';
@@ -380,6 +381,85 @@ test('cross-file analysis resolves aliases, Python relatives, duplicates, and se
   assert.equal(cross.fanOut.get(self), 0, 'self imports do not inflate fan-out');
   assert.equal(cross.fanIn.get(self), 0, 'self imports do not inflate fan-in');
   assert.equal(cross.inCycle.has(self), true, 'self import is marked cyclic');
+});
+
+test('import extraction captures re-exports and dynamic import/require', async () => {
+  const src = `
+import { a } from './static';
+export { b } from './reexport';
+export * from './star';
+const x = await import('./dynamic');
+const y = require('./required');
+const z = import(variablePath); // computed — not resolvable, skipped
+`;
+  const r = await analyzeFile(src, '.ts', src.split('\n').length);
+  assert.ok(r.imports.includes('./static'), 'plain import captured');
+  assert.ok(r.imports.includes('./reexport'), 'named re-export source captured');
+  assert.ok(r.imports.includes('./star'), 'star re-export source captured');
+  assert.ok(r.imports.includes('./dynamic'), 'dynamic import() captured');
+  assert.ok(r.imports.includes('./required'), 'require() captured');
+});
+
+test('dead-code reachability flags orphans, dead islands, and entry points', () => {
+  const root = path.resolve('health-dead-code-fixture');
+  const entry = path.join(root, 'src', 'index.ts'); // conventional root
+  const live = path.join(root, 'src', 'live.ts'); // imported by entry
+  const barrel = path.join(root, 'src', 'barrel.ts'); // reached via re-export
+  const lazy = path.join(root, 'src', 'lazy.ts'); // reached via dynamic import
+  const orphan = path.join(root, 'src', 'orphan.ts'); // nothing imports it
+  const islandA = path.join(root, 'src', 'islandA.ts'); // dead pair, import
+  const islandB = path.join(root, 'src', 'islandB.ts'); //  each other only
+  const asset = path.join(root, 'src', 'styles.css'); // unreachable, no grammar
+  const present = new Set([entry, live, barrel, lazy, orphan, islandA, islandB, asset]);
+
+  const roots = detectRoots(present, { projectRoot: root });
+  assert.equal(roots.has(entry), true, 'index.ts is a conventional root');
+
+  const cross = computeCrossFile(
+    [
+      { filePath: entry, imports: ['./live', './barrel', './lazy'] },
+      { filePath: barrel, imports: [] },
+      { filePath: live, imports: [] },
+      { filePath: lazy, imports: [] },
+      { filePath: orphan, imports: [] },
+      { filePath: islandA, imports: ['./islandB'] },
+      { filePath: islandB, imports: ['./islandA'] },
+    ],
+    present,
+    undefined,
+    { roots },
+  );
+
+  assert.equal(cross.deadCode.get(entry), 'entry', 'root → entry');
+  assert.equal(cross.deadCode.get(live), 'live', 'imported file → live');
+  assert.equal(cross.deadCode.get(barrel), 'live', 're-exported file → live');
+  assert.equal(cross.deadCode.get(lazy), 'live', 'dynamically imported → live');
+  assert.equal(cross.deadCode.get(orphan), 'dead', 'unimported TS file → dead');
+  assert.equal(cross.deadCode.get(islandA), 'dead', 'dead island is unreachable');
+  assert.equal(cross.deadCode.get(islandB), 'dead', 'fan-in>0 but still dead');
+  assert.equal(
+    cross.deadCode.get(asset),
+    'uncertain',
+    'unreachable non-code asset is uncertain, never dead',
+  );
+});
+
+test('conventional root detection covers entries, configs, tests, and decls', () => {
+  for (const f of [
+    'src/index.ts',
+    'frontend/src/main.tsx',
+    'backend/server.ts',
+    'vite.config.ts',
+    'jest.config.js',
+    'src/foo.test.ts',
+    'src/__tests__/bar.ts',
+    'types/global.d.ts',
+  ]) {
+    assert.equal(isConventionalRoot(f), true, `${f} should be a root`);
+  }
+  for (const f of ['src/util.ts', 'src/components/Button.tsx', 'lib/helper.py']) {
+    assert.equal(isConventionalRoot(f), false, `${f} should not be a root`);
+  }
 });
 
 test('watcher cache hydration keeps imports and metrics mirrors aligned', () => {

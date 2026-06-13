@@ -7,6 +7,7 @@ export type CouplingMap = ReturnType<typeof computeCrossFile>;
 export function computeCoupling(
   metrics: FileMetric[],
   aliases?: readonly ParsedAlias[],
+  roots?: Set<string>,
 ): CouplingMap {
   const fileImports: FileImports[] = [];
   const presentFiles = new Set<string>();
@@ -16,5 +17,5 @@ export function computeCoupling(
       fileImports.push({ filePath: metric.filePath, imports: metric.imports });
     }
   }
-  return computeCrossFile(fileImports, presentFiles, aliases);
+  return computeCrossFile(fileImports, presentFiles, aliases, { roots });
 }

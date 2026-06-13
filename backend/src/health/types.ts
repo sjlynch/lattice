@@ -73,6 +73,17 @@ export type HealthSmell = {
   label: string;
 };
 
+// Reachability classification produced by the cross-file pass and consumed
+// by the frontend's `D` (dead-code) overlay. Deliberately separate from the
+// health score — orphan status must not move a file's maintainability number.
+//   live      — reachable from a detected entry-point root
+//   dead      — unreachable, statically import-resolvable language (TS/JS/Py)
+//   entry     — itself a detected root (index/main/config/test/package entry)
+//   uncertain — unreachable but in a language we can't resolve imports for, a
+//               non-code asset, or reachable only via something we couldn't
+//               statically resolve. Rendered neutral, never flagged red.
+export type DeadCodeStatus = 'live' | 'dead' | 'entry' | 'uncertain';
+
 // Halstead metrics derived from operator/operand tokenization. Volume
 // feeds into the Maintainability Index. Difficulty / effort are
 // retained for power users but not currently surfaced in the score.
@@ -117,6 +128,10 @@ export type HealthMetrics = {
   fanIn?: number;
   fanOut?: number;
   inCycle?: boolean;
+  // Reachability classification for the dead-code overlay. Only set when the
+  // cross-file pass is given a root set (the scan + watcher both provide one);
+  // absent on isolated per-file analysis.
+  deadCode?: DeadCodeStatus;
 
   // Smells
   smells: HealthSmell[];

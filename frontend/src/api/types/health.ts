@@ -58,6 +58,10 @@ export type HealthSmell = {
   label: string;
 };
 
+// Mirror of backend `DeadCodeStatus` (health/types.ts). Drives the `D`
+// dead-code overlay: live=green, dead=red, entry/uncertain=neutral grey.
+export type DeadCodeStatus = 'live' | 'dead' | 'entry' | 'uncertain';
+
 export type HalsteadMetrics = {
   vocabulary: number;
   length: number;
@@ -89,6 +93,7 @@ export type HealthMetrics = {
   fanIn?: number;
   fanOut?: number;
   inCycle?: boolean;
+  deadCode?: DeadCodeStatus;
   smells: HealthSmell[];
   smellCount: number;
 };
