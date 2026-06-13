@@ -18,6 +18,7 @@ import {
   pickInitialActiveId,
   removeTerminalFromList,
   removeTerminalsFromList,
+  reorderTerminalInList,
   setServerIdInList,
 } from './terminal/terminalState';
 import { deleteBackendSession } from './terminal/terminalApi';
@@ -97,6 +98,10 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
     setTerminals((ts) => setServerIdInList(ts, id, serverId));
   }, []);
 
+  const reorderTerminal = useCallback((draggedId: string, targetId: string) => {
+    setTerminals((ts) => reorderTerminalInList(ts, draggedId, targetId));
+  }, []);
+
   const closeTerminals = useCallback((ids: string[]) => {
     const idSet = new Set(ids);
     const prev = terminalsRef.current;
@@ -134,6 +139,7 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
         closeTerminals,
         closeTerminalsForTask,
         setServerId,
+        reorderTerminal,
       }}
     >
       {children}
