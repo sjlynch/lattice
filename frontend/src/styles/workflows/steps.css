@@ -58,6 +58,28 @@
 .workflows-step-harness {
   min-width: 74px;
 }
+.workflows-step-mode:hover,
+.workflows-step-harness:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+.workflows-step-mode:focus,
+.workflows-step-harness:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+/* On-theme dropdown list: match the panel surface and use the app accent for
+   the selected entry instead of the OS default highlight. */
+.workflows-step-mode option,
+.workflows-step-harness option {
+  background: var(--bg-elev);
+  color: var(--text-primary);
+}
+.workflows-step-mode option:checked,
+.workflows-step-harness option:checked {
+  background: var(--accent-bg);
+  color: var(--text-primary);
+}
 .workflows-step-prompt {
   /* Auto-grown to fit content via JS (StepRow.tsx). The native resizer
      renders as a stark white square against the dark theme whenever the
