@@ -6,9 +6,15 @@
 // the centroid of the files it's currently touching (so it sits over the
 // region it's working in) while its Y is pinned just above the top of the
 // graph and low-pass filtered so it doesn't bob. A camera-scaled label next
-// to the node shows the file it's reading/editing. Focus beams drop from the
-// node down to each touched file node and fade out on a TTL, so several
-// recently-touched files stay lit at once.
+// to the node shows the file it's reading/editing.
+//
+// The LAST file an agent viewed/edited stays lit — its beam never expires and
+// its label stays on screen — for the whole life of the session, so a node
+// always shows what it most recently touched even while the agent is thinking.
+// Older (no-longer-current) files fade out on a TTL, so several recently-
+// touched files can stay lit at once, but the current one persists. When the
+// session stops the agent is removed entirely (node + label + beams cleared)
+// until it becomes active again.
 //
 // The nodes live directly in `graph.scene()` rather than `graphData()` — so
 // an agent appearing/finishing never reheats the d3 simulation or distorts
@@ -24,7 +30,9 @@ import {
   type LabelTextureOptions,
 } from './labelTexture';
 
-// How long a touched file stays beamed after the last activity event.
+// How long a *non-current* touched file stays beamed after it stops being the
+// agent's current file. The current (last-touched) file's beam never expires —
+// it persists until a new file is touched or the session stops.
 const BEAM_TTL_MS = 2600;
 // After a PostToolUse (tool finished), collapse the remaining TTL to this so
 // the beam fades promptly but not instantly.
@@ -175,8 +183,12 @@ export class AgentOverlay {
     this.agents.delete(taskId);
   }
 
-  // A `task-activity` / `agent-activity` event: open/extend (start) or fade
-  // (end) a beam, and record the touched file for the label.
+  // A `task-activity` / `agent-activity` event: open/refresh the beam for the
+  // touched file and record it as the agent's current file. The current file's
+  // beam is kept persistent (`endAt = Infinity`) so the last file the agent
+  // viewed/edited stays lit — and its label stays up — until either a *new*
+  // file is touched (demoting the old one to a fading TTL beam) or the session
+  // stops. A PostToolUse (`end`) for the current file does NOT fade it.
   addActivity(
     taskId: string,
     file: string,
@@ -185,17 +197,30 @@ export class AgentOverlay {
   ): void {
     const agent = this.agents.get(taskId);
     if (!agent) return;
-    agent.currentFile = file;
     const norm = normalizePath(file);
-    const existing = agent.beams.get(norm);
+    const prevNorm = agent.currentFile ? normalizePath(agent.currentFile) : null;
+
     if (phase === 'end') {
-      if (existing) {
+      // Tool finished. Keep the current (last-touched) file lit; only let an
+      // older, no-longer-current file begin to fade.
+      const existing = agent.beams.get(norm);
+      if (existing && norm !== prevNorm) {
         existing.endAt = Math.min(existing.endAt, now + BEAM_END_FADE_MS);
       }
       return;
     }
+
+    // phase === 'start': this file becomes the agent's current file. Demote the
+    // previously-current file's beam to a normal fading one.
+    if (prevNorm && prevNorm !== norm) {
+      const prevBeam = agent.beams.get(prevNorm);
+      if (prevBeam) prevBeam.endAt = now + BEAM_TTL_MS;
+    }
+    agent.currentFile = file;
+
+    const existing = agent.beams.get(norm);
     if (existing) {
-      existing.endAt = now + BEAM_TTL_MS;
+      existing.endAt = Infinity;
       return;
     }
     const geometry = new THREE.BufferGeometry();
@@ -219,7 +244,7 @@ export class AgentOverlay {
       geometry,
       normPath: norm,
       openedAt: now,
-      endAt: now + BEAM_TTL_MS,
+      endAt: Infinity,
     });
     this.group.add(line);
   }
@@ -258,10 +283,11 @@ export class AgentOverlay {
       agent.pos.y += (this.tmpA.y - agent.pos.y) * HOVER_EASE;
       agent.node.position.copy(agent.pos);
 
-      // Only label while the agent is actively touching files (has a live
-      // beam). When it stops reading/editing the beams drain and the label
-      // disappears with them — no stale last-file label left hanging.
-      if (agent.beams.size > 0 && agent.currentFile) this.updateLabel(agent);
+      // Show the last file the agent viewed/edited for as long as the session
+      // is alive — the label persists through idle gaps and only clears when
+      // the agent is removed (session stopped). Before the first activity
+      // there's no file yet, so nothing is shown.
+      if (agent.currentFile) this.updateLabel(agent);
       else this.clearLabel(agent);
 
       // Update beam geometries + opacity.
@@ -329,7 +355,8 @@ export class AgentOverlay {
     );
   }
 
-  // Drop the label when the agent isn't actively touching files.
+  // Drop the label (only reached before the agent's first activity, since the
+  // current file otherwise persists for the life of the session).
   private clearLabel(agent: Agent): void {
     if (agent.label) {
       this.group.remove(agent.label);

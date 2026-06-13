@@ -63,16 +63,20 @@
 - `agentOverlay.ts` — `AgentOverlay`: a `THREE.Group` added straight to
   `graph.scene()` (NOT via `graphData`, so an agent appearing/finishing
   never reheats the sim or distorts the DAG). Holds one Claude node per live
-  agent plus TTL-fading focus beams (`THREE.Line`) to the files it touches.
-  Each node **hovers above the graph at a steady height**: `tick()` eases its
-  X/Z toward the centroid of the files in play (so it sits over the region
-  it's working in) while pinning Y to a low-pass-filtered hover line just
-  above the graph's top (`graphBounds`/`updateHoverY`), so the height stays
-  stable as the layout settles. A camera-scaled **file label** (reusing
-  `labelTexture` + `floatingLabelSprite`) sits beside each node showing the
-  basename it's currently reading/editing. Beams drop from the elevated node
-  down to the file nodes. Path→node index rebuilt only on a structural
-  `graphData` swap. Driven by `useAgentOverlay`.
+  agent plus focus beams (`THREE.Line`) to the files it touches. The **last
+  file an agent viewed/edited stays lit**: its beam never expires (`endAt =
+  Infinity`) and its label stays up for the whole session — only *older*,
+  no-longer-current files fade out on a TTL, and the whole node/label/beam set
+  is cleared when the session stops (agent removed). Each node **hovers above
+  the graph at a steady height**: `tick()` eases its X/Z toward the centroid of
+  the files in play (so it sits over the region it's working in) while pinning
+  Y to a low-pass-filtered hover line just above the graph's top
+  (`graphBounds`/`updateHoverY`), so the height stays stable as the layout
+  settles. A camera-scaled **file label** (reusing `labelTexture` +
+  `floatingLabelSprite`) sits beside each node showing the basename it most
+  recently read/edited. Beams drop from the elevated node down to the file
+  nodes. Path→node index rebuilt only on a structural `graphData` swap. Driven
+  by `useAgentOverlay`.
 - `worktreeRing.ts` — `setNodeWorktreeRing(root, on, color, baseSize)`: a
   double concentric ring (distinct from the single selection halo / change
   rings) colored by the owning task. Same sibling-child toggle as `halo.ts`;
