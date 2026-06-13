@@ -34,6 +34,36 @@ export function setServerIdInList(
   return terminals.map((t) => (t.id === id ? { ...t, serverId } : t));
 }
 
+export function renameTerminalInList(
+  terminals: TerminalSpec[],
+  id: string,
+  label: string,
+): TerminalSpec[] {
+  return terminals.map((t) => (t.id === id ? { ...t, label } : t));
+}
+
+// Move `draggedId` to sit next to `targetId` in the full list. Operates on
+// ids (not indices) so it stays correct even though the tab strip only shows
+// a project/panel-scoped, optionally search-filtered subset of `terminals`.
+// When dragging forward (left→right) the tab lands after the target; when
+// dragging backward it lands before — matching the dropped tab's visual
+// position.
+export function reorderTerminalInList(
+  terminals: TerminalSpec[],
+  draggedId: string,
+  targetId: string,
+): TerminalSpec[] {
+  if (draggedId === targetId) return terminals;
+  const from = terminals.findIndex((t) => t.id === draggedId);
+  const to = terminals.findIndex((t) => t.id === targetId);
+  if (from === -1 || to === -1) return terminals;
+  const next = [...terminals];
+  const [moved] = next.splice(from, 1);
+  const insertAt = next.findIndex((t) => t.id === targetId);
+  next.splice(from < to ? insertAt + 1 : insertAt, 0, moved);
+  return next;
+}
+
 // Active-id selection policies. Kept separate so the policy can be reasoned
 // about without React state. Close fallbacks stay within the closed terminal's
 // project-scoped panel (regular / merge / startup), so closing the last regular

@@ -1,51 +1,36 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { TerminalSpec } from '../../../TerminalsContext';
 
 export function useTerminalSearch(panelTerminals: TerminalSpec[]) {
   const [filter, setFilter] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const trimmedFilter = filter.trim().toLowerCase();
   const visibleTerminals = useMemo(() => {
     if (!trimmedFilter) return panelTerminals;
     return panelTerminals.filter((t) => {
+      // `label` doubles as the searchable session name — tabs can be
+      // renamed (double-click) to a memorable name, and `cwd` lets the
+      // user find a session by its working directory.
       const haystack = `${t.label} ${t.cwd}`.toLowerCase();
       return haystack.includes(trimmedFilter);
     });
   }, [panelTerminals, trimmedFilter]);
 
-  const toggle = useCallback(() => {
-    setSearchOpen((open) => {
-      const next = !open;
-      if (!next) setFilter('');
-      return next;
-    });
-  }, []);
-
-  useEffect(() => {
-    if (searchOpen) searchInputRef.current?.focus();
-  }, [searchOpen]);
-
   const onKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
       setFilter('');
-      setSearchOpen(false);
+      e.currentTarget.blur();
     }
   }, []);
 
-  const reset = useCallback(() => {
-    setFilter('');
-    setSearchOpen(false);
-  }, []);
+  const reset = useCallback(() => setFilter(''), []);
 
   return {
     filter,
-    searchOpen,
     searchInputRef,
     visibleTerminals,
-    toggle,
     onKeyDown,
     setFilter,
     reset,

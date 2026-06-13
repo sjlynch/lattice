@@ -1,4 +1,9 @@
 :root {
+  /* Render native form-control popups (notably the <select> dropdown list)
+     in dark mode. Without this the OS renders them light — white background,
+     grey text, and a mismatched-blue hover highlight. */
+  color-scheme: dark;
+
   --bg-app: #16191e;
   --bg-graph: #1a1d22;
   --bg-panel: #1c1f25;
