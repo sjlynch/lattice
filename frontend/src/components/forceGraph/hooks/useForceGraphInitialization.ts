@@ -1,4 +1,4 @@
-import { useLayoutEffect, type MutableRefObject } from 'react';
+import { useLayoutEffect, useRef, type MutableRefObject } from 'react';
 import ForceGraph3D, { type ForceGraph3DInstance } from '3d-force-graph';
 import type { GraphNode } from '../../../api';
 import { healthLabelRegistry } from '../healthOverlay';
@@ -30,6 +30,17 @@ export function useForceGraphInitialization(
 ) {
   const { onHoverNodeChange, ...nodeRefs } = settings;
 
+  // The graph (and its `nodeThreeObject` closure) is created once, below.
+  // Capturing the `nodeRefs` *object* directly would freeze the set of refs
+  // to that first render — fine in production (the inner refs are stable),
+  // but under HMR a newly-added ref (e.g. `labelShiftRef`) is absent from the
+  // stale captured bundle, so a later `graph.refresh()` runs the new
+  // `buildNodeObject` against an old bundle and throws on `…Ref.current`.
+  // Hold the latest bundle in a stable ref and read it inside the closure so
+  // the accessor always sees the current set, present and future refs alike.
+  const nodeRefsRef = useRef(nodeRefs);
+  nodeRefsRef.current = nodeRefs;
+
   useLayoutEffect(() => {
     if (!containerRef.current) return;
     const container = containerRef.current;
@@ -37,7 +48,9 @@ export function useForceGraphInitialization(
       .backgroundColor('#1a1d22')
       .nodeId('id')
       .nodeLabel((n: object) => nativeNodeLabel(n as GraphNode))
-      .nodeThreeObject((n: object) => buildNodeObject(n as GraphNode, nodeRefs))
+      .nodeThreeObject((n: object) =>
+        buildNodeObject(n as GraphNode, nodeRefsRef.current),
+      )
       .nodeRelSize(1)
       .linkColor(() => 'rgba(220,228,240,0.55)')
       .linkOpacity(0.85)
