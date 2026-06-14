@@ -1,7 +1,7 @@
-import fs from 'node:fs/promises';
 import { assertSafePushSessionPath } from './paths.js';
 import { assertNotReparsePoint } from '../worktree/cleanupSafety.js';
 import { pruneReparsePointsUnder } from '../worktree/reparsePoints.js';
+import { fsRmWithRetries } from '../worktree/rmRetry.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
 import { notifySessionsFreed } from '../spawnQueue.js';
 
@@ -35,7 +35,7 @@ export async function cleanupPushSession(projectPath: string, id: string): Promi
     // cannot walk out of Lattice's home-scoped push scratch root.
     await pruneReparsePointsUnder(dir);
 
-    if (!(await rmWithRetries(dir))) {
+    if (!(await fsRmWithRetries(dir, { delays: RM_RETRY_DELAYS_MS, logPrefix: '[pushRuns]' }))) {
       // Leave the directory for the boot-time sweep
       // (sweepOrphanedPushSessions) to retry. Inert: it's under
       // ~/.lattice/per-project/<hash>/push/, never inside the project.
@@ -49,26 +49,4 @@ export async function cleanupPushSession(projectPath: string, id: string): Promi
     // recursive fs.rm is attempted.
     console.warn(`[pushRuns] cleanup skipped/failed for ${id}:`, err);
   }
-}
-
-async function rmWithRetries(target: string): Promise<boolean> {
-  for (let attempt = 0; attempt <= RM_RETRY_DELAYS_MS.length; attempt += 1) {
-    try {
-      await fs.rm(target, { recursive: true, force: true });
-      return true;
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      const transient =
-        code === 'EBUSY' || code === 'EPERM' || code === 'ENOTEMPTY';
-      if (!transient || attempt === RM_RETRY_DELAYS_MS.length) {
-        console.warn(
-          `[pushRuns] fs.rm ${target} failed (${code ?? 'unknown'}):`,
-          err,
-        );
-        return false;
-      }
-      await new Promise<void>((r) => setTimeout(r, RM_RETRY_DELAYS_MS[attempt]));
-    }
-  }
-  return false;
 }
