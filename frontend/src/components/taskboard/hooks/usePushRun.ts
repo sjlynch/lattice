@@ -49,6 +49,7 @@ export function usePushRun(
   useEffect(() => {
     if (!activePush) return;
     let cancelled = false;
+    let handle: number | null = null;
     const tick = async () => {
       const status = await fetchPushRunStatus(activePush.runId).catch(() => null);
       if (cancelled) return;
@@ -61,10 +62,32 @@ export function usePushRun(
         setActivePush(null);
       }
     };
-    const handle = window.setInterval(() => { void tick(); }, 2000);
+    const startPolling = () => {
+      if (handle === null) handle = window.setInterval(() => { void tick(); }, 2000);
+    };
+    const stopPolling = () => {
+      if (handle !== null) {
+        window.clearInterval(handle);
+        handle = null;
+      }
+    };
+    // Pause polling while the tab is backgrounded — the run keeps progressing
+    // on the backend, so there's no point hammering it from a hidden tab.
+    // Resume (with an immediate check) when the tab is foregrounded again.
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        stopPolling();
+      } else {
+        void tick();
+        startPolling();
+      }
+    };
+    if (document.visibilityState !== 'hidden') startPolling();
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       cancelled = true;
-      window.clearInterval(handle);
+      stopPolling();
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [activePush, closeTerminal]);
 

@@ -55,6 +55,11 @@ export function useMergeRunSync(
   // event for the rest of the run.
   const toastedRef = useRef<Set<string>>(new Set());
 
+  // Pending auto-clear timeout for the recent-run summary. Held in a ref so
+  // an unmount / folder switch can cancel it instead of leaking a setState
+  // that fires after the effect has been torn down.
+  const summaryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     // Reset run state on every folder switch so a summary from project A
     // doesn't briefly flash when the user opens project B.
@@ -104,8 +109,15 @@ export function useMergeRunSync(
         setMergeRun(null);
         setRecentRunSummary(ev.run);
         maybeToastErrors(ev.run);
-        // Auto-clear summary after a few seconds.
-        setTimeout(() => {
+        // Auto-clear summary after a few seconds. Track the handle so the
+        // cleanup below can cancel a pending clear, and bail if the effect
+        // has been cancelled (folder switch / unmount) before it fires.
+        if (summaryTimerRef.current !== null) {
+          clearTimeout(summaryTimerRef.current);
+        }
+        summaryTimerRef.current = setTimeout(() => {
+          summaryTimerRef.current = null;
+          if (cancelled) return;
           setRecentRunSummary((cur) => (cur?.id === ev.run.id ? null : cur));
         }, 8000);
       } else if (ev.type === 'conflict') {
@@ -127,6 +139,10 @@ export function useMergeRunSync(
     return () => {
       cancelled = true;
       unsub();
+      if (summaryTimerRef.current !== null) {
+        clearTimeout(summaryTimerRef.current);
+        summaryTimerRef.current = null;
+      }
     };
   }, [activeFolder, addTerminal, showError]);
 
