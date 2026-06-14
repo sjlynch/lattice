@@ -5,6 +5,8 @@ Components behind the Tasks button. `TaskBoard.tsx` (parent dir) is a re-export 
 ## Modules
 
 - `TaskBoardLauncher.tsx` — top-level component that owns panel-only UI state and wires taskboard hooks to JSX.
+- `TaskBoardTitle.tsx` — FloatingPanel titlebar: title label + case-insensitive search box (Escape / ✕ clear).
+- `TaskBoardFooter.tsx` — footer summary line: total/matching count, running-vs-queued spawn-queue indicator, interaction hints.
 - `TaskBoardFilters.tsx` — lane visibility chips plus the task harness selector.
 - `Lane.tsx` — one kanban column. Drop slots between cards for explicit positioning; lane background drop = status-only move. Hosts the local `DropSlot` helper for the repeated between-card slot markup.
 - `LaneHeader.tsx` — dot/title/count, lane-level run-all action, push, add. `laneRunAllConfig` (per-lane copy/icon/disabled rules) lives here.
@@ -15,6 +17,9 @@ Components behind the Tasks button. `TaskBoard.tsx` (parent dir) is a re-export 
 - `StuckPill.tsx` — "stuck Nm" surfaced after a conflict resolver runs > 3 min.
 - `lanes.ts` — `LANES` array, `LANE_BY_ID` map, `DRAG_MIME` constant, `shortLabel()`, `parseDragPayload()`.
 - `hooks/useTaskBoardState.ts` — combines task-list syncing, lane grouping/sorting, active counts, and multi-selection.
+- `hooks/useTaskSearch.ts` — search box state + case-insensitive title/description filtering; derives `filteredTasks`/`filteredGrouped` and the `searchActive` flag that gates lane run-all.
+- `hooks/useVisibleLanes.ts` — lane visibility toggle set (all visible by default).
+- `hooks/useTaskTerminalFocus.ts` — task→pty focus map (`getFocusTerminal`) plus a serverId-based focuser for the post-merge hook row.
 - `hooks/useTaskTerminalCleanup.ts` — closes task terminals on lifecycle transitions (terminal statuses and ready-to-merge non-merge cleanup).
 - `hooks/useSyncedViewedTask.ts` — keeps the task detail overlay's viewed task object fresh with live task-list updates.
 - `hooks/useTaskActions.ts` — composes the four per-concern action hooks below into the single shape the launcher consumes. Add new actions in the matching focused hook, not here.

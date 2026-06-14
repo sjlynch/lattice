@@ -4,37 +4,38 @@ import {
   fetchActiveWorkflowRuns,
   subscribeWorkflowRuns,
   type WorkflowRun,
-  type WorkflowStepKind,
 } from '../../../api';
-import { shortLabel } from '../../taskboard/lanes';
+import { createRecentDismissalScheduler } from './recentDismissalScheduler';
+import {
+  activeRunsFromHello,
+  addRecentRun,
+  clearStaleControlProgress,
+  mergeFetchedActiveRuns,
+  removeKey,
+  setControlProgress as applyControlProgress,
+  upsertRun,
+  VISIBILITY_REFETCH_MIN_INTERVAL_MS,
+  type ControlProgressMap,
+  type RunMap,
+} from './workflowRunSync';
+import {
+  stepSpawnedTerminal,
+  workflowTaskSpawnedTerminal,
+} from './workflowTerminalSpawns';
 
-// Latest progress snapshot for a control-flow step. Keyed by runId; only the
-// currently-executing step's progress is retained (next step replaces it).
-export type ControlProgress = {
-  stepIndex: number;
-  kind: WorkflowStepKind;
-  current: number;
-  total: number;
-  message?: string;
-};
-
-// Recent-run linger windows. Completed runs disappear quickly (10s) so the
-// chip area stays uncluttered, but errored/cancelled runs linger long enough
-// (5min) that a user who stepped away from the screen still sees the failure
-// signal when they return. Both can be dismissed manually via `dismissRecent`.
-const COMPLETED_LINGER_MS = 10_000;
-const ERRORED_LINGER_MS = 5 * 60 * 1000;
-
-// Re-fetch the active-runs HTTP endpoint when this fraction of stale time has
-// passed since the last fetch on visibility return. Cheap belt-and-braces in
-// case a WS event was lost while the tab was hidden — additive only, so a
-// stale fetch can't remove a run.
-const VISIBILITY_REFETCH_MIN_INTERVAL_MS = 2000;
+// Re-exported for the strip component and other consumers that imported it
+// from here before the sync helpers were split out.
+export type { ControlProgress } from './workflowRunSync';
 
 // Tracks live workflow runs (`/ws/workflow-runs`) and hands per-step terminal
 // spawns to the global TerminalsContext. Recently-finished runs linger in
 // `recentRuns` for ~10s (completed) or 5min (errored/cancelled) so the UI can
 // surface failures even after the user looks away from the screen.
+//
+// The pure state transitions live in `workflowRunSync.ts`, the linger timers
+// in `recentDismissalScheduler.ts`, and the terminal-spawn mapping in
+// `workflowTerminalSpawns.ts`; this hook is the wiring that subscribes, fetches
+// additively, and routes each WS event through those helpers.
 //
 // Recovery design (see CLAUDE.md note on the disappearing-chip incident):
 // the WS `hello` event from `/ws/workflow-runs` is the primary snapshot
@@ -46,17 +47,21 @@ const VISIBILITY_REFETCH_MIN_INTERVAL_MS = 2000;
 // avoid race conditions with the fetch (which can return a "still running"
 // snapshot that pre-dates a recently received completion event).
 export function useWorkflowRuns(activeFolder: string) {
-  const [activeRuns, setActiveRuns] = useState<Record<string, WorkflowRun>>({});
-  const [recentRuns, setRecentRuns] = useState<Record<string, WorkflowRun>>({});
-  const [controlProgress, setControlProgress] = useState<
-    Record<string, ControlProgress>
-  >({});
+  const [activeRuns, setActiveRuns] = useState<RunMap>({});
+  const [recentRuns, setRecentRuns] = useState<RunMap>({});
+  const [controlProgress, setControlProgress] = useState<ControlProgressMap>(
+    {},
+  );
   const { addTerminal } = useTerminals();
 
   // Mirrored so the additive fetch reconciler can read the freshest known
   // recent-runs map without re-running on every state change.
   const recentRunsRef = useRef(recentRuns);
   recentRunsRef.current = recentRuns;
+
+  const dismissRecent = useCallback((id: string) => {
+    setRecentRuns((cur) => removeKey(cur, id));
+  }, []);
 
   useEffect(() => {
     if (!activeFolder) {
@@ -66,28 +71,13 @@ export function useWorkflowRuns(activeFolder: string) {
     }
     let cancelled = false;
 
-    // Schedule the deferred removal of a recent run, with a status-dependent
-    // delay so errored/cancelled runs stay visible long enough for the user
-    // to notice them. Captured in the effect so cancellation can wipe pending
-    // timers on activeFolder change.
-    const pendingDismissTimers = new Map<string, ReturnType<typeof setTimeout>>();
-    function scheduleRecentDismissal(id: string, status: WorkflowRun['status']) {
-      const delay =
-        status === 'completed' ? COMPLETED_LINGER_MS : ERRORED_LINGER_MS;
-      const prev = pendingDismissTimers.get(id);
-      if (prev) clearTimeout(prev);
-      const t = setTimeout(() => {
-        pendingDismissTimers.delete(id);
-        if (cancelled) return;
-        setRecentRuns((cur) => {
-          if (!cur[id]) return cur;
-          const next = { ...cur };
-          delete next[id];
-          return next;
-        });
-      }, delay);
-      pendingDismissTimers.set(id, t);
-    }
+    // Deferred removal of recent runs, with a status-dependent delay so
+    // errored/cancelled runs stay visible long enough for the user to notice.
+    // `cancelAll` in cleanup wipes pending timers on activeFolder change.
+    const dismissals = createRecentDismissalScheduler((id) => {
+      if (cancelled) return;
+      setRecentRuns((cur) => removeKey(cur, id));
+    });
 
     // Additive reconciler: merge `fetched` into `activeRuns` without removing
     // anything. A run in `recentRuns` was finalized by a WS event we already
@@ -95,14 +85,11 @@ export function useWorkflowRuns(activeFolder: string) {
     function applyFetched(fetched: WorkflowRun[], origin: string) {
       if (cancelled) return;
       setActiveRuns((cur) => {
-        let addedIds: string[] = [];
-        const next = { ...cur };
-        for (const r of fetched) {
-          if (next[r.id]) continue;
-          if (recentRunsRef.current[r.id]) continue;
-          next[r.id] = r;
-          addedIds.push(r.id);
-        }
+        const { next, addedIds } = mergeFetchedActiveRuns(
+          cur,
+          recentRunsRef.current,
+          fetched,
+        );
         if (addedIds.length > 0) {
           console.log(
             `[useWorkflowRuns] ${origin} added ${addedIds.length} run(s) ` +
@@ -159,103 +146,54 @@ export function useWorkflowRuns(activeFolder: string) {
         // `hello` is emitted both on initial connect and on every WS
         // reconnect (see backend/src/ws/projectEndpoint.ts), so this also
         // serves as the recovery path after a network/socket drop.
-        const map: Record<string, WorkflowRun> = {};
-        for (const r of ev.runs) map[r.id] = r;
         console.log(
           `[useWorkflowRuns] hello: ${ev.runs.length} active run(s) ` +
             `(project=${activeFolder})`,
         );
-        setActiveRuns(map);
+        setActiveRuns(activeRunsFromHello(ev.runs));
       } else if (ev.type === 'started' || ev.type === 'progress') {
-        setActiveRuns((cur) => ({ ...cur, [ev.run.id]: ev.run }));
-        // A step advance ('progress' is fired after step-spawned for agent
-        // steps) means whatever control-progress we were showing for the
-        // prior step is stale. Drop it; the next step's first progress event
-        // will replace it.
-        setControlProgress((cur) => {
-          const prev = cur[ev.run.id];
-          if (!prev || prev.stepIndex === ev.run.currentStepIndex) return cur;
-          const next = { ...cur };
-          delete next[ev.run.id];
-          return next;
-        });
-      } else if (ev.type === 'completed' || ev.type === 'errored' || ev.type === 'cancelled') {
+        setActiveRuns((cur) => upsertRun(cur, ev.run));
+        setControlProgress((cur) =>
+          clearStaleControlProgress(cur, ev.run.id, ev.run.currentStepIndex),
+        );
+      } else if (
+        ev.type === 'completed' ||
+        ev.type === 'errored' ||
+        ev.type === 'cancelled'
+      ) {
         if (ev.type !== 'completed') {
           console.log(
             `[useWorkflowRuns] run ${ev.run.id} ${ev.type} ` +
               `(workflow=${ev.run.workflowName}, error=${ev.run.error ?? 'none'})`,
           );
         }
-        setActiveRuns((cur) => {
-          const next = { ...cur };
-          delete next[ev.run.id];
-          return next;
-        });
-        setControlProgress((cur) => {
-          if (!cur[ev.run.id]) return cur;
-          const next = { ...cur };
-          delete next[ev.run.id];
-          return next;
-        });
-        setRecentRuns((cur) => ({ ...cur, [ev.run.id]: ev.run }));
+        setActiveRuns((cur) => removeKey(cur, ev.run.id));
+        setControlProgress((cur) => removeKey(cur, ev.run.id));
+        setRecentRuns((cur) => addRecentRun(cur, ev.run));
         // Schedule auto-dismissal with a status-dependent delay so failures
         // stay visible long enough to notice. Manual dismiss via
         // `dismissRecent` still works.
-        scheduleRecentDismissal(ev.run.id, ev.run.status);
+        dismissals.schedule(ev.run.id, ev.run.status);
       } else if (ev.type === 'step-spawned') {
-        addTerminal({
-          label: `wf:step${ev.stepIndex + 1}`,
-          cwd: ev.cwd,
-          initialCommand: ev.command,
-          projectPath: activeFolder,
-          serverId: ev.serverId,
-        });
+        const { spec, focus } = stepSpawnedTerminal(ev, activeFolder);
+        addTerminal(spec, focus);
       } else if (ev.type === 'workflow-task-spawned') {
-        // Start control step fans out one task agent per Open task. Make
-        // each one visible in the sidebar — tagging with taskId lets
-        // useTaskTerminalCleanup auto-close it when the task moves out
-        // of in_progress.
-        addTerminal({
-          label: shortLabel(ev.title),
-          cwd: ev.cwd,
-          initialCommand: ev.command,
-          taskId: ev.taskId,
-          projectPath: activeFolder,
-          serverId: ev.serverId,
-        }, false);
+        const { spec, focus } = workflowTaskSpawnedTerminal(ev, activeFolder);
+        addTerminal(spec, focus);
       } else if (ev.type === 'step-control-progress') {
-        setControlProgress((cur) => ({
-          ...cur,
-          [ev.runId]: {
-            stepIndex: ev.stepIndex,
-            kind: ev.kind,
-            current: ev.current,
-            total: ev.total,
-            message: ev.message,
-          },
-        }));
+        setControlProgress((cur) => applyControlProgress(cur, ev));
       }
     });
     return () => {
       cancelled = true;
-      for (const t of pendingDismissTimers.values()) clearTimeout(t);
-      pendingDismissTimers.clear();
+      dismissals.cancelAll();
       document.removeEventListener('visibilitychange', onVisibility);
       unsub();
     };
   }, [activeFolder, addTerminal]);
 
   const addActiveRun = useCallback((run: WorkflowRun) => {
-    setActiveRuns((cur) => ({ ...cur, [run.id]: run }));
-  }, []);
-
-  const dismissRecent = useCallback((id: string) => {
-    setRecentRuns((cur) => {
-      if (!cur[id]) return cur;
-      const next = { ...cur };
-      delete next[id];
-      return next;
-    });
+    setActiveRuns((cur) => upsertRun(cur, run));
   }, []);
 
   return { activeRuns, recentRuns, controlProgress, addActiveRun, dismissRecent };
