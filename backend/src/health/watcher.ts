@@ -77,7 +77,40 @@ async function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
   wireWatcherEvents(proj, watcher);
 
   watchers.set(projectRoot, proj);
+  ensureShutdownFlushHook();
   return proj;
+}
+
+// Force every project's debounced health-cache write out — used on shutdown
+// so a coalesced write that hasn't fired yet isn't lost. Never rejects
+// (HealthCache.flush swallows write errors).
+export async function flushWatcherCaches(): Promise<void> {
+  await Promise.all([...watchers.values()].map((proj) => proj.cache.flush()));
+}
+
+let shutdownFlushRegistered = false;
+
+// Register process-exit handlers (once) that flush pending health-cache writes
+// before the process goes away. Signal handlers must re-exit themselves —
+// adding a listener suppresses Node's default terminate — and are time-boxed
+// so a stuck disk can't hang a dev-server restart. On Windows a force-kill
+// (TerminateProcess, e.g. the dev runner's restart) bypasses these entirely;
+// that's acceptable since the cache is best-effort and re-derived from each
+// file's (mtime,size) on the next scan. `beforeExit` covers a natural
+// event-loop drain (no signal) and must not call process.exit itself.
+function ensureShutdownFlushHook(): void {
+  if (shutdownFlushRegistered) return;
+  shutdownFlushRegistered = true;
+
+  const flushThenExit = () => {
+    void Promise.race([
+      flushWatcherCaches(),
+      new Promise((resolve) => setTimeout(resolve, 1000)),
+    ]).finally(() => process.exit(0));
+  };
+  process.once('SIGINT', flushThenExit);
+  process.once('SIGTERM', flushThenExit);
+  process.once('beforeExit', () => { void flushWatcherCaches(); });
 }
 
 function createChokidarWatcher(

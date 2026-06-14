@@ -1,4 +1,4 @@
-import type { MouseEvent } from 'react';
+import { memo, type MouseEvent } from 'react';
 import { AlertTriangle, Hourglass } from 'lucide-react';
 import type { Task } from '../../api';
 import { StuckPill } from './StuckPill';
@@ -9,7 +9,9 @@ import {
 
 // Title/description block plus the queued/conflict pills. Click anywhere on
 // the body to drive selection (handled by the parent via `onClick`).
-export function TaskCardBody({
+// Memoized: TaskCard passes a stable `onClick`, so re-renders driven by
+// unrelated card state (e.g. drag highlight) skip the body.
+export const TaskCardBody = memo(function TaskCardBody({
   task,
   isConflict,
   isSelected,
@@ -47,11 +49,11 @@ export function TaskCardBody({
       )}
     </div>
   );
-}
+});
 
 // Conflict pill + (once it's been stuck a while) the "stuck Nm" pill. Renders
 // nothing unless the task is mid-conflict.
-export function TaskCardConflictBadges({
+export const TaskCardConflictBadges = memo(function TaskCardConflictBadges({
   task,
   isConflict,
 }: {
@@ -70,11 +72,13 @@ export function TaskCardConflictBadges({
       {task.conflictStartedAt && <StuckPill since={task.conflictStartedAt} />}
     </>
   );
-}
+});
 
 // The lane-appropriate icon button row. The set + order of buttons is derived
 // declaratively from which handlers are present (see `buildTaskCardActions`).
-export function TaskCardActions({
+// Memoized: TaskCard passes stable, useCallback-wrapped handlers so the row
+// skips re-rendering when only drag/selection state on the card changes.
+export const TaskCardActions = memo(function TaskCardActions({
   isConflict,
   ...handlers
 }: TaskCardActionHandlers & { isConflict: boolean }) {
@@ -99,4 +103,4 @@ export function TaskCardActions({
       ))}
     </div>
   );
-}
+});
