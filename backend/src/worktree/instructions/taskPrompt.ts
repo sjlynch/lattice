@@ -1,7 +1,41 @@
 import type { Task } from '../../tasks.js';
 import type { AgentHarness } from '../../harnesses.js';
+import type { DeadCodeSummary } from '../../deadCode.js';
 import { canonicalProjectPath } from '../../projectPath.js';
 import { renderEnvNotesBlock } from '../envDetect.js';
+
+// Reference-only nudge: surfaced only when the analyzer confidently flags at
+// least one unreachable file (`deadCode.total > 0`). Deliberately framed as
+// optional context — an unrelated task (add a button, fix a bug) shouldn't be
+// derailed into a dead-code hunt, and the scanner can't see dynamic/string-path
+// loads, so the agent is told to verify before removing anything.
+function renderDeadCodeBlock(
+  deadCode: DeadCodeSummary | null,
+  backendOrigin: string,
+): string {
+  if (!deadCode || deadCode.total === 0) return '';
+  const sample = deadCode.files.slice(0, 5).map((f) => `\`${f.path}\``);
+  const more = deadCode.total - sample.length;
+  const sampleLine =
+    sample.length > 0
+      ? `> e.g. ${sample.join(', ')}${more > 0 ? `, …and ${more} more` : ''}.\n>\n`
+      : '';
+  return `> **Dead-code scan (optional context).** Lattice's analyzer currently flags
+> **${deadCode.total} file(s)** in this project as possibly unreachable — not
+> imported from any detected entry point.
+${sampleLine}> This is a heuristic: it can't see dynamic \`import()\`, string-path/\`fs\`
+> loads, or framework magic, so a flagged file may well be live. **Only act on
+> this if your task involves cleanup, refactoring, or deleting code** — don't
+> go out of your way otherwise. If it is relevant, fetch the current list and
+> **verify each file is genuinely dead** (grep for its name, check for dynamic
+> loads) before removing it:
+>
+> \`\`\`
+> curl -sG "${backendOrigin}/api/health/dead-code" --data-urlencode "project=$LATTICE_PROJECT"
+> \`\`\`
+
+`;
+}
 
 // `harness` controls a couple of pieces. Claude (the default) ends the
 // session and its Stop hook in `.claude/settings.local.json` POSTs
@@ -17,10 +51,12 @@ export function renderTaskMarkdown(
   backendOrigin: string,
   harness: AgentHarness = 'claude',
   envNotes: string[] = [],
+  deadCode: DeadCodeSummary | null = null,
 ): string {
   const created = new Date(task.createdAt).toISOString();
   const desc = task.description?.trim() || '_(no description provided)_';
   const envBlock = renderEnvNotesBlock(envNotes);
+  const deadCodeBlock = renderDeadCodeBlock(deadCode, backendOrigin);
   const autonomyPreamble =
     harness === 'claude'
       ? ''
@@ -70,7 +106,7 @@ ${desc}
 
 ## Instructions (please complete autonomously, no need to confirm with the user)
 
-${autonomyPreamble}${envBlock}1. **Check existing state first.** This task may have been started in a
+${autonomyPreamble}${envBlock}${deadCodeBlock}1. **Check existing state first.** This task may have been started in a
    prior session — Lattice can resume worktrees after a server restart or
    when Claude finishes without committing. Before doing anything, run:
 

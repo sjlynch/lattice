@@ -14,12 +14,27 @@
 //   - `labelPhysics`  : an overlay (LOC / health / labels) is running its
 //                       per-frame repulsion loop. Acquired/released by the
 //                       owning hook.
-//   - `agents`        : one or more Claude agent nodes / focus beams are on
-//                       screen and being animated. Held by `useAgentOverlay`
-//                       so the node easing + beam fades actually paint.
+//   - `agents`        : the Agent Presence Layer (Claude presence nodes +
+//                       focus beams) has self-driven motion to paint — a node
+//                       easing, the hover line settling, or a beam fading. Held
+//                       by `useAgentOverlay` ONLY while `AgentOverlay.tick`
+//                       reports motion, NOT for an agent's whole lifetime, so a
+//                       settled-but-still-running agent lets the loop idle. (It
+//                       used to be held while any agent existed — the
+//                       render-on-demand regression this file's contract now
+//                       guards against.)
 //
 // Tab visibility is a negative gate: when the tab is hidden the loop is
 // fully paused regardless of held reasons.
+//
+// Frame-rate throttle: when the ONLY held reasons are the slow self-animations
+// (`agents` and/or `labelPhysics`) — i.e. no `engine` warmup, `interact`, or
+// `refresh` tail demanding full responsiveness — the loop is duty-cycled down
+// to ~SLOW_FPS via pause/resume. Those eases/fades read fine at a reduced rate,
+// so this roughly halves the full-scene render cost while an agent is active or
+// a label overlay is held, without affecting interaction or layout warmup. Fed
+// one frame at a time by `notifyFrameRendered` (wired to the scene frame
+// driver at init).
 //
 // The controller is attached to the graph instance as `__idleController`
 // so utilities like `clearLabelsAndRefresh` and the overlay RAF loops can
@@ -37,15 +52,21 @@ const REFRESH_TAIL_MS = 120;
 // loop pinned forever. Sized comfortably above cooldownTime + a margin
 // for the warmup ticks.
 const ENGINE_SAFETY_TIMEOUT_MS = 20000;
+// Duty-cycle target when only the slow self-animations are driving the loop.
+// ~30fps halves the render cost vs the library's uncapped ~60fps while staying
+// visually smooth for node easing + beam/label fades.
+const SLOW_FRAME_MS = 1000 / 30;
 
 export type IdleController = {
   engineStarted(): void;
   engineStopped(): void;
+  isEngineHot(): boolean;
   acquireLabelPhysics(): void;
   releaseLabelPhysics(): void;
   acquireAgents(): void;
   releaseAgents(): void;
   wakeForRefresh(): void;
+  notifyFrameRendered(): void;
   destroy(): void;
 };
 
@@ -69,7 +90,19 @@ export function createIdleController(
     agents: 0,
   };
   let hidden = document.visibilityState === 'hidden';
-  let running = true; // 3d-force-graph starts its own RAF on construction
+  // `throttleTimer` holds a pending throttled-frame resume; `pausePending`
+  // means a deferred pause microtask is already queued (coalesces repeats).
+  let throttleTimer: ReturnType<typeof setTimeout> | null = null;
+  let pausePending = false;
+  // Guards against re-entrant resumes. `graph.resumeAnimation()` synchronously
+  // runs a render tick (`_animationCycle` → `tickFrame` → `scene.onBeforeRender`)
+  // BEFORE the library re-arms its RAF id, so the id is transiently null mid-tick
+  // — meaning a `sync()` triggered from inside that render (e.g. a frame-driver
+  // callback releasing `labelPhysics`) would see null and call resume AGAIN,
+  // nesting `_animationCycle` into unbounded recursion (stack overflow). While a
+  // resume is on the stack the loop is definitionally (re)starting, so any nested
+  // resume request is a redundant no-op we simply skip.
+  let resuming = false;
 
   function shouldRun(): boolean {
     if (hidden) return false;
@@ -82,12 +115,95 @@ export function createIdleController(
     );
   }
 
+  // True when the loop is running purely for the slow self-animations and
+  // nothing demands full responsiveness — the only case we duty-cycle.
+  function slowOnly(): boolean {
+    return (
+      counts.engine === 0 &&
+      counts.interact === 0 &&
+      counts.refresh === 0 &&
+      (counts.agents > 0 || counts.labelPhysics > 0)
+    );
+  }
+
+  function clearThrottleTimer() {
+    if (throttleTimer) {
+      clearTimeout(throttleTimer);
+      throttleTimer = null;
+    }
+  }
+
+  // Pause the render loop, but ALWAYS from a microtask so it lands BETWEEN
+  // frames. This is load-bearing: the library's `_animationCycle` re-schedules
+  // its own RAF unconditionally at the end of every frame, and `onEngineStop`
+  // fires synchronously *inside* that cycle (within `tickFrame`). A
+  // `pauseAnimation()` called straight from `engineStopped` therefore only
+  // cancels the already-fired frame and is overwritten by the cycle's trailing
+  // reschedule — so the loop would never actually stop after the layout
+  // settles (a perpetual-100%-CPU idle). Deferring to a microtask runs the
+  // cancel after the cycle returns, when the next-frame RAF is pending and
+  // genuinely cancellable.
+  //
+  // One unified check, shared by `sync` (we should stop) and
+  // `notifyFrameRendered` (throttle: pause then re-wake). Whichever queues it,
+  // the body decides from the CURRENT counts at execution time:
+  //   - a full-speed reason was (re)acquired → stay running;
+  //   - still slow-only → pause now and schedule the next throttled paint;
+  //   - nothing wants the loop → pause and stay paused.
+  function schedulePauseCheck() {
+    if (pausePending) return;
+    pausePending = true;
+    queueMicrotask(() => {
+      pausePending = false;
+      if (shouldRun() && !slowOnly()) return; // full-speed reason → keep running
+      if (throttleTimer) return; // a throttled resume is already scheduled
+      graph.pauseAnimation();
+      if (shouldRun() && slowOnly()) {
+        throttleTimer = setTimeout(() => {
+          throttleTimer = null;
+          sync();
+        }, SLOW_FRAME_MS);
+      }
+    });
+  }
+
+  // Resume the render loop, but never re-enter `_animationCycle` from inside the
+  // render tick a resume itself drives (see the `resuming` guard above). The
+  // outer resume is already (re)starting the loop, so a nested request is moot.
+  function resumeLoop() {
+    if (resuming) return;
+    resuming = true;
+    try {
+      graph.resumeAnimation();
+    } finally {
+      resuming = false;
+    }
+  }
+
   function sync() {
-    const want = shouldRun();
-    if (want === running) return;
-    if (want) graph.resumeAnimation();
-    else graph.pauseAnimation();
-    running = want;
+    if (!shouldRun()) {
+      clearThrottleTimer();
+      schedulePauseCheck();
+      return;
+    }
+    if (!slowOnly()) {
+      // A full-speed reason (engine/interact/refresh) is held — run uncapped.
+      clearThrottleTimer();
+      resumeLoop(); // idempotent (no-op if already running / mid-resume)
+      return;
+    }
+    // Slow-only: ensure the duty cycle is alive, but don't cut a throttle wait
+    // short — that would push the effective rate above the cap.
+    if (!throttleTimer && !pausePending) resumeLoop();
+  }
+
+  // Called once per real render frame (via the scene frame driver). In
+  // slow-only mode this drives the duty cycle: pause after this frame and
+  // re-wake SLOW_FRAME_MS later (~SLOW_FPS). A no-op outside slow-only mode.
+  function notifyFrameRendered() {
+    if (throttleTimer || pausePending) return;
+    if (!shouldRun() || !slowOnly()) return;
+    schedulePauseCheck();
   }
 
   // ---- engine (boolean, mirrors three-forcegraph's engineRunning) -------
@@ -130,6 +246,13 @@ export function createIdleController(
     counts.engine--;
     clearEngineSafety();
     sync();
+  }
+  // Whether the d3 layout is currently live (nodes may be moving this frame).
+  // Consumers that cache per-frame geometry derived from node positions (e.g.
+  // the Agent Presence Layer's graph bounds) use this to recompute only while
+  // positions can change and reuse the cache once the layout has settled.
+  function isEngineHot(): boolean {
+    return engineHeld;
   }
 
   // ---- label-physics (counter, multiple overlays may be active) ---------
@@ -211,6 +334,7 @@ export function createIdleController(
     document.removeEventListener('visibilitychange', onVisibility);
     if (interactTimer) clearTimeout(interactTimer);
     if (refreshTimer) clearTimeout(refreshTimer);
+    clearThrottleTimer();
     clearEngineSafety();
   }
 
@@ -220,11 +344,13 @@ export function createIdleController(
   return {
     engineStarted,
     engineStopped,
+    isEngineHot,
     acquireLabelPhysics,
     releaseLabelPhysics,
     acquireAgents,
     releaseAgents,
     wakeForRefresh,
+    notifyFrameRendered,
     destroy,
   };
 }

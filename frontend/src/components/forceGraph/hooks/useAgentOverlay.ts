@@ -9,9 +9,23 @@ import {
 import { CLAUDE_ORANGE, taskColor } from '../../../taskColors';
 import type { GraphSettings } from '../graphSettings';
 import { getIdleController } from '../idleController';
+import { onFrame } from '../sceneFrameDriver';
 import { AgentOverlay, type AgentDescriptor } from '../agentOverlay';
 
-// Drives the agent overlay from two sources, unified by the overlay's string
+// Hook half of the **Agent Presence Layer (APL)** — the scene overlay that
+// shows where live Claude agents are working (a hovering "presence node" per
+// agent + TTL "focus beams" to the files it touches). This hook owns the APL's
+// lifecycle and its render-on-demand contract with the idle controller; the
+// drawing lives in `agentOverlay.ts` (+ its `agentOverlay*` siblings).
+//
+// Render-on-demand: the APL is driven off the graph's real render frames
+// (`scene.onBeforeRender`) and holds the idle controller's `agents` reason ONLY
+// while `overlay.tick` reports self-driven motion, releasing it the frame the
+// agents settle. An idle-but-in-progress agent therefore lets the render loop
+// suspend. (Regression history: it used to hold `agents` for the whole lifetime
+// of any agent, pinning the loop at 60fps — see forceGraph/CLAUDE.md.)
+//
+// Drives the overlay from two sources, unified by the overlay's string
 // agent id:
 //   - in-progress *Claude* tasks → a task-colored node (id = taskId).
 //   - Claude sessions OUTSIDE a worktree (push / workflow step / post-merge
@@ -42,69 +56,97 @@ export function useAgentOverlay(
   // The two descriptor sources, merged on every change.
   const taskDescRef = useRef<AgentDescriptor[]>([]);
   const sessionDescRef = useRef<AgentDescriptor[]>([]);
-  const rafRef = useRef(0);
+  // Whether we currently hold the idle controller's `agents` reason (a boolean
+  // hold, not a counter): acquired to wake the render loop, released the frame
+  // the overlay settles. Kept in sync by `kick` (acquire) and the frame handler
+  // (release on rest), so it can never leak a permanent hold.
   const idleHeldRef = useRef(false);
 
-  const stopLoop = useCallback(() => {
-    if (rafRef.current) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = 0;
-    }
-    if (idleHeldRef.current) {
-      getIdleController(graphRef.current)?.releaseAgents();
-      idleHeldRef.current = false;
-    }
-  }, [graphRef]);
-
-  const loop = useCallback(() => {
-    const overlay = overlayRef.current;
-    const graph = graphRef.current;
-    if (overlay && graph) {
-      overlay.setSizes(
-        settingsRef.current.fileNodeSize,
-        settingsRef.current.labelSize,
-      );
-      overlay.tick(performance.now(), graph);
-      if (overlay.isActive()) {
-        rafRef.current = requestAnimationFrame(loop);
-        return;
-      }
-    }
-    stopLoop();
-  }, [graphRef, settingsRef, stopLoop]);
-
+  // Wake the render loop so a pending change paints: a new/removed agent, a new
+  // beam, or ongoing easing. The per-frame handler below releases the hold again
+  // once `overlay.tick` reports the overlay has settled, so this never pins the
+  // loop the way the old "hold while any agent exists" logic did.
   const kick = useCallback(() => {
-    const overlay = overlayRef.current;
-    if (!overlay || !overlay.isActive()) return;
-    if (rafRef.current) return;
-    if (!idleHeldRef.current) {
-      getIdleController(graphRef.current)?.acquireAgents();
-      idleHeldRef.current = true;
-    }
-    rafRef.current = requestAnimationFrame(loop);
-  }, [graphRef, loop]);
+    if (idleHeldRef.current) return;
+    // Set the hold flag BEFORE acquiring. `acquireAgents` → `sync` →
+    // `resumeAnimation` renders synchronously, which re-enters this overlay's
+    // frame callback (and thus `kick`/`release`) before control returns here.
+    // Flipping the flag first makes that re-entrant call bail at its guard,
+    // preventing unbounded recursion (and a leaked `agents` count).
+    idleHeldRef.current = true;
+    getIdleController(graphRef.current)?.acquireAgents();
+  }, [graphRef]);
 
   const applyMerged = useCallback(() => {
     const overlay = overlayRef.current;
     const graph = graphRef.current;
     if (!overlay || !graph) return;
-    overlay.setAgents([...taskDescRef.current, ...sessionDescRef.current], graph);
+    const changed = overlay.setAgents(
+      [...taskDescRef.current, ...sessionDescRef.current],
+      graph,
+    );
     kick();
+    // A removal (agent stopped) takes effect by deleting the node/label from the
+    // scene — but the render loop may be idle, so nothing would repaint it away.
+    // `kick`'s motion-gated `agents` reason settles after a single frame; a SET
+    // change instead gets the same guaranteed short frame tail every other
+    // one-shot scene mutator uses (selection halo, worktree ring, labels), so a
+    // stopped agent's node reliably disappears even from a fully settled scene.
+    if (changed) getIdleController(graph)?.wakeForRefresh();
   }, [graphRef, kick]);
 
-  // Create the overlay once the graph instance exists.
+  // Create the overlay once the graph instance exists, and drive its per-frame
+  // tick from the graph's OWN render frames via the shared scene frame driver
+  // (scene.onBeforeRender, fired by THREE at the head of every render). This
+  // means:
+  //   - the overlay updates exactly when the scene actually paints — for free
+  //     while the loop is already running for another reason (engine hot, user
+  //     interacting), so beams track moving file nodes without us forcing frames;
+  //   - we hold the idle controller's `agents` reason ONLY while `tick` reports
+  //     self-driven motion (easing / fading), and drop it the moment it settles.
+  // That's the render-on-demand fix: an idle-but-in-progress agent no longer
+  // keeps the render loop spinning.
   useEffect(() => {
     const graph = graphRef.current;
     if (!graph) return;
     const overlay = new AgentOverlay(graph, settingsRef.current.fileNodeSize);
     overlayRef.current = overlay;
+    const idle = getIdleController(graph);
+
+    const release = () => {
+      if (!idleHeldRef.current) return;
+      // Clear the hold flag BEFORE releasing. `releaseAgents` → `sync` →
+      // `resumeAnimation` can render synchronously (when another reason still
+      // wants the loop), re-entering this frame callback before control
+      // returns. Clearing first makes the re-entrant `release` bail at the
+      // guard above instead of recursing into `releaseAgents` forever.
+      idleHeldRef.current = false;
+      idle?.releaseAgents();
+    };
+
+    const offFrame = onFrame(graph, (now) => {
+      // Cheap early-out: with nothing on screen and no hold, skip all per-frame
+      // work so ordinary (agent-free) renders pay nothing.
+      if (!overlay.isActive() && !idleHeldRef.current) return;
+      overlay.setSizes(
+        settingsRef.current.fileNodeSize,
+        settingsRef.current.labelSize,
+      );
+      // While the layout is live, file nodes move under the beams, so the graph
+      // bounds (hover-line height) must be recomputed; once settled they're
+      // cached. See AgentPathIndex.bounds / idleController.isEngineHot.
+      if (overlay.tick(now, graph, idle?.isEngineHot() ?? false)) kick();
+      else release();
+    });
+
     applyMerged(); // apply anything that arrived before the overlay existed
     return () => {
-      stopLoop();
+      release();
+      offFrame();
       overlay.destroy(graph);
       overlayRef.current = null;
     };
-  }, [graphRef, settingsRef, applyMerged, stopLoop]);
+  }, [graphRef, settingsRef, applyMerged, kick]);
 
   // Task agents + both activity beam sources (all on `/ws/tasks`).
   useEffect(() => {

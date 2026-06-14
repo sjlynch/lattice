@@ -71,3 +71,17 @@ test('HoverLine snaps on first sample then low-passes, ignoring null targets', (
   line.update(null); // null is a no-op
   assert.ok(Math.abs(line.value() - 94) < 1e-9);
 });
+
+test('HoverLine.update reports motion so a settled line lets the loop idle', () => {
+  const line = new HoverLine();
+  assert.equal(line.update(null), false); // no target → no motion
+  assert.equal(line.update(100), true); // first sample snaps → moved
+  assert.equal(line.update(0), true); // big step → still moving
+  // Ease all the way in; eventually the per-frame step drops below REST_EPS and
+  // update() reports rest, which is what releases the `agents` idle hold.
+  let moved = true;
+  for (let i = 0; i < 1000 && moved; i++) moved = line.update(0);
+  assert.equal(moved, false);
+  assert.ok(Math.abs(line.value()) < 0.5); // settled at (≈) the target
+  assert.equal(line.update(null), false); // null stays a no-op once settled
+});

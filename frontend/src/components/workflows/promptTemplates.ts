@@ -7,6 +7,7 @@ export type PromptTemplateId =
   | ProjectAwarePromptId
   | 'combine-tasks'
   | 'pmf'
+  | 'security'
   | 'brainstorm';
 
 export type PromptTemplateMatchInput = {
@@ -52,6 +53,13 @@ const PROMPT_TEMPLATE_METADATA: readonly PromptTemplateMetadata[] = [
     matches: ({ title, prompt }) =>
       title === 'pmf' ||
       prompt.startsWith('please do a thorough review of this codebase'),
+  },
+  {
+    id: 'security',
+    title: 'Security',
+    matches: ({ title, prompt }) =>
+      title === 'security' ||
+      prompt.startsWith('analyze this codebase specifically for security vulnerabilities'),
   },
   {
     id: 'brainstorm',

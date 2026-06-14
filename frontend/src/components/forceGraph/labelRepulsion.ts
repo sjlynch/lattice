@@ -13,11 +13,13 @@
 // label only checks its 3×3 neighbourhood — O(N·k) where k is the
 // average cluster density. All per-frame scratch arrays are reused at
 // module scope to keep GC pressure flat. `repelLabels` returns whether
-// every label has settled (kept for use by callers that want to skip
-// per-frame work when the system is at rest; the overlay hooks
-// currently leave the RAF running continuously while the overlay key
-// is held so labelSpread / refresh changes always propagate without
-// extra wake plumbing).
+// every label has settled; `labelRepulsionFrames.startLabelRepulsion` uses
+// that to hold the idle controller's `labelPhysics` reason ONLY while the
+// labels are still moving, so the render loop idles once they settle. (The
+// stale-state cases the old always-running RAF guarded against —
+// labelSpread / labelMode / refresh changes — still re-run the step for free,
+// because each wakes the render loop through its own idle reason and the step
+// is driven off the shared scene frame driver.)
 //
 // This file is a thin facade. The implementation is split by concern
 // under `labelPhysics/`:

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import type { ScanResult } from '../../../api';
-import { getIdleController } from '../idleController';
 import { depthFor, labelsRegistry } from '../labelsOverlay';
-import { repelLabels } from '../labelRepulsion';
+import { applyLabelsToGraph } from '../labelSync';
+import { startLabelRepulsion } from '../labelRepulsionFrames';
+import { getIdleController } from '../idleController';
 import type { GraphSettings } from '../graphSettings';
 import { isTextInput } from './refresh';
 
@@ -13,9 +14,7 @@ import { isTextInput } from './refresh';
 //
 // Track Alt as a chord-style modifier: keydown enables labels mode,
 // keyup/blur disables. Alt+wheel cycles the visible depth band instead
-// of zooming the camera. Holding Shift as well (Alt+Shift) reveals the
-// file-node labels too; Alt alone shows directory names only, so the
-// band reads as a clean folder map until you ask for filenames.
+// of zooming the camera.
 export function useLabelsOverlay(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   containerRef: MutableRefObject<HTMLDivElement | null>,
@@ -24,14 +23,24 @@ export function useLabelsOverlay(
 ) {
   const [labelMode, setLabelMode] = useState(false);
   const labelModeRef = useRef(false);
-  // Whether file-node labels should show. Off by default: Alt alone shows
-  // directory names only, holding Shift too reveals filenames.
+  // Whether Shift is also held while Alt is down — gates file-node labels.
+  // Alt alone shows only directory names.
   const [labelShift, setLabelShift] = useState(false);
   const labelShiftRef = useRef(false);
   const [labelLevel, setLabelLevel] = useState(1);
   const labelLevelRef = useRef(1);
+  // Deepest node overall (files included) and deepest *directory*. The wheel
+  // clamps to whichever applies: with Shift held file labels show, so the full
+  // depth is reachable; with Alt alone only directory names show, so scrolling
+  // past the deepest directory would land on empty (file-only) bands. Clamping
+  // to the dir max keeps a label visible at every reachable level.
   const maxDepthRef = useRef(0);
+  const maxDirDepthRef = useRef(0);
   const nodeDepthsRef = useRef<Map<string, number>>(new Map());
+
+  // Effective ceiling for the current modifier state.
+  const effectiveMaxDepth = (shift: boolean) =>
+    Math.max(1, shift ? maxDepthRef.current : maxDirDepthRef.current);
 
   useEffect(() => {
     labelModeRef.current = labelMode;
@@ -46,19 +55,28 @@ export function useLabelsOverlay(
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (isTextInput(e.target)) return;
-      if (e.repeat) return;
       if (e.key === 'Alt') {
+        if (e.repeat) return;
         // Browsers focus the menu bar on Alt-up; suppressing the default on
         // keydown also kills that side-effect when Alt is released alone.
         e.preventDefault();
         setLabelMode(true);
-      } else if (e.key === 'Shift') {
-        setLabelShift(true);
+        // Pick up Shift if it's already held as Alt goes down.
+        setLabelShift(e.shiftKey);
+        return;
       }
+      // Shift only matters while the labels overlay is up — gate on the live
+      // Alt state so unrelated Shift use (e.g. shift-drag box-select) doesn't
+      // flip the file-label gate and trigger a sprite refresh.
+      if (e.key === 'Shift' && e.altKey) setLabelShift(true);
     }
     function onKeyUp(e: KeyboardEvent) {
-      if (e.key === 'Alt') setLabelMode(false);
-      else if (e.key === 'Shift') setLabelShift(false);
+      if (e.key === 'Alt') {
+        setLabelMode(false);
+        setLabelShift(false);
+      } else if (e.key === 'Shift') {
+        setLabelShift(false);
+      }
     }
     function reset() {
       setLabelMode(false);
@@ -95,7 +113,7 @@ export function useLabelsOverlay(
       const dir = accum > 0 ? 1 : -1;
       accum = 0;
       setLabelLevel((lvl) => {
-        const max = Math.max(1, maxDepthRef.current);
+        const max = effectiveMaxDepth(labelShiftRef.current);
         const next = lvl + dir;
         if (next < 1) return 1;
         if (next > max) return max;
@@ -116,32 +134,52 @@ export function useLabelsOverlay(
     if (!data) {
       nodeDepthsRef.current = new Map();
       maxDepthRef.current = 0;
+      maxDirDepthRef.current = 0;
       return;
     }
     const depths = new Map<string, number>();
     let maxD = 0;
+    let maxDirD = 0;
     for (const n of data.nodes) {
       const d = depthFor(n, data.root);
       depths.set(n.id, d);
       if (d > maxD) maxD = d;
+      if (n.kind === 'dir' && d > maxDirD) maxDirD = d;
     }
     nodeDepthsRef.current = depths;
     maxDepthRef.current = maxD;
-    setLabelLevel((lvl) => Math.min(Math.max(lvl, 1), Math.max(1, maxD)));
+    maxDirDepthRef.current = maxDirD;
+    setLabelLevel((lvl) =>
+      Math.min(Math.max(lvl, 1), effectiveMaxDepth(labelShiftRef.current)),
+    );
   }, [data]);
 
-  // Refresh sprites when labels mode toggles or the active depth changes.
-  // The Shift toggle (file labels on/off) and depth only matter while Alt
-  // is held, so when neither the mode itself changed nor labels are active
-  // (a stray Shift from box-select, etc.) skip the refresh entirely.
-  const prevLabelModeRef = useRef(false);
+  // Releasing Shift drops the ceiling to the deepest directory; snap the level
+  // down so labels stay visible instead of landing on an empty file-only band.
+  // Pressing Shift only raises the ceiling, so it never needs a clamp.
   useEffect(() => {
-    const modeChanged = prevLabelModeRef.current !== labelMode;
-    prevLabelModeRef.current = labelMode;
-    if (!labelMode && !modeChanged) return;
-    labelsRegistry.clear();
-    graphRef.current?.refresh?.();
-  }, [labelMode, labelShift, labelLevel, graphRef]);
+    if (labelShift) return;
+    setLabelLevel((lvl) => Math.min(lvl, effectiveMaxDepth(false)));
+  }, [labelShift]);
+
+  // Toggle labels in place when labels mode flips, the active depth changes, or
+  // Shift is pressed/released. Instead of `graph.refresh()` — which disposes and
+  // rebuilds *every* node sprite — `applyLabelsToGraph` walks the mounted nodes
+  // and adds/removes only the labels that changed (see `labelSync`). The idle
+  // controller is woken so the scene change paints; the d3 engine is untouched.
+  useEffect(() => {
+    const graph = graphRef.current;
+    if (!graph) return;
+    applyLabelsToGraph(
+      graph,
+      nodeDepthsRef.current,
+      settingsRef.current,
+      labelLevel,
+      labelShift,
+      labelMode,
+    );
+    getIdleController(graph)?.wakeForRefresh();
+  }, [labelMode, labelShift, labelLevel, graphRef, settingsRef]);
 
   // Same physics as LOC, with a wider per-overlay base because file-name
   // labels are much longer than 3-digit LOC / health values and would
@@ -149,35 +187,25 @@ export function useLabelsOverlay(
   // fresh each tick so the slider takes effect live.
   useEffect(() => {
     if (!labelMode) return;
-    // See `useHealthOverlay` for the always-running RAF pattern shared
-    // by all three repulsion-driven overlays.
-    const idle = getIdleController(graphRef.current);
-    let rafId = 0;
-    let stopped = false;
-
-    idle?.acquireLabelPhysics();
-
-    const tick = () => {
-      if (stopped) return;
-      repelLabels(labelsRegistry, 90 * settingsRef.current.labelSpread);
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-
-    return () => {
-      stopped = true;
-      if (rafId) cancelAnimationFrame(rafId);
-      idle?.releaseLabelPhysics();
-    };
+    // Wider per-overlay base (90 units) because file-name labels are much longer
+    // than 3-digit LOC/health values. Shared frame-driven, rest-gated loop — see
+    // `labelRepulsionFrames`.
+    return startLabelRepulsion(
+      graphRef.current,
+      labelsRegistry,
+      () => 90 * settingsRef.current.labelSpread,
+    );
   }, [labelMode, settingsRef, graphRef]);
 
   return {
     labelMode,
     labelModeRef,
+    labelShift,
     labelShiftRef,
     labelLevel,
     labelLevelRef,
     maxDepthRef,
+    maxDirDepthRef,
     nodeDepthsRef,
   };
 }

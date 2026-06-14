@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import type { Task } from '../tasks.js';
 import type { AgentHarness } from '../harnesses.js';
+import type { DeadCodeSummary } from '../deadCode.js';
 import { ensureTrustedClaudeDir } from '../claudeTrust.js';
 import { renderTaskMarkdown } from './instructions.js';
 import { LATTICE_EXCLUDE_PATTERNS } from './managedFiles.js';
@@ -17,6 +18,7 @@ export async function writePostAddWorktreeFiles(
   backendOrigin: string,
   harness: AgentHarness,
   envNotes: string[],
+  deadCode: DeadCodeSummary | null,
 ): Promise<string> {
   // Home-scoped worktrees sit outside the project's `.git`, so Claude treats
   // each fresh worktree as its own untrusted project root. Pre-accept the
@@ -27,7 +29,7 @@ export async function writePostAddWorktreeFiles(
   const taskFile = path.join(worktreePath, 'LATTICE_TASK.md');
   await fs.writeFile(
     taskFile,
-    renderTaskMarkdown(task, backendOrigin, harness, envNotes),
+    renderTaskMarkdown(task, backendOrigin, harness, envNotes, deadCode),
     'utf8',
   );
   // The Claude Stop hook is installed for every worktree regardless of run

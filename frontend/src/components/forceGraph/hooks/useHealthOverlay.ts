@@ -1,8 +1,7 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { healthLabelRegistry } from '../healthOverlay';
-import { getIdleController } from '../idleController';
-import { repelLabels } from '../labelRepulsion';
+import { startLabelRepulsion } from '../labelRepulsionFrames';
 import type { GraphSettings } from '../graphSettings';
 import { clearLabelsAndRefresh, isTextInput } from './refresh';
 
@@ -60,37 +59,17 @@ export function useHealthOverlay(
     clearLabelsAndRefresh(graphRef.current);
   }, [healthMode, graphRef]);
 
-  // Same physics as the LOC loop — health labels are also short
-  // numbers, so the per-overlay base is 55 units. The `labelSpread`
-  // multiplier is read each tick so the slider takes effect live.
+  // Same physics as the LOC loop — health labels are also short numbers, so the
+  // per-overlay base is 55 units. Driven off the shared frame driver, holding
+  // `labelPhysics` only while the labels are still moving (see
+  // labelRepulsionFrames); `labelSpread` is read fresh each frame.
   useEffect(() => {
     if (!healthMode) return;
-    // Hold `labelPhysics` for the duration the overlay is active so the
-    // renderer keeps running for hover raycasts. The repulsion RAF runs
-    // continuously and reads `settingsRef.current.labelSpread` fresh
-    // every tick — the spatial-grid pairwise loop makes the per-frame
-    // cost small enough that there's no need to suspend on settle, and
-    // an always-running tick removes a class of stale-state bugs where
-    // a labelSpread or labelMode change wasn't reaching the loop after
-    // a self-stop.
-    const idle = getIdleController(graphRef.current);
-    let rafId = 0;
-    let stopped = false;
-
-    idle?.acquireLabelPhysics();
-
-    const tick = () => {
-      if (stopped) return;
-      repelLabels(healthLabelRegistry, 55 * settingsRef.current.labelSpread);
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-
-    return () => {
-      stopped = true;
-      if (rafId) cancelAnimationFrame(rafId);
-      idle?.releaseLabelPhysics();
-    };
+    return startLabelRepulsion(
+      graphRef.current,
+      healthLabelRegistry,
+      () => 55 * settingsRef.current.labelSpread,
+    );
   }, [healthMode, settingsRef, graphRef]);
 
   return { healthModeRef };

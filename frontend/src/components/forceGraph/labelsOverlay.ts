@@ -16,7 +16,7 @@ import {
   createLabelTextureCache,
   type LabelTextureOptions,
 } from './labelTexture';
-import { spriteFor } from './sprites';
+import { isGhost } from './timelineDiff';
 
 // Node depth derived from path: root has depth 0; every path separator past
 // the root prefix bumps the depth by one. Works for both POSIX and Windows
@@ -53,6 +53,11 @@ export const LABEL_Y = 100;
 export type LabelEntry = FloatingLabelEntry;
 export const labelsRegistry = new Set<LabelEntry>();
 
+// Tag carried by the label sprite + connector line, and the entry stash on the
+// node's root `userData`, so a label can be toggled in place on an already-
+// mounted node without rebuilding its sprite (the halo / worktree-ring pattern).
+const LABEL_ENTRY = 'lattice:labelEntry';
+
 function makeNameSprite(text: string, color: string, baseH: number): THREE.Sprite {
   const texture = buildMeasuredLabelTexture(
     nameLabelTextureCache,
@@ -67,37 +72,61 @@ function makeNameSprite(text: string, color: string, baseH: number): THREE.Sprit
   });
 }
 
-// Build a node object for labels mode. If the node sits at the active
-// depth, attach a floating name label + connector; otherwise just render
-// the normal sprite. File-node labels are gated behind `showFileLabels`
-// (Shift held): with Alt alone, only directory names are shown.
-export function spriteForLabels(
+// Whether this node should carry a name label for the current Alt-overlay
+// state: it must sit on the active depth band, and file nodes only when Shift
+// is held (Alt alone shows directory names only). Ghosts never get labels.
+function shouldShowLabel(
+  node: GraphNode,
+  activeDepth: number,
+  nodeDepth: number,
+  showFileLabels: boolean,
+): boolean {
+  if (isGhost(node)) return false;
+  if (nodeDepth !== activeDepth) return false;
+  if (node.kind === 'file' && !showFileLabels) return false;
+  return true;
+}
+
+function disposeLabelEntry(entry: FloatingLabelEntry): void {
+  // The texture is shared via `nameLabelTextureCache`, so only the per-sprite
+  // material + the connector's own geometry/material are ours to free.
+  entry.label.material.dispose();
+  entry.line.geometry.dispose();
+  (entry.line.material as THREE.Material).dispose();
+}
+
+// Add or remove a node's floating name label as a sibling child of its root
+// Group, keeping `labelsRegistry` and the root's stashed entry in lock-step.
+// Idempotent: safe to call every frame / from both the node-object factory
+// (full rebuilds) and the in-place delta walker (depth/Shift scrolling), so
+// neither path needs a global `graph.refresh()`.
+export function applyNodeLabelState(
+  root: THREE.Object3D,
   node: GraphNode,
   settings: GraphSettings,
   activeDepth: number,
   nodeDepth: number,
   showFileLabels: boolean,
-): THREE.Object3D {
-  const base = spriteFor(node, settings);
-  if (nodeDepth !== activeDepth) return base;
-  if (node.kind === 'file' && !showFileLabels) return base;
-
-  const group = new THREE.Group();
-  group.add(base);
-
-  const color = node.kind === 'dir' ? '#e6c07b' : '#dce4f0';
-  const line = makeConnectorLine({
-    color,
-    labelY: LABEL_Y,
-    opacity: 0.7,
-  });
-  group.add(line);
-
-  const label = makeNameSprite(node.name, color, settings.labelSize);
-  label.position.set(0, LABEL_Y, 0);
-  group.add(label);
-
-  labelsRegistry.add({ label, line });
-
-  return group;
+): void {
+  const want = shouldShowLabel(node, activeDepth, nodeDepth, showFileLabels);
+  const existing = root.userData[LABEL_ENTRY] as FloatingLabelEntry | undefined;
+  if (want) {
+    if (existing) return;
+    const color = node.kind === 'dir' ? '#e6c07b' : '#dce4f0';
+    const line = makeConnectorLine({ color, labelY: LABEL_Y, opacity: 0.7 });
+    const label = makeNameSprite(node.name, color, settings.labelSize);
+    label.position.set(0, LABEL_Y, 0);
+    root.add(line);
+    root.add(label);
+    const entry: FloatingLabelEntry = { label, line };
+    labelsRegistry.add(entry);
+    root.userData[LABEL_ENTRY] = entry;
+  } else {
+    if (!existing) return;
+    labelsRegistry.delete(existing);
+    root.remove(existing.label);
+    root.remove(existing.line);
+    disposeLabelEntry(existing);
+    delete root.userData[LABEL_ENTRY];
+  }
 }

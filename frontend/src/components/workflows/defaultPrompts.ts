@@ -1,9 +1,10 @@
-import { Bug, Lightbulb, Merge, Target, Wrench } from 'lucide-react';
+import { Bug, Lightbulb, Merge, ShieldAlert, Target, Wrench } from 'lucide-react';
 import refactorPrompt from './prompts/refactor.md?raw';
 import combineTasksPrompt from './prompts/combine-tasks.md?raw';
 import pmfPrompt from './prompts/pmf.md?raw';
 import brainstormPrompt from './prompts/brainstorm.md?raw';
 import bugCatcherPrompt from './prompts/bug-catcher.md?raw';
+import securityPrompt from './prompts/security.md?raw';
 
 export type DefaultPrompt = {
   id: string;
@@ -44,6 +45,13 @@ export const DEFAULT_PROMPTS: DefaultPrompt[] = [
     label: 'Bug Catcher',
     icon: Bug,
     prompt: bugCatcherPrompt,
+  },
+  {
+    id: 'security',
+    title: 'Security',
+    label: 'Security',
+    icon: ShieldAlert,
+    prompt: securityPrompt,
   },
   {
     id: 'brainstorm',

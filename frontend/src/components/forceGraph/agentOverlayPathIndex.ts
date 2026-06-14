@@ -44,6 +44,12 @@ export function hoverMargin(bounds: GraphBounds): number {
 export class AgentPathIndex {
   private byPath = new Map<string, SimNode>();
   private indexedNodes: object[] | null = null;
+  // Cached vertical bounds. Recomputing every frame is an O(N) scan over every
+  // file node; node positions only move while the d3 layout is live, so the
+  // overlay invalidates this (via `invalidateBounds`) only on engine-hot frames
+  // and a structural swap, and reuses the cache once the layout has settled.
+  private cachedBounds: GraphBounds | null = null;
+  private boundsValid = false;
 
   get(normPath: string): SimNode | undefined {
     return this.byPath.get(normPath);
@@ -63,10 +69,18 @@ export class AgentPathIndex {
         this.byPath.set(normalizePath(obj.path), obj);
       }
     }
+    this.boundsValid = false; // fresh node set → recompute bounds on next read
+  }
+
+  // Mark the cached bounds stale (call while node positions may have moved).
+  invalidateBounds(): void {
+    this.boundsValid = false;
   }
 
   // Vertical extent of the indexed nodes, or null when nothing is indexed.
+  // Memoised; `invalidateBounds` / a structural swap force a recompute.
   bounds(): GraphBounds | null {
+    if (this.boundsValid) return this.cachedBounds;
     let minY = Infinity;
     let maxY = -Infinity;
     let count = 0;
@@ -76,7 +90,9 @@ export class AgentPathIndex {
       if (y > maxY) maxY = y;
       count++;
     }
-    return count > 0 ? { minY, maxY } : null;
+    this.cachedBounds = count > 0 ? { minY, maxY } : null;
+    this.boundsValid = true;
+    return this.cachedBounds;
   }
 
   centroidSpread(): CentroidSpread | null {

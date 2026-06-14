@@ -1,5 +1,9 @@
-// Scene-level overlay for active Claude agents (both in-worktree task agents
-// and non-worktree sessions).
+// The **Agent Presence Layer (APL)** — scene-level overlay for active Claude
+// agents (both in-worktree task agents and non-worktree sessions). This file is
+// the drawing/orchestration half; `hooks/useAgentOverlay.ts` is the lifecycle +
+// render-on-demand half. Vocabulary: a "presence node" (one per live agent), a
+// "focus beam" (node → a file it's touching, on a TTL), and the "hover line"
+// (the steady height the nodes float at above the graph).
 //
 // Each live agent draws a free-floating "Claude node" (see claudeNodeSprite)
 // that hovers ABOVE the file graph at a stable height: its X/Z ease toward
@@ -35,10 +39,12 @@ import {
   AGENT_GROUP_RENDER_ORDER,
   BEAM_END_FADE_MS,
   BEAM_TTL_MS,
+  BOUNDS_RECHECK_FRAMES,
   EASE,
   HOVER_EASE,
   NODE_SCALE_MULTIPLIER,
   PARKED_BASE_RADIUS,
+  REST_EPS,
 } from './agentOverlayConstants';
 import {
   AgentPathIndex,
@@ -66,6 +72,10 @@ export class AgentOverlay {
   // node positions, low-pass filtered so the agents' height stays steady.
   private hoverLine = new HoverLine();
   private readonly tmpB = new THREE.Vector3();
+  // Frames since the cached graph bounds were last recomputed (see
+  // BOUNDS_RECHECK_FRAMES). Forces a periodic refresh so the hover line can't
+  // lag node motion that bypasses the engine-hot flag.
+  private sinceBoundsRecheck = 0;
 
   constructor(graph: ForceGraph3DInstance, nodeSize: number) {
     this.nodeSize = nodeSize;
@@ -82,16 +92,24 @@ export class AgentOverlay {
     for (const a of this.agents.values()) a.node.scale.set(s, s, 1);
   }
 
-  // Reconcile the live agent set against the latest descriptors.
-  setAgents(descriptors: AgentDescriptor[], graph: ForceGraph3DInstance): void {
+  // Reconcile the live agent set against the latest descriptors. Returns
+  // whether the set visibly changed (an agent added / removed / recolored), so
+  // the caller can force a repaint — a removal must paint even when the render
+  // loop is otherwise idle (see useAgentOverlay's wakeForRefresh).
+  setAgents(descriptors: AgentDescriptor[], graph: ForceGraph3DInstance): boolean {
+    let changed = false;
     const wanted = new Map(descriptors.map((d) => [d.taskId, d]));
     for (const taskId of [...this.agents.keys()]) {
-      if (!wanted.has(taskId)) this.removeAgent(taskId);
+      if (!wanted.has(taskId)) {
+        this.removeAgent(taskId);
+        changed = true;
+      }
     }
     for (const d of descriptors) {
       const existing = this.agents.get(d.taskId);
       if (!existing) {
         this.addAgent(d, graph);
+        changed = true;
       } else if (existing.color !== d.color) {
         // Color slot changed (rare) — rebuild the node sprite.
         this.group.remove(existing.node);
@@ -99,8 +117,10 @@ export class AgentOverlay {
         existing.node = makeClaudeNode(d.color, this.nodeSize * NODE_SCALE_MULTIPLIER);
         existing.node.position.copy(existing.pos);
         this.group.add(existing.node);
+        changed = true;
       }
     }
+    return changed;
   }
 
   private addAgent(d: AgentDescriptor, graph: ForceGraph3DInstance): void {
@@ -175,9 +195,28 @@ export class AgentOverlay {
 
   // Per-frame update: refresh the hover line, ease nodes, update labels +
   // beams, prune expired beams.
-  tick(now: number, graph: ForceGraph3DInstance): void {
+  //
+  // Returns whether the overlay still has SELF-DRIVEN motion to paint — a node
+  // is still easing, the hover line is still settling, or a beam is fading.
+  // `useAgentOverlay` uses this to hold the idle controller's `agents` reason
+  // only while that's true, so an idle (settled) agent lets the render loop
+  // suspend instead of pinning it at 60fps. Beam endpoints tracking a *moving*
+  // file node don't need to be reported here: while the d3 engine is hot the
+  // loop already runs on its own `engine` reason and this still gets called each
+  // render frame (via scene.onBeforeRender), so the beams follow for free; once
+  // the engine settles the file nodes stop and there's nothing left to track.
+  //
+  // `engineHot` says whether the d3 layout is live this frame; when it is, the
+  // cached graph bounds are invalidated so the hover line tracks the still-
+  // moving nodes, otherwise the cache is reused (the bounds scan is O(N)).
+  tick(now: number, graph: ForceGraph3DInstance, engineHot: boolean): boolean {
+    if (this.agents.size === 0) return false;
     this.pathIndex.ensure(graph);
-    this.updateHoverY();
+    if (engineHot || ++this.sinceBoundsRecheck >= BOUNDS_RECHECK_FRAMES) {
+      this.pathIndex.invalidateBounds();
+      this.sinceBoundsRecheck = 0;
+    }
+    let moving = this.updateHoverY();
     const hoverY = this.hoverLine.value();
 
     for (const agent of this.agents.values()) {
@@ -189,8 +228,12 @@ export class AgentOverlay {
         if (now >= beam.endAt) {
           disposeBeam(this.group, beam);
           agent.beams.delete(norm);
+          moving = true; // a beam vanished this frame — paint its removal
           continue;
         }
+        // A finite endAt means the beam is on its fade-out clock; keep painting
+        // until it expires. A persistent (Infinity) beam at rest needs nothing.
+        if (beam.endAt !== Infinity) moving = true;
         const node = this.pathIndex.get(norm);
         if (node) {
           sx += node.x ?? 0;
@@ -199,12 +242,23 @@ export class AgentOverlay {
         }
       }
 
-      // Track horizontally toward the files in play; keep X/Z when idle.
+      // Track horizontally toward the files in play; keep X/Z when idle. Rest is
+      // judged by distance to the target (not by easing step), so the node
+      // settles right over its files instead of stalling a few units short.
       const tx = n > 0 ? sx / n : agent.pos.x;
       const tz = n > 0 ? sz / n : agent.pos.z;
-      agent.pos.x = lowPassStep(agent.pos.x, tx, EASE);
-      agent.pos.z = lowPassStep(agent.pos.z, tz, EASE);
-      agent.pos.y = lowPassStep(agent.pos.y, hoverY, HOVER_EASE);
+      if (
+        Math.abs(tx - agent.pos.x) > REST_EPS ||
+        Math.abs(tz - agent.pos.z) > REST_EPS ||
+        Math.abs(hoverY - agent.pos.y) > REST_EPS
+      ) {
+        moving = true;
+      }
+      agent.pos.set(
+        lowPassStep(agent.pos.x, tx, EASE),
+        lowPassStep(agent.pos.y, hoverY, HOVER_EASE),
+        lowPassStep(agent.pos.z, tz, EASE),
+      );
       agent.node.position.copy(agent.pos);
 
       // Show the last file the agent viewed/edited for as long as the session
@@ -229,10 +283,13 @@ export class AgentOverlay {
         updateBeam(beam, a, this.tmpB, now);
       }
     }
+
+    return moving;
   }
 
-  // True while any agent node is on screen — `useAgentOverlay` uses this to
-  // know whether to keep the render loop awake.
+  // True while any agent node is on screen. `useAgentOverlay` uses this only as
+  // a cheap early-out (skip the per-frame work entirely when nothing is on
+  // screen) — whether the loop stays awake is decided by `tick`'s return.
   isActive(): boolean {
     return this.agents.size > 0;
   }
@@ -244,10 +301,11 @@ export class AgentOverlay {
   }
 
   // Low-pass the hover line toward (graph top + margin) so the agents float a
-  // steady distance above the file graph even as the layout settles.
-  private updateHoverY(): void {
+  // steady distance above the file graph even as the layout settles. Returns
+  // whether the line still moved this frame (propagated into tick's "moving").
+  private updateHoverY(): boolean {
     const bounds = this.pathIndex.bounds();
-    this.hoverLine.update(bounds ? bounds.maxY + hoverMargin(bounds) : null);
+    return this.hoverLine.update(bounds ? bounds.maxY + hoverMargin(bounds) : null);
   }
 
   // A stable spot on the hover line (above the graph) for a freshly spawned

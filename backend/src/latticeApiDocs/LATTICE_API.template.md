@@ -308,10 +308,27 @@ curl -s -X POST "$LATTICE_API_URL/api/tasks/transition" \
 | GET    | /api/settings?project=             | Per-project user settings (read) |
 | PATCH  | /api/settings?project=             | Per-project user settings (update) |
 | GET    | /api/project-env?project=          | Auto-detected package-manager envs + injected worktree notes |
+| GET    | /api/health/dead-code?project=     | Files the analyzer flags as unreachable: `{files:[{path,ext}], total, scannedAt}` (empty if the confidence guard tripped) |
 
 Statuses: `backlog | open | in_progress | ready_to_merge | qa | done | deleted`.
 Pipeline: `open → in_progress → ready_to_merge → qa → done` (drag-and-drop
 in the UI moves `qa → done`; everything else is automated).
+
+### Finding dead / unreachable code
+
+Lattice's health analyzer computes reachability from detected entry points.
+`GET /api/health/dead-code` returns only the files it's *confident* are
+unreachable (the list is empty when its confidence guard trips, so a resolver
+gap never floods you with false positives). It's a heuristic — it can't see
+dynamic `import()`, string-path/`fs` loads, or framework magic — so **verify
+before deleting**.
+
+```bash
+curl -sG "$LATTICE_API_URL/api/health/dead-code" \
+  --data-urlencode "project=$LATTICE_PROJECT"
+# → { "files": [ { "path": "src/old/util.ts", "ext": ".ts" }, ... ],
+#     "total": 3, "scannedAt": 1718323200000 }
+```
 
 ## Working with the board
 

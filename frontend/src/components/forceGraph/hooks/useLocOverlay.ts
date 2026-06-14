@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
-import { getIdleController } from '../idleController';
 import { locLabelRegistry } from '../locOverlay';
-import { repelLabels } from '../labelRepulsion';
+import { startLabelRepulsion } from '../labelRepulsionFrames';
 import type { GraphSettings } from '../graphSettings';
 import { clearLabelsAndRefresh, isTextInput } from './refresh';
 
@@ -66,26 +65,13 @@ export function useLocOverlay(
   // read fresh each tick so dragging the slider feels live.
   useEffect(() => {
     if (!locMode) return;
-    // See `useHealthOverlay` for the always-running RAF pattern shared
-    // by all three repulsion-driven overlays.
-    const idle = getIdleController(graphRef.current);
-    let rafId = 0;
-    let stopped = false;
-
-    idle?.acquireLabelPhysics();
-
-    const tick = () => {
-      if (stopped) return;
-      repelLabels(locLabelRegistry, 55 * settingsRef.current.labelSpread);
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-
-    return () => {
-      stopped = true;
-      if (rafId) cancelAnimationFrame(rafId);
-      idle?.releaseLabelPhysics();
-    };
+    // See `labelRepulsionFrames` for the shared frame-driven, rest-gated loop
+    // used by all three repulsion overlays.
+    return startLabelRepulsion(
+      graphRef.current,
+      locLabelRegistry,
+      () => 55 * settingsRef.current.labelSpread,
+    );
   }, [locMode, settingsRef, graphRef]);
 
   return { locMode, locModeRef };

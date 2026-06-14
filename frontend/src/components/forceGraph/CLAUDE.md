@@ -2,6 +2,76 @@
 
 3D file-tree view. `ForceGraphView.tsx` (parent dir) is a re-export shim.
 
+## Named subsystems (shared vocabulary)
+
+Two cooperating subsystems are easy to confuse — name them precisely when
+asking for fixes/reviews:
+
+- **Idle controller** (`idleController.ts`) — the render-on-demand gate. A
+  reference-counted wrapper around the library's `pauseAnimation` /
+  `resumeAnimation` that suspends the RAF render loop whenever nothing needs
+  painting. The loop runs only while some **reason** is held: `engine` (d3 sim
+  hot), `interact` (pointer/wheel, short tail), `refresh` (sprite rebuild
+  tail), `labelPhysics` (an LOC/health/Alt overlay repulsion loop), or `agents`
+  (the Agent Presence Layer has motion to paint). Tab-hidden is a negative
+  gate. This is THE performance contract for the whole view: a fully settled,
+  un-interacted scene must reach 0 render frames. Any feature that animates
+  must (a) hold a reason while it animates and (b) release it the moment it
+  settles — never hold "while the feature is enabled". Per-frame work hangs off
+  the **scene frame driver** (`sceneFrameDriver.ts`): one
+  `scene.onBeforeRender` fan-out (registered once at init) that runs each
+  subscriber's callback at the head of every real render. Subscribe with
+  `onFrame(graph, cb)` instead of wrapping `onBeforeRender` yourself — callbacks
+  fire only while the loop runs, so any change that wakes the loop (via some
+  reason) re-runs every callback for free; this is what lets the APL + label
+  overlays self-stop yet stay correct.
+
+- **Agent Presence Layer (APL)** (`agentOverlay.ts` + `agentOverlay*.ts` +
+  `hooks/useAgentOverlay.ts`) — the overlay that shows where live Claude agents
+  are working. Per agent it draws a **presence node** (a free-floating Claude
+  node hovering above the graph), zero-or-more **focus beams** (node → a file
+  it's touching, the current file persistent and older ones fading on a TTL),
+  and a **file label**; all nodes float on a shared **hover line** a steady
+  height above the graph top. The APL lives directly in `graph.scene()` (NOT in
+  `graphData`), so an agent appearing/finishing never reheats the sim.
+
+  **APL ⇄ idle-controller contract (read before touching either).** The APL is
+  ticked from the graph's *real* render frames via the shared scene frame driver
+  (`onFrame`), not a private RAF — so it updates exactly when the scene paints,
+  and tracks moving file nodes for free whenever the loop is already running
+  (engine/interact).
+  `AgentOverlay.tick()` returns whether it still has **self-driven motion** (a
+  node easing toward its target, the hover line settling, or a beam fading);
+  `useAgentOverlay` holds the idle controller's `agents` reason **only while
+  that's true** and releases it the frame it settles. Rest is judged by
+  distance-to-target (within `REST_EPS`), so nodes settle on target rather than
+  stalling short. *Regression guarded here:* the APL originally held `agents`
+  for the entire lifetime of any in-progress agent (`isActive()` = "an agent
+  exists"), which pinned the render loop at ~60fps/20–30% CPU the whole time a
+  task ran — defeating render-on-demand. Do not reintroduce a "hold while any
+  agent exists" hold; gate on motion. `isActive()` is now only a cheap
+  per-frame early-out.
+
+  **Cleanup contract (a stale node = a missed wake).** Because the loop is
+  *paused* whenever the APL is settled, a change that should be visible only
+  paints if it also wakes the loop. The motion-gated `agents` reason covers
+  ongoing easing/fading, but a **one-shot set change is not motion** — when a
+  session stops (Stop hook → task leaves `in_progress`, or `SessionEnd` →
+  `unregisterAgentSession`), `setAgents` deletes the node/label/beams from the
+  scene group on an *already-settled* (loop-paused) frame, so the deletion would
+  never be drawn. `setAgents` therefore returns whether the set changed and
+  `useAgentOverlay.applyMerged` calls `wakeForRefresh()` on a change — the same
+  guaranteed short frame tail every other one-shot scene mutator uses (selection
+  halo, worktree ring, Alt labels). Rule: **any mutation of the agent set/beams
+  must wake the loop** (`kick()` for motion, `wakeForRefresh()` for a one-shot
+  set change); relying on the motion gate alone leaves a stopped agent's node
+  painted on screen until the next unrelated wake. NB: this is the *render* half
+  only — if a node lingers, first confirm the agent actually left the data
+  (task status flipped / `agentSessions` unregistered). A non-worktree session
+  that never fires `SessionEnd` (terminal hard-killed, or started before the
+  project hooks were installed) only clears via `agentSessions`' idle-TTL /
+  max-age sweep, which looks like "no cleanup" until the sweep fires.
+
 ## Modules
 
 - `ForceGraphView.tsx` — coordinator. Holds `selected`/`hoverNode`/`showSettings`,
@@ -9,11 +79,16 @@
   composes the small `Graph*` overlay components below. Each remaining
   `useEffect` is one concern: selection-refresh, Escape key, counts memo.
 - `nodeObjectFactory.ts` — `buildNodeObject(node, refs)` + `nativeNodeLabel(node)`.
-  The decision tree for ghost vs health vs LOC vs dead-code vs labels vs base
-  sprite (+ change-ring and selection-halo wrap order) lives here; the init hook
-  just hands the closure to `ForceGraph3D.nodeThreeObject`. Precedence is
-  health > loc > dead > labels; health/loc skip `metricsIgnoredExts`, dead-code
-  does not (it recolors every file).
+  The decision tree for ghost vs health vs LOC vs dead-code vs base sprite
+  (+ change-ring and selection-halo wrap order) lives here; the init hook just
+  hands the closure to `ForceGraph3D.nodeThreeObject`. Recolor precedence is
+  health > loc > dead > base; health/loc skip `metricsIgnoredExts`, dead-code
+  does not (it recolors every file). **Alt name labels are NOT a base-sprite
+  branch** — they attach as a sibling child of the root via `applyNodeLabelState`
+  (the halo / worktree-ring pattern), drawn here only so labels survive a full
+  rebuild that happens while Alt is held, and suppressed while a recolor overlay
+  owns the sprite. Their *interactive* add/remove (depth scroll, Shift gate)
+  goes through `labelSync`, never `graph.refresh()`.
 - `sceneSetup.ts` — `configureCameraControls(graph)` locks `camera.up` and
   clamps OrbitControls polar to `[0, 0.75π]`. `createResizeObserver(graph, el)`
   installs the 150ms-debounced resize loop and returns a teardown.
@@ -29,10 +104,36 @@
   cursor coords so the tooltip can render at the right place on mount.
 - `idleController.ts` — reference-counted wrapper around the library's
   `pauseAnimation`/`resumeAnimation`. Pauses the RAF render loop when the
-  d3 engine has settled, no overlay RAF is active, the user isn't
+  d3 engine has settled, no overlay is animating, the user isn't
   interacting, or the tab is hidden. Attached to the graph instance so
   `clearLabelsAndRefresh` and the overlay hooks can reach it without
-  threading another ref through the React tree.
+  threading another ref through the React tree. `isEngineHot()` exposes
+  whether the layout is live this frame (consumers that cache per-frame
+  geometry off node positions key on it). See the named-subsystems section.
+  **Pauses are deferred to a microtask (load-bearing).** The library's
+  `_animationCycle` re-schedules its own RAF unconditionally at the end of
+  every frame, and `onEngineStop` fires *synchronously inside* that cycle (in
+  `tickFrame`). A `pauseAnimation()` called straight from `engineStopped` only
+  cancels the already-fired frame and is then overwritten by the cycle's
+  trailing reschedule — so the loop would never actually stop after the layout
+  settles (perpetual ~100% idle CPU). All pauses therefore route through a
+  `queueMicrotask` so the cancel runs *between* frames, when the next-frame RAF
+  is pending and genuinely cancellable. Resumes can stay synchronous
+  (`resumeAnimation` is idempotent and only ever called between frames).
+  **Frame-rate throttle:** when the only held reasons are the slow
+  self-animations (`agents` / `labelPhysics`) and nothing demands full
+  responsiveness (no `engine` / `interact` / `refresh`), the loop is
+  duty-cycled to ~30fps via pause/resume — fed one frame at a time by
+  `notifyFrameRendered` (wired to the scene frame driver in
+  `useForceGraphInitialization`). Halves the full-scene render cost while an
+  agent is active or a label overlay is held; warmup and interaction stay
+  uncapped.
+- `sceneFrameDriver.ts` — the single `scene.onBeforeRender` fan-out.
+  `attachFrameDriver(graph)` (called once at init) installs the dispatcher;
+  `onFrame(graph, cb)` subscribes a per-frame callback that runs at the head of
+  every real render. Used by the APL (`useAgentOverlay`) and the label overlays
+  (`labelRepulsionFrames`) so per-frame work runs only while the loop is already
+  painting — no fragile chains of independently-mounted onBeforeRender wrappers.
 - `sprites.ts` — `spriteFor(node, settings)`. Per-style `SpriteMaterial` cache so
   the simulation only allocates one material per (ext, shape, color) tuple.
 - `labelTexture.ts` / `floatingLabelSprite.ts` / `metricOverlayFactory.ts` —
@@ -40,14 +141,35 @@
   lines, and metric-overlay assembly used by LOC, health, and Alt labels.
 - `locOverlay.ts` / `healthOverlay.ts` / `labelsOverlay.ts` — thin overlay
   configs + registries (`locLabelRegistry`, `healthLabelRegistry`,
-  `labelsRegistry`) walked by the RAF loop for pairwise repulsion.
+  `labelsRegistry`) walked each frame for pairwise repulsion via
+  `labelRepulsionFrames`. `labelsOverlay.applyNodeLabelState(root, node, …)` is
+  the idempotent per-node toggle for an Alt name label: it adds/removes the
+  label sprite + connector as sibling children of the node root (stashed on
+  `root.userData`) and keeps `labelsRegistry` in lock-step — the halo pattern,
+  applied to labels.
+- `labelSync.ts` — `applyLabelsToGraph(graph, depths, settings, depth, shift,
+  enabled)`: the in-place delta walker for the Alt overlay (mirrors
+  `selectionHaloSync`). Reaches each mounted node's `__threeObj` and calls
+  `applyNodeLabelState`, so changing the depth band or the Shift (file-label)
+  gate toggles only the labels that changed — **no `graph.refresh()`**, which
+  would dispose and rebuild every node sprite. `enabled` false (Alt released)
+  passes a band no node occupies, stripping all labels. Driven by
+  `useLabelsOverlay`'s depth/Shift/mode effect, which then wakes the idle
+  controller so the change paints.
 - `deadCodeOverlay.ts` — `spriteForDeadCode(node, settings)` for the `D`-hold
   overlay. A pure recolor (no label/connector, so no registry/RAF) keyed off
   `node.healthDetails.deadCode`: green=reachable, red=dead, grey=entry/uncertain
   (`DEAD_CODE_COLORS`). Reuses the shared `materialFor` cache.
 - `labelRepulsion.ts` — named cleanup, world-snapshot, force accumulation,
   velocity/rest integration, and connector endpoint helpers behind
-  `repelLabels(registry, minDist)`.
+  `repelLabels(registry, minDist)`, which returns whether all labels have
+  settled.
+- `labelRepulsionFrames.ts` — `startLabelRepulsion(graph, registry, minDist)`:
+  drives a label registry off the scene frame driver and holds the idle
+  controller's `labelPhysics` reason ONLY while `repelLabels` reports motion,
+  releasing it the frame the labels settle so the render loop idles even while
+  the overlay key is held. `minDist` is a thunk (live `labelSpread`). Shared by
+  all three repulsion overlays; replaced their old always-running per-hook RAFs.
 - `halo.ts` — `setNodeHalo(root, on, baseSize)` adds/removes a light-blue
   ring as a sibling child of the node's root Group (drawn the same way as
   `changeRing.ts`). Designed for in-place toggling: a selection click
@@ -60,10 +182,15 @@
 - `claudeNodeSprite.ts` — `makeClaudeNode(color, size)`: the free-floating
   filled disc + soft glow drawn for each in-progress Claude agent. Material
   cached per color.
-- `agentOverlay.ts` — `AgentOverlay`: a `THREE.Group` added straight to
+- `agentOverlay.ts` — `AgentOverlay`, the drawing half of the **Agent Presence
+  Layer** (see the named-subsystems section above for the APL ⇄ idle-controller
+  render-on-demand contract). A `THREE.Group` added straight to
   `graph.scene()` (NOT via `graphData`, so an agent appearing/finishing
   never reheats the sim or distorts the DAG). Holds one Claude node per live
-  agent plus focus beams (`THREE.Line`) to the files it touches. The **last
+  agent plus focus beams (`THREE.Line`) to the files it touches. `tick()`
+  returns whether the layer still has self-driven motion (drives the `agents`
+  idle reason); rest is judged by distance-to-target within `REST_EPS`. The
+  **last
   file an agent viewed/edited stays lit**: its beam never expires (`endAt =
   Infinity`) and its label stays up for the whole session — only *older*,
   no-longer-current files fade out on a TTL, and the whole node/label/beam set
@@ -84,7 +211,10 @@
     (the latter still re-exported from `agentOverlay.ts` as the public type).
   - `agentOverlayPathIndex.ts` — `normalizePath` / `baseName` plus
     `AgentPathIndex` (the path→node index lifecycle + `bounds()`/
-    `centroidSpread()`) and the pure `hoverMargin(bounds)` clamp.
+    `centroidSpread()`) and the pure `hoverMargin(bounds)` clamp. `bounds()` (an
+    O(N) scan) is memoised: invalidated on a structural swap and via
+    `invalidateBounds()`, which `tick` calls on engine-hot frames + at least
+    every `BOUNDS_RECHECK_FRAMES`, so it's recomputed only while nodes can move.
   - `agentOverlayBeams.ts` — beam `THREE.Line` lifecycle: `createBeam` /
     `disposeBeam` / `updateBeam` (endpoints + opacity) and the pure
     `beamFade(remaining)` ramp. The current-vs-fading TTL *policy* stays in
@@ -118,8 +248,16 @@
   endpoints (e.g. a single-file health update from the chokidar watcher)
   takes the **fast-patch path** instead: per-node `health`/`healthDetails`/
   `loc`/`size` fields are written onto the in-place sim nodes and
-  `graph.refresh()` is called. The d3 force engine is *not* reheated, so
-  the idle controller can keep the render loop paused. The full-swap path
+  `graph.refresh()` is called *only if an `H`/`Z`/`D` metric overlay is
+  currently held* — those are the only views that render the patched fields, so
+  with none held the refresh would rebuild all N sprites to a byte-identical
+  result. That refresh-gating is critical for idle CPU: HealthUpdates stream
+  constantly while the dev server writes files, and an unconditional refresh on
+  each one wakes the render loop every time (`wakeForRefresh`), pinning it at
+  ~100% on an otherwise-idle tab. The fields are still patched in place either
+  way, so toggling an overlay on later picks up the latest values. The d3 force
+  engine is *not* reheated, so the idle controller can keep the render loop
+  paused. The full-swap path
   pins `engineStarted` for the duration of the new warmup and is now
   hard-bounded by `cooldownTicks: 400` + `cooldownTime: 8000` +
   `d3AlphaMin: 0.005` (set once in `useForceGraphInitialization`).
@@ -134,14 +272,17 @@
   as `h`/`z`/`w` (blur + visibilitychange reset); recolors by reachability
   (`deadCode` field on each node's `healthDetails`). No labels/RAF — just a
   `clearLabelsAndRefresh` on toggle.
-- `useAgentOverlay` — owns the Claude-agent overlay, unified by the overlay's
-  string agent id from two sources: in-progress `harness === 'claude'` tasks
-  (task-colored node) and non-worktree Claude sessions from
+- `useAgentOverlay` — lifecycle half of the **Agent Presence Layer**, unified by
+  the overlay's string agent id from two sources: in-progress `harness ===
+  'claude'` tasks (task-colored node) and non-worktree Claude sessions from
   `/ws/agent-sessions` (orange `CLAUDE_ORANGE` node — push / workflow step /
   post-merge hook). Beams arrive as `task-activity` (taskId) and
-  `agent-activity` (agentId) on `/ws/tasks`. Owns the `AgentOverlay`
-  lifecycle and the RAF; holds the idle controller's `agents` reason while
-  anything is on screen, releases it when none remain.
+  `agent-activity` (agentId) on `/ws/tasks`. Owns the `AgentOverlay` lifecycle.
+  Drives `tick()` from `scene.onBeforeRender` (the graph's real render frames,
+  not a private RAF) and holds the idle controller's `agents` reason **only
+  while `tick()` reports motion** — `kick()` acquires to wake the loop on a
+  change, the frame handler releases on rest. See the APL ⇄ idle-controller
+  contract in the named-subsystems section.
 - `useWorktreeHighlight` — the `W`-hold overlay. Same keydown/keyup chord
   pattern as `h`/`z` (blur + visibilitychange reset). On press, fetches
   `GET /api/tasks/worktree-modified` and rings each changed file in its

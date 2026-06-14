@@ -90,9 +90,15 @@
 }
 .graph-selection-chip .link-btn:hover { text-decoration: underline; }
 
-/* Right-click menu over selected nodes. Reuses .popover for chrome. */
+/* Right-click menu over selected nodes. Reuses .popover for chrome.
+   MUST stay position: absolute — useNodeContextMenu stores coords
+   relative to the graph container (clientX - rect.left), and the menu
+   renders inside the (position: relative) ForceGraphView wrapper. Using
+   position: fixed reinterprets those container-relative coords as
+   viewport coords, so the menu lands offset left/up by the sidebar +
+   topbar instead of at the cursor. */
 .graph-context-menu {
-  position: fixed;
+  position: absolute;
   z-index: 1100;
   min-width: 200px;
 }

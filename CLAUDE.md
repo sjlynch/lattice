@@ -103,6 +103,7 @@ therefore stay safely re-runnable.
 | GET | `/api/health` | Liveness probe |
 | GET | `/api/default-root` | Default project for the UI |
 | GET | `/api/scan?path=` | Recursive source-file scan, gitignore-aware |
+| GET | `/api/health/dead-code?project=` | Files the analyzer confidently flags unreachable (`{files, total, scannedAt}`); 60s-memoized scan. Backs the dead-code note in `LATTICE_TASK.md` + agent self-investigation |
 | GET | `/api/list-dir?path=` | Folder browser (folder picker) |
 | GET | `/api/settings?project=` | Read per-project user settings |
 | PATCH | `/api/settings?project=` | Merge-update per-project user settings |
@@ -165,15 +166,18 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
 - **Graph overlays (hold-key).** Momentary recolors of the file graph, each on
   the same chord pattern (keyup/blur/visibilitychange reset): **`H`** code
   health, **`Z`** lines of code, **`D`** dead code, **`W`** worktree-modified
-  files, **`Alt`** name labels (directories only; hold **`Alt`+`Shift`** to
-  also reveal file-node labels). The **`D`** dead-code view colors each file by
+  files, **`Alt`** name labels. The **`D`** dead-code view colors each file by
   reachability from detected entry points — green = reachable, red =
   dead/orphaned, grey = entry point or uncertain (asset / unsupported language /
   dynamic-only). Classification is computed in `backend/src/health/crossFile/`
   (reachability from roots, *not* `fanIn===0`) and rides on each node's
   `healthDetails.deadCode`. Extra roots for framework magic go in
   `userSettings.deadCodeEntryGlobs`. Complements (doesn't replace) the
-  right-click "Find dead code" agent action.
+  right-click "Find dead code" agent action. The same classification is
+  exposed to agents over `GET /api/health/dead-code` (see
+  `backend/src/deadCode.ts`); when it returns ≥1 confidently-dead file,
+  worktree task setup injects an optional "investigate before deleting"
+  note into `LATTICE_TASK.md` (reference-only, gated on count > 0).
 - **Claude agent overlay (graph).** Each in-progress *Claude* task shows a
   free-floating filled "Claude node"; while its agent reads/modifies files
   (PreToolUse/PostToolUse hooks → `/activity` → `task-activity` WS) a TTL-

@@ -4,7 +4,7 @@ One Express `Router` per domain. Each module exports a `buildXRouter(deps)` fact
 
 ## Modules
 
-- `health.ts` — `/api/health`, `/api/default-root`, `/api/scan`, `/api/list-dir` (read-only).
+- `health.ts` — `/api/health`, `/api/default-root`, `/api/scan`, `/api/health/dead-code` (agent-facing dead-file list via `../deadCode.ts`, 60s-memoized scan), `/api/list-dir` (read-only).
 - `settings.ts` — `/api/settings` (per-project user settings) + `/api/project-env` (read-only: auto-detected package-manager envs + the "fresh worktree, don't reinstall" notes that get prepended to `LATTICE_TASK.md`; see `worktree/envDetect.ts`).
 - `terminals.ts` — `/api/terminals` list/delete (proxies to terminal-server).
 - `tasks.ts` — task CRUD + `/run`, `/resume`, `/complete`, `/merge`, `/merged`, `/merge-aborted`, `/stash-resolved`, plus `/activity` (Claude tool-hook callback → `task-activity` WS) and `/worktree-modified` (files changed per not-yet-merged task, for the graph `W` highlight). The state-machine logic lives in `tasks/`. The activity sub-router (`tasks/activity.ts`) mounts first so `GET /api/tasks/worktree-modified` isn't captured by crud's `/api/tasks/:id`. `tasks/colorSlot.ts` assigns the persistent per-task palette slot.

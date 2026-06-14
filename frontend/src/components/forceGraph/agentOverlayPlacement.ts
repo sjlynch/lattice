@@ -8,6 +8,7 @@ import {
   HOVER_EASE,
   PARKED_RADIUS_FRACTION,
   PARKED_RADIUS_PADDING,
+  REST_EPS,
 } from './agentOverlayConstants';
 
 // Everything parkedPosition needs about the current graph layout: the centroid
@@ -39,10 +40,21 @@ export class HoverLine {
   private y = 0;
   private init = false;
 
-  update(target: number | null): void {
-    if (target === null) return;
-    this.y = this.init ? lowPassStep(this.y, target, HOVER_EASE) : target;
-    this.init = true;
+  // Eases toward `target`, returning whether it's still more than REST_EPS away
+  // (i.e. still needs frames). The first sample snaps and counts as a move; a
+  // null target — no nodes yet — is a no-op. Rest is judged by distance to the
+  // target (not by step size), so the line settles right at the target rather
+  // than stalling short, and a settled line lets the render loop idle.
+  update(target: number | null): boolean {
+    if (target === null) return false;
+    if (!this.init) {
+      this.y = target;
+      this.init = true;
+      return true;
+    }
+    const moving = Math.abs(target - this.y) > REST_EPS;
+    this.y = lowPassStep(this.y, target, HOVER_EASE);
+    return moving;
   }
 
   value(): number {

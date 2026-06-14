@@ -6,7 +6,7 @@ import { spriteForDeadCode } from './deadCodeOverlay';
 import type { GraphSettings } from './graphSettings';
 import { setNodeHalo } from './halo';
 import { spriteForHealth } from './healthOverlay';
-import { spriteForLabels } from './labelsOverlay';
+import { applyNodeLabelState } from './labelsOverlay';
 import { spriteForLoc } from './locOverlay';
 import { spriteFor } from './sprites';
 import { isGhost, relForward } from './timelineDiff';
@@ -83,15 +83,6 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
     // every file gets the green/red/grey treatment (config/prose files just
     // resolve to neutral "uncertain" rather than falling back to ext color).
     base = spriteForDeadCode(node, s);
-  } else if (refs.labelModeRef.current) {
-    const d = refs.nodeDepthsRef.current.get(node.id) ?? 0;
-    base = spriteForLabels(
-      node,
-      s,
-      refs.labelLevelRef.current,
-      d,
-      refs.labelShiftRef.current,
-    );
   } else {
     base = spriteFor(node, s);
   }
@@ -106,6 +97,29 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
     base = withChangeRing(base, baseSize, kind);
   }
   root.add(base);
+
+  // Name labels (Alt overlay) hang off the root as sibling children so the
+  // active depth band / Shift gate can be toggled in place by the delta walker
+  // without a global sprite rebuild — see `applyNodeLabelState`. Building it
+  // here too keeps labels correct through full rebuilds (data swap, size/metric
+  // refresh) that happen while Alt is held. Suppressed while a recolor overlay
+  // (health / loc / dead) owns the sprite, matching the overlay precedence.
+  if (
+    refs.labelModeRef.current &&
+    !refs.healthModeRef.current &&
+    !refs.locModeRef.current &&
+    !refs.deadModeRef.current
+  ) {
+    const d = refs.nodeDepthsRef.current.get(node.id) ?? 0;
+    applyNodeLabelState(
+      root,
+      node,
+      s,
+      refs.labelLevelRef.current,
+      d,
+      refs.labelShiftRef.current,
+    );
+  }
 
   if (refs.selectedRef.current.has(node.id)) {
     setNodeHalo(root, true, baseSize);

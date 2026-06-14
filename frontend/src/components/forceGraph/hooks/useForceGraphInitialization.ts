@@ -1,10 +1,11 @@
-import { useLayoutEffect, useRef, type MutableRefObject } from 'react';
+import { useLayoutEffect, type MutableRefObject } from 'react';
 import ForceGraph3D, { type ForceGraph3DInstance } from '3d-force-graph';
 import type { GraphNode } from '../../../api';
 import { healthLabelRegistry } from '../healthOverlay';
 import { labelsRegistry } from '../labelsOverlay';
 import { locLabelRegistry } from '../locOverlay';
 import { attachIdleController, createIdleController } from '../idleController';
+import { attachFrameDriver, onFrame } from '../sceneFrameDriver';
 import {
   buildNodeObject,
   nativeNodeLabel,
@@ -14,6 +15,7 @@ import {
   configureCameraControls,
   configureRenderer,
   createResizeObserver,
+  guardNodeRightClickCrash,
 } from '../sceneSetup';
 
 export type ForceGraphInitializationSettings = NodeObjectRefs & {
@@ -30,17 +32,6 @@ export function useForceGraphInitialization(
 ) {
   const { onHoverNodeChange, ...nodeRefs } = settings;
 
-  // The graph (and its `nodeThreeObject` closure) is created once, below.
-  // Capturing the `nodeRefs` *object* directly would freeze the set of refs
-  // to that first render — fine in production (the inner refs are stable),
-  // but under HMR a newly-added ref (e.g. `labelShiftRef`) is absent from the
-  // stale captured bundle, so a later `graph.refresh()` runs the new
-  // `buildNodeObject` against an old bundle and throws on `…Ref.current`.
-  // Hold the latest bundle in a stable ref and read it inside the closure so
-  // the accessor always sees the current set, present and future refs alike.
-  const nodeRefsRef = useRef(nodeRefs);
-  nodeRefsRef.current = nodeRefs;
-
   useLayoutEffect(() => {
     if (!containerRef.current) return;
     const container = containerRef.current;
@@ -48,9 +39,7 @@ export function useForceGraphInitialization(
       .backgroundColor('#1a1d22')
       .nodeId('id')
       .nodeLabel((n: object) => nativeNodeLabel(n as GraphNode))
-      .nodeThreeObject((n: object) =>
-        buildNodeObject(n as GraphNode, nodeRefsRef.current),
-      )
+      .nodeThreeObject((n: object) => buildNodeObject(n as GraphNode, nodeRefs))
       .nodeRelSize(1)
       .linkColor(() => 'rgba(220,228,240,0.55)')
       .linkOpacity(0.85)
@@ -96,6 +85,10 @@ export function useForceGraphInitialization(
 
     graphRef.current = graph;
     configureCameraControls(graph);
+    // Must run before the first pointer interaction (see fn doc) — wrap the
+    // controls' pointerup handler so a right-click on a node can't crash the
+    // library's drag→camera handoff.
+    guardNodeRightClickCrash(graph);
     configureRenderer(graph);
     const teardownResize = createResizeObserver(graph, container);
 
@@ -105,12 +98,19 @@ export function useForceGraphInitialization(
     // `idleController.ts` for the full reason set.
     const idle = createIdleController(graph, container);
     attachIdleController(graph, idle);
+    // Single per-frame dispatcher over scene.onBeforeRender, shared by the
+    // Agent Presence Layer + the label-repulsion overlays (see sceneFrameDriver).
+    attachFrameDriver(graph);
+    // Feed each rendered frame to the idle controller so it can duty-cycle the
+    // loop down to ~30fps while only slow self-animations are driving it.
+    const offThrottleFrame = onFrame(graph, () => idle.notifyFrameRendered());
     // The engine warms up immediately on first data load; hold the reason
     // until `onEngineStop` fires (also fires after each later reheat).
     idle.engineStarted();
     graph.onEngineStop(() => idle.engineStopped());
 
     return () => {
+      offThrottleFrame();
       idle.destroy();
       teardownResize();
       locLabelRegistry.clear();

@@ -45,6 +45,41 @@ export function configureCameraControls(graph: ForceGraph3DInstance) {
   }
 }
 
+// Works around a 3d-force-graph crash on right-click *directly over a
+// node*. The library's node-drag `dragend` handler dispatches a synthetic
+// `PointerEvent('pointerup', { pointerType: 'touch' })` to nudge the camera
+// controls into releasing. Right-clicking a node makes DragControls fire
+// `dragend` (its internal `_selected` is set) while the real mouse pointer
+// is still tracked by OrbitControls — and that real pointer's id never
+// matches the synthetic event's (which defaults to id 0). So OrbitControls'
+// `_removePointer` no-ops, `_pointers.length` stays 1, and its multi-pointer
+// (touch) path reads an undefined tracked-pointer position:
+//   Uncaught TypeError: Cannot read properties of undefined (reading 'x')
+//     at OrbitControls.onPointerUp …
+// The real mouse `pointerup` cleans the controls' pointer state up correctly
+// on its own, so we simply drop the bogus synthetic event. It's reliably
+// identifiable because events built with `new PointerEvent(...)` and fed
+// through `dispatchEvent` are untrusted (`isTrusted === false`), whereas
+// genuine touch input is trusted. Must run before the first interaction so
+// OrbitControls registers our wrapper as its document `pointerup` listener
+// (it attaches that listener lazily inside `onPointerDown`). Idempotent.
+export function guardNodeRightClickCrash(graph: ForceGraph3DInstance) {
+  const controls = graph.controls() as {
+    _onPointerUp?: (event: PointerEvent) => void;
+    __latticeRightClickGuard?: boolean;
+  } | null;
+  if (!controls || typeof controls._onPointerUp !== 'function') return;
+  if (controls.__latticeRightClickGuard) return;
+  const originalPointerUp = controls._onPointerUp;
+  controls._onPointerUp = (event: PointerEvent) => {
+    if (event && event.isTrusted === false && event.pointerType === 'touch') {
+      return;
+    }
+    originalPointerUp(event);
+  };
+  controls.__latticeRightClickGuard = true;
+}
+
 // Sizes the graph to its container and installs a debounced
 // ResizeObserver so subsequent resizes stay coalesced. Returns a
 // cleanup function that disconnects the observer and cancels any

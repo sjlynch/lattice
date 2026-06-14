@@ -13,6 +13,12 @@ type Args = {
   data: ScanResult | null;
   history: GitHistoryResult | null;
   onResetSelection: () => void;
+  // The three overlays that actually render the patched metric fields. When
+  // none is held the rebuilt sprites would be byte-identical, so the
+  // fast-patch path skips its `graph.refresh()` entirely (see below).
+  healthModeRef: MutableRefObject<boolean>;
+  locModeRef: MutableRefObject<boolean>;
+  deadModeRef: MutableRefObject<boolean>;
 };
 
 type SimNode = GraphNode & {
@@ -173,6 +179,9 @@ export function useGraphDataSync({
   data,
   history,
   onResetSelection,
+  healthModeRef,
+  locModeRef,
+  deadModeRef,
 }: Args) {
   const ghostsRef = useRef<Set<string>>(new Set());
   // Fingerprint of the *last graphData() push*. Compared against each
@@ -211,7 +220,17 @@ export function useGraphDataSync({
       // Same set of nodes & links — only per-node fields could differ.
       // Patch them in place; the engine stays settled.
       const changed = patchSimNodeMetrics(graph, mergedNodes);
-      if (changed) clearLabelsAndRefresh(graph);
+      // Only the H/Z/D overlays render the patched health/loc/deadCode fields.
+      // With none held, a `graph.refresh()` would rebuild all N sprites to a
+      // byte-identical result — pure waste that ALSO wakes the render loop on
+      // every backend HealthUpdate (which stream constantly while the dev
+      // server writes files), pinning the loop at 100% CPU on an otherwise idle
+      // tab. So refresh only when an overlay is actually showing those values;
+      // the fields are still patched in place, so toggling an overlay on later
+      // (its keydown calls clearLabelsAndRefresh) picks up the latest values.
+      const metricOverlayActive =
+        healthModeRef.current || locModeRef.current || deadModeRef.current;
+      if (changed && metricOverlayActive) clearLabelsAndRefresh(graph);
       return;
     }
 
@@ -229,7 +248,7 @@ export function useGraphDataSync({
     getIdleController(graph)?.engineStarted();
     // A new scan invalidates the previous selection (node IDs may differ).
     onResetSelection();
-  }, [data, history, graphRef, onResetSelection]);
+  }, [data, history, graphRef, onResetSelection, healthModeRef, locModeRef, deadModeRef]);
 
   return { ghostsRef };
 }

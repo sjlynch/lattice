@@ -20,6 +20,19 @@ export const BEAM_MAX_OPACITY = 0.85;
 export const EASE = 0.12;
 // Even slower easing for the height, so the hover line stays steady.
 export const HOVER_EASE = 0.06;
+// Rest threshold (graph units). When a node's / hover line's per-frame easing
+// step moves it less than this, it's treated as "at rest" and stops requesting
+// frames. Sub-pixel at any sane zoom, so the settle is visually imperceptible —
+// it just lets the render loop idle instead of easing forever (see the
+// AgentOverlay.tick "moving" return + idleController's `agents` reason).
+export const REST_EPS = 0.5;
+// The graph bounds (used for the hover-line height) are an O(N) scan over every
+// file node, so the overlay caches them and recomputes immediately on engine-hot
+// frames. As a cheap safety net against position changes that don't flip the
+// idle controller's engine flag (e.g. a node drag reheats d3 directly), it also
+// forces a recompute at least every this-many frames — capping staleness to
+// ~half a second without paying the scan every frame.
+export const BOUNDS_RECHECK_FRAMES = 30;
 // The above-graph hover line sits this fraction of the graph's vertical
 // extent above its top, clamped so it's neither glued to the graph nor lost
 // in space on a very tall/short tree.

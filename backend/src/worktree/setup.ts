@@ -16,6 +16,7 @@ import {
   logFallbackWorktreeCandidate,
 } from './setupAdd.js';
 import { writePostAddWorktreeFiles } from './setupFiles.js';
+import { getDeadCodeSummarySafe } from '../deadCode.js';
 
 export type WorktreeResult = {
   worktreePath: string;
@@ -47,12 +48,17 @@ export async function setupTaskWorktree(
   await fs.mkdir(plan.worktreesDir, { recursive: true });
 
   const candidate = await addWorktreeWithRetries(repoRoot, plan, task.title);
+  // Dead-code summary is derived from the *main checkout* (warm health cache),
+  // not the fresh worktree. Best-effort + time-bounded so a slow scan never
+  // blocks worktree creation; a null result just omits the note.
+  const deadCode = await getDeadCodeSummarySafe(repoRoot);
   const taskFile = await writePostAddWorktreeFiles(
     candidate.candidatePath,
     task,
     backendOrigin,
     harness,
     envNotes,
+    deadCode,
   );
   logFallbackWorktreeCandidate(candidate, plan, task.id);
 

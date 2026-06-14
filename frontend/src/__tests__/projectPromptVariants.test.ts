@@ -92,6 +92,7 @@ test('inferPromptTemplateId and promptTemplateTitle use the ordered template met
     [{ title: 'Refactor modules', prompt: '' }, 'refactor', 'Refactor'],
     [{ title: 'Combine task backlog', prompt: '' }, 'combine-tasks', 'Combine Tasks'],
     [{ title: ' PMF ', prompt: '' }, 'pmf', 'PMF'],
+    [{ title: 'Security', prompt: '' }, 'security', 'Security'],
     [{ title: 'Brainstorm options', prompt: '' }, 'brainstorm', 'Brainstorm'],
     [
       {

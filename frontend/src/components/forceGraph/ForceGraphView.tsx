@@ -126,10 +126,12 @@ export function ForceGraphView({
     deadModeRef,
     labelMode,
     labelModeRef,
+    labelShift,
     labelShiftRef,
     labelLevel,
     labelLevelRef,
     maxDepthRef,
+    maxDirDepthRef,
     nodeDepthsRef,
   } = useGraphOverlays({
     activeFolder,
@@ -164,6 +166,9 @@ export function ForceGraphView({
     data,
     history,
     onResetSelection: resetSelection,
+    healthModeRef,
+    locModeRef,
+    deadModeRef,
   });
 
   // Claude agent nodes + focus beams (in-progress Claude tasks), and the
@@ -279,8 +284,12 @@ export function ForceGraphView({
         deadMode={deadMode}
         labelMode={labelMode}
         labelLevel={labelLevel}
-        maxDepth={maxDepthRef.current}
-        hoverNode={hoverNode}
+        maxDepth={labelShift ? maxDepthRef.current : maxDirDepthRef.current}
+        // Suppress the file hover tooltip while the right-click menu is open
+        // so it doesn't sit over the menu. Gating (rather than a one-shot
+        // clear) also keeps it from flickering back if the raycaster re-hovers
+        // the still-under-cursor node while the menu is up.
+        hoverNode={contextMenu ? null : hoverNode}
       />
 
       {history && history.isRepo && history.commits.length > 0 && (
