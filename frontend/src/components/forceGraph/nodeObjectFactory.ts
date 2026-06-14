@@ -22,6 +22,9 @@ export type NodeObjectRefs = {
   healthModeRef: MutableRefObject<boolean>;
   deadModeRef: MutableRefObject<boolean>;
   labelModeRef: MutableRefObject<boolean>;
+  // Whether Shift is also held — gates file-node labels. Alt alone shows
+  // only directory names.
+  labelShiftRef: MutableRefObject<boolean>;
   labelLevelRef: MutableRefObject<number>;
   nodeDepthsRef: MutableRefObject<Map<string, number>>;
   changeMapRef: MutableRefObject<Map<string, ChangeKind>>;
@@ -82,7 +85,13 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
     base = spriteForDeadCode(node, s);
   } else if (refs.labelModeRef.current) {
     const d = refs.nodeDepthsRef.current.get(node.id) ?? 0;
-    base = spriteForLabels(node, s, refs.labelLevelRef.current, d);
+    base = spriteForLabels(
+      node,
+      s,
+      refs.labelLevelRef.current,
+      d,
+      refs.labelShiftRef.current,
+    );
   } else {
     base = spriteFor(node, s);
   }

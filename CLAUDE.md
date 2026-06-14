@@ -165,7 +165,8 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
 - **Graph overlays (hold-key).** Momentary recolors of the file graph, each on
   the same chord pattern (keyup/blur/visibilitychange reset): **`H`** code
   health, **`Z`** lines of code, **`D`** dead code, **`W`** worktree-modified
-  files, **`Alt`** name labels. The **`D`** dead-code view colors each file by
+  files, **`Alt`** name labels (directories only; hold **`Alt`+`Shift`** to
+  also reveal file-node labels). The **`D`** dead-code view colors each file by
   reachability from detected entry points — green = reachable, red =
   dead/orphaned, grey = entry point or uncertain (asset / unsupported language /
   dynamic-only). Classification is computed in `backend/src/health/crossFile/`

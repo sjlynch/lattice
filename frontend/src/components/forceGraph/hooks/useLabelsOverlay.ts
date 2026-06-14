@@ -13,7 +13,9 @@ import { isTextInput } from './refresh';
 //
 // Track Alt as a chord-style modifier: keydown enables labels mode,
 // keyup/blur disables. Alt+wheel cycles the visible depth band instead
-// of zooming the camera.
+// of zooming the camera. Holding Shift as well (Alt+Shift) reveals the
+// file-node labels too; Alt alone shows directory names only, so the
+// band reads as a clean folder map until you ask for filenames.
 export function useLabelsOverlay(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   containerRef: MutableRefObject<HTMLDivElement | null>,
@@ -22,6 +24,10 @@ export function useLabelsOverlay(
 ) {
   const [labelMode, setLabelMode] = useState(false);
   const labelModeRef = useRef(false);
+  // Whether file-node labels should show. Off by default: Alt alone shows
+  // directory names only, holding Shift too reveals filenames.
+  const [labelShift, setLabelShift] = useState(false);
+  const labelShiftRef = useRef(false);
   const [labelLevel, setLabelLevel] = useState(1);
   const labelLevelRef = useRef(1);
   const maxDepthRef = useRef(0);
@@ -31,24 +37,32 @@ export function useLabelsOverlay(
     labelModeRef.current = labelMode;
   }, [labelMode]);
   useEffect(() => {
+    labelShiftRef.current = labelShift;
+  }, [labelShift]);
+  useEffect(() => {
     labelLevelRef.current = labelLevel;
   }, [labelLevel]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key !== 'Alt') return;
       if (isTextInput(e.target)) return;
       if (e.repeat) return;
-      // Browsers focus the menu bar on Alt-up; suppressing the default on
-      // keydown also kills that side-effect when Alt is released alone.
-      e.preventDefault();
-      setLabelMode(true);
+      if (e.key === 'Alt') {
+        // Browsers focus the menu bar on Alt-up; suppressing the default on
+        // keydown also kills that side-effect when Alt is released alone.
+        e.preventDefault();
+        setLabelMode(true);
+      } else if (e.key === 'Shift') {
+        setLabelShift(true);
+      }
     }
     function onKeyUp(e: KeyboardEvent) {
       if (e.key === 'Alt') setLabelMode(false);
+      else if (e.key === 'Shift') setLabelShift(false);
     }
     function reset() {
       setLabelMode(false);
+      setLabelShift(false);
     }
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
@@ -117,10 +131,17 @@ export function useLabelsOverlay(
   }, [data]);
 
   // Refresh sprites when labels mode toggles or the active depth changes.
+  // The Shift toggle (file labels on/off) and depth only matter while Alt
+  // is held, so when neither the mode itself changed nor labels are active
+  // (a stray Shift from box-select, etc.) skip the refresh entirely.
+  const prevLabelModeRef = useRef(false);
   useEffect(() => {
+    const modeChanged = prevLabelModeRef.current !== labelMode;
+    prevLabelModeRef.current = labelMode;
+    if (!labelMode && !modeChanged) return;
     labelsRegistry.clear();
     graphRef.current?.refresh?.();
-  }, [labelMode, labelLevel, graphRef]);
+  }, [labelMode, labelShift, labelLevel, graphRef]);
 
   // Same physics as LOC, with a wider per-overlay base because file-name
   // labels are much longer than 3-digit LOC / health values and would
@@ -153,6 +174,7 @@ export function useLabelsOverlay(
   return {
     labelMode,
     labelModeRef,
+    labelShiftRef,
     labelLevel,
     labelLevelRef,
     maxDepthRef,

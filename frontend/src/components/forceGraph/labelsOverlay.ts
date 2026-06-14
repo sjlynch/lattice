@@ -69,15 +69,18 @@ function makeNameSprite(text: string, color: string, baseH: number): THREE.Sprit
 
 // Build a node object for labels mode. If the node sits at the active
 // depth, attach a floating name label + connector; otherwise just render
-// the normal sprite.
+// the normal sprite. File-node labels are gated behind `showFileLabels`
+// (Shift held): with Alt alone, only directory names are shown.
 export function spriteForLabels(
   node: GraphNode,
   settings: GraphSettings,
   activeDepth: number,
   nodeDepth: number,
+  showFileLabels: boolean,
 ): THREE.Object3D {
   const base = spriteFor(node, settings);
   if (nodeDepth !== activeDepth) return base;
+  if (node.kind === 'file' && !showFileLabels) return base;
 
   const group = new THREE.Group();
   group.add(base);
