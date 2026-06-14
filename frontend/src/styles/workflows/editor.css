@@ -9,9 +9,18 @@
   font-size: 14px;
   font-weight: 500;
 }
+/* Scroll container holding the variables section + the steps list, so the
+   variables section scrolls with the steps rather than acting as a pinned
+   header above a separately-scrolling list. */
+.workflows-editor-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
 .workflows-editor-steps {
   flex: 1;
-  overflow-y: auto;
   padding: 10px 12px;
   display: flex;
   flex-direction: column;

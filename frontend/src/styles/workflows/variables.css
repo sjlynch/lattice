@@ -1,9 +1,12 @@
 /* Variables panel: the collapsible "Variables" section at the top of the
    editor. Holds the built-in user_instructions box plus any custom variables;
-   each is a collapsible card mirroring the step rows. */
+   each is a collapsible card mirroring the step rows. It scrolls together with
+   the steps (not a pinned header), so a faint section tint plus the bottom
+   border keep it reading as a distinct block as it scrolls past the steps. */
 .workflows-vars {
   padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-strong);
+  background: rgba(255, 255, 255, 0.015);
   display: flex;
   flex-direction: column;
   gap: 8px;

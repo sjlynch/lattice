@@ -109,32 +109,38 @@ export function WorkflowEditorPanel({ manager }: Props) {
               />
             )}
           </div>
-          <WorkflowVariablesPanel
-            variables={editor.variables}
-            onPatch={actions.patchVariable}
-            onAdd={actions.addVariable}
-            onRemove={actions.removeVariable}
-          />
-          <div className="workflows-editor-steps">
-            {editor.steps.map((step, index) => (
-              <StepRow
-                key={step.id}
-                step={step}
-                index={index}
-                collapsed={collapsedSteps.isCollapsed(step.id)}
-                harnessAvail={harnessAvail}
-                definedNames={definedNames}
-                onChange={(patch) => actions.patchStep(index, patch)}
-                onRemove={() => actions.removeStep(index)}
-                onReorder={actions.reorderSteps}
-                onToggleCollapse={() => collapsedSteps.toggleCollapsed(step.id)}
-                onCustomize={() => void actions.customizeStepPrompt(index)}
-                customizing={Boolean(customizingSteps[step.id])}
-              />
-            ))}
-            <button className="workflows-add-step" onClick={actions.addStep}>
-              <Plus size={12} /> Add step
-            </button>
+          {/* Variables + steps share one scroll container so the variables
+              section scrolls up/down with the steps instead of staying pinned
+              as a sticky header. It keeps its own border/label so it reads as a
+              distinct section while scrolling. */}
+          <div className="workflows-editor-scroll">
+            <WorkflowVariablesPanel
+              variables={editor.variables}
+              onPatch={actions.patchVariable}
+              onAdd={actions.addVariable}
+              onRemove={actions.removeVariable}
+            />
+            <div className="workflows-editor-steps">
+              {editor.steps.map((step, index) => (
+                <StepRow
+                  key={step.id}
+                  step={step}
+                  index={index}
+                  collapsed={collapsedSteps.isCollapsed(step.id)}
+                  harnessAvail={harnessAvail}
+                  definedNames={definedNames}
+                  onChange={(patch) => actions.patchStep(index, patch)}
+                  onRemove={() => actions.removeStep(index)}
+                  onReorder={actions.reorderSteps}
+                  onToggleCollapse={() => collapsedSteps.toggleCollapsed(step.id)}
+                  onCustomize={() => void actions.customizeStepPrompt(index)}
+                  customizing={Boolean(customizingSteps[step.id])}
+                />
+              ))}
+              <button className="workflows-add-step" onClick={actions.addStep}>
+                <Plus size={12} /> Add step
+              </button>
+            </div>
           </div>
           {quickAddPrompts}
           <div className="workflows-editor-actions">
