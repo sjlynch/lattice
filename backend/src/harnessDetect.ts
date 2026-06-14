@@ -7,6 +7,9 @@ import { ALL_AGENT_HARNESSES, type AgentHarness } from './harnesses.js';
 
 export type HarnessAvailability = Record<AgentHarness, boolean>;
 
+// Max time to wait on the `where`/`which` PATH probe before giving up on it.
+const HARNESS_PROBE_TIMEOUT_MS = 2000;
+
 let cached: Promise<HarnessAvailability> | null = null;
 
 function isOnPath(cmd: string): Promise<boolean> {
@@ -28,7 +31,7 @@ function isOnPath(cmd: string): Promise<boolean> {
     const timer = setTimeout(() => {
       try { child!.kill(); } catch { /* already exited */ }
       finish(false);
-    }, 2000);
+    }, HARNESS_PROBE_TIMEOUT_MS);
     child.on('error', () => {
       clearTimeout(timer);
       finish(false);

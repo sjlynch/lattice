@@ -32,9 +32,11 @@ the next:
    any file whose parent wasn't in the walked directory list.
 6. **`scan.ts`** — `scan(root)` is the top-level orchestrator: wires the
    phases above, then `cache.prune(seenFiles)`, fire-and-forget
-   `cache.save()`, and `seedWatcherState(...)` so the health watcher's
-   in-memory mirror reflects the freshly-scanned state (otherwise it
-   keeps broadcasting cross-file numbers from before the rescan).
+   `cache.flush()` (forces the single end-of-scan write immediately — the
+   watcher's `cache.save()` coalesces bursts, but this one-shot cache has
+   nothing to coalesce with), and `seedWatcherState(...)` so the health
+   watcher's in-memory mirror reflects the freshly-scanned state (otherwise
+   it keeps broadcasting cross-file numbers from before the rescan).
 
 ## Conventions
 

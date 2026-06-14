@@ -1,4 +1,4 @@
-import { useCallback, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import {
   getWorkflowPromptCustomization,
   startWorkflowPromptCustomization,
@@ -40,12 +40,19 @@ export function useWorkflowPromptCustomization({
 }: Args) {
   const [customizingSteps, setCustomizingSteps] = useState<Record<string, string>>({});
 
+  // Read the latest steps through a ref so `customizeStepPrompt` stays
+  // referentially stable. Otherwise it would be recreated on every keystroke
+  // (steps change on each edit) and break the memoization of every StepRow it's
+  // passed to as `onCustomize`.
+  const stepsRef = useRef(steps);
+  stepsRef.current = steps;
+
   const customizeStepPrompt = useCallback(async (index: number) => {
     if (!activeFolder) {
       showError('Choose an active project before customizing a workflow prompt.');
       return;
     }
-    const step = steps[index];
+    const step = stepsRef.current[index];
     if (!step) return;
 
     const inferredTemplateId = step.prompt.trim()
@@ -126,7 +133,7 @@ export function useWorkflowPromptCustomization({
       });
       showError(`Prompt customization failed: ${(err as Error).message}`);
     }
-  }, [activeFolder, addTerminal, setEditor, showError, steps]);
+  }, [activeFolder, addTerminal, setEditor, showError]);
 
   return { customizingSteps, customizeStepPrompt };
 }

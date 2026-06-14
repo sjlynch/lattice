@@ -26,7 +26,12 @@ export function WorkflowEditorPanel({ manager }: Props) {
     actions,
   } = manager;
 
-  const projectPrompts = promptsWithProjectVariants(DEFAULT_PROMPTS, projectProfile);
+  // projectProfile is stable across typing, so build the project-tailored
+  // quick-add prompts once per profile rather than on every keystroke.
+  const projectPrompts = useMemo(
+    () => promptsWithProjectVariants(DEFAULT_PROMPTS, projectProfile),
+    [projectProfile],
+  );
 
   // Names of variables defined on this workflow, so the step-prompt highlight
   // can distinguish a real `{{var}}` reference from a typo'd / undefined one.
@@ -129,11 +134,11 @@ export function WorkflowEditorPanel({ manager }: Props) {
                   collapsed={collapsedSteps.isCollapsed(step.id)}
                   harnessAvail={harnessAvail}
                   definedNames={definedNames}
-                  onChange={(patch) => actions.patchStep(index, patch)}
-                  onRemove={() => actions.removeStep(index)}
+                  onChange={actions.patchStep}
+                  onRemove={actions.removeStep}
                   onReorder={actions.reorderSteps}
-                  onToggleCollapse={() => collapsedSteps.toggleCollapsed(step.id)}
-                  onCustomize={() => void actions.customizeStepPrompt(index)}
+                  onToggleCollapse={collapsedSteps.toggleCollapsed}
+                  onCustomize={actions.customizeStepPrompt}
                   customizing={Boolean(customizingSteps[step.id])}
                 />
               ))}

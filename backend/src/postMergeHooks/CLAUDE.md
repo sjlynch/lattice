@@ -1,0 +1,14 @@
+# backend/src/postMergeHooks
+
+Optional per-project **post-merge hook**: after a merge (per-task `/merge` or a "Merge All" run), Lattice spawns the user-configured harness with their prompt as a one-off task, and the merge is **not** considered complete until that agent calls back. This keeps any workflow merge step / per-task merge response gated on the post-merge agent finishing. Parallels the `pushRuns/` subsystem — same scratch-dir + Stop-hook + registry-waiter shape. `../postMergeHooks.ts` is the public shim.
+
+## Flow
+
+- `trigger.ts` — `triggerPostMergeHook`, the decide-and-outcome half: gate on empty prompt (`no-prompt` skip) and one-running-per-project (`already-running` skip via `getActiveHookForProject`), record the run, spawn the pty (spawn-queue `priority` band, deduped per project), and register the orange agent-session node (Claude only). Returns an outcome immediately; callers block via the waiter.
+- `session.ts` — `runPostMergeHookGate`, the thin trigger + `waitForPostMergeHook` coordinator. The merge-run finisher / per-task finalize `await` this so the merge stays gated until the hook reaches a terminal status.
+- `sessionSetup.ts` — the filesystem/trust half: mkdir the scratch dir, `ensureTrustedClaudeDir`, install the completion plumbing, render the brief. Mirrors `pushRuns/session.ts`.
+- `paths.ts` — scratch lives at `~/.lattice/per-project/<hash>/post-merge-hooks/<id>/` (home-scoped, **outside** the repo). `assertSafePostMergeHookPath` refuses any id/dir not strictly under that root or that lands inside the project, so the bounded recursive cleanup can never reach the repo.
+- `stopHook.ts` — installs **both** the Claude Stop hook and the Pi completion extension into the scratch dir regardless of harness (defence-in-depth against a mid-run harness switch); the unused one is inert. Codex has no backstop and must curl the callback explicitly. Also defines `postMergeHookAgentId` and the activity-hook URL for the graph beams.
+- `commands.ts` / `instructions.ts` — the launch command and the `POST_MERGE_HOOK.md` brief. **Key invariant:** the pty runs with `cwd = scratchDir` (so Claude reads the Stop hook from cwd and Pi loads `.pi/extensions/` from cwd); the brief's step 1 then `cd`s the agent into the project. Running with `cwd = projectPath` was the original bug — the Stop hook never fired and the merge run hung forever. Don't reintroduce it.
+- `registry.ts` — in-memory run registry (one running per project, last ~5 finished kept), the `started`/`progress`/`finished` event fan-out for the UI, and the per-run promise waiters that the `/complete` + `/abort` routes resolve.
+- `types.ts` — `PostMergeHookRun` / `PostMergeHookSession` / `PostMergeHookStatus`.

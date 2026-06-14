@@ -1,5 +1,12 @@
+import { useMemo } from 'react';
 import { ListChecks, Plus, X } from 'lucide-react';
 import { WORKFLOW_TEMPLATES } from '../../workflowTemplates';
+import { ALL_AGENT_HARNESSES } from '../../harnesses';
+import type {
+  WorkflowRun,
+  WorkflowRunHarnessOverride,
+  WorkflowStepHarness,
+} from '../../api';
 import type { WorkflowManager } from './hooks/useWorkflowManager';
 import { WorkflowsSavedItem } from './WorkflowsSavedItem';
 import { availableWorkflowHarnessOptions } from './workflowHarnessOverride';
@@ -19,6 +26,37 @@ export function WorkflowsSavedList({ manager }: Props) {
     getWorkflowHarnessOverride,
     actions,
   } = manager;
+
+  // First active run per workflow id, indexed once. activeRunList is sorted by
+  // startedAt, so keeping the first insertion preserves the prior `.find` result.
+  const runByWorkflowId = useMemo(() => {
+    const map = new Map<string, WorkflowRun>();
+    for (const run of activeRunList) {
+      if (!map.has(run.workflowId)) map.set(run.workflowId, run);
+    }
+    return map;
+  }, [activeRunList]);
+
+  // Queued-entry counts per workflow id, tallied once instead of a per-row filter.
+  const queuedCountByWorkflowId = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const entry of queue.queuedEntries) {
+      map.set(entry.workflowId, (map.get(entry.workflowId) ?? 0) + 1);
+    }
+    return map;
+  }, [queue.queuedEntries]);
+
+  // Harness-option arrays keyed by override value. There are only a handful of
+  // override values, so precompute each once per availability change; reusing the
+  // same array reference keeps the memoized rows from re-rendering needlessly.
+  const harnessOptionsByOverride = useMemo(() => {
+    const map = new Map<WorkflowRunHarnessOverride, WorkflowStepHarness[]>();
+    const overrides: WorkflowRunHarnessOverride[] = [null, ...ALL_AGENT_HARNESSES];
+    for (const override of overrides) {
+      map.set(override, availableWorkflowHarnessOptions(harnessAvail, override));
+    }
+    return map;
+  }, [harnessAvail]);
 
   return (
     <aside className="workflows-list">
@@ -77,16 +115,13 @@ export function WorkflowsSavedList({ manager }: Props) {
           </div>
         ) : (
           sortedWorkflows.map((workflow) => {
-            const run = activeRunList.find((r) => r.workflowId === workflow.id);
+            const run = runByWorkflowId.get(workflow.id);
             const isSelected = editor.workflowId === workflow.id;
-            const queuedCount = queue.queuedEntries.filter(
-              (entry) => entry.workflowId === workflow.id,
-            ).length;
+            const queuedCount = queuedCountByWorkflowId.get(workflow.id) ?? 0;
             const harnessOverride = getWorkflowHarnessOverride(workflow.id);
-            const harnessOptions = availableWorkflowHarnessOptions(
-              harnessAvail,
-              harnessOverride,
-            );
+            const harnessOptions =
+              harnessOptionsByOverride.get(harnessOverride) ??
+              availableWorkflowHarnessOptions(harnessAvail, harnessOverride);
             return (
               <WorkflowsSavedItem
                 key={workflow.id}

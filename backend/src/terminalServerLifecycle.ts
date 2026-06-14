@@ -14,13 +14,19 @@ export const BASE = `http://127.0.0.1:${TERMINAL_PORT}`;
 // must be respawned. No manual version constant to forget to bump.
 export const EXPECTED_TERMINAL_FINGERPRINT = computeTerminalFingerprint();
 
+// Timeouts / poll intervals for talking to the detached terminal-server.
+const PROBE_TIMEOUT_MS = 500; // /health liveness probe
+const SHUTDOWN_STALE_TIMEOUT_MS = 1000; // POST /shutdown to a stale server
+const SHUTDOWN_POLL_INTERVAL_MS = 150; // poll waiting for the stale server to die
+const SPAWN_WAIT_POLL_INTERVAL_MS = 100; // poll waiting for the fresh server to come up
+
 export type ProbeResult = 'ok' | 'stale' | 'dead';
 
 export async function probeServer(): Promise<ProbeResult> {
   let res: Response;
   try {
     res = await fetch(`${BASE}/health`, {
-      signal: AbortSignal.timeout(500),
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
   } catch {
     return 'dead';
@@ -48,14 +54,14 @@ export async function shutdownStale(): Promise<void> {
   try {
     await fetch(`${BASE}/shutdown`, {
       method: 'POST',
-      signal: AbortSignal.timeout(1000),
+      signal: AbortSignal.timeout(SHUTDOWN_STALE_TIMEOUT_MS),
     });
   } catch {
     /* old server may already be dying or never had the endpoint */
   }
   const deadline = Date.now() + 3000;
   while (Date.now() < deadline) {
-    await new Promise<void>((r) => setTimeout(r, 150));
+    await new Promise<void>((r) => setTimeout(r, SHUTDOWN_POLL_INTERVAL_MS));
     if ((await probeServer()) === 'dead') return;
   }
   // Polite shutdown didn't take. Common causes seen in the wild:
@@ -104,7 +110,7 @@ export async function spawnAndWait(): Promise<void> {
 
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
-    await new Promise<void>((r) => setTimeout(r, 100));
+    await new Promise<void>((r) => setTimeout(r, SPAWN_WAIT_POLL_INTERVAL_MS));
     if ((await probeServer()) === 'ok') {
       console.log(
         `[lattice-backend] terminal server started on port ${TERMINAL_PORT}`,
