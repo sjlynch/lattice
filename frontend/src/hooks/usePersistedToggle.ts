@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 function readPersistedToggle(key: string, defaultValue: boolean): boolean {
   try {
@@ -32,7 +32,15 @@ export function usePersistedToggle(
     setValue(readPersistedToggle(key, defaultValue));
   }, [key, defaultValue]);
 
+  // Skip the write on the initial mount: the read-on-mount seed above already
+  // reflects what's in storage, so persisting it again is a redundant
+  // setItem. Only real toggles (and key changes) after mount actually write.
+  const didMountRef = useRef(false);
   useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      return;
+    }
     writePersistedToggle(key, value);
   }, [key, value]);
 
