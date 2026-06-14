@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { APP_CONFIG } from '../appConfig';
-import { fetchUserSettings, patchUserSettings } from '../api';
+import { patchUserSettings } from '../api';
 import { useSyncedRef } from './useSyncedRef';
+import type { UserSettingsResult } from './useUserSettings';
 
 function clampSidebarWidth(width: number) {
   const viewportCap = Math.min(
@@ -15,7 +16,10 @@ function clampSidebarWidth(width: number) {
   );
 }
 
-export function useSidebarWidth(activeFolder: string) {
+export function useSidebarWidth(
+  activeFolder: string,
+  userSettings: UserSettingsResult,
+) {
   const [sidebarWidth, setSidebarWidth] = useState<number>(
     APP_CONFIG.sidebar.defaultWidth,
   );
@@ -25,8 +29,10 @@ export function useSidebarWidth(activeFolder: string) {
   const resizingRef = useRef(false);
   const activeFolderRef = useSyncedRef(activeFolder);
   const sidebarWidthRef = useSyncedRef(sidebarWidth);
+  const { settings, loaded } = userSettings;
 
-  // Load per-project sidebar width from backend when the active folder changes.
+  // Apply the per-project sidebar width from the shared userSettings fetch
+  // (useUserSettings) when the active folder changes.
   // Only gates the FIRST mount: once the sidebar has shown for any project,
   // subsequent project switches keep it mounted and just update the width
   // in place. Flipping `sidebarSettingsLoaded` back to false on every
@@ -35,33 +41,22 @@ export function useSidebarWidth(activeFolder: string) {
   // attach for any just-created terminal — the user saw a tab but never
   // got a shell. Keeping it mounted means the previous width stays put for
   // a moment until the new project's value arrives; a brief width hold is
-  // strictly less disruptive than a full sidebar remount.
+  // strictly less disruptive than a full sidebar remount. While the shared
+  // fetch is in flight (`!loaded`) we do nothing — `sidebarSettingsLoaded`
+  // is never reset to false on a folder switch — so the sidebar stays put.
   useEffect(() => {
-    let cancelled = false;
-
     if (!activeFolder) {
       setSidebarSettingsLoaded(true);
-      return () => {
-        cancelled = true;
-      };
+      return;
     }
 
-    fetchUserSettings(activeFolder)
-      .then((settings) => {
-        if (cancelled) return;
-        if (typeof settings.sidebarWidth === 'number') {
-          setSidebarWidth(clampSidebarWidth(settings.sidebarWidth));
-        }
-      })
-      .catch(() => { /* ignore — keep current width */ })
-      .finally(() => {
-        if (!cancelled) setSidebarSettingsLoaded(true);
-      });
+    if (!loaded || !settings) return; // hold previous width until settings arrive
 
-    return () => {
-      cancelled = true;
-    };
-  }, [activeFolder]);
+    if (typeof settings.sidebarWidth === 'number') {
+      setSidebarWidth(clampSidebarWidth(settings.sidebarWidth));
+    }
+    setSidebarSettingsLoaded(true);
+  }, [activeFolder, loaded, settings]);
 
   // Re-clamp on window resize so the sidebar can't exceed its viewport cap.
   useEffect(() => {
