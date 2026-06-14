@@ -70,7 +70,10 @@ export async function scan(root: string, options: ScanOptions = {}): Promise<Sca
   const seenFiles = new Set(collected.files);
   cache.prune(seenFiles);
   // Persist asynchronously — don't block the scan response on disk I/O.
-  cache.save().catch(() => { /* best-effort */ });
+  // flush() (not save()) forces the single end-of-scan write straight away:
+  // this cache is one-shot, so there's no later burst to coalesce with and
+  // nothing to keep the debounce timer alive after scan() returns.
+  cache.flush().catch(() => { /* best-effort */ });
 
   // Keep the watcher's in-memory mirror in sync with the freshly-scanned
   // state. No-op when the watcher hasn't been started for this project

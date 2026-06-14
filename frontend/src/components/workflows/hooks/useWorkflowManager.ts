@@ -135,24 +135,34 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
   }, [setEditor]);
 
   // Find any active/recent run for the currently-edited workflow so the
-  // strip in the editor head reflects the right run.
-  const runForEditor = editor.workflowId
-    ? activeRuns[
-        Object.keys(activeRuns).find(
-          (k) => activeRuns[k].workflowId === editor.workflowId,
-        ) ?? ''
-      ]
-    : undefined;
+  // strip in the editor head reflects the right run. Memoized so the scan
+  // only reruns when the run maps or the edited workflow change.
+  const runForEditor = useMemo(
+    () =>
+      editor.workflowId
+        ? Object.values(activeRuns).find(
+            (r) => r.workflowId === editor.workflowId,
+          )
+        : undefined,
+    [activeRuns, editor.workflowId],
+  );
   const controlProgressForEditor = runForEditor
     ? controlProgress[runForEditor.id]
     : undefined;
-  const recentForEditor = editor.workflowId
-    ? recentRuns[
-        Object.keys(recentRuns).find(
-          (k) => recentRuns[k].workflowId === editor.workflowId,
-        ) ?? ''
-      ]
-    : undefined;
+  const recentForEditor = useMemo(
+    () =>
+      editor.workflowId
+        ? Object.values(recentRuns).find(
+            (r) => r.workflowId === editor.workflowId,
+          )
+        : undefined,
+    [recentRuns, editor.workflowId],
+  );
+
+  const queuedWorkflowIds = useMemo(
+    () => queueState.queued.map((entry) => entry.workflowId),
+    [queueState.queued],
+  );
 
   return {
     activeFolder,
@@ -177,7 +187,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     queue: {
       mode: queueState.mode,
       queuedEntries: queueState.queued,
-      queuedWorkflowIds: queueState.queued.map((entry) => entry.workflowId),
+      queuedWorkflowIds,
       queuedItems: queueSelectors.queuedItems,
       running: queueState.running,
       busy: queueSelectors.busy,

@@ -65,7 +65,7 @@ export function Legend({ data, hiddenExts, onToggleExt, healthMode }: Props) {
                   key={r.key}
                   row={r}
                   hidden={hiddenExts.has(r.key)}
-                  onToggle={() => onToggleExt(r.key)}
+                  onToggle={onToggleExt}
                 />
               ))
             )}
@@ -86,7 +86,7 @@ export function Legend({ data, hiddenExts, onToggleExt, healthMode }: Props) {
                   key={r.key}
                   row={r}
                   hidden={hiddenExts.has(r.key)}
-                  onToggle={() => onToggleExt(r.key)}
+                  onToggle={onToggleExt}
                   muted
                 />
               ))}

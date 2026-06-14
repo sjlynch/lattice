@@ -41,6 +41,9 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [addingTo, setAddingTo] = useState<TaskStatus | null>(null);
 
+  // Stable so it doesn't defeat React.memo(TaskCard) on every re-render.
+  const handleDragEnd = useCallback(() => setDraggingId(null), []);
+
   const { visibleLanes, toggleLane } = useVisibleLanes();
 
   const {
@@ -216,7 +219,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 draggingId={draggingId}
                 selectedIds={selectedIds}
                 onDragStart={setDraggingId}
-                onDragEnd={() => setDraggingId(null)}
+                onDragEnd={handleDragEnd}
                 onAdd={() => setAddingTo(lane.id)}
                 onMove={moveTask}
                 onDropAt={dropAt}
@@ -228,9 +231,9 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 onResume={resumeTaskAction}
                 onMerge={mergeTaskAction}
                 getFocusTerminal={getFocusTerminal}
-                onSingleSelect={(id) => selectSingle(id, lane.id)}
-                onToggleSelect={(id) => toggleSelect(id, lane.id)}
-                onRangeSelect={(id) => rangeSelect(id, lane.id)}
+                onSingleSelect={selectSingle}
+                onToggleSelect={toggleSelect}
+                onRangeSelect={rangeSelect}
                 onClearSelection={clearSelection}
                 onRunAll={
                   searchActive ? undefined : runAllActionByLane[lane.id]
