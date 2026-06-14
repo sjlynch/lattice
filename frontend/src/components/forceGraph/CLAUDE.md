@@ -70,13 +70,32 @@
   is cleared when the session stops (agent removed). Each node **hovers above
   the graph at a steady height**: `tick()` eases its X/Z toward the centroid of
   the files in play (so it sits over the region it's working in) while pinning
-  Y to a low-pass-filtered hover line just above the graph's top
-  (`graphBounds`/`updateHoverY`), so the height stays stable as the layout
-  settles. A camera-scaled **file label** (reusing `labelTexture` +
-  `floatingLabelSprite`) sits beside each node showing the basename it most
-  recently read/edited. Beams drop from the elevated node down to the file
-  nodes. Path→node index rebuilt only on a structural `graphData` swap. Driven
-  by `useAgentOverlay`.
+  Y to a low-pass-filtered hover line just above the graph's top, so the
+  height stays stable as the layout settles. A camera-scaled **file label**
+  sits beside each node showing the basename it most recently read/edited.
+  Beams drop from the elevated node down to the file nodes. Path→node index
+  rebuilt only on a structural `graphData` swap. Driven by `useAgentOverlay`.
+  `agentOverlay.ts` is the orchestrator (reconcile/`addActivity`/`tick`); its
+  cohesive internals are split into sibling modules:
+  - `agentOverlayConstants.ts` — all overlay tunables + render orders
+    (beam TTL/fade, easing, hover margins, golden angle, node/label scale +
+    offsets, parked-spread radius) and `LABEL_OPTIONS` / `LABEL_SPRITE_CONFIG`.
+  - `agentOverlayTypes.ts` — `SimNode` / `Beam` / `Agent` / `AgentDescriptor`
+    (the latter still re-exported from `agentOverlay.ts` as the public type).
+  - `agentOverlayPathIndex.ts` — `normalizePath` / `baseName` plus
+    `AgentPathIndex` (the path→node index lifecycle + `bounds()`/
+    `centroidSpread()`) and the pure `hoverMargin(bounds)` clamp.
+  - `agentOverlayBeams.ts` — beam `THREE.Line` lifecycle: `createBeam` /
+    `disposeBeam` / `updateBeam` (endpoints + opacity) and the pure
+    `beamFade(remaining)` ramp. The current-vs-fading TTL *policy* stays in
+    `agentOverlay.addActivity`.
+  - `agentOverlayLabels.ts` — agent file-label cache + `updateAgentLabel` /
+    `clearAgentLabel` (reusing `labelTexture` + `floatingLabelSprite`).
+  - `agentOverlayPlacement.ts` — `parkedPosition` (golden-angle spiral),
+    `lowPassStep`, and the `HoverLine` low-pass smoother for the hover height.
+  The pure math (`hoverMargin`, `beamFade`, `parkedPosition`, `lowPassStep`,
+  `HoverLine`, `normalizePath`, `baseName`) is covered by
+  `__tests__/agentOverlayMath.test.ts`.
 - `worktreeRing.ts` — `setNodeWorktreeRing(root, on, color, baseSize)`: a
   double concentric ring (distinct from the single selection halo / change
   rings) colored by the owning task. Same sibling-child toggle as `halo.ts`;
