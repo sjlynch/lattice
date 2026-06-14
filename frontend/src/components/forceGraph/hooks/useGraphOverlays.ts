@@ -17,6 +17,8 @@ type UseGraphOverlaysArgs = {
   hiddenExts: Set<string>;
   healthMode: boolean;
   onHealthModeChange: (mode: boolean) => void;
+  // Current node selection — narrows the Alt label overlay to just these nodes.
+  selected: Set<string>;
 };
 
 // Coordinates the graph's overlay concerns: persisted graph settings, git
@@ -31,6 +33,7 @@ export function useGraphOverlays({
   hiddenExts,
   healthMode,
   onHealthModeChange,
+  selected,
 }: UseGraphOverlaysArgs) {
   const { settings, setSettings, settingsRef } = useGraphSettings(
     activeFolder,
@@ -50,7 +53,13 @@ export function useGraphOverlays({
     settingsRef,
   );
   const { deadMode, deadModeRef } = useDeadCodeOverlay(graphRef);
-  const labels = useLabelsOverlay(graphRef, containerRef, data, settingsRef);
+  const labels = useLabelsOverlay(
+    graphRef,
+    containerRef,
+    data,
+    settingsRef,
+    selected,
+  );
 
   useGraphFilter(graphRef, hiddenExts, data, history, range, changeMapRef);
 

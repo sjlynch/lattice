@@ -20,6 +20,9 @@ export function useLabelsOverlay(
   containerRef: MutableRefObject<HTMLDivElement | null>,
   data: ScanResult | null,
   settingsRef: MutableRefObject<GraphSettings>,
+  // The user's current node selection. When non-empty, holding Alt shows the
+  // labels of exactly these nodes and no others (depth band + Shift ignored).
+  selected: Set<string>,
 ) {
   const [labelMode, setLabelMode] = useState(false);
   const labelModeRef = useRef(false);
@@ -162,10 +165,12 @@ export function useLabelsOverlay(
     setLabelLevel((lvl) => Math.min(lvl, effectiveMaxDepth(false)));
   }, [labelShift]);
 
-  // Toggle labels in place when labels mode flips, the active depth changes, or
-  // Shift is pressed/released. Instead of `graph.refresh()` — which disposes and
-  // rebuilds *every* node sprite — `applyLabelsToGraph` walks the mounted nodes
-  // and adds/removes only the labels that changed (see `labelSync`). The idle
+  // Toggle labels in place when labels mode flips, the active depth changes,
+  // Shift is pressed/released, or the selection changes (so narrowing to the
+  // selected nodes — or back to depth bands when it clears — repaints live while
+  // Alt is held). Instead of `graph.refresh()` — which disposes and rebuilds
+  // *every* node sprite — `applyLabelsToGraph` walks the mounted nodes and
+  // adds/removes only the labels that changed (see `labelSync`). The idle
   // controller is woken so the scene change paints; the d3 engine is untouched.
   useEffect(() => {
     const graph = graphRef.current;
@@ -177,9 +182,10 @@ export function useLabelsOverlay(
       labelLevel,
       labelShift,
       labelMode,
+      selected,
     );
     getIdleController(graph)?.wakeForRefresh();
-  }, [labelMode, labelShift, labelLevel, graphRef, settingsRef]);
+  }, [labelMode, labelShift, labelLevel, selected, graphRef, settingsRef]);
 
   // Same physics as LOC, with a wider per-overlay base because file-name
   // labels are much longer than 3-digit LOC / health values and would

@@ -13,6 +13,9 @@ type Props = {
   labelMode: boolean;
   labelLevel: number;
   maxDepth: number;
+  // Number of nodes the user has selected. While Alt is held a non-zero count
+  // narrows the label overlay to just those nodes (depth scrolling disabled).
+  selectionCount: number;
   hoverNode: GraphNode | null;
 };
 
@@ -29,6 +32,7 @@ export function GraphHud({
   labelMode,
   labelLevel,
   maxDepth,
+  selectionCount,
   hoverNode,
 }: Props) {
   return (
@@ -53,11 +57,22 @@ export function GraphHud({
       )}
       {labelMode && !deadMode && !locMode && !healthMode && (
         <div className="loc-view-chip">
-          View: Labels · depth {labelLevel}
-          {maxDepth > 0 && ` / ${maxDepth}`}
-          <span style={{ opacity: 0.7, marginLeft: 8 }}>
-            (alt+wheel to scroll)
-          </span>
+          {selectionCount > 0 ? (
+            <>
+              View: Labels · {selectionCount} selected
+              <span style={{ opacity: 0.7, marginLeft: 8 }}>
+                (showing selected nodes)
+              </span>
+            </>
+          ) : (
+            <>
+              View: Labels · depth {labelLevel}
+              {maxDepth > 0 && ` / ${maxDepth}`}
+              <span style={{ opacity: 0.7, marginLeft: 8 }}>
+                (alt+wheel to scroll)
+              </span>
+            </>
+          )}
         </div>
       )}
       {hoverNode && <HealthTooltip node={hoverNode} />}

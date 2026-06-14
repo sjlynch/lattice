@@ -148,14 +148,17 @@ asking for fixes/reviews:
   `root.userData`) and keeps `labelsRegistry` in lock-step — the halo pattern,
   applied to labels.
 - `labelSync.ts` — `applyLabelsToGraph(graph, depths, settings, depth, shift,
-  enabled)`: the in-place delta walker for the Alt overlay (mirrors
+  enabled, selectedIds)`: the in-place delta walker for the Alt overlay (mirrors
   `selectionHaloSync`). Reaches each mounted node's `__threeObj` and calls
   `applyNodeLabelState`, so changing the depth band or the Shift (file-label)
   gate toggles only the labels that changed — **no `graph.refresh()`**, which
   would dispose and rebuild every node sprite. `enabled` false (Alt released)
-  passes a band no node occupies, stripping all labels. Driven by
-  `useLabelsOverlay`'s depth/Shift/mode effect, which then wakes the idle
-  controller so the change paints.
+  passes a band no node occupies, stripping all labels. **Selection override:**
+  when `selectedIds` is non-empty (and Alt held) the overlay shows the labels of
+  exactly those nodes and no others — depth band + Shift gate ignored (see
+  `shouldShowLabel` in `labelsOverlay`). Driven by `useLabelsOverlay`'s
+  depth/Shift/mode/selection effect, which then wakes the idle controller so the
+  change paints.
 - `deadCodeOverlay.ts` — `spriteForDeadCode(node, settings)` for the `D`-hold
   overlay. A pure recolor (no label/connector, so no registry/RAF) keyed off
   `node.healthDetails.deadCode`: green=reachable, red=dead, grey=entry/uncertain

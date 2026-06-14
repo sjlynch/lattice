@@ -118,6 +118,9 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
       refs.labelLevelRef.current,
       d,
       refs.labelShiftRef.current,
+      // With an active selection, the Alt overlay shows only the selected
+      // nodes' labels — keep that true through full sprite rebuilds too.
+      refs.selectedRef.current,
     );
   }
 

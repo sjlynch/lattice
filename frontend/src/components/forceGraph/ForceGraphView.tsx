@@ -141,6 +141,7 @@ export function ForceGraphView({
     hiddenExts,
     healthMode,
     onHealthModeChange,
+    selected,
   });
 
   useForceGraphInitialization(containerRef, graphRef, {
@@ -285,6 +286,7 @@ export function ForceGraphView({
         labelMode={labelMode}
         labelLevel={labelLevel}
         maxDepth={labelShift ? maxDepthRef.current : maxDirDepthRef.current}
+        selectionCount={selected.size}
         // Suppress the file hover tooltip while the right-click menu is open
         // so it doesn't sit over the menu. Gating (rather than a one-shot
         // clear) also keeps it from flickering back if the raycaster re-hovers

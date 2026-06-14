@@ -24,7 +24,9 @@ type SimNodeWithObj = GraphNode & { [OBJ_BIND_ATTR]?: THREE.Object3D };
 
 // Reconcile every mounted node's label against the current overlay state.
 // `enabled` false (Alt released) drives `activeDepth` to a band no node sits on,
-// so every label is stripped. Depths come from the precomputed id→depth map.
+// so every label is stripped. When `selectedIds` is non-empty the overlay shows
+// only those nodes' labels (depth band + Shift gate ignored) — see
+// `shouldShowLabel`. Depths come from the precomputed id→depth map.
 export function applyLabelsToGraph(
   graph: ForceGraph3DInstance,
   nodeDepths: Map<string, number>,
@@ -32,15 +34,19 @@ export function applyLabelsToGraph(
   activeDepth: number,
   showFileLabels: boolean,
   enabled: boolean,
+  selectedIds: Set<string>,
 ): void {
   const getGraphData = graph.graphData as unknown as () => { nodes?: object[] };
   const nodes = (getGraphData.call(graph)?.nodes ?? []) as SimNodeWithObj[];
   // A band no real node occupies (depths are >= 0) → every label is removed.
   const band = enabled ? activeDepth : -1;
+  // The selection only narrows the overlay while Alt is held; with Alt released
+  // pass none so every label is stripped regardless of what's selected.
+  const sel = enabled ? selectedIds : null;
   for (const node of nodes) {
     const root = node[OBJ_BIND_ATTR];
     if (!root) continue;
     const depth = nodeDepths.get(node.id) ?? 0;
-    applyNodeLabelState(root, node, settings, band, depth, showFileLabels);
+    applyNodeLabelState(root, node, settings, band, depth, showFileLabels, sel);
   }
 }

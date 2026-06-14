@@ -73,15 +73,21 @@ function makeNameSprite(text: string, color: string, baseH: number): THREE.Sprit
 }
 
 // Whether this node should carry a name label for the current Alt-overlay
-// state: it must sit on the active depth band, and file nodes only when Shift
-// is held (Alt alone shows directory names only). Ghosts never get labels.
+// state. Ghosts never get labels. When the user has an active selection
+// (`selectedIds` non-empty) the overlay narrows to exactly those nodes —
+// their labels show regardless of depth band or the Shift file gate, and no
+// other node gets one. With no selection it falls back to the depth-band
+// behavior: the node must sit on the active depth band, and file nodes only
+// when Shift is held (Alt alone shows directory names only).
 function shouldShowLabel(
   node: GraphNode,
   activeDepth: number,
   nodeDepth: number,
   showFileLabels: boolean,
+  selectedIds?: Set<string> | null,
 ): boolean {
   if (isGhost(node)) return false;
+  if (selectedIds && selectedIds.size > 0) return selectedIds.has(node.id);
   if (nodeDepth !== activeDepth) return false;
   if (node.kind === 'file' && !showFileLabels) return false;
   return true;
@@ -107,8 +113,9 @@ export function applyNodeLabelState(
   activeDepth: number,
   nodeDepth: number,
   showFileLabels: boolean,
+  selectedIds?: Set<string> | null,
 ): void {
-  const want = shouldShowLabel(node, activeDepth, nodeDepth, showFileLabels);
+  const want = shouldShowLabel(node, activeDepth, nodeDepth, showFileLabels, selectedIds);
   const existing = root.userData[LABEL_ENTRY] as FloatingLabelEntry | undefined;
   if (want) {
     if (existing) return;
