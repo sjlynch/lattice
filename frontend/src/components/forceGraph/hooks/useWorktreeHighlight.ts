@@ -3,6 +3,7 @@ import type { ForceGraph3DInstance } from '3d-force-graph';
 import type * as THREE from 'three';
 import { fetchWorktreeModified, type GraphNode } from '../../../api';
 import { taskColor } from '../../../taskColors';
+import { setNodeChangeRingsVisible } from '../changeRing';
 import type { GraphSettings } from '../graphSettings';
 import { getIdleController } from '../idleController';
 import { setNodeWorktreeRing } from '../worktreeRing';
@@ -43,6 +44,22 @@ export function useWorktreeHighlight(
   // Guards against a stale fetch (key released before it resolved) painting
   // rings after the fact.
   const activeRef = useRef(false);
+
+  // Toggle every timeline change-ring across the graph. While `W` is held we
+  // hide them so they don't stack with the worktree rings (the two ring
+  // styles are too hard to tell apart side by side).
+  const setChangeRingsVisible = useCallback(
+    (visible: boolean) => {
+      const graph = graphRef.current;
+      if (!graph) return;
+      for (const node of graphNodes(graph)) {
+        const root = node.__threeObj;
+        if (root) setNodeChangeRingsVisible(root, visible);
+      }
+      getIdleController(graph)?.wakeForRefresh();
+    },
+    [graphRef],
+  );
 
   const clearRings = useCallback(() => {
     const graph = graphRef.current;
@@ -92,6 +109,9 @@ export function useWorktreeHighlight(
   const activate = useCallback(async () => {
     if (activeRef.current || !activeFolder) return;
     activeRef.current = true;
+    // Suppress the git change-rings immediately (before the fetch resolves)
+    // so the worktree rings are the only rings on screen while `W` is held.
+    setChangeRingsVisible(false);
     try {
       const tasks = await fetchWorktreeModified(activeFolder);
       if (!activeRef.current) return; // released while fetching
@@ -110,7 +130,9 @@ export function useWorktreeHighlight(
     if (!activeRef.current) return;
     activeRef.current = false;
     clearRings();
-  }, [clearRings]);
+    // Restore the git change-rings hidden on activate.
+    setChangeRingsVisible(true);
+  }, [clearRings, setChangeRingsVisible]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {

@@ -17,6 +17,23 @@ import type { ChangeKind } from './changeRingTextures';
 
 export type { ChangeKind } from './changeRingTextures';
 
+// Tag set on every timeline change-ring sprite so the `W` worktree overlay
+// can momentarily hide them (the two ring styles are hard to tell apart
+// when stacked, so worktree view suppresses change rings while held).
+const CHANGE_RING_TAG = 'lattice:changeRing';
+
+// Hide / show all timeline change-ring sprites under a node's root Group.
+// Walks descendants because the change ring is nested inside the base
+// composite group, not a direct child of the root.
+export function setNodeChangeRingsVisible(
+  root: THREE.Object3D,
+  visible: boolean,
+): void {
+  root.traverse((obj) => {
+    if (obj.userData[CHANGE_RING_TAG]) obj.visible = visible;
+  });
+}
+
 // Wrap an existing sprite in a parent group with a colored ring sprite
 // behind it. The ring sits at renderOrder=0 so the source sprite (which
 // is renderOrder>=1) paints over the inner part of the disc.
@@ -32,6 +49,7 @@ export function withChangeRing(
   const s = baseSize * 1.6;
   ring.scale.set(s, s, 1);
   ring.renderOrder = 11;
+  ring.userData[CHANGE_RING_TAG] = true;
   group.add(ring);
   group.add(child);
   return group;

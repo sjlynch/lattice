@@ -20,12 +20,12 @@ const TEX_SIZE = 128;
 // cleanly. The glow gradient peaks at the ring radius and the colored band
 // spans GRADIENT_INNER_STOP..GRADIENT_OUTER_STOP of its sweep.
 const RING_RADIUS = TEX_SIZE * 0.42;
-const RING_WIDTH = TEX_SIZE * 0.06;
+const RING_WIDTH = TEX_SIZE * 0.09;
 const RING_GLOW_SPREAD = RING_WIDTH * 1.5;
 const RING_GRADIENT_INNER_STOP = 0.45;
 const RING_GRADIENT_OUTER_STOP = 0.55;
-// Suffix appended to the ring color to give the soft glow band ~67% alpha.
-const RING_GLOW_ALPHA = 'aa';
+// Suffix appended to the ring color to give the soft glow band ~87% alpha.
+const RING_GLOW_ALPHA = 'dd';
 
 // Ghost (deleted) disc: a small grey circle inset from the canvas edge.
 const GHOST_RADIUS = TEX_SIZE / 2 - 14;

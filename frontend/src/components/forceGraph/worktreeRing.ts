@@ -35,20 +35,21 @@ function ringTexture(color: string): THREE.CanvasTexture {
   // Soft glow so the ring reads against a similarly-colored sprite.
   const grad = ctx.createRadialGradient(cx, cy, SIZE * 0.3, cx, cy, SIZE * 0.5);
   grad.addColorStop(0, rgba(col, 0));
-  grad.addColorStop(0.7, rgba(col, 0.28));
+  grad.addColorStop(0.7, rgba(col, 0.42));
   grad.addColorStop(1, rgba(col, 0));
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, SIZE, SIZE);
 
-  // Two concentric crisp strokes = the distinct "worktree" look.
+  // Two concentric crisp strokes = the distinct "worktree" look. Drawn
+  // thicker/brighter so they stand off the (now darker, flat) file bodies.
   ctx.strokeStyle = rgba(col, 1);
-  ctx.lineWidth = SIZE * 0.035;
+  ctx.lineWidth = SIZE * 0.06;
   ctx.beginPath();
   ctx.arc(cx, cy, SIZE * 0.46, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.lineWidth = SIZE * 0.028;
+  ctx.lineWidth = SIZE * 0.048;
   ctx.beginPath();
-  ctx.arc(cx, cy, SIZE * 0.36, 0, Math.PI * 2);
+  ctx.arc(cx, cy, SIZE * 0.35, 0, Math.PI * 2);
   ctx.stroke();
 
   tex = new THREE.CanvasTexture(canvas);
