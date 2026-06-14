@@ -2,17 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { TerminalSquare, FileText, BarChart3, Cpu } from 'lucide-react';
 import { Modal } from './Modal';
 import {
-  ensureProjectInstrumentation,
-  fetchUserSettings,
-  patchGlobalSettings,
-  patchUserSettings,
   type StartupTerminal,
   type TerminalDefaultHarness,
   type TerminalLaunchSettings,
-  type UserSettings,
 } from '../api';
 import {
-  cleanStartupTerminals,
   StartupTerminalsTab,
   type StartupTerminalsTabHandle,
 } from './settings/StartupTerminalsTab';
@@ -25,6 +19,8 @@ import {
   type MetricsIgnoredExtsTabHandle,
 } from './settings/MetricsIgnoredExtsTab';
 import { AgentsTab, type AgentsTabHandle } from './settings/AgentsTab';
+import { useSettingsDrafts } from './settings/useSettingsDrafts';
+import { saveSettings } from './settings/saveSettings';
 
 type Props = {
   open: boolean;
@@ -155,12 +151,7 @@ export function SettingsDialog({
   const [tab, setTab] = useState<Tab>('terminals');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [terminalDefaultHarnessDraft, setTerminalDefaultHarnessDraft] =
-    useState<TerminalDefaultHarness>(terminalLaunchSettings.terminalDefaultHarness);
-  const [terminalClaudeSkipPermissionsDraft, setTerminalClaudeSkipPermissionsDraft] =
-    useState(terminalLaunchSettings.terminalClaudeSkipPermissions);
-  // Default ON (opt-out) — absent setting counts as enabled.
-  const [instrumentClaudeDraft, setInstrumentClaudeDraft] = useState(true);
+  const drafts = useSettingsDrafts(open, activeFolder, terminalLaunchSettings);
   const startupTerminalsRef = useRef<StartupTerminalsTabHandle>(null);
   const envNotesRef = useRef<EnvNotesTabHandle>(null);
   const metricsIgnoredExtsRef = useRef<MetricsIgnoredExtsTabHandle>(null);
@@ -170,68 +161,29 @@ export function SettingsDialog({
     if (open) setError(null);
   }, [open, startupTerminals]);
 
-  useEffect(() => {
-    if (!open) return;
-    setTerminalDefaultHarnessDraft(terminalLaunchSettings.terminalDefaultHarness);
-    setTerminalClaudeSkipPermissionsDraft(
-      terminalLaunchSettings.terminalClaudeSkipPermissions,
-    );
-  }, [open, terminalLaunchSettings]);
-
-  // The instrument toggle isn't part of terminalLaunchSettings, so fetch it
-  // fresh when the dialog opens.
-  useEffect(() => {
-    if (!open || !activeFolder) return;
-    let cancelled = false;
-    fetchUserSettings(activeFolder)
-      .then((s) => {
-        if (!cancelled) {
-          setInstrumentClaudeDraft(s.instrumentProjectClaudeSessions !== false);
-        }
-      })
-      .catch(() => { /* keep current draft */ });
-    return () => { cancelled = true; };
-  }, [open, activeFolder]);
-
   const save = async () => {
     if (!activeFolder) return;
     setSaving(true);
     setError(null);
     try {
-      const cleaned =
-        startupTerminalsRef.current?.getCleanedTerminals() ??
-        cleanStartupTerminals(startupTerminals);
-      const terminalLaunchPatch: TerminalLaunchSettings = {
-        terminalDefaultHarness: terminalDefaultHarnessDraft,
-        terminalClaudeSkipPermissions: terminalClaudeSkipPermissionsDraft,
-      };
-      const patch: Partial<UserSettings> = {
-        startupTerminals: cleaned,
-        ...terminalLaunchPatch,
-        instrumentProjectClaudeSessions: instrumentClaudeDraft,
-      };
-      // Only touch worktreeEnvNotes if the env fetch finished — otherwise we'd
-      // overwrite the saved overrides with an empty map.
-      const envNotesPatch = envNotesRef.current?.getWorktreeEnvNotesPatch();
-      if (envNotesPatch !== undefined) patch.worktreeEnvNotes = envNotesPatch;
-      const metricsExtsPatch =
-        metricsIgnoredExtsRef.current?.getMetricsIgnoredExtsPatch();
-      if (metricsExtsPatch !== undefined) {
-        patch.metricsIgnoredExts = metricsExtsPatch;
-      }
-      await patchUserSettings(activeFolder, patch);
-      // Apply the install/remove of project hooks per the just-saved toggle.
-      void ensureProjectInstrumentation(activeFolder);
-      // Machine-global settings go to a separate endpoint, not userSettings.
-      const maxAgentsPatch = agentsRef.current?.getMaxConcurrentAgentsPatch();
-      if (maxAgentsPatch !== undefined) {
-        await patchGlobalSettings({ maxConcurrentAgents: maxAgentsPatch });
-      }
-      onStartupTerminalsChange(cleaned);
-      onTerminalLaunchSettingsChange(terminalLaunchPatch);
-      if (metricsExtsPatch !== undefined) {
-        await onMetricsIgnoredExtsChange(metricsExtsPatch);
-      }
+      await saveSettings({
+        activeFolder,
+        startupTerminals,
+        drafts: {
+          terminalDefaultHarness: drafts.terminalDefaultHarness,
+          terminalClaudeSkipPermissions: drafts.terminalClaudeSkipPermissions,
+          instrumentClaude: drafts.instrumentClaude,
+        },
+        handles: {
+          startupTerminals: startupTerminalsRef.current,
+          envNotes: envNotesRef.current,
+          metricsIgnoredExts: metricsIgnoredExtsRef.current,
+          agents: agentsRef.current,
+        },
+        onStartupTerminalsChange,
+        onTerminalLaunchSettingsChange,
+        onMetricsIgnoredExtsChange,
+      });
       onClose();
     } catch (err) {
       setError((err as Error).message || 'Failed to save settings');
@@ -278,14 +230,14 @@ export function SettingsDialog({
           {tab === 'terminals' && (
             <>
               <TerminalDefaultSettingsSection
-                terminalDefaultHarness={terminalDefaultHarnessDraft}
-                terminalClaudeSkipPermissions={terminalClaudeSkipPermissionsDraft}
-                onTerminalDefaultHarnessChange={setTerminalDefaultHarnessDraft}
-                onTerminalClaudeSkipPermissionsChange={setTerminalClaudeSkipPermissionsDraft}
+                terminalDefaultHarness={drafts.terminalDefaultHarness}
+                terminalClaudeSkipPermissions={drafts.terminalClaudeSkipPermissions}
+                onTerminalDefaultHarnessChange={drafts.setTerminalDefaultHarness}
+                onTerminalClaudeSkipPermissionsChange={drafts.setTerminalClaudeSkipPermissions}
               />
               <ClaudeInstrumentationSection
-                enabled={instrumentClaudeDraft}
-                onChange={setInstrumentClaudeDraft}
+                enabled={drafts.instrumentClaude}
+                onChange={drafts.setInstrumentClaude}
               />
             </>
           )}
