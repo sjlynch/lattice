@@ -10,11 +10,28 @@ import type { WorldXZ } from './types';
 import {
   worldX,
   worldZ,
+  cellX,
+  cellZ,
   cellGrid,
   ensureCapacity,
   recycleGrid,
   getBucket,
 } from './scratchBuffers';
+
+// Pack a (cx, cz) integer cell coordinate into a single Map key. cx/cz are
+// `floor(world / cellSize)`; at Lattice's world scale (graph spans a few
+// thousand units, cellSize = minDist ≈ 27–165) they stay within a few thousand
+// of the origin. BIAS shifts them non-negative and STRIDE must exceed the
+// largest possible `cz + BIAS`; with BIAS = 2e6 and STRIDE = 4e6 the key is
+// unique for any cell coordinate in [-2e6, 2e6) (key max ≈ 4e6·4e6 = 1.6e13,
+// far under Number.MAX_SAFE_INTEGER ≈ 9e15) — orders of magnitude beyond any
+// real graph. The key is an opaque per-cell bucket identity: a pure
+// representation change from the old `"cx,cz"` string, same neighbour set.
+const CELL_KEY_BIAS = 2_000_000;
+const CELL_KEY_STRIDE = 4_000_000;
+function cellKey(cx: number, cz: number): number {
+  return (cx + CELL_KEY_BIAS) * CELL_KEY_STRIDE + (cz + CELL_KEY_BIAS);
+}
 
 export function zeroDistanceJitter(i: number, j: number): WorldXZ {
   const angle = (i * 12.9898 + j * 78.233) % (Math.PI * 2);
@@ -32,7 +49,11 @@ export function buildSpatialGridFromScratch(
   for (let i = 0; i < count; i++) {
     const cx = Math.floor(worldX[i] / cellSize);
     const cz = Math.floor(worldZ[i] / cellSize);
-    const key = `${cx},${cz}`;
+    // Stash the integer cell coords so the pairwise pass below can reuse them
+    // instead of recomputing the same floor/divide.
+    cellX[i] = cx;
+    cellZ[i] = cz;
+    const key = cellKey(cx, cz);
     let bucket = cellGrid.get(key);
     if (!bucket) {
       bucket = getBucket();
@@ -50,11 +71,13 @@ export function pairwiseGrid(
 ): void {
   const minDist2 = minDist * minDist;
   for (let i = 0; i < count; i++) {
-    const cx = Math.floor(worldX[i] / minDist);
-    const cz = Math.floor(worldZ[i] / minDist);
+    // Reuse the cell coords computed during the build pass (cellSize === minDist
+    // for the live path), so no second floor/divide per label.
+    const cx = cellX[i];
+    const cz = cellZ[i];
     for (let dx = -1; dx <= 1; dx++) {
       for (let dz = -1; dz <= 1; dz++) {
-        const bucket = cellGrid.get(`${cx + dx},${cz + dz}`);
+        const bucket = cellGrid.get(cellKey(cx + dx, cz + dz));
         if (!bucket) continue;
         for (let bi = 0; bi < bucket.length; bi++) {
           const j = bucket[bi];

@@ -16,6 +16,11 @@ export const BEAM_END_FADE_MS = 700;
 // Final fade ramp duration (opacity → 0 over the last stretch of the TTL).
 export const FADE_MS = 700;
 export const BEAM_MAX_OPACITY = 0.85;
+// Endpoint movement (graph units) below which a beam's geometry is NOT re-
+// uploaded to the GPU (Part B). Sub-pixel at any sane zoom, so a persistent beam
+// over stationary file nodes stops re-uploading unchanged geometry every frame
+// while the opacity/fade update still runs.
+export const BEAM_MOVE_EPS = 0.01;
 // Per-frame easing of the node toward its target (0..1; higher = snappier).
 export const EASE = 0.12;
 // Even slower easing for the height, so the hover line stays steady.

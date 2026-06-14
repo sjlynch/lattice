@@ -37,18 +37,37 @@ export function updateAgentLabel(
 ): void {
   if (!agent.currentFile) return;
   const text = baseName(agent.currentFile);
+  let rebuilt = false;
   if (!agent.label || agent.labelText !== text) {
     if (agent.label) group.remove(agent.label);
     const label = buildAgentLabel(text, agent.color, labelSize);
     agent.label = label;
     agent.labelText = text;
     group.add(label);
+    rebuilt = true;
+  }
+  // The label position is a pure function of agent.pos + nodeSize. Skip the
+  // position.set when neither changed since last call (and the sprite wasn't
+  // just rebuilt to a default position) — once an agent settles its label stops
+  // moving, so this is a no-op every idle frame otherwise (Part D).
+  if (
+    !rebuilt &&
+    agent.labelPosX === agent.pos.x &&
+    agent.labelPosY === agent.pos.y &&
+    agent.labelPosZ === agent.pos.z &&
+    agent.labelNodeSize === nodeSize
+  ) {
+    return;
   }
   agent.label.position.set(
     agent.pos.x + nodeSize * LABEL_OFFSET_X_FACTOR,
     agent.pos.y + nodeSize * LABEL_OFFSET_Y_FACTOR,
     agent.pos.z,
   );
+  agent.labelPosX = agent.pos.x;
+  agent.labelPosY = agent.pos.y;
+  agent.labelPosZ = agent.pos.z;
+  agent.labelNodeSize = nodeSize;
 }
 
 // Drop the label (only reached before the agent's first activity, since the

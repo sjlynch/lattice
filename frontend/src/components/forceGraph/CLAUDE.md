@@ -308,6 +308,65 @@ Three useEffects (inside the overlay sub-hooks) react to settings changes:
 - Filter (`hiddenExts`): swap `nodeVisibility`/`linkVisibility` accessors.
   No restart.
 
+## Render-path perf invariants (read before touching overlay/beam/label hot paths)
+
+Pure CPU/allocation optimizations on the graph render path; each is *visually
+identical* to what it replaced. Preserve these invariants when editing the
+files below.
+
+- **Shared, module-owned label/connector resources (caching invariant).**
+  Toggling an `H`/`Z`/Alt overlay calls `graph.refresh()`, which rebuilds every
+  node object. The immutable Three.js pieces are cached at module scope so a
+  refresh over hundreds/thousands of files no longer allocates per node:
+  `floatingLabelSprite.ts` caches the floating-label `SpriteMaterial` by its
+  texture (WeakMap — the material depends only on the texture map), the
+  connector `LineBasicMaterial` by `(color, opacity)`, `THREE.Color` by hex, and
+  a connector-geometry **template** by its constant endpoints; `metricOverlay
+  Factory.ts` shares ONE label-texture cache across the health + LOC overlays
+  (identical number glyphs aren't duplicated). **INVARIANT: anything cached here
+  is module-owned and must NEVER be disposed per-node.** Each connector line
+  gets its OWN `clone()` of the geometry template (the repulsion step mutates its
+  upper endpoint per-frame, so it can't be one shared instance) — that clone is
+  the *only* thing a per-node teardown owns, so `labelsOverlay.disposeLabelEntry`
+  frees the cloned geometry and nothing else (never the shared materials/
+  textures). Same rule for agent labels (`agentOverlayLabels.ts`) — their
+  textures/materials come from the same caches.
+- **Skip redundant per-frame work in the APL (beams/labels/nodes).**
+  `agentOverlayBeams.updateBeam` re-uploads beam geometry to the GPU only when an
+  endpoint moved beyond `BEAM_MOVE_EPS` (caching the last endpoints on the beam),
+  so a persistent beam over stationary nodes stops re-uploading identical
+  geometry every frame — but the opacity/fade update still runs every frame so
+  fading beams ramp out correctly. In `AgentOverlay.tick`, the node easing +
+  `node.position.copy` run only while the node is still > `REST_EPS` from target
+  (the same criterion that drives the `agents` idle reason; the < `REST_EPS`
+  residual is sub-pixel), each beam's file node is resolved ONCE in the centroid
+  pass and stashed on `beam.targetNode` for reuse in the geometry pass (one
+  `pathIndex.get` per beam, not two), and `updateAgentLabel` skips its
+  `position.set` when `agent.pos` + `nodeSize` are unchanged since last call. Do
+  not reintroduce a per-frame node/label/beam write that runs while everything is
+  at rest — it defeats render-on-demand even though the loop is duty-cycled.
+- **Floating-label scale recompute is memoised.** Each floating-label sprite's
+  `onBeforeRender` early-returns from the camera-distance scale recompute (the
+  `getWorldPosition`-distance-`sqrt`-`scale.set`) when neither the camera nor the
+  sprite's world position moved beyond `SCALE_RECOMPUTE_EPS` since the last
+  frame. The scale is a pure function of distance, so an unchanged distance gives
+  an identical scale.
+- **Label-physics spatial grid uses an integer cell key.** `labelPhysics/
+  spatialGrid.ts` keys `cellGrid` by a packed integer
+  `(cx + BIAS) * STRIDE + (cz + BIAS)` instead of a `"cx,cz"` string, so the
+  hottest per-frame loop (`repelLabels`, every frame while a label/`H`/`Z`
+  overlay is held and labels move) allocates no per-cell key strings. **The key
+  is an opaque per-cell bucket identity** — a pure representation change, same
+  neighbour set, same forces. `BIAS = 2e6` / `STRIDE = 4e6` are collision-free
+  for any cell coordinate in `[-2e6, 2e6)` (key max ≈ 1.6e13 ≪
+  `Number.MAX_SAFE_INTEGER`); real graphs stay within a few thousand cells. The
+  build pass also stashes each label's integer `(cx, cz)` into the reusable
+  `cellX`/`cellZ` scratch `Int32Array`s (grown in lockstep by `ensureCapacity`)
+  and the pairwise pass reuses them instead of recomputing the floor/divide. The
+  grid is rebuilt from scratch each frame (no cross-frame state); the
+  `labelRepulsion` tests assert on force results, not key form, so they stay
+  green.
+
 ## Camera
 
 `up = (0,1,0)`; polar clamped to `[0, 0.75π]`. OrbitControls (not Trackball).

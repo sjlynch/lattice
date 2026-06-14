@@ -234,7 +234,11 @@ export class AgentOverlay {
         // A finite endAt means the beam is on its fade-out clock; keep painting
         // until it expires. A persistent (Infinity) beam at rest needs nothing.
         if (beam.endAt !== Infinity) moving = true;
+        // Resolve the file node ONCE here and stash it on the beam so the
+        // geometry pass below reuses it instead of a second pathIndex lookup
+        // (Part D).
         const node = this.pathIndex.get(norm);
+        beam.targetNode = node;
         if (node) {
           sx += node.x ?? 0;
           sz += node.z ?? 0;
@@ -247,19 +251,25 @@ export class AgentOverlay {
       // settles right over its files instead of stalling a few units short.
       const tx = n > 0 ? sx / n : agent.pos.x;
       const tz = n > 0 ? sz / n : agent.pos.z;
+      // Ease + push to the node sprite only while it's still more than REST_EPS
+      // from its target (the same criterion that drives `moving`). Once within
+      // REST_EPS it's at rest: skip the easing AND the node.position.copy, so a
+      // settled node doesn't re-dirty its matrix every frame while the loop runs
+      // for some other reason (Part B). The residual (< REST_EPS) is sub-pixel —
+      // the same settle tolerance the loop already idles at.
       if (
         Math.abs(tx - agent.pos.x) > REST_EPS ||
         Math.abs(tz - agent.pos.z) > REST_EPS ||
         Math.abs(hoverY - agent.pos.y) > REST_EPS
       ) {
         moving = true;
+        agent.pos.set(
+          lowPassStep(agent.pos.x, tx, EASE),
+          lowPassStep(agent.pos.y, hoverY, HOVER_EASE),
+          lowPassStep(agent.pos.z, tz, EASE),
+        );
+        agent.node.position.copy(agent.pos);
       }
-      agent.pos.set(
-        lowPassStep(agent.pos.x, tx, EASE),
-        lowPassStep(agent.pos.y, hoverY, HOVER_EASE),
-        lowPassStep(agent.pos.z, tz, EASE),
-      );
-      agent.node.position.copy(agent.pos);
 
       // Show the last file the agent viewed/edited for as long as the session
       // is alive — the label persists through idle gaps and only clears when
@@ -271,9 +281,10 @@ export class AgentOverlay {
         clearAgentLabel(this.group, agent);
       }
 
-      // Update beam geometries + opacity.
+      // Update beam geometries + opacity. Reuse the node resolved in the
+      // centroid pass above (Part D) rather than a second pathIndex lookup.
       for (const beam of agent.beams.values()) {
-        const node = this.pathIndex.get(beam.normPath);
+        const node = beam.targetNode;
         const a = agent.pos;
         if (node) {
           this.tmpB.set(node.x ?? a.x, node.y ?? a.y, node.z ?? a.z);

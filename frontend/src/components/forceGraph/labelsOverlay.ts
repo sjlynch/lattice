@@ -94,11 +94,13 @@ function shouldShowLabel(
 }
 
 function disposeLabelEntry(entry: FloatingLabelEntry): void {
-  // The texture is shared via `nameLabelTextureCache`, so only the per-sprite
-  // material + the connector's own geometry/material are ours to free.
-  entry.label.material.dispose();
+  // The label texture (nameLabelTextureCache), the sprite material (shared per
+  // texture) and the connector's line material (shared per color) are all
+  // module-owned caches in floatingLabelSprite/labelTexture — disposing any of
+  // them here would break every other label still using them. The connector
+  // geometry is the only thing this entry solely owns (a per-line clone of the
+  // shared template), so it's the only thing we free. (Part A invariant.)
   entry.line.geometry.dispose();
-  (entry.line.material as THREE.Material).dispose();
 }
 
 // Add or remove a node's floating name label as a sibling child of its root

@@ -31,6 +31,13 @@ const METRIC_LABEL_HIT_BOUNDS = {
   maxV: 1,
 };
 
+// ONE label-texture cache shared across ALL metric overlays (health + LOC), so
+// identical number textures (e.g. "42" in the same color) aren't duplicated per
+// overlay — the rendered glyph is a pure function of (text, color, options) and
+// METRIC_LABEL_TEXTURE_OPTIONS is the same for both. Module-owned, like the
+// shared materials in floatingLabelSprite — never disposed per-node.
+const sharedMetricLabelTextureCache = createLabelTextureCache();
+
 export type MetricOverlayConfig = {
   overlayKey: string;
   labelY: number;
@@ -53,8 +60,6 @@ function metricShapeStyle(node: GraphNode, color: string, overlayKey: string): E
 export function createMetricOverlaySpriteFactory(
   config: MetricOverlayConfig,
 ): (node: GraphNode, settings: GraphSettings) => THREE.Object3D {
-  const textureCache = createLabelTextureCache();
-
   return (node, settings) => {
     if (node.kind !== 'file') return spriteFor(node, settings);
 
@@ -79,7 +84,7 @@ export function createMetricOverlaySpriteFactory(
     group.add(line);
 
     const texture = buildMeasuredLabelTexture(
-      textureCache,
+      sharedMetricLabelTextureCache,
       String(value),
       color,
       METRIC_LABEL_TEXTURE_OPTIONS,

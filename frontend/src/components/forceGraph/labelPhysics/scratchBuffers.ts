@@ -18,6 +18,11 @@ export let worldX: Float32Array = new Float32Array(0);
 export let worldZ: Float32Array = new Float32Array(0);
 export let fx: Float32Array = new Float32Array(0);
 export let fz: Float32Array = new Float32Array(0);
+// Integer cell coordinates per label, written by the grid-build pass and
+// reused by the pairwise pass so the floor/divide isn't recomputed (see
+// spatialGrid.ts). Sized in lockstep with the float buffers below.
+export let cellX: Int32Array = new Int32Array(0);
+export let cellZ: Int32Array = new Int32Array(0);
 
 // Entry list + temp vector collected once per tick by `repelLabels`.
 export const entries: RepulsionEntry[] = [];
@@ -25,8 +30,10 @@ export const tmpVec = new THREE.Vector3();
 
 // `cellGrid` is cleared and rebuilt each call; its bucket arrays come
 // from `bucketPool` (reused) rather than being freshly allocated, so a
-// settled scene's per-frame allocations are flat.
-export const cellGrid = new Map<string, number[]>();
+// settled scene's per-frame allocations are flat. Keyed by a packed integer
+// cell identity (see `cellKey` in spatialGrid.ts) rather than a `"cx,cz"`
+// string, so the hot loop allocates no per-cell key strings.
+export const cellGrid = new Map<number, number[]>();
 const bucketPool: number[][] = [];
 
 export function ensureCapacity(n: number): void {
@@ -36,6 +43,8 @@ export function ensureCapacity(n: number): void {
   worldZ = new Float32Array(newCap);
   fx = new Float32Array(newCap);
   fz = new Float32Array(newCap);
+  cellX = new Int32Array(newCap);
+  cellZ = new Int32Array(newCap);
   capacity = newCap;
 }
 
