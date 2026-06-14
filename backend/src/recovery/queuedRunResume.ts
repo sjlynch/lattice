@@ -14,6 +14,7 @@
 
 import { listTasks } from '../tasks.js';
 import { enqueueTaskRun } from '../routes/tasks/queuedSpawn.js';
+import { isFreshlyRunnable } from '../routes/tasks/startTask.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';
 
 export async function resumeQueuedTaskRuns(
@@ -21,7 +22,11 @@ export async function resumeQueuedTaskRuns(
 ): Promise<void> {
   await forEachKnownProjectSafely('resumeQueuedTaskRuns', async (repoRoot) => {
     const tasks = await listTasks(repoRoot);
-    const queued = tasks.filter((t) => t.status === 'open' && t.runQueued);
+    // Re-enqueue anything still flagged runQueued that is freshly runnable —
+    // an Open task, or an In Progress task with no worktree (started fresh
+    // from the In Progress lane). Leaving the latter unresumed would strand a
+    // permanent "queued" pill on the card.
+    const queued = tasks.filter((t) => t.runQueued && isFreshlyRunnable(t));
     for (const task of queued) {
       console.log(
         `[startup] re-enqueuing interrupted queued run for task ${task.id} ` +

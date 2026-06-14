@@ -285,7 +285,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
               }}
               onSave={(updates) => editTask(viewing.id, updates)}
               onRun={
-                viewing.status === 'open'
+                viewing.status === 'open' ||
+                (viewing.status === 'in_progress' && !viewing.worktreePath)
                   ? () => {
                       runTask(viewing);
                       setViewing(null);

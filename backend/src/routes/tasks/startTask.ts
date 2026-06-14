@@ -12,6 +12,15 @@ import type { AgentHarness } from '../../harnesses.js';
 import { selectHarnessCommand } from './harnessFactory.js';
 import { assignColorSlot } from './colorSlot.js';
 
+// A task can be started from scratch (fresh worktree + agent) when it is
+// Open, or In Progress with no worktree on record — the latter happens when a
+// task is dragged into the In Progress lane manually without ever running. In
+// both cases there is no existing worktree, so setupTaskWorktree creates one.
+export function isFreshlyRunnable(task: Task): boolean {
+  if (task.status === 'open') return true;
+  return task.status === 'in_progress' && !task.worktreePath;
+}
+
 export type StartTaskByIdResult = {
   task: Task;
   worktreePath: string;
@@ -49,8 +58,10 @@ export async function startTaskById(
 ): Promise<StartTaskByIdResult> {
   const task = await getTask(taskId);
   if (!task) throw new Error(`task ${taskId} not found`);
-  if (task.status !== 'open') {
-    throw new Error(`task ${taskId} is "${task.status}", expected "open"`);
+  if (!isFreshlyRunnable(task)) {
+    throw new Error(
+      `task ${taskId} is "${task.status}" with a worktree, expected a runnable task`,
+    );
   }
 
   const selectedHarness = selectHarnessCommand(task, {

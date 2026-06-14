@@ -5,6 +5,16 @@ import { TaskCard } from './TaskCard';
 import type { Lane as LaneDef } from './lanes';
 import { useLaneDropTargets, type LaneSlotProps } from './hooks/useLaneDropTargets';
 
+// A task can be run from scratch (▶ creates a fresh worktree + agent) when it
+// is an Open task, or an In Progress task that has no worktree yet — i.e. it
+// was dragged into the lane manually and never actually started. The latter
+// otherwise had no runnable button (resume needs an existing worktree), so the
+// only way to start it was to drag it back to Open first.
+function canRunFresh(laneId: TaskStatus, task: Task): boolean {
+  if (laneId === 'open') return true;
+  return laneId === 'in_progress' && !task.worktreePath;
+}
+
 // One lane in the kanban. Hosts drop targets for cross-lane drops and
 // per-position drop slots between cards. Lane background drops do a
 // status-only move (preserving the prior "drop anywhere" behavior); slot
@@ -134,12 +144,12 @@ export function Lane({
                   onDragEnd={onDragEnd}
                   onDelete={() => onDelete(t.id)}
                   onRun={
-                    lane.id === 'open' && !t.runQueued
+                    canRunFresh(lane.id, t) && !t.runQueued
                       ? () => onRun(t)
                       : undefined
                   }
                   onCancelQueuedRun={
-                    lane.id === 'open' && t.runQueued
+                    canRunFresh(lane.id, t) && t.runQueued
                       ? () => onCancelQueuedRun(t)
                       : undefined
                   }

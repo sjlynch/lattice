@@ -33,6 +33,9 @@ export function TaskDetailOverlay({
   function saveEdit() {
     const updates = prepareSave();
     if (updates) onSave(updates);
+    // Saving closes the overlay — clicking Save (or pressing Enter) is a
+    // "done editing" gesture, so dismiss rather than leaving it open.
+    onClose();
   }
 
   useEffect(() => {
