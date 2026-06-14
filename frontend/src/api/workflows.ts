@@ -12,6 +12,7 @@ import type {
   WorkflowRunResult,
   WorkflowRunStartOptions,
   WorkflowStep,
+  WorkflowVariable,
 } from './types';
 
 export async function fetchWorkflows(projectPath: string): Promise<Workflow[]> {
@@ -24,19 +25,20 @@ export async function createWorkflow(
   projectPath: string,
   name: string,
   steps: WorkflowStep[],
+  variables?: WorkflowVariable[],
 ): Promise<Workflow> {
   return asJson<Workflow>(
     await fetch('/api/workflows', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project: projectPath, name, steps }),
+      body: JSON.stringify({ project: projectPath, name, steps, variables }),
     }),
   );
 }
 
 export async function updateWorkflow(
   id: string,
-  updates: { name?: string; steps?: WorkflowStep[] },
+  updates: { name?: string; steps?: WorkflowStep[]; variables?: WorkflowVariable[] },
 ): Promise<Workflow> {
   return asJson<Workflow>(
     await fetch(`/api/workflows/${encodeURIComponent(id)}`, {

@@ -11,6 +11,7 @@ import type {
   Workflow,
   WorkflowStep,
   WorkflowSubscriber,
+  WorkflowVariable,
 } from './workflows/types.js';
 
 export type {
@@ -21,13 +22,23 @@ export type {
   WorkflowStepKind,
   WorkflowStepMode,
   WorkflowSubscriber,
+  WorkflowVariable,
 } from './workflows/types.js';
 export {
+  ensureUserInstructions,
   normalizeSteps,
+  normalizeVariableName,
+  normalizeVariables,
   normalizeWorkflowRunHarnessOverride,
   normalizeWorkflowStepHarness,
+  normalizeWorkflowVariables,
   normalizeWorkflows,
+  USER_INSTRUCTIONS_VAR,
 } from './workflows/normalization.js';
+export {
+  interpolateWorkflowVariables,
+  WORKFLOW_VARIABLE_PATTERN,
+} from './workflows/interpolate.js';
 export {
   WORKFLOWS_FILENAME,
   workflowsFile,
@@ -52,13 +63,14 @@ export async function createWorkflow(
   projectPath: string,
   name: string,
   steps: WorkflowStep[] | undefined,
+  variables?: WorkflowVariable[],
 ): Promise<Workflow> {
-  return workflowStore.createWorkflow(projectPath, name, steps);
+  return workflowStore.createWorkflow(projectPath, name, steps, variables);
 }
 
 export async function updateWorkflow(
   id: string,
-  updates: { name?: string; steps?: WorkflowStep[] },
+  updates: { name?: string; steps?: WorkflowStep[]; variables?: WorkflowVariable[] },
 ): Promise<Workflow | null> {
   return workflowStore.updateWorkflow(id, updates);
 }

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { GitMerge, Play, Plus, Square, Trash2, UploadCloud } from 'lucide-react';
 import { DEFAULT_PROMPTS } from './defaultPrompts';
 import { promptsWithProjectVariants } from './projectPromptVariants';
@@ -5,6 +6,7 @@ import type { WorkflowManager } from './hooks/useWorkflowManager';
 import { StepRow } from './StepRow';
 import { WorkflowEditorEmptyState } from './WorkflowEditorEmptyState';
 import { WorkflowRunStrip } from './WorkflowRunStrip';
+import { WorkflowVariablesPanel } from './WorkflowVariablesPanel';
 
 type Props = {
   manager: WorkflowManager;
@@ -25,6 +27,13 @@ export function WorkflowEditorPanel({ manager }: Props) {
   } = manager;
 
   const projectPrompts = promptsWithProjectVariants(DEFAULT_PROMPTS, projectProfile);
+
+  // Names of variables defined on this workflow, so the step-prompt highlight
+  // can distinguish a real `{{var}}` reference from a typo'd / undefined one.
+  const definedNames = useMemo(
+    () => new Set(editor.variables.map((v) => v.name)),
+    [editor.variables],
+  );
 
   const quickAddPrompts = (
     <div className="workflows-default-prompts">
@@ -100,6 +109,12 @@ export function WorkflowEditorPanel({ manager }: Props) {
               />
             )}
           </div>
+          <WorkflowVariablesPanel
+            variables={editor.variables}
+            onPatch={actions.patchVariable}
+            onAdd={actions.addVariable}
+            onRemove={actions.removeVariable}
+          />
           <div className="workflows-editor-steps">
             {editor.steps.map((step, index) => (
               <StepRow
@@ -108,6 +123,7 @@ export function WorkflowEditorPanel({ manager }: Props) {
                 index={index}
                 collapsed={collapsedSteps.isCollapsed(step.id)}
                 harnessAvail={harnessAvail}
+                definedNames={definedNames}
                 onChange={(patch) => actions.patchStep(index, patch)}
                 onRemove={() => actions.removeStep(index)}
                 onReorder={actions.reorderSteps}

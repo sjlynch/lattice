@@ -6,7 +6,11 @@
 // backstop, codex always curls itself.
 
 import { canonicalProjectPath } from '../projectPath.js';
-import type { Workflow, WorkflowStepHarness } from '../workflows.js';
+import {
+  interpolateWorkflowVariables,
+  type Workflow,
+  type WorkflowStepHarness,
+} from '../workflows.js';
 import type { WorkflowRun } from './state.js';
 import {
   renderDirtyStateWarning,
@@ -84,6 +88,10 @@ export function renderStepMarkdown(
   // the single biggest source of "task references a path that doesn't
   // exist" failures; see projectDirtyState.ts.
   const dirtyWarning = dirtyState ? renderDirtyStateWarning(dirtyState) : '';
+  // Substitute `{{var_name}}` references with the workflow's variable values
+  // (e.g. the built-in `{{user_instructions}}`) before the prompt reaches the
+  // agent. Unknown variables are left intact so a typo is visible, not silent.
+  const renderedPrompt = interpolateWorkflowVariables(step.prompt, wf.variables);
   return [
     `# Workflow Step ${stepIndex + 1} of ${wf.steps.length}: ${step.title}`,
     '',
@@ -91,7 +99,7 @@ export function renderStepMarkdown(
     '## Your Task',
     '',
     autonomyPreamble,
-    step.prompt,
+    renderedPrompt,
     '',
     '## Active project (use ONLY this one)',
     '',

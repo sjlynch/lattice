@@ -22,11 +22,20 @@ export type WorkflowStep = {
   kind?: WorkflowStepKind;
 };
 
+// A user-defined variable injected into step prompts via `{{name}}`. Every
+// workflow always carries the built-in `user_instructions` variable.
+export type WorkflowVariable = {
+  id: string;
+  name: string;
+  value: string;
+};
+
 export type Workflow = {
   id: string;
   name: string;
   projectPath: string;
   steps: WorkflowStep[];
+  variables: WorkflowVariable[];
   createdAt: number;
 };
 

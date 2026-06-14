@@ -10,6 +10,7 @@ import {
   normalizeWorkflowRunHarnessOverride,
   updateWorkflow,
   type WorkflowStep,
+  type WorkflowVariable,
 } from '../workflows.js';
 import {
   getActiveRunsForProject as getActiveWorkflowRunsForProject,
@@ -36,18 +37,23 @@ export function buildWorkflowsRouter(backendOrigin: string): Router {
   });
 
   r.post('/api/workflows', async (req, res) => {
-    const { project, name, steps } = (req.body || {}) as {
+    const { project, name, steps, variables } = (req.body || {}) as {
       project?: string;
       name?: string;
       steps?: WorkflowStep[];
+      variables?: WorkflowVariable[];
     };
     if (!project) return res.status(400).json({ error: 'project required' });
-    const w = await createWorkflow(project, name ?? '', steps);
+    const w = await createWorkflow(project, name ?? '', steps, variables);
     res.json(w);
   });
 
   r.patch('/api/workflows/:id', async (req, res) => {
-    const updates = (req.body || {}) as { name?: string; steps?: WorkflowStep[] };
+    const updates = (req.body || {}) as {
+      name?: string;
+      steps?: WorkflowStep[];
+      variables?: WorkflowVariable[];
+    };
     const w = await updateWorkflow(req.params.id, updates);
     if (!w) return res.status(404).json({ error: 'not found' });
     res.json(w);

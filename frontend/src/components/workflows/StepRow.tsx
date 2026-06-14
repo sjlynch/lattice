@@ -25,6 +25,7 @@ import {
   useAutosizedTextarea,
   useWorkflowStepDragDrop,
 } from './StepRowHooks';
+import { splitPromptSegments } from './promptVariables';
 
 export { PROMPT_MIN_HEIGHT_PX, STEP_DRAG_MIME } from './StepRowHooks';
 
@@ -95,6 +96,7 @@ export function StepRow({
   index,
   collapsed,
   harnessAvail,
+  definedNames,
   onChange,
   onRemove,
   onReorder,
@@ -106,6 +108,7 @@ export function StepRow({
   index: number;
   collapsed: boolean;
   harnessAvail: HarnessAvailability;
+  definedNames: ReadonlySet<string>;
   onChange: (patch: Partial<WorkflowStep>) => void;
   onRemove: () => void;
   onReorder: (fromIdx: number, toIdx: number) => void;
@@ -132,6 +135,7 @@ export function StepRow({
       index={index}
       collapsed={collapsed}
       harnessAvail={harnessAvail}
+      definedNames={definedNames}
       onChange={onChange}
       onRemove={onRemove}
       onReorder={onReorder}
@@ -147,6 +151,7 @@ function AgentStepRow({
   index,
   collapsed,
   harnessAvail,
+  definedNames,
   onChange,
   onRemove,
   onReorder,
@@ -158,6 +163,7 @@ function AgentStepRow({
   index: number;
   collapsed: boolean;
   harnessAvail: HarnessAvailability;
+  definedNames: ReadonlySet<string>;
   onChange: (patch: Partial<WorkflowStep>) => void;
   onRemove: () => void;
   onReorder: (fromIdx: number, toIdx: number) => void;
@@ -171,6 +177,7 @@ function AgentStepRow({
   useAutosizedTextarea(promptRef, step.prompt, collapsed);
 
   const selectedHarness = normalizeAgentHarness(step.harness);
+  const segments = splitPromptSegments(step.prompt, definedNames);
 
   return (
     <div
@@ -236,13 +243,35 @@ function AgentStepRow({
           </button>
         </div>
         {!collapsed && (
-          <textarea
-            ref={promptRef}
-            className="task-card-form-input task-card-form-textarea workflows-step-prompt"
-            placeholder="Prompt — written into LATTICE_TASK.md as the task description."
-            value={step.prompt}
-            onChange={(e) => onChange({ prompt: e.target.value })}
-          />
+          <div className="workflows-step-prompt-wrap">
+            {/* Colorized overlay rendered behind the transparent-text
+                textarea so `{{variable}}` references stand out. Mirrors the
+                textarea's box model exactly (see steps.css) so the glyphs
+                line up. aria-hidden — the textarea is the real control. */}
+            <div className="workflows-step-prompt-highlight" aria-hidden>
+              {segments.map((seg, i) =>
+                seg.token ? (
+                  <mark
+                    key={i}
+                    className={`workflows-step-prompt-token${seg.known ? '' : ' unknown'}`}
+                  >
+                    {seg.text}
+                  </mark>
+                ) : (
+                  <span key={i}>{seg.text}</span>
+                ),
+              )}
+              {'\n'}
+            </div>
+            <textarea
+              ref={promptRef}
+              className="task-card-form-input task-card-form-textarea workflows-step-prompt"
+              placeholder="Prompt — written into LATTICE_TASK.md as the task description."
+              value={step.prompt}
+              onChange={(e) => onChange({ prompt: e.target.value })}
+              spellCheck={false}
+            />
+          </div>
         )}
       </div>
     </div>
