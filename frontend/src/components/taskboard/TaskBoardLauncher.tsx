@@ -1,9 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Kanban, Search, X } from 'lucide-react';
+import { Kanban } from 'lucide-react';
 import { FloatingPanel } from '../FloatingPanel';
 import { useTerminals } from '../../TerminalsContext';
 import {
-  type Task,
   type TaskSpawnedEvent,
   type TaskStatus,
 } from '../../api';
@@ -14,26 +13,25 @@ import { mergeRunStripFor } from './MergeRunStrip';
 import { NewTaskOverlay } from './NewTaskOverlay';
 import { PostMergeHookRow } from './PostMergeHookRow';
 import { TaskBoardFilters } from './TaskBoardFilters';
+import { TaskBoardFooter } from './TaskBoardFooter';
+import { TaskBoardTitle } from './TaskBoardTitle';
 import { TaskDetailOverlay } from './TaskDetailOverlay';
 import { useMergeRunSync } from './hooks/useMergeRunSync';
 import { usePostMergeHook } from './hooks/usePostMergeHook';
 import { usePushRun } from './hooks/usePushRun';
 import { useHarnessSelector } from './hooks/useHarnessSelector';
 import { useTaskActions } from './hooks/useTaskActions';
-import { groupTasksByStatus, useTaskBoardState } from './hooks/useTaskBoardState';
+import { useTaskBoardState } from './hooks/useTaskBoardState';
+import { useTaskSearch } from './hooks/useTaskSearch';
 import { useTaskTerminalCleanup } from './hooks/useTaskTerminalCleanup';
+import { useTaskTerminalFocus } from './hooks/useTaskTerminalFocus';
 import { useTaskTerminalReattach } from './hooks/useTaskTerminalReattach';
 import { useSyncedViewedTask } from './hooks/useSyncedViewedTask';
-import { buildTerminalMap } from '../../utils/terminalMap';
+import { useVisibleLanes } from './hooks/useVisibleLanes';
 
 type Props = {
   activeFolder: string;
 };
-
-function taskContainsSearchText(task: Task, searchText: string): boolean {
-  const haystack = `${task.title}\n${task.description ?? ''}`.toLowerCase();
-  return haystack.includes(searchText);
-}
 
 // Top-level Task Board: opens the floating panel and renders the lanes.
 // Data-sync/state responsibilities live in hooks under ./hooks; this
@@ -42,12 +40,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   const [open, setOpen] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [addingTo, setAddingTo] = useState<TaskStatus | null>(null);
-  const [taskSearch, setTaskSearch] = useState('');
 
-  // Filter state — all lanes visible by default.
-  const [visibleLanes, setVisibleLanes] = useState<Set<TaskStatus>>(
-    () => new Set(LANES.map((lane) => lane.id)),
-  );
+  const { visibleLanes, toggleLane } = useVisibleLanes();
 
   const {
     addTerminal,
@@ -134,32 +128,18 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     showError,
   });
 
-  const searchText = taskSearch.trim().toLowerCase();
-  const searchActive = searchText.length > 0;
-  const filteredTasks = useMemo(
-    () =>
-      searchActive
-        ? tasks.filter((task) => taskContainsSearchText(task, searchText))
-        : tasks,
-    [searchActive, searchText, tasks],
-  );
-  const filteredGrouped = useMemo(
-    () => groupTasksByStatus(filteredTasks),
-    [filteredTasks],
-  );
+  const {
+    taskSearch,
+    setTaskSearch,
+    searchActive,
+    filteredTasks,
+    filteredGrouped,
+  } = useTaskSearch(tasks);
 
-  const terminalByTaskId = useMemo(
-    () => buildTerminalMap(terminals, tasks),
-    [terminals, tasks],
-  );
-
-  const getFocusTerminal = useCallback(
-    (task: Task): (() => void) | null => {
-      const termId = terminalByTaskId.get(task.id);
-      if (!termId) return null;
-      return () => setActiveId(termId);
-    },
-    [terminalByTaskId, setActiveId],
+  const { getFocusTerminal, focusTerminalByServerId } = useTaskTerminalFocus(
+    terminals,
+    tasks,
+    setActiveId,
   );
 
   useTaskTerminalCleanup(
@@ -183,20 +163,6 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     }),
     [runAllOpen, resumeAllInProgress, mergeAllReady, markAllQaDone],
   );
-
-  function toggleLane(id: TaskStatus) {
-    setVisibleLanes((cur) => {
-      const next = new Set(cur);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  // Spawn-queue activity for the footer indicator: how many agents are
-  // running vs. waiting for a free slot.
-  const runningCount = tasks.filter((t) => t.status === 'in_progress').length;
-  const queuedCount = tasks.filter((t) => t.runQueued).length;
 
   return (
     <>
@@ -225,37 +191,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         open={open}
         onClose={() => setOpen(false)}
         title={
-          <>
-            <Kanban size={13} />
-            <span>Task board</span>
-            <div className="taskboard-search fp-no-drag">
-              <Search size={12} aria-hidden />
-              <input
-                className="taskboard-search-input"
-                value={taskSearch}
-                onChange={(e) => setTaskSearch(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape' && taskSearch) {
-                    e.stopPropagation();
-                    setTaskSearch('');
-                  }
-                }}
-                placeholder="Search tasks"
-                aria-label="Search tasks"
-              />
-              {taskSearch && (
-                <button
-                  type="button"
-                  className="taskboard-search-clear"
-                  onClick={() => setTaskSearch('')}
-                  title="Clear search"
-                  aria-label="Clear search"
-                >
-                  <X size={11} />
-                </button>
-              )}
-            </div>
-          </>
+          <TaskBoardTitle taskSearch={taskSearch} setTaskSearch={setTaskSearch} />
         }
         defaultSize={{ width: 720, height: 620 }}
         minSize={{ width: 460, height: 380 }}
@@ -324,16 +260,9 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
             onSavePrompt={postMergeHook.savePrompt}
             onSaveHarness={postMergeHook.saveHarness}
             onAbort={postMergeHook.abort}
-            onFocusActiveTerminal={
-              postMergeHook.active?.serverId
-                ? () => {
-                    const t = terminals.find(
-                      (term) => term.serverId === postMergeHook.active?.serverId,
-                    );
-                    if (t) setActiveId(t.id);
-                  }
-                : null
-            }
+            onFocusActiveTerminal={focusTerminalByServerId(
+              postMergeHook.active?.serverId,
+            )}
           />
           {addingTo && (
             <NewTaskOverlay
@@ -369,18 +298,11 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
             <ErrorToast message={error} onDismiss={() => setError(null)} />
           )}
         </div>
-        <div className="taskboard-footer">
-          {searchActive
-            ? `${filteredTasks.length} of ${tasks.length} matching`
-            : `${tasks.length} total`}
-          {queuedCount > 0 && (
-            <span className="taskboard-footer-queue">
-              {' · '}
-              {runningCount} running · {queuedCount} queued
-            </span>
-          )}{' '}
-          · drag to reorder · click to select · ctrl+click or shift+click to multi-select · pencil to edit
-        </div>
+        <TaskBoardFooter
+          tasks={tasks}
+          filteredTasks={filteredTasks}
+          searchActive={searchActive}
+        />
       </FloatingPanel>
     </>
   );
