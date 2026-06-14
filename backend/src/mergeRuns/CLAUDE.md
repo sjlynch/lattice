@@ -23,6 +23,18 @@ here instead of bloating the parent file.
 - `processTarget.ts` — per-task state machine: re-read task state, honor the
   merge lock, retry flagged conflicts, re-sync/finalize, spawn resolver PTYs,
   update run progress, and run the repo-integrity check.
+- `lifecycle.ts` — run-startup helpers: `initializeRunState` (canonicalize +
+  load + in-process active-run/409 gate + cross-process lock acquire, honoring
+  `lockMode: 'inherit'`), `filterAndSortTargets` (ready_to_merge incl.
+  conflict-flagged, createdAt-ascending — the ordering invariant), and
+  `createRunRecord`. Throwing in `initializeRunState` happens before any run
+  record exists.
+- `teardown.ts` — post-run teardown: `runTeardown` (copy-snapshot restore on a
+  non-cancelled run, then `autoRestartIfNeeded`), `autoRestartIfNeeded` (restart
+  for tasks that became ready mid-run, skipped when the lock was inherited), and
+  `runPostMergeHook` (the once-per-run hook gate). The restart is injected as a
+  `RestartMergeRun` callback so teardown takes no runtime dependency back on
+  `../mergeRuns.ts`.
 
 Conflict-waiter contract: after spawning a merge-conflict resolver,
 `processTarget` registers a task-id keyed waiter. Routes `/complete` and
