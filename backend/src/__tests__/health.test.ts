@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { analyzeFile, computeCrossFile, detectRoots } from '../health/index.js';
 import { isConventionalRoot } from '../health/crossFile/roots.js';
+import { resolveImport } from '../health/crossFile/resolveImport.js';
 import type { HealthMetrics } from '../health/index.js';
 import type { ParsedAlias } from '../health/tsconfig.js';
 import type { CacheEntry } from '../health/cache.js';
@@ -383,6 +384,55 @@ test('cross-file analysis resolves aliases, Python relatives, duplicates, and se
   assert.equal(cross.inCycle.has(self), true, 'self import is marked cyclic');
 });
 
+test('resolver maps NodeNext .js specifiers to their TS sources', () => {
+  const root = path.resolve('resolve-nodenext-fixture');
+  const caller = path.join(root, 'caller.ts');
+  const a = path.join(root, 'a.ts');
+  const b = path.join(root, 'b.tsx');
+  const m = path.join(root, 'm.mts');
+  const c = path.join(root, 'c.cts');
+  const present = new Set([caller, a, b, m, c]);
+
+  assert.equal(resolveImport(caller, './a.js', present), a, '.js → .ts');
+  assert.equal(resolveImport(caller, './b.js', present), b, '.js → .tsx');
+  assert.equal(resolveImport(caller, './m.mjs', present), m, '.mjs → .mts');
+  assert.equal(resolveImport(caller, './c.cjs', present), c, '.cjs → .cts');
+});
+
+test('resolver prefers a real .js sibling over the .ts remap', () => {
+  const root = path.resolve('resolve-jsts-fixture');
+  const caller = path.join(root, 'caller.ts');
+  const js = path.join(root, 'x.js');
+  const ts = path.join(root, 'x.ts');
+  const present = new Set([caller, js, ts]);
+  assert.equal(resolveImport(caller, './x.js', present), js, 'exact .js wins');
+});
+
+test('baseUrl catch-all resolves bare imports but never relative ones', () => {
+  const root = path.resolve('resolve-baseurl-fixture');
+  const baseDir = path.join(root, 'src');
+  const foo = path.join(baseDir, 'foo.ts');
+  const baseTypes = path.join(baseDir, 'types.ts');
+  const relTypes = path.join(root, 'pages', 'types.ts');
+  const caller = path.join(root, 'pages', 'caller.ts');
+  const present = new Set([foo, baseTypes, relTypes, caller]);
+  const aliases: ParsedAlias[] = [
+    { prefix: '', isWildcard: true, substitutions: [baseDir] },
+  ];
+
+  assert.equal(resolveImport(caller, 'foo', present, aliases), foo, 'bare → baseUrl');
+  assert.equal(
+    resolveImport(caller, './types', present, aliases),
+    relTypes,
+    'relative resolves next to the importer, not baseUrl',
+  );
+  assert.equal(
+    resolveImport(caller, 'react', present, aliases),
+    null,
+    'unresolvable bare specifier is still external',
+  );
+});
+
 test('import extraction captures re-exports and dynamic import/require', async () => {
   const src = `
 import { a } from './static';
@@ -444,11 +494,64 @@ test('dead-code reachability flags orphans, dead islands, and entry points', () 
   );
 });
 
+test('unreachable .mjs/.cjs are uncertain, not dead (fs-loaded assets)', () => {
+  const root = path.resolve('health-mjs-cjs-fixture');
+  const index = path.join(root, 'src', 'index.ts');
+  const tmpl = path.join(root, 'src', 'template.cjs'); // read via fs, not imported
+  const script = path.join(root, 'src', 'helper.mjs'); // standalone, unimported
+  const orphanTs = path.join(root, 'src', 'orphan.ts');
+  const present = new Set([index, tmpl, script, orphanTs]);
+  const roots = detectRoots(present, { projectRoot: root });
+
+  const cross = computeCrossFile(
+    [{ filePath: index, imports: [] }],
+    present,
+    undefined,
+    { roots },
+  );
+
+  assert.equal(cross.deadCode.get(tmpl), 'uncertain', '.cjs never confidently dead');
+  assert.equal(cross.deadCode.get(script), 'uncertain', '.mjs never confidently dead');
+  assert.equal(cross.deadCode.get(orphanTs), 'dead', '.ts orphan still flagged dead');
+});
+
+test('reachability connects NodeNext .js-specifier imports (regression)', () => {
+  // The dominant false-dead bug: a TS project whose imports carry `.js`
+  // specifiers (`import './util.js'`) pointing at `.ts` files. Before the
+  // resolver remap every such edge dropped and the whole tree read as dead.
+  const root = path.resolve('health-nodenext-fixture');
+  const index = path.join(root, 'src', 'index.ts'); // root
+  const util = path.join(root, 'src', 'util.ts');
+  const deep = path.join(root, 'src', 'deep.ts');
+  const present = new Set([index, util, deep]);
+  const roots = detectRoots(present, { projectRoot: root });
+
+  const cross = computeCrossFile(
+    [
+      { filePath: index, imports: ['./util.js'] },
+      { filePath: util, imports: ['./deep.js'] },
+    ],
+    present,
+    undefined,
+    { roots },
+  );
+
+  assert.equal(cross.fanIn.get(util), 1, '.js specifier resolves to util.ts');
+  assert.equal(cross.deadCode.get(util), 'live', 'util reachable via .js import');
+  assert.equal(cross.deadCode.get(deep), 'live', 'transitively reachable too');
+  assert.equal(cross.deadCodeStats?.downgraded, false, 'no resolver-gap guard trip');
+});
+
 test('conventional root detection covers entries, configs, tests, and decls', () => {
   for (const f of [
     'src/index.ts',
     'frontend/src/main.tsx',
     'backend/server.ts',
+    'backend/src/terminal-server.ts', // -server suffix (spawned by path)
+    'backend/src/foo.worker.ts', // .worker suffix
+    'backend/scripts/dev.mjs', // under a scripts/ dir
+    'scripts/orchestrate.mjs',
+    'tools/codegen.ts',
     'vite.config.ts',
     'jest.config.js',
     'src/foo.test.ts',
@@ -457,7 +560,12 @@ test('conventional root detection covers entries, configs, tests, and decls', ()
   ]) {
     assert.equal(isConventionalRoot(f), true, `${f} should be a root`);
   }
-  for (const f of ['src/util.ts', 'src/components/Button.tsx', 'lib/helper.py']) {
+  for (const f of [
+    'src/util.ts',
+    'src/components/Button.tsx',
+    'lib/helper.py',
+    'src/observer.ts', // not a -server/-worker suffix
+  ]) {
     assert.equal(isConventionalRoot(f), false, `${f} should not be a root`);
   }
 });

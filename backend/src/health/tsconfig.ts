@@ -145,17 +145,16 @@ async function parseTsconfig(tsconfigPath: string): Promise<ParsedAlias[]> {
   if (!co || typeof co !== 'object') return [];
 
   const tsconfigDir = path.dirname(tsconfigPath);
-  const baseUrl =
-    typeof (co as { baseUrl?: unknown }).baseUrl === 'string'
-      ? (co as { baseUrl: string }).baseUrl
-      : '.';
+  const hasExplicitBaseUrl =
+    typeof (co as { baseUrl?: unknown }).baseUrl === 'string';
+  const baseUrl = hasExplicitBaseUrl ? (co as { baseUrl: string }).baseUrl : '.';
   const baseDir = path.resolve(tsconfigDir, baseUrl);
 
-  const paths = (co as { paths?: unknown }).paths;
-  if (!paths || typeof paths !== 'object') return [];
-
   const out: ParsedAlias[] = [];
-  for (const [pattern, subs] of Object.entries(paths as Record<string, unknown>)) {
+  const paths = (co as { paths?: unknown }).paths;
+  for (const [pattern, subs] of Object.entries(
+    (paths && typeof paths === 'object' ? paths : {}) as Record<string, unknown>,
+  )) {
     if (!Array.isArray(subs) || subs.length === 0) continue;
     const isWildcard = pattern.endsWith('/*');
     const prefix = isWildcard ? pattern.slice(0, -1) : pattern;
@@ -176,6 +175,15 @@ async function parseTsconfig(tsconfigPath: string): Promise<ParsedAlias[]> {
       out.push({ prefix, isWildcard, substitutions });
     }
   }
+
+  // baseUrl-relative bare imports: TS resolves `import 'src/foo'` against
+  // baseUrl even with no matching `paths` entry. Emit a catch-all (bare
+  // specifiers only — see resolveByAlias) so those edges land. Empty prefix
+  // sorts last in loadProjectAliases, so explicit `paths` always win.
+  if (hasExplicitBaseUrl) {
+    out.push({ prefix: '', isWildcard: true, substitutions: [baseDir] });
+  }
+
   return out;
 }
 

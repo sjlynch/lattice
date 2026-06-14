@@ -8,9 +8,9 @@ Halstead token counts and a Maintainability Index, and folded into a composite
 ## Files
 
 - `parser.ts` — grammar load/cache; `grammarKeyForExt` maps extensions to grammars
-- `nodeKinds.ts` + `nodeKinds/` — shim plus per-language node-kind sets
-  (function/branch/loop/etc.) — `base.ts` plus one file per language
-  (`typescript.ts`, `python.ts`, `go.ts`, …)
+- `nodeKinds/` — per-language node-kind sets (function/branch/loop/etc.):
+  `index.ts` (`nodeKindsFor`) + `base.ts` plus one file per language
+  (`typescript.ts`, `python.ts`, `go.ts`, …). Import from `./nodeKinds/index.js`.
 - `walker.ts` + `walker/` — shim plus the single AST pass producing a
   `FileAnalysis`; see `walker/CLAUDE.md`. `walker/index.ts` orchestrates the
   walk via a `context.ts` `WalkerContext` plus visitor helpers in
@@ -42,16 +42,45 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   `resolveImport.ts` (extension/index/alias/Python-relative resolution),
   `graph.ts` (edge construction, duplicate de-duping, Tarjan SCCs, and
   reachability/dead-code classification when given a root set), `roots.ts`
-  (entry-point detection: conventional filenames + user `deadCodeEntryGlobs` +
-  package.json entry targets; `RESOLVABLE_IMPORT_EXTS`), and `apply.ts` (patch
+  (entry-point detection + `RESOLVABLE_IMPORT_EXTS`), and `apply.ts` (patch
   fanIn/fanOut/inCycle smells + the `deadCode` status back into `HealthMetrics`).
   The dead-code pass is reachability-from-roots, not raw `fanIn===0`, so dead
   islands/cycles and entry points classify correctly; it is deliberately kept
-  out of `computeScore` (orphan status is a signal, not a penalty). Edge
-  capture includes `export … from` re-exports and string-literal dynamic
-  `import()`/`require()` (see `walker/visitors.ts`) so barrels and lazy routes
-  aren't mistaken for orphans. Roots come from the scan (`scanner/scan.ts`) and
-  the watcher (`crossFileAnalyzer.ts`); the `D` overlay consumes the result.
+  out of `computeScore` (orphan status is a signal, not a penalty). Roots come
+  from the scan (`scanner/scan.ts`) and the watcher (`crossFileAnalyzer.ts`);
+  the `D` overlay consumes the result.
+  - **Resolver accuracy (TS-first).** The dominant false-dead cause is dropped
+    edges. `resolveImport.ts` therefore: maps NodeNext `.js`/`.mjs`/`.cjs`/`.jsx`
+    specifiers to their TS twins (`./types.js` → `types.ts`) — without this a
+    `"module":"NodeNext"` backend loses ~every internal edge; resolves
+    `baseUrl`-relative bare imports via a `tsconfig.ts` catch-all alias (bare
+    specifiers only — relative imports always resolve against the importer);
+    and the walker captures `export … from` re-exports + string-literal dynamic
+    `import()`/`require()` (`walker/visitors.ts`) so barrels and lazy routes
+    aren't orphaned.
+  - **Entry-point roots** (`roots.ts`): conventional filenames (`index`/`main`/
+    `*.config.*`/tests/`.d.ts`), standalone process/CLI entries (`*-server`,
+    `*.worker`, files under a `scripts/`|`tools/` dir — spawned by path, never
+    imported), user `deadCodeEntryGlobs`, and package.json entry targets across
+    all in-tree `package.json`s (`main`/`module`/`source`/`bin`/`exports` + file
+    refs inside `scripts`).
+  - **Dead-eligible languages** (`RESOLVABLE_IMPORT_EXTS` in `roots.ts`): only
+    genuine importable source modules (`.ts/.tsx/.js/.jsx/.py/.pyi`) are
+    confidently flagged `dead` when unreachable. `.mjs`/`.cjs` are excluded —
+    in TS-first projects they're overwhelmingly tooling/runtime assets loaded
+    by path (e.g. a `.cjs` template `fs.readFile`-d, invisible to import
+    analysis), so an unreachable one is `uncertain`, never red. (The general
+    fix — capturing string-literal fs/path references as weak reachability
+    edges — is the future enhancement for non-TS asset accuracy.)
+  - **Confidence guard** (`graph.ts`): if >70% of resolvable non-root files come
+    back dead (the fingerprint of a resolver gap, not a real dead codebase),
+    every `dead` is downgraded to `uncertain` and `scan.ts` logs a warning — a
+    resolver blind spot can never paint a whole project red.
+  - **Cache coupling:** import extraction feeds the `(mtime,size)`-keyed health
+    cache, which does NOT invalidate on analyzer-logic changes. Any change to
+    edge capture / resolution MUST bump `CACHE_VERSION` in `cache.ts` or
+    existing projects keep serving stale `imports` (this was why the first cut
+    showed most files dead).
 - `crossFileAnalyzer.ts` — watcher-facing diff/broadcast wrapper around the
   cross-file pass
 - `scoreMetadata.ts` — serializable source of truth for score component ids,

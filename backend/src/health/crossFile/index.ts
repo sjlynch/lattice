@@ -7,6 +7,7 @@ export {
   tarjan,
   type ComputeCrossFileOptions,
   type CrossFileResult,
+  type DeadCodeStats,
   type FileImports,
   type ImportGraph,
 } from './graph.js';

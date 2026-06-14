@@ -32,6 +32,20 @@ export const INDEX_FILES = [
   '__init__.py',
 ];
 
+// TypeScript NodeNext/ESM convention: an import specifier carries the *output*
+// `.js`-family extension even though the file on disk is the `.ts` twin
+// (`import './types.js'` → `types.ts`). Without this mapping every such edge is
+// dropped — which on a `"module": "NodeNext"` backend is ~every internal
+// import, disconnecting the whole subgraph and flagging it all dead. For each
+// JS-family extension, try the TypeScript sources first, then the literal
+// (covers genuine hand-written `.js` alongside `.ts`).
+const JS_TO_TS_CANDIDATES: Record<string, readonly string[]> = {
+  '.js': ['.ts', '.tsx', '.js', '.jsx'],
+  '.jsx': ['.tsx', '.jsx'],
+  '.mjs': ['.mts', '.mjs'],
+  '.cjs': ['.cts', '.cjs'],
+};
+
 // Python relative imports surface as e.g. `.foo` or `..foo.bar` (leading dots
 // indicate parent packages; remaining text is the dotted sub-package). Translate
 // them into ordinary fs-relative specs so the rest of the resolver treats them
@@ -56,10 +70,27 @@ export function tryAllExtensions(
   target: string,
   presentFiles: Set<string>,
 ): string | null {
+  // 1. Exact path as written (already-extensioned imports: `.ts`, `.tsx`,
+  //    `.css`, a real hand-written `.js`, …).
   if (presentFiles.has(target)) return target;
-  for (const ext of RESOLVE_EXTS) {
-    if (presentFiles.has(target + ext)) return target + ext;
+
+  // 2. JS-family specifier → TS source (NodeNext). Only when the literal above
+  //    missed, so a genuine `.js` sibling still wins.
+  const ext = path.extname(target);
+  const remaps = JS_TO_TS_CANDIDATES[ext];
+  if (remaps) {
+    const stem = target.slice(0, target.length - ext.length);
+    for (const r of remaps) {
+      if (presentFiles.has(stem + r)) return stem + r;
+    }
   }
+
+  // 3. Extensionless specifier → append each known source extension.
+  for (const e of RESOLVE_EXTS) {
+    if (presentFiles.has(target + e)) return target + e;
+  }
+
+  // 4. Directory import → its index file.
   for (const indexFile of INDEX_FILES) {
     const candidate = path.join(target, indexFile);
     if (presentFiles.has(candidate)) return candidate;
@@ -77,7 +108,14 @@ export function resolveByAlias(
   for (const alias of aliases) {
     let tail: string | null = null;
     if (alias.isWildcard) {
-      if (spec.startsWith(alias.prefix)) {
+      if (alias.prefix === '') {
+        // baseUrl catch-all (or a `"*"` path): applies to BARE specifiers
+        // only. Relative imports resolve against the importing file, never
+        // baseUrl — letting this match them would wrongly bind `./types` to
+        // `<baseUrl>/types`.
+        if (isRelativeSpec(spec)) continue;
+        tail = spec;
+      } else if (spec.startsWith(alias.prefix)) {
         tail = spec.slice(alias.prefix.length);
       }
     } else if (spec === alias.prefix) {
@@ -92,6 +130,10 @@ export function resolveByAlias(
     }
   }
   return null;
+}
+
+function isRelativeSpec(spec: string): boolean {
+  return spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('\\');
 }
 
 export function resolveImport(
@@ -114,12 +156,10 @@ export function resolveImport(
     if (aliased) return aliased;
   }
 
-  // External package — `react`, `lodash/fp`, etc.
-  if (
-    !normalized.startsWith('.') &&
-    !normalized.startsWith('/') &&
-    !normalized.startsWith('\\')
-  ) {
+  // External package — `react`, `lodash/fp`, etc. (Bare specifiers that a
+  // baseUrl catch-all could resolve were already handled by the alias pass
+  // above; anything still bare here is a real node_modules dependency.)
+  if (!isRelativeSpec(normalized)) {
     return null;
   }
 

@@ -9,7 +9,11 @@ import type { HealthMetrics } from './types.js';
 
 // Bump on schema changes — old caches are rejected on load when the
 // version doesn't match, forcing re-analysis with the new pipeline.
-const CACHE_VERSION = 2;
+// v3: import extraction now captures `export … from` re-exports and dynamic
+// `import()`/`require()`, and the resolver maps NodeNext `.js` specifiers to
+// their `.ts` sources — the cached `imports` arrays from v2 predate all three,
+// so reuse would keep the dead-code graph disconnected.
+const CACHE_VERSION = 3;
 const CACHE_DIRNAME = '.lattice';
 const CACHE_FILENAME = 'health-cache.json';
 

@@ -49,6 +49,19 @@ export async function scan(root: string, options: ScanOptions = {}): Promise<Sca
   });
 
   const coupling = computeCoupling(metrics, aliases, roots);
+
+  // Surface a resolver-health warning once per scan. A tripped guard means an
+  // implausible share of analyzable files looked dead — usually a module-
+  // resolution gap for this project's import style, not real dead code.
+  const dcs = coupling.deadCodeStats;
+  if (dcs?.downgraded) {
+    console.warn(
+      `[dead-code] ${dcs.dead}/${dcs.resolvable} analyzable files unreachable ` +
+        `(${Math.round((dcs.dead / dcs.resolvable) * 100)}%) — downgraded to ` +
+        `"uncertain" rather than flagging. Likely an unresolved import style; ` +
+        `check tsconfig paths / entry globs for ${absRoot}.`,
+    );
+  }
   const result = aggregate(metrics, coupling, {
     root: absRoot,
     directories: collected.directories,

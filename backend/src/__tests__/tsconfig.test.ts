@@ -60,9 +60,27 @@ test('loadProjectAliases discovers tsconfig.app.json under references', async ()
     }),
   });
   const aliases = await loadProjectAliases(dir);
+  const tilde = aliases.find((a) => a.prefix === '~/');
+  assert.ok(tilde, '~/ alias discovered from tsconfig.app.json');
+  assert.equal(tilde.substitutions[0], path.join(dir, 'app'));
+  // baseUrl '.' also yields a bare-import catch-all (sorted last).
+  assert.ok(
+    aliases.some((a) => a.prefix === '' && a.isWildcard),
+    'explicit baseUrl emits a catch-all alias',
+  );
+});
+
+test('loadProjectAliases emits a baseUrl catch-all even without paths', async () => {
+  const dir = await makeProject({
+    'tsconfig.json': JSON.stringify({
+      compilerOptions: { baseUrl: './src' },
+    }),
+  });
+  const aliases = await loadProjectAliases(dir);
   assert.equal(aliases.length, 1);
-  assert.equal(aliases[0].prefix, '~/');
-  assert.equal(aliases[0].substitutions[0], path.join(dir, 'app'));
+  assert.equal(aliases[0].prefix, '');
+  assert.equal(aliases[0].isWildcard, true);
+  assert.equal(aliases[0].substitutions[0], path.join(dir, 'src'));
 });
 
 test('loadProjectAliases skips node_modules', async () => {
