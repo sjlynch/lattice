@@ -7,7 +7,9 @@ Components behind the Workflows button. `Workflows.tsx` (parent dir) is a re-exp
 - `WorkflowsLauncher.tsx` — top-level shell. Owns panel visibility and composes the saved-list, editor, queue, and runs sub-panels.
 - `WorkflowsSavedList.tsx` — saved workflow list, template picker, run/queue buttons, and per-run harness override selector (`WorkflowListPanel.tsx` is a compatibility alias).
 - `WorkflowEditorEmptyState.tsx` — empty editor quick-start pane.
-- `WorkflowEditorPanel.tsx` — populated editor body, quick-add prompts, prompt-customization button wiring, save/queue/run actions.
+- `WorkflowEditorPanel.tsx` — populated editor body, quick-add prompts, prompt-customization button wiring, save/queue/run actions. Renders `WorkflowVariablesPanel` above the steps and passes each step the set of defined variable names for prompt highlighting.
+- `WorkflowVariablesPanel.tsx` — the collapsible "Variables" section at the top of the editor: the built-in `user_instructions` box (always present, can't be renamed/removed) plus user-added custom variables. An info popover explains `{{name}}` injection. Step prompts reference variables as `{{name}}`; the backend substitutes them at run time (`renderStepMarkdown` → `interpolateWorkflowVariables`).
+- `promptVariables.ts` — shared frontend helpers mirroring the backend grammar: `USER_INSTRUCTIONS_VAR`, `VAR_TOKEN_RE`, name sanitization, `defaultVariables`/`ensureUserInstructions`, `withUserInstructions` (appends `{{user_instructions}}` to built-in template/quick-add prompts), and `splitPromptSegments` (drives the `{{var}}` highlight overlay in `StepRow`).
 - `QueuePanel.tsx` — queue mode, controls, and queued workflow list.
 - `WorkflowRunsAside.tsx` — right rail wrapper with active run cards (`WorkflowRunsPanel.tsx` is a compatibility alias).
 - `hooks/useWorkflowManager.ts` — thin composition layer over the smaller workflow hooks below; assembles the `WorkflowManager` interface the panels render.

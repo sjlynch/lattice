@@ -5,11 +5,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { canonicalProjectPath } from '../projectPath.js';
 import {
+  ensureUserInstructions,
   normalizeSteps,
+  normalizeVariables,
   normalizeWorkflowRunHarnessOverride,
   normalizeWorkflowStepHarness,
   normalizeWorkflows,
+  USER_INSTRUCTIONS_VAR,
 } from '../workflows/normalization.js';
+import { interpolateWorkflowVariables } from '../workflows/interpolate.js';
 import {
   WORKFLOWS_FILENAME,
   WorkflowStore,
@@ -78,6 +82,55 @@ test('workflow normalization applies persisted fallbacks and harness defaults', 
   assert.equal(normalizeWorkflowRunHarnessOverride('bogus'), null);
   assert.equal(normalizeWorkflowRunHarnessOverride(null), null);
   assert.deepEqual(normalizeSteps(undefined), []);
+});
+
+test('workflow variable normalization sanitizes names, dedupes, and guarantees user_instructions', () => {
+  const project = canonicalProjectPath(path.join(os.tmpdir(), 'lattice-workflow-vars'));
+
+  // No variables on disk → user_instructions is injected as an empty default.
+  const [withDefault] = normalizeWorkflows([{ id: 'wf_a', steps: [] }], project);
+  assert.equal(withDefault.variables.length, 1);
+  assert.equal(withDefault.variables[0].name, USER_INSTRUCTIONS_VAR);
+  assert.equal(withDefault.variables[0].value, '');
+
+  // Names are sanitized to the {{name}} grammar; blanks/dupes are dropped.
+  const cleaned = normalizeVariables([
+    { id: 'v1', name: '  Spaced Name!! ', value: 'a' },
+    { name: '', value: 'ignored-blank' },
+    { name: 'dup', value: 'first' },
+    { name: 'dup', value: 'second-dropped' },
+  ]);
+  assert.deepEqual(
+    cleaned.map((v) => v.name),
+    ['Spaced_Name', 'dup'],
+  );
+  assert.equal(cleaned[1].value, 'first');
+
+  // ensureUserInstructions is idempotent and leads with the built-in.
+  const ensured = ensureUserInstructions(cleaned);
+  assert.equal(ensured[0].name, USER_INSTRUCTIONS_VAR);
+  assert.equal(ensureUserInstructions(ensured).length, ensured.length);
+});
+
+test('interpolateWorkflowVariables replaces known refs and leaves unknown ones intact', () => {
+  const vars = [
+    { id: 'v1', name: 'user_instructions', value: 'Be terse.' },
+    { id: 'v2', name: 'scope', value: 'frontend only' },
+  ];
+  assert.equal(
+    interpolateWorkflowVariables('Do the work.\n\n{{user_instructions}}', vars),
+    'Do the work.\n\nBe terse.',
+  );
+  // Whitespace inside braces is tolerated; unknown vars pass through.
+  assert.equal(
+    interpolateWorkflowVariables('{{ scope }} and {{unknown}}', vars),
+    'frontend only and {{unknown}}',
+  );
+  // An empty value collapses its reference to nothing.
+  assert.equal(
+    interpolateWorkflowVariables('x{{empty}}y', [{ id: 'e', name: 'empty', value: '' }]),
+    'xy',
+  );
 });
 
 test('WorkflowStore persists workflows under .lattice/workflows.json and reloads harness choices', async () => {

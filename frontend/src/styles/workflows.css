@@ -27,6 +27,9 @@
 /* Editor: populated editor header and scroll container. */
 @import './workflows/editor.css';
 
+/* Variables: collapsible variables panel at the top of the editor. */
+@import './workflows/variables.css';
+
 /* Steps: step row layout, drag/drop states, prompt textarea, add-step button. */
 @import './workflows/steps.css';
 

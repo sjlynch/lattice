@@ -30,11 +30,22 @@ export type WorkflowStep = {
   kind?: WorkflowStepKind;
 };
 
+// A user-defined variable whose `value` is substituted into any step prompt
+// that references it as `{{name}}` before the prompt is handed to an agent.
+// Every workflow always carries at least the built-in `user_instructions`
+// variable (see USER_INSTRUCTIONS_VAR / ensureUserInstructions).
+export type WorkflowVariable = {
+  id: string;
+  name: string;
+  value: string;
+};
+
 export type Workflow = {
   id: string;
   name: string;
   projectPath: string;
   steps: WorkflowStep[];
+  variables: WorkflowVariable[];
   createdAt: number;
 };
 

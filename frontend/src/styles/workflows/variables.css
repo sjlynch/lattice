@@ -1,0 +1,116 @@
+/* Variables panel: the collapsible "Variables" section at the top of the
+   editor. Holds the built-in user_instructions box plus any custom variables;
+   each is a collapsible card mirroring the step rows. */
+.workflows-vars {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.workflows-vars-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.workflows-vars-head-icon {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+.workflows-vars-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+.workflows-vars-info-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.workflows-vars-info-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: 300px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-md);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.workflows-vars-info-popover p {
+  margin: 0 0 8px;
+}
+.workflows-vars-info-popover p:last-child {
+  margin-bottom: 0;
+}
+.workflows-vars-info-popover code {
+  background: var(--accent-bg);
+  color: var(--accent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.workflows-vars-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.workflows-vars-add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.workflows-vars-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.workflows-var {
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 6px 8px 8px 4px;
+}
+.workflows-var-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.workflows-var-collapse {
+  flex-shrink: 0;
+}
+.workflows-var-name {
+  flex: 1;
+  font-size: 12.5px;
+  font-family: var(--mono);
+}
+.workflows-var-name:disabled {
+  opacity: 0.85;
+  cursor: default;
+}
+.workflows-var-token {
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-bg);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+.workflows-var-value {
+  margin-top: 6px;
+  min-height: 56px;
+}

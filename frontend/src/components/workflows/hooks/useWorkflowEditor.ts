@@ -6,6 +6,7 @@ import {
   type Workflow,
   type WorkflowStep,
   type WorkflowStepKind,
+  type WorkflowVariable,
 } from '../../../api';
 import type { WorkflowTemplate } from '../../../workflowTemplates';
 import {
@@ -15,6 +16,12 @@ import {
   localStepId,
   type EditorState,
 } from '../editorState';
+import {
+  defaultVariables,
+  makeVariable,
+  USER_INSTRUCTIONS_VAR,
+  withUserInstructions,
+} from '../promptVariables';
 import type { DefaultPrompt } from '../defaultPrompts';
 
 type Args = {
@@ -52,12 +59,13 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
         {
           id: localStepId(),
           title: 'Step 1',
-          prompt: '',
+          prompt: '\n\n{{user_instructions}}',
           mode: 'sequential',
           harness: 'claude',
           kind: 'agent',
         },
       ],
+      variables: defaultVariables(),
       dirty: true,
     });
     setPickingTemplate(false);
@@ -74,7 +82,17 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
       const created = await apiCreateWorkflow(
         activeFolder,
         t.name,
-        t.steps.map((s) => ({ ...s, id: localStepId(), harness: s.harness ?? 'claude' })),
+        t.steps.map((s) => {
+          const kind = s.kind ?? 'agent';
+          return {
+            ...s,
+            id: localStepId(),
+            // Built-in agent steps end with {{user_instructions}} by default.
+            prompt: kind === 'agent' ? withUserInstructions(s.prompt) : s.prompt,
+            harness: s.harness ?? 'claude',
+          };
+        }),
+        defaultVariables(),
       );
       setEditor(fromWorkflow(created));
     } catch (err) {
@@ -92,13 +110,14 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
       prompt: s.prompt,
       harness: s.harness ?? 'claude',
     }));
+    const variables = editor.variables;
     try {
       if (editor.workflowId) {
-        const w = await apiUpdateWorkflow(editor.workflowId, { name, steps });
+        const w = await apiUpdateWorkflow(editor.workflowId, { name, steps, variables });
         setEditor(fromWorkflow(w));
         return w;
       } else {
-        const w = await apiCreateWorkflow(activeFolder, name, steps);
+        const w = await apiCreateWorkflow(activeFolder, name, steps, variables);
         setEditor(fromWorkflow(w));
         return w;
       }
@@ -106,7 +125,7 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
       onError(`Save failed: ${(err as Error).message}`);
       return null;
     }
-  }, [activeFolder, editor.workflowId, editor.name, editor.steps, onError]);
+  }, [activeFolder, editor.workflowId, editor.name, editor.steps, editor.variables, onError]);
 
   const discardEdits = useCallback(() => {
     if (!editor.workflowId) {
@@ -151,7 +170,9 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
         {
           id: localStepId(),
           title: `Step ${cur.steps.length + 1}`,
-          prompt: '',
+          // Seed the built-in injection point so new steps follow the same
+          // convention as the built-in templates/quick-add prompts.
+          prompt: '\n\n{{user_instructions}}',
           mode: 'sequential',
           harness: 'claude',
           kind: 'agent',
@@ -159,6 +180,46 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
       ],
       dirty: true,
     }));
+  }, []);
+
+  // Variable actions. The built-in `user_instructions` variable can't be
+  // removed (ensureUserInstructions would re-add it anyway); custom variables
+  // are free-form. patchVariable handles both name and value edits.
+  const patchVariable = useCallback(
+    (idx: number, patch: Partial<WorkflowVariable>) => {
+      setEditor((cur) => ({
+        ...cur,
+        variables: cur.variables.map((v, i) => (i === idx ? { ...v, ...patch } : v)),
+        dirty: true,
+      }));
+    },
+    [],
+  );
+
+  const addVariable = useCallback(() => {
+    setEditor((cur) => {
+      const taken = new Set(cur.variables.map((v) => v.name));
+      let name = 'custom_var';
+      let n = 2;
+      while (taken.has(name)) name = `custom_var_${n++}`;
+      return {
+        ...cur,
+        variables: [...cur.variables, makeVariable(name, '')],
+        dirty: true,
+      };
+    });
+  }, []);
+
+  const removeVariable = useCallback((idx: number) => {
+    setEditor((cur) => {
+      const target = cur.variables[idx];
+      if (!target || target.name === USER_INSTRUCTIONS_VAR) return cur;
+      return {
+        ...cur,
+        variables: cur.variables.filter((_, i) => i !== idx),
+        dirty: true,
+      };
+    });
   }, []);
 
   // Append a headless control-flow step (Start/Merge/Push). These have no
@@ -193,9 +254,9 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
   // the empty state immediately produces something runnable.
   const addDefaultPromptStep = useCallback((p: DefaultPrompt) => {
     setEditor((cur) => {
-      const base =
+      const base: EditorState =
         cur.workflowId === null && cur.steps.length === 0 && cur.name === ''
-          ? { workflowId: null, name: p.title, steps: [], dirty: true }
+          ? { workflowId: null, name: p.title, steps: [], variables: cur.variables, dirty: true }
           : cur;
       return {
         ...base,
@@ -204,7 +265,8 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
           {
             id: localStepId(),
             title: p.title,
-            prompt: p.prompt,
+            // Built-in quick-add prompts end with {{user_instructions}}.
+            prompt: withUserInstructions(p.prompt),
             mode: 'sequential',
             harness: 'claude',
             kind: 'agent',
@@ -243,5 +305,8 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
     addControlStep,
     addDefaultPromptStep,
     reorderSteps,
+    patchVariable,
+    addVariable,
+    removeVariable,
   };
 }

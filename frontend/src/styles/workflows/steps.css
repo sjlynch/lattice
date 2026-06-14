@@ -88,6 +88,59 @@
   min-height: 64px;
   overflow: hidden;
 }
+
+/* Highlighted prompt editor: a colorized backdrop renders the prompt text
+   with `{{variable}}` tokens marked, and the textarea sits on top with
+   transparent text (only its caret/selection show). The two must share an
+   identical box model — see .task-card-form-textarea in taskboard/forms.css —
+   or the glyphs drift out of alignment. */
+.workflows-step-prompt-wrap {
+  position: relative;
+  width: 100%;
+}
+.workflows-step-prompt-wrap .workflows-step-prompt {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text-primary);
+  width: 100%;
+}
+.workflows-step-prompt-wrap .workflows-step-prompt::placeholder {
+  color: var(--text-tertiary);
+}
+.workflows-step-prompt-highlight {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  margin: 0;
+  pointer-events: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  /* Mirror .task-card-form-textarea exactly (transparent border keeps the
+     content box in the same place without double-drawing the textarea's). */
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: #15181d;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+/* No padding on the token mark — a tight background hugs the glyphs without
+   shifting text metrics (which would break alignment with the textarea). */
+.workflows-step-prompt-token {
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-radius: 3px;
+}
+.workflows-step-prompt-token.unknown {
+  color: var(--danger);
+  background: rgba(220, 90, 90, 0.14);
+}
 .workflows-step-collapse {
   flex-shrink: 0;
 }

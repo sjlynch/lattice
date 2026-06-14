@@ -1,8 +1,17 @@
 import path from 'node:path';
 import { generateWorkflowId } from '../ids.js';
 import { ProjectStateManager } from '../projectStateManager.js';
-import { normalizeSteps, normalizeWorkflows } from './normalization.js';
-import type { Workflow, WorkflowStep, WorkflowSubscriber } from './types.js';
+import {
+  normalizeSteps,
+  normalizeWorkflows,
+  normalizeWorkflowVariables,
+} from './normalization.js';
+import type {
+  Workflow,
+  WorkflowStep,
+  WorkflowSubscriber,
+  WorkflowVariable,
+} from './types.js';
 
 export const WORKFLOWS_FILENAME = 'workflows.json';
 
@@ -38,6 +47,7 @@ export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubsc
     projectPath: string,
     name: string,
     steps: WorkflowStep[] | undefined,
+    variables?: WorkflowVariable[],
   ): Promise<Workflow> {
     const key = await this.loadIfNeeded(projectPath);
     const list = this.getCached(key) ?? [];
@@ -46,6 +56,7 @@ export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubsc
       projectPath: key,
       name: name.trim() || 'Untitled workflow',
       steps: normalizeSteps(steps),
+      variables: normalizeWorkflowVariables(variables),
       createdAt: Date.now(),
     };
     const next = [...list, workflow];
@@ -57,7 +68,7 @@ export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubsc
 
   public async updateWorkflow(
     id: string,
-    updates: { name?: string; steps?: WorkflowStep[] },
+    updates: { name?: string; steps?: WorkflowStep[]; variables?: WorkflowVariable[] },
   ): Promise<Workflow | null> {
     for (const [project, list] of this.cacheEntries()) {
       const idx = list.findIndex((w) => w.id === id);
@@ -70,6 +81,9 @@ export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubsc
             ? updates.name.trim()
             : prev.name,
         steps: updates.steps ? normalizeSteps(updates.steps) : prev.steps,
+        variables: updates.variables
+          ? normalizeWorkflowVariables(updates.variables)
+          : normalizeWorkflowVariables(prev.variables),
       };
       const nextList = list.map((w, i) => (i === idx ? nextWorkflow : w));
       this.setCached(project, nextList);
