@@ -41,6 +41,25 @@ explicit-curl callbacks — never by polling task state.
   Node CJS helper script copied into each step dir so the agent can
   create tasks without shell-quoting headaches. The `.cjs` template is a
   runtime asset; `scripts/copy-assets.mjs` mirrors it into `dist/`.
+- `controlStep.ts` + `controlSteps/` — headless control-flow steps
+  (`start` / `merge` / `push`) that run server-side against Lattice's own
+  task pipeline instead of spawning an agent. `controlStep.ts` is the thin
+  dispatcher: it owns the per-project run-lock lifecycle (acquire →
+  kind→worker dispatch → **release BEFORE `completeStep`**), cancellation /
+  not-running guards, and the public surface (`executeControlStep`,
+  `CompleteStepCallback`). The per-kind workers live under `controlSteps/`:
+  - `controlSteps/start.ts` — `runStartStep`: move every Open task to In
+    Progress and run it (one `workflow-task-spawned` terminal tab each);
+    throws if it started none so a no-op run doesn't silently "succeed".
+  - `controlSteps/merge.ts` — `runMergeStep`: Phase A drains In Progress,
+    Phase B loops merge runs (`lockMode: 'inherit'`) until Ready-to-Merge
+    is empty, with the unchanged-lane error-loop guard.
+  - `controlSteps/push.ts` — `runPushStep`: drain Ready-to-Merge, spawn a
+    push session, wait for its Stop hook with the `PUSH_STEP_TIMEOUT_MS`
+    (15 min) backstop and prompt cancel/pty cleanup.
+  - `controlSteps/shared.ts` — `waitForLaneEmpty` (lane-drain subscription,
+    subscribes before the initial read; resolves on cancellation) and
+    `emitControlProgress` (the single `step-control-progress` WS shaper).
 
 ## Adding a step-completion harness
 
