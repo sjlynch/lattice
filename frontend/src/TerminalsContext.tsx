@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -139,21 +140,41 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
     [closeTerminal],
   );
 
+  // Memoize the context value so its identity is stable across renders that
+  // don't change terminals/activeId. The callbacks are already useCallback-
+  // stable, so this recomputes only when terminals or activeId actually
+  // change — exactly when consumers must re-render. Without this, the
+  // freshly-allocated object literal re-rendered every useTerminals()
+  // consumer on any provider render.
+  const value = useMemo<Ctx>(
+    () => ({
+      terminals,
+      activeId,
+      setActiveId,
+      addTerminal,
+      closeTerminal,
+      closeTerminals,
+      closeTerminalsForTask,
+      setServerId,
+      renameTerminal,
+      reorderTerminal,
+    }),
+    [
+      terminals,
+      activeId,
+      setActiveId,
+      addTerminal,
+      closeTerminal,
+      closeTerminals,
+      closeTerminalsForTask,
+      setServerId,
+      renameTerminal,
+      reorderTerminal,
+    ],
+  );
+
   return (
-    <TerminalsContext.Provider
-      value={{
-        terminals,
-        activeId,
-        setActiveId,
-        addTerminal,
-        closeTerminal,
-        closeTerminals,
-        closeTerminalsForTask,
-        setServerId,
-        renameTerminal,
-        reorderTerminal,
-      }}
-    >
+    <TerminalsContext.Provider value={value}>
       {children}
     </TerminalsContext.Provider>
   );
