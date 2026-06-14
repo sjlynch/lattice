@@ -18,13 +18,19 @@ export type {
   GitUncommitted,
 } from './types.js';
 
+// Per-invocation git timeouts. `git log --name-status` does the most work
+// (walks history + diffs each commit) so it gets the longest budget.
+const GIT_REVPARSE_TIMEOUT_MS = 4000;
+const GIT_LOG_TIMEOUT_MS = 6000;
+const GIT_STATUS_TIMEOUT_MS = 4000;
+
 function clampLogLimit(limit: number): number {
   return Math.max(1, Math.min(50, Math.floor(limit)));
 }
 
 async function isGitRepo(repoRoot: string): Promise<boolean> {
   const r = await exec('git', ['rev-parse', '--is-inside-work-tree'], repoRoot, {
-    timeoutMs: 4000,
+    timeoutMs: GIT_REVPARSE_TIMEOUT_MS,
   });
   return r.code === 0 && r.stdout.trim() === 'true';
 }
@@ -48,7 +54,7 @@ async function readCommits(repoRoot: string, limit: number): Promise<GitCommit[]
       `--format=${gitLogFormat()}`,
     ],
     repoRoot,
-    { timeoutMs: 6000 },
+    { timeoutMs: GIT_LOG_TIMEOUT_MS },
   );
   if (r.code !== 0) {
     // No commits yet, shallow repo with no history, etc. — return empty.
@@ -60,7 +66,7 @@ async function readCommits(repoRoot: string, limit: number): Promise<GitCommit[]
 
 async function readUncommitted(repoRoot: string): Promise<GitUncommitted> {
   const r = await exec('git', ['status', '--porcelain=v1', '-z'], repoRoot, {
-    timeoutMs: 4000,
+    timeoutMs: GIT_STATUS_TIMEOUT_MS,
   });
   if (r.code !== 0) return { changes: [] };
 

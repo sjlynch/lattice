@@ -18,6 +18,10 @@ import path from 'node:path';
 const CLAUDE_JSON = path.join(os.homedir(), '.claude.json');
 const BACKUP = path.join(os.homedir(), '.lattice', 'claude-json-backup.json');
 
+// Settle delay between the two reads in `validate` — long enough to let an
+// in-flight Claude write finish, short enough not to stall a health tick.
+const REVALIDATE_DELAY_MS = 200;
+
 function tryRead(): { ok: true; content: string } | { ok: false } {
   try {
     const content = fs.readFileSync(CLAUDE_JSON, 'utf8');
@@ -36,7 +40,7 @@ function tryRead(): { ok: true; content: string } | { ok: false } {
 async function validate(): Promise<{ valid: boolean; content?: string }> {
   const first = tryRead();
   if (first.ok) return { valid: true, content: first.content };
-  await new Promise<void>((r) => setTimeout(r, 200));
+  await new Promise<void>((r) => setTimeout(r, REVALIDATE_DELAY_MS));
   const second = tryRead();
   if (second.ok) return { valid: true, content: second.content };
   return { valid: false };

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { ShapePreview } from './ShapePreview';
 import type { LegendRowData } from './useLegendRows';
@@ -5,15 +6,23 @@ import type { LegendRowData } from './useLegendRows';
 type Props = {
   row: LegendRowData;
   hidden: boolean;
-  onToggle: () => void;
+  // Receives the row key so the parent can pass a single stable handler
+  // (no per-row arrow closure), keeping this row from re-rendering when a
+  // sibling toggles.
+  onToggle: (key: string) => void;
   muted?: boolean;
 };
 
-export function LegendRow({ row, hidden, onToggle, muted }: Props) {
+export const LegendRow = memo(function LegendRow({
+  row,
+  hidden,
+  onToggle,
+  muted,
+}: Props) {
   return (
     <button
       className={`legend-row ${hidden ? 'hidden' : ''} ${muted ? 'muted' : ''}`}
-      onClick={onToggle}
+      onClick={() => onToggle(row.key)}
       title={hidden ? 'Click to show' : 'Click to hide'}
     >
       <ShapePreview style={row.style} size={14} />
@@ -25,4 +34,4 @@ export function LegendRow({ row, hidden, onToggle, muted }: Props) {
       </span>
     </button>
   );
-}
+});

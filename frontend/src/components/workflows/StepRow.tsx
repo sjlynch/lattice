@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { memo, useMemo, useRef } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -91,7 +91,20 @@ function StepHarnessSelect({
 // steps (start/merge/push) render a compact, fixed-behavior row: title plus
 // an info tooltip explaining what the step does. They don't have a prompt or
 // a harness, but they still reorder, collapse (no-op), and can be removed.
-export function StepRow({
+// Row callback props are id/index-parameterized so the parent can hand down a
+// single stable handler per concern (one `useCallback`, not one closure per
+// row). Combined with `React.memo`, typing in one step only re-renders that
+// row — siblings keep their memoized output because every prop they receive is
+// referentially stable.
+type StepRowCallbacks = {
+  onChange: (index: number, patch: Partial<WorkflowStep>) => void;
+  onRemove: (index: number) => void;
+  onReorder: (fromIdx: number, toIdx: number) => void;
+  onToggleCollapse: (stepId: string) => void;
+  onCustomize: (index: number) => void;
+};
+
+export const StepRow = memo(function StepRow({
   step,
   index,
   collapsed,
@@ -109,13 +122,8 @@ export function StepRow({
   collapsed: boolean;
   harnessAvail: HarnessAvailability;
   definedNames: ReadonlySet<string>;
-  onChange: (patch: Partial<WorkflowStep>) => void;
-  onRemove: () => void;
-  onReorder: (fromIdx: number, toIdx: number) => void;
-  onToggleCollapse: () => void;
-  onCustomize: () => void;
   customizing: boolean;
-}) {
+} & StepRowCallbacks) {
   const kind = step.kind ?? 'agent';
   if (kind !== 'agent') {
     return (
@@ -144,9 +152,9 @@ export function StepRow({
       customizing={customizing}
     />
   );
-}
+});
 
-function AgentStepRow({
+const AgentStepRow = memo(function AgentStepRow({
   step,
   index,
   collapsed,
@@ -164,20 +172,20 @@ function AgentStepRow({
   collapsed: boolean;
   harnessAvail: HarnessAvailability;
   definedNames: ReadonlySet<string>;
-  onChange: (patch: Partial<WorkflowStep>) => void;
-  onRemove: () => void;
-  onReorder: (fromIdx: number, toIdx: number) => void;
-  onToggleCollapse: () => void;
-  onCustomize: () => void;
   customizing: boolean;
-}) {
+} & StepRowCallbacks) {
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const { dragOver, onDragStart, onDragOver, onDragLeave, onDrop } =
     useWorkflowStepDragDrop(index, onReorder);
   useAutosizedTextarea(promptRef, step.prompt, collapsed);
 
   const selectedHarness = normalizeAgentHarness(step.harness);
-  const segments = splitPromptSegments(step.prompt, definedNames);
+  // Tokenizing the prompt is the per-row hot path; only redo it when the prompt
+  // text or the set of defined variable names actually changes.
+  const segments = useMemo(
+    () => splitPromptSegments(step.prompt, definedNames),
+    [step.prompt, definedNames],
+  );
 
   return (
     <div
@@ -196,7 +204,7 @@ function AgentStepRow({
           <button
             type="button"
             className="icon-btn sm workflows-step-collapse"
-            onClick={onToggleCollapse}
+            onClick={() => onToggleCollapse(step.id)}
             title={collapsed ? 'Expand step' : 'Collapse step'}
             aria-label={collapsed ? 'Expand step' : 'Collapse step'}
             aria-expanded={!collapsed}
@@ -208,12 +216,12 @@ function AgentStepRow({
             className="task-card-form-input workflows-step-title"
             placeholder="Step title"
             value={step.title}
-            onChange={(e) => onChange({ title: e.target.value })}
+            onChange={(e) => onChange(index, { title: e.target.value })}
           />
           <select
             className="workflows-step-mode"
             value={step.mode}
-            onChange={(e) => onChange({ mode: e.target.value as WorkflowStepMode })}
+            onChange={(e) => onChange(index, { mode: e.target.value as WorkflowStepMode })}
             title="Sequential runs after the prior step finishes; parallel is reserved for the upcoming fan-out executor"
           >
             <option value="sequential">sequential</option>
@@ -222,11 +230,11 @@ function AgentStepRow({
           <StepHarnessSelect
             harnessAvail={harnessAvail}
             selectedHarness={selectedHarness}
-            onChange={(harness) => onChange({ harness })}
+            onChange={(harness) => onChange(index, { harness })}
           />
           <button
             className="icon-btn sm"
-            onClick={onCustomize}
+            onClick={() => onCustomize(index)}
             disabled={customizing}
             title={`Customize this prompt for the active project using ${harnessLabel(selectedHarness)}`}
             aria-label="Customize prompt for active project"
@@ -235,7 +243,7 @@ function AgentStepRow({
           </button>
           <button
             className="icon-btn sm"
-            onClick={onRemove}
+            onClick={() => onRemove(index)}
             title="Remove step"
             aria-label="Remove step"
           >
@@ -268,7 +276,7 @@ function AgentStepRow({
               className="task-card-form-input task-card-form-textarea workflows-step-prompt"
               placeholder="Prompt — written into LATTICE_TASK.md as the task description."
               value={step.prompt}
-              onChange={(e) => onChange({ prompt: e.target.value })}
+              onChange={(e) => onChange(index, { prompt: e.target.value })}
               spellCheck={false}
             />
           </div>
@@ -276,9 +284,9 @@ function AgentStepRow({
       </div>
     </div>
   );
-}
+});
 
-function ControlStepRow({
+const ControlStepRow = memo(function ControlStepRow({
   step,
   index,
   kind,
@@ -289,10 +297,7 @@ function ControlStepRow({
   step: WorkflowStep;
   index: number;
   kind: Exclude<WorkflowStepKind, 'agent'>;
-  onChange: (patch: Partial<WorkflowStep>) => void;
-  onRemove: () => void;
-  onReorder: (fromIdx: number, toIdx: number) => void;
-}) {
+} & Pick<StepRowCallbacks, 'onChange' | 'onRemove' | 'onReorder'>) {
   const { dragOver, onDragStart, onDragOver, onDragLeave, onDrop } =
     useWorkflowStepDragDrop(index, onReorder);
   const meta = CONTROL_STEP_META[kind];
@@ -323,7 +328,7 @@ function ControlStepRow({
             className="task-card-form-input workflows-step-title"
             placeholder={meta.defaultTitle}
             value={step.title}
-            onChange={(e) => onChange({ title: e.target.value })}
+            onChange={(e) => onChange(index, { title: e.target.value })}
             title={meta.hint}
           />
           <span className="workflows-step-control-tag" title={meta.hint}>
@@ -331,7 +336,7 @@ function ControlStepRow({
           </span>
           <button
             className="icon-btn sm"
-            onClick={onRemove}
+            onClick={() => onRemove(index)}
             title="Remove step"
             aria-label="Remove step"
           >
@@ -341,4 +346,4 @@ function ControlStepRow({
       </div>
     </div>
   );
-}
+});

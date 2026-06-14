@@ -1,5 +1,8 @@
 import { execSync } from 'node:child_process';
 
+// Pause after taskkill so Windows releases the listener before the next bind.
+const PORT_RELEASE_DELAY_MS = 500;
+
 // Find the PID listening on `port` and SIGKILL/taskkill it. Windows-only —
 // POSIX rarely needs this and `lsof | xargs kill -9` against the wrong PID
 // is a worse failure mode than the original symptom. Best-effort: any
@@ -45,5 +48,5 @@ export async function forceKillByPort(port: number): Promise<void> {
     }
   }
   // Brief pause so Windows releases the listener before the next bind.
-  await new Promise<void>((r) => setTimeout(r, 500));
+  await new Promise<void>((r) => setTimeout(r, PORT_RELEASE_DELAY_MS));
 }
