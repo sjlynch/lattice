@@ -124,7 +124,9 @@ async function modifiedFilesForTask(
 
 // The project's base branch (what tasks were forked from). `rev-parse
 // --abbrev-ref HEAD` in the main repo = "main" / "master" / whatever.
-async function resolveBaseBranch(projectPath: string): Promise<string> {
+// Returns null on failure so the cached wrapper can fall back without
+// poisoning the cache with a spurious "main".
+async function resolveBaseBranch(projectPath: string): Promise<string | null> {
   try {
     const r = await exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], projectPath, {
       timeoutMs: GIT_TIMEOUT_MS,
@@ -134,8 +136,39 @@ async function resolveBaseBranch(projectPath: string): Promise<string> {
   } catch {
     /* fall through */
   }
+  return null;
+}
+
+// The base branch does not change mid-session, so cache the resolved name
+// per project (keyed by canonical path) and skip the `git rev-parse` spawn on
+// every poll. A failed resolution falls back to "main" for that request only,
+// without caching it.
+const baseBranchCache = new Map<string, string>();
+
+async function resolveBaseBranchCached(projectPath: string): Promise<string> {
+  const key = canonicalProjectPath(projectPath);
+  const cached = baseBranchCache.get(key);
+  if (cached) return cached;
+  const resolved = await resolveBaseBranch(projectPath);
+  if (resolved) {
+    baseBranchCache.set(key, resolved);
+    return resolved;
+  }
   return 'main';
 }
+
+// Short-TTL cache of the computed `/worktree-modified` payload, keyed by
+// canonical project path. The graph's `W` highlight polls this endpoint
+// repeatedly; within the TTL a burst of polls reuses the last result instead
+// of re-spawning `git diff` + `git status` per active task. Entries simply
+// expire — no invalidation needed; staleness is bounded by the TTL.
+const RESULT_TTL_MS = 1500;
+
+type WorktreeModifiedPayload = {
+  tasks: Array<{ taskId: string; colorIndex: Task['colorIndex']; files: string[] }>;
+};
+
+const resultCache = new Map<string, { expires: number; payload: WorktreeModifiedPayload }>();
 
 export function buildTaskActivityRouter(): Router {
   const r = Router();
@@ -171,23 +204,36 @@ export function buildTaskActivityRouter(): Router {
   r.get('/api/tasks/worktree-modified', async (req, res) => {
     const project = typeof req.query.project === 'string' ? req.query.project : '';
     if (!project) return res.status(400).json({ error: 'project required' });
+
+    const cacheKey = canonicalProjectPath(project);
+    const now = Date.now();
+    const cached = resultCache.get(cacheKey);
+    if (cached && cached.expires > now) return res.json(cached.payload);
+
     const tasks = await listTasks(project);
     const active = tasks.filter(
       (t) =>
         (t.status === 'in_progress' || t.status === 'ready_to_merge') &&
         t.worktreePath,
     );
-    if (active.length === 0) return res.json({ tasks: [] });
 
-    const baseBranch = await resolveBaseBranch(project);
-    const results = await Promise.all(
-      active.map(async (t) => ({
-        taskId: t.id,
-        colorIndex: t.colorIndex,
-        files: await modifiedFilesForTask(t, baseBranch),
-      })),
-    );
-    res.json({ tasks: results.filter((t) => t.files.length > 0) });
+    let payload: WorktreeModifiedPayload;
+    if (active.length === 0) {
+      payload = { tasks: [] };
+    } else {
+      const baseBranch = await resolveBaseBranchCached(project);
+      const results = await Promise.all(
+        active.map(async (t) => ({
+          taskId: t.id,
+          colorIndex: t.colorIndex,
+          files: await modifiedFilesForTask(t, baseBranch),
+        })),
+      );
+      payload = { tasks: results.filter((t) => t.files.length > 0) };
+    }
+
+    resultCache.set(cacheKey, { expires: now + RESULT_TTL_MS, payload });
+    res.json(payload);
   });
 
   return r;
