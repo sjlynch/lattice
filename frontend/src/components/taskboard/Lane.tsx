@@ -1,19 +1,9 @@
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, useCallback, useMemo, type ReactNode } from 'react';
 import type { Task, TaskStatus } from '../../api';
 import { LaneHeader } from './LaneHeader';
 import { TaskCard } from './TaskCard';
 import type { Lane as LaneDef } from './lanes';
 import { useLaneDropTargets, type LaneSlotProps } from './hooks/useLaneDropTargets';
-
-// A task can be run from scratch (▶ creates a fresh worktree + agent) when it
-// is an Open task, or an In Progress task that has no worktree yet — i.e. it
-// was dragged into the lane manually and never actually started. The latter
-// otherwise had no runnable button (resume needs an existing worktree), so the
-// only way to start it was to drag it back to Open first.
-function canRunFresh(laneId: TaskStatus, task: Task): boolean {
-  if (laneId === 'open') return true;
-  return laneId === 'in_progress' && !task.worktreePath;
-}
 
 // One lane in the kanban. Hosts drop targets for cross-lane drops and
 // per-position drop slots between cards. Lane background drops do a
@@ -69,9 +59,9 @@ export function Lane({
   onPush?: () => void;
   pushDisabled?: boolean;
   onView: (task: Task) => void;
-  onSingleSelect: (id: string) => void;
-  onToggleSelect: (id: string) => void;
-  onRangeSelect: (id: string) => void;
+  onSingleSelect: (id: string, laneId: TaskStatus) => void;
+  onToggleSelect: (id: string, laneId: TaskStatus) => void;
+  onRangeSelect: (id: string, laneId: TaskStatus) => void;
   onClearSelection: () => void;
   strip?: ReactNode;
 }) {
@@ -84,8 +74,29 @@ export function Lane({
     });
 
   // IDs of selected tasks in this lane (preserves lane order for multi-drag).
-  const selectedIdsInLane = tasks.filter((t) => selectedIds.has(t.id)).map((t) => t.id);
+  // Memoized so cards receive a referentially stable array — with the sibling
+  // structural-sharing change to the task list, this only changes when the
+  // lane's tasks or the selection actually change, not on every WS tick.
+  const selectedIdsInLane = useMemo(
+    () => tasks.filter((t) => selectedIds.has(t.id)).map((t) => t.id),
+    [tasks, selectedIds],
+  );
   const dragging = !!draggingId;
+
+  // Bind the lane id into the selection handlers once per lane (not per card),
+  // keeping the per-card props stable so React.memo(TaskCard) can do its job.
+  const handleSingleSelect = useCallback(
+    (id: string) => onSingleSelect(id, lane.id),
+    [onSingleSelect, lane.id],
+  );
+  const handleToggleSelect = useCallback(
+    (id: string) => onToggleSelect(id, lane.id),
+    [onToggleSelect, lane.id],
+  );
+  const handleRangeSelect = useCallback(
+    (id: string) => onRangeSelect(id, lane.id),
+    [onRangeSelect, lane.id],
+  );
 
   return (
     <div
@@ -131,6 +142,7 @@ export function Lane({
               <Fragment key={t.id}>
                 <TaskCard
                   task={t}
+                  laneId={lane.id}
                   laneColor={lane.color}
                   isDragging={
                     draggingId === t.id ||
@@ -140,34 +152,18 @@ export function Lane({
                   }
                   isSelected={selectedIds.has(t.id)}
                   selectedIdsInLane={selectedIdsInLane}
-                  onDragStart={() => onDragStart(t.id)}
+                  getFocusTerminal={getFocusTerminal}
+                  onDragStart={onDragStart}
                   onDragEnd={onDragEnd}
-                  onDelete={() => onDelete(t.id)}
-                  onRun={
-                    canRunFresh(lane.id, t) && !t.runQueued
-                      ? () => onRun(t)
-                      : undefined
-                  }
-                  onCancelQueuedRun={
-                    canRunFresh(lane.id, t) && t.runQueued
-                      ? () => onCancelQueuedRun(t)
-                      : undefined
-                  }
-                  onResume={
-                    lane.id === 'in_progress' && t.worktreePath
-                      ? () => onResume(t)
-                      : undefined
-                  }
-                  onMerge={
-                    lane.id === 'ready_to_merge'
-                      ? () => onMerge(t)
-                      : undefined
-                  }
-                  onFocusTerminal={getFocusTerminal?.(t) ?? undefined}
-                  onView={() => onView(t)}
-                  onSelect={() => onSingleSelect(t.id)}
-                  onToggleSelect={() => onToggleSelect(t.id)}
-                  onRangeSelect={() => onRangeSelect(t.id)}
+                  onDelete={onDelete}
+                  onRun={onRun}
+                  onCancelQueuedRun={onCancelQueuedRun}
+                  onResume={onResume}
+                  onMerge={onMerge}
+                  onView={onView}
+                  onSelect={handleSingleSelect}
+                  onToggleSelect={handleToggleSelect}
+                  onRangeSelect={handleRangeSelect}
                 />
                 <DropSlot
                   active={hoverIndex === i + 1}
