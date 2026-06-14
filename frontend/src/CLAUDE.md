@@ -6,7 +6,7 @@ list, with feature-scoped stylesheets in `styles/` (see
 
 ## Layout
 
-- `App.tsx` — top-level shell: TopAppBar + resizable Sidebar + ForceGraph + Legend. Project-scoped state is split across `hooks/` (`useActiveFolder`, `useProjectScan`, `useHiddenExtensions`, `useSidebarWidth`, `useStartupTerminalSync`); App itself is layout + wiring.
+- `App.tsx` — top-level shell: TopAppBar + resizable Sidebar + ForceGraph + Legend. Project-scoped state is split across `hooks/` (`useActiveFolder`, `useProjectScan`, `useHiddenExtensions`, `useSidebarWidth`, `useStartupTerminalSync`). `useUserSettings(activeFolder)` does the single per-folder `userSettings.json` fetch; `useSidebarWidth` / `useStartupTerminalSync` / `useMetricsIgnoredExts` (and App's terminal-launch defaults) read their slice from it instead of each fetching. App itself is layout + wiring.
 - `api/` — every backend call. Domain-grouped (`tasks.ts`, `mergeRuns.ts`, `workflows.ts`, `scan.ts`, `settings.ts`). Generic WS subscriber in `ws.ts`. Components import from `'../api'` which resolves to `api/index.ts`.
 - `components/` — UI. Big launchers live in subdirectories with shim re-exports at the top level (`TaskBoard.tsx` → `taskboard/`, `Workflows.tsx` → `workflows/`, `ForceGraphView.tsx` → `forceGraph/`).
 - `TerminalsContext.tsx` — global terminal-tab state, persisted to sessionStorage (per-tab). `addTerminal({...})` is how features spawn agent sessions. Reducer/storage/IO helpers live in `terminal/` (see `terminal/CLAUDE.md`); the context file is just React glue around them.

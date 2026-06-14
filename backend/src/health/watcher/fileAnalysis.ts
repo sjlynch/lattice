@@ -63,5 +63,8 @@ export async function loadOrAnalyzeFile(
 }
 
 export function saveCacheBestEffort(proj: ProjectWatcher): void {
-  proj.cache.save().catch(() => { /* best-effort */ });
+  // save() coalesces this into a single debounced write, so the watcher can
+  // call it after every set()/delete() without re-serializing the whole cache
+  // per file change. It's fire-and-forget and never throws.
+  proj.cache.save();
 }
