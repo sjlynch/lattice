@@ -64,12 +64,19 @@ export function listenForRequests(
     };
     const onListening = () => {
       server.off('error', onError);
-      console.log(`[lattice-backend] listening on http://localhost:${config.port}`);
+      console.log(`[lattice-backend] listening on http://127.0.0.1:${config.port}`);
       console.log(`[lattice-backend] default root: ${config.defaultRoot}`);
       resolve();
     };
     server.once('error', onError);
-    server.listen(config.port, onListening);
+    // Bind loopback-only (NOT 'localhost' — on Windows that can resolve to
+    // ::1 and miss IPv4 callers). The frontend reaches the backend through
+    // vite's dev-server proxy (127.0.0.1) and every hook callback uses
+    // backendOrigin=http://127.0.0.1, so this closes the LAN-reachable
+    // raw-backend hole without affecting any working path. Single-machine
+    // personal tool — no remote-access opt-in needed. Mirrors
+    // terminal-server.ts, which already binds 127.0.0.1.
+    server.listen(config.port, '127.0.0.1', onListening);
   });
 }
 
