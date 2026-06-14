@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight, GitMerge, Rocket, TerminalSquare, X } from 'lucide-react';
-import { useState, type DragEvent, type MouseEvent, type RefObject } from 'react';
+import { memo, useCallback, useRef, useState, type DragEvent, type MouseEvent, type RefObject } from 'react';
 import type { TerminalSpec } from '../../TerminalsContext';
 
 type Props = {
@@ -33,50 +33,63 @@ export function SidebarTabsBar({
   handleTabContextMenu,
   reorderTerminal,
 }: Props) {
-  // Inline rename: double-click a tab to edit its (searchable) label.
+  // Inline rename: double-click a tab to edit its (searchable) label. Only the
+  // id of the tab being edited lives here; the draft text is owned by the
+  // <RenameInput> leaf so per-keystroke churn never reaches the other tabs.
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
 
-  const startRename = (t: TerminalSpec) => {
-    setEditingId(t.id);
-    setDraft(t.label);
-  };
-  const commitRename = () => {
-    if (editingId) renameTerminal(editingId, draft);
-    setEditingId(null);
-  };
-  const cancelRename = () => setEditingId(null);
+  const startRename = useCallback((id: string) => setEditingId(id), []);
+  const commitRename = useCallback(
+    (id: string, label: string) => {
+      renameTerminal(id, label);
+      setEditingId(null);
+    },
+    [renameTerminal],
+  );
+  const cancelRename = useCallback(() => setEditingId(null), []);
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  // Mirror the dragged id into a ref so the drag callbacks stay referentially
+  // stable across the state changes they trigger — otherwise every memoized
+  // tab would re-render on each dragover as the closures changed identity.
+  const draggingIdRef = useRef<string | null>(null);
 
-  const onDragStart = (e: DragEvent, id: string) => {
+  const onDragStart = useCallback((e: DragEvent, id: string) => {
+    draggingIdRef.current = id;
     setDraggingId(id);
     e.dataTransfer.effectAllowed = 'move';
     // Firefox requires data to be set for the drag to start.
     e.dataTransfer.setData('text/plain', id);
-  };
+  }, []);
 
-  const onDragOver = (e: DragEvent, id: string) => {
-    if (draggingId === null || draggingId === id) return;
+  const onDragOver = useCallback((e: DragEvent, id: string) => {
+    const dragging = draggingIdRef.current;
+    if (dragging === null || dragging === id) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    if (dragOverId !== id) setDragOverId(id);
-  };
+    setDragOverId((prev) => (prev === id ? prev : id));
+  }, []);
 
-  const onDrop = (e: DragEvent, id: string) => {
-    e.preventDefault();
-    if (draggingId !== null && draggingId !== id) {
-      reorderTerminal(draggingId, id);
-    }
+  const onDrop = useCallback(
+    (e: DragEvent, id: string) => {
+      e.preventDefault();
+      const dragging = draggingIdRef.current;
+      if (dragging !== null && dragging !== id) {
+        reorderTerminal(dragging, id);
+      }
+      draggingIdRef.current = null;
+      setDraggingId(null);
+      setDragOverId(null);
+    },
+    [reorderTerminal],
+  );
+
+  const onDragEnd = useCallback(() => {
+    draggingIdRef.current = null;
     setDraggingId(null);
     setDragOverId(null);
-  };
-
-  const onDragEnd = () => {
-    setDraggingId(null);
-    setDragOverId(null);
-  };
+  }, []);
 
   return (
     <div className="sidebar-tabs-row">
@@ -96,57 +109,28 @@ export function SidebarTabsBar({
           </div>
         ) : (
           visibleTerminals.map((t) => (
-            <div
+            <SidebarTab
               key={t.id}
-              ref={t.id === activeId ? activeTabRef : undefined}
-              className={`sidebar-tab ${t.id === activeId ? 'active' : ''} ${
-                t.id === draggingId ? 'dragging' : ''
-              } ${t.id === dragOverId ? 'drag-over' : ''}`}
-              draggable
-              onClick={() => setActiveId(t.id)}
-              onDoubleClick={(e) => { e.stopPropagation(); startRename(t); }}
-              onContextMenu={(e) => handleTabContextMenu(e, t.id)}
-              onDragStart={(e) => onDragStart(e, t.id)}
-              onDragOver={(e) => onDragOver(e, t.id)}
-              onDrop={(e) => onDrop(e, t.id)}
+              id={t.id}
+              label={t.label}
+              cwd={t.cwd}
+              kind={t.kind}
+              isActive={t.id === activeId}
+              isDragging={t.id === draggingId}
+              isDragOver={t.id === dragOverId}
+              isEditing={editingId === t.id}
+              activeTabRef={activeTabRef}
+              onActivate={setActiveId}
+              onClose={closeTerminal}
+              onStartRename={startRename}
+              onRename={commitRename}
+              onCancelRename={cancelRename}
+              onContextMenu={handleTabContextMenu}
+              onDragStart={onDragStart}
+              onDragOver={onDragOver}
+              onDrop={onDrop}
               onDragEnd={onDragEnd}
-              title={editingId === t.id ? undefined : `${t.cwd}\nDouble-click to rename`}
-            >
-              {t.kind === 'merge' ? (
-                <GitMerge size={12} />
-              ) : t.kind === 'startup' ? (
-                <Rocket size={12} />
-              ) : (
-                <TerminalSquare size={12} />
-              )}
-              {editingId === t.id ? (
-                <input
-                  className="sidebar-tab-rename"
-                  value={draft}
-                  autoFocus
-                  onClick={(e) => e.stopPropagation()}
-                  onFocus={(e) => e.currentTarget.select()}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onBlur={commitRename}
-                  onKeyDown={(e) => {
-                    e.stopPropagation();
-                    if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
-                    else if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
-                  }}
-                  aria-label="Rename terminal"
-                />
-              ) : (
-                <span>{t.label}</span>
-              )}
-              <button
-                className="sidebar-tab-close"
-                onClick={(e) => { e.stopPropagation(); closeTerminal(t.id); }}
-                title="Close"
-                aria-label="Close terminal"
-              >
-                <X size={12} />
-              </button>
-            </div>
+            />
           ))
         )}
       </div>
@@ -160,5 +144,142 @@ export function SidebarTabsBar({
         <ChevronRight size={14} />
       </button>
     </div>
+  );
+}
+
+type SidebarTabProps = {
+  id: string;
+  label: string;
+  cwd: string;
+  kind?: 'merge' | 'startup';
+  isActive: boolean;
+  isDragging: boolean;
+  isDragOver: boolean;
+  isEditing: boolean;
+  activeTabRef: RefObject<HTMLDivElement | null>;
+  onActivate: (id: string) => void;
+  onClose: (id: string) => void;
+  onStartRename: (id: string) => void;
+  onRename: (id: string, label: string) => void;
+  onCancelRename: () => void;
+  onContextMenu: (e: MouseEvent, id: string) => void;
+  onDragStart: (e: DragEvent, id: string) => void;
+  onDragOver: (e: DragEvent, id: string) => void;
+  onDrop: (e: DragEvent, id: string) => void;
+  onDragEnd: () => void;
+};
+
+// Memoized so the most populous sidebar list (many concurrent agents → many
+// terminals) only re-renders the handful of tabs whose flags actually change
+// on a given TerminalsContext update or drag — not every tab. All callbacks
+// are id-parameterized and stable, so the shallow prop compare holds.
+const SidebarTab = memo(function SidebarTab({
+  id,
+  label,
+  cwd,
+  kind,
+  isActive,
+  isDragging,
+  isDragOver,
+  isEditing,
+  activeTabRef,
+  onActivate,
+  onClose,
+  onStartRename,
+  onRename,
+  onCancelRename,
+  onContextMenu,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+}: SidebarTabProps) {
+  return (
+    <div
+      ref={isActive ? activeTabRef : undefined}
+      className={`sidebar-tab ${isActive ? 'active' : ''} ${
+        isDragging ? 'dragging' : ''
+      } ${isDragOver ? 'drag-over' : ''}`}
+      draggable
+      onClick={() => onActivate(id)}
+      onDoubleClick={(e) => { e.stopPropagation(); onStartRename(id); }}
+      onContextMenu={(e) => onContextMenu(e, id)}
+      onDragStart={(e) => onDragStart(e, id)}
+      onDragOver={(e) => onDragOver(e, id)}
+      onDrop={(e) => onDrop(e, id)}
+      onDragEnd={onDragEnd}
+      title={isEditing ? undefined : `${cwd}\nDouble-click to rename`}
+    >
+      {kind === 'merge' ? (
+        <GitMerge size={12} />
+      ) : kind === 'startup' ? (
+        <Rocket size={12} />
+      ) : (
+        <TerminalSquare size={12} />
+      )}
+      {isEditing ? (
+        <RenameInput
+          initialLabel={label}
+          onCommit={(name) => onRename(id, name)}
+          onCancel={onCancelRename}
+        />
+      ) : (
+        <span>{label}</span>
+      )}
+      <button
+        className="sidebar-tab-close"
+        onClick={(e) => { e.stopPropagation(); onClose(id); }}
+        title="Close"
+        aria-label="Close terminal"
+      >
+        <X size={12} />
+      </button>
+    </div>
+  );
+});
+
+// Mounts fresh each time a rename begins, seeding the draft from the current
+// label (replacing the parent's old setDraft-on-startRename). The doneRef guard
+// keeps the exact rename semantics: Enter or blur commits once, Escape cancels
+// without committing — even though unmounting the focused input also fires blur.
+function RenameInput({
+  initialLabel,
+  onCommit,
+  onCancel,
+}: {
+  initialLabel: string;
+  onCommit: (label: string) => void;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(initialLabel);
+  const doneRef = useRef(false);
+
+  const commit = () => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    onCommit(draft);
+  };
+  const cancel = () => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    onCancel();
+  };
+
+  return (
+    <input
+      className="sidebar-tab-rename"
+      value={draft}
+      autoFocus
+      onClick={(e) => e.stopPropagation()}
+      onFocus={(e) => e.currentTarget.select()}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+      }}
+      aria-label="Rename terminal"
+    />
   );
 }

@@ -10,9 +10,9 @@ import { useMetricsIgnoredExts } from './hooks/useMetricsIgnoredExts';
 import { useProjectScan } from './hooks/useProjectScan';
 import { useSidebarWidth } from './hooks/useSidebarWidth';
 import { useStartupTerminalSync } from './hooks/useStartupTerminalSync';
+import { useUserSettings } from './hooks/useUserSettings';
 import {
   ensureProjectInstrumentation,
-  fetchUserSettings,
   normalizeTerminalLaunchSettings,
   type TerminalLaunchSettings,
 } from './api';
@@ -26,31 +26,39 @@ function App() {
   // panel while it's active. ForceGraphView still owns the keydown
   // listener and pushes changes back up via onHealthModeChange.
   const [healthMode, setHealthMode] = useState(false);
+  // One per-folder fetch of userSettings.json, shared by the hooks below (and
+  // the terminal-launch defaults) instead of each fetching it independently.
+  const userSettings = useUserSettings(activeFolder);
   const {
     sidebarWidth,
     sidebarSettingsLoaded,
     onResizerPointerDown,
     onResizerDoubleClick,
-  } = useSidebarWidth(activeFolder);
+  } = useSidebarWidth(activeFolder, userSettings);
   const [startupTerminals, setStartupTerminals] =
-    useStartupTerminalSync(activeFolder);
+    useStartupTerminalSync(activeFolder, userSettings);
   const [terminalLaunchSettings, setTerminalLaunchSettings] =
     useState<TerminalLaunchSettings>(normalizeTerminalLaunchSettings(null));
   const [metricsIgnoredExts, saveMetricsIgnoredExts] =
-    useMetricsIgnoredExts(activeFolder);
+    useMetricsIgnoredExts(activeFolder, userSettings);
 
+  // Terminal-launch defaults read the same shared userSettings; kept as local
+  // state so SettingsDialog can update them in place.
   useEffect(() => {
     if (!activeFolder) {
       setTerminalLaunchSettings(normalizeTerminalLaunchSettings(null));
       return;
     }
-    fetchUserSettings(activeFolder)
-      .then((settings) => {
-        setTerminalLaunchSettings(normalizeTerminalLaunchSettings(settings));
-      })
-      .catch(() => { /* keep current setting */ });
-    // Install (or remove, per the saved setting) Lattice's project-level
-    // Claude hooks so any session working in this project shows on the graph.
+    if (!userSettings.loaded || !userSettings.settings) return;
+    setTerminalLaunchSettings(
+      normalizeTerminalLaunchSettings(userSettings.settings),
+    );
+  }, [activeFolder, userSettings.loaded, userSettings.settings]);
+
+  // Install (or remove, per the saved setting) Lattice's project-level Claude
+  // hooks so any session working in this project shows on the graph.
+  useEffect(() => {
+    if (!activeFolder) return;
     void ensureProjectInstrumentation(activeFolder);
   }, [activeFolder]);
 

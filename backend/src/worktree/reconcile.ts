@@ -1,10 +1,9 @@
 import path from 'node:path';
-import fs from 'node:fs/promises';
 import { projectGit } from './projectGit.js';
 import { worktreeExists, parseWorktreesPorcelain } from './state.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
-import { assertNotReparsePoint } from './cleanupSafety.js';
 import { pruneReparsePointsUnder } from './reparsePoints.js';
+import { fsRmWithRetries } from './rmRetry.js';
 import { isPathStrictlyInside } from './paths.js';
 import { homeWorktreesDir } from '../projectPath.js';
 
@@ -78,7 +77,7 @@ export async function reconcileStaleState(
     // worktreePath is always a fresh candidate under homeWorktreesDir(repoRoot)
     // — i.e. ~/.lattice/worktrees/<hash>/… — so this fs.rm is structurally
     // incapable of touching any project's `.git`. The startsWith guard plus
-    // the reparse-point check in tryRmWithRetries are belt-and-suspenders.
+    // fsRmWithRetries's guardReparse check are belt-and-suspenders.
     const resolvedWt = path.resolve(worktreePath);
     const resolvedBase = path.resolve(homeWorktreesDir(repoRoot));
     if (!isPathStrictlyInside(resolvedBase, resolvedWt)) {
@@ -90,7 +89,13 @@ export async function reconcileStaleState(
     }
     await proxyKillSessionsByCwd(worktreePath);
     await new Promise<void>((r) => setTimeout(r, 200));
-    if (!(await tryRmWithRetries(worktreePath))) {
+    if (
+      !(await fsRmWithRetries(worktreePath, {
+        delays: RM_RETRY_DELAYS_MS,
+        logPrefix: '[worktree]',
+        guardReparse: true,
+      }))
+    ) {
       // Caller will move on to a fresh suffix; leave the orphan dir in
       // place so the user can investigate the lock holder.
       return false;
@@ -111,46 +116,4 @@ export async function reconcileStaleState(
     }
   }
   return true;
-}
-
-// `fs.rm` on Windows fails with EBUSY/EPERM/ENOTEMPTY when something
-// holds a handle on the directory. Most lock holders we care about (PTYs)
-// have already been killed by the caller; this gives the OS a few hundred
-// ms to actually release the handle before declaring defeat.
-export async function tryRmWithRetries(target: string): Promise<boolean> {
-  // Reparse-point guard before any retry. If the path is a symlink or
-  // Windows junction, fs.rm would recurse into the target and delete it —
-  // catastrophic if the junction happened to point at the repo root or
-  // its `.git`. Refuse loud and skip the rm entirely.
-  try {
-    await assertNotReparsePoint(target);
-  } catch (err) {
-    console.error((err as Error).message);
-    return false;
-  }
-  // `assertNotReparsePoint` only checks `target` itself. A reparse point
-  // *inside* it (e.g. an npm `file:` self-dep junction at
-  // node_modules/<pkg> pointing back at target) would make the recursive
-  // fs.rm below walk a loop. Strip those links first; failure is non-fatal.
-  await pruneReparsePointsUnder(target).catch((err) =>
-    console.warn(`[worktree] pruneReparsePointsUnder(${target}) failed (continuing):`, err),
-  );
-  for (let attempt = 0; attempt < RM_RETRY_DELAYS_MS.length + 1; attempt += 1) {
-    try {
-      await fs.rm(target, { recursive: true, force: true });
-      return true;
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      const transient =
-        code === 'EBUSY' || code === 'EPERM' || code === 'ENOTEMPTY';
-      if (!transient || attempt === RM_RETRY_DELAYS_MS.length) {
-        console.warn(`[worktree] fs.rm ${target} failed (${code ?? 'unknown'}):`, err);
-        return false;
-      }
-      await new Promise<void>((r) =>
-        setTimeout(r, RM_RETRY_DELAYS_MS[attempt]),
-      );
-    }
-  }
-  return false;
 }
