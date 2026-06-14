@@ -1,7 +1,7 @@
 // Task CRUD + lifecycle (run, resume, merge) + live subscription.
 
 import { asJson } from './http';
-import { subscribeWs } from './ws';
+import { subscribeWs, subscribeWsShared } from './ws';
 import type {
   AgentActivityEvent,
   AgentSession,
@@ -133,6 +133,14 @@ type TasksWsMessage =
   | ({ type: 'task-activity' } & TaskActivityEvent)
   | ({ type: 'agent-activity' } & AgentActivityEvent);
 
+// Both the taskboard (`useTaskList`) and the graph (`useAgentOverlay`)
+// subscribe to `/ws/tasks` for the same project. Routing through the
+// ref-counted `subscribeWsShared` multiplexer means a single socket / single
+// JSON.parse fans the high-frequency snapshot + activity frames out to both,
+// instead of two independent sockets each parsing every frame. The `tasks`
+// snapshot is cached+replayed to a late joiner (e.g. the board opening after
+// the graph already opened the socket); the transient `task-spawned` /
+// `*-activity` frames are NOT replayed (no stale beam re-fires).
 export function subscribeTasks(
   projectPath: string,
   onUpdate: (tasks: Task[]) => void,
@@ -140,7 +148,7 @@ export function subscribeTasks(
   onActivity?: (event: TaskActivityEvent) => void,
   onAgentActivity?: (event: AgentActivityEvent) => void,
 ): () => void {
-  return subscribeWs<TasksWsMessage>(
+  return subscribeWsShared<TasksWsMessage>(
     `/ws/tasks?project=${encodeURIComponent(projectPath)}`,
     (msg) => {
       if (msg.type === 'tasks') onUpdate(msg.tasks);
@@ -148,6 +156,7 @@ export function subscribeTasks(
       else if (msg.type === 'task-activity') onActivity?.(msg);
       else if (msg.type === 'agent-activity') onAgentActivity?.(msg);
     },
+    (msg) => msg.type === 'tasks',
   );
 }
 
