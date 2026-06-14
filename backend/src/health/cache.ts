@@ -17,6 +17,14 @@ const CACHE_VERSION = 3;
 const CACHE_DIRNAME = '.lattice';
 const CACHE_FILENAME = 'health-cache.json';
 
+// Quiet period before a coalesced write fires. A burst of set()/delete()
+// calls (a branch switch, a formatter touching many files, the watcher
+// re-analyzing a save) each re-arms this timer, so the whole burst collapses
+// into a single JSON.stringify + writeFile after things settle instead of one
+// full re-serialization of the entire cache per file change. flush() forces
+// the pending write out immediately when we can't wait (scan done / shutdown).
+const SAVE_DEBOUNCE_MS = 300;
+
 export type CacheEntry = {
   mtimeMs: number;
   size: number;
@@ -45,11 +53,15 @@ export class HealthCache {
   private projectRoot: string;
   private data: CacheFile = emptyCache();
   private dirty = false;
-  // All save() calls chain off this promise so two concurrent writers
-  // can never race on the same JSON file. Each link snapshots `data`
-  // and clears `dirty` before doing the write — concurrent set()s after
-  // the snapshot re-mark dirty and a subsequent save() picks them up.
+  // All writes chain off this promise so two concurrent writers can never
+  // race on the same JSON file. Each link snapshots `data` and clears
+  // `dirty` before doing the write — concurrent set()s after the snapshot
+  // re-mark dirty and a subsequent write picks them up.
   private saveChain: Promise<void> = Promise.resolve();
+  // Pending debounced-write timer. While set, save() calls are coalesced
+  // into the one write it will fire; flush() clears it and writes now. null
+  // when no write is scheduled.
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(projectRoot: string) {
     this.projectRoot = projectRoot;
@@ -120,12 +132,36 @@ export class HealthCache {
     if (removed > 0) this.dirty = true;
   }
 
-  save(): Promise<void> {
-    // Queue ourselves at the end of the chain so two callers that fire
-    // save() back-to-back don't both end up inside fs.writeFile at the
-    // same time (which can corrupt the JSON). The chain itself never
-    // rejects — _doSave swallows write errors so a transient EBUSY
-    // doesn't poison every subsequent save.
+  // Request a write. Coalescing: a burst of set()/delete()-driven save()
+  // calls re-arms a single debounce timer, so we serialize+write the whole
+  // cache once after the burst settles instead of once per change. Returns
+  // immediately — the write is fire-and-forget (errors are swallowed in
+  // _doSave); use flush() when you need to await the result.
+  save(): void {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      void this.runSave();
+    }, SAVE_DEBOUNCE_MS);
+  }
+
+  // Force any pending coalesced write to happen now and resolve once it (and
+  // anything already in flight) completes. No-ops cheaply when nothing is
+  // dirty. Call on scan completion and process shutdown so a debounced write
+  // is never dropped. Never rejects — _doSave swallows write errors.
+  flush(): Promise<void> {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    return this.runSave();
+  }
+
+  // Queue a write at the end of the chain so two callers can't both be inside
+  // fs.writeFile at once (which can corrupt the JSON). The chain never rejects
+  // — _doSave swallows write errors so a transient EBUSY doesn't poison every
+  // subsequent write.
+  private runSave(): Promise<void> {
     this.saveChain = this.saveChain.then(() => this._doSave());
     return this.saveChain;
   }
