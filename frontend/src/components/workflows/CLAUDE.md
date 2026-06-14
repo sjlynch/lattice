@@ -23,7 +23,9 @@ Components behind the Workflows button. `Workflows.tsx` (parent dir) is a re-exp
 - `WorkflowRunStrip.tsx` — progress / summary strip above the editor name input.
 - `editorState.ts` — `EditorState` type + `emptyEditor`, `localStepId`, `fromTemplate`, `fromWorkflow`. Editor keeps a `dirty` flag so unsaved changes show "Discard"/"Save".
 - `defaultPrompts.ts` + `prompts/*.md` — quick-add prompt metadata and raw markdown prompt assets. Keep existing raw prompt bytes stable when moving/editing prompt bodies.
-- `projectPromptVariants.ts` — project-stack heuristics and project-aware variants for the refactor / bug-catcher prompt templates only.
+- `projectPromptVariants.ts` — thin facade re-exporting `projectStackDetection.ts` + `promptTemplates.ts` so importers have one entry point. Project-stack heuristics and project-aware variants for the refactor / bug-catcher prompt templates only.
+- `projectStackDetection.ts` — stack detection/profiling: framework signals, the `PROJECT_STACKS` table, and `detectProjectPromptProfile` (which stacks a scan matches + the guidance that follows).
+- `promptTemplates.ts` — prompt-template matching + project-variant generation: `PROMPT_TEMPLATE_METADATA`, `inferPromptTemplateId`/`promptTemplateTitle`, and `promptWithProjectVariant`/`promptsWithProjectVariants`.
 
 ## Styles
 
