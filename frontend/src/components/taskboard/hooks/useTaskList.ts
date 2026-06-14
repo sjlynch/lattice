@@ -1,10 +1,40 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fetchTasks,
   subscribeTasks,
   type Task,
   type TaskSpawnedEvent,
 } from '../../../api';
+
+// Cheap per-task signature: every backend mutation bumps `updatedAt` (via
+// `stampTimestamps`) and a reorder rewrites `status`/`sortOrder`, so a task
+// whose signature is unchanged is byte-identical to the last snapshot for
+// everything the board renders. `conflict`/`runQueued` are listed explicitly
+// as belt-and-suspenders for the card-visible flags.
+function taskSig(t: Task): string {
+  return `${t.updatedAt ?? 0}|${t.status}|${t.conflict ? 1 : 0}|${
+    t.runQueued ? 1 : 0
+  }|${t.sortOrder ?? 0}`;
+}
+
+// Structural share: reuse the previous Task object for any id whose signature
+// is unchanged, so referentially-stable cards (React.memo on the task object)
+// can skip re-render even though the whole list snapshot arrives each frame.
+// If every position resolves to the exact object already at that index in
+// `prev`, hand back `prev` itself so the array identity is stable too (lets
+// the lane grouping/sort memos skip as well, not just the cards).
+function structurallyShareTasks(prev: Task[], next: Task[]): Task[] {
+  if (prev.length === 0) return next;
+  const prevById = new Map(prev.map((t) => [t.id, t]));
+  let identical = next.length === prev.length;
+  const merged = next.map((t, i) => {
+    const old = prevById.get(t.id);
+    const reused = old && taskSig(old) === taskSig(t) ? old : t;
+    if (reused !== prev[i]) identical = false;
+    return reused;
+  });
+  return identical ? prev : merged;
+}
 
 // Owns the per-folder task list: initial fetch, live WS subscription, and
 // the in-flight error toast. `showError` is also exposed so action handlers
@@ -20,11 +50,26 @@ export function useTaskList(
 ) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // Hold the auto-dismiss timer so we can clear it on unmount / before
+  // re-scheduling instead of leaking a 5 s timer per error (mirrors the
+  // copy-timer pattern in shared/ErrorToast.tsx).
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showError = useCallback((msg: string) => {
     setError(msg);
-    setTimeout(() => setError((cur) => (cur === msg ? null : cur)), 5000);
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    errorTimerRef.current = setTimeout(
+      () => setError((cur) => (cur === msg ? null : cur)),
+      5000,
+    );
   }, []);
+
+  useEffect(
+    () => () => {
+      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    },
+    [],
+  );
 
   // Initial load + WS subscription per active folder.
   useEffect(() => {
@@ -35,13 +80,13 @@ export function useTaskList(
     let cancelled = false;
     fetchTasks(activeFolder)
       .then((ts) => {
-        if (!cancelled) setTasks(ts);
+        if (!cancelled) setTasks((prev) => structurallyShareTasks(prev, ts));
       })
       .catch((err) => console.error('fetchTasks', err));
     const unsub = subscribeTasks(
       activeFolder,
       (ts) => {
-        if (!cancelled) setTasks(ts);
+        if (!cancelled) setTasks((prev) => structurallyShareTasks(prev, ts));
       },
       (event) => {
         if (!cancelled) onTaskSpawned?.(event);
