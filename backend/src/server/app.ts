@@ -29,8 +29,31 @@ export function createBackendApp(options: BackendAppOptions): Express {
   return app;
 }
 
+// The SPA is same-origin via vite's dev-server proxy and never relies on
+// CORS response headers, so a strict allowlist is invisible to the app while
+// blocking cross-origin attackers. Only the vite dev origin (both loopback
+// spellings) is permitted; everything else gets no CORS headers and is thus
+// rejected by the browser's same-origin policy. curl/agent task-seeding is
+// unaffected — CORS is browser-enforced only.
+const ALLOWED_ORIGINS = new Set([
+  'http://localhost:5183',
+  'http://127.0.0.1:5183',
+]);
+
 export function mountBaseMiddleware(app: Express): void {
-  app.use(cors());
+  app.use(
+    cors({
+      origin(origin, callback) {
+        // No Origin header (same-origin requests, curl, server-side hooks)
+        // → allow; cross-origin requests must match the allowlist.
+        if (!origin || ALLOWED_ORIGINS.has(origin)) {
+          callback(null, true);
+        } else {
+          callback(null, false);
+        }
+      },
+    }),
+  );
   // 25mb so a Claude PreToolUse/PostToolUse hook can POST a large `Write`
   // tool_input (the whole file body) to /api/tasks/:id/activity without
   // tripping the default 100kb limit. Localhost-only personal tool; the
