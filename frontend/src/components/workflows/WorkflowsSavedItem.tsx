@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Play, Plus, Square } from 'lucide-react';
 import type {
   Workflow,
@@ -28,7 +29,10 @@ type Props = {
   onStopRun: (runId: string) => void | Promise<unknown>;
 };
 
-export function WorkflowsSavedItem({
+// Memoized leaf: the saved list re-renders on every /ws/workflow-runs progress
+// event, but with stable handler/option props each row only re-renders when its
+// own workflow/run/queue state actually changes.
+export const WorkflowsSavedItem = memo(function WorkflowsSavedItem({
   workflow,
   isSelected,
   run,
@@ -139,4 +143,4 @@ export function WorkflowsSavedItem({
       </div>
     </div>
   );
-}
+});

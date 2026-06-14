@@ -1,8 +1,11 @@
+import { memo } from 'react';
 import type { ExtStyle, Shape } from '../../extensionStyles';
 
 // Inline SVG preview matching the canvas-drawn shapes in ForceGraphView.
 // Two-color uses a linearGradient with hard 50% stops for the diagonal split.
-export function ShapePreview({
+// Memoized: EXT_STYLES entries are module constants, so a stable `style`
+// reference skips re-running the SVG point-array math when a sibling row toggles.
+export const ShapePreview = memo(function ShapePreview({
   style,
   size = 14,
 }: {
@@ -37,7 +40,7 @@ export function ShapePreview({
       <ShapeSvg shape={style.shape} fill={fill} />
     </svg>
   );
-}
+});
 
 function ShapeSvg({ shape, fill }: { shape: Shape; fill: string }) {
   const stroke = 'rgba(0,0,0,0.45)';
