@@ -1,0 +1,79 @@
+// Filesystem side of the Pi completion extension: install/update the
+// `.pi/extensions/lattice-complete.ts` file on disk and read back the sentinel
+// it writes. Rendering lives in `template.ts`; the public types and the
+// `renderPiCompletionExtension` composition live in `../piExtension.ts`, which
+// re-exports the functions here.
+
+import path from 'node:path';
+import fs from 'node:fs/promises';
+
+import {
+  defaultPiExtensionFileName,
+  defaultPiSentinelFileName,
+  renderPiCompletionExtension,
+  type PiExtensionSite,
+} from '../piExtension.js';
+
+// Whether the extension already on disk matches what we'd write. Pulled out so
+// the "don't dirty `git status` on a no-op reconciliation" check reads as one
+// named intent.
+function isExtensionUpToDate(existing: string, expected: string): boolean {
+  return existing === expected;
+}
+
+// Install (or update) the Pi extension on disk. Skips the write when the
+// existing contents already match so a worktree reconciliation doesn't dirty
+// `git status`.
+export async function installPiCompletionExtension(args: {
+  dir: string;
+  callbackUrl: string;
+  site: PiExtensionSite;
+  respectQuitGate: boolean;
+  promptFile?: string;
+}): Promise<{ extensionFile: string; sentinelFile: string }> {
+  const extDir = path.join(args.dir, '.pi', 'extensions');
+  await fs.mkdir(extDir, { recursive: true });
+  const extensionFile = path.join(extDir, defaultPiExtensionFileName());
+  const sentinelFile = path.join(extDir, defaultPiSentinelFileName());
+  const expected = renderPiCompletionExtension({
+    callbackUrl: args.callbackUrl,
+    site: args.site,
+    respectQuitGate: args.respectQuitGate,
+    promptFile: args.promptFile,
+    extensionFile,
+    sentinelFile,
+  });
+  try {
+    const existing = await fs.readFile(extensionFile, 'utf8');
+    if (isExtensionUpToDate(existing, expected)) return { extensionFile, sentinelFile };
+  } catch {
+    /* file absent — fall through to write */
+  }
+  await fs.writeFile(extensionFile, expected, 'utf8');
+  console.log(
+    `[pi-extension] installed ${args.site} backstop at ${extensionFile} ` +
+      `(gate=${args.respectQuitGate ? 'quit-only' : 'any-reason'}` +
+      `${args.promptFile ? `, promptFile=${args.promptFile}` : ''})`,
+  );
+  return { extensionFile, sentinelFile };
+}
+
+// Helper for callers that want to read a sentinel for diagnostics (e.g. the
+// staleness sweep in recovery/inProgressSweep.ts could surface it on the
+// task card). Returns null if absent / unparseable.
+export async function readPiShutdownSentinel(
+  scratchDir: string,
+): Promise<unknown | null> {
+  try {
+    const file = path.join(
+      scratchDir,
+      '.pi',
+      'extensions',
+      defaultPiSentinelFileName(),
+    );
+    const raw = await fs.readFile(file, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}

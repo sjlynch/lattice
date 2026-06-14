@@ -25,9 +25,14 @@
 // Adding a new Pi-extension call-site = add a `PiExtensionSite` value,
 // pick a sentinel filename, decide whether to gate on `quit`, and call
 // `installPiCompletionExtension`. Don't inline a fresh copy.
+//
+// This file is the stable public facade. The extension source template lives
+// in `piExtension/template.ts` (how the generated TS is assembled) and the
+// filesystem install + sentinel-read logic lives in `piExtension/install.ts`.
+// Keep all three public-export names below stable — callers import them from
+// `./piExtension.js`.
 
-import path from 'node:path';
-import fs from 'node:fs/promises';
+import { appendSourceParam, renderExtensionSource } from './piExtension/template.js';
 
 export type PiExtensionSite =
   | 'task-complete'
@@ -71,187 +76,29 @@ export function defaultPiExtensionFileName(): string {
   return 'lattice-complete.ts';
 }
 
-// Render the extension source. Strings are kept as JSON literals so an
-// unexpected character in a URL or path can't break the generated TS.
+// Render the extension source. The per-call inputs (source-tagged URL, the
+// `null`-or-JSON prompt-file literal) are derived here, then handed to the
+// section-assembly in `piExtension/template.ts`. The generated text is
+// byte-identical to the original single-template-literal renderer.
 export function renderPiCompletionExtension(
   opts: PiCompletionExtensionOptions,
 ): string {
   const { callbackUrl, site, respectQuitGate, promptFile, sentinelFile } = opts;
-  // Append ?source so the backend `/complete` route can log which mechanism
-  // fired (model curl vs Pi extension vs Claude Stop hook).
   const urlWithSource = appendSourceParam(callbackUrl, `pi-extension-${site}`);
   const promptFileLiteral = promptFile ? JSON.stringify(promptFile) : 'null';
 
-  return `// Lattice-managed — do not commit. Reports completion (${site}) to Lattice
-// when the Pi session exits. Mirrors the Claude Stop hook installed alongside
-// this directory. Safe to fire multiple times — the Lattice endpoint is
-// idempotent. Writes a sentinel JSON file beside this extension recording
-// what happened so we can diagnose Pi reliability without server logs.
-//
-// Hardened behavior vs. the original one-shot fetch:
-//   - up to 3 attempts with a short backoff so a transient socket hiccup
-//     during process shutdown doesn't lose the callback;
-//   - a per-attempt timeout so a wedged backend doesn't strand shutdown;
-//   - a sentinel audit log so 'did the extension fire?' is visible on disk;
-//   - shutdown-reason gate is ${respectQuitGate ? 'enabled' : 'disabled'}
-//     for this site (${site}).
-
-import fs from "node:fs";
-
-const CALLBACK_URL = ${JSON.stringify(urlWithSource)};
-const SENTINEL_FILE = ${JSON.stringify(sentinelFile)};
-const PROMPT_FILE = ${promptFileLiteral};
-const SITE = ${JSON.stringify(site)};
-const RESPECT_QUIT_GATE = ${respectQuitGate ? 'true' : 'false'};
-const ATTEMPT_TIMEOUT_MS = 4000;
-const MAX_ATTEMPTS = 3;
-const BACKOFF_MS = 400;
-
-function writeSentinel(record) {
-  try {
-    fs.writeFileSync(SENTINEL_FILE, JSON.stringify(record, null, 2));
-  } catch {
-    // Best-effort — sentinel write must never throw out of session_shutdown.
-  }
-}
-
-function readPromptIfNeeded() {
-  if (!PROMPT_FILE) return { prompt: undefined, promptError: undefined };
-  try {
-    const prompt = fs.readFileSync(PROMPT_FILE, "utf8");
-    return { prompt, promptError: undefined };
-  } catch (err) {
-    return { prompt: "", promptError: String(err && err.message ? err.message : err) };
-  }
-}
-
-async function attemptPost(prompt) {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), ATTEMPT_TIMEOUT_MS);
-  try {
-    const init = {
-      method: "POST",
-      signal: ac.signal,
-    };
-    if (prompt !== undefined) {
-      init.headers = { "Content-Type": "application/json" };
-      init.body = JSON.stringify({ prompt });
-    }
-    const res = await fetch(CALLBACK_URL, init);
-    return { ok: res.ok, status: res.status };
-  } catch (err) {
-    return { ok: false, error: String(err && err.message ? err.message : err) };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function postWithRetries(prompt) {
-  const attempts = [];
-  for (let i = 0; i < MAX_ATTEMPTS; i++) {
-    const result = await attemptPost(prompt);
-    attempts.push(result);
-    if (result.ok) return { success: true, attempts };
-    if (i < MAX_ATTEMPTS - 1) {
-      await new Promise((r) => setTimeout(r, BACKOFF_MS * (i + 1)));
-    }
-  }
-  return { success: false, attempts };
-}
-
-export default function (pi) {
-  pi.on("session_shutdown", async (event) => {
-    const reason = event && event.reason ? event.reason : undefined;
-    const startedAt = Date.now();
-
-    if (RESPECT_QUIT_GATE && reason && reason !== "quit") {
-      writeSentinel({
-        site: SITE,
-        startedAt,
-        reason,
-        skipped: "non-quit reason gated by RESPECT_QUIT_GATE",
-      });
-      return;
-    }
-
-    const { prompt, promptError } = readPromptIfNeeded();
-    const { success, attempts } = await postWithRetries(prompt);
-
-    writeSentinel({
-      site: SITE,
-      startedAt,
-      finishedAt: Date.now(),
-      reason,
-      url: CALLBACK_URL,
-      promptFile: PROMPT_FILE,
-      promptError,
-      promptBytes: prompt === undefined ? null : prompt.length,
-      attempts,
-      success,
-    });
-  });
-}
-`;
-}
-
-function appendSourceParam(url: string, source: string): string {
-  const sep = url.includes('?') ? '&' : '?';
-  return `${url}${sep}source=${encodeURIComponent(source)}`;
-}
-
-// Install (or update) the Pi extension on disk. Skips the write when the
-// existing contents already match so a worktree reconciliation doesn't dirty
-// `git status`.
-export async function installPiCompletionExtension(args: {
-  dir: string;
-  callbackUrl: string;
-  site: PiExtensionSite;
-  respectQuitGate: boolean;
-  promptFile?: string;
-}): Promise<{ extensionFile: string; sentinelFile: string }> {
-  const extDir = path.join(args.dir, '.pi', 'extensions');
-  await fs.mkdir(extDir, { recursive: true });
-  const extensionFile = path.join(extDir, defaultPiExtensionFileName());
-  const sentinelFile = path.join(extDir, defaultPiSentinelFileName());
-  const expected = renderPiCompletionExtension({
-    callbackUrl: args.callbackUrl,
-    site: args.site,
-    respectQuitGate: args.respectQuitGate,
-    promptFile: args.promptFile,
-    extensionFile,
+  return renderExtensionSource({
+    urlWithSource,
     sentinelFile,
+    promptFileLiteral,
+    site,
+    respectQuitGate,
   });
-  try {
-    const existing = await fs.readFile(extensionFile, 'utf8');
-    if (existing === expected) return { extensionFile, sentinelFile };
-  } catch {
-    /* file absent — fall through to write */
-  }
-  await fs.writeFile(extensionFile, expected, 'utf8');
-  console.log(
-    `[pi-extension] installed ${args.site} backstop at ${extensionFile} ` +
-      `(gate=${args.respectQuitGate ? 'quit-only' : 'any-reason'}` +
-      `${args.promptFile ? `, promptFile=${args.promptFile}` : ''})`,
-  );
-  return { extensionFile, sentinelFile };
 }
 
-// Helper for callers that want to read a sentinel for diagnostics (e.g. the
-// staleness sweep in recovery/inProgressSweep.ts could surface it on the
-// task card). Returns null if absent / unparseable.
-export async function readPiShutdownSentinel(
-  scratchDir: string,
-): Promise<unknown | null> {
-  try {
-    const file = path.join(
-      scratchDir,
-      '.pi',
-      'extensions',
-      defaultPiSentinelFileName(),
-    );
-    const raw = await fs.readFile(file, 'utf8');
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
+// Re-export the filesystem surface so existing callers keep importing
+// everything from `./piExtension.js`.
+export {
+  installPiCompletionExtension,
+  readPiShutdownSentinel,
+} from './piExtension/install.js';

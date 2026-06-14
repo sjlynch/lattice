@@ -11,15 +11,30 @@
 // are rejected. Inside a run, each task acquires the per-task lock from
 // mergeLocks.ts, so a manual /merge call landing during a run can't race.
 
-import { restoreSnapshot, type SnapshotHandle } from './worktree.js';
-import { listTasks, type Task } from './tasks.js';
-import { canonicalProjectPath } from './projectPath.js';
-import { runPostMergeHookGate } from './postMergeHooks.js';
+import { listTasks } from './tasks.js';
+import { processTarget } from './mergeRuns/processTarget.js';
+import { runPreflight } from './mergeRuns/preflight.js';
 import {
-  acquireProjectRunLock,
-  ProjectRunLockedError,
-  type ProjectRunLockHandle,
-} from './projectRunLock.js';
+  createRunRecord,
+  filterAndSortTargets,
+  initializeRunState,
+} from './mergeRuns/lifecycle.js';
+import {
+  runPostMergeHook,
+  runTeardown,
+} from './mergeRuns/teardown.js';
+import {
+  cancelRunInState,
+  createRunState,
+  getActiveRunForProjectFromState,
+  getRunFromState,
+  notify,
+  signalConflictWaiterInState,
+  snapshot,
+  subscribeToRunState,
+  type MergeRun,
+  type MergeRunEvent,
+} from './mergeRuns/state.js';
 
 // Lock-acquisition policy for startMergeRun.
 //   - 'acquire' (default): grab the cross-process project run-lock for the
@@ -33,21 +48,6 @@ export type MergeRunLockMode = 'acquire' | 'inherit';
 export type StartMergeRunOptions = {
   lockMode?: MergeRunLockMode;
 };
-import { generateMergeRunId } from './ids.js';
-import { processTarget } from './mergeRuns/processTarget.js';
-import { runPreflight } from './mergeRuns/preflight.js';
-import {
-  cancelRunInState,
-  createRunState,
-  getActiveRunForProjectFromState,
-  getRunFromState,
-  notify,
-  signalConflictWaiterInState,
-  snapshot,
-  subscribeToRunState,
-  type MergeRun,
-  type MergeRunEvent,
-} from './mergeRuns/state.js';
 
 export type {
   MergeRun,
@@ -83,62 +83,11 @@ export function signalConflictWaiter(taskId: string): boolean {
   return signalConflictWaiterInState(runState, taskId);
 }
 
-async function runTeardown(
-  projectPath: string,
-  run: MergeRun,
-  runSnapshot: SnapshotHandle,
-  targets: Task[],
-  backendOrigin: string,
-  lockMode: MergeRunLockMode,
-): Promise<void> {
-  // Post-run snapshot restore. Only when the loop ran to completion
-  // (not on cancel) — a cancelled run leaves the snapshot in place so
-  // the user's mods aren't blasted with whatever partial state the FFs
-  // left. The snapshot dir survives across server restarts and
-  // recoverPendingSnapshots will restore it on next boot.
-  //
-  // Unlike the prior stash-based path, restore here can never produce a
-  // "conflict" outcome — copy-based restore is last-writer-wins on
-  // overlap. Conservative: the user's snapshotted files always win
-  // over whatever the FF brought in. Worst case is a dirty working
-  // tree the user can review with `git status` / `git diff`.
-  if (runSnapshot.dir && !run.cancelRequested) {
-    console.log(`[merge-run] restoring run snapshot → ${runSnapshot.dir}`);
-    try {
-      await restoreSnapshot(runSnapshot, projectPath);
-      console.log(`[merge-run] snapshot restored`);
-    } catch (err) {
-      console.warn('[merge-run] post-run snapshot restore failed (continuing):', err);
-    }
-  }
-
-  // If tasks became ready_to_merge while this run was processing its
-  // snapshot, they were never in `targets` and are still waiting. Auto-
-  // restart so they get picked up without requiring a manual merge-all click.
-  //
-  // Skip the auto-restart when this run inherited its lock — the workflow
-  // Merge control step holds the lock and is responsible for looping through
-  // any remaining ready_to_merge tasks itself. A fire-and-forget restart here
-  // would try to acquire its own lock (with the default 'acquire' mode) and
-  // fail since the workflow still holds it.
-  if (!run.cancelRequested && lockMode !== 'inherit') {
-    try {
-      const allTasks = await listTasks(projectPath);
-      const seenIds = new Set(targets.map((t) => t.id));
-      const newReady = allTasks.filter(
-        (t) => t.status === 'ready_to_merge' && !t.conflict && !seenIds.has(t.id),
-      );
-      if (newReady.length > 0) {
-        console.log(
-          `[merge-run] ${newReady.length} task(s) became ready_to_merge during this run — auto-restarting`,
-        );
-        startMergeRun(projectPath, backendOrigin).catch(() => {});
-      }
-    } catch {
-      // best-effort; failure just means the user sees the remaining tasks
-      // at ready_to_merge and can trigger merge-all manually
-    }
-  }
+// Fire-and-forget restart used by teardown's auto-restart branch. Passed in
+// (rather than referenced directly inside teardown) so teardown.ts doesn't take
+// a runtime dependency back on this module.
+function restartMergeRun(projectPath: string, backendOrigin: string): void {
+  startMergeRun(projectPath, backendOrigin).catch(() => {});
 }
 
 export async function startMergeRun(
@@ -146,57 +95,20 @@ export async function startMergeRun(
   backendOrigin: string,
   options: StartMergeRunOptions = {},
 ): Promise<MergeRun> {
-  projectPath = canonicalProjectPath(projectPath);
-  await runState.loadProject(projectPath);
-  for (const r of runState.runs.values()) {
-    if (r.projectPath === projectPath && r.status === 'running') {
-      throw new Error('A merge run is already in progress for this project.');
-    }
-  }
+  const lockMode = options.lockMode ?? 'acquire';
 
-  // Cross-process gate. If another Lattice process is already merging
-  // this project (the lattice-on-lattice scenario, or two sibling
-  // installations sharing a repo), bail before we begin: holding a stale
-  // run object plus running snapshot/FF concurrently with a sibling
-  // process is the configuration that produced prior `.git` deletions.
-  //
-  // When lockMode is 'inherit' (workflow Merge control step), the caller
-  // already holds the lock for the whole step — skip both acquire and
-  // release here so we don't deadlock or release someone else's lock.
-  let projectLock: ProjectRunLockHandle | null = null;
-  if (options.lockMode !== 'inherit') {
-    try {
-      projectLock = await acquireProjectRunLock(projectPath, 'merge-run');
-    } catch (err) {
-      if (err instanceof ProjectRunLockedError) {
-        throw new Error(err.message);
-      }
-      throw err;
-    }
-  }
-
-  const tasks = await listTasks(projectPath);
-  // Include conflict-flagged tasks too — the per-task loop knows how to
-  // re-attempt them (resolver Claude may have already finished and
-  // committed; Lattice just needs to re-sync and finalize). The old
-  // `&& !t.conflict` filter stranded conflict tasks across server
-  // restarts: a "merge all" click would skip them entirely.
-  const targets = tasks
-    .filter((t) => t.status === 'ready_to_merge')
-    .sort((a, b) => a.createdAt - b.createdAt);
-
-  const run: MergeRun = {
-    id: generateMergeRunId(),
+  // Lock acquisition + active-run (409) detection. Throws before any run
+  // record exists if a run is already in progress (in- or cross-process).
+  const { projectPath: canonicalPath, projectLock } = await initializeRunState(
+    runState,
     projectPath,
-    status: 'running',
-    startedAt: Date.now(),
-    total: targets.length,
-    processed: 0,
-    merged: [],
-    conflicted: [],
-    errored: [],
-    cancelRequested: false,
-  };
+    lockMode,
+  );
+
+  const tasks = await listTasks(canonicalPath);
+  const targets = filterAndSortTargets(tasks);
+
+  const run = createRunRecord(targets, canonicalPath);
   runState.runs.set(run.id, run);
   notify(runState, { type: 'started', run: snapshot(run) });
 
@@ -204,9 +116,9 @@ export async function startMergeRun(
   (async () => {
     console.log(`[merge-run] ${run.id} started — ${targets.length} task(s) to merge`);
 
-    const { runSnapshot, baselineHead } = await runPreflight(projectPath, run);
+    const { runSnapshot, baselineHead } = await runPreflight(canonicalPath, run);
     const runCtx = {
-      projectPath,
+      projectPath: canonicalPath,
       backendOrigin,
       baselineHead,
       state: runState,
@@ -218,33 +130,15 @@ export async function startMergeRun(
     }
 
     await runTeardown(
-      projectPath,
+      canonicalPath,
       run,
       runSnapshot,
       targets,
       backendOrigin,
-      options.lockMode ?? 'acquire',
+      lockMode,
+      restartMergeRun,
     );
-
-    // Post-merge hook gate. Fires once per merge run when at least one task
-    // actually landed in qa, the run wasn't cancelled, and the user has a
-    // hook prompt configured. Blocks `finishRun` (and therefore any WS
-    // subscriber / workflow merge step awaiting 'completed') until the hook
-    // agent calls back. A no-op if the hook isn't configured.
-    if (!run.cancelRequested && run.merged.length > 0) {
-      try {
-        await runPostMergeHookGate({
-          projectPath,
-          backendOrigin,
-          trigger: 'merge-run',
-        });
-      } catch (err) {
-        console.warn(
-          '[merge-run] post-merge hook gate threw (continuing to finish run):',
-          err,
-        );
-      }
-    }
+    await runPostMergeHook(run, canonicalPath, backendOrigin);
     finishRun(run);
   })()
     .catch((err) => {
