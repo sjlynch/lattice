@@ -42,12 +42,18 @@ export type UserSettings = {
 // signal, so their line counts and fallback "smell" scores stay out of the
 // metric overlays unless a project explicitly opts them back in.
 export const DEFAULT_METRICS_IGNORED_EXTS: readonly string[] = [
+  // Structured config / data — no real complexity signal, scored only by the
+  // regex fallback analyzer, so their LOC + "smell" numbers are just noise.
   '.json',
+  '.yaml',
+  '.yml',
+  '.toml',
+  '.xml',
+  '.csv',
+  // Prose / docs.
   '.md',
   '.mdx',
   '.txt',
-  '.yaml',
-  '.yml',
 ];
 
 export function isTerminalDefaultHarness(
