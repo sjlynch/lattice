@@ -23,6 +23,14 @@ export type ScanResult = {
   links: GraphLink[];
 };
 
+// Result of a file-contents search (GET /api/search). `matches` holds
+// absolute file paths, which are identical to the graph's file-node ids.
+export type SearchResult = {
+  matches: string[];
+  scanned: number;
+  truncated: boolean;
+};
+
 export type DirEntry = { name: string; path: string };
 export type DirRoot = { name: string; path: string };
 export type DirListing = {

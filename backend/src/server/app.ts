@@ -11,6 +11,7 @@ import { buildHealthRouter } from '../routes/health.js';
 import { buildMergeRunsRouter } from '../routes/mergeRuns.js';
 import { buildPostMergeHooksRouter } from '../routes/postMergeHooks.js';
 import { buildPushRunsRouter } from '../routes/pushRuns.js';
+import { buildSearchRouter } from '../routes/search.js';
 import { buildSettingsRouter } from '../routes/settings.js';
 import { buildTasksRouter } from '../routes/tasks.js';
 import { buildTerminalsRouter } from '../routes/terminals.js';
@@ -72,6 +73,7 @@ export function mountRouteFactories(
   options: BackendAppOptions,
 ): void {
   app.use(buildHealthRouter(options.defaultRoot));
+  app.use(buildSearchRouter(options.defaultRoot));
   app.use(buildSettingsRouter());
   app.use(buildGlobalSettingsRouter());
   app.use(buildTerminalsRouter());

@@ -14,6 +14,7 @@ import { useAgentOverlay } from './hooks/useAgentOverlay';
 import { useForceGraphInitialization } from './hooks/useForceGraphInitialization';
 import { useGraphDataSync } from './hooks/useGraphDataSync';
 import { useGraphOverlays } from './hooks/useGraphOverlays';
+import { useGraphSearch } from './hooks/useGraphSearch';
 import { useGraphTaskCreation } from './hooks/useGraphTaskCreation';
 import { useNodeContextMenu } from './hooks/useNodeContextMenu';
 import { useWorktreeHighlight } from './hooks/useWorktreeHighlight';
@@ -60,6 +61,10 @@ export function ForceGraphView({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchRegex, setSearchRegex] = useState(false);
+  // File-contents search is opt-in — name-only is the zero-cost default.
+  const [searchContents, setSearchContents] = useState(false);
 
   // When labels are dense or still moving the raycaster can blip in and
   // out of label hitboxes every other frame, firing `(file, null, file,
@@ -178,6 +183,18 @@ export function ForceGraphView({
   useAgentOverlay(graphRef, settingsRef, activeFolder);
   useWorktreeHighlight(graphRef, settingsRef, activeFolder);
 
+  // Search bar: filename matches (instant, client-side) + file-contents matches
+  // (debounced backend pass) both feed the shared `selected` set, so a match
+  // shows the standard selection ring.
+  const searchStatus = useGraphSearch({
+    data,
+    activeFolder,
+    query: searchQuery,
+    regex: searchRegex,
+    contents: searchContents,
+    setSelected,
+  });
+
   const { contextMenu, setContextMenu } = useNodeContextMenu(containerRef);
   const closeContextMenu = useCallback(() => setContextMenu(null), [setContextMenu]);
   const { dragRect } = useBoxSelect(
@@ -237,13 +254,16 @@ export function ForceGraphView({
       if (contextMenu) setContextMenu(null);
       else if (modalAction) {
         // Modal handles its own Escape close
+      } else if (searchQuery) {
+        // Clearing the query also clears its driven selection (useGraphSearch).
+        setSearchQuery('');
       } else if (selected.size > 0) {
         setSelected(new Set());
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [contextMenu, modalAction, selected, setContextMenu]);
+  }, [contextMenu, modalAction, searchQuery, selected, setContextMenu]);
 
   // ----- Phase 3: render data + JSX overlays -----
   const counts = useMemo(() => {
@@ -292,6 +312,13 @@ export function ForceGraphView({
         // clear) also keeps it from flickering back if the raycaster re-hovers
         // the still-under-cursor node while the menu is up.
         hoverNode={contextMenu ? null : hoverNode}
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+        searchRegex={searchRegex}
+        onSearchRegexToggle={() => setSearchRegex((v) => !v)}
+        searchContents={searchContents}
+        onSearchContentsToggle={() => setSearchContents((v) => !v)}
+        searchStatus={searchStatus}
       />
 
       {history && history.isRepo && history.commits.length > 0 && (

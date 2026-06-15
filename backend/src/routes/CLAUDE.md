@@ -5,6 +5,7 @@ One Express `Router` per domain. Each module exports a `buildXRouter(deps)` fact
 ## Modules
 
 - `health.ts` — `/api/health`, `/api/default-root`, `/api/scan`, `/api/health/dead-code` (agent-facing dead-file list via `../deadCode.ts`, 60s-memoized scan), `/api/list-dir` (read-only).
+- `search.ts` — `/api/search` (file-*contents* grep via `../search.ts`; gitignore-aware, size/binary guards, cancel-on-client-close). Uses a ripgrep fast-path (`../ripgrep.ts`) when `rg` is found, falling back to a concurrency-limited Node read loop. Backs the graph search bar's contents pass; returned paths == graph file-node ids. Env knobs: `LATTICE_DISABLE_RG=1` forces the JS path, `LATTICE_RG_PATH=` points at a specific `rg`.
 - `settings.ts` — `/api/settings` (per-project user settings) + `/api/project-env` (read-only: auto-detected package-manager envs + the "fresh worktree, don't reinstall" notes that get prepended to `LATTICE_TASK.md`; see `worktree/envDetect.ts`).
 - `terminals.ts` — `/api/terminals` list/delete (proxies to terminal-server).
 - `tasks.ts` — task CRUD + `/run`, `/resume`, `/complete`, `/merge`, `/merged`, `/merge-aborted`, `/stash-resolved`, plus `/activity` (Claude tool-hook callback → `task-activity` WS) and `/worktree-modified` (files changed per not-yet-merged task, for the graph `W` highlight). The state-machine logic lives in `tasks/`. The activity sub-router (`tasks/activity.ts`) mounts first so `GET /api/tasks/worktree-modified` isn't captured by crud's `/api/tasks/:id`. `tasks/colorSlot.ts` assigns the persistent per-task palette slot.

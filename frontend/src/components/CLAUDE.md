@@ -42,7 +42,7 @@ modules after.
 | `modal.css` | `.modal-backdrop`, `.modal`, `.modal-header/body/footer` (+ `@keyframes modal-fade`) |
 | `settings.css` | `.settings-*`, `.startup-*`, `.env-note-*` (Agent instructions tab) |
 | `folder-picker.css` | `.path-row`, `.drive-*`, `.create-folder-*`, `.dir-list/row` |
-| `graph.css` | `.graph-overlay`, `.loc-view-chip`, `.graph-select-rect`, `.graph-selection-chip`, `.graph-context-menu`, `.graph-settings-fab/panel`, `.graph-toast` (+ overlay `@keyframes`) |
+| `graph.css` | `.graph-overlay`, `.graph-bottom-left` (search+counts cluster) / `.graph-search*` / `.graph-counts`, `.loc-view-chip`, `.graph-select-rect`, `.graph-selection-chip`, `.graph-context-menu`, `.graph-settings-fab/panel`, `.graph-toast` (+ overlay `@keyframes`) |
 | `terminal.css` | `.term-pane` |
 | `floating-panel.css` | `.floating-panel*` (titlebar, body, resize grip) |
 | `taskboard.css` | Taskboard aggregator. Ordered partials live under `styles/taskboard/`: `shell`, `lanes`, `cards`, `filters`, `lane-actions`, `detail`, `toast`, `forms` |

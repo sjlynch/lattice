@@ -94,7 +94,24 @@ asking for fixes/reviews:
   installs the 150ms-debounced resize loop and returns a teardown.
 - `GraphHud.tsx` / `GraphSelectionChip.tsx` / `GraphContextMenu.tsx` /
   `GraphTaskModal.tsx` — render-only overlays for the spinner+view chip+counts,
-  the selection chip, the right-click popover, and the create-task modal.
+  the selection chip, the right-click popover, and the create-task modal. The
+  HUD's bottom-left also hosts the search bar (`GraphSearchBar.tsx`) inline with
+  the file/dir counts.
+- `GraphSearchBar.tsx` + `searchMatcher.ts` + `hooks/useGraphSearch.ts` — the
+  file search bar. `buildSearchRegExp` (searchMatcher) turns a query into a
+  case-insensitive matcher: `*`/`?` wildcards by default, raw regex when the
+  `.*` toggle is on. `useGraphSearch` runs two passes that both feed the shared
+  `selected` set (so matches show the standard selection ring, one source of
+  truth): a **filename pass** (pure, instant, client-side over `data.nodes`) and
+  an opt-in **contents pass** (debounced, cancelable `GET /api/search`, gated on
+  the file-icon toggle — name-only is the zero-cost default). The contents
+  pass is a per-query snapshot — it does NOT re-run on file-content churn (the
+  health watcher pushes a fresh `data` ref per save; re-greping each time would
+  hammer the backend). `buildSearchRegExp` is kept byte-identical to the
+  backend's (`backend/src/search.ts`) so a wildcard selects the same files in
+  both passes. Search owns the selection while a query is active; clearing a
+  search it drove restores empty, and an empty box never wipes a manual
+  selection.
 - `HealthTooltip.tsx` — measurement/composition wrapper for file health hover.
   Owns its own `pointermove` listener and writes directly to the element's
   `transform` so per-pixel cursor moves don't re-render the React tree;

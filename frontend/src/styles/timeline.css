@@ -28,7 +28,7 @@
 
 /* When the timeline is present, lift the bottom-left counts chip and
    the gear FAB above it so the timeline owns the entire bottom edge. */
-.has-timeline .graph-overlay.bottom-left {
+.has-timeline .graph-bottom-left {
   bottom: calc(var(--timeline-h) + 12px);
 }
 .has-timeline .graph-settings-fab {

@@ -103,6 +103,7 @@ therefore stay safely re-runnable.
 | GET | `/api/health` | Liveness probe |
 | GET | `/api/default-root` | Default project for the UI |
 | GET | `/api/scan?path=` | Recursive source-file scan, gitignore-aware |
+| GET | `/api/search?project=&q=&regex=` | File-*contents* search (gitignore-aware grep); returns `{matches, scanned, truncated}` where `matches` are absolute paths == graph file-node ids. Backs the graph search bar's contents pass (filename matches are client-side). `regex=1` for raw regex, else `*`/`?` wildcards |
 | GET | `/api/health/dead-code?project=` | Files the analyzer confidently flags unreachable (`{files, total, scannedAt}`); 60s-memoized scan. Backs the dead-code note in `LATTICE_TASK.md` + agent self-investigation |
 | GET | `/api/list-dir?path=` | Folder browser (folder picker) |
 | GET | `/api/settings?project=` | Read per-project user settings |

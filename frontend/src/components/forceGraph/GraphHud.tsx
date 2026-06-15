@@ -1,5 +1,7 @@
 import type { GraphNode, ScanResult } from '../../api';
+import { GraphSearchBar } from './GraphSearchBar';
 import { HealthTooltip } from './HealthTooltip';
+import type { SearchStatus } from './hooks/useGraphSearch';
 
 type Counts = { files: number; dirs: number; hidden: number };
 
@@ -17,6 +19,14 @@ type Props = {
   // narrows the label overlay to just those nodes (depth scrolling disabled).
   selectionCount: number;
   hoverNode: GraphNode | null;
+  // Search bar (bottom-left, inline with the counts chip).
+  searchQuery: string;
+  onSearchQueryChange: (q: string) => void;
+  searchRegex: boolean;
+  onSearchRegexToggle: () => void;
+  searchContents: boolean;
+  onSearchContentsToggle: () => void;
+  searchStatus: SearchStatus;
 };
 
 // Render-only overlays: scan spinner (top-left), the active-view chip
@@ -34,6 +44,13 @@ export function GraphHud({
   maxDepth,
   selectionCount,
   hoverNode,
+  searchQuery,
+  onSearchQueryChange,
+  searchRegex,
+  onSearchRegexToggle,
+  searchContents,
+  onSearchContentsToggle,
+  searchStatus,
 }: Props) {
   return (
     <>
@@ -76,17 +93,28 @@ export function GraphHud({
         </div>
       )}
       {hoverNode && <HealthTooltip node={hoverNode} />}
-      {!loading && data && (
-        <div className="graph-overlay bottom-left">
-          <span>
-            {counts.files} files · {counts.dirs} dirs
-            {counts.hidden > 0 && (
-              <span style={{ color: 'var(--text-tertiary)' }}>
-                {' '}
-                · {counts.hidden} hidden
-              </span>
-            )}
-          </span>
+      {data && (
+        <div className="graph-bottom-left">
+          <GraphSearchBar
+            query={searchQuery}
+            onQueryChange={onSearchQueryChange}
+            regex={searchRegex}
+            onRegexToggle={onSearchRegexToggle}
+            contents={searchContents}
+            onContentsToggle={onSearchContentsToggle}
+            status={searchStatus}
+          />
+          <div className="graph-overlay graph-counts">
+            <span>
+              {counts.files} files · {counts.dirs} dirs
+              {counts.hidden > 0 && (
+                <span style={{ color: 'var(--text-tertiary)' }}>
+                  {' '}
+                  · {counts.hidden} hidden
+                </span>
+              )}
+            </span>
+          </div>
         </div>
       )}
     </>
