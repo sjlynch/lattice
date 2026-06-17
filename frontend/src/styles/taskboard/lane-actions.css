@@ -45,3 +45,14 @@
   color: #d8b4ff;
   background: rgba(200, 156, 255, 0.22);
 }
+
+/* QA-lane Playwright MCP toggle buttons (reuse .icon-btn.sm). The "on" state
+   uses the QA lane accent so it reads as a QA-scoped control. */
+.mcp-pw-btn.on {
+  color: #c89cff;
+  background: rgba(200, 156, 255, 0.16);
+}
+.mcp-pw-btn.on:hover {
+  color: #d8b4ff;
+  background: rgba(200, 156, 255, 0.26);
+}

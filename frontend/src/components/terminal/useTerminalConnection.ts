@@ -3,7 +3,15 @@ import type { RefObject } from 'react';
 import type { Terminal } from '@xterm/xterm';
 import { useSyncedRef } from '../../hooks/useSyncedRef';
 
+// Reconnect cap for a SERVERLESS terminal that has never attached: without a
+// session id to re-subscribe to, each fresh connect can spawn a brand-new pty,
+// so unbounded retries there could leak orphan ptys if the connect flaps. A
+// terminal we CAN re-attach to (it has a serverId, or captured one via a prior
+// `attached`) is not capped — see the onclose handler.
 export const MAX_RECONNECT_ATTEMPTS = 6;
+// Backoff ceiling. Delays grow 250ms → 500 → … and then hold here, so a long
+// outage keeps being retried roughly every 10s rather than giving up.
+const RECONNECT_MAX_DELAY_MS = 10_000;
 
 type TerminalMessage = {
   type?: string;
@@ -50,6 +58,11 @@ export function useTerminalConnection({
     // trigger a fresh connect, which on a deleted-worktree session
     // produces a feedback loop that spawns thousands of doomed ptys.
     let terminated = false;
+    // True once this connection has received an `attached` frame — i.e. the
+    // terminal-server owns a live pty that a reconnect just re-subscribes to
+    // (idempotent). Lets a terminal that started life serverless still
+    // reconnect indefinitely, since it captured a session id on first attach.
+    let attachedOnce = false;
 
     function connect() {
       if (cancelled || terminated) return;
@@ -85,6 +98,7 @@ export function useTerminalConnection({
           if (msg.type === 'data' && typeof msg.data === 'string') {
             term.write(msg.data);
           } else if (msg.type === 'attached') {
+            attachedOnce = true;
             if (msg.id && msg.id !== serverId) {
               onServerIdRef.current?.(msg.id);
             }
@@ -119,7 +133,18 @@ export function useTerminalConnection({
 
       ws.onclose = () => {
         if (cancelled || terminated) return;
-        if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+        // A terminal we can re-attach to (has a serverId, or captured one via
+        // an earlier `attached` this session) reconnects to its EXISTING pty —
+        // idempotent and safe to retry forever. So ride out a transient outage
+        // (main-backend restart/stall, or a wedged upstream proxy under a heavy
+        // "Run All" burst) with capped backoff instead of giving up and forcing
+        // a manual page refresh. The genuine stop is `terminated`, set on a
+        // clean `exit` or a `session_lost` — that is what bounds the deleted-
+        // worktree runaway, not an attempt count.
+        const canReattach = Boolean(serverId) || attachedOnce;
+        if (!canReattach && attempt >= MAX_RECONNECT_ATTEMPTS) {
+          // Serverless terminal that never attached: a reconnect here can spawn
+          // a fresh pty, so it must stay bounded.
           term.write(
             '\r\n\x1b[31m[connection lost — gave up after ' +
               MAX_RECONNECT_ATTEMPTS +
@@ -134,7 +159,12 @@ export function useTerminalConnection({
           );
           reconnectingShown = true;
         }
-        const delay = Math.min(5000, 250 * 2 ** attempt);
+        // Cap the exponent so the delay tops out at the ceiling instead of
+        // overflowing once `attempt` grows large during a long outage.
+        const delay = Math.min(
+          RECONNECT_MAX_DELAY_MS,
+          250 * 2 ** Math.min(attempt, 6),
+        );
         attempt += 1;
         retryTimer = setTimeout(connect, delay);
       };

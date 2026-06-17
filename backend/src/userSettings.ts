@@ -1,6 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { PROJECT_DIR_NAME } from './tasks.js';
+// Import the constant from the leaf paths module, NOT from `./tasks.js` (which
+// re-exports the whole task cache). This keeps userSettings — and therefore the
+// MCP registry / detached terminal-server that now read it at spawn time — free
+// of the heavy taskCache import chain.
+import { PROJECT_DIR_NAME } from './taskCache/paths.js';
 import { canonicalProjectPath } from './projectPath.js';
 import type { AgentHarness } from './harnesses.js';
 
@@ -59,6 +63,24 @@ export type UserSettings = {
   // hook entries (the user's own config is preserved). See
   // `projectClaudeHooks.ts`.
   instrumentProjectClaudeSessions?: boolean;
+  // When true (the DEFAULT — absent counts as true), Lattice turns Claude's
+  // auto-memory OFF for this project: every agent Lattice spawns gets
+  // `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` (see terminal/launchContext.ts) and the
+  // project's own `.claude/settings.local.json` gets `autoMemoryEnabled: false`
+  // (see projectClaudeHooks.ts). Both are Local/per-project scope — Lattice
+  // never touches the machine-global `~/.claude/settings.json`, so Claude
+  // memory in your other (non-Lattice) projects is unaffected. Set false to let
+  // this project's Claude sessions use auto-memory.
+  disableClaudeMemory?: boolean;
+  // Per-project MCP-server on/off overrides, keyed by catalog server id. A
+  // missing entry means OFF — the all-off-by-default invariant. The backend
+  // reads this at every Claude spawn to decide what to inject (see
+  // `mcp/registry.ts`). Playwright is driven by `qaPlaywright`, not this map.
+  mcpOverrides?: Record<string, boolean>;
+  // Backs the QA-lane Playwright buttons. `enabled` toggles whether the
+  // Playwright MCP is injected into this project's Claude spawns; `headless`
+  // appends `--headless` to its args. Absent = off / (when on) headless.
+  qaPlaywright?: { enabled: boolean; headless: boolean };
 };
 
 function settingsFile(projectPath: string): string {
@@ -86,4 +108,16 @@ export async function patchUserSettings(
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(settingsFile(key), JSON.stringify(updated, null, 2), 'utf8');
   return updated;
+}
+
+// Whether Claude's auto-memory should be OFF for this project. Default is
+// disabled (memory off) — an absent setting counts as `true`, matching the
+// opt-out model used by instrumentProjectClaudeSessions. Read at every Claude
+// spawn (terminal-server POST /sessions) and on project open / settings save
+// (the project-instrumentation route).
+export async function isClaudeMemoryDisabled(
+  projectPath: string,
+): Promise<boolean> {
+  const settings = await getUserSettings(projectPath);
+  return settings.disableClaudeMemory !== false;
 }

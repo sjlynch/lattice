@@ -47,6 +47,13 @@ export function buildSessionLaunchContext(
   const docPath = ensureLatticeApiDoc(projectPath, apiPort);
   if (docPath) latticeEnv.LATTICE_DOCS = docPath;
 
+  // Opt this project's Lattice-spawned Claude session out of auto-memory when
+  // the per-project setting says so (resolved at the POST /sessions chokepoint).
+  // Scoped to this child process only — never the user's global Claude config.
+  if (opts.disableClaudeMemory) {
+    latticeEnv.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1';
+  }
+
   const baseEnv: { [key: string]: string } = {
     ...(process.env as { [key: string]: string }),
   };

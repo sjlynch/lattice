@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   installProjectClaudeHooks,
   removeProjectClaudeHooks,
+  setProjectClaudeMemoryDisabled,
 } from '../projectClaudeHooks.js';
 
 // installProjectClaudeHooks must MERGE into the user's existing
@@ -109,5 +110,66 @@ test('install creates the file when absent', async () => {
   await installProjectClaudeHooks(dir, ORIGIN);
   const after = await readSettings(dir);
   assert.equal(latticeGroups(after.hooks, 'SessionStart').length, 1);
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('memory: disabled writes autoMemoryEnabled:false, preserving other keys', async () => {
+  const dir = await mkProject();
+  await fs.writeFile(
+    settingsPath(dir),
+    JSON.stringify({ permissions: { allow: ['Bash(git *)'] } }, null, 2),
+  );
+
+  await setProjectClaudeMemoryDisabled(dir, true);
+  const after = await readSettings(dir);
+
+  assert.equal(after.autoMemoryEnabled, false);
+  assert.deepEqual(after.permissions, { allow: ['Bash(git *)'] });
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('memory: re-enabling strips only our managed false, keeping other keys', async () => {
+  const dir = await mkProject();
+  await fs.writeFile(
+    settingsPath(dir),
+    JSON.stringify({ permissions: {}, autoMemoryEnabled: false }, null, 2),
+  );
+
+  await setProjectClaudeMemoryDisabled(dir, false);
+  const after = await readSettings(dir);
+
+  assert.ok(!('autoMemoryEnabled' in after), 'managed flag removed');
+  assert.deepEqual(after.permissions, {});
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('memory: re-enabling is a no-op when the file is absent (none created)', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-pch-mem-'));
+  await setProjectClaudeMemoryDisabled(dir, false);
+  await assert.rejects(
+    fs.readFile(settingsPath(dir), 'utf8'),
+    'no settings file should be created',
+  );
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('memory: coexists with Lattice activity hooks, byte-stable on re-run', async () => {
+  const dir = await mkProject();
+  await installProjectClaudeHooks(dir, ORIGIN);
+  await setProjectClaudeMemoryDisabled(dir, true);
+  const after = await readSettings(dir);
+
+  assert.equal(after.autoMemoryEnabled, false);
+  assert.equal(latticeGroups(after.hooks, 'SessionStart').length, 1);
+
+  // Re-reconciling both writers must not churn the file.
+  const before = await fs.readFile(settingsPath(dir), 'utf8');
+  await installProjectClaudeHooks(dir, ORIGIN);
+  await setProjectClaudeMemoryDisabled(dir, true);
+  const stable = await fs.readFile(settingsPath(dir), 'utf8');
+  assert.equal(before, stable, 'both reconciles are byte-stable');
+
   await fs.rm(dir, { recursive: true, force: true });
 });

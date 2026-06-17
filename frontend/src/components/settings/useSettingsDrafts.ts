@@ -16,6 +16,8 @@ export type SettingsDrafts = {
   setTerminalClaudeSkipPermissions: (value: boolean) => void;
   instrumentClaude: boolean;
   setInstrumentClaude: (value: boolean) => void;
+  disableMemory: boolean;
+  setDisableMemory: (value: boolean) => void;
 };
 
 export function useSettingsDrafts(
@@ -29,6 +31,8 @@ export function useSettingsDrafts(
     useState(terminalLaunchSettings.terminalClaudeSkipPermissions);
   // Default ON (opt-out) — absent setting counts as enabled.
   const [instrumentClaude, setInstrumentClaude] = useState(true);
+  // Default ON (memory disabled) — absent setting counts as "off".
+  const [disableMemory, setDisableMemory] = useState(true);
 
   // Reseed the terminal-default drafts from the latest saved settings each
   // time the dialog opens.
@@ -49,6 +53,7 @@ export function useSettingsDrafts(
       .then((s) => {
         if (!cancelled) {
           setInstrumentClaude(s.instrumentProjectClaudeSessions !== false);
+          setDisableMemory(s.disableClaudeMemory !== false);
         }
       })
       .catch(() => { /* keep current draft */ });
@@ -62,5 +67,7 @@ export function useSettingsDrafts(
     setTerminalClaudeSkipPermissions,
     instrumentClaude,
     setInstrumentClaude,
+    disableMemory,
+    setDisableMemory,
   };
 }

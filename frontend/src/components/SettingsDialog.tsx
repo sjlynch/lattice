@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { TerminalSquare, FileText, BarChart3, Cpu } from 'lucide-react';
+import { TerminalSquare, FileText, BarChart3, Cpu, Plug } from 'lucide-react';
 import { Modal } from './Modal';
 import {
   type StartupTerminal,
@@ -19,6 +19,7 @@ import {
   type MetricsIgnoredExtsTabHandle,
 } from './settings/MetricsIgnoredExtsTab';
 import { AgentsTab, type AgentsTabHandle } from './settings/AgentsTab';
+import { McpTab, type McpTabHandle } from './settings/McpTab';
 import { useSettingsDrafts } from './settings/useSettingsDrafts';
 import { saveSettings } from './settings/saveSettings';
 
@@ -34,7 +35,7 @@ type Props = {
   onMetricsIgnoredExtsChange: (next: string[]) => void | Promise<void>;
 };
 
-type Tab = 'terminals' | 'env' | 'metrics' | 'agents';
+type Tab = 'terminals' | 'env' | 'metrics' | 'agents' | 'mcp';
 
 const TERMINAL_DEFAULT_OPTIONS: { value: TerminalDefaultHarness; label: string }[] = [
   { value: 'claude', label: 'Claude' },
@@ -137,6 +138,41 @@ function ClaudeInstrumentationSection({
   );
 }
 
+type ClaudeMemorySectionProps = {
+  disabled: boolean;
+  onChange: (value: boolean) => void;
+};
+
+function ClaudeMemorySection({ disabled, onChange }: ClaudeMemorySectionProps) {
+  return (
+    <div className="settings-section">
+      <div className="settings-section-header">
+        <div>
+          <div className="settings-section-title">Turn off Claude memory for this project</div>
+          <div className="settings-section-sub">
+            Disables Claude Code’s auto-memory for this project — both the agents
+            Lattice runs in worktrees and any Claude session you start yourself
+            in the project tree. Recommended when running many agents in
+            parallel, since they would otherwise share and thrash one project
+            memory store. Written per-project (the project’s{' '}
+            <code>.claude/settings.local.json</code> plus an env var on spawned
+            agents); your machine-global Claude memory in other projects is left
+            untouched.
+          </div>
+        </div>
+      </div>
+      <label className="settings-checkbox-row">
+        <input
+          type="checkbox"
+          checked={disabled}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <span>Disable Claude auto-memory for this project</span>
+      </label>
+    </div>
+  );
+}
+
 export function SettingsDialog({
   open,
   onClose,
@@ -156,6 +192,7 @@ export function SettingsDialog({
   const envNotesRef = useRef<EnvNotesTabHandle>(null);
   const metricsIgnoredExtsRef = useRef<MetricsIgnoredExtsTabHandle>(null);
   const agentsRef = useRef<AgentsTabHandle>(null);
+  const mcpRef = useRef<McpTabHandle>(null);
 
   useEffect(() => {
     if (open) setError(null);
@@ -173,12 +210,14 @@ export function SettingsDialog({
           terminalDefaultHarness: drafts.terminalDefaultHarness,
           terminalClaudeSkipPermissions: drafts.terminalClaudeSkipPermissions,
           instrumentClaude: drafts.instrumentClaude,
+          disableMemory: drafts.disableMemory,
         },
         handles: {
           startupTerminals: startupTerminalsRef.current,
           envNotes: envNotesRef.current,
           metricsIgnoredExts: metricsIgnoredExtsRef.current,
           agents: agentsRef.current,
+          mcp: mcpRef.current,
         },
         onStartupTerminalsChange,
         onTerminalLaunchSettingsChange,
@@ -225,6 +264,13 @@ export function SettingsDialog({
             <Cpu size={12} />
             Agents
           </button>
+          <button
+            className={`settings-tab ${tab === 'mcp' ? 'active' : ''}`}
+            onClick={() => setTab('mcp')}
+          >
+            <Plug size={12} />
+            MCP
+          </button>
         </div>
         <div className="settings-tab-body">
           {tab === 'terminals' && (
@@ -238,6 +284,10 @@ export function SettingsDialog({
               <ClaudeInstrumentationSection
                 enabled={drafts.instrumentClaude}
                 onChange={drafts.setInstrumentClaude}
+              />
+              <ClaudeMemorySection
+                disabled={drafts.disableMemory}
+                onChange={drafts.setDisableMemory}
               />
             </>
           )}
@@ -260,6 +310,12 @@ export function SettingsDialog({
             metricsIgnoredExts={metricsIgnoredExts}
           />
           <AgentsTab ref={agentsRef} active={tab === 'agents'} open={open} />
+          <McpTab
+            ref={mcpRef}
+            active={tab === 'mcp'}
+            open={open}
+            activeFolder={activeFolder}
+          />
         </div>
       </div>
       {error && <div className="error-msg" style={{ margin: '0 16px' }}>{error}</div>}

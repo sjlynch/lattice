@@ -14,12 +14,14 @@ import {
 import { type EnvNotesTabHandle } from './EnvNotesTab';
 import { type MetricsIgnoredExtsTabHandle } from './MetricsIgnoredExtsTab';
 import { type AgentsTabHandle } from './AgentsTab';
+import { type McpTabHandle } from './McpTab';
 
 // The parent-owned draft values that participate in a save.
 type SaveDrafts = {
   terminalDefaultHarness: TerminalDefaultHarness;
   terminalClaudeSkipPermissions: boolean;
   instrumentClaude: boolean;
+  disableMemory: boolean;
 };
 
 // Imperative handles for each tab. Each may be null if its tab hasn't
@@ -29,6 +31,7 @@ type SaveHandles = {
   envNotes: EnvNotesTabHandle | null;
   metricsIgnoredExts: MetricsIgnoredExtsTabHandle | null;
   agents: AgentsTabHandle | null;
+  mcp: McpTabHandle | null;
 };
 
 export type SaveSettingsParams = {
@@ -70,6 +73,7 @@ export async function saveSettings({
     startupTerminals: cleaned,
     ...terminalLaunchPatch,
     instrumentProjectClaudeSessions: drafts.instrumentClaude,
+    disableClaudeMemory: drafts.disableMemory,
   };
   // Only touch worktreeEnvNotes if the env fetch finished — otherwise we'd
   // overwrite the saved overrides with an empty map.
@@ -79,6 +83,10 @@ export async function saveSettings({
   if (metricsExtsPatch !== undefined) {
     patch.metricsIgnoredExts = metricsExtsPatch;
   }
+  // MCP per-project enables (mcpOverrides + qaPlaywright). Secrets / imports /
+  // custom-server defs persist on their own immediately, so they're not here.
+  const mcpPatch = handles.mcp?.getMcpUserPatch();
+  if (mcpPatch !== undefined) Object.assign(patch, mcpPatch);
 
   // 2. Persist the project user settings.
   await patchUserSettings(activeFolder, patch);

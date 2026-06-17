@@ -142,3 +142,29 @@ export async function removeProjectClaudeHooks(
   if (Object.keys(settings.hooks as HooksMap).length === 0) delete settings.hooks;
   await writeIfChanged(file, JSON.stringify(settings, null, 2));
 }
+
+// Reconcile the `autoMemoryEnabled` flag in the project's OWN
+// settings.local.json so Claude sessions you launch yourself in the project
+// tree have auto-memory off (or on), matching the per-project setting. Local
+// scope: it overrides the machine-global ~/.claude/settings.json but never
+// modifies it. Preserves every other key (hooks, permissions, …) and only
+// manages the value Lattice writes (`false`), so a user's explicit `true` is
+// left untouched when re-enabling. Idempotent; no-op write when unchanged.
+export async function setProjectClaudeMemoryDisabled(
+  projectPath: string,
+  disabled: boolean,
+): Promise<void> {
+  const root = canonicalProjectPath(projectPath);
+  const file = settingsLocalFile(root);
+  const settings = (await readJson(file)) ?? {};
+  if (disabled) {
+    if (settings.autoMemoryEnabled === false) return;
+    settings.autoMemoryEnabled = false;
+  } else {
+    // Re-enabling: strip only the value we manage. If our `false` isn't there,
+    // do nothing (and don't create an otherwise-empty settings file).
+    if (settings.autoMemoryEnabled !== false) return;
+    delete settings.autoMemoryEnabled;
+  }
+  await writeIfChanged(file, JSON.stringify(settings, null, 2));
+}

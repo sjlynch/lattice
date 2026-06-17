@@ -1,6 +1,16 @@
-import { CheckCheck, GitMerge, Play, Plus, UploadCloud } from 'lucide-react';
+import {
+  CheckCheck,
+  Eye,
+  EyeOff,
+  GitMerge,
+  Globe,
+  Play,
+  Plus,
+  UploadCloud,
+} from 'lucide-react';
 import type { Task, TaskStatus } from '../../api';
 import type { Lane as LaneDef } from './lanes';
+import type { QaPlaywrightControls } from './hooks/useQaPlaywright';
 
 type Props = {
   lane: LaneDef;
@@ -11,12 +21,22 @@ type Props = {
   // QA lane today; rendered as a small icon button next to the add (+) one.
   onPush?: () => void;
   pushDisabled?: boolean;
+  // QA-lane Playwright MCP controls (launcher passes this only on the QA lane).
+  qaPlaywright?: QaPlaywrightControls;
 };
 
 // Lane header row: dot/title/count, lane-level run-all action, push, add.
 // Extracted from Lane so the lane body stays focused on drop targets and
 // card rendering.
-export function LaneHeader({ lane, tasks, onAdd, onRunAll, onPush, pushDisabled }: Props) {
+export function LaneHeader({
+  lane,
+  tasks,
+  onAdd,
+  onRunAll,
+  onPush,
+  pushDisabled,
+  qaPlaywright,
+}: Props) {
   const runAllConfig = onRunAll ? laneRunAllConfig(lane.id, tasks) : null;
 
   return (
@@ -41,6 +61,38 @@ export function LaneHeader({ lane, tasks, onAdd, onRunAll, onPush, pushDisabled 
         )}
       </span>
       <div className="taskboard-lane-actions">
+        {qaPlaywright && (
+          <>
+            <button
+              className={`icon-btn sm mcp-pw-btn ${qaPlaywright.enabled ? 'on' : ''}`}
+              onClick={qaPlaywright.onToggleEnabled}
+              title={
+                qaPlaywright.enabled
+                  ? 'Playwright MCP ON — injected into Claude sessions Lattice spawns for this project (takes effect on the next launch). Click to turn off.'
+                  : 'Turn ON the Playwright MCP for this project’s Claude sessions (browser testing). Applies to the next launch.'
+              }
+              aria-label="Toggle Playwright MCP"
+              aria-pressed={qaPlaywright.enabled}
+            >
+              <Globe size={14} />
+            </button>
+            {qaPlaywright.enabled && (
+              <button
+                className="icon-btn sm mcp-pw-btn"
+                onClick={qaPlaywright.onToggleHeadless}
+                title={
+                  qaPlaywright.headless
+                    ? 'Playwright runs HEADLESS (no visible browser). Click for headed.'
+                    : 'Playwright runs HEADED (visible browser window). Click for headless.'
+                }
+                aria-label="Toggle Playwright headless mode"
+                aria-pressed={qaPlaywright.headless}
+              >
+                {qaPlaywright.headless ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            )}
+          </>
+        )}
         {onPush && (
           <button
             className="icon-btn sm"

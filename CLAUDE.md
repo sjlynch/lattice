@@ -108,8 +108,15 @@ therefore stay safely re-runnable.
 | GET | `/api/list-dir?path=` | Folder browser (folder picker) |
 | GET | `/api/settings?project=` | Read per-project user settings |
 | PATCH | `/api/settings?project=` | Merge-update per-project user settings |
-| GET | `/api/global-settings` | Read machine-global settings (`maxConcurrentAgents`) |
-| PATCH | `/api/global-settings` | Update machine-global settings (applies the spawn-queue softCap live) |
+| GET | `/api/global-settings` | Read machine-global settings (`maxConcurrentAgents`, `mcpCustomServers`, `mcpBuiltinOverrides`) |
+| PATCH | `/api/global-settings` | Update machine-global settings (applies the spawn-queue softCap live; carries MCP custom-server defs / built-in overrides) |
+| GET | `/api/mcp-catalog` | Merged MCP catalog (built-ins ⊕ overrides ⊕ custom). Definitions only — no secret values. Backs the Settings → MCP tab |
+| GET | `/api/mcp-secrets` | Redacted MCP secret presence (`{redacted, hints}` — booleans + last-4 hints, never the value) |
+| PATCH | `/api/mcp-secrets` | Set/clear one secret `{serverId, envVar, value}` (`value:null` clears); returns redacted. Stored in `~/.lattice/mcpSecrets.json` (`0600`), never settings files |
+| GET | `/api/mcp-env-presence` | Which required MCP env vars exist in the backend's ambient env (booleans) — drives the "detected from your environment" state |
+| POST | `/api/mcp/validate` | `{serverId}` — run the server's key validator (v1: Brave one-search probe); `{ok, error?}` |
+| GET | `/api/mcp-import/scan?project=` | Scan other tools' MCP configs (Claude Code / Cursor / Codex / VS Code / Windsurf), secrets redacted |
+| POST | `/api/mcp-import` | Apply selected imports `{ids, project?}` → add custom-server defs + store literal keys |
 | GET | `/api/project-env?project=` | Auto-detected package-manager envs + the "fresh worktree, don't reinstall" notes (default + effective) |
 | GET | `/api/tasks?project=` | List tasks for a project |
 | GET | `/api/tasks/worktree-modified?project=` | Files changed by each not-yet-merged task (in_progress + ready_to_merge); drives the graph's `W` worktree-highlight |
@@ -206,6 +213,17 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
   idle TTL (covers a missed `SessionEnd`). Sessions in `.lattice/` /
   `~/.lattice/` scratch are skipped (handled by their own machinery). A
   session must be (re)started to pick up newly-installed hooks.
+- **MCP servers** are curated once at the Lattice level and injected into every
+  Claude session Lattice spawns. Built-in catalog is in code
+  (`backend/src/mcp/catalog.ts`); definitions/overrides live in
+  `globalSettings.json`, per-project on/off in `userSettings.json`
+  (`mcpOverrides` + `qaPlaywright`), secrets in their own `0600`
+  `~/.lattice/mcpSecrets.json`. **Everything is off by default.** Injection is at
+  the single terminal-server `POST /sessions` chokepoint
+  (`ensureTrustedClaudeDir(cwd, { projectPath })` → reconcile into
+  `projects[<cwd>].mcpServers`); v1 = Claude only (Codex v2, Pi via a plugin
+  later). The QA-lane Globe/eye buttons drive the Playwright MCP + headless flag.
+  See `backend/src/mcp/CLAUDE.md`.
 - **Tasks store** is in-memory keyed by project path with debounced JSON
   persistence; the global `~/.lattice/projects.json` index is consulted
   lazily so Stop-hook callbacks resolve task IDs across sessions.

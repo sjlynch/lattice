@@ -33,6 +33,10 @@ export type CreateOpts = {
   // if not supplied — sessions created before per-project scoping was
   // wired up still have a projectPath that's at least their working dir.
   projectPath?: string;
+  // When true, the spawned pty gets `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` so the
+  // Claude session doesn't read/write auto-memory. Resolved per-project at the
+  // POST /sessions chokepoint from `UserSettings.disableClaudeMemory`.
+  disableClaudeMemory?: boolean;
 };
 
 export type AttachOpts = {

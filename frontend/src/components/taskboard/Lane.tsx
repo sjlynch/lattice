@@ -4,6 +4,7 @@ import { LaneHeader } from './LaneHeader';
 import { TaskCard } from './TaskCard';
 import type { Lane as LaneDef } from './lanes';
 import { useLaneDropTargets, type LaneSlotProps } from './hooks/useLaneDropTargets';
+import type { QaPlaywrightControls } from './hooks/useQaPlaywright';
 
 // One lane in the kanban. Hosts drop targets for cross-lane drops and
 // per-position drop slots between cards. Lane background drops do a
@@ -31,6 +32,7 @@ export function Lane({
   onRunAll,
   onPush,
   pushDisabled,
+  qaPlaywright,
   onView,
   onSingleSelect,
   onToggleSelect,
@@ -58,6 +60,7 @@ export function Lane({
   onRunAll?: () => void;
   onPush?: () => void;
   pushDisabled?: boolean;
+  qaPlaywright?: QaPlaywrightControls;
   onView: (task: Task) => void;
   onSingleSelect: (id: string, laneId: TaskStatus) => void;
   onToggleSelect: (id: string, laneId: TaskStatus) => void;
@@ -114,6 +117,7 @@ export function Lane({
         onRunAll={onRunAll}
         onPush={onPush}
         pushDisabled={pushDisabled}
+        qaPlaywright={qaPlaywright}
       />
       {strip}
       <div

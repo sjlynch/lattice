@@ -8,6 +8,7 @@ import { buildAgentActivityRouter } from '../routes/agentActivity.js';
 import { buildProjectClaudeRouter } from '../routes/projectClaude.js';
 import { buildGlobalSettingsRouter } from '../routes/globalSettings.js';
 import { buildHealthRouter } from '../routes/health.js';
+import { buildMcpRouter } from '../routes/mcp.js';
 import { buildMergeRunsRouter } from '../routes/mergeRuns.js';
 import { buildPostMergeHooksRouter } from '../routes/postMergeHooks.js';
 import { buildPushRunsRouter } from '../routes/pushRuns.js';
@@ -76,6 +77,7 @@ export function mountRouteFactories(
   app.use(buildSearchRouter(options.defaultRoot));
   app.use(buildSettingsRouter());
   app.use(buildGlobalSettingsRouter());
+  app.use(buildMcpRouter());
   app.use(buildTerminalsRouter());
   app.use(buildTasksRouter(options.backendOrigin));
   app.use(buildAgentActivityRouter());

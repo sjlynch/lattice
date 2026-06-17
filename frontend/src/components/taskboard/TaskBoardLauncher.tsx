@@ -20,6 +20,7 @@ import { useMergeRunSync } from './hooks/useMergeRunSync';
 import { usePostMergeHook } from './hooks/usePostMergeHook';
 import { usePushRun } from './hooks/usePushRun';
 import { useHarnessSelector } from './hooks/useHarnessSelector';
+import { useQaPlaywright } from './hooks/useQaPlaywright';
 import { useTaskActions } from './hooks/useTaskActions';
 import { useTaskBoardState } from './hooks/useTaskBoardState';
 import { useTaskSearch } from './hooks/useTaskSearch';
@@ -102,6 +103,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   );
   const { harness, setHarness, harnessAvail, pickInterleaveHarness } =
     useHarnessSelector(activeFolder);
+  const qaPlaywright = useQaPlaywright(activeFolder);
   const postMergeHook = usePostMergeHook(activeFolder, addTerminal, showError);
   const {
     addTask,
@@ -240,6 +242,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 }
                 onPush={lane.id === 'qa' && hasGit ? startPush : undefined}
                 pushDisabled={!!activePush}
+                qaPlaywright={lane.id === 'qa' ? qaPlaywright : undefined}
                 onView={setViewing}
                 strip={mergeRunStripFor(
                   lane,

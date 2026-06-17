@@ -35,6 +35,20 @@ export type UserSettings = {
   // the project tree shows as an orange node on the graph. See backend
   // projectClaudeHooks.ts.
   instrumentProjectClaudeSessions?: boolean;
+  // When true (default — absent counts as true), Lattice turns Claude's
+  // auto-memory OFF for this project: spawned agents get
+  // CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 and the project's own
+  // `.claude/settings.local.json` gets `autoMemoryEnabled: false`. Per-project
+  // / Local scope only — never the machine-global ~/.claude/settings.json. See
+  // backend userSettings.ts.
+  disableClaudeMemory?: boolean;
+  // Per-project MCP-server on/off overrides, keyed by catalog server id.
+  // Missing = OFF (the all-off-by-default invariant). Playwright is driven by
+  // qaPlaywright, not this map. See backend mcp/registry.ts.
+  mcpOverrides?: Record<string, boolean>;
+  // Backs the QA-lane Playwright buttons: `enabled` injects the Playwright MCP
+  // into this project's Claude spawns, `headless` appends --headless.
+  qaPlaywright?: { enabled: boolean; headless: boolean };
 };
 
 // Extensions Lattice ignores by default in the LOC and code-health overlays.

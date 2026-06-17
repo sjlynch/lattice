@@ -19,6 +19,7 @@ import { ensureTrustedClaudeDir } from '../claudeTrust.js';
 import {
   installProjectClaudeHooks,
   removeProjectClaudeHooks,
+  setProjectClaudeMemoryDisabled,
 } from '../projectClaudeHooks.js';
 import {
   cwdFromHookBody,
@@ -60,25 +61,32 @@ export function buildProjectClaudeRouter(backendOrigin: string): Router {
     const project =
       typeof req.body?.project === 'string' ? req.body.project : '';
     if (!project) return res.status(400).json({ error: 'project required' });
-    // Default ON — absent setting counts as enabled (opt-out model).
+    // Both default ON — absent settings count as enabled (opt-out model).
     const settings = await getUserSettings(project);
     const enabled = settings.instrumentProjectClaudeSessions !== false;
+    const memoryDisabled = settings.disableClaudeMemory !== false;
     try {
-      if (enabled) {
-        // Make .claude/settings.local.json gitignored even if no task ever
-        // ran here, pre-trust the dir so a launched session doesn't stall on
-        // the trust dialog, then merge the hooks in.
+      // Either feature writes <project>/.claude/settings.local.json; keep it
+      // gitignored so it never shows up in the user's `git status`.
+      if (enabled || memoryDisabled) {
         await ensureLatticeGitignore(canonicalProjectPath(project)).catch(() => {});
+      }
+      if (enabled) {
+        // Pre-trust the dir so a launched session doesn't stall on the trust
+        // dialog, then merge the activity hooks in.
         await ensureTrustedClaudeDir(canonicalProjectPath(project)).catch(() => {});
         await installProjectClaudeHooks(project, backendOrigin);
       } else {
         await removeProjectClaudeHooks(project);
       }
+      // Independent of instrumentation: reconcile auto-memory for the project's
+      // own Claude sessions (per-project, Local scope — never global).
+      await setProjectClaudeMemoryDisabled(project, memoryDisabled);
     } catch (err) {
       console.warn('[project-instrumentation] failed:', err);
       return res.status(500).json({ error: (err as Error).message });
     }
-    res.json({ ok: true, enabled });
+    res.json({ ok: true, enabled, memoryDisabled });
   });
 
   r.post('/api/project-activity/:token', (req, res) => {

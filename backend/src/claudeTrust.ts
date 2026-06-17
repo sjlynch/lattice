@@ -29,6 +29,8 @@
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
+import { effectiveMcpServers } from './mcp/registry.js';
+import { reconcileMcpServers, type ClaudeMcpServerConfig } from './mcp/claudeInject.js';
 
 const CLAUDE_GLOBAL_CONFIG = path.join(os.homedir(), '.claude.json');
 const LOCK_DIR = path.join(os.homedir(), '.claude.json.lattice-lock');
@@ -49,19 +51,48 @@ type ClaudeGlobalConfig = {
   [k: string]: unknown;
 };
 
-export async function ensureTrustedClaudeDir(dirPath: string): Promise<void> {
+// `opts.projectPath` opts this call into MCP injection: the enabled MCP servers
+// for that project are resolved and reconciled into `projects[<dirPath>].mcpServers`.
+// Omit it for a trust-only seed (the historical behavior) — that path never
+// touches `mcpServers`, so it can't strip MCP a prior call added. The single
+// injection chokepoint is the terminal-server's `POST /sessions` re-seed, which
+// fires microseconds before spawn (after any Claude config clobber); the
+// setup-time seeds stay trust-only.
+export async function ensureTrustedClaudeDir(
+  dirPath: string,
+  opts?: { projectPath?: string },
+): Promise<void> {
   const key = toClaudeProjectKey(dirPath);
+
+  // Resolve MCP OUTSIDE the config lock (it does its own file reads) to keep
+  // lock-held time minimal. Best-effort: an MCP resolve failure must never
+  // block the spawn or the trust seed.
+  let managed: Record<string, ClaudeMcpServerConfig> | null = null;
+  if (opts?.projectPath) {
+    try {
+      managed = await effectiveMcpServers(opts.projectPath, 'claude');
+    } catch (err) {
+      console.warn(
+        `[claudeTrust] MCP resolve failed for ${opts.projectPath}: ${(err as Error).message}`,
+      );
+    }
+  }
+
   try {
     await withClaudeConfigLock(async () => {
       const cfg = await readClaudeConfig();
       const projects = (cfg.projects ??= {});
       const existing = projects[key];
-      if (existing && existing.hasTrustDialogAccepted === true) return;
+      const alreadyTrusted = existing?.hasTrustDialogAccepted === true;
+      // Fast-exit only when there's nothing to do: already trusted AND no MCP
+      // reconcile requested. When `managed` is set we must proceed even if
+      // trusted, to add/strip the managed servers.
+      if (alreadyTrusted && managed === null) return;
       // Mirror the structural empty-collection fields Claude writes on first
       // accept so any later code that introspects the entry doesn't trip on
       // missing fields. Spread `existing` last so we never clobber data Claude
       // wrote (e.g. lastCost on a re-seed of an already-known path).
-      projects[key] = {
+      const entry: ClaudeProjectEntry = {
         allowedTools: [],
         mcpContextUris: [],
         mcpServers: {},
@@ -70,6 +101,8 @@ export async function ensureTrustedClaudeDir(dirPath: string): Promise<void> {
         ...existing,
         hasTrustDialogAccepted: true,
       };
+      if (managed !== null) reconcileMcpServers(entry, managed);
+      projects[key] = entry;
       await writeClaudeConfigAtomic(cfg);
     });
   } catch (err) {

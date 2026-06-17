@@ -80,6 +80,20 @@ export type CreateSessionOptions = {
   rows?: number;
 };
 
+// Hard timeout on a single POST /sessions. Generous on purpose: a normal pty
+// pre-create is sub-second, but under a heavy "Run All" burst the trust-seed
+// file I/O on the shared ~/.claude.json plus the conpty spawn can legitimately
+// take a few seconds, so anything under ~30s would risk aborting a spawn that
+// was about to succeed. Past that, the request is almost certainly WEDGED (a
+// stuck conpty handle or a black-holed socket to :5185), and we must not wait
+// on it forever: the spawn queue holds a concurrency reservation for the WHOLE
+// spawn thunk and only reclaims it once this call settles, so an un-timed hang
+// here permanently leaks a slot and silently lowers the effective agent cap
+// below the configured `maxConcurrentAgents` (the "Run All gave me 15 of 24"
+// symptom). Bounding the call guarantees the thunk always settles and the slot
+// is always returned to the queue.
+const CREATE_SESSION_TIMEOUT_MS = 30_000;
+
 // `code: 'CAP'` ⇒ the failure was the terminal-server's hard session cap.
 // The spawn queue keys its over-admit back-off on this; any other failure
 // is a genuine error.
@@ -131,8 +145,25 @@ export async function tryCreateSessionOnce(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(opts),
+      signal: AbortSignal.timeout(CREATE_SESSION_TIMEOUT_MS),
     });
   } catch (err) {
+    const name = (err as { name?: string })?.name;
+    if (name === 'TimeoutError' || name === 'AbortError') {
+      // The terminal-server is alive (it answered the /health probe in
+      // ensureTerminalServer) but this one spawn wedged. Fail JUST this spawn
+      // as NON-recoverable: a recoverable failure would trigger respawn(),
+      // which shuts the whole terminal-server down and kills every live PTY —
+      // catastrophic mid-run. Returning non-recoverable settles the thunk so
+      // the spawn queue reclaims the reservation; the task simply re-queues.
+      console.warn(
+        `[terminal-proxy] POST /sessions timed out (>${CREATE_SESSION_TIMEOUT_MS}ms) — failing this spawn (queue slot reclaimed, will retry)`,
+      );
+      return {
+        error: `terminal-server did not respond within ${CREATE_SESSION_TIMEOUT_MS}ms`,
+        recoverable: false,
+      };
+    }
     // Connection errors (server died between probe and request) are
     // recoverable — a respawn will restore service.
     return { error: (err as Error).message, recoverable: true };

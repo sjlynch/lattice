@@ -2,6 +2,7 @@ import express from 'express';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { killSession, killSessionsByCwd, listSessions, precreateSession } from '../terminal.js';
 import { ensureTrustedClaudeDir } from '../claudeTrust.js';
+import { isClaudeMemoryDisabled } from '../userSettings.js';
 import type { TerminalShutdown } from './shutdown.js';
 
 export function registerTerminalRoutes(
@@ -45,8 +46,28 @@ export function registerTerminalRoutes(
     // trust the files in this folder?" dialog. Best-effort + Claude-only:
     // `ensureTrustedClaudeDir` swallows its own errors, and pi/codex have no
     // such gate so seeding for them would just churn the config file.
-    if (body.cwd && /^\s*claude\b/.test(body.initialCommand ?? '')) {
-      await ensureTrustedClaudeDir(body.cwd);
+    //
+    // This is also the single MCP-injection chokepoint: passing `projectPath`
+    // resolves the project's enabled MCP servers and reconciles them into
+    // `projects[<cwd>].mcpServers` right here — microseconds before spawn, after
+    // any Claude config clobber. Every backend-spawned Claude session (task
+    // worktree, resolver, push, post-merge hook, workflow step, prompt
+    // customization) flows through here, so one wiring point covers them all.
+    const isClaudeCmd = /^\s*claude\b/.test(body.initialCommand ?? '');
+    if (body.cwd && isClaudeCmd) {
+      await ensureTrustedClaudeDir(body.cwd, { projectPath: body.projectPath });
+    }
+    // Per-project Claude auto-memory opt-out (default on). Resolved here at the
+    // single Claude-spawn chokepoint and applied as an env var on the pty
+    // (launchContext.ts) — it never writes the global Claude config. Best-effort:
+    // a settings-read failure just leaves memory at Claude's own default.
+    let disableClaudeMemory = false;
+    if (isClaudeCmd && body.projectPath) {
+      try {
+        disableClaudeMemory = await isClaudeMemoryDisabled(body.projectPath);
+      } catch {
+        /* leave memory as-is */
+      }
     }
     const result = precreateSession({
       cwd: body.cwd,
@@ -54,6 +75,7 @@ export function registerTerminalRoutes(
       rows: body.rows,
       initialCommand: body.initialCommand,
       projectPath: body.projectPath,
+      disableClaudeMemory,
     });
     if ('error' in result) {
       // A hard-cap refusal is 503 ("at capacity") so the backend proxy can

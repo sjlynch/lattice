@@ -35,6 +35,9 @@ Thumbs.db
 .cache/
 coverage/
 
+# local design/planning docs (not checked in)
+plans/
+
 # Lattice per-project state (tasks.json + future user settings)
 .lattice/
 
