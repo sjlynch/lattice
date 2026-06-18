@@ -1,6 +1,6 @@
 import * as pty from 'node-pty';
 import { createTerminalSessionId } from '../ids.js';
-import { SessionBuffer } from '../terminalBuffer.js';
+import { ScrollbackStore } from './scrollbackStore.js';
 import { TERMINAL_CONFIG } from '../terminalConfig.js';
 import type { CreateOpts, Session } from './sessionTypes.js';
 import { addSession, sessionCount } from './sessionStore.js';
@@ -67,10 +67,11 @@ export function createSession(
     };
   }
 
+  const id = createTerminalSessionId();
   const session: Session = {
-    id: createTerminalSessionId(),
+    id,
     pty: term,
-    buffer: new SessionBuffer(),
+    scrollback: new ScrollbackStore(id),
     cols: context.cols,
     rows: context.rows,
     cwd: context.cwd,
@@ -97,8 +98,8 @@ export function createSession(
 // frontend can lazy-mount the <TerminalPane> instead of having to mount it
 // immediately just to trigger session creation via WS attach. The pty starts
 // running (initialCommand fires) regardless of whether anyone connects; the
-// TERMINAL_CONFIG.BUFFER_REPLAY_MAX_BYTES rolling buffer captures output for replay when a
-// subscriber later attaches via `attachTerminal({ id })`.
+// disk-backed ScrollbackStore captures output for replay when a subscriber
+// later attaches via `attachTerminal({ id })`.
 export function precreateSession(
   opts: CreateOpts,
 ): { id: string } | SessionErrorResult {

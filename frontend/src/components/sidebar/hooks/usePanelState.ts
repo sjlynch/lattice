@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { TerminalSpec } from '../../../TerminalsContext';
 
 export type Panel = 'terminals' | 'merging' | 'startup';
@@ -22,16 +22,17 @@ export function usePanelState({
 }: UsePanelStateArgs) {
   const [activePanel, setActivePanel] = useState<Panel>('terminals');
 
-  // Auto-switch to Merging panel when a new merge terminal is added.
-  const prevMergeCountRef = useRef(mergeTerminals.length);
-  useEffect(() => {
-    if (mergeTerminals.length > prevMergeCountRef.current) {
-      setActivePanel('merging');
-      const newest = mergeTerminals[mergeTerminals.length - 1];
-      if (newest) setActiveId(newest.id);
-    }
-    prevMergeCountRef.current = mergeTerminals.length;
-  }, [mergeTerminals, setActiveId]);
+  // NOTE: deliberately do NOT auto-switch to the Merging panel or steal the
+  // active terminal when a merge (conflict-resolver) terminal spawns. Both
+  // spawn sites pass `focus: false` on purpose — a "Merge All" run can spawn
+  // many resolvers, and yanking focus to each one (a) interrupts whatever the
+  // user is doing and (b) forces each merge pane to mount, allocating an
+  // xterm WebGL context per pane. A burst of those blew past Chrome's
+  // per-page WebGL context cap and dropped the force-graph's context (graph
+  // turned white). Merge terminals stay discoverable via the "Merging" panel
+  // tab + count badge; the resolver runs server-side regardless of whether
+  // its pane is ever mounted. The user can click into the Merging panel when
+  // they want to watch a resolver.
 
   // When the Merging/Startup panel disappears, fall back to regular terminals.
   useEffect(() => {

@@ -1,11 +1,12 @@
 import type * as pty from 'node-pty';
 import type { WebSocket } from 'ws';
-import type { SessionBuffer } from '../terminalBuffer.js';
+import type { ScrollbackStore } from './scrollbackStore.js';
 
 export type Session = {
   id: string;
   pty: pty.IPty;
-  buffer: SessionBuffer;
+  // Disk-backed scrollback (replay on attach). See scrollbackStore.ts.
+  scrollback: ScrollbackStore;
   cols: number;
   rows: number;
   cwd: string;

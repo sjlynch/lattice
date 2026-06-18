@@ -103,12 +103,12 @@ export function attachTerminal(ws: WebSocket, opts: AttachOpts) {
     /* ignore */
   }
 
-  // Send any buffered output. Covers two cases:
+  // Send the scrollback replay window. Covers two cases:
   //   - replay on reconnect (existing session, scrollback the user had)
-  //   - first attach to a pre-spawned session whose buffer already holds
+  //   - first attach to a pre-spawned session whose log already holds
   //     the Lattice banner (and any pty output that arrived before the
   //     subscriber connected).
-  const full = session.buffer.replay();
+  const full = session.scrollback.replay();
   if (full.length > 0) {
     try {
       ws.send(JSON.stringify({ type: 'data', data: full }));

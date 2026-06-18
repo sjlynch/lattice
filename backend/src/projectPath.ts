@@ -38,6 +38,13 @@ export function latticeHomeDir(): string {
   return path.join(os.homedir(), '.lattice');
 }
 
+// Per-session terminal scrollback logs: `~/.lattice/terminal-scrollback/`.
+// Home-scoped (never inside a project tree) and wiped on terminal-server boot,
+// since a restart invalidates every in-memory session anyway.
+export function terminalScrollbackDir(): string {
+  return path.join(latticeHomeDir(), 'terminal-scrollback');
+}
+
 // Shared per-project home state/scratch root:
 // `~/.lattice/per-project/<projectHash>/`. Use this for project-scoped data
 // that must survive project-tree damage and must not be recursively deleted

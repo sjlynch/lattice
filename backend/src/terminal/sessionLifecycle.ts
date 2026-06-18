@@ -7,7 +7,7 @@ import { broadcastToSubscribers } from './broadcast.js';
 
 export function wireSessionPtyEvents(session: Session): void {
   session.pty.onData((data) => {
-    session.buffer.append(data);
+    session.scrollback.append(data);
     broadcastToSubscribers(session.subscribers, JSON.stringify({ type: 'data', data }));
   });
   session.pty.onExit(({ exitCode }) => {
@@ -34,7 +34,7 @@ export function addLatticeBanner(session: Session, docPath: string | null): void
   // Only emitted for Lattice-managed projects (those that already have a
   // .lattice/ directory, hence a docPath).
   if (!docPath) return;
-  session.buffer.append(buildLatticeBanner());
+  session.scrollback.append(buildLatticeBanner());
 }
 
 export function scheduleInitialCommand(term: pty.IPty, initialCommand?: string): void {

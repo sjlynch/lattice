@@ -11,6 +11,16 @@ export function addSession(session: Session): void {
 }
 
 export function deleteSession(id: string): void {
+  // Release the on-disk scrollback log at the single deletion point (covers
+  // both natural pty exit and killSession → pty exit). Idempotent.
+  const session = sessions.get(id);
+  if (session) {
+    try {
+      session.scrollback.dispose();
+    } catch {
+      /* ignore */
+    }
+  }
   sessions.delete(id);
 }
 
@@ -42,6 +52,6 @@ export function listSessions(): Array<{
     projectPath: s.projectPath,
     createdAt: s.createdAt,
     subscribers: s.subscribers.size,
-    bufferSize: s.buffer.size,
+    bufferSize: s.scrollback.size,
   }));
 }

@@ -8,6 +8,7 @@
 import http from 'node:http';
 import express from 'express';
 import { ensureClaudeConfigValid } from './claudeConfigGuard.js';
+import { clearTerminalScrollback } from './terminal/scrollbackStore.js';
 import { computeTerminalFingerprint } from './terminalFingerprint.js';
 import { installTerminalProcessGuards } from './terminalServer/processGuards.js';
 import { registerTerminalRoutes } from './terminalServer/routes.js';
@@ -54,6 +55,12 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(
     `[lattice-terminal] listening on port ${PORT} (fingerprint ${TERMINAL_FINGERPRINT})`,
   );
+  // We now own the port, so any previous terminal-server has exited and every
+  // session it held is gone (a stale-id attach gets session_lost). Its
+  // per-session scrollback logs are therefore orphans — wipe the directory.
+  // Done here (not before listen) so a failed listen on a port-conflict can't
+  // clobber a still-running server's logs.
+  clearTerminalScrollback();
   // Backup ~/.claude.json if valid, restore from backup if corrupt. Runs
   // once on startup so a Claude-prompt-blocking corruption from a previous
   // session is healed before any new pty is spawned.

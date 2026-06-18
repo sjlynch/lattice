@@ -31,6 +31,12 @@ export const TERMINAL_OPTIONS = {
   lineHeight: 1.25,
   letterSpacing: 0,
   allowProposedApi: true,
-  scrollback: 5000,
+  // How many lines xterm retains for scroll-back in the LIVE terminal. This is
+  // the cap that bounds scrolling up in a long-running session (independent of
+  // the server-side replay window used on reattach). Raised from 5000 so a
+  // long Claude session stays scrollable to its start; only paid per actually-
+  // mounted (viewed) terminal, and roughly matched to the backend's ~2 MB
+  // SCROLLBACK_REPLAY_BYTES window so a reload restores a comparable amount.
+  scrollback: 20000,
   theme: TERMINAL_THEME,
 } satisfies ITerminalOptions;
