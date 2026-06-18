@@ -107,7 +107,17 @@ export function setNodeWorktreeRing(
   const ring = new THREE.Sprite(ringMaterial(color));
   const s = baseSize * 2.0;
   ring.scale.set(s, s, 1);
-  ring.renderOrder = 11;
+  // The `W` overlay's whole purpose is to make worktree-modified files pop, so
+  // its ring must ALWAYS paint on top of every other graph node and line — not
+  // just its own node body. Every node/link material in this view runs with
+  // `depthTest: false` (see sprites.ts / agentOverlay*), so render order is the
+  // sole arbiter of who paints last; the highest the rest reach is the Claude
+  // node at 13 (node body 12, dead-code/metric 12, links 10, beams 9). At the
+  // ring's old value of 11 it lost to every node body in the graph, so any
+  // sibling node overlapping it on screen obscured the ring. Sit well above the
+  // pack so the ring is unambiguously the topmost graph element. (Change rings
+  // are hidden while `W` is held — see useWorktreeHighlight — so no clash.)
+  ring.renderOrder = 30;
   ring.raycast = () => {};
   ring.userData[RING_TAG] = true;
   ring.userData[`${RING_TAG}:color`] = color;
