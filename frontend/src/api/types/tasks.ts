@@ -69,11 +69,19 @@ export type TaskActivityEvent = {
   taskId: string;
   projectPath: string;
   // Project-absolute path of the touched file (matches a graph node `path`).
-  file: string;
+  // Absent on `lifecycle` (SubagentStart/Stop) events.
+  file?: string;
   // 'start' = PreToolUse, 'end' = PostToolUse.
   phase: 'start' | 'end';
   tool: string;
   ts: number;
+  // Subagent attribution. When set, this event pertains to a *satellite* (a
+  // Task/Agent subagent) of the task's Claude node, not the main agent.
+  subagentId?: string;
+  subagentType?: string;
+  // SubagentStart ('spawn') / SubagentStop ('stop') — a satellite appears /
+  // disappears. `file` is absent on these.
+  lifecycle?: 'spawn' | 'stop';
 };
 
 // One task's not-yet-merged file set, from `GET /api/tasks/worktree-modified`.
@@ -92,10 +100,15 @@ export type AgentActivityEvent = {
   agentId: string;
   projectPath: string;
   label: string;
-  file: string;
+  // Absent on `lifecycle` (SubagentStart/Stop) events.
+  file?: string;
   phase: 'start' | 'end';
   tool: string;
   ts: number;
+  // Subagent attribution — see TaskActivityEvent.
+  subagentId?: string;
+  subagentType?: string;
+  lifecycle?: 'spawn' | 'stop';
 };
 
 // Presence snapshot entry from `/ws/agent-sessions`. One orange Claude node

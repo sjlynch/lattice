@@ -9,6 +9,8 @@ import {
   PARKED_RADIUS_FRACTION,
   PARKED_RADIUS_PADDING,
   REST_EPS,
+  SATELLITE_DROP_FACTOR,
+  SATELLITE_RING_RADIUS,
 } from './agentOverlayConstants';
 
 // Everything parkedPosition needs about the current graph layout: the centroid
@@ -31,6 +33,34 @@ export function parkedPosition(index: number, center: ParkCenter): THREE.Vector3
 // One step of a low-pass filter easing `current` toward `target`.
 export function lowPassStep(current: number, target: number, ease: number): number {
   return current + (target - current) * ease;
+}
+
+// Fixed offset from a parent agent node to one of its satellites, by ring slot.
+// Satellites spread around the parent on a golden-angle ring (so 1..N stay
+// distinct) at a nodeSize-scaled radius, dropped slightly below the parent
+// toward the file graph. Deterministic in `slot` — a satellite never moves for
+// movement's sake; it only follows the parent. Pure, so it's unit-tested.
+export function satelliteOffset(
+  slot: number,
+  nodeSize: number,
+): { dx: number; dy: number; dz: number } {
+  const angle = slot * GOLDEN_ANGLE;
+  const r = nodeSize * SATELLITE_RING_RADIUS;
+  return {
+    dx: r * Math.cos(angle),
+    dy: -nodeSize * SATELLITE_DROP_FACTOR,
+    dz: r * Math.sin(angle),
+  };
+}
+
+// Smallest non-negative ring slot not already taken by a sibling satellite, so
+// a new subagent gets a stable, distinct direction and a freed slot is reused
+// (keeps a parent's satellites tightly packed as subagents come and go).
+export function freeSatelliteSlot(usedSlots: Iterable<number>): number {
+  const used = new Set(usedSlots);
+  let i = 0;
+  while (used.has(i)) i++;
+  return i;
 }
 
 // Low-pass smoother for the above-graph hover line, so the agents float a

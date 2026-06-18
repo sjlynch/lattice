@@ -52,12 +52,17 @@ function latticeHookGroups(backendOrigin: string, projectRoot: string): HooksMap
   const cmd = activityCommand(backendOrigin, projectRoot);
   const command: HookHandler[] = [{ type: 'command', command: cmd }];
   return {
-    // File tool-use → focus beams.
+    // File tool-use → focus beams. A subagent's own tool-use fires these too,
+    // tagged with `agent_id`, so the backend routes the beam to its satellite.
     PreToolUse: [{ matcher: FILE_TOOL_MATCHER, hooks: command }],
     PostToolUse: [{ matcher: FILE_TOOL_MATCHER, hooks: command }],
     // Session lifecycle → orange node appears/disappears (no matcher).
     SessionStart: [{ hooks: command }],
     SessionEnd: [{ hooks: command }],
+    // Subagent lifecycle → satellite nodes around the session's node (no
+    // matcher = every agent type).
+    SubagentStart: [{ hooks: command }],
+    SubagentStop: [{ hooks: command }],
   };
 }
 

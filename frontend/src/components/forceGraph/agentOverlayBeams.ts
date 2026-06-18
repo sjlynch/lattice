@@ -9,6 +9,7 @@ import {
   BEAM_MOVE_EPS,
   BEAM_RENDER_ORDER,
   FADE_MS,
+  SATELLITE_TETHER_OPACITY,
 } from './agentOverlayConstants';
 import type { Beam } from './agentOverlayTypes';
 
@@ -48,6 +49,42 @@ export function createBeam(color: string, normPath: string, openedAt: number): B
   };
 }
 
+// A tether is a persistent, constant-opacity line from a parent agent node to
+// one of its satellites. It reuses the Beam shape (line/material/geometry +
+// endpoint cache) but is never faded — `updateBeamEndpoints` refreshes only its
+// geometry, leaving the dimmer tether opacity set here untouched.
+export function createTether(color: string): Beam {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new THREE.BufferAttribute(new Float32Array(6), 3),
+  );
+  const material = new THREE.LineBasicMaterial({
+    color: new THREE.Color(color),
+    transparent: true,
+    opacity: SATELLITE_TETHER_OPACITY,
+    depthWrite: false,
+    depthTest: false,
+  });
+  const line = new THREE.Line(geometry, material);
+  line.renderOrder = BEAM_RENDER_ORDER;
+  line.raycast = () => {};
+  return {
+    line,
+    material,
+    geometry,
+    normPath: '',
+    openedAt: 0,
+    endAt: Infinity,
+    lastFromX: NaN,
+    lastFromY: NaN,
+    lastFromZ: NaN,
+    lastToX: NaN,
+    lastToY: NaN,
+    lastToZ: NaN,
+  };
+}
+
 export function disposeBeam(group: THREE.Group, beam: Beam): void {
   group.remove(beam.line);
   beam.geometry.dispose();
@@ -66,16 +103,15 @@ function endpointMoved(next: number, last: number): boolean {
   return !(Math.abs(next - last) <= BEAM_MOVE_EPS);
 }
 
-// Refresh a beam's endpoints (agent node → file node) and fade its opacity by
-// the remaining TTL. The geometry is re-uploaded to the GPU only when an
-// endpoint actually moved (Part B) — a persistent beam over stationary nodes
-// would otherwise re-upload identical geometry every frame — but the opacity/
-// fade update always runs so finite-life (fading) beams still ramp out.
-export function updateBeam(
+// Refresh a beam/tether's endpoints, re-uploading geometry to the GPU only when
+// an endpoint actually moved beyond BEAM_MOVE_EPS (Part B) — a line over
+// stationary nodes would otherwise re-upload identical geometry every frame.
+// Does NOT touch opacity, so a tether keeps its fixed opacity; `updateBeam`
+// layers the fade on top for focus beams.
+export function updateBeamEndpoints(
   beam: Beam,
   from: THREE.Vector3,
   to: THREE.Vector3,
-  now: number,
 ): void {
   if (
     endpointMoved(from.x, beam.lastFromX) ||
@@ -96,5 +132,20 @@ export function updateBeam(
     beam.lastToY = to.y;
     beam.lastToZ = to.z;
   }
-  beam.material.opacity = BEAM_MAX_OPACITY * beamFade(beam.endAt - now);
+}
+
+// Refresh a focus beam's endpoints (node → file node) and fade its opacity by
+// the remaining TTL. The geometry re-upload is gated as above, but the opacity/
+// fade update always runs so finite-life (fading) beams still ramp out.
+// `opacityFactor` dims satellite beams relative to the parent's (default 1).
+export function updateBeam(
+  beam: Beam,
+  from: THREE.Vector3,
+  to: THREE.Vector3,
+  now: number,
+  opacityFactor = 1,
+): void {
+  updateBeamEndpoints(beam, from, to);
+  beam.material.opacity =
+    BEAM_MAX_OPACITY * opacityFactor * beamFade(beam.endAt - now);
 }

@@ -66,6 +66,35 @@ export const PARKED_BASE_RADIUS = 40;
 export const PARKED_RADIUS_FRACTION = 0.6;
 export const PARKED_RADIUS_PADDING = 20;
 
+// --- Subagent satellites ---------------------------------------------------
+// A satellite (a Task/Agent subagent) is a smaller node that hangs at a fixed
+// offset around its parent Claude node and FOLLOWS it — it never orbits for
+// effect (that would pin the render loop; see the APL idle contract). Drawn at
+// this fraction of the parent node's on-screen size.
+export const SATELLITE_SCALE = 0.6;
+// Distance from the parent node to each satellite, in multiples of nodeSize.
+// Satellites are spread around the parent on a golden-angle ring by slot.
+export const SATELLITE_RING_RADIUS = 4.2;
+// Satellites sit slightly BELOW the parent (toward the file graph) by this many
+// nodeSizes, so the cluster reads as "parent up top, helpers reaching down".
+export const SATELLITE_DROP_FACTOR = 1.1;
+// The tether line (parent → satellite) is drawn at this constant opacity, well
+// under a focus beam so it reads as structure, not activity.
+export const SATELLITE_TETHER_OPACITY = 0.3;
+// Satellite focus beams are slightly dimmer than the parent's so the parent's
+// own current file still dominates. Multiplies BEAM_MAX_OPACITY.
+export const SATELLITE_BEAM_OPACITY_FACTOR = 0.8;
+// Safety net for a satellite whose SubagentStop never arrives (e.g. the
+// terminal was hard-killed). SubagentStop is the primary removal signal; this
+// only reaps a satellite that has gone fully quiet (no live beam) for this long.
+// Generous so a long-thinking subagent is never reaped early.
+export const SATELLITE_IDLE_TTL_MS = 5 * 60 * 1000;
+// Satellite type label offset from its node (multiples of the satellite size).
+export const SATELLITE_LABEL_OFFSET_X_FACTOR = 1.3;
+export const SATELLITE_LABEL_OFFSET_Y_FACTOR = -1.1;
+// Satellite type labels read smaller than the parent's file label.
+export const SATELLITE_LABEL_SCALE = 0.78;
+
 // File label next to the node (camera-scaled, like the Alt-labels overlay).
 export const LABEL_OPTIONS: LabelTextureOptions = {
   font: '600 44px -apple-system, "Segoe UI", Inter, Roboto, sans-serif',

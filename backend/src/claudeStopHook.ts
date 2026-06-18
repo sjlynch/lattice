@@ -69,14 +69,18 @@ export function renderClaudeHooksConfig(urls: ClaudeHookUrls): string {
     const activityCommand =
       `curl -s -m 2 -X POST ` +
       `-H "Content-Type: application/json" -d @- ${urls.activityUrl}`;
-    const block = [
-      {
-        matcher: ACTIVITY_TOOL_MATCHER,
-        hooks: [{ type: 'command', command: activityCommand }],
-      },
-    ];
+    const command = [{ type: 'command', command: activityCommand }];
+    // File tool-use → focus beams. A subagent's own tool-use fires these too,
+    // carrying `agent_id`, so the backend can route the beam to its satellite.
+    const block = [{ matcher: ACTIVITY_TOOL_MATCHER, hooks: command }];
     hooks.PreToolUse = block;
     hooks.PostToolUse = block;
+    // Subagent (Task/Agent) lifecycle → a satellite node appears/disappears
+    // around the agent's Claude node. No matcher = every agent type. The same
+    // endpoint reads `hook_event_name` to tell SubagentStart from SubagentStop.
+    const subagentBlock = [{ hooks: command }];
+    hooks.SubagentStart = subagentBlock;
+    hooks.SubagentStop = subagentBlock;
   }
   return JSON.stringify({ hooks }, null, 2);
 }

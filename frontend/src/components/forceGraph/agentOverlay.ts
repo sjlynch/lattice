@@ -34,7 +34,7 @@
 
 import * as THREE from 'three';
 import type { ForceGraph3DInstance } from '3d-force-graph';
-import { makeClaudeNode } from './claudeNodeSprite';
+import { makeClaudeNode, makeSatelliteNode } from './claudeNodeSprite';
 import {
   AGENT_GROUP_RENDER_ORDER,
   BEAM_END_FADE_MS,
@@ -45,16 +45,48 @@ import {
   NODE_SCALE_MULTIPLIER,
   PARKED_BASE_RADIUS,
   REST_EPS,
+  SATELLITE_BEAM_OPACITY_FACTOR,
+  SATELLITE_IDLE_TTL_MS,
+  SATELLITE_SCALE,
 } from './agentOverlayConstants';
 import {
   AgentPathIndex,
   hoverMargin,
   normalizePath,
 } from './agentOverlayPathIndex';
-import { createBeam, disposeBeam, updateBeam } from './agentOverlayBeams';
-import { clearAgentLabel, updateAgentLabel } from './agentOverlayLabels';
-import { HoverLine, lowPassStep, parkedPosition } from './agentOverlayPlacement';
-import type { Agent, AgentDescriptor } from './agentOverlayTypes';
+import {
+  createBeam,
+  createTether,
+  disposeBeam,
+  updateBeam,
+  updateBeamEndpoints,
+} from './agentOverlayBeams';
+import {
+  clearAgentLabel,
+  updateAgentLabel,
+  updateSatelliteLabel,
+} from './agentOverlayLabels';
+import {
+  freeSatelliteSlot,
+  HoverLine,
+  lowPassStep,
+  parkedPosition,
+  satelliteOffset,
+} from './agentOverlayPlacement';
+import type {
+  Agent,
+  AgentDescriptor,
+  Beam,
+  Satellite,
+} from './agentOverlayTypes';
+
+// The beam-bearing fields shared by an Agent and a Satellite, so the focus-beam
+// add/demote policy (`applyActivity`) works on either.
+type BeamHost = {
+  color: string;
+  beams: Map<string, Beam>;
+  currentFile?: string;
+};
 
 export type { AgentDescriptor } from './agentOverlayTypes';
 
@@ -89,7 +121,11 @@ export class AgentOverlay {
     if (nodeSize === this.nodeSize) return;
     this.nodeSize = nodeSize;
     const s = nodeSize * NODE_SCALE_MULTIPLIER;
-    for (const a of this.agents.values()) a.node.scale.set(s, s, 1);
+    const ss = s * SATELLITE_SCALE;
+    for (const a of this.agents.values()) {
+      a.node.scale.set(s, s, 1);
+      for (const sat of a.satellites.values()) sat.node.scale.set(ss, ss, 1);
+    }
   }
 
   // Reconcile the live agent set against the latest descriptors. Returns
@@ -117,6 +153,17 @@ export class AgentOverlay {
         existing.node = makeClaudeNode(d.color, this.nodeSize * NODE_SCALE_MULTIPLIER);
         existing.node.position.copy(existing.pos);
         this.group.add(existing.node);
+        // Recolor satellites + tethers to match (existing beams age out in the
+        // old color; new ones pick up the new color).
+        const ss = this.nodeSize * NODE_SCALE_MULTIPLIER * SATELLITE_SCALE;
+        for (const sat of existing.satellites.values()) {
+          sat.color = d.color;
+          this.group.remove(sat.node);
+          sat.node = makeSatelliteNode(d.color, ss);
+          sat.node.position.copy(sat.pos);
+          this.group.add(sat.node);
+          sat.tether.material.color.set(d.color);
+        }
         changed = true;
       }
     }
@@ -135,6 +182,7 @@ export class AgentOverlay {
       node,
       pos,
       beams: new Map(),
+      satellites: new Map(),
     });
   }
 
@@ -143,17 +191,24 @@ export class AgentOverlay {
     if (!agent) return;
     for (const beam of agent.beams.values()) disposeBeam(this.group, beam);
     agent.beams.clear();
+    for (const sat of agent.satellites.values()) this.disposeSatellite(sat);
+    agent.satellites.clear();
     this.group.remove(agent.node);
     if (agent.label) this.group.remove(agent.label);
     this.agents.delete(taskId);
   }
 
-  // A `task-activity` / `agent-activity` event: open/refresh the beam for the
-  // touched file and record it as the agent's current file. The current file's
-  // beam is kept persistent (`endAt = Infinity`) so the last file the agent
-  // viewed/edited stays lit — and its label stays up — until either a *new*
-  // file is touched (demoting the old one to a fading TTL beam) or the session
-  // stops. A PostToolUse (`end`) for the current file does NOT fade it.
+  // Tear down a satellite's node, tether, beams, and label.
+  private disposeSatellite(sat: Satellite): void {
+    for (const beam of sat.beams.values()) disposeBeam(this.group, beam);
+    sat.beams.clear();
+    disposeBeam(this.group, sat.tether);
+    this.group.remove(sat.node);
+    if (sat.label) this.group.remove(sat.label);
+  }
+
+  // A `task-activity` / `agent-activity` event for the MAIN agent: open/refresh
+  // the beam for the touched file and record it as the agent's current file.
   addActivity(
     taskId: string,
     file: string,
@@ -162,34 +217,134 @@ export class AgentOverlay {
   ): void {
     const agent = this.agents.get(taskId);
     if (!agent) return;
+    this.applyActivity(agent, file, phase, now);
+  }
+
+  // A subagent (Task/Agent) of `taskId` spawned — show a satellite around its
+  // parent node. Idempotent: a repeat refreshes liveness/type. No-op if the
+  // parent isn't on screen (the parent's node must exist to hang the satellite
+  // off). Returns whether a satellite was added (caller forces a repaint).
+  addSubagent(
+    taskId: string,
+    subagentId: string,
+    subagentType: string | undefined,
+    now: number,
+  ): boolean {
+    const agent = this.agents.get(taskId);
+    if (!agent) return false;
+    const existing = agent.satellites.get(subagentId);
+    if (existing) {
+      existing.lastSeen = now;
+      if (subagentType) existing.subagentType = subagentType;
+      return false;
+    }
+    this.createSatellite(agent, subagentId, subagentType, now);
+    return true;
+  }
+
+  // A subagent finished (SubagentStop) — remove its satellite. Returns whether
+  // one was actually removed (caller forces a repaint of the deletion).
+  removeSubagent(taskId: string, subagentId: string): boolean {
+    const agent = this.agents.get(taskId);
+    if (!agent) return false;
+    const sat = agent.satellites.get(subagentId);
+    if (!sat) return false;
+    this.disposeSatellite(sat);
+    agent.satellites.delete(subagentId);
+    return true;
+  }
+
+  // A subagent's own tool-use: beam from its satellite to the touched file.
+  // Lazily creates the satellite if its SubagentStart was missed, so a beam
+  // never has nowhere to land.
+  addSubagentActivity(
+    taskId: string,
+    subagentId: string,
+    subagentType: string | undefined,
+    file: string,
+    phase: 'start' | 'end',
+    now: number,
+  ): void {
+    const agent = this.agents.get(taskId);
+    if (!agent) return;
+    let sat = agent.satellites.get(subagentId);
+    if (!sat) sat = this.createSatellite(agent, subagentId, subagentType, now);
+    sat.lastSeen = now;
+    if (subagentType && !sat.subagentType) sat.subagentType = subagentType;
+    this.applyActivity(sat, file, phase, now);
+  }
+
+  // Build a satellite, parking it AT the parent node so its first tick eases it
+  // out to its ring slot (a one-time fly-out, not perpetual motion).
+  private createSatellite(
+    agent: Agent,
+    subagentId: string,
+    subagentType: string | undefined,
+    now: number,
+  ): Satellite {
+    const slot = freeSatelliteSlot(
+      [...agent.satellites.values()].map((s) => s.slot),
+    );
+    const size = this.nodeSize * NODE_SCALE_MULTIPLIER * SATELLITE_SCALE;
+    const node = makeSatelliteNode(agent.color, size);
+    node.position.copy(agent.pos);
+    this.group.add(node);
+    const tether = createTether(agent.color);
+    this.group.add(tether.line);
+    const sat: Satellite = {
+      subagentId,
+      subagentType,
+      slot,
+      color: agent.color,
+      node,
+      pos: agent.pos.clone(),
+      tether,
+      beams: new Map(),
+      lastSeen: now,
+    };
+    agent.satellites.set(subagentId, sat);
+    return sat;
+  }
+
+  // Focus-beam add/demote policy, shared by the main agent and its satellites.
+  // The current file's beam is kept persistent (`endAt = Infinity`) so the last
+  // file the host viewed/edited stays lit until either a *new* file is touched
+  // (demoting the old one to a fading TTL beam) or the host is removed. A
+  // PostToolUse (`end`) for the current file does NOT fade it.
+  private applyActivity(
+    host: BeamHost,
+    file: string,
+    phase: 'start' | 'end',
+    now: number,
+  ): void {
     const norm = normalizePath(file);
-    const prevNorm = agent.currentFile ? normalizePath(agent.currentFile) : null;
+    const prevNorm = host.currentFile ? normalizePath(host.currentFile) : null;
 
     if (phase === 'end') {
       // Tool finished. Keep the current (last-touched) file lit; only let an
       // older, no-longer-current file begin to fade.
-      const existing = agent.beams.get(norm);
+      const existing = host.beams.get(norm);
       if (existing && norm !== prevNorm) {
         existing.endAt = Math.min(existing.endAt, now + BEAM_END_FADE_MS);
       }
       return;
     }
 
-    // phase === 'start': this file becomes the agent's current file. Demote the
+    // phase === 'start': this file becomes the host's current file. Demote the
     // previously-current file's beam to a normal fading one.
     if (prevNorm && prevNorm !== norm) {
-      const prevBeam = agent.beams.get(prevNorm);
+      const prevBeam = host.beams.get(prevNorm);
       if (prevBeam) prevBeam.endAt = now + BEAM_TTL_MS;
     }
-    agent.currentFile = file;
+    host.currentFile = file;
 
-    const existing = agent.beams.get(norm);
+    const existing = host.beams.get(norm);
     if (existing) {
       existing.endAt = Infinity;
       return;
     }
-    const beam = createBeam(agent.color, norm, now);
-    agent.beams.set(norm, beam);
+    const beam = createBeam(host.color, norm, now);
+    host.beams.set(norm, beam);
     this.group.add(beam.line);
   }
 
@@ -220,37 +375,22 @@ export class AgentOverlay {
     const hoverY = this.hoverLine.value();
 
     for (const agent of this.agents.values()) {
-      // Gather live (non-expired) beam targets (X/Z only — Y is the hover line).
-      let sx = 0;
-      let sz = 0;
-      let n = 0;
-      for (const [norm, beam] of agent.beams) {
-        if (now >= beam.endAt) {
-          disposeBeam(this.group, beam);
-          agent.beams.delete(norm);
-          moving = true; // a beam vanished this frame — paint its removal
-          continue;
-        }
-        // A finite endAt means the beam is on its fade-out clock; keep painting
-        // until it expires. A persistent (Infinity) beam at rest needs nothing.
-        if (beam.endAt !== Infinity) moving = true;
-        // Resolve the file node ONCE here and stash it on the beam so the
-        // geometry pass below reuses it instead of a second pathIndex lookup
-        // (Part D).
-        const node = this.pathIndex.get(norm);
-        beam.targetNode = node;
-        if (node) {
-          sx += node.x ?? 0;
-          sz += node.z ?? 0;
-          n++;
-        }
+      // Gather live beam targets (X/Z only — Y is the hover line). Includes the
+      // main agent's beams AND its subagents' beams, so the node centers over
+      // the whole cluster's work even when the main agent has delegated. This
+      // pass also prunes expired beams and stashes each live beam's file node
+      // for the geometry pass below (Part D).
+      const acc = { sx: 0, sz: 0, n: 0 };
+      if (this.accumulateBeams(agent.beams, now, acc)) moving = true;
+      for (const sat of agent.satellites.values()) {
+        if (this.accumulateBeams(sat.beams, now, acc)) moving = true;
       }
 
       // Track horizontally toward the files in play; keep X/Z when idle. Rest is
       // judged by distance to the target (not by easing step), so the node
       // settles right over its files instead of stalling a few units short.
-      const tx = n > 0 ? sx / n : agent.pos.x;
-      const tz = n > 0 ? sz / n : agent.pos.z;
+      const tx = acc.n > 0 ? acc.sx / acc.n : agent.pos.x;
+      const tz = acc.n > 0 ? acc.sz / acc.n : agent.pos.z;
       // Ease + push to the node sprite only while it's still more than REST_EPS
       // from its target (the same criterion that drives `moving`). Once within
       // REST_EPS it's at rest: skip the easing AND the node.position.copy, so a
@@ -281,18 +421,10 @@ export class AgentOverlay {
         clearAgentLabel(this.group, agent);
       }
 
-      // Update beam geometries + opacity. Reuse the node resolved in the
-      // centroid pass above (Part D) rather than a second pathIndex lookup.
-      for (const beam of agent.beams.values()) {
-        const node = beam.targetNode;
-        const a = agent.pos;
-        if (node) {
-          this.tmpB.set(node.x ?? a.x, node.y ?? a.y, node.z ?? a.z);
-        } else {
-          this.tmpB.copy(a);
-        }
-        updateBeam(beam, a, this.tmpB, now);
-      }
+      // Update the main agent's beam geometries + opacity (reusing the stashed
+      // file nodes), then place + update its satellites.
+      this.updateBeamGeometries(agent.beams, agent.pos, now, 1);
+      if (this.updateSatellites(agent, now)) moving = true;
     }
 
     return moving;
@@ -309,6 +441,99 @@ export class AgentOverlay {
     for (const taskId of [...this.agents.keys()]) this.removeAgent(taskId);
     const scene = (graph as unknown as { scene: () => THREE.Scene }).scene();
     scene.remove(this.group);
+  }
+
+  // Prune expired beams, resolve+stash each live beam's file node (Part D), and
+  // add its X/Z to the centroid accumulator. Returns whether any beam still
+  // needs frames — one vanished this frame, or one is on its fade-out clock (a
+  // persistent Infinity beam at rest needs nothing). Shared by the main agent
+  // and each satellite.
+  private accumulateBeams(
+    beams: Map<string, Beam>,
+    now: number,
+    acc: { sx: number; sz: number; n: number },
+  ): boolean {
+    let moving = false;
+    for (const [norm, beam] of beams) {
+      if (now >= beam.endAt) {
+        disposeBeam(this.group, beam);
+        beams.delete(norm);
+        moving = true; // a beam vanished this frame — paint its removal
+        continue;
+      }
+      if (beam.endAt !== Infinity) moving = true;
+      const node = this.pathIndex.get(norm);
+      beam.targetNode = node;
+      if (node) {
+        acc.sx += node.x ?? 0;
+        acc.sz += node.z ?? 0;
+        acc.n++;
+      }
+    }
+    return moving;
+  }
+
+  // Refresh a beam map's geometry + opacity from `origin` to each beam's stashed
+  // file node (Part D — no second pathIndex lookup). `opacityFactor` dims
+  // satellite beams under the parent's.
+  private updateBeamGeometries(
+    beams: Map<string, Beam>,
+    origin: THREE.Vector3,
+    now: number,
+    opacityFactor: number,
+  ): void {
+    for (const beam of beams.values()) {
+      const node = beam.targetNode;
+      if (node) {
+        this.tmpB.set(node.x ?? origin.x, node.y ?? origin.y, node.z ?? origin.z);
+      } else {
+        this.tmpB.copy(origin);
+      }
+      updateBeam(beam, origin, this.tmpB, now, opacityFactor);
+    }
+  }
+
+  // Place each of an agent's satellites at its fixed ring slot around the parent
+  // node and follow the parent — they never orbit for effect (perpetual motion
+  // would pin the render loop; see the APL idle contract). Updates the tether,
+  // the type label, and the satellite's own beam geometries, and idle-reaps a
+  // satellite whose SubagentStop was missed and has gone fully quiet. Returns
+  // whether any satellite still has motion to paint.
+  private updateSatellites(agent: Agent, now: number): boolean {
+    let moving = false;
+    for (const [id, sat] of agent.satellites) {
+      // Missed-SubagentStop safety net: a satellite with no live beam that has
+      // been quiet past the TTL is reaped. SubagentStop is the primary signal,
+      // so a satellite still showing its last file (a persistent beam) is kept.
+      if (sat.beams.size === 0 && now - sat.lastSeen > SATELLITE_IDLE_TTL_MS) {
+        this.disposeSatellite(sat);
+        agent.satellites.delete(id);
+        moving = true;
+        continue;
+      }
+      const off = satelliteOffset(sat.slot, this.nodeSize);
+      const tx = agent.pos.x + off.dx;
+      const ty = agent.pos.y + off.dy;
+      const tz = agent.pos.z + off.dz;
+      if (
+        Math.abs(tx - sat.pos.x) > REST_EPS ||
+        Math.abs(ty - sat.pos.y) > REST_EPS ||
+        Math.abs(tz - sat.pos.z) > REST_EPS
+      ) {
+        moving = true;
+        sat.pos.set(
+          lowPassStep(sat.pos.x, tx, EASE),
+          lowPassStep(sat.pos.y, ty, EASE),
+          lowPassStep(sat.pos.z, tz, EASE),
+        );
+        sat.node.position.copy(sat.pos);
+      }
+      // Tether parent → satellite (constant opacity; geometry only).
+      updateBeamEndpoints(sat.tether, agent.pos, sat.pos);
+      updateSatelliteLabel(this.group, sat, this.labelSize, this.nodeSize);
+      this.updateBeamGeometries(sat.beams, sat.pos, now, SATELLITE_BEAM_OPACITY_FACTOR);
+    }
+    return moving;
   }
 
   // Low-pass the hover line toward (graph top + margin) so the agents float a

@@ -27,6 +27,8 @@ import {
   hookEventName,
   phaseFromHookBody,
   sessionIdFromHookBody,
+  subagentIdFromHookBody,
+  subagentTypeFromHookBody,
   toolFromHookBody,
 } from '../claudeHookBody.js';
 import { decodeAgentToken, notifyAgentActivity } from '../agentActivity.js';
@@ -121,7 +123,28 @@ export function buildProjectClaudeRouter(backendOrigin: string): Router {
     touchAgentSession(agentId);
     if (event === 'SessionStart') return ack();
 
-    // Tool use → focus beam.
+    const subagentId = subagentIdFromHookBody(body);
+    const subagentType = subagentTypeFromHookBody(body) ?? undefined;
+
+    // Subagent lifecycle → satellite appears/disappears on this session's node.
+    if (event === 'SubagentStart' || event === 'SubagentStop') {
+      if (subagentId) {
+        notifyAgentActivity({
+          projectPath: meta.projectPath,
+          agentId,
+          label: meta.label,
+          phase: 'start',
+          tool: 'Task',
+          ts: Date.now(),
+          subagentId,
+          subagentType,
+          lifecycle: event === 'SubagentStart' ? 'spawn' : 'stop',
+        });
+      }
+      return ack();
+    }
+
+    // Tool use → focus beam (on the satellite when `subagentId` is set).
     const rawFile = fileFromHookBody(body);
     if (!rawFile) return ack();
     const file = mapFileToProject(meta.projectPath, rawFile, cwd);
@@ -134,6 +157,8 @@ export function buildProjectClaudeRouter(backendOrigin: string): Router {
       phase: phaseFromHookBody(body),
       tool: toolFromHookBody(body),
       ts: Date.now(),
+      subagentId: subagentId ?? undefined,
+      subagentType,
     });
     return ack();
   });

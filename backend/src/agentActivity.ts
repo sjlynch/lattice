@@ -20,6 +20,9 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 export type AgentActivityPhase = 'start' | 'end';
+// A subagent (Task/Agent) of this session's Claude appeared ('spawn',
+// SubagentStart) or finished ('stop', SubagentStop). These carry no `file`.
+export type AgentActivityLifecycle = 'spawn' | 'stop';
 
 export type AgentActivityEvent = {
   projectPath: string;
@@ -30,10 +33,17 @@ export type AgentActivityEvent = {
   // Human label for the session kind (for tooltips/debug).
   label: string;
   // Project-absolute path of the touched file (matches a graph node `path`).
-  file: string;
+  // Absent on `lifecycle` (SubagentStart/Stop) events.
+  file?: string;
   phase: AgentActivityPhase;
   tool: string;
   ts: number;
+  // Subagent attribution — see TaskActivityEvent. When set, the event pertains
+  // to a satellite of this session's Claude node.
+  subagentId?: string;
+  subagentType?: string;
+  // Set for SubagentStart ('spawn') / SubagentStop ('stop').
+  lifecycle?: AgentActivityLifecycle;
 };
 
 type AgentTokenPayload = {

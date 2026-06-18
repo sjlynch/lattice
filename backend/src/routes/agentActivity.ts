@@ -11,7 +11,10 @@ import { canonicalProjectPath } from '../projectPath.js';
 import {
   cwdFromHookBody,
   fileFromHookBody,
+  hookEventName,
   phaseFromHookBody,
+  subagentIdFromHookBody,
+  subagentTypeFromHookBody,
   toolFromHookBody,
 } from '../claudeHookBody.js';
 import { decodeAgentToken, notifyAgentActivity } from '../agentActivity.js';
@@ -47,6 +50,27 @@ export function buildAgentActivityRouter(): Router {
     const meta = decodeAgentToken(req.params.token);
     if (!meta) return ack();
 
+    const event = hookEventName(req.body);
+    const subagentId = subagentIdFromHookBody(req.body);
+    const subagentType = subagentTypeFromHookBody(req.body) ?? undefined;
+
+    // Subagent lifecycle → satellite appears/disappears on this session's node.
+    if (event === 'SubagentStart' || event === 'SubagentStop') {
+      if (!subagentId) return ack();
+      notifyAgentActivity({
+        projectPath: meta.projectPath,
+        agentId: meta.agentId,
+        label: meta.label,
+        phase: 'start',
+        tool: 'Task',
+        ts: Date.now(),
+        subagentId,
+        subagentType,
+        lifecycle: event === 'SubagentStart' ? 'spawn' : 'stop',
+      });
+      return ack();
+    }
+
     const rawFile = fileFromHookBody(req.body);
     if (!rawFile) return ack();
     const file = mapFileToProject(meta.projectPath, rawFile, cwdFromHookBody(req.body));
@@ -60,6 +84,8 @@ export function buildAgentActivityRouter(): Router {
       phase: phaseFromHookBody(req.body),
       tool: toolFromHookBody(req.body),
       ts: Date.now(),
+      subagentId: subagentId ?? undefined,
+      subagentType,
     });
     return ack();
   });

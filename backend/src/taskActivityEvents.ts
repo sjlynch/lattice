@@ -8,13 +8,17 @@
 // `taskSpawnEvents.ts` model.
 
 export type TaskActivityPhase = 'start' | 'end';
+// A subagent (Task/Agent) of the task's main Claude appeared ('spawn',
+// SubagentStart) or finished ('stop', SubagentStop). These carry no `file`.
+export type TaskActivityLifecycle = 'spawn' | 'stop';
 
 export type TaskActivityEvent = {
   projectPath: string;
   taskId: string;
   // Project-absolute path of the file the agent touched (mapped from the
-  // worktree path). Matches a graph node's `path`.
-  file: string;
+  // worktree path). Matches a graph node's `path`. Absent on `lifecycle`
+  // (SubagentStart/Stop) events, which name no file.
+  file?: string;
   // 'start' = PreToolUse (tool about to run), 'end' = PostToolUse (finished).
   phase: TaskActivityPhase;
   // The tool name (Read / Edit / Write / MultiEdit / NotebookEdit).
@@ -22,6 +26,15 @@ export type TaskActivityEvent = {
   // Backend receipt time (ms). Frontend uses it only for ordering/debug; the
   // beam TTL is driven by the frontend's own clock.
   ts: number;
+  // Subagent attribution. When set, the event pertains to a *satellite* of the
+  // task's Claude node (a Task/Agent subagent), not the main agent. The
+  // subagent's own tool-use carries `subagentId` so its beams hang off the
+  // satellite; `subagentType` labels the satellite (e.g. 'Explore').
+  subagentId?: string;
+  subagentType?: string;
+  // Set for SubagentStart ('spawn') / SubagentStop ('stop') — a satellite
+  // appears / disappears. `file` is absent on these.
+  lifecycle?: TaskActivityLifecycle;
 };
 
 type Listener = (event: TaskActivityEvent) => void;

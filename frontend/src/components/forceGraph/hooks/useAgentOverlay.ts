@@ -47,6 +47,17 @@ function sessionDescriptors(sessions: AgentSession[]): AgentDescriptor[] {
   return sessions.map((s) => ({ taskId: s.agentId, color: CLAUDE_ORANGE }));
 }
 
+// The fields a `task-activity` / `agent-activity` frame carries that the
+// overlay routing cares about — shared shape of TaskActivityEvent and
+// AgentActivityEvent so one router handles both (keyed by the parent's id).
+type ActivityLike = {
+  file?: string;
+  phase: 'start' | 'end';
+  subagentId?: string;
+  subagentType?: string;
+  lifecycle?: 'spawn' | 'stop';
+};
+
 export function useAgentOverlay(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   settingsRef: MutableRefObject<GraphSettings>,
@@ -76,6 +87,57 @@ export function useAgentOverlay(
     idleHeldRef.current = true;
     getIdleController(graphRef.current)?.acquireAgents();
   }, [graphRef]);
+
+  // Wake the render loop to paint a one-shot set change (a satellite removed)
+  // that has no follow-on motion of its own — same guaranteed short frame tail
+  // `applyMerged` uses for an agent add/remove.
+  const wakeRefresh = useCallback(() => {
+    getIdleController(graphRef.current)?.wakeForRefresh();
+  }, [graphRef]);
+
+  // Route one activity/lifecycle frame to the overlay, keyed by the parent
+  // agent's id (taskId for task-activity, agentId for agent-activity):
+  //   - lifecycle 'spawn'/'stop' → a subagent satellite appears/disappears.
+  //   - a tool-use frame with `subagentId` → a satellite's focus beam.
+  //   - a plain tool-use frame → the main agent's focus beam.
+  const routeActivity = useCallback(
+    (parentId: string, event: ActivityLike) => {
+      const ov = overlayRef.current;
+      if (!ov) return;
+      const now = performance.now();
+      if (event.lifecycle === 'spawn') {
+        // The new satellite eases out from the parent — kick() animates it.
+        if (
+          event.subagentId &&
+          ov.addSubagent(parentId, event.subagentId, event.subagentType, now)
+        ) {
+          kick();
+        }
+        return;
+      }
+      if (event.lifecycle === 'stop') {
+        if (event.subagentId && ov.removeSubagent(parentId, event.subagentId)) {
+          wakeRefresh();
+        }
+        return;
+      }
+      if (!event.file) return;
+      if (event.subagentId) {
+        ov.addSubagentActivity(
+          parentId,
+          event.subagentId,
+          event.subagentType,
+          event.file,
+          event.phase,
+          now,
+        );
+      } else {
+        ov.addActivity(parentId, event.file, event.phase, now);
+      }
+      kick();
+    },
+    [kick, wakeRefresh],
+  );
 
   const applyMerged = useCallback(() => {
     const overlay = overlayRef.current;
@@ -158,31 +220,15 @@ export function useAgentOverlay(
         applyMerged();
       },
       undefined,
-      (event) => {
-        overlayRef.current?.addActivity(
-          event.taskId,
-          event.file,
-          event.phase,
-          performance.now(),
-        );
-        kick();
-      },
-      (event) => {
-        overlayRef.current?.addActivity(
-          event.agentId,
-          event.file,
-          event.phase,
-          performance.now(),
-        );
-        kick();
-      },
+      (event) => routeActivity(event.taskId, event),
+      (event) => routeActivity(event.agentId, event),
     );
     return () => {
       unsub();
       taskDescRef.current = [];
       applyMerged();
     };
-  }, [activeFolder, applyMerged, kick]);
+  }, [activeFolder, applyMerged, routeActivity]);
 
   // Non-worktree Claude session presence (`/ws/agent-sessions`).
   useEffect(() => {

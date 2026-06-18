@@ -59,3 +59,26 @@ export function hookEventName(body: unknown): string {
       : undefined;
   return typeof n === 'string' ? n : '';
 }
+
+// The subagent that triggered this hook, when it fired inside a Task/Agent
+// subagent. Claude sets `agent_id` (e.g. `"subagent-123"`) on SubagentStart /
+// SubagentStop AND on the subagent's OWN tool-use events; main-thread events
+// omit it. Presence is how we tell a satellite's activity from the parent's.
+export function subagentIdFromHookBody(body: unknown): string | null {
+  const s =
+    body && typeof body === 'object'
+      ? (body as Record<string, unknown>).agent_id
+      : undefined;
+  return typeof s === 'string' && s ? s : null;
+}
+
+// The subagent's type/name (`agent_type`), e.g. 'Explore', 'Plan',
+// 'general-purpose', or a custom subagent name. Present alongside `agent_id`
+// for subagent events; used to label the satellite node.
+export function subagentTypeFromHookBody(body: unknown): string | null {
+  const t =
+    body && typeof body === 'object'
+      ? (body as Record<string, unknown>).agent_type
+      : undefined;
+  return typeof t === 'string' && t ? t : null;
+}

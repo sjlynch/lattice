@@ -35,6 +35,23 @@ asking for fixes/reviews:
   height above the graph top. The APL lives directly in `graph.scene()` (NOT in
   `graphData`), so an agent appearing/finishing never reheats the sim.
 
+  **Subagent satellites.** Each Task/Agent subagent the main Claude spawns shows
+  as a smaller **satellite** node (ring sprite, parent's color) tethered to and
+  *following* the parent — it sits at a fixed golden-angle ring slot
+  (`satelliteOffset`) and never orbits for effect (perpetual motion would pin
+  the loop). A satellite has its own (slightly dimmer) focus beams and a small
+  **type label** (`agent_type`, e.g. `Explore`). Driven by Claude's
+  `SubagentStart`/`SubagentStop` hooks (→ a `lifecycle` activity event → a
+  satellite appears/disappears) and the subagent's own tool-use hooks (which
+  carry `agent_id` → a `subagentId`-tagged activity event → the satellite's
+  beam). The parent node's centroid folds in its satellites' beam endpoints, so
+  it sits over the whole cluster's work even when it has delegated everything. A
+  missed `SubagentStop` is reaped by a generous idle-TTL once the satellite has
+  no live beam (mirrors the backend session registry's safety net); parent
+  removal disposes all its satellites. Works for every Claude node — worktree
+  tasks (`task-activity`) and the orange non-worktree / project-instrumented
+  sessions (`agent-activity`) alike.
+
   **APL ⇄ idle-controller contract (read before touching either).** The APL is
   ticked from the graph's *real* render frames via the shared scene frame driver
   (`onFrame`), not a private RAF — so it updates exactly when the scene paints,
@@ -200,8 +217,9 @@ asking for fixes/reviews:
   affected sim node's `__threeObj` (three-forcegraph's default
   `objBindAttr`) and routes the call to `setNodeHalo`.
 - `claudeNodeSprite.ts` — `makeClaudeNode(color, size)`: the free-floating
-  filled disc + soft glow drawn for each in-progress Claude agent. Material
-  cached per color.
+  filled disc + soft glow drawn for each in-progress Claude agent.
+  `makeSatelliteNode(color, size)`: the smaller hollow-ring sprite for a
+  subagent satellite (same color as its parent). Materials cached per color.
 - `agentOverlay.ts` — `AgentOverlay`, the drawing half of the **Agent Presence
   Layer** (see the named-subsystems section above for the APL ⇄ idle-controller
   render-on-demand contract). A `THREE.Group` added straight to
@@ -227,8 +245,9 @@ asking for fixes/reviews:
   - `agentOverlayConstants.ts` — all overlay tunables + render orders
     (beam TTL/fade, easing, hover margins, golden angle, node/label scale +
     offsets, parked-spread radius) and `LABEL_OPTIONS` / `LABEL_SPRITE_CONFIG`.
-  - `agentOverlayTypes.ts` — `SimNode` / `Beam` / `Agent` / `AgentDescriptor`
-    (the latter still re-exported from `agentOverlay.ts` as the public type).
+  - `agentOverlayTypes.ts` — `SimNode` / `Beam` / `LabelHost` / `Satellite` /
+    `Agent` / `AgentDescriptor` (the last re-exported from `agentOverlay.ts` as
+    the public type). `Agent.satellites` holds the live subagent satellites.
   - `agentOverlayPathIndex.ts` — `normalizePath` / `baseName` plus
     `AgentPathIndex` (the path→node index lifecycle + `bounds()`/
     `centroidSpread()`) and the pure `hoverMargin(bounds)` clamp. `bounds()` (an
@@ -236,16 +255,22 @@ asking for fixes/reviews:
     `invalidateBounds()`, which `tick` calls on engine-hot frames + at least
     every `BOUNDS_RECHECK_FRAMES`, so it's recomputed only while nodes can move.
   - `agentOverlayBeams.ts` — beam `THREE.Line` lifecycle: `createBeam` /
-    `disposeBeam` / `updateBeam` (endpoints + opacity) and the pure
-    `beamFade(remaining)` ramp. The current-vs-fading TTL *policy* stays in
-    `agentOverlay.addActivity`.
-  - `agentOverlayLabels.ts` — agent file-label cache + `updateAgentLabel` /
-    `clearAgentLabel` (reusing `labelTexture` + `floatingLabelSprite`).
+    `createTether` (the persistent, dimmer parent→satellite line) /
+    `disposeBeam` / `updateBeamEndpoints` (geometry only — used for tethers) /
+    `updateBeam` (endpoints + opacity, with an `opacityFactor` to dim satellite
+    beams) and the pure `beamFade(remaining)` ramp. The current-vs-fading TTL
+    *policy* stays in `agentOverlay.applyActivity` (shared by the main agent and
+    its satellites).
+  - `agentOverlayLabels.ts` — file/type-label cache + `updateAgentLabel` /
+    `clearAgentLabel` (agent file labels) + `updateSatelliteLabel` (satellite
+    type labels), all over a shared `applyFloatingLabel` core (reusing
+    `labelTexture` + `floatingLabelSprite`).
   - `agentOverlayPlacement.ts` — `parkedPosition` (golden-angle spiral),
+    `satelliteOffset` (fixed ring slot around a parent) + `freeSatelliteSlot`,
     `lowPassStep`, and the `HoverLine` low-pass smoother for the hover height.
-  The pure math (`hoverMargin`, `beamFade`, `parkedPosition`, `lowPassStep`,
-  `HoverLine`, `normalizePath`, `baseName`) is covered by
-  `__tests__/agentOverlayMath.test.ts`.
+  The pure math (`hoverMargin`, `beamFade`, `parkedPosition`, `satelliteOffset`,
+  `freeSatelliteSlot`, `lowPassStep`, `HoverLine`, `normalizePath`, `baseName`)
+  is covered by `__tests__/agentOverlayMath.test.ts`.
 - `worktreeRing.ts` — `setNodeWorktreeRing(root, on, color, baseSize)`: a
   double concentric ring (distinct from the single selection halo / change
   rings) colored by the owning task. Same sibling-child toggle as `halo.ts`;

@@ -97,3 +97,70 @@ export function makeClaudeNode(color: string, size: number): THREE.Sprite {
   sprite.raycast = () => {};
   return sprite;
 }
+
+// A satellite (subagent) node: a smaller hollow ring with a bright core, so it
+// reads as a secondary "helper" of the parent's filled disc while sharing its
+// color (subagents belong to that Claude). Same per-color material cache idea.
+function buildSatelliteTexture(color: string): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = TEX_SIZE;
+  canvas.height = TEX_SIZE;
+  const ctx = canvas.getContext('2d')!;
+  const cx = TEX_SIZE / 2;
+  const cy = TEX_SIZE / 2;
+  const col = new THREE.Color(color);
+
+  // Faint glow (dimmer than the parent so the parent dominates).
+  const glowR = TEX_SIZE * 0.5;
+  const glow = ctx.createRadialGradient(cx, cy, TEX_SIZE * 0.18, cx, cy, glowR);
+  glow.addColorStop(0, rgba(col, 0.32));
+  glow.addColorStop(0.6, rgba(col, 0.12));
+  glow.addColorStop(1, rgba(col, 0));
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+  // Hollow ring.
+  const ringR = TEX_SIZE * 0.27;
+  ctx.beginPath();
+  ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+  ctx.lineWidth = TEX_SIZE * 0.09;
+  ctx.strokeStyle = rgba(col, 1);
+  ctx.stroke();
+
+  // Bright core dot.
+  ctx.beginPath();
+  ctx.arc(cx, cy, TEX_SIZE * 0.1, 0, Math.PI * 2);
+  ctx.fillStyle = rgba(col.clone().offsetHSL(0, 0, 0.18), 0.95);
+  ctx.fill();
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+const satelliteMaterialCache = new Map<string, THREE.SpriteMaterial>();
+
+function satelliteMaterial(color: string): THREE.SpriteMaterial {
+  let mat = satelliteMaterialCache.get(color);
+  if (!mat) {
+    mat = new THREE.SpriteMaterial({
+      map: buildSatelliteTexture(color),
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+    });
+    satelliteMaterialCache.set(color, mat);
+  }
+  return mat;
+}
+
+export function makeSatelliteNode(color: string, size: number): THREE.Sprite {
+  const sprite = new THREE.Sprite(satelliteMaterial(color));
+  sprite.scale.set(size, size, 1);
+  sprite.renderOrder = 13;
+  sprite.raycast = () => {};
+  return sprite;
+}

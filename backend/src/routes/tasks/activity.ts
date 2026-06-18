@@ -18,7 +18,10 @@ import { exec } from '../../worktree/exec.js';
 import { LATTICE_OWNED_FILE_PATHS } from '../../worktree/managedFiles.js';
 import {
   fileFromHookBody,
+  hookEventName,
   phaseFromHookBody,
+  subagentIdFromHookBody,
+  subagentTypeFromHookBody,
   toolFromHookBody,
 } from '../../claudeHookBody.js';
 import { notifyTaskActivity } from '../../taskActivityEvents.js';
@@ -185,11 +188,34 @@ export function buildTaskActivityRouter(): Router {
     }
     if (!task || !task.worktreePath) return ack();
 
+    const event = hookEventName(req.body);
+    const subagentId = subagentIdFromHookBody(req.body);
+    const subagentType = subagentTypeFromHookBody(req.body) ?? undefined;
+
+    // Subagent lifecycle → a satellite node appears/disappears around the
+    // task's Claude node. No file is named on these events.
+    if (event === 'SubagentStart' || event === 'SubagentStop') {
+      if (!subagentId) return ack();
+      notifyTaskActivity({
+        projectPath: task.projectPath,
+        taskId: task.id,
+        phase: 'start',
+        tool: 'Task',
+        ts: Date.now(),
+        subagentId,
+        subagentType,
+        lifecycle: event === 'SubagentStart' ? 'spawn' : 'stop',
+      });
+      return ack();
+    }
+
     const rawFile = fileFromHookBody(req.body);
     if (!rawFile) return ack();
     const file = mapWorktreeFileToProject(task, rawFile);
     if (!file) return ack();
 
+    // A subagent's own tool-use carries `agent_id`; tagging the event routes
+    // the focus beam to that satellite instead of the main Claude node.
     notifyTaskActivity({
       projectPath: task.projectPath,
       taskId: task.id,
@@ -197,6 +223,8 @@ export function buildTaskActivityRouter(): Router {
       phase: phaseFromHookBody(req.body),
       tool: toolFromHookBody(req.body),
       ts: Date.now(),
+      subagentId: subagentId ?? undefined,
+      subagentType,
     });
     return ack();
   });

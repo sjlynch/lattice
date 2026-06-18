@@ -12,9 +12,12 @@ import {
   LABEL_OPTIONS,
   LABEL_RENDER_ORDER,
   LABEL_SPRITE_CONFIG,
+  SATELLITE_LABEL_OFFSET_X_FACTOR,
+  SATELLITE_LABEL_OFFSET_Y_FACTOR,
+  SATELLITE_LABEL_SCALE,
 } from './agentOverlayConstants';
 import { baseName } from './agentOverlayPathIndex';
-import type { Agent } from './agentOverlayTypes';
+import type { Agent, LabelHost, Satellite } from './agentOverlayTypes';
 
 const agentLabelCache = createLabelTextureCache();
 
@@ -27,8 +30,61 @@ function buildAgentLabel(text: string, color: string, labelSize: number): THREE.
   return label;
 }
 
-// Build/refresh the label sprite next to a node, showing its current file, and
-// place it just to the right of and slightly above the node.
+// Build/refresh a host's label sprite to `text` and place it at
+// (anchor + nodeSize * offset). Shared by agent file-labels and satellite
+// type-labels. Skips the `position.set` when neither the anchor nor nodeSize
+// changed since last call (and the sprite wasn't just rebuilt to a default
+// position) — once a host settles its label stops moving, so this is a no-op
+// every idle frame otherwise (Part D).
+function applyFloatingLabel(
+  group: THREE.Group,
+  host: LabelHost,
+  text: string,
+  anchor: THREE.Vector3,
+  labelSize: number,
+  nodeSize: number,
+  offXFactor: number,
+  offYFactor: number,
+): void {
+  let rebuilt = false;
+  if (!host.label || host.labelText !== text) {
+    if (host.label) group.remove(host.label);
+    const label = buildAgentLabel(text, host.color, labelSize);
+    host.label = label;
+    host.labelText = text;
+    group.add(label);
+    rebuilt = true;
+  }
+  if (
+    !rebuilt &&
+    host.labelPosX === anchor.x &&
+    host.labelPosY === anchor.y &&
+    host.labelPosZ === anchor.z &&
+    host.labelNodeSize === nodeSize
+  ) {
+    return;
+  }
+  host.label.position.set(
+    anchor.x + nodeSize * offXFactor,
+    anchor.y + nodeSize * offYFactor,
+    anchor.z,
+  );
+  host.labelPosX = anchor.x;
+  host.labelPosY = anchor.y;
+  host.labelPosZ = anchor.z;
+  host.labelNodeSize = nodeSize;
+}
+
+function removeFloatingLabel(group: THREE.Group, host: LabelHost): void {
+  if (host.label) {
+    group.remove(host.label);
+    host.label = undefined;
+  }
+  host.labelText = undefined;
+}
+
+// Build/refresh the label sprite next to an agent node, showing its current
+// file, just to the right of and slightly above the node.
 export function updateAgentLabel(
   group: THREE.Group,
   agent: Agent,
@@ -36,47 +92,41 @@ export function updateAgentLabel(
   nodeSize: number,
 ): void {
   if (!agent.currentFile) return;
-  const text = baseName(agent.currentFile);
-  let rebuilt = false;
-  if (!agent.label || agent.labelText !== text) {
-    if (agent.label) group.remove(agent.label);
-    const label = buildAgentLabel(text, agent.color, labelSize);
-    agent.label = label;
-    agent.labelText = text;
-    group.add(label);
-    rebuilt = true;
-  }
-  // The label position is a pure function of agent.pos + nodeSize. Skip the
-  // position.set when neither changed since last call (and the sprite wasn't
-  // just rebuilt to a default position) — once an agent settles its label stops
-  // moving, so this is a no-op every idle frame otherwise (Part D).
-  if (
-    !rebuilt &&
-    agent.labelPosX === agent.pos.x &&
-    agent.labelPosY === agent.pos.y &&
-    agent.labelPosZ === agent.pos.z &&
-    agent.labelNodeSize === nodeSize
-  ) {
-    return;
-  }
-  agent.label.position.set(
-    agent.pos.x + nodeSize * LABEL_OFFSET_X_FACTOR,
-    agent.pos.y + nodeSize * LABEL_OFFSET_Y_FACTOR,
-    agent.pos.z,
+  applyFloatingLabel(
+    group,
+    agent,
+    baseName(agent.currentFile),
+    agent.pos,
+    labelSize,
+    nodeSize,
+    LABEL_OFFSET_X_FACTOR,
+    LABEL_OFFSET_Y_FACTOR,
   );
-  agent.labelPosX = agent.pos.x;
-  agent.labelPosY = agent.pos.y;
-  agent.labelPosZ = agent.pos.z;
-  agent.labelNodeSize = nodeSize;
 }
 
-// Drop the label (only reached before the agent's first activity, since the
+// Drop the agent's label (only reached before its first activity, since the
 // current file otherwise persists for the life of the session).
 export function clearAgentLabel(group: THREE.Group, agent: Agent): void {
-  if (agent.label) {
-    group.remove(agent.label);
-    agent.label = undefined;
-  }
-  agent.labelText = undefined;
+  removeFloatingLabel(group, agent);
   agent.currentFile = undefined;
+}
+
+// Build/refresh a satellite's type label (e.g. 'Explore'), reading smaller than
+// the parent's file label and tucked just under the satellite node.
+export function updateSatelliteLabel(
+  group: THREE.Group,
+  satellite: Satellite,
+  labelSize: number,
+  nodeSize: number,
+): void {
+  applyFloatingLabel(
+    group,
+    satellite,
+    satellite.subagentType || 'subagent',
+    satellite.pos,
+    labelSize * SATELLITE_LABEL_SCALE,
+    nodeSize,
+    SATELLITE_LABEL_OFFSET_X_FACTOR,
+    SATELLITE_LABEL_OFFSET_Y_FACTOR,
+  );
 }

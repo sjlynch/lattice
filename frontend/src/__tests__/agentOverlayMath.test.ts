@@ -7,10 +7,16 @@ import {
 } from '../components/forceGraph/agentOverlayPathIndex.ts';
 import { beamFade } from '../components/forceGraph/agentOverlayBeams.ts';
 import {
+  freeSatelliteSlot,
   HoverLine,
   lowPassStep,
   parkedPosition,
+  satelliteOffset,
 } from '../components/forceGraph/agentOverlayPlacement.ts';
+import {
+  SATELLITE_DROP_FACTOR,
+  SATELLITE_RING_RADIUS,
+} from '../components/forceGraph/agentOverlayConstants.ts';
 
 test('normalizePath lowercases and forward-slashes', () => {
   assert.equal(normalizePath('Src\\Components\\App.TS'), 'src/components/app.ts');
@@ -57,6 +63,32 @@ test('parkedPosition pins Y and spreads X/Z on a golden-angle spiral', () => {
   const r1 = Math.hypot(p1.x - center.cx, p1.z - center.cz);
   assert.ok(Math.abs(r1 - 80) < 1e-9);
   assert.notEqual(p1.x, p0.x);
+});
+
+test('satelliteOffset rings around the parent at a nodeSize-scaled radius', () => {
+  const nodeSize = 10;
+  const o0 = satelliteOffset(0, nodeSize);
+  // slot 0 → angle 0 → cos=1, sin=0; radius = nodeSize * SATELLITE_RING_RADIUS.
+  const r = nodeSize * SATELLITE_RING_RADIUS;
+  assert.ok(Math.abs(o0.dx - r) < 1e-9);
+  assert.ok(Math.abs(o0.dz - 0) < 1e-9);
+  // Always dropped below the parent by the same amount, regardless of slot.
+  assert.equal(o0.dy, -nodeSize * SATELLITE_DROP_FACTOR);
+  // Distinct slot → distinct direction, same ring radius + same drop.
+  const o1 = satelliteOffset(1, nodeSize);
+  assert.ok(Math.abs(Math.hypot(o1.dx, o1.dz) - r) < 1e-9);
+  assert.equal(o1.dy, o0.dy);
+  assert.notEqual(o1.dx, o0.dx);
+  // Radius scales linearly with nodeSize.
+  const o0big = satelliteOffset(0, 20);
+  assert.ok(Math.abs(o0big.dx - 20 * SATELLITE_RING_RADIUS) < 1e-9);
+});
+
+test('freeSatelliteSlot returns the smallest non-negative free slot', () => {
+  assert.equal(freeSatelliteSlot([]), 0); // none used → 0
+  assert.equal(freeSatelliteSlot([0, 1, 2]), 3); // packed → next
+  assert.equal(freeSatelliteSlot([0, 2]), 1); // reuse the gap
+  assert.equal(freeSatelliteSlot([1, 2]), 0); // 0 freed → reclaimed first
 });
 
 test('HoverLine snaps on first sample then low-passes, ignoring null targets', () => {

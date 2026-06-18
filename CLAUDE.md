@@ -129,10 +129,10 @@ therefore stay safely re-runnable.
 | POST | `/api/tasks/:id/run` | Enqueue an Open task's run on the spawn queue; returns `{accepted, queued}` (pty delivered later via the `task-spawned` WS event) |
 | POST | `/api/tasks/:id/resume` | Enqueue a re-spawn in the existing worktree; returns `{accepted, queued}` |
 | POST | `/api/tasks/:id/complete` | Stop-hook callback (in_progress → ready_to_merge) |
-| POST | `/api/tasks/:id/activity` | Claude PreToolUse/PostToolUse hook callback — reports the file the agent is touching; emits a `task-activity` WS event for the graph focus beam (204, body ignored) |
-| POST | `/api/agent-activity/:token` | Same, for a Claude session OUTSIDE a worktree (push / workflow step / post-merge hook). The token encodes agent id + project + label; emits an `agent-activity` WS event (204, body ignored) |
+| POST | `/api/tasks/:id/activity` | Claude PreToolUse/PostToolUse hook callback — reports the file the agent is touching; emits a `task-activity` WS event for the graph focus beam. Also handles `SubagentStart`/`SubagentStop` (satellite spawn/stop, `lifecycle` events) and tags subagent tool-use with `subagentId` (204, body ignored) |
+| POST | `/api/agent-activity/:token` | Same, for a Claude session OUTSIDE a worktree (push / workflow step / post-merge hook). The token encodes agent id + project + label; emits an `agent-activity` WS event. Also handles `SubagentStart`/`SubagentStop` + `subagentId`-tagged tool-use for satellites (204, body ignored) |
 | POST | `/api/project-instrumentation` | Body `{project}` — install (or remove, per the `instrumentProjectClaudeSessions` setting) Lattice's activity hooks in `<project>/.claude/settings.local.json` so ANY Claude session in the project tree shows on the graph. Called on project open + when the toggle changes |
-| POST | `/api/project-activity/:token` | SessionStart/SessionEnd/PreToolUse/PostToolUse callback for a project-instrumented Claude session (any session, not just Lattice-spawned). Keyed by Claude's `session_id`; drives the orange node + beams (204, body ignored) |
+| POST | `/api/project-activity/:token` | SessionStart/SessionEnd/PreToolUse/PostToolUse (+ `SubagentStart`/`SubagentStop`) callback for a project-instrumented Claude session (any session, not just Lattice-spawned). Keyed by Claude's `session_id`; drives the orange node + beams + subagent satellites (204, body ignored) |
 | POST | `/api/tasks/:id/merge` | Attempt git merge; conflict pre-creates resolver pty, returns `serverId` |
 | POST | `/api/tasks/:id/merged` | Resolver-Claude callback after a successful merge |
 | POST | `/api/tasks/:id/merge-aborted` | Resolver-Claude callback if it gave up |
@@ -189,13 +189,17 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
 - **Claude agent overlay (graph).** Each in-progress *Claude* task shows a
   free-floating filled "Claude node"; while its agent reads/modifies files
   (PreToolUse/PostToolUse hooks → `/activity` → `task-activity` WS) a TTL-
-  fading focus beam links the node to each file node. Holding **`W`**
-  outlines every file changed by a not-yet-merged task in that task's color.
-  Claude-only for now (Codex/Pi lack the activity hooks). See
+  fading focus beam links the node to each file node. **Subagents** (Task/Agent
+  tool) the Claude spawns appear as smaller **satellite** nodes that follow the
+  parent, each with its own focus beams and an `agent_type` label — driven by
+  Claude's `SubagentStart`/`SubagentStop` hooks plus the subagent's own tool-use
+  hooks (which carry `agent_id`). Holding **`W`** outlines every file changed by
+  a not-yet-merged task in that task's color. Claude-only for now (Codex/Pi lack
+  the activity/subagent hooks). See
   `frontend/src/components/forceGraph/CLAUDE.md`.
 - **Non-worktree Claude sessions** (push runs, workflow steps, post-merge
-  hooks) get the *same* node + beams, but a fixed Claude-orange
-  (`CLAUDE_ORANGE`) since they have no task color. Presence is registry-
+  hooks) get the *same* node + beams + subagent satellites, but a fixed
+  Claude-orange (`CLAUDE_ORANGE`) since they have no task color. Presence is registry-
   driven (`backend/src/agentSessions.ts` → `/ws/agent-sessions`): a node
   appears at spawn and disappears at the session's completion callback;
   beams come from the `/api/agent-activity/:token` hook
