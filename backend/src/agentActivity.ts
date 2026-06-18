@@ -18,6 +18,9 @@
 // the signature is purely an authenticity check — no key distribution.
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
+import path from 'node:path';
+import { latticeHomeDir } from './projectPath.js';
 
 export type AgentActivityPhase = 'start' | 'end';
 // A subagent (Task/Agent) of this session's Claude appeared ('spawn',
@@ -52,13 +55,49 @@ type AgentTokenPayload = {
   label: string;
 };
 
-// Per-boot secret used to HMAC the token payload. Regenerated each process
-// start: a token minted before a restart stops validating after one, which is
-// acceptable — the session it identified is gone too, and project
-// instrumentation re-mints its token on the next project-open. The secret
-// never leaves the process (it's not persisted or sent anywhere), so it can't
-// be recovered to forge a token offline.
-const TOKEN_SECRET = randomBytes(32);
+// HMAC secret for the activity token. PERSISTED to `~/.lattice/agentTokenSecret`
+// (chmod 0600) and loaded once at startup — it MUST survive a backend restart,
+// because the token is baked into long-lived hook commands that outlive this
+// process:
+//   - `<project>/.claude/settings.local.json` for project-instrumented sessions
+//     (a `claude` you run yourself — alive for hours, across many dev restarts);
+//   - push / workflow-step / post-merge scratch hooks, whose Claude pty lives in
+//     the DETACHED terminal-server and so likewise survives a main-server boot.
+// A per-boot random secret (the previous behaviour) silently invalidated every
+// one of those tokens on the first `tsc -w` restart: `decodeAgentToken` then
+// returned null and the activity route dropped the event, so the agent's graph
+// node + focus beams + subagent satellites vanished and never came back until
+// BOTH the project was re-opened AND the session restarted. Persisting the
+// secret keeps a baked token valid forever, so no restart is ever needed.
+//
+// Security is unchanged in substance: the secret stays on the user's machine
+// (home dir, best-effort 0600) and never crosses the wire, so it remains a pure
+// authenticity check against a forged browser payload. Anyone who can read this
+// file already has local filesystem access (and could do far worse) — the same
+// trust boundary as `~/.lattice/mcpSecrets.json`.
+function loadOrCreateTokenSecret(): Buffer {
+  const file = path.join(latticeHomeDir(), 'agentTokenSecret');
+  try {
+    const existing = readFileSync(file);
+    if (existing.length >= 32) return existing;
+  } catch {
+    /* absent or unreadable — fall through and create one */
+  }
+  const secret = randomBytes(32);
+  try {
+    mkdirSync(latticeHomeDir(), { recursive: true });
+    writeFileSync(file, secret, { mode: 0o600 });
+    chmodSync(file, 0o600); // best-effort owner-only (inert on Windows)
+  } catch (err) {
+    // Couldn't persist (read-only FS / perms): degrade to a process-lifetime
+    // secret. Tokens then don't survive a restart — the old behaviour — but the
+    // feature still works within a single boot rather than crashing at import.
+    console.warn('[agent-activity] could not persist token secret:', err);
+  }
+  return secret;
+}
+
+const TOKEN_SECRET = loadOrCreateTokenSecret();
 
 // Separator between the base64url payload and its signature. `.` is outside
 // the base64url alphabet (so it can't appear inside either half) yet is still
