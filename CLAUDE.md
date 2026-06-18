@@ -37,6 +37,13 @@ Type-check:
 - backend: `cd backend && npx tsc --noEmit`
 - frontend: `cd frontend && npx tsc -b`
 
+## Git discipline
+
+**Stay on the `main` branch unless otherwise specified.** Do work, commit,
+and push on `main` by default; only switch to (or create) another branch when
+the user explicitly asks for it, and switch back to `main` when that work is
+done.
+
 ## Task pipeline
 
 ```
