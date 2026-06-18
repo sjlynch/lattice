@@ -41,33 +41,52 @@ See `plans/mcp-integration.md` (gitignored) for the full design + decisions.
   `secretEnvVars` with no value (ambient inheritance). `parseCodexMcpServers` is a
   minimal `[mcp_servers.*]`-only TOML reader (no dep added).
 
-## Injection sites
+## Injection sites — resolve in the backend, apply in the terminal-server
 
-The PRIMARY (per-spawn) injection is at ONE place: the terminal-server's
-`POST /sessions` re-seed (`terminalServer/routes.ts`), which calls
-`ensureTrustedClaudeDir(cwd, { projectPath, isQaRun })` microseconds before
-`pty.spawn` — after any `~/.claude.json` clobber by an exiting Claude. Every
-backend-spawned Claude session funnels through there, so one wiring point covers
-all eight spawn sites. The QA-run spawn passes `isQaRun: true` (its
-`CreateSessionOptions` carries it into the POST body) so the QA-scoped Playwright
-resolves; every other spawn leaves it false. Most Lattice spawns use ephemeral
-cwds (worktrees / scratch), so they write throw-away `projects[<cwd>]` entries.
+Policy is **resolved in the main backend** and **applied** (written to
+`~/.claude.json`) by whoever spawns — split deliberately so the detached
+terminal-server never imports the resolver. Why: the terminal-server is a
+long-lived process whose runtime files are content-fingerprinted; if MCP policy
+lived there, every policy edit would change a fingerprinted file and force a
+respawn that **kills every running agent** (and the resolver could silently run
+stale). Keeping policy in the backend makes a policy change a backend-only edit —
+no respawn, never stale. The terminal-server stays a dumb executor.
 
-A SECOND, persistent injection is the **project-root reconcile**: `POST
+The PRIMARY (per-spawn) path: the main backend's `proxyCreateSession`
+(`terminalServerClient.ts`) calls `resolveManagedClaudeServers(projectPath, {isQaRun})`
++ `isClaudeMemoryDisabled(projectPath)` and folds the result into the `POST
+/sessions` body (`SessionWireBody.managedMcpServers` / `disableClaudeMemory`).
+The terminal-server's handler (`terminalServer/routes.ts`) then calls
+`applyClaudeProjectConfig(cwd, { managed })` microseconds before `pty.spawn` —
+after any `~/.claude.json` clobber by an exiting Claude — writing the
+backend-resolved set verbatim. Every backend-spawned Claude session funnels
+through `proxyCreateSession`, so one wiring point covers all eight spawn sites.
+The QA-run spawn passes `isQaRun: true` so the QA-scoped Playwright resolves;
+every other spawn leaves it false. Most Lattice spawns use ephemeral cwds
+(worktrees / scratch), so they write throw-away `projects[<cwd>]` entries.
+
+A SECOND, persistent path is the **project-root reconcile**: `POST
 /api/project-instrumentation` (`routes/projectClaude.ts`, fired on project open +
-settings save) calls `ensureTrustedClaudeDir(<projectRoot>, { projectPath })` —
-the one place Lattice intentionally writes the user's canonical
-`projects[projectRoot].mcpServers`, so the GLOBAL servers (`mcpOverrides`, incl.
-the Playwright global toggle) show up in a `claude` the user starts themselves at
-the project root, and in Lattice sidebar terminals (cwd = project root). `isQaRun`
-is left false there, so the QA-only Playwright never lands in the root entry.
-Claude keys config by launch cwd, so this covers sessions started AT the project
-root, not from a subdirectory. `reconcileMcpServers` only manages Lattice's own
-servers (the `__latticeManagedMcp` marker), so the user's hand-added MCP entries
-are never touched and turning a global toggle off strips it back out.
+settings save) resolves with `resolveManagedClaudeServers(project, {isQaRun:false})`
+and `applyClaudeProjectConfig(<projectRoot>, { managed })` — the one place Lattice
+intentionally writes the user's canonical `projects[projectRoot].mcpServers`, so
+the GLOBAL servers (`mcpOverrides`, incl. the Playwright global toggle) show up in
+a `claude` the user starts themselves at the project root, and in Lattice sidebar
+terminals (cwd = project root). `isQaRun` is false there, so the QA-only Playwright
+never lands in the root entry. Claude keys config by launch cwd, so this covers
+sessions started AT the project root, not from a subdirectory. `reconcileMcpServers`
+only manages Lattice's own servers (the `__latticeManagedMcp` marker), so the
+user's hand-added MCP entries are never touched and turning a global toggle off
+strips it back out.
 
-Setup-time `ensureTrustedClaudeDir` calls (worktree/scratch creation) stay
-trust-only (no `projectPath`), so they never strip MCP a later call added.
+Setup-time `seedClaudeTrust(dir)` calls (worktree/scratch creation) are
+trust-only (`managed: null`), so they never strip MCP a later call added.
+
+`claudeTrust.ts` (the apply mechanism) imports only `claudeInject.ts` (no
+resolver) and is in the terminal-server's fingerprint set — so a change to the
+write mechanism itself still takes effect, while the policy modules
+(`registry.ts`/`userSettings.ts`/…) stay out of the fingerprint and out of the
+terminal-server entirely.
 
 ## Storage
 

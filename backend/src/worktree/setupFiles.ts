@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import type { Task } from '../tasks.js';
 import type { AgentHarness } from '../harnesses.js';
 import type { DeadCodeSummary } from '../deadCode.js';
-import { ensureTrustedClaudeDir } from '../claudeTrust.js';
+import { seedClaudeTrust } from '../claudeTrust.js';
 import { renderTaskMarkdown } from './instructions.js';
 import { LATTICE_EXCLUDE_PATTERNS } from './managedFiles.js';
 import {
@@ -24,7 +24,7 @@ export async function writePostAddWorktreeFiles(
   // each fresh worktree as its own untrusted project root. Pre-accept the
   // trust dialog so the Run flow stays one-click. Always seeded — a Pi/Codex
   // task that later hits a merge conflict spawns a Claude resolver in here.
-  await ensureTrustedClaudeDir(worktreePath);
+  await seedClaudeTrust(worktreePath);
 
   const taskFile = path.join(worktreePath, 'LATTICE_TASK.md');
   await fs.writeFile(

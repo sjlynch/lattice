@@ -179,3 +179,26 @@ export async function effectiveMcpServers(
   ]);
   return resolveClaudeServers(catalog, settings, secrets, ctx);
 }
+
+// Best-effort variant for the spawn chokepoint: resolve the managed Claude
+// servers for `projectPath`, returning `null` instead of throwing so a resolve
+// failure degrades to a trust-only seed and never blocks a spawn. The MAIN
+// backend calls this (in `terminalServerClient.proxyCreateSession` and the
+// project-instrumentation route) and passes the result to the terminal-server,
+// which only APPLIES it (`claudeTrust.applyClaudeProjectConfig`). Keeping the
+// resolution here — out of the long-lived detached terminal-server — means a
+// spawn-policy change is a backend-only edit (no terminal-server respawn, never
+// stale). See mcp/CLAUDE.md "Injection sites".
+export async function resolveManagedClaudeServers(
+  projectPath: string,
+  ctx: McpResolveContext = {},
+): Promise<Record<string, ClaudeMcpServerConfig> | null> {
+  try {
+    return await effectiveMcpServers(projectPath, 'claude', ctx);
+  } catch (err) {
+    console.warn(
+      `[mcp] resolve failed for ${projectPath}: ${(err as Error).message}`,
+    );
+    return null;
+  }
+}

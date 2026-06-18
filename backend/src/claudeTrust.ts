@@ -23,13 +23,22 @@
 // single pre-seed at session-setup time is not enough — a queued spawn can
 // sit in the admission queue while other agents exit and clobber it. The
 // terminal-server's `POST /sessions` handler therefore calls
-// `ensureTrustedClaudeDir` again, microseconds before `pty.spawn`, to shrink
+// `applyClaudeProjectConfig` again, microseconds before `pty.spawn`, to shrink
 // that clobber window to near zero. The setup-time calls stay as an early
 // first layer; the spawn-time call is the one that actually closes the race.
+//
+// This module is the APPLY mechanism only — it writes a pre-resolved set of
+// managed MCP servers (or `null` for a trust-only seed) into `~/.claude.json`.
+// It deliberately does NOT resolve policy (which servers, headed/headless, the
+// memory opt-out): that lives in the main backend (`mcp/registry.ts` +
+// `terminalServerClient.ts`), which passes the resolved `managed` set in.
+// Keeping the resolver out of this file is what lets the detached terminal-
+// server import the apply path without pulling the whole MCP policy chain — so
+// a policy change is a backend-only edit and never forces a terminal-server
+// respawn. See mcp/CLAUDE.md "Injection sites".
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
-import { effectiveMcpServers } from './mcp/registry.js';
 import {
   MANAGED_MCP_MARKER,
   reconcileMcpServers,
@@ -55,38 +64,25 @@ type ClaudeGlobalConfig = {
   [k: string]: unknown;
 };
 
-// `opts.projectPath` opts this call into MCP injection: the enabled MCP servers
-// for that project are resolved and reconciled into `projects[<dirPath>].mcpServers`.
-// Omit it for a trust-only seed (the historical behavior) — that path never
-// touches `mcpServers`, so it can't strip MCP a prior call added. The single
-// per-spawn injection chokepoint is the terminal-server's `POST /sessions`
-// re-seed, which fires microseconds before spawn (after any Claude config
-// clobber); the setup-time seeds stay trust-only. The project-instrumentation
-// route also calls this with `projectPath === dirPath === <projectRoot>` to
-// reconcile the GLOBAL servers into the user's own project-root entry.
-// `opts.isQaRun` opts the resolve into QA-scoped Playwright (see resolvePlaywright).
-export async function ensureTrustedClaudeDir(
+// Apply a pre-resolved Claude project config to `~/.claude.json`'s
+// `projects[<dirPath>]`: pre-accept workspace trust and reconcile the given
+// `managed` MCP server set into it. `managed === null` is a trust-ONLY seed
+// (the historical behavior) — it never touches `mcpServers`, so it can't strip
+// MCP a prior call added. A non-null `managed` (possibly `{}`) reconciles:
+// adds/updates Lattice-managed servers and strips previously-managed-now-absent
+// ones, leaving the user's own entries alone (the `__latticeManagedMcp` marker).
+//
+// Callers:
+//   - terminal-server `POST /sessions` — the per-spawn chokepoint, microseconds
+//     before `pty.spawn`, with the `managed` set the backend resolved and sent.
+//   - project-instrumentation route — `dirPath === <projectRoot>` to reconcile
+//     the GLOBAL servers into the user's own project-root entry.
+//   - `seedClaudeTrust` — the trust-only setup seeds (worktree/scratch dirs).
+export async function applyClaudeProjectConfig(
   dirPath: string,
-  opts?: { projectPath?: string; isQaRun?: boolean },
+  { managed }: { managed: Record<string, ClaudeMcpServerConfig> | null },
 ): Promise<void> {
   const key = toClaudeProjectKey(dirPath);
-
-  // Resolve MCP OUTSIDE the config lock (it does its own file reads) to keep
-  // lock-held time minimal. Best-effort: an MCP resolve failure must never
-  // block the spawn or the trust seed.
-  let managed: Record<string, ClaudeMcpServerConfig> | null = null;
-  if (opts?.projectPath) {
-    try {
-      managed = await effectiveMcpServers(opts.projectPath, 'claude', {
-        isQaRun: opts.isQaRun,
-      });
-    } catch (err) {
-      console.warn(
-        `[claudeTrust] MCP resolve failed for ${opts.projectPath}: ${(err as Error).message}`,
-      );
-    }
-  }
-
   try {
     await withClaudeConfigLock(async () => {
       const cfg = await readClaudeConfig();
@@ -95,7 +91,7 @@ export async function ensureTrustedClaudeDir(
       const alreadyTrusted = existing?.hasTrustDialogAccepted === true;
       // Fast-exit when there's nothing to do: already trusted AND the reconcile
       // wouldn't change anything. "No-op reconcile" = a trust-only call
-      // (`managed === null`) OR an MCP call that resolves to zero servers AND
+      // (`managed === null`) OR a reconcile that resolves to zero servers AND
       // none were previously managed here (so there's nothing to strip either).
       // This keeps the project-root re-seed a no-op for the common case of a
       // project with no GLOBAL MCP servers, instead of rewriting ~/.claude.json
@@ -125,10 +121,17 @@ export async function ensureTrustedClaudeDir(
     });
   } catch (err) {
     console.warn(
-      `[claudeTrust] could not pre-seed trust for ${dirPath}: ${(err as Error).message}. ` +
+      `[claudeTrust] could not apply Claude config for ${dirPath}: ${(err as Error).message}. ` +
         `Claude may show the trust dialog on first launch.`,
     );
   }
+}
+
+// Trust-only seed for a brand-new Lattice scratch/worktree dir (no MCP
+// reconcile). Used by setup-time seeds (worktree files, push / QA / post-merge
+// scratch) so the very first launch doesn't stall on the trust dialog.
+export async function seedClaudeTrust(dirPath: string): Promise<void> {
+  await applyClaudeProjectConfig(dirPath, { managed: null });
 }
 
 // Claude stores project keys with forward slashes even on Windows

@@ -44,6 +44,15 @@ const FINGERPRINT_FILES = [
   'latticeApiDocs.js',
   'latticeApiDocs/LATTICE_API.template.md',
   'claudeConfigGuard.js',
+  // The Claude-config WRITE mechanism the terminal-server runs at every spawn
+  // (apply trust + reconcile the backend-resolved MCP set into ~/.claude.json).
+  // Stable by design — the MCP/trust/memory POLICY lives in the main backend and
+  // is NOT fingerprinted, so a policy change is a backend-only edit that never
+  // respawns the terminal-server (the whole point of keeping these thin). These
+  // two ARE fingerprinted so a change to the write mechanism itself still takes
+  // effect instead of running stale in a long-lived orphan.
+  'claudeTrust.js',
+  'mcp/claudeInject.js',
 ];
 
 export function computeTerminalFingerprint(): string {

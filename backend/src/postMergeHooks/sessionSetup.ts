@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import { ensureTrustedClaudeDir } from '../claudeTrust.js';
+import { seedClaudeTrust } from '../claudeTrust.js';
 import { instructionsFilePath } from './commands.js';
 import { renderPostMergeHookInstructions } from './instructions.js';
 import {
@@ -33,7 +33,7 @@ export async function setupPostMergeHookSession(args: {
 
   // Trust the scratch dir for Claude so the very first launch doesn't stall
   // on the workspace-trust dialog. Project-root trust isn't our concern here.
-  await ensureTrustedClaudeDir(cwd);
+  await seedClaudeTrust(cwd);
 
   await installPostMergeHookStopHook({
     scratchDir: cwd,

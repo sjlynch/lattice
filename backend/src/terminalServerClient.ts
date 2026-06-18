@@ -3,6 +3,9 @@ import {
   ensureTerminalServer,
   respawn,
 } from './terminalServerLifecycle.js';
+import { resolveManagedClaudeServers } from './mcp/registry.js';
+import { isClaudeMemoryDisabled } from './userSettings.js';
+import type { ClaudeMcpServerConfig } from './mcp/claudeInject.js';
 
 export async function proxyListSessions(): Promise<unknown[]> {
   try {
@@ -78,12 +81,50 @@ export type CreateSessionOptions = {
   projectPath?: string;
   cols?: number;
   rows?: number;
-  // Set only by the QA-lane e2e-run spawn. Serialized into the POST /sessions
-  // body so the injection chokepoint resolves the QA-scoped Playwright
-  // (`qaPlaywright`) for this session; ordinary spawns omit it and get Playwright
-  // only via the global `mcpOverrides.playwright` toggle. See mcp/registry.ts.
+  // Set only by the QA-lane e2e-run spawn. Used HERE (in the backend) to resolve
+  // the QA-scoped Playwright (`qaPlaywright`); ordinary spawns omit it and get
+  // Playwright only via the global `mcpOverrides.playwright` toggle. Not consumed
+  // by the terminal-server itself. See mcp/registry.ts.
   isQaRun?: boolean;
 };
+
+// The POST /sessions wire body: the caller's options plus the spawn-time Claude
+// config the BACKEND resolves here, so the detached terminal-server stays a dumb
+// executor that only APPLIES this (it never resolves MCP/trust/memory policy
+// itself). Threading the resolved config as DATA — instead of having the
+// terminal-server import the resolver — is what keeps a spawn-policy change a
+// backend-only edit that never forces a terminal-server respawn. See
+// claudeTrust.ts / mcp/CLAUDE.md "Injection sites".
+export type SessionWireBody = CreateSessionOptions & {
+  // The managed MCP server set to reconcile into `projects[<cwd>]`, or `null`
+  // for a trust-only seed. Absent for non-Claude spawns.
+  managedMcpServers?: Record<string, ClaudeMcpServerConfig> | null;
+  // Whether to set `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` on the pty. Resolved here
+  // from `UserSettings.disableClaudeMemory`. Absent for non-Claude spawns.
+  disableClaudeMemory?: boolean;
+};
+
+function isClaudeCommand(initialCommand: string | undefined): boolean {
+  return /^\s*claude\b/.test(initialCommand ?? '');
+}
+
+// Resolve the per-spawn Claude config (managed MCP servers + memory opt-out) in
+// the always-fresh main backend and fold it into the wire body. Best-effort: a
+// resolve failure degrades to a trust-only seed and Claude's default memory.
+// Runs for Claude commands only; pi/codex/plain shells pass through untouched.
+async function resolveClaudeSpawnBody(
+  opts: CreateSessionOptions,
+): Promise<SessionWireBody> {
+  if (!opts.cwd || !isClaudeCommand(opts.initialCommand)) return opts;
+  // No projectPath → trust-only seed (managed: null) + Claude's default memory.
+  const managedMcpServers = opts.projectPath
+    ? await resolveManagedClaudeServers(opts.projectPath, { isQaRun: opts.isQaRun })
+    : null;
+  const disableClaudeMemory = opts.projectPath
+    ? await isClaudeMemoryDisabled(opts.projectPath).catch(() => false)
+    : false;
+  return { ...opts, managedMcpServers, disableClaudeMemory };
+}
 
 // Hard timeout on a single POST /sessions. Generous on purpose: a normal pty
 // pre-create is sub-second, but under a heavy "Run All" burst the trust-seed
@@ -124,7 +165,10 @@ export async function proxyCreateSession(
   opts: CreateSessionOptions,
 ): Promise<CreateSessionResult> {
   await ensureTerminalServer();
-  const first = await tryCreateSessionOnce(opts);
+  // Resolve the Claude spawn config ONCE (so a retry reuses the same body) and
+  // in the always-fresh backend — the terminal-server only applies it.
+  const body = await resolveClaudeSpawnBody(opts);
+  const first = await tryCreateSessionOnce(body);
   if ('id' in first) return first;
   // Retry once if the failure was non-JSON (stale server / unrelated listener
   // on 5185). respawn() forces a clean restart even if the stale server's
@@ -134,7 +178,7 @@ export async function proxyCreateSession(
       `[terminal-proxy] non-JSON response from terminal-server — forcing respawn and retrying once. First error: ${first.error}`,
     );
     await respawn();
-    const second = await tryCreateSessionOnce(opts);
+    const second = await tryCreateSessionOnce(body);
     if ('id' in second) return second;
     return { error: second.error, code: second.code };
   }
@@ -142,14 +186,14 @@ export async function proxyCreateSession(
 }
 
 export async function tryCreateSessionOnce(
-  opts: CreateSessionOptions,
+  body: SessionWireBody,
 ): Promise<CreateOnce> {
   let res: Response;
   try {
     res = await fetch(`${BASE}/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(opts),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(CREATE_SESSION_TIMEOUT_MS),
     });
   } catch (err) {

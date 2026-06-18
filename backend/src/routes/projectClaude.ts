@@ -15,7 +15,8 @@ import { Router } from 'express';
 import { canonicalProjectPath, latticeHomeDir } from '../projectPath.js';
 import { getUserSettings } from '../userSettings.js';
 import { ensureLatticeGitignore } from '../worktree.js';
-import { ensureTrustedClaudeDir } from '../claudeTrust.js';
+import { applyClaudeProjectConfig } from '../claudeTrust.js';
+import { resolveManagedClaudeServers } from '../mcp/registry.js';
 import {
   installProjectClaudeHooks,
   removeProjectClaudeHooks,
@@ -86,9 +87,9 @@ export function buildProjectClaudeRouter(backendOrigin: string): Router {
       // false so the QA-only Playwright never lands here. Best-effort.
       // NB: Claude keys config by launch cwd, so this covers sessions started AT
       // the project root, not ones launched from a subdirectory.
-      await ensureTrustedClaudeDir(canonicalProjectPath(project), {
-        projectPath: project,
-      }).catch(() => {});
+      // `isQaRun: false` so the QA-only Playwright never lands in the root entry.
+      const managed = await resolveManagedClaudeServers(project, { isQaRun: false });
+      await applyClaudeProjectConfig(canonicalProjectPath(project), { managed });
       if (enabled) {
         await installProjectClaudeHooks(project, backendOrigin);
       } else {

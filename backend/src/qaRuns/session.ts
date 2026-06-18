@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ensureTrustedClaudeDir } from '../claudeTrust.js';
+import { seedClaudeTrust } from '../claudeTrust.js';
 import { queuedCreateSession } from '../queuedCreateSession.js';
 import { renderQaInstructions } from './instructions.js';
 import { assertSafeQaSessionPath, createQaSessionId } from './paths.js';
@@ -29,7 +29,7 @@ async function setupQaSession(args: StartQaSessionArgs): Promise<QaSession> {
 
   // Pre-accept the workspace-trust dialog for this brand-new dir; otherwise
   // Claude prompts on first launch and blocks the unattended QA flow.
-  await ensureTrustedClaudeDir(cwd);
+  await seedClaudeTrust(cwd);
 
   await installQaStopHook(cwd, id, args.backendOrigin, args.projectPath);
 
