@@ -134,6 +134,13 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
 // (rendered separately in React), so suppress the library label there to
 // avoid stacking two tooltips; directories keep the simple folder hint.
 export function nativeNodeLabel(node: GraphNode): string {
+  // Deleted files surface as small grey "ghost" discs with a red ring. They
+  // have no real file behind them, so HealthTooltip renders nothing for them —
+  // which used to leave hover showing nothing at all. Use the library's native
+  // hover label to still identify the removed file by its relative path.
+  // (Ghosts are intentionally excluded from the Alt name-label overlay — see
+  // `shouldShowLabel` in labelsOverlay — but hover should still name them.)
+  if (isGhost(node)) return `🗑 ${node.path} (deleted)`;
   if (node.kind === 'file') return '';
   return `📁 ${node.name}`;
 }
