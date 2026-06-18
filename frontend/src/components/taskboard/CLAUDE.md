@@ -27,6 +27,8 @@ Components behind the Tasks button. `TaskBoard.tsx` (parent dir) is a re-export 
 - `hooks/useTaskReorderActions.ts` — `dropAt` / `moveMulti` / `dropAtMulti` lane reorder math (computes a new ID order and ships one batched reorder).
 - `hooks/useTaskLifecycleActions.ts` — `runTask` / `resumeTaskAction` and the lane-level "run all" / "resume all" variants. Each action spawns the worktree-agent terminal.
 - `hooks/useTaskMergeActions.ts` — `mergeTaskAction` (with resolver-Claude spawn on conflict), `mergeAllReady`, `cancelActiveRun`, `markAllQaDone`.
+- `hooks/useQaPlaywright.ts` — the QA-lane Playwright MCP toggle (`userSettings.qaPlaywright`: enabled + headless), read by the backend at spawn.
+- `hooks/useQaRuns.ts` — QA-lane "run an e2e test" actions (`startQaRun`/`startAllQaRuns`), gated on `useQaPlaywright().enabled`. Each spawns a Playwright Claude session via `POST /api/qa-runs` in its own terminal tab and polls `/api/qa-runs/:id` to auto-close on done. The terminal carries **no** `taskId` (the task is in the `qa` lane; `useTaskTerminalCleanup` would otherwise close it instantly), so runs are tracked here by terminal id.
 - `hooks/useLaneDropTargets.ts` — `isOver` + `hoverIndex` state, lane-background `onDragOver/onDragLeave/onDrop`, and `slotProps(idx)` factory used by `Lane.tsx`. Lane-background drops do status-only moves; slot drops set both status and position.
 
 ## Styles

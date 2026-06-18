@@ -28,6 +28,9 @@ export type TaskCardActionHandlers = {
   onCancelQueuedRun?: () => void;
   onResume?: () => void;
   onMerge?: () => void;
+  // QA lane only, and only when the Playwright MCP is on for the project:
+  // launch a full end-to-end test of this merged task.
+  onQaRun?: () => void;
   onFocusTerminal?: () => void;
   onView: () => void;
 };
@@ -106,6 +109,17 @@ const TASK_CARD_ACTION_SPECS: readonly TaskCardActionSpec[] = [
       icon: isConflict
         ? createElement(AlertTriangle, { size: 12 })
         : createElement(GitMerge, { size: 12 }),
+    }),
+  },
+  {
+    handler: 'onQaRun',
+    build: (onClick) => ({
+      key: 'qa-run',
+      className: 'task-card-iconbtn qa-run',
+      onClick,
+      title: 'Run an end-to-end test with Playwright',
+      ariaLabel: 'Run end-to-end test',
+      icon: createElement(Play, { size: 11, fill: 'currentColor' }),
     }),
   },
   {

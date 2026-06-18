@@ -56,3 +56,18 @@
   color: #d8b4ff;
   background: rgba(200, 156, 255, 0.26);
 }
+
+/* "Run all QA e2e tests" — only shown when Playwright is on, so it reads as a
+   ready-to-go action in the QA accent rather than an off toggle. */
+.mcp-pw-btn.qa-runall {
+  color: #c89cff;
+  background: rgba(200, 156, 255, 0.10);
+}
+.mcp-pw-btn.qa-runall:hover {
+  color: #d8b4ff;
+  background: rgba(200, 156, 255, 0.22);
+}
+.mcp-pw-btn.qa-runall:disabled {
+  color: var(--text-tertiary);
+  background: transparent;
+}

@@ -54,6 +54,9 @@ export type TaskCardProps = {
   onCancelQueuedRun: (task: Task) => void;
   onResume: (task: Task) => void;
   onMerge: (task: Task) => void | Promise<boolean>;
+  // Present only for QA-lane cards when the Playwright MCP is on; launches a
+  // full end-to-end test of this merged task.
+  onQaRun?: (task: Task) => void;
   onView: (task: Task) => void;
   onSelect: (id: string) => void;
   onToggleSelect: (id: string) => void;
@@ -80,6 +83,7 @@ export const TaskCard = memo(function TaskCard({
   onCancelQueuedRun,
   onResume,
   onMerge,
+  onQaRun,
   onView,
   onSelect,
   onToggleSelect,
@@ -123,6 +127,7 @@ export const TaskCard = memo(function TaskCard({
   );
   const handleResume = useCallback(() => onResume(task), [onResume, task]);
   const handleMerge = useCallback(() => onMerge(task), [onMerge, task]);
+  const handleQaRun = useCallback(() => onQaRun?.(task), [onQaRun, task]);
 
   // Per-card terminal-focus lookup (was done in Lane). Memoized so the
   // resolved handler is referentially stable until the task/mapping changes.
@@ -168,6 +173,7 @@ export const TaskCard = memo(function TaskCard({
             : undefined
         }
         onMerge={laneId === 'ready_to_merge' ? handleMerge : undefined}
+        onQaRun={onQaRun ? handleQaRun : undefined}
         onFocusTerminal={focusTerminal}
         onView={handleView}
       />

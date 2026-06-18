@@ -7,6 +7,7 @@ Boot-time crash recovery for project/task state. `../recovery.ts` is only the st
 1. `restoreAllProjectsFromBackup` — repair task DB files before any task cache read.
 2. `recoverPendingSnapshots` — restore copy-based working-tree snapshots left by crashed merge/finalize work.
 3. `sweepOrphanedWorktrees` (`worktreeSweep.ts`) — remove only Lattice-managed worktrees that no active task owns.
+3a. `sweepOrphanedPushSessions` (`pushSessionSweep.ts`) / `sweepOrphanedQaSessions` (`qaSessionSweep.ts`) — reclaim home-scoped push / QA-e2e scratch dirs whose `/done` cleanup lost its EBUSY race or never fired (the in-memory registries are empty at boot, so anything on disk is stale). Bounded to `~/.lattice/per-project/<hash>/{push,qa}/`.
 4. Branch repair (`index.ts`) — `ready_to_merge` tasks whose branch is gone are marked `qa` because finalize cleanup already ran.
 5. `resumeInterruptedMergeRuns` (`mergeRunResume.ts`) — called after HTTP listen so spawned resolvers can call the API.
 6. `resumeQueuedTaskRuns` (`queuedRunResume.ts`) — also called after HTTP listen. Re-enqueues task runs that were waiting in the in-memory spawn queue when the backend stopped (found via the persisted `Task.runQueued` flag). Runs *after* `sweepOrphanedWorktrees` so a worktree half-created by an interrupted run is reconciled by the re-run, not reclaimed as an orphan.

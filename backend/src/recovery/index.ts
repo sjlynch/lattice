@@ -14,11 +14,13 @@ import {
 import { checkBranchExists, recoverPendingSnapshots } from '../worktree.js';
 import { sweepOrphanedWorktrees } from './worktreeSweep.js';
 import { sweepOrphanedPushSessions } from './pushSessionSweep.js';
+import { sweepOrphanedQaSessions } from './qaSessionSweep.js';
 
 export { resumeInterruptedMergeRuns } from './mergeRunResume.js';
 export { resumeQueuedTaskRuns } from './queuedRunResume.js';
 export { sweepOrphanedWorktrees } from './worktreeSweep.js';
 export { sweepOrphanedPushSessions } from './pushSessionSweep.js';
+export { sweepOrphanedQaSessions } from './qaSessionSweep.js';
 export {
   startInProgressSweepLoop,
   stopInProgressSweepLoop,
@@ -50,6 +52,9 @@ export async function recoverOrphanedTasks(): Promise<void> {
   // PTY (the in-memory registry is empty at boot, so anything still on
   // disk is by definition stale). Mirrors sweepOrphanedWorktrees.
   await runStartupRecoveryStep('sweepOrphanedPushSessions', () => sweepOrphanedPushSessions());
+
+  // Phase 1e: same convergence layer for QA e2e-run scratch dirs.
+  await runStartupRecoveryStep('sweepOrphanedQaSessions', () => sweepOrphanedQaSessions());
 
   await runStartupRecoveryStep('recoverOrphanedTasks', () => recoverReadyTasksWithDeletedBranches());
 }

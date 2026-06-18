@@ -93,6 +93,10 @@
 .task-card-iconbtn.cancel-queued:hover { background: rgba(147, 197, 253, 0.22); color: #d4e4fc; }
 .task-card-iconbtn.terminal { color: #93c5fd; opacity: 1; background: rgba(147, 197, 253, 0.10); }
 .task-card-iconbtn.terminal:hover { background: rgba(147, 197, 253, 0.22); color: #b8d6fc; }
+/* QA e2e "run Playwright test" — uses the QA-lane purple accent (matches the
+   Playwright MCP toggle) so it reads as a QA-scoped action, not a worktree run. */
+.task-card-iconbtn.qa-run { color: #c89cff; opacity: 1; background: rgba(200, 156, 255, 0.10); }
+.task-card-iconbtn.qa-run:hover { background: rgba(200, 156, 255, 0.24); color: #d8b4ff; }
 .task-card-iconbtn.danger { opacity: 1; }
 .task-card-iconbtn.danger:hover { color: var(--danger); }
 .task-card-iconbtn.edit { opacity: 1; }

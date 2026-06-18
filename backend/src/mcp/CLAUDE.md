@@ -42,8 +42,8 @@ Injection happens at ONE place: the terminal-server's `POST /sessions` re-seed
 (`terminalServer/routes.ts`), which calls
 `ensureTrustedClaudeDir(cwd, { projectPath })` microseconds before `pty.spawn` —
 after any `~/.claude.json` clobber by an exiting Claude. Every backend-spawned
-Claude session funnels through there, so one wiring point covers all seven spawn
-sites. Setup-time `ensureTrustedClaudeDir` calls stay trust-only (no
+Claude session funnels through there, so one wiring point covers all eight spawn
+sites (incl. the QA-lane e2e run, which relies on this to get Playwright). Setup-time `ensureTrustedClaudeDir` calls stay trust-only (no
 `projectPath`), so they never strip MCP a later call added. All Lattice-spawned
 sessions use ephemeral cwds (worktrees / scratch), so the user's canonical
 `projects[projectRoot]` entry is never written.

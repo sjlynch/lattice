@@ -16,6 +16,11 @@ export {
   startPushRun,
 } from './pushRuns';
 export {
+  fetchQaRunStatus,
+  forgetQaRun,
+  startQaRun,
+} from './qaRuns';
+export {
   abortPostMergeHook,
   getActivePostMergeHook,
   subscribePostMergeHooks,

@@ -46,3 +46,16 @@ export type StartPushRunResult = {
 };
 
 export type PushRunStatus = 'running' | 'done';
+
+// A QA e2e run: a Playwright-enabled Claude session that exercises one merged
+// QA-lane task end-to-end. Spawned per task from the QA lane when the
+// Playwright MCP toggle is on.
+export type StartQaRunResult = {
+  id: string;
+  taskId: string;
+  command: string;
+  cwd: string;
+  serverId?: string;
+};
+
+export type QaRunStatus = 'running' | 'done';

@@ -227,7 +227,11 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
   (`ensureTrustedClaudeDir(cwd, { projectPath })` → reconcile into
   `projects[<cwd>].mcpServers`); v1 = Claude only (Codex v2, Pi via a plugin
   later). The QA-lane Globe/eye buttons drive the Playwright MCP + headless flag.
-  See `backend/src/mcp/CLAUDE.md`.
+  When Playwright is on, the QA lane also shows a per-task ▶ "run e2e test" button
+  and a lane-header "run all e2e tests" button: each spawns a one-off
+  Playwright-enabled Claude session (`backend/src/qaRuns/`, mirrors `pushRuns/`)
+  that exercises the merged task end-to-end and appends a PASS/FAIL verdict to the
+  task via `/append-summary`. See `backend/src/mcp/CLAUDE.md`.
 - **Tasks store** is in-memory keyed by project path with debounced JSON
   persistence; the global `~/.lattice/projects.json` index is consulted
   lazily so Stop-hook callbacks resolve task IDs across sessions.

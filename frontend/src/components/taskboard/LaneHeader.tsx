@@ -23,6 +23,9 @@ type Props = {
   pushDisabled?: boolean;
   // QA-lane Playwright MCP controls (launcher passes this only on the QA lane).
   qaPlaywright?: QaPlaywrightControls;
+  // QA-lane "run an e2e test for every task". Passed only on the QA lane and
+  // only when the Playwright MCP is on, so it sits in the Playwright cluster.
+  onQaRunAll?: () => void;
 };
 
 // Lane header row: dot/title/count, lane-level run-all action, push, add.
@@ -36,6 +39,7 @@ export function LaneHeader({
   onPush,
   pushDisabled,
   qaPlaywright,
+  onQaRunAll,
 }: Props) {
   const runAllConfig = onRunAll ? laneRunAllConfig(lane.id, tasks) : null;
 
@@ -89,6 +93,17 @@ export function LaneHeader({
                 aria-pressed={qaPlaywright.headless}
               >
                 {qaPlaywright.headless ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            )}
+            {qaPlaywright.enabled && onQaRunAll && (
+              <button
+                className="icon-btn sm mcp-pw-btn qa-runall"
+                onClick={onQaRunAll}
+                disabled={tasks.length === 0}
+                title="Run an end-to-end Playwright test for every QA task"
+                aria-label="Run all QA end-to-end tests"
+              >
+                <Play size={13} fill="currentColor" />
               </button>
             )}
           </>

@@ -21,6 +21,7 @@ import { usePostMergeHook } from './hooks/usePostMergeHook';
 import { usePushRun } from './hooks/usePushRun';
 import { useHarnessSelector } from './hooks/useHarnessSelector';
 import { useQaPlaywright } from './hooks/useQaPlaywright';
+import { useQaRuns } from './hooks/useQaRuns';
 import { useTaskActions } from './hooks/useTaskActions';
 import { useTaskBoardState } from './hooks/useTaskBoardState';
 import { useTaskSearch } from './hooks/useTaskSearch';
@@ -104,6 +105,12 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   const { harness, setHarness, harnessAvail, pickInterleaveHarness } =
     useHarnessSelector(activeFolder);
   const qaPlaywright = useQaPlaywright(activeFolder);
+  const { startQaRun, startAllQaRuns } = useQaRuns(
+    activeFolder,
+    addTerminal,
+    closeTerminal,
+    showError,
+  );
   const postMergeHook = usePostMergeHook(activeFolder, addTerminal, showError);
   const {
     addTask,
@@ -243,6 +250,16 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 onPush={lane.id === 'qa' && hasGit ? startPush : undefined}
                 pushDisabled={!!activePush}
                 qaPlaywright={lane.id === 'qa' ? qaPlaywright : undefined}
+                onQaRun={
+                  lane.id === 'qa' && qaPlaywright.enabled
+                    ? startQaRun
+                    : undefined
+                }
+                onQaRunAll={
+                  lane.id === 'qa' && qaPlaywright.enabled && !searchActive
+                    ? () => startAllQaRuns(filteredGrouped.qa)
+                    : undefined
+                }
                 onView={setViewing}
                 strip={mergeRunStripFor(
                   lane,

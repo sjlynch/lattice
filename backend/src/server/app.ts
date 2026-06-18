@@ -12,6 +12,7 @@ import { buildMcpRouter } from '../routes/mcp.js';
 import { buildMergeRunsRouter } from '../routes/mergeRuns.js';
 import { buildPostMergeHooksRouter } from '../routes/postMergeHooks.js';
 import { buildPushRunsRouter } from '../routes/pushRuns.js';
+import { buildQaRunsRouter } from '../routes/qaRuns.js';
 import { buildSearchRouter } from '../routes/search.js';
 import { buildSettingsRouter } from '../routes/settings.js';
 import { buildTasksRouter } from '../routes/tasks.js';
@@ -85,6 +86,7 @@ export function mountRouteFactories(
   app.use(buildMergeRunsRouter(options.backendOrigin));
   app.use(buildPostMergeHooksRouter());
   app.use(buildPushRunsRouter(options.backendOrigin));
+  app.use(buildQaRunsRouter(options.backendOrigin));
   app.use(buildWorkflowsRouter(options.backendOrigin));
 }
 
