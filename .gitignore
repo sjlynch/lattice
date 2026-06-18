@@ -35,6 +35,9 @@ Thumbs.db
 .cache/
 coverage/
 
+# Playwright MCP scratch (page snapshots written into the server's cwd)
+.playwright-mcp/
+
 # local design/planning docs (not checked in)
 plans/
 
