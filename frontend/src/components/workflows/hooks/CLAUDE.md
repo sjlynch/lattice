@@ -25,8 +25,10 @@ there.
   the linger-timer bookkeeping (one timer per run id, replace-on-reschedule,
   `cancelAll` on cleanup); delay policy comes from `recentDismissalDelayMs`.
 - `workflowTerminalSpawns.ts` — maps `step-spawned` / `workflow-task-spawned`
-  WS events to `addTerminal` args (`{ spec, focus }`); steps focus, fanned-out
-  tasks don't.
+  WS events to `addTerminal` args (`{ spec, focus }`); both spawn with
+  `focus: false` so a running workflow never steals the user's currently
+  focused terminal tab (`pickActiveAfterAdd` still focuses the spawn when
+  nothing is focused yet).
 - `useCollapsedSteps.ts` — persisted per-step collapse state in
   `userSettings.workflowStepsCollapsed`.
 - `useWorkflowErrorHandler.ts` — shared auto-dismissing error toast state.

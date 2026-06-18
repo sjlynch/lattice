@@ -8,12 +8,22 @@ import { shortLabel } from '../../taskboard/lanes';
 
 export type TerminalSpawn = {
   spec: Omit<TerminalSpec, 'id'>;
-  // Second arg to `addTerminal` (focus). Step terminals focus; fanned-out task
-  // terminals don't, to avoid yanking focus per-task during a start step.
+  // Second arg to `addTerminal` (focus). Neither step nor fanned-out task
+  // terminals steal focus from a currently-focused tab — `addTerminal`'s
+  // `pickActiveAfterAdd` still focuses the spawn when nothing is focused
+  // (so a run from an empty sidebar isn't left on the empty state), but
+  // preserves the active tab when the user is already in one.
   focus: boolean;
 };
 
-// A per-step `step-spawned` event → a focused terminal in the step directory.
+// A per-step `step-spawned` event → a terminal in the step directory.
+//
+// `focus: false` so a running workflow advancing to its next step doesn't yank
+// the user away from whatever terminal tab they're currently watching. The
+// step terminal still becomes active when there's nothing focused yet (the
+// first step of a run started from an empty sidebar), because
+// `pickActiveAfterAdd` focuses a `focus: false` spawn only when `activeId` is
+// null. It stays discoverable in the Terminals panel either way.
 export function stepSpawnedTerminal(
   ev: {
     stepIndex: number;
@@ -31,7 +41,7 @@ export function stepSpawnedTerminal(
       projectPath,
       serverId: ev.serverId,
     },
-    focus: true,
+    focus: false,
   };
 }
 
