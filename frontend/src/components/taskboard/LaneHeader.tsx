@@ -86,8 +86,8 @@ export function LaneHeader({
                 onClick={qaPlaywright.onToggleHeadless}
                 title={
                   qaPlaywright.headless
-                    ? 'Playwright runs HEADLESS (no visible browser). Click for headed.'
-                    : 'Playwright runs HEADED (visible browser window). Click for headless.'
+                    ? 'Playwright runs HEADLESS (no visible browser). Click for headed. Takes effect on the next QA run, not one already started.'
+                    : 'Playwright runs HEADED (visible browser window). Click for headless. Takes effect on the next QA run, not one already started.'
                 }
                 aria-label="Toggle Playwright headless mode"
                 aria-pressed={qaPlaywright.headless}

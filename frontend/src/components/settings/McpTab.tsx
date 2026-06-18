@@ -46,18 +46,14 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
 ) {
   const [catalog, setCatalog] = useState<McpServerEntry[]>([]);
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
-  const [qa, setQa] = useState<{ enabled: boolean; headless: boolean }>({
-    enabled: false,
-    headless: true,
-  });
   const [redacted, setRedacted] = useState<RedactedMcpSecrets>({});
   const [hints, setHints] = useState<McpSecretHints>({});
   const [envPresence, setEnvPresence] = useState<McpEnvPresence>({});
-  // Tracked separately so saving a non-Playwright toggle never rewrites
-  // `qaPlaywright` (which the QA lane also writes, possibly while this dialog
-  // is open) — and vice-versa.
+  // Only patch `mcpOverrides` when the user actually flipped a toggle here, so
+  // an unrelated save doesn't rewrite the file. Playwright is now an ordinary
+  // `mcpOverrides` entry (the GLOBAL toggle); the QA lane's separate QA-only
+  // `qaPlaywright` toggle is written elsewhere and never touched from this tab.
   const [overridesTouched, setOverridesTouched] = useState(false);
-  const [qaTouched, setQaTouched] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
   const reloadCatalog = async () => {
@@ -77,7 +73,6 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
     let cancelled = false;
     setLoaded(false);
     setOverridesTouched(false);
-    setQaTouched(false);
     (async () => {
       const [{ servers }, settings, secrets, env] = await Promise.all([
         fetchMcpCatalog(),
@@ -88,10 +83,6 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
       if (cancelled) return;
       setCatalog(servers);
       setOverrides(settings.mcpOverrides ?? {});
-      setQa({
-        enabled: settings.qaPlaywright?.enabled ?? false,
-        headless: settings.qaPlaywright?.headless ?? true,
-      });
       setRedacted(secrets.redacted);
       setHints(secrets.hints);
       setEnvPresence(env.presence);
@@ -107,28 +98,17 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
   useImperativeHandle(
     ref,
     () => ({
-      getMcpUserPatch: () => {
-        if (!overridesTouched && !qaTouched) return undefined;
-        return {
-          ...(overridesTouched ? { mcpOverrides: overrides } : {}),
-          ...(qaTouched ? { qaPlaywright: qa } : {}),
-        };
-      },
+      getMcpUserPatch: () =>
+        overridesTouched ? { mcpOverrides: overrides } : undefined,
     }),
-    [overridesTouched, qaTouched, overrides, qa],
+    [overridesTouched, overrides],
   );
 
-  const isEnabled = (s: McpServerEntry): boolean =>
-    s.id === 'playwright' ? qa.enabled : !!overrides[s.id];
+  const isEnabled = (s: McpServerEntry): boolean => !!overrides[s.id];
 
   const toggle = (s: McpServerEntry, next: boolean) => {
-    if (s.id === 'playwright') {
-      setQaTouched(true);
-      setQa((prev) => ({ ...prev, enabled: next }));
-    } else {
-      setOverridesTouched(true);
-      setOverrides((prev) => ({ ...prev, [s.id]: next }));
-    }
+    setOverridesTouched(true);
+    setOverrides((prev) => ({ ...prev, [s.id]: next }));
   };
 
   const existingIds = new Set(catalog.map((s) => s.id));
@@ -156,10 +136,11 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
           <div className="settings-section-title">MCP servers</div>
           <div className="settings-section-sub">
             Curate MCP servers once here; Lattice injects the enabled ones into
-            every Claude session it spawns for <strong>{folderName(activeFolder)}</strong>.
-            Keys are stored once and used across all projects; each toggle is{' '}
-            <em>per-project</em>. Everything starts off — nothing loads until you
-            turn it on. (Codex injection is v2; Pi support arrives via a plugin.)
+            every Claude session it spawns for <strong>{folderName(activeFolder)}</strong>{' '}
+            — and into a <code>claude</code> you start yourself at the project
+            root. Keys are stored once and used across all projects; each toggle
+            is <em>per-project</em>. Everything starts off — nothing loads until
+            you turn it on. (Codex injection is v2; Pi support arrives via a plugin.)
           </div>
         </div>
       </div>

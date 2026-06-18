@@ -131,30 +131,62 @@ test('resolve: nothing enabled by default (the all-off invariant)', () => {
   assert.deepEqual(resolveClaudeServers(BUILTIN_MCP_SERVERS, {}, {}), {});
 });
 
-test('resolve: Playwright is driven by qaPlaywright, not mcpOverrides', () => {
-  // mcpOverrides.playwright is ignored — only the QA toggle turns it on.
-  const viaOverride = resolveClaudeServers(
+test('resolve: global Playwright (mcpOverrides) is on for any session, headless', () => {
+  // mcpOverrides.playwright = the GLOBAL toggle (Settings → MCP tab): enabled
+  // regardless of isQaRun, and always headless (background/unattended use).
+  const ordinary = resolveClaudeServers(
     BUILTIN_MCP_SERVERS,
     { mcpOverrides: { playwright: true } },
     {},
   );
-  assert.ok(!('playwright' in viaOverride));
+  assert.ok('playwright' in ordinary);
+  assert.ok(asStdio(ordinary.playwright).args?.includes('--headless'));
 
-  const viaQa = resolveClaudeServers(
+  const onQaRun = resolveClaudeServers(
     BUILTIN_MCP_SERVERS,
-    { qaPlaywright: { enabled: true, headless: true } },
+    { mcpOverrides: { playwright: true } },
     {},
+    { isQaRun: true },
   );
-  assert.ok('playwright' in viaQa);
-  assert.ok(asStdio(viaQa.playwright).args?.includes('--headless'));
+  assert.ok('playwright' in onQaRun);
 });
 
-test('resolve: headed Playwright omits --headless', () => {
+test('resolve: QA Playwright (qaPlaywright) is QA-runs-only', () => {
+  const settings = { qaPlaywright: { enabled: true, headless: true } };
+  // Not a QA run → NOT injected: the QA toggle never leaks into ordinary
+  // (task / sidebar / push) sessions.
+  const ordinary = resolveClaudeServers(BUILTIN_MCP_SERVERS, settings, {});
+  assert.ok(!('playwright' in ordinary));
+  // QA run → injected, headless per the QA eye toggle.
+  const qaRun = resolveClaudeServers(BUILTIN_MCP_SERVERS, settings, {}, { isQaRun: true });
+  assert.ok('playwright' in qaRun);
+  assert.ok(asStdio(qaRun.playwright).args?.includes('--headless'));
+});
+
+test('resolve: headed QA Playwright omits --headless (QA run only)', () => {
   const out = resolveClaudeServers(
     BUILTIN_MCP_SERVERS,
     { qaPlaywright: { enabled: true, headless: false } },
     {},
+    { isQaRun: true },
   );
+  assert.ok('playwright' in out);
+  assert.ok(!asStdio(out.playwright).args?.includes('--headless'));
+});
+
+test('resolve: on a QA run the QA eye toggle wins over the global toggle', () => {
+  // Both on: the global toggle alone would force headless, but a QA run honors
+  // the QA lane's headed choice so "watch it test" stays authoritative.
+  const out = resolveClaudeServers(
+    BUILTIN_MCP_SERVERS,
+    {
+      mcpOverrides: { playwright: true },
+      qaPlaywright: { enabled: true, headless: false },
+    },
+    {},
+    { isQaRun: true },
+  );
+  assert.ok('playwright' in out);
   assert.ok(!asStdio(out.playwright).args?.includes('--headless'));
 });
 

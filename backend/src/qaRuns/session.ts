@@ -71,7 +71,16 @@ export async function startQaSession(
     kind: 'qa-run',
     priority: 'interactive',
     dedupeKey: `qa:${session.id}`,
-    opts: { cwd: session.cwd, initialCommand: command, projectPath: args.projectPath },
+    // `isQaRun` opts this session into the QA-scoped Playwright (`qaPlaywright`)
+    // at the injection chokepoint — Playwright + the QA lane's headed/headless
+    // choice. Ordinary task spawns don't set it, so the QA toggle never leaks
+    // into them; they only get Playwright via the global `mcpOverrides` toggle.
+    opts: {
+      cwd: session.cwd,
+      initialCommand: command,
+      projectPath: args.projectPath,
+      isQaRun: true,
+    },
   });
   if ('error' in sess) {
     await cleanupQaSession(args.projectPath, session.id);

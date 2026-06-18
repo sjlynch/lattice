@@ -43,11 +43,14 @@ export type UserSettings = {
   // backend userSettings.ts.
   disableClaudeMemory?: boolean;
   // Per-project MCP-server on/off overrides, keyed by catalog server id.
-  // Missing = OFF (the all-off-by-default invariant). Playwright is driven by
-  // qaPlaywright, not this map. See backend mcp/registry.ts.
+  // Missing = OFF (the all-off-by-default invariant). `mcpOverrides.playwright`
+  // is the GLOBAL Playwright toggle (Settings → MCP tab): injected into every
+  // Lattice-spawned Claude session for the project and reconciled into the
+  // user's own project-root config. See backend mcp/registry.ts.
   mcpOverrides?: Record<string, boolean>;
-  // Backs the QA-lane Playwright buttons: `enabled` injects the Playwright MCP
-  // into this project's Claude spawns, `headless` appends --headless.
+  // Backs the QA-lane Playwright buttons — QA e2e runs ONLY (separate from the
+  // global `mcpOverrides.playwright`). `enabled` injects Playwright into QA
+  // "run an e2e test" sessions; `headless` (the eye toggle) appends --headless.
   qaPlaywright?: { enabled: boolean; headless: boolean };
 };
 

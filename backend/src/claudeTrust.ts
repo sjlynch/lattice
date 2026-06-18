@@ -30,7 +30,11 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import { effectiveMcpServers } from './mcp/registry.js';
-import { reconcileMcpServers, type ClaudeMcpServerConfig } from './mcp/claudeInject.js';
+import {
+  MANAGED_MCP_MARKER,
+  reconcileMcpServers,
+  type ClaudeMcpServerConfig,
+} from './mcp/claudeInject.js';
 
 const CLAUDE_GLOBAL_CONFIG = path.join(os.homedir(), '.claude.json');
 const LOCK_DIR = path.join(os.homedir(), '.claude.json.lattice-lock');
@@ -55,12 +59,15 @@ type ClaudeGlobalConfig = {
 // for that project are resolved and reconciled into `projects[<dirPath>].mcpServers`.
 // Omit it for a trust-only seed (the historical behavior) — that path never
 // touches `mcpServers`, so it can't strip MCP a prior call added. The single
-// injection chokepoint is the terminal-server's `POST /sessions` re-seed, which
-// fires microseconds before spawn (after any Claude config clobber); the
-// setup-time seeds stay trust-only.
+// per-spawn injection chokepoint is the terminal-server's `POST /sessions`
+// re-seed, which fires microseconds before spawn (after any Claude config
+// clobber); the setup-time seeds stay trust-only. The project-instrumentation
+// route also calls this with `projectPath === dirPath === <projectRoot>` to
+// reconcile the GLOBAL servers into the user's own project-root entry.
+// `opts.isQaRun` opts the resolve into QA-scoped Playwright (see resolvePlaywright).
 export async function ensureTrustedClaudeDir(
   dirPath: string,
-  opts?: { projectPath?: string },
+  opts?: { projectPath?: string; isQaRun?: boolean },
 ): Promise<void> {
   const key = toClaudeProjectKey(dirPath);
 
@@ -70,7 +77,9 @@ export async function ensureTrustedClaudeDir(
   let managed: Record<string, ClaudeMcpServerConfig> | null = null;
   if (opts?.projectPath) {
     try {
-      managed = await effectiveMcpServers(opts.projectPath, 'claude');
+      managed = await effectiveMcpServers(opts.projectPath, 'claude', {
+        isQaRun: opts.isQaRun,
+      });
     } catch (err) {
       console.warn(
         `[claudeTrust] MCP resolve failed for ${opts.projectPath}: ${(err as Error).message}`,
@@ -84,10 +93,19 @@ export async function ensureTrustedClaudeDir(
       const projects = (cfg.projects ??= {});
       const existing = projects[key];
       const alreadyTrusted = existing?.hasTrustDialogAccepted === true;
-      // Fast-exit only when there's nothing to do: already trusted AND no MCP
-      // reconcile requested. When `managed` is set we must proceed even if
-      // trusted, to add/strip the managed servers.
-      if (alreadyTrusted && managed === null) return;
+      // Fast-exit when there's nothing to do: already trusted AND the reconcile
+      // wouldn't change anything. "No-op reconcile" = a trust-only call
+      // (`managed === null`) OR an MCP call that resolves to zero servers AND
+      // none were previously managed here (so there's nothing to strip either).
+      // This keeps the project-root re-seed a no-op for the common case of a
+      // project with no GLOBAL MCP servers, instead of rewriting ~/.claude.json
+      // on every project open. When `managed` has entries (or we still need to
+      // strip a now-disabled one) we proceed even if already trusted.
+      const prevManaged = existing?.[MANAGED_MCP_MARKER];
+      const hadManaged = Array.isArray(prevManaged) && prevManaged.length > 0;
+      const reconcileIsNoop =
+        managed === null || (Object.keys(managed).length === 0 && !hadManaged);
+      if (alreadyTrusted && reconcileIsNoop) return;
       // Mirror the structural empty-collection fields Claude writes on first
       // accept so any later code that introspects the entry doesn't trip on
       // missing fields. Spread `existing` last so we never clobber data Claude

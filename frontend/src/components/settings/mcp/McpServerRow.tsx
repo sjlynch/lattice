@@ -6,8 +6,8 @@ type Props = {
   server: McpServerEntry;
   enabled: boolean;
   onToggle: (next: boolean) => void;
-  // Playwright's enable lives in qaPlaywright and is the QA lane's domain; the
-  // row still toggles it but shows a hint pointing at the QA lane.
+  // Playwright's row is the GLOBAL enable (mcpOverrides). The hint clarifies
+  // that the QA lane has a separate, QA-runs-only toggle (with headed/headless).
   playwrightHint?: boolean;
   // Secret state for a requiresSecret server.
   stored: boolean;
@@ -61,7 +61,12 @@ export function McpServerRow({
               <span className="mcp-runtime-note">⚠ {server.runtimeNote}</span>
             )}
             {playwrightHint && (
-              <span className="mcp-runtime-note">Also toggleable from the QA lane.</span>
+              <span className="mcp-runtime-note">
+                Global: on for every Claude session Lattice runs in this project,
+                plus your own <code>claude</code> started at the project root
+                (headless). The QA lane has a separate QA-runs-only toggle with a
+                headed/headless switch.
+              </span>
             )}
           </div>
         </div>

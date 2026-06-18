@@ -78,6 +78,11 @@ export type CreateSessionOptions = {
   projectPath?: string;
   cols?: number;
   rows?: number;
+  // Set only by the QA-lane e2e-run spawn. Serialized into the POST /sessions
+  // body so the injection chokepoint resolves the QA-scoped Playwright
+  // (`qaPlaywright`) for this session; ordinary spawns omit it and get Playwright
+  // only via the global `mcpOverrides.playwright` toggle. See mcp/registry.ts.
+  isQaRun?: boolean;
 };
 
 // Hard timeout on a single POST /sessions. Generous on purpose: a normal pty

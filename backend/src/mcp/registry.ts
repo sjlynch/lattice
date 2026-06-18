@@ -47,16 +47,38 @@ function harnessSupports(support: McpHarnessSupport, harness: AgentHarness): boo
   return support?.[harness] === true;
 }
 
-// Is this server turned on for this project? Playwright is driven by the QA-lane
-// toggle (`qaPlaywright.enabled`); everything else by `mcpOverrides[id]`. Both
-// default OFF — a missing entry is always off (the all-off-by-default invariant).
-function isServerEnabled(
-  entry: McpServerEntry,
-  overrides: Record<string, boolean> | undefined,
-  qaEnabled: boolean,
-): boolean {
-  if (entry.id === 'playwright') return qaEnabled;
-  return overrides?.[entry.id] === true;
+// Context for a single resolve, distinguishing the kind of session being
+// spawned. Today it carries only `isQaRun` — see `resolvePlaywright`.
+export type McpResolveContext = {
+  // True ONLY for the QA-lane "run an e2e test" sessions. Gates the QA-scoped
+  // Playwright enablement (`qaPlaywright`), which must NOT leak into ordinary
+  // task / sidebar / push / workflow sessions — those get Playwright only via
+  // the global `mcpOverrides.playwright` toggle.
+  isQaRun?: boolean;
+};
+
+// Whether Playwright is on for this resolve, and (if so) whether it runs
+// headless. Two independent switches feed it, matching the two UI surfaces:
+//   - `mcpOverrides.playwright` (Settings → MCP tab): GLOBAL. Injected into
+//     every Lattice-spawned Claude session for the project AND the project-root
+//     entry that the user's own root-cwd `claude` sessions read. Always headless
+//     (these are background / unattended sessions — nobody is watching them).
+//   - `qaPlaywright` (QA lane): QA-RUNS-ONLY — applies only when `isQaRun`. Its
+//     `headless` flag is the "I want to watch it test" control (default headless).
+// When both apply (a QA run with the global toggle also on), the QA headless
+// toggle wins so the QA lane's eye switch stays authoritative for QA runs.
+function resolvePlaywright(
+  settings: Pick<UserSettings, 'mcpOverrides' | 'qaPlaywright'>,
+  isQaRun: boolean,
+): { enabled: boolean; headless: boolean } {
+  const qa = settings.qaPlaywright;
+  if (isQaRun && qa?.enabled === true) {
+    return { enabled: true, headless: qa.headless !== false };
+  }
+  if (settings.mcpOverrides?.playwright === true) {
+    return { enabled: true, headless: true };
+  }
+  return { enabled: false, headless: true };
 }
 
 // All env vars whose values come from the secrets file for this entry: the
@@ -68,11 +90,12 @@ function secretEnvVarsFor(entry: McpServerEntry): string[] {
 }
 
 // Build the Claude per-server config for an enabled entry, folding in secrets
-// and the Playwright headless flag.
+// and the Playwright headless flag. `headless` is only meaningful for the
+// Playwright entry (see `resolvePlaywright`); it's ignored for every other server.
 function toClaudeConfig(
   entry: McpServerEntry,
   serverSecrets: Record<string, string> | undefined,
-  qaHeadless: boolean,
+  headless: boolean,
 ): ClaudeMcpServerConfig {
   if (entry.transport === 'http') {
     return {
@@ -85,8 +108,8 @@ function toClaudeConfig(
   }
 
   let args = [...(entry.args ?? [])];
-  // Playwright's headless flag rides on the QA toggle, not on stored args.
-  if (entry.id === 'playwright' && qaHeadless) args = [...args, '--headless'];
+  // Playwright's headless flag is computed (QA-toggle or global), not stored on args.
+  if (entry.id === 'playwright' && headless) args = [...args, '--headless'];
 
   const env: Record<string, string> = { ...(entry.env ?? {}) };
   for (const envVar of secretEnvVarsFor(entry)) {
@@ -106,34 +129,45 @@ function toClaudeConfig(
 }
 
 // The PURE resolver core: given the already-loaded catalog, project settings,
-// and secrets, decide the enabled Claude server set. No I/O — this is the unit
-// of logic worth testing exhaustively (all-off default, qaPlaywright →
-// Playwright + headless flag, secret inject-vs-omit, harnessSupport filter,
-// custom merge). `effectiveMcpServers` is the thin I/O wrapper around it.
+// secrets, and spawn context, decide the enabled Claude server set. No I/O —
+// this is the unit of logic worth testing exhaustively (all-off default, global
+// vs QA-only Playwright + headless flag, secret inject-vs-omit, harnessSupport
+// filter, custom merge). `effectiveMcpServers` is the thin I/O wrapper around it.
 export function resolveClaudeServers(
   catalog: McpServerEntry[],
   settings: Pick<UserSettings, 'mcpOverrides' | 'qaPlaywright'>,
   secrets: McpSecrets,
+  ctx: McpResolveContext = {},
 ): Record<string, ClaudeMcpServerConfig> {
-  const qa = settings.qaPlaywright;
-  const qaEnabled = qa?.enabled === true;
-  const qaHeadless = qa?.headless !== false; // default headless when on
+  const isQaRun = ctx.isQaRun === true;
 
   const out: Record<string, ClaudeMcpServerConfig> = {};
   for (const entry of catalog) {
-    if (!isServerEnabled(entry, settings.mcpOverrides, qaEnabled)) continue;
     if (!harnessSupports(entry.harnessSupport, 'claude')) continue;
-    out[entry.id] = toClaudeConfig(entry, secrets[entry.id], qaHeadless);
+    if (entry.id === 'playwright') {
+      // Playwright has two scopes (global vs QA-only) and a computed headless
+      // flag, so it doesn't go through the plain `mcpOverrides` gate.
+      const pw = resolvePlaywright(settings, isQaRun);
+      if (!pw.enabled) continue;
+      out[entry.id] = toClaudeConfig(entry, secrets[entry.id], pw.headless);
+    } else {
+      // Everything else: the per-project `mcpOverrides[id]` toggle, default OFF.
+      if (settings.mcpOverrides?.[entry.id] !== true) continue;
+      out[entry.id] = toClaudeConfig(entry, secrets[entry.id], false);
+    }
   }
   return out;
 }
 
 // The spawn-path resolver: server name → Claude config for everything enabled
 // for `projectPath` and supported by `harness`. Returns {} for harnesses without
-// MCP support yet (codex v2, pi until the plugin lands).
+// MCP support yet (codex v2, pi until the plugin lands). `ctx.isQaRun` opts the
+// spawn into the QA-scoped Playwright (see `resolvePlaywright`); omit it for
+// ordinary sessions (task / sidebar / push / workflow / project-root reconcile).
 export async function effectiveMcpServers(
   projectPath: string,
   harness: AgentHarness,
+  ctx: McpResolveContext = {},
 ): Promise<Record<string, ClaudeMcpServerConfig>> {
   // v1 only injects into Claude; short-circuit other harnesses.
   if (harness !== 'claude') return {};
@@ -143,5 +177,5 @@ export async function effectiveMcpServers(
     getUserSettings(projectPath),
     readMcpSecrets(),
   ]);
-  return resolveClaudeServers(catalog, settings, secrets);
+  return resolveClaudeServers(catalog, settings, secrets, ctx);
 }

@@ -34,6 +34,10 @@ export function registerTerminalRoutes(
       rows?: number;
       initialCommand?: string;
       projectPath?: string;
+      // Set only by the QA-lane e2e-run spawn so the chokepoint resolves the
+      // QA-scoped Playwright (`qaPlaywright`) for this session. Ordinary spawns
+      // leave it false and get Playwright only via the global `mcpOverrides`.
+      isQaRun?: boolean;
     };
     // Re-seed Claude's workspace-trust entry for `cwd` here, microseconds
     // before pty.spawn. The spawn sites already pre-seed at session-setup
@@ -55,7 +59,10 @@ export function registerTerminalRoutes(
     // customization) flows through here, so one wiring point covers them all.
     const isClaudeCmd = /^\s*claude\b/.test(body.initialCommand ?? '');
     if (body.cwd && isClaudeCmd) {
-      await ensureTrustedClaudeDir(body.cwd, { projectPath: body.projectPath });
+      await ensureTrustedClaudeDir(body.cwd, {
+        projectPath: body.projectPath,
+        isQaRun: body.isQaRun,
+      });
     }
     // Per-project Claude auto-memory opt-out (default on). Resolved here at the
     // single Claude-spawn chokepoint and applied as an env var on the pty

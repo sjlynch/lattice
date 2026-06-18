@@ -217,21 +217,31 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
   idle TTL (covers a missed `SessionEnd`). Sessions in `.lattice/` /
   `~/.lattice/` scratch are skipped (handled by their own machinery). A
   session must be (re)started to pick up newly-installed hooks.
-- **MCP servers** are curated once at the Lattice level and injected into every
-  Claude session Lattice spawns. Built-in catalog is in code
+- **MCP servers** are curated once at the Lattice level and injected into the
+  Claude sessions Lattice spawns. Built-in catalog is in code
   (`backend/src/mcp/catalog.ts`); definitions/overrides live in
   `globalSettings.json`, per-project on/off in `userSettings.json`
   (`mcpOverrides` + `qaPlaywright`), secrets in their own `0600`
-  `~/.lattice/mcpSecrets.json`. **Everything is off by default.** Injection is at
-  the single terminal-server `POST /sessions` chokepoint
-  (`ensureTrustedClaudeDir(cwd, { projectPath })` → reconcile into
-  `projects[<cwd>].mcpServers`); v1 = Claude only (Codex v2, Pi via a plugin
-  later). The QA-lane Globe/eye buttons drive the Playwright MCP + headless flag.
-  When Playwright is on, the QA lane also shows a per-task ▶ "run e2e test" button
-  and a lane-header "run all e2e tests" button: each spawns a one-off
-  Playwright-enabled Claude session (`backend/src/qaRuns/`, mirrors `pushRuns/`)
-  that exercises the merged task end-to-end and appends a PASS/FAIL verdict to the
-  task via `/append-summary`. See `backend/src/mcp/CLAUDE.md`.
+  `~/.lattice/mcpSecrets.json`. **Everything is off by default.** Per-spawn
+  injection is at the terminal-server `POST /sessions` chokepoint
+  (`ensureTrustedClaudeDir(cwd, { projectPath, isQaRun })` → reconcile into
+  `projects[<cwd>].mcpServers`); a *global* enable is **also** reconciled
+  persistently into the user's own `projects[<projectRoot>]` entry on project
+  open / settings save (`routes/projectClaude.ts`), so it reaches sidebar
+  terminals and a `claude` the user starts themselves at the project root. v1 =
+  Claude only (Codex v2, Pi via a plugin later).
+- **Playwright has two independent toggles** (the only server with this split):
+  the **Settings → MCP tab** toggle (`mcpOverrides.playwright`) is *global* —
+  injected into every Lattice-spawned Claude session for the project plus the
+  user's own project-root sessions, always headless. The **QA-lane Globe/eye**
+  buttons (`qaPlaywright`) are *QA-e2e-runs-only* and carry the headed/headless
+  switch ("watch it test"); they never leak into ordinary task/sidebar sessions
+  (gated on the spawn's `isQaRun`). When the QA Globe is on, the QA lane shows a
+  per-task ▶ "run e2e test" button and a lane-header "run all e2e tests" button:
+  each spawns a one-off QA-scoped-Playwright Claude session
+  (`backend/src/qaRuns/`, mirrors `pushRuns/`) that exercises the merged task
+  end-to-end and appends a PASS/FAIL verdict via `/append-summary`. See
+  `backend/src/mcp/CLAUDE.md`.
 - **Tasks store** is in-memory keyed by project path with debounced JSON
   persistence; the global `~/.lattice/projects.json` index is consulted
   lazily so Stop-hook callbacks resolve task IDs across sessions.

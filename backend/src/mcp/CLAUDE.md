@@ -14,10 +14,15 @@ See `plans/mcp-integration.md` (gitignored) for the full design + decisions.
   there is no `enabledByDefault` flag** — everything is off until the resolver is
   told otherwise, so a new project loads nothing.
 - `registry.ts` — `mergedCatalog()` (built-ins ⊕ `mcpBuiltinOverrides` ⊕
-  `mcpCustomServers`) and **`effectiveMcpServers(projectPath, harness)`** — the
-  spawn-path resolver. Computes `enabled` per project (`mcpOverrides[id] ?? false`,
-  `qaPlaywright` for playwright), folds in secrets, shapes the Claude config,
-  filters by `harnessSupport`. Returns `{}` for non-claude harnesses (v1).
+  `mcpCustomServers`) and **`effectiveMcpServers(projectPath, harness, ctx?)`** —
+  the spawn-path resolver. Computes `enabled` per project (`mcpOverrides[id] ?? false`),
+  folds in secrets, shapes the Claude config, filters by `harnessSupport`. Returns
+  `{}` for non-claude harnesses (v1). **Playwright has two scopes** (`resolvePlaywright`):
+  `mcpOverrides.playwright` is the GLOBAL toggle (any Lattice session + the
+  project-root reconcile, always headless); `qaPlaywright` is QA-runs-ONLY and
+  only applies when `ctx.isQaRun` (its `headless` flag is the QA lane's eye switch,
+  and on a QA run it wins over the global toggle). `ctx.isQaRun` is set by the
+  QA-run spawn alone; every other spawn leaves it false.
 - `secrets.ts` — read/write `~/.lattice/mcpSecrets.json` (`0600`), kept in its
   OWN file so the settings endpoints never touch secret bytes. `redactSecrets()`
   → presence booleans; `secretHints()` → `••••<last4>`. **Raw values never cross
@@ -36,24 +41,42 @@ See `plans/mcp-integration.md` (gitignored) for the full design + decisions.
   `secretEnvVars` with no value (ambient inheritance). `parseCodexMcpServers` is a
   minimal `[mcp_servers.*]`-only TOML reader (no dep added).
 
-## Injection chokepoint
+## Injection sites
 
-Injection happens at ONE place: the terminal-server's `POST /sessions` re-seed
-(`terminalServer/routes.ts`), which calls
-`ensureTrustedClaudeDir(cwd, { projectPath })` microseconds before `pty.spawn` —
-after any `~/.claude.json` clobber by an exiting Claude. Every backend-spawned
-Claude session funnels through there, so one wiring point covers all eight spawn
-sites (incl. the QA-lane e2e run, which relies on this to get Playwright). Setup-time `ensureTrustedClaudeDir` calls stay trust-only (no
-`projectPath`), so they never strip MCP a later call added. All Lattice-spawned
-sessions use ephemeral cwds (worktrees / scratch), so the user's canonical
-`projects[projectRoot]` entry is never written.
+The PRIMARY (per-spawn) injection is at ONE place: the terminal-server's
+`POST /sessions` re-seed (`terminalServer/routes.ts`), which calls
+`ensureTrustedClaudeDir(cwd, { projectPath, isQaRun })` microseconds before
+`pty.spawn` — after any `~/.claude.json` clobber by an exiting Claude. Every
+backend-spawned Claude session funnels through there, so one wiring point covers
+all eight spawn sites. The QA-run spawn passes `isQaRun: true` (its
+`CreateSessionOptions` carries it into the POST body) so the QA-scoped Playwright
+resolves; every other spawn leaves it false. Most Lattice spawns use ephemeral
+cwds (worktrees / scratch), so they write throw-away `projects[<cwd>]` entries.
+
+A SECOND, persistent injection is the **project-root reconcile**: `POST
+/api/project-instrumentation` (`routes/projectClaude.ts`, fired on project open +
+settings save) calls `ensureTrustedClaudeDir(<projectRoot>, { projectPath })` —
+the one place Lattice intentionally writes the user's canonical
+`projects[projectRoot].mcpServers`, so the GLOBAL servers (`mcpOverrides`, incl.
+the Playwright global toggle) show up in a `claude` the user starts themselves at
+the project root, and in Lattice sidebar terminals (cwd = project root). `isQaRun`
+is left false there, so the QA-only Playwright never lands in the root entry.
+Claude keys config by launch cwd, so this covers sessions started AT the project
+root, not from a subdirectory. `reconcileMcpServers` only manages Lattice's own
+servers (the `__latticeManagedMcp` marker), so the user's hand-added MCP entries
+are never touched and turning a global toggle off strips it back out.
+
+Setup-time `ensureTrustedClaudeDir` calls (worktree/scratch creation) stay
+trust-only (no `projectPath`), so they never strip MCP a later call added.
 
 ## Storage
 
 - Definitions / overrides → `~/.lattice/globalSettings.json`
   (`mcpCustomServers`, `mcpBuiltinOverrides`) via `globalSettings.ts`.
-- Per-project enables → `<project>/.lattice/userSettings.json` (`mcpOverrides`,
-  `qaPlaywright`) via `userSettings.ts` — the backend reads these at spawn.
+- Per-project enables → `<project>/.lattice/userSettings.json` via `userSettings.ts`
+  (read at spawn): `mcpOverrides` (per-server global toggles, incl.
+  `mcpOverrides.playwright`) and `qaPlaywright` (the QA lane's separate
+  QA-runs-only Playwright enable + headed/headless eye switch).
 - Secrets → `~/.lattice/mcpSecrets.json` (`0600`), separate file, redaction is
   structural.
 
