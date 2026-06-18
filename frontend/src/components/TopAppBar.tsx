@@ -1,9 +1,10 @@
-import { useState } from 'react';
-import { FolderOpen, Settings } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { FolderOpen, GitBranch, Settings } from 'lucide-react';
 import { FolderPicker } from './FolderPicker';
 import { TaskBoardLauncher } from './TaskBoard';
 import { WorkflowsLauncher } from './Workflows';
 import { SettingsDialog } from './SettingsDialog';
+import { fetchGitBranch } from '../api';
 import type { ScanResult, StartupTerminal, TerminalLaunchSettings } from '../api';
 
 type Props = {
@@ -31,17 +32,35 @@ export function TopAppBar({
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [branch, setBranch] = useState<string | null>(null);
 
   const folderName = activeFolder
     ? activeFolder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || activeFolder
     : '(no folder)';
 
+  // Resolve the active folder's current git branch for the navbar indicator.
+  // Cleared immediately on folder change so a stale branch from the previous
+  // project never lingers, and guarded so a slow lookup that resolves after
+  // another switch doesn't overwrite the newer folder's branch.
+  useEffect(() => {
+    if (!activeFolder) {
+      setBranch(null);
+      return;
+    }
+    let cancelled = false;
+    setBranch(null);
+    fetchGitBranch(activeFolder).then((b) => {
+      if (!cancelled) setBranch(b);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeFolder]);
+
   return (
     <>
       <header className="appbar">
-        <div className="appbar-brand">Lattice</div>
         <div className="appbar-folder">
-          <span className="appbar-folder-name">{folderName}</span>
           <button
             className="icon-btn sm"
             onClick={() => setPickerOpen(true)}
@@ -50,9 +69,16 @@ export function TopAppBar({
           >
             <FolderOpen size={14} />
           </button>
+          <span className="appbar-folder-name">{folderName}</span>
           <span className="appbar-folder-path" title={activeFolder}>
             {activeFolder}
           </span>
+          {branch && (
+            <span className="appbar-branch" title={`Current git branch: ${branch}`}>
+              <GitBranch size={13} className="appbar-branch-icon" />
+              <span className="appbar-branch-name">{branch}</span>
+            </span>
+          )}
         </div>
         <WorkflowsLauncher activeFolder={activeFolder} scanResult={scanResult} />
         <TaskBoardLauncher activeFolder={activeFolder} />

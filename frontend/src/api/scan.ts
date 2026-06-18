@@ -50,6 +50,22 @@ export async function fetchGitHistory(
   return r.json();
 }
 
+// Current git branch of the active project folder, for the navbar indicator.
+// Returns null when the folder isn't a git repo or the lookup fails — the
+// navbar simply omits the branch in that case.
+export async function fetchGitBranch(folderPath: string): Promise<string | null> {
+  try {
+    const r = await fetch(
+      `/api/git-branch?path=${encodeURIComponent(folderPath)}`,
+    );
+    if (!r.ok) return null;
+    const j = await r.json();
+    return (j.branch as string | null) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function listDir(folderPath?: string): Promise<DirListing> {
   const url = folderPath
     ? `/api/list-dir?path=${encodeURIComponent(folderPath)}`
