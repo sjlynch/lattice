@@ -76,8 +76,13 @@ export function pairwiseGrid(
     const cx = cellX[i];
     const cz = cellZ[i];
     for (let dx = -1; dx <= 1; dx++) {
+      // Factor the cell-key formula: the `(cx + dx + BIAS) * STRIDE` term is
+      // constant across the inner dz sweep, so compute it once per dx and add
+      // only `(cz + dz + BIAS)` per dz. Byte-identical keys to
+      // `cellKey(cx + dx, cz + dz)`, so the same buckets are fetched.
+      const rowKeyBase = (cx + dx + CELL_KEY_BIAS) * CELL_KEY_STRIDE;
       for (let dz = -1; dz <= 1; dz++) {
-        const bucket = cellGrid.get(cellKey(cx + dx, cz + dz));
+        const bucket = cellGrid.get(rowKeyBase + (cz + dz + CELL_KEY_BIAS));
         if (!bucket) continue;
         for (let bi = 0; bi < bucket.length; bi++) {
           const j = bucket[bi];
