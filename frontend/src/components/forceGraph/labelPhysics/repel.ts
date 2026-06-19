@@ -34,16 +34,18 @@ export function repelLabels(
   ensureCapacity(count);
 
   // Snapshot world XZ + collect entries into the shared scratch buffers
-  // in one pass.
-  entries.length = 0;
+  // in one pass. `ensureCapacity(count)` already ran and `count` is known,
+  // so write `entries` by index (no per-member `push`) and trim any stale
+  // tail once after the loop. Same contents, same order.
   let i = 0;
   for (const entry of registry) {
     entry.label.getWorldPosition(tmpVec);
     worldX[i] = tmpVec.x;
     worldZ[i] = tmpVec.z;
-    entries.push(entry);
+    entries[i] = entry;
     i++;
   }
+  entries.length = count;
 
   // Home-spring forces + clear residuals (home spring overwrites, so no
   // separate zeroing step is needed).
