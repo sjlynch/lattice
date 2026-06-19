@@ -11,14 +11,35 @@ export function applyCrossFile(
   cross: CrossFileResult,
 ): void {
   for (const [filePath, m] of metrics) {
-    m.fanIn = cross.fanIn.get(filePath) ?? 0;
-    m.fanOut = cross.fanOut.get(filePath) ?? 0;
-    m.inCycle = cross.inCycle.has(filePath);
+    const newFanIn = cross.fanIn.get(filePath) ?? 0;
+    const newFanOut = cross.fanOut.get(filePath) ?? 0;
+    const newInCycle = cross.inCycle.has(filePath);
     // Reachability classification (only present when the pass was given a root
     // set). Intentionally NOT fed into computeScore below — dead status is a
     // separate signal, not a maintainability penalty.
     const dc = cross.deadCode.get(filePath);
+
+    // Skip the smell-rebuild + computeScore when none of the cross-file inputs
+    // changed. A single-file edit leaves the vast majority of files with
+    // identical fanIn/fanOut/inCycle, and those three (plus deadCode) are the
+    // ONLY cross-file signals — the circular_dependency / high_fan_out /
+    // high_fan_in smells and the score (which reads fanIn/fanOut/inCycle
+    // directly, never the smell counts) are then bit-for-bit unchanged.
+    // Gate on the previous values being DEFINED so the first pass after a fresh
+    // (cache-hydrated, fan* still undefined) boot — and the just-reanalyzed
+    // originator (its metrics carry no cross-file fields yet) — still rebuild.
+    const unchanged =
+      m.fanIn !== undefined && m.fanIn === newFanIn &&
+      m.fanOut !== undefined && m.fanOut === newFanOut &&
+      m.inCycle !== undefined && m.inCycle === newInCycle &&
+      m.deadCode === (dc ?? m.deadCode);
+
+    m.fanIn = newFanIn;
+    m.fanOut = newFanOut;
+    m.inCycle = newInCycle;
     if (dc) m.deadCode = dc;
+
+    if (unchanged) continue;
 
     // Patch the smells list to reflect cross-file findings.
     const smellMap: SmellCounter = new Map();

@@ -17,6 +17,7 @@ export { HealthCache } from './cache.js';
 export {
   computeCrossFile,
   applyCrossFile,
+  compileEntryGlobs,
   detectRoots,
   readPackageJsonRoots,
   type ComputeCrossFileOptions,

@@ -28,7 +28,7 @@ async function handleAddOrChange(
     // alias map so previously-unresolved imports start counting.
     broadcast(proj, { type: 'rescan', reason: 'config', path: filePath });
     proj.watcher.add(proj.root);
-    proj.crossFile.recomputeAndBroadcast(null);
+    proj.crossFile.scheduleRecompute(null);
     return;
   }
 
@@ -38,21 +38,27 @@ async function handleAddOrChange(
   const analyzed = await loadOrAnalyzeFile(proj, filePath, ext);
   if (!analyzed) return;
 
+  // A brand-new file can change the root set (it may itself be an entry point);
+  // a content edit to an already-tracked file never does. Invalidate the
+  // memoized roots only on a genuinely new key so plain saves reuse the cache.
+  const isNewFile = !proj.metrics.has(filePath);
   proj.imports.set(filePath, analyzed.imports);
   proj.metrics.set(filePath, analyzed.metrics);
+  if (isNewFile) proj.crossFile.invalidateRoots();
 
-  // Recompute cross-file analysis using the current snapshot. Cheap for small
-  // projects, O(V + E) for SCC; for huge projects we'd want to do an incremental
-  // pass, but Lattice's typical project is small enough that a full re-pass is
-  // fine (sub-millisecond).
-  proj.crossFile.recomputeAndBroadcast(filePath);
+  // Coalesce cross-file analysis into a single trailing-edge pass. A burst of
+  // file events (checkout, format-all, codegen) now triggers one O(V + E)
+  // project pass instead of one per file, de-duplicated and deferred by tens of
+  // ms; the end-of-pass diff still emits one `updated` per genuinely-changed
+  // file, so WS output is unchanged.
+  proj.crossFile.scheduleRecompute(filePath);
 }
 
 async function handleRemove(proj: ProjectWatcher, filePath: string): Promise<void> {
   if (await proj.config.reloadForPath(filePath)) {
     broadcast(proj, { type: 'rescan', reason: 'config', path: filePath });
     proj.watcher.add(proj.root);
-    proj.crossFile.recomputeAndBroadcast(null);
+    proj.crossFile.scheduleRecompute(null);
     return;
   }
 
@@ -60,15 +66,19 @@ async function handleRemove(proj: ProjectWatcher, filePath: string): Promise<voi
   if (!SOURCE_EXTS.has(ext)) return;
 
   proj.imports.delete(filePath);
-  proj.metrics.delete(filePath);
+  const existed = proj.metrics.delete(filePath);
   // Drop the on-disk cache entry too — the previous version only updated the
   // in-memory maps, which let the cache grow unboundedly across renames during a
   // long-running session.
   proj.cache.delete(filePath);
   saveCacheBestEffort(proj);
+  // A removed file leaves the root set — invalidate so the coalesced pass
+  // recomputes roots from the new membership.
+  if (existed) proj.crossFile.invalidateRoots();
 
   // Tell subscribers the node is gone, then re-run cross-file so anyone who
-  // imported it sees their fanOut drop.
+  // imported it sees their fanOut drop. Coalesced with any concurrent
+  // add/change events in the same debounce window.
   broadcast(proj, { type: 'removed', filePath });
-  proj.crossFile.recomputeAndBroadcast(null);
+  proj.crossFile.scheduleRecompute(null);
 }
