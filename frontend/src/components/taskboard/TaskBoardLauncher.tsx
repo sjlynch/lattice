@@ -87,7 +87,6 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     showError,
     selectedIds,
     clearSelection,
-    selectSingle,
     toggleSelect,
     rangeSelect,
   } = useTaskBoardState(activeFolder, handleTaskSpawned);
@@ -240,7 +239,6 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 onResume={resumeTaskAction}
                 onMerge={mergeTaskAction}
                 getFocusTerminal={getFocusTerminal}
-                onSingleSelect={selectSingle}
                 onToggleSelect={toggleSelect}
                 onRangeSelect={rangeSelect}
                 onClearSelection={clearSelection}

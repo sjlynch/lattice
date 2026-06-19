@@ -58,16 +58,15 @@ export type TaskCardProps = {
   // full end-to-end test of this merged task.
   onQaRun?: (task: Task) => void;
   onView: (task: Task) => void;
-  onSelect: (id: string) => void;
   onToggleSelect: (id: string) => void;
   onRangeSelect: (id: string) => void;
 };
 
 // One row in a lane. Shows the task title/description, a conflict pill if
 // the task is in conflict-resolution, and lane-appropriate action buttons
-// (run/resume/merge/delete). Click anywhere on the body to highlight that
-// task (single-select); Ctrl/Cmd+click toggles multi-select; Shift+click
-// range-selects. The pencil icon opens the detail overlay.
+// (run/resume/merge/delete). A plain click anywhere on the card (outside the
+// action buttons) opens the detail/editor overlay; Ctrl/Cmd+click toggles
+// multi-select and Shift+click range-selects so batch drag still works.
 export const TaskCard = memo(function TaskCard({
   task,
   laneId,
@@ -85,7 +84,6 @@ export const TaskCard = memo(function TaskCard({
   onMerge,
   onQaRun,
   onView,
-  onSelect,
   onToggleSelect,
   onRangeSelect,
 }: TaskCardProps) {
@@ -105,21 +103,23 @@ export const TaskCard = memo(function TaskCard({
     [task.id, isSelected, selectedIdsInLane, onDragStart],
   );
 
-  const handleBodyClick = useCallback(
+  // Plain click anywhere on the card opens the editor; Ctrl/Cmd+click toggles
+  // multi-select and Shift+click range-selects. The action buttons stop
+  // propagation, so they never reach this handler.
+  const handleCardClick = useCallback(
     (e: MouseEvent<HTMLDivElement>) => {
       const intent = getSelectionClickIntent(e);
       if (intent === 'toggle') onToggleSelect(task.id);
       else if (intent === 'range') onRangeSelect(task.id);
-      else onSelect(task.id);
+      else onView(task);
     },
-    [task.id, onSelect, onToggleSelect, onRangeSelect],
+    [task, onView, onToggleSelect, onRangeSelect],
   );
 
   // Stable per-action closures fed to the memoized action row. Each depends
   // only on the (stable) launcher handler + this card's task, so re-renders
   // driven by drag/selection state don't churn the action buttons.
   const handleDelete = useCallback(() => onDelete(task.id), [onDelete, task.id]);
-  const handleView = useCallback(() => onView(task), [onView, task]);
   const handleRun = useCallback(() => onRun(task), [onRun, task]);
   const handleCancelQueuedRun = useCallback(
     () => onCancelQueuedRun(task),
@@ -146,6 +146,7 @@ export const TaskCard = memo(function TaskCard({
       draggable
       onDragStart={handleDragStart}
       onDragEnd={onDragEnd}
+      onClick={handleCardClick}
       style={{
         ['--lane-color' as string]: laneColor,
         ...(accentColor ? { ['--task-color' as string]: accentColor } : {}),
@@ -158,7 +159,6 @@ export const TaskCard = memo(function TaskCard({
         task={task}
         isConflict={isConflict}
         isSelected={isSelected}
-        onClick={handleBodyClick}
       />
       <TaskCardActions
         isConflict={isConflict}
@@ -175,7 +175,6 @@ export const TaskCard = memo(function TaskCard({
         onMerge={laneId === 'ready_to_merge' ? handleMerge : undefined}
         onQaRun={onQaRun ? handleQaRun : undefined}
         onFocusTerminal={focusTerminal}
-        onView={handleView}
       />
     </div>
   );

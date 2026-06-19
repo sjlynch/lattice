@@ -36,7 +36,6 @@ export function Lane({
   pushDisabled,
   qaPlaywright,
   onView,
-  onSingleSelect,
   onToggleSelect,
   onRangeSelect,
   onClearSelection,
@@ -68,7 +67,6 @@ export function Lane({
   pushDisabled?: boolean;
   qaPlaywright?: QaPlaywrightControls;
   onView: (task: Task) => void;
-  onSingleSelect: (id: string, laneId: TaskStatus) => void;
   onToggleSelect: (id: string, laneId: TaskStatus) => void;
   onRangeSelect: (id: string, laneId: TaskStatus) => void;
   onClearSelection: () => void;
@@ -94,10 +92,6 @@ export function Lane({
 
   // Bind the lane id into the selection handlers once per lane (not per card),
   // keeping the per-card props stable so React.memo(TaskCard) can do its job.
-  const handleSingleSelect = useCallback(
-    (id: string) => onSingleSelect(id, lane.id),
-    [onSingleSelect, lane.id],
-  );
   const handleToggleSelect = useCallback(
     (id: string) => onToggleSelect(id, lane.id),
     [onToggleSelect, lane.id],
@@ -173,7 +167,6 @@ export function Lane({
                   onMerge={onMerge}
                   onQaRun={onQaRun}
                   onView={onView}
-                  onSelect={handleSingleSelect}
                   onToggleSelect={handleToggleSelect}
                   onRangeSelect={handleRangeSelect}
                 />

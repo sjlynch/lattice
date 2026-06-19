@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { GraphNode, ScanResult } from '../../api';
 import { GraphSearchBar } from './GraphSearchBar';
 import { HealthTooltip } from './HealthTooltip';
@@ -32,7 +33,7 @@ type Props = {
 // Render-only overlays: scan spinner (top-left), the active-view chip
 // (top-center-ish), the file/dir counts chip (bottom-left), and the
 // hover tooltip that anchors to the cursor.
-export function GraphHud({
+export const GraphHud = memo(function GraphHud({
   loading,
   data,
   counts,
@@ -119,4 +120,4 @@ export function GraphHud({
       )}
     </>
   );
-}
+});

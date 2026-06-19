@@ -61,7 +61,6 @@ export function useTaskBoardState(
     selected: selection.selectedIds,
     selectedIds: selection.selectedIds,
     clearSelection: selection.clearSelection,
-    selectSingle: selection.handleSingleSelect,
     toggleSelect: selection.handleToggleSelect,
     rangeSelect: selection.handleRangeSelect,
   };
