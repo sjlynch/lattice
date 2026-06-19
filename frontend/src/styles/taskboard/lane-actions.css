@@ -46,13 +46,24 @@
   background: rgba(200, 156, 255, 0.22);
 }
 
-/* Per-lane arrival-date sort toggle: clock + a small up/down caret. Wider than
-   a square icon-btn to fit both glyphs; "on" (any arrival sort) tints it in the
-   accent, while 'manual' mode leaves it muted. */
-.lane-sort {
-  width: auto;
-  padding: 0 4px;
-  gap: 1px;
+/* Per-lane arrival-date sort toggle: a full-size clock (matching the other
+   lane-action icons) with a small up/down caret overlaid on its lower-right
+   corner, so the button stays a square icon-btn instead of widening to fit
+   both glyphs side by side. "on" (any arrival sort) tints it in the accent,
+   while 'manual' mode leaves it muted. */
+.lane-sort-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.lane-sort-caret {
+  position: absolute;
+  right: -5px;
+  bottom: -4px;
+  /* Sits in the clock's empty lower-right corner; a halo in the lane-header
+     colour keeps it legible where it grazes the clock's outline. */
+  filter: drop-shadow(0 0 1px #1d2128) drop-shadow(0 0 1px #1d2128);
 }
 .lane-sort.on {
   color: var(--accent);

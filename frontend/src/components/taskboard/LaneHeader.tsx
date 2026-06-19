@@ -92,12 +92,14 @@ export function LaneHeader({
           title={sortTitle(sortMode)}
           aria-label="Sort by arrival date"
         >
-          <Clock size={12} />
-          {sortMode === 'oldest' ? (
-            <ChevronUp size={11} />
-          ) : (
-            <ChevronDown size={11} />
-          )}
+          <span className="lane-sort-icon">
+            <Clock size={14} />
+            {sortMode === 'oldest' ? (
+              <ChevronUp size={11} className="lane-sort-caret" />
+            ) : (
+              <ChevronDown size={11} className="lane-sort-caret" />
+            )}
+          </span>
         </button>
         {qaPlaywright && (
           <>
