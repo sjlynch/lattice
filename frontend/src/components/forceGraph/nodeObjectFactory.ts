@@ -1,15 +1,16 @@
 import type { MutableRefObject } from 'react';
 import * as THREE from 'three';
 import type { GraphNode, ScanResult } from '../../api';
-import { deletedSprite, withChangeRing, type ChangeKind } from './changeRing';
+import { deletedSprite, setNodeChangeRing, type ChangeKind } from './changeRing';
 import { spriteForDeadCode } from './deadCodeOverlay';
 import type { GraphSettings } from './graphSettings';
 import { setNodeHalo } from './halo';
 import { spriteForHealth } from './healthOverlay';
 import { applyNodeLabelState } from './labelsOverlay';
 import { spriteForLoc } from './locOverlay';
+import { baseSizeFor } from './mountedNodes';
 import { spriteFor } from './sprites';
-import { isGhost, relForward } from './timelineDiff';
+import { isGhost, readRelForward } from './timelineDiff';
 
 // Refs the node-object factory reads to pick the right sprite for the
 // current overlay/selection state without forcing the parent hook to
@@ -47,7 +48,9 @@ export type NodeObjectRefs = {
 // `useSelectionHaloSync`.
 export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Object3D {
   const s = refs.settingsRef.current;
-  const baseSize = node.kind === 'dir' ? s.dirNodeSize : s.fileNodeSize;
+  // Shared ghost-aware sizing — keeps the halo/ring scale added here in lock-step
+  // with the selection/worktree delta walkers (see `mountedNodes`).
+  const baseSize = baseSizeFor(node, s);
   const root = new THREE.Group();
   root.userData['lattice:nodeRoot'] = true;
 
@@ -68,10 +71,14 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
   // the file's extension is on the per-project ignore list — e.g.
   // config/prose files by default. Directories aren't measured by either
   // overlay anyway, so the check is file-only.
+  // `node.ext` is always lowercase at the source (the scanner lowercases it,
+  // ghosts too) and the ignore Set is built from lowercased exts — so compare
+  // directly and skip the per-node `.toLowerCase()` allocation that ran for
+  // every file on every refresh.
   const ignored =
     node.kind === 'file' &&
     !!node.ext &&
-    refs.metricsIgnoredExtsRef.current.has(node.ext.toLowerCase());
+    refs.metricsIgnoredExtsRef.current.has(node.ext);
 
   let base: THREE.Object3D;
   if (refs.healthModeRef.current && !ignored) {
@@ -87,16 +94,26 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
     base = spriteFor(node, s);
   }
 
-  // Apply change ring before halo so the selection halo (drawn as a
-  // sibling of the root) reads as the outermost element regardless of
-  // whether the base has a change ring or not.
+  root.add(base);
+
+  // Change ring + selection halo both hang off the root as sibling children
+  // (drawn behind / around the base via renderOrder + size, not by child
+  // order). Adding the ring here keeps it correct through full rebuilds (data
+  // swap, size/metric refresh); its interactive add/remove on a scrubber
+  // change-set flip goes through `applyChangeRingDelta`, never `graph.refresh`.
+  // The halo (1.8×) is larger than the change ring (1.6×) so a node that's
+  // both changed and selected shows both rings concentrically.
   const rootData = refs.dataRef.current?.root || '';
-  const rel = node.kind === 'file' ? relForward(node.path, rootData) : '';
+  // `readRelForward` returns the value precomputed once per scan in
+  // `buildForceGraphData` (falling back to a fresh compute for any node that
+  // didn't come through it), so this no longer re-derives relForward on every
+  // refresh. Only the changeMap lookup below is genuinely live (scrubbing the
+  // timeline mutates the map).
+  const rel = node.kind === 'file' ? readRelForward(node, rootData) : '';
   const kind = rel ? refs.changeMapRef.current.get(rel) : undefined;
   if (kind && kind !== 'deleted') {
-    base = withChangeRing(base, baseSize, kind);
+    setNodeChangeRing(root, kind, baseSize);
   }
-  root.add(base);
 
   // Name labels (Alt overlay) hang off the root as sibling children so the
   // active depth band / Shift gate can be toggled in place by the delta walker
