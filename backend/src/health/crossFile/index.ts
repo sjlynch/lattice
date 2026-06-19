@@ -21,6 +21,7 @@ export {
 } from './resolveImport.js';
 export {
   RESOLVABLE_IMPORT_EXTS,
+  compileEntryGlobs,
   detectRoots,
   isConventionalRoot,
   matchesEntryGlob,

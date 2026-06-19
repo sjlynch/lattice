@@ -9,6 +9,7 @@ import { GraphSelectionChip } from './GraphSelectionChip';
 import { GraphSettingsPanel } from './GraphSettingsPanel';
 import { GraphTaskModal } from './GraphTaskModal';
 import { TimelineScrubber } from './TimelineScrubber';
+import { useStructuralScan } from '../../hooks/useStructuralScan';
 import { useBoxSelect } from './hooks/useBoxSelect';
 import { useAgentOverlay } from './hooks/useAgentOverlay';
 import { useForceGraphInitialization } from './hooks/useForceGraphInitialization';
@@ -106,6 +107,12 @@ export function ForceGraphView({
   const selectedRef = useRefMirror(selected);
   const hiddenExtsRef = useRefMirror(hiddenExts);
   const dataRef = useRefMirror(data);
+  // Structure-only view of the scan: a reference that's stable across the
+  // metric-only HealthUpdates that churn `data` on every file save, changing
+  // only when files are added/removed/renamed. The file/dir counts read only
+  // structural fields (kind/ext), so keying their memo off this skips the O(N)
+  // recount + HUD re-render on every save.
+  const structuralData = useStructuralScan(data);
 
   // Build a Set once per change so the lookup is O(1) per node. Lowercased
   // for case-insensitive matching against `node.ext`.
@@ -287,18 +294,17 @@ export function ForceGraphView({
   }, []);
 
   // ----- Phase 3: render data + JSX overlays -----
-  // `data` is a fresh ref on every HealthUpdate (each file save), so this
-  // memo recomputes an equal-valued new object constantly. Reuse the prior
-  // object when the three numbers are unchanged so the memoized HUD doesn't
-  // re-render on every save (useMemo can't compare its own output, hence the
-  // ref).
+  // Keyed off `structuralData` (stable across metric-only saves) + `hiddenExts`,
+  // so it no longer recomputes on every HealthUpdate. The ref-compare still
+  // reuses the prior object when the three numbers are unchanged (e.g. a
+  // same-shape rescan), so the memoized HUD doesn't re-render needlessly.
   const countsRef = useRef({ files: 0, dirs: 0, hidden: 0 });
   const counts = useMemo(() => {
     let files = 0;
     let dirs = 0;
     let hidden = 0;
-    if (data) {
-      for (const n of data.nodes) {
+    if (structuralData) {
+      for (const n of structuralData.nodes) {
         if (n.kind === 'dir') {
           dirs++;
         } else {
@@ -315,7 +321,7 @@ export function ForceGraphView({
     const next = { files, dirs, hidden };
     countsRef.current = next;
     return next;
-  }, [data, hiddenExts]);
+  }, [structuralData, hiddenExts]);
 
   // Stable handlers so the memoized HUD / search bar / timeline don't
   // re-render on every hover/search keystroke. Functional-updater form

@@ -3,7 +3,8 @@ import type { ForceGraph3DInstance } from '3d-force-graph';
 import { healthLabelRegistry } from '../healthOverlay';
 import { startLabelRepulsion } from '../labelRepulsionFrames';
 import type { GraphSettings } from '../graphSettings';
-import { clearLabelsAndRefresh, isTextInput } from './refresh';
+import { clearLabelsAndRefresh } from './refresh';
+import { momentaryLetterMode, useHoldKeyMode } from './useHoldKeyMode';
 
 // Code-health overlay: active while the user holds `h`. State is owned
 // by App (so the Legend can react), but mirrored to a ref here so the
@@ -11,7 +12,7 @@ import { clearLabelsAndRefresh, isTextInput } from './refresh';
 //
 // Same chord pattern as `z` (LOC) — keyup, blur, and visibility-change
 // all reset so we can't get stuck in an "always on" state if the user
-// alt-tabs while holding the key.
+// alt-tabs while holding the key (shared lifecycle in `useHoldKeyMode`).
 export function useHealthOverlay(
   healthMode: boolean,
   onHealthModeChange: (mode: boolean) => void,
@@ -24,31 +25,7 @@ export function useHealthOverlay(
     healthModeRef.current = healthMode;
   }, [healthMode]);
 
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key !== 'h' && e.key !== 'H') return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (isTextInput(e.target)) return;
-      if (e.repeat) return;
-      onHealthModeChange(true);
-    }
-    function onKeyUp(e: KeyboardEvent) {
-      if (e.key === 'h' || e.key === 'H') onHealthModeChange(false);
-    }
-    function reset() {
-      onHealthModeChange(false);
-    }
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('blur', reset);
-    document.addEventListener('visibilitychange', reset);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('blur', reset);
-      document.removeEventListener('visibilitychange', reset);
-    };
-  }, [onHealthModeChange]);
+  useHoldKeyMode(momentaryLetterMode('h', onHealthModeChange));
 
   // Refresh sprites + drop the previous overlay's labels when the
   // health overlay toggles. Same shape as the LOC mode effect.

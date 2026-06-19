@@ -176,4 +176,7 @@ export function seedWatcherState(
   proj.metrics.clear();
   for (const [k, v] of importsByFile) proj.imports.set(k, v);
   for (const [k, v] of metricsByFile) proj.metrics.set(k, v);
+  // The seeded membership can differ from what the memoized root set was built
+  // on (a rescan, file-tree change, or cache-version bump), so drop it.
+  proj.crossFile.invalidateRoots();
 }

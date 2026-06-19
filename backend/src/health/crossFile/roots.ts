@@ -58,7 +58,7 @@ export function isConventionalRoot(filePath: string): boolean {
 // Minimal glob → RegExp for the user-configurable `deadCodeEntryGlobs` escape
 // hatch (framework magic: file-based routing, DI registries, plugin globs).
 // Supports `**`, `*`, and `?`; matches against the project-relative path.
-function globToRegExp(glob: string): RegExp {
+export function globToRegExp(glob: string): RegExp {
   let re = '';
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
@@ -81,31 +81,40 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${re}$`);
 }
 
+// Precompile the user's `deadCodeEntryGlobs` to RegExp[] once, so the per-file
+// matcher just runs `.test()` instead of rebuilding a RegExp per glob per file
+// per cross-file pass (G×F constructions). Callers cache the result where the
+// glob list is captured (the watcher's CrossFileAnalyzer + the scan).
+export function compileEntryGlobs(globs: readonly string[]): RegExp[] {
+  return globs.map(globToRegExp);
+}
+
 export function matchesEntryGlob(
   filePath: string,
   projectRoot: string,
-  globs: readonly string[],
+  entryRegexps: readonly RegExp[],
 ): boolean {
-  if (globs.length === 0) return false;
+  if (entryRegexps.length === 0) return false;
   const rel = path.relative(projectRoot, filePath).replace(/\\/g, '/');
   if (!rel || rel.startsWith('..')) return false;
-  return globs.some((g) => globToRegExp(g).test(rel));
+  return entryRegexps.some((re) => re.test(rel));
 }
 
 // Combine conventional roots + user globs + caller-supplied extra roots
-// (typically package.json entry targets) into one set. Pure.
+// (typically package.json entry targets) into one set. Pure. `entryRegexps`
+// is the precompiled `deadCodeEntryGlobs` (see compileEntryGlobs).
 export function detectRoots(
   presentFiles: Iterable<string>,
   opts: {
     projectRoot: string;
-    entryGlobs?: readonly string[];
+    entryRegexps?: readonly RegExp[];
     extraRoots?: Iterable<string>;
   },
 ): Set<string> {
-  const globs = opts.entryGlobs ?? [];
+  const entryRegexps = opts.entryRegexps ?? [];
   const roots = new Set<string>();
   for (const f of presentFiles) {
-    if (isConventionalRoot(f) || matchesEntryGlob(f, opts.projectRoot, globs)) {
+    if (isConventionalRoot(f) || matchesEntryGlob(f, opts.projectRoot, entryRegexps)) {
       roots.add(f);
     }
   }

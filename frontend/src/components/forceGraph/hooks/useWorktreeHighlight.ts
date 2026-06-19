@@ -1,36 +1,26 @@
-import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
+import { useCallback, useRef, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
-import type * as THREE from 'three';
-import { fetchWorktreeModified, type GraphNode } from '../../../api';
+import { fetchWorktreeModified } from '../../../api';
 import { taskColor } from '../../../taskColors';
 import { setNodeChangeRingsVisible } from '../changeRing';
 import type { GraphSettings } from '../graphSettings';
 import { getIdleController } from '../idleController';
+import { baseSizeFor, mountedNodes, mountedRoot } from '../mountedNodes';
 import { setNodeWorktreeRing } from '../worktreeRing';
-import { isTextInput } from './refresh';
+import { momentaryLetterMode, useHoldKeyMode } from './useHoldKeyMode';
 
 // `W` (hold) outlines every file changed by a not-yet-merged task
 // (in_progress + ready_to_merge), ringed in that task's color. Same chord
-// pattern as `h`/`z`: keyup / blur / visibilitychange all clear it so the
-// rings can't get stuck on if the user alt-tabs while holding the key.
+// pattern as `h`/`z` (keyup / blur / visibilitychange all clear it — see
+// `useHoldKeyMode`) so the rings can't get stuck on if the user alt-tabs while
+// holding the key.
 //
 // The modified-file set comes from a git-backed snapshot fetched once on
 // press (`GET /api/tasks/worktree-modified`). Momentary by design — release
 // and re-press to refresh.
 
-type SimNode = GraphNode & { __threeObj?: THREE.Object3D };
-
 function normalizePath(p: string): string {
   return p.replace(/\\/g, '/').toLowerCase();
-}
-
-function baseSizeFor(node: GraphNode, settings: GraphSettings): number {
-  return node.kind === 'dir' ? settings.dirNodeSize : settings.fileNodeSize;
-}
-
-function graphNodes(graph: ForceGraph3DInstance): SimNode[] {
-  const getData = graph.graphData as unknown as () => { nodes?: object[] };
-  return (getData.call(graph)?.nodes ?? []) as SimNode[];
 }
 
 export function useWorktreeHighlight(
@@ -52,8 +42,8 @@ export function useWorktreeHighlight(
     (visible: boolean) => {
       const graph = graphRef.current;
       if (!graph) return;
-      for (const node of graphNodes(graph)) {
-        const root = node.__threeObj;
+      for (const node of mountedNodes(graph)) {
+        const root = mountedRoot(node);
         if (root) setNodeChangeRingsVisible(root, visible);
       }
       getIdleController(graph)?.wakeForRefresh();
@@ -67,9 +57,9 @@ export function useWorktreeHighlight(
       appliedRef.current.clear();
       return;
     }
-    for (const node of graphNodes(graph)) {
+    for (const node of mountedNodes(graph)) {
       if (typeof node.id !== 'string' || !appliedRef.current.has(node.id)) continue;
-      const root = node.__threeObj;
+      const root = mountedRoot(node);
       if (root) setNodeWorktreeRing(root, false, '', 0);
     }
     appliedRef.current.clear();
@@ -82,10 +72,10 @@ export function useWorktreeHighlight(
       if (!graph) return;
       const settings = settingsRef.current;
       const next = new Set<string>();
-      for (const node of graphNodes(graph)) {
+      for (const node of mountedNodes(graph)) {
         if (typeof node.id !== 'string' || typeof node.path !== 'string') continue;
         const color = pathColors.get(normalizePath(node.path));
-        const root = node.__threeObj;
+        const root = mountedRoot(node);
         if (!root) continue;
         if (color) {
           setNodeWorktreeRing(root, true, color, baseSizeFor(node, settings));
@@ -93,10 +83,10 @@ export function useWorktreeHighlight(
         }
       }
       // Strip any previously-ringed node that's no longer in the set.
-      for (const node of graphNodes(graph)) {
+      for (const node of mountedNodes(graph)) {
         if (typeof node.id !== 'string') continue;
         if (appliedRef.current.has(node.id) && !next.has(node.id)) {
-          const root = node.__threeObj;
+          const root = mountedRoot(node);
           if (root) setNodeWorktreeRing(root, false, '', 0);
         }
       }
@@ -124,7 +114,7 @@ export function useWorktreeHighlight(
     } catch {
       /* fetch failed — leave the graph untouched */
     }
-  }, [activeFolder, applyRings]);
+  }, [activeFolder, applyRings, setChangeRingsVisible]);
 
   const deactivate = useCallback(() => {
     if (!activeRef.current) return;
@@ -134,27 +124,11 @@ export function useWorktreeHighlight(
     setChangeRingsVisible(true);
   }, [clearRings, setChangeRingsVisible]);
 
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key !== 'w' && e.key !== 'W') return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (isTextInput(e.target)) return;
-      if (e.repeat) return;
-      void activate();
-    }
-    function onKeyUp(e: KeyboardEvent) {
-      if (e.key === 'w' || e.key === 'W') deactivate();
-    }
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('blur', deactivate);
-    document.addEventListener('visibilitychange', deactivate);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('blur', deactivate);
-      document.removeEventListener('visibilitychange', deactivate);
-      deactivate();
-    };
-  }, [activate, deactivate]);
+  // `W` is the only hold-key overlay with live scene state (rings) to strip
+  // when the hook unmounts, so it opts into `resetOnUnmount`.
+  useHoldKeyMode(
+    momentaryLetterMode('w', (on) => (on ? void activate() : deactivate()), {
+      resetOnUnmount: true,
+    }),
+  );
 }

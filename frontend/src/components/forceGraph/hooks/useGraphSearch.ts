@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { searchProjectContents, type ScanResult } from '../../../api';
+import { useStructuralScan } from '../../../hooks/useStructuralScan';
 import { buildSearchRegExp } from '../searchMatcher';
 
 // Debounce before hitting the backend contents pass — filename matches update
@@ -60,18 +61,22 @@ export function useGraphSearch(params: {
   );
   const invalidRegex = regex && trimmed.length > 0 && matcher === null;
 
-  // Filename pass — pure and instant, recomputed when the data or query change
-  // (so renamed/added/removed files re-match live). Empty query → empty Set
-  // (matcher is null), so there's no O(N) scan when search is idle.
+  // Filename pass — pure and instant, recomputed when the structure or query
+  // change (so renamed/added/removed files re-match live). Keyed off the
+  // structure-stable scan reference (names/ids only — structural), so a
+  // metric-only file save no longer re-runs the O(N) scan while a query is
+  // active. Empty query → empty Set (matcher is null), so there's no scan when
+  // search is idle.
+  const structuralData = useStructuralScan(data);
   const fileNameMatches = useMemo(() => {
     const ids = new Set<string>();
-    if (!data || !matcher) return ids;
-    for (const n of data.nodes) {
+    if (!structuralData || !matcher) return ids;
+    for (const n of structuralData.nodes) {
       if (n.kind !== 'file') continue;
       if (matcher.test(n.name)) ids.add(n.id);
     }
     return ids;
-  }, [data, matcher]);
+  }, [structuralData, matcher]);
 
   const [contentMatches, setContentMatches] = useState<Set<string>>(new Set());
   const [searching, setSearching] = useState(false);

@@ -3,6 +3,7 @@
 export {
   applyCrossFile,
   buildImportGraph,
+  compileEntryGlobs,
   computeCrossFile,
   computeReachability,
   cyclicNodes,

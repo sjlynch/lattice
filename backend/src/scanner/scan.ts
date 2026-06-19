@@ -1,5 +1,6 @@
 import {
   HealthCache,
+  compileEntryGlobs,
   detectRoots,
   readPackageJsonRoots,
   type HealthMetrics,
@@ -41,10 +42,11 @@ export async function scan(root: string, options: ScanOptions = {}): Promise<Sca
   // not reachable from a root is flagged for the `D` overlay.
   const presentFiles = new Set(metrics.map((m) => m.filePath));
   const entryGlobs = (await getUserSettings(absRoot)).deadCodeEntryGlobs ?? [];
+  const entryRegexps = compileEntryGlobs(entryGlobs);
   const packageRoots = await readPackageJsonRoots(absRoot, presentFiles);
   const roots = detectRoots(presentFiles, {
     projectRoot: absRoot,
-    entryGlobs,
+    entryRegexps,
     extraRoots: packageRoots,
   });
 

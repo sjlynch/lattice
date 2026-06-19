@@ -97,8 +97,9 @@ asking for fixes/reviews:
   `useEffect` is one concern: selection-refresh, Escape key, counts memo.
 - `nodeObjectFactory.ts` — `buildNodeObject(node, refs)` + `nativeNodeLabel(node)`.
   The decision tree for ghost vs health vs LOC vs dead-code vs base sprite
-  (+ change-ring and selection-halo wrap order) lives here; the init hook just
-  hands the closure to `ForceGraph3D.nodeThreeObject`. Recolor precedence is
+  (+ change-ring and selection-halo, both attached as sibling children of the
+  root, ordered behind/around the base by renderOrder + size) lives here; the
+  init hook just hands the closure to `ForceGraph3D.nodeThreeObject`. Recolor precedence is
   health > loc > dead > base; health/loc skip `metricsIgnoredExts`, dead-code
   does not (it recolors every file). **Alt name labels are NOT a base-sprite
   branch** — they attach as a sibling child of the root via `applyNodeLabelState`
@@ -183,8 +184,8 @@ asking for fixes/reviews:
   applied to labels.
 - `labelSync.ts` — `applyLabelsToGraph(graph, depths, settings, depth, shift,
   enabled, selectedIds)`: the in-place delta walker for the Alt overlay (mirrors
-  `selectionHaloSync`). Reaches each mounted node's `__threeObj` and calls
-  `applyNodeLabelState`, so changing the depth band or the Shift (file-label)
+  `selectionHaloSync`). Walks the mounted nodes via the shared `mountedNodes`
+  helpers and calls `applyNodeLabelState`, so changing the depth band or the Shift (file-label)
   gate toggles only the labels that changed — **no `graph.refresh()`**, which
   would dispose and rebuild every node sprite. `enabled` false (Alt released)
   passes a band no node occupies, stripping all labels. **Selection override:**
@@ -213,9 +214,34 @@ asking for fixes/reviews:
   walks only the affected ids and calls `setNodeHalo`, never
   `graph.refresh()`.
 - `selectionHaloSync.ts` — `applySelectionHaloDelta(graph, prev, next,
-  settings)` is the entry point for that in-place toggle. Reads each
-  affected sim node's `__threeObj` (three-forcegraph's default
-  `objBindAttr`) and routes the call to `setNodeHalo`.
+  settings)` is the entry point for that in-place toggle. Looks up each
+  affected sim node via the shared `mountedNodes` helpers and routes the call
+  to `setNodeHalo`.
+- `mountedNodes.ts` — the shared mounted-node helpers every overlay delta
+  walker uses instead of re-deriving the same casts: `mountedNodes(graph)`
+  (the live sim-node array), `mountedRoot(node)` (its `__threeObj` mounted root
+  — three-forcegraph's default `objBindAttr`), `mountedNodesById(graph)` (an
+  id→node index for selection deltas), and `baseSizeFor(node, settings)` (the
+  ghost-aware ring/halo base size, the single source of truth shared with
+  `nodeObjectFactory`). **Cache-free** — every call walks `graphData()` fresh so
+  a structural swap can't serve a stale node. New ring/label overlays should
+  reuse these rather than re-adding bespoke `__threeObj` casts or
+  `graph.graphData().nodes` walkers.
+- `changeRing.ts` — the timeline scrubber's git change rings, drawn as a
+  sibling-child toggle on the node root (the halo pattern):
+  `setNodeChangeRing(root, kind|null, baseSize)` adds/removes/recolors the
+  ring (added=green, modified=yellow), `deletedSprite` renders a ghost
+  (deleted-file) node from scratch (grey disc + red ring), and
+  `setNodeChangeRingsVisible` is the `W`-overlay momentary hide. Materials are
+  cached in `changeRingMaterials.ts` (4 GPU resources total).
+- `changeRingSync.ts` — `applyChangeRingDelta(graph, prevMap, nextMap,
+  settings, scanRoot)` is the scrub-driven in-place toggle (mirrors
+  `selectionHaloSync`): it diffs the prev/next change maps and, for only the
+  affected rel-paths, toggles each real file node's ring via `setNodeChangeRing`
+  and flips affected ghost nodes' `.visible`. Used by `useGitTimeline` instead
+  of `graph.refresh()`, so a scrubber notch is O(changed paths) ring mutations
+  rather than an O(N) full sprite rebuild. The full-rebuild path
+  (`buildNodeObject`) still attaches rings for genuine data/size/metric swaps.
 - `claudeNodeSprite.ts` — `makeClaudeNode(color, size)`: the free-floating
   filled disc + soft glow drawn for each in-progress Claude agent.
   `makeSatelliteNode(color, size)`: the smaller hollow-ring sprite for a
@@ -306,6 +332,21 @@ asking for fixes/reviews:
   pins `engineStarted` for the duration of the new warmup and is now
   hard-bounded by `cooldownTicks: 400` + `cooldownTime: 8000` +
   `d3AlphaMin: 0.005` (set once in `useForceGraphInitialization`).
+  **Two fast-patch tiers.** The common batched-metric update (from
+  `scanResultPatch.patchUpdatedFiles`, fed by the metric-queue in
+  `useProjectScan`) is caught by a *cheap* pre-check **before** any ghost
+  rebuild or `shapeFingerprint`: same scan root, same `links` array identity
+  (the patch helpers keep `prev.links` by reference; any structural change mints
+  a new array), same node count, and unchanged `history` ref → patch metric
+  fields in place, done. The sorted-`shapeFingerprint` tier is the fallback for
+  full scans, ghost-history changes, removals, and same-shape rescans from fresh
+  backend responses. Both tiers reuse one **cached id→sim-node index**
+  (`nodeIndexRef`), rebuilt lazily and invalidated (set `null`) on every full
+  `graph.graphData(...)` swap — the only thing that replaces the node array — so
+  consecutive HealthUpdates don't rebuild the map per event. `buildForceGraphData`
+  also stashes each file node's `relForward` under `REL_FORWARD_KEY` (see
+  `timelineDiff.readRelForward`) when it mints fresh clones, so `buildNodeObject`
+  reads the precomputed value instead of recomputing it per node per refresh.
 - `useGraphTaskCreation` — modal action, prompt text, submitting + toast
   state, derived `selectedFiles`, plus `openMenuItem` / `submitTask` /
   `closeModal` actions.
@@ -313,10 +354,19 @@ asking for fixes/reviews:
   `useLocOverlay` + `useHealthOverlay` + `useDeadCodeOverlay` +
   `useLabelsOverlay` + `useGraphFilter` so ForceGraphView gets one overlay
   setup point.
-- `useDeadCodeOverlay` — the `D`-hold overlay. Same keydown/keyup chord pattern
-  as `h`/`z`/`w` (blur + visibilitychange reset); recolors by reachability
-  (`deadCode` field on each node's `healthDetails`). No labels/RAF — just a
-  `clearLabelsAndRefresh` on toggle.
+- `useHoldKeyMode` — the shared hold-key chord lifecycle behind every overlay
+  (`H`/`Z`/`D`/`W`/Alt). Owns the four window/document listeners
+  (keydown/keyup/blur/visibilitychange), the `isTextInput` keydown guard, the
+  blur+tab-hide reset, and an opt-in `resetOnUnmount`; handlers are read through
+  a ref so the listeners register once and never churn. `momentaryLetterMode(key,
+  setActive, opts)` builds the handlers for a single-letter momentary chord
+  (modifier-excluded, repeat-suppressed) — used by `H`/`Z`/`D`/`W`. Alt supplies
+  bespoke handlers (modifier key + Shift sub-gate + `preventDefault`) to the same
+  hook. New hold-key overlays should reuse this rather than re-adding listeners.
+- `useDeadCodeOverlay` — the `D`-hold overlay. Hold-key chord via
+  `useHoldKeyMode(momentaryLetterMode('d', …))` (blur + visibilitychange reset);
+  recolors by reachability (`deadCode` field on each node's `healthDetails`). No
+  labels/RAF — just a `clearLabelsAndRefresh` on toggle.
 - `useAgentOverlay` — lifecycle half of the **Agent Presence Layer**, unified by
   the overlay's string agent id from two sources: in-progress `harness ===
   'claude'` tasks (task-colored node) and non-worktree Claude sessions from
@@ -328,10 +378,12 @@ asking for fixes/reviews:
   while `tick()` reports motion** — `kick()` acquires to wake the loop on a
   change, the frame handler releases on rest. See the APL ⇄ idle-controller
   contract in the named-subsystems section.
-- `useWorktreeHighlight` — the `W`-hold overlay. Same keydown/keyup chord
-  pattern as `h`/`z` (blur + visibilitychange reset). On press, fetches
-  `GET /api/tasks/worktree-modified` and rings each changed file in its
-  task's color via `setNodeWorktreeRing`; strips them on release.
+- `useWorktreeHighlight` — the `W`-hold overlay. Hold-key chord via
+  `useHoldKeyMode(momentaryLetterMode('w', …, { resetOnUnmount: true }))` (blur +
+  visibilitychange reset; the only overlay that also strips its rings on
+  unmount). On press, fetches `GET /api/tasks/worktree-modified` and rings each
+  changed file in its task's color via `setNodeWorktreeRing` (walking the shared
+  `mountedNodes`); strips them on release.
 - `useNodeContextMenu` / `useBoxSelect` / `useRefMirror` /
   `refresh.ts` — small focused helpers consumed directly by the coordinator.
 - `hooks/boxSelectGeometry.ts` — pure rectangle/projection hit-testing helpers
@@ -344,9 +396,25 @@ asking for fixes/reviews:
 Three useEffects (inside the overlay sub-hooks) react to settings changes:
 - Sizes (`fileNodeSize`/`dirNodeSize`/`labelSize`): clear the LOC, health, and
   Alt-label registries, then call `graph.refresh()` (re-evaluates
-  `nodeThreeObject`, no sim restart).
+  `nodeThreeObject`, no sim restart). **Guarded** (`useGraphSettings`): the
+  refresh is skipped on the initial mount and on any run where no nodes are
+  mounted — `nodeThreeObject` reads `settingsRef.current` live, so the data-sync
+  build already creates sprites at the current sizes; a refresh before then is a
+  byte-identical rebuild that needlessly wakes the idle loop. A previous-size
+  ref also no-ops a settings-object swap (e.g. project switch) that lands on
+  identical sizes. Live slider drags still refresh (size changed + nodes
+  mounted).
 - Physics (`dagLevelDistance`/`charge`/`link`/`velocityDecay`): poke
-  `d3Force` strengths + `d3ReheatSimulation()`.
+  `d3Force` strengths + `d3ReheatSimulation()`. **The force pokes run on every
+  run, including initial setup** — the graph is constructed only with
+  `dagLevelDistance`, so a project's persisted non-default charge/link/decay
+  must be pushed in here or they'd sit at the d3 defaults until the first slider
+  drag. **The reheat is guarded** (`useGraphSettings`): skipped on the initial
+  mount (previous-value ref) and whenever no nodes are mounted (an empty sim has
+  nothing to relax — the data-sync structural swap reheats once it populates
+  `graphData`, picking up the forces we set). So a freshly-loaded/applied
+  settings object no longer wakes the render loop for nothing; only an actual
+  physics/DAG change on a populated graph reheats.
 - Filter (`hiddenExts`): swap `nodeVisibility`/`linkVisibility` accessors.
   No restart.
 
@@ -356,6 +424,19 @@ Pure CPU/allocation optimizations on the graph render path; each is *visually
 identical* to what it replaced. Preserve these invariants when editing the
 files below.
 
+- **Structure-only consumers key off `useStructuralScan(data)`, not `data`.**
+  `data` gets a fresh reference on every metric-only HealthUpdate (one per file
+  save). `useStructuralScan` (`frontend/src/hooks/useStructuralScan.ts`) returns
+  a reference that changes only when the file *structure* does — it keys a memo
+  on `data.links` identity, which the `scanResultPatch` helpers preserve across
+  metric patches and rebuild on any structural change. Consumers that read only
+  structural fields (file/dir counts in `ForceGraphView`, `legend/useLegendRows`,
+  the filename pass in `useGraphSearch`, workflow stack detection in
+  `useWorkflowManager`) depend on it so they skip the O(N) recompute + re-render
+  per save. **INVARIANT: only feed the structural reference to consumers that
+  never read metric fields (health/loc/size) — it carries stale metrics by
+  design.** Add/remove/rename and hidden-ext changes still update immediately
+  (new links array → new reference; `hiddenExts` is a separate dep).
 - **Shared, module-owned label/connector resources (caching invariant).**
   Toggling an `H`/`Z`/Alt overlay calls `graph.refresh()`, which rebuilds every
   node object. The immutable Three.js pieces are cached at module scope so a
