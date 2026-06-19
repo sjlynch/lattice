@@ -92,10 +92,13 @@ export function updateAgentLabel(
   nodeSize: number,
 ): void {
   if (!agent.currentFile) return;
+  // Use the basename cached at the write site (applyActivity); fall back to a
+  // recompute only if it's somehow absent. Avoids a regex replace + slice each
+  // frame purely to compare against the existing label text.
   applyFloatingLabel(
     group,
     agent,
-    baseName(agent.currentFile),
+    agent.currentFileBase ?? baseName(agent.currentFile),
     agent.pos,
     labelSize,
     nodeSize,
@@ -109,6 +112,7 @@ export function updateAgentLabel(
 export function clearAgentLabel(group: THREE.Group, agent: Agent): void {
   removeFloatingLabel(group, agent);
   agent.currentFile = undefined;
+  agent.currentFileBase = undefined;
 }
 
 // Build/refresh a satellite's type label (e.g. 'Explore'), reading smaller than
