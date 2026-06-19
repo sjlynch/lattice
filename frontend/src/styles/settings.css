@@ -193,6 +193,155 @@
   color: var(--text-tertiary);
 }
 
+/* Settings dialog — "Agent prompts" tab (editable instruction templates) */
+.prompt-tpl-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.prompt-tpl-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #15181d;
+  overflow: hidden;
+}
+.prompt-tpl-card-head {
+  display: flex;
+  align-items: stretch;
+}
+.prompt-tpl-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 9px 10px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary);
+}
+.prompt-tpl-head:hover {
+  background: var(--bg-hover);
+}
+.prompt-tpl-reset {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 0 11px;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.prompt-tpl-reset:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.prompt-tpl-reset:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.prompt-tpl-head svg {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+.prompt-tpl-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.prompt-tpl-modified {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #e7c986;
+  background: rgba(231, 201, 134, 0.16);
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+}
+.prompt-tpl-filename {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  margin-left: auto;
+}
+.prompt-tpl-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+.prompt-tpl-desc {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.prompt-tpl-editor {
+  height: auto;
+  padding: 9px 11px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 200px;
+  max-height: 460px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+  tab-size: 2;
+}
+.prompt-tpl-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.prompt-tpl-tokens-label {
+  flex: 0 0 100%;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+.prompt-tpl-token {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: #0f1115;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s, background 0.12s;
+}
+.prompt-tpl-token:hover {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.prompt-tpl-token code {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: #c89cff;
+  white-space: nowrap;
+}
+.prompt-tpl-token-desc {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+
 /* ---------- MCP tab ---------- */
 .mcp-list {
   display: flex;

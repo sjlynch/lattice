@@ -6,6 +6,8 @@
 // backstop, codex always curls itself.
 
 import { canonicalProjectPath } from '../projectPath.js';
+import { applyTemplate } from '../instructionTemplates/apply.js';
+import { DEFAULT_WORKFLOW_STEP_TEMPLATE } from '../instructionTemplates/defs.js';
 import {
   interpolateWorkflowVariables,
   type Workflow,
@@ -31,6 +33,7 @@ export function renderStepMarkdown(
   stepIndex: number,
   backendOrigin: string,
   dirtyState: DirtyStateSummary | null = null,
+  template: string = DEFAULT_WORKFLOW_STEP_TEMPLATE,
 ): string {
   const step = wf.steps[stepIndex];
   const harness = effectiveStepHarness(wf, run, stepIndex);
@@ -43,7 +46,7 @@ export function renderStepMarkdown(
   // a session_shutdown extension is installed as a backstop — useful so the
   // model knows abnormal exits won't strand the run, but it's not framed as a
   // permission to skip the explicit curl (the backstop is best-effort).
-  const completionInstructions =
+  const completionInstructions = (
     harness === 'claude'
       ? [
           'After creating all the tasks described above, simply stop. Your session',
@@ -67,7 +70,10 @@ export function renderStepMarkdown(
                 'always run the curl yourself.',
               ]
             : []),
-        ];
+        ]
+  ).join('\n');
+  // Trailing '\n\n' so the preamble sits on its own paragraph above the step
+  // prompt; empty for Claude (no preamble).
   const autonomyPreamble =
     harness === 'claude'
       ? ''
@@ -81,105 +87,31 @@ export function renderStepMarkdown(
           "> the tasks\" — without calling `/complete` — leaves the workflow run",
           "> stuck on this step and the next step never spawns. Don't end your",
           "> turn until you've run the curl below.",
-          '',
-        ].join('\n');
+        ].join('\n') + '\n\n';
   // If the project tree is dirty, surface the divergence at the very top
   // so the planner reads it before the step prompt. Worktree-mismatch is
   // the single biggest source of "task references a path that doesn't
   // exist" failures; see projectDirtyState.ts.
   const dirtyWarning = dirtyState ? renderDirtyStateWarning(dirtyState) : '';
+  // Trailing '\n\n' so the note is its own paragraph; empty when no override.
+  const harnessOverrideNote = run.harnessOverride
+    ? `Run harness override: every step in this run is using ${run.harnessOverride}.\n\n`
+    : '';
   // Substitute `{{var_name}}` references with the workflow's variable values
   // (e.g. the built-in `{{user_instructions}}`) before the prompt reaches the
   // agent. Unknown variables are left intact so a typo is visible, not silent.
   const renderedPrompt = interpolateWorkflowVariables(step.prompt, wf.variables);
-  return [
-    `# Workflow Step ${stepIndex + 1} of ${wf.steps.length}: ${step.title}`,
-    '',
-    ...(dirtyWarning ? [dirtyWarning] : []),
-    '## Your Task',
-    '',
-    autonomyPreamble,
-    renderedPrompt,
-    '',
-    '## Active project (use ONLY this one)',
-    '',
-    `\`${canonicalProject}\``,
-    '',
-    'Every Lattice API call you make must be for this project. The helper',
-    'script below has the project baked in — prefer it over raw curl so you',
-    "can't accidentally hit a different project's board. If you do use curl,",
-    'verify the response\'s `canonicalProject` field matches the path above',
-    'before acting on the data.',
-    '',
-    '## Reading the board — query the API, not local files',
-    '',
-    'The live task DB is the API. **Do not read `tasks.json`, `tasks-current.json`,',
-    '`combined-tasks.json`, `lattice_tasks.json`, or any similar file you find',
-    'in this directory or sibling workflow-step directories** — those are stale',
-    'scratch dumps left by previous agents and they will mislead you (the canonical',
-    "example: they often miss whole lanes like 'qa' or 'ready_to_merge'). Always",
-    "use `node create-task.cjs --list` or the API; that's the source of truth.",
-    ...(run.harnessOverride
-      ? [
-          '',
-          `Run harness override: every step in this run is using ${run.harnessOverride}.`,
-        ]
-      : []),
-    '',
-    'You can inspect the project files at that path if helpful.',
-    'Your primary role here is to create tasks on the Lattice board so that',
-    'code agents can do the implementation work. Do not write or commit code directly.',
-    '',
-    '## Creating tasks — use the helper script',
-    '',
-    'A `create-task.cjs` script is in this directory. It handles JSON serialization',
-    "for you so you never need to escape quotes, backticks, or special characters,",
-    "and every command targets only this project's board.",
-    '',
-    '**Single task (inline description):**',
-    '```bash',
-    'node create-task.cjs "Task title" "Short description here"',
-    '```',
-    '',
-    '**Single task with a long/complex description (write to a file first):**',
-    '```bash',
-    "cat > desc.md << 'EOF'",
-    'Your description here. Backticks `like this`, quotes "like this",',
-    'and even (parentheses) are all fine inside a single-quoted heredoc.',
-    'EOF',
-    'node create-task.cjs "Task title" < desc.md',
-    '```',
-    '',
-    '**Multiple tasks at once (recommended when creating 3+ tasks):**',
-    '```bash',
-    "cat > tasks.json << 'EOF'",
-    '[',
-    '  { "title": "First task",  "description": "What to do" },',
-    '  { "title": "Second task", "description": "Details..." }',
-    ']',
-    'EOF',
-    'node create-task.cjs --batch tasks.json',
-    '```',
-    '',
-    '### Read the board (always project-safe)',
-    '```bash',
-    'node create-task.cjs --list                  # every task on this project',
-    'node create-task.cjs --list open             # one lane',
-    'node create-task.cjs --list open,in_progress # multiple lanes',
-    'node create-task.cjs --summary               # counts by status',
-    '```',
-    '',
-    'If you ever need a raw curl, the response is an envelope — assert',
-    '`.canonicalProject` matches the project path above before iterating',
-    '`.tasks`:',
-    '',
-    '```bash',
-    `curl -s "${backendOrigin}/api/tasks?project=${encodedProject}"`,
-    '# → { project, canonicalProject, hash, count, mismatched, tasks: [...] }',
-    '```',
-    '',
-    '## When you are done',
-    '',
-    ...completionInstructions,
-  ].join('\n');
+  return applyTemplate(template, {
+    step_number: String(stepIndex + 1),
+    total_steps: String(wf.steps.length),
+    step_title: step.title,
+    dirty_state_warning: dirtyWarning,
+    autonomy_preamble: autonomyPreamble,
+    step_prompt: renderedPrompt,
+    project_path: canonicalProject,
+    project_path_encoded: encodedProject,
+    backend_origin: backendOrigin,
+    harness_override_note: harnessOverrideNote,
+    completion_instructions: completionInstructions,
+  });
 }

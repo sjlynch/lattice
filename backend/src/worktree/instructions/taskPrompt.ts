@@ -3,6 +3,8 @@ import type { AgentHarness } from '../../harnesses.js';
 import type { DeadCodeSummary } from '../../deadCode.js';
 import { canonicalProjectPath } from '../../projectPath.js';
 import { renderEnvNotesBlock } from '../envDetect.js';
+import { applyTemplate } from '../../instructionTemplates/apply.js';
+import { DEFAULT_TASK_TEMPLATE } from '../../instructionTemplates/defs.js';
 
 // Reference-only nudge: surfaced only when the analyzer confidently flags at
 // least one unreachable file (`deadCode.total > 0`). Deliberately framed as
@@ -46,12 +48,16 @@ ${sampleLine}> This is a heuristic: it can't see dynamic \`import()\`, string-pa
 // `/complete` on session exit as a backstop, but the model should not rely
 // on it.) The non-Claude variant therefore gets an explicit "this is an
 // autonomous session, finish everything" preamble and a stronger final step.
+//
+// `template` is the resolved per-project template (override or default); the
+// caller looks it up via resolveInstructionTemplate so this stays synchronous.
 export function renderTaskMarkdown(
   task: Task,
   backendOrigin: string,
   harness: AgentHarness = 'claude',
   envNotes: string[] = [],
   deadCode: DeadCodeSummary | null = null,
+  template: string = DEFAULT_TASK_TEMPLATE,
 ): string {
   const created = new Date(task.createdAt).toISOString();
   const desc = task.description?.trim() || '_(no description provided)_';
@@ -89,66 +95,16 @@ export function renderTaskMarkdown(
    which case Lattice leaves the task In Progress so it can be resumed);
    even then, say so explicitly rather than just stopping.`;
   const projectPath = canonicalProjectPath(task.projectPath);
-  return `# ${task.title}
-
-${desc}
-
----
-
-**Lattice task ID:** \`${task.id}\`
-**Project:** \`${projectPath}\`
-**Created:** ${created}
-
-> You are working on this single task. You should not need to query the
-> Lattice task board to complete it — but if you do, pass exactly the
-> project path above as \`project=\`, and see \`$LATTICE_DOCS\`
-> (\`.lattice/LATTICE_API.md\`) for the API.
-
-## Instructions (please complete autonomously, no need to confirm with the user)
-
-${autonomyPreamble}${envBlock}${deadCodeBlock}1. **Check existing state first.** This task may have been started in a
-   prior session — Lattice can resume worktrees after a server restart or
-   when Claude finishes without committing. Before doing anything, run:
-
-   \`\`\`
-   git log --oneline -10
-   git status
-   \`\`\`
-
-   - If there are commits on this branch, read them with \`git show <sha>\`
-     to understand what's already been implemented.
-   - If there are uncommitted changes, review them with \`git diff\` and
-     decide whether to keep, amend, or rework them.
-   - Only redo work that's clearly broken or out of scope. Don't restart
-     the implementation from scratch when it's already partially done.
-
-2. Implement the task described above (continuing from the prior state if
-   any).
-
-3. **Commit your work** before ending the session — Lattice merges your
-   branch via \`git merge\`, so a commit is required for changes to land:
-
-   \`\`\`
-   git add -A
-   git commit -m "<concise summary of the change>"
-   \`\`\`
-
-4. **Append a short summary of your changes to the task** so the task
-   board reflects what was actually done once it lands in "Ready to
-   Merge":
-
-   \`\`\`
-   curl -s -X POST ${backendOrigin}/api/tasks/${task.id}/append-summary \\
-     -H "Content-Type: application/json" \\
-     -d '{"summary":"<1-3 bullet summary of what changed>"}'
-   \`\`\`
-
-   Keep it concise (1-3 bullet points). This appends the summary beneath
-   the original description — both remain visible on the task board.
-
-${finalStep}
-
-Please do not start, stop, or restart any dev servers — the user runs
-them in their own console and your output goes to the worktree's terminal.
-`;
+  return applyTemplate(template, {
+    task_title: task.title,
+    task_description: desc,
+    task_id: task.id,
+    project_path: projectPath,
+    created_at: created,
+    backend_origin: backendOrigin,
+    autonomy_preamble: autonomyPreamble,
+    env_notes_block: envBlock,
+    dead_code_block: deadCodeBlock,
+    final_step: finalStep,
+  });
 }

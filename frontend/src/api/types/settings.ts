@@ -52,6 +52,12 @@ export type UserSettings = {
   // global `mcpOverrides.playwright`). `enabled` injects Playwright into QA
   // "run an e2e test" sessions; `headless` (the eye toggle) appends --headless.
   qaPlaywright?: { enabled: boolean; headless: boolean };
+  // Per-project overrides of the agent instruction templates (task brief,
+  // conflict resolver, QA / push / post-merge / workflow briefs), keyed by
+  // template id. Value = raw markdown with `{{token}}` placeholders; a missing
+  // or blank entry means "use Lattice's default". See backend
+  // instructionTemplates/.
+  instructionTemplateOverrides?: Record<string, string>;
 };
 
 // Extensions Lattice ignores by default in the LOC and code-health overlays.
@@ -150,6 +156,28 @@ export type ProjectEnvInfo = {
 
 export type ProjectEnvResponse = {
   environments: ProjectEnvInfo[];
+};
+
+// One token (`{{name}}`) a template can interpolate, with a human-readable
+// note shown in the editor's legend.
+export type InstructionTemplateToken = {
+  name: string;
+  description: string;
+};
+
+// An editable instruction template Lattice writes for a spawned agent. Backs
+// the settings dialog's "Agent prompts" tab. `defaultTemplate` is Lattice's
+// built-in; `currentTemplate` is the project's override-or-default. Edits are
+// saved as `UserSettings.instructionTemplateOverrides[id]`. See backend
+// instructionTemplates/.
+export type InstructionTemplate = {
+  id: string;
+  title: string;
+  filename: string;
+  description: string;
+  defaultTemplate: string;
+  currentTemplate: string;
+  tokens: InstructionTemplateToken[];
 };
 
 export type { HarnessAvailability };

@@ -5,6 +5,7 @@ import type { AgentHarness } from '../harnesses.js';
 import type { DeadCodeSummary } from '../deadCode.js';
 import { seedClaudeTrust } from '../claudeTrust.js';
 import { renderTaskMarkdown } from './instructions.js';
+import { resolveInstructionTemplate } from '../instructionTemplates.js';
 import { LATTICE_EXCLUDE_PATTERNS } from './managedFiles.js';
 import {
   installPiCompletionExtension,
@@ -27,9 +28,10 @@ export async function writePostAddWorktreeFiles(
   await seedClaudeTrust(worktreePath);
 
   const taskFile = path.join(worktreePath, 'LATTICE_TASK.md');
+  const taskTemplate = await resolveInstructionTemplate(task.projectPath, 'task');
   await fs.writeFile(
     taskFile,
-    renderTaskMarkdown(task, backendOrigin, harness, envNotes, deadCode),
+    renderTaskMarkdown(task, backendOrigin, harness, envNotes, deadCode, taskTemplate),
     'utf8',
   );
   // The Claude Stop hook is installed for every worktree regardless of run

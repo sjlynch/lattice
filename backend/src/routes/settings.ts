@@ -6,6 +6,7 @@ import { Router } from 'express';
 import { getUserSettings, patchUserSettings, type UserSettings } from '../userSettings.js';
 import { describeProjectEnvs } from '../worktree.js';
 import { canonicalProjectPath } from '../projectPath.js';
+import { buildInstructionTemplateEditorData } from '../instructionTemplates.js';
 
 export function buildSettingsRouter(): Router {
   const r = Router();
@@ -34,6 +35,17 @@ export function buildSettingsRouter(): Router {
     const settings = await getUserSettings(repoRoot);
     const environments = await describeProjectEnvs(repoRoot, settings);
     res.json({ environments });
+  });
+
+  // The editable instruction templates for a project — each template's default
+  // markdown, the project's current (override-or-default) text, and its token
+  // docs. Backs the settings dialog's "Agent prompts" tab. Edits are saved back
+  // through PATCH /api/settings (`instructionTemplateOverrides`). Read-only.
+  r.get('/api/instruction-templates', async (req, res) => {
+    const project = typeof req.query.project === 'string' ? req.query.project : '';
+    if (!project) return res.status(400).json({ error: 'project required' });
+    const templates = await buildInstructionTemplateEditorData(project);
+    res.json({ templates });
   });
 
   return r;

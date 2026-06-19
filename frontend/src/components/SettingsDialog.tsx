@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { TerminalSquare, FileText, BarChart3, Cpu, Plug } from 'lucide-react';
+import { TerminalSquare, ScrollText, BarChart3, Cpu, Plug } from 'lucide-react';
 import { Modal } from './Modal';
 import {
   type StartupTerminal,
@@ -20,6 +20,10 @@ import {
 } from './settings/MetricsIgnoredExtsTab';
 import { AgentsTab, type AgentsTabHandle } from './settings/AgentsTab';
 import { McpTab, type McpTabHandle } from './settings/McpTab';
+import {
+  InstructionTemplatesTab,
+  type InstructionTemplatesTabHandle,
+} from './settings/InstructionTemplatesTab';
 import { useSettingsDrafts } from './settings/useSettingsDrafts';
 import { saveSettings } from './settings/saveSettings';
 
@@ -35,7 +39,7 @@ type Props = {
   onMetricsIgnoredExtsChange: (next: string[]) => void | Promise<void>;
 };
 
-type Tab = 'terminals' | 'env' | 'metrics' | 'agents' | 'mcp';
+type Tab = 'terminals' | 'prompts' | 'metrics' | 'agents' | 'mcp';
 
 const TERMINAL_DEFAULT_OPTIONS: { value: TerminalDefaultHarness; label: string }[] = [
   { value: 'claude', label: 'Claude' },
@@ -190,6 +194,7 @@ export function SettingsDialog({
   const drafts = useSettingsDrafts(open, activeFolder, terminalLaunchSettings);
   const startupTerminalsRef = useRef<StartupTerminalsTabHandle>(null);
   const envNotesRef = useRef<EnvNotesTabHandle>(null);
+  const instructionTemplatesRef = useRef<InstructionTemplatesTabHandle>(null);
   const metricsIgnoredExtsRef = useRef<MetricsIgnoredExtsTabHandle>(null);
   const agentsRef = useRef<AgentsTabHandle>(null);
   const mcpRef = useRef<McpTabHandle>(null);
@@ -215,6 +220,7 @@ export function SettingsDialog({
         handles: {
           startupTerminals: startupTerminalsRef.current,
           envNotes: envNotesRef.current,
+          instructionTemplates: instructionTemplatesRef.current,
           metricsIgnoredExts: metricsIgnoredExtsRef.current,
           agents: agentsRef.current,
           mcp: mcpRef.current,
@@ -244,11 +250,11 @@ export function SettingsDialog({
             Terminals
           </button>
           <button
-            className={`settings-tab ${tab === 'env' ? 'active' : ''}`}
-            onClick={() => setTab('env')}
+            className={`settings-tab ${tab === 'prompts' ? 'active' : ''}`}
+            onClick={() => setTab('prompts')}
           >
-            <FileText size={12} />
-            Agent instructions
+            <ScrollText size={12} />
+            Agent prompts
           </button>
           <button
             className={`settings-tab ${tab === 'metrics' ? 'active' : ''}`}
@@ -297,9 +303,15 @@ export function SettingsDialog({
             open={open}
             startupTerminals={startupTerminals}
           />
+          <InstructionTemplatesTab
+            ref={instructionTemplatesRef}
+            active={tab === 'prompts'}
+            open={open}
+            activeFolder={activeFolder}
+          />
           <EnvNotesTab
             ref={envNotesRef}
-            active={tab === 'env'}
+            active={tab === 'prompts'}
             open={open}
             activeFolder={activeFolder}
           />

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { seedClaudeTrust } from '../claudeTrust.js';
 import { queuedCreateSession } from '../queuedCreateSession.js';
 import { renderPushInstructions } from './instructions.js';
+import { resolveInstructionTemplate } from '../instructionTemplates.js';
 import { assertSafePushSessionPath, createPushSessionId } from './paths.js';
 import { recordPushRun } from './registry.js';
 import { installPushStopHook, pushAgentId } from './stopHook.js';
@@ -28,7 +29,12 @@ export async function setupPushSession(
   await installPushStopHook(cwd, id, backendOrigin, projectPath);
 
   const instructionsFile = path.join(cwd, 'PUSH_INSTRUCTIONS.md');
-  await fs.writeFile(instructionsFile, renderPushInstructions(projectPath), 'utf8');
+  const template = await resolveInstructionTemplate(projectPath, 'push');
+  await fs.writeFile(
+    instructionsFile,
+    renderPushInstructions(projectPath, template),
+    'utf8',
+  );
 
   return { id, cwd, instructionsFile };
 }

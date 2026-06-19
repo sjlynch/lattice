@@ -3,6 +3,7 @@
 import { asJson } from './http';
 import type {
   HarnessAvailability,
+  InstructionTemplate,
   ProjectEnvResponse,
   UserSettings,
 } from './types';
@@ -71,4 +72,16 @@ export async function fetchProjectEnv(projectPath: string): Promise<ProjectEnvRe
   } catch {
     return { environments: [] };
   }
+}
+
+// Read-only previews of the instruction files Lattice hands to spawned agents
+// (task brief, conflict resolver, QA / push / post-merge / workflow briefs),
+// rendered with sample values. Backs the settings dialog's "Agent prompts" tab.
+export async function fetchInstructionTemplates(
+  projectPath: string,
+): Promise<InstructionTemplate[]> {
+  const data = await asJson<{ templates: InstructionTemplate[] }>(
+    await fetch(`/api/instruction-templates?project=${encodeURIComponent(projectPath)}`),
+  );
+  return data.templates;
 }

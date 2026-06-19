@@ -12,6 +12,7 @@ import {
   type StartupTerminalsTabHandle,
 } from './StartupTerminalsTab';
 import { type EnvNotesTabHandle } from './EnvNotesTab';
+import { type InstructionTemplatesTabHandle } from './InstructionTemplatesTab';
 import { type MetricsIgnoredExtsTabHandle } from './MetricsIgnoredExtsTab';
 import { type AgentsTabHandle } from './AgentsTab';
 import { type McpTabHandle } from './McpTab';
@@ -29,6 +30,7 @@ type SaveDrafts = {
 type SaveHandles = {
   startupTerminals: StartupTerminalsTabHandle | null;
   envNotes: EnvNotesTabHandle | null;
+  instructionTemplates: InstructionTemplatesTabHandle | null;
   metricsIgnoredExts: MetricsIgnoredExtsTabHandle | null;
   agents: AgentsTabHandle | null;
   mcp: McpTabHandle | null;
@@ -79,6 +81,13 @@ export async function saveSettings({
   // overwrite the saved overrides with an empty map.
   const envNotesPatch = handles.envNotes?.getWorktreeEnvNotesPatch();
   if (envNotesPatch !== undefined) patch.worktreeEnvNotes = envNotesPatch;
+  // Only touch instructionTemplateOverrides once the editor has loaded — same
+  // clobber-guard as env notes (the patch is the full desired override map).
+  const templatesPatch =
+    handles.instructionTemplates?.getInstructionTemplateOverridesPatch();
+  if (templatesPatch !== undefined) {
+    patch.instructionTemplateOverrides = templatesPatch;
+  }
   const metricsExtsPatch = handles.metricsIgnoredExts?.getMetricsIgnoredExtsPatch();
   if (metricsExtsPatch !== undefined) {
     patch.metricsIgnoredExts = metricsExtsPatch;

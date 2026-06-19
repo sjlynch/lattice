@@ -86,6 +86,13 @@ export type UserSettings = {
   // "watch it test" control) appends `--headless`. Absent = off / (when on)
   // headless.
   qaPlaywright?: { enabled: boolean; headless: boolean };
+  // Per-project overrides of the agent instruction templates Lattice writes
+  // (LATTICE_TASK.md, MERGE_INSTRUCTIONS.md, the QA/push/post-merge/workflow
+  // briefs). Keyed by template id (see instructionTemplates/defs.ts). The
+  // value is the raw markdown with `{{token}}` placeholders; a missing/blank
+  // entry means "use the built-in default". Edited in Settings → Agent prompts
+  // and applied at spawn via resolveInstructionTemplate.
+  instructionTemplateOverrides?: Record<string, string>;
 };
 
 function settingsFile(projectPath: string): string {

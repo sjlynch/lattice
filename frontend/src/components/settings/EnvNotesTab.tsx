@@ -185,8 +185,9 @@ export const EnvNotesTab = forwardRef<EnvNotesTabHandle, Props>(
               <code>LATTICE_TASK.md</code> (and <code> MERGE_INSTRUCTIONS.md</code>)
               telling the agent not to reinstall unless the task actually needs
               it — saving the agent from deliberating and running{' '}
-              <code>install</code>. Edit the note below, or clear the box to
-              remove it entirely.
+              <code>install</code>. This is what fills the{' '}
+              <code>{'{{env_notes_block}}'}</code> token in the templates above.
+              Edit the note below, or clear the box to remove it entirely.
             </div>
           </div>
         </div>

@@ -20,6 +20,7 @@ import { installPiCompletionExtension } from '../piExtension.js';
 import { buildAgentActivityUrl } from '../agentActivity.js';
 import type { Workflow } from '../workflows.js';
 import { renderHelperScript } from './renderHelperScript.js';
+import { resolveInstructionTemplate } from '../instructionTemplates.js';
 import { effectiveStepHarness, renderStepMarkdown } from './stepMarkdown.js';
 import { getProjectDirtyState } from './projectDirtyState.js';
 import { notify, snapshot, type WorkflowRun } from './state.js';
@@ -67,9 +68,10 @@ export async function spawnWorkflowStep(
         `injecting divergence warning into WORKFLOW_STEP.md`,
     );
   }
+  const stepTemplate = await resolveInstructionTemplate(wf.projectPath, 'workflow-step');
   await fs.writeFile(
     stepFile,
-    renderStepMarkdown(wf, run, stepIndex, backendOrigin, dirtyState),
+    renderStepMarkdown(wf, run, stepIndex, backendOrigin, dirtyState, stepTemplate),
     'utf8',
   );
 

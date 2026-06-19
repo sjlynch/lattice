@@ -3,6 +3,7 @@ import path from 'node:path';
 import { seedClaudeTrust } from '../claudeTrust.js';
 import { queuedCreateSession } from '../queuedCreateSession.js';
 import { renderQaInstructions } from './instructions.js';
+import { resolveInstructionTemplate } from '../instructionTemplates.js';
 import { assertSafeQaSessionPath, createQaSessionId } from './paths.js';
 import { recordQaRun } from './registry.js';
 import { installQaStopHook, qaAgentId } from './stopHook.js';
@@ -34,6 +35,7 @@ async function setupQaSession(args: StartQaSessionArgs): Promise<QaSession> {
   await installQaStopHook(cwd, id, args.backendOrigin, args.projectPath);
 
   const instructionsFile = path.join(cwd, 'QA_INSTRUCTIONS.md');
+  const template = await resolveInstructionTemplate(args.projectPath, 'qa');
   await fs.writeFile(
     instructionsFile,
     renderQaInstructions({
@@ -42,6 +44,7 @@ async function setupQaSession(args: StartQaSessionArgs): Promise<QaSession> {
       taskTitle: args.taskTitle,
       taskDescription: args.taskDescription,
       backendOrigin: args.backendOrigin,
+      template,
     }),
     'utf8',
   );

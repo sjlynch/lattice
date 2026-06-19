@@ -5,6 +5,14 @@ for a fresh task, `MERGE_INSTRUCTIONS.md` / `STASH_CONFLICT_*.md` for a
 conflict resolver) and repairs the Claude Stop hook before a resolver spawns.
 `../instructions.ts` re-exports the public surface.
 
+The `LATTICE_TASK.md` and `MERGE_INSTRUCTIONS.md` bodies are now **editable
+templates**: their default markdown + `{{token}}` set live in
+`../../instructionTemplates/defs.ts`, and `renderTaskMarkdown` /
+`renderMergeInstructions` take the resolved (override-or-default) template as
+their last argument and `applyTemplate` the computed token values. The spawn
+caller does the `resolveInstructionTemplate(project, id)`. See
+`backend/src/instructionTemplates/CLAUDE.md`.
+
 ## Modules
 
 - `taskPrompt.ts` — `renderTaskMarkdown(task, backendOrigin, harness, envNotes,

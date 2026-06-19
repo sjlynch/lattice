@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import { seedClaudeTrust } from '../claudeTrust.js';
 import { instructionsFilePath } from './commands.js';
 import { renderPostMergeHookInstructions } from './instructions.js';
+import { resolveInstructionTemplate } from '../instructionTemplates.js';
 import {
   assertSafePostMergeHookPath,
   createPostMergeHookId,
@@ -45,6 +46,7 @@ export async function setupPostMergeHookSession(args: {
 
   const callbackUrl = postMergeHookCallbackUrl(id, backendOrigin);
   const instructionsFile = instructionsFilePath(cwd);
+  const template = await resolveInstructionTemplate(projectPath, 'post-merge-hook');
   await fs.writeFile(
     instructionsFile,
     renderPostMergeHookInstructions({
@@ -52,6 +54,7 @@ export async function setupPostMergeHookSession(args: {
       prompt,
       callbackUrl,
       harness,
+      template,
     }),
     'utf8',
   );
