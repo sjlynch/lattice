@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { scanFolder, subscribeHealth, type ScanResult } from '../api';
 import { APP_CONFIG } from '../appConfig';
+import { patchUpdatedFile, removeFile } from './scanResultPatch';
 
 const STRUCTURAL_RESCAN_DEBOUNCE_MS = 150;
 // Coalesce a burst of `removed` events into a single follow-up rescan.
@@ -13,57 +14,6 @@ const STRUCTURAL_RESCAN_DEBOUNCE_MS = 150;
 // debounce lets us avoid even running the (synchronous, fs-walking)
 // scan on the backend in the first place.
 const REMOVED_RESCAN_DEBOUNCE_MS = 1500;
-
-type RuntimeLink = { source: unknown; target: unknown };
-
-function linkEndpointId(endpoint: unknown): string | null {
-  if (typeof endpoint === 'string') return endpoint;
-  if (endpoint && typeof endpoint === 'object') {
-    const node = endpoint as { id?: unknown; path?: unknown };
-    if (typeof node.id === 'string') return node.id;
-    if (typeof node.path === 'string') return node.path;
-  }
-  return null;
-}
-
-function normalizeLinks(links: ScanResult['links']): ScanResult['links'] {
-  const normalized: ScanResult['links'] = [];
-  for (const link of links) {
-    const runtimeLink = link as unknown as RuntimeLink;
-    const source = linkEndpointId(runtimeLink.source);
-    const target = linkEndpointId(runtimeLink.target);
-    if (source && target) normalized.push({ source, target });
-  }
-  return normalized;
-}
-
-function patchUpdatedFile(
-  prev: ScanResult,
-  filePath: string,
-  metrics: NonNullable<ScanResult['nodes'][number]['healthDetails']>,
-): ScanResult | null {
-  const idx = prev.nodes.findIndex(
-    (n) => n.kind === 'file' && n.path === filePath,
-  );
-  if (idx === -1) return null;
-  const nextNodes = prev.nodes.slice();
-  nextNodes[idx] = {
-    ...nextNodes[idx],
-    health: metrics.score,
-    healthDetails: metrics,
-    loc: metrics.loc,
-  };
-  return { ...prev, nodes: nextNodes };
-}
-
-function removeFile(prev: ScanResult, filePath: string): ScanResult {
-  const nextNodes = prev.nodes.filter((n) => n.path !== filePath);
-  if (nextNodes.length === prev.nodes.length) return prev;
-  const nextLinks = normalizeLinks(prev.links).filter(
-    (l) => l.source !== filePath && l.target !== filePath,
-  );
-  return { ...prev, nodes: nextNodes, links: nextLinks };
-}
 
 export function useProjectScan(activeFolder: string) {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
