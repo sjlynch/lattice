@@ -183,8 +183,8 @@ asking for fixes/reviews:
   applied to labels.
 - `labelSync.ts` — `applyLabelsToGraph(graph, depths, settings, depth, shift,
   enabled, selectedIds)`: the in-place delta walker for the Alt overlay (mirrors
-  `selectionHaloSync`). Reaches each mounted node's `__threeObj` and calls
-  `applyNodeLabelState`, so changing the depth band or the Shift (file-label)
+  `selectionHaloSync`). Walks the mounted nodes via the shared `mountedNodes`
+  helpers and calls `applyNodeLabelState`, so changing the depth band or the Shift (file-label)
   gate toggles only the labels that changed — **no `graph.refresh()`**, which
   would dispose and rebuild every node sprite. `enabled` false (Alt released)
   passes a band no node occupies, stripping all labels. **Selection override:**
@@ -213,9 +213,19 @@ asking for fixes/reviews:
   walks only the affected ids and calls `setNodeHalo`, never
   `graph.refresh()`.
 - `selectionHaloSync.ts` — `applySelectionHaloDelta(graph, prev, next,
-  settings)` is the entry point for that in-place toggle. Reads each
-  affected sim node's `__threeObj` (three-forcegraph's default
-  `objBindAttr`) and routes the call to `setNodeHalo`.
+  settings)` is the entry point for that in-place toggle. Looks up each
+  affected sim node via the shared `mountedNodes` helpers and routes the call
+  to `setNodeHalo`.
+- `mountedNodes.ts` — the shared mounted-node helpers every overlay delta
+  walker uses instead of re-deriving the same casts: `mountedNodes(graph)`
+  (the live sim-node array), `mountedRoot(node)` (its `__threeObj` mounted root
+  — three-forcegraph's default `objBindAttr`), `mountedNodesById(graph)` (an
+  id→node index for selection deltas), and `baseSizeFor(node, settings)` (the
+  ghost-aware ring/halo base size, the single source of truth shared with
+  `nodeObjectFactory`). **Cache-free** — every call walks `graphData()` fresh so
+  a structural swap can't serve a stale node. New ring/label overlays should
+  reuse these rather than re-adding bespoke `__threeObj` casts or
+  `graph.graphData().nodes` walkers.
 - `claudeNodeSprite.ts` — `makeClaudeNode(color, size)`: the free-floating
   filled disc + soft glow drawn for each in-progress Claude agent.
   `makeSatelliteNode(color, size)`: the smaller hollow-ring sprite for a
@@ -313,10 +323,19 @@ asking for fixes/reviews:
   `useLocOverlay` + `useHealthOverlay` + `useDeadCodeOverlay` +
   `useLabelsOverlay` + `useGraphFilter` so ForceGraphView gets one overlay
   setup point.
-- `useDeadCodeOverlay` — the `D`-hold overlay. Same keydown/keyup chord pattern
-  as `h`/`z`/`w` (blur + visibilitychange reset); recolors by reachability
-  (`deadCode` field on each node's `healthDetails`). No labels/RAF — just a
-  `clearLabelsAndRefresh` on toggle.
+- `useHoldKeyMode` — the shared hold-key chord lifecycle behind every overlay
+  (`H`/`Z`/`D`/`W`/Alt). Owns the four window/document listeners
+  (keydown/keyup/blur/visibilitychange), the `isTextInput` keydown guard, the
+  blur+tab-hide reset, and an opt-in `resetOnUnmount`; handlers are read through
+  a ref so the listeners register once and never churn. `momentaryLetterMode(key,
+  setActive, opts)` builds the handlers for a single-letter momentary chord
+  (modifier-excluded, repeat-suppressed) — used by `H`/`Z`/`D`/`W`. Alt supplies
+  bespoke handlers (modifier key + Shift sub-gate + `preventDefault`) to the same
+  hook. New hold-key overlays should reuse this rather than re-adding listeners.
+- `useDeadCodeOverlay` — the `D`-hold overlay. Hold-key chord via
+  `useHoldKeyMode(momentaryLetterMode('d', …))` (blur + visibilitychange reset);
+  recolors by reachability (`deadCode` field on each node's `healthDetails`). No
+  labels/RAF — just a `clearLabelsAndRefresh` on toggle.
 - `useAgentOverlay` — lifecycle half of the **Agent Presence Layer**, unified by
   the overlay's string agent id from two sources: in-progress `harness ===
   'claude'` tasks (task-colored node) and non-worktree Claude sessions from
@@ -328,10 +347,12 @@ asking for fixes/reviews:
   while `tick()` reports motion** — `kick()` acquires to wake the loop on a
   change, the frame handler releases on rest. See the APL ⇄ idle-controller
   contract in the named-subsystems section.
-- `useWorktreeHighlight` — the `W`-hold overlay. Same keydown/keyup chord
-  pattern as `h`/`z` (blur + visibilitychange reset). On press, fetches
-  `GET /api/tasks/worktree-modified` and rings each changed file in its
-  task's color via `setNodeWorktreeRing`; strips them on release.
+- `useWorktreeHighlight` — the `W`-hold overlay. Hold-key chord via
+  `useHoldKeyMode(momentaryLetterMode('w', …, { resetOnUnmount: true }))` (blur +
+  visibilitychange reset; the only overlay that also strips its rings on
+  unmount). On press, fetches `GET /api/tasks/worktree-modified` and rings each
+  changed file in its task's color via `setNodeWorktreeRing` (walking the shared
+  `mountedNodes`); strips them on release.
 - `useNodeContextMenu` / `useBoxSelect` / `useRefMirror` /
   `refresh.ts` — small focused helpers consumed directly by the coordinator.
 - `hooks/boxSelectGeometry.ts` — pure rectangle/projection hit-testing helpers

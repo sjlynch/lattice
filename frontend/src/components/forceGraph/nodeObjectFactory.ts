@@ -8,6 +8,7 @@ import { setNodeHalo } from './halo';
 import { spriteForHealth } from './healthOverlay';
 import { applyNodeLabelState } from './labelsOverlay';
 import { spriteForLoc } from './locOverlay';
+import { baseSizeFor } from './mountedNodes';
 import { spriteFor } from './sprites';
 import { isGhost, relForward } from './timelineDiff';
 
@@ -47,7 +48,9 @@ export type NodeObjectRefs = {
 // `useSelectionHaloSync`.
 export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Object3D {
   const s = refs.settingsRef.current;
-  const baseSize = node.kind === 'dir' ? s.dirNodeSize : s.fileNodeSize;
+  // Shared ghost-aware sizing — keeps the halo/ring scale added here in lock-step
+  // with the selection/worktree delta walkers (see `mountedNodes`).
+  const baseSize = baseSizeFor(node, s);
   const root = new THREE.Group();
   root.userData['lattice:nodeRoot'] = true;
 

@@ -3,7 +3,8 @@ import type { ForceGraph3DInstance } from '3d-force-graph';
 import { locLabelRegistry } from '../locOverlay';
 import { startLabelRepulsion } from '../labelRepulsionFrames';
 import type { GraphSettings } from '../graphSettings';
-import { clearLabelsAndRefresh, isTextInput } from './refresh';
+import { clearLabelsAndRefresh } from './refresh';
+import { momentaryLetterMode, useHoldKeyMode } from './useHoldKeyMode';
 
 // Lines-of-code overlay: active while the user holds `z`. Tracked in
 // both state (for the chip overlay) and a ref (so the nodeThreeObject
@@ -11,7 +12,8 @@ import { clearLabelsAndRefresh, isTextInput } from './refresh';
 //
 // Toggle on/off when `z` is held. Keyup also fires on window blur
 // (Alt-Tab, dev-tools focus) — we can't trust `keyup` alone, so reset
-// on blur and on visibility loss as well.
+// on blur and on visibility loss as well (shared lifecycle in
+// `useHoldKeyMode`).
 export function useLocOverlay(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   settingsRef: MutableRefObject<GraphSettings>,
@@ -23,31 +25,7 @@ export function useLocOverlay(
     locModeRef.current = locMode;
   }, [locMode]);
 
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key !== 'z' && e.key !== 'Z') return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (isTextInput(e.target)) return;
-      if (e.repeat) return;
-      setLocMode(true);
-    }
-    function onKeyUp(e: KeyboardEvent) {
-      if (e.key === 'z' || e.key === 'Z') setLocMode(false);
-    }
-    function reset() {
-      setLocMode(false);
-    }
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('blur', reset);
-    document.addEventListener('visibilitychange', reset);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('blur', reset);
-      document.removeEventListener('visibilitychange', reset);
-    };
-  }, []);
+  useHoldKeyMode(momentaryLetterMode('z', setLocMode));
 
   // Re-render node THREE objects when the LOC overlay toggles.
   // refresh() re-evaluates nodeThreeObject without restarting the d3
