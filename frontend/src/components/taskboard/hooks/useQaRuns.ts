@@ -54,8 +54,17 @@ export function useQaRuns(
       const settled: string[] = [];
       await Promise.all(
         activeRuns.map(async (run) => {
-          const status = await fetchQaRunStatus(run.runId).catch(() => null);
-          if (cancelled) return;
+          // A *transient* fetch failure must not be treated as "run gone":
+          // closing the terminal (which kills the pty) + forgetting the run
+          // here would strand the agent's pending verdict, so a confident PASS
+          // could never auto-advance the task to Done. fetchQaRunStatus returns
+          // null only for a real 404 (genuinely gone); a thrown error (network
+          // blip, backend momentarily busy) is caught to 'error' and skipped —
+          // we just retry on the next tick.
+          const status = await fetchQaRunStatus(run.runId).catch(
+            () => 'error' as const,
+          );
+          if (cancelled || status === 'error') return;
           if (!status || status.status === 'done') {
             closeTerminal(run.terminalId);
             apiForgetQaRun(run.runId).catch(() => {});

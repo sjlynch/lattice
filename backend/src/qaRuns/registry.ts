@@ -35,6 +35,18 @@ export function markQaRunMovedToDone(id: string): void {
 
 // Forget the run once the frontend has acknowledged completion — keeps the
 // in-memory map from growing across long sessions.
+//
+// IMPORTANT: never drop a run that is still `running`. The frontend status
+// poller calls this (via DELETE /api/qa-runs/:id) whenever a single
+// `GET /api/qa-runs/:id` poll fails or 404s — and a *transient* fetch hiccup is
+// indistinguishable from "the run is gone". Honoring that for a live run would
+// delete it from the registry before the agent posts its verdict, so the later
+// /verdict callback finds no run (`tracked:false`) and the confident-PASS
+// auto-advance qa → done silently never happens (the exact bug that left a
+// passed task stuck in the QA lane). A live run is only ever forgotten after
+// its Stop hook has marked it `done`; an unknown id is a harmless no-op.
 export function forgetQaRun(id: string): void {
+  const r = runs.get(id);
+  if (r && r.status !== 'done') return;
   runs.delete(id);
 }

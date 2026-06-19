@@ -2,6 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseVerdictBody } from '../routes/qaRuns.js';
 import { renderQaInstructions } from '../qaRuns/instructions.js';
+import {
+  applyQaVerdict,
+  forgetQaRun,
+  getQaRun,
+  markQaRunDone,
+  recordQaRun,
+} from '../qaRuns.js';
 
 // ---------- parseVerdictBody ----------
 //
@@ -73,4 +80,48 @@ test('renderQaInstructions: embeds the run-keyed verdict URL + auto-advance step
   assert.match(md, /confident PASS auto-moves the task to Done/);
   // No unsubstituted tokens left behind.
   assert.doesNotMatch(md, /\{\{\s*\w+\s*\}\}/);
+});
+
+// ---------- forgetQaRun guard ----------
+//
+// Regression guard for the "passed task stuck in QA" bug: the frontend status
+// poller forgets a run (DELETE /api/qa-runs/:id) on any failed poll, including
+// a transient one. If that dropped a still-running run, the agent's later
+// verdict would land as `tracked:false` and never advance qa → done. So forget
+// must refuse to drop a `running` run, and only finalize a `done` one.
+
+function makeRunningRun(id: string) {
+  recordQaRun({
+    id,
+    taskId: 't_does_not_exist',
+    projectPath: 'C:/dev/proj',
+    cwd: `C:/dev/proj/.scratch/${id}`,
+    status: 'running',
+    createdAt: 1,
+  });
+}
+
+test('forgetQaRun: keeps a still-running run so its verdict can still advance it', async () => {
+  const id = 'qa_test_running_keep';
+  makeRunningRun(id);
+  // The frontend poller's transient-failure DELETE must NOT drop a live run.
+  forgetQaRun(id);
+  assert.ok(getQaRun(id), 'a running run must survive forgetQaRun');
+
+  // A verdict arriving afterward is still tracked (the move itself no-ops only
+  // because the throwaway task id does not exist — the point is tracked:true,
+  // not the silent tracked:false that caused the stuck-in-QA bug).
+  const outcome = await applyQaVerdict(id, { passed: true, confident: true });
+  assert.equal(outcome.tracked, true);
+  // Tidy up the module-global registry: only a done run can be forgotten.
+  markQaRunDone(id);
+  forgetQaRun(id);
+});
+
+test('forgetQaRun: drops a run once it is marked done', () => {
+  const id = 'qa_test_done_drop';
+  makeRunningRun(id);
+  markQaRunDone(id);
+  forgetQaRun(id);
+  assert.equal(getQaRun(id), undefined, 'a done run is forgotten normally');
 });
