@@ -8,6 +8,7 @@ import { Router } from 'express';
 import { canonicalProjectPath } from '../projectPath.js';
 import { getTask } from '../tasks.js';
 import {
+  applyQaVerdict,
   cleanupQaSession,
   forgetQaRun,
   getQaRun,
@@ -16,6 +17,27 @@ import {
   startQaSession,
 } from '../qaRuns.js';
 import { unregisterAgentSession } from '../agentSessions.js';
+
+// Tolerantly read a PASS/confident verdict out of the agent's POST body. The
+// brief tells it to send `{ "verdict": "pass"|"fail", "confidence": "high"|"low" }`,
+// but we also accept the boolean shorthand (`passed` / `confident`) so a small
+// wording drift in a user-edited QA template still advances the task.
+export function parseVerdictBody(
+  body: unknown,
+): { passed: boolean; confident: boolean } {
+  const b = (body || {}) as {
+    verdict?: unknown;
+    confidence?: unknown;
+    passed?: unknown;
+    confident?: unknown;
+  };
+  const verdict = typeof b.verdict === 'string' ? b.verdict.trim().toLowerCase() : '';
+  const confidence =
+    typeof b.confidence === 'string' ? b.confidence.trim().toLowerCase() : '';
+  const passed = b.passed === true || verdict === 'pass' || verdict === 'passed';
+  const confident = b.confident === true || confidence === 'high';
+  return { passed, confident };
+}
 
 export function buildQaRunsRouter(backendOrigin: string): Router {
   const r = Router();
@@ -62,7 +84,23 @@ export function buildQaRunsRouter(backendOrigin: string): Router {
       status: run.status,
       taskId: run.taskId,
       projectPath: run.projectPath,
+      verdict: run.verdict,
+      movedToDone: run.movedToDone,
     });
+  });
+
+  // Verdict callback — the agent's final step. A confident PASS promotes the
+  // task qa → done; anything else leaves it in the QA lane for human review.
+  // Reported before the session stops (and thus before the /done Stop hook
+  // fires), so the move lands while the run is still tracked.
+  r.post('/api/qa-runs/:id/verdict', async (req, res) => {
+    const { passed, confident } = parseVerdictBody(req.body);
+    try {
+      const outcome = await applyQaVerdict(req.params.id, { passed, confident });
+      res.json(outcome);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   // Stop-hook callback. Idempotent: a duplicate POST after the run has been

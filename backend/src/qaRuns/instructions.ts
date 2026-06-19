@@ -15,22 +15,27 @@ import { DEFAULT_QA_TEMPLATE } from '../instructionTemplates/defs.js';
 
 export function renderQaInstructions(args: {
   projectPath: string;
+  // The QA run id — keys the structured-verdict callback URL.
+  qaRunId: string;
   taskId: string;
   taskTitle: string;
   taskDescription?: string;
   backendOrigin: string;
   template?: string;
 }): string {
-  const { projectPath, taskId, taskTitle, taskDescription, backendOrigin } = args;
+  const { projectPath, qaRunId, taskId, taskTitle, taskDescription, backendOrigin } =
+    args;
   const description = taskDescription?.trim()
     ? taskDescription.trim()
     : '_(no description provided)_';
   const summaryUrl = `${backendOrigin}/api/tasks/${taskId}/append-summary`;
+  const verdictUrl = `${backendOrigin}/api/qa-runs/${qaRunId}/verdict`;
 
   return applyTemplate(args.template ?? DEFAULT_QA_TEMPLATE, {
     project_path: projectPath,
     task_title: taskTitle,
     task_description: description,
     summary_url: summaryUrl,
+    verdict_url: verdictUrl,
   });
 }

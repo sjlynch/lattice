@@ -77,7 +77,11 @@ Open ──▶── In Progress ──▶── Ready to Merge ──▶── 
     the resolved merge and finalizes (FF main + cleanup). `/merged` and
     `/merge-aborted` are also exposed as explicit fallbacks.
 - `QA → Done`: manual drag-and-drop in the UI, or "mark all QA → Done"
-  button on the QA lane.
+  button on the QA lane. **Also automatic**: when a QA-lane Playwright e2e
+  session finishes and reports a *confident PASS* to
+  `POST /api/qa-runs/:id/verdict` (`{verdict:"pass",confidence:"high"}`), the
+  backend promotes the task qa → done. A FAIL — or a PASS the agent isn't
+  confident in — leaves it in QA for a human.
 
 ### Merge runs (backend-driven "merge all")
 
@@ -248,7 +252,10 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
   per-task ▶ "run e2e test" button and a lane-header "run all e2e tests" button:
   each spawns a one-off QA-scoped-Playwright Claude session
   (`backend/src/qaRuns/`, mirrors `pushRuns/`) that exercises the merged task
-  end-to-end and appends a PASS/FAIL verdict via `/append-summary`. See
+  end-to-end, appends a human-readable PASS/FAIL verdict via `/append-summary`,
+  then posts a *structured* verdict to `POST /api/qa-runs/:id/verdict`
+  (`{verdict, confidence}`) — a confident PASS auto-advances the task qa → done
+  (`backend/src/qaRuns/verdict.ts`); anything else leaves it in QA. See
   `backend/src/mcp/CLAUDE.md`.
 - **Tasks store** is in-memory keyed by project path with debounced JSON
   persistence; the global `~/.lattice/projects.json` index is consulted

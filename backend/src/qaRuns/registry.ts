@@ -1,4 +1,4 @@
-import type { QaRun } from './types.js';
+import type { QaRun, QaVerdict } from './types.js';
 
 // In-memory QA e2e-run registry. Like pushRuns, it isn't persisted — at boot
 // the map is empty, so any scratch dir still on disk is by definition stale
@@ -19,6 +19,18 @@ export function markQaRunDone(id: string): boolean {
   r.status = 'done';
   r.doneAt = Date.now();
   return true;
+}
+
+// Stash the agent's reported verdict on the run. No-op if the run is unknown.
+export function recordQaVerdict(id: string, verdict: QaVerdict): void {
+  const r = runs.get(id);
+  if (r) r.verdict = verdict;
+}
+
+// Flag that a confident pass promoted this run's task to Done.
+export function markQaRunMovedToDone(id: string): void {
+  const r = runs.get(id);
+  if (r) r.movedToDone = true;
 }
 
 // Forget the run once the frontend has acknowledged completion — keeps the

@@ -4,14 +4,18 @@
 // paths, instruction rendering, Stop-hook setup, session materialization, and
 // guarded cleanup each stay independently reviewable.
 
-export type { QaRun, QaSession } from './qaRuns/types.js';
+export type { QaRun, QaSession, QaVerdict } from './qaRuns/types.js';
 export {
   forgetQaRun,
   getQaRun,
   markQaRunDone,
+  markQaRunMovedToDone,
   recordQaRun,
+  recordQaVerdict,
 } from './qaRuns/registry.js';
 export { startQaSession } from './qaRuns/session.js';
 export type { StartedQaSession, StartQaSessionArgs } from './qaRuns/session.js';
 export { cleanupQaSession } from './qaRuns/cleanup.js';
 export { qaAgentId } from './qaRuns/stopHook.js';
+export { applyQaVerdict } from './qaRuns/verdict.js';
+export type { QaVerdictInput, QaVerdictOutcome } from './qaRuns/verdict.js';

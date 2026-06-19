@@ -40,6 +40,7 @@ async function setupQaSession(args: StartQaSessionArgs): Promise<QaSession> {
     instructionsFile,
     renderQaInstructions({
       projectPath: args.projectPath,
+      qaRunId: id,
       taskId: args.taskId,
       taskTitle: args.taskTitle,
       taskDescription: args.taskDescription,

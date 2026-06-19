@@ -187,9 +187,11 @@ Project: \`{{project_path}}\`
    least one edge/error case where it makes sense. The browser may be headless
    or headed depending on the QA-lane toggle — that's already configured.
 5. Decide a verdict: **PASS** (the feature works as described) or **FAIL**
-   (it doesn't — capture exactly what broke and how to reproduce it).
-6. **As your final step, append your verdict to the Lattice task** so it stays
-   on the task board after this terminal closes:
+   (it doesn't — capture exactly what broke and how to reproduce it), and how
+   **confident** you are in that verdict (\`high\` only if you genuinely
+   exercised the feature end-to-end and are sure; otherwise \`low\`).
+6. **Append your verdict to the Lattice task** so it stays on the task board
+   after this terminal closes:
 
    \`\`\`bash
    curl -s -X POST {{summary_url}} \\
@@ -204,8 +206,22 @@ Project: \`{{project_path}}\`
    Replace the body with your real findings. On FAIL, lead with \`FAIL\` and the
    reproduction steps.
 
-7. Then stop — Lattice's Stop hook closes this terminal automatically once you
-   stop, so make sure the summary curl has already run.
+7. **Then report the structured verdict** so Lattice can advance the task.
+   A **confident PASS auto-moves the task to Done**; a FAIL — or a PASS you are
+   not confident in — leaves it in the QA lane for a human to review. Only send
+   \`"confidence":"high"\` when you are genuinely sure the feature works:
+
+   \`\`\`bash
+   curl -s -X POST {{verdict_url}} \\
+     -H "Content-Type: application/json" \\
+     -d '{"verdict":"pass","confidence":"high"}'
+   \`\`\`
+
+   Use \`"verdict":"fail"\` if it didn't work, or \`"confidence":"low"\` if you
+   couldn't fully verify it.
+
+8. Then stop — Lattice's Stop hook closes this terminal automatically once you
+   stop, so make sure both curls above have already run.
 `;
 
 // ---------------------------------------------------------------------------
@@ -457,6 +473,11 @@ export const INSTRUCTION_TEMPLATE_CATALOG: InstructionTemplateDef[] = [
       {
         name: 'summary_url',
         description: 'The /append-summary callback URL for posting the verdict.',
+      },
+      {
+        name: 'verdict_url',
+        description:
+          'The /verdict callback URL for the structured PASS/FAIL + confidence report; a confident PASS auto-advances the task qa → done.',
       },
     ],
   },
