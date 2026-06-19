@@ -61,7 +61,7 @@ export function useGraphOverlays({
     selected,
   );
 
-  useGraphFilter(graphRef, hiddenExts, data, history, range, changeMapRef);
+  useGraphFilter(graphRef, hiddenExts, changeMapRef);
 
   return {
     settings,
