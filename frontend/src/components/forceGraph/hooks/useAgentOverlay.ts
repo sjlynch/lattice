@@ -47,6 +47,21 @@ function sessionDescriptors(sessions: AgentSession[]): AgentDescriptor[] {
   return sessions.map((s) => ({ taskId: s.agentId, color: CLAUDE_ORANGE }));
 }
 
+// Cheap equality on a descriptor set: `/ws/tasks` re-pushes a full snapshot for
+// ANY board change (a status flip on an unrelated task, a title edit), so the
+// recomputed array is usually identical to the last one. Guarding the apply on
+// an actual change keeps a busy board from running a full `overlay.setAgents`
+// reconcile on every WS message. Mirrors `sameSet`/`lastAppliedRef` in
+// `useGraphSearch`. Order is stable (both descriptor sources map in input
+// order), so an index-wise compare on `taskId` + `color` is sufficient.
+function sameDescriptors(a: AgentDescriptor[], b: AgentDescriptor[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].taskId !== b[i].taskId || a[i].color !== b[i].color) return false;
+  }
+  return true;
+}
+
 // The fields a `task-activity` / `agent-activity` frame carries that the
 // overlay routing cares about — shared shape of TaskActivityEvent and
 // AgentActivityEvent so one router handles both (keyed by the parent's id).
@@ -216,7 +231,9 @@ export function useAgentOverlay(
     const unsub = subscribeTasks(
       activeFolder,
       (tasks) => {
-        taskDescRef.current = taskDescriptors(tasks);
+        const next = taskDescriptors(tasks);
+        if (sameDescriptors(next, taskDescRef.current)) return;
+        taskDescRef.current = next;
         applyMerged();
       },
       undefined,
@@ -234,7 +251,9 @@ export function useAgentOverlay(
   useEffect(() => {
     if (!activeFolder) return;
     const unsub = subscribeAgentSessions(activeFolder, (sessions) => {
-      sessionDescRef.current = sessionDescriptors(sessions);
+      const next = sessionDescriptors(sessions);
+      if (sameDescriptors(next, sessionDescRef.current)) return;
+      sessionDescRef.current = next;
       applyMerged();
     });
     return () => {
