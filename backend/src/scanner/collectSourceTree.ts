@@ -32,6 +32,12 @@ export async function collectSourceTree(
       return;
     }
 
+    // Overlap sibling subtrees: collect each subdir walk and await them
+    // together rather than serializing readdir round-trips. Mirrors the
+    // proven pattern in findTsconfigs (health/tsconfig.ts) and
+    // findPackageJsons (health/crossFile/roots.ts). Nothing downstream
+    // depends on walk order — aggregate rebuilds dir nodes and sorts.
+    const subwalks: Promise<void>[] = [];
     for (const entry of entries) {
       const abs = path.join(dir, entry.name);
       const rel = path.relative(absRoot, abs).split(path.sep).join('/');
@@ -41,12 +47,13 @@ export async function collectSourceTree(
 
       if (entry.isDirectory()) {
         directories.push({ id: abs, name: entry.name, path: abs, parentId });
-        await walk(abs, abs);
+        subwalks.push(walk(abs, abs));
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();
         if (SOURCE_EXTS.has(ext)) files.push(abs);
       }
     }
+    await Promise.all(subwalks);
   }
 
   await walk(absRoot, absRoot);
