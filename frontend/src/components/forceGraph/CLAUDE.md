@@ -97,8 +97,9 @@ asking for fixes/reviews:
   `useEffect` is one concern: selection-refresh, Escape key, counts memo.
 - `nodeObjectFactory.ts` — `buildNodeObject(node, refs)` + `nativeNodeLabel(node)`.
   The decision tree for ghost vs health vs LOC vs dead-code vs base sprite
-  (+ change-ring and selection-halo wrap order) lives here; the init hook just
-  hands the closure to `ForceGraph3D.nodeThreeObject`. Recolor precedence is
+  (+ change-ring and selection-halo, both attached as sibling children of the
+  root, ordered behind/around the base by renderOrder + size) lives here; the
+  init hook just hands the closure to `ForceGraph3D.nodeThreeObject`. Recolor precedence is
   health > loc > dead > base; health/loc skip `metricsIgnoredExts`, dead-code
   does not (it recolors every file). **Alt name labels are NOT a base-sprite
   branch** — they attach as a sibling child of the root via `applyNodeLabelState`
@@ -216,6 +217,21 @@ asking for fixes/reviews:
   settings)` is the entry point for that in-place toggle. Reads each
   affected sim node's `__threeObj` (three-forcegraph's default
   `objBindAttr`) and routes the call to `setNodeHalo`.
+- `changeRing.ts` — the timeline scrubber's git change rings, drawn as a
+  sibling-child toggle on the node root (the halo pattern):
+  `setNodeChangeRing(root, kind|null, baseSize)` adds/removes/recolors the
+  ring (added=green, modified=yellow), `deletedSprite` renders a ghost
+  (deleted-file) node from scratch (grey disc + red ring), and
+  `setNodeChangeRingsVisible` is the `W`-overlay momentary hide. Materials are
+  cached in `changeRingMaterials.ts` (4 GPU resources total).
+- `changeRingSync.ts` — `applyChangeRingDelta(graph, prevMap, nextMap,
+  settings, scanRoot)` is the scrub-driven in-place toggle (mirrors
+  `selectionHaloSync`): it diffs the prev/next change maps and, for only the
+  affected rel-paths, toggles each real file node's ring via `setNodeChangeRing`
+  and flips affected ghost nodes' `.visible`. Used by `useGitTimeline` instead
+  of `graph.refresh()`, so a scrubber notch is O(changed paths) ring mutations
+  rather than an O(N) full sprite rebuild. The full-rebuild path
+  (`buildNodeObject`) still attaches rings for genuine data/size/metric swaps.
 - `claudeNodeSprite.ts` — `makeClaudeNode(color, size)`: the free-floating
   filled disc + soft glow drawn for each in-progress Claude agent.
   `makeSatelliteNode(color, size)`: the smaller hollow-ring sprite for a
@@ -344,9 +360,25 @@ asking for fixes/reviews:
 Three useEffects (inside the overlay sub-hooks) react to settings changes:
 - Sizes (`fileNodeSize`/`dirNodeSize`/`labelSize`): clear the LOC, health, and
   Alt-label registries, then call `graph.refresh()` (re-evaluates
-  `nodeThreeObject`, no sim restart).
+  `nodeThreeObject`, no sim restart). **Guarded** (`useGraphSettings`): the
+  refresh is skipped on the initial mount and on any run where no nodes are
+  mounted — `nodeThreeObject` reads `settingsRef.current` live, so the data-sync
+  build already creates sprites at the current sizes; a refresh before then is a
+  byte-identical rebuild that needlessly wakes the idle loop. A previous-size
+  ref also no-ops a settings-object swap (e.g. project switch) that lands on
+  identical sizes. Live slider drags still refresh (size changed + nodes
+  mounted).
 - Physics (`dagLevelDistance`/`charge`/`link`/`velocityDecay`): poke
-  `d3Force` strengths + `d3ReheatSimulation()`.
+  `d3Force` strengths + `d3ReheatSimulation()`. **The force pokes run on every
+  run, including initial setup** — the graph is constructed only with
+  `dagLevelDistance`, so a project's persisted non-default charge/link/decay
+  must be pushed in here or they'd sit at the d3 defaults until the first slider
+  drag. **The reheat is guarded** (`useGraphSettings`): skipped on the initial
+  mount (previous-value ref) and whenever no nodes are mounted (an empty sim has
+  nothing to relax — the data-sync structural swap reheats once it populates
+  `graphData`, picking up the forces we set). So a freshly-loaded/applied
+  settings object no longer wakes the render loop for nothing; only an actual
+  physics/DAG change on a populated graph reheats.
 - Filter (`hiddenExts`): swap `nodeVisibility`/`linkVisibility` accessors.
   No restart.
 

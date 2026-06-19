@@ -51,6 +51,7 @@ import {
 } from './agentOverlayConstants';
 import {
   AgentPathIndex,
+  baseName,
   hoverMargin,
   normalizePath,
 } from './agentOverlayPathIndex';
@@ -86,6 +87,8 @@ type BeamHost = {
   color: string;
   beams: Map<string, Beam>;
   currentFile?: string;
+  // Cached basename of currentFile (kept in lock-step at the write site below).
+  currentFileBase?: string;
 };
 
 export type { AgentDescriptor } from './agentOverlayTypes';
@@ -104,6 +107,10 @@ export class AgentOverlay {
   // node positions, low-pass filtered so the agents' height stays steady.
   private hoverLine = new HoverLine();
   private readonly tmpB = new THREE.Vector3();
+  // Reusable per-agent centroid accumulator, reset at the top of each agent
+  // iteration in tick (tick is not re-entrant, so a single shared instance is
+  // safe). Hoisted off the per-agent-per-frame object literal it replaced.
+  private readonly acc = { sx: 0, sz: 0, n: 0 };
   // Frames since the cached graph bounds were last recomputed (see
   // BOUNDS_RECHECK_FRAMES). Forces a periodic refresh so the hover line can't
   // lag node motion that bypasses the engine-hot flag.
@@ -124,7 +131,15 @@ export class AgentOverlay {
     const ss = s * SATELLITE_SCALE;
     for (const a of this.agents.values()) {
       a.node.scale.set(s, s, 1);
-      for (const sat of a.satellites.values()) sat.node.scale.set(ss, ss, 1);
+      for (const sat of a.satellites.values()) {
+        sat.node.scale.set(ss, ss, 1);
+        // The cached ring offset depends on nodeSize — refresh it here, the
+        // only other place nodeSize changes (besides createSatellite).
+        const off = satelliteOffset(sat.slot, nodeSize);
+        sat.offDx = off.dx;
+        sat.offDy = off.dy;
+        sat.offDz = off.dz;
+      }
     }
   }
 
@@ -291,6 +306,7 @@ export class AgentOverlay {
     this.group.add(node);
     const tether = createTether(agent.color);
     this.group.add(tether.line);
+    const off = satelliteOffset(slot, this.nodeSize);
     const sat: Satellite = {
       subagentId,
       subagentType,
@@ -298,6 +314,9 @@ export class AgentOverlay {
       color: agent.color,
       node,
       pos: agent.pos.clone(),
+      offDx: off.dx,
+      offDy: off.dy,
+      offDz: off.dz,
       tether,
       beams: new Map(),
       lastSeen: now,
@@ -337,6 +356,7 @@ export class AgentOverlay {
       if (prevBeam) prevBeam.endAt = now + BEAM_TTL_MS;
     }
     host.currentFile = file;
+    host.currentFileBase = baseName(file);
 
     const existing = host.beams.get(norm);
     if (existing) {
@@ -380,10 +400,15 @@ export class AgentOverlay {
       // the whole cluster's work even when the main agent has delegated. This
       // pass also prunes expired beams and stashes each live beam's file node
       // for the geometry pass below (Part D).
-      const acc = { sx: 0, sz: 0, n: 0 };
+      const acc = this.acc;
+      acc.sx = 0;
+      acc.sz = 0;
+      acc.n = 0;
       if (this.accumulateBeams(agent.beams, now, acc)) moving = true;
-      for (const sat of agent.satellites.values()) {
-        if (this.accumulateBeams(sat.beams, now, acc)) moving = true;
+      if (agent.satellites.size > 0) {
+        for (const sat of agent.satellites.values()) {
+          if (this.accumulateBeams(sat.beams, now, acc)) moving = true;
+        }
       }
 
       // Track horizontally toward the files in play; keep X/Z when idle. Rest is
@@ -424,7 +449,7 @@ export class AgentOverlay {
       // Update the main agent's beam geometries + opacity (reusing the stashed
       // file nodes), then place + update its satellites.
       this.updateBeamGeometries(agent.beams, agent.pos, now, 1);
-      if (this.updateSatellites(agent, now)) moving = true;
+      if (agent.satellites.size > 0 && this.updateSatellites(agent, now)) moving = true;
     }
 
     return moving;
@@ -454,15 +479,18 @@ export class AgentOverlay {
     acc: { sx: number; sz: number; n: number },
   ): boolean {
     let moving = false;
-    for (const [norm, beam] of beams) {
+    // Iterate values() (not entries) so destructuring a Map pair array per beam
+    // per frame is avoided; Beam.normPath is the exact map key for the delete
+    // and the pathIndex lookup. Deleting mid-values()-iteration is safe.
+    for (const beam of beams.values()) {
       if (now >= beam.endAt) {
         disposeBeam(this.group, beam);
-        beams.delete(norm);
+        beams.delete(beam.normPath);
         moving = true; // a beam vanished this frame — paint its removal
         continue;
       }
       if (beam.endAt !== Infinity) moving = true;
-      const node = this.pathIndex.get(norm);
+      const node = this.pathIndex.get(beam.normPath);
       beam.targetNode = node;
       if (node) {
         acc.sx += node.x ?? 0;
@@ -501,20 +529,24 @@ export class AgentOverlay {
   // whether any satellite still has motion to paint.
   private updateSatellites(agent: Agent, now: number): boolean {
     let moving = false;
-    for (const [id, sat] of agent.satellites) {
+    // Iterate values() (not entries) to skip the per-satellite pair-array
+    // allocation; Satellite.subagentId is the exact map key for the delete.
+    // Deleting mid-values()-iteration is safe.
+    for (const sat of agent.satellites.values()) {
       // Missed-SubagentStop safety net: a satellite with no live beam that has
       // been quiet past the TTL is reaped. SubagentStop is the primary signal,
       // so a satellite still showing its last file (a persistent beam) is kept.
       if (sat.beams.size === 0 && now - sat.lastSeen > SATELLITE_IDLE_TTL_MS) {
         this.disposeSatellite(sat);
-        agent.satellites.delete(id);
+        agent.satellites.delete(sat.subagentId);
         moving = true;
         continue;
       }
-      const off = satelliteOffset(sat.slot, this.nodeSize);
-      const tx = agent.pos.x + off.dx;
-      const ty = agent.pos.y + off.dy;
-      const tz = agent.pos.z + off.dz;
+      // Cached ring offset (set at spawn, refreshed in setSizes) — no per-frame
+      // trig + object allocation.
+      const tx = agent.pos.x + sat.offDx;
+      const ty = agent.pos.y + sat.offDy;
+      const tz = agent.pos.z + sat.offDz;
       if (
         Math.abs(tx - sat.pos.x) > REST_EPS ||
         Math.abs(ty - sat.pos.y) > REST_EPS ||
