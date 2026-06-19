@@ -38,23 +38,56 @@ export function useTimelineScrubberDrag(
     if (!activeHandle) return;
     const handle = activeHandle;
 
-    function onMove(e: PointerEvent) {
-      const idx = indexFromClientX(e.clientX);
+    // Coalesce the per-pointermove onChange into at most one call per frame:
+    // each move just stashes the latest clientX and schedules a single RAF.
+    // onChange drives the visible commit range (which filters/recolors graph
+    // nodes), so firing it ~60+/sec during a fast scrub is wasted graph CPU.
+    let rafId: number | null = null;
+    let latestClientX = 0;
+
+    function emit() {
+      const idx = indexFromClientX(latestClientX);
       const range = rangeForHandleMove(handle, idx, left, right);
       onChange(range.left, range.right);
     }
 
+    function onFrame() {
+      rafId = null;
+      emit();
+    }
+
+    function onMove(e: PointerEvent) {
+      latestClientX = e.clientX;
+      if (rafId === null) rafId = requestAnimationFrame(onFrame);
+    }
+
     function onUp() {
+      // Never drop the final frame: if a coalesced move is still pending,
+      // flush it synchronously so the released range is exact.
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+        emit();
+      }
+      setActiveHandle(null);
+    }
+
+    function onCancel() {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
       setActiveHandle(null);
     }
 
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
-    window.addEventListener('pointercancel', onUp);
+    window.addEventListener('pointercancel', onCancel);
     return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('pointercancel', onCancel);
     };
   }, [activeHandle, indexFromClientX, left, onChange, right]);
 
