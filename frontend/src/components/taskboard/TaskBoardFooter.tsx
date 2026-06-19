@@ -24,8 +24,8 @@ export function TaskBoardFooter({ tasks, filteredTasks, searchActive }: Props) {
           {runningCount} running · {queuedCount} queued
         </span>
       )}{' '}
-      · drag to reorder · click to select · ctrl+click or shift+click to
-      multi-select · pencil to edit
+      · drag to reorder · click to edit · ctrl+click or shift+click to
+      multi-select
     </div>
   );
 }

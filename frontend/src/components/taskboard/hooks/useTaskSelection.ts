@@ -37,19 +37,6 @@ export function useTaskSelection(
     [selectedIds, selectionLane],
   );
 
-  const handleSingleSelect = useCallback(
-    (id: string, laneId: TaskStatus) => {
-      if (selectedIds.size === 1 && selectedIds.has(id)) {
-        clearSelection();
-        return;
-      }
-      setSelectedIds(new Set([id]));
-      setSelectionLane(laneId);
-      setAnchorId(id);
-    },
-    [selectedIds, clearSelection],
-  );
-
   const handleRangeSelect = useCallback(
     (id: string, laneId: TaskStatus) => {
       const anchor = anchorId ? tasks.find((t) => t.id === anchorId) : null;
@@ -79,7 +66,6 @@ export function useTaskSelection(
     selectedIds,
     selectionLane,
     clearSelection,
-    handleSingleSelect,
     handleToggleSelect,
     handleRangeSelect,
   };

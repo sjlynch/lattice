@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   Ban,
   GitMerge,
-  Pencil,
   Play,
   TerminalSquare,
   Trash2,
@@ -20,8 +19,9 @@ export type TaskCardAction = {
 };
 
 // The optional per-action handlers a card may wire up. A handler being
-// present is what conditions an action into the rendered row — `onView`
-// and `onDelete` are always supplied, so edit/delete always render.
+// present is what conditions an action into the rendered row — `onDelete`
+// is always supplied, so delete always renders. (Editing a task is no
+// longer a button: a plain click anywhere on the card opens the editor.)
 export type TaskCardActionHandlers = {
   onDelete: () => void;
   onRun?: () => void;
@@ -32,7 +32,6 @@ export type TaskCardActionHandlers = {
   // launch a full end-to-end test of this merged task.
   onQaRun?: () => void;
   onFocusTerminal?: () => void;
-  onView: () => void;
 };
 
 type TaskCardActionContext = {
@@ -42,7 +41,7 @@ type TaskCardActionContext = {
 // Declarative spec for one possible action: which handler gates it, and how
 // to build the rendered action once that handler is present. Ordering of
 // this list is the on-screen button order (terminal, run, cancel-queued,
-// resume, merge, then the always-present edit + delete).
+// resume, merge, then the always-present delete).
 type TaskCardActionSpec = {
   handler: keyof TaskCardActionHandlers;
   build: (
@@ -120,17 +119,6 @@ const TASK_CARD_ACTION_SPECS: readonly TaskCardActionSpec[] = [
       title: 'Run an end-to-end test with Playwright',
       ariaLabel: 'Run end-to-end test',
       icon: createElement(Play, { size: 11, fill: 'currentColor' }),
-    }),
-  },
-  {
-    handler: 'onView',
-    build: (onClick) => ({
-      key: 'edit',
-      className: 'task-card-iconbtn edit',
-      onClick,
-      title: 'View / edit task',
-      ariaLabel: 'View task details',
-      icon: createElement(Pencil, { size: 11 }),
     }),
   },
   {

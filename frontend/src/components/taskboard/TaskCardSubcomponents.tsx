@@ -1,4 +1,4 @@
-import { memo, type MouseEvent } from 'react';
+import { memo } from 'react';
 import { AlertTriangle, Hourglass } from 'lucide-react';
 import type { Task } from '../../api';
 import { StuckPill } from './StuckPill';
@@ -7,29 +7,27 @@ import {
   type TaskCardActionHandlers,
 } from './TaskCardActions';
 
-// Title/description block plus the queued/conflict pills. Click anywhere on
-// the body to drive selection (handled by the parent via `onClick`).
-// Memoized: TaskCard passes a stable `onClick`, so re-renders driven by
-// unrelated card state (e.g. drag highlight) skip the body.
+// Title/description block plus the queued/conflict pills. The click handler
+// lives on the parent card container now (a plain click opens the editor;
+// ctrl/shift+click multi-select), so the body is purely presentational.
+// Memoized: re-renders driven by unrelated card state (e.g. drag highlight)
+// skip the body.
 export const TaskCardBody = memo(function TaskCardBody({
   task,
   isConflict,
   isSelected,
-  onClick,
 }: {
   task: Task;
   isConflict: boolean;
   isSelected: boolean;
-  onClick: (e: MouseEvent<HTMLDivElement>) => void;
 }) {
   return (
     <div
       className="task-card-body"
-      onClick={onClick}
       title={
         isSelected
-          ? 'Ctrl+click to deselect · shift+click to range-select'
-          : 'Click to select · ctrl+click to multi-select'
+          ? 'Click to edit · ctrl+click to deselect · shift+click to range-select'
+          : 'Click to edit · ctrl+click or shift+click to multi-select'
       }
     >
       <div className="task-card-title">
