@@ -360,9 +360,25 @@ asking for fixes/reviews:
 Three useEffects (inside the overlay sub-hooks) react to settings changes:
 - Sizes (`fileNodeSize`/`dirNodeSize`/`labelSize`): clear the LOC, health, and
   Alt-label registries, then call `graph.refresh()` (re-evaluates
-  `nodeThreeObject`, no sim restart).
+  `nodeThreeObject`, no sim restart). **Guarded** (`useGraphSettings`): the
+  refresh is skipped on the initial mount and on any run where no nodes are
+  mounted — `nodeThreeObject` reads `settingsRef.current` live, so the data-sync
+  build already creates sprites at the current sizes; a refresh before then is a
+  byte-identical rebuild that needlessly wakes the idle loop. A previous-size
+  ref also no-ops a settings-object swap (e.g. project switch) that lands on
+  identical sizes. Live slider drags still refresh (size changed + nodes
+  mounted).
 - Physics (`dagLevelDistance`/`charge`/`link`/`velocityDecay`): poke
-  `d3Force` strengths + `d3ReheatSimulation()`.
+  `d3Force` strengths + `d3ReheatSimulation()`. **The force pokes run on every
+  run, including initial setup** — the graph is constructed only with
+  `dagLevelDistance`, so a project's persisted non-default charge/link/decay
+  must be pushed in here or they'd sit at the d3 defaults until the first slider
+  drag. **The reheat is guarded** (`useGraphSettings`): skipped on the initial
+  mount (previous-value ref) and whenever no nodes are mounted (an empty sim has
+  nothing to relax — the data-sync structural swap reheats once it populates
+  `graphData`, picking up the forces we set). So a freshly-loaded/applied
+  settings object no longer wakes the render loop for nothing; only an actual
+  physics/DAG change on a populated graph reheats.
 - Filter (`hiddenExts`): swap `nodeVisibility`/`linkVisibility` accessors.
   No restart.
 
