@@ -3,6 +3,7 @@ import path from 'node:path';
 import { pushSessionsRoot } from '../pushRuns/paths.js';
 import { cleanupPushSession } from '../pushRuns.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';
+import { collectLiveSessionCwds, hasLiveSessionAtOrUnder } from './liveSessions.js';
 
 // At boot the in-memory push-runs registry is empty (it isn't persisted —
 // see pushRuns/registry.ts), so any directory under each project's push
@@ -14,6 +15,19 @@ import { forEachKnownProjectSafely } from './projectIteration.js';
 // root). This is the convergence layer for the same reason
 // sweepOrphanedWorktrees exists for worktrees.
 export async function sweepOrphanedPushSessions(): Promise<void> {
+  // Same hazard as the QA sweep: a push session still running when the backend
+  // restarted looks orphaned here (registry wiped on restart) but its PTY is
+  // still live in the restart-surviving terminal-server. Snapshot live cwds
+  // once so we skip those dirs instead of killing the terminal.
+  const liveCwds = await collectLiveSessionCwds();
+  if (liveCwds === null) {
+    console.warn(
+      '[startup] push sweep: terminal-server unreachable — skipping this pass ' +
+        '(orphans get reclaimed on the next boot).',
+    );
+    return;
+  }
+
   await forEachKnownProjectSafely(
     'sweepOrphanedPushSessions',
     async (repoRoot) => {
@@ -37,6 +51,13 @@ export async function sweepOrphanedPushSessions(): Promise<void> {
           const st = await fs.stat(dir);
           if (!st.isDirectory()) continue;
         } catch {
+          continue;
+        }
+        // A live PTY whose cwd sits at/under this dir means the session is
+        // still running (its registry entry was just lost in the restart) —
+        // leave it alone so we don't kill an active push terminal.
+        if (hasLiveSessionAtOrUnder(liveCwds, dir)) {
+          console.log(`[startup] push sweep: skipping ${id} — live PTY still attached`);
           continue;
         }
         // cleanupPushSession enforces the strict id regex; anything that

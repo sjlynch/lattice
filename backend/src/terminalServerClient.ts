@@ -16,6 +16,27 @@ export async function proxyListSessions(): Promise<unknown[]> {
   }
 }
 
+// Like proxyListSessions but returns `null` (NOT []) when the terminal-server
+// is unreachable or answers unparseably — mirrors proxyCountSessions. Callers
+// that act on "no live sessions" (e.g. the recovery sweeps, which delete a
+// scratch dir when nothing live owns it) MUST distinguish "can't tell" from a
+// real empty list, or a transient fetch failure would look like "no sessions"
+// and they'd reclaim a still-live session's dir.
+const LIST_SESSIONS_TIMEOUT_MS = 3_000;
+
+export async function proxyListSessionsOrNull(): Promise<unknown[] | null> {
+  try {
+    const res = await fetch(`${BASE}/sessions`, {
+      signal: AbortSignal.timeout(LIST_SESSIONS_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data) ? (data as unknown[]) : null;
+  } catch {
+    return null;
+  }
+}
+
 // Authoritative live-session count for the spawn queue's accounting.
 // Returns `null` (NOT 0) when the terminal-server is unreachable or answers
 // unparseably — the queue must distinguish "can't tell" from a real empty

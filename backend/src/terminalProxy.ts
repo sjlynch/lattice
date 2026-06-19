@@ -13,6 +13,7 @@ export {
   proxyKillSession,
   proxyKillSessionsByCwd,
   proxyListSessions,
+  proxyListSessionsOrNull,
   proxyShutdown,
 } from './terminalServerClient.js';
 export { proxyTerminalWs } from './terminalWsRelay.js';

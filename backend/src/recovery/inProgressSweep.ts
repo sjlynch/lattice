@@ -24,7 +24,6 @@
 // `/complete` path, and reads any Pi sentinel file the dead extension wrote
 // so the log line says *why* the model didn't call back itself.
 
-import path from 'node:path';
 import {
   listKnownProjects,
   listTasks,
@@ -32,7 +31,7 @@ import {
   type Task,
 } from '../tasks.js';
 import { branchCommitCount } from '../worktree.js';
-import { proxyListSessions } from '../terminalProxy.js';
+import { collectLiveSessionCwds, normalizeCwd } from './liveSessions.js';
 import { readPiShutdownSentinel } from '../piExtension.js';
 
 // Minimum `in_progress` age before a task is eligible for an auto-flip.
@@ -172,42 +171,6 @@ async function safeListKnownProjects(): Promise<string[]> {
     console.warn('[in-progress-sweep] listKnownProjects threw:', err);
     return [];
   }
-}
-
-// Returns the resolved cwd of every live terminal-server session, or null
-// when the terminal-server is unreachable (so callers can distinguish "no
-// sessions" from "can't tell" — same distinction the spawn queue makes).
-async function collectLiveSessionCwds(): Promise<Set<string> | null> {
-  let sessions: unknown[];
-  try {
-    sessions = await proxyListSessions();
-  } catch {
-    return null;
-  }
-  // proxyListSessions returns [] both on success-with-no-sessions and on
-  // any failure. We can't distinguish those reliably here, so we
-  // conservatively treat an empty list as "no live sessions" — the worst
-  // false-positive is a stuck task auto-completing slightly faster, which
-  // is what this sweep is for.
-  const set = new Set<string>();
-  for (const s of sessions) {
-    if (s && typeof s === 'object' && 'cwd' in s) {
-      const cwd = (s as { cwd?: unknown }).cwd;
-      if (typeof cwd === 'string' && cwd.length > 0) {
-        set.add(normalizeCwd(cwd));
-      }
-    }
-  }
-  return set;
-}
-
-// Path normalization for cwd comparison: case-insensitive on Windows
-// (Windows allows mixed-case paths but the filesystem is case-preserving
-// not case-sensitive), normalized separators, trailing-slash stripped.
-function normalizeCwd(p: string): string {
-  let out = path.resolve(p);
-  if (process.platform === 'win32') out = out.toLowerCase();
-  return out.replace(/[\\/]+$/, '');
 }
 
 // Periodic-sweep loop holder. Kept module-scoped so the start/stop calls
