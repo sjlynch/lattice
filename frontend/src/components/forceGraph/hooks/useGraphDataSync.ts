@@ -5,7 +5,12 @@ import { healthLabelRegistry } from '../healthOverlay';
 import { getIdleController } from '../idleController';
 import { labelsRegistry } from '../labelsOverlay';
 import { locLabelRegistry } from '../locOverlay';
-import { buildGhostGraphData } from '../timelineDiff';
+import {
+  REL_FORWARD_KEY,
+  buildGhostGraphData,
+  isGhost,
+  relForward,
+} from '../timelineDiff';
 import { clearLabelsAndRefresh } from './refresh';
 
 type Args = {
@@ -105,12 +110,21 @@ function buildForceGraphData(
   graph: ForceGraph3DInstance,
   nodes: GraphNode[],
   links: GraphLink[],
+  root: string,
 ): { nodes: SimNode[]; links: GraphLink[] } {
   const previous = currentNodesById(graph);
   const clonedNodes = nodes.map((node) => {
     const clone = { ...node } as SimNode;
     const prev = previous.get(node.id);
     if (prev) copySimulationState(clone, prev);
+    // Precompute the forward-relative path once per scan and stash it on the
+    // clone so buildNodeObject can skip recomputing it on every refresh (see
+    // readRelForward). Ghosts already carry a relative path and never reach the
+    // changeMap lookup, so skip them.
+    if (node.kind === 'file' && !isGhost(node)) {
+      (clone as Record<string, unknown>)[REL_FORWARD_KEY] =
+        relForward(node.path, root);
+    }
     return clone;
   });
   const clonedLinks = links.flatMap((link) => {
@@ -136,14 +150,19 @@ function shapeFingerprint(nodes: GraphNode[], links: GraphLink[]): string {
 // Walks the in-place sim nodes and copies metric fields off the new
 // ScanResult. Returns true if any field actually changed (so callers
 // can skip the refresh() roundtrip when the swap was a no-op).
+//
+// `index` is the id→sim-node Map cached on `nodeIndexRef` — reused across the
+// consecutive HealthUpdates that fire constantly while the dev server writes
+// files, instead of rebuilt per event. It's invalidated on every full
+// `graph.graphData(...)` swap (the only thing that replaces the node array), so
+// it can never point at a stale array.
 function patchSimNodeMetrics(
-  graph: ForceGraph3DInstance,
+  index: Map<string, SimNode>,
   freshNodes: GraphNode[],
 ): boolean {
-  const current = currentNodesById(graph);
   let changed = false;
   for (const fresh of freshNodes) {
-    const sim = current.get(fresh.id);
+    const sim = index.get(fresh.id);
     if (!sim) continue;
     for (const key of PATCHABLE_FIELDS) {
       const next = fresh[key];
@@ -156,6 +175,16 @@ function patchSimNodeMetrics(
     }
   }
   return changed;
+}
+
+// Lazily (re)builds the cached id→sim-node index. Rebuilt only when the ref was
+// invalidated by a full graphData swap; otherwise reused across HealthUpdates.
+function ensureNodeIndex(
+  graph: ForceGraph3DInstance,
+  indexRef: MutableRefObject<Map<string, SimNode> | null>,
+): Map<string, SimNode> {
+  if (!indexRef.current) indexRef.current = currentNodesById(graph);
+  return indexRef.current;
 }
 
 // Pushes the scan + git history into the ForceGraph instance only when
@@ -188,6 +217,15 @@ export function useGraphDataSync({
   // incoming ScanResult to choose between the fast-patch and full-swap
   // paths. `null` forces a full swap on first load and after teardown.
   const lastShapeRef = useRef<string | null>(null);
+  // id→sim-node index for the *current* graphData node array. Cached across
+  // the constant stream of metric HealthUpdates and rebuilt lazily; nulled on
+  // every full graphData swap so it can never reference a replaced array.
+  const nodeIndexRef = useRef<Map<string, SimNode> | null>(null);
+  // The last `data` / `history` refs we processed — used by the cheap
+  // metric-only fast path to detect a `patchUpdatedFiles` burst without
+  // building ghosts or the sorted shape fingerprint.
+  const prevDataRef = useRef<ScanResult | null>(null);
+  const prevHistoryRef = useRef<GitHistoryResult | null>(null);
 
   useEffect(() => {
     const graph = graphRef.current;
@@ -197,10 +235,48 @@ export function useGraphDataSync({
       labelsRegistry.clear();
       healthLabelRegistry.clear();
       graph.graphData({ nodes: [], links: [] });
+      nodeIndexRef.current = null;
       ghostsRef.current = new Set();
       lastShapeRef.current = null;
+      prevDataRef.current = null;
+      prevHistoryRef.current = null;
       return;
     }
+
+    // ----- Cheap metric-only fast path -----
+    // A `patchUpdatedFiles` burst keeps the scan root, the `links` array
+    // identity, and the node count stable, and arrives while `history` is
+    // unchanged — which guarantees the merged shape (incl. ghost nodes derived
+    // from that history) is identical to the last push. So we can patch the
+    // metric fields straight onto the in-place sim nodes with NO ghost rebuild
+    // and NO sorted shapeFingerprint. The fingerprint fallback below still
+    // covers full scans, ghost-history changes, removals, and same-shape
+    // rescans from fresh backend responses (all of which mint a new links
+    // array or change `history`).
+    const prevData = prevDataRef.current;
+    if (
+      prevData &&
+      lastShapeRef.current !== null &&
+      history === prevHistoryRef.current &&
+      data.root === prevData.root &&
+      data.links === prevData.links &&
+      data.nodes.length === prevData.nodes.length
+    ) {
+      const changed = patchSimNodeMetrics(
+        ensureNodeIndex(graph, nodeIndexRef),
+        data.nodes,
+      );
+      // Only the H/Z/D overlays render the patched fields; with none held a
+      // refresh would rebuild every sprite to a byte-identical result and wake
+      // the render loop on every HealthUpdate. The fields are patched in place
+      // either way, so toggling an overlay on later picks up the latest values.
+      const metricOverlayActive =
+        healthModeRef.current || locModeRef.current || deadModeRef.current;
+      if (changed && metricOverlayActive) clearLabelsAndRefresh(graph);
+      prevDataRef.current = data;
+      return;
+    }
+
     const ghostIds = new Set<string>();
     let ghostNodes: GraphNode[] = [];
     let ghostLinks: GraphLink[] = [];
@@ -218,8 +294,13 @@ export function useGraphDataSync({
 
     if (lastShapeRef.current === nextShape) {
       // Same set of nodes & links — only per-node fields could differ.
-      // Patch them in place; the engine stays settled.
-      const changed = patchSimNodeMetrics(graph, mergedNodes);
+      // Patch them in place; the engine stays settled. (Reached for same-shape
+      // rescans from fresh backend responses, where the cheap path's links
+      // identity check fails but the shape is unchanged.)
+      const changed = patchSimNodeMetrics(
+        ensureNodeIndex(graph, nodeIndexRef),
+        mergedNodes,
+      );
       // Only the H/Z/D overlays render the patched health/loc/deadCode fields.
       // With none held, a `graph.refresh()` would rebuild all N sprites to a
       // byte-identical result — pure waste that ALSO wakes the render loop on
@@ -231,6 +312,8 @@ export function useGraphDataSync({
       const metricOverlayActive =
         healthModeRef.current || locModeRef.current || deadModeRef.current;
       if (changed && metricOverlayActive) clearLabelsAndRefresh(graph);
+      prevDataRef.current = data;
+      prevHistoryRef.current = history;
       return;
     }
 
@@ -241,8 +324,13 @@ export function useGraphDataSync({
     locLabelRegistry.clear();
     labelsRegistry.clear();
     healthLabelRegistry.clear();
-    graph.graphData(buildForceGraphData(graph, mergedNodes, mergedLinks));
+    graph.graphData(buildForceGraphData(graph, mergedNodes, mergedLinks, data.root));
+    // The node array was replaced — drop the cached id→node index so the next
+    // metric patch rebuilds it against the new array rather than the old one.
+    nodeIndexRef.current = null;
     lastShapeRef.current = nextShape;
+    prevDataRef.current = data;
+    prevHistoryRef.current = history;
     // graphData() restarts the d3 force engine — let the idle controller
     // know so it keeps the render loop running until onEngineStop fires.
     getIdleController(graph)?.engineStarted();

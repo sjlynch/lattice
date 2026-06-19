@@ -132,7 +132,11 @@ export const DIR_STYLE: ExtStyle = {
 
 export function getStyleFor(ext?: string): ExtStyle {
   if (!ext) return DEFAULT_STYLE;
-  return EXT_STYLES[ext.toLowerCase()] ?? DEFAULT_STYLE;
+  // The hot caller (graph node build) passes `node.ext`, already lowercased at
+  // the scanner, so the direct hit skips the per-node `.toLowerCase()` alloc.
+  // The second lookup is a defensive fallback for any other caller that might
+  // pass mixed case — correctness is preserved either way.
+  return EXT_STYLES[ext] ?? EXT_STYLES[ext.toLowerCase()] ?? DEFAULT_STYLE;
 }
 
 export function styleKey(s: ExtStyle): string {

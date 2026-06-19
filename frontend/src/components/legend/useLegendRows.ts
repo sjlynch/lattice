@@ -5,6 +5,7 @@ import {
   EXT_STYLES,
   type ExtStyle,
 } from '../../extensionStyles';
+import { useStructuralScan } from '../../hooks/useStructuralScan';
 
 export type LegendRowData = {
   key: string; // canonical ext (lowercased) — '*' for unknown
@@ -61,7 +62,11 @@ export function useLegendRows(data: ScanResult | null): {
   visibleRows: LegendRowData[];
   allOtherRows: LegendRowData[];
 } {
-  const visibleRows = useMemo(() => visibleRowsFor(data), [data]);
+  // The legend tallies by extension only (structural), so key off the
+  // structure-stable reference rather than `data` — which churns on every
+  // metric-only file save — to skip the O(N) re-tally + re-render per save.
+  const structuralData = useStructuralScan(data);
+  const visibleRows = useMemo(() => visibleRowsFor(structuralData), [structuralData]);
   const allOtherRows = useMemo(
     () => allOtherRowsFor(visibleRows),
     [visibleRows],

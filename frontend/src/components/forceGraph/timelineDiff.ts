@@ -29,6 +29,20 @@ export function relForward(absPath: string, root: string): string {
   return absPath.split('\\').join('/');
 }
 
+// `buildForceGraphData` (useGraphDataSync) stashes each file node's forward-
+// relative path under this key when it mints fresh sim-node clones on a
+// structural swap. `node.path` and the scan root are invariant for the life of
+// a scan, so this lets `buildNodeObject` read the precomputed value instead of
+// recomputing `relForward` (2 string allocs + an array) for every node on every
+// `graph.refresh()` (each H/Z/D overlay toggle / metric refresh). A new scan
+// produces new clones, naturally recomputing it.
+export const REL_FORWARD_KEY = '__latticeRelForward';
+
+export function readRelForward(node: GraphNode, root: string): string {
+  const cached = (node as Record<string, unknown>)[REL_FORWARD_KEY];
+  return typeof cached === 'string' ? cached : relForward(node.path, root);
+}
+
 // rightIdx is in tick space: 0..commits.length, where commits.length is
 // the working-tree slot.
 export function computeChangeMap(

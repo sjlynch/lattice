@@ -6,6 +6,7 @@ import {
   type WorkflowRun,
 } from '../../../api';
 import { useTerminals } from '../../../TerminalsContext';
+import { useStructuralScan } from '../../../hooks/useStructuralScan';
 import { fromWorkflow } from '../editorState';
 import { useCollapsedSteps } from './useCollapsedSteps';
 import { useWorkflowEditor } from './useWorkflowEditor';
@@ -35,12 +36,16 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
   const { addTerminal } = useTerminals();
   const harnessState = useWorkflowHarnessOverrides();
 
+  // Stack detection reads only structural fields (names/paths/exts), so key it
+  // off the structure-stable scan reference — a metric-only file save no longer
+  // re-runs the whole detection pass.
+  const structuralScan = useStructuralScan(scanResult);
   const projectProfile = useMemo(
     () => detectProjectPromptProfile(
       activeFolder,
-      scanResult?.root === activeFolder ? scanResult : null,
+      structuralScan?.root === activeFolder ? structuralScan : null,
     ),
-    [activeFolder, scanResult],
+    [activeFolder, structuralScan],
   );
 
   const collapsedSteps = useCollapsedSteps(activeFolder);
