@@ -16,10 +16,11 @@ import type { ChangeKind } from '../changeRing';
 // the change map. So those are intentionally NOT deps: re-installing the
 // accessors on every HealthUpdate (`data`) or every scrubber pixel
 // (`range`/`history`) would make the library re-evaluate visibility for
-// all N nodes/links with identical logic — pure churn. When the change
-// set actually flips, `useGitTimeline` calls `clearLabelsAndRefresh`
-// (→ `graph.refresh()`), which re-runs these still-installed accessors,
-// so ghost nodes appearing/disappearing on scrub stays correct.
+// all N nodes/links with identical logic — pure churn. On a scrubber
+// change-set flip, `useGitTimeline`'s `applyChangeRingDelta` toggles the
+// affected ghost nodes' visibility directly (O(changed), no refresh); this
+// still-installed accessor remains the source of truth for genuine refreshes
+// and data swaps (it reads the live map), so ghosts stay correct there too.
 export function useGraphFilter(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   hiddenExts: Set<string>,
