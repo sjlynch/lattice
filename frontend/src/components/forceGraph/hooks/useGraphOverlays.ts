@@ -43,6 +43,8 @@ export function useGraphOverlays({
   const { history, range, setRange, changeMapRef } = useGitTimeline(
     activeFolder,
     graphRef,
+    settingsRef,
+    data,
   );
 
   const { locMode, locModeRef } = useLocOverlay(graphRef, settingsRef);

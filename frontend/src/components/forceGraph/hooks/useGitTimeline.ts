@@ -1,25 +1,11 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
-import { fetchGitHistory, type GitHistoryResult } from '../../../api';
+import { fetchGitHistory, type GitHistoryResult, type ScanResult } from '../../../api';
+import { applyChangeRingDelta } from '../changeRingSync';
+import type { GraphSettings } from '../graphSettings';
+import { getIdleController } from '../idleController';
 import { computeChangeMap } from '../timelineDiff';
 import type { ChangeKind } from '../changeRing';
-import { clearLabelsAndRefresh } from './refresh';
-
-// Two change maps are equal when they cover the same paths with the
-// same kinds. Tracked as a 1-pass walk over the larger map; both ring
-// maps are O(commits·changes) so this comparison is cheap relative to
-// the full sprite-rebuild it replaces.
-function changeMapsEqual(
-  a: Map<string, ChangeKind>,
-  b: Map<string, ChangeKind>,
-): boolean {
-  if (a === b) return true;
-  if (a.size !== b.size) return false;
-  for (const [path, kind] of a) {
-    if (b.get(path) !== kind) return false;
-  }
-  return true;
-}
 
 // History is fetched once per project; the scrubber range is two
 // tick indices into [0, commits.length], where commits.length is
@@ -32,6 +18,8 @@ function changeMapsEqual(
 export function useGitTimeline(
   activeFolder: string,
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
+  settingsRef: MutableRefObject<GraphSettings>,
+  data: ScanResult | null,
 ) {
   const [history, setHistory] = useState<GitHistoryResult | null>(null);
   const [range, setRange] = useState<{ left: number; right: number }>({
@@ -39,6 +27,12 @@ export function useGitTimeline(
     right: 0,
   });
   const changeMapRef = useRef<Map<string, ChangeKind>>(new Map());
+  // Scan root is read live by the delta walker to resolve real file nodes'
+  // absolute paths to the rel-paths the change map is keyed by — matching
+  // `nodeObjectFactory` (`dataRef.current?.root`). Mirrored each render so
+  // the scrub effect, which doesn't depend on `data`, still sees the latest.
+  const scanRootRef = useRef('');
+  scanRootRef.current = data?.root ?? '';
 
   // Fetch the last 10 commits + uncommitted status whenever the active
   // project changes. The scrubber drives ring colors and ghost-node
@@ -68,14 +62,14 @@ export function useGitTimeline(
     };
   }, [activeFolder]);
 
-  // Recompute the change map when the slider range moves and refresh
-  // sprites so rings update. nodeVisibility (in the parent) also
-  // re-evaluates on the same dep set, which hides/shows ghost nodes
-  // for the new range. The scrubber emits range changes continuously
-  // while dragging; many adjacent ticks share the exact same change
-  // set, so we only refresh when the per-path ring kind actually
-  // flipped — otherwise we'd rebuild every node's THREE object on
-  // every scrubber pixel.
+  // Recompute the change map when the slider range moves, then apply the
+  // prev→next diff in place: only the nodes whose ChangeKind actually flipped
+  // get their ring added/removed/recolored (and ghost nodes whose presence
+  // flipped get their visibility toggled). The scrubber emits range changes
+  // continuously while dragging and many adjacent ticks share the exact same
+  // change set, so `applyChangeRingDelta` no-ops (and we skip the wake) when
+  // nothing changed. This replaced a `graph.refresh()` that rebuilt every
+  // node's THREE object on every flip — see `changeRingSync`.
   useEffect(() => {
     const prev = changeMapRef.current;
     const next = history
@@ -87,10 +81,19 @@ export function useGitTimeline(
         )
       : new Map<string, ChangeKind>();
     changeMapRef.current = next;
-    if (!changeMapsEqual(prev, next)) {
-      clearLabelsAndRefresh(graphRef.current);
-    }
-  }, [history, range, graphRef]);
+    const graph = graphRef.current;
+    if (!graph) return;
+    const changed = applyChangeRingDelta(
+      graph,
+      prev,
+      next,
+      settingsRef.current,
+      scanRootRef.current,
+    );
+    // Wake a few frames so the added/removed rings + ghost toggles paint; the
+    // render loop is otherwise paused once the engine has settled.
+    if (changed) getIdleController(graph)?.wakeForRefresh();
+  }, [history, range, graphRef, settingsRef]);
 
   return { history, range, setRange, changeMapRef };
 }
