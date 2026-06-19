@@ -1,5 +1,8 @@
 import {
   CheckCheck,
+  ChevronDown,
+  ChevronUp,
+  Clock,
   Eye,
   EyeOff,
   GitMerge,
@@ -10,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { Task, TaskStatus } from '../../api';
 import type { Lane as LaneDef } from './lanes';
+import type { LaneSortMode } from './laneSort';
 import type { QaPlaywrightControls } from './hooks/useQaPlaywright';
 
 type Props = {
@@ -26,7 +30,22 @@ type Props = {
   // QA-lane "run an e2e test for every task". Passed only on the QA lane and
   // only when the Playwright MCP is on, so it sits in the Playwright cluster.
   onQaRunAll?: () => void;
+  // Per-lane arrival-date sort (clock + up/down caret). Always provided.
+  sortMode: LaneSortMode;
+  onToggleSort: () => void;
 };
+
+// Tooltip + the next mode the clock cycles to, by current mode.
+function sortTitle(mode: LaneSortMode): string {
+  switch (mode) {
+    case 'recent':
+      return 'Sorted by newest arrival to this section first. Click for oldest first.';
+    case 'oldest':
+      return 'Sorted by oldest arrival to this section first. Click for newest first.';
+    default:
+      return 'Manual order. Click to sort by newest arrival to this section.';
+  }
+}
 
 // Lane header row: dot/title/count, lane-level run-all action, push, add.
 // Extracted from Lane so the lane body stays focused on drop targets and
@@ -40,6 +59,8 @@ export function LaneHeader({
   pushDisabled,
   qaPlaywright,
   onQaRunAll,
+  sortMode,
+  onToggleSort,
 }: Props) {
   const runAllConfig = onRunAll ? laneRunAllConfig(lane.id, tasks) : null;
 
@@ -65,6 +86,19 @@ export function LaneHeader({
         )}
       </span>
       <div className="taskboard-lane-actions">
+        <button
+          className={`icon-btn sm lane-sort ${sortMode !== 'manual' ? 'on' : ''}`}
+          onClick={onToggleSort}
+          title={sortTitle(sortMode)}
+          aria-label="Sort by arrival date"
+        >
+          <Clock size={12} />
+          {sortMode === 'oldest' ? (
+            <ChevronUp size={11} />
+          ) : (
+            <ChevronDown size={11} />
+          )}
+        </button>
         {qaPlaywright && (
           <>
             <button

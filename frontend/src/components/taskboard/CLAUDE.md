@@ -16,9 +16,11 @@ Components behind the Tasks button. `TaskBoard.tsx` (parent dir) is a re-export 
 - `MergeRunStrip.tsx` — progress strip rendered above Ready-to-Merge during a backend run; switches to dismissable summary on done.
 - `StuckPill.tsx` — "stuck Nm" surfaced after a conflict resolver runs > 3 min.
 - `lanes.ts` — `LANES` array, `LANE_BY_ID` map, `DRAG_MIME` constant, `shortLabel()`, `parseDragPayload()`.
+- `laneSort.ts` — per-lane arrival-date sort: `LaneSortMode` (`recent`/`oldest`/`manual`, default `recent`), `arrivalTime(task, status)` (the lane-specific arrival stamp — startedAt/completedAt/mergedAt/doneAt, else createdAt), and `sortTasksForLane()`. Drives the lane header's clock + up/down caret control.
 - `hooks/useTaskBoardState.ts` — combines task-list syncing, lane grouping/sorting, active counts, and multi-selection.
 - `hooks/useTaskSearch.ts` — search box state + case-insensitive title/description filtering; derives `filteredTasks`/`filteredGrouped` and the `searchActive` flag that gates lane run-all.
 - `hooks/useVisibleLanes.ts` — lane visibility toggle set (all visible by default).
+- `hooks/useLaneSort.ts` — per-lane `LaneSortMode` state (default `recent` = newest arrival on top), persisted per project under `lattice.laneSort.<path>`. `toggle` flips recent↔oldest; `setManual` is called when a card is dropped at an explicit slot so hand-ordering wins until the clock is clicked again.
 - `hooks/useTaskTerminalFocus.ts` — task→pty focus map (`getFocusTerminal`) plus a serverId-based focuser for the post-merge hook row.
 - `hooks/useTaskTerminalCleanup.ts` — closes task terminals on lifecycle transitions (terminal statuses and ready-to-merge non-merge cleanup).
 - `hooks/useSyncedViewedTask.ts` — keeps the task detail overlay's viewed task object fresh with live task-list updates.

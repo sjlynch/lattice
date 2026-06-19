@@ -3,6 +3,7 @@ import type { Task, TaskStatus } from '../../api';
 import { LaneHeader } from './LaneHeader';
 import { TaskCard } from './TaskCard';
 import type { Lane as LaneDef } from './lanes';
+import type { LaneSortMode } from './laneSort';
 import { useLaneDropTargets, type LaneSlotProps } from './hooks/useLaneDropTargets';
 import type { QaPlaywrightControls } from './hooks/useQaPlaywright';
 
@@ -35,6 +36,8 @@ export function Lane({
   onPush,
   pushDisabled,
   qaPlaywright,
+  sortMode,
+  onToggleSort,
   onView,
   onToggleSelect,
   onRangeSelect,
@@ -66,6 +69,9 @@ export function Lane({
   onPush?: () => void;
   pushDisabled?: boolean;
   qaPlaywright?: QaPlaywrightControls;
+  // Per-lane arrival-date sort state + toggle (clock + up/down caret header).
+  sortMode: LaneSortMode;
+  onToggleSort: () => void;
   onView: (task: Task) => void;
   onToggleSelect: (id: string, laneId: TaskStatus) => void;
   onRangeSelect: (id: string, laneId: TaskStatus) => void;
@@ -119,6 +125,8 @@ export function Lane({
         onPush={onPush}
         pushDisabled={pushDisabled}
         qaPlaywright={qaPlaywright}
+        sortMode={sortMode}
+        onToggleSort={onToggleSort}
       />
       {strip}
       <div

@@ -8,6 +8,7 @@ import {
 } from '../../api';
 import { ErrorToast } from '../shared/ErrorToast';
 import { LANE_BY_ID, LANES, shortLabel } from './lanes';
+import { sortTasksForLane } from './laneSort';
 import { Lane } from './Lane';
 import { mergeRunStripFor } from './MergeRunStrip';
 import { NewTaskOverlay } from './NewTaskOverlay';
@@ -22,6 +23,7 @@ import { usePushRun } from './hooks/usePushRun';
 import { useHarnessSelector } from './hooks/useHarnessSelector';
 import { useQaPlaywright } from './hooks/useQaPlaywright';
 import { useQaRuns } from './hooks/useQaRuns';
+import { useLaneSort } from './hooks/useLaneSort';
 import { useTaskActions } from './hooks/useTaskActions';
 import { useTaskBoardState } from './hooks/useTaskBoardState';
 import { useTaskSearch } from './hooks/useTaskSearch';
@@ -147,6 +149,38 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     filteredGrouped,
   } = useTaskSearch(tasks);
 
+  // Per-lane clock/caret sort. Defaults to newest-arrival-first; dropping a
+  // card at an explicit slot switches that lane to 'manual' so the user's
+  // hand-ordering survives until they click the clock to re-sort.
+  const { getMode: getLaneSortMode, toggle: toggleLaneSort, setManual } =
+    useLaneSort(activeFolder);
+  const sortedGrouped = useMemo(() => {
+    const out = {} as typeof filteredGrouped;
+    for (const lane of LANES) {
+      out[lane.id] = sortTasksForLane(
+        filteredGrouped[lane.id],
+        lane.id,
+        getLaneSortMode(lane.id),
+      );
+    }
+    return out;
+  }, [filteredGrouped, getLaneSortMode]);
+
+  const handleDropAt = useCallback(
+    (id: string, status: TaskStatus, index: number) => {
+      setManual(status);
+      dropAt(id, status, index);
+    },
+    [setManual, dropAt],
+  );
+  const handleMultiDropAt = useCallback(
+    (ids: string[], status: TaskStatus, index: number) => {
+      setManual(status);
+      dropAtMulti(ids, status, index);
+    },
+    [setManual, dropAtMulti],
+  );
+
   const { getFocusTerminal, focusTerminalByServerId } = useTaskTerminalFocus(
     terminals,
     tasks,
@@ -223,17 +257,19 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
               <Lane
                 key={lane.id}
                 lane={lane}
-                tasks={filteredGrouped[lane.id]}
+                tasks={sortedGrouped[lane.id]}
                 draggingId={draggingId}
                 selectedIds={selectedIds}
                 onDragStart={setDraggingId}
                 onDragEnd={handleDragEnd}
                 onAdd={() => setAddingTo(lane.id)}
                 onMove={moveTask}
-                onDropAt={dropAt}
+                onDropAt={handleDropAt}
                 onMultiMove={moveMulti}
-                onMultiDropAt={dropAtMulti}
+                onMultiDropAt={handleMultiDropAt}
                 onDelete={deleteTask}
+                sortMode={getLaneSortMode(lane.id)}
+                onToggleSort={() => toggleLaneSort(lane.id)}
                 onRun={runTask}
                 onCancelQueuedRun={cancelQueuedRun}
                 onResume={resumeTaskAction}
@@ -261,7 +297,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 onView={setViewing}
                 strip={mergeRunStripFor(
                   lane,
-                  filteredGrouped[lane.id],
+                  sortedGrouped[lane.id],
                   mergeRun,
                   recentRunSummary,
                   tasks,

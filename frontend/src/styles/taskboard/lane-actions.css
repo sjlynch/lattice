@@ -46,6 +46,23 @@
   background: rgba(200, 156, 255, 0.22);
 }
 
+/* Per-lane arrival-date sort toggle: clock + a small up/down caret. Wider than
+   a square icon-btn to fit both glyphs; "on" (any arrival sort) tints it in the
+   accent, while 'manual' mode leaves it muted. */
+.lane-sort {
+  width: auto;
+  padding: 0 4px;
+  gap: 1px;
+}
+.lane-sort.on {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+.lane-sort.on:hover {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
 /* QA-lane Playwright MCP toggle buttons (reuse .icon-btn.sm). The "on" state
    uses the QA lane accent so it reads as a QA-scoped control. */
 .mcp-pw-btn.on {

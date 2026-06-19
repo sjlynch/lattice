@@ -12,6 +12,7 @@ the launcher calls directly.
 - `useTaskSearch.ts` — case-insensitive search box state; derives `filteredTasks`/`filteredGrouped` and the `searchActive` flag that gates lane "run all".
 - `useTaskSelection.ts` — multi-selection on cards: selected ids, shift-range anchor, and the lane the selection is anchored in (cross-lane ranges reset).
 - `useVisibleLanes.ts` — lane-visibility toggle set for the filter chips (all visible by default).
+- `useLaneSort.ts` — per-lane arrival-date sort mode (`recent`/`oldest`/`manual`, default `recent`), persisted per project (`lattice.laneSort.<path>`); backs the lane header clock + caret. `setManual` is wired to slot drops so manual reorder survives.
 - `useSyncedViewedTask.ts` — keeps the detail overlay's viewed task fresh against live updates; closes the overlay if the task disappears.
 - `useTaskDetailEdit.ts` — the detail overlay's editable title/description draft, dirty check, and save-payload prep (resets only when the task changes).
 - `useHarnessSelector.ts` — agent-harness dropdown: installed CLIs, the persisted per-project choice, and the round-robin pick used in `interleave` mode.
