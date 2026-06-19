@@ -57,6 +57,13 @@ export type Satellite = LabelHost & {
   slot: number;
   node: THREE.Sprite;
   pos: THREE.Vector3;
+  // Cached ring offset from the parent node (= satelliteOffset(slot, nodeSize)).
+  // Only depends on the fixed `slot` and the current nodeSize, so it's computed
+  // once at spawn and refreshed for every satellite in setSizes — never per
+  // frame in updateSatellites.
+  offDx: number;
+  offDy: number;
+  offDz: number;
   // Persistent line from the parent node to this satellite (constant opacity).
   tether: Beam;
   beams: Map<string, Beam>;
@@ -76,6 +83,10 @@ export type Agent = LabelHost & {
   beams: Map<string, Beam>;
   // The file the agent most recently touched — drives the label.
   currentFile?: string;
+  // Basename of `currentFile`, cached at the write sites (applyActivity /
+  // clearAgentLabel) so updateAgentLabel doesn't recompute it (regex + slice)
+  // every frame just to compare against the existing label text.
+  currentFileBase?: string;
   // Subagents currently shown as satellites, keyed by subagentId.
   satellites: Map<string, Satellite>;
 };
