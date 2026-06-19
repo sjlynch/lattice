@@ -61,6 +61,31 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Agent-appended resolution/summary preview — sits below the original
+   description so both the ask and what was done read at a glance. Dimmed +
+   teal label so it's clearly distinct from the human-authored description. */
+.task-card-summary {
+  font-size: 10.5px;
+  color: #9aa3af;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+.task-card-summary-label {
+  display: inline-block;
+  font-size: 8.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #5eead4;
+  background: rgba(94, 234, 212, 0.12);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-right: 5px;
+  vertical-align: 1px;
+}
 .task-card-actions {
   display: inline-flex;
   align-items: center;

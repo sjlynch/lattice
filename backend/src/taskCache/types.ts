@@ -14,6 +14,13 @@ export type Task = {
   projectPath: string;
   title: string;
   description?: string;
+  // Agent-contributed resolution / progress notes, appended via
+  // POST /api/tasks/:id/append-summary as a task moves through the pipeline
+  // (the worktree agent's change summary, then a QA verdict, …). Kept SEPARATE
+  // from `description` on purpose: the original ticket text (the human-authored
+  // ask) must never be overwritten by an agent's summary — the board shows
+  // both. Multiple appends are joined with a `---` divider.
+  summary?: string;
   status: TaskStatus;
   createdAt: number;
   // Timestamp of the most recent mutation (any field). Set by updateTask /

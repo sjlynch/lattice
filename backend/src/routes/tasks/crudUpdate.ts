@@ -71,9 +71,24 @@ export async function handleTaskUpdate(
   }
 }
 
+// Join a new summary onto whatever's already in the task's `summary` field.
+// Multiple appends (the worktree agent's change summary, then a QA verdict)
+// are stacked newest-last and separated by a horizontal rule so they stay
+// visually distinct. Pure + exported so it can be unit-tested in isolation.
+export function appendSummaryText(existing: string | undefined, addition: string): string {
+  const prev = existing?.trim() || '';
+  const next = addition.trim();
+  return prev ? `${prev}\n\n---\n\n${next}` : next;
+}
+
 // Accepts EITHER a JSON body ({summary}) OR a text/markdown / text/plain
 // body whose whole content becomes the summary. Markdown body lets agents
 // pipe long heredoc summaries through curl without any JSON escaping.
+//
+// The summary is appended to the task's dedicated `summary` field — NOT the
+// `description`. The original ticket text the human wrote stays pristine; the
+// board renders the resolution/update text alongside it (see the 2026-06-19
+// "stop replacing the description" change).
 export async function handleTaskAppendSummary(
   req: TaskIdRequest,
   res: Response,
@@ -94,11 +109,8 @@ export async function handleTaskAppendSummary(
       res.status(404).json({ error: 'not found' });
       return;
     }
-    const existing = task.description?.trim() || '';
-    const appended = existing
-      ? `${existing}\n\n---\n\n**Summary:**\n${summary.trim()}`
-      : summary.trim();
-    const updated = await updateTask(req.params.id, { description: appended });
+    const appended = appendSummaryText(task.summary, summary);
+    const updated = await updateTask(req.params.id, { summary: appended });
     if (!updated) {
       res.status(404).json({ error: 'not found' });
       return;

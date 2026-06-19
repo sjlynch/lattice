@@ -14,6 +14,11 @@ export type Task = {
   projectPath: string;
   title: string;
   description?: string;
+  // Agent-contributed resolution / progress notes appended via
+  // /append-summary (worktree change summary, QA verdict, …). Stored apart
+  // from `description` so the original ticket text is never overwritten — the
+  // card + detail overlay render both. Multiple appends are `---`-separated.
+  summary?: string;
   status: TaskStatus;
   createdAt: number;
   updatedAt?: number;

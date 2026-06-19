@@ -42,6 +42,35 @@
   color: #c9ced7;
   line-height: 1.55;
 }
+/* Read-only resolution/summary block — the agent-appended text shown beneath
+   the (editable) description so the original ask and what was done both stay
+   visible. Scrolls within a capped height so a long QA log can't push the
+   action row off-screen. */
+.taskboard-detail-summary {
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--border);
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.taskboard-detail-summary-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #5eead4;
+}
+.taskboard-detail-summary-text {
+  font-size: 12px;
+  color: #c0c6d0;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+  max-height: 160px;
+}
 .taskboard-detail-meta {
   font-size: 10.5px;
   color: var(--text-tertiary);
