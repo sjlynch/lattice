@@ -41,9 +41,31 @@ export function useBoxSelect(
     let altAtStart = false;
     let controlsLock: OrbitControlsLock | null = null;
 
+    // RAF-coalesce the drag-rect overlay: a fast pointermove fires far more
+    // often than the display refreshes, so we keep the latest pointer
+    // position and flush at most one `setDragRect` per frame instead of one
+    // per raw event. The final selection still uses the pointerup position
+    // directly (below), so coalescing never changes what gets selected.
+    let pendingPoint: ScreenPoint | null = null;
+    let rafId: number | null = null;
+
     function pointerPoint(e: PointerEvent): ScreenPoint {
       const rect = container!.getBoundingClientRect();
       return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    }
+
+    function cancelScheduledRect() {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      pendingPoint = null;
+    }
+
+    function flushDragRect() {
+      rafId = null;
+      if (!dragging || !pendingPoint) return;
+      setDragRect({ x1: start.x, y1: start.y, x2: pendingPoint.x, y2: pendingPoint.y });
     }
 
     function restoreControls() {
@@ -85,14 +107,15 @@ export function useBoxSelect(
 
     function onPointerMove(e: PointerEvent) {
       if (!dragging || e.pointerId !== activePointerId) return;
-      const point = pointerPoint(e);
-      setDragRect({ x1: start.x, y1: start.y, x2: point.x, y2: point.y });
+      pendingPoint = pointerPoint(e);
+      if (rafId === null) rafId = requestAnimationFrame(flushDragRect);
     }
 
     function onPointerUp(e: PointerEvent) {
       if (!dragging || e.pointerId !== activePointerId) return;
       dragging = false;
       activePointerId = null;
+      cancelScheduledRect();
 
       const point = pointerPoint(e);
       const finalRect = normalizeDragRect(start, point);
@@ -127,6 +150,7 @@ export function useBoxSelect(
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerUp);
     return () => {
+      cancelScheduledRect();
       restoreControls();
       container.removeEventListener('pointerdown', onPointerDown, { capture: true });
       window.removeEventListener('pointermove', onPointerMove);
