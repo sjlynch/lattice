@@ -38,8 +38,15 @@ See `plans/mcp-integration.md` (gitignored) for the full design + decisions.
   Cursor, Codex TOML, VS Code, Windsurf) → normalized `McpServerEntry[]`. Literal
   secret-looking env values → stored in the secrets file + kept off the entry;
   references (`${input:…}`, Codex `bearer_token_env_var`) → recorded as
-  `secretEnvVars` with no value (ambient inheritance). `parseCodexMcpServers` is a
-  minimal `[mcp_servers.*]`-only TOML reader (no dep added).
+  `secretEnvVars` with no value (ambient inheritance). This file is now a thin
+  orchestrator (`scanImportableServers`/`applyImport` + dedupe) that re-exports
+  the public surface; the concerns live under `import/`:
+  - `import/normalize.ts` — `normalizeServer` + the secret-classification helpers
+    and the `Normalized`/`RawServer` types (security-relevant; test-pinned).
+  - `import/codexToml.ts` — the minimal `[mcp_servers.*]`-only TOML reader
+    (`parseCodexMcpServers`; no dep added; test-pinned).
+  - `import/sources.ts` — the five per-tool `collect*` config readers plus the
+    `readJson`/`serversFromMap` helpers.
 
 ## Injection sites — resolve in the backend, apply in the terminal-server
 

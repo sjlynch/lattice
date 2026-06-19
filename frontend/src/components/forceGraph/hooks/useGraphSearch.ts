@@ -148,12 +148,13 @@ export function useGraphSearch(params: {
     setSelected(new Set(union));
   }, [trimmed, union, setSelected]);
 
-  return {
-    active: trimmed.length > 0,
-    invalidRegex,
-    searching,
-    error,
-    matchCount: union.size,
-    truncated,
-  };
+  // Return a stable object keyed on its scalar fields so consumers that
+  // memoize on the status (the HUD / search bar) aren't re-rendered by a
+  // fresh-but-equal object every render.
+  const active = trimmed.length > 0;
+  const matchCount = union.size;
+  return useMemo(
+    () => ({ active, invalidRegex, searching, error, matchCount, truncated }),
+    [active, invalidRegex, searching, error, matchCount, truncated],
+  );
 }
