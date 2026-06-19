@@ -3,7 +3,15 @@
 // label and re-anchors its connector line.
 
 import * as THREE from 'three';
-import { HOME_K, FRICTION, REST_VEL, REST_FORCE, REST_FRAMES, LINE_EPS } from './physics';
+import {
+  HOME_K,
+  FRICTION,
+  REST_VEL,
+  REST_VEL_SQ,
+  REST_FORCE_SQ,
+  REST_FRAMES,
+  LINE_EPS,
+} from './physics';
 import type {
   RepulsionEntry,
   LabelState,
@@ -74,9 +82,12 @@ export function integrateLabelState(
   fx: number,
   fz: number,
 ): void {
-  const forceMag = Math.hypot(fx, fz);
-  const speed = Math.hypot(state.vx, state.vz);
-  const canRest = forceMag < REST_FORCE && speed < REST_VEL;
+  // Squared-magnitude comparisons avoid two `Math.hypot` calls per label per
+  // frame: `hypot(fx, fz) < REST_FORCE` ⇔ `fx*fx + fz*fz < REST_FORCE_SQ`
+  // (both sides non-negative), same for the velocity check.
+  const forceMag2 = fx * fx + fz * fz;
+  const speed2 = state.vx * state.vx + state.vz * state.vz;
+  const canRest = forceMag2 < REST_FORCE_SQ && speed2 < REST_VEL_SQ;
   if (canRest) {
     state.restFrames++;
     if (state.restFrames >= REST_FRAMES) {
