@@ -70,7 +70,51 @@ export const WorkflowsSavedItem = memo(function WorkflowsSavedItem({
           </>
         )}
       </div>
+      {/* The harness override + queue button stay visible while a run is in
+          flight so the user can queue another copy of the same workflow (and
+          pick a different harness for it) without first stopping the current
+          run. The override is captured per-entry at enqueue/run time, so
+          changing it here only affects the next workflow queued/run — never the
+          in-progress run or already-queued entries. Only the run/stop button
+          toggles on run state, mirroring the editor panel's Queue + Run/Stop. */}
       <div className="workflows-item-actions">
+        <select
+          className="workflows-item-harness workflows-step-harness"
+          value={serializeWorkflowHarnessOverride(harnessOverride)}
+          onClick={(event) => event.stopPropagation()}
+          onChange={(event) => {
+            event.stopPropagation();
+            onSetHarnessOverride(
+              workflow.id,
+              parseWorkflowHarnessOverride(event.target.value),
+            );
+          }}
+          title="Run override (applies to the next queued/run copy): Default uses each step's harness"
+          aria-label={`Run override for ${workflow.name}`}
+        >
+          <option value="default">Default</option>
+          {harnessOptions.map((harness) => (
+            <option key={harness} value={harness}>
+              {workflowHarnessOverrideLabel(harness)}
+            </option>
+          ))}
+        </select>
+        <button
+          className="workflows-item-run-btn"
+          onClick={(event) => {
+            event.stopPropagation();
+            onEnqueue(workflow.id);
+          }}
+          disabled={workflow.steps.length === 0}
+          title={
+            workflow.steps.length === 0
+              ? 'Add steps before queueing'
+              : 'Add to queue'
+          }
+          aria-label="Add workflow to queue"
+        >
+          <Plus size={12} />
+        </button>
         {run ? (
           <button
             className="workflows-item-run-btn danger"
@@ -84,61 +128,22 @@ export const WorkflowsSavedItem = memo(function WorkflowsSavedItem({
             <Square size={10} fill="currentColor" />
           </button>
         ) : (
-          <>
-            <select
-              className="workflows-item-harness workflows-step-harness"
-              value={serializeWorkflowHarnessOverride(harnessOverride)}
-              onClick={(event) => event.stopPropagation()}
-              onChange={(event) => {
-                event.stopPropagation();
-                onSetHarnessOverride(
-                  workflow.id,
-                  parseWorkflowHarnessOverride(event.target.value),
-                );
-              }}
-              title="Run override: Default uses each step's harness"
-              aria-label={`Run override for ${workflow.name}`}
-            >
-              <option value="default">Default</option>
-              {harnessOptions.map((harness) => (
-                <option key={harness} value={harness}>
-                  {workflowHarnessOverrideLabel(harness)}
-                </option>
-              ))}
-            </select>
-            <button
-              className="workflows-item-run-btn"
-              onClick={(event) => {
-                event.stopPropagation();
-                onEnqueue(workflow.id);
-              }}
-              disabled={workflow.steps.length === 0}
-              title={
-                workflow.steps.length === 0
-                  ? 'Add steps before queueing'
-                  : 'Add to queue'
-              }
-              aria-label="Add workflow to queue"
-            >
-              <Plus size={12} />
-            </button>
-            <button
-              className="workflows-item-run-btn"
-              onClick={(event) => {
-                event.stopPropagation();
-                void onRun(workflow.id);
-              }}
-              disabled={workflow.steps.length === 0}
-              title={
-                workflow.steps.length === 0
-                  ? 'Add steps before running'
-                  : 'Run workflow now'
-              }
-              aria-label="Run workflow now"
-            >
-              <Play size={11} fill="currentColor" />
-            </button>
-          </>
+          <button
+            className="workflows-item-run-btn"
+            onClick={(event) => {
+              event.stopPropagation();
+              void onRun(workflow.id);
+            }}
+            disabled={workflow.steps.length === 0}
+            title={
+              workflow.steps.length === 0
+                ? 'Add steps before running'
+                : 'Run workflow now'
+            }
+            aria-label="Run workflow now"
+          >
+            <Play size={11} fill="currentColor" />
+          </button>
         )}
       </div>
     </div>
