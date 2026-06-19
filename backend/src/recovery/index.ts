@@ -15,12 +15,14 @@ import { checkBranchExists, recoverPendingSnapshots } from '../worktree.js';
 import { sweepOrphanedWorktrees } from './worktreeSweep.js';
 import { sweepOrphanedPushSessions } from './pushSessionSweep.js';
 import { sweepOrphanedQaSessions } from './qaSessionSweep.js';
+import { sweepStaleClaudeProjectEntries } from './claudeConfigSweep.js';
 
 export { resumeInterruptedMergeRuns } from './mergeRunResume.js';
 export { resumeQueuedTaskRuns } from './queuedRunResume.js';
 export { sweepOrphanedWorktrees } from './worktreeSweep.js';
 export { sweepOrphanedPushSessions } from './pushSessionSweep.js';
 export { sweepOrphanedQaSessions } from './qaSessionSweep.js';
+export { sweepStaleClaudeProjectEntries } from './claudeConfigSweep.js';
 export {
   startInProgressSweepLoop,
   stopInProgressSweepLoop,
@@ -55,6 +57,14 @@ export async function recoverOrphanedTasks(): Promise<void> {
 
   // Phase 1e: same convergence layer for QA e2e-run scratch dirs.
   await runStartupRecoveryStep('sweepOrphanedQaSessions', () => sweepOrphanedQaSessions());
+
+  // Phase 1f: reclaim dead `projects[<cwd>]` entries in ~/.claude.json that
+  // point at Lattice ephemeral worktree/scratch dirs already removed (incl. the
+  // ones the sweeps above just reclaimed). Each spawn pre-seeds one such entry
+  // (trust + managed MCP) and nothing else prunes them, so the map grew by one
+  // per run forever. Global, not per-project — one shared file. See
+  // recovery/claudeConfigSweep.ts.
+  await runStartupRecoveryStep('sweepStaleClaudeProjectEntries', () => sweepStaleClaudeProjectEntries());
 
   await runStartupRecoveryStep('recoverOrphanedTasks', () => recoverReadyTasksWithDeletedBranches());
 }
