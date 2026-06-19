@@ -23,6 +23,7 @@ export {
 export {
   handleTaskUpdate,
   handleTaskAppendSummary,
+  appendSummaryText,
   handleTaskBulkUpdate,
   handleTaskUpsert,
 } from './crudUpdate.js';

@@ -89,6 +89,12 @@ export function TaskDetailOverlay({
             placeholder="Description"
           />
         </div>
+        {task.summary && (
+          <div className="taskboard-detail-summary">
+            <div className="taskboard-detail-summary-label">Summary / updates</div>
+            <div className="taskboard-detail-summary-text">{task.summary}</div>
+          </div>
+        )}
         <TaskDetailMeta task={task} lane={lane} />
         <div className="taskboard-detail-actions">
           <button

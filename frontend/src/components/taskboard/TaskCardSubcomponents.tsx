@@ -7,6 +7,16 @@ import {
   type TaskCardActionHandlers,
 } from './TaskCardActions';
 
+// Flatten the (possibly multi-line, `---`-divided) summary into a single
+// line for the card preview. The full text is in the title tooltip and the
+// detail overlay; here we just want a readable one-liner.
+function summaryPreview(summary: string): string {
+  return summary
+    .replace(/\n?-{3,}\n?/g, ' · ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // Title/description block plus the queued/conflict pills. The click handler
 // lives on the parent card container now (a plain click opens the editor;
 // ctrl/shift+click multi-select), so the body is purely presentational.
@@ -44,6 +54,12 @@ export const TaskCardBody = memo(function TaskCardBody({
       </div>
       {task.description && (
         <div className="task-card-desc">{task.description}</div>
+      )}
+      {task.summary && (
+        <div className="task-card-summary" title={task.summary}>
+          <span className="task-card-summary-label">summary</span>
+          {summaryPreview(task.summary)}
+        </div>
       )}
     </div>
   );

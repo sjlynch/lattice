@@ -3,7 +3,9 @@ import { type Task } from '../../../api';
 import { groupTasksByStatus } from './useTaskBoardState';
 
 function taskContainsSearchText(task: Task, searchText: string): boolean {
-  const haystack = `${task.title}\n${task.description ?? ''}`.toLowerCase();
+  const haystack = `${task.title}\n${task.description ?? ''}\n${
+    task.summary ?? ''
+  }`.toLowerCase();
   return haystack.includes(searchText);
 }
 
