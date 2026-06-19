@@ -9,7 +9,7 @@ import { spriteForHealth } from './healthOverlay';
 import { applyNodeLabelState } from './labelsOverlay';
 import { spriteForLoc } from './locOverlay';
 import { spriteFor } from './sprites';
-import { isGhost, relForward } from './timelineDiff';
+import { isGhost, readRelForward } from './timelineDiff';
 
 // Refs the node-object factory reads to pick the right sprite for the
 // current overlay/selection state without forcing the parent hook to
@@ -68,10 +68,14 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
   // the file's extension is on the per-project ignore list — e.g.
   // config/prose files by default. Directories aren't measured by either
   // overlay anyway, so the check is file-only.
+  // `node.ext` is always lowercase at the source (the scanner lowercases it,
+  // ghosts too) and the ignore Set is built from lowercased exts — so compare
+  // directly and skip the per-node `.toLowerCase()` allocation that ran for
+  // every file on every refresh.
   const ignored =
     node.kind === 'file' &&
     !!node.ext &&
-    refs.metricsIgnoredExtsRef.current.has(node.ext.toLowerCase());
+    refs.metricsIgnoredExtsRef.current.has(node.ext);
 
   let base: THREE.Object3D;
   if (refs.healthModeRef.current && !ignored) {
@@ -91,7 +95,12 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
   // sibling of the root) reads as the outermost element regardless of
   // whether the base has a change ring or not.
   const rootData = refs.dataRef.current?.root || '';
-  const rel = node.kind === 'file' ? relForward(node.path, rootData) : '';
+  // `readRelForward` returns the value precomputed once per scan in
+  // `buildForceGraphData` (falling back to a fresh compute for any node that
+  // didn't come through it), so this no longer re-derives relForward on every
+  // refresh. Only the changeMap lookup below is genuinely live (scrubbing the
+  // timeline mutates the map).
+  const rel = node.kind === 'file' ? readRelForward(node, rootData) : '';
   const kind = rel ? refs.changeMapRef.current.get(rel) : undefined;
   if (kind && kind !== 'deleted') {
     base = withChangeRing(base, baseSize, kind);

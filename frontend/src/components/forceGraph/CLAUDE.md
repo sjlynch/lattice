@@ -306,6 +306,21 @@ asking for fixes/reviews:
   pins `engineStarted` for the duration of the new warmup and is now
   hard-bounded by `cooldownTicks: 400` + `cooldownTime: 8000` +
   `d3AlphaMin: 0.005` (set once in `useForceGraphInitialization`).
+  **Two fast-patch tiers.** The common batched-metric update (from
+  `scanResultPatch.patchUpdatedFiles`, fed by the metric-queue in
+  `useProjectScan`) is caught by a *cheap* pre-check **before** any ghost
+  rebuild or `shapeFingerprint`: same scan root, same `links` array identity
+  (the patch helpers keep `prev.links` by reference; any structural change mints
+  a new array), same node count, and unchanged `history` ref → patch metric
+  fields in place, done. The sorted-`shapeFingerprint` tier is the fallback for
+  full scans, ghost-history changes, removals, and same-shape rescans from fresh
+  backend responses. Both tiers reuse one **cached id→sim-node index**
+  (`nodeIndexRef`), rebuilt lazily and invalidated (set `null`) on every full
+  `graph.graphData(...)` swap — the only thing that replaces the node array — so
+  consecutive HealthUpdates don't rebuild the map per event. `buildForceGraphData`
+  also stashes each file node's `relForward` under `REL_FORWARD_KEY` (see
+  `timelineDiff.readRelForward`) when it mints fresh clones, so `buildNodeObject`
+  reads the precomputed value instead of recomputing it per node per refresh.
 - `useGraphTaskCreation` — modal action, prompt text, submitting + toast
   state, derived `selectedFiles`, plus `openMenuItem` / `submitTask` /
   `closeModal` actions.
@@ -356,6 +371,19 @@ Pure CPU/allocation optimizations on the graph render path; each is *visually
 identical* to what it replaced. Preserve these invariants when editing the
 files below.
 
+- **Structure-only consumers key off `useStructuralScan(data)`, not `data`.**
+  `data` gets a fresh reference on every metric-only HealthUpdate (one per file
+  save). `useStructuralScan` (`frontend/src/hooks/useStructuralScan.ts`) returns
+  a reference that changes only when the file *structure* does — it keys a memo
+  on `data.links` identity, which the `scanResultPatch` helpers preserve across
+  metric patches and rebuild on any structural change. Consumers that read only
+  structural fields (file/dir counts in `ForceGraphView`, `legend/useLegendRows`,
+  the filename pass in `useGraphSearch`, workflow stack detection in
+  `useWorkflowManager`) depend on it so they skip the O(N) recompute + re-render
+  per save. **INVARIANT: only feed the structural reference to consumers that
+  never read metric fields (health/loc/size) — it carries stale metrics by
+  design.** Add/remove/rename and hidden-ext changes still update immediately
+  (new links array → new reference; `hiddenExts` is a separate dep).
 - **Shared, module-owned label/connector resources (caching invariant).**
   Toggling an `H`/`Z`/Alt overlay calls `graph.refresh()`, which rebuilds every
   node object. The immutable Three.js pieces are cached at module scope so a

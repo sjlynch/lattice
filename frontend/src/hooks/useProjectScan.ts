@@ -1,9 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { scanFolder, subscribeHealth, type ScanResult } from '../api';
+import { scanFolder, subscribeHealth, type HealthMetrics, type ScanResult } from '../api';
 import { APP_CONFIG } from '../appConfig';
-import { patchUpdatedFile, removeFile } from './scanResultPatch';
+import { patchUpdatedFiles, removeFile } from './scanResultPatch';
 
 const STRUCTURAL_RESCAN_DEBOUNCE_MS = 150;
+// Coalesce a burst of metric-only `updated` events into a single
+// `setScanResult`. The dev server writing files emits a HealthUpdate per save
+// (tsc/vite emit + AV scan), and one React/App/Legend/ForceGraph render per
+// file pins the main thread. Queue them for a short window and apply the whole
+// burst at once; the queue is keyed by path so repeated saves of one file
+// collapse to its latest metrics.
+const METRIC_BATCH_MS = 50;
 // Coalesce a burst of `removed` events into a single follow-up rescan.
 // We already prune the file from the local ScanResult immediately for
 // instant UI feedback, so the rescan only exists to drop now-empty
@@ -96,6 +103,37 @@ export function useProjectScan(activeFolder: string) {
     let rescanAttempt = 0;
     let rescanTimer: ReturnType<typeof setTimeout> | null = null;
 
+    // Metric-only update queue (keyed by path so repeated saves of one file
+    // collapse to the latest metrics) + its short coalescing timer.
+    const metricQueue = new Map<string, HealthMetrics>();
+    let metricTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const flushMetricQueue = () => {
+      if (metricTimer) {
+        clearTimeout(metricTimer);
+        metricTimer = null;
+      }
+      if (cancelled || metricQueue.size === 0) {
+        metricQueue.clear();
+        return;
+      }
+      const updates = Array.from(metricQueue, ([filePath, metrics]) => ({
+        filePath,
+        metrics,
+      }));
+      metricQueue.clear();
+      const prev = scanResultRef.current;
+      if (!prev) return;
+      const { result, missing } = patchUpdatedFiles(prev, updates);
+      if (result !== prev) {
+        scanResultRef.current = result;
+        setScanResult(result);
+      }
+      // A queued file wasn't in the scan yet (added after the last scan) — pull
+      // it (and any new parent dirs) in with a structural rescan.
+      if (missing) requestRescan();
+    };
+
     const runRescan = () => {
       if (cancelled) return;
       const requestId = ++scanRequestIdRef.current;
@@ -135,6 +173,18 @@ export function useProjectScan(activeFolder: string) {
       // competing rescans that just keep loading=true forever.
       if (!initialScanCompleteRef.current) return;
 
+      if (event.type === 'updated') {
+        // Metric-only patch — coalesce into the batch queue.
+        metricQueue.set(event.filePath, event.metrics);
+        if (!metricTimer) metricTimer = setTimeout(flushMetricQueue, METRIC_BATCH_MS);
+        return;
+      }
+
+      // Structural events (rescan/removed) reorder the file tree, so apply any
+      // queued metric patches first — they reference the pre-structural scan
+      // and would otherwise be lost (or land on a stale tree).
+      flushMetricQueue();
+
       if (event.type === 'rescan') {
         requestRescan();
         return;
@@ -142,19 +192,6 @@ export function useProjectScan(activeFolder: string) {
 
       const prev = scanResultRef.current;
       if (!prev) return;
-
-      if (event.type === 'updated') {
-        const next = patchUpdatedFile(prev, event.filePath, event.metrics);
-        if (!next) {
-          // A source file was added after the last scan. Re-scan to add the
-          // file node plus any new parent directory nodes/links.
-          requestRescan();
-          return;
-        }
-        scanResultRef.current = next;
-        setScanResult(next);
-        return;
-      }
 
       // event.type === 'removed' — drop the file immediately so the UI
       // updates without waiting for the rescan, then schedule a delayed
@@ -173,6 +210,8 @@ export function useProjectScan(activeFolder: string) {
     return () => {
       cancelled = true;
       if (rescanTimer) clearTimeout(rescanTimer);
+      if (metricTimer) clearTimeout(metricTimer);
+      metricQueue.clear();
       unsubscribe();
     };
   }, [activeFolder]);
