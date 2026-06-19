@@ -1,7 +1,7 @@
 import type { MutableRefObject } from 'react';
 import * as THREE from 'three';
 import type { GraphNode, ScanResult } from '../../api';
-import { deletedSprite, withChangeRing, type ChangeKind } from './changeRing';
+import { deletedSprite, setNodeChangeRing, type ChangeKind } from './changeRing';
 import { spriteForDeadCode } from './deadCodeOverlay';
 import type { GraphSettings } from './graphSettings';
 import { setNodeHalo } from './halo';
@@ -87,16 +87,21 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
     base = spriteFor(node, s);
   }
 
-  // Apply change ring before halo so the selection halo (drawn as a
-  // sibling of the root) reads as the outermost element regardless of
-  // whether the base has a change ring or not.
+  root.add(base);
+
+  // Change ring + selection halo both hang off the root as sibling children
+  // (drawn behind / around the base via renderOrder + size, not by child
+  // order). Adding the ring here keeps it correct through full rebuilds (data
+  // swap, size/metric refresh); its interactive add/remove on a scrubber
+  // change-set flip goes through `applyChangeRingDelta`, never `graph.refresh`.
+  // The halo (1.8×) is larger than the change ring (1.6×) so a node that's
+  // both changed and selected shows both rings concentrically.
   const rootData = refs.dataRef.current?.root || '';
   const rel = node.kind === 'file' ? relForward(node.path, rootData) : '';
   const kind = rel ? refs.changeMapRef.current.get(rel) : undefined;
   if (kind && kind !== 'deleted') {
-    base = withChangeRing(base, baseSize, kind);
+    setNodeChangeRing(root, kind, baseSize);
   }
-  root.add(base);
 
   // Name labels (Alt overlay) hang off the root as sibling children so the
   // active depth band / Shift gate can be toggled in place by the delta walker

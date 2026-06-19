@@ -24,6 +24,12 @@ export function createLabelTextureCache(): LabelTextureCache {
   return new Map<string, MeasuredLabelTexture>();
 }
 
+// Shared, module-level offscreen 2D context used only for measureText on cache
+// misses. Creating a <canvas> + 2D context is one of the costlier DOM
+// allocations; measureText is deterministic given ctx.font, so a single reused
+// probe yields identical metrics while avoiding a throwaway canvas per miss.
+const measureCtx = document.createElement('canvas').getContext('2d')!;
+
 function measuredTextWidth(metrics: TextMetrics): number {
   const actual = metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight;
   return Math.ceil(actual > 0 ? actual : metrics.width);
@@ -39,9 +45,8 @@ export function buildMeasuredLabelTexture(
   const cached = cache.get(key);
   if (cached) return cached;
 
-  const probe = document.createElement('canvas').getContext('2d')!;
-  probe.font = options.font;
-  const measured = measuredTextWidth(probe.measureText(text));
+  measureCtx.font = options.font;
+  const measured = measuredTextWidth(measureCtx.measureText(text));
   const visualW = measured + options.strokeWidth + 2;
   const W = Math.max(options.minWidth, visualW + options.padX * 2);
 
