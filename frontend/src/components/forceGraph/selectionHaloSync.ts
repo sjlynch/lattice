@@ -41,6 +41,27 @@ export function applySelectionHaloDelta(
   next: Set<string>,
   settings: GraphSettings,
 ): void {
+  // Early-out: if the symmetric difference is empty (nothing added or
+  // removed) there's no halo to toggle, so skip the O(N) index build.
+  // `useGraphSearch` pushes a fresh `selected` Set per keystroke — often
+  // value-identical to the last — so this guard runs hot.
+  let changed = false;
+  for (const id of next) {
+    if (!prev.has(id)) {
+      changed = true;
+      break;
+    }
+  }
+  if (!changed) {
+    for (const id of prev) {
+      if (!next.has(id)) {
+        changed = true;
+        break;
+      }
+    }
+  }
+  if (!changed) return;
+
   // `graphData()` returns the library's internal nodes array — same
   // objects the library binds `__threeObj` onto. We index by id so
   // the diff lookups stay O(1).

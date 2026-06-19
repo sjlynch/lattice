@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { FileText, Search, X } from 'lucide-react';
 import type { SearchStatus } from './hooks/useGraphSearch';
 
@@ -15,7 +16,7 @@ type Props = {
 // file/dir counts. Matches (filename + contents) are rendered as the standard
 // selection ring via the shared `selected` set. The `.*` button toggles
 // raw-regex vs wildcard interpretation.
-export function GraphSearchBar({
+export const GraphSearchBar = memo(function GraphSearchBar({
   query,
   onQueryChange,
   regex,
@@ -89,4 +90,4 @@ export function GraphSearchBar({
       </button>
     </div>
   );
-}
+});

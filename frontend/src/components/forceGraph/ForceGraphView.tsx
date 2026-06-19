@@ -239,49 +239,101 @@ export function ForceGraphView({
     // Drive a few render frames so the new halo paints — the render
     // loop is otherwise paused while the engine is settled.
     getIdleController(graph)?.wakeForRefresh();
-  }, [selected, settings]);
+    // The halo only reads node sizes (via baseSizeFor). Narrow the deps so
+    // dragging an unrelated slider (charge, link distance, label spread, …)
+    // doesn't re-run the O(N) delta and wake the loop for an unchanged
+    // selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, settings.fileNodeSize, settings.dirNodeSize]);
 
   // Same when the LOC/health ignore list changes — re-render so the new
-  // filter takes effect without touching the d3 simulation.
+  // filter takes effect without touching the d3 simulation. Skip the mount
+  // run: the initial sprite build already reads the ignore set (threaded as
+  // `metricsIgnoredExtsRef` into useForceGraphInitialization), so a refresh
+  // here on first mount is a wasted full sprite rebuild + loop wake — often
+  // before any data has even loaded.
+  const ignoreListMountedRef = useRef(false);
   useEffect(() => {
+    if (!ignoreListMountedRef.current) {
+      ignoreListMountedRef.current = true;
+      return;
+    }
     clearLabelsAndRefresh(graphRef.current);
   }, [metricsIgnoredExtsSet]);
 
-  // Clear selection / close context menu on Escape.
+  // Clear selection / close context menu on Escape. Bound ONCE — the
+  // branch state (contextMenu / modal / searchQuery / selection) is read
+  // through refs so the listener isn't removed/re-added on every selection
+  // change or search keystroke (it previously re-bound per keystroke).
+  const contextMenuRef = useRefMirror(contextMenu);
+  const modalActionRef = useRefMirror(modalAction);
+  const searchQueryRef = useRefMirror(searchQuery);
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key !== 'Escape') return;
-      if (contextMenu) setContextMenu(null);
-      else if (modalAction) {
+      if (contextMenuRef.current) setContextMenu(null);
+      else if (modalActionRef.current) {
         // Modal handles its own Escape close
-      } else if (searchQuery) {
+      } else if (searchQueryRef.current) {
         // Clearing the query also clears its driven selection (useGraphSearch).
         setSearchQuery('');
-      } else if (selected.size > 0) {
+      } else if (selectedRef.current.size > 0) {
         setSelected(new Set());
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [contextMenu, modalAction, searchQuery, selected, setContextMenu]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ----- Phase 3: render data + JSX overlays -----
+  // `data` is a fresh ref on every HealthUpdate (each file save), so this
+  // memo recomputes an equal-valued new object constantly. Reuse the prior
+  // object when the three numbers are unchanged so the memoized HUD doesn't
+  // re-render on every save (useMemo can't compare its own output, hence the
+  // ref).
+  const countsRef = useRef({ files: 0, dirs: 0, hidden: 0 });
   const counts = useMemo(() => {
-    if (!data) return { files: 0, dirs: 0, hidden: 0 };
     let files = 0;
     let dirs = 0;
     let hidden = 0;
-    for (const n of data.nodes) {
-      if (n.kind === 'dir') {
-        dirs++;
-      } else {
-        const key = n.ext ? n.ext.toLowerCase() : '*';
-        if (hiddenExts.has(key)) hidden++;
-        else files++;
+    if (data) {
+      for (const n of data.nodes) {
+        if (n.kind === 'dir') {
+          dirs++;
+        } else {
+          const key = n.ext ? n.ext.toLowerCase() : '*';
+          if (hiddenExts.has(key)) hidden++;
+          else files++;
+        }
       }
     }
-    return { files, dirs, hidden };
+    const prev = countsRef.current;
+    if (prev.files === files && prev.dirs === dirs && prev.hidden === hidden) {
+      return prev;
+    }
+    const next = { files, dirs, hidden };
+    countsRef.current = next;
+    return next;
   }, [data, hiddenExts]);
+
+  // Stable handlers so the memoized HUD / search bar / timeline don't
+  // re-render on every hover/search keystroke. Functional-updater form
+  // keeps the deps empty.
+  const toggleSearchRegex = useCallback(() => setSearchRegex((v) => !v), []);
+  const toggleSearchContents = useCallback(
+    () => setSearchContents((v) => !v),
+    [],
+  );
+  const toggleSettings = useCallback(() => setShowSettings((v) => !v), []);
+  const closeSettings = useCallback(() => setShowSettings(false), []);
+  const handleRangeChange = useCallback(
+    (l: number, r: number) =>
+      setRange((cur) =>
+        cur.left === l && cur.right === r ? cur : { left: l, right: r },
+      ),
+    [setRange],
+  );
 
   // The bottom-anchored counts chip and gear FAB shift up when the
   // timeline is visible so the timeline can claim the entire viewport
@@ -315,9 +367,9 @@ export function ForceGraphView({
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
         searchRegex={searchRegex}
-        onSearchRegexToggle={() => setSearchRegex((v) => !v)}
+        onSearchRegexToggle={toggleSearchRegex}
         searchContents={searchContents}
-        onSearchContentsToggle={() => setSearchContents((v) => !v)}
+        onSearchContentsToggle={toggleSearchContents}
         searchStatus={searchStatus}
       />
 
@@ -327,11 +379,7 @@ export function ForceGraphView({
             commits={history.commits}
             left={range.left}
             right={range.right}
-            onChange={(l, r) =>
-              setRange((cur) =>
-                cur.left === l && cur.right === r ? cur : { left: l, right: r },
-              )
-            }
+            onChange={handleRangeChange}
             hasUncommitted={history.uncommitted.changes.length > 0}
           />
         </div>
@@ -374,13 +422,13 @@ export function ForceGraphView({
         <GraphSettingsPanel
           settings={settings}
           onChange={setSettings}
-          onClose={() => setShowSettings(false)}
+          onClose={closeSettings}
         />
       )}
 
       <button
         className={`graph-settings-fab${showSettings ? ' active' : ''}`}
-        onClick={() => setShowSettings((v) => !v)}
+        onClick={toggleSettings}
         aria-label="Graph settings"
         title="Graph settings"
       >

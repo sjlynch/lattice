@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { MENU_ITEMS, type MenuItemDef } from './menu';
 
 type Props = {
@@ -7,7 +8,7 @@ type Props = {
 
 // Right-click popover anchored to container-local coords. Returns null
 // when there's no active menu so the caller can render unconditionally.
-export function GraphContextMenu({ position, onPick }: Props) {
+export const GraphContextMenu = memo(function GraphContextMenu({ position, onPick }: Props) {
   if (!position) return null;
   return (
     <div
@@ -27,4 +28,4 @@ export function GraphContextMenu({ position, onPick }: Props) {
       ))}
     </div>
   );
-}
+});
