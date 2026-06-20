@@ -4,7 +4,7 @@
 import type { Request, Response } from 'express';
 import { createTask } from '../../tasks.js';
 import { parseMarkdownTasks } from './markdownBatch.js';
-import { resolveProject } from './requestUtils.js';
+import { resolveProject, respondJson } from './requestUtils.js';
 
 type TaskDraft = { title: string; description?: string };
 type JsonBatchTask = { title?: string; description?: string };
@@ -21,12 +21,7 @@ export async function handleTaskCreate(
     res.status(400).json({ error: 'project and title required' });
     return;
   }
-  try {
-    const t = await createTask(project, title, description);
-    res.json(t);
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
+  await respondJson(res, () => createTask(project, title, description));
 }
 
 export async function handleTaskBatchCreate(
@@ -65,12 +60,7 @@ export async function handleTaskBatchCreate(
       description: t.description,
     }));
   }
-  try {
-    const created = await Promise.all(
-      parsed.map((t) => createTask(project, t.title, t.description)),
-    );
-    res.json(created);
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
+  await respondJson(res, () =>
+    Promise.all(parsed.map((t) => createTask(project, t.title, t.description))),
+  );
 }

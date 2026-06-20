@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { RotateCcw } from 'lucide-react';
 import {
   DEFAULT_SETTINGS,
@@ -44,7 +45,7 @@ const PHYSICS_ROWS: SliderRow[] = [
 // Floating panel that mutates the GraphSettings object in the parent. Pure
 // UI — it doesn't talk to the graph directly; the parent's effects react
 // to settings changes and re-render sprites or reheat the d3 simulation.
-export function GraphSettingsPanel({
+export const GraphSettingsPanel = memo(function GraphSettingsPanel({
   settings,
   onChange,
   onClose,
@@ -101,4 +102,4 @@ export function GraphSettingsPanel({
       </div>
     </div>
   );
-}
+});
