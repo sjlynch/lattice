@@ -1,4 +1,7 @@
-import { pruneStaleClaudeProjectEntries } from '../claudeTrust.js';
+import {
+  pruneStaleClaudeProjectEntries,
+  sweepOrphanedClaudeConfigTemps,
+} from '../claudeTrust.js';
 
 // Boot-time reclamation of dead `projects[<path>]` entries in `~/.claude.json`
 // that point at Lattice ephemeral worktree/scratch cwds removed on a prior run.
@@ -21,6 +24,22 @@ export async function sweepStaleClaudeProjectEntries(): Promise<void> {
     console.log(
       `[startup] claude.json sweep: removed ${removed} stale Lattice ephemeral ` +
         `project ${removed === 1 ? 'entry' : 'entries'} from ~/.claude.json`,
+    );
+  }
+}
+
+// Boot-time reclamation of orphaned `~/.claude.json.lattice-*.tmp` (and the
+// analogous mcpSecrets temps) left when a writer was hard-killed between the
+// temp write and the rename. These accumulated unbounded (one realistic pile
+// hit ~8MB) because the atomic-write path used to neither clean up on a failed
+// rename nor have a sweep. Skips temps newer than 60s so a live terminal-
+// server's in-flight write is never touched. GLOBAL (one shared home dir).
+export async function sweepOrphanedClaudeConfigTempFiles(): Promise<void> {
+  const removed = await sweepOrphanedClaudeConfigTemps();
+  if (removed > 0) {
+    console.log(
+      `[startup] claude.json sweep: removed ${removed} orphaned ` +
+        `${removed === 1 ? 'temp file' : 'temp files'} (~/.claude.json.lattice-*.tmp)`,
     );
   }
 }

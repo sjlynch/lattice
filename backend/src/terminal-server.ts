@@ -8,6 +8,7 @@
 import http from 'node:http';
 import express from 'express';
 import { ensureClaudeConfigValid } from './claudeConfigGuard.js';
+import { pruneStaleClaudeProjectEntries } from './claudeTrust.js';
 import { clearTerminalScrollback } from './terminal/scrollbackStore.js';
 import { computeTerminalFingerprint } from './terminalFingerprint.js';
 import { installTerminalProcessGuards } from './terminalServer/processGuards.js';
@@ -74,6 +75,21 @@ const claudeConfigInterval = setInterval(() => {
   void ensureClaudeConfigValid({ refreshBackup: true });
 }, 60_000);
 claudeConfigInterval.unref();
+
+// Periodic: cap ~/.claude.json bloat from THIS long-lived process. Every spawn
+// pre-seeds a `projects[<ephemeral-cwd>]` entry; the boot-time
+// `sweepStaleClaudeProjectEntries` only prunes them at main-backend startup, but
+// the terminal-server outlives many such restarts and is the thing accumulating
+// them (a real pile reached 246 entries / 770KB). A bigger file means Claude's
+// in-place shutdown rewrite takes longer, widening the window for a force-kill
+// to truncate it — the root corruption cause. Pruning dead-dir entries here
+// keeps the file (and that window) small between boots. Off the hot path: a
+// 5-min cadence, never the per-spawn write. Goes through the same config lock,
+// so it can't race a spawn-time write.
+const claudeConfigPruneInterval = setInterval(() => {
+  void pruneStaleClaudeProjectEntries();
+}, 5 * 60_000);
+claudeConfigPruneInterval.unref();
 
 wireTerminalShutdownSignals(shutdown);
 

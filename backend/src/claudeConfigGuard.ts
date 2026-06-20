@@ -10,13 +10,25 @@
 // We can't fully prevent that without a graceful-shutdown protocol Claude
 // doesn't expose — so we make it self-healing instead. Backup the file
 // while it's valid; restore from backup when we observe corruption.
+//
+// This module is the POLICY layer (when to back up, when to restore, the
+// read-twice debounce). The actual file primitives — the backup path, the
+// mkdir-mutex-serialized atomic write, and the restore — live in
+// `claudeTrust.ts` alongside the per-spawn writer, so the guard here and the
+// per-spawn heal-on-read path share one lock and one atomic-write
+// implementation. The per-spawn path (`applyClaudeProjectConfig` →
+// `readClaudeConfig`) is what actually closes the corruption-reaches-a-fresh-
+// spawn window; this guard is the slower boot/periodic/post-kill backstop and
+// the thing that keeps the known-good backup current.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-
-const CLAUDE_JSON = path.join(os.homedir(), '.claude.json');
-const BACKUP = path.join(os.homedir(), '.lattice', 'claude-json-backup.json');
+import {
+  CLAUDE_GLOBAL_CONFIG as CLAUDE_JSON,
+  CLAUDE_JSON_BACKUP as BACKUP,
+  atomicWriteFile,
+  restoreClaudeConfigFromBackup,
+} from './claudeTrust.js';
 
 // Settle delay between the two reads in `validate` — long enough to let an
 // in-flight Claude write finish, short enough not to stall a health tick.
@@ -60,8 +72,8 @@ export async function ensureClaudeConfigValid(opts: Opts = {}): Promise<void> {
   if (valid) {
     if (opts.refreshBackup && content) {
       try {
-        fs.mkdirSync(path.dirname(BACKUP), { recursive: true });
-        fs.writeFileSync(BACKUP, content, 'utf8');
+        await fs.promises.mkdir(path.dirname(BACKUP), { recursive: true });
+        await atomicWriteFile(BACKUP, content);
       } catch {
         /* best effort — corrupt-disk write failures shouldn't block startup */
       }
@@ -69,18 +81,14 @@ export async function ensureClaudeConfigValid(opts: Opts = {}): Promise<void> {
     return;
   }
   try {
-    if (!fs.existsSync(BACKUP)) {
+    const restored = await restoreClaudeConfigFromBackup();
+    if (restored) {
+      console.warn(`[lattice] restored corrupt ${CLAUDE_JSON} from ${BACKUP}`);
+    } else {
       console.warn(
-        `[lattice] ${CLAUDE_JSON} appears corrupt and no backup is available — Claude may prompt the user to reset it`,
+        `[lattice] ${CLAUDE_JSON} appears corrupt and no usable backup is available — Claude may prompt the user to reset it`,
       );
-      return;
     }
-    const backup = fs.readFileSync(BACKUP, 'utf8');
-    JSON.parse(backup);
-    fs.writeFileSync(CLAUDE_JSON, backup, 'utf8');
-    console.warn(
-      `[lattice] restored corrupt ${CLAUDE_JSON} from ${BACKUP}`,
-    );
   } catch (err) {
     console.warn(
       `[lattice] failed to restore ${CLAUDE_JSON} from backup: ${(err as Error).message}`,

@@ -10,6 +10,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { latticeHomeDir } from '../projectPath.js';
+import { atomicWriteFile } from '../claudeTrust.js';
 
 // { [serverId]: { [envVar]: value } }
 export type McpSecrets = Record<string, Record<string, string>>;
@@ -48,9 +49,10 @@ function sanitizeSecrets(raw: unknown): McpSecrets {
 async function writeMcpSecrets(secrets: McpSecrets): Promise<void> {
   const file = secretsFile();
   await fs.mkdir(latticeHomeDir(), { recursive: true });
-  const tmp = `${file}.lattice-${process.pid}-${Date.now()}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(secrets, null, 2), 'utf8');
-  await fs.rename(tmp, file);
+  // Shared atomic writer: cleans up its temp on a failed rename (this used to
+  // leak `.lattice-*.tmp` orphans the same way ~/.claude.json did) and retries
+  // through transient Windows file-locks.
+  await atomicWriteFile(file, JSON.stringify(secrets, null, 2));
   // Best-effort owner-only perms (inert on Windows).
   await fs.chmod(file, 0o600).catch(() => {});
 }

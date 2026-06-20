@@ -15,14 +15,20 @@ import { checkBranchExists, recoverPendingSnapshots } from '../worktree.js';
 import { sweepOrphanedWorktrees } from './worktreeSweep.js';
 import { sweepOrphanedPushSessions } from './pushSessionSweep.js';
 import { sweepOrphanedQaSessions } from './qaSessionSweep.js';
-import { sweepStaleClaudeProjectEntries } from './claudeConfigSweep.js';
+import {
+  sweepStaleClaudeProjectEntries,
+  sweepOrphanedClaudeConfigTempFiles,
+} from './claudeConfigSweep.js';
 
 export { resumeInterruptedMergeRuns } from './mergeRunResume.js';
 export { resumeQueuedTaskRuns } from './queuedRunResume.js';
 export { sweepOrphanedWorktrees } from './worktreeSweep.js';
 export { sweepOrphanedPushSessions } from './pushSessionSweep.js';
 export { sweepOrphanedQaSessions } from './qaSessionSweep.js';
-export { sweepStaleClaudeProjectEntries } from './claudeConfigSweep.js';
+export {
+  sweepStaleClaudeProjectEntries,
+  sweepOrphanedClaudeConfigTempFiles,
+} from './claudeConfigSweep.js';
 export {
   startInProgressSweepLoop,
   stopInProgressSweepLoop,
@@ -65,6 +71,12 @@ export async function recoverOrphanedTasks(): Promise<void> {
   // per run forever. Global, not per-project — one shared file. See
   // recovery/claudeConfigSweep.ts.
   await runStartupRecoveryStep('sweepStaleClaudeProjectEntries', () => sweepStaleClaudeProjectEntries());
+
+  // Phase 1g: delete orphaned ~/.claude.json.lattice-*.tmp temps left by a
+  // writer hard-killed between its temp write and rename. The fixed
+  // atomic-write path now cleans up on a failed rename, but this reclaims
+  // legacy orphans (and any from a true hard-kill). See claudeConfigSweep.ts.
+  await runStartupRecoveryStep('sweepOrphanedClaudeConfigTempFiles', () => sweepOrphanedClaudeConfigTempFiles());
 
   await runStartupRecoveryStep('recoverOrphanedTasks', () => recoverReadyTasksWithDeletedBranches());
 }
