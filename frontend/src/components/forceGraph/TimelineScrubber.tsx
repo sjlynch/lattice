@@ -4,7 +4,7 @@
 // the rightmost tick is "WT" — including it in the range surfaces
 // uncommitted changes as rings on the graph.
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import type { GitCommit } from '../../api';
 import {
   formatTimelineTickLabel,
@@ -23,7 +23,7 @@ type Props = {
   hasUncommitted: boolean;
 };
 
-export function TimelineScrubber({
+export const TimelineScrubber = memo(function TimelineScrubber({
   commits,
   left,
   right,
@@ -136,4 +136,4 @@ export function TimelineScrubber({
       </div>
     </div>
   );
-}
+});
