@@ -167,8 +167,9 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
     const tasks = this.getCached(key);
     if (!tasks) return false;
     let changed = false;
+    const idToIndex = new Map(ids.map((id, i) => [id, i]));
     const updatedList = tasks.map((t) => {
-      const i = ids.indexOf(t.id);
+      const i = idToIndex.get(t.id) ?? -1;
       if (i === -1) return t;
       if (t.status === status && t.sortOrder === i) return t;
       changed = true;

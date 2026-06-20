@@ -1,0 +1,54 @@
+# frontend/src/components/settings
+
+Tab panels for the Settings modal. The parent, `SettingsDialog.tsx`, lives one
+level up in `components/`: a `Modal` with a tab strip (Terminals / Agent
+prompts / Metrics / Agents / MCP) that renders every tab and a single
+Save/Cancel footer.
+
+## Shared tab pattern
+
+Each tab is a `forwardRef` panel that:
+- (re)loads its saved value + overrides when the dialog `open`s, into local
+  **draft** state — editing never mutates anything persisted until Save;
+- exposes an imperative handle `get<Thing>Patch()` returning the value to
+  persist, or **`undefined`** when the user hasn't touched it (or the load
+  hasn't finished). That `undefined` is the clobber-guard: it stops an
+  unrelated Save from rewriting a value this tab never actually edited;
+- renders `null` while `!active` (hooks still run before the early return, so
+  the handle stays live even for a tab the user never opened).
+
+`saveSettings.ts` is the orchestrator. SettingsDialog hands it every tab's
+handle (any may be `null` if unmounted), it reads each `*Patch()`, merges the
+*defined* ones into one `PATCH /api/settings` body, then applies project Claude
+instrumentation and the global max-agents patch, and finally fires the parent
+callbacks. `useSettingsDrafts.ts` owns the handful of drafts that live on the
+parent itself rather than a tab — the terminal-default harness +
+skip-permissions, and the instrument-Claude / disable-memory toggles.
+
+## Where each setting persists
+
+**Per-project** — `userSettings.json`, via `PATCH /api/settings`:
+`InstructionTemplatesTab` + `EnvNotesTab` (both on the Agent-prompts tab),
+`MetricsIgnoredExtsTab`, `StartupTerminalsTab`, the MCP per-project enables
+(`mcpOverrides`), plus the parent's terminal-default / instrument / memory
+drafts.
+
+**Machine-global** — `globalSettings.json`, via `PATCH /api/global-settings`:
+`AgentsTab` (`maxConcurrentAgents`) and the MCP catalog (custom-server defs /
+built-in overrides). (`AgentsTab` reads/writes the global file directly, not
+`userSettings` — don't assume "a tab ⇒ per-project".)
+
+MCP **secrets** are separate again: stored in a `0600` file, written
+immediately on entry — never through the Save button.
+
+## `mcp/` subdir
+
+MCP-tab-only UI, composed by `McpTab.tsx`:
+- `McpServerRow` — one catalog row (enable toggle, badges, key field).
+- `McpKeyField` — masked-but-confirmable secret entry (autosaves on blur).
+- `McpAddCustom` — add a custom stdio/http server (definition only, no key).
+- `McpImportSection` — import servers from other tools' MCP configs.
+
+Within the MCP tab, secrets, custom-server defs, and imports each persist
+**immediately** via their own API calls; only the per-project enables
+(`mcpOverrides`) wait for Save.
