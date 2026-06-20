@@ -11,6 +11,7 @@ import {
 import {
   isValidTaskStatus,
   resolveProject,
+  respondJson,
   statusValidationError,
 } from './requestUtils.js';
 
@@ -52,15 +53,13 @@ export async function handleTaskTransition(
     res.json({ updated: 0, missing: [], ids: [] });
     return;
   }
-  try {
+  await respondJson(res, async () => {
     const results = await Promise.all(ids.map((id) => updateTask(id, { status })));
     const updated: string[] = [];
     const missing: string[] = [];
     results.forEach((r, i) => (r ? updated.push(r.id) : missing.push(ids[i])));
-    res.json({ updated: updated.length, missing, ids: updated });
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
+    return { updated: updated.length, missing, ids: updated };
+  });
 }
 
 export async function handleTaskReorder(
@@ -76,14 +75,12 @@ export async function handleTaskReorder(
     res.status(400).json({ error: 'project, status, ids required' });
     return;
   }
-  try {
+  await respondJson(res, async () => {
     const ok = await reorderTasksInLane(project, status, ids);
     if (!ok) {
       res.status(404).json({ error: 'project not found' });
       return;
     }
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
+    return { ok: true };
+  });
 }

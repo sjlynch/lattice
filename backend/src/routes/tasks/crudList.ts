@@ -11,6 +11,7 @@ import {
 } from '../../tasks.js';
 import { canonicalProjectPath, projectHash } from '../../projectPath.js';
 import { serializeTasksAsMarkdown } from './markdownBatch.js';
+import { respondJson } from './requestUtils.js';
 import type { TaskIdRequest } from './crudTypes.js';
 
 // Partition a flat task list into those whose canonical projectPath matches
@@ -67,7 +68,7 @@ export async function handleTaskList(
   // Pair with POST /api/tasks/upsert to do "GET → edit → POST back" loops
   // without any JSON / shell-quoting in between.
   const format = typeof req.query.format === 'string' ? req.query.format : 'json';
-  try {
+  await respondJson(res, async () => {
     const all = await listTasks(canonicalProject);
     const { safe, foreign } = partitionByProject(all, canonicalProject);
     logForeignTasks(canonicalProject, foreign);
@@ -86,17 +87,15 @@ export async function handleTaskList(
       res.send(md);
       return;
     }
-    res.json({
+    return {
       project,
       canonicalProject,
       hash,
       count: tasks.length,
       mismatched: foreign.length,
       tasks,
-    });
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
+    };
+  });
 }
 
 export async function handleTaskSummary(
@@ -110,23 +109,21 @@ export async function handleTaskSummary(
   }
   const canonicalProject = canonicalProjectPath(project);
   const hash = projectHash(canonicalProject);
-  try {
+  await respondJson(res, async () => {
     const all = await listTasks(canonicalProject);
     const { safe, foreign } = partitionByProject(all, canonicalProject);
     logForeignTasks(canonicalProject, foreign);
     const byStatus: Record<string, number> = {};
     for (const t of safe) byStatus[t.status] = (byStatus[t.status] ?? 0) + 1;
-    res.json({
+    return {
       project,
       canonicalProject,
       hash,
       total: safe.length,
       mismatched: foreign.length,
       byStatus,
-    });
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
+    };
+  });
 }
 
 // Every project root Lattice has indexed (from ~/.lattice/projects.json).
@@ -137,17 +134,13 @@ export async function handleProjectsList(
   _req: Request,
   res: Response,
 ): Promise<void> {
-  try {
+  await respondJson(res, async () => {
     const projects = await listKnownProjects();
-    res.json(
-      projects.map((p) => {
-        const canonical = canonicalProjectPath(p);
-        return { path: canonical, hash: projectHash(canonical) };
-      }),
-    );
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
+    return projects.map((p) => {
+      const canonical = canonicalProjectPath(p);
+      return { path: canonical, hash: projectHash(canonical) };
+    });
+  });
 }
 
 export async function handleTaskGet(

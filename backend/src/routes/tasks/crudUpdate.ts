@@ -17,6 +17,7 @@ import {
 import {
   isValidTaskStatus,
   resolveProject,
+  respondJson,
   statusValidationError,
 } from './requestUtils.js';
 import type { TaskIdRequest } from './crudTypes.js';
@@ -59,16 +60,14 @@ export async function handleTaskUpdate(
       status?: TaskStatus;
     };
   }
-  try {
+  await respondJson(res, async () => {
     const updated = await updateTask(req.params.id, updates);
     if (!updated) {
       res.status(404).json({ error: 'not found' });
       return;
     }
-    res.json(updated);
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
+    return updated;
+  });
 }
 
 // Join a new summary onto whatever's already in the task's `summary` field.
@@ -93,17 +92,15 @@ export async function handleTaskAppendSummary(
   req: TaskIdRequest,
   res: Response,
 ): Promise<void> {
-  let summary: string | undefined;
-  if (typeof req.body === 'string') {
-    summary = req.body;
-  } else {
-    summary = (req.body as { summary?: string } | null)?.summary;
-  }
+  const summary =
+    typeof req.body === 'string'
+      ? req.body
+      : (req.body as { summary?: string } | null)?.summary;
   if (!summary?.trim()) {
     res.status(400).json({ error: 'summary required' });
     return;
   }
-  try {
+  await respondJson(res, async () => {
     const task = await getTask(req.params.id);
     if (!task) {
       res.status(404).json({ error: 'not found' });
@@ -115,10 +112,8 @@ export async function handleTaskAppendSummary(
       res.status(404).json({ error: 'not found' });
       return;
     }
-    res.json(updated);
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
+    return updated;
+  });
 }
 
 // Bulk update — one round trip for N {id, …} patches. Saves agents from
@@ -152,7 +147,7 @@ export async function handleTaskBulkUpdate(
       return;
     }
   }
-  try {
+  await respondJson(res, async () => {
     const results = await Promise.all(
       updates.map(({ id, ...patch }) => updateTask(id!, patch)),
     );
@@ -162,10 +157,8 @@ export async function handleTaskBulkUpdate(
       if (r) updated.push(r);
       else missing.push(updates[i].id!);
     });
-    res.json({ updated: updated.length, missing, tasks: updated });
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
+    return { updated: updated.length, missing, tasks: updated };
+  });
 }
 
 // Upsert from markdown — the "backlog as a document" workflow. Accepts the
@@ -213,7 +206,7 @@ export async function handleTaskUpsert(
       return;
     }
   }
-  try {
+  await respondJson(res, async () => {
     const created: Task[] = [];
     const updated: Task[] = [];
     const missing: string[] = [];
@@ -237,13 +230,11 @@ export async function handleTaskUpsert(
         }
       }
     }
-    res.json({
+    return {
       created: created.length,
       updated: updated.length,
       missing,
       tasks: { created, updated },
-    });
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
+    };
+  });
 }
