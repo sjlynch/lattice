@@ -29,12 +29,17 @@
 // what reaches a manually-typed `pi`.
 
 import { spawn } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { latticeHomeDir } from './projectPath.js';
 import { detectHarnesses } from './harnessDetect.js';
 
 const PI_SUBAGENTS_SPEC = 'npm:@tintinweb/pi-subagents';
+
+// The npm package name (without the `npm:` install-spec prefix). Used to detect
+// a pre-existing GLOBAL install in the user's own Pi config.
+const PI_SUBAGENTS_PKG = '@tintinweb/pi-subagents';
 
 // Filename of the discovery shim, dropped alongside `lattice-complete.ts`. Pi
 // auto-loads any `.ts` in `.pi/extensions/`, so no settings entry is needed.
@@ -188,6 +193,46 @@ export function getPiSubagentsEntry(): string | null {
   return resolvedEntry;
 }
 
+// Pi's global agent dir (`~/.pi/agent`): `settings.json` holds the `packages`
+// array of globally-installed extensions and `npm/node_modules/` holds their
+// code. Overridable for tests; defaults to the real home-scoped path.
+export function piGlobalAgentDir(): string {
+  return path.join(os.homedir(), '.pi', 'agent');
+}
+
+// True when the user has `@tintinweb/pi-subagents` installed GLOBALLY in Pi, in
+// which case Pi already loads the extension in every session. Lattice must then
+// NOT drop its discovery shim: the shim would register the same tools (`Agent` /
+// `get_subagent_result` / `steer_subagent`) a SECOND time and Pi aborts the load
+// with `Tool "Agent" conflicts with …/lattice-subagents.ts`. Two independent
+// signals are checked so a hand-edited or partial install is still caught:
+//   1) the package appears in `settings.json`'s `packages` array (authoritative —
+//      this is what makes Pi load it), and
+//   2) the package physically exists under `npm/node_modules/` (belt-and-braces).
+export async function isPiSubagentsGloballyInstalled(
+  agentDir: string = piGlobalAgentDir(),
+): Promise<boolean> {
+  try {
+    const raw = await fs.readFile(path.join(agentDir, 'settings.json'), 'utf8');
+    const settings = JSON.parse(raw) as { packages?: unknown };
+    if (Array.isArray(settings.packages)) {
+      for (const p of settings.packages) {
+        if (typeof p === 'string' && p.includes(PI_SUBAGENTS_PKG)) return true;
+      }
+    }
+  } catch {
+    /* no/!unreadable global settings → fall through to the filesystem check */
+  }
+  try {
+    await fs.access(
+      path.join(agentDir, 'npm', 'node_modules', PI_SUBAGENTS_PKG, 'package.json'),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Pure renderer for the discovery shim — exported for unit testing.
 export function renderPiSubagentsShim(entry: string): string {
   return `// Lattice-managed — do not commit. Loads the @tintinweb/pi-subagents
@@ -212,6 +257,24 @@ export async function installPiSubagentsShim(args: {
   if (!entry) return;
   const extDir = path.join(args.dir, '.pi', 'extensions');
   const shimFile = path.join(extDir, PI_SUBAGENTS_SHIM_FILENAME);
+
+  // Edge case: the user already installed `@tintinweb/pi-subagents` globally, so
+  // Pi loads it in every session. Dropping our shim would double-register its
+  // tools and make Pi error out on load. Yield to the user's global copy — and
+  // HEAL a shim a prior Lattice version already wrote, so the conflict clears on
+  // the next project open without manual cleanup.
+  if (await isPiSubagentsGloballyInstalled()) {
+    try {
+      await fs.unlink(shimFile);
+      console.log(
+        `[pi-subagents] global install detected; removed redundant shim ${shimFile}`,
+      );
+    } catch {
+      /* shim absent — nothing to heal */
+    }
+    return;
+  }
+
   const expected = renderPiSubagentsShim(entry);
   try {
     const existing = await fs.readFile(shimFile, 'utf8');
