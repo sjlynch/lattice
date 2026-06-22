@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parsePiListModels } from '../piModels.js';
+import { sanitizePiProviders } from '../globalSettings.js';
 import { normalizePiModel, buildPiModelFlag } from '../worktree/commands.js';
 
 // `pi --list-models` prints a fixed-width table (to stderr). Columns are
@@ -53,4 +54,38 @@ test('buildPiModelFlag quotes a valid model and is empty otherwise', () => {
   assert.equal(buildPiModelFlag('qwen-local/qwen'), ' --model "qwen-local/qwen"');
   assert.equal(buildPiModelFlag(undefined), '');
   assert.equal(buildPiModelFlag('not a model'), '');
+});
+
+test('sanitizePiProviders keeps well-formed providers and drops junk', () => {
+  const out = sanitizePiProviders([
+    {
+      id: 'qwen-local',
+      baseUrl: 'http://192.168.8.113:8000/v1',
+      api: 'openai-completions',
+      apiKey: 'local',
+      compat: { thinkingFormat: 'qwen-chat-template' },
+      models: [
+        { id: 'qwen', name: 'Qwen', reasoning: true, contextWindow: 204800 },
+        { id: '', name: 'dropped — no id' },
+      ],
+    },
+    { id: '', baseUrl: 'x' }, // no id → dropped
+    { id: 'no-url' }, // no baseUrl → dropped
+    'garbage',
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 'qwen-local');
+  assert.equal(out[0].baseUrl, 'http://192.168.8.113:8000/v1');
+  assert.equal(out[0].apiKey, 'local');
+  assert.deepEqual(out[0].compat, { thinkingFormat: 'qwen-chat-template' });
+  // The model with an empty id is dropped; the good one is kept.
+  assert.equal(out[0].models.length, 1);
+  assert.equal(out[0].models[0].id, 'qwen');
+  assert.equal(out[0].models[0].contextWindow, 204800);
+});
+
+test('sanitizePiProviders returns [] for non-arrays', () => {
+  assert.deepEqual(sanitizePiProviders(undefined), []);
+  assert.deepEqual(sanitizePiProviders({}), []);
+  assert.deepEqual(sanitizePiProviders('x'), []);
 });

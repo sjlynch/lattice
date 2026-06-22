@@ -16,6 +16,8 @@ force-directed DAG.
 - `~/.lattice/worktrees/<projectHash>/<slug>-<id>/` — per-task git worktree checkout. **Outside the project tree on purpose** (2026-05-10): nesting them inside `<repo>/.lattice/` was the root of three `.git`-deletion incidents (a bad recursive-delete path, or `git status` enumerating the nested checkouts). The only thing left inside `<repo>/.git` is the small `worktrees/<name>/gitdir` pointer.
 - `~/.lattice/snapshots/<projectHash>/<ts>-<label>/` — copy-based working-tree snapshot (replaces `git stash --include-untracked`, which had a silent-data-loss failure mode). Orphan snapshots from a crashed run are restored on next boot via `recoverPendingSnapshots`.
 - `~/.lattice/git-backups/<projectHash>/<ts>.bundle` — `git bundle --all` snapshot taken before each merge run; last 5 kept. Last-resort full-history recovery if `.git` is ever damaged: `git fetch <bundle>`.
+- `~/.lattice/globalSettings.json` — machine-global settings (`maxConcurrentAgents`, MCP defs/overrides, `piModelMenu`, `piProviders`).
+- `~/.lattice/piManagedProviders.json` — sidecar listing the Pi provider ids Lattice manages in `~/.pi/agent/models.json`, so a UI removal deletes precisely those (hand-written providers are never touched). See `backend/src/piModels.ts` `reconcilePiModelsJson`.
 
 ### `.git`-deletion defences (read before touching the merge pipeline)
 
@@ -120,9 +122,10 @@ therefore stay safely re-runnable.
 | GET | `/api/settings?project=` | Read per-project user settings |
 | PATCH | `/api/settings?project=` | Merge-update per-project user settings |
 | GET | `/api/instruction-templates?project=` | Editable agent instruction templates (task/merge/QA/push/post-merge/workflow): each template's `defaultTemplate`, the project's `currentTemplate` (override-or-default), and its `{{token}}` docs. Backs Settings → Agent prompts; edits save via PATCH `/api/settings` (`instructionTemplateOverrides`) |
-| GET | `/api/global-settings` | Read machine-global settings (`maxConcurrentAgents`, `mcpCustomServers`, `mcpBuiltinOverrides`, `piModelMenu`) |
-| PATCH | `/api/global-settings` | Update machine-global settings (applies the spawn-queue softCap live; carries MCP custom-server defs / built-in overrides; `piModelMenu` curates the Pi-model dropdown) |
+| GET | `/api/global-settings` | Read machine-global settings (`maxConcurrentAgents`, `mcpCustomServers`, `mcpBuiltinOverrides`, `piModelMenu`, `piProviders`) |
+| PATCH | `/api/global-settings` | Update machine-global settings (applies the spawn-queue softCap live; carries MCP custom-server defs / built-in overrides; `piModelMenu` curates the Pi-model dropdown; `piProviders` reconciles into `~/.pi/agent/models.json`) |
 | GET | `/api/pi-models` | Pi models for the harness dropdowns: full `pi --list-models` list, the curated "Pi — X" `menu` (`globalSettings.piModelMenu` or the default), and Pi's current `defaultPattern`. Machine-global; empty when `pi` isn't installed. See `backend/src/piModels.ts` |
+| POST | `/api/pi-endpoints/probe` | `{baseUrl, apiKey?}` → `{models}`: GET `<baseUrl>/models` on an OpenAI-compatible server (vLLM, …) and list its model ids. Backs the Settings → Pi "Detect models" button |
 | GET | `/api/mcp-catalog` | Merged MCP catalog (built-ins ⊕ overrides ⊕ custom). Definitions only — no secret values. Backs the Settings → MCP tab |
 | GET | `/api/mcp-secrets` | Redacted MCP secret presence (`{redacted, hints}` — booleans + last-4 hints, never the value) |
 | PATCH | `/api/mcp-secrets` | Set/clear one secret `{serverId, envVar, value}` (`value:null` clears); returns redacted. Stored in `~/.lattice/mcpSecrets.json` (`0600`), never settings files |
@@ -291,10 +294,17 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
   `buildPiModelFlag(piModel)` in `worktree/commands.ts` validates it against a
   safe `provider/model[:thinking]` pattern (shell-injection guard) and appends
   `--model "<piModel>"` at the four Pi spawn sites (task run/resume, workflow
-  step, prompt customization, post-merge hook). Lattice never writes Pi's
-  config — model selection is per-spawn via the flag. (Phase-2 endpoint
-  management — adding vLLM providers from the UI — is not built yet; declare
-  providers by hand in `~/.pi/agent/models.json` for now.)
+  step, prompt customization, post-merge hook). Model SELECTION is per-spawn
+  via the flag, never `~/.pi/agent/settings.json`.
+  **Endpoint management (Settings → Pi):** OpenAI-compatible providers (vLLM,
+  …) are declared in `globalSettings.piProviders` and *reconciled into*
+  `~/.pi/agent/models.json` by `reconcilePiModelsJson()` (boot + after a
+  global-settings PATCH that carries `piProviders`). Lattice owns exactly the
+  provider ids it manages — tracked in the `~/.lattice/piManagedProviders.json`
+  sidecar so a UI removal is a precise delete — and *preserves every
+  hand-written provider* (and any `compat`/`headers` on a re-managed id). The
+  "Detect models" button hits `POST /api/pi-endpoints/probe`. `settings.json`
+  defaults are still never touched.
 - **Tasks store** is in-memory keyed by project path with debounced JSON
   persistence; the global `~/.lattice/projects.json` index is consulted
   lazily so Stop-hook callbacks resolve task IDs across sessions.

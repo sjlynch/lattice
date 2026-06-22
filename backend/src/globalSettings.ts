@@ -23,6 +23,30 @@ export type GlobalSettings = {
   // models.json-declared model + Pi's current default; see piModels.ts).
   // Machine-global because Pi config (~/.pi/agent/) is machine-global.
   piModelMenu?: string[];
+  // Lattice-managed Pi providers (OpenAI-compatible endpoints — e.g. vLLM).
+  // Reconciled INTO `~/.pi/agent/models.json` on save/boot (Lattice owns these
+  // provider ids there; hand-written providers are preserved). Secret VALUES
+  // are stored inline here per the v1-simple decision: literal, an env-var
+  // name, or a `!command` — all resolved by Pi natively. See piModels.ts.
+  piProviders?: PiProvider[];
+};
+
+export type PiProviderModel = {
+  id: string;
+  name?: string;
+  reasoning?: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+};
+
+export type PiProvider = {
+  id: string; // models.json provider key
+  baseUrl: string;
+  api?: string; // default 'openai-completions'
+  apiKey?: string; // literal | env-var name | "!command" (Pi resolves)
+  headers?: Record<string, string>;
+  compat?: Record<string, unknown>;
+  models: PiProviderModel[];
 };
 
 // Bounds for maxConcurrentAgents. The upper bound stays well under the
@@ -72,6 +96,56 @@ function sanitize(raw: Partial<GlobalSettings>): Partial<GlobalSettings> {
     out.piModelMenu = Array.isArray(raw.piModelMenu)
       ? raw.piModelMenu.filter((p): p is string => typeof p === 'string' && !!p)
       : [];
+  }
+  if (raw.piProviders !== undefined) {
+    out.piProviders = sanitizePiProviders(raw.piProviders);
+  }
+  return out;
+}
+
+// Defensive shape validation for Lattice-managed Pi providers. Keeps only
+// well-formed entries (a non-empty id + baseUrl and at least the model id).
+// Exported for unit testing.
+export function sanitizePiProviders(raw: unknown): PiProvider[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PiProvider[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const e = item as Record<string, unknown>;
+    if (typeof e.id !== 'string' || !e.id.trim()) continue;
+    if (typeof e.baseUrl !== 'string' || !e.baseUrl.trim()) continue;
+    const models: PiProviderModel[] = [];
+    if (Array.isArray(e.models)) {
+      for (const m of e.models) {
+        if (!m || typeof m !== 'object') continue;
+        const mm = m as Record<string, unknown>;
+        if (typeof mm.id !== 'string' || !mm.id.trim()) continue;
+        const model: PiProviderModel = { id: mm.id.trim() };
+        if (typeof mm.name === 'string' && mm.name) model.name = mm.name;
+        if (typeof mm.reasoning === 'boolean') model.reasoning = mm.reasoning;
+        if (typeof mm.contextWindow === 'number' && mm.contextWindow > 0) {
+          model.contextWindow = Math.floor(mm.contextWindow);
+        }
+        if (typeof mm.maxTokens === 'number' && mm.maxTokens > 0) {
+          model.maxTokens = Math.floor(mm.maxTokens);
+        }
+        models.push(model);
+      }
+    }
+    const provider: PiProvider = {
+      id: e.id.trim(),
+      baseUrl: e.baseUrl.trim(),
+      models,
+    };
+    if (typeof e.api === 'string' && e.api) provider.api = e.api;
+    if (typeof e.apiKey === 'string' && e.apiKey) provider.apiKey = e.apiKey;
+    if (e.headers && typeof e.headers === 'object') {
+      provider.headers = stringRecord(e.headers);
+    }
+    if (e.compat && typeof e.compat === 'object') {
+      provider.compat = e.compat as Record<string, unknown>;
+    }
+    out.push(provider);
   }
   return out;
 }

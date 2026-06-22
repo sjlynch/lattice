@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { TerminalSquare, ScrollText, BarChart3, Cpu, Plug } from 'lucide-react';
+import { TerminalSquare, ScrollText, BarChart3, Cpu, Plug, Server } from 'lucide-react';
 import { Modal } from './Modal';
 import {
   type StartupTerminal,
@@ -19,6 +19,7 @@ import {
   type MetricsIgnoredExtsTabHandle,
 } from './settings/MetricsIgnoredExtsTab';
 import { AgentsTab, type AgentsTabHandle } from './settings/AgentsTab';
+import { PiTab, type PiTabHandle } from './settings/PiTab';
 import { McpTab, type McpTabHandle } from './settings/McpTab';
 import {
   InstructionTemplatesTab,
@@ -39,7 +40,7 @@ type Props = {
   onMetricsIgnoredExtsChange: (next: string[]) => void | Promise<void>;
 };
 
-type Tab = 'terminals' | 'prompts' | 'metrics' | 'agents' | 'mcp';
+type Tab = 'terminals' | 'prompts' | 'metrics' | 'agents' | 'pi' | 'mcp';
 
 const TERMINAL_DEFAULT_OPTIONS: { value: TerminalDefaultHarness; label: string }[] = [
   { value: 'claude', label: 'Claude' },
@@ -197,6 +198,7 @@ export function SettingsDialog({
   const instructionTemplatesRef = useRef<InstructionTemplatesTabHandle>(null);
   const metricsIgnoredExtsRef = useRef<MetricsIgnoredExtsTabHandle>(null);
   const agentsRef = useRef<AgentsTabHandle>(null);
+  const piRef = useRef<PiTabHandle>(null);
   const mcpRef = useRef<McpTabHandle>(null);
 
   useEffect(() => {
@@ -223,6 +225,7 @@ export function SettingsDialog({
           instructionTemplates: instructionTemplatesRef.current,
           metricsIgnoredExts: metricsIgnoredExtsRef.current,
           agents: agentsRef.current,
+          pi: piRef.current,
           mcp: mcpRef.current,
         },
         onStartupTerminalsChange,
@@ -269,6 +272,13 @@ export function SettingsDialog({
           >
             <Cpu size={12} />
             Agents
+          </button>
+          <button
+            className={`settings-tab ${tab === 'pi' ? 'active' : ''}`}
+            onClick={() => setTab('pi')}
+          >
+            <Server size={12} />
+            Pi
           </button>
           <button
             className={`settings-tab ${tab === 'mcp' ? 'active' : ''}`}
@@ -322,6 +332,7 @@ export function SettingsDialog({
             metricsIgnoredExts={metricsIgnoredExts}
           />
           <AgentsTab ref={agentsRef} active={tab === 'agents'} open={open} />
+          <PiTab ref={piRef} active={tab === 'pi'} open={open} />
           <McpTab
             ref={mcpRef}
             active={tab === 'mcp'}

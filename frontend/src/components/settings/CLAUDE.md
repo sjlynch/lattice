@@ -34,10 +34,15 @@ skip-permissions, and the instrument-Claude / disable-memory toggles.
 drafts.
 
 **Machine-global** — `globalSettings.json`, via `PATCH /api/global-settings`:
-`AgentsTab` (`maxConcurrentAgents` **and** `piModelMenu` — the curated "Pi — X"
-dropdown list, a checklist over `GET /api/pi-models`) and the MCP catalog
-(custom-server defs / built-in overrides). (`AgentsTab` reads/writes the global
-file directly, not `userSettings` — don't assume "a tab ⇒ per-project".)
+`AgentsTab` (`maxConcurrentAgents`), `PiTab` (`piProviders` + `piModelMenu`),
+and the MCP catalog (custom-server defs / built-in overrides). (These tabs
+read/write the global file directly, not `userSettings` — don't assume "a tab
+⇒ per-project".) `PiTab` manages OpenAI-compatible Pi endpoints (id / baseUrl /
+apiKey / models, with a "Detect models" probe via `POST /api/pi-endpoints/probe`)
+which the backend reconciles into `~/.pi/agent/models.json`, plus the curated
+"Pi — X" model-menu checklist. Note: the `PATCH /api/global-settings` route now
+passes *all* machine-global fields through (it previously forwarded only
+`maxConcurrentAgents`, silently dropping the rest).
 
 MCP **secrets** are separate again: stored in a `0600` file, written
 immediately on entry — never through the Save button.

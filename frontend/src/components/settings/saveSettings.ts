@@ -15,6 +15,7 @@ import { type EnvNotesTabHandle } from './EnvNotesTab';
 import { type InstructionTemplatesTabHandle } from './InstructionTemplatesTab';
 import { type MetricsIgnoredExtsTabHandle } from './MetricsIgnoredExtsTab';
 import { type AgentsTabHandle } from './AgentsTab';
+import { type PiTabHandle } from './PiTab';
 import { type McpTabHandle } from './McpTab';
 
 // The parent-owned draft values that participate in a save.
@@ -33,6 +34,7 @@ type SaveHandles = {
   instructionTemplates: InstructionTemplatesTabHandle | null;
   metricsIgnoredExts: MetricsIgnoredExtsTabHandle | null;
   agents: AgentsTabHandle | null;
+  pi: PiTabHandle | null;
   mcp: McpTabHandle | null;
 };
 
@@ -104,10 +106,14 @@ export async function saveSettings({
   void ensureProjectInstrumentation(activeFolder);
 
   // 4. Machine-global settings go to a separate endpoint, not userSettings.
+  // (The Pi providers + model menu come from the Pi tab; max-agents from
+  // Agents. The backend reconciles piProviders into ~/.pi/agent/models.json.)
   const maxAgentsPatch = handles.agents?.getMaxConcurrentAgentsPatch();
-  const piModelMenuPatch = handles.agents?.getPiModelMenuPatch();
+  const piProvidersPatch = handles.pi?.getPiProvidersPatch();
+  const piModelMenuPatch = handles.pi?.getPiModelMenuPatch();
   const globalPatch: Parameters<typeof patchGlobalSettings>[0] = {};
   if (maxAgentsPatch !== undefined) globalPatch.maxConcurrentAgents = maxAgentsPatch;
+  if (piProvidersPatch !== undefined) globalPatch.piProviders = piProvidersPatch;
   if (piModelMenuPatch !== undefined) globalPatch.piModelMenu = piModelMenuPatch;
   if (Object.keys(globalPatch).length > 0) {
     await patchGlobalSettings(globalPatch);

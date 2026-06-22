@@ -9,7 +9,7 @@
 - `FloatingPanel.tsx` + `floatingPanel/` — portal markup plus extracted geometry/state/drag/resize helpers; persists size/pos under `lattice.<thing>.window`.
 - `Modal.tsx` — generic backdrop overlay used by ForceGraph's "create task" flow.
 - `FolderPicker.tsx` + `folderPicker/` — backend-paged folder browser, with state in `useFolderPickerState` and focused row/list components.
-- `SettingsDialog.tsx` + `settings/` — settings modal tabs; keep the ref handles as thin save adapters and put per-tab draft state in focused `use*Draft` hooks.
+- `SettingsDialog.tsx` + `settings/` — settings modal tabs (Terminals / Agent prompts / Metrics / Agents / Pi / MCP); keep the ref handles as thin save adapters and put per-tab draft state in focused `use*Draft` hooks. The "Pi" tab (`settings/PiTab.tsx`) manages Pi endpoints + the model-menu curation (machine-global).
 
 ## Big launchers (split into subdirs)
 

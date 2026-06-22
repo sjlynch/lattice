@@ -3,6 +3,26 @@
 import { asJson } from './http';
 import type { McpServerEntry } from './mcp';
 
+export type PiProviderModel = {
+  id: string;
+  name?: string;
+  reasoning?: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+};
+
+// A Lattice-managed Pi provider (OpenAI-compatible endpoint, e.g. vLLM).
+// Reconciled into ~/.pi/agent/models.json on save. See backend piModels.ts.
+export type PiProvider = {
+  id: string;
+  baseUrl: string;
+  api?: string;
+  apiKey?: string; // literal | env-var name | "!command" (Pi resolves)
+  headers?: Record<string, string>;
+  compat?: Record<string, unknown>;
+  models: PiProviderModel[];
+};
+
 export type GlobalSettings = {
   // Max agents Lattice runs concurrently — the spawn queue's softCap.
   maxConcurrentAgents: number;
@@ -15,6 +35,8 @@ export type GlobalSettings = {
   // in the harness dropdowns. Empty/absent → the default menu. See backend
   // piModels.ts.
   piModelMenu?: string[];
+  // Lattice-managed Pi providers, reconciled into ~/.pi/agent/models.json.
+  piProviders?: PiProvider[];
 };
 
 export async function fetchGlobalSettings(): Promise<GlobalSettings> {

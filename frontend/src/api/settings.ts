@@ -23,6 +23,24 @@ export async function getPiModels(): Promise<PiModelsResult> {
   }
 }
 
+// "Detect models" for the Settings → Pi endpoint form: ask the backend to
+// GET <baseUrl>/models on an OpenAI-compatible server and return the model ids.
+// Throws (via asJson) with the backend's message on a bad URL / unreachable
+// endpoint so the form can surface it.
+export async function probePiEndpoint(
+  baseUrl: string,
+  apiKey?: string,
+): Promise<string[]> {
+  const data = await asJson<{ models: string[] }>(
+    await fetch('/api/pi-endpoints/probe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseUrl, apiKey }),
+    }),
+  );
+  return data.models;
+}
+
 // Live harness-availability subscription. The backend pushes the
 // `{claude, pi, codex}` map once `detectHarnesses()` resolves and on
 // every reconnect, so the UI picks up the Pi/Codex/Interleave options
