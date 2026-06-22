@@ -5,7 +5,28 @@ import {
   step,
   type QueueAction,
   type QueueState,
+  type StepContext,
 } from '../queueScheduler';
+
+// Count the active runs the queue itself didn't dispatch (a manual ▶ Run, or a
+// run from another tab). Queue-owned runs are the ones whose runId is attached
+// to a `started` entry; everything else in `activeRuns` is external and feeds
+// the scheduler's sequential gate + enqueue-while-busy auto-start.
+function externalActiveContext(
+  state: QueueState,
+  activeRuns: Record<string, WorkflowRun>,
+): StepContext {
+  const owned = new Set(
+    state.started
+      .map((entry) => entry.runId)
+      .filter((runId): runId is string => runId !== null),
+  );
+  let externalActiveCount = 0;
+  for (const id of Object.keys(activeRuns)) {
+    if (!owned.has(id)) externalActiveCount += 1;
+  }
+  return { externalActiveCount };
+}
 
 type Args = {
   workflowsById: Map<string, Workflow>;
@@ -48,13 +69,16 @@ export function useWorkflowQueue({
   const workflowsByIdRef = useRef(workflowsById);
   const runWorkflowRef = useRef(runWorkflow);
   const recentRunsRef = useRef(recentRuns);
+  const activeRunsRef = useRef(activeRuns);
   stateRef.current = state;
   workflowsByIdRef.current = workflowsById;
   runWorkflowRef.current = runWorkflow;
   recentRunsRef.current = recentRuns;
+  activeRunsRef.current = activeRuns;
 
   const dispatch = useCallback((action: QueueAction) => {
-    const result = step(stateRef.current, action);
+    const ctx = externalActiveContext(stateRef.current, activeRunsRef.current);
+    const result = step(stateRef.current, action, ctx);
     // Apply the new state to the ref BEFORE the recursive dispatches below,
     // so a fast-resolving runWorkflow that dispatches workflowStarted
     // synchronously reads the post-action state rather than the pre-action

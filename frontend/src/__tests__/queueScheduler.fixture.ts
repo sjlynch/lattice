@@ -7,6 +7,7 @@ import {
   type QueueMode,
   type QueueState,
   type StartedEntry,
+  type StepContext,
 } from '../components/workflows/queueScheduler.ts';
 
 export function queued(
@@ -45,9 +46,23 @@ export class QueueScenario {
   state: QueueState;
   starts: WorkflowQueueEntry[] = [];
   autoStop = false;
+  // Simulated count of active runs the queue didn't dispatch (manual ▶ Run,
+  // other tabs). Fed to `step` as the scheduler context for the methods that
+  // route through it.
+  externalActiveCount = 0;
 
   constructor(state: QueueState = initialQueueState) {
     this.state = state;
+  }
+
+  // Set the external-active-run count used by subsequent `step`-routed actions.
+  externalActive(count: number): this {
+    this.externalActiveCount = count;
+    return this;
+  }
+
+  private ctx(): StepContext {
+    return { externalActiveCount: this.externalActiveCount };
   }
 
   reduce(action: QueueAction): this {
@@ -57,7 +72,7 @@ export class QueueScenario {
   }
 
   step(action: QueueAction): this {
-    const result = step(this.state, action);
+    const result = step(this.state, action, this.ctx());
     this.state = result.state;
     this.starts = result.starts;
     this.autoStop = result.autoStop;
@@ -70,6 +85,16 @@ export class QueueScenario {
     harnessOverride: WorkflowRunHarnessOverride = null,
   ): this {
     return this.reduce({ type: 'enqueue', entry: queued(id, workflowId, harnessOverride) });
+  }
+
+  // Enqueue *through* the scheduler (not the raw reducer) so the
+  // enqueue-while-busy auto-start rule can fire when `externalActive(n)` is set.
+  enqueueStep(
+    id: string,
+    workflowId: string,
+    harnessOverride: WorkflowRunHarnessOverride = null,
+  ): this {
+    return this.step({ type: 'enqueue', entry: queued(id, workflowId, harnessOverride) });
   }
 
   setMode(mode: QueueMode): this {

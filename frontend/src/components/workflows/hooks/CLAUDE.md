@@ -11,7 +11,12 @@ there.
 - `useWorkflowEditor.ts` — mutable editor draft plus save/discard/delete,
   templates, prompt chips, and step reorder/patch actions.
 - `useWorkflowQueue.ts` — React adapter around the pure `queueScheduler`; starts
-  queued runs and advances from active-run diffs.
+  queued runs and advances from active-run diffs. Feeds the scheduler a
+  `StepContext` each tick — the count of active runs the queue didn't dispatch
+  (a manual ▶ Run, or another tab). That external count makes the sequential
+  gate wait behind a manual run and makes an enqueue auto-start the queue when a
+  run is already in flight (so "queue it while one is playing" runs the new
+  entry without a second Start-queue click).
 - `useWorkflowRuns.ts` — `/ws/workflow-runs` state, recent-run linger, and
   per-step terminal spawning through `TerminalsContext`. Thin wiring over the
   three helpers below.

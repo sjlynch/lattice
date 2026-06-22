@@ -27,9 +27,11 @@ export type QueueState = {
   // Independent queued workflow entries waiting to be started, in FIFO order.
   // The same workflowId may appear multiple times with different overrides.
   queued: WorkflowQueueEntry[];
-  // True iff the user pressed Start queue and the scheduler is responsible
-  // for auto-progressing. Flips back to false automatically when the queue
-  // drains.
+  // True iff the scheduler is responsible for auto-progressing. Set when the
+  // user presses Start queue, and *also* auto-set when a workflow is enqueued
+  // while another run is already in flight (so "queue it while one is playing"
+  // runs the new entry without a second click). Flips back to false
+  // automatically when the queue drains.
   running: boolean;
   // Queue entries the queue has dispatched /run for, that we still consider
   // in-flight or active. Sequential mode keeps this at length <= 1; parallel
@@ -265,8 +267,23 @@ export function reduceQueue(state: QueueState, action: QueueAction): QueueState 
   }
 }
 
-function pendingSequentialStarts(state: QueueState): WorkflowQueueEntry[] {
-  if (state.started.length > 0) return [];
+// Context the React layer feeds the scheduler each tick. `externalActiveCount`
+// is the number of workflow runs active server-side that the queue itself did
+// NOT dispatch — a manual ▶ Run click, or a run started from another browser
+// tab. Sequential mode admits one workflow at a time across the whole project,
+// so an external run occupies the slot exactly like a queue-owned run; and an
+// external run in flight is what makes an enqueue auto-start the queue.
+export type StepContext = {
+  externalActiveCount: number;
+};
+
+const NO_EXTERNAL_RUNS: StepContext = { externalActiveCount: 0 };
+
+function pendingSequentialStarts(state: QueueState, ctx: StepContext): WorkflowQueueEntry[] {
+  // The slot is taken by either a queue-owned run (`started`) or an
+  // externally-started run (`ctx.externalActiveCount`). Either one makes the
+  // next queued entry wait.
+  if (state.started.length > 0 || ctx.externalActiveCount > 0) return [];
   return [state.queued[0]];
 }
 
@@ -278,12 +295,16 @@ function pendingParallelStarts(state: QueueState): WorkflowQueueEntry[] {
 // What the scheduler wants the React layer to start *now*. Pure — safe to
 // call after every action.
 //
-// Sequential: at most one queued entry may be in-flight or active at a time.
+// Sequential: at most one queued entry may be in-flight or active at a time —
+// and it also waits behind any externally-started run (see StepContext).
 // Parallel: every queued entry not already in-flight should fire now.
-export function pendingStarts(state: QueueState): WorkflowQueueEntry[] {
+export function pendingStarts(
+  state: QueueState,
+  ctx: StepContext = NO_EXTERNAL_RUNS,
+): WorkflowQueueEntry[] {
   if (!state.running) return [];
   if (state.queued.length === 0) return [];
-  if (state.mode === 'sequential') return pendingSequentialStarts(state);
+  if (state.mode === 'sequential') return pendingSequentialStarts(state, ctx);
   return pendingParallelStarts(state);
 }
 
@@ -336,9 +357,24 @@ function stopIfDrained(state: QueueState): Pick<Step, 'state' | 'autoStop'> {
   };
 }
 
-export function step(state: QueueState, action: QueueAction): Step {
-  const reduced = reduceQueue(state, action);
-  const starts = pendingStarts(reduced);
+export function step(
+  state: QueueState,
+  action: QueueAction,
+  ctx: StepContext = NO_EXTERNAL_RUNS,
+): Step {
+  let reduced = reduceQueue(state, action);
+  // Auto-start: queueing a workflow while another run is already in flight
+  // behaves as if the user had pressed "Start queue" — the new entry runs as
+  // soon as the active run frees the slot (sequential) or immediately
+  // (parallel). Without this, an entry queued during a manual ▶ Run just sits
+  // idle because nothing flipped `running` on. Gated on an *external* active
+  // run (one the queue itself didn't dispatch): after an explicit Stop queue
+  // the lingering run is still in `started`, so enqueueing then must NOT
+  // silently resume the queue the user just stopped.
+  if (action.type === 'enqueue' && !reduced.running && ctx.externalActiveCount > 0) {
+    reduced = reduceRunningMode(reduced, { type: 'startQueue' });
+  }
+  const starts = pendingStarts(reduced, ctx);
   const reserved = reserveDispatches(reduced, starts);
   const stopped = stopIfDrained(reserved);
   return { ...stopped, starts };
