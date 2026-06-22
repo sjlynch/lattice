@@ -27,6 +27,19 @@ export function effectiveStepHarness(
   return run.harnessOverride ?? wf.steps[stepIndex].harness ?? 'claude';
 }
 
+// The Pi model for a step, mirroring effectiveStepHarness: a run-level override
+// (its piModelOverride) wins when set, otherwise the step's own piModel. Only
+// meaningful when the effective harness is `pi`; returns undefined otherwise so
+// the command builder falls back to Pi's default.
+export function effectiveStepPiModel(
+  wf: Workflow,
+  run: WorkflowRun,
+  stepIndex: number,
+): string | undefined {
+  if (effectiveStepHarness(wf, run, stepIndex) !== 'pi') return undefined;
+  return run.harnessOverride ? run.piModelOverride : wf.steps[stepIndex].piModel;
+}
+
 export function renderStepMarkdown(
   wf: Workflow,
   run: WorkflowRun,

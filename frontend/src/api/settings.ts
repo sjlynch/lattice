@@ -4,10 +4,24 @@ import { asJson } from './http';
 import type {
   HarnessAvailability,
   InstructionTemplate,
+  PiModelsResult,
   ProjectEnvResponse,
   UserSettings,
 } from './types';
 import { subscribeWs } from './ws';
+
+// The Pi models available for the harness dropdowns: the full
+// `pi --list-models` list, the curated "Pi — X" menu, and Pi's current default.
+// Machine-global (no project param). Empty lists when `pi` isn't installed.
+export async function getPiModels(): Promise<PiModelsResult> {
+  try {
+    const r = await fetch('/api/pi-models');
+    if (!r.ok) return { models: [], menu: [], defaultPattern: null };
+    return r.json();
+  } catch {
+    return { models: [], menu: [], defaultPattern: null };
+  }
+}
 
 // Live harness-availability subscription. The backend pushes the
 // `{claude, pi, codex}` map once `detectHarnesses()` resolves and on

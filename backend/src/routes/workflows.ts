@@ -75,6 +75,8 @@ export function buildWorkflowsRouter(backendOrigin: string): Router {
       }
       const run = await startWorkflowRun(req.params.id, backendOrigin, {
         harnessOverride,
+        piModelOverride:
+          typeof body.piModelOverride === 'string' ? body.piModelOverride : undefined,
       });
       res.json({ run });
     } catch (err) {

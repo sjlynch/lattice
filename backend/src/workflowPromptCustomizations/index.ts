@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { generateWorkflowPromptCustomizationId } from '../ids.js';
 import { normalizeAgentHarness } from '../harnesses.js';
+import { resolvePiModel } from '../piModels.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { installClaudeStopHookForCommand } from '../claudeStopHook.js';
 import { installPiCompletionExtension } from '../piExtension.js';
@@ -117,7 +118,10 @@ export async function startWorkflowPromptCustomization(
       `(active harness=${harness}, cwd=${cwd})`,
   );
 
-  const command = buildCustomizationCommand(instructionsFile, harness);
+  // A prompt-customization session has no model picker of its own; when it
+  // runs under Pi, use the project's default Pi model (UserSettings.piModel).
+  const piModel = harness === 'pi' ? await resolvePiModel(projectPath) : undefined;
+  const command = buildCustomizationCommand(instructionsFile, harness, piModel);
   request.command = command;
   storeWorkflowPromptCustomization(request);
 

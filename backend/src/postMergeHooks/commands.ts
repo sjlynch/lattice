@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { AgentHarness } from '../harnesses.js';
+import { buildPiModelFlag } from '../worktree/commands.js';
 
 // Build the single-line shell command that launches the chosen harness for a
 // post-merge hook. The pty's cwd is the home-scoped scratch dir (so the
@@ -17,15 +18,16 @@ import type { AgentHarness } from '../harnesses.js';
 export function buildPostMergeHookCommand(args: {
   harness: AgentHarness;
   instructionsFile: string;
+  piModel?: string;
 }): string {
-  const { harness, instructionsFile } = args;
+  const { harness, instructionsFile, piModel } = args;
   const fileName = path.basename(instructionsFile);
 
   if (harness === 'claude') {
     return `claude --dangerously-skip-permissions "Please read ${fileName} in this directory and complete the post-merge hook task it describes. Follow the completion instructions at the end carefully — Lattice is blocking the merge step waiting for your callback."`;
   }
   if (harness === 'pi') {
-    return `pi "Please read ${fileName} in this directory and complete the post-merge hook task it describes. Follow the completion instructions at the end carefully — Lattice is blocking the merge step waiting for your callback."`;
+    return `pi${buildPiModelFlag(piModel)} "Please read ${fileName} in this directory and complete the post-merge hook task it describes. Follow the completion instructions at the end carefully — Lattice is blocking the merge step waiting for your callback."`;
   }
   // Codex has no Stop-hook / shutdown-extension backstop, so emphasise the
   // explicit callback in the prompt.

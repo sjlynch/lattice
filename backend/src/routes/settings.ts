@@ -7,6 +7,8 @@ import { getUserSettings, patchUserSettings, type UserSettings } from '../userSe
 import { describeProjectEnvs } from '../worktree.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { buildInstructionTemplateEditorData } from '../instructionTemplates.js';
+import { getGlobalSettings } from '../globalSettings.js';
+import { getPiModels } from '../piModels.js';
 
 export function buildSettingsRouter(): Router {
   const r = Router();
@@ -35,6 +37,16 @@ export function buildSettingsRouter(): Router {
     const settings = await getUserSettings(repoRoot);
     const environments = await describeProjectEnvs(repoRoot, settings);
     res.json({ environments });
+  });
+
+  // Pi models for the harness dropdowns: the full `pi --list-models` list, the
+  // curated "Pi — X" menu (globalSettings.piModelMenu, or the default menu),
+  // and Pi's current default model. Machine-global (Pi config is), so no
+  // project param. Returns empty lists when `pi` isn't installed. See
+  // ../piModels.ts.
+  r.get('/api/pi-models', async (_req, res) => {
+    const global = await getGlobalSettings();
+    res.json(await getPiModels(global.piModelMenu));
   });
 
   // The editable instruction templates for a project — each template's default

@@ -12,7 +12,7 @@ list, with feature-scoped stylesheets in `styles/` (see
 - `TerminalsContext.tsx` — global terminal-tab state, persisted to sessionStorage (per-tab). `addTerminal({...})` is how features spawn agent sessions. Reducer/storage/IO helpers live in `terminal/` (see `terminal/CLAUDE.md`); the context file is just React glue around them.
 - `extensionStyles.ts` — single source of truth for sprite shape/color per file extension. Shared by graph + Legend.
 - `workflowTemplates.ts` — built-in templates surfaced in the Workflows picker.
-- `harnesses.ts` — shared frontend vocabulary/helpers for agent harness strings, labels, and availability-filtered option lists.
+- `harnesses.ts` — shared frontend vocabulary/helpers for agent harness strings, labels, and availability-filtered option lists. Also the Pi-model dropdown encoding: `buildHarnessOptions` (flattens harness + curated Pi models into "Pi — X" rows) and `encodeHarnessValue`/`decodeHarnessValue` (the `pi:<provider/model>` `<select>` value ⇄ `{harness, piModel}`).
 
 ## Per-project state keys
 

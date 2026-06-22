@@ -21,6 +21,9 @@ export type WorkflowRun = {
   totalSteps: number;
   currentStepIndex: number;
   harnessOverride?: WorkflowStepHarness;
+  // Pi model override for the run, applied to every step when harnessOverride
+  // is `pi`. Sibling to harnessOverride (two-field model, see piModels.ts).
+  piModelOverride?: string;
   error?: string;
 };
 

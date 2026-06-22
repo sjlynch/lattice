@@ -5,11 +5,11 @@ import {
   runTask as apiRunTask,
   type Task,
 } from '../../../api';
-import type { ResolvedHarness } from './useHarnessSelector';
+import type { RunHarnessSelection } from './useHarnessSelector';
 
 type UseTaskLifecycleActionsArgs = {
   tasks: Task[];
-  pickInterleaveHarness: () => ResolvedHarness;
+  pickRunHarness: () => RunHarnessSelection;
   showError: (message: string) => void;
 };
 
@@ -20,18 +20,19 @@ type UseTaskLifecycleActionsArgs = {
 // useTaskList). So these actions no longer mount a terminal themselves.
 export function useTaskLifecycleActions({
   tasks,
-  pickInterleaveHarness,
+  pickRunHarness,
   showError,
 }: UseTaskLifecycleActionsArgs) {
   const runTask = useCallback(
     async (task: Task) => {
       try {
-        await apiRunTask(task.id, pickInterleaveHarness());
+        const sel = pickRunHarness();
+        await apiRunTask(task.id, sel.harness, sel.piModel);
       } catch (err) {
         showError(`Run failed: ${(err as Error).message}`);
       }
     },
-    [pickInterleaveHarness, showError],
+    [pickRunHarness, showError],
   );
 
   const runAllOpen = useCallback(() => {
@@ -60,12 +61,13 @@ export function useTaskLifecycleActions({
   const resumeTaskAction = useCallback(
     async (task: Task) => {
       try {
-        await apiResumeTask(task.id, pickInterleaveHarness());
+        const sel = pickRunHarness();
+        await apiResumeTask(task.id, sel.harness, sel.piModel);
       } catch (err) {
         showError(`Resume failed: ${(err as Error).message}`);
       }
     },
-    [pickInterleaveHarness, showError],
+    [pickRunHarness, showError],
   );
 
   const resumeAllInProgress = useCallback(() => {

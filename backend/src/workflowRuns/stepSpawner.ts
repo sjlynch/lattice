@@ -22,7 +22,11 @@ import { buildAgentActivityUrl } from '../agentActivity.js';
 import type { Workflow } from '../workflows.js';
 import { renderHelperScript } from './renderHelperScript.js';
 import { resolveInstructionTemplate } from '../instructionTemplates.js';
-import { effectiveStepHarness, renderStepMarkdown } from './stepMarkdown.js';
+import {
+  effectiveStepHarness,
+  effectiveStepPiModel,
+  renderStepMarkdown,
+} from './stepMarkdown.js';
 import { getProjectDirtyState } from './projectDirtyState.js';
 import { notify, snapshot, type WorkflowRun } from './state.js';
 import { pruneOldWorkflowRuns, writeScratchReadme } from './scratchDirectory.js';
@@ -116,7 +120,11 @@ export async function spawnWorkflowStep(
       `(active harness=${harness}, dir=${stepDir})`,
   );
 
-  const command = buildWorkflowStepCommand(stepFile, harness);
+  const command = buildWorkflowStepCommand(
+    stepFile,
+    harness,
+    effectiveStepPiModel(wf, run, stepIndex),
+  );
 
   enqueueWorkflowStepSession({
     run,

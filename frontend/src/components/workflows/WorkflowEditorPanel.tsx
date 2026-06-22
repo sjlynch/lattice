@@ -21,6 +21,7 @@ export function WorkflowEditorPanel({ manager }: Props) {
     recentForEditor,
     collapsedSteps,
     harnessAvail,
+    piMenu,
     projectProfile,
     customizingSteps,
     actions,
@@ -133,6 +134,7 @@ export function WorkflowEditorPanel({ manager }: Props) {
                   index={index}
                   collapsed={collapsedSteps.isCollapsed(step.id)}
                   harnessAvail={harnessAvail}
+                  piMenu={piMenu}
                   definedNames={definedNames}
                   onChange={actions.patchStep}
                   onRemove={actions.removeStep}

@@ -15,6 +15,8 @@ type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
 export type PostMergeHookFormState = {
   prompt: string;
   harness: AgentHarness;
+  // Pi model for the hook; used only when harness is `pi`.
+  piModel?: string;
 };
 
 // Per-project state for the PostMergeHookRow: the persisted prompt/harness
@@ -49,6 +51,7 @@ export function usePostMergeHook(
         setForm({
           prompt: typeof s.postMergeHookPrompt === 'string' ? s.postMergeHookPrompt : '',
           harness: normalizeAgentHarness(s.postMergeHookHarness),
+          piModel: s.postMergeHookPiModel || undefined,
         });
       })
       .catch(() => {
@@ -136,11 +139,15 @@ export function usePostMergeHook(
   );
 
   const saveHarness = useCallback(
-    (next: AgentHarness) => {
-      setForm((prev) => ({ ...prev, harness: next }));
+    (next: AgentHarness, piModel?: string) => {
+      setForm((prev) => ({ ...prev, harness: next, piModel }));
       if (!activeFolder) return;
       setSaving(true);
-      patchUserSettings(activeFolder, { postMergeHookHarness: next })
+      patchUserSettings(activeFolder, {
+        postMergeHookHarness: next,
+        // '' clears the stored model (→ Pi default) for bare Pi / non-Pi.
+        postMergeHookPiModel: next === 'pi' ? piModel ?? '' : '',
+      })
         .catch((err) => showError(`Saving hook harness failed: ${(err as Error).message}`))
         .finally(() => setSaving(false));
     },

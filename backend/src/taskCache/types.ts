@@ -57,6 +57,10 @@ export type Task = {
   // scope itself to `claude` tasks — Codex/Pi have no PreToolUse/PostToolUse
   // activity hooks yet, so they get no live focus beams.
   harness?: AgentHarness;
+  // The Pi model ("provider/model") this task's worktree agent ran with, when
+  // the harness was `pi`. Recorded at spawn so a resume re-uses the same model
+  // without the UI having to re-send it. Absent for non-Pi tasks.
+  piModel?: string;
   // A stable palette slot assigned at spawn time (smallest index free among
   // the project's currently-active tasks). Drives the per-task accent color
   // shared by the card's left edge, the Claude node, and the `W` worktree

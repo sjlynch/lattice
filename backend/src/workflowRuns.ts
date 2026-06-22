@@ -24,6 +24,7 @@ import {
   type Workflow,
   type WorkflowRunHarnessOverride,
 } from './workflows.js';
+import { normalizePiModel } from './worktree/commands.js';
 import { generateWorkflowRunId } from './ids.js';
 import {
   notify,
@@ -47,6 +48,8 @@ export {
 
 export type StartWorkflowRunOptions = {
   harnessOverride?: WorkflowRunHarnessOverride;
+  // Pi model override, applied to every step when harnessOverride is `pi`.
+  piModelOverride?: string;
 };
 
 // Picks the right executor for a step. Agent steps run through the existing
@@ -85,6 +88,9 @@ export async function startWorkflowRun(
   if (wf.steps.length === 0) throw new Error('workflow has no steps');
 
   const harnessOverride = normalizeWorkflowRunHarnessOverride(options.harnessOverride);
+  // Only carry a model override when the run is overriding to Pi.
+  const piModelOverride =
+    harnessOverride === 'pi' ? normalizePiModel(options.piModelOverride) : undefined;
   const run: WorkflowRun = {
     id: generateWorkflowRunId(),
     workflowId: wf.id,
@@ -95,6 +101,7 @@ export async function startWorkflowRun(
     totalSteps: wf.steps.length,
     currentStepIndex: 0,
     ...(harnessOverride ? { harnessOverride } : {}),
+    ...(piModelOverride ? { piModelOverride } : {}),
   };
   runs.set(run.id, run);
   notify({ type: 'started', run: snapshot(run) });

@@ -9,6 +9,8 @@ import path from 'node:path';
 import { getTask, type Task } from '../../tasks.js';
 import { worktreeExists } from '../../worktree.js';
 import { SpawnCapacityError } from '../../spawnQueue.js';
+import { normalizeAgentHarness } from '../../harnesses.js';
+import { normalizePiModel, resolvePiModel } from '../../piModels.js';
 import { selectHarnessCommand } from './harnessFactory.js';
 
 export type ResumeTaskByIdResult = {
@@ -30,6 +32,7 @@ export async function resumeTaskById(
   taskId: string,
   requestedHarness: unknown,
   options: ResumeTaskByIdOptions = {},
+  requestedPiModel?: unknown,
 ): Promise<ResumeTaskByIdResult> {
   const task = await getTask(taskId);
   if (!task) throw new Error(`task ${taskId} not found`);
@@ -47,9 +50,19 @@ export async function resumeTaskById(
   }
 
   const taskFile = path.join(task.worktreePath, 'LATTICE_TASK.md');
+  // Pi model for the resume: explicit request wins, else the model the task
+  // originally ran with, else the per-project default.
+  const harness = normalizeAgentHarness(requestedHarness);
+  const piModel =
+    harness === 'pi'
+      ? normalizePiModel(requestedPiModel) ??
+        normalizePiModel(task.piModel) ??
+        (await resolvePiModel(task.projectPath))
+      : undefined;
   const selectedHarness = selectHarnessCommand(task, {
     requestedHarness,
     mode: 'resume',
+    piModel,
   });
   const spawn = await selectedHarness.createSession({
     taskFile,

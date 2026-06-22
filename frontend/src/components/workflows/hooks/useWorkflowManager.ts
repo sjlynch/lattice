@@ -185,6 +185,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     editor,
     pickingTemplate: editorState.pickingTemplate,
     harnessAvail: harnessState.harnessAvail,
+    piMenu: harnessState.piMenu,
     workflowHarnessOverrides: harnessState.workflowHarnessOverrides,
     getWorkflowHarnessOverride: harnessState.getWorkflowHarnessOverride,
     projectProfile,

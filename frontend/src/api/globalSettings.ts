@@ -11,6 +11,10 @@ export type GlobalSettings = {
   mcpCustomServers?: McpServerEntry[];
   // Per-id partial overrides of built-in catalog entries.
   mcpBuiltinOverrides?: Record<string, Partial<McpServerEntry>>;
+  // Curated Pi model menu — `provider/model` patterns shown as "Pi — X" rows
+  // in the harness dropdowns. Empty/absent → the default menu. See backend
+  // piModels.ts.
+  piModelMenu?: string[];
 };
 
 export async function fetchGlobalSettings(): Promise<GlobalSettings> {

@@ -26,6 +26,9 @@ export type WorkflowStep = {
   // the executor lands.
   mode: WorkflowStepMode;
   harness: WorkflowStepHarness;
+  // Pi model ("provider/model") for this step, used only when `harness` is
+  // `pi`. Absent = Pi's configured default. See piModels.ts.
+  piModel?: string;
   // Defaults to 'agent' (legacy steps that have no `kind` field on disk).
   kind?: WorkflowStepKind;
 };

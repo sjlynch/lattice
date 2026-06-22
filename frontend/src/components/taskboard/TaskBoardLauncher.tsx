@@ -103,7 +103,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     closeTerminal,
     showError,
   );
-  const { harness, setHarness, harnessAvail, pickInterleaveHarness } =
+  const { harness, piModel, piMenu, selectHarness, harnessAvail, pickRunHarness } =
     useHarnessSelector(activeFolder);
   const qaPlaywright = useQaPlaywright(activeFolder);
   const { startQaRun, startAllQaRuns } = useQaRuns(
@@ -137,7 +137,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     mergeRun,
     addTerminal,
     clearSelection,
-    pickInterleaveHarness,
+    pickRunHarness,
     showError,
   });
 
@@ -247,7 +247,9 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
           visibleLanes={visibleLanes}
           grouped={filteredGrouped}
           harness={harness}
-          setHarness={setHarness}
+          piModel={piModel}
+          piMenu={piMenu}
+          selectHarness={selectHarness}
           harnessAvail={harnessAvail}
           onToggleLane={toggleLane}
         />
@@ -310,6 +312,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
           <PostMergeHookRow
             prompt={postMergeHook.form.prompt}
             harness={postMergeHook.form.harness}
+            piModel={postMergeHook.form.piModel}
+            piMenu={piMenu}
             harnessAvail={harnessAvail}
             active={postMergeHook.active}
             recent={postMergeHook.recent}

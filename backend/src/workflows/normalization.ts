@@ -4,6 +4,7 @@ import {
   isAgentHarness,
   normalizeAgentHarness,
 } from '../harnesses.js';
+import { normalizePiModel } from '../worktree/commands.js';
 import type {
   Workflow,
   WorkflowRunHarnessOverride,
@@ -57,6 +58,7 @@ export function normalizeSteps(steps: unknown): WorkflowStep[] {
       prompt: typeof step.prompt === 'string' ? step.prompt : '',
       mode: step.mode === 'parallel' ? 'parallel' : 'sequential',
       harness: normalizeWorkflowStepHarness(step.harness),
+      piModel: normalizePiModel(step.piModel),
       kind: normalizeStepKind(step.kind),
     };
   });

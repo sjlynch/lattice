@@ -16,6 +16,9 @@ export type TerminalLaunchSettings = {
 export type UserSettings = {
   sidebarWidth?: number;
   harness?: HarnessChoice;
+  // Per-project default Pi model ("provider/model"), chosen via the "Pi — X"
+  // rows in the harness dropdown. Only used when the harness is `pi`.
+  piModel?: string;
   startupTerminals?: StartupTerminal[];
   terminalDefaultHarness?: TerminalDefaultHarness;
   terminalClaudeSkipPermissions?: boolean;
@@ -30,6 +33,8 @@ export type UserSettings = {
   // Optional post-merge hook. See backend userSettings.ts.
   postMergeHookPrompt?: string;
   postMergeHookHarness?: AgentHarness;
+  // Pi model for the post-merge hook, used only when postMergeHookHarness is `pi`.
+  postMergeHookPiModel?: string;
   // When true (default — absent counts as true), Lattice instruments the
   // project's `.claude/settings.local.json` so any Claude session working in
   // the project tree shows as an orange node on the graph. See backend
@@ -181,3 +186,22 @@ export type InstructionTemplate = {
 };
 
 export type { HarnessAvailability };
+
+// --- Pi model discovery (GET /api/pi-models). See backend piModels.ts. ---
+
+export type PiModelInfo = {
+  provider: string;
+  model: string;
+  pattern: string; // `${provider}/${model}` — value for `pi --model`
+  contextWindow?: string;
+  thinking?: boolean;
+};
+
+// One curated dropdown entry. `label` excludes the "Pi — " prefix.
+export type PiMenuEntry = { pattern: string; label: string };
+
+export type PiModelsResult = {
+  models: PiModelInfo[];
+  menu: PiMenuEntry[];
+  defaultPattern: string | null;
+};

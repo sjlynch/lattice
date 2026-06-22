@@ -1,7 +1,7 @@
-import type { Task, TaskStatus } from '../../api';
+import type { PiMenuEntry, Task, TaskStatus } from '../../api';
 import {
-  availableHarnessChoices,
-  harnessLabel,
+  buildHarnessOptions,
+  encodeHarnessValue,
   type HarnessAvailability,
   type HarnessChoice,
 } from '../../harnesses';
@@ -12,7 +12,9 @@ type TaskBoardFiltersProps = {
   visibleLanes: Set<TaskStatus>;
   grouped: Record<TaskStatus, Task[]>;
   harness: HarnessChoice;
-  setHarness: (value: HarnessChoice) => void;
+  piModel?: string;
+  piMenu: PiMenuEntry[];
+  selectHarness: (value: string) => void;
   harnessAvail: HarnessAvailability;
   onToggleLane: (id: TaskStatus) => void;
 };
@@ -22,11 +24,18 @@ export function TaskBoardFilters({
   visibleLanes,
   grouped,
   harness,
-  setHarness,
+  piModel,
+  piMenu,
+  selectHarness,
   harnessAvail,
   onToggleLane,
 }: TaskBoardFiltersProps) {
-  const harnessOptions = availableHarnessChoices(harnessAvail, harness);
+  const harnessOptions = buildHarnessOptions({
+    harnessAvail,
+    piMenu,
+    selected: { harness, piModel },
+    includeInterleave: true,
+  });
   return (
     <div className="taskboard-filters">
       {lanes.map((lane) => {
@@ -58,13 +67,13 @@ export function TaskBoardFilters({
       {harnessOptions.length > 1 && (
         <select
           className="taskboard-harness-select"
-          value={harness}
-          onChange={(e) => setHarness(e.target.value as HarnessChoice)}
-          title="Agent harness for running tasks"
+          value={encodeHarnessValue(harness, piModel)}
+          onChange={(e) => selectHarness(e.target.value)}
+          title="Agent harness (and Pi model) for running tasks"
         >
           {harnessOptions.map((option) => (
-            <option key={option} value={option}>
-              {harnessLabel(option)}
+            <option key={option.value} value={option.value}>
+              {option.label}
             </option>
           ))}
         </select>

@@ -34,9 +34,10 @@ skip-permissions, and the instrument-Claude / disable-memory toggles.
 drafts.
 
 **Machine-global** — `globalSettings.json`, via `PATCH /api/global-settings`:
-`AgentsTab` (`maxConcurrentAgents`) and the MCP catalog (custom-server defs /
-built-in overrides). (`AgentsTab` reads/writes the global file directly, not
-`userSettings` — don't assume "a tab ⇒ per-project".)
+`AgentsTab` (`maxConcurrentAgents` **and** `piModelMenu` — the curated "Pi — X"
+dropdown list, a checklist over `GET /api/pi-models`) and the MCP catalog
+(custom-server defs / built-in overrides). (`AgentsTab` reads/writes the global
+file directly, not `userSettings` — don't assume "a tab ⇒ per-project".)
 
 MCP **secrets** are separate again: stored in a `0600` file, written
 immediately on entry — never through the Save button.

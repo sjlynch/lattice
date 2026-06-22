@@ -8,7 +8,8 @@
 import { getTask, listTasks, updateTask, type Task } from '../../tasks.js';
 import { setupTaskWorktree } from '../../worktree.js';
 import { SpawnCapacityError } from '../../spawnQueue.js';
-import type { AgentHarness } from '../../harnesses.js';
+import { normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
+import { normalizePiModel, resolvePiModel } from '../../piModels.js';
 import { selectHarnessCommand } from './harnessFactory.js';
 import { assignColorSlot } from './colorSlot.js';
 
@@ -32,6 +33,9 @@ export type StartTaskByIdResult = {
 
 export type StartTaskByIdOptions = {
   requestedHarness?: unknown;
+  // Explicit Pi model from the run request body. Falls back to the per-project
+  // default (UserSettings.piModel) when absent. Ignored unless harness is `pi`.
+  requestedPiModel?: unknown;
   // When true, a terminal-server hard-cap rejection throws SpawnCapacityError
   // and the task is left 'open' (so the spawn-queue thunk is re-runnable).
   // When false/omitted, a cap rejection is swallowed: the task still flips to
@@ -64,9 +68,18 @@ export async function startTaskById(
     );
   }
 
+  // Resolve the Pi model only for a Pi run: explicit request body wins, else
+  // the per-project default. Avoids a settings read for Claude/Codex tasks.
+  const harness = normalizeAgentHarness(options.requestedHarness);
+  const piModel =
+    harness === 'pi'
+      ? normalizePiModel(options.requestedPiModel) ??
+        (await resolvePiModel(task.projectPath))
+      : undefined;
   const selectedHarness = selectHarnessCommand(task, {
     requestedHarness: options.requestedHarness,
     mode: 'run',
+    piModel,
   });
   const result = await setupTaskWorktree(
     task.projectPath,
@@ -97,6 +110,8 @@ export async function startTaskById(
     branch: result.branch,
     startedAt: Date.now(),
     harness: selectedHarness.harness,
+    // Persist the model used so a resume re-spawns with the same one.
+    piModel: selectedHarness.harness === 'pi' ? piModel : undefined,
     colorIndex,
     runQueued: undefined,
     runQueuedAt: undefined,

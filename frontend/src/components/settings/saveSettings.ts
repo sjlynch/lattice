@@ -105,8 +105,12 @@ export async function saveSettings({
 
   // 4. Machine-global settings go to a separate endpoint, not userSettings.
   const maxAgentsPatch = handles.agents?.getMaxConcurrentAgentsPatch();
-  if (maxAgentsPatch !== undefined) {
-    await patchGlobalSettings({ maxConcurrentAgents: maxAgentsPatch });
+  const piModelMenuPatch = handles.agents?.getPiModelMenuPatch();
+  const globalPatch: Parameters<typeof patchGlobalSettings>[0] = {};
+  if (maxAgentsPatch !== undefined) globalPatch.maxConcurrentAgents = maxAgentsPatch;
+  if (piModelMenuPatch !== undefined) globalPatch.piModelMenu = piModelMenuPatch;
+  if (Object.keys(globalPatch).length > 0) {
+    await patchGlobalSettings(globalPatch);
   }
 
   // 5. Notify the parent callbacks.

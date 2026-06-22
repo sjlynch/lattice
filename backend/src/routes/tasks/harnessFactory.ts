@@ -18,6 +18,10 @@ type CommandBuilder = (taskFile: string) => string;
 type SelectHarnessCommandOptions = {
   requestedHarness: unknown;
   mode: HarnessMode;
+  // Resolved Pi model ("provider/model"); only applied when the harness is
+  // `pi`. The caller (startTask/resumeTask) does the body→task→settings
+  // resolution; this just binds it into the Pi command builder.
+  piModel?: string;
 };
 
 export type CreateSessionOutcome = {
@@ -39,20 +43,20 @@ export type SelectedHarnessCommand = {
   }) => Promise<CreateSessionOutcome>;
 };
 
-function getCommandBuilder(harness: TaskHarness, mode: HarnessMode): CommandBuilder {
+function getCommandBuilder(
+  harness: TaskHarness,
+  mode: HarnessMode,
+  piModel?: string,
+): CommandBuilder {
   if (mode === 'resume') {
-    return harness === 'pi'
-      ? buildPiResumeCommand
-      : harness === 'codex'
-      ? buildCodexResumeCommand
-      : buildResumeCommand;
+    if (harness === 'pi') return (taskFile) => buildPiResumeCommand(taskFile, piModel);
+    if (harness === 'codex') return buildCodexResumeCommand;
+    return buildResumeCommand;
   }
 
-  return harness === 'pi'
-    ? buildPiCommand
-    : harness === 'codex'
-    ? buildCodexCommand
-    : buildClaudeCommand;
+  if (harness === 'pi') return (taskFile) => buildPiCommand(taskFile, piModel);
+  if (harness === 'codex') return buildCodexCommand;
+  return buildClaudeCommand;
 }
 
 export function selectHarnessCommand(
@@ -60,7 +64,7 @@ export function selectHarnessCommand(
   options: SelectHarnessCommandOptions,
 ): SelectedHarnessCommand {
   const harness = normalizeAgentHarness(options.requestedHarness);
-  const commandBuilder = getCommandBuilder(harness, options.mode);
+  const commandBuilder = getCommandBuilder(harness, options.mode, options.piModel);
 
   return {
     harness,

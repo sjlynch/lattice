@@ -84,22 +84,30 @@ export async function deleteTask(id: string): Promise<void> {
   );
 }
 
-export async function runTask(id: string, harness?: AgentHarness): Promise<RunTaskResult> {
+export async function runTask(
+  id: string,
+  harness?: AgentHarness,
+  piModel?: string,
+): Promise<RunTaskResult> {
   return asJson<RunTaskResult>(
     await fetch(`/api/tasks/${encodeURIComponent(id)}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ harness }),
+      body: JSON.stringify({ harness, piModel }),
     }),
   );
 }
 
-export async function resumeTask(id: string, harness?: AgentHarness): Promise<RunTaskResult> {
+export async function resumeTask(
+  id: string,
+  harness?: AgentHarness,
+  piModel?: string,
+): Promise<RunTaskResult> {
   return asJson<RunTaskResult>(
     await fetch(`/api/tasks/${encodeURIComponent(id)}/resume`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ harness }),
+      body: JSON.stringify({ harness, piModel }),
     }),
   );
 }

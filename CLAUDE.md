@@ -120,8 +120,9 @@ therefore stay safely re-runnable.
 | GET | `/api/settings?project=` | Read per-project user settings |
 | PATCH | `/api/settings?project=` | Merge-update per-project user settings |
 | GET | `/api/instruction-templates?project=` | Editable agent instruction templates (task/merge/QA/push/post-merge/workflow): each template's `defaultTemplate`, the project's `currentTemplate` (override-or-default), and its `{{token}}` docs. Backs Settings → Agent prompts; edits save via PATCH `/api/settings` (`instructionTemplateOverrides`) |
-| GET | `/api/global-settings` | Read machine-global settings (`maxConcurrentAgents`, `mcpCustomServers`, `mcpBuiltinOverrides`) |
-| PATCH | `/api/global-settings` | Update machine-global settings (applies the spawn-queue softCap live; carries MCP custom-server defs / built-in overrides) |
+| GET | `/api/global-settings` | Read machine-global settings (`maxConcurrentAgents`, `mcpCustomServers`, `mcpBuiltinOverrides`, `piModelMenu`) |
+| PATCH | `/api/global-settings` | Update machine-global settings (applies the spawn-queue softCap live; carries MCP custom-server defs / built-in overrides; `piModelMenu` curates the Pi-model dropdown) |
+| GET | `/api/pi-models` | Pi models for the harness dropdowns: full `pi --list-models` list, the curated "Pi — X" `menu` (`globalSettings.piModelMenu` or the default), and Pi's current `defaultPattern`. Machine-global; empty when `pi` isn't installed. See `backend/src/piModels.ts` |
 | GET | `/api/mcp-catalog` | Merged MCP catalog (built-ins ⊕ overrides ⊕ custom). Definitions only — no secret values. Backs the Settings → MCP tab |
 | GET | `/api/mcp-secrets` | Redacted MCP secret presence (`{redacted, hints}` — booleans + last-4 hints, never the value) |
 | PATCH | `/api/mcp-secrets` | Set/clear one secret `{serverId, envVar, value}` (`value:null` clears); returns redacted. Stored in `~/.lattice/mcpSecrets.json` (`0600`), never settings files |
@@ -273,6 +274,27 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
   (`ensurePiSubagentsInstalled` at boot + project open; `installPiSubagentsShim`
   is a graceful no-op until the shared install resolves). Always on when `pi`
   is present — no toggle.
+- **Pi model selection.** The harness dropdowns (task board, workflow steps,
+  post-merge hook) surface one "Pi — X" row per *curated* Pi model in addition
+  to bare "Pi". The list is *detected*, never hardcoded: `backend/src/piModels.ts`
+  parses `pi --list-models` (printed to **stderr**) and merges in the friendly
+  names + custom-provider set from `~/.pi/agent/models.json`. The curated
+  `menu` defaults to every models.json-declared model plus Pi's current default
+  (`~/.pi/agent/settings.json` `defaultProvider`/`defaultModel`); the user
+  widens it via Settings → Agents → "Pi model menu" (machine-global
+  `globalSettings.piModelMenu`). Selection rides as a **second field**
+  `piModel` ("provider/model") alongside the existing `harness` enum — never a
+  composite — persisted on `UserSettings.piModel` (per-project default),
+  `Task.piModel` (recorded at spawn so a resume reuses it), `WorkflowStep.piModel`,
+  the workflow run's `piModelOverride`, and `UserSettings.postMergeHookPiModel`.
+  It only takes effect when the resolved harness is `pi`; the single
+  `buildPiModelFlag(piModel)` in `worktree/commands.ts` validates it against a
+  safe `provider/model[:thinking]` pattern (shell-injection guard) and appends
+  `--model "<piModel>"` at the four Pi spawn sites (task run/resume, workflow
+  step, prompt customization, post-merge hook). Lattice never writes Pi's
+  config — model selection is per-spawn via the flag. (Phase-2 endpoint
+  management — adding vLLM providers from the UI — is not built yet; declare
+  providers by hand in `~/.pi/agent/models.json` for now.)
 - **Tasks store** is in-memory keyed by project path with debounced JSON
   persistence; the global `~/.lattice/projects.json` index is consulted
   lazily so Stop-hook callbacks resolve task IDs across sessions.

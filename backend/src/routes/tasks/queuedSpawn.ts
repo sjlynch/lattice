@@ -32,6 +32,7 @@ export async function enqueueTaskRun(
   taskId: string,
   backendOrigin: string,
   requestedHarness: unknown,
+  requestedPiModel?: unknown,
 ): Promise<EnqueueTaskResult> {
   const task = await getTask(taskId);
   if (task && !task.runQueued) {
@@ -46,6 +47,7 @@ export async function enqueueTaskRun(
       try {
         const result = await startTaskById(taskId, backendOrigin, {
           requestedHarness,
+          requestedPiModel,
           throwOnCapacity: true,
         });
         if (result.serverId) {
@@ -84,15 +86,19 @@ export async function enqueueTaskRun(
 export async function enqueueTaskResume(
   taskId: string,
   requestedHarness: unknown,
+  requestedPiModel?: unknown,
 ): Promise<EnqueueTaskResult> {
   const { queued, done } = enqueueSpawn<void>({
     kind: 'task-resume',
     priority: 'batch',
     dedupeKey: taskResumeDedupeKey(taskId),
     thunk: async () => {
-      const result = await resumeTaskById(taskId, requestedHarness, {
-        throwOnCapacity: true,
-      });
+      const result = await resumeTaskById(
+        taskId,
+        requestedHarness,
+        { throwOnCapacity: true },
+        requestedPiModel,
+      );
       if (result.serverId) {
         notifyTaskSpawned({
           projectPath: result.task.projectPath,

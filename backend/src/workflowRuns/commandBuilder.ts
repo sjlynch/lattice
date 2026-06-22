@@ -9,8 +9,9 @@ import type { Workflow } from '../workflows.js';
 export function buildWorkflowStepCommand(
   stepFile: string,
   harness: Workflow['steps'][number]['harness'],
+  piModel?: string,
 ): string {
-  if (harness === 'pi') return buildPiCommand(stepFile);
+  if (harness === 'pi') return buildPiCommand(stepFile, piModel);
   if (harness === 'codex') return buildCodexCommand(stepFile);
   return buildClaudeCommand(stepFile);
 }

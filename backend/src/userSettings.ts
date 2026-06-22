@@ -19,6 +19,11 @@ export type TerminalDefaultHarness = AgentHarness | 'terminal';
 export type UserSettings = {
   sidebarWidth?: number;
   harness?: AgentHarness | 'interleave';
+  // Per-project default Pi model ("provider/model", optionally `:thinking`),
+  // chosen via the "Pi — X" rows in the harness dropdown. Only consulted when
+  // the resolved harness is `pi` and the run/resume request didn't carry an
+  // explicit model. Absent = Pi's own configured default. See piModels.ts.
+  piModel?: string;
   startupTerminals?: StartupTerminal[];
   terminalDefaultHarness?: TerminalDefaultHarness;
   terminalClaudeSkipPermissions?: boolean;
@@ -56,6 +61,9 @@ export type UserSettings = {
   // workflow Merge control step from advancing as well.
   postMergeHookPrompt?: string;
   postMergeHookHarness?: AgentHarness;
+  // Pi model for the post-merge hook, used only when postMergeHookHarness is
+  // `pi`. Sibling to postMergeHookHarness (see `piModel` above).
+  postMergeHookPiModel?: string;
   // When true (the default — absent counts as true), Lattice merges activity
   // hooks into this project's `.claude/settings.local.json` so ANY Claude
   // session working in the project tree (even ones Lattice didn't launch)

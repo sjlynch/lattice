@@ -1,5 +1,6 @@
 import { queuedCreateSession } from '../queuedCreateSession.js';
 import { normalizeAgentHarness } from '../harnesses.js';
+import { normalizePiModel } from '../piModels.js';
 import { getUserSettings } from '../userSettings.js';
 import { buildPostMergeHookCommand } from './commands.js';
 import {
@@ -85,6 +86,8 @@ export async function triggerPostMergeHook(
     const command = buildPostMergeHookCommand({
       harness,
       instructionsFile: session.instructionsFile,
+      piModel:
+        harness === 'pi' ? normalizePiModel(settings.postMergeHookPiModel) : undefined,
     });
 
     console.log(

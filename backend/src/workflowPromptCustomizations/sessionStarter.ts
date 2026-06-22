@@ -10,8 +10,9 @@ import type { WorkflowPromptCustomization } from './types.js';
 export function buildCustomizationCommand(
   instructionsFile: string,
   harness: AgentHarness,
+  piModel?: string,
 ): string {
-  if (harness === 'pi') return buildPiCommand(instructionsFile);
+  if (harness === 'pi') return buildPiCommand(instructionsFile, piModel);
   if (harness === 'codex') return buildCodexCommand(instructionsFile);
   return buildClaudeCommand(instructionsFile);
 }

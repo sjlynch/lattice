@@ -1,7 +1,7 @@
 import type { MergeRun, Task } from '../../../api';
 import type { TerminalSpec } from '../../../TerminalsContext';
 import type { GroupedTasks } from './useTaskBoardState';
-import type { ResolvedHarness } from './useHarnessSelector';
+import type { RunHarnessSelection } from './useHarnessSelector';
 import { useTaskCrudActions } from './useTaskCrudActions';
 import { useTaskLifecycleActions } from './useTaskLifecycleActions';
 import { useTaskMergeActions } from './useTaskMergeActions';
@@ -16,7 +16,7 @@ type UseTaskActionsArgs = {
   mergeRun: MergeRun | null;
   addTerminal: AddTerminal;
   clearSelection: () => void;
-  pickInterleaveHarness: () => ResolvedHarness;
+  pickRunHarness: () => RunHarnessSelection;
   showError: (message: string) => void;
 };
 
@@ -31,7 +31,7 @@ export function useTaskActions({
   mergeRun,
   addTerminal,
   clearSelection,
-  pickInterleaveHarness,
+  pickRunHarness,
   showError,
 }: UseTaskActionsArgs) {
   const crud = useTaskCrudActions({ activeFolder, showError });
@@ -44,7 +44,7 @@ export function useTaskActions({
   });
   const lifecycle = useTaskLifecycleActions({
     tasks,
-    pickInterleaveHarness,
+    pickRunHarness,
     showError,
   });
   const merge = useTaskMergeActions({

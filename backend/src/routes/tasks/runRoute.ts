@@ -27,6 +27,7 @@ export function buildTaskRunRoute(backendOrigin: string): Router {
       task.id,
       backendOrigin,
       req.body?.harness,
+      req.body?.piModel,
     );
     res.json({ accepted: true, queued });
   });

@@ -62,7 +62,9 @@ export async function startWorkflow(
   options: WorkflowRunStartOptions = {},
 ): Promise<WorkflowRunResult> {
   const harnessOverride = options.harnessOverride ?? options.modelOverride ?? null;
-  const body = harnessOverride ? JSON.stringify({ harnessOverride }) : undefined;
+  const body = harnessOverride
+    ? JSON.stringify({ harnessOverride, piModelOverride: options.piModelOverride })
+    : undefined;
   return asJson<WorkflowRunResult>(
     await fetch(`/api/workflows/${encodeURIComponent(id)}/run`, {
       method: 'POST',

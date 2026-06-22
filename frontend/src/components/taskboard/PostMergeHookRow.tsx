@@ -1,22 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Webhook, X } from 'lucide-react';
 import {
-  availableAgentHarnesses,
+  buildHarnessOptions,
+  decodeHarnessValue,
+  encodeHarnessValue,
   harnessLabel,
+  normalizeAgentHarness,
   type AgentHarness,
   type HarnessAvailability,
 } from '../../harnesses';
-import type { PostMergeHookRun } from '../../api';
+import type { PiMenuEntry, PostMergeHookRun } from '../../api';
 
 type Props = {
   prompt: string;
   harness: AgentHarness;
+  piModel?: string;
+  piMenu: PiMenuEntry[];
   harnessAvail: HarnessAvailability;
   active: PostMergeHookRun | null;
   recent: PostMergeHookRun | null;
   saving: boolean;
   onSavePrompt: (value: string) => void;
-  onSaveHarness: (harness: AgentHarness) => void;
+  onSaveHarness: (harness: AgentHarness, piModel?: string) => void;
   onAbort: () => void;
   onFocusActiveTerminal: (() => void) | null;
 };
@@ -36,6 +41,8 @@ function statusLabel(active: PostMergeHookRun | null, recent: PostMergeHookRun |
 export function PostMergeHookRow({
   prompt,
   harness,
+  piModel,
+  piMenu,
   harnessAvail,
   active,
   recent,
@@ -72,7 +79,12 @@ export function PostMergeHookRow({
 
   const configured = prompt.trim().length > 0;
   const status = statusLabel(active, recent, configured);
-  const harnessOptions = availableAgentHarnesses(harnessAvail, harness);
+  const harnessOptions = buildHarnessOptions({
+    harnessAvail,
+    piMenu,
+    selected: { harness, piModel },
+    includeInterleave: false,
+  });
 
   const onPromptChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => setDraftPrompt(e.target.value),
@@ -151,12 +163,15 @@ export function PostMergeHookRow({
             <label className="post-merge-hook-field">
               <span>Harness</span>
               <select
-                value={harness}
-                onChange={(e) => onSaveHarness(e.target.value as AgentHarness)}
+                value={encodeHarnessValue(harness, piModel)}
+                onChange={(e) => {
+                  const sel = decodeHarnessValue(e.target.value);
+                  onSaveHarness(normalizeAgentHarness(sel.harness), sel.piModel);
+                }}
               >
                 {harnessOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {harnessLabel(option)}
+                  <option key={option.value} value={option.value}>
+                    {option.label}
                   </option>
                 ))}
               </select>

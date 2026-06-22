@@ -18,6 +18,11 @@ export type GlobalSettings = {
   mcpCustomServers?: McpServerEntry[];
   // Per-id partial overrides of built-in catalog entries (e.g. edited args).
   mcpBuiltinOverrides?: Record<string, Partial<McpServerEntry>>;
+  // Curated Pi model menu — `provider/model` patterns surfaced as "Pi — X"
+  // rows in the harness dropdowns. Empty/absent → the default menu (every
+  // models.json-declared model + Pi's current default; see piModels.ts).
+  // Machine-global because Pi config (~/.pi/agent/) is machine-global.
+  piModelMenu?: string[];
 };
 
 // Bounds for maxConcurrentAgents. The upper bound stays well under the
@@ -62,6 +67,11 @@ function sanitize(raw: Partial<GlobalSettings>): Partial<GlobalSettings> {
   }
   if (raw.mcpBuiltinOverrides !== undefined) {
     out.mcpBuiltinOverrides = sanitizeBuiltinOverrides(raw.mcpBuiltinOverrides);
+  }
+  if (raw.piModelMenu !== undefined) {
+    out.piModelMenu = Array.isArray(raw.piModelMenu)
+      ? raw.piModelMenu.filter((p): p is string => typeof p === 'string' && !!p)
+      : [];
   }
   return out;
 }

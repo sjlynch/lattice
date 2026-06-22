@@ -19,6 +19,8 @@ export type WorkflowStep = {
   prompt: string;
   mode: WorkflowStepMode;
   harness: WorkflowStepHarness;
+  // Pi model ("provider/model") for this step; used only when harness is `pi`.
+  piModel?: string;
   kind?: WorkflowStepKind;
 };
 
@@ -52,12 +54,16 @@ export type WorkflowRun = {
   totalSteps: number;
   currentStepIndex: number;
   harnessOverride?: WorkflowStepHarness;
+  // Pi model override, applied to every step when harnessOverride is `pi`.
+  piModelOverride?: string;
   error?: string;
 };
 
 export type WorkflowRunStartOptions = {
   harnessOverride?: WorkflowRunHarnessOverride;
   modelOverride?: WorkflowRunModelOverride;
+  // Pi model override for the run, applied when the override harness is `pi`.
+  piModelOverride?: string;
 };
 
 export type WorkflowRunResult = {
@@ -68,6 +74,8 @@ export type WorkflowQueueEntry = {
   id: string;
   workflowId: string;
   harnessOverride: WorkflowRunHarnessOverride;
+  // Pi model override carried alongside harnessOverride when it's `pi`.
+  piModelOverride?: string;
 };
 
 export type WorkflowPromptTemplateId =

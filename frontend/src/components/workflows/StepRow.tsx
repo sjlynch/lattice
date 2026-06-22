@@ -11,12 +11,15 @@ import {
 } from 'lucide-react';
 import type {
   HarnessAvailability,
+  PiMenuEntry,
   WorkflowStep,
   WorkflowStepKind,
   WorkflowStepMode,
 } from '../../api';
 import {
-  availableAgentHarnesses,
+  buildHarnessOptions,
+  decodeHarnessValue,
+  encodeHarnessValue,
   harnessLabel,
   normalizeAgentHarness,
   type AgentHarness,
@@ -57,27 +60,39 @@ const CONTROL_STEP_META: Record<
 
 function StepHarnessSelect({
   harnessAvail,
+  piMenu,
   selectedHarness,
+  selectedPiModel,
   onChange,
 }: {
   harnessAvail: HarnessAvailability;
+  piMenu: PiMenuEntry[];
   selectedHarness: AgentHarness;
-  onChange: (harness: AgentHarness) => void;
+  selectedPiModel?: string;
+  onChange: (harness: AgentHarness, piModel?: string) => void;
 }) {
-  const harnessOptions = availableAgentHarnesses(harnessAvail, selectedHarness);
+  const harnessOptions = buildHarnessOptions({
+    harnessAvail,
+    piMenu,
+    selected: { harness: selectedHarness, piModel: selectedPiModel },
+    includeInterleave: false,
+  });
   const showHarnessSelect = harnessOptions.length > 1 || selectedHarness !== 'claude';
   if (!showHarnessSelect) return null;
 
   return (
     <select
       className="workflows-step-harness"
-      value={selectedHarness}
-      onChange={(e) => onChange(normalizeAgentHarness(e.target.value))}
-      title="Agent harness for this workflow step"
+      value={encodeHarnessValue(selectedHarness, selectedPiModel)}
+      onChange={(e) => {
+        const sel = decodeHarnessValue(e.target.value);
+        onChange(normalizeAgentHarness(sel.harness), sel.piModel);
+      }}
+      title="Agent harness (and Pi model) for this workflow step"
     >
-      {harnessOptions.map((harness) => (
-        <option key={harness} value={harness}>
-          {harnessLabel(harness)}
+      {harnessOptions.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
         </option>
       ))}
     </select>
@@ -109,6 +124,7 @@ export const StepRow = memo(function StepRow({
   index,
   collapsed,
   harnessAvail,
+  piMenu,
   definedNames,
   onChange,
   onRemove,
@@ -121,6 +137,7 @@ export const StepRow = memo(function StepRow({
   index: number;
   collapsed: boolean;
   harnessAvail: HarnessAvailability;
+  piMenu: PiMenuEntry[];
   definedNames: ReadonlySet<string>;
   customizing: boolean;
 } & StepRowCallbacks) {
@@ -143,6 +160,7 @@ export const StepRow = memo(function StepRow({
       index={index}
       collapsed={collapsed}
       harnessAvail={harnessAvail}
+      piMenu={piMenu}
       definedNames={definedNames}
       onChange={onChange}
       onRemove={onRemove}
@@ -159,6 +177,7 @@ const AgentStepRow = memo(function AgentStepRow({
   index,
   collapsed,
   harnessAvail,
+  piMenu,
   definedNames,
   onChange,
   onRemove,
@@ -171,6 +190,7 @@ const AgentStepRow = memo(function AgentStepRow({
   index: number;
   collapsed: boolean;
   harnessAvail: HarnessAvailability;
+  piMenu: PiMenuEntry[];
   definedNames: ReadonlySet<string>;
   customizing: boolean;
 } & StepRowCallbacks) {
@@ -229,8 +249,10 @@ const AgentStepRow = memo(function AgentStepRow({
           </select>
           <StepHarnessSelect
             harnessAvail={harnessAvail}
+            piMenu={piMenu}
             selectedHarness={selectedHarness}
-            onChange={(harness) => onChange(index, { harness })}
+            selectedPiModel={step.piModel}
+            onChange={(harness, piModel) => onChange(index, { harness, piModel })}
           />
           <button
             className="icon-btn sm"

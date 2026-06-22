@@ -31,7 +31,11 @@ export function buildTaskResumeRoute(): Router {
 
     // Route through the spawn queue (see runRoute.ts). The terminal is
     // delivered via the `task-spawned` WS event when the pty spawns.
-    const { queued } = await enqueueTaskResume(task.id, req.body?.harness);
+    const { queued } = await enqueueTaskResume(
+      task.id,
+      req.body?.harness,
+      req.body?.piModel,
+    );
     res.json({ accepted: true, queued });
   });
 
