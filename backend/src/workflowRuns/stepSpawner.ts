@@ -17,6 +17,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { installClaudeHooks } from '../claudeStopHook.js';
 import { installPiCompletionExtension } from '../piExtension.js';
+import { installPiSubagentsShim } from '../piSubagents.js';
 import { buildAgentActivityUrl } from '../agentActivity.js';
 import type { Workflow } from '../workflows.js';
 import { renderHelperScript } from './renderHelperScript.js';
@@ -106,6 +107,10 @@ export async function spawnWorkflowStep(
     site: 'workflow-step-complete',
     respectQuitGate: false,
   });
+  // pi-subagents loader shim alongside the completion extension (no-op until
+  // the shared install resolves). Step dir is under <project>/.lattice/, which
+  // is gitignored, so no extra exclude is needed.
+  await installPiSubagentsShim({ dir: stepDir });
   console.log(
     `[workflow-step] installed Claude+Pi backstops for run ${run.id} step ${stepIndex} ` +
       `(active harness=${harness}, dir=${stepDir})`,

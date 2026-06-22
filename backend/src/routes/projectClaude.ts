@@ -15,6 +15,11 @@ import { Router } from 'express';
 import { canonicalProjectPath, latticeHomeDir } from '../projectPath.js';
 import { getUserSettings } from '../userSettings.js';
 import { ensureLatticeGitignore } from '../worktree.js';
+import {
+  ensurePiSubagentsInstalled,
+  getPiSubagentsEntry,
+  installPiSubagentsShim,
+} from '../piSubagents.js';
 import { applyClaudeProjectConfig } from '../claudeTrust.js';
 import { resolveManagedClaudeServers } from '../mcp/registry.js';
 import {
@@ -98,6 +103,20 @@ export function buildProjectClaudeRouter(backendOrigin: string): Router {
       // Independent of instrumentation: reconcile auto-memory for the project's
       // own Claude sessions (per-project, Local scope — never global).
       await setProjectClaudeMemoryDisabled(project, memoryDisabled);
+      // pi-subagents (best-effort, non-blocking): ensure the shared install,
+      // then drop the loader shim at the project ROOT so a `pi` the user starts
+      // in the Lattice terminal panel (cwd = project root) gets sub-agents — Pi
+      // extension discovery is cwd-exact, so this is the only way to reach a
+      // manually-typed `pi`. Backgrounded so a cold first-time install (~20s)
+      // doesn't delay this response; the shim still lands once it resolves.
+      void ensurePiSubagentsInstalled()
+        .then(async () => {
+          if (!getPiSubagentsEntry()) return;
+          const root = canonicalProjectPath(project);
+          await ensureLatticeGitignore(root).catch(() => {});
+          await installPiSubagentsShim({ dir: root }).catch(() => {});
+        })
+        .catch(() => {});
     } catch (err) {
       console.warn('[project-instrumentation] failed:', err);
       return res.status(500).json({ error: (err as Error).message });

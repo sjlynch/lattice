@@ -7,6 +7,7 @@ import { seedClaudeTrust } from '../claudeTrust.js';
 import { renderTaskMarkdown } from './instructions.js';
 import { resolveInstructionTemplate } from '../instructionTemplates.js';
 import { LATTICE_EXCLUDE_PATTERNS } from './managedFiles.js';
+import { installPiSubagentsShim } from '../piSubagents.js';
 import {
   installPiCompletionExtension,
   installStopHook,
@@ -45,6 +46,10 @@ export async function writePostAddWorktreeFiles(
   // Pi auto-loads `.pi/extensions/*.ts`; nothing else sees the file. The
   // file is excluded from `git status` via writeWorktreeExclude below.
   await installPiCompletionExtension(worktreePath, task.id, backendOrigin);
+  // Drop the pi-subagents loader shim next to the completion extension so a Pi
+  // task in this worktree gets sub-agents. No-op until the shared install has
+  // resolved (graceful), and excluded from `git status` via LATTICE_EXCLUDE_PATTERNS.
+  await installPiSubagentsShim({ dir: worktreePath });
   console.log(
     `[task-worktree] installed Claude+Pi backstops for task ${task.id} ` +
       `(active harness=${harness}, worktree=${worktreePath})`,

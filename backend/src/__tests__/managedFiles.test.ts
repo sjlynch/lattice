@@ -62,3 +62,12 @@ test('the Pi completion extension is in every relevant set', () => {
   assert.equal(isLatticeOwnedConflictPath(piExt), true);
   assert.equal(isLatticeOwnedConflictPath('.pi\\extensions\\lattice-complete.ts'), true);
 });
+
+test('the pi-subagents loader shim is in every relevant set', () => {
+  const shim = '.pi/extensions/lattice-subagents.ts';
+  assert.ok((LATTICE_OWNED_FILE_PATHS as readonly string[]).includes(shim));
+  assert.ok((LATTICE_GITIGNORE_ENTRIES as readonly string[]).includes(shim));
+  assert.ok((LATTICE_EXCLUDE_PATTERNS as readonly string[]).includes(shim));
+  assert.equal(isLatticeOwnedConflictPath(shim), true);
+  assert.equal(isLatticeOwnedConflictPath('.pi\\extensions\\lattice-subagents.ts'), true);
+});

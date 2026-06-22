@@ -1,5 +1,6 @@
 import type http from 'node:http';
 import { detectHarnesses } from '../harnessDetect.js';
+import { ensurePiSubagentsInstalled } from '../piSubagents.js';
 import {
   recoverOrphanedTasks,
   resumeInterruptedMergeRuns,
@@ -41,6 +42,11 @@ export function startHarnessDetection(): void {
   // frontend's /ws/harnesses connection lands. Probe failures are
   // swallowed inside the module's cache.
   detectHarnesses().catch(() => {});
+  // If `pi` is installed, auto-install the pi-subagents extension into a shared
+  // Lattice-owned dir (project-local, never the user's global pi config) so the
+  // loader shim has a target to point at. Fire-and-forget — runs concurrently
+  // with listen; never throws. See piSubagents.ts.
+  ensurePiSubagentsInstalled().catch(() => {});
 }
 
 export async function runPreListenStartupRecovery(): Promise<void> {

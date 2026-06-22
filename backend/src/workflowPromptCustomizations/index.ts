@@ -4,6 +4,7 @@ import { normalizeAgentHarness } from '../harnesses.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { installClaudeStopHookForCommand } from '../claudeStopHook.js';
 import { installPiCompletionExtension } from '../piExtension.js';
+import { installPiSubagentsShim } from '../piSubagents.js';
 import { renderCustomizationBackstopScript } from './backstopScripts.js';
 import { renderCustomizationInstructions } from './instructionRenderer.js';
 import {
@@ -108,6 +109,9 @@ export async function startWorkflowPromptCustomization(
     respectQuitGate: false,
     promptFile: customizedPromptFile(cwd),
   });
+  // pi-subagents loader shim alongside the completion extension (no-op until
+  // the shared install resolves). Scratch is under <project>/.lattice/ (gitignored).
+  await installPiSubagentsShim({ dir: cwd });
   console.log(
     `[workflow-customization] installed Claude+Pi backstops for ${id} ` +
       `(active harness=${harness}, cwd=${cwd})`,

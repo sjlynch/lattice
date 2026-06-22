@@ -1,6 +1,7 @@
 import { installClaudeHooks } from '../claudeStopHook.js';
 import type { AgentHarness } from '../harnesses.js';
 import { installPiCompletionExtension } from '../piExtension.js';
+import { installPiSubagentsShim } from '../piSubagents.js';
 import { buildAgentActivityUrl } from '../agentActivity.js';
 
 export function postMergeHookCallbackUrl(
@@ -67,6 +68,9 @@ export async function installPostMergeHookStopHook(args: {
     site: 'post-merge-hook-complete',
     respectQuitGate: false,
   });
+  // pi-subagents loader shim alongside the completion extension (no-op until
+  // the shared install resolves). Scratch is home-scoped (outside the repo).
+  await installPiSubagentsShim({ dir: scratchDir });
   console.log(
     `[post-merge-hook] installed Claude+Pi backstops for ${id} ` +
       `(active harness=${harness}, scratch=${scratchDir})`,

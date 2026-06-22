@@ -257,6 +257,22 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
   (`{verdict, confidence}`) — a confident PASS auto-advances the task qa → done
   (`backend/src/qaRuns/verdict.ts`); anything else leaves it in QA. See
   `backend/src/mcp/CLAUDE.md`.
+- **Pi sub-agents** (`@tintinweb/pi-subagents`) are auto-installed when the
+  `pi` CLI is detected, scoped to Lattice's own Pi sessions so the user's
+  global pi config (`~/.pi/agent/settings.json`) is never polluted. Lattice
+  installs the package once into a shared home dir
+  (`~/.lattice/pi-extensions/` via `pi install npm:@tintinweb/pi-subagents -l`)
+  and loads it through a tiny re-export shim
+  (`.pi/extensions/lattice-subagents.ts` → `export { default } from
+  "<shared entry>"`). Pi auto-discovers any `.ts` under `<cwd>/.pi/extensions/`
+  but **cwd-exact** (it does not walk up), so Lattice drops the shim alongside
+  the existing `lattice-complete.ts` in every Pi session cwd it creates
+  (worktrees, workflow steps, post-merge, prompt-customization) **and at the
+  project root**, the latter so a `pi` the user launches in the terminal panel
+  (cwd = project root) also gets it. Backend: `backend/src/piSubagents.ts`
+  (`ensurePiSubagentsInstalled` at boot + project open; `installPiSubagentsShim`
+  is a graceful no-op until the shared install resolves). Always on when `pi`
+  is present — no toggle.
 - **Tasks store** is in-memory keyed by project path with debounced JSON
   persistence; the global `~/.lattice/projects.json` index is consulted
   lazily so Stop-hook callbacks resolve task IDs across sessions.

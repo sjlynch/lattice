@@ -15,20 +15,25 @@
 //     conflict markers in the JSON break Claude's bootstrap.
 //     `.pi/extensions/lattice-complete.ts` is the Pi-harness analogue —
 //     same per-worktree task-id URL, same "ours always wins" logic.
+//     `.pi/extensions/lattice-subagents.ts` is the pi-subagents loader shim
+//     (see piSubagents.ts) — Lattice-owned, identical content everywhere.
 
 // Repo-relative file paths Lattice writes that should never be tracked.
 // Added to .gitignore (repo root) and .git/info/exclude (per worktree).
 //
-// `.pi/extensions/lattice-complete.ts` is written only into worktrees whose
-// task runs under the Pi harness (Pi's analogue of the Claude Stop hook —
-// see installPiCompletionExtension in stopHook.ts). The exact path (not the
-// whole `.pi/` dir) is listed so a project that legitimately tracks its own
-// `.pi/` settings isn't disturbed.
+// `.pi/extensions/lattice-complete.ts` is written into Pi-capable worktrees
+// (Pi's analogue of the Claude Stop hook — see installPiCompletionExtension in
+// stopHook.ts); `.pi/extensions/lattice-subagents.ts` is the pi-subagents
+// loader shim (see piSubagents.ts) Lattice drops alongside it (and at the
+// project root for manual terminal-panel `pi` sessions). The exact paths (not
+// the whole `.pi/` dir) are listed so a project that legitimately tracks its
+// own `.pi/` settings isn't disturbed.
 export const LATTICE_OWNED_FILE_PATHS = [
   'LATTICE_TASK.md',
   'MERGE_INSTRUCTIONS.md',
   '.claude/settings.local.json',
   '.pi/extensions/lattice-complete.ts',
+  '.pi/extensions/lattice-subagents.ts',
 ] as const;
 
 // Patterns for the worktree-local exclude file. STASH_CONFLICT_*.md is a
@@ -45,6 +50,7 @@ export const LATTICE_EXCLUDE_PATTERNS = [
   '.claude/settings.local.json',
   '.pi/extensions/lattice-complete.ts',
   '.pi/extensions/lattice-last-shutdown.json',
+  '.pi/extensions/lattice-subagents.ts',
 ] as const;
 
 // .gitignore entries appended to the project's repo-root .gitignore.
@@ -59,6 +65,7 @@ export const LATTICE_GITIGNORE_ENTRIES = [
   '.lattice/',
   '.pi/extensions/lattice-complete.ts',
   '.pi/extensions/lattice-last-shutdown.json',
+  '.pi/extensions/lattice-subagents.ts',
 ] as const;
 
 // Conflict paths that always resolve to "ours" (the worktree's version).
