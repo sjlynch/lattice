@@ -54,3 +54,6 @@ LATTICE_TASK.md
 
 # lattice-managed (do not remove)
 .pi/extensions/lattice-last-shutdown.json
+
+# lattice-managed (do not remove)
+.pi/extensions/lattice-subagents.ts
