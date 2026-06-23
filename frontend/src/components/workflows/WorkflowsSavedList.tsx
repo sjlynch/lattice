@@ -1,15 +1,10 @@
 import { useMemo } from 'react';
 import { ListChecks, Plus, X } from 'lucide-react';
 import { WORKFLOW_TEMPLATES } from '../../workflowTemplates';
-import { ALL_AGENT_HARNESSES } from '../../harnesses';
-import type {
-  WorkflowRun,
-  WorkflowRunHarnessOverride,
-  WorkflowStepHarness,
-} from '../../api';
+import type { WorkflowRun } from '../../api';
 import type { WorkflowManager } from './hooks/useWorkflowManager';
 import { WorkflowsSavedItem } from './WorkflowsSavedItem';
-import { availableWorkflowHarnessOptions } from './workflowHarnessOverride';
+import { workflowRunOverrideOptions } from './workflowHarnessOverride';
 
 type Props = {
   manager: WorkflowManager;
@@ -22,8 +17,10 @@ export function WorkflowsSavedList({ manager }: Props) {
     activeRunList,
     pickingTemplate,
     harnessAvail,
+    piMenu,
     queue,
     getWorkflowHarnessOverride,
+    getWorkflowPiModelOverride,
     actions,
   } = manager;
 
@@ -46,17 +43,13 @@ export function WorkflowsSavedList({ manager }: Props) {
     return map;
   }, [queue.queuedEntries]);
 
-  // Harness-option arrays keyed by override value. There are only a handful of
-  // override values, so precompute each once per availability change; reusing the
-  // same array reference keeps the memoized rows from re-rendering needlessly.
-  const harnessOptionsByOverride = useMemo(() => {
-    const map = new Map<WorkflowRunHarnessOverride, WorkflowStepHarness[]>();
-    const overrides: WorkflowRunHarnessOverride[] = [null, ...ALL_AGENT_HARNESSES];
-    for (const override of overrides) {
-      map.set(override, availableWorkflowHarnessOptions(harnessAvail, override));
-    }
-    return map;
-  }, [harnessAvail]);
+  // One shared run-override option list ("Default" + harness rows + "Pi — X"
+  // model rows). Stable per availability/menu change so the memoized rows don't
+  // re-render on every run-progress event.
+  const runOverrideOptions = useMemo(
+    () => workflowRunOverrideOptions(harnessAvail, piMenu),
+    [harnessAvail, piMenu],
+  );
 
   return (
     <aside className="workflows-list">
@@ -119,9 +112,7 @@ export function WorkflowsSavedList({ manager }: Props) {
             const isSelected = editor.workflowId === workflow.id;
             const queuedCount = queuedCountByWorkflowId.get(workflow.id) ?? 0;
             const harnessOverride = getWorkflowHarnessOverride(workflow.id);
-            const harnessOptions =
-              harnessOptionsByOverride.get(harnessOverride) ??
-              availableWorkflowHarnessOptions(harnessAvail, harnessOverride);
+            const piModelOverride = getWorkflowPiModelOverride(workflow.id);
             return (
               <WorkflowsSavedItem
                 key={workflow.id}
@@ -130,7 +121,8 @@ export function WorkflowsSavedList({ manager }: Props) {
                 run={run}
                 queuedCount={queuedCount}
                 harnessOverride={harnessOverride}
-                harnessOptions={harnessOptions}
+                piModelOverride={piModelOverride}
+                harnessOptions={runOverrideOptions}
                 onSelect={actions.selectWorkflow}
                 onSetHarnessOverride={actions.setWorkflowHarnessOverride}
                 onEnqueue={actions.enqueueWorkflow}

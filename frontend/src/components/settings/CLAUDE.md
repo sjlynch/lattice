@@ -38,9 +38,12 @@ drafts.
 and the MCP catalog (custom-server defs / built-in overrides). (These tabs
 read/write the global file directly, not `userSettings` — don't assume "a tab
 ⇒ per-project".) `PiTab` manages OpenAI-compatible Pi endpoints (id / baseUrl /
-apiKey / models, with a "Detect models" probe via `POST /api/pi-endpoints/probe`)
-which the backend reconciles into `~/.pi/agent/models.json`, plus the curated
-"Pi — X" model-menu checklist. Note: the `PATCH /api/global-settings` route now
+apiKey / models, with a "Detect models" probe via `POST /api/pi-endpoints/probe`),
+plus a per-endpoint **Advanced** section (compat `thinkingFormat` +
+`supportsDeveloperRole`, and custom request headers). The backend reconciles all
+of this into `~/.pi/agent/models.json`, plus the curated "Pi — X" model-menu
+checklist. (A keyless endpoint is written with `apiKey: "local"` so Pi doesn't
+reject the whole file — see `backend/src/piModels.ts`.) Note: the `PATCH /api/global-settings` route now
 passes *all* machine-global fields through (it previously forwarded only
 `maxConcurrentAgents`, silently dropping the rest).
 

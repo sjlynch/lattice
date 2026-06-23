@@ -97,12 +97,15 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     save,
     addActiveRun,
     getWorkflowHarnessOverride: harnessState.getWorkflowHarnessOverride,
+    getWorkflowPiModelOverride: harnessState.getWorkflowPiModelOverride,
     onError: showError,
   });
 
   const runQueuedWorkflow = useCallback(
     (wf: Workflow, entry: WorkflowQueueEntry): Promise<WorkflowRun | null> =>
-      runActions.runWorkflow(wf.id, entry.harnessOverride),
+      // Each entry captured its own override at enqueue time — pass both fields
+      // through so a queued "Pi — X" run uses the model it was queued with.
+      runActions.runWorkflow(wf.id, entry.harnessOverride, entry.piModelOverride),
     [runActions],
   );
 
@@ -118,6 +121,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     workflowsById,
     save,
     getWorkflowHarnessOverride: harnessState.getWorkflowHarnessOverride,
+    getWorkflowPiModelOverride: harnessState.getWorkflowPiModelOverride,
     dispatchQueue,
   });
 
@@ -188,6 +192,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     piMenu: harnessState.piMenu,
     workflowHarnessOverrides: harnessState.workflowHarnessOverrides,
     getWorkflowHarnessOverride: harnessState.getWorkflowHarnessOverride,
+    getWorkflowPiModelOverride: harnessState.getWorkflowPiModelOverride,
     projectProfile,
     customizingSteps: promptCustomization.customizingSteps,
     queue: {

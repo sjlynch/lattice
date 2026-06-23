@@ -57,6 +57,11 @@
 }
 .workflows-step-harness {
   min-width: 74px;
+  /* Truncate long "Pi — <model>" labels on the closed control. */
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .workflows-step-mode:hover,
 .workflows-step-harness:hover {

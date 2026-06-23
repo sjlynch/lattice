@@ -1,15 +1,10 @@
 import { memo } from 'react';
 import { Play, Plus, Square } from 'lucide-react';
-import type {
-  Workflow,
-  WorkflowRun,
-  WorkflowRunHarnessOverride,
-  WorkflowStepHarness,
-} from '../../api';
+import type { Workflow, WorkflowRun, WorkflowRunHarnessOverride } from '../../api';
+import type { HarnessOption } from '../../harnesses';
 import {
-  parseWorkflowHarnessOverride,
-  serializeWorkflowHarnessOverride,
-  workflowHarnessOverrideLabel,
+  parseWorkflowRunOverride,
+  serializeWorkflowRunOverride,
 } from './workflowHarnessOverride';
 
 type Props = {
@@ -18,11 +13,13 @@ type Props = {
   run?: WorkflowRun;
   queuedCount: number;
   harnessOverride: WorkflowRunHarnessOverride;
-  harnessOptions: WorkflowStepHarness[];
+  piModelOverride?: string;
+  harnessOptions: HarnessOption[];
   onSelect: (workflow: Workflow) => void;
   onSetHarnessOverride: (
     workflowId: string,
     harnessOverride: WorkflowRunHarnessOverride,
+    piModel?: string,
   ) => void;
   onEnqueue: (workflowId: string) => void;
   onRun: (workflowId: string) => void | Promise<unknown>;
@@ -38,6 +35,7 @@ export const WorkflowsSavedItem = memo(function WorkflowsSavedItem({
   run,
   queuedCount,
   harnessOverride,
+  piModelOverride,
   harnessOptions,
   onSelect,
   onSetHarnessOverride,
@@ -80,22 +78,19 @@ export const WorkflowsSavedItem = memo(function WorkflowsSavedItem({
       <div className="workflows-item-actions">
         <select
           className="workflows-item-harness workflows-step-harness"
-          value={serializeWorkflowHarnessOverride(harnessOverride)}
+          value={serializeWorkflowRunOverride(harnessOverride, piModelOverride)}
           onClick={(event) => event.stopPropagation()}
           onChange={(event) => {
             event.stopPropagation();
-            onSetHarnessOverride(
-              workflow.id,
-              parseWorkflowHarnessOverride(event.target.value),
-            );
+            const sel = parseWorkflowRunOverride(event.target.value);
+            onSetHarnessOverride(workflow.id, sel.harness, sel.piModel);
           }}
-          title="Run override (applies to the next queued/run copy): Default uses each step's harness"
+          title="Run override (applies to the next queued/run copy): Default uses each step's harness/model"
           aria-label={`Run override for ${workflow.name}`}
         >
-          <option value="default">Default</option>
-          {harnessOptions.map((harness) => (
-            <option key={harness} value={harness}>
-              {workflowHarnessOverrideLabel(harness)}
+          {harnessOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
             </option>
           ))}
         </select>

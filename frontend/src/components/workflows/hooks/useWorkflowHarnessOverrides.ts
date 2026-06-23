@@ -18,8 +18,10 @@ export function useWorkflowHarnessOverrides() {
     codex: false,
   });
   const [piMenu, setPiMenu] = useState<PiMenuEntry[]>([]);
+  // Per-workflow run override: the harness plus (for Pi) the chosen model. Held
+  // as one object so the harness and model can't drift apart.
   const [workflowHarnessOverrides, setWorkflowHarnessOverrides] = useState<
-    Record<string, WorkflowRunHarnessOverride>
+    Record<string, { harness: WorkflowRunHarnessOverride; piModel?: string }>
   >({});
 
   // Live harness-availability subscription — auto-reconnects so the UI
@@ -47,15 +49,29 @@ export function useWorkflowHarnessOverrides() {
 
   const getWorkflowHarnessOverride = useCallback(
     (workflowId: string): WorkflowRunHarnessOverride =>
-      workflowHarnessOverrides[workflowId] ?? null,
+      workflowHarnessOverrides[workflowId]?.harness ?? null,
+    [workflowHarnessOverrides],
+  );
+
+  const getWorkflowPiModelOverride = useCallback(
+    (workflowId: string): string | undefined =>
+      workflowHarnessOverrides[workflowId]?.piModel,
     [workflowHarnessOverrides],
   );
 
   const setWorkflowHarnessOverride = useCallback(
-    (workflowId: string, harnessOverride: WorkflowRunHarnessOverride) => {
+    (
+      workflowId: string,
+      harnessOverride: WorkflowRunHarnessOverride,
+      piModel?: string,
+    ) => {
       setWorkflowHarnessOverrides((cur) => ({
         ...cur,
-        [workflowId]: harnessOverride,
+        // Only keep a model when overriding to Pi.
+        [workflowId]: {
+          harness: harnessOverride,
+          piModel: harnessOverride === 'pi' ? piModel : undefined,
+        },
       }));
     },
     [],
@@ -66,6 +82,7 @@ export function useWorkflowHarnessOverrides() {
     piMenu,
     workflowHarnessOverrides,
     getWorkflowHarnessOverride,
+    getWorkflowPiModelOverride,
     setWorkflowHarnessOverride,
   };
 }

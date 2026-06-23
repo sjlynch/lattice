@@ -92,6 +92,12 @@
   appearance: auto;
   outline: none;
   transition: border-color 0.12s ease;
+  /* Long "Pi — <vLLM model name>" labels truncate on the closed control; the
+     opened option list still shows the full name. */
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .taskboard-harness-select:hover {
   border-color: var(--accent);

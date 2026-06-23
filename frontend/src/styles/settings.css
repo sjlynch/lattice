@@ -130,6 +130,56 @@
   display: flex;
   font-family: var(--font-mono, monospace);
 }
+
+/* Settings → Pi tab: one managed-endpoint card. */
+.settings-pi-endpoint {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #15181d;
+}
+.settings-pi-endpoint-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.settings-pi-advanced-toggle {
+  align-self: flex-start;
+  gap: 4px;
+  padding-left: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.settings-pi-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
+.settings-pi-advanced-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.settings-pi-advanced-field span {
+  flex: 0 0 110px;
+}
+.settings-pi-advanced-field .text-input {
+  flex: 1;
+}
+.settings-pi-advanced-headers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 .startup-list {
   display: flex;
   flex-direction: column;

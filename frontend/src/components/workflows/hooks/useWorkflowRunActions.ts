@@ -14,6 +14,7 @@ type Args = {
   save: () => Promise<Workflow | null>;
   addActiveRun: (run: WorkflowRun) => void;
   getWorkflowHarnessOverride: (workflowId: string) => WorkflowRunHarnessOverride;
+  getWorkflowPiModelOverride: (workflowId: string) => string | undefined;
   onError: (msg: string) => void;
 };
 
@@ -26,14 +27,16 @@ export function useWorkflowRunActions({
   save,
   addActiveRun,
   getWorkflowHarnessOverride,
+  getWorkflowPiModelOverride,
   onError,
 }: Args) {
   const startWorkflowDefinition = useCallback(async (
     workflowId: string,
     harnessOverride: WorkflowRunHarnessOverride = null,
+    piModelOverride?: string,
   ): Promise<WorkflowRun | null> => {
     try {
-      const res = await apiStartWorkflow(workflowId, { harnessOverride });
+      const res = await apiStartWorkflow(workflowId, { harnessOverride, piModelOverride });
       addActiveRun(res.run);
       return res.run;
     } catch (err) {
@@ -45,6 +48,7 @@ export function useWorkflowRunActions({
   const runWorkflow = useCallback(async (
     workflowId: string,
     harnessOverride: WorkflowRunHarnessOverride = getWorkflowHarnessOverride(workflowId),
+    piModelOverride: string | undefined = getWorkflowPiModelOverride(workflowId),
   ): Promise<WorkflowRun | null> => {
     const wf = workflowsById.get(workflowId);
     if (!wf) return null;
@@ -56,11 +60,12 @@ export function useWorkflowRunActions({
       if (!saved) return null;
       targetId = saved.id;
     }
-    return startWorkflowDefinition(targetId, harnessOverride);
+    return startWorkflowDefinition(targetId, harnessOverride, piModelOverride);
   }, [
     editor.dirty,
     editor.workflowId,
     getWorkflowHarnessOverride,
+    getWorkflowPiModelOverride,
     save,
     startWorkflowDefinition,
     workflowsById,
@@ -70,16 +75,20 @@ export function useWorkflowRunActions({
     const harnessOverride = editor.workflowId
       ? getWorkflowHarnessOverride(editor.workflowId)
       : null;
+    const piModelOverride = editor.workflowId
+      ? getWorkflowPiModelOverride(editor.workflowId)
+      : undefined;
     if (!editor.workflowId || editor.dirty) {
       const saved = await save();
-      if (saved) await startWorkflowDefinition(saved.id, harnessOverride);
+      if (saved) await startWorkflowDefinition(saved.id, harnessOverride, piModelOverride);
       return;
     }
-    await runWorkflow(editor.workflowId, harnessOverride);
+    await runWorkflow(editor.workflowId, harnessOverride, piModelOverride);
   }, [
     editor.dirty,
     editor.workflowId,
     getWorkflowHarnessOverride,
+    getWorkflowPiModelOverride,
     runWorkflow,
     save,
     startWorkflowDefinition,

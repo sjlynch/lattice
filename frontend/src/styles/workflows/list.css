@@ -87,6 +87,10 @@
 .workflows-item-harness {
   width: 82px;
   height: 24px;
+  /* Fixed-width run-override select: clip long "Pi — <model>" to ellipsis. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .workflows-item-run-btn {
   display: inline-flex;

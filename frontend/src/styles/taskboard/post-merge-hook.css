@@ -185,6 +185,11 @@
   border-radius: 5px;
   padding: 3px 6px;
   font-size: 11px;
+  /* Truncate long "Pi — <model>" labels on the closed control. */
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .post-merge-hook-hint {

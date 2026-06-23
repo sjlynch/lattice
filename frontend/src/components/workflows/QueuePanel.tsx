@@ -1,6 +1,6 @@
 import { Play, X } from 'lucide-react';
 import type { WorkflowManager } from './hooks/useWorkflowManager';
-import { workflowHarnessOverrideLabel } from './workflowHarnessOverride';
+import { workflowRunOverrideLabel } from './workflowHarnessOverride';
 
 type Props = {
   manager: WorkflowManager;
@@ -66,7 +66,7 @@ export function QueuePanel({ manager }: Props) {
                   <span className="workflows-run-card-meta">
                     {workflow.steps.length} step{workflow.steps.length === 1 ? '' : 's'}
                     {' · '}
-                    Override: {workflowHarnessOverrideLabel(entry.harnessOverride)}
+                    Override: {workflowRunOverrideLabel(entry.harnessOverride, entry.piModelOverride)}
                   </span>
                 </div>
                 <button

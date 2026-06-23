@@ -1,7 +1,7 @@
 import { Square, X } from 'lucide-react';
 import type { WorkflowManager } from './hooks/useWorkflowManager';
 import { QueuePanel } from './QueuePanel';
-import { workflowHarnessOverrideLabel } from './workflowHarnessOverride';
+import { workflowRunOverrideLabel } from './workflowHarnessOverride';
 
 type Props = {
   manager: WorkflowManager;
@@ -33,7 +33,7 @@ export function WorkflowRunsAside({ manager }: Props) {
                     <span className="workflows-run-card-meta">
                       Step {pos}/{run.totalSteps} · {pct}%
                       {run.harnessOverride
-                        ? ` · Override: ${workflowHarnessOverrideLabel(run.harnessOverride)}`
+                        ? ` · Override: ${workflowRunOverrideLabel(run.harnessOverride, run.piModelOverride)}`
                         : ''}
                     </span>
                     <div className="workflows-run-progress" aria-hidden>

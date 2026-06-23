@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Plus, RefreshCw, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, RefreshCw, X } from 'lucide-react';
 import {
   fetchGlobalSettings,
   getPiModels,
@@ -18,6 +18,36 @@ type Props = {
   active: boolean;
   open: boolean;
 };
+
+// Drop blank/whitespace header keys and omit the map entirely when empty, so a
+// half-typed header row never reaches models.json.
+function cleanHeaders(
+  headers?: Record<string, string>,
+): Record<string, string> | undefined {
+  if (!headers) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    const key = k.trim();
+    if (key) out[key] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+// Rebuild a header record from ordered [key,value] pairs. fromEntries keeps
+// insertion order (so editing a key in place doesn't reshuffle rows) and a
+// transient empty/duplicate key just collapses — fine mid-edit.
+function entriesToHeaders(entries: [string, string][]): Record<string, string> {
+  return Object.fromEntries(entries);
+}
+
+// Read a string-valued compat key for an input value.
+function compatString(
+  compat: Record<string, unknown> | undefined,
+  key: string,
+): string {
+  const v = compat?.[key];
+  return typeof v === 'string' ? v : '';
+}
 
 export type PiTabHandle = {
   // The Pi providers to persist (reconciled into models.json), or `undefined`
@@ -50,6 +80,8 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
   const [probing, setProbing] = useState<Record<number, boolean>>({});
   const [detected, setDetected] = useState<Record<number, string[]>>({});
   const [probeError, setProbeError] = useState<Record<number, string>>({});
+  // Which endpoints have their "Advanced" (compat / headers) section open.
+  const [advancedOpen, setAdvancedOpen] = useState<Record<number, boolean>>({});
   const seqRef = useRef(0);
   // Patterns we've already reflected into menuSelected — so a newly-added
   // endpoint model defaults to shown, but a model the user later unchecks
@@ -114,14 +146,18 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
       getPiProvidersPatch: () => {
         if (!providersTouched) return undefined;
         // Drop incomplete rows (need an id + baseUrl) so a half-typed endpoint
-        // isn't written to models.json.
+        // isn't written to models.json; clean half-typed header rows too.
         return providers
-          .map((p) => ({
-            ...p,
-            id: p.id.trim(),
-            baseUrl: p.baseUrl.trim(),
-            models: p.models.filter((m) => m.id.trim()),
-          }))
+          .map((p) => {
+            const headers = cleanHeaders(p.headers);
+            return {
+              ...p,
+              id: p.id.trim(),
+              baseUrl: p.baseUrl.trim(),
+              models: p.models.filter((m) => m.id.trim()),
+              headers,
+            };
+          })
           .filter((p) => p.id && p.baseUrl);
       },
       getPiModelMenuPatch: () => {
@@ -149,6 +185,62 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
   const removeProvider = (idx: number) => {
     setProvidersTouched(true);
     setProviders((cur) => cur.filter((_, i) => i !== idx));
+  };
+
+  // Set/clear a single `compat` key (empty/undefined removes it; the whole
+  // compat object is dropped once it's empty so we don't write `compat: {}`).
+  const updateCompat = (
+    idx: number,
+    key: string,
+    value: string | boolean | undefined,
+  ) => {
+    setProvidersTouched(true);
+    setProviders((cur) =>
+      cur.map((p, i) => {
+        if (i !== idx) return p;
+        const compat: Record<string, unknown> = { ...(p.compat ?? {}) };
+        if (value === undefined || value === '') delete compat[key];
+        else compat[key] = value;
+        const next = { ...p };
+        if (Object.keys(compat).length) next.compat = compat;
+        else delete next.compat;
+        return next;
+      }),
+    );
+  };
+
+  const setHeaderEntries = (idx: number, entries: [string, string][]) => {
+    setProvidersTouched(true);
+    setProviders((cur) =>
+      cur.map((p, i) =>
+        i === idx ? { ...p, headers: entriesToHeaders(entries) } : p,
+      ),
+    );
+  };
+
+  const updateHeaderKey = (idx: number, rowIdx: number, key: string) => {
+    const entries = Object.entries(providers[idx]?.headers ?? {});
+    if (entries[rowIdx]) entries[rowIdx] = [key, entries[rowIdx][1]];
+    setHeaderEntries(idx, entries);
+  };
+
+  const updateHeaderValue = (idx: number, rowIdx: number, value: string) => {
+    const entries = Object.entries(providers[idx]?.headers ?? {});
+    if (entries[rowIdx]) entries[rowIdx] = [entries[rowIdx][0], value];
+    setHeaderEntries(idx, entries);
+  };
+
+  const addHeader = (idx: number) => {
+    const entries = Object.entries(providers[idx]?.headers ?? {});
+    // Unique placeholder key so a second "add" never collides with a blank one.
+    entries.push([`header-${entries.length + 1}`, '']);
+    setHeaderEntries(idx, entries);
+  };
+
+  const removeHeader = (idx: number, rowIdx: number) => {
+    const entries = Object.entries(providers[idx]?.headers ?? {});
+    entries.splice(rowIdx, 1);
+    setHeaderEntries(idx, entries);
   };
 
   const toggleEndpointModel = (idx: number, modelId: string) => {
@@ -301,6 +393,92 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
                       <span>{id}</span>
                     </label>
                   ))}
+                </div>
+              )}
+
+              <button
+                type="button"
+                className="btn-ghost settings-pi-advanced-toggle"
+                onClick={() =>
+                  setAdvancedOpen((o) => ({ ...o, [idx]: !o[idx] }))
+                }
+              >
+                {advancedOpen[idx] ? (
+                  <ChevronDown size={11} />
+                ) : (
+                  <ChevronRight size={11} />
+                )}
+                Advanced (thinking format / headers)
+              </button>
+              {advancedOpen[idx] && (
+                <div className="settings-pi-advanced">
+                  <label className="settings-pi-advanced-field">
+                    <span>Thinking format</span>
+                    <input
+                      className="text-input"
+                      placeholder="e.g. qwen-chat-template (optional)"
+                      value={compatString(ep.compat, 'thinkingFormat')}
+                      onChange={(e) =>
+                        updateCompat(idx, 'thinkingFormat', e.target.value)
+                      }
+                    />
+                  </label>
+                  <label className="settings-checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={ep.compat?.supportsDeveloperRole !== false}
+                      onChange={(e) =>
+                        updateCompat(
+                          idx,
+                          'supportsDeveloperRole',
+                          e.target.checked ? undefined : false,
+                        )
+                      }
+                    />
+                    <span>Server supports the developer role</span>
+                  </label>
+                  <div className="settings-pi-advanced-headers">
+                    <div className="settings-section-sub">
+                      Custom request headers
+                    </div>
+                    {Object.entries(ep.headers ?? {}).map(([k, v], rowIdx) => (
+                      <div key={rowIdx} className="settings-pi-endpoint-head">
+                        <input
+                          className="text-input"
+                          style={{ width: 130 }}
+                          placeholder="Header-Name"
+                          value={k}
+                          onChange={(e) =>
+                            updateHeaderKey(idx, rowIdx, e.target.value)
+                          }
+                        />
+                        <input
+                          className="text-input"
+                          style={{ flex: 1, minWidth: 120 }}
+                          placeholder="value"
+                          value={v}
+                          onChange={(e) =>
+                            updateHeaderValue(idx, rowIdx, e.target.value)
+                          }
+                        />
+                        <button
+                          className="icon-btn sm"
+                          onClick={() => removeHeader(idx, rowIdx)}
+                          title="Remove header"
+                          aria-label="Remove header"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      className="btn-ghost"
+                      onClick={() => addHeader(idx)}
+                    >
+                      <Plus size={12} />
+                      Add header
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
