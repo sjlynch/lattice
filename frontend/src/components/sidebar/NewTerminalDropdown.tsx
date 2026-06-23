@@ -1,5 +1,6 @@
 import { ChevronDown, Plus } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { PiMenuEntry } from '../../api';
 
 export type ShellKind = 'claude' | 'claude-yolo' | 'pi' | 'codex' | 'terminal';
 
@@ -13,10 +14,13 @@ const SHELL_KIND_BUTTON_TITLES: Record<ShellKind, string> = {
 
 type Props = {
   defaultKind: ShellKind;
-  onNewTerminal: (kind: ShellKind) => void;
+  // The curated "Pi — X" model menu (GET /api/pi-models .menu). Rendered as
+  // sub-items beneath "Pi"; each spawns `pi --model "<pattern>"`.
+  piMenu: PiMenuEntry[];
+  onNewTerminal: (kind: ShellKind, piModel?: string) => void;
 };
 
-export function NewTerminalDropdown({ defaultKind, onNewTerminal }: Props) {
+export function NewTerminalDropdown({ defaultKind, piMenu, onNewTerminal }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -39,9 +43,9 @@ export function NewTerminalDropdown({ defaultKind, onNewTerminal }: Props) {
   }, [menuOpen]);
 
   const choose = useCallback(
-    (kind: ShellKind) => {
+    (kind: ShellKind, piModel?: string) => {
       setMenuOpen(false);
-      onNewTerminal(kind);
+      onNewTerminal(kind, piModel);
     },
     [onNewTerminal],
   );
@@ -89,6 +93,17 @@ export function NewTerminalDropdown({ defaultKind, onNewTerminal }: Props) {
           >
             Pi
           </div>
+          {piMenu.map((m) => (
+            <div
+              key={m.pattern}
+              className="popover-item popover-item-sub"
+              role="menuitem"
+              title={m.pattern}
+              onClick={() => choose('pi', m.pattern)}
+            >
+              Pi — {m.label}
+            </div>
+          ))}
           <div
             className="popover-item"
             role="menuitem"

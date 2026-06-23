@@ -79,6 +79,15 @@ export type HarnessSelection = { harness: HarnessChoice; piModel?: string };
 
 const PI_MODEL_VALUE_PREFIX = 'pi:';
 
+// Mirrors the backend's PI_MODEL_PATTERN_RE (worktree/commands.ts): a
+// `provider/model[:thinking]` token of safe chars only. Used as a
+// shell-injection guard before a Pi model ever lands in a command string.
+const PI_MODEL_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(:[A-Za-z0-9_.-]+)?$/;
+
+export function isValidPiModel(piModel: string | undefined): piModel is string {
+  return !!piModel && PI_MODEL_RE.test(piModel);
+}
+
 export function encodeHarnessValue(harness: HarnessChoice, piModel?: string): string {
   return harness === 'pi' && piModel ? `${PI_MODEL_VALUE_PREFIX}${piModel}` : harness;
 }

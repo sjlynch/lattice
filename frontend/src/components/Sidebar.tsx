@@ -1,6 +1,7 @@
 import { RefreshCw, Search, X } from 'lucide-react';
-import { useCallback, useEffect } from 'react';
-import type { StartupTerminal, TerminalLaunchSettings } from '../api';
+import { useCallback, useEffect, useState } from 'react';
+import { getPiModels } from '../api';
+import type { PiMenuEntry, StartupTerminal, TerminalLaunchSettings } from '../api';
 import { useTerminals } from '../TerminalsContext';
 import { TerminalPane } from './TerminalPane';
 import { createTerminalSpec } from './sidebar/constants';
@@ -47,6 +48,21 @@ export function Sidebar({
     renameTerminal,
     reorderTerminal,
   } = useTerminals();
+
+  // Curated "Pi — X" model menu for the new-terminal dropdown. Machine-global,
+  // so fetched once; an empty menu just means only bare "Pi" shows.
+  const [piMenu, setPiMenu] = useState<PiMenuEntry[]>([]);
+  useEffect(() => {
+    let alive = true;
+    getPiModels()
+      .then((r) => {
+        if (alive) setPiMenu(r.menu);
+      })
+      .catch(() => { /* keep empty */ });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const {
     projectTerminals,
@@ -109,8 +125,10 @@ export function Sidebar({
   });
 
   const newTerminal = useCallback(
-    (kind: ShellKind) => {
-      addTerminal(createTerminalSpec(kind, activeFolder, projectTerminals.length + 1));
+    (kind: ShellKind, piModel?: string) => {
+      addTerminal(
+        createTerminalSpec(kind, activeFolder, projectTerminals.length + 1, piModel),
+      );
     },
     [addTerminal, activeFolder, projectTerminals.length],
   );
@@ -189,6 +207,7 @@ export function Sidebar({
           {activePanel === 'terminals' && (
             <NewTerminalDropdown
               defaultKind={defaultShellKind(terminalLaunchSettings)}
+              piMenu={piMenu}
               onNewTerminal={newTerminal}
             />
           )}

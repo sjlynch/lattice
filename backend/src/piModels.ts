@@ -216,11 +216,18 @@ function buildMenu(
     patterns = [...set];
   }
 
-  // Keep only patterns Pi still reports, dedupe, preserve order.
+  // Keep only patterns that still exist — either reported by `pi --list-models`
+  // OR declared in models.json. The models.json fallback matters because that
+  // CLI call is fragile: a transient spawn failure (or Pi rejecting one bad
+  // provider, which drops every custom provider from the listing) would
+  // otherwise silently hide models the user explicitly curated. Dedupe,
+  // preserve order.
+  const valid = (pattern: string): boolean =>
+    byPattern.has(pattern) || nameByPattern.has(pattern);
   const seen = new Set<string>();
   const entries: PiMenuEntry[] = [];
   for (const pattern of patterns) {
-    if (seen.has(pattern) || !byPattern.has(pattern)) continue;
+    if (seen.has(pattern) || !valid(pattern)) continue;
     seen.add(pattern);
     entries.push({ pattern, label: labelFor(pattern) });
   }
@@ -271,7 +278,12 @@ function buildModelsJsonProvider(p: PiProvider): Record<string, unknown> {
   return {
     baseUrl: p.baseUrl,
     api: p.api || 'openai-completions',
-    ...(p.apiKey ? { apiKey: p.apiKey } : {}),
+    // Pi REQUIRES an `apiKey` on any custom provider that defines models — if
+    // it's missing, Pi rejects the ENTIRE models.json (so one keyless Lattice
+    // provider would also knock out the user's hand-written ones). Local
+    // servers (vLLM, …) don't check it, so default to a harmless placeholder
+    // rather than emitting an invalid entry.
+    apiKey: p.apiKey || 'local',
     ...(p.headers ? { headers: p.headers } : {}),
     ...(p.compat ? { compat: p.compat } : {}),
     models: p.models.map((m) => ({

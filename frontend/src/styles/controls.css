@@ -107,3 +107,5 @@
 .popover-item:hover { background: var(--bg-hover); }
 .popover-item.disabled { color: var(--text-tertiary); cursor: not-allowed; }
 .popover-item.disabled:hover { background: transparent; }
+/* Indented secondary rows (e.g. "Pi — <model>" under "Pi"). */
+.popover-item-sub { padding-left: 22px; font-size: 11px; color: var(--text-secondary); }
