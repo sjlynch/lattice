@@ -530,6 +530,7 @@ export function ForceGraphView({
           settings={settings}
           onChange={setSettings}
           onClose={closeSettings}
+          project={activeFolder}
         />
       )}
 
