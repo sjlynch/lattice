@@ -5,6 +5,7 @@ import { LANE_BY_ID } from './lanes';
 import { getApplicableMoveTargets } from './moveTargets';
 import { TaskDetailMeta } from './TaskDetailMeta';
 import { useTaskDetailEdit } from './hooks/useTaskDetailEdit';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 // Detail overlay for a single task. Title and description are always editable;
 // the Save button enables once a field is dirty. Lane-appropriate Move/Run
@@ -27,6 +28,8 @@ export function TaskDetailOverlay({
 }) {
   const { editTitle, setEditTitle, editDesc, setEditDesc, dirty, prepareSave } =
     useTaskDetailEdit(task);
+  // Mounted only while open, so the trap is always active here.
+  const dialogRef = useFocusTrap<HTMLDivElement>(true);
 
   const lane = LANE_BY_ID[task.status];
 
@@ -51,7 +54,10 @@ export function TaskDetailOverlay({
   return (
     <div className="taskboard-overlay" onMouseDown={onClose}>
       <div
+        ref={dialogRef}
         className="taskboard-detail"
+        role="dialog"
+        aria-modal="true"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="taskboard-detail-head">
@@ -106,6 +112,18 @@ export function TaskDetailOverlay({
             Delete
           </button>
           <span style={{ flex: 1 }} />
+          <span
+            className="taskboard-detail-current"
+            aria-current="true"
+            title={`This task is currently in ${lane.label}`}
+          >
+            Currently:
+            <span
+              className="taskboard-detail-current-dot"
+              style={{ background: lane.color }}
+            />
+            <strong style={{ color: lane.color }}>{lane.label}</strong>
+          </span>
           {moveTargets.map((target) => (
             <button
               key={target.status}

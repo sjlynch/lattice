@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 type Props = {
   open: boolean;
@@ -9,6 +10,8 @@ type Props = {
 };
 
 export function Modal({ open, onClose, children, width }: Props) {
+  const dialogRef = useFocusTrap<HTMLDivElement>(open);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -23,7 +26,10 @@ export function Modal({ open, onClose, children, width }: Props) {
   return createPortal(
     <div className="modal-backdrop" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="modal"
+        role="dialog"
+        aria-modal="true"
         style={width ? { width } : undefined}
         onClick={(e) => e.stopPropagation()}
       >

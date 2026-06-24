@@ -1,10 +1,35 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import {
   DEFAULT_SETTINGS,
   type GraphSettings,
   type RepulsionMode,
 } from './graphSettings';
+
+// Horizontal tabs replacing the old flat section dividers — one group of
+// controls visible at a time so the panel can't grow taller than the viewport
+// (paired with the body's max-height/overflow guard in graph.css).
+type TabKey = 'sizes' | 'physics' | 'rendering';
+const TABS: { key: TabKey; label: string }[] = [
+  { key: 'sizes', label: 'Sizes' },
+  { key: 'physics', label: 'Physics' },
+  { key: 'rendering', label: 'Rendering' },
+];
+
+// Persist the active tab per project, matching the `lattice.<thing>.<projectPath>`
+// localStorage convention (alongside `lattice.graphSettings.<project>`).
+const TAB_STORAGE_PREFIX = 'lattice.graphSettingsTab.';
+
+function loadActiveTab(project: string): TabKey {
+  if (!project) return 'sizes';
+  try {
+    const raw = localStorage.getItem(TAB_STORAGE_PREFIX + project);
+    if (raw && TABS.some((t) => t.key === raw)) return raw as TabKey;
+  } catch {
+    /* ignore quota / disabled storage */
+  }
+  return 'sizes';
+}
 
 // SliderRow only drives the numeric settings; non-numeric settings (e.g.
 // repulsionMode) get bespoke controls below.
@@ -109,11 +134,25 @@ export const GraphSettingsPanel = memo(function GraphSettingsPanel({
   settings,
   onChange,
   onClose,
+  project,
 }: {
   settings: GraphSettings;
   onChange: (next: GraphSettings) => void;
   onClose: () => void;
+  project: string;
 }) {
+  const [activeTab, setActiveTab] = useState<TabKey>(() => loadActiveTab(project));
+
+  const selectTab = (tab: TabKey) => {
+    setActiveTab(tab);
+    if (!project) return;
+    try {
+      localStorage.setItem(TAB_STORAGE_PREFIX + project, tab);
+    } catch {
+      /* ignore quota / disabled storage */
+    }
+  };
+
   const setField = (key: NumericKey, value: number) =>
     onChange({ ...settings, [key]: value });
 
@@ -160,84 +199,116 @@ export const GraphSettingsPanel = memo(function GraphSettingsPanel({
           <span>Reset</span>
         </button>
       </div>
-      <div className="graph-settings-section-title">Sizes</div>
-      {NODE_ROWS.map(renderRow)}
-      <div className="graph-settings-section-title">Physics</div>
-      {PHYSICS_ROWS.map(renderRow)}
 
-      <div className="graph-settings-row">
-        <div className="graph-settings-label">
-          <span>Repulsion mode</span>
-        </div>
-        <div className="graph-settings-toggle" role="group" aria-label="Repulsion mode">
-          {REPULSION_MODES.map((m) => (
-            <button
-              key={m.value}
-              type="button"
-              title={m.hint}
-              className={
-                settings.repulsionMode === m.value
-                  ? 'graph-settings-toggle-btn is-active'
-                  : 'graph-settings-toggle-btn'
-              }
-              onClick={() => setMode(m.value)}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
+      <div
+        className="graph-settings-toggle graph-settings-tabs"
+        role="tablist"
+        aria-label="Settings sections"
+      >
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === t.key}
+            className={
+              activeTab === t.key
+                ? 'graph-settings-toggle-btn is-active'
+                : 'graph-settings-toggle-btn'
+            }
+            onClick={() => selectTab(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
-      {settings.repulsionMode === 'nbody' && renderRow(THETA_ROW)}
 
-      <div className="graph-settings-section-title">Rendering</div>
-      {renderRow(RENDER_SCALE_ROW)}
+      <div className="graph-settings-body">
+        {activeTab === 'sizes' && NODE_ROWS.map(renderRow)}
 
-      <div className="graph-settings-row">
-        <div className="graph-settings-label">
-          <span>Link rendering</span>
-        </div>
-        <div className="graph-settings-toggle" role="group" aria-label="Link rendering">
-          {LINK_MODES.map((m) => (
-            <button
-              key={String(m.value)}
-              type="button"
-              title={m.hint}
-              className={
-                settings.batchedLinks === m.value
-                  ? 'graph-settings-toggle-btn is-active'
-                  : 'graph-settings-toggle-btn'
-              }
-              onClick={() => setBatchedLinks(m.value)}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      {/* Width is meaningless for batched links (always flat). */}
-      {!settings.batchedLinks && renderRow(LINK_WIDTH_ROW)}
+        {activeTab === 'physics' && (
+          <>
+            {PHYSICS_ROWS.map(renderRow)}
 
-      <div className="graph-settings-row">
-        <div className="graph-settings-label">
-          <span>Node rendering</span>
-        </div>
-        <div className="graph-settings-toggle" role="group" aria-label="Node rendering">
-          {NODE_MODES.map((m) => (
-            <button
-              key={String(m.value)}
-              type="button"
-              title={m.hint}
-              className={
-                settings.batchedNodes === m.value
-                  ? 'graph-settings-toggle-btn is-active'
-                  : 'graph-settings-toggle-btn'
-              }
-              onClick={() => setBatchedNodes(m.value)}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
+            <div className="graph-settings-row">
+              <div className="graph-settings-label">
+                <span>Repulsion mode</span>
+              </div>
+              <div className="graph-settings-toggle" role="group" aria-label="Repulsion mode">
+                {REPULSION_MODES.map((m) => (
+                  <button
+                    key={m.value}
+                    type="button"
+                    title={m.hint}
+                    className={
+                      settings.repulsionMode === m.value
+                        ? 'graph-settings-toggle-btn is-active'
+                        : 'graph-settings-toggle-btn'
+                    }
+                    onClick={() => setMode(m.value)}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {settings.repulsionMode === 'nbody' && renderRow(THETA_ROW)}
+          </>
+        )}
+
+        {activeTab === 'rendering' && (
+          <>
+            {renderRow(RENDER_SCALE_ROW)}
+
+            <div className="graph-settings-row">
+              <div className="graph-settings-label">
+                <span>Link rendering</span>
+              </div>
+              <div className="graph-settings-toggle" role="group" aria-label="Link rendering">
+                {LINK_MODES.map((m) => (
+                  <button
+                    key={String(m.value)}
+                    type="button"
+                    title={m.hint}
+                    className={
+                      settings.batchedLinks === m.value
+                        ? 'graph-settings-toggle-btn is-active'
+                        : 'graph-settings-toggle-btn'
+                    }
+                    onClick={() => setBatchedLinks(m.value)}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* Width is meaningless for batched links (always flat). */}
+            {!settings.batchedLinks && renderRow(LINK_WIDTH_ROW)}
+
+            <div className="graph-settings-row">
+              <div className="graph-settings-label">
+                <span>Node rendering</span>
+              </div>
+              <div className="graph-settings-toggle" role="group" aria-label="Node rendering">
+                {NODE_MODES.map((m) => (
+                  <button
+                    key={String(m.value)}
+                    type="button"
+                    title={m.hint}
+                    className={
+                      settings.batchedNodes === m.value
+                        ? 'graph-settings-toggle-btn is-active'
+                        : 'graph-settings-toggle-btn'
+                    }
+                    onClick={() => setBatchedNodes(m.value)}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="graph-settings-footer">
