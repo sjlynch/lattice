@@ -457,7 +457,7 @@ export function ForceGraphView({
 
       <GraphHud
         loading={loading}
-        data={data}
+        hasData={!!data}
         counts={counts}
         healthMode={healthMode}
         locMode={locMode}

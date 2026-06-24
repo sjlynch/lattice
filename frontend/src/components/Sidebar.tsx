@@ -1,5 +1,5 @@
 import { RefreshCw, Search, X } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import { getPiModels } from '../api';
 import type { PiMenuEntry, StartupTerminal, TerminalLaunchSettings } from '../api';
 import { useTerminals } from '../TerminalsContext';
@@ -32,7 +32,12 @@ function defaultShellKind(settings: TerminalLaunchSettings): ShellKind {
   return settings.terminalDefaultHarness;
 }
 
-export function Sidebar({
+// Memoized: Sidebar receives no scanResult — its props (activeFolder,
+// startupTerminals, terminalLaunchSettings) are all reference-stable across the
+// metric-only HealthUpdates that re-render App on every file save. Without the
+// memo its whole hook fan-out (useTerminalGroups, usePanelState,
+// useTerminalSearch, …) re-runs on each save for an unchanged result.
+export const Sidebar = memo(function Sidebar({
   activeFolder,
   startupTerminals,
   terminalLaunchSettings,
@@ -266,6 +271,6 @@ export function Sidebar({
       />
     </>
   );
-}
+});
 
 export default Sidebar;

@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import type { GraphNode, ScanResult } from '../../api';
+import type { GraphNode } from '../../api';
 import { GraphSearchBar } from './GraphSearchBar';
 import { HealthTooltip } from './HealthTooltip';
 import type { SearchStatus } from './hooks/useGraphSearch';
@@ -8,7 +8,12 @@ type Counts = { files: number; dirs: number; hidden: number };
 
 type Props = {
   loading: boolean;
-  data: ScanResult | null;
+  // Only whether a scan has loaded — the HUD reads no field of the scan
+  // (counts arrive via the stable `counts` memo). Passing a boolean instead of
+  // the full ScanResult keeps this memo'd component off the per-save render
+  // path: `data` gets a fresh reference on every metric-only HealthUpdate, so
+  // the old `data` prop made the memo bail on every file save.
+  hasData: boolean;
   counts: Counts;
   healthMode: boolean;
   locMode: boolean;
@@ -35,7 +40,7 @@ type Props = {
 // hover tooltip that anchors to the cursor.
 export const GraphHud = memo(function GraphHud({
   loading,
-  data,
+  hasData,
   counts,
   healthMode,
   locMode,
@@ -94,7 +99,7 @@ export const GraphHud = memo(function GraphHud({
         </div>
       )}
       {hoverNode && <HealthTooltip node={hoverNode} />}
-      {data && (
+      {hasData && (
         <div className="graph-bottom-left">
           <GraphSearchBar
             query={searchQuery}
