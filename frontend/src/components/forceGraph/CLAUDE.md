@@ -409,7 +409,11 @@ asking for fixes/reviews:
   these run BEFORE the motion dispatch so their position mutations are in place
   when the batched sync reads them. Used by `useNodeDragBehavior`.
 - `GraphSettingsPanel.tsx` — slider panel; pure UI, mutates the settings
-  object via `onChange`.
+  object via `onChange`. Controls are split across horizontal **tabs**
+  (Sizes / Physics / Rendering) reusing the `.graph-settings-toggle` look; the
+  active tab persists per project under `lattice.graphSettingsTab.<project>`. The
+  body (`.graph-settings-body`) is `max-height`-capped + `overflow-y:auto` so the
+  panel can't push its header/footer offscreen on short windows.
 
 ## Hooks (`./hooks/`)
 
