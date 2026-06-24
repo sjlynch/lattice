@@ -7,6 +7,15 @@ import { resolveManagedClaudeServers } from './mcp/registry.js';
 import { isClaudeMemoryDisabled } from './userSettings.js';
 import type { ClaudeMcpServerConfig } from './mcp/claudeInject.js';
 
+// Hard timeout shared by the three cheap session probes below (list / count /
+// kill-by-cwd). All three are best-effort reads against the detached
+// terminal-server on :5185, awaited on hot paths (spawn-queue accounting,
+// recovery sweeps, worktree teardown) where a wedged terminal-server must
+// surface as "can't tell" / "best-effort" fast rather than hang. The two other
+// timeouts in this file stay separate on purpose — CREATE_SESSION (30s) and
+// SHUTDOWN_POST (2s) have genuinely different intents.
+const SESSIONS_PROBE_TIMEOUT_MS = 3_000;
+
 export async function proxyListSessions(): Promise<unknown[]> {
   try {
     const res = await fetch(`${BASE}/sessions`);
@@ -22,12 +31,10 @@ export async function proxyListSessions(): Promise<unknown[]> {
 // scratch dir when nothing live owns it) MUST distinguish "can't tell" from a
 // real empty list, or a transient fetch failure would look like "no sessions"
 // and they'd reclaim a still-live session's dir.
-const LIST_SESSIONS_TIMEOUT_MS = 3_000;
-
 export async function proxyListSessionsOrNull(): Promise<unknown[] | null> {
   try {
     const res = await fetch(`${BASE}/sessions`, {
-      signal: AbortSignal.timeout(LIST_SESSIONS_TIMEOUT_MS),
+      signal: AbortSignal.timeout(SESSIONS_PROBE_TIMEOUT_MS),
     });
     if (!res.ok) return null;
     const data = await res.json();
@@ -41,12 +48,10 @@ export async function proxyListSessionsOrNull(): Promise<unknown[] | null> {
 // Returns `null` (NOT 0) when the terminal-server is unreachable or answers
 // unparseably — the queue must distinguish "can't tell" from a real empty
 // terminal-server and freeze admissions rather than over-admit.
-const COUNT_SESSIONS_TIMEOUT_MS = 3_000;
-
 export async function proxyCountSessions(): Promise<number | null> {
   try {
     const res = await fetch(`${BASE}/sessions`, {
-      signal: AbortSignal.timeout(COUNT_SESSIONS_TIMEOUT_MS),
+      signal: AbortSignal.timeout(SESSIONS_PROBE_TIMEOUT_MS),
     });
     if (!res.ok) return null;
     const data = await res.json();
@@ -63,15 +68,13 @@ export async function proxyCountSessions(): Promise<number | null> {
 // etc.) can't hang the boot-time push-session sweep or any worktree
 // teardown — both call this in a loop, and an indefinite-hang here
 // would freeze recovery and prevent the backend from ever listening.
-const KILL_BY_CWD_TIMEOUT_MS = 3_000;
-
 export async function proxyKillSessionsByCwd(worktreePath: string): Promise<void> {
   try {
     const res = await fetch(
       `${BASE}/sessions/by-cwd?cwd=${encodeURIComponent(worktreePath)}`,
       {
         method: 'DELETE',
-        signal: AbortSignal.timeout(KILL_BY_CWD_TIMEOUT_MS),
+        signal: AbortSignal.timeout(SESSIONS_PROBE_TIMEOUT_MS),
       },
     );
     if (!res.ok) {
@@ -90,7 +93,7 @@ export async function proxyKillSessionsByCwd(worktreePath: string): Promise<void
     const name = (err as { name?: string })?.name;
     if (name === 'TimeoutError' || name === 'AbortError') {
       console.warn(
-        `[terminal-proxy] kill-by-cwd timed out (>${KILL_BY_CWD_TIMEOUT_MS}ms) for ${worktreePath} — terminal-server may be wedged`,
+        `[terminal-proxy] kill-by-cwd timed out (>${SESSIONS_PROBE_TIMEOUT_MS}ms) for ${worktreePath} — terminal-server may be wedged`,
       );
     }
   }

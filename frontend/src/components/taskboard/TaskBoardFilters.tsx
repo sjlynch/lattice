@@ -2,6 +2,7 @@ import type { PiMenuEntry, Task, TaskStatus } from '../../api';
 import {
   buildHarnessOptions,
   encodeHarnessValue,
+  selectedOptionTitle,
   type HarnessAvailability,
   type HarnessChoice,
 } from '../../harnesses';
@@ -69,10 +70,13 @@ export function TaskBoardFilters({
           className="taskboard-harness-select"
           value={encodeHarnessValue(harness, piModel)}
           onChange={(e) => selectHarness(e.target.value)}
-          title="Agent harness (and Pi model) for running tasks"
+          title={`Agent harness for running tasks: ${selectedOptionTitle(
+            harnessOptions,
+            encodeHarnessValue(harness, piModel),
+          )}`}
         >
           {harnessOptions.map((option) => (
-            <option key={option.value} value={option.value}>
+            <option key={option.value} value={option.value} title={option.title}>
               {option.label}
             </option>
           ))}

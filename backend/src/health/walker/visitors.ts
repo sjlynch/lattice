@@ -7,6 +7,7 @@ import {
   isConsoleLogish,
   isImportSpecifierString,
   leafIdentifier,
+  stripStringQuotes,
 } from './smells.js';
 import { currentFunction, type WalkerContext } from './context.js';
 
@@ -85,7 +86,7 @@ export function handleImportsAndStrings(
   if (!ctx.kinds.string.has(t) || isImportSpecifierString(node)) return;
 
   const raw = node.text;
-  const trimmed = raw.replace(/^[\'"`]|[\'"`]$/g, '');
+  const trimmed = stripStringQuotes(raw);
   if (trimmed.length >= 4 && trimmed.length <= 200 && /\S/.test(trimmed)) {
     ctx.result.stringLiterals.set(
       trimmed,
@@ -131,7 +132,7 @@ export function handleExportTracking(
   // look orphaned to the dead-code pass.
   const source = node.childForFieldName('source');
   if (source) {
-    const spec = source.text.replace(/^[\'"`]|[\'"`]$/g, '');
+    const spec = stripStringQuotes(source.text);
     if (spec) ctx.result.imports.push(spec);
   }
 
@@ -194,7 +195,7 @@ export function handleCallExpression(
     const args = node.childForFieldName('arguments');
     const first = args?.namedChild(0);
     if (first && first.type === 'string') {
-      const spec = first.text.replace(/^[\'"`]|[\'"`]$/g, '');
+      const spec = stripStringQuotes(first.text);
       if (spec) ctx.result.imports.push(spec);
     }
   }
@@ -236,5 +237,5 @@ function importSourceText(
   // TS/JS: import_statement with a `source` field.
   const src = node.childForFieldName('source');
   if (!src) return null;
-  return src.text.replace(/^[\'"`]|[\'"`]$/g, '');
+  return stripStringQuotes(src.text);
 }
