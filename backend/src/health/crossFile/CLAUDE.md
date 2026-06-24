@@ -20,7 +20,19 @@ the watcher and the full scan both drive `computeCrossFile`.
 - `deadCode.ts` — `classifyDeadCode` + the `DeadCodeStats` type + the guard
   constants. Tags each file `entry`/`live`/`dead`/`uncertain`.
 - `resolveImport.ts` — extension/index/alias/Python-relative import resolution.
-- `roots.ts` — entry-point detection + `RESOLVABLE_IMPORT_EXTS`.
+- `roots.ts` — pure, synchronous, fs-free entry-point heuristics +
+  `RESOLVABLE_IMPORT_EXTS`: `isConventionalRoot` (filename/path shapes),
+  `globToRegExp`/`compileEntryGlobs`/`matchesEntryGlob` (the user
+  `deadCodeEntryGlobs` escape hatch), and `detectRoots` (combine the two with
+  caller-supplied extra roots). Cheap enough for the watcher to recompute on
+  every change.
+- `packageRoots.ts` — async, filesystem-walking package.json resolution used
+  only by the full scan: `readPackageJsonRoots` resolves every in-tree
+  package.json's `main`/`module`/`source`/`types`/`bin`/`exports` + `scripts`
+  file refs to in-tree source files. Finds the package.jsons via the shared
+  bounded walker (`../walkTree.js` `walkSourceTree`, canonical
+  `IGNORE_DIR_NAMES` skip set). Re-exported from `./index.js` alongside the
+  `roots.js` heuristics, so importers are unaffected by the split.
 - `apply.ts` — patch fanIn/fanOut/inCycle smells + the `deadCode` status back
   into `HealthMetrics` and recompute the score.
 

@@ -30,7 +30,7 @@
 
 import * as THREE from 'three';
 import type { ForceGraph3DInstance } from '3d-force-graph';
-import { onNodeMotion } from './nodeMotionDriver';
+import { createMotionSyncGate } from './motionSyncGate';
 import { getIdleController } from './idleController';
 
 type SimNode = { x?: number; y?: number; z?: number };
@@ -92,17 +92,9 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
   let positions = new Float32Array(0);
   // The visible links captured at the last rebuild, in buffer order.
   let links: SimLink[] = [];
-  // Set by the node-motion driver (engine tick or a drag): positions moved, so
-  // the buffer needs a re-sync this frame. Both fire BEFORE the frame's render
-  // (and our onFrame), so the sync picks up the just-updated positions same frame.
-  let movedThisFrame = false;
-  // Carries one extra sync into the settling frame: the final cooldown tick
-  // updates positions WITHOUT firing a motion event, so trail the last moved frame.
-  let movedLastFrame = false;
-  // Force one sync regardless of motion (after a rebuild / re-enable).
-  let dirty = false;
-  // Unsubscribe handle for the shared engine-tick listener (held only while on).
-  let tickUnsub: (() => void) | null = null;
+  // Shared "should I re-upload positions this frame?" gate: engine-tick / drag
+  // motion + one trailing settle frame + forced-dirty. See motionSyncGate.ts.
+  const gate = createMotionSyncGate(graph);
 
   function visibleLinks(): SimLink[] {
     const all = g.graphData().links || [];
@@ -183,9 +175,10 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
       scene.add(lineSegments);
     }
     lineSegments.visible = true;
-    dirty = true;
+    // Sync the rebuilt buffer directly so the new lines paint this frame; the
+    // gate's dirty flag is untouched (it's always clear here — only rebuild ever
+    // set it, and it cleared it again the same call).
     syncPositions();
-    dirty = false;
     // The loop may be paused (settled graph) when the user toggles this on or a
     // filter changes the set — wake a few frames so the rebuilt lines paint.
     getIdleController(graph)?.wakeForRefresh();
@@ -193,17 +186,8 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
 
   function onFrame(): void {
     if (!enabled || !lineSegments) return;
-    if (movedThisFrame || movedLastFrame || dirty) {
-      syncPositions();
-      dirty = false;
-    }
-    movedLastFrame = movedThisFrame;
-    movedThisFrame = false;
+    if (gate.shouldSync()) syncPositions();
   }
-
-  const onTick = () => {
-    movedThisFrame = true;
-  };
 
   function setEnabled(on: boolean): void {
     if (on === enabled) return;
@@ -214,21 +198,19 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
       g.linkThreeObject(emptyLinkObject);
       // Re-sync the buffer whenever node positions move (engine tick OR a drag —
       // incl. a drag after the layout has settled; see nodeMotionDriver).
-      tickUnsub = onNodeMotion(graph, onTick);
+      gate.attach();
       rebuild();
     } else {
       // Restore the library's default per-link line rendering.
       g.linkThreeObject(null);
-      tickUnsub?.();
-      tickUnsub = null;
+      gate.detach();
       if (lineSegments) lineSegments.visible = false;
       getIdleController(graph)?.wakeForRefresh();
     }
   }
 
   function dispose(): void {
-    tickUnsub?.();
-    tickUnsub = null;
+    gate.detach();
     if (lineSegments) {
       scene.remove(lineSegments);
       lineSegments = null;
