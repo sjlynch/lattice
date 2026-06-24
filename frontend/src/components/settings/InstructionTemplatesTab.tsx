@@ -1,17 +1,11 @@
-import {
-  forwardRef,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useRef,
-  useState,
-} from 'react';
+import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
 import {
   fetchInstructionTemplates,
-  fetchUserSettings,
   type InstructionTemplate,
+  type UserSettings,
 } from '../../api';
+import { useOverrideDraft } from './useOverrideDraft';
 
 type Props = {
   active: boolean;
@@ -26,77 +20,37 @@ export type InstructionTemplatesTabHandle = {
   getInstructionTemplateOverridesPatch: () => Record<string, string> | undefined;
 };
 
+// Stable (module-level) config for the shared override-draft engine. A draft
+// drops its override key — falling back to Lattice's default — when it's blank
+// or exactly equals the default template.
+const idOf = (t: InstructionTemplate) => t.id;
+const defaultOf = (t: InstructionTemplate) => t.defaultTemplate;
+const currentOf = (t: InstructionTemplate) => t.currentTemplate;
+const readOverrides = (s: UserSettings) => s.instructionTemplateOverrides ?? {};
+const matchesDefault = (draft: string, t: InstructionTemplate) =>
+  draft.trim().length === 0 || draft === t.defaultTemplate;
+
 function useInstructionTemplatesDraft(open: boolean, active: boolean, activeFolder: string) {
-  const [templates, setTemplates] = useState<InstructionTemplate[]>([]);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [existingOverrides, setExistingOverrides] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Fetch only once the tab is actually viewed (rendering the catalog is cheap,
-  // but no reason to pay for it on every dialog open). Re-fetches on reopen /
-  // project change.
-  useEffect(() => {
-    if (!open || !active || !activeFolder) return;
-    let cancelled = false;
-    setLoading(true);
-    setLoaded(false);
-    setError(null);
-    Promise.all([
-      fetchInstructionTemplates(activeFolder),
-      fetchUserSettings(activeFolder),
-    ])
-      .then(([list, settings]) => {
-        if (cancelled) return;
-        setTemplates(list);
-        setDrafts(Object.fromEntries(list.map((t) => [t.id, t.currentTemplate])));
-        setExistingOverrides(settings.instructionTemplateOverrides ?? {});
-      })
-      .catch((err) => {
-        if (!cancelled) setError((err as Error).message || 'Failed to load templates');
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-          setLoaded(true);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, active, activeFolder]);
-
-  const setDraft = useCallback((id: string, text: string) => {
-    setDrafts((d) => ({ ...d, [id]: text }));
-  }, []);
-
-  const resetDraft = useCallback((tpl: InstructionTemplate) => {
-    setDrafts((d) => ({ ...d, [tpl.id]: tpl.defaultTemplate }));
-  }, []);
-
-  const resetAll = useCallback(() => {
-    setDrafts(Object.fromEntries(templates.map((t) => [t.id, t.defaultTemplate])));
-  }, [templates]);
-
-  // Build the map to persist: keep overrides for ids we don't manage, then for
-  // each template store the edited text unless it matches the default or is
-  // blank (either of which means "use Lattice's default" → drop the key).
-  const getInstructionTemplateOverridesPatch = useCallback(():
-    | Record<string, string>
-    | undefined => {
-    if (!loaded) return undefined;
-    const next: Record<string, string> = { ...existingOverrides };
-    for (const tpl of templates) {
-      const draft = drafts[tpl.id] ?? tpl.currentTemplate;
-      if (draft.trim().length === 0 || draft === tpl.defaultTemplate) {
-        delete next[tpl.id];
-      } else {
-        next[tpl.id] = draft;
-      }
-    }
-    return next;
-  }, [loaded, existingOverrides, templates, drafts]);
+  const {
+    items: templates,
+    draftMap: drafts,
+    loading,
+    error,
+    setDraft,
+    resetDraft,
+    resetAll,
+    getPatch,
+  } = useOverrideDraft<InstructionTemplate>({
+    open,
+    active,
+    activeFolder,
+    fetchItems: fetchInstructionTemplates,
+    readOverrides,
+    idOf,
+    defaultOf,
+    currentOf,
+    matchesDefault,
+  });
 
   return {
     templates,
@@ -106,7 +60,7 @@ function useInstructionTemplatesDraft(open: boolean, active: boolean, activeFold
     setDraft,
     resetDraft,
     resetAll,
-    getInstructionTemplateOverridesPatch,
+    getInstructionTemplateOverridesPatch: getPatch,
   };
 }
 

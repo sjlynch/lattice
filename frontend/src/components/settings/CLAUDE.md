@@ -25,6 +25,17 @@ callbacks. `useSettingsDrafts.ts` owns the handful of drafts that live on the
 parent itself rather than a tab — the terminal-default harness +
 skip-permissions, and the instrument-Claude / disable-memory toggles.
 
+`useOverrideDraft.ts` is the shared draft engine behind the two
+**override-merge** tabs (`InstructionTemplatesTab` + `EnvNotesTab`): both fetch
+a list of items + the saved override map (gated on `open && active`), keep an
+editable text draft per item, and on Save clone the saved overrides then per
+item either drop the key (draft means "use Lattice's default") or write the
+edited text — with the `undefined`-until-loaded clobber-guard above. It's
+parameterized by `fetchItems` and `matchesDefault` (the one real divergence:
+instruction templates drop on blank-or-exact-default, env notes on trimmed
+equality). Keep these tabs on the shared hook rather than re-copying the
+clobber-guard logic.
+
 ## Where each setting persists
 
 **Per-project** — `userSettings.json`, via `PATCH /api/settings`:

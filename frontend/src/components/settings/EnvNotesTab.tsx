@@ -1,10 +1,12 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from 'react';
+import { forwardRef, useImperativeHandle } from 'react';
 import { RotateCcw } from 'lucide-react';
 import {
   fetchProjectEnv,
-  fetchUserSettings,
   type ProjectEnvInfo,
+  type ProjectEnvResponse,
+  type UserSettings,
 } from '../../api';
+import { useOverrideDraft } from './useOverrideDraft';
 
 type Props = {
   active: boolean;
@@ -25,75 +27,38 @@ type EnvNotesDraft = {
   updateEnvDraft: (id: string, text: string) => void;
 };
 
-function useEnvNotesDraft(open: boolean, activeFolder: string): EnvNotesDraft {
-  // `envs` is what the backend detected (+ default and effective notes);
-  // `envDraft` is the editable text keyed by env id; `existingOverrides` is
-  // the raw saved map so we don't clobber overrides for envs that aren't
-  // currently detected.
-  const [envs, setEnvs] = useState<ProjectEnvInfo[]>([]);
-  const [envDraft, setEnvDraft] = useState<Record<string, string>>({});
-  const [existingOverrides, setExistingOverrides] = useState<Record<string, string>>({});
-  const [envLoading, setEnvLoading] = useState(false);
-  // Guards against saving (and clobbering) `worktreeEnvNotes` before the
-  // fetch that seeds `existingOverrides` / `envDraft` has completed.
-  const [envLoaded, setEnvLoaded] = useState(false);
+// Stable (module-level) config for the shared override-draft engine. A note
+// drops its override key — falling back to Lattice's default — when its
+// trimmed text equals the default note's; a blank-but-nondefault note is kept
+// as `''`, deliberately suppressing the note for that env.
+const fetchItems = (projectPath: string): Promise<ProjectEnvInfo[]> =>
+  fetchProjectEnv(projectPath).then((r: ProjectEnvResponse) => r.environments);
+const idOf = (e: ProjectEnvInfo) => e.id;
+const defaultOf = (e: ProjectEnvInfo) => e.defaultNote;
+const currentOf = (e: ProjectEnvInfo) => e.effectiveNote;
+const readOverrides = (s: UserSettings) => s.worktreeEnvNotes ?? {};
+const matchesDefault = (draft: string, e: ProjectEnvInfo) =>
+  draft.trim() === e.defaultNote.trim();
 
-  // Fetch detected environments + current overrides each time the dialog
-  // opens (cheap, and keeps it fresh if the user just `npm install`ed).
-  useEffect(() => {
-    if (!open || !activeFolder) return;
-    let cancelled = false;
-    setEnvLoading(true);
-    setEnvLoaded(false);
-    Promise.all([fetchProjectEnv(activeFolder), fetchUserSettings(activeFolder)])
-      .then(([envResp, settings]) => {
-        if (cancelled) return;
-        const overrides = settings.worktreeEnvNotes ?? {};
-        setEnvs(envResp.environments);
-        setExistingOverrides(overrides);
-        setEnvDraft(
-          Object.fromEntries(envResp.environments.map((e) => [e.id, e.effectiveNote])),
-        );
-        setEnvLoaded(true);
-      })
-      .finally(() => {
-        if (!cancelled) setEnvLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, activeFolder]);
-
-  const updateEnvDraft = useCallback((id: string, text: string) => {
-    setEnvDraft((draft) => ({ ...draft, [id]: text }));
-  }, []);
-
-  const resetEnvDraft = useCallback((env: ProjectEnvInfo) => {
-    setEnvDraft((draft) => ({ ...draft, [env.id]: env.defaultNote }));
-  }, []);
-
-  // Build the `worktreeEnvNotes` map to persist: start from whatever's
-  // already saved (so overrides for undetected envs survive), then for each
-  // detected env drop the key when the text equals the built-in default,
-  // otherwise store the edited text (an empty string deliberately suppresses
-  // the note for that env).
-  const buildEnvNotesPatch = useCallback((): Record<string, string> => {
-    const next: Record<string, string> = { ...existingOverrides };
-    for (const env of envs) {
-      const text = envDraft[env.id] ?? env.effectiveNote;
-      if (text.trim() === env.defaultNote.trim()) {
-        delete next[env.id];
-      } else {
-        next[env.id] = text;
-      }
-    }
-    return next;
-  }, [existingOverrides, envDraft, envs]);
-
-  const getWorktreeEnvNotesPatch = useCallback(
-    () => (envLoaded ? buildEnvNotesPatch() : undefined),
-    [buildEnvNotesPatch, envLoaded],
-  );
+function useEnvNotesDraft(open: boolean, active: boolean, activeFolder: string): EnvNotesDraft {
+  const {
+    items: envs,
+    draftMap: envDraft,
+    loading: envLoading,
+    setDraft: updateEnvDraft,
+    resetDraft: resetEnvDraft,
+    getPatch: getWorktreeEnvNotesPatch,
+  } = useOverrideDraft<ProjectEnvInfo>({
+    open,
+    active,
+    activeFolder,
+    fetchItems,
+    readOverrides,
+    idOf,
+    defaultOf,
+    currentOf,
+    matchesDefault,
+  });
 
   return {
     envs,
@@ -162,7 +127,7 @@ export const EnvNotesTab = forwardRef<EnvNotesTabHandle, Props>(
       getWorktreeEnvNotesPatch,
       resetEnvDraft,
       updateEnvDraft,
-    } = useEnvNotesDraft(open, activeFolder);
+    } = useEnvNotesDraft(open, active, activeFolder);
 
     useImperativeHandle(
       ref,
