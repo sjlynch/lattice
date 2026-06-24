@@ -3,6 +3,7 @@ import { TopAppBar } from './components/TopAppBar';
 import { Sidebar } from './components/Sidebar';
 import { ForceGraphView } from './components/ForceGraphView';
 import { Legend } from './components/Legend';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { TerminalsProvider } from './TerminalsContext';
 import { useActiveFolder } from './hooks/useActiveFolder';
 import { useHiddenExtensions } from './hooks/useHiddenExtensions';
@@ -98,21 +99,26 @@ function App() {
             </>
           )}
           <main className="app-graph">
-            <ForceGraphView
-              data={scanResult}
-              loading={loading}
-              hiddenExts={hiddenExts}
-              metricsIgnoredExts={metricsIgnoredExts}
-              activeFolder={activeFolder}
-              healthMode={healthMode}
-              onHealthModeChange={setHealthMode}
-            />
-            <Legend
-              data={scanResult}
-              hiddenExts={hiddenExts}
-              onToggleExt={toggleExt}
-              healthMode={healthMode}
-            />
+            {/* The force graph (3d-force-graph + WebGL) is the most
+                crash-prone subtree; its own boundary keeps a graph fault
+                from blanking the sidebar / task board. */}
+            <ErrorBoundary compact title="The file graph crashed">
+              <ForceGraphView
+                data={scanResult}
+                loading={loading}
+                hiddenExts={hiddenExts}
+                metricsIgnoredExts={metricsIgnoredExts}
+                activeFolder={activeFolder}
+                healthMode={healthMode}
+                onHealthModeChange={setHealthMode}
+              />
+              <Legend
+                data={scanResult}
+                hiddenExts={hiddenExts}
+                onToggleExt={toggleExt}
+                healthMode={healthMode}
+              />
+            </ErrorBoundary>
           </main>
         </div>
       </div>
