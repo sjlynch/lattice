@@ -2,7 +2,14 @@ import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { loadSettings, type GraphSettings } from '../graphSettings';
 import { getIdleController } from '../idleController';
+import { forceLocalRepulsion, type LocalRepulsionForce } from '../localRepulsionForce';
 import { clearLabelsAndRefresh } from './refresh';
+
+// The cell size (== interaction radius) of the local repulsion force is derived
+// from the link distance so its reach scales with the graph's natural spacing.
+function localCellSize(linkDistance: number): number {
+  return Math.max(40, linkDistance * 2);
+}
 
 // Owns the GraphSettings state, mirrored ref, and per-project
 // localStorage persistence. Also drives sprite-size refreshes and
@@ -103,21 +110,57 @@ export function useGraphSettings(
   // would crash inside `layoutTick` with "Cannot read properties of
   // undefined (reading 'tick')". A short setTimeout lets kapsule's
   // ~1ms-debounced digest install `state.layout` before we reheat.
+  // The library's own n-body ('charge') force, captured once before we ever
+  // swap it, so switching `repulsionMode` back to 'nbody' restores the real
+  // forceManyBody rather than leaving our local force in place.
+  const nbodyForceRef = useRef<
+    { strength?: (n: number) => unknown; theta?: (n: number) => unknown } | null
+  >(null);
+  // Our O(N) tree-aware repulsion, created lazily and reused across mode flips.
+  const localForceRef = useRef<LocalRepulsionForce | null>(null);
   const appliedPhysicsRef = useRef({
     dagLevelDistance: settings.dagLevelDistance,
     velocityDecay: settings.velocityDecay,
     chargeStrength: settings.chargeStrength,
     linkDistance: settings.linkDistance,
+    chargeTheta: settings.chargeTheta,
+    repulsionMode: settings.repulsionMode,
   });
   useEffect(() => {
     const g = graphRef.current;
     if (!g) return;
     g.dagLevelDistance(settings.dagLevelDistance);
     g.d3VelocityDecay(settings.velocityDecay);
-    const charge = g.d3Force('charge') as
-      | { strength?: (n: number) => unknown }
-      | undefined;
-    charge?.strength?.(settings.chargeStrength);
+
+    // `d3Force(name)` reads the force; `d3Force(name, force)` replaces it.
+    const d3Force = g.d3Force as unknown as (
+      name: string,
+      force?: unknown,
+    ) => unknown;
+
+    if (!nbodyForceRef.current) {
+      nbodyForceRef.current = d3Force('charge') as typeof nbodyForceRef.current;
+    }
+    if (!localForceRef.current) {
+      localForceRef.current = forceLocalRepulsion();
+    }
+    const nbody = nbodyForceRef.current;
+    const local = localForceRef.current;
+
+    // Keep both forces configured from the current settings so a mode flip is
+    // instant and the active slider always applies regardless of mode.
+    nbody?.strength?.(settings.chargeStrength);
+    nbody?.theta?.(settings.chargeTheta);
+    local.strength(settings.chargeStrength);
+    local.cellSize(localCellSize(settings.linkDistance));
+
+    // Select the active charge force; only swap when it actually changes so we
+    // don't needlessly re-initialize the force every settings tick.
+    const desired = settings.repulsionMode === 'local' ? local : nbody;
+    if (desired && d3Force('charge') !== desired) {
+      d3Force('charge', desired);
+    }
+
     const link = g.d3Force('link') as
       | { distance?: (n: number) => unknown }
       | undefined;
@@ -128,12 +171,16 @@ export function useGraphSettings(
       prev.dagLevelDistance !== settings.dagLevelDistance ||
       prev.velocityDecay !== settings.velocityDecay ||
       prev.chargeStrength !== settings.chargeStrength ||
-      prev.linkDistance !== settings.linkDistance;
+      prev.linkDistance !== settings.linkDistance ||
+      prev.chargeTheta !== settings.chargeTheta ||
+      prev.repulsionMode !== settings.repulsionMode;
     appliedPhysicsRef.current = {
       dagLevelDistance: settings.dagLevelDistance,
       velocityDecay: settings.velocityDecay,
       chargeStrength: settings.chargeStrength,
       linkDistance: settings.linkDistance,
+      chargeTheta: settings.chargeTheta,
+      repulsionMode: settings.repulsionMode,
     };
     if (!changed || g.graphData().nodes.length === 0) return;
 
@@ -149,8 +196,25 @@ export function useGraphSettings(
     settings.velocityDecay,
     settings.chargeStrength,
     settings.linkDistance,
+    settings.chargeTheta,
+    settings.repulsionMode,
     graphRef,
   ]);
+
+  // Link width is a render-only prop (no physics reheat). Changing it rebuilds
+  // the link objects, so wake the loop a few frames to paint them. Guarded like
+  // the size effect: skip the initial mount and any run with no nodes mounted
+  // (init already applies `settings.linkWidth`).
+  const appliedLinkWidthRef = useRef(settings.linkWidth);
+  useEffect(() => {
+    const prev = appliedLinkWidthRef.current;
+    const changed = prev !== settings.linkWidth;
+    appliedLinkWidthRef.current = settings.linkWidth;
+    const g = graphRef.current;
+    if (!changed || !g || g.graphData().nodes.length === 0) return;
+    g.linkWidth(settings.linkWidth);
+    getIdleController(g)?.wakeForRefresh();
+  }, [settings.linkWidth, graphRef]);
 
   return { settings, setSettings, settingsRef };
 }

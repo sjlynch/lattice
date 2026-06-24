@@ -4,6 +4,7 @@ import type { GraphNode } from '../../../api';
 import { healthLabelRegistry } from '../healthOverlay';
 import { labelsRegistry } from '../labelsOverlay';
 import { locLabelRegistry } from '../locOverlay';
+import { attachNodeMotionDriver } from '../nodeMotionDriver';
 import { attachIdleController, createIdleController } from '../idleController';
 import { attachFrameDriver, onFrame } from '../sceneFrameDriver';
 import {
@@ -43,7 +44,7 @@ export function useForceGraphInitialization(
       .nodeRelSize(1)
       .linkColor(() => 'rgba(220,228,240,0.55)')
       .linkOpacity(0.85)
-      .linkWidth(0.7)
+      .linkWidth(nodeRefs.settingsRef.current.linkWidth)
       .dagMode('td')
       .dagLevelDistance(nodeRefs.settingsRef.current.dagLevelDistance)
       // Engine settle bounds. The library defaults to
@@ -101,6 +102,10 @@ export function useForceGraphInitialization(
     // Single per-frame dispatcher over scene.onBeforeRender, shared by the
     // Agent Presence Layer + the label-repulsion overlays (see sceneFrameDriver).
     attachFrameDriver(graph);
+    // Single fan-out over the library's one-slot node-motion callbacks
+    // (`onEngineTick` + `onNodeDrag`/`onNodeDragEnd`), shared by the batched-link
+    // + batched-node position sync (see nodeMotionDriver).
+    attachNodeMotionDriver(graph);
     // Feed each rendered frame to the idle controller so it can duty-cycle the
     // loop down to ~30fps while only slow self-animations are driving it.
     const offThrottleFrame = onFrame(graph, () => idle.notifyFrameRendered());

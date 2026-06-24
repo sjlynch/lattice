@@ -12,6 +12,9 @@ import { TimelineScrubber } from './TimelineScrubber';
 import { useStructuralScan } from '../../hooks/useStructuralScan';
 import { useBoxSelect } from './hooks/useBoxSelect';
 import { useAgentOverlay } from './hooks/useAgentOverlay';
+import { useBatchedLinks } from './hooks/useBatchedLinks';
+import { useInstancedNodes } from './hooks/useInstancedNodes';
+import { useNodeDragBehavior } from './hooks/useNodeDragBehavior';
 import { useForceGraphInitialization } from './hooks/useForceGraphInitialization';
 import { useGraphDataSync } from './hooks/useGraphDataSync';
 import { useGraphOverlays } from './hooks/useGraphOverlays';
@@ -156,6 +159,12 @@ export function ForceGraphView({
     selected,
   });
 
+  // Mirror of the batched-nodes toggle, read live by nodeObjectFactory to hide
+  // the per-node base sprite (kept as the raycast pick proxy) — seeded from the
+  // persisted setting on first render so init builds sprites at the right
+  // visibility, then kept in sync for runtime toggles.
+  const batchedNodesRef = useRefMirror(settings.batchedNodes);
+
   useForceGraphInitialization(containerRef, graphRef, {
     settingsRef,
     selectedRef,
@@ -169,6 +178,7 @@ export function ForceGraphView({
     nodeDepthsRef,
     changeMapRef,
     metricsIgnoredExtsRef,
+    batchedNodesRef,
     onHoverNodeChange: debouncedSetHoverNode,
   });
 
@@ -183,6 +193,33 @@ export function ForceGraphView({
     locModeRef,
     deadModeRef,
   });
+
+  // Batched link rendering: collapse the library's per-link Line objects into a
+  // single LineSegments so orbiting a settled graph isn't E extra draw calls per
+  // frame. Keyed off `structuralData` (the visible link set only changes on a
+  // structural swap or a hidden-ext change, not on metric-only HealthUpdates).
+  useBatchedLinks(graphRef, settings.batchedLinks, structuralData, hiddenExts);
+
+  // Batched node rendering: draw the base node shapes as a few instanced meshes
+  // (one per file type) instead of N Sprite-bearing Groups, so orbiting a
+  // settled graph isn't ~N node draw calls per frame. The per-node sprite stays
+  // mounted-but-invisible as the pick proxy (see nodeObjectFactory); recolor
+  // overlays (health/loc/dead) fall back to the per-node path. Keyed off
+  // `structuralData` for the same reason as batched links.
+  useInstancedNodes(
+    graphRef,
+    settings.batchedNodes,
+    structuralData,
+    hiddenExts,
+    settings,
+    { settingsRef, healthModeRef, locModeRef, deadModeRef },
+  );
+
+  // Drag UX: dragging a node carries its descendant subtree along and locks the
+  // node to its DAG level (Y) so a drag only slides it within its plane. Rides
+  // the shared node-motion driver's drag callback; active regardless of the
+  // batched-render toggles.
+  useNodeDragBehavior(graphRef);
 
   // Claude agent nodes + focus beams (in-progress Claude tasks), and the
   // `W`-hold worktree-modified file outline. Both read live task data over

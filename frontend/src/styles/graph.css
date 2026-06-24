@@ -298,6 +298,30 @@
   width: 100%;
   accent-color: var(--accent);
 }
+/* Segmented two-option toggle (e.g. repulsion mode) inside the panel. */
+.graph-settings-toggle {
+  display: flex;
+  gap: 4px;
+}
+.graph-settings-toggle-btn {
+  flex: 1;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.graph-settings-toggle-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+.graph-settings-toggle-btn.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
 .graph-settings-footer {
   display: flex;
   justify-content: flex-end;

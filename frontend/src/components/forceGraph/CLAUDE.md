@@ -305,6 +305,94 @@ asking for fixes/reviews:
   code) + `relPath(full, root)`.
 - `graphSettings.ts` — `GraphSettings` shape, `DEFAULT_SETTINGS`,
   `loadSettings(project)`. Persisted under `lattice.graphSettings.<project>`.
+  Physics-perf fields (added after the graph-perf investigation — see
+  `plans/graph-perf-plan.md`): `chargeTheta` (Barnes-Hut accuracy for the n-body
+  charge force; default 1.5 ≈ 3× cheaper than d3's 0.9, negligible visual
+  change), `repulsionMode` (`'nbody'` | `'local'`; `'local'` swaps in the O(N)
+  tree-aware `localRepulsionForce`), `linkWidth` (0 = flat lines instead of
+  lit cylinders), and `batchedLinks` (render all links as one `LineSegments` —
+  see `instancedLinks.ts`), and `batchedNodes` (render the base node shapes as a
+  few instanced meshes — see `instancedNodes.ts`). The dominant per-*tick* layout
+  CPU is `forceManyBody` (charge/repulsion fields target it); the dominant *orbit*
+  CPU is N+E draw calls (`batchedLinks` targets the E half, `batchedNodes` the N
+  half). The two are separate regimes.
+- `localRepulsionForce.ts` — `forceLocalRepulsion()`: an O(N) linked-cell grid
+  repulsion (X/Z plane only; cell size = interaction radius) that drop-in
+  replaces d3's `forceManyBody` for the `charge` force when `repulsionMode ===
+  'local'`. The file graph is a containment *tree*, so global Barnes-Hut n-body
+  is overkill; this repels only same-cell + 8-neighbour nodes, mirroring the
+  `labelPhysics/spatialGrid` integer-key + pooled-bucket pattern. Pure math,
+  covered by `__tests__/localRepulsionForce.test.ts`.
+- `instancedLinks.ts` — `createInstancedLinks(graph)`: batched link rendering for
+  the `batchedLinks` setting. The library makes one `THREE.Line` per link (E
+  draw calls/frame even at rest), so orbiting a settled graph re-submits ~N+E
+  draw calls and spikes CPU. This collapses every visible link into **one
+  `THREE.LineSegments`** in `graph.scene()`: it suppresses the library's per-link
+  objects via `linkThreeObject(() => new Object3D())` (empty → no draw call;
+  `tickFrame` skips geometry work for a non-Line/Mesh), reuses the library's
+  installed `linkVisibility` accessor for the visible set, and re-uploads the
+  position buffer **only on frames where node positions moved — keyed off the
+  shared node-motion driver (`nodeMotionDriver.ts`) (+ a one-frame trailing sync
+  for the settling frame)** — so a pure orbit is one static draw call, zero GPU
+  uploads. The motion driver (not the idle controller's `isEngineHot()`) is the
+  signal because a node *drag* reheats the engine internally without notifying the
+  idle controller; and `onEngineTick` alone isn't enough either, because a drag
+  AFTER the layout settles can't re-tick below `d3AlphaMin` — so the driver also
+  listens to `onNodeDrag`. Flat lines read heavier than the
+  lit cylinders they replace, so the configured link opacity is damped
+  (`FLAT_LINE_OPACITY_SCALE`). Driven per-frame off the shared scene frame driver
+  via `hooks/useBatchedLinks.ts`; rebuild (buffer resize) on a structural swap /
+  hidden-ext change. Flat 1px lines (the `linkWidth: 0` look); opt-in while the
+  look is evaluated. Low-risk because links carry no overlays and aren't pick
+  targets. The node half is `instancedNodes.ts` (shipped).
+- `instancedNodes.ts` — `createInstancedNodes(graph, opts)`: batched node
+  rendering for the `batchedNodes` setting — the node half of the orbit-cost
+  lever (links being the first half). The library mounts one Sprite-bearing
+  `Group` per node (≈N draw calls/frame even at rest); this collapses the **base**
+  node shapes into a few `THREE.InstancedMesh`es, one per distinct `styleKey`
+  (≈5–50, = number of file types on screen). Each mesh reuses the EXACT cached
+  sprite `CanvasTexture` (`materialFor(style).map`) drawn through a
+  `MeshBasicMaterial` whose vertex shader is patched (one `<project_vertex>` swap)
+  to billboard a unit quad in view space — so texture/color-management/flipY/uv
+  orientation/world-sizing match the sprite with no atlas or colorspace guesswork
+  (uv layout of `PlaneGeometry(1,1)` matches `THREE.Sprite`'s quad, preserving
+  e.g. triangle apex). Per-instance position is re-uploaded only on node-motion
+  frames (`nodeMotionDriver` + trailing settle), like batched links, so orbit is
+  static. **Pick
+  proxy:** the per-node sprite is NOT removed — `nodeObjectFactory` keeps it
+  mounted but `.visible = false` (three.js raycasting ignores `.visible`: it
+  tests only `object.layers`, and `Sprite.raycast` has no visibility guard), so
+  the invisible sprite stays the hover/right-click pick target and the
+  halo/change-ring/worktree-ring/Alt-label sibling children still anchor to it —
+  this is what keeps picking + overlays untouched. **Overlays:** rather than
+  mirror the health/loc/dead recolor precedence into per-instance colors, the
+  mesh hides itself while any recolor overlay is active (`isBaseView()` false) and
+  the per-node recolored sprite stays visible — those modes run on the proven
+  per-node path. The mesh only ever draws the base (no-overlay) view, the
+  orbit-cost steady state. Ghosts keep their per-node sprite (excluded here).
+  Driven by `hooks/useInstancedNodes.ts`; rebuild (regroup + buffer resize) on a
+  structural swap / hidden-ext change / node-size change. Opt-in while the look
+  is evaluated.
+- `nodeMotionDriver.ts` — single fan-out over three-forcegraph's one-slot
+  node-motion callbacks (`onEngineTick` + `onNodeDrag` + `onNodeDragEnd`; mirrors
+  `sceneFrameDriver` over `onBeforeRender`), so batched links AND batched nodes can
+  both subscribe instead of fighting over the single setters.
+  `attachNodeMotionDriver(graph)` at init installs the dispatchers;
+  `onNodeMotion(graph, cb)` registers a listener and returns an unsubscribe.
+  **Why all three signals:** `onEngineTick` fires only on frames the engine ticks;
+  a drag rides those while warm, but once the layout SETTLES
+  (`alpha < d3AlphaMin`) a drag's `resetCountdown()` can't make `layoutTick`
+  re-tick (the `alpha < d3AlphaMin` stop branch trips before `layout.tick()` can
+  raise alpha toward the drag's `alphaTarget(0.3)`), so `onEngineTick` never fires
+  — but the drag handler still wrote the new `node.x` and fires `onNodeDrag`, which
+  is the reliable "a node moved" signal during a settled-graph drag (the bug where
+  dragged batched links/nodes froze once the physics settled). It is the
+  position-sync signal, not the idle controller's `isEngineHot()` (which misses
+  drags entirely). A second channel, `onNodeDragMove(graph, cb)` — `cb(node,
+  translate, isEnd)` — carries the drag node + per-event delta (it owns the
+  single `onNodeDrag`/`onNodeDragEnd` slots, so drag consumers register here);
+  these run BEFORE the motion dispatch so their position mutations are in place
+  when the batched sync reads them. Used by `useNodeDragBehavior`.
 - `GraphSettingsPanel.tsx` — slider panel; pure UI, mutates the settings
   object via `onChange`.
 
@@ -384,6 +472,36 @@ asking for fixes/reviews:
   unmount). On press, fetches `GET /api/tasks/worktree-modified` and rings each
   changed file in its task's color via `setNodeWorktreeRing` (walking the shared
   `mountedNodes`); strips them on release.
+- `useBatchedLinks` — owns the `instancedLinks.ts` controller: creates it once
+  after init (so the library's `linkVisibility` accessor is installed),
+  subscribes its per-frame sync to the scene frame driver, toggles it on
+  `settings.batchedLinks`, and rebuilds the batched geometry on a structural
+  swap / hidden-ext change. Mounted after `useGraphDataSync` in `ForceGraphView`.
+- `useInstancedNodes` — owns the `instancedNodes.ts` controller (the node
+  analogue of `useBatchedLinks`): creates it once after init, subscribes its
+  per-frame `onFrame` to the scene frame driver, toggles on `settings.batchedNodes`
+  (a runtime toggle also fires `clearLabelsAndRefresh` so `nodeObjectFactory`
+  flips the per-node base sprite's `.visible`), and rebuilds the instance buffers
+  on a structural swap / hidden-ext / node-size change. Passes the controller a
+  live `settingsRef` + an `isBaseView()` built from the health/loc/dead mode refs.
+  Mounted after `useBatchedLinks`.
+- `useNodeDragBehavior` — two drag-UX behaviors, registered via the motion
+  driver's `onNodeDragMove` drag channel (always active, independent of the
+  batched toggles): (1) **physics-active drag** — so a dragged node's children
+  follow (link springs) and siblings make room (repulsion), the gesture lifts
+  the settled-freeze by setting `d3AlphaMin(0)` for its duration, letting the
+  library's own per-event `alphaTarget(0.3)` re-warm the sim (settled graphs
+  otherwise re-trip the `alpha < d3AlphaMin` stop branch before a tick can raise
+  alpha — so only the directly-pinned dragged node moved). Nodes at equilibrium
+  barely move (near-zero net force) while neighbours visibly follow; `d3AlphaMin`
+  is restored on drag end (library's `alphaTarget(0)` then cools it to rest), and
+  `engineStarted()` holds the render loop through the warm-up + settle. (An
+  earlier version rigidly block-translated the whole descendant subtree, which
+  made dragging a top-level directory haul the entire graph; physics is what was
+  wanted.) (2) **DAG-Y lock** — re-pins the dragged node's `fy`/`y` to its
+  dragstart level (`__initialPos.y`), undoing the library's `fy = dragY` so a
+  drag only slides within the node's horizontal plane; neighbours keep their own
+  (deeper) `fy`, so the physics-follow moves them in X/Z only.
 - `useNodeContextMenu` / `useBoxSelect` / `useRefMirror` /
   `refresh.ts` — small focused helpers consumed directly by the coordinator.
 - `hooks/boxSelectGeometry.ts` — pure rectangle/projection hit-testing helpers
@@ -404,19 +522,41 @@ Three useEffects (inside the overlay sub-hooks) react to settings changes:
   ref also no-ops a settings-object swap (e.g. project switch) that lands on
   identical sizes. Live slider drags still refresh (size changed + nodes
   mounted).
-- Physics (`dagLevelDistance`/`charge`/`link`/`velocityDecay`): poke
-  `d3Force` strengths + `d3ReheatSimulation()`. **The force pokes run on every
-  run, including initial setup** — the graph is constructed only with
-  `dagLevelDistance`, so a project's persisted non-default charge/link/decay
-  must be pushed in here or they'd sit at the d3 defaults until the first slider
-  drag. **The reheat is guarded** (`useGraphSettings`): skipped on the initial
-  mount (previous-value ref) and whenever no nodes are mounted (an empty sim has
-  nothing to relax — the data-sync structural swap reheats once it populates
-  `graphData`, picking up the forces we set). So a freshly-loaded/applied
-  settings object no longer wakes the render loop for nothing; only an actual
-  physics/DAG change on a populated graph reheats.
+- Physics (`dagLevelDistance`/`charge`/`link`/`velocityDecay`/`chargeTheta`/
+  `repulsionMode`): poke `d3Force` strengths + `d3ReheatSimulation()`. **The
+  force pokes run on every run, including initial setup** — the graph is
+  constructed only with `dagLevelDistance`, so a project's persisted non-default
+  charge/link/decay must be pushed in here or they'd sit at the d3 defaults until
+  the first slider drag. The **charge force is mode-selected** here:
+  `chargeTheta` is applied to the n-body force, and `repulsionMode` swaps the
+  `'charge'` force between the library's original `forceManyBody` (captured once
+  into a ref so switching back restores it) and `forceLocalRepulsion` — only when
+  the active force actually changes, so a settings tick doesn't needlessly
+  re-init the force. **The reheat is guarded** (`useGraphSettings`): skipped on
+  the initial mount (previous-value ref) and whenever no nodes are mounted (an
+  empty sim has nothing to relax — the data-sync structural swap reheats once it
+  populates `graphData`, picking up the forces we set). So a freshly-loaded/
+  applied settings object no longer wakes the render loop for nothing; only an
+  actual physics/DAG change on a populated graph reheats.
+- Link width (`linkWidth`): render-only prop, its own guarded effect — calls
+  `graph.linkWidth()` (rebuilds link objects) + `wakeForRefresh()` to paint;
+  skipped on mount / empty graph (init already applies it). No reheat. Inert
+  while `batchedLinks` is on (batched lines are always flat).
+- Batched links (`batchedLinks`): not a settings *effect* — `useBatchedLinks`
+  owns it. Toggling on swaps `linkThreeObject` for empty objects + draws one
+  `LineSegments`; off restores the default per-link lines. No reheat; the
+  per-frame position sync rides the scene frame driver and only uploads while
+  the engine is hot.
+- Batched nodes (`batchedNodes`): not a settings *effect* — `useInstancedNodes`
+  owns it. Toggling on draws the base shapes as a few InstancedMeshes and
+  (via `nodeObjectFactory` + a refresh) makes the per-node base sprites invisible
+  pick proxies; off disposes the meshes and re-shows the sprites. No reheat; the
+  per-frame position sync rides the scene frame driver + engine-tick driver. A
+  recolor overlay (`h`/`z`/`d`) being held hides the meshes and the per-node
+  recolored sprites take over.
 - Filter (`hiddenExts`): swap `nodeVisibility`/`linkVisibility` accessors.
-  No restart.
+  No restart. (When batched, `useBatchedLinks` also rebuilds off this so the
+  LineSegments tracks the same visible set.)
 
 ## Render-path perf invariants (read before touching overlay/beam/label hot paths)
 

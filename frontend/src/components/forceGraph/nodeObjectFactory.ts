@@ -33,6 +33,13 @@ export type NodeObjectRefs = {
   // overlays should skip — matching files render as their normal sprite
   // instead of a tinted shape with a numeric label.
   metricsIgnoredExtsRef: MutableRefObject<Set<string>>;
+  // When true, the plain base shape is drawn by the shared InstancedMesh
+  // (`instancedNodes.ts`); the per-node base sprite is kept but made invisible
+  // so it still serves as the raycast/hover pick proxy and so the halo/ring/
+  // label sibling children still anchor to it. Only the *base* (non-overlay,
+  // non-ghost) sprite is hidden — recolor overlays keep their visible sprite
+  // (the instanced mesh hides itself instead).
+  batchedNodesRef: MutableRefObject<boolean>;
 };
 
 // Picks the THREE.Object3D that represents a node in the current frame.
@@ -95,6 +102,20 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
   }
 
   root.add(base);
+
+  // Batched-node rendering: the InstancedMesh draws the plain base shape, so
+  // hide the per-node base sprite (it stays raycastable → still the hover/click
+  // pick proxy; its halo/ring/label siblings stay visible). Only in the base
+  // view — when a recolor overlay (health/loc/dead) owns the sprite, the
+  // instanced mesh hides itself instead, so the overlay sprite must stay shown.
+  if (
+    refs.batchedNodesRef.current &&
+    !refs.healthModeRef.current &&
+    !refs.locModeRef.current &&
+    !refs.deadModeRef.current
+  ) {
+    base.visible = false;
+  }
 
   // Change ring + selection halo both hang off the root as sibling children
   // (drawn behind / around the base via renderOrder + size, not by child
