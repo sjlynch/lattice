@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { DriveSelector } from './folderPicker/DriveSelector';
 import { CreateFolderRow } from './folderPicker/CreateFolderRow';
 import { DirectoryList } from './folderPicker/DirectoryList';
@@ -20,6 +21,8 @@ export function FolderPicker({ open, initialPath, onClose, onSelect }: Props) {
     pathInput,
     setPathInput,
     listing,
+    selectedPath,
+    setSelectedPath,
     newFolderName,
     setNewFolderName,
     loading,
@@ -31,6 +34,32 @@ export function FolderPicker({ open, initialPath, onClose, onSelect }: Props) {
 
   const roots = listing?.roots ?? [];
   const activeRoot = listing ? rootKey(listing.path) : '';
+
+  // Commit the current selection: the highlighted row, or — with nothing
+  // highlighted — the folder we're currently inside. The only path to a
+  // project switch (footer button + Enter).
+  const selectedEntry = selectedPath
+    ? listing?.entries.find((e) => e.path === selectedPath) ?? null
+    : null;
+  const commit = () => {
+    if (!listing) return;
+    onSelect(selectedPath ?? listing.path);
+  };
+
+  // Enter confirms the selection, mirroring the footer button. Skip it while
+  // typing in the path / new-folder inputs (they handle Enter themselves).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter') return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      if (!listing) return;
+      onSelect(selectedPath ?? listing.path);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, listing, selectedPath, onSelect]);
 
   return (
     <Modal open={open} onClose={onClose}>
@@ -59,8 +88,9 @@ export function FolderPicker({ open, initialPath, onClose, onSelect }: Props) {
         <DirectoryList
           loading={loading}
           listing={listing}
+          selectedPath={selectedPath}
           onNavigate={load}
-          onSelect={onSelect}
+          onHighlight={setSelectedPath}
         />
       </div>
       <div className="modal-footer">
@@ -70,9 +100,13 @@ export function FolderPicker({ open, initialPath, onClose, onSelect }: Props) {
         <button
           className="btn-primary"
           disabled={!listing}
-          onClick={() => listing && onSelect(listing.path)}
+          // No listing = nothing to select yet; say so rather than leaving a
+          // greyed button with no explanation.
+          title={listing ? undefined : 'Browse to a folder first'}
+          aria-label={listing ? undefined : 'Browse to a folder first'}
+          onClick={commit}
         >
-          Select this folder
+          {selectedEntry ? `Select ${selectedEntry.name}` : 'Select this folder'}
         </button>
       </div>
     </Modal>
