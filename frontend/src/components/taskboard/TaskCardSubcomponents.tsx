@@ -26,10 +26,14 @@ export const TaskCardBody = memo(function TaskCardBody({
   task,
   isConflict,
   isSelected,
+  onOpenResolver,
 }: {
   task: Task;
   isConflict: boolean;
   isSelected: boolean;
+  // When set, the conflict pill becomes a button that re-opens the resolver
+  // (same handler as the merge-under-conflict button).
+  onOpenResolver?: () => void;
 }) {
   return (
     <div
@@ -40,8 +44,12 @@ export const TaskCardBody = memo(function TaskCardBody({
           : 'Click to edit · ctrl+click or shift+click to multi-select'
       }
     >
-      <div className="task-card-title">
-        <TaskCardConflictBadges task={task} isConflict={isConflict} />
+      <div className="task-card-title" title={task.title}>
+        <TaskCardConflictBadges
+          task={task}
+          isConflict={isConflict}
+          onOpenResolver={onOpenResolver}
+        />
         {task.runQueued && (
           <span
             className="task-card-queued-pill"
@@ -53,7 +61,9 @@ export const TaskCardBody = memo(function TaskCardBody({
         {task.title}
       </div>
       {task.description && (
-        <div className="task-card-desc">{task.description}</div>
+        <div className="task-card-desc" title={task.description}>
+          {task.description}
+        </div>
       )}
       {task.summary && (
         <div className="task-card-summary" title={task.summary}>
@@ -70,19 +80,39 @@ export const TaskCardBody = memo(function TaskCardBody({
 export const TaskCardConflictBadges = memo(function TaskCardConflictBadges({
   task,
   isConflict,
+  onOpenResolver,
 }: {
   task: Task;
   isConflict: boolean;
+  // When supplied, the pill is the most salient one-click entry point to the
+  // conflict resolver — same handler the merge-under-conflict button uses.
+  onOpenResolver?: () => void;
 }) {
   if (!isConflict) return null;
   return (
     <>
-      <span
-        className="task-card-conflict-pill"
-        title="Merge conflict — open the resolver"
-      >
-        <AlertTriangle size={10} /> conflict
-      </span>
+      {onOpenResolver ? (
+        <button
+          type="button"
+          className="task-card-conflict-pill"
+          title="Open conflict resolver"
+          aria-label="Open conflict resolver"
+          draggable={false}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenResolver();
+          }}
+        >
+          <AlertTriangle size={10} /> conflict
+        </button>
+      ) : (
+        <span
+          className="task-card-conflict-pill"
+          title="Merge conflict — open the resolver"
+        >
+          <AlertTriangle size={10} /> conflict
+        </span>
+      )}
       {task.conflictStartedAt && <StuckPill since={task.conflictStartedAt} />}
     </>
   );

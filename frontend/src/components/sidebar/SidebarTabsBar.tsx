@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight, GitMerge, Rocket, TerminalSquare, X } from 'lucide-react';
 import { memo, useCallback, useRef, useState, type DragEvent, type MouseEvent, type RefObject } from 'react';
 import type { TerminalSpec } from '../../TerminalsContext';
+import type { TerminalStatus } from '../../terminal/terminalTypes';
 
 type Props = {
   visibleTerminals: TerminalSpec[];
@@ -115,6 +116,8 @@ export function SidebarTabsBar({
               label={t.label}
               cwd={t.cwd}
               kind={t.kind}
+              status={t.status}
+              exitCode={t.exitCode}
               isActive={t.id === activeId}
               isDragging={t.id === draggingId}
               isDragOver={t.id === dragOverId}
@@ -147,11 +150,31 @@ export function SidebarTabsBar({
   );
 }
 
+// Tabs only surface a dot for the attention-worthy states; a live or
+// still-connecting terminal stays quiet (no extra noise), matching the
+// behaviour described in the task.
+const STATUS_TOOLTIPS: Record<TerminalStatus, string> = {
+  connecting: 'Connecting…',
+  live: 'Connected',
+  reconnecting: 'Reconnecting…',
+  exited: 'Exited',
+  dead: 'Disconnected — close and reopen',
+};
+
+function statusTooltip(status: TerminalStatus, exitCode?: number): string {
+  if (status === 'exited') {
+    return exitCode === undefined ? 'Exited' : `Exited (code ${exitCode})`;
+  }
+  return STATUS_TOOLTIPS[status];
+}
+
 type SidebarTabProps = {
   id: string;
   label: string;
   cwd: string;
   kind?: 'merge' | 'startup';
+  status?: TerminalStatus;
+  exitCode?: number;
   isActive: boolean;
   isDragging: boolean;
   isDragOver: boolean;
@@ -178,6 +201,8 @@ const SidebarTab = memo(function SidebarTab({
   label,
   cwd,
   kind,
+  status,
+  exitCode,
   isActive,
   isDragging,
   isDragOver,
@@ -225,6 +250,14 @@ const SidebarTab = memo(function SidebarTab({
         />
       ) : (
         <span>{label}</span>
+      )}
+      {status && status !== 'live' && status !== 'connecting' && (
+        <span
+          className={`sidebar-tab-status ${status}`}
+          title={statusTooltip(status, exitCode)}
+          aria-label={statusTooltip(status, exitCode)}
+          role="img"
+        />
       )}
       <button
         className="sidebar-tab-close"

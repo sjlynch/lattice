@@ -18,6 +18,32 @@
   min-height: 0;
 }
 .taskboard-scroll::-webkit-scrollbar { width: 8px; }
+/* Active-search-with-zero-results empty state. Rendered in place of the lanes
+   only when a query is present and nothing matches — never for a legitimately
+   empty board. */
+.taskboard-search-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 36px 20px;
+  text-align: center;
+  color: var(--text-tertiary);
+}
+.taskboard-search-empty svg { opacity: 0.7; }
+.taskboard-search-empty-title {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.taskboard-search-empty-query {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.taskboard-search-empty-clear {
+  border: 1px solid var(--border-strong);
+}
 .taskboard-footer {
   flex: 0 0 auto;
   padding: 6px 10px 8px 12px;
