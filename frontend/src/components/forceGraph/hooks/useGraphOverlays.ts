@@ -8,6 +8,7 @@ import { useGraphSettings } from './useGraphSettings';
 import { useHealthOverlay } from './useHealthOverlay';
 import { useLabelsOverlay } from './useLabelsOverlay';
 import { useLocOverlay } from './useLocOverlay';
+import { useOverlayPins } from './useOverlayPins';
 
 type UseGraphOverlaysArgs = {
   activeFolder: string;
@@ -47,20 +48,32 @@ export function useGraphOverlays({
     data,
   );
 
-  const { locMode, locModeRef } = useLocOverlay(graphRef, settingsRef);
+  // Pin state for the hold-key overlays — a pin latches a view on without
+  // holding its key (the GraphOverlayKey chips toggle these; each overlay folds
+  // its pin into the effective `held || pinned` mode). The `worktree` pin is
+  // applied by ForceGraphView, which owns the worktree-highlight hook.
+  const { pinned, togglePin } = useOverlayPins();
+
+  const { locMode, locModeRef } = useLocOverlay(
+    graphRef,
+    settingsRef,
+    pinned.loc,
+  );
   const { healthModeRef } = useHealthOverlay(
     healthMode,
     onHealthModeChange,
     graphRef,
     settingsRef,
+    pinned.health,
   );
-  const { deadMode, deadModeRef } = useDeadCodeOverlay(graphRef);
+  const { deadMode, deadModeRef } = useDeadCodeOverlay(graphRef, pinned.dead);
   const labels = useLabelsOverlay(
     graphRef,
     containerRef,
     data,
     settingsRef,
     selected,
+    pinned.labels,
   );
 
   useGraphFilter(graphRef, hiddenExts, changeMapRef);
@@ -78,6 +91,8 @@ export function useGraphOverlays({
     healthModeRef,
     deadMode,
     deadModeRef,
+    pinned,
+    togglePin,
     ...labels,
   };
 }
