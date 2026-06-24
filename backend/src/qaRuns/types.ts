@@ -22,6 +22,11 @@ export type QaRun = {
   verdict?: QaVerdict;
   // Set once a confident pass promoted the task to the Done lane.
   movedToDone?: boolean;
+  // The terminal auto-close decision resolved at `/done` time (from
+  // UserSettings.qaTerminalAutoClose). Surfaced via GET /api/qa-runs/:id so the
+  // frontend poller closes the tab only when this is true — otherwise the
+  // terminal stays open (the default). Absent until the run reaches `done`.
+  autoCloseTerminal?: boolean;
 };
 
 export type QaSession = {
