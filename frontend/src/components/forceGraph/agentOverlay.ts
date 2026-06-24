@@ -395,62 +395,78 @@ export class AgentOverlay {
     const hoverY = this.hoverLine.value();
 
     for (const agent of this.agents.values()) {
-      // Gather live beam targets (X/Z only — Y is the hover line). Includes the
-      // main agent's beams AND its subagents' beams, so the node centers over
-      // the whole cluster's work even when the main agent has delegated. This
-      // pass also prunes expired beams and stashes each live beam's file node
-      // for the geometry pass below (Part D).
-      const acc = this.acc;
-      acc.sx = 0;
-      acc.sz = 0;
-      acc.n = 0;
-      if (this.accumulateBeams(agent.beams, now, acc)) moving = true;
-      if (agent.satellites.size > 0) {
-        for (const sat of agent.satellites.values()) {
-          if (this.accumulateBeams(sat.beams, now, acc)) moving = true;
-        }
-      }
-
-      // Track horizontally toward the files in play; keep X/Z when idle. Rest is
-      // judged by distance to the target (not by easing step), so the node
-      // settles right over its files instead of stalling a few units short.
-      const tx = acc.n > 0 ? acc.sx / acc.n : agent.pos.x;
-      const tz = acc.n > 0 ? acc.sz / acc.n : agent.pos.z;
-      // Ease + push to the node sprite only while it's still more than REST_EPS
-      // from its target (the same criterion that drives `moving`). Once within
-      // REST_EPS it's at rest: skip the easing AND the node.position.copy, so a
-      // settled node doesn't re-dirty its matrix every frame while the loop runs
-      // for some other reason (Part B). The residual (< REST_EPS) is sub-pixel —
-      // the same settle tolerance the loop already idles at.
-      if (
-        Math.abs(tx - agent.pos.x) > REST_EPS ||
-        Math.abs(tz - agent.pos.z) > REST_EPS ||
-        Math.abs(hoverY - agent.pos.y) > REST_EPS
-      ) {
-        moving = true;
-        agent.pos.set(
-          lowPassStep(agent.pos.x, tx, EASE),
-          lowPassStep(agent.pos.y, hoverY, HOVER_EASE),
-          lowPassStep(agent.pos.z, tz, EASE),
-        );
-        agent.node.position.copy(agent.pos);
-      }
-
-      // Show the last file the agent viewed/edited for as long as the session
-      // is alive — the label persists through idle gaps and only clears when
-      // the agent is removed (session stopped). Before the first activity
-      // there's no file yet, so nothing is shown.
-      if (agent.currentFile) {
-        updateAgentLabel(this.group, agent, this.labelSize, this.nodeSize);
-      } else {
-        clearAgentLabel(this.group, agent);
-      }
-
-      // Update the main agent's beam geometries + opacity (reusing the stashed
-      // file nodes), then place + update its satellites.
-      this.updateBeamGeometries(agent.beams, agent.pos, now, 1);
-      if (agent.satellites.size > 0 && this.updateSatellites(agent, now)) moving = true;
+      if (this.tickAgent(agent, now, hoverY)) moving = true;
     }
+
+    return moving;
+  }
+
+  // Advance a single agent for this frame and return whether it still has
+  // self-driven motion to paint (centroid easing, satellite easing, or a beam
+  // fading). Split out of `tick`'s per-agent loop so each documented Part A/B/D
+  // perf invariant is individually readable. The five concerns run in order:
+  // centroid accumulation (Part A), X/Z + Y easing under the REST_EPS gate
+  // (Part B), label show/clear, beam-geometry update (Part D), and satellite
+  // placement. Uses the shared `this.acc` accumulator, reset at the top here —
+  // safe because `tick` is not re-entrant, so one agent is processed at a time.
+  private tickAgent(agent: Agent, now: number, hoverY: number): boolean {
+    let moving = false;
+
+    // Gather live beam targets (X/Z only — Y is the hover line). Includes the
+    // main agent's beams AND its subagents' beams, so the node centers over
+    // the whole cluster's work even when the main agent has delegated. This
+    // pass also prunes expired beams and stashes each live beam's file node
+    // for the geometry pass below (Part D).
+    const acc = this.acc;
+    acc.sx = 0;
+    acc.sz = 0;
+    acc.n = 0;
+    if (this.accumulateBeams(agent.beams, now, acc)) moving = true;
+    if (agent.satellites.size > 0) {
+      for (const sat of agent.satellites.values()) {
+        if (this.accumulateBeams(sat.beams, now, acc)) moving = true;
+      }
+    }
+
+    // Track horizontally toward the files in play; keep X/Z when idle. Rest is
+    // judged by distance to the target (not by easing step), so the node
+    // settles right over its files instead of stalling a few units short.
+    const tx = acc.n > 0 ? acc.sx / acc.n : agent.pos.x;
+    const tz = acc.n > 0 ? acc.sz / acc.n : agent.pos.z;
+    // Ease + push to the node sprite only while it's still more than REST_EPS
+    // from its target (the same criterion that drives `moving`). Once within
+    // REST_EPS it's at rest: skip the easing AND the node.position.copy, so a
+    // settled node doesn't re-dirty its matrix every frame while the loop runs
+    // for some other reason (Part B). The residual (< REST_EPS) is sub-pixel —
+    // the same settle tolerance the loop already idles at.
+    if (
+      Math.abs(tx - agent.pos.x) > REST_EPS ||
+      Math.abs(tz - agent.pos.z) > REST_EPS ||
+      Math.abs(hoverY - agent.pos.y) > REST_EPS
+    ) {
+      moving = true;
+      agent.pos.set(
+        lowPassStep(agent.pos.x, tx, EASE),
+        lowPassStep(agent.pos.y, hoverY, HOVER_EASE),
+        lowPassStep(agent.pos.z, tz, EASE),
+      );
+      agent.node.position.copy(agent.pos);
+    }
+
+    // Show the last file the agent viewed/edited for as long as the session
+    // is alive — the label persists through idle gaps and only clears when
+    // the agent is removed (session stopped). Before the first activity
+    // there's no file yet, so nothing is shown.
+    if (agent.currentFile) {
+      updateAgentLabel(this.group, agent, this.labelSize, this.nodeSize);
+    } else {
+      clearAgentLabel(this.group, agent);
+    }
+
+    // Update the main agent's beam geometries + opacity (reusing the stashed
+    // file nodes), then place + update its satellites.
+    this.updateBeamGeometries(agent.beams, agent.pos, now, 1);
+    if (agent.satellites.size > 0 && this.updateSatellites(agent, now)) moving = true;
 
     return moving;
   }
