@@ -94,7 +94,15 @@ asking for fixes/reviews:
 - `ForceGraphView.tsx` — coordinator. Holds `selected`/`hoverNode`/`showSettings`,
   threads refs through `useGraphOverlays` + `useForceGraphInitialization`, and
   composes the small `Graph*` overlay components below. Each remaining
-  `useEffect` is one concern: selection-refresh, Escape key, counts memo.
+  `useEffect` is one concern: selection-refresh, Escape key, counts memo,
+  pointer-drag tracking. **Hover is gated off while a pointer is dragging**
+  (`pointerDraggingRef`, set by a pointerdown-on-canvas / window-pointerup
+  effect): the library raycasts hover every render frame, so a drag-rotate
+  otherwise fires `onHover` continuously and each hover-in does a synchronous
+  `flushSync(setHoverNode)` + a HealthTooltip mount/unmount → per-frame React
+  commit + Layerize → the rotate stutter. The gesture clears `hoverNode` at drag
+  start (hides any open tooltip) and the library re-fires hover on the first
+  move after release. There's nothing to read mid-rotate, so this is free.
 - `nodeObjectFactory.ts` — `buildNodeObject(node, refs)` + `nativeNodeLabel(node)`.
   The decision tree for ghost vs health vs LOC vs dead-code vs base sprite
   (+ change-ring and selection-halo, both attached as sibling children of the
@@ -342,9 +350,9 @@ asking for fixes/reviews:
   lit cylinders they replace, so the configured link opacity is damped
   (`FLAT_LINE_OPACITY_SCALE`). Driven per-frame off the shared scene frame driver
   via `hooks/useBatchedLinks.ts`; rebuild (buffer resize) on a structural swap /
-  hidden-ext change. Flat 1px lines (the `linkWidth: 0` look); opt-in while the
-  look is evaluated. Low-risk because links carry no overlays and aren't pick
-  targets. The node half is `instancedNodes.ts` (shipped).
+  hidden-ext change. Flat 1px lines (the `linkWidth: 0` look); **default-on**
+  (`DEFAULT_SETTINGS.batchedLinks: true`). Low-risk because links carry no
+  overlays and aren't pick targets. The node half is `instancedNodes.ts`.
 - `instancedNodes.ts` — `createInstancedNodes(graph, opts)`: batched node
   rendering for the `batchedNodes` setting — the node half of the orbit-cost
   lever (links being the first half). The library mounts one Sprite-bearing
@@ -371,8 +379,8 @@ asking for fixes/reviews:
   per-node path. The mesh only ever draws the base (no-overlay) view, the
   orbit-cost steady state. Ghosts keep their per-node sprite (excluded here).
   Driven by `hooks/useInstancedNodes.ts`; rebuild (regroup + buffer resize) on a
-  structural swap / hidden-ext change / node-size change. Opt-in while the look
-  is evaluated.
+  structural swap / hidden-ext change / node-size change. **Default-on**
+  (`DEFAULT_SETTINGS.batchedNodes: true`).
 - `nodeMotionDriver.ts` — single fan-out over three-forcegraph's one-slot
   node-motion callbacks (`onEngineTick` + `onNodeDrag` + `onNodeDragEnd`; mirrors
   `sceneFrameDriver` over `onBeforeRender`), so batched links AND batched nodes can

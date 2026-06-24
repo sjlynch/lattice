@@ -38,8 +38,8 @@ export type GraphSettings = {
   // Render all links as a single batched `THREE.LineSegments` instead of one
   // `THREE.Line`/cylinder per link. Collapses E≈N per-frame draw calls to 1 —
   // the big lever for orbiting a settled graph (no physics) without the CPU
-  // spike. Flat 1px lines; opt-in while the look is evaluated. See
-  // `instancedLinks.ts` and `plans/graph-perf-plan.md`.
+  // spike. Flat 1px lines. Default-on. See `instancedLinks.ts` and
+  // `plans/graph-perf-plan.md`.
   batchedLinks: boolean;
   // Render the base node shapes via a handful of `THREE.InstancedMesh`es (one
   // per distinct style) instead of one Sprite-bearing Group per node. The other
@@ -48,7 +48,7 @@ export type GraphSettings = {
   // The per-node sprite stays mounted-but-invisible as the hover/right-click
   // pick proxy, so picking + the halo/ring/label overlays are untouched; the
   // recolor overlays (health/loc/dead) fall back to the per-node sprite path.
-  // Opt-in while the look is evaluated. See `instancedNodes.ts`.
+  // Default-on. See `instancedNodes.ts`.
   batchedNodes: boolean;
 };
 
@@ -69,8 +69,12 @@ export const DEFAULT_SETTINGS: GraphSettings = {
   chargeTheta: 1.5,
   repulsionMode: 'nbody',
   linkWidth: 0.7,
-  batchedLinks: false,
-  batchedNodes: false,
+  // Default-on: collapse the per-frame node/link draw calls to a handful so
+  // orbiting a large graph stays cheap out of the box. Picking, halos, rings,
+  // labels, and recolor overlays all still work via the mounted-but-invisible
+  // per-node sprite (see nodeObjectFactory / instancedNodes).
+  batchedLinks: true,
+  batchedNodes: true,
 };
 
 export function loadSettings(project: string): GraphSettings {

@@ -74,20 +74,20 @@ const REPULSION_MODES: { value: RepulsionMode; label: string; hint: string }[] =
 ];
 
 const LINK_MODES: { value: boolean; label: string; hint: string }[] = [
-  { value: false, label: 'Per-link', hint: 'one Line/tube per link (default)' },
+  { value: false, label: 'Per-link', hint: 'one Line/tube per link' },
   {
     value: true,
     label: 'Batched (fast)',
-    hint: 'all links in one LineSegments — 1 draw call when orbiting',
+    hint: 'all links in one LineSegments — 1 draw call when orbiting (default)',
   },
 ];
 
 const NODE_MODES: { value: boolean; label: string; hint: string }[] = [
-  { value: false, label: 'Per-node', hint: 'one Sprite per node (default)' },
+  { value: false, label: 'Per-node', hint: 'one Sprite per node' },
   {
     value: true,
     label: 'Batched (fast)',
-    hint: 'instanced shapes — ~1 draw call per file type when orbiting',
+    hint: 'instanced shapes — ~1 draw call per file type when orbiting (default)',
   },
 ];
 

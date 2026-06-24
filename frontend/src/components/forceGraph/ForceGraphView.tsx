@@ -80,7 +80,20 @@ export function ForceGraphView({
   // genuinely off all labels for longer than NULL_HOVER_DEBOUNCE_MS.
   const NULL_HOVER_DEBOUNCE_MS = 220;
   const nullClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True while a pointer button is held down on the canvas (orbit-rotate, node
+  // drag, or shift box-select). 3d-force-graph's raycaster recomputes hover on
+  // EVERY render frame, so while you drag-rotate the camera, nodes sweep under
+  // the cursor and `onHover` fires continuously — and each hover-in does a
+  // synchronous `flushSync` React render below (plus a HealthTooltip
+  // mount/unmount → Recalculate style → Layerize → Commit). That per-frame
+  // churn is the rotate stutter; there's no tooltip to read mid-drag anyway, so
+  // we gate hover off for the duration of the gesture (set in the pointer-drag
+  // effect below).
+  const pointerDraggingRef = useRef(false);
   const debouncedSetHoverNode = useCallback((node: GraphNode | null) => {
+    // While dragging, ignore hover entirely. The tooltip is cleared at drag
+    // start and the library re-fires hover on the first move after release.
+    if (pointerDraggingRef.current) return;
     if (node !== null) {
       if (nullClearTimerRef.current) {
         clearTimeout(nullClearTimerRef.current);
@@ -104,6 +117,36 @@ export function ForceGraphView({
   useEffect(() => {
     return () => {
       if (nullClearTimerRef.current) clearTimeout(nullClearTimerRef.current);
+    };
+  }, []);
+
+  // Track pointer-drag state on the canvas to gate hover (see
+  // pointerDraggingRef). pointerdown on the container starts a drag; the release
+  // is bound on `window` because a fast rotate often lifts off-canvas. At drag
+  // start we cancel any pending hover-clear and hide an open tooltip so it
+  // doesn't sit stale over the rotating graph; the functional updater skips the
+  // render when nothing was shown.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onDown = () => {
+      pointerDraggingRef.current = true;
+      if (nullClearTimerRef.current) {
+        clearTimeout(nullClearTimerRef.current);
+        nullClearTimerRef.current = null;
+      }
+      setHoverNode((cur) => (cur === null ? cur : null));
+    };
+    const onUp = () => {
+      pointerDraggingRef.current = false;
+    };
+    el.addEventListener('pointerdown', onDown, { passive: true });
+    window.addEventListener('pointerup', onUp, { passive: true });
+    window.addEventListener('pointercancel', onUp, { passive: true });
+    return () => {
+      el.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
   }, []);
 
