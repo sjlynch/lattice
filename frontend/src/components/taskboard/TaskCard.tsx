@@ -152,13 +152,14 @@ export const TaskCard = memo(function TaskCard({
         ...(accentColor ? { ['--task-color' as string]: accentColor } : {}),
       }}
     >
-      <span className="task-card-grip" aria-hidden>
+      <span className="task-card-grip" aria-hidden title="Drag to reorder">
         <GripVertical size={12} />
       </span>
       <TaskCardBody
         task={task}
         isConflict={isConflict}
         isSelected={isSelected}
+        onOpenResolver={isConflict ? handleMerge : undefined}
       />
       <TaskCardActions
         isConflict={isConflict}

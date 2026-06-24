@@ -33,6 +33,10 @@ type Props = {
   searchContents: boolean;
   onSearchContentsToggle: () => void;
   searchStatus: SearchStatus;
+  // Match navigation (prev/next stepping through the search matches).
+  searchMatchPosition: number;
+  onSearchPrevMatch: () => void;
+  onSearchNextMatch: () => void;
 };
 
 // Render-only overlays: scan spinner (top-left), the active-view chip
@@ -57,6 +61,9 @@ export const GraphHud = memo(function GraphHud({
   searchContents,
   onSearchContentsToggle,
   searchStatus,
+  searchMatchPosition,
+  onSearchPrevMatch,
+  onSearchNextMatch,
 }: Props) {
   return (
     <>
@@ -109,6 +116,9 @@ export const GraphHud = memo(function GraphHud({
             contents={searchContents}
             onContentsToggle={onSearchContentsToggle}
             status={searchStatus}
+            matchPosition={searchMatchPosition}
+            onPrevMatch={onSearchPrevMatch}
+            onNextMatch={onSearchNextMatch}
           />
           <div className="graph-overlay graph-counts">
             <span>

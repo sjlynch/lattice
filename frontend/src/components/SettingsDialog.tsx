@@ -208,6 +208,37 @@ function ClaudeMemorySection({ disabled, onChange }: ClaudeMemorySectionProps) {
   );
 }
 
+type QaTerminalSectionProps = {
+  autoClose: boolean;
+  onChange: (value: boolean) => void;
+};
+
+function QaTerminalSection({ autoClose, onChange }: QaTerminalSectionProps) {
+  return (
+    <div className="settings-section">
+      <div className="settings-section-header">
+        <div>
+          <div className="settings-section-title">QA e2e test terminal</div>
+          <div className="settings-section-sub">
+            When a QA-lane end-to-end (Playwright) test finishes, its terminal
+            stays open by default so you can read the PASS/FAIL verdict and
+            output. Enable this to auto-close it the moment the run completes.
+            The task’s qa&nbsp;→&nbsp;done auto-advance is unaffected either way.
+          </div>
+        </div>
+      </div>
+      <label className="settings-checkbox-row">
+        <input
+          type="checkbox"
+          checked={autoClose}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <span>Auto-close the QA e2e terminal when its run finishes</span>
+      </label>
+    </div>
+  );
+}
+
 export function SettingsDialog({
   open,
   onClose,
@@ -294,6 +325,7 @@ export function SettingsDialog({
           terminalClaudeSkipPermissions: drafts.terminalClaudeSkipPermissions,
           instrumentClaude: drafts.instrumentClaude,
           disableMemory: drafts.disableMemory,
+          qaTerminalAutoClose: drafts.qaTerminalAutoClose,
         },
         handles: {
           startupTerminals: startupTerminalsRef.current,
@@ -397,6 +429,10 @@ export function SettingsDialog({
               <ClaudeMemorySection
                 disabled={drafts.disableMemory}
                 onChange={drafts.setDisableMemory}
+              />
+              <QaTerminalSection
+                autoClose={drafts.qaTerminalAutoClose}
+                onChange={drafts.setQaTerminalAutoClose}
               />
             </>
           )}

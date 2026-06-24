@@ -28,11 +28,11 @@
 // `-e` would only reach command lines Lattice itself builds; a discovery shim is
 // what reaches a manually-typed `pi`.
 
-import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { latticeHomeDir } from './projectPath.js';
 import { detectHarnesses } from './harnessDetect.js';
+import { spawnWithTimeout } from './spawnWithTimeout.js';
 
 const PI_SUBAGENTS_SPEC = 'npm:@tintinweb/pi-subagents';
 
@@ -99,37 +99,22 @@ async function resolveEntry(pkgDir: string): Promise<string | null> {
   return null;
 }
 
-function runPiInstall(cwd: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    // shell:true so Windows resolves `pi` → `pi.cmd`; args are static constants
-    // (no injection surface). windowsHide keeps a console window from flashing.
-    const child = spawn('pi', ['install', PI_SUBAGENTS_SPEC, '-l'], {
-      cwd,
-      shell: true,
-      windowsHide: true,
-    });
-    let stderr = '';
-    child.stderr?.on('data', (d) => {
-      stderr += String(d);
-    });
-    const timer = setTimeout(() => {
-      try {
-        child.kill();
-      } catch {
-        /* already exited */
-      }
-      reject(new Error(`pi install timed out after ${PI_INSTALL_TIMEOUT_MS}ms`));
-    }, PI_INSTALL_TIMEOUT_MS);
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new Error(`pi install exited ${code}: ${stderr.slice(0, 500)}`));
-    });
+async function runPiInstall(cwd: string): Promise<void> {
+  // shell:true so Windows resolves `pi` → `pi.cmd`; args are static constants
+  // (no injection surface). Maps the shared spawn result onto this caller's
+  // resolve-on-exit-0 / reject-otherwise contract.
+  const r = await spawnWithTimeout('pi', ['install', PI_SUBAGENTS_SPEC, '-l'], {
+    cwd,
+    shell: true,
+    timeoutMs: PI_INSTALL_TIMEOUT_MS,
   });
+  if (r.timedOut) {
+    throw new Error(`pi install timed out after ${PI_INSTALL_TIMEOUT_MS}ms`);
+  }
+  if (r.error) throw r.error;
+  if (r.code !== 0) {
+    throw new Error(`pi install exited ${r.code}: ${r.stderr.slice(0, 500)}`);
+  }
 }
 
 async function doEnsure(): Promise<void> {

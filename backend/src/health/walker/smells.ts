@@ -136,6 +136,16 @@ function isOptionalChainCarrier(t: string): boolean {
   );
 }
 
+// Strip the surrounding quote characters from a tree-sitter string /
+// import-specifier node's `.text`. Backtick-aware on purpose: an ordinary
+// '…' / "…" string and a template-literal specifier (`import(`./m`)`) all
+// carry their delimiters in `.text`, and the import/dead-code passes want the
+// bare module path. Anchored to the first and last char only, so interior
+// quotes are left untouched. Single source for this (subtle) edge-strip.
+export function stripStringQuotes(text: string): string {
+  return text.replace(/^['"`]|['"`]$/g, '');
+}
+
 // Strings inside import specifiers aren't "magic strings" — a
 // shared module path like './api' isn't a duplicated literal,
 // it's just the module being referenced. Without this skip,

@@ -35,6 +35,7 @@ export function useTaskLifecycleActions({
     [pickRunHarness, showError],
   );
 
+  // Returns the ids enqueued so the caller can drive a progress strip.
   const runAllOpen = useCallback(() => {
     const openTasks = tasks
       .filter((task) => task.status === 'open')
@@ -43,6 +44,7 @@ export function useTaskLifecycleActions({
     // queue thunks, paced by the queue's drain, so there is no longer any
     // need to serialize these to avoid hammering git.
     for (const task of openTasks) void runTask(task);
+    return openTasks.map((task) => task.id);
   }, [runTask, tasks]);
 
   // Drop a queued run back to a plain Open task. The card's WS update
@@ -70,11 +72,13 @@ export function useTaskLifecycleActions({
     [pickRunHarness, showError],
   );
 
+  // Returns the ids re-spawned so the caller can drive a progress strip.
   const resumeAllInProgress = useCallback(() => {
     const list = tasks
       .filter((task) => task.status === 'in_progress' && !!task.worktreePath)
       .sort((a, b) => a.createdAt - b.createdAt);
     for (const task of list) void resumeTaskAction(task);
+    return list.map((task) => task.id);
   }, [resumeTaskAction, tasks]);
 
   return {

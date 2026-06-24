@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useState } from 'react';
 import { getPiModels } from '../api';
 import type { PiMenuEntry, StartupTerminal, TerminalLaunchSettings } from '../api';
 import { useTerminals } from '../TerminalsContext';
+import type { TerminalStatus } from '../terminal/terminalTypes';
 import { TerminalPane } from './TerminalPane';
 import { createTerminalSpec } from './sidebar/constants';
 import { NewTerminalDropdown } from './sidebar/NewTerminalDropdown';
@@ -50,6 +51,7 @@ export const Sidebar = memo(function Sidebar({
     closeTerminal,
     closeTerminals,
     setServerId,
+    setStatus,
     renameTerminal,
     reorderTerminal,
   } = useTerminals();
@@ -141,6 +143,12 @@ export const Sidebar = memo(function Sidebar({
   const handleServerId = useCallback(
     (localId: string, srv: string) => setServerId(localId, srv),
     [setServerId],
+  );
+
+  const handleStatus = useCallback(
+    (localId: string, status: TerminalStatus, exitCode?: number) =>
+      setStatus(localId, status, exitCode),
+    [setStatus],
   );
 
   const {
@@ -254,6 +262,7 @@ export const Sidebar = memo(function Sidebar({
                   serverId={t.serverId}
                   projectPath={t.projectPath}
                   onServerId={(srv) => handleServerId(t.id, srv)}
+                  onStatus={(status, exitCode) => handleStatus(t.id, status, exitCode)}
                 />
               )}
             </div>

@@ -11,6 +11,7 @@ export {
   markQaRunDone,
   markQaRunMovedToDone,
   recordQaRun,
+  recordQaRunAutoClose,
   recordQaVerdict,
 } from './qaRuns/registry.js';
 export { startQaSession } from './qaRuns/session.js';

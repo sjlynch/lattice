@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Braces, ChevronDown, ChevronRight, Info, Plus, X } from 'lucide-react';
 import type { WorkflowVariable } from '../../api';
 import {
@@ -25,6 +25,16 @@ export function WorkflowVariablesPanel({
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [showInfo, setShowInfo] = useState(false);
+  // Id of the variable whose `{{token}}` was just click-copied (drives the
+  // brief "Copied!" label swap). A single ref-held timer resets it after ~1.5s.
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+    },
+    [],
+  );
 
   const toggle = (id: string) =>
     setCollapsed((cur) => {
@@ -33,6 +43,22 @@ export function WorkflowVariablesPanel({
       else next.add(id);
       return next;
     });
+
+  const copyToken = (v: WorkflowVariable) => {
+    // Nothing to copy in the empty placeholder (`{{…}}`) state.
+    if (!v.name || !navigator.clipboard) return;
+    void navigator.clipboard.writeText(`{{${v.name}}}`);
+    setCopiedId(v.id);
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopiedId(null), 1500);
+  };
+
+  // Custom variable names that collide with another variable's name. Built-in
+  // and empty names are excluded; substitution silently shadows on a clash.
+  const nameCounts = new Map<string, number>();
+  for (const v of variables) {
+    if (v.name) nameCounts.set(v.name, (nameCounts.get(v.name) ?? 0) + 1);
+  }
 
   return (
     <div className="workflows-vars">
@@ -83,6 +109,8 @@ export function WorkflowVariablesPanel({
         {variables.map((v, idx) => {
           const builtin = v.name === USER_INSTRUCTIONS_VAR;
           const isCollapsed = collapsed.has(v.id);
+          const duplicate = !builtin && !!v.name && (nameCounts.get(v.name) ?? 0) > 1;
+          const copied = copiedId === v.id;
           return (
             <div
               key={v.id}
@@ -100,7 +128,9 @@ export function WorkflowVariablesPanel({
                   {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
                 </button>
                 <input
-                  className="task-card-form-input workflows-var-name"
+                  className={`task-card-form-input workflows-var-name${
+                    duplicate ? ' workflows-var-name--dup' : ''
+                  }`}
                   value={v.name}
                   placeholder="variable_name"
                   readOnly={builtin}
@@ -108,15 +138,34 @@ export function WorkflowVariablesPanel({
                   title={
                     builtin
                       ? 'Built-in variable — appended to every built-in step'
-                      : 'Variable name (letters, digits, underscores)'
+                      : duplicate
+                        ? 'Variable name already in use'
+                        : 'Variable name (letters, digits, underscores)'
                   }
                   onChange={(e) =>
                     onPatch(idx, { name: sanitizeVariableNameInput(e.target.value) })
                   }
                 />
-                <code className="workflows-var-token" title="Reference this in a step prompt">
-                  {`{{${v.name || '…'}}}`}
-                </code>
+                <button
+                  type="button"
+                  className="workflows-var-token"
+                  onClick={() => copyToken(v)}
+                  disabled={!v.name}
+                  title={
+                    !v.name
+                      ? 'Name this variable to reference it'
+                      : copied
+                        ? 'Copied!'
+                        : 'Click to copy — reference this in a step prompt'
+                  }
+                  aria-label={
+                    v.name
+                      ? `Copy {{${v.name}}} to clipboard`
+                      : 'Variable reference token'
+                  }
+                >
+                  {copied ? 'Copied!' : `{{${v.name || '…'}}}`}
+                </button>
                 {!builtin && (
                   <button
                     className="icon-btn sm"

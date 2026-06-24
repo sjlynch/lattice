@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type { Ctx, Persisted, TerminalSpec } from './terminal/terminalTypes';
+import type { Ctx, Persisted, TerminalSpec, TerminalStatus } from './terminal/terminalTypes';
 import { loadPersisted, persist } from './terminal/terminalStorage';
 import {
   addTerminalToList,
@@ -22,6 +22,7 @@ import {
   renameTerminalInList,
   reorderTerminalInList,
   setServerIdInList,
+  setStatusInList,
 } from './terminal/terminalState';
 import { deleteBackendSession } from './terminal/terminalApi';
 
@@ -100,6 +101,17 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
     setTerminals((ts) => setServerIdInList(ts, id, serverId));
   }, []);
 
+  // Reflect the connection hook's transitions onto the tab model so the
+  // sidebar can show a health indicator. Pure state update (no IO); the
+  // setStatusInList no-op guard keeps repeated `live` reports from re-rendering
+  // the tab strip.
+  const setStatus = useCallback(
+    (id: string, status: TerminalStatus, exitCode?: number) => {
+      setTerminals((ts) => setStatusInList(ts, id, status, exitCode));
+    },
+    [],
+  );
+
   // Rename a tab's label. Purely a UI label change — the new name is
   // persisted to sessionStorage like any other spec field and feeds the
   // sidebar search haystack. Empty/whitespace names are ignored so a tab
@@ -156,6 +168,7 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
       closeTerminals,
       closeTerminalsForTask,
       setServerId,
+      setStatus,
       renameTerminal,
       reorderTerminal,
     }),
@@ -168,6 +181,7 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
       closeTerminals,
       closeTerminalsForTask,
       setServerId,
+      setStatus,
       renameTerminal,
       reorderTerminal,
     ],

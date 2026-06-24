@@ -110,6 +110,47 @@
   background: var(--accent-bg);
 }
 
+/* Search pill + its error message stacked. Bottom-anchored cluster
+   (.graph-bottom-left grows upward), so the error sits beneath the pill while
+   the pill shifts up — it never clips off the viewport bottom edge. */
+.graph-search-shell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+/* Prev/next match stepping flanking the count. */
+.graph-search-nav {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.graph-search-step {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.graph-search-step:hover { color: var(--text-primary); }
+/* A query that matched nothing reads danger-tinted, distinct from idle. */
+.graph-search-count.none { color: var(--danger); }
+/* Backend contents-search error, surfaced beneath the pill (reuses .error-msg
+   chrome). pointer-events re-enabled so its title tooltip works. */
+.graph-search-error {
+  pointer-events: auto;
+  max-width: 240px;
+  font-size: 11px;
+  padding: 4px 8px;
+  word-break: break-word;
+}
+
 /* Floating "view mode" chip — shown while the user holds a view key
    like `z` for the lines-of-code overlay. Centered under the appbar so
    it never collides with the legend or the file/dir counter. */
@@ -137,6 +178,78 @@
 @keyframes loc-chip-fade {
   from { opacity: 0; transform: translate(-50%, -4px); }
   to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* Always-visible overlay-view key (top-left): one toggle chip per hold-key
+   graph overlay (Health/H, LOC/Z, Dead/D, Worktree/W, Labels/Alt). Clicking a
+   chip PINS that view so it persists without holding its key; the chip also
+   documents the shortcut. Gated on loaded data in ForceGraphView so it never
+   shares the corner with the scan spinner. */
+.graph-overlay-key {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 7;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 62%;
+  /* Let canvas drags through the row's empty gaps / wrapped whitespace; each
+     chip re-enables pointer events on itself (mirrors .graph-bottom-left). */
+  pointer-events: none;
+}
+.graph-overlay-chip {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px 4px 9px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: rgba(15, 17, 21, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.graph-overlay-chip:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+/* Currently showing — key held or pinned. */
+.graph-overlay-chip.is-active {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+/* Latched on via click — persists without holding the key. */
+.graph-overlay-chip.is-pinned {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.graph-overlay-chip-label { font-weight: 500; }
+.graph-overlay-chip-key {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  color: var(--text-tertiary);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+}
+.graph-overlay-chip.is-active .graph-overlay-chip-key {
+  color: var(--text-secondary);
+}
+.graph-overlay-chip.is-pinned .graph-overlay-chip-key {
+  color: #fff;
+  background: rgba(0, 0, 0, 0.22);
+  border-color: rgba(255, 255, 255, 0.25);
 }
 
 /* Box-select rectangle drawn on top of the 3D canvas while shift+drag
@@ -244,6 +357,36 @@
   font-size: 12px;
   color: var(--text-primary);
   animation: graph-settings-fade 0.14s ease;
+  /* Safety net: never grow past the viewport on short windows. Anchored at
+     bottom:56px, so leave ~14px of top breathing room. The header/tabs/footer
+     stay pinned; only .graph-settings-body scrolls. */
+  max-height: calc(100vh - 70px);
+}
+/* Keep header/tabs/footer at their natural height so only the body shrinks
+   and scrolls once the panel hits its max-height. */
+.graph-settings-header,
+.graph-settings-tabs,
+.graph-settings-footer {
+  flex: none;
+}
+/* Horizontal tab nav: reuses the segmented .graph-settings-toggle look, with a
+   divider separating it from the active section's controls below. */
+.graph-settings-tabs {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+/* Scrollable region holding the active tab's controls. Capped + auto-scroll so
+   a tall section (or a short viewport) can't push the footer offscreen. */
+.graph-settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* Pull the scrollbar to the panel edge without crowding the slider thumbs. */
+  margin-right: -6px;
+  padding-right: 6px;
 }
 @keyframes graph-settings-fade {
   /* Anchored to the right edge with `right: 14px`, so the in-animation
@@ -270,13 +413,6 @@
   background: transparent;
 }
 .graph-settings-header .link-btn:hover { text-decoration: underline; }
-.graph-settings-section-title {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-tertiary);
-  margin-top: 2px;
-}
 .graph-settings-row {
   display: flex;
   flex-direction: column;

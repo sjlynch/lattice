@@ -94,6 +94,14 @@ export type UserSettings = {
   // "watch it test" control) appends `--headless`. Absent = off / (when on)
   // headless.
   qaPlaywright?: { enabled: boolean; headless: boolean };
+  // When true, a QA-lane e2e (Playwright) terminal AUTO-CLOSES the moment its
+  // run finishes. Default (absent/false) keeps it OPEN so the user can read the
+  // PASS/FAIL verdict and output. On auto-close the `/done` callback tears down
+  // the pty + scratch (the original pre-toggle behavior); on stay-open it leaves
+  // the live pty + scratch in place (the boot-time sweep reclaims the scratch
+  // dir, and closing the tab kills the pty). Only the terminal lifecycle — the
+  // qa → done auto-advance is unaffected either way. See routes/qaRuns.ts.
+  qaTerminalAutoClose?: boolean;
   // Per-project overrides of the agent instruction templates Lattice writes
   // (LATTICE_TASK.md, MERGE_INSTRUCTIONS.md, the QA/push/post-merge/workflow
   // briefs). Keyed by template id (see instructionTemplates/defs.ts). The
@@ -140,4 +148,15 @@ export async function isClaudeMemoryDisabled(
 ): Promise<boolean> {
   const settings = await getUserSettings(projectPath);
   return settings.disableClaudeMemory !== false;
+}
+
+// Whether a QA-lane e2e (Playwright) terminal should AUTO-CLOSE when its run
+// finishes. Default is "stay open" (absent/false) so the user can read the
+// PASS/FAIL verdict and output; only an explicit `true` opts into auto-close.
+// Read by the QA-run `/done` callback to decide whether to tear the pty down.
+export async function isQaTerminalAutoCloseEnabled(
+  projectPath: string,
+): Promise<boolean> {
+  const settings = await getUserSettings(projectPath);
+  return settings.qaTerminalAutoClose === true;
 }

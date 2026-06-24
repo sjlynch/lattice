@@ -21,6 +21,13 @@
   padding-top: 6px;
   color: var(--text-tertiary);
   cursor: grab;
+  transition: color 0.12s ease;
+}
+.workflows-step:hover .workflows-step-grip {
+  color: var(--text-secondary);
+}
+.workflows-step-grip:active {
+  cursor: grabbing;
 }
 .workflows-step-body {
   flex: 1;
@@ -35,12 +42,56 @@
   align-items: center;
 }
 .workflows-step-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 11px;
   font-weight: 600;
   color: var(--text-tertiary);
   letter-spacing: 0.04em;
   width: 24px;
   flex-shrink: 0;
+}
+
+/* Live per-step run status (StepRow ← active/recent run's currentStepIndex):
+   the editor doubles as an execution view. The running row gets an accent
+   left rail + a spinner badge, completed rows a green check, the failed row a
+   red rail + alert badge, and not-yet-reached rows dim out. */
+.workflows-step.run-running {
+  border-color: var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.workflows-step.run-error {
+  border-color: var(--danger);
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+.workflows-step.run-done {
+  border-color: rgba(120, 200, 140, 0.3);
+}
+.workflows-step.run-pending {
+  opacity: 0.5;
+}
+.workflows-step-index.run-running {
+  color: var(--accent);
+}
+.workflows-step-index.run-done {
+  color: rgba(150, 210, 165, 0.95);
+}
+.workflows-step-index.run-error {
+  color: var(--danger);
+}
+.workflows-step-index.run-pending {
+  color: var(--text-tertiary);
+}
+/* Inline determinate-less spinner for the running step's badge. Reuses the
+   global `spin` keyframes from controls.css (imported before workflows.css). */
+.workflows-step-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  animation: spin 0.7s linear infinite;
 }
 .workflows-step-title {
   flex: 1;
@@ -56,9 +107,12 @@
   padding: 3px 6px;
 }
 .workflows-step-harness {
-  min-width: 74px;
-  /* Truncate long "Pi — <model>" labels on the closed control. */
-  max-width: 170px;
+  /* Size to content within a sane cap. A very long "Pi — <model>" label still
+     ellipsis-clips on the closed control, but its full `provider/model` is in
+     the select's (and each option's) title tooltip, and the open option list
+     shows the full label — so the value is never truly hidden. */
+  min-width: 90px;
+  max-width: 210px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

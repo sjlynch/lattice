@@ -94,15 +94,18 @@ asking for fixes/reviews:
 - `ForceGraphView.tsx` — coordinator. Holds `selected`/`hoverNode`/`showSettings`,
   threads refs through `useGraphOverlays` + `useForceGraphInitialization`, and
   composes the small `Graph*` overlay components below. Each remaining
-  `useEffect` is one concern: selection-refresh, Escape key, counts memo,
-  pointer-drag tracking. **Hover is gated off while a pointer is dragging**
-  (`pointerDraggingRef`, set by a pointerdown-on-canvas / window-pointerup
-  effect): the library raycasts hover every render frame, so a drag-rotate
-  otherwise fires `onHover` continuously and each hover-in does a synchronous
-  `flushSync(setHoverNode)` + a HealthTooltip mount/unmount → per-frame React
-  commit + Layerize → the rotate stutter. The gesture clears `hoverNode` at drag
-  start (hides any open tooltip) and the library re-fires hover on the first
-  move after release. There's nothing to read mid-rotate, so this is free.
+  `useEffect` is one concern: selection-refresh, Escape key, counts memo; the
+  hover debounce and pointer-drag tracking now live in their own hooks
+  (`useHoverNodeDebounce` / `useCanvasDragTracking`). **Hover is gated off while
+  a pointer is dragging** (`pointerDraggingRef`, owned by the coordinator, set by
+  `useCanvasDragTracking`'s pointerdown-on-canvas / window-pointerup effect and
+  read by `useHoverNodeDebounce`): the library raycasts hover every render frame,
+  so a drag-rotate otherwise fires `onHover` continuously and each hover-in does a
+  synchronous `flushSync(setHoverNode)` + a HealthTooltip mount/unmount →
+  per-frame React commit + Layerize → the rotate stutter. The gesture clears
+  `hoverNode` at drag start (via the debounce hook's `cancelPendingHoverClear`,
+  hiding any open tooltip) and the library re-fires hover on the first move after
+  release. There's nothing to read mid-rotate, so this is free.
 - `nodeObjectFactory.ts` — `buildNodeObject(node, refs)` + `nativeNodeLabel(node)`.
   The decision tree for ghost vs health vs LOC vs dead-code vs base sprite
   (+ change-ring and selection-halo, both attached as sibling children of the
@@ -123,6 +126,15 @@ asking for fixes/reviews:
   the selection chip, the right-click popover, and the create-task modal. The
   HUD's bottom-left also hosts the search bar (`GraphSearchBar.tsx`) inline with
   the file/dir counts.
+- `GraphOverlayKey.tsx` — the always-visible top-left key for the hold-key
+  overlays: one toggle chip per view (Health/H, LOC/Z, Dead/D, Worktree/W,
+  Labels/Alt). A chip is **lit** while its view is showing (`active` = held OR
+  pinned) and **filled** while pinned. Clicking a chip toggles that view's pin
+  via `togglePin`, which latches the same state the hold-key drives so the view
+  persists without holding the key — making the otherwise-invisible Z/D/W/Alt
+  power-features discoverable. Pin state lives in `hooks/useOverlayPins.ts`;
+  ForceGraphView gates the key on loaded data (so it never shares the corner
+  with the scan spinner) and builds the `active` record from the overlay modes.
 - `GraphSearchBar.tsx` + `searchMatcher.ts` + `hooks/useGraphSearch.ts` — the
   file search bar. `buildSearchRegExp` (searchMatcher) turns a query into a
   case-insensitive matcher: `*`/`?` wildcards by default, raw regex when the
@@ -137,7 +149,19 @@ asking for fixes/reviews:
   backend's (`backend/src/search.ts`) so a wildcard selects the same files in
   both passes. Search owns the selection while a query is active; clearing a
   search it drove restores empty, and an empty box never wipes a manual
-  selection.
+  selection. `useGraphSearch` returns `{ status, matches }` — the scalar
+  `SearchStatus` (memoized stable for the HUD) plus the ordered `matches` id
+  list (sorted; threaded separately so it never churns the status memo). The bar
+  surfaces three states off that: a `.error-msg` chip beneath the pill when
+  `status.error` is set (a failed/timed-out contents pass), a danger-tinted "no
+  matches" when an active query selected nothing (distinct from idle), and
+  **prev/next match navigation** — ←/→ buttons flanking an "X of Y" count, plus
+  Enter (Shift+Enter back) in the field. `ForceGraphView` owns the cursor
+  (tracked by match *id*, so its position derives from the live list and a
+  dropped id just reads "no current match") and pans the camera to each stepped
+  match via `graph.cameraPosition` (a settled-graph focus must pulse the idle
+  controller's `wakeForRefresh` across the tween, since the library steps it
+  inside the render loop the controller pauses).
 - `HealthTooltip.tsx` — measurement/composition wrapper for file health hover.
   Owns its own `pointermove` listener and writes directly to the element's
   `transform` so per-pixel cursor moves don't re-render the React tree;
@@ -406,7 +430,11 @@ asking for fixes/reviews:
   these run BEFORE the motion dispatch so their position mutations are in place
   when the batched sync reads them. Used by `useNodeDragBehavior`.
 - `GraphSettingsPanel.tsx` — slider panel; pure UI, mutates the settings
-  object via `onChange`.
+  object via `onChange`. Controls are split across horizontal **tabs**
+  (Sizes / Physics / Rendering) reusing the `.graph-settings-toggle` look; the
+  active tab persists per project under `lattice.graphSettingsTab.<project>`. The
+  body (`.graph-settings-body`) is `max-height`-capped + `overflow-y:auto` so the
+  panel can't push its header/footer offscreen on short windows.
 
 ## Hooks (`./hooks/`)
 
@@ -463,6 +491,14 @@ asking for fixes/reviews:
   (modifier-excluded, repeat-suppressed) — used by `H`/`Z`/`D`/`W`. Alt supplies
   bespoke handlers (modifier key + Shift sub-gate + `preventDefault`) to the same
   hook. New hold-key overlays should reuse this rather than re-adding listeners.
+- `useOverlayPins` — pin state for the hold-key overlays (`{ health, loc, dead,
+  worktree, labels }` booleans + a `togglePin`). A pin latches a view on without
+  holding its key; each overlay hook takes its pin and computes the **effective
+  mode** as `held || pinned` (the key hold is tracked locally, the pin survives
+  the blur/visibility resets that clear the hold). The `GraphOverlayKey` chips
+  toggle these. Independent toggles — overlap between simultaneously-pinned views
+  follows the same sprite-recolor precedence the hold-keys use (health > loc >
+  dead). Kept in component state (a pin survives the key release, not a reload).
 - `useDeadCodeOverlay` — the `D`-hold overlay. Hold-key chord via
   `useHoldKeyMode(momentaryLetterMode('d', …))` (blur + visibilitychange reset);
   recolors by reachability (`deadCode` field on each node's `healthDetails`). No
@@ -478,12 +514,16 @@ asking for fixes/reviews:
   while `tick()` reports motion** — `kick()` acquires to wake the loop on a
   change, the frame handler releases on rest. See the APL ⇄ idle-controller
   contract in the named-subsystems section.
-- `useWorktreeHighlight` — the `W`-hold overlay. Hold-key chord via
-  `useHoldKeyMode(momentaryLetterMode('w', …, { resetOnUnmount: true }))` (blur +
-  visibilitychange reset; the only overlay that also strips its rings on
-  unmount). On press, fetches `GET /api/tasks/worktree-modified` and rings each
-  changed file in its task's color via `setNodeWorktreeRing` (walking the shared
-  `mountedNodes`); strips them on release.
+- `useWorktreeHighlight` — the `W` overlay (hold-or-pin). Hold-key chord via
+  `useHoldKeyMode(momentaryLetterMode('w', setHeld))` flips a local `held` flag;
+  the effective state is `held || pinned`. A single effect drives the ring side
+  effects off that effective state: on activation it fetches
+  `GET /api/tasks/worktree-modified` and rings each changed file in its task's
+  color via `setNodeWorktreeRing` (walking the shared `mountedNodes`); the
+  effect's cleanup strips them on deactivation, an `activeFolder` change (while
+  active → re-fetch for the new project), and unmount (this is the only overlay
+  with live scene state to tear down — the cleanup replaces the old
+  `resetOnUnmount`).
 - `useBatchedLinks` — owns the `instancedLinks.ts` controller: creates it once
   after init (so the library's `linkVisibility` accessor is installed),
   subscribes its per-frame sync to the scene frame driver, toggles it on
@@ -514,6 +554,17 @@ asking for fixes/reviews:
   dragstart level (`__initialPos.y`), undoing the library's `fy = dragY` so a
   drag only slides within the node's horizontal plane; neighbours keep their own
   (deeper) `fy`, so the physics-follow moves them in X/Z only.
+- `useHoverNodeDebounce` — owns the file-hover tooltip state + the
+  null-transition debounce (`NULL_HOVER_DEBOUNCE_MS`) that stops the tooltip
+  flickering out between adjacent label hitboxes, plus the synchronous
+  `flushSync` hover-in commit. Reads the coordinator's `pointerDraggingRef` to
+  ignore hover during a drag, and exposes `cancelPendingHoverClear` (cancel the
+  pending clear + hide the tooltip) for the drag tracker to call at drag start.
+- `useCanvasDragTracking` — the pointerdown-on-canvas / window-pointerup(+cancel)
+  effect that drives `pointerDraggingRef` and suspends 3d-force-graph's pointer
+  interaction (`enablePointerInteraction(false)`) for the duration of a drag,
+  re-enabling on release (and on mid-drag unmount). Calls the supplied
+  `onDragStart` (the debounce hook's `cancelPendingHoverClear`) at drag start.
 - `useNodeContextMenu` / `useBoxSelect` / `useRefMirror` /
   `refresh.ts` — small focused helpers consumed directly by the coordinator.
 - `hooks/boxSelectGeometry.ts` — pure rectangle/projection hit-testing helpers

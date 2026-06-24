@@ -1,5 +1,7 @@
 import { memo, useMemo, useRef } from 'react';
 import {
+  AlertCircle,
+  Check,
   ChevronDown,
   ChevronRight,
   GitMerge,
@@ -22,15 +24,53 @@ import {
   encodeHarnessValue,
   harnessLabel,
   normalizeAgentHarness,
+  selectedOptionTitle,
   type AgentHarness,
 } from '../../harnesses';
 import {
   useAutosizedTextarea,
+  useScrollRunningIntoView,
   useWorkflowStepDragDrop,
 } from './StepRowHooks';
 import { splitPromptSegments } from './promptVariables';
+import type { StepRunStatus } from './stepRunStatus';
 
 export { PROMPT_MIN_HEIGHT_PX, STEP_DRAG_MIME } from './StepRowHooks';
+
+const STEP_RUN_STATUS_TITLE: Record<StepRunStatus, string> = {
+  running: 'Running…',
+  done: 'Completed',
+  pending: 'Pending',
+  error: 'Failed here',
+};
+
+// The `#N` badge, which becomes the per-step status indicator during a run: a
+// spinner while running, a check when done, an alert glyph on the failed step,
+// and the dimmed number otherwise.
+function StepIndexBadge({
+  index,
+  runStatus,
+}: {
+  index: number;
+  runStatus?: StepRunStatus;
+}) {
+  return (
+    <span
+      className={`workflows-step-index${runStatus ? ` run-${runStatus}` : ''}`}
+      title={runStatus ? STEP_RUN_STATUS_TITLE[runStatus] : undefined}
+    >
+      {runStatus === 'running' ? (
+        <span className="workflows-step-spinner" aria-hidden />
+      ) : runStatus === 'done' ? (
+        <Check size={13} aria-hidden />
+      ) : runStatus === 'error' ? (
+        <AlertCircle size={13} aria-hidden />
+      ) : (
+        `#${index + 1}`
+      )}
+    </span>
+  );
+}
 
 // Per-kind copy for the compact control-step row. Title is what shows in the
 // editor row label; hint is the tooltip explaining behavior.
@@ -80,18 +120,19 @@ function StepHarnessSelect({
   const showHarnessSelect = harnessOptions.length > 1 || selectedHarness !== 'claude';
   if (!showHarnessSelect) return null;
 
+  const value = encodeHarnessValue(selectedHarness, selectedPiModel);
   return (
     <select
       className="workflows-step-harness"
-      value={encodeHarnessValue(selectedHarness, selectedPiModel)}
+      value={value}
       onChange={(e) => {
         const sel = decodeHarnessValue(e.target.value);
         onChange(normalizeAgentHarness(sel.harness), sel.piModel);
       }}
-      title="Agent harness (and Pi model) for this workflow step"
+      title={`Agent harness for this workflow step: ${selectedOptionTitle(harnessOptions, value)}`}
     >
       {harnessOptions.map((option) => (
-        <option key={option.value} value={option.value}>
+        <option key={option.value} value={option.value} title={option.title}>
           {option.label}
         </option>
       ))}
@@ -126,6 +167,7 @@ export const StepRow = memo(function StepRow({
   harnessAvail,
   piMenu,
   definedNames,
+  runStatus,
   onChange,
   onRemove,
   onReorder,
@@ -139,6 +181,7 @@ export const StepRow = memo(function StepRow({
   harnessAvail: HarnessAvailability;
   piMenu: PiMenuEntry[];
   definedNames: ReadonlySet<string>;
+  runStatus?: StepRunStatus;
   customizing: boolean;
 } & StepRowCallbacks) {
   const kind = step.kind ?? 'agent';
@@ -148,6 +191,7 @@ export const StepRow = memo(function StepRow({
         step={step}
         index={index}
         kind={kind}
+        runStatus={runStatus}
         onChange={onChange}
         onRemove={onRemove}
         onReorder={onReorder}
@@ -162,6 +206,7 @@ export const StepRow = memo(function StepRow({
       harnessAvail={harnessAvail}
       piMenu={piMenu}
       definedNames={definedNames}
+      runStatus={runStatus}
       onChange={onChange}
       onRemove={onRemove}
       onReorder={onReorder}
@@ -179,6 +224,7 @@ const AgentStepRow = memo(function AgentStepRow({
   harnessAvail,
   piMenu,
   definedNames,
+  runStatus,
   onChange,
   onRemove,
   onReorder,
@@ -192,12 +238,15 @@ const AgentStepRow = memo(function AgentStepRow({
   harnessAvail: HarnessAvailability;
   piMenu: PiMenuEntry[];
   definedNames: ReadonlySet<string>;
+  runStatus?: StepRunStatus;
   customizing: boolean;
 } & StepRowCallbacks) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const { dragOver, onDragStart, onDragOver, onDragLeave, onDrop } =
     useWorkflowStepDragDrop(index, onReorder);
   useAutosizedTextarea(promptRef, step.prompt, collapsed);
+  useScrollRunningIntoView(rootRef, runStatus === 'running');
 
   const selectedHarness = normalizeAgentHarness(step.harness);
   // Tokenizing the prompt is the per-row hot path; only redo it when the prompt
@@ -209,14 +258,15 @@ const AgentStepRow = memo(function AgentStepRow({
 
   return (
     <div
-      className={`workflows-step ${dragOver ? `drop-${dragOver}` : ''} ${collapsed ? 'collapsed' : ''}`}
+      ref={rootRef}
+      className={`workflows-step ${dragOver ? `drop-${dragOver}` : ''} ${collapsed ? 'collapsed' : ''}${runStatus ? ` run-${runStatus}` : ''}`}
       draggable
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <span className="workflows-step-grip" aria-hidden>
+      <span className="workflows-step-grip" aria-hidden title="Drag to reorder">
         <GripVertical size={12} />
       </span>
       <div className="workflows-step-body">
@@ -231,7 +281,7 @@ const AgentStepRow = memo(function AgentStepRow({
           >
             {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
           </button>
-          <span className="workflows-step-index">#{index + 1}</span>
+          <StepIndexBadge index={index} runStatus={runStatus} />
           <input
             className="task-card-form-input workflows-step-title"
             placeholder="Step title"
@@ -312,6 +362,7 @@ const ControlStepRow = memo(function ControlStepRow({
   step,
   index,
   kind,
+  runStatus,
   onChange,
   onRemove,
   onReorder,
@@ -319,21 +370,25 @@ const ControlStepRow = memo(function ControlStepRow({
   step: WorkflowStep;
   index: number;
   kind: Exclude<WorkflowStepKind, 'agent'>;
+  runStatus?: StepRunStatus;
 } & Pick<StepRowCallbacks, 'onChange' | 'onRemove' | 'onReorder'>) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const { dragOver, onDragStart, onDragOver, onDragLeave, onDrop } =
     useWorkflowStepDragDrop(index, onReorder);
+  useScrollRunningIntoView(rootRef, runStatus === 'running');
   const meta = CONTROL_STEP_META[kind];
   const Icon = meta.icon;
   return (
     <div
-      className={`workflows-step workflows-step-control workflows-step-control-${kind} ${dragOver ? `drop-${dragOver}` : ''} collapsed`}
+      ref={rootRef}
+      className={`workflows-step workflows-step-control workflows-step-control-${kind} ${dragOver ? `drop-${dragOver}` : ''} collapsed${runStatus ? ` run-${runStatus}` : ''}`}
       draggable
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <span className="workflows-step-grip" aria-hidden>
+      <span className="workflows-step-grip" aria-hidden title="Drag to reorder">
         <GripVertical size={12} />
       </span>
       <div className="workflows-step-body">
@@ -345,7 +400,7 @@ const ControlStepRow = memo(function ControlStepRow({
           >
             <Icon size={12} />
           </span>
-          <span className="workflows-step-index">#{index + 1}</span>
+          <StepIndexBadge index={index} runStatus={runStatus} />
           <input
             className="task-card-form-input workflows-step-title"
             placeholder={meta.defaultTitle}

@@ -237,6 +237,31 @@
   height: 2px;
   background: var(--accent);
 }
+/* Per-tab connection-health dot. Quiet by design: only reconnecting / exited /
+   dead render one (live & still-connecting tabs show nothing). Colors reuse the
+   existing state palette — amber for in-flight attention, danger for dead. */
+.sidebar-tab-status {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--text-tertiary);
+}
+.sidebar-tab-status.reconnecting {
+  background: #e7c986;
+  animation: sidebar-tab-pulse 1.1s ease-in-out infinite;
+}
+.sidebar-tab-status.exited {
+  background: var(--text-tertiary);
+}
+.sidebar-tab-status.dead {
+  background: var(--danger);
+}
+@keyframes sidebar-tab-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
 .sidebar-tab-close {
   display: inline-flex;
   align-items: center;
