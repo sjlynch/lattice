@@ -16,6 +16,7 @@ import { NewTaskOverlay } from './NewTaskOverlay';
 import { PostMergeHookRow } from './PostMergeHookRow';
 import { TaskBoardFilters } from './TaskBoardFilters';
 import { TaskBoardFooter } from './TaskBoardFooter';
+import { TaskBoardSearchEmpty } from './TaskBoardSearchEmpty';
 import { TaskBoardTitle } from './TaskBoardTitle';
 import { TaskDetailOverlay } from './TaskDetailOverlay';
 import { useMergeRunSync } from './hooks/useMergeRunSync';
@@ -275,7 +276,13 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         />
         <div className="taskboard-body">
           <div className="taskboard-scroll">
-            {LANES.filter((lane) => visibleLanes.has(lane.id)).map((lane) => (
+            {searchActive && filteredTasks.length === 0 ? (
+              <TaskBoardSearchEmpty
+                query={taskSearch.trim()}
+                onClear={() => setTaskSearch('')}
+              />
+            ) : (
+            LANES.filter((lane) => visibleLanes.has(lane.id)).map((lane) => (
               <Lane
                 key={lane.id}
                 lane={lane}
@@ -329,7 +336,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                   ) ?? bulkRunStripFor(lane, bulkStrips, dismissBulk)
                 }
               />
-            ))}
+            ))
+            )}
           </div>
           <PostMergeHookRow
             prompt={postMergeHook.form.prompt}
