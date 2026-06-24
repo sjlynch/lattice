@@ -4,6 +4,7 @@ import { DEFAULT_PROMPTS } from './defaultPrompts';
 import { promptsWithProjectVariants } from './projectPromptVariants';
 import type { WorkflowManager } from './hooks/useWorkflowManager';
 import { StepRow } from './StepRow';
+import { stepRunStatus } from './stepRunStatus';
 import { WorkflowEditorEmptyState } from './WorkflowEditorEmptyState';
 import { WorkflowRunStrip } from './WorkflowRunStrip';
 import { WorkflowVariablesPanel } from './WorkflowVariablesPanel';
@@ -40,6 +41,12 @@ export function WorkflowEditorPanel({ manager }: Props) {
     () => new Set(editor.variables.map((v) => v.name)),
     [editor.variables],
   );
+
+  // The run whose progress the editor rows should mirror: the active run if
+  // one is in flight, else a recently-finished one still lingering in view (so
+  // a failed step stays marked red for the ~5min the errored run lingers).
+  // Mirrors the precedence WorkflowRunStrip uses (active over recent).
+  const statusRun = runForEditor ?? recentForEditor ?? null;
 
   const quickAddPrompts = (
     <div className="workflows-default-prompts">
@@ -136,6 +143,7 @@ export function WorkflowEditorPanel({ manager }: Props) {
                   harnessAvail={harnessAvail}
                   piMenu={piMenu}
                   definedNames={definedNames}
+                  runStatus={stepRunStatus(index, statusRun)}
                   onChange={actions.patchStep}
                   onRemove={actions.removeStep}
                   onReorder={actions.reorderSteps}
