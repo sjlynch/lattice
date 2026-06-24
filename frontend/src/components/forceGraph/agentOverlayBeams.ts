@@ -13,10 +13,17 @@ import {
 } from './agentOverlayConstants';
 import type { Beam } from './agentOverlayTypes';
 
-// Build a beam line (the caller adds it to the group). Its two-point geometry
-// is filled each frame by updateBeam; it opens fully-lit and persistent
-// (endAt = Infinity) until the overlay demotes or expires it.
-export function createBeam(color: string, normPath: string, openedAt: number): Beam {
+// Shared construction for both focus beams and satellite tethers: a two-point
+// geometry, a transparent depth-disabled line material, and a non-raycasting
+// THREE.Line at the beam render order. The varying bits — opacity and the
+// `normPath`/`openedAt` metadata — come in as arguments. The two-point geometry
+// is filled each frame by updateBeam/updateBeamEndpoints.
+function makeBeam(
+  color: string,
+  opacity: number,
+  normPath: string,
+  openedAt: number,
+): Beam {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute(
     'position',
@@ -25,7 +32,7 @@ export function createBeam(color: string, normPath: string, openedAt: number): B
   const material = new THREE.LineBasicMaterial({
     color: new THREE.Color(color),
     transparent: true,
-    opacity: BEAM_MAX_OPACITY,
+    opacity,
     depthWrite: false,
     depthTest: false,
   });
@@ -49,40 +56,18 @@ export function createBeam(color: string, normPath: string, openedAt: number): B
   };
 }
 
+// Build a beam line (the caller adds it to the group). It opens fully-lit and
+// persistent (endAt = Infinity) until the overlay demotes or expires it.
+export function createBeam(color: string, normPath: string, openedAt: number): Beam {
+  return makeBeam(color, BEAM_MAX_OPACITY, normPath, openedAt);
+}
+
 // A tether is a persistent, constant-opacity line from a parent agent node to
 // one of its satellites. It reuses the Beam shape (line/material/geometry +
 // endpoint cache) but is never faded — `updateBeamEndpoints` refreshes only its
 // geometry, leaving the dimmer tether opacity set here untouched.
 export function createTether(color: string): Beam {
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    'position',
-    new THREE.BufferAttribute(new Float32Array(6), 3),
-  );
-  const material = new THREE.LineBasicMaterial({
-    color: new THREE.Color(color),
-    transparent: true,
-    opacity: SATELLITE_TETHER_OPACITY,
-    depthWrite: false,
-    depthTest: false,
-  });
-  const line = new THREE.Line(geometry, material);
-  line.renderOrder = BEAM_RENDER_ORDER;
-  line.raycast = () => {};
-  return {
-    line,
-    material,
-    geometry,
-    normPath: '',
-    openedAt: 0,
-    endAt: Infinity,
-    lastFromX: NaN,
-    lastFromY: NaN,
-    lastFromZ: NaN,
-    lastToX: NaN,
-    lastToY: NaN,
-    lastToZ: NaN,
-  };
+  return makeBeam(color, SATELLITE_TETHER_OPACITY, '', 0);
 }
 
 export function disposeBeam(group: THREE.Group, beam: Beam): void {
