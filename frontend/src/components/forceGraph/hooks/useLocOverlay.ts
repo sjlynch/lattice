@@ -6,26 +6,30 @@ import type { GraphSettings } from '../graphSettings';
 import { clearLabelsAndRefresh } from './refresh';
 import { momentaryLetterMode, useHoldKeyMode } from './useHoldKeyMode';
 
-// Lines-of-code overlay: active while the user holds `z`. Tracked in
-// both state (for the chip overlay) and a ref (so the nodeThreeObject
-// accessor — wired into the graph once at mount — reads the live value).
+// Lines-of-code overlay: active while the user holds `z` OR while the LOC view
+// is pinned (the overlay-key chip latches the same state). Tracked in both state
+// (for the chip overlay) and a ref (so the nodeThreeObject accessor — wired into
+// the graph once at mount — reads the live value).
 //
 // Toggle on/off when `z` is held. Keyup also fires on window blur
 // (Alt-Tab, dev-tools focus) — we can't trust `keyup` alone, so reset
 // on blur and on visibility loss as well (shared lifecycle in
-// `useHoldKeyMode`).
+// `useHoldKeyMode`). `pinned` survives those resets (it's not a hold).
 export function useLocOverlay(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   settingsRef: MutableRefObject<GraphSettings>,
+  pinned: boolean,
 ) {
-  const [locMode, setLocMode] = useState(false);
+  // `held` tracks just the key; the effective mode is held OR pinned.
+  const [held, setHeld] = useState(false);
+  const locMode = held || pinned;
   const locModeRef = useRef(false);
 
   useEffect(() => {
     locModeRef.current = locMode;
   }, [locMode]);
 
-  useHoldKeyMode(momentaryLetterMode('z', setLocMode));
+  useHoldKeyMode(momentaryLetterMode('z', setHeld));
 
   // Re-render node THREE objects when the LOC overlay toggles.
   // refresh() re-evaluates nodeThreeObject without restarting the d3
