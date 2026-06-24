@@ -9,6 +9,7 @@ import { useActiveFolder } from './hooks/useActiveFolder';
 import { useHiddenExtensions } from './hooks/useHiddenExtensions';
 import { useMetricsIgnoredExts } from './hooks/useMetricsIgnoredExts';
 import { useProjectScan } from './hooks/useProjectScan';
+import { useStructuralScan } from './hooks/useStructuralScan';
 import { useSidebarWidth } from './hooks/useSidebarWidth';
 import { useStartupTerminalSync } from './hooks/useStartupTerminalSync';
 import { useUserSettings } from './hooks/useUserSettings';
@@ -21,6 +22,13 @@ import {
 function App() {
   const [activeFolder, setActiveFolder] = useActiveFolder();
   const { scanResult, loading } = useProjectScan(activeFolder);
+  // Structure-stable view of the scan (changes only on add/remove/rename, not
+  // on the metric-only HealthUpdates that mint a fresh `scanResult` ref every
+  // file save). TopAppBar (→ WorkflowsLauncher) and Legend read only structural
+  // fields, so feeding them this ref + memoizing both keeps the app shell off
+  // the per-save render path — only ForceGraphView, which needs the metric
+  // churn, gets the raw `scanResult`.
+  const structuralScan = useStructuralScan(scanResult);
   const { hiddenExts, toggleExt } = useHiddenExtensions(activeFolder);
   // Code-health overlay (held `h` key). Lifted here — unlike `z` (LOC)
   // and `Alt` (labels) — so the Legend can swap to a health breakdown
@@ -75,7 +83,7 @@ function App() {
           onTerminalLaunchSettingsChange={setTerminalLaunchSettings}
           metricsIgnoredExts={metricsIgnoredExts}
           onMetricsIgnoredExtsChange={saveMetricsIgnoredExts}
-          scanResult={scanResult}
+          scanResult={structuralScan}
         />
         <div className="app-body">
           {sidebarSettingsLoaded && (
@@ -113,7 +121,7 @@ function App() {
                 onHealthModeChange={setHealthMode}
               />
               <Legend
-                data={scanResult}
+                data={structuralScan}
                 hiddenExts={hiddenExts}
                 onToggleExt={toggleExt}
                 healthMode={healthMode}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { FolderOpen, GitBranch, Settings } from 'lucide-react';
 import { FolderPicker } from './FolderPicker';
 import { TaskBoardLauncher } from './TaskBoard';
@@ -19,7 +19,11 @@ type Props = {
   scanResult: ScanResult | null;
 };
 
-export function TopAppBar({
+// Memoized: App now feeds TopAppBar the structure-stable scan ref (→
+// WorkflowsLauncher → useWorkflowManager, which reads only structural fields)
+// and its other props are reference-stable across health updates, so the memo
+// bails on a metric-only file save instead of re-rendering the whole app bar.
+export const TopAppBar = memo(function TopAppBar({
   activeFolder,
   onSelectFolder,
   startupTerminals,
@@ -115,4 +119,4 @@ export function TopAppBar({
       />
     </>
   );
-}
+});

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { DEFAULT_STYLE } from '../extensionStyles';
 import type { ScanResult } from '../api';
@@ -20,7 +21,16 @@ type Props = {
 const STORAGE_OPEN = 'lattice.legend.open';
 const STORAGE_ALL = 'lattice.legend.all';
 
-export function Legend({ data, hiddenExts, onToggleExt, healthMode }: Props) {
+// Memoized: App now feeds Legend the structure-stable scan ref (not the raw
+// `scanResult` that churns on every metric-only HealthUpdate) and its other
+// props (hiddenExts, onToggleExt, healthMode) are reference-stable, so the memo
+// bails on a metric-only file save instead of re-tallying the legend rows.
+export const Legend = memo(function Legend({
+  data,
+  hiddenExts,
+  onToggleExt,
+  healthMode,
+}: Props) {
   const [open, toggleOpen] = usePersistedToggle(STORAGE_OPEN, false);
   const [allOpen, toggleAllOpen] = usePersistedToggle(STORAGE_ALL, false);
   const { visibleRows, allOtherRows } = useLegendRows(data);
@@ -96,4 +106,4 @@ export function Legend({ data, hiddenExts, onToggleExt, healthMode }: Props) {
       )}
     </div>
   );
-}
+});

@@ -33,14 +33,11 @@ export type {
   RepulsionEntry,
   LabelState,
   WorldXZ,
-  ForceAccumulators,
 } from './labelPhysics/types';
 
 export {
   cleanupStaleRegistryEntries,
   snapshotWorldXZ,
-  createForceAccumulators,
-  accumulateHomeForces,
   getOrCreateLabelState,
   integrateLabelState,
   integrateEntryMotion,

@@ -10,7 +10,3 @@ export type RepulsionEntry = {
 
 export type LabelState = { vx: number; vz: number; restFrames: number };
 export type WorldXZ = readonly [number, number];
-export type ForceAccumulators = {
-  fx: Float32Array;
-  fz: Float32Array;
-};
