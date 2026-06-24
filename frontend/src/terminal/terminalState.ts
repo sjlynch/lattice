@@ -1,4 +1,4 @@
-import type { Persisted, TerminalSpec } from './terminalTypes';
+import type { Persisted, TerminalSpec, TerminalStatus } from './terminalTypes';
 
 export function newTerminalId(): string {
   return `term_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -32,6 +32,24 @@ export function setServerIdInList(
   serverId: string,
 ): TerminalSpec[] {
   return terminals.map((t) => (t.id === id ? { ...t, serverId } : t));
+}
+
+// Set a terminal's connection-health status (and optional pty exit code).
+// Returns the SAME array reference when nothing changed, so a repeated status
+// report (e.g. `live` on every successful (re)connect) doesn't churn renders of
+// the whole tab strip.
+export function setStatusInList(
+  terminals: TerminalSpec[],
+  id: string,
+  status: TerminalStatus,
+  exitCode?: number,
+): TerminalSpec[] {
+  const target = terminals.find((t) => t.id === id);
+  if (!target) return terminals;
+  if (target.status === status && target.exitCode === exitCode) return terminals;
+  return terminals.map((t) =>
+    t.id === id ? { ...t, status, exitCode } : t,
+  );
 }
 
 export function renameTerminalInList(
