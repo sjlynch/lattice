@@ -244,6 +244,36 @@
   font-size: 12px;
   color: var(--text-primary);
   animation: graph-settings-fade 0.14s ease;
+  /* Safety net: never grow past the viewport on short windows. Anchored at
+     bottom:56px, so leave ~14px of top breathing room. The header/tabs/footer
+     stay pinned; only .graph-settings-body scrolls. */
+  max-height: calc(100vh - 70px);
+}
+/* Keep header/tabs/footer at their natural height so only the body shrinks
+   and scrolls once the panel hits its max-height. */
+.graph-settings-header,
+.graph-settings-tabs,
+.graph-settings-footer {
+  flex: none;
+}
+/* Horizontal tab nav: reuses the segmented .graph-settings-toggle look, with a
+   divider separating it from the active section's controls below. */
+.graph-settings-tabs {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+/* Scrollable region holding the active tab's controls. Capped + auto-scroll so
+   a tall section (or a short viewport) can't push the footer offscreen. */
+.graph-settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* Pull the scrollbar to the panel edge without crowding the slider thumbs. */
+  margin-right: -6px;
+  padding-right: 6px;
 }
 @keyframes graph-settings-fade {
   /* Anchored to the right edge with `right: 14px`, so the in-animation
@@ -270,13 +300,6 @@
   background: transparent;
 }
 .graph-settings-header .link-btn:hover { text-decoration: underline; }
-.graph-settings-section-title {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-tertiary);
-  margin-top: 2px;
-}
 .graph-settings-row {
   display: flex;
   flex-direction: column;
