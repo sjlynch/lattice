@@ -24,6 +24,15 @@ export type SearchStatus = {
   truncated: boolean;
 };
 
+export type SearchResult = {
+  status: SearchStatus;
+  // Ordered match ids (== file-node ids) for prev/next navigation. Sorted so
+  // stepping follows a stable, predictable order across re-renders; a fresh
+  // array reference whenever the match set changes (so consumers can reset
+  // their "current match" cursor off its identity).
+  matches: string[];
+};
+
 function sameSet(a: Set<string>, b: Set<string>): boolean {
   if (a.size !== b.size) return false;
   for (const v of a) if (!b.has(v)) return false;
@@ -51,7 +60,7 @@ export function useGraphSearch(params: {
   regex: boolean;
   contents: boolean;
   setSelected: (next: Set<string>) => void;
-}): SearchStatus {
+}): SearchResult {
   const { data, activeFolder, query, regex, contents, setSelected } = params;
   const trimmed = query.trim();
 
@@ -153,13 +162,19 @@ export function useGraphSearch(params: {
     setSelected(new Set(union));
   }, [trimmed, union, setSelected]);
 
-  // Return a stable object keyed on its scalar fields so consumers that
+  // Ordered match list for prev/next navigation — a stable sort over the union
+  // so stepping is predictable, and a fresh reference only when the set changes.
+  const matches = useMemo(() => Array.from(union).sort(), [union]);
+
+  // Return a stable status object keyed on its scalar fields so consumers that
   // memoize on the status (the HUD / search bar) aren't re-rendered by a
-  // fresh-but-equal object every render.
+  // fresh-but-equal object every render. `matches` is threaded separately so it
+  // never churns that memo.
   const active = trimmed.length > 0;
   const matchCount = union.size;
-  return useMemo(
+  const status = useMemo(
     () => ({ active, invalidRegex, searching, error, matchCount, truncated }),
     [active, invalidRegex, searching, error, matchCount, truncated],
   );
+  return useMemo(() => ({ status, matches }), [status, matches]);
 }

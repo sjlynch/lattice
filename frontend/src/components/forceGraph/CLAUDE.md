@@ -137,7 +137,19 @@ asking for fixes/reviews:
   backend's (`backend/src/search.ts`) so a wildcard selects the same files in
   both passes. Search owns the selection while a query is active; clearing a
   search it drove restores empty, and an empty box never wipes a manual
-  selection.
+  selection. `useGraphSearch` returns `{ status, matches }` — the scalar
+  `SearchStatus` (memoized stable for the HUD) plus the ordered `matches` id
+  list (sorted; threaded separately so it never churns the status memo). The bar
+  surfaces three states off that: a `.error-msg` chip beneath the pill when
+  `status.error` is set (a failed/timed-out contents pass), a danger-tinted "no
+  matches" when an active query selected nothing (distinct from idle), and
+  **prev/next match navigation** — ←/→ buttons flanking an "X of Y" count, plus
+  Enter (Shift+Enter back) in the field. `ForceGraphView` owns the cursor
+  (tracked by match *id*, so its position derives from the live list and a
+  dropped id just reads "no current match") and pans the camera to each stepped
+  match via `graph.cameraPosition` (a settled-graph focus must pulse the idle
+  controller's `wakeForRefresh` across the tween, since the library steps it
+  inside the render loop the controller pauses).
 - `HealthTooltip.tsx` — measurement/composition wrapper for file health hover.
   Owns its own `pointermove` listener and writes directly to the element's
   `transform` so per-pixel cursor moves don't re-render the React tree;
