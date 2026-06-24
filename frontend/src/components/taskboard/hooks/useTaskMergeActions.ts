@@ -78,9 +78,12 @@ export function useTaskMergeActions({
     }
   }, [mergeRun, showError]);
 
-  const markAllQaDone = useCallback(async () => {
+  // Fire each move-to-done without awaiting (moveTask handles its own errors)
+  // and return the ids so the caller can drive a progress strip immediately.
+  const markAllQaDone = useCallback(() => {
     const qaTasks = tasks.filter((task) => task.status === 'qa');
-    await Promise.all(qaTasks.map((task) => moveTask(task.id, 'done')));
+    for (const task of qaTasks) void moveTask(task.id, 'done');
+    return qaTasks.map((task) => task.id);
   }, [moveTask, tasks]);
 
   return { mergeTaskAction, mergeAllReady, cancelActiveRun, markAllQaDone };
