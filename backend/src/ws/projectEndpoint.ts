@@ -38,6 +38,31 @@ export function buildProjectWss<TEvent>(
   options: ProjectWsOptions<TEvent>,
 ): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
+
+  // One broadcast event is fanned out to every subscribed connection by
+  // invoking each connection's listener with the *same* event object (e.g. the
+  // health watcher loops `proj.subscribers` calling `sub(update)`). Serialize
+  // that payload once and reuse the string across clients instead of
+  // JSON.stringify-ing it per connection — with several tabs open on one
+  // project this was N× redundant serialization on the health hot path. Keyed
+  // by event identity in a WeakMap so the cached string is collected with the
+  // (short-lived) event after the broadcast, and each new broadcast serializes
+  // exactly once. Byte-identical on the wire to sendJson(ws, payload).
+  const serializedByEvent = new WeakMap<object, string>();
+  const serialize = (event: TEvent): string => {
+    const stringify = () =>
+      JSON.stringify(
+        options.payloadFromEvent ? options.payloadFromEvent(event) : event,
+      );
+    if (event === null || typeof event !== 'object') return stringify();
+    const key = event as object;
+    const cached = serializedByEvent.get(key);
+    if (cached !== undefined) return cached;
+    const str = stringify();
+    serializedByEvent.set(key, str);
+    return str;
+  };
+
   wss.on('connection', (ws, req) => {
     const project = parseProject(req.url);
     if (!project) {
@@ -74,10 +99,8 @@ export function buildProjectWss<TEvent>(
           if (options.projectFromEvent && options.projectFromEvent(event) !== project) {
             return;
           }
-          sendJson(
-            ws,
-            options.payloadFromEvent ? options.payloadFromEvent(event) : event,
-          );
+          if (ws.readyState !== ws.OPEN) return;
+          ws.send(serialize(event));
         }, project);
       } catch {
         ws.close();
