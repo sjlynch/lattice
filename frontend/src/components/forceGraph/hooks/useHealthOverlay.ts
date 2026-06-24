@@ -1,6 +1,7 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { healthLabelRegistry } from '../healthOverlay';
+import { METRIC_REPULSION_BASE } from '../metricOverlayFactory';
 import { startLabelRepulsion } from '../labelRepulsionFrames';
 import type { GraphSettings } from '../graphSettings';
 import { clearLabelsAndRefresh } from './refresh';
@@ -36,16 +37,16 @@ export function useHealthOverlay(
     clearLabelsAndRefresh(graphRef.current);
   }, [healthMode, graphRef]);
 
-  // Same physics as the LOC loop — health labels are also short numbers, so the
-  // per-overlay base is 55 units. Driven off the shared frame driver, holding
-  // `labelPhysics` only while the labels are still moving (see
+  // Same physics as the LOC loop — health labels are also short numbers, so they
+  // share `METRIC_REPULSION_BASE` with LOC. Driven off the shared frame driver,
+  // holding `labelPhysics` only while the labels are still moving (see
   // labelRepulsionFrames); `labelSpread` is read fresh each frame.
   useEffect(() => {
     if (!healthMode) return;
     return startLabelRepulsion(
       graphRef.current,
       healthLabelRegistry,
-      () => 55 * settingsRef.current.labelSpread,
+      () => METRIC_REPULSION_BASE * settingsRef.current.labelSpread,
     );
   }, [healthMode, settingsRef, graphRef]);
 

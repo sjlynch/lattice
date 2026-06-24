@@ -46,6 +46,13 @@ const nameLabelTextureCache = createLabelTextureCache();
 // dense clusters of labels can fan out without crashing into their nodes.
 export const LABEL_Y = 100;
 
+// Minimum desired separation (graph units, before the user's `labelSpread`
+// multiplier) between two name labels in the Alt-labels repulsion loop. Wider
+// than the metric overlays' base (`METRIC_REPULSION_BASE` = 55 in
+// metricOverlayFactory.ts) because filenames are much longer than the 3-digit
+// LOC / 0–100 health values and would visibly overlap at that distance.
+export const LABEL_REPULSION_BASE = 90;
+
 // Local-space registry of active name-label sprites + their connector
 // lines. The relaxation loop in ForceGraphView walks this each frame to
 // spread overlapping labels apart and to keep the connector's upper

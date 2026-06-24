@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { locLabelRegistry } from '../locOverlay';
+import { METRIC_REPULSION_BASE } from '../metricOverlayFactory';
 import { startLabelRepulsion } from '../labelRepulsionFrames';
 import type { GraphSettings } from '../graphSettings';
 import { clearLabelsAndRefresh } from './refresh';
@@ -38,9 +39,9 @@ export function useLocOverlay(
   // clusters, with a velocity-based settle so the system stops moving
   // once an equilibrium is reached. Shared physics implementation
   // lives in labelRepulsion.ts; only the minimum desired separation
-  // differs per overlay (LOC numbers are short, so the per-overlay
-  // base is 55 units). The user-tweakable `labelSpread` multiplier is
-  // read fresh each tick so dragging the slider feels live.
+  // differs per overlay (LOC numbers are short, so they use the modest
+  // `METRIC_REPULSION_BASE`). The user-tweakable `labelSpread` multiplier
+  // is read fresh each tick so dragging the slider feels live.
   useEffect(() => {
     if (!locMode) return;
     // See `labelRepulsionFrames` for the shared frame-driven, rest-gated loop
@@ -48,7 +49,7 @@ export function useLocOverlay(
     return startLabelRepulsion(
       graphRef.current,
       locLabelRegistry,
-      () => 55 * settingsRef.current.labelSpread,
+      () => METRIC_REPULSION_BASE * settingsRef.current.labelSpread,
     );
   }, [locMode, settingsRef, graphRef]);
 
