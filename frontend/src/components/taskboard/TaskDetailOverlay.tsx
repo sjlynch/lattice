@@ -106,6 +106,18 @@ export function TaskDetailOverlay({
             Delete
           </button>
           <span style={{ flex: 1 }} />
+          <span
+            className="taskboard-detail-current"
+            aria-current="true"
+            title={`This task is currently in ${lane.label}`}
+          >
+            Currently:
+            <span
+              className="taskboard-detail-current-dot"
+              style={{ background: lane.color }}
+            />
+            <strong style={{ color: lane.color }}>{lane.label}</strong>
+          </span>
           {moveTargets.map((target) => (
             <button
               key={target.status}
