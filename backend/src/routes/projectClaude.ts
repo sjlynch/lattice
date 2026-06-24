@@ -29,13 +29,8 @@ import {
 } from '../projectClaudeHooks.js';
 import {
   cwdFromHookBody,
-  fileFromHookBody,
   hookEventName,
-  phaseFromHookBody,
   sessionIdFromHookBody,
-  subagentIdFromHookBody,
-  subagentTypeFromHookBody,
-  toolFromHookBody,
 } from '../claudeHookBody.js';
 import { decodeAgentToken, notifyAgentActivity } from '../agentActivity.js';
 import {
@@ -43,7 +38,7 @@ import {
   touchAgentSession,
   unregisterAgentSession,
 } from '../agentSessions.js';
-import { mapFileToProject } from './agentActivity.js';
+import { buildAgentActivityEvent } from './agentActivity.js';
 
 // A project session that goes quiet for this long is dropped — a safety net
 // for a session that exits without firing SessionEnd (hard-killed terminal).
@@ -156,43 +151,11 @@ export function buildProjectClaudeRouter(backendOrigin: string): Router {
     touchAgentSession(agentId);
     if (event === 'SessionStart') return ack();
 
-    const subagentId = subagentIdFromHookBody(body);
-    const subagentType = subagentTypeFromHookBody(body) ?? undefined;
-
-    // Subagent lifecycle → satellite appears/disappears on this session's node.
-    if (event === 'SubagentStart' || event === 'SubagentStop') {
-      if (subagentId) {
-        notifyAgentActivity({
-          projectPath: meta.projectPath,
-          agentId,
-          label: meta.label,
-          phase: 'start',
-          tool: 'Task',
-          ts: Date.now(),
-          subagentId,
-          subagentType,
-          lifecycle: event === 'SubagentStart' ? 'spawn' : 'stop',
-        });
-      }
-      return ack();
-    }
-
-    // Tool use → focus beam (on the satellite when `subagentId` is set).
-    const rawFile = fileFromHookBody(body);
-    if (!rawFile) return ack();
-    const file = mapFileToProject(meta.projectPath, rawFile, cwd);
-    if (!file) return ack();
-    notifyAgentActivity({
-      projectPath: meta.projectPath,
-      agentId,
-      label: meta.label,
-      file,
-      phase: phaseFromHookBody(body),
-      tool: toolFromHookBody(body),
-      ts: Date.now(),
-      subagentId: subagentId ?? undefined,
-      subagentType,
-    });
+    // Subagent lifecycle (satellite spawn/stop) or tool-use (focus beam) — the
+    // same decode as the other two activity routes, keyed on this session's
+    // `claude:<sessionId>` agent id rather than the token's.
+    const activity = buildAgentActivityEvent(meta, body, { agentId, cwd });
+    if (activity) notifyAgentActivity(activity);
     return ack();
   });
 

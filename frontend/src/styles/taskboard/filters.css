@@ -92,9 +92,11 @@
   appearance: auto;
   outline: none;
   transition: border-color 0.12s ease;
-  /* Long "Pi — <vLLM model name>" labels truncate on the closed control; the
-     opened option list still shows the full name. */
-  max-width: 200px;
+  /* Size to content up to a sane cap. A long "Pi — <vLLM model name>" label
+     ellipsis-clips on the closed control, but the open option list shows the
+     full name and the select/option title tooltips carry the full
+     `provider/model`. */
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -31,6 +31,15 @@ const METRIC_LABEL_HIT_BOUNDS = {
   maxV: 1,
 };
 
+// Minimum desired separation (graph units, before the user's `labelSpread`
+// multiplier) between two metric labels in the LOC (`z`) and health (`h`)
+// repulsion loops — shared by both since their labels are equally short
+// (≤4-digit LOC / 0–100 health). The Alt name-label overlay deliberately uses a
+// WIDER base (`LABEL_REPULSION_BASE` in labelsOverlay.ts) because filenames are
+// much longer and would visibly overlap at this distance; keep the two values
+// in view of each other when retuning either overlay.
+export const METRIC_REPULSION_BASE = 55;
+
 // ONE label-texture cache shared across ALL metric overlays (health + LOC), so
 // identical number textures (e.g. "42" in the same color) aren't duplicated per
 // overlay — the rendered glyph is a pure function of (text, color, options) and
