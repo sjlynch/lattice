@@ -46,13 +46,16 @@ function depthMapStructuralKey(data: ScanResult): string {
   return `${data.nodes.length}:${h >>> 0}`;
 }
 
-// Labels overlay: active while the user holds Alt. Shows the name of
+// Labels overlay: active while the user holds Alt OR while the Labels view is
+// pinned (the overlay-key chip latches the same state). Shows the name of
 // every node at `labelLevel` (path depth from the scan root); alt+wheel
 // scrolls through depths so the user can read one band at a time.
 //
 // Track Alt as a chord-style modifier: keydown enables labels mode,
 // keyup/blur disables. Alt+wheel cycles the visible depth band instead
-// of zooming the camera.
+// of zooming the camera. The Shift sub-gate and alt+wheel depth scroll only
+// apply while Alt is physically held; a pin shows directory names at the
+// current depth (hold Alt to scroll depths / reveal file labels).
 export function useLabelsOverlay(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   containerRef: MutableRefObject<HTMLDivElement | null>,
@@ -61,8 +64,11 @@ export function useLabelsOverlay(
   // The user's current node selection. When non-empty, holding Alt shows the
   // labels of exactly these nodes and no others (depth band + Shift ignored).
   selected: Set<string>,
+  pinned: boolean,
 ) {
-  const [labelMode, setLabelMode] = useState(false);
+  // `labelHeld` tracks just the Alt key; the effective mode is held OR pinned.
+  const [labelHeld, setLabelHeld] = useState(false);
+  const labelMode = labelHeld || pinned;
   const labelModeRef = useRef(false);
   // Whether Shift is also held while Alt is down — gates file-node labels.
   // Alt alone shows only directory names.
@@ -108,7 +114,7 @@ export function useLabelsOverlay(
         // Browsers focus the menu bar on Alt-up; suppressing the default on
         // keydown also kills that side-effect when Alt is released alone.
         e.preventDefault();
-        setLabelMode(true);
+        setLabelHeld(true);
         // Pick up Shift if it's already held as Alt goes down.
         setLabelShift(e.shiftKey);
         return;
@@ -120,14 +126,14 @@ export function useLabelsOverlay(
     },
     onKeyUp(e) {
       if (e.key === 'Alt') {
-        setLabelMode(false);
+        setLabelHeld(false);
         setLabelShift(false);
       } else if (e.key === 'Shift') {
         setLabelShift(false);
       }
     },
     onReset() {
-      setLabelMode(false);
+      setLabelHeld(false);
       setLabelShift(false);
     },
   });

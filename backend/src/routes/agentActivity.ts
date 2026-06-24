@@ -8,16 +8,13 @@
 import path from 'node:path';
 import { Router } from 'express';
 import { canonicalProjectPath } from '../projectPath.js';
+import { cwdFromHookBody } from '../claudeHookBody.js';
+import { decodeActivityHook } from '../activityHook.js';
 import {
-  cwdFromHookBody,
-  fileFromHookBody,
-  hookEventName,
-  phaseFromHookBody,
-  subagentIdFromHookBody,
-  subagentTypeFromHookBody,
-  toolFromHookBody,
-} from '../claudeHookBody.js';
-import { decodeAgentToken, notifyAgentActivity } from '../agentActivity.js';
+  type AgentActivityEvent,
+  decodeAgentToken,
+  notifyAgentActivity,
+} from '../agentActivity.js';
 import { isManaged } from './tasks/activity.js';
 
 // Map a file path from a non-worktree session's hook to the project-absolute
@@ -40,6 +37,50 @@ export function mapFileToProject(
   return path.join(root, rel);
 }
 
+// Build the `AgentActivityEvent` for a non-worktree Claude session, or null to
+// drop. Shared verbatim by the agent-activity route (Lattice-spawned sessions)
+// and the project-activity route (project-instrumented sessions) — they have
+// the same notify payload and the same `mapFileToProject` mapping; only the
+// `agentId` differs (the project route keys on `claude:<sessionId>`, not the
+// token's agentId), so it's passed in explicitly. `cwd` resolves relative hook
+// paths against the session's working directory.
+export function buildAgentActivityEvent(
+  meta: { projectPath: string; label: string },
+  body: unknown,
+  opts: { agentId: string; cwd: string | null },
+): AgentActivityEvent | null {
+  const result = decodeActivityHook(body, (raw) =>
+    mapFileToProject(meta.projectPath, raw, opts.cwd),
+  );
+  if (!result) return null;
+  const identity = {
+    projectPath: meta.projectPath,
+    agentId: opts.agentId,
+    label: meta.label,
+  };
+  if (result.kind === 'lifecycle') {
+    // Satellite appears/disappears on this session's node.
+    return {
+      ...identity,
+      phase: 'start',
+      tool: 'Task',
+      ts: Date.now(),
+      subagentId: result.subagentId,
+      subagentType: result.subagentType,
+      lifecycle: result.lifecycle,
+    };
+  }
+  return {
+    ...identity,
+    file: result.file,
+    phase: result.phase,
+    tool: result.tool,
+    ts: Date.now(),
+    subagentId: result.subagentId,
+    subagentType: result.subagentType,
+  };
+}
+
 export function buildAgentActivityRouter(): Router {
   const r = Router();
 
@@ -49,44 +90,11 @@ export function buildAgentActivityRouter(): Router {
     const ack = () => res.status(204).end();
     const meta = decodeAgentToken(req.params.token);
     if (!meta) return ack();
-
-    const event = hookEventName(req.body);
-    const subagentId = subagentIdFromHookBody(req.body);
-    const subagentType = subagentTypeFromHookBody(req.body) ?? undefined;
-
-    // Subagent lifecycle → satellite appears/disappears on this session's node.
-    if (event === 'SubagentStart' || event === 'SubagentStop') {
-      if (!subagentId) return ack();
-      notifyAgentActivity({
-        projectPath: meta.projectPath,
-        agentId: meta.agentId,
-        label: meta.label,
-        phase: 'start',
-        tool: 'Task',
-        ts: Date.now(),
-        subagentId,
-        subagentType,
-        lifecycle: event === 'SubagentStart' ? 'spawn' : 'stop',
-      });
-      return ack();
-    }
-
-    const rawFile = fileFromHookBody(req.body);
-    if (!rawFile) return ack();
-    const file = mapFileToProject(meta.projectPath, rawFile, cwdFromHookBody(req.body));
-    if (!file) return ack();
-
-    notifyAgentActivity({
-      projectPath: meta.projectPath,
+    const event = buildAgentActivityEvent(meta, req.body, {
       agentId: meta.agentId,
-      label: meta.label,
-      file,
-      phase: phaseFromHookBody(req.body),
-      tool: toolFromHookBody(req.body),
-      ts: Date.now(),
-      subagentId: subagentId ?? undefined,
-      subagentType,
+      cwd: cwdFromHookBody(req.body),
     });
+    if (event) notifyAgentActivity(event);
     return ack();
   });
 
