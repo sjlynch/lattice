@@ -1,4 +1,11 @@
-import { useLayoutEffect, useState, type DragEvent, type RefObject } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type RefObject,
+} from 'react';
 
 export const STEP_DRAG_MIME = 'application/x-lattice-workflow-step';
 
@@ -43,6 +50,23 @@ export function useWorkflowStepDragDrop(
   }
 
   return { dragOver, onDragStart, onDragOver, onDragLeave, onDrop };
+}
+
+// Scroll the step row into view the moment it becomes the running step, so a
+// long multi-step run keeps the live step visible without the user scrolling.
+// Only fires on the false→true transition (not on every render while running)
+// so it doesn't fight the user scrolling away to inspect another step.
+export function useScrollRunningIntoView(
+  ref: RefObject<HTMLDivElement | null>,
+  running: boolean,
+): void {
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (running && !wasRunning.current) {
+      ref.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+    wasRunning.current = running;
+  }, [ref, running]);
 }
 
 export function useAutosizedTextarea(
