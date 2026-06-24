@@ -78,8 +78,18 @@ export function LaneHeader({
             className={`lane-runall ${runAllConfig.cls}`}
             onClick={onRunAll}
             disabled={runAllConfig.disabled}
-            title={runAllConfig.title}
-            aria-label={runAllConfig.aria}
+            // When disabled, surface the unblock condition instead of the
+            // happy-path copy so a greyed button never reads as broken.
+            title={
+              runAllConfig.disabled
+                ? runAllConfig.disabledReason
+                : runAllConfig.title
+            }
+            aria-label={
+              runAllConfig.disabled
+                ? runAllConfig.disabledReason
+                : runAllConfig.aria
+            }
           >
             {runAllConfig.icon}
           </button>
@@ -136,8 +146,16 @@ export function LaneHeader({
                 className="icon-btn sm mcp-pw-btn qa-runall"
                 onClick={onQaRunAll}
                 disabled={tasks.length === 0}
-                title="Run an end-to-end Playwright test for every QA task"
-                aria-label="Run all QA end-to-end tests"
+                title={
+                  tasks.length === 0
+                    ? 'No tasks in this lane'
+                    : 'Run an end-to-end Playwright test for every QA task'
+                }
+                aria-label={
+                  tasks.length === 0
+                    ? 'No tasks in this lane'
+                    : 'Run all QA end-to-end tests'
+                }
               >
                 <Play size={13} fill="currentColor" />
               </button>
@@ -178,6 +196,7 @@ function laneRunAllConfig(id: TaskStatus, tasks: Task[]) {
         disabled: tasks.length === 0,
         title: 'Merge every Ready-to-Merge task (stops on first conflict)',
         aria: 'Merge all ready tasks',
+        disabledReason: 'No tasks in this lane',
         icon: <GitMerge size={11} />,
       };
     case 'in_progress':
@@ -186,6 +205,7 @@ function laneRunAllConfig(id: TaskStatus, tasks: Task[]) {
         disabled: tasks.filter((t) => !!t.worktreePath).length === 0,
         title: 'Resume every In Progress task with an existing worktree',
         aria: 'Resume all in-progress tasks',
+        disabledReason: 'No In-Progress task has a worktree to resume',
         icon: <Play size={11} fill="currentColor" />,
       };
     case 'qa':
@@ -194,6 +214,7 @@ function laneRunAllConfig(id: TaskStatus, tasks: Task[]) {
         disabled: tasks.length === 0,
         title: 'Mark every QA task as Done',
         aria: 'Mark all QA tasks done',
+        disabledReason: 'No tasks in this lane',
         icon: <CheckCheck size={12} />,
       };
     case 'open':
@@ -202,6 +223,7 @@ function laneRunAllConfig(id: TaskStatus, tasks: Task[]) {
         disabled: tasks.length === 0,
         title: 'Run every task in Open in a new worktree',
         aria: 'Run all open tasks',
+        disabledReason: 'No tasks in this lane',
         icon: <Play size={11} fill="currentColor" />,
       };
     default:
