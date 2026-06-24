@@ -25,6 +25,17 @@ callbacks. `useSettingsDrafts.ts` owns the handful of drafts that live on the
 parent itself rather than a tab — the terminal-default harness +
 skip-permissions, and the instrument-Claude / disable-memory toggles.
 
+`useOverrideDraft.ts` is the shared draft engine behind the two
+**override-merge** tabs (`InstructionTemplatesTab` + `EnvNotesTab`): both fetch
+a list of items + the saved override map (gated on `open && active`), keep an
+editable text draft per item, and on Save clone the saved overrides then per
+item either drop the key (draft means "use Lattice's default") or write the
+edited text — with the `undefined`-until-loaded clobber-guard above. It's
+parameterized by `fetchItems` and `matchesDefault` (the one real divergence:
+instruction templates drop on blank-or-exact-default, env notes on trimmed
+equality). Keep these tabs on the shared hook rather than re-copying the
+clobber-guard logic.
+
 ## Where each setting persists
 
 **Per-project** — `userSettings.json`, via `PATCH /api/settings`:
@@ -43,7 +54,13 @@ plus a per-endpoint **Advanced** section (compat `thinkingFormat` +
 `supportsDeveloperRole`, and custom request headers). The backend reconciles all
 of this into `~/.pi/agent/models.json`, plus the curated "Pi — X" model-menu
 checklist. (A keyless endpoint is written with `apiKey: "local"` so Pi doesn't
-reject the whole file — see `backend/src/piModels.ts`.) Note: the `PATCH /api/global-settings` route now
+reject the whole file — see `backend/src/piModels.ts`.) `PiTab`'s draft state
+lives in two focused hooks in `usePiEndpoints.ts`: `useEndpointState` (the
+endpoint list + `touched` flag + `patch`/`add`/`remove`, and a shared `mutate`
+primitive the tab reuses for its compat/header/model/detect edits) and
+`useProbeDetection` (per-row `probing`/`detected`/`probeError` + the
+`/api/pi-endpoints/probe` flow, reporting ids back via an `onDetected`
+callback). Note: the `PATCH /api/global-settings` route now
 passes *all* machine-global fields through (it previously forwarded only
 `maxConcurrentAgents`, silently dropping the rest).
 

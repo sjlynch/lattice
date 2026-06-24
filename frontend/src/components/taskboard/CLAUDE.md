@@ -14,6 +14,7 @@ Components behind the Tasks button. `TaskBoard.tsx` (parent dir) is a re-export 
 - `NewTaskOverlay.tsx` — modal for creating a task in a specific lane.
 - `TaskDetailOverlay.tsx` — view/edit overlay; action row shifts based on task lane.
 - `MergeRunStrip.tsx` — progress strip rendered above Ready-to-Merge during a backend run; switches to dismissable summary on done.
+- `BulkRunStrip.tsx` — the same idea for the Open / In Progress / QA lane bulk actions (`Run all` / `Resume all` / `Mark all done`): a spinner strip with live "(X spawned, Y queued)" counts that auto-dismisses to a "Started N tasks" summary. Reuses the merge-run strip CSS. State lives in `hooks/useBulkRunStrips.ts`; the launcher `?? `s `bulkRunStripFor` after `mergeRunStripFor`.
 - `StuckPill.tsx` — "stuck Nm" surfaced after a conflict resolver runs > 3 min.
 - `lanes.ts` — `LANES` array, `LANE_BY_ID` map, `DRAG_MIME` constant, `shortLabel()`, `parseDragPayload()`.
 - `laneSort.ts` — per-lane arrival-date sort: `LaneSortMode` (`recent`/`oldest`/`manual`, default `recent`), `arrivalTime(task, status)` (the lane-specific arrival stamp — startedAt/completedAt/mergedAt/doneAt, else createdAt), and `sortTasksForLane()`. Drives the lane header's clock + up/down caret control.

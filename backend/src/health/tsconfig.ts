@@ -16,6 +16,8 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { IGNORE_DIR_NAMES } from './constants.js';
+import { walkSourceTree } from './walkTree.js';
 
 export type ParsedAlias = {
   // Pattern prefix as it appears in tsconfig. For `@/*` this is `@/`;
@@ -35,16 +37,6 @@ const MAX_TSCONFIG_DEPTH = 4;
 // them all; non-tsconfig files would never parse with a
 // `compilerOptions.paths` schema so the false positives are inert.
 const TSCONFIG_RE = /^tsconfig(?:\..+)?\.json$/;
-// Names we never recurse into when looking for tsconfigs. Keeps us
-// from walking dependency trees on huge repos.
-const SKIP_DIR_NAMES = new Set<string>([
-  '.git', '.idea', '.vscode', '.lattice',
-  'node_modules', 'dist', 'build',
-  '.next', '.nuxt', '.svelte-kit',
-  '.cache', '.parcel-cache', '.swc',
-  '.venv', 'venv', '__pycache__',
-  'target', '.gradle', 'Pods', 'DerivedData',
-]);
 
 // Strip JSONC (line comments, block comments, trailing commas) so
 // JSON.parse can handle a real-world tsconfig. We do this in a
@@ -94,31 +86,17 @@ function stripJsonc(text: string): string {
 }
 
 async function findTsconfigs(projectRoot: string): Promise<string[]> {
+  // Shared bounded walker (health/walkTree.ts) with the canonical skip-dir set.
+  // Dotfile dirs that aren't in IGNORE_DIR_NAMES (e.g. `.config`) are still
+  // recursed into, so a tsconfig nested under one is discovered.
   const out: string[] = [];
-  async function walk(dir: string, depth: number): Promise<void> {
-    if (depth > MAX_TSCONFIG_DEPTH) return;
-    let entries: import('node:fs').Dirent[];
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    const subwalks: Promise<void>[] = [];
-    for (const e of entries) {
-      if (e.name.startsWith('.') && e.name !== '.') {
-        if (SKIP_DIR_NAMES.has(e.name)) continue;
-      }
-      if (SKIP_DIR_NAMES.has(e.name)) continue;
-      const abs = path.join(dir, e.name);
-      if (e.isDirectory()) {
-        subwalks.push(walk(abs, depth + 1));
-      } else if (e.isFile() && TSCONFIG_RE.test(e.name)) {
-        out.push(abs);
-      }
-    }
-    await Promise.all(subwalks);
-  }
-  await walk(projectRoot, 0);
+  await walkSourceTree(projectRoot, {
+    maxDepth: MAX_TSCONFIG_DEPTH,
+    skipDirs: IGNORE_DIR_NAMES,
+    onFile: (filePath, name) => {
+      if (TSCONFIG_RE.test(name)) out.push(filePath);
+    },
+  });
   return out;
 }
 

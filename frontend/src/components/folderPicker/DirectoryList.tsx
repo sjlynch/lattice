@@ -4,22 +4,24 @@ import type { DirEntry, DirListing } from '../../api';
 type DirectoryListProps = {
   loading: boolean;
   listing: DirListing | null;
+  selectedPath: string | null;
   onNavigate: (path: string) => void;
-  onSelect: (path: string) => void;
+  onHighlight: (path: string) => void;
 };
 
 type DirectoryRowProps = {
   entry: DirEntry;
+  selected: boolean;
   onNavigate: (path: string) => void;
-  onSelect: (path: string) => void;
+  onHighlight: (path: string) => void;
 };
 
-function DirectoryRow({ entry, onNavigate, onSelect }: DirectoryRowProps) {
+function DirectoryRow({ entry, selected, onNavigate, onHighlight }: DirectoryRowProps) {
   return (
     <div
-      className="dir-row"
-      onClick={() => onNavigate(entry.path)}
-      onDoubleClick={() => onSelect(entry.path)}
+      className={selected ? 'dir-row selected' : 'dir-row'}
+      onClick={() => onHighlight(entry.path)}
+      onDoubleClick={() => onNavigate(entry.path)}
     >
       <span className="dir-icon">
         <Folder size={14} />
@@ -29,7 +31,13 @@ function DirectoryRow({ entry, onNavigate, onSelect }: DirectoryRowProps) {
   );
 }
 
-export function DirectoryList({ loading, listing, onNavigate, onSelect }: DirectoryListProps) {
+export function DirectoryList({
+  loading,
+  listing,
+  selectedPath,
+  onNavigate,
+  onHighlight,
+}: DirectoryListProps) {
   return (
     <div className="dir-list">
       {loading && !listing && (
@@ -43,8 +51,9 @@ export function DirectoryList({ loading, listing, onNavigate, onSelect }: Direct
           <DirectoryRow
             key={entry.path}
             entry={entry}
+            selected={entry.path === selectedPath}
             onNavigate={onNavigate}
-            onSelect={onSelect}
+            onHighlight={onHighlight}
           />
         ))}
     </div>

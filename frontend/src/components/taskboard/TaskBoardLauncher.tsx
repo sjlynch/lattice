@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Kanban } from 'lucide-react';
 import { FloatingPanel } from '../FloatingPanel';
 import { useTerminals } from '../../TerminalsContext';
@@ -10,11 +10,13 @@ import { ErrorToast } from '../shared/ErrorToast';
 import { LANE_BY_ID, LANES, shortLabel } from './lanes';
 import { sortTasksForLane } from './laneSort';
 import { Lane } from './Lane';
+import { bulkRunStripFor } from './BulkRunStrip';
 import { mergeRunStripFor } from './MergeRunStrip';
 import { NewTaskOverlay } from './NewTaskOverlay';
 import { PostMergeHookRow } from './PostMergeHookRow';
 import { TaskBoardFilters } from './TaskBoardFilters';
 import { TaskBoardFooter } from './TaskBoardFooter';
+import { TaskBoardSearchEmpty } from './TaskBoardSearchEmpty';
 import { TaskBoardTitle } from './TaskBoardTitle';
 import { TaskDetailOverlay } from './TaskDetailOverlay';
 import { useMergeRunSync } from './hooks/useMergeRunSync';
@@ -24,6 +26,7 @@ import { useHarnessSelector } from './hooks/useHarnessSelector';
 import { useQaPlaywright } from './hooks/useQaPlaywright';
 import { useQaRuns } from './hooks/useQaRuns';
 import { useLaneSort } from './hooks/useLaneSort';
+import { useBulkRunStrips } from './hooks/useBulkRunStrips';
 import { useTaskActions } from './hooks/useTaskActions';
 import { useTaskBoardState } from './hooks/useTaskBoardState';
 import { useTaskSearch } from './hooks/useTaskSearch';
@@ -48,6 +51,11 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   // Stable so it doesn't defeat React.memo(TaskCard) on every re-render.
   const handleDragEnd = useCallback(() => setDraggingId(null), []);
 
+  // `noteBulkSpawned` is produced by a hook that runs *after* the task list
+  // (which needs `handleTaskSpawned`), so reach it through a ref to break the
+  // declaration cycle. Resume's progress strip rides these spawn events.
+  const noteBulkSpawnedRef = useRef<((taskId: string) => void) | null>(null);
+
   const { visibleLanes, toggleLane } = useVisibleLanes();
 
   const {
@@ -65,6 +73,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   // tab watching the project mounts it, matching the workflow step model.
   const handleTaskSpawned = useCallback(
     (event: TaskSpawnedEvent) => {
+      noteBulkSpawnedRef.current?.(event.taskId);
       addTerminal(
         {
           label: shortLabel(event.title),
@@ -141,6 +150,15 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     showError,
   });
 
+  // Live progress strips for the Open/In Progress/QA lane bulk actions
+  // (mirrors the Ready-to-Merge MergeRunStrip). `noteBulkSpawned` is reached
+  // from `handleTaskSpawned` via a ref since it's defined before this hook.
+  const { bulkStrips, beginBulk, noteBulkSpawned, dismissBulk } =
+    useBulkRunStrips(tasks);
+  useEffect(() => {
+    noteBulkSpawnedRef.current = noteBulkSpawned;
+  }, [noteBulkSpawned]);
+
   const {
     taskSearch,
     setTaskSearch,
@@ -199,14 +217,17 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   useTaskTerminalReattach(activeFolder, tasks, terminals, addTerminal);
   const [viewing, setViewing] = useSyncedViewedTask(tasks);
 
+  // Fire the bulk action and start its progress strip off the ids it targeted
+  // (merge-all keeps its own backend-run strip via mergeRunStripFor).
   const runAllActionByLane = useMemo<Partial<Record<TaskStatus, () => void>>>(
     () => ({
-      open: runAllOpen,
-      in_progress: resumeAllInProgress,
+      open: () => beginBulk('open', runAllOpen(), 'run'),
+      in_progress: () =>
+        beginBulk('in_progress', resumeAllInProgress(), 'resume'),
       ready_to_merge: mergeAllReady,
-      qa: markAllQaDone,
+      qa: () => beginBulk('qa', markAllQaDone(), 'qa-done'),
     }),
-    [runAllOpen, resumeAllInProgress, mergeAllReady, markAllQaDone],
+    [beginBulk, runAllOpen, resumeAllInProgress, mergeAllReady, markAllQaDone],
   );
 
   return (
@@ -255,7 +276,13 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         />
         <div className="taskboard-body">
           <div className="taskboard-scroll">
-            {LANES.filter((lane) => visibleLanes.has(lane.id)).map((lane) => (
+            {searchActive && filteredTasks.length === 0 ? (
+              <TaskBoardSearchEmpty
+                query={taskSearch.trim()}
+                onClear={() => setTaskSearch('')}
+              />
+            ) : (
+            LANES.filter((lane) => visibleLanes.has(lane.id)).map((lane) => (
               <Lane
                 key={lane.id}
                 lane={lane}
@@ -297,17 +324,20 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                     : undefined
                 }
                 onView={setViewing}
-                strip={mergeRunStripFor(
-                  lane,
-                  sortedGrouped[lane.id],
-                  mergeRun,
-                  recentRunSummary,
-                  tasks,
-                  cancelActiveRun,
-                  dismissRecent,
-                )}
+                strip={
+                  mergeRunStripFor(
+                    lane,
+                    sortedGrouped[lane.id],
+                    mergeRun,
+                    recentRunSummary,
+                    tasks,
+                    cancelActiveRun,
+                    dismissRecent,
+                  ) ?? bulkRunStripFor(lane, bulkStrips, dismissBulk)
+                }
               />
-            ))}
+            ))
+            )}
           </div>
           <PostMergeHookRow
             prompt={postMergeHook.form.prompt}

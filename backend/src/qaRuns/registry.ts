@@ -33,6 +33,14 @@ export function markQaRunMovedToDone(id: string): void {
   if (r) r.movedToDone = true;
 }
 
+// Record the resolved terminal auto-close decision (from
+// UserSettings.qaTerminalAutoClose) so the frontend poller can mirror it when
+// it next sees `done`. No-op if the run is unknown.
+export function recordQaRunAutoClose(id: string, autoClose: boolean): void {
+  const r = runs.get(id);
+  if (r) r.autoCloseTerminal = autoClose;
+}
+
 // Forget the run once the frontend has acknowledged completion — keeps the
 // in-memory map from growing across long sessions.
 //

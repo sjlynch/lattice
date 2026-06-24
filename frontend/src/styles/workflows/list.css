@@ -85,12 +85,19 @@
   gap: 4px;
 }
 .workflows-item-harness {
-  width: 82px;
   height: 24px;
-  /* Fixed-width run-override select: clip long "Pi — <model>" to ellipsis. */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* The run-override select shares `.workflows-step-harness`; in this narrow,
+   right-anchored sidebar it gets a tighter cap (this 2-class selector beats the
+   step-editor sizing). It sizes to content; a long "Pi — <model>" ellipsis-clips
+   here but the full id is in the select/option title tooltip. */
+.workflows-item-actions .workflows-item-harness {
+  width: auto;
+  min-width: 82px;
+  max-width: 150px;
 }
 .workflows-item-run-btn {
   display: inline-flex;

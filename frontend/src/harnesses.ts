@@ -100,7 +100,29 @@ export function decodeHarnessValue(value: string): HarnessSelection {
   return { harness: isHarnessChoice(value) ? value : 'claude' };
 }
 
-export type HarnessOption = { value: string; label: string };
+// `title` carries the full, un-truncated tooltip text for an option (and, when
+// selected, for the closed control). For "Pi — X" rows it is the full
+// `provider/model` id, so the value is never hidden even when the visible
+// `label` is shortened or the closed `<select>` ellipsis-clips it.
+export type HarnessOption = { value: string; label: string; title?: string };
+
+// Curated Pi model ids are arbitrary `provider/model` strings (vLLM / custom
+// endpoints) that can be long. Cap the VISIBLE label so it doesn't blow out the
+// closed control; the full id always rides along in `title` (a hover tooltip).
+const PI_LABEL_MAX_CHARS = 28;
+
+function piModelDisplayLabel(entry: PiModelMenuEntry): string {
+  // Prefer a real friendly name from the menu; otherwise fall back to the model
+  // segment of `provider/model` (dropping the provider prefix and any
+  // `:thinking` suffix), matching workflowRunOverrideLabel's shortening.
+  const friendly =
+    entry.label && entry.label !== entry.pattern
+      ? entry.label
+      : entry.pattern.split('/').pop()?.split(':')[0] || entry.pattern;
+  return friendly.length > PI_LABEL_MAX_CHARS
+    ? `${friendly.slice(0, PI_LABEL_MAX_CHARS - 1)}…`
+    : friendly;
+}
 
 // Build the flattened dropdown option list for a harness selector. `piMenu`
 // expands into "Pi — X" rows beneath bare "Pi"; an already-selected Pi model
@@ -132,7 +154,9 @@ export function buildHarnessOptions(args: {
     for (const entry of entries) {
       options.push({
         value: encodeHarnessValue('pi', entry.pattern),
-        label: `${HARNESS_LABELS.pi} — ${entry.label}`,
+        label: `${HARNESS_LABELS.pi} — ${piModelDisplayLabel(entry)}`,
+        // Full `provider/model` for the tooltip — never truncated.
+        title: `${HARNESS_LABELS.pi} — ${entry.pattern}`,
       });
     }
   }
@@ -140,4 +164,12 @@ export function buildHarnessOptions(args: {
     options.push({ value: 'interleave', label: HARNESS_LABELS.interleave });
   }
   return options;
+}
+
+// The full-value tooltip for whichever option a <select> currently has selected
+// — its `title` (full `provider/model` for a Pi row) or, failing that, its
+// visible `label`. Lets a truncated closed control reveal exactly what runs.
+export function selectedOptionTitle(options: HarnessOption[], value: string): string {
+  const selected = options.find((o) => o.value === value);
+  return selected?.title ?? selected?.label ?? '';
 }
