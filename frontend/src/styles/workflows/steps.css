@@ -21,6 +21,13 @@
   padding-top: 6px;
   color: var(--text-tertiary);
   cursor: grab;
+  transition: color 0.12s ease;
+}
+.workflows-step:hover .workflows-step-grip {
+  color: var(--text-secondary);
+}
+.workflows-step-grip:active {
+  cursor: grabbing;
 }
 .workflows-step-body {
   flex: 1;

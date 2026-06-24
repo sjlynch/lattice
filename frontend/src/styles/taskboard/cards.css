@@ -35,6 +35,14 @@
   color: rgba(255, 255, 255, 0.30);
   display: inline-flex;
   flex: 0 0 auto;
+  cursor: grab;
+  transition: color 0.12s ease;
+}
+.task-card:hover .task-card-grip {
+  color: var(--text-secondary);
+}
+.task-card-grip:active {
+  cursor: grabbing;
 }
 .task-card-body {
   flex: 1;

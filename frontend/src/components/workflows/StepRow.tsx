@@ -216,7 +216,7 @@ const AgentStepRow = memo(function AgentStepRow({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <span className="workflows-step-grip" aria-hidden>
+      <span className="workflows-step-grip" aria-hidden title="Drag to reorder">
         <GripVertical size={12} />
       </span>
       <div className="workflows-step-body">
@@ -333,7 +333,7 @@ const ControlStepRow = memo(function ControlStepRow({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <span className="workflows-step-grip" aria-hidden>
+      <span className="workflows-step-grip" aria-hidden title="Drag to reorder">
         <GripVertical size={12} />
       </span>
       <div className="workflows-step-body">
