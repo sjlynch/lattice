@@ -1,10 +1,10 @@
-// Per-label state: registry maintenance, world snapshots, home-spring
-// force accumulation, and the velocity/rest integration that moves each
-// label and re-anchors its connector line.
+// Per-label state: registry maintenance, world snapshots, and the
+// velocity/rest integration that moves each label and re-anchors its
+// connector line. (The home-spring force is accumulated inline by the
+// per-frame `repelLabels` in repel.ts.)
 
 import * as THREE from 'three';
 import {
-  HOME_K,
   FRICTION,
   REST_VEL,
   REST_VEL_SQ,
@@ -16,7 +16,6 @@ import type {
   RepulsionEntry,
   LabelState,
   WorldXZ,
-  ForceAccumulators,
 } from './types';
 
 // Velocity is owned by the sprite (one velocity per label). Using a
@@ -43,26 +42,6 @@ export function snapshotWorldXZ(entries: readonly RepulsionEntry[]): WorldXZ[] {
     entry.label.getWorldPosition(tmp);
     return [tmp.x, tmp.z];
   });
-}
-
-export function createForceAccumulators(
-  entries: readonly RepulsionEntry[],
-): ForceAccumulators {
-  const fx = new Float32Array(entries.length);
-  const fz = new Float32Array(entries.length);
-  accumulateHomeForces(entries, fx, fz);
-  return { fx, fz };
-}
-
-export function accumulateHomeForces(
-  entries: readonly RepulsionEntry[],
-  fx: Float32Array,
-  fz: Float32Array,
-): void {
-  for (let i = 0; i < entries.length; i++) {
-    fx[i] = -entries[i].label.position.x * HOME_K;
-    fz[i] = -entries[i].label.position.z * HOME_K;
-  }
 }
 
 export function getOrCreateLabelState(
