@@ -54,9 +54,17 @@ const FINGERPRINT_FILES = [
   // Stable by design — the MCP/trust/memory POLICY lives in the main backend and
   // is NOT fingerprinted, so a policy change is a backend-only edit that never
   // respawns the terminal-server (the whole point of keeping these thin). These
-  // two ARE fingerprinted so a change to the write mechanism itself still takes
-  // effect instead of running stale in a long-lived orphan.
+  // ARE fingerprinted so a change to the write mechanism itself still takes
+  // effect instead of running stale in a long-lived orphan. `claudeTrust.js` is
+  // now a thin facade re-exporting the `claudeTrust/*` submodules that hold the
+  // real logic, so all of them must be listed (the facade's bytes alone barely
+  // change when the implementation does).
   'claudeTrust.js',
+  'claudeTrust/apply.js',
+  'claudeTrust/configFile.js',
+  'claudeTrust/configLock.js',
+  'claudeTrust/maintenance.js',
+  'claudeTrust/util.js',
   'mcp/claudeInject.js',
 ];
 
