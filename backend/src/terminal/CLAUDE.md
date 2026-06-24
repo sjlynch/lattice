@@ -19,6 +19,15 @@ owns the node-pty processes.
   (validated to exist — refusing a doomed spawn that would feed a reconnect
   loop), size, projectPath, and the env (Lattice breadcrumb vars +
   `$LATTICE_DOCS`); calls `windowsPath` + `envSetup` to shape PATH/overhead env.
+  Shell resolution is `resolveDefaultShell(env, platform)` (exported, injectable
+  for tests): per-spawn `opts.shell` → `LATTICE_DEFAULT_SHELL` env override (the
+  detached terminal-server can't read settings files, so the escape hatch is
+  env-based like `LATTICE_API_PORT`) → platform default (`COMSPEC`/cmd.exe on
+  Windows, `$SHELL`/bash on POSIX). **The Windows default is cmd.exe**, where
+  `$LATTICE_*` breadcrumbs don't expand — so the discovery banner names the doc
+  by its literal absolute path (`terminalBanner.ts`) and the generated
+  `LATTICE_API.md` bakes in literal values + per-shell (`$VAR` / `%VAR%` /
+  `$env:VAR`) syntax rather than relying on shell expansion.
 - `windowsPath.ts` — `applyFreshWindowsPath`: replace the inherited Windows PATH
   with a registry-read one (HKLM+HKCU) so tools installed after the long-lived
   terminal-server booted are visible. Read off the spawn path (cached, 30 s TTL,

@@ -18,6 +18,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { canonicalProjectPath } from './projectPath.js';
 
 export const LATTICE_API_DOC_FILENAME = 'LATTICE_API.md';
 const LATTICE_DIR = '.lattice';
@@ -25,8 +26,13 @@ const VERSION_PREFIX = '<!-- lattice-docs-version: ';
 const VERSION_SUFFIX = ' -->';
 
 // LATTICE_API.template.md is a runtime asset copied next to the compiled JS.
-// It uses this documented placeholder where the current API port should appear.
+// It uses these documented placeholders, interpolated with the LITERAL values
+// for this project/port so an agent can copy them straight into a command
+// without relying on any shell expanding `$LATTICE_*` (which it won't in the
+// default Windows shell, cmd.exe). `{{API_URL}}` is the required sanity probe.
 const API_PORT_PLACEHOLDER = '{{API_PORT}}';
+const API_URL_PLACEHOLDER = '{{API_URL}}';
+const PROJECT_PLACEHOLDER = '{{PROJECT}}';
 
 // We try the dist-adjacent path first, then fall back to the src tree. The
 // fallback exists because a merge that introduces a new runtime asset can
@@ -55,9 +61,9 @@ function loadTemplate(): string | null {
     } catch {
       continue;
     }
-    if (!raw.includes(API_PORT_PLACEHOLDER)) {
+    if (!raw.includes(API_URL_PLACEHOLDER)) {
       console.warn(
-        `[latticeApiDocs] template at ${candidate} missing ${API_PORT_PLACEHOLDER} — skipping`,
+        `[latticeApiDocs] template at ${candidate} missing ${API_URL_PLACEHOLDER} — skipping`,
       );
       continue;
     }
@@ -76,8 +82,13 @@ function loadTemplate(): string | null {
   return null;
 }
 
-function renderBody(apiPort: number, template: string): string {
-  return template.replaceAll(API_PORT_PLACEHOLDER, String(apiPort));
+type DocValues = { apiPort: number; apiUrl: string; project: string };
+
+function renderBody(template: string, vals: DocValues): string {
+  return template
+    .replaceAll(API_PORT_PLACEHOLDER, String(vals.apiPort))
+    .replaceAll(API_URL_PLACEHOLDER, vals.apiUrl)
+    .replaceAll(PROJECT_PLACEHOLDER, vals.project);
 }
 
 function hashContent(body: string): string {
@@ -85,10 +96,10 @@ function hashContent(body: string): string {
 }
 
 function renderLatticeApiDoc(
-  apiPort: number,
+  vals: DocValues,
   template: string,
 ): { content: string; hash: string } {
-  const body = renderBody(apiPort, template);
+  const body = renderBody(template, vals);
   const hash = hashContent(body);
   return {
     content: `${VERSION_PREFIX}${hash}${VERSION_SUFFIX}\n${body}`,
@@ -120,7 +131,14 @@ export function ensureLatticeApiDoc(
     return null;
   }
   const docPath = path.join(latticeDir, LATTICE_API_DOC_FILENAME);
-  const { content, hash } = renderLatticeApiDoc(apiPort, template);
+  // Canonical project path so the literal in the doc matches `$LATTICE_PROJECT`
+  // (the dir above stays on the raw path to preserve existing write behavior).
+  const vals: DocValues = {
+    apiPort,
+    apiUrl: `http://127.0.0.1:${apiPort}`,
+    project: canonicalProjectPath(projectPath),
+  };
+  const { content, hash } = renderLatticeApiDoc(vals, template);
   try {
     if (fs.existsSync(docPath)) {
       const existing = fs.readFileSync(docPath, 'utf8');

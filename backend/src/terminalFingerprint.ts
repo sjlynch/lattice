@@ -41,6 +41,11 @@ const FINGERPRINT_FILES = [
   'terminal/attach.js',
   'terminal/kill.js',
   'processTree.js',
+  // Discovery breadcrumbs the terminal-server stamps into every pty: the
+  // banner (imported by sessionLifecycle) and the generated API doc. Their
+  // bytes affect runtime behavior, so a banner/doc-only edit must still
+  // invalidate a stale orphan.
+  'terminalBanner.js',
   'latticeApiDocs.js',
   'latticeApiDocs/LATTICE_API.template.md',
   'claudeConfigGuard.js',

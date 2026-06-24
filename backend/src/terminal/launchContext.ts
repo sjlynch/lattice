@@ -6,10 +6,32 @@ import type { CreateOpts } from './sessionTypes.js';
 import { applyFreshWindowsPath } from './windowsPath.js';
 import { applyClaudeOverheadEnv } from './envSetup.js';
 
-const isWindows = os.platform() === 'win32';
-const defaultShell = isWindows
-  ? process.env.COMSPEC || 'powershell.exe'
-  : process.env.SHELL || 'bash';
+// Resolve the pty's default shell. Order: explicit per-spawn override
+// (`opts.shell`, handled by the caller) → `LATTICE_DEFAULT_SHELL` operator
+// escape hatch → platform default.
+//
+// The override is env-based on purpose: this runs in the *detached*
+// terminal-server, which can't read Lattice's settings files, and every other
+// knob it honors (`LATTICE_API_PORT`, `TERMINAL_PORT`, …) reaches it the same
+// way. A locked-down Windows box can point this at `pwsh`/`powershell.exe`; a
+// POSIX box at a specific shell.
+//
+// NOTE: on Windows `COMSPEC` is effectively always set (→ cmd.exe), so the
+// previous `process.env.COMSPEC || 'powershell.exe'` could never reach the
+// powershell fallback — it was dead code, and every Windows pty silently got
+// cmd.exe (where the bash/PowerShell-shaped `$LATTICE_*` breadcrumbs don't
+// expand). The literal `'cmd.exe'` backstop here only matters in the
+// pathological case where `COMSPEC` is unset. `platform`/`env` are injectable
+// so the resolution is unit-testable across platforms.
+export function resolveDefaultShell(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = os.platform(),
+): string {
+  const override = env.LATTICE_DEFAULT_SHELL?.trim();
+  if (override) return override;
+  if (platform === 'win32') return env.COMSPEC?.trim() || 'cmd.exe';
+  return env.SHELL?.trim() || 'bash';
+}
 
 export type SessionLaunchContext = {
   shell: string;
@@ -24,7 +46,7 @@ export type SessionLaunchContext = {
 export function buildSessionLaunchContext(
   opts: CreateOpts,
 ): SessionLaunchContext | { error: string } {
-  const shell = opts.shell || defaultShell;
+  const shell = opts.shell?.trim() || resolveDefaultShell();
   const requestedCwd = opts.cwd?.trim();
   const cwd = requestedCwd || os.homedir();
   const cols = opts.cols ?? 80;

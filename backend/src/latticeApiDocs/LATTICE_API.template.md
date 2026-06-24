@@ -1,15 +1,31 @@
 # Lattice API
 
 Lattice is a local task / worktree orchestrator running on this machine.
-This terminal has these env vars set (this session only — not your global env):
-
-- `$LATTICE_API_URL` — API base URL (default `http://127.0.0.1:{{API_PORT}}`)
-- `$LATTICE_PROJECT` — active project's absolute path
-- `$LATTICE_PROJECT_HASH` — 12-char project hash (compare against the `hash` field in API responses)
-- `$LATTICE_DOCS` — absolute path to this file
-
 If the user mentions tasks / taskboard / merging / worktrees, drive the
 HTTP API below directly — don't ask how to reach it.
+
+## Values for THIS session (use these literally)
+
+- **API base URL:** `{{API_URL}}`
+- **Project (`project=` field):** `{{PROJECT}}`
+
+Paste those literal values straight into your commands — they don't depend on
+any shell variable expanding. The same values are *also* exported as env vars
+**in this terminal only** (not your global env). Reference them with the
+syntax your shell uses:
+
+| Value | bash / sh | PowerShell | cmd.exe |
+|-------|-----------|------------|---------|
+| API base URL | `$LATTICE_API_URL` | `$env:LATTICE_API_URL` | `%LATTICE_API_URL%` |
+| Project path | `$LATTICE_PROJECT` | `$env:LATTICE_PROJECT` | `%LATTICE_PROJECT%` |
+| Project hash | `$LATTICE_PROJECT_HASH` | `$env:LATTICE_PROJECT_HASH` | `%LATTICE_PROJECT_HASH%` |
+| This file | `$LATTICE_DOCS` | `$env:LATTICE_DOCS` | `%LATTICE_DOCS%` |
+
+> ⚠️ **The default pty shell on Windows is `cmd.exe`**, where `$LATTICE_API_URL`
+> does **not** expand (it's a literal). If a `$VAR`-style recipe below yields an
+> empty or malformed URL, either paste the literal values above, or switch to
+> the `%VAR%` (cmd.exe) / `$env:VAR` (PowerShell) form. The recipes are grouped
+> by shell — pick the block that matches yours.
 
 ## Hard rules
 

@@ -32,9 +32,11 @@ export function addLatticeBanner(session: Session, docPath: string | null): void
   // sentence; the body of the API reference is loaded on demand if (and
   // only if) the AI agent follows the hint and reads $LATTICE_DOCS.
   // Only emitted for Lattice-managed projects (those that already have a
-  // .lattice/ directory, hence a docPath).
+  // .lattice/ directory, hence a docPath). The banner points at the doc by
+  // its literal path so the hint survives cmd.exe (where `$LATTICE_DOCS`
+  // wouldn't expand).
   if (!docPath) return;
-  session.scrollback.append(buildLatticeBanner());
+  session.scrollback.append(buildLatticeBanner(docPath));
 }
 
 export function scheduleInitialCommand(term: pty.IPty, initialCommand?: string): void {
