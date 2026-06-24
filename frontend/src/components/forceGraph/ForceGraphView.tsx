@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { Settings as SettingsIcon } from 'lucide-react';
-import type { GraphNode, ScanResult } from '../../api';
+import type { ScanResult } from '../../api';
 import { GraphContextMenu } from './GraphContextMenu';
 import { GraphHud } from './GraphHud';
 import { GraphOverlayKey } from './GraphOverlayKey';
@@ -23,6 +22,8 @@ import { useGraphSearch } from './hooks/useGraphSearch';
 import { useGraphTaskCreation } from './hooks/useGraphTaskCreation';
 import { useNodeContextMenu } from './hooks/useNodeContextMenu';
 import { useWorktreeHighlight } from './hooks/useWorktreeHighlight';
+import { useHoverNodeDebounce } from './hooks/useHoverNodeDebounce';
+import { useCanvasDragTracking } from './hooks/useCanvasDragTracking';
 import { useRefMirror } from './hooks/useRefMirror';
 import { getIdleController } from './idleController';
 import { clearLabelsAndRefresh } from './hooks/refresh';
@@ -64,113 +65,25 @@ export function ForceGraphView({
   const graphRef = useRef<ForceGraph3DInstance | null>(null);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchRegex, setSearchRegex] = useState(false);
   // File-contents search is opt-in — name-only is the zero-cost default.
   const [searchContents, setSearchContents] = useState(false);
 
-  // When labels are dense or still moving the raycaster can blip in and
-  // out of label hitboxes every other frame, firing `(file, null, file,
-  // null, …)`. Each null transition would unmount HealthTooltip and a
-  // fresh mount restarts the opacity fade-in from zero — if the flicker
-  // is faster than ~80 ms the tooltip is invisible at all times. Debounce
-  // null transitions so a fresh hover within the window cancels the
-  // pending unmount; the user only loses the tooltip if their cursor is
-  // genuinely off all labels for longer than NULL_HOVER_DEBOUNCE_MS.
-  const NULL_HOVER_DEBOUNCE_MS = 220;
-  const nullClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // True while a pointer button is held down on the canvas (orbit-rotate, node
-  // drag, or shift box-select). 3d-force-graph's raycaster recomputes hover on
-  // EVERY render frame, so while you drag-rotate the camera, nodes sweep under
-  // the cursor and `onHover` fires continuously — and each hover-in does a
-  // synchronous `flushSync` React render below (plus a HealthTooltip
-  // mount/unmount → Recalculate style → Layerize → Commit). That per-frame
-  // churn is the rotate stutter; there's no tooltip to read mid-drag anyway, so
-  // we gate hover off for the duration of the gesture (set in the pointer-drag
-  // effect below).
+  // Hover tooltip state + its null-transition debounce (see the hook). Hover is
+  // gated off while a pointer is dragging the canvas: the shared
+  // `pointerDraggingRef` is read by the debounce and driven by the drag tracker,
+  // which also calls `cancelPendingHoverClear` at drag start to hide the tooltip.
   const pointerDraggingRef = useRef(false);
-  const debouncedSetHoverNode = useCallback((node: GraphNode | null) => {
-    // While dragging, ignore hover entirely. The tooltip is cleared at drag
-    // start and the library re-fires hover on the first move after release.
-    if (pointerDraggingRef.current) return;
-    if (node !== null) {
-      if (nullClearTimerRef.current) {
-        clearTimeout(nullClearTimerRef.current);
-        nullClearTimerRef.current = null;
-      }
-      // 3d-force-graph emits hover changes from its RAF, outside
-      // React's event system. While the health overlay is also running
-      // RAF work, normal-priority commits can be delayed until the user
-      // releases `h`, which made the tooltip appear only as the mode was
-      // turning off. Hover-in changes are infrequent (raycast-throttled),
-      // so flush this small state update synchronously.
-      flushSync(() => setHoverNode(node));
-      return;
-    }
-    if (nullClearTimerRef.current) return;
-    nullClearTimerRef.current = setTimeout(() => {
-      nullClearTimerRef.current = null;
-      setHoverNode(null);
-    }, NULL_HOVER_DEBOUNCE_MS);
-  }, []);
-  useEffect(() => {
-    return () => {
-      if (nullClearTimerRef.current) clearTimeout(nullClearTimerRef.current);
-    };
-  }, []);
-
-  // Track pointer-drag state on the canvas to gate hover (see
-  // pointerDraggingRef). pointerdown on the container starts a drag; the release
-  // is bound on `window` because a fast rotate often lifts off-canvas. At drag
-  // start we cancel any pending hover-clear and hide an open tooltip so it
-  // doesn't sit stale over the rotating graph; the functional updater skips the
-  // render when nothing was shown.
-  //
-  // We ALSO suspend 3d-force-graph's pointer interaction for the gesture
-  // (`enablePointerInteraction(false)`). The library re-runs an O(N) hover
-  // raycast — over every node incl. the invisible batched-node pick proxies —
-  // on EVERY render frame (`renderObjs.tick`), and on a hover change it shows /
-  // positions its own DOM tooltip element (the `Recalculate style` / `setProperty`
-  // / `Layerize` churn in the trace). None of that is wanted while you rotate, so
-  // disabling it for the drag removes the per-frame raycast + tooltip work. It
-  // only gates hover/click; the already-constructed node-drag DragControls and
-  // OrbitControls are unaffected. Re-enabled on release.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const setPointerInteraction = (on: boolean) => {
-      const g = graphRef.current as unknown as {
-        enablePointerInteraction?: (v: boolean) => unknown;
-      } | null;
-      g?.enablePointerInteraction?.(on);
-    };
-    const onDown = () => {
-      pointerDraggingRef.current = true;
-      if (nullClearTimerRef.current) {
-        clearTimeout(nullClearTimerRef.current);
-        nullClearTimerRef.current = null;
-      }
-      setHoverNode((cur) => (cur === null ? cur : null));
-      setPointerInteraction(false);
-    };
-    const onUp = () => {
-      if (!pointerDraggingRef.current) return;
-      pointerDraggingRef.current = false;
-      setPointerInteraction(true);
-    };
-    el.addEventListener('pointerdown', onDown, { passive: true });
-    window.addEventListener('pointerup', onUp, { passive: true });
-    window.addEventListener('pointercancel', onUp, { passive: true });
-    return () => {
-      el.removeEventListener('pointerdown', onDown);
-      window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('pointercancel', onUp);
-      // Don't leave interaction disabled if we unmount mid-drag.
-      if (pointerDraggingRef.current) setPointerInteraction(true);
-    };
-  }, [graphRef]);
+  const { hoverNode, debouncedSetHoverNode, cancelPendingHoverClear } =
+    useHoverNodeDebounce(pointerDraggingRef);
+  useCanvasDragTracking(
+    containerRef,
+    graphRef,
+    pointerDraggingRef,
+    cancelPendingHoverClear,
+  );
 
   const selectedRef = useRefMirror(selected);
   const hiddenExtsRef = useRefMirror(hiddenExts);
@@ -565,6 +478,7 @@ export function ForceGraphView({
           settings={settings}
           onChange={setSettings}
           onClose={closeSettings}
+          project={activeFolder}
         />
       )}
 
