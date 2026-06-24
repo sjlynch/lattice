@@ -123,6 +123,15 @@ asking for fixes/reviews:
   the selection chip, the right-click popover, and the create-task modal. The
   HUD's bottom-left also hosts the search bar (`GraphSearchBar.tsx`) inline with
   the file/dir counts.
+- `GraphOverlayKey.tsx` — the always-visible top-left key for the hold-key
+  overlays: one toggle chip per view (Health/H, LOC/Z, Dead/D, Worktree/W,
+  Labels/Alt). A chip is **lit** while its view is showing (`active` = held OR
+  pinned) and **filled** while pinned. Clicking a chip toggles that view's pin
+  via `togglePin`, which latches the same state the hold-key drives so the view
+  persists without holding the key — making the otherwise-invisible Z/D/W/Alt
+  power-features discoverable. Pin state lives in `hooks/useOverlayPins.ts`;
+  ForceGraphView gates the key on loaded data (so it never shares the corner
+  with the scan spinner) and builds the `active` record from the overlay modes.
 - `GraphSearchBar.tsx` + `searchMatcher.ts` + `hooks/useGraphSearch.ts` — the
   file search bar. `buildSearchRegExp` (searchMatcher) turns a query into a
   case-insensitive matcher: `*`/`?` wildcards by default, raw regex when the
@@ -463,6 +472,14 @@ asking for fixes/reviews:
   (modifier-excluded, repeat-suppressed) — used by `H`/`Z`/`D`/`W`. Alt supplies
   bespoke handlers (modifier key + Shift sub-gate + `preventDefault`) to the same
   hook. New hold-key overlays should reuse this rather than re-adding listeners.
+- `useOverlayPins` — pin state for the hold-key overlays (`{ health, loc, dead,
+  worktree, labels }` booleans + a `togglePin`). A pin latches a view on without
+  holding its key; each overlay hook takes its pin and computes the **effective
+  mode** as `held || pinned` (the key hold is tracked locally, the pin survives
+  the blur/visibility resets that clear the hold). The `GraphOverlayKey` chips
+  toggle these. Independent toggles — overlap between simultaneously-pinned views
+  follows the same sprite-recolor precedence the hold-keys use (health > loc >
+  dead). Kept in component state (a pin survives the key release, not a reload).
 - `useDeadCodeOverlay` — the `D`-hold overlay. Hold-key chord via
   `useHoldKeyMode(momentaryLetterMode('d', …))` (blur + visibilitychange reset);
   recolors by reachability (`deadCode` field on each node's `healthDetails`). No
@@ -478,12 +495,16 @@ asking for fixes/reviews:
   while `tick()` reports motion** — `kick()` acquires to wake the loop on a
   change, the frame handler releases on rest. See the APL ⇄ idle-controller
   contract in the named-subsystems section.
-- `useWorktreeHighlight` — the `W`-hold overlay. Hold-key chord via
-  `useHoldKeyMode(momentaryLetterMode('w', …, { resetOnUnmount: true }))` (blur +
-  visibilitychange reset; the only overlay that also strips its rings on
-  unmount). On press, fetches `GET /api/tasks/worktree-modified` and rings each
-  changed file in its task's color via `setNodeWorktreeRing` (walking the shared
-  `mountedNodes`); strips them on release.
+- `useWorktreeHighlight` — the `W` overlay (hold-or-pin). Hold-key chord via
+  `useHoldKeyMode(momentaryLetterMode('w', setHeld))` flips a local `held` flag;
+  the effective state is `held || pinned`. A single effect drives the ring side
+  effects off that effective state: on activation it fetches
+  `GET /api/tasks/worktree-modified` and rings each changed file in its task's
+  color via `setNodeWorktreeRing` (walking the shared `mountedNodes`); the
+  effect's cleanup strips them on deactivation, an `activeFolder` change (while
+  active → re-fetch for the new project), and unmount (this is the only overlay
+  with live scene state to tear down — the cleanup replaces the old
+  `resetOnUnmount`).
 - `useBatchedLinks` — owns the `instancedLinks.ts` controller: creates it once
   after init (so the library's `linkVisibility` accessor is installed),
   subscribes its per-frame sync to the scene frame driver, toggles it on

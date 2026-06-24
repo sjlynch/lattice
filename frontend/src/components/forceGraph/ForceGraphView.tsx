@@ -5,6 +5,7 @@ import { Settings as SettingsIcon } from 'lucide-react';
 import type { GraphNode, ScanResult } from '../../api';
 import { GraphContextMenu } from './GraphContextMenu';
 import { GraphHud } from './GraphHud';
+import { GraphOverlayKey } from './GraphOverlayKey';
 import { GraphSelectionChip } from './GraphSelectionChip';
 import { GraphSettingsPanel } from './GraphSettingsPanel';
 import { GraphTaskModal } from './GraphTaskModal';
@@ -212,6 +213,8 @@ export function ForceGraphView({
     maxDepthRef,
     maxDirDepthRef,
     nodeDepthsRef,
+    pinned,
+    togglePin,
   } = useGraphOverlays({
     activeFolder,
     graphRef,
@@ -289,7 +292,12 @@ export function ForceGraphView({
   // `W`-hold worktree-modified file outline. Both read live task data over
   // their own `/ws/tasks` subscription and draw straight into the scene.
   useAgentOverlay(graphRef, settingsRef, activeFolder);
-  useWorktreeHighlight(graphRef, settingsRef, activeFolder);
+  const { worktreeActive } = useWorktreeHighlight(
+    graphRef,
+    settingsRef,
+    activeFolder,
+    pinned.worktree,
+  );
 
   // Search bar: filename matches (instant, client-side) + file-contents matches
   // (debounced backend pass) both feed the shared `selected` set, so a match
@@ -442,6 +450,21 @@ export function ForceGraphView({
     [setRange],
   );
 
+  // Which overlay views are currently *showing* (held OR pinned), for the
+  // overlay-key chips' lit "active" state. `healthMode` is the App-owned
+  // effective value (already composed in useHealthOverlay); the rest come back
+  // from useGraphOverlays / useWorktreeHighlight already folded with their pins.
+  const overlayActive = useMemo(
+    () => ({
+      health: healthMode,
+      loc: locMode,
+      dead: deadMode,
+      worktree: worktreeActive,
+      labels: labelMode,
+    }),
+    [healthMode, locMode, deadMode, worktreeActive, labelMode],
+  );
+
   // The bottom-anchored counts chip and gear FAB shift up when the
   // timeline is visible so the timeline can claim the entire viewport
   // bottom edge.
@@ -479,6 +502,18 @@ export function ForceGraphView({
         onSearchContentsToggle={toggleSearchContents}
         searchStatus={searchStatus}
       />
+
+      {/* Always-visible key for the hold-key overlays (top-left). Each chip
+          documents a view + shortcut and pins it on click. Gated on loaded data
+          so it never overlaps the top-left scan spinner (loading is true only
+          while data is null). */}
+      {!!data && (
+        <GraphOverlayKey
+          pinned={pinned}
+          active={overlayActive}
+          onTogglePin={togglePin}
+        />
+      )}
 
       {history && history.isRepo && history.commits.length > 0 && (
         <div className="timeline-bar">
