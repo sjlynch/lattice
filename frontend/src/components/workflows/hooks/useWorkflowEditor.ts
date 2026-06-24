@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   createWorkflow as apiCreateWorkflow,
   deleteWorkflow as apiDeleteWorkflow,
@@ -14,8 +14,15 @@ import {
   fromTemplate,
   fromWorkflow,
   localStepId,
+  makeAgentStep,
+  makeControlStep,
   type EditorState,
 } from '../editorState';
+import {
+  clearWorkflowDraft,
+  loadWorkflowDraft,
+  saveWorkflowDraft,
+} from '../workflowDraftStorage';
 import {
   defaultVariables,
   makeVariable,
@@ -51,20 +58,40 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
     }
   }, [workflows, editor.workflowId, editor.dirty]);
 
+  // Restore a never-saved draft once per project, so a reload/close while
+  // mid-edit on a brand-new workflow doesn't lose it. Guarded so it never
+  // stomps an edit already in progress in this session.
+  const restoredFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeFolder || restoredFor.current === activeFolder) return;
+    restoredFor.current = activeFolder;
+    setEditor((cur) => {
+      if (cur.workflowId !== null || cur.steps.length > 0 || cur.name.trim()) {
+        return cur;
+      }
+      return loadWorkflowDraft(activeFolder) ?? cur;
+    });
+  }, [activeFolder]);
+
+  // Debounced persist of the in-progress draft. Only never-saved drafts with
+  // content are stashed (a saved workflow is reloaded from the server, and an
+  // empty draft is noise); see workflowDraftStorage.
+  useEffect(() => {
+    if (!activeFolder) return;
+    const persistable =
+      editor.dirty &&
+      editor.workflowId === null &&
+      (editor.steps.length > 0 || editor.name.trim() !== '');
+    if (!persistable) return;
+    const t = setTimeout(() => saveWorkflowDraft(activeFolder, editor), 500);
+    return () => clearTimeout(t);
+  }, [activeFolder, editor]);
+
   const newBlank = useCallback(() => {
     setEditor({
       workflowId: null,
       name: '',
-      steps: [
-        {
-          id: localStepId(),
-          title: 'Step 1',
-          prompt: '\n\n{{user_instructions}}',
-          mode: 'sequential',
-          harness: 'claude',
-          kind: 'agent',
-        },
-      ],
+      steps: [makeAgentStep({ title: 'Step 1', prompt: '\n\n{{user_instructions}}' })],
       variables: defaultVariables(),
       dirty: true,
     });
@@ -119,6 +146,8 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
       } else {
         const w = await apiCreateWorkflow(activeFolder, name, steps, variables);
         setEditor(fromWorkflow(w));
+        // The never-saved draft is now persisted server-side; drop the stash.
+        clearWorkflowDraft(activeFolder);
         return w;
       }
     } catch (err) {
@@ -128,13 +157,14 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
   }, [activeFolder, editor.workflowId, editor.name, editor.steps, editor.variables, onError]);
 
   const discardEdits = useCallback(() => {
+    clearWorkflowDraft(activeFolder);
     if (!editor.workflowId) {
       setEditor(emptyEditor());
       return;
     }
     const fresh = workflows.find((w) => w.id === editor.workflowId);
     if (fresh) setEditor(fromWorkflow(fresh));
-  }, [editor.workflowId, workflows]);
+  }, [activeFolder, editor.workflowId, workflows]);
 
   const deleteCurrent = useCallback(async () => {
     if (!editor.workflowId) return;
@@ -167,16 +197,12 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
       ...cur,
       steps: [
         ...cur.steps,
-        {
-          id: localStepId(),
+        // Seed the built-in injection point so new steps follow the same
+        // convention as the built-in templates/quick-add prompts.
+        makeAgentStep({
           title: `Step ${cur.steps.length + 1}`,
-          // Seed the built-in injection point so new steps follow the same
-          // convention as the built-in templates/quick-add prompts.
           prompt: '\n\n{{user_instructions}}',
-          mode: 'sequential',
-          harness: 'claude',
-          kind: 'agent',
-        },
+        }),
       ],
       dirty: true,
     }));
@@ -234,17 +260,7 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
     };
     setEditor((cur) => ({
       ...cur,
-      steps: [
-        ...cur.steps,
-        {
-          id: localStepId(),
-          title: titleByKind[kind],
-          prompt: '',
-          mode: 'sequential',
-          harness: 'claude',
-          kind,
-        },
-      ],
+      steps: [...cur.steps, makeControlStep(kind, titleByKind[kind])],
       dirty: true,
     }));
   }, []);
@@ -262,15 +278,8 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
         ...base,
         steps: [
           ...base.steps,
-          {
-            id: localStepId(),
-            title: p.title,
-            // Built-in quick-add prompts end with {{user_instructions}}.
-            prompt: withUserInstructions(p.prompt),
-            mode: 'sequential',
-            harness: 'claude',
-            kind: 'agent',
-          },
+          // Built-in quick-add prompts end with {{user_instructions}}.
+          makeAgentStep({ title: p.title, prompt: withUserInstructions(p.prompt) }),
         ],
         dirty: true,
       };

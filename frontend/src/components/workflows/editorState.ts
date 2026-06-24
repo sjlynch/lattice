@@ -3,7 +3,12 @@
 // alongside the data so unsaved changes are visible in the UI and so
 // runs can persist before executing.
 
-import type { Workflow, WorkflowStep, WorkflowVariable } from '../../api';
+import type {
+  Workflow,
+  WorkflowStep,
+  WorkflowStepKind,
+  WorkflowVariable,
+} from '../../api';
 import type { WorkflowTemplate } from '../../workflowTemplates';
 import {
   defaultVariables,
@@ -31,6 +36,43 @@ export function emptyEditor(): EditorState {
 
 export function localStepId(): string {
   return `step_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+// Single source of truth for a fresh agent step. The editor hand-wrote this
+// literal in four places (newBlank / addStep / addDefaultPromptStep, plus the
+// control variant) — callers pass only what differs (title + prompt); the
+// default mode/harness/kind live here. Output is byte-identical to the old
+// inline literals.
+export function makeAgentStep({
+  title,
+  prompt,
+}: {
+  title: string;
+  prompt: string;
+}): WorkflowStep {
+  return {
+    id: localStepId(),
+    title,
+    prompt,
+    mode: 'sequential',
+    harness: 'claude',
+    kind: 'agent',
+  };
+}
+
+// A headless control-flow step (start/merge/push): no prompt, no real harness.
+export function makeControlStep(
+  kind: WorkflowStepKind,
+  title: string,
+): WorkflowStep {
+  return {
+    id: localStepId(),
+    title,
+    prompt: '',
+    mode: 'sequential',
+    harness: 'claude',
+    kind,
+  };
 }
 
 export function fromTemplate(t: WorkflowTemplate): EditorState {

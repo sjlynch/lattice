@@ -16,16 +16,18 @@ type UseTaskCrudActionsArgs = {
 // over a minimal CRUD surface.
 export function useTaskCrudActions({ activeFolder, showError }: UseTaskCrudActionsArgs) {
   const addTask = useCallback(
-    async (status: TaskStatus, title: string, description?: string) => {
-      if (!activeFolder || !title.trim()) return;
+    async (status: TaskStatus, title: string, description?: string): Promise<boolean> => {
+      if (!activeFolder || !title.trim()) return false;
       try {
         const created = await apiCreateTask(activeFolder, title, description);
         // If we're adding to a non-open lane, immediately update its status.
         if (status !== 'open') {
           await apiUpdateTask(created.id, { status });
         }
+        return true;
       } catch (err) {
         showError((err as Error).message);
+        return false;
       }
     },
     [activeFolder, showError],
@@ -54,11 +56,13 @@ export function useTaskCrudActions({ activeFolder, showError }: UseTaskCrudActio
   );
 
   const deleteTask = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       try {
         await apiDeleteTask(id);
+        return true;
       } catch (err) {
         showError((err as Error).message);
+        return false;
       }
     },
     [showError],

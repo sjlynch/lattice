@@ -5,10 +5,21 @@
   flex: 1;
   min-height: 0;
 }
+/* One-line note explaining the Global vs Per-project distinction, shown under
+   the dialog header. */
+.settings-scope-note {
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--text-tertiary);
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--border);
+  background: #181b21;
+}
 .settings-tabs {
   display: flex;
   align-items: center;
-  gap: 2px;
+  flex-wrap: wrap;
+  gap: 4px 2px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   background: #181b21;
@@ -36,6 +47,33 @@
 .settings-tab.active {
   color: var(--text-primary);
   background: var(--bg-active);
+}
+/* Scope badge — Global (machine-wide) vs Project (active folder). */
+.settings-tab-scope {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 1px 4px;
+  border-radius: var(--radius-pill);
+  color: var(--text-tertiary);
+  background: var(--bg-active);
+}
+.settings-tab-scope.global {
+  color: #c89cff;
+  background: rgba(200, 156, 255, 0.14);
+}
+.settings-tab-scope.project {
+  color: #7fc4ff;
+  background: rgba(106, 169, 255, 0.12);
+}
+/* Unsaved-changes dot on a tab whose drafts differ from what was loaded. */
+.settings-tab-dirty {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
 }
 .settings-tab-body {
   padding: 14px 16px;

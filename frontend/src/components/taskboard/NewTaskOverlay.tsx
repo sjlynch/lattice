@@ -3,17 +3,21 @@ import type { Lane } from './lanes';
 
 // Modal-ish overlay for creating a new task in a specific lane. Cmd/Ctrl+Enter
 // in the description submits; Enter in the title submits; Escape cancels.
+// `onSubmit` may be async (it creates the task); the overlay shows an "Adding…"
+// in-flight state and guards against a double-submit until it resolves. The
+// parent dismisses the overlay on success.
 export function NewTaskOverlay({
   lane,
   onSubmit,
   onCancel,
 }: {
   lane: Lane;
-  onSubmit: (title: string, desc?: string) => void;
+  onSubmit: (title: string, desc?: string) => void | Promise<unknown>;
   onCancel: () => void;
 }) {
   const [title, setTitle] = useState('');
   const [desc, setDesc] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -27,9 +31,16 @@ export function NewTaskOverlay({
     return () => window.removeEventListener('keydown', onKey);
   }, [onCancel]);
 
-  function submit() {
-    if (!title.trim()) return;
-    onSubmit(title, desc || undefined);
+  async function submit() {
+    if (!title.trim() || submitting) return;
+    setSubmitting(true);
+    try {
+      await onSubmit(title, desc || undefined);
+    } finally {
+      // If the create succeeded the parent unmounts this overlay; otherwise the
+      // error toast is shown and the user can retry, so re-enable the button.
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -65,15 +76,16 @@ export function NewTaskOverlay({
           />
         </div>
         <div className="taskboard-newform-actions">
-          <button className="btn-ghost" onClick={onCancel}>
+          <button className="btn-ghost" onClick={onCancel} disabled={submitting}>
             Cancel
           </button>
           <button
             className="btn-primary"
             onClick={submit}
-            disabled={!title.trim()}
+            disabled={!title.trim() || submitting}
           >
-            Add task
+            {submitting && <span className="spinner" />}
+            {submitting ? 'Adding…' : 'Add task'}
           </button>
         </div>
       </div>

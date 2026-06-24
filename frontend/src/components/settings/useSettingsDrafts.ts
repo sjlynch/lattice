@@ -18,6 +18,9 @@ export type SettingsDrafts = {
   setInstrumentClaude: (value: boolean) => void;
   disableMemory: boolean;
   setDisableMemory: (value: boolean) => void;
+  // True when any parent-owned draft differs from its last-loaded value. Feeds
+  // the Terminals tab's dirty dot and the warn-on-close check.
+  dirty: boolean;
 };
 
 export function useSettingsDrafts(
@@ -33,6 +36,9 @@ export function useSettingsDrafts(
   const [instrumentClaude, setInstrumentClaude] = useState(true);
   // Default ON (memory disabled) — absent setting counts as "off".
   const [disableMemory, setDisableMemory] = useState(true);
+  // Last-loaded baselines for the fetched toggles, so we can tell "dirty".
+  const [loadedInstrumentClaude, setLoadedInstrumentClaude] = useState(true);
+  const [loadedDisableMemory, setLoadedDisableMemory] = useState(true);
 
   // Reseed the terminal-default drafts from the latest saved settings each
   // time the dialog opens.
@@ -52,13 +58,24 @@ export function useSettingsDrafts(
     fetchUserSettings(activeFolder)
       .then((s) => {
         if (!cancelled) {
-          setInstrumentClaude(s.instrumentProjectClaudeSessions !== false);
-          setDisableMemory(s.disableClaudeMemory !== false);
+          const instrument = s.instrumentProjectClaudeSessions !== false;
+          const memory = s.disableClaudeMemory !== false;
+          setInstrumentClaude(instrument);
+          setLoadedInstrumentClaude(instrument);
+          setDisableMemory(memory);
+          setLoadedDisableMemory(memory);
         }
       })
       .catch(() => { /* keep current draft */ });
     return () => { cancelled = true; };
   }, [open, activeFolder]);
+
+  const dirty =
+    terminalDefaultHarness !== terminalLaunchSettings.terminalDefaultHarness ||
+    terminalClaudeSkipPermissions !==
+      terminalLaunchSettings.terminalClaudeSkipPermissions ||
+    instrumentClaude !== loadedInstrumentClaude ||
+    disableMemory !== loadedDisableMemory;
 
   return {
     terminalDefaultHarness,
@@ -69,5 +86,6 @@ export function useSettingsDrafts(
     setInstrumentClaude,
     disableMemory,
     setDisableMemory,
+    dirty,
   };
 }

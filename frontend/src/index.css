@@ -11,6 +11,7 @@
 @import './styles/appbar.css';
 @import './styles/sidebar.css';
 @import './styles/modal.css';
+@import './styles/confirm-dialog.css';
 @import './styles/settings.css';
 @import './styles/folder-picker.css';
 

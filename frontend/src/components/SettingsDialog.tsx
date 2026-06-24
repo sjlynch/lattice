@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { TerminalSquare, ScrollText, BarChart3, Cpu, Plug, Server } from 'lucide-react';
 import { Modal } from './Modal';
+import { useConfirm } from './shared/ConfirmDialog';
 import {
   type StartupTerminal,
   type TerminalDefaultHarness,
   type TerminalLaunchSettings,
 } from '../api';
 import {
+  cleanStartupTerminals,
   StartupTerminalsTab,
   type StartupTerminalsTabHandle,
 } from './settings/StartupTerminalsTab';
@@ -41,6 +43,34 @@ type Props = {
 };
 
 type Tab = 'terminals' | 'prompts' | 'metrics' | 'agents' | 'pi' | 'mcp';
+
+// Scope tells the user whether a tab's settings are machine-global (apply to
+// every project on this machine — Agents' max-agents, Pi endpoints/model menu)
+// or per-project (only the active folder). Drives the per-tab scope badge.
+type TabScope = 'global' | 'project';
+
+const TAB_META: {
+  id: Tab;
+  label: string;
+  Icon: typeof TerminalSquare;
+  scope: TabScope;
+}[] = [
+  { id: 'terminals', label: 'Terminals', Icon: TerminalSquare, scope: 'project' },
+  { id: 'prompts', label: 'Agent prompts', Icon: ScrollText, scope: 'project' },
+  { id: 'metrics', label: 'Metrics', Icon: BarChart3, scope: 'project' },
+  { id: 'agents', label: 'Agents', Icon: Cpu, scope: 'global' },
+  { id: 'pi', label: 'Pi', Icon: Server, scope: 'global' },
+  { id: 'mcp', label: 'MCP', Icon: Plug, scope: 'project' },
+];
+
+const EMPTY_DIRTY: Record<Tab, boolean> = {
+  terminals: false,
+  prompts: false,
+  metrics: false,
+  agents: false,
+  pi: false,
+  mcp: false,
+};
 
 const TERMINAL_DEFAULT_OPTIONS: { value: TerminalDefaultHarness; label: string }[] = [
   { value: 'claude', label: 'Claude' },
@@ -200,10 +230,56 @@ export function SettingsDialog({
   const agentsRef = useRef<AgentsTabHandle>(null);
   const piRef = useRef<PiTabHandle>(null);
   const mcpRef = useRef<McpTabHandle>(null);
+  const { confirmUnsaved } = useConfirm();
+  const closingRef = useRef(false);
 
   useEffect(() => {
     if (open) setError(null);
   }, [open, startupTerminals]);
+
+  // Per-tab dirty: a tab is dirty when its patch getter would write something
+  // (returns non-undefined) or, for the parent-owned drafts / startup
+  // terminals, when the draft differs from what was loaded. MCP secrets are
+  // intentionally excluded — they auto-save on their own, outside Save.
+  const computeDirty = useCallback((): Record<Tab, boolean> => {
+    const startupDirty =
+      JSON.stringify(
+        startupTerminalsRef.current?.getCleanedTerminals() ??
+          cleanStartupTerminals(startupTerminals),
+      ) !== JSON.stringify(cleanStartupTerminals(startupTerminals));
+    return {
+      terminals: drafts.dirty || startupDirty,
+      prompts:
+        instructionTemplatesRef.current?.getInstructionTemplateOverridesPatch() !==
+          undefined ||
+        envNotesRef.current?.getWorktreeEnvNotesPatch() !== undefined,
+      metrics:
+        metricsIgnoredExtsRef.current?.getMetricsIgnoredExtsPatch() !== undefined,
+      agents: agentsRef.current?.getMaxConcurrentAgentsPatch() !== undefined,
+      pi:
+        piRef.current?.getPiProvidersPatch() !== undefined ||
+        piRef.current?.getPiModelMenuPatch() !== undefined,
+      mcp: mcpRef.current?.getMcpUserPatch() !== undefined,
+    };
+  }, [drafts.dirty, startupTerminals]);
+
+  // The imperative patch getters aren't reactive, so re-derive the dirty map
+  // after any edit inside the dialog body. The bump (onChange/onClick on the
+  // body) re-renders us; reading the refs in this post-commit effect avoids the
+  // one-tick staleness of reading them during render.
+  const [dirtyByTab, setDirtyByTab] = useState<Record<Tab, boolean>>(EMPTY_DIRTY);
+  const [dirtyTick, setDirtyTick] = useState(0);
+  useEffect(() => {
+    if (!open) {
+      setDirtyByTab(EMPTY_DIRTY);
+      return;
+    }
+    const next = computeDirty();
+    setDirtyByTab((prev) =>
+      TAB_META.every((t) => prev[t.id] === next[t.id]) ? prev : next,
+    );
+  }, [open, dirtyTick, computeDirty]);
+  const bumpDirty = useCallback(() => setDirtyTick((t) => t + 1), []);
 
   const save = async () => {
     if (!activeFolder) return;
@@ -240,55 +316,72 @@ export function SettingsDialog({
     }
   };
 
+  // Every close path (Cancel, Escape, backdrop) routes here. With pending edits
+  // across any tab, ask Save / Discard / Cancel first instead of silently
+  // dropping them. (MCP secrets aren't in the dirty check — they auto-save.)
+  const requestClose = async () => {
+    if (saving || closingRef.current) return;
+    if (!Object.values(computeDirty()).some(Boolean)) {
+      onClose();
+      return;
+    }
+    closingRef.current = true;
+    try {
+      const choice = await confirmUnsaved({
+        message: 'You have unsaved settings changes.',
+      });
+      if (choice === 'cancel') return;
+      if (choice === 'discard') {
+        onClose();
+        return;
+      }
+      // save() closes on success (onClose) and surfaces an error + stays open
+      // on failure.
+      await save();
+    } finally {
+      closingRef.current = false;
+    }
+  };
+
   return (
-    <Modal open={open} onClose={onClose} width={620}>
+    <Modal open={open} onClose={requestClose} width={620}>
       <div className="modal-header">Settings</div>
+      <div className="settings-scope-note">
+        Global settings apply to all projects on this machine; per-project
+        settings affect only the active folder.
+      </div>
       <div className="settings-body">
         <div className="settings-tabs">
-          <button
-            className={`settings-tab ${tab === 'terminals' ? 'active' : ''}`}
-            onClick={() => setTab('terminals')}
-          >
-            <TerminalSquare size={12} />
-            Terminals
-          </button>
-          <button
-            className={`settings-tab ${tab === 'prompts' ? 'active' : ''}`}
-            onClick={() => setTab('prompts')}
-          >
-            <ScrollText size={12} />
-            Agent prompts
-          </button>
-          <button
-            className={`settings-tab ${tab === 'metrics' ? 'active' : ''}`}
-            onClick={() => setTab('metrics')}
-          >
-            <BarChart3 size={12} />
-            Metrics
-          </button>
-          <button
-            className={`settings-tab ${tab === 'agents' ? 'active' : ''}`}
-            onClick={() => setTab('agents')}
-          >
-            <Cpu size={12} />
-            Agents
-          </button>
-          <button
-            className={`settings-tab ${tab === 'pi' ? 'active' : ''}`}
-            onClick={() => setTab('pi')}
-          >
-            <Server size={12} />
-            Pi
-          </button>
-          <button
-            className={`settings-tab ${tab === 'mcp' ? 'active' : ''}`}
-            onClick={() => setTab('mcp')}
-          >
-            <Plug size={12} />
-            MCP
-          </button>
+          {TAB_META.map(({ id, label, Icon, scope }) => (
+            <button
+              key={id}
+              className={`settings-tab ${tab === id ? 'active' : ''}`}
+              onClick={() => setTab(id)}
+              title={
+                scope === 'global'
+                  ? 'Machine-global — applies to all projects'
+                  : 'Per-project — applies to the active folder'
+              }
+            >
+              <Icon size={12} />
+              {label}
+              <span
+                className={`settings-tab-scope ${scope}`}
+                aria-label={scope === 'global' ? 'Global setting' : 'Per-project setting'}
+              >
+                {scope === 'global' ? 'Global' : 'Project'}
+              </span>
+              {dirtyByTab[id] && (
+                <span className="settings-tab-dirty" aria-label="Unsaved changes" />
+              )}
+            </button>
+          ))}
         </div>
-        <div className="settings-tab-body">
+        <div
+          className="settings-tab-body"
+          onChange={bumpDirty}
+          onClick={bumpDirty}
+        >
           {tab === 'terminals' && (
             <>
               <TerminalDefaultSettingsSection
@@ -343,7 +436,7 @@ export function SettingsDialog({
       </div>
       {error && <div className="error-msg" style={{ margin: '0 16px' }}>{error}</div>}
       <div className="modal-footer">
-        <button className="btn-ghost" onClick={onClose} disabled={saving}>
+        <button className="btn-ghost" onClick={requestClose} disabled={saving}>
           Cancel
         </button>
         <button

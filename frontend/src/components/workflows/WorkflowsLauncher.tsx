@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { ListChecks } from 'lucide-react';
 import { FloatingPanel } from '../FloatingPanel';
 import { ErrorToast } from '../shared/ErrorToast';
+import { useConfirm } from '../shared/ConfirmDialog';
 import { WorkflowEditorPanel } from './WorkflowEditorPanel';
 import { WorkflowRecentFailureChip } from './WorkflowRecentFailureChip';
 import { WorkflowRunChip } from './WorkflowRunChip';
@@ -21,6 +22,38 @@ type Props = {
 export function WorkflowsLauncher({ activeFolder, scanResult }: Props) {
   const [open, setOpen] = useState(false);
   const manager = useWorkflowManager(activeFolder, scanResult);
+  const { confirmUnsaved } = useConfirm();
+  // Prevents a second close attempt (e.g. a stray Escape) from stacking another
+  // confirm while one is already in flight.
+  const closingRef = useRef(false);
+
+  // The panel's titlebar ✕ and Escape both route here. If the editor has
+  // unsaved edits, ask Save / Discard / Cancel before actually closing.
+  const requestClose = useCallback(async () => {
+    if (closingRef.current) return;
+    if (!manager.editor.dirty) {
+      setOpen(false);
+      return;
+    }
+    closingRef.current = true;
+    try {
+      const choice = await confirmUnsaved({
+        message: 'You have unsaved changes to this workflow.',
+      });
+      if (choice === 'cancel') return;
+      if (choice === 'save') {
+        const saved = await manager.actions.save();
+        if (!saved) return; // save failed — keep the panel open (error toast shown)
+        setOpen(false);
+        return;
+      }
+      // discard
+      manager.actions.discardEdits();
+      setOpen(false);
+    } finally {
+      closingRef.current = false;
+    }
+  }, [manager.editor.dirty, manager.actions, confirmUnsaved]);
 
   return (
     <>
@@ -51,7 +84,7 @@ export function WorkflowsLauncher({ activeFolder, scanResult }: Props) {
 
       <FloatingPanel
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={requestClose}
         title={
           <>
             <ListChecks size={13} />

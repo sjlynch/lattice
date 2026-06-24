@@ -1,0 +1,28 @@
+/* Shared confirmation dialog (components/shared/ConfirmDialog.tsx). Reuses
+   Modal's backdrop + header/body/footer chrome; this file adds the message
+   body and the danger-styled primary button. Styled after the error toast. */
+
+.confirm-dialog-message {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Danger primary — the destructive confirm's accept button. Mirrors
+   .btn-primary's shape with the danger fill. */
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--danger);
+  color: #0d0e10;
+  font-weight: 500;
+  font-size: 12px;
+  transition: filter 0.12s ease;
+}
+.btn-danger:hover { filter: brightness(1.08); }
+.btn-danger:disabled { opacity: 0.45; cursor: not-allowed; }

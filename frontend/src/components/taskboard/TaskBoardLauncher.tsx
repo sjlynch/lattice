@@ -329,9 +329,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
             <NewTaskOverlay
               lane={LANE_BY_ID[addingTo]}
               onCancel={() => setAddingTo(null)}
-              onSubmit={(title, desc) => {
-                addTask(addingTo, title, desc);
-                setAddingTo(null);
+              onSubmit={async (title, desc) => {
+                if (await addTask(addingTo, title, desc)) setAddingTo(null);
               }}
             />
           )}
@@ -340,9 +339,8 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
               task={viewing}
               onClose={() => setViewing(null)}
               onMove={(status) => moveTask(viewing.id, status)}
-              onDelete={() => {
-                deleteTask(viewing.id);
-                setViewing(null);
+              onDelete={async () => {
+                if (await deleteTask(viewing.id)) setViewing(null);
               }}
               onSave={(updates) => editTask(viewing.id, updates)}
               onRun={

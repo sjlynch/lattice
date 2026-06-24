@@ -1,10 +1,11 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Play, Trash2, X } from 'lucide-react';
 import type { Task, TaskStatus } from '../../api';
 import { LANE_BY_ID } from './lanes';
 import { getApplicableMoveTargets } from './moveTargets';
 import { TaskDetailMeta } from './TaskDetailMeta';
 import { useTaskDetailEdit } from './hooks/useTaskDetailEdit';
+import { useConfirm } from '../shared/ConfirmDialog';
 
 // Detail overlay for a single task. Title and description are always editable;
 // the Save button enables once a field is dirty. Lane-appropriate Move/Run
@@ -21,14 +22,32 @@ export function TaskDetailOverlay({
   task: Task;
   onClose: () => void;
   onMove: (status: TaskStatus) => void;
-  onDelete: () => void;
+  onDelete: () => void | Promise<unknown>;
   onSave: (updates: { title?: string; description?: string }) => void;
   onRun?: () => void;
 }) {
   const { editTitle, setEditTitle, editDesc, setEditDesc, dirty, prepareSave } =
     useTaskDetailEdit(task);
+  const { confirm } = useConfirm();
+  const [deleting, setDeleting] = useState(false);
 
   const lane = LANE_BY_ID[task.status];
+
+  async function handleDelete() {
+    if (deleting) return;
+    const ok = await confirm({
+      title: 'Delete task',
+      message: 'Delete this task? This cannot be undone.',
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await onDelete();
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   function saveEdit() {
     const updates = prepareSave();
@@ -99,11 +118,12 @@ export function TaskDetailOverlay({
         <div className="taskboard-detail-actions">
           <button
             className="btn-ghost"
-            onClick={onDelete}
+            onClick={handleDelete}
+            disabled={deleting}
             style={{ color: 'var(--danger)' }}
           >
             <Trash2 size={12} style={{ marginRight: 4 }} />
-            Delete
+            {deleting ? 'Deleting…' : 'Delete'}
           </button>
           <span style={{ flex: 1 }} />
           {moveTargets.map((target) => (

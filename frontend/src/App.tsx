@@ -4,6 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { ForceGraphView } from './components/ForceGraphView';
 import { Legend } from './components/Legend';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { ConfirmProvider } from './components/shared/ConfirmDialog';
 import { TerminalsProvider } from './TerminalsContext';
 import { useActiveFolder } from './hooks/useActiveFolder';
 import { useHiddenExtensions } from './hooks/useHiddenExtensions';
@@ -72,7 +73,8 @@ function App() {
   }, [activeFolder]);
 
   return (
-    <TerminalsProvider>
+    <ConfirmProvider>
+      <TerminalsProvider>
       <div className="app-shell">
         <TopAppBar
           activeFolder={activeFolder}
@@ -130,7 +132,8 @@ function App() {
           </main>
         </div>
       </div>
-    </TerminalsProvider>
+      </TerminalsProvider>
+    </ConfirmProvider>
   );
 }
 

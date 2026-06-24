@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { GitMerge, Play, Plus, Square, Trash2, UploadCloud } from 'lucide-react';
 import { DEFAULT_PROMPTS } from './defaultPrompts';
 import { promptsWithProjectVariants } from './projectPromptVariants';
@@ -7,6 +7,7 @@ import { StepRow } from './StepRow';
 import { WorkflowEditorEmptyState } from './WorkflowEditorEmptyState';
 import { WorkflowRunStrip } from './WorkflowRunStrip';
 import { WorkflowVariablesPanel } from './WorkflowVariablesPanel';
+import { useConfirm } from '../shared/ConfirmDialog';
 
 type Props = {
   manager: WorkflowManager;
@@ -40,6 +41,43 @@ export function WorkflowEditorPanel({ manager }: Props) {
     () => new Set(editor.variables.map((v) => v.name)),
     [editor.variables],
   );
+
+  const { confirm } = useConfirm();
+  const [deletingWorkflow, setDeletingWorkflow] = useState(false);
+
+  // Depend on the individual (stable) action callbacks, not the `actions`
+  // object — that object is rebuilt each render, and a fresh onRemove identity
+  // would re-render every memoized StepRow on each keystroke.
+  const { removeStep, deleteCurrent } = actions;
+
+  // Deleting a step permanently drops its prompt body — confirm first.
+  const handleRemoveStep = useCallback(
+    async (index: number) => {
+      const ok = await confirm({
+        title: 'Delete step',
+        message: 'Delete this step? Its prompt will be lost.',
+        confirmLabel: 'Delete',
+      });
+      if (ok) removeStep(index);
+    },
+    [confirm, removeStep],
+  );
+
+  const handleDeleteWorkflow = useCallback(async () => {
+    if (deletingWorkflow) return;
+    const ok = await confirm({
+      title: 'Delete workflow',
+      message: 'Delete this workflow? This cannot be undone.',
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    setDeletingWorkflow(true);
+    try {
+      await deleteCurrent();
+    } finally {
+      setDeletingWorkflow(false);
+    }
+  }, [confirm, deleteCurrent, deletingWorkflow]);
 
   const quickAddPrompts = (
     <div className="workflows-default-prompts">
@@ -137,7 +175,7 @@ export function WorkflowEditorPanel({ manager }: Props) {
                   piMenu={piMenu}
                   definedNames={definedNames}
                   onChange={actions.patchStep}
-                  onRemove={actions.removeStep}
+                  onRemove={handleRemoveStep}
                   onReorder={actions.reorderSteps}
                   onToggleCollapse={collapsedSteps.toggleCollapsed}
                   onCustomize={actions.customizeStepPrompt}
@@ -154,10 +192,11 @@ export function WorkflowEditorPanel({ manager }: Props) {
             {editor.workflowId && (
               <button
                 className="btn-ghost"
-                onClick={() => void actions.deleteCurrent()}
+                onClick={() => void handleDeleteWorkflow()}
+                disabled={deletingWorkflow}
                 style={{ color: 'var(--danger)' }}
               >
-                <Trash2 size={12} /> Delete
+                <Trash2 size={12} /> {deletingWorkflow ? 'Deleting…' : 'Delete'}
               </button>
             )}
             <span style={{ flex: 1 }} />
