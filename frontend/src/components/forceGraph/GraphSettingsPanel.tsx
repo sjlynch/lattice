@@ -68,6 +68,17 @@ const LINK_WIDTH_ROW: SliderRow = {
   format: (v) => (v === 0 ? 'flat lines' : `${v.toFixed(1)} (tubes)`),
 };
 
+// Renderer pixel-ratio cap. The big lever when the browser is software-rendering
+// (no GPU hardware acceleration) — lower it to render fewer pixels per frame.
+const RENDER_SCALE_ROW: SliderRow = {
+  key: 'pixelRatio',
+  label: 'Render scale',
+  min: 0.25,
+  max: 2,
+  step: 0.05,
+  format: (v) => `${v.toFixed(2)}×${v < 1 ? ' (faster)' : ''}`,
+};
+
 const REPULSION_MODES: { value: RepulsionMode; label: string; hint: string }[] = [
   { value: 'nbody', label: 'N-body', hint: 'd3 forceManyBody (global, default)' },
   { value: 'local', label: 'Local (fast)', hint: 'O(N) tree-aware repulsion' },
@@ -177,6 +188,9 @@ export const GraphSettingsPanel = memo(function GraphSettingsPanel({
         </div>
       </div>
       {settings.repulsionMode === 'nbody' && renderRow(THETA_ROW)}
+
+      <div className="graph-settings-section-title">Rendering</div>
+      {renderRow(RENDER_SCALE_ROW)}
 
       <div className="graph-settings-row">
         <div className="graph-settings-label">

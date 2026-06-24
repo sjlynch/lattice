@@ -320,10 +320,14 @@ asking for fixes/reviews:
   tree-aware `localRepulsionForce`), `linkWidth` (0 = flat lines instead of
   lit cylinders), and `batchedLinks` (render all links as one `LineSegments` —
   see `instancedLinks.ts`), and `batchedNodes` (render the base node shapes as a
-  few instanced meshes — see `instancedNodes.ts`). The dominant per-*tick* layout
-  CPU is `forceManyBody` (charge/repulsion fields target it); the dominant *orbit*
-  CPU is N+E draw calls (`batchedLinks` targets the E half, `batchedNodes` the N
-  half). The two are separate regimes.
+  few instanced meshes — see `instancedNodes.ts`), and `pixelRatio` ("Render
+  scale" — the WebGL drawing-buffer cap, `min(devicePixelRatio, pixelRatio)`;
+  default 1.5). The dominant per-*tick* layout CPU is `forceManyBody`
+  (charge/repulsion fields target it); the dominant *orbit* CPU is N+E draw calls
+  (`batchedLinks` targets the E half, `batchedNodes` the N half) **plus per-frame
+  fill** (`pixelRatio` targets that — the lever when the browser is
+  software-rendering, e.g. no GPU hardware acceleration, where every canvas pixel
+  is CPU-rasterized). The three are separate regimes.
 - `localRepulsionForce.ts` — `forceLocalRepulsion()`: an O(N) linked-cell grid
   repulsion (X/Z plane only; cell size = interaction radius) that drop-in
   replaces d3's `forceManyBody` for the `charge` force when `repulsionMode ===
@@ -550,6 +554,13 @@ Three useEffects (inside the overlay sub-hooks) react to settings changes:
   `graph.linkWidth()` (rebuilds link objects) + `wakeForRefresh()` to paint;
   skipped on mount / empty graph (init already applies it). No reheat. Inert
   while `batchedLinks` is on (batched lines are always flat).
+- Render scale (`pixelRatio`): render-only, its own guarded effect — calls
+  `applyRenderPixelRatio` (`sceneSetup.ts`: `setPixelRatio` + re-issue the
+  current CSS size so the drawing buffer actually resizes) + `wakeForRefresh()`.
+  Skipped on mount (init's `configureRenderer` already applied it) and on a
+  no-op change. No reheat; CSS size / camera aspect unchanged, only the backing
+  resolution. Effective ratio is clamped to `[0.25, 4]` and never exceeds the
+  device ratio.
 - Batched links (`batchedLinks`): not a settings *effect* — `useBatchedLinks`
   owns it. Toggling on swaps `linkThreeObject` for empty objects + draws one
   `LineSegments`; off restores the default per-link lines. No reheat; the

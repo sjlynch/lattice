@@ -3,6 +3,7 @@ import type { ForceGraph3DInstance } from '3d-force-graph';
 import { loadSettings, type GraphSettings } from '../graphSettings';
 import { getIdleController } from '../idleController';
 import { forceLocalRepulsion, type LocalRepulsionForce } from '../localRepulsionForce';
+import { applyRenderPixelRatio } from '../sceneSetup';
 import { clearLabelsAndRefresh } from './refresh';
 
 // The cell size (== interaction radius) of the local repulsion force is derived
@@ -200,6 +201,22 @@ export function useGraphSettings(
     settings.repulsionMode,
     graphRef,
   ]);
+
+  // Render scale (pixelRatio): re-size the WebGL drawing buffer to the new cap.
+  // Guarded like the other render-only effects — skip the initial mount (init's
+  // `configureRenderer` already applied it) and re-apply only on an actual
+  // change. `wakeForRefresh` paints a few frames so the resized buffer shows
+  // even on an otherwise-settled graph.
+  const appliedPixelRatioRef = useRef(settings.pixelRatio);
+  useEffect(() => {
+    const prev = appliedPixelRatioRef.current;
+    const changed = prev !== settings.pixelRatio;
+    appliedPixelRatioRef.current = settings.pixelRatio;
+    const g = graphRef.current;
+    if (!changed || !g) return;
+    applyRenderPixelRatio(g, settings.pixelRatio);
+    getIdleController(g)?.wakeForRefresh();
+  }, [settings.pixelRatio, graphRef]);
 
   // Link width is a render-only prop (no physics reheat). Changing it rebuilds
   // the link objects, so wake the loop a few frames to paint them. Guarded like

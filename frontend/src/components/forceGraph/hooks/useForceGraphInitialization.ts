@@ -90,7 +90,7 @@ export function useForceGraphInitialization(
     // controls' pointerup handler so a right-click on a node can't crash the
     // library's drag→camera handoff.
     guardNodeRightClickCrash(graph);
-    configureRenderer(graph);
+    configureRenderer(graph, nodeRefs.settingsRef.current.pixelRatio);
     const teardownResize = createResizeObserver(graph, container);
 
     // Render-on-demand: 3d-force-graph runs a perpetual RAF render loop by

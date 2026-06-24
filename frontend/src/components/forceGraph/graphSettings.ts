@@ -50,6 +50,15 @@ export type GraphSettings = {
   // recolor overlays (health/loc/dead) fall back to the per-node sprite path.
   // Default-on. See `instancedNodes.ts`.
   batchedNodes: boolean;
+  // Renderer pixel-ratio cap ("Render scale"). The WebGL drawing buffer is sized
+  // to `min(devicePixelRatio, pixelRatio)` — so values below the device ratio
+  // render fewer pixels per frame (softer, but a large fill-rate saving). The big
+  // lever for machines where the browser falls back to SOFTWARE rendering (no GPU
+  // hardware acceleration — common on locked-down business laptops, RDP sessions,
+  // or a blocklisted driver): every canvas pixel is rasterized/composited on the
+  // CPU there, so halving the scale ≈ 4× cheaper frames. Default 1.5 preserves
+  // the historical cap. Applied in `sceneSetup.ts`.
+  pixelRatio: number;
 };
 
 // Defaults: file/dir node sizes are 2× the historical baseline (5.5 / 7) so
@@ -75,6 +84,7 @@ export const DEFAULT_SETTINGS: GraphSettings = {
   // per-node sprite (see nodeObjectFactory / instancedNodes).
   batchedLinks: true,
   batchedNodes: true,
+  pixelRatio: 1.5,
 };
 
 export function loadSettings(project: string): GraphSettings {

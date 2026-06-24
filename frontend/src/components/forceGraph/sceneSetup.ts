@@ -1,3 +1,4 @@
+import { Vector2 } from 'three';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 
 // Camera can swing from straight overhead all the way down to ~45° below
@@ -11,19 +12,48 @@ const MAX_POLAR_ANGLE = Math.PI * 0.75;
 // thrashing the GPU every pixel.
 const RESIZE_DEBOUNCE_MS = 150;
 
-// Cap WebGL's pixel ratio. On 4K / HiDPI displays the default devicePixelRatio
-// can be 2+, which makes the fragment shader 4× more expensive for no visible
-// gain on this kind of sprite-heavy scene.
-const MAX_PIXEL_RATIO = 1.5;
+// Hard bounds on the user-facing "Render scale" (`pixelRatio`) setting, so a
+// corrupt persisted value can't size the drawing buffer to something absurd.
+const MIN_PIXEL_RATIO = 0.25;
+const MAX_PIXEL_RATIO = 4;
+
+// Effective WebGL pixel ratio = the user's cap, clamped, then never above the
+// device's own ratio (rendering MORE pixels than the display has buys nothing
+// for this sprite-heavy scene). Values below the device ratio render fewer
+// pixels per frame — the fill-rate lever for software-rendering / weak-GPU
+// machines (see `graphSettings.pixelRatio`).
+function effectivePixelRatio(pixelRatio: number): number {
+  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+  const cap = Math.max(MIN_PIXEL_RATIO, Math.min(MAX_PIXEL_RATIO, pixelRatio));
+  return Math.min(dpr, cap);
+}
 
 // Tighten Three.js' WebGLRenderer so a still scene costs less per frame.
-// Called once after `new ForceGraph3D(...)`. Safe to call again — every
-// setter is idempotent.
-export function configureRenderer(graph: ForceGraph3DInstance) {
+// Called once after `new ForceGraph3D(...)`; the resize observer's `setSize`
+// (installed right after) applies the ratio to the drawing buffer. Idempotent.
+export function configureRenderer(
+  graph: ForceGraph3DInstance,
+  pixelRatio: number,
+) {
   const renderer = graph.renderer();
   if (!renderer) return;
-  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-  renderer.setPixelRatio(Math.min(dpr, MAX_PIXEL_RATIO));
+  renderer.setPixelRatio(effectivePixelRatio(pixelRatio));
+}
+
+// Re-apply the pixel ratio after the renderer already exists (the "Render scale"
+// slider moved). `setPixelRatio` alone does NOT resize the existing drawing
+// buffer, so re-issue the current CSS size to make the buffer pick up the new
+// ratio. CSS size is unchanged (camera aspect untouched); only the backing
+// resolution changes.
+export function applyRenderPixelRatio(
+  graph: ForceGraph3DInstance,
+  pixelRatio: number,
+) {
+  const renderer = graph.renderer();
+  if (!renderer) return;
+  renderer.setPixelRatio(effectivePixelRatio(pixelRatio));
+  const size = renderer.getSize(new Vector2());
+  renderer.setSize(size.x, size.y, false);
 }
 
 // Locks the world up vector and clamps OrbitControls so the camera never
