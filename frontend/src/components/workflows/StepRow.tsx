@@ -22,6 +22,7 @@ import {
   encodeHarnessValue,
   harnessLabel,
   normalizeAgentHarness,
+  selectedOptionTitle,
   type AgentHarness,
 } from '../../harnesses';
 import {
@@ -80,18 +81,19 @@ function StepHarnessSelect({
   const showHarnessSelect = harnessOptions.length > 1 || selectedHarness !== 'claude';
   if (!showHarnessSelect) return null;
 
+  const value = encodeHarnessValue(selectedHarness, selectedPiModel);
   return (
     <select
       className="workflows-step-harness"
-      value={encodeHarnessValue(selectedHarness, selectedPiModel)}
+      value={value}
       onChange={(e) => {
         const sel = decodeHarnessValue(e.target.value);
         onChange(normalizeAgentHarness(sel.harness), sel.piModel);
       }}
-      title="Agent harness (and Pi model) for this workflow step"
+      title={`Agent harness for this workflow step: ${selectedOptionTitle(harnessOptions, value)}`}
     >
       {harnessOptions.map((option) => (
-        <option key={option.value} value={option.value}>
+        <option key={option.value} value={option.value} title={option.title}>
           {option.label}
         </option>
       ))}

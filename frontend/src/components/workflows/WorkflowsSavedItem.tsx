@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import { Play, Plus, Square } from 'lucide-react';
 import type { Workflow, WorkflowRun, WorkflowRunHarnessOverride } from '../../api';
-import type { HarnessOption } from '../../harnesses';
+import { selectedOptionTitle, type HarnessOption } from '../../harnesses';
 import {
   parseWorkflowRunOverride,
   serializeWorkflowRunOverride,
@@ -85,11 +85,14 @@ export const WorkflowsSavedItem = memo(function WorkflowsSavedItem({
             const sel = parseWorkflowRunOverride(event.target.value);
             onSetHarnessOverride(workflow.id, sel.harness, sel.piModel);
           }}
-          title="Run override (applies to the next queued/run copy): Default uses each step's harness/model"
+          title={`Run override: ${selectedOptionTitle(
+            harnessOptions,
+            serializeWorkflowRunOverride(harnessOverride, piModelOverride),
+          )} (applies to the next queued/run copy; Default uses each step's harness/model)`}
           aria-label={`Run override for ${workflow.name}`}
         >
           {harnessOptions.map((option) => (
-            <option key={option.value} value={option.value}>
+            <option key={option.value} value={option.value} title={option.title}>
               {option.label}
             </option>
           ))}

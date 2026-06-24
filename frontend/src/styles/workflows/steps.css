@@ -56,9 +56,12 @@
   padding: 3px 6px;
 }
 .workflows-step-harness {
-  min-width: 74px;
-  /* Truncate long "Pi — <model>" labels on the closed control. */
-  max-width: 170px;
+  /* Size to content within a sane cap. A very long "Pi — <model>" label still
+     ellipsis-clips on the closed control, but its full `provider/model` is in
+     the select's (and each option's) title tooltip, and the open option list
+     shows the full label — so the value is never truly hidden. */
+  min-width: 90px;
+  max-width: 210px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
