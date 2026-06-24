@@ -18,6 +18,8 @@ export type SettingsDrafts = {
   setInstrumentClaude: (value: boolean) => void;
   disableMemory: boolean;
   setDisableMemory: (value: boolean) => void;
+  qaTerminalAutoClose: boolean;
+  setQaTerminalAutoClose: (value: boolean) => void;
 };
 
 export function useSettingsDrafts(
@@ -33,6 +35,8 @@ export function useSettingsDrafts(
   const [instrumentClaude, setInstrumentClaude] = useState(true);
   // Default ON (memory disabled) — absent setting counts as "off".
   const [disableMemory, setDisableMemory] = useState(true);
+  // Default OFF (terminal stays open) — only an explicit `true` auto-closes.
+  const [qaTerminalAutoClose, setQaTerminalAutoClose] = useState(false);
 
   // Reseed the terminal-default drafts from the latest saved settings each
   // time the dialog opens.
@@ -54,6 +58,7 @@ export function useSettingsDrafts(
         if (!cancelled) {
           setInstrumentClaude(s.instrumentProjectClaudeSessions !== false);
           setDisableMemory(s.disableClaudeMemory !== false);
+          setQaTerminalAutoClose(s.qaTerminalAutoClose === true);
         }
       })
       .catch(() => { /* keep current draft */ });
@@ -69,5 +74,7 @@ export function useSettingsDrafts(
     setInstrumentClaude,
     disableMemory,
     setDisableMemory,
+    qaTerminalAutoClose,
+    setQaTerminalAutoClose,
   };
 }

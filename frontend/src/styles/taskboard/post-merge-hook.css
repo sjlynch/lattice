@@ -185,8 +185,10 @@
   border-radius: 5px;
   padding: 3px 6px;
   font-size: 11px;
-  /* Truncate long "Pi — <model>" labels on the closed control. */
-  max-width: 200px;
+  /* Size to content up to a sane cap; a long "Pi — <model>" label ellipsis-clips
+     on the closed control, with the full `provider/model` in the select/option
+     title tooltip and the open option list showing the full label. */
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
