@@ -94,15 +94,18 @@ asking for fixes/reviews:
 - `ForceGraphView.tsx` — coordinator. Holds `selected`/`hoverNode`/`showSettings`,
   threads refs through `useGraphOverlays` + `useForceGraphInitialization`, and
   composes the small `Graph*` overlay components below. Each remaining
-  `useEffect` is one concern: selection-refresh, Escape key, counts memo,
-  pointer-drag tracking. **Hover is gated off while a pointer is dragging**
-  (`pointerDraggingRef`, set by a pointerdown-on-canvas / window-pointerup
-  effect): the library raycasts hover every render frame, so a drag-rotate
-  otherwise fires `onHover` continuously and each hover-in does a synchronous
-  `flushSync(setHoverNode)` + a HealthTooltip mount/unmount → per-frame React
-  commit + Layerize → the rotate stutter. The gesture clears `hoverNode` at drag
-  start (hides any open tooltip) and the library re-fires hover on the first
-  move after release. There's nothing to read mid-rotate, so this is free.
+  `useEffect` is one concern: selection-refresh, Escape key, counts memo; the
+  hover debounce and pointer-drag tracking now live in their own hooks
+  (`useHoverNodeDebounce` / `useCanvasDragTracking`). **Hover is gated off while
+  a pointer is dragging** (`pointerDraggingRef`, owned by the coordinator, set by
+  `useCanvasDragTracking`'s pointerdown-on-canvas / window-pointerup effect and
+  read by `useHoverNodeDebounce`): the library raycasts hover every render frame,
+  so a drag-rotate otherwise fires `onHover` continuously and each hover-in does a
+  synchronous `flushSync(setHoverNode)` + a HealthTooltip mount/unmount →
+  per-frame React commit + Layerize → the rotate stutter. The gesture clears
+  `hoverNode` at drag start (via the debounce hook's `cancelPendingHoverClear`,
+  hiding any open tooltip) and the library re-fires hover on the first move after
+  release. There's nothing to read mid-rotate, so this is free.
 - `nodeObjectFactory.ts` — `buildNodeObject(node, refs)` + `nativeNodeLabel(node)`.
   The decision tree for ghost vs health vs LOC vs dead-code vs base sprite
   (+ change-ring and selection-halo, both attached as sibling children of the
@@ -514,6 +517,17 @@ asking for fixes/reviews:
   dragstart level (`__initialPos.y`), undoing the library's `fy = dragY` so a
   drag only slides within the node's horizontal plane; neighbours keep their own
   (deeper) `fy`, so the physics-follow moves them in X/Z only.
+- `useHoverNodeDebounce` — owns the file-hover tooltip state + the
+  null-transition debounce (`NULL_HOVER_DEBOUNCE_MS`) that stops the tooltip
+  flickering out between adjacent label hitboxes, plus the synchronous
+  `flushSync` hover-in commit. Reads the coordinator's `pointerDraggingRef` to
+  ignore hover during a drag, and exposes `cancelPendingHoverClear` (cancel the
+  pending clear + hide the tooltip) for the drag tracker to call at drag start.
+- `useCanvasDragTracking` — the pointerdown-on-canvas / window-pointerup(+cancel)
+  effect that drives `pointerDraggingRef` and suspends 3d-force-graph's pointer
+  interaction (`enablePointerInteraction(false)`) for the duration of a drag,
+  re-enabling on release (and on mid-drag unmount). Calls the supplied
+  `onDragStart` (the debounce hook's `cancelPendingHoverClear`) at drag start.
 - `useNodeContextMenu` / `useBoxSelect` / `useRefMirror` /
   `refresh.ts` — small focused helpers consumed directly by the coordinator.
 - `hooks/boxSelectGeometry.ts` — pure rectangle/projection hit-testing helpers
