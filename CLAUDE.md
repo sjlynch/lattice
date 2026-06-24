@@ -187,10 +187,15 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
   index free among active tasks) mapped through a golden-angle palette, so
   30–80 concurrent agents stay maximally distinct and colors never
   reshuffle when a sibling finishes.
-- **Graph overlays (hold-key).** Momentary recolors of the file graph, each on
-  the same chord pattern (keyup/blur/visibilitychange reset): **`H`** code
+- **Graph overlays (hold-key, or pin).** Momentary recolors of the file graph,
+  each on the same chord pattern (keyup/blur/visibilitychange reset): **`H`** code
   health, **`Z`** lines of code, **`D`** dead code, **`W`** worktree-modified
-  files, **`Alt`** name labels. The **`D`** dead-code view colors each file by
+  files, **`Alt`** name labels. An always-visible **overlay-key** (top-left,
+  `frontend/src/components/forceGraph/GraphOverlayKey.tsx`) lists all five as
+  toggle chips with their shortcuts — **clicking a chip pins that view** so it
+  latches on without holding the key (`hooks/useOverlayPins.ts`; each overlay
+  hook composes `held || pinned`), making the hidden Z/D/W/Alt views
+  discoverable. The **`D`** dead-code view colors each file by
   reachability from detected entry points — green = reachable, red =
   dead/orphaned, grey = entry point or uncertain (asset / unsupported language /
   dynamic-only). Classification is computed in `backend/src/health/crossFile/`

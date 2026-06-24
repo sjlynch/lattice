@@ -90,6 +90,25 @@
   padding: 8px 12px;
   border-top: 1px solid var(--border);
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 6px;
+}
+/* Non-interactive "Currently: <Lane>" chip sitting next to the Move buttons so
+   the current lane is unambiguous before reasoning about where a move sends the
+   task. Colored dot + lane-tinted label mirror the lane header. */
+.taskboard-detail-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  margin-right: 2px;
+}
+.taskboard-detail-current-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex: 0 0 auto;
 }

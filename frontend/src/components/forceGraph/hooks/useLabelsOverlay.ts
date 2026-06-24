@@ -1,12 +1,25 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import type { ScanResult } from '../../../api';
-import { depthFor, labelsRegistry } from '../labelsOverlay';
+import { depthFor, labelsRegistry, LABEL_REPULSION_BASE } from '../labelsOverlay';
 import { applyLabelsToGraph } from '../labelSync';
 import { startLabelRepulsion } from '../labelRepulsionFrames';
 import { getIdleController } from '../idleController';
 import type { GraphSettings } from '../graphSettings';
 import { useHoldKeyMode } from './useHoldKeyMode';
+
+// FNV-1a (32-bit) hash constants for `depthMapStructuralKey` below: the standard
+// offset basis (seed) and prime. `FNV_SEPARATOR` is the delimiter byte mixed in
+// between hashed entries so e.g. ['ab','c'] and ['a','bc'] can't collide; its
+// value (0x2f, '/') is arbitrary — only that it's a consistent separator matters.
+const FNV_OFFSET_BASIS = 0x811c9dc5;
+const FNV_PRIME = 0x01000193;
+const FNV_SEPARATOR = 0x2f;
+
+// Alt+wheel deltaY accumulated past this threshold bumps the depth band one
+// step. Trackpads fire many small-delta events per swipe, so accumulating to a
+// threshold advances one level per gesture instead of racing through every band.
+const WHEEL_DEPTH_STEP = 50;
 
 // Cheap structural fingerprint of the inputs the Alt-label depth map depends on:
 // the scan root plus the node-id set (a metric-only health/LOC update keeps both
@@ -19,13 +32,13 @@ function depthMapStructuralKey(data: ScanResult): string {
   // FNV-1a rolling hash over the root then every node id, with a separator byte
   // mixed in between entries (so ['ab','c'] and ['a','bc'] can't collide). No
   // substring allocation, no Map build — unlike the depth recompute it guards.
-  let h = 0x811c9dc5;
+  let h = FNV_OFFSET_BASIS;
   const mix = (s: string) => {
     for (let i = 0; i < s.length; i++) {
       h = (h ^ s.charCodeAt(i)) >>> 0;
-      h = (h * 0x01000193) >>> 0;
+      h = (h * FNV_PRIME) >>> 0;
     }
-    h = ((h ^ 0x2f) * 0x01000193) >>> 0;
+    h = ((h ^ FNV_SEPARATOR) * FNV_PRIME) >>> 0;
   };
   mix(data.root);
   for (const n of data.nodes) mix(n.id);
@@ -33,13 +46,16 @@ function depthMapStructuralKey(data: ScanResult): string {
   return `${data.nodes.length}:${h >>> 0}`;
 }
 
-// Labels overlay: active while the user holds Alt. Shows the name of
+// Labels overlay: active while the user holds Alt OR while the Labels view is
+// pinned (the overlay-key chip latches the same state). Shows the name of
 // every node at `labelLevel` (path depth from the scan root); alt+wheel
 // scrolls through depths so the user can read one band at a time.
 //
 // Track Alt as a chord-style modifier: keydown enables labels mode,
 // keyup/blur disables. Alt+wheel cycles the visible depth band instead
-// of zooming the camera.
+// of zooming the camera. The Shift sub-gate and alt+wheel depth scroll only
+// apply while Alt is physically held; a pin shows directory names at the
+// current depth (hold Alt to scroll depths / reveal file labels).
 export function useLabelsOverlay(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   containerRef: MutableRefObject<HTMLDivElement | null>,
@@ -48,8 +64,11 @@ export function useLabelsOverlay(
   // The user's current node selection. When non-empty, holding Alt shows the
   // labels of exactly these nodes and no others (depth band + Shift ignored).
   selected: Set<string>,
+  pinned: boolean,
 ) {
-  const [labelMode, setLabelMode] = useState(false);
+  // `labelHeld` tracks just the Alt key; the effective mode is held OR pinned.
+  const [labelHeld, setLabelHeld] = useState(false);
+  const labelMode = labelHeld || pinned;
   const labelModeRef = useRef(false);
   // Whether Shift is also held while Alt is down — gates file-node labels.
   // Alt alone shows only directory names.
@@ -95,7 +114,7 @@ export function useLabelsOverlay(
         // Browsers focus the menu bar on Alt-up; suppressing the default on
         // keydown also kills that side-effect when Alt is released alone.
         e.preventDefault();
-        setLabelMode(true);
+        setLabelHeld(true);
         // Pick up Shift if it's already held as Alt goes down.
         setLabelShift(e.shiftKey);
         return;
@@ -107,14 +126,14 @@ export function useLabelsOverlay(
     },
     onKeyUp(e) {
       if (e.key === 'Alt') {
-        setLabelMode(false);
+        setLabelHeld(false);
         setLabelShift(false);
       } else if (e.key === 'Shift') {
         setLabelShift(false);
       }
     },
     onReset() {
-      setLabelMode(false);
+      setLabelHeld(false);
       setLabelShift(false);
     },
   });
@@ -128,13 +147,12 @@ export function useLabelsOverlay(
     const container = containerRef.current;
     if (!container) return;
     let accum = 0;
-    const STEP = 50;
     function onWheel(e: WheelEvent) {
       if (!e.altKey) return;
       e.preventDefault();
       e.stopPropagation();
       accum += e.deltaY;
-      if (Math.abs(accum) < STEP) return;
+      if (Math.abs(accum) < WHEEL_DEPTH_STEP) return;
       const dir = accum > 0 ? 1 : -1;
       accum = 0;
       setLabelLevel((lvl) => {
@@ -230,19 +248,18 @@ export function useLabelsOverlay(
     getIdleController(graph)?.wakeForRefresh();
   }, [labelMode, labelShift, labelLevel, selected, graphRef, settingsRef]);
 
-  // Same physics as LOC, with a wider per-overlay base because file-name
-  // labels are much longer than 3-digit LOC / health values and would
-  // visibly overlap at 55 units. The `labelSpread` multiplier is read
-  // fresh each tick so the slider takes effect live.
+  // Same physics as LOC/health, but with the wider `LABEL_REPULSION_BASE`
+  // because file-name labels are much longer than the 3-digit LOC / health
+  // values and would visibly overlap at the metric overlays'
+  // `METRIC_REPULSION_BASE`. The `labelSpread` multiplier is read fresh each
+  // tick so the slider takes effect live. Shared frame-driven, rest-gated loop
+  // — see `labelRepulsionFrames`.
   useEffect(() => {
     if (!labelMode) return;
-    // Wider per-overlay base (90 units) because file-name labels are much longer
-    // than 3-digit LOC/health values. Shared frame-driven, rest-gated loop — see
-    // `labelRepulsionFrames`.
     return startLabelRepulsion(
       graphRef.current,
       labelsRegistry,
-      () => 90 * settingsRef.current.labelSpread,
+      () => LABEL_REPULSION_BASE * settingsRef.current.labelSpread,
     );
   }, [labelMode, settingsRef, graphRef]);
 

@@ -5,6 +5,8 @@ export type FolderPickerState = {
   pathInput: string;
   setPathInput: (path: string) => void;
   listing: DirListing | null;
+  selectedPath: string | null;
+  setSelectedPath: (path: string | null) => void;
   newFolderName: string;
   setNewFolderName: (name: string) => void;
   loading: boolean;
@@ -22,6 +24,7 @@ type UseFolderPickerStateArgs = {
 export function useFolderPickerState({ open, initialPath }: UseFolderPickerStateArgs): FolderPickerState {
   const [pathInput, setPathInput] = useState(initialPath);
   const [listing, setListing] = useState<DirListing | null>(null);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [newFolderName, setNewFolderName] = useState('');
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -30,6 +33,8 @@ export function useFolderPickerState({ open, initialPath }: UseFolderPickerState
   const load = useCallback(async (target?: string) => {
     setLoading(true);
     setError(null);
+    // Navigating into a new folder clears any highlighted row (Windows-style).
+    setSelectedPath(null);
     try {
       const result = await listDir(target);
       setListing(result);
@@ -71,6 +76,8 @@ export function useFolderPickerState({ open, initialPath }: UseFolderPickerState
     pathInput,
     setPathInput,
     listing,
+    selectedPath,
+    setSelectedPath,
     newFolderName,
     setNewFolderName,
     loading,
