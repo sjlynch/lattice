@@ -9,6 +9,7 @@ import {
   usePanelDrag,
   usePanelResize,
 } from './floatingPanel/hooks';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 type Props = {
   open: boolean;
@@ -31,6 +32,7 @@ export function FloatingPanel({
 }: Props) {
   const { pos, size, setPos, setSize } = useFloatingPanelState(open, defaultSize, storageKey);
   useFloatingPanelEscape(open, onClose);
+  const dialogRef = useFocusTrap<HTMLDivElement>(open);
 
   const onTitleDown = usePanelDrag({ pos, size, setPos });
   const onResizeDown = usePanelResize({ pos, size, minSize, setSize });
@@ -39,8 +41,10 @@ export function FloatingPanel({
 
   return createPortal(
     <div
+      ref={dialogRef}
       className="floating-panel"
       role="dialog"
+      aria-modal="true"
       style={{
         left: pos.x,
         top: pos.y,

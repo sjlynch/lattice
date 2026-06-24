@@ -75,3 +75,11 @@ shared `userSettings.json` fetch:
   back to the backend default) · `useSidebarWidth` (drag-resize + persist) ·
   `useSyncedRef` (a ref kept in sync with a value, for stable event handlers) ·
   `useStartupTerminalSync` (per-project startup-terminal list).
+
+## Other shared hooks
+
+- `useFocusTrap(open)` — shared modal/dialog focus management. Returns a ref for
+  the dialog container; moves focus inside on open (respecting a child's
+  `autoFocus`), wraps Tab/Shift+Tab within it, and restores focus to the opener
+  on close. Used by `Modal`, `FloatingPanel`, and `TaskDetailOverlay`;
+  Escape-to-close stays each wrapper's own concern.
