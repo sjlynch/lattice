@@ -159,6 +159,7 @@ export const TaskCard = memo(function TaskCard({
         task={task}
         isConflict={isConflict}
         isSelected={isSelected}
+        onOpenResolver={isConflict ? handleMerge : undefined}
       />
       <TaskCardActions
         isConflict={isConflict}
