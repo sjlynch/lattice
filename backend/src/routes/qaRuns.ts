@@ -14,9 +14,11 @@ import {
   getQaRun,
   markQaRunDone,
   qaAgentId,
+  recordQaRunAutoClose,
   startQaSession,
 } from '../qaRuns.js';
 import { unregisterAgentSession } from '../agentSessions.js';
+import { isQaTerminalAutoCloseEnabled } from '../userSettings.js';
 
 // Tolerantly read a PASS/confident verdict out of the agent's POST body. The
 // brief tells it to send `{ "verdict": "pass"|"fail", "confidence": "high"|"low" }`,
@@ -86,6 +88,9 @@ export function buildQaRunsRouter(backendOrigin: string): Router {
       projectPath: run.projectPath,
       verdict: run.verdict,
       movedToDone: run.movedToDone,
+      // Resolved at `/done` time; the frontend poller closes the tab only when
+      // this is true (default is stay-open).
+      autoCloseTerminal: run.autoCloseTerminal,
     });
   });
 
@@ -111,9 +116,20 @@ export function buildQaRunsRouter(backendOrigin: string): Router {
     unregisterAgentSession(qaAgentId(req.params.id));
     if (!run) return res.json({ ok: true });
     markQaRunDone(run.id);
-    // Cleanup the home-scoped scratch dir off the response path so a slow
-    // Windows fs.rm doesn't keep the curl call open past its 5s timeout.
-    void cleanupQaSession(run.projectPath, run.id);
+    // Resolve once whether the QA terminal should auto-close (default: stay
+    // open so the user can read the verdict/output) and record it on the run so
+    // the frontend poller mirrors the same decision when it next sees `done`.
+    const autoClose = await isQaTerminalAutoCloseEnabled(run.projectPath);
+    recordQaRunAutoClose(run.id, autoClose);
+    if (autoClose) {
+      // Auto-close: tear down the pty + reclaim the home-scoped scratch dir off
+      // the response path so a slow Windows fs.rm doesn't keep the curl call
+      // open past its 5s timeout. (The original pre-toggle behavior.)
+      void cleanupQaSession(run.projectPath, run.id);
+    }
+    // Stay-open: leave the live pty + scratch in place so the terminal stays
+    // readable. The boot-time sweep (sweepOrphanedQaSessions) reclaims the
+    // scratch dir on the next restart, and closing the tab kills the pty.
     res.json({ ok: true });
   });
 

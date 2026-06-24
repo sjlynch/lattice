@@ -24,6 +24,7 @@ type SaveDrafts = {
   terminalClaudeSkipPermissions: boolean;
   instrumentClaude: boolean;
   disableMemory: boolean;
+  qaTerminalAutoClose: boolean;
 };
 
 // Imperative handles for each tab. Each may be null if its tab hasn't
@@ -78,6 +79,7 @@ export async function saveSettings({
     ...terminalLaunchPatch,
     instrumentProjectClaudeSessions: drafts.instrumentClaude,
     disableClaudeMemory: drafts.disableMemory,
+    qaTerminalAutoClose: drafts.qaTerminalAutoClose,
   };
   // Only touch worktreeEnvNotes if the env fetch finished — otherwise we'd
   // overwrite the saved overrides with an empty map.

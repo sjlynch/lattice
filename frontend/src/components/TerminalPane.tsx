@@ -6,6 +6,7 @@ import '@xterm/xterm/css/xterm.css';
 import { useActiveTerminalWebgl } from './terminal/useActiveTerminalWebgl';
 import { useTerminalConnection } from './terminal/useTerminalConnection';
 import { useTerminalLifecycle } from './terminal/useTerminalLifecycle';
+import type { TerminalStatus } from '../terminal/terminalTypes';
 
 type Props = {
   cwd: string;
@@ -14,6 +15,7 @@ type Props = {
   serverId?: string;
   projectPath?: string;
   onServerId?: (id: string) => void;
+  onStatus?: (status: TerminalStatus, exitCode?: number) => void;
 };
 
 export function TerminalPane({
@@ -23,6 +25,7 @@ export function TerminalPane({
   serverId,
   projectPath,
   onServerId,
+  onStatus,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -37,6 +40,7 @@ export function TerminalPane({
     serverId,
     projectPath,
     onServerId,
+    onStatus,
   });
   useActiveTerminalWebgl({ active, termRef, fitRef, webglRef, cwd, serverId });
 

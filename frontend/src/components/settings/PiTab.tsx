@@ -9,10 +9,10 @@ import { ChevronDown, ChevronRight, Plus, RefreshCw, X } from 'lucide-react';
 import {
   fetchGlobalSettings,
   getPiModels,
-  probePiEndpoint,
   type PiModelInfo,
   type PiProvider,
 } from '../../api';
+import { useEndpointState, useProbeDetection } from './usePiEndpoints';
 
 type Props = {
   active: boolean;
@@ -59,11 +59,6 @@ export type PiTabHandle = {
   getPiModelMenuPatch: () => string[] | undefined;
 };
 
-// A blank provider row.
-function blankProvider(seq: number): PiProvider {
-  return { id: `endpoint-${seq}`, baseUrl: '', models: [] };
-}
-
 // Machine-global Pi configuration: OpenAI-compatible endpoints (vLLM, etc.)
 // that Lattice reconciles into ~/.pi/agent/models.json, plus the curated model
 // menu surfaced as "Pi — X" rows in the harness dropdowns.
@@ -71,18 +66,18 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
   { active, open },
   ref,
 ) {
-  const [providers, setProviders] = useState<PiProvider[]>([]);
-  const [providersTouched, setProvidersTouched] = useState(false);
+  // The endpoint list + touched flag + patch/add/remove, and the per-endpoint
+  // probe state + "Detect models" flow, each live in a focused hook.
+  const endpoints = useEndpointState();
+  const probe = useProbeDetection();
+  const { providers } = endpoints;
+  const { probing, detected, probeError } = probe;
+
   const [savedModels, setSavedModels] = useState<PiModelInfo[]>([]);
   const [menuSelected, setMenuSelected] = useState<Set<string>>(new Set());
   const [menuTouched, setMenuTouched] = useState(false);
-  // Per-endpoint "Detect models" transient state, keyed by row index.
-  const [probing, setProbing] = useState<Record<number, boolean>>({});
-  const [detected, setDetected] = useState<Record<number, string[]>>({});
-  const [probeError, setProbeError] = useState<Record<number, string>>({});
   // Which endpoints have their "Advanced" (compat / headers) section open.
   const [advancedOpen, setAdvancedOpen] = useState<Record<number, boolean>>({});
-  const seqRef = useRef(0);
   // Patterns we've already reflected into menuSelected — so a newly-added
   // endpoint model defaults to shown, but a model the user later unchecks
   // doesn't get auto-re-added on the next render.
@@ -91,14 +86,12 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setProvidersTouched(false);
+    endpoints.setTouched(false);
     setMenuTouched(false);
-    setProbing({});
-    setDetected({});
-    setProbeError({});
+    probe.reset();
     fetchGlobalSettings()
       .then((s) => {
-        if (!cancelled) setProviders(s.piProviders ?? []);
+        if (!cancelled) endpoints.setProviders(s.piProviders ?? []);
       })
       .catch(() => { /* leave empty */ });
     getPiModels()
@@ -113,6 +106,7 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // The universe of selectable model patterns = saved models ∪ everything the
@@ -144,7 +138,7 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
     ref,
     () => ({
       getPiProvidersPatch: () => {
-        if (!providersTouched) return undefined;
+        if (!endpoints.touched) return undefined;
         // Drop incomplete rows (need an id + baseUrl) so a half-typed endpoint
         // isn't written to models.json; clean half-typed header rows too.
         return providers
@@ -161,31 +155,20 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
           .filter((p) => p.id && p.baseUrl);
       },
       getPiModelMenuPatch: () => {
-        if (!providersTouched && !menuTouched) return undefined;
+        if (!endpoints.touched && !menuTouched) return undefined;
         return [...menuSelected].filter((p) => universe.has(p));
       },
     }),
     // universe / providers / menuSelected are all derived from the deps below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [providersTouched, menuTouched, providers, menuSelected, savedModels],
+    [endpoints.touched, menuTouched, providers, menuSelected, savedModels],
   );
 
   if (!active) return null;
 
-  const patchProvider = (idx: number, patch: Partial<PiProvider>) => {
-    setProvidersTouched(true);
-    setProviders((cur) => cur.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
-  };
-
-  const addProvider = () => {
-    setProvidersTouched(true);
-    setProviders((cur) => [...cur, blankProvider(++seqRef.current)]);
-  };
-
-  const removeProvider = (idx: number) => {
-    setProvidersTouched(true);
-    setProviders((cur) => cur.filter((_, i) => i !== idx));
-  };
+  const patchProvider = endpoints.patch;
+  const addProvider = endpoints.add;
+  const removeProvider = endpoints.remove;
 
   // Set/clear a single `compat` key (empty/undefined removes it; the whole
   // compat object is dropped once it's empty so we don't write `compat: {}`).
@@ -194,8 +177,7 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
     key: string,
     value: string | boolean | undefined,
   ) => {
-    setProvidersTouched(true);
-    setProviders((cur) =>
+    endpoints.mutate((cur) =>
       cur.map((p, i) => {
         if (i !== idx) return p;
         const compat: Record<string, unknown> = { ...(p.compat ?? {}) };
@@ -210,42 +192,48 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
   };
 
   const setHeaderEntries = (idx: number, entries: [string, string][]) => {
-    setProvidersTouched(true);
-    setProviders((cur) =>
+    endpoints.mutate((cur) =>
       cur.map((p, i) =>
         i === idx ? { ...p, headers: entriesToHeaders(entries) } : p,
       ),
     );
   };
 
-  const updateHeaderKey = (idx: number, rowIdx: number, key: string) => {
+  // Read endpoint `idx`'s header rows as ordered entries, let `fn` mutate them
+  // in place, then write the result back — the shared body of the four header
+  // mutators below.
+  const mutateHeaderEntries = (
+    idx: number,
+    fn: (entries: [string, string][]) => void,
+  ) => {
     const entries = Object.entries(providers[idx]?.headers ?? {});
-    if (entries[rowIdx]) entries[rowIdx] = [key, entries[rowIdx][1]];
+    fn(entries);
     setHeaderEntries(idx, entries);
   };
 
-  const updateHeaderValue = (idx: number, rowIdx: number, value: string) => {
-    const entries = Object.entries(providers[idx]?.headers ?? {});
-    if (entries[rowIdx]) entries[rowIdx] = [entries[rowIdx][0], value];
-    setHeaderEntries(idx, entries);
-  };
+  const updateHeaderKey = (idx: number, rowIdx: number, key: string) =>
+    mutateHeaderEntries(idx, (entries) => {
+      if (entries[rowIdx]) entries[rowIdx] = [key, entries[rowIdx][1]];
+    });
 
-  const addHeader = (idx: number) => {
-    const entries = Object.entries(providers[idx]?.headers ?? {});
-    // Unique placeholder key so a second "add" never collides with a blank one.
-    entries.push([`header-${entries.length + 1}`, '']);
-    setHeaderEntries(idx, entries);
-  };
+  const updateHeaderValue = (idx: number, rowIdx: number, value: string) =>
+    mutateHeaderEntries(idx, (entries) => {
+      if (entries[rowIdx]) entries[rowIdx] = [entries[rowIdx][0], value];
+    });
 
-  const removeHeader = (idx: number, rowIdx: number) => {
-    const entries = Object.entries(providers[idx]?.headers ?? {});
-    entries.splice(rowIdx, 1);
-    setHeaderEntries(idx, entries);
-  };
+  const addHeader = (idx: number) =>
+    mutateHeaderEntries(idx, (entries) => {
+      // Unique placeholder key so a second "add" never collides with a blank one.
+      entries.push([`header-${entries.length + 1}`, '']);
+    });
+
+  const removeHeader = (idx: number, rowIdx: number) =>
+    mutateHeaderEntries(idx, (entries) => {
+      entries.splice(rowIdx, 1);
+    });
 
   const toggleEndpointModel = (idx: number, modelId: string) => {
-    setProvidersTouched(true);
-    setProviders((cur) =>
+    endpoints.mutate((cur) =>
       cur.map((p, i) => {
         if (i !== idx) return p;
         const has = p.models.some((m) => m.id === modelId);
@@ -259,20 +247,9 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
     );
   };
 
-  const detectModels = async (idx: number) => {
-    const ep = providers[idx];
-    if (!ep?.baseUrl.trim()) {
-      setProbeError((e) => ({ ...e, [idx]: 'Enter a base URL first.' }));
-      return;
-    }
-    setProbing((p) => ({ ...p, [idx]: true }));
-    setProbeError((e) => ({ ...e, [idx]: '' }));
-    try {
-      const ids = await probePiEndpoint(ep.baseUrl.trim(), ep.apiKey?.trim() || undefined);
-      setDetected((d) => ({ ...d, [idx]: ids }));
-      // Pre-select all detected models (the common case); the user can uncheck.
-      setProvidersTouched(true);
-      setProviders((cur) =>
+  const detectModels = (idx: number) =>
+    probe.detect(idx, providers[idx], (ids) =>
+      endpoints.mutate((cur) =>
         cur.map((p, i) =>
           i === idx
             ? {
@@ -283,13 +260,8 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
               }
             : p,
         ),
-      );
-    } catch (err) {
-      setProbeError((e) => ({ ...e, [idx]: (err as Error).message || 'Probe failed' }));
-    } finally {
-      setProbing((p) => ({ ...p, [idx]: false }));
-    }
-  };
+      ),
+    );
 
   const toggleMenu = (pattern: string) => {
     setMenuTouched(true);

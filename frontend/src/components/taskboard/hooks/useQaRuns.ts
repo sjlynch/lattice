@@ -66,7 +66,12 @@ export function useQaRuns(
           );
           if (cancelled || status === 'error') return;
           if (!status || status.status === 'done') {
-            closeTerminal(run.terminalId);
+            // Tear down the terminal tab only when the run resolved with
+            // auto-close enabled. The default (and a bare 404 — run already
+            // gone) is to leave the terminal open so the user can read the
+            // PASS/FAIL verdict and output. Either way, stop tracking + forget
+            // the run so the registry doesn't grow.
+            if (status && status.autoCloseTerminal) closeTerminal(run.terminalId);
             apiForgetQaRun(run.runId).catch(() => {});
             settled.push(run.runId);
           }

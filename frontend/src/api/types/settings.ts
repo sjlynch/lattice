@@ -57,6 +57,12 @@ export type UserSettings = {
   // global `mcpOverrides.playwright`). `enabled` injects Playwright into QA
   // "run an e2e test" sessions; `headless` (the eye toggle) appends --headless.
   qaPlaywright?: { enabled: boolean; headless: boolean };
+  // When true, a QA-lane e2e (Playwright) terminal auto-closes the moment its
+  // run finishes. Default (absent/false) keeps it open so the user can read the
+  // verdict/output. Only the terminal lifecycle — the qa → done auto-advance is
+  // unaffected. The backend resolves this at `/done` time; see backend
+  // userSettings.ts / routes/qaRuns.ts.
+  qaTerminalAutoClose?: boolean;
   // Per-project overrides of the agent instruction templates (task brief,
   // conflict resolver, QA / push / post-merge / workflow briefs), keyed by
   // template id. Value = raw markdown with `{{token}}` placeholders; a missing

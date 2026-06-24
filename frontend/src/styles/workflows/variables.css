@@ -104,6 +104,16 @@
   opacity: 0.85;
   cursor: default;
 }
+/* Faint red border when a custom variable name collides with another's
+   (presentational only — typing is never blocked). */
+.workflows-var-name--dup {
+  border-color: rgba(245, 120, 120, 0.6);
+}
+.workflows-var-name--dup:focus {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px rgba(245, 120, 120, 0.16);
+}
+/* Click-to-copy `{{token}}` badge. Looks like a code chip but is a button. */
 .workflows-var-token {
   font-size: 11px;
   color: var(--accent);
@@ -112,6 +122,16 @@
   border-radius: var(--radius-sm);
   white-space: nowrap;
   font-family: var(--mono);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.workflows-var-token:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--bg-app);
+}
+.workflows-var-token:disabled {
+  cursor: default;
+  opacity: 0.7;
 }
 .workflows-var-value {
   margin-top: 6px;

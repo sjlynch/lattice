@@ -25,5 +25,5 @@ export {
   detectRoots,
   isConventionalRoot,
   matchesEntryGlob,
-  readPackageJsonRoots,
 } from './roots.js';
+export { readPackageJsonRoots } from './packageRoots.js';

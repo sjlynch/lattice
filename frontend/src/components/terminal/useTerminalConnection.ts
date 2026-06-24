@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import type { RefObject } from 'react';
 import type { Terminal } from '@xterm/xterm';
 import { useSyncedRef } from '../../hooks/useSyncedRef';
+import type { TerminalStatus } from '../../terminal/terminalTypes';
 
 // Reconnect cap for a SERVERLESS terminal that has never attached: without a
 // session id to re-subscribe to, each fresh connect can spawn a brand-new pty,
@@ -29,6 +30,9 @@ type UseTerminalConnectionArgs = {
   serverId?: string;
   projectPath?: string;
   onServerId?: (id: string) => void;
+  // Reports connection-health transitions so the sidebar tab can show an
+  // indicator. Purely a notification — the hook's reconnect logic is unchanged.
+  onStatus?: (status: TerminalStatus, exitCode?: number) => void;
 };
 
 export function useTerminalConnection({
@@ -38,10 +42,12 @@ export function useTerminalConnection({
   serverId,
   projectPath,
   onServerId,
+  onStatus,
 }: UseTerminalConnectionArgs) {
-  // Keep latest callback in a ref so we don't re-establish the WS just
+  // Keep latest callbacks in refs so we don't re-establish the WS just
   // because the parent re-rendered.
   const onServerIdRef = useSyncedRef(onServerId);
+  const onStatusRef = useSyncedRef(onStatus);
 
   useEffect(() => {
     const term = termRef.current!;
@@ -63,6 +69,12 @@ export function useTerminalConnection({
     // (idempotent). Lets a terminal that started life serverless still
     // reconnect indefinitely, since it captured a session id on first attach.
     let attachedOnce = false;
+
+    // Notify the parent of a health transition. Mirrors the terminal-body
+    // messages below; never influences reconnect behaviour.
+    const reportStatus = (status: TerminalStatus, exitCode?: number) => {
+      onStatusRef.current?.(status, exitCode);
+    };
 
     function connect() {
       if (cancelled || terminated) return;
@@ -90,6 +102,7 @@ export function useTerminalConnection({
           term.write('\r\n\x1b[2m[reconnected]\x1b[0m\r\n');
           reconnectingShown = false;
         }
+        reportStatus('live');
       };
 
       ws.onmessage = (ev) => {
@@ -116,11 +129,13 @@ export function useTerminalConnection({
             // feeding back into another close → another reconnect →
             // runaway).
             terminated = true;
+            reportStatus('exited', msg.exitCode);
           } else if (msg.type === 'session_lost') {
             term.write(
               `\r\n\x1b[2m[${msg.message ?? 'session lost'}]\x1b[0m\r\n`,
             );
             terminated = true;
+            reportStatus('dead');
           }
         } catch {
           /* ignore */
@@ -151,6 +166,7 @@ export function useTerminalConnection({
               ' reconnect attempts. Close this tab and start a new terminal if needed.]\x1b[0m\r\n',
           );
           terminated = true;
+          reportStatus('dead');
           return;
         }
         if (!reconnectingShown) {
@@ -158,6 +174,7 @@ export function useTerminalConnection({
             '\r\n\x1b[2m[connection lost — reconnecting…]\x1b[0m\r\n',
           );
           reconnectingShown = true;
+          reportStatus('reconnecting');
         }
         // Cap the exponent so the delay tops out at the ceiling instead of
         // overflowing once `attempt` grows large during a long outage.
@@ -193,6 +210,7 @@ export function useTerminalConnection({
     // initialCommand. For port-binding commands like `npm run dev`,
     // the second fails with "address in use". This delay is also
     // production-safe — a 0 ms task hop is imperceptible.
+    reportStatus('connecting');
     const connectTimer = setTimeout(connect, 0);
 
     return () => {

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { Settings as SettingsIcon } from 'lucide-react';
-import type { GraphNode, ScanResult } from '../../api';
+import type { ScanResult } from '../../api';
 import { GraphContextMenu } from './GraphContextMenu';
 import { GraphHud } from './GraphHud';
+import { GraphOverlayKey } from './GraphOverlayKey';
 import { GraphSelectionChip } from './GraphSelectionChip';
 import { GraphSettingsPanel } from './GraphSettingsPanel';
 import { GraphTaskModal } from './GraphTaskModal';
@@ -22,10 +22,13 @@ import { useGraphSearch } from './hooks/useGraphSearch';
 import { useGraphTaskCreation } from './hooks/useGraphTaskCreation';
 import { useNodeContextMenu } from './hooks/useNodeContextMenu';
 import { useWorktreeHighlight } from './hooks/useWorktreeHighlight';
+import { useHoverNodeDebounce } from './hooks/useHoverNodeDebounce';
+import { useCanvasDragTracking } from './hooks/useCanvasDragTracking';
 import { useRefMirror } from './hooks/useRefMirror';
 import { getIdleController } from './idleController';
 import { clearLabelsAndRefresh } from './hooks/refresh';
 import { applySelectionHaloDelta } from './selectionHaloSync';
+import { mountedNodesById } from './mountedNodes';
 
 type Props = {
   data: ScanResult | null;
@@ -43,6 +46,15 @@ type Props = {
   healthMode: boolean;
   onHealthModeChange: (mode: boolean) => void;
 };
+
+// Camera fly duration when stepping to a search match, and the cadence we
+// re-wake the render loop at while it animates. The library steps its camera
+// tween inside the render frame (`tweenGroup.update` in three-render-objects'
+// `tick`), which the idle controller pauses once the scene settles — so a
+// programmatic focus must keep the loop awake for the whole transition.
+// `wakeForRefresh` holds it only ~120 ms, hence the pulse < that interval.
+const CAMERA_FOCUS_MS = 450;
+const CAMERA_FOCUS_PULSE_MS = 100;
 
 // Hosts the 3d-force-graph instance and stitches together the per-concern
 // hooks under ./hooks/: graph initialization, settings persistence, git
@@ -63,113 +75,25 @@ export function ForceGraphView({
   const graphRef = useRef<ForceGraph3DInstance | null>(null);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchRegex, setSearchRegex] = useState(false);
   // File-contents search is opt-in — name-only is the zero-cost default.
   const [searchContents, setSearchContents] = useState(false);
 
-  // When labels are dense or still moving the raycaster can blip in and
-  // out of label hitboxes every other frame, firing `(file, null, file,
-  // null, …)`. Each null transition would unmount HealthTooltip and a
-  // fresh mount restarts the opacity fade-in from zero — if the flicker
-  // is faster than ~80 ms the tooltip is invisible at all times. Debounce
-  // null transitions so a fresh hover within the window cancels the
-  // pending unmount; the user only loses the tooltip if their cursor is
-  // genuinely off all labels for longer than NULL_HOVER_DEBOUNCE_MS.
-  const NULL_HOVER_DEBOUNCE_MS = 220;
-  const nullClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // True while a pointer button is held down on the canvas (orbit-rotate, node
-  // drag, or shift box-select). 3d-force-graph's raycaster recomputes hover on
-  // EVERY render frame, so while you drag-rotate the camera, nodes sweep under
-  // the cursor and `onHover` fires continuously — and each hover-in does a
-  // synchronous `flushSync` React render below (plus a HealthTooltip
-  // mount/unmount → Recalculate style → Layerize → Commit). That per-frame
-  // churn is the rotate stutter; there's no tooltip to read mid-drag anyway, so
-  // we gate hover off for the duration of the gesture (set in the pointer-drag
-  // effect below).
+  // Hover tooltip state + its null-transition debounce (see the hook). Hover is
+  // gated off while a pointer is dragging the canvas: the shared
+  // `pointerDraggingRef` is read by the debounce and driven by the drag tracker,
+  // which also calls `cancelPendingHoverClear` at drag start to hide the tooltip.
   const pointerDraggingRef = useRef(false);
-  const debouncedSetHoverNode = useCallback((node: GraphNode | null) => {
-    // While dragging, ignore hover entirely. The tooltip is cleared at drag
-    // start and the library re-fires hover on the first move after release.
-    if (pointerDraggingRef.current) return;
-    if (node !== null) {
-      if (nullClearTimerRef.current) {
-        clearTimeout(nullClearTimerRef.current);
-        nullClearTimerRef.current = null;
-      }
-      // 3d-force-graph emits hover changes from its RAF, outside
-      // React's event system. While the health overlay is also running
-      // RAF work, normal-priority commits can be delayed until the user
-      // releases `h`, which made the tooltip appear only as the mode was
-      // turning off. Hover-in changes are infrequent (raycast-throttled),
-      // so flush this small state update synchronously.
-      flushSync(() => setHoverNode(node));
-      return;
-    }
-    if (nullClearTimerRef.current) return;
-    nullClearTimerRef.current = setTimeout(() => {
-      nullClearTimerRef.current = null;
-      setHoverNode(null);
-    }, NULL_HOVER_DEBOUNCE_MS);
-  }, []);
-  useEffect(() => {
-    return () => {
-      if (nullClearTimerRef.current) clearTimeout(nullClearTimerRef.current);
-    };
-  }, []);
-
-  // Track pointer-drag state on the canvas to gate hover (see
-  // pointerDraggingRef). pointerdown on the container starts a drag; the release
-  // is bound on `window` because a fast rotate often lifts off-canvas. At drag
-  // start we cancel any pending hover-clear and hide an open tooltip so it
-  // doesn't sit stale over the rotating graph; the functional updater skips the
-  // render when nothing was shown.
-  //
-  // We ALSO suspend 3d-force-graph's pointer interaction for the gesture
-  // (`enablePointerInteraction(false)`). The library re-runs an O(N) hover
-  // raycast — over every node incl. the invisible batched-node pick proxies —
-  // on EVERY render frame (`renderObjs.tick`), and on a hover change it shows /
-  // positions its own DOM tooltip element (the `Recalculate style` / `setProperty`
-  // / `Layerize` churn in the trace). None of that is wanted while you rotate, so
-  // disabling it for the drag removes the per-frame raycast + tooltip work. It
-  // only gates hover/click; the already-constructed node-drag DragControls and
-  // OrbitControls are unaffected. Re-enabled on release.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const setPointerInteraction = (on: boolean) => {
-      const g = graphRef.current as unknown as {
-        enablePointerInteraction?: (v: boolean) => unknown;
-      } | null;
-      g?.enablePointerInteraction?.(on);
-    };
-    const onDown = () => {
-      pointerDraggingRef.current = true;
-      if (nullClearTimerRef.current) {
-        clearTimeout(nullClearTimerRef.current);
-        nullClearTimerRef.current = null;
-      }
-      setHoverNode((cur) => (cur === null ? cur : null));
-      setPointerInteraction(false);
-    };
-    const onUp = () => {
-      if (!pointerDraggingRef.current) return;
-      pointerDraggingRef.current = false;
-      setPointerInteraction(true);
-    };
-    el.addEventListener('pointerdown', onDown, { passive: true });
-    window.addEventListener('pointerup', onUp, { passive: true });
-    window.addEventListener('pointercancel', onUp, { passive: true });
-    return () => {
-      el.removeEventListener('pointerdown', onDown);
-      window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('pointercancel', onUp);
-      // Don't leave interaction disabled if we unmount mid-drag.
-      if (pointerDraggingRef.current) setPointerInteraction(true);
-    };
-  }, [graphRef]);
+  const { hoverNode, debouncedSetHoverNode, cancelPendingHoverClear } =
+    useHoverNodeDebounce(pointerDraggingRef);
+  useCanvasDragTracking(
+    containerRef,
+    graphRef,
+    pointerDraggingRef,
+    cancelPendingHoverClear,
+  );
 
   const selectedRef = useRefMirror(selected);
   const hiddenExtsRef = useRefMirror(hiddenExts);
@@ -212,6 +136,8 @@ export function ForceGraphView({
     maxDepthRef,
     maxDirDepthRef,
     nodeDepthsRef,
+    pinned,
+    togglePin,
   } = useGraphOverlays({
     activeFolder,
     graphRef,
@@ -289,12 +215,18 @@ export function ForceGraphView({
   // `W`-hold worktree-modified file outline. Both read live task data over
   // their own `/ws/tasks` subscription and draw straight into the scene.
   useAgentOverlay(graphRef, settingsRef, activeFolder);
-  useWorktreeHighlight(graphRef, settingsRef, activeFolder);
+  const { worktreeActive } = useWorktreeHighlight(
+    graphRef,
+    settingsRef,
+    activeFolder,
+    pinned.worktree,
+  );
 
   // Search bar: filename matches (instant, client-side) + file-contents matches
   // (debounced backend pass) both feed the shared `selected` set, so a match
-  // shows the standard selection ring.
-  const searchStatus = useGraphSearch({
+  // shows the standard selection ring. `searchMatches` is the ordered id list
+  // backing prev/next match navigation.
+  const { status: searchStatus, matches: searchMatches } = useGraphSearch({
     data,
     activeFolder,
     query: searchQuery,
@@ -302,6 +234,106 @@ export function ForceGraphView({
     contents: searchContents,
     setSelected,
   });
+
+  // Prev/next match navigation. The current match is tracked by *id* (not a
+  // numeric index), so its "X of Y" position derives straight from the live
+  // match list — when the set changes under us (the contents pass landing, a
+  // file rename) a dropped id simply reads as "no current match", no reset
+  // bookkeeping. Stepping recenters the camera on the match's node (already
+  // ringed as a member of `selected`). The list is read through a ref so the
+  // step handlers stay referentially stable (keeping the memoized HUD off the
+  // per-keystroke render path). A fresh query clears the cursor via
+  // `handleSearchQueryChange` below.
+  const [currentMatchId, setCurrentMatchId] = useState<string | null>(null);
+  const searchMatchesRef = useRefMirror(searchMatches);
+
+  // Pan the camera to center a match's node, preserving the current viewing
+  // angle + distance (translate camera by the same delta as the orbit target).
+  const cameraPulseRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const focusNodeById = useCallback((nodeId: string) => {
+    const graph = graphRef.current;
+    if (!graph) return;
+    const node = mountedNodesById(graph).get(nodeId) as
+      | { x?: number; y?: number; z?: number }
+      | undefined;
+    if (!node) return;
+    const { x, y, z } = node;
+    if (typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number') {
+      return;
+    }
+    const camera = graph.camera();
+    const controls = graph.controls() as { target?: { x: number; y: number; z: number } };
+    const target = controls?.target;
+    if (camera && target) {
+      const dx = x - target.x;
+      const dy = y - target.y;
+      const dz = z - target.z;
+      graph.cameraPosition(
+        { x: camera.position.x + dx, y: camera.position.y + dy, z: camera.position.z + dz },
+        { x, y, z },
+        CAMERA_FOCUS_MS,
+      );
+    } else {
+      graph.cameraPosition({}, { x, y, z }, CAMERA_FOCUS_MS);
+    }
+    // Keep the render loop awake so the camera tween actually advances (the
+    // idle controller pauses it once settled). Pulse the refresh wake faster
+    // than its ~120 ms hold for the transition, then let it settle on its own.
+    const idle = getIdleController(graph);
+    if (idle) {
+      if (cameraPulseRef.current) clearInterval(cameraPulseRef.current);
+      idle.wakeForRefresh();
+      let elapsed = 0;
+      cameraPulseRef.current = setInterval(() => {
+        elapsed += CAMERA_FOCUS_PULSE_MS;
+        idle.wakeForRefresh();
+        if (elapsed >= CAMERA_FOCUS_MS && cameraPulseRef.current) {
+          clearInterval(cameraPulseRef.current);
+          cameraPulseRef.current = null;
+        }
+      }, CAMERA_FOCUS_PULSE_MS);
+    }
+  }, []);
+  useEffect(
+    () => () => {
+      if (cameraPulseRef.current) clearInterval(cameraPulseRef.current);
+    },
+    [],
+  );
+
+  // Pure id step (no side effect in the updater, so it's safe under batching /
+  // StrictMode): wrap-around from the current match, or start at the first/last
+  // when there's none. The camera follow runs in the effect below, off the
+  // committed id — so a rapid double-step animates once to the final match
+  // instead of fighting two tweens.
+  const stepMatch = useCallback(
+    (delta: number) => {
+      setCurrentMatchId((curId) => {
+        const list = searchMatchesRef.current;
+        if (list.length === 0) return null;
+        const cur = curId ? list.indexOf(curId) : -1;
+        const next =
+          cur < 0
+            ? delta > 0
+              ? 0
+              : list.length - 1
+            : (cur + delta + list.length) % list.length;
+        return list[next];
+      });
+    },
+    [searchMatchesRef],
+  );
+  useEffect(() => {
+    if (currentMatchId) focusNodeById(currentMatchId);
+  }, [currentMatchId, focusNodeById]);
+  const goPrevMatch = useCallback(() => stepMatch(-1), [stepMatch]);
+  const goNextMatch = useCallback(() => stepMatch(1), [stepMatch]);
+  // 1-based position of the current match in the live list (0 = none / dropped).
+  const searchMatchPosition = useMemo(() => {
+    if (!currentMatchId) return 0;
+    const i = searchMatches.indexOf(currentMatchId);
+    return i >= 0 ? i + 1 : 0;
+  }, [searchMatches, currentMatchId]);
 
   const { contextMenu, setContextMenu } = useNodeContextMenu(containerRef);
   const closeContextMenu = useCallback(() => setContextMenu(null), [setContextMenu]);
@@ -383,8 +415,10 @@ export function ForceGraphView({
       else if (modalActionRef.current) {
         // Modal handles its own Escape close
       } else if (searchQueryRef.current) {
-        // Clearing the query also clears its driven selection (useGraphSearch).
+        // Clearing the query also clears its driven selection (useGraphSearch)
+        // and the match-navigation cursor.
         setSearchQuery('');
+        setCurrentMatchId(null);
       } else if (selectedRef.current.size > 0) {
         setSelected(new Set());
       }
@@ -432,6 +466,13 @@ export function ForceGraphView({
     () => setSearchContents((v) => !v),
     [],
   );
+  // Any query change is a fresh search, so drop the current-match cursor (the
+  // "X of Y" only reappears once the user steps again). Stable — both setters
+  // are stable, so the memoized HUD stays off the per-keystroke render path.
+  const handleSearchQueryChange = useCallback((q: string) => {
+    setSearchQuery(q);
+    setCurrentMatchId(null);
+  }, []);
   const toggleSettings = useCallback(() => setShowSettings((v) => !v), []);
   const closeSettings = useCallback(() => setShowSettings(false), []);
   const handleRangeChange = useCallback(
@@ -440,6 +481,21 @@ export function ForceGraphView({
         cur.left === l && cur.right === r ? cur : { left: l, right: r },
       ),
     [setRange],
+  );
+
+  // Which overlay views are currently *showing* (held OR pinned), for the
+  // overlay-key chips' lit "active" state. `healthMode` is the App-owned
+  // effective value (already composed in useHealthOverlay); the rest come back
+  // from useGraphOverlays / useWorktreeHighlight already folded with their pins.
+  const overlayActive = useMemo(
+    () => ({
+      health: healthMode,
+      loc: locMode,
+      dead: deadMode,
+      worktree: worktreeActive,
+      labels: labelMode,
+    }),
+    [healthMode, locMode, deadMode, worktreeActive, labelMode],
   );
 
   // The bottom-anchored counts chip and gear FAB shift up when the
@@ -472,13 +528,28 @@ export function ForceGraphView({
         // the still-under-cursor node while the menu is up.
         hoverNode={contextMenu ? null : hoverNode}
         searchQuery={searchQuery}
-        onSearchQueryChange={setSearchQuery}
+        onSearchQueryChange={handleSearchQueryChange}
         searchRegex={searchRegex}
         onSearchRegexToggle={toggleSearchRegex}
         searchContents={searchContents}
         onSearchContentsToggle={toggleSearchContents}
         searchStatus={searchStatus}
+        searchMatchPosition={searchMatchPosition}
+        onSearchPrevMatch={goPrevMatch}
+        onSearchNextMatch={goNextMatch}
       />
+
+      {/* Always-visible key for the hold-key overlays (top-left). Each chip
+          documents a view + shortcut and pins it on click. Gated on loaded data
+          so it never overlaps the top-left scan spinner (loading is true only
+          while data is null). */}
+      {!!data && (
+        <GraphOverlayKey
+          pinned={pinned}
+          active={overlayActive}
+          onTogglePin={togglePin}
+        />
+      )}
 
       {history && history.isRepo && history.commits.length > 0 && (
         <div className="timeline-bar">
@@ -530,6 +601,7 @@ export function ForceGraphView({
           settings={settings}
           onChange={setSettings}
           onClose={closeSettings}
+          project={activeFolder}
         />
       )}
 

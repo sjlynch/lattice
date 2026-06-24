@@ -6,6 +6,7 @@ import {
   encodeHarnessValue,
   harnessLabel,
   normalizeAgentHarness,
+  selectedOptionTitle,
   type AgentHarness,
   type HarnessAvailability,
 } from '../../harnesses';
@@ -168,9 +169,13 @@ export function PostMergeHookRow({
                   const sel = decodeHarnessValue(e.target.value);
                   onSaveHarness(normalizeAgentHarness(sel.harness), sel.piModel);
                 }}
+                title={`Post-merge hook harness: ${selectedOptionTitle(
+                  harnessOptions,
+                  encodeHarnessValue(harness, piModel),
+                )}`}
               >
                 {harnessOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
+                  <option key={option.value} value={option.value} title={option.title}>
                     {option.label}
                   </option>
                 ))}
