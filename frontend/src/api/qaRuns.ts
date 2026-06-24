@@ -22,10 +22,10 @@ export async function startQaRun(
 
 export async function fetchQaRunStatus(
   id: string,
-): Promise<{ status: QaRunStatus } | null> {
+): Promise<{ status: QaRunStatus; autoCloseTerminal?: boolean } | null> {
   const r = await fetch(`/api/qa-runs/${encodeURIComponent(id)}`);
   if (r.status === 404) return null;
-  return asJson<{ status: QaRunStatus }>(r);
+  return asJson<{ status: QaRunStatus; autoCloseTerminal?: boolean }>(r);
 }
 
 export async function forgetQaRun(id: string): Promise<void> {

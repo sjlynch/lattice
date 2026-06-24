@@ -25,6 +25,19 @@ export function GraphTaskModal({
   onSubmit,
   onClose,
 }: Props) {
+  // When the Create button is disabled by missing input (not by an in-flight
+  // submit), point at the exact unblock condition instead of leaving the
+  // happy-path label, so a greyed button never reads as broken.
+  const missingPrompt = !promptText.trim();
+  const missingFiles = selectedFiles.length === 0;
+  const blockingReason =
+    submitting || (!missingPrompt && !missingFiles)
+      ? undefined
+      : missingPrompt && missingFiles
+        ? 'Select at least one file and enter a prompt'
+        : missingFiles
+          ? 'Select at least one file'
+          : 'Enter a prompt';
   return (
     <Modal open={!!action} onClose={onClose}>
       <div className="modal-header">
@@ -72,7 +85,9 @@ export function GraphTaskModal({
         <button
           className="btn-primary"
           onClick={onSubmit}
-          disabled={submitting || !promptText.trim() || selectedFiles.length === 0}
+          disabled={submitting || missingPrompt || missingFiles}
+          title={blockingReason}
+          aria-label={blockingReason}
         >
           {submitting ? 'Creating…' : 'Create task'}
         </button>

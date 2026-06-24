@@ -1,4 +1,4 @@
-import { useCallback, useRef, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { fetchWorktreeModified } from '../../../api';
 import { taskColor } from '../../../taskColors';
@@ -9,15 +9,16 @@ import { baseSizeFor, mountedNodes, mountedRoot } from '../mountedNodes';
 import { setNodeWorktreeRing } from '../worktreeRing';
 import { momentaryLetterMode, useHoldKeyMode } from './useHoldKeyMode';
 
-// `W` (hold) outlines every file changed by a not-yet-merged task
-// (in_progress + ready_to_merge), ringed in that task's color. Same chord
-// pattern as `h`/`z` (keyup / blur / visibilitychange all clear it — see
-// `useHoldKeyMode`) so the rings can't get stuck on if the user alt-tabs while
-// holding the key.
+// `W` outlines every file changed by a not-yet-merged task (in_progress +
+// ready_to_merge), ringed in that task's color — active while `W` is held OR
+// while the Worktree view is pinned (the overlay-key chip latches the same
+// state). Same chord pattern as `h`/`z` (keyup / blur / visibilitychange all
+// clear the hold — see `useHoldKeyMode`) so the rings can't get stuck on if the
+// user alt-tabs while holding the key; `pinned` is independent of those resets.
 //
 // The modified-file set comes from a git-backed snapshot fetched once on
-// press (`GET /api/tasks/worktree-modified`). Momentary by design — release
-// and re-press to refresh.
+// activation (`GET /api/tasks/worktree-modified`). Momentary by design — release
+// (or unpin) and re-activate to refresh.
 
 function normalizePath(p: string): string {
   return p.replace(/\\/g, '/').toLowerCase();
@@ -27,6 +28,7 @@ export function useWorktreeHighlight(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   settingsRef: MutableRefObject<GraphSettings>,
   activeFolder: string,
+  pinned: boolean,
 ) {
   // Node ids currently wearing a worktree ring, so we can strip exactly
   // those on release.
@@ -34,6 +36,8 @@ export function useWorktreeHighlight(
   // Guards against a stale fetch (key released before it resolved) painting
   // rings after the fact.
   const activeRef = useRef(false);
+  // `held` tracks just the `W` key; the effective state is held OR pinned.
+  const [held, setHeld] = useState(false);
 
   // Toggle every timeline change-ring across the graph. While `W` is held we
   // hide them so they don't stack with the worktree rings (the two ring
@@ -124,11 +128,24 @@ export function useWorktreeHighlight(
     setChangeRingsVisible(true);
   }, [clearRings, setChangeRingsVisible]);
 
-  // `W` is the only hold-key overlay with live scene state (rings) to strip
-  // when the hook unmounts, so it opts into `resetOnUnmount`.
-  useHoldKeyMode(
-    momentaryLetterMode('w', (on) => (on ? void activate() : deactivate()), {
-      resetOnUnmount: true,
-    }),
-  );
+  // The `W` key only flips the local `held` flag; the effective state below
+  // composes it with the pin. Keyup / blur / visibilitychange reset `held` (not
+  // the pin) via the shared lifecycle.
+  useHoldKeyMode(momentaryLetterMode('w', setHeld));
+
+  const active = held || pinned;
+
+  // Drive the ring side effects off the effective (held || pinned) state.
+  // Activate fetches the modified-file snapshot and paints rings; the effect's
+  // cleanup strips them. Re-running on an `activeFolder` change (while active)
+  // re-fetches for the new project; the cleanup also covers unmount — so this is
+  // the only hold-key overlay with live scene state to tear down (the old
+  // `resetOnUnmount` is now this cleanup).
+  useEffect(() => {
+    if (!active) return;
+    void activate();
+    return () => deactivate();
+  }, [active, activate, deactivate]);
+
+  return { worktreeActive: active };
 }

@@ -45,7 +45,7 @@ import {
 } from '../../extensionStyles';
 import type { GraphNode } from '../../api';
 import type { GraphSettings } from './graphSettings';
-import { onNodeMotion } from './nodeMotionDriver';
+import { createMotionSyncGate } from './motionSyncGate';
 import { getIdleController } from './idleController';
 import { materialFor } from './sprites';
 import { isGhost } from './timelineDiff';
@@ -168,12 +168,10 @@ export function createInstancedNodes(
 
   let enabled = false;
   const meshes = new Map<string, StyleMesh>();
-  // Motion signals — same scheme as instancedLinks.
-  let movedThisFrame = false;
-  let movedLastFrame = false;
-  let dirty = false;
+  // Shared "should I re-upload positions this frame?" gate: engine-tick / drag
+  // motion + one trailing settle frame + forced-dirty. See motionSyncGate.ts.
+  const gate = createMotionSyncGate(graph);
   let lastBaseView = true;
-  let tickUnsub: (() => void) | null = null;
 
   function baseStyleFor(node: SimNode): ExtStyle {
     return node.kind === 'dir' ? DIR_STYLE : getStyleFor(node.ext);
@@ -272,7 +270,7 @@ export function createInstancedNodes(
     lastBaseView = opts.isBaseView();
     // Force a position sync on the next painted frame too (positions captured
     // here may be pre-hydration on a fresh structural swap).
-    dirty = true;
+    gate.markDirty();
     getIdleController(graph)?.wakeForRefresh();
   }
 
@@ -301,29 +299,22 @@ export function createInstancedNodes(
       lastBaseView = base;
       // Returning to base view: positions may have settled while hidden — force
       // one sync so the shapes land where the (now-shown) nodes are.
-      if (base) dirty = true;
+      if (base) gate.markDirty();
     }
-    if (base && (movedThisFrame || movedLastFrame || dirty)) {
-      syncPositions();
-      dirty = false;
-    }
-    movedLastFrame = movedThisFrame;
-    movedThisFrame = false;
+    // Advance the gate every frame (so the motion flags decay even while the
+    // meshes are hidden), but only re-upload when the base shapes are shown.
+    const moved = gate.shouldSync();
+    if (base && moved) syncPositions();
   }
-
-  const onTick = () => {
-    movedThisFrame = true;
-  };
 
   function setEnabled(on: boolean): void {
     if (on === enabled) return;
     enabled = on;
     if (on) {
-      tickUnsub = onNodeMotion(graph, onTick);
+      gate.attach();
       rebuild();
     } else {
-      tickUnsub?.();
-      tickUnsub = null;
+      gate.detach();
       for (const sm of meshes.values()) disposeStyleMesh(sm);
       meshes.clear();
       getIdleController(graph)?.wakeForRefresh();
@@ -331,8 +322,7 @@ export function createInstancedNodes(
   }
 
   function dispose(): void {
-    tickUnsub?.();
-    tickUnsub = null;
+    gate.detach();
     for (const sm of meshes.values()) disposeStyleMesh(sm);
     meshes.clear();
     quad.dispose();
