@@ -126,9 +126,25 @@ export function ForceGraphView({
   // start we cancel any pending hover-clear and hide an open tooltip so it
   // doesn't sit stale over the rotating graph; the functional updater skips the
   // render when nothing was shown.
+  //
+  // We ALSO suspend 3d-force-graph's pointer interaction for the gesture
+  // (`enablePointerInteraction(false)`). The library re-runs an O(N) hover
+  // raycast — over every node incl. the invisible batched-node pick proxies —
+  // on EVERY render frame (`renderObjs.tick`), and on a hover change it shows /
+  // positions its own DOM tooltip element (the `Recalculate style` / `setProperty`
+  // / `Layerize` churn in the trace). None of that is wanted while you rotate, so
+  // disabling it for the drag removes the per-frame raycast + tooltip work. It
+  // only gates hover/click; the already-constructed node-drag DragControls and
+  // OrbitControls are unaffected. Re-enabled on release.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    const setPointerInteraction = (on: boolean) => {
+      const g = graphRef.current as unknown as {
+        enablePointerInteraction?: (v: boolean) => unknown;
+      } | null;
+      g?.enablePointerInteraction?.(on);
+    };
     const onDown = () => {
       pointerDraggingRef.current = true;
       if (nullClearTimerRef.current) {
@@ -136,9 +152,12 @@ export function ForceGraphView({
         nullClearTimerRef.current = null;
       }
       setHoverNode((cur) => (cur === null ? cur : null));
+      setPointerInteraction(false);
     };
     const onUp = () => {
+      if (!pointerDraggingRef.current) return;
       pointerDraggingRef.current = false;
+      setPointerInteraction(true);
     };
     el.addEventListener('pointerdown', onDown, { passive: true });
     window.addEventListener('pointerup', onUp, { passive: true });
@@ -147,8 +166,10 @@ export function ForceGraphView({
       el.removeEventListener('pointerdown', onDown);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
+      // Don't leave interaction disabled if we unmount mid-drag.
+      if (pointerDraggingRef.current) setPointerInteraction(true);
     };
-  }, []);
+  }, [graphRef]);
 
   const selectedRef = useRefMirror(selected);
   const hiddenExtsRef = useRefMirror(hiddenExts);
