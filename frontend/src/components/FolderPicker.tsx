@@ -70,6 +70,10 @@ export function FolderPicker({ open, initialPath, onClose, onSelect }: Props) {
         <button
           className="btn-primary"
           disabled={!listing}
+          // No listing = nothing to select yet; say so rather than leaving a
+          // greyed button with no explanation.
+          title={listing ? undefined : 'Browse to a folder first'}
+          aria-label={listing ? undefined : 'Browse to a folder first'}
           onClick={() => listing && onSelect(listing.path)}
         >
           Select this folder

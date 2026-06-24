@@ -41,6 +41,17 @@ export function WorkflowEditorPanel({ manager }: Props) {
     [editor.variables],
   );
 
+  // When the save/queue/run buttons are disabled, name the unblock condition
+  // so a greyed button never reads as broken. Save needs a step; queue/run
+  // additionally need an open project folder.
+  const noSteps = editor.steps.length === 0;
+  const saveBlockedReason = noSteps ? 'Add a step first' : undefined;
+  const runBlockedReason = noSteps
+    ? 'Add a step first'
+    : !activeFolder
+      ? 'Open a project folder first'
+      : undefined;
+
   const quickAddPrompts = (
     <div className="workflows-default-prompts">
       <span className="workflows-default-prompts-label">Quick add</span>
@@ -169,14 +180,18 @@ export function WorkflowEditorPanel({ manager }: Props) {
             <button
               className="btn-ghost"
               onClick={() => void actions.save()}
-              disabled={editor.steps.length === 0}
+              disabled={noSteps}
+              title={saveBlockedReason}
+              aria-label={saveBlockedReason}
             >
               {editor.workflowId ? 'Save' : 'Create'}
             </button>
             <button
               className="btn-ghost"
               onClick={() => void actions.enqueueEditorWorkflow()}
-              disabled={editor.steps.length === 0 || !activeFolder}
+              disabled={noSteps || !activeFolder}
+              title={runBlockedReason}
+              aria-label={runBlockedReason}
             >
               <Plus size={11} /> Queue
             </button>
@@ -192,7 +207,9 @@ export function WorkflowEditorPanel({ manager }: Props) {
               <button
                 className="btn-primary"
                 onClick={() => void actions.runEditorWorkflow()}
-                disabled={editor.steps.length === 0 || !activeFolder}
+                disabled={noSteps || !activeFolder}
+                title={runBlockedReason}
+                aria-label={runBlockedReason}
               >
                 <Play size={11} fill="currentColor" /> Run
               </button>
