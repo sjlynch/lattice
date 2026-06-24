@@ -40,7 +40,7 @@ export const TaskCardBody = memo(function TaskCardBody({
           : 'Click to edit · ctrl+click or shift+click to multi-select'
       }
     >
-      <div className="task-card-title">
+      <div className="task-card-title" title={task.title}>
         <TaskCardConflictBadges task={task} isConflict={isConflict} />
         {task.runQueued && (
           <span
@@ -53,7 +53,9 @@ export const TaskCardBody = memo(function TaskCardBody({
         {task.title}
       </div>
       {task.description && (
-        <div className="task-card-desc">{task.description}</div>
+        <div className="task-card-desc" title={task.description}>
+          {task.description}
+        </div>
       )}
       {task.summary && (
         <div className="task-card-summary" title={task.summary}>
