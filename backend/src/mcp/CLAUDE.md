@@ -30,8 +30,9 @@ See `plans/mcp-integration.md` (gitignored) for the full design + decisions.
 - `claudeServerConfig.ts` — **Claude config shaping** (pure, no I/O):
   `secretEnvVarsFor(entry)` (secret-env selection: `requiresSecret.envVar` ⊕
   `secretEnvVars`) and `toClaudeConfig(entry, serverSecrets, headless)` (shape one
-  entry into Claude's per-server config, fold in stored secrets / append the
-  Playwright `--headless` flag / win32-wrap the command). Deliberately separate
+  entry into Claude's per-server config, fold in stored secrets — stdio env via
+  `secretEnvVars`, HTTP headers via `secretHeaders` — / append the Playwright
+  `--headless` flag / win32-wrap the command). Deliberately separate
   from `claudeInject.ts` so the resolver/secret logic stays out of the terminal-
   server's apply path + fingerprint (see "Injection sites").
 - `secrets.ts` — read/write `~/.lattice/mcpSecrets.json` (`0600`), kept in its
@@ -47,13 +48,19 @@ See `plans/mcp-integration.md` (gitignored) for the full design + decisions.
   `POST /api/mcp/validate` (v1: Brave one-search request only).
 - `importConfigs.ts` — read-only scan of other tools' MCP configs (Claude Code,
   Cursor, Codex TOML, VS Code, Windsurf) → normalized `McpServerEntry[]`. Literal
-  secret-looking env values → stored in the secrets file + kept off the entry;
-  references (`${input:…}`, Codex `bearer_token_env_var`) → recorded as
-  `secretEnvVars` with no value (ambient inheritance). This file is now a thin
-  orchestrator (`scanImportableServers`/`applyImport` + dedupe) that re-exports
-  the public surface; the concerns live under `import/`:
+  secret-looking **env AND HTTP-header** values → stored in the secrets file +
+  kept off the entry (env keys recorded in `secretEnvVars`, header names in
+  `secretHeaders`); references (`${input:…}`, Codex `bearer_token_env_var`) →
+  recorded with no value (env: ambient inheritance; header: placeholder the user
+  still supplies). `scanImportableServers` surfaces both lists in the preview.
+  This file is now a thin orchestrator (`scanImportableServers`/`applyImport` +
+  dedupe) that re-exports the public surface; the concerns live under `import/`:
   - `import/normalize.ts` — `normalizeServer` + the secret-classification helpers
-    and the `Normalized`/`RawServer` types (security-relevant; test-pinned).
+    and the `Normalized`/`RawServer` types (security-relevant; test-pinned). The
+    same name/value secret classification runs over HTTP headers, not just stdio
+    env, so an imported auth header's literal key never lands in globalSettings.json
+    — it routes to the secrets file (keyed by header name) via `secretHeaders`,
+    and `claudeServerConfig.toClaudeConfig` re-injects it at spawn.
   - `import/codexToml.ts` — the minimal `[mcp_servers.*]`-only TOML reader
     (`parseCodexMcpServers`; no dep added; test-pinned).
   - `import/sources.ts` — the five per-tool `collect*` config readers plus the

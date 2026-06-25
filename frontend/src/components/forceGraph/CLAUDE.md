@@ -93,10 +93,15 @@ asking for fixes/reviews:
 
 - `ForceGraphView.tsx` — coordinator. Holds `selected`/`hoverNode`/`showSettings`,
   threads refs through `useGraphOverlays` + `useForceGraphInitialization`, and
-  composes the small `Graph*` overlay components below. Each remaining
-  `useEffect` is one concern: selection-refresh, Escape key, counts memo; the
-  hover debounce and pointer-drag tracking now live in their own hooks
-  (`useHoverNodeDebounce` / `useCanvasDragTracking`). **Hover is gated off while
+  composes the small `Graph*` overlay components below. The imperative scene
+  syncs and the keyboard handling now live in their own focused hooks rather than
+  inline effects: `useSelectionHaloSync` (halo delta on selection change),
+  `useMetricsIgnoreRefresh` (sprite refresh on ignore-list change),
+  `useGraphViewKeyboard` (the Escape chord: close menu → clear search → clear
+  selection), and `useOverlayTooltipDismiss` (the LOC/health tooltip-dismissal
+  fix); the hover debounce and pointer-drag tracking live in
+  `useHoverNodeDebounce` / `useCanvasDragTracking`. The only logic left inline is
+  the counts/overlay-active memos and the JSX. **Hover is gated off while
   a pointer is dragging** (`pointerDraggingRef`, owned by the coordinator, set by
   `useCanvasDragTracking`'s pointerdown-on-canvas / window-pointerup effect and
   read by `useHoverNodeDebounce`): the library raycasts hover every render frame,
@@ -322,8 +327,16 @@ asking for fixes/reviews:
   sits beside each node showing the basename it most recently read/edited.
   Beams drop from the elevated node down to the file nodes. Path→node index
   rebuilt only on a structural `graphData` swap. Driven by `useAgentOverlay`.
-  `agentOverlay.ts` is the orchestrator (reconcile/`addActivity`/`tick`); its
-  cohesive internals are split into sibling modules:
+  `agentOverlay.ts` is now a **thin façade**: it holds the shared mutable state
+  (`AgentOverlayCtx`) and every public method delegates to a focused sibling
+  module, so the public API (`setAgents`/`addActivity`/`addSubagent*`/`tick`/
+  `setSizes`/`isActive`/`destroy`) stays stable while each responsibility lives
+  in its own unit:
+  - `agentOverlayContext.ts` — the shared mutable state (`AgentOverlayCtx`:
+    scene group, `agents` map, `pathIndex`, node/label size, spawn counter,
+    `hoverLine`, bounds-recheck counter, per-frame scratch) + `createAgentOverlay
+    Ctx`, which mints the group and adds it to `graph.scene()`. Threaded to every
+    sibling module below so they operate on one overlay's state.
   - `agentOverlayConstants.ts` — all overlay tunables + render orders
     (beam TTL/fade, easing, hover margins, golden angle, node/label scale +
     offsets, parked-spread radius) and `LABEL_OPTIONS` / `LABEL_SPRITE_CONFIG`.
@@ -336,13 +349,32 @@ asking for fixes/reviews:
     O(N) scan) is memoised: invalidated on a structural swap and via
     `invalidateBounds()`, which `tick` calls on engine-hot frames + at least
     every `BOUNDS_RECHECK_FRAMES`, so it's recomputed only while nodes can move.
+  - `agentOverlayReconcile.ts` — live-agent reconciliation/registry:
+    `reconcileAgents` (= `setAgents`) diffs descriptors → add/remove/recolor,
+    `removeAgent` is the per-agent teardown reused by `destroy`, and the
+    parked-spawn placement of a fresh node.
+  - `agentOverlayActivity.ts` — the focus-beam **add/demote (TTL) policy**
+    (`applyActivity`) + the shared `BeamHost` shape. Keeps the current
+    (last-touched) file's beam persistent and demotes older ones to a fading TTL;
+    shared by the main agent and its satellites. (This is the policy that used to
+    live in `agentOverlay.applyActivity`.)
+  - `agentOverlaySatellites.ts` — subagent-satellite management:
+    `createSatellite` / `disposeSatellite` + per-frame `updateSatellites`
+    (ring-slot follow, tether, type label, idle-reap of a missed SubagentStop).
   - `agentOverlayBeams.ts` — beam `THREE.Line` lifecycle: `createBeam` /
     `createTether` (the persistent, dimmer parent→satellite line) /
     `disposeBeam` / `updateBeamEndpoints` (geometry only — used for tethers) /
     `updateBeam` (endpoints + opacity, with an `opacityFactor` to dim satellite
     beams) and the pure `beamFade(remaining)` ramp. The current-vs-fading TTL
-    *policy* stays in `agentOverlay.applyActivity` (shared by the main agent and
-    its satellites).
+    *policy* lives in `agentOverlayActivity.applyActivity`.
+  - `agentOverlayBeamMath.ts` — the two hot per-frame beam passes shared by the
+    agent and its satellites: `accumulateBeams` (prune expired + stash each live
+    beam's file node + fold its X/Z into the centroid accumulator) and
+    `updateBeamGeometries` (re-upload geometry/opacity from the stashed node).
+  - `agentOverlayTick.ts` — the per-frame `tickOverlay` (= `tick`): refresh the
+    hover line, ease each agent toward its files' centroid under the `REST_EPS`
+    gate, update labels + beams, place satellites, and return whether the layer
+    still has self-driven motion (drives the `agents` idle reason).
   - `agentOverlayLabels.ts` — file/type-label cache + `updateAgentLabel` /
     `clearAgentLabel` (agent file labels) + `updateSatelliteLabel` (satellite
     type labels), all over a shared `applyFloatingLabel` core (reusing
@@ -589,12 +621,38 @@ asking for fixes/reviews:
   flickering out between adjacent label hitboxes, plus the synchronous
   `flushSync` hover-in commit. Reads the coordinator's `pointerDraggingRef` to
   ignore hover during a drag, and exposes `cancelPendingHoverClear` (cancel the
-  pending clear + hide the tooltip) for the drag tracker to call at drag start.
+  pending clear + hide the tooltip) — called by the drag tracker at drag start
+  AND by `useOverlayTooltipDismiss` when an LOC/health view ends.
 - `useCanvasDragTracking` — the pointerdown-on-canvas / window-pointerup(+cancel)
   effect that drives `pointerDraggingRef` and suspends 3d-force-graph's pointer
   interaction (`enablePointerInteraction(false)`) for the duration of a drag,
   re-enabling on release (and on mid-drag unmount). Calls the supplied
   `onDragStart` (the debounce hook's `cancelPendingHoverClear`) at drag start.
+- `useSelectionHaloSync` — the in-place selection-halo delta (toggles the halo
+  sprite on only the changed ids via `applySelectionHaloDelta` + a
+  `wakeForRefresh`, never a full `graph.refresh()`). Deps narrowed to the
+  selection + the two node-size settings so an unrelated slider drag doesn't
+  re-run the O(N) delta. Extracted from the coordinator's inline effect.
+- `useMetricsIgnoreRefresh` — re-runs `clearLabelsAndRefresh` when the LOC/health
+  ignore-extension set changes (skips the mount run, since init already builds
+  sprites against the live ignore ref). Extracted from the coordinator.
+- `useGraphViewKeyboard` — the graph view's Escape chord, bound once and reading
+  its branch state (context menu / modal-open / search query / selection) through
+  refs so the listener never re-binds per keystroke. Dismisses the most specific
+  thing first: open context menu → active search query (+ match cursor) →
+  selection.
+- `useOverlayTooltipDismiss` — the **LOC/health hover-tooltip dismissal fix**.
+  Watches `locMode || healthMode` and, on the active→inactive transition (Z/H
+  released / last overlay view ends), clears the hover tooltip via
+  `cancelPendingHoverClear`. Without this the tooltip sticks to the cursor after
+  release: the library only re-evaluates hover by raycasting inside the render
+  loop, which pauses once the overlay's label-physics reason drops, and the
+  toggle's `clearLabelsAndRefresh` resets the library's cached hover object — so a
+  later "cursor off node" never fires `onNodeHover(null)`. Clearing here dismisses
+  the stale tooltip; the same-commit `clearLabelsAndRefresh` lets the next frame
+  re-fire `onNodeHover` and restore it iff the cursor is genuinely still over a
+  node (normal hover/mouseout preserved). Only fires on deactivation — entering an
+  overlay must not dismiss a legitimately-hovered tooltip.
 - `useNodeContextMenu` / `useBoxSelect` / `useRefMirror` /
   `refresh.ts` — small focused helpers consumed directly by the coordinator.
 - `hooks/boxSelectGeometry.ts` — pure rectangle/projection hit-testing helpers

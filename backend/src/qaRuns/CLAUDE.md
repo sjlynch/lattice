@@ -14,11 +14,13 @@ Same skeleton (`paths` / `cleanup` / `session` / `stopHook` / `instructions` /
 `registry` / `types`) with the same in-memory-registry, home-scoped-scratch
 (`~/.lattice/per-project/<hash>/qa/<id>/`, **outside** the repo), path-guard and
 boot-sweep (`recovery/qaSessionSweep.ts → sweepOrphanedQaSessions`) contract.
-**See `pushRuns/CLAUDE.md` for that shared shape** — including that the registry
-is non-persisted (stale-at-boot ⇒ swept) and that the path guards here
-(`assertSafeQaSessionPath` / `isPathInsideOrSame`) are part of the repo's
-`.git`-deletion defence layer a third run-type must replicate. **Edit one,
-check the other.**
+The path guard, session-setup lifecycle, and bounded cleanup are shared via
+**`../homeScratch/`** — `paths.ts` / `cleanup.ts` / `session.ts` here are thin
+wrappers passing the `qa`/`[qaRuns]`/`qa session` config (and `isQaRun: true`)
+into that factory. **See `pushRuns/CLAUDE.md` and `homeScratch/CLAUDE.md` for
+that shared shape** — including that the registry is non-persisted (stale-at-boot
+⇒ swept) and that `assertSafeQaSessionPath` is part of the repo's
+`.git`-deletion defence layer. **Edit one, check the other.**
 
 Differences from pushRuns:
 
