@@ -15,7 +15,7 @@ the launcher calls directly.
 - `useLaneSort.ts` — per-lane arrival-date sort mode (`recent`/`oldest`/`manual`, default `recent`), persisted per project (`lattice.laneSort.<path>`); backs the lane header clock + caret. `setManual` is wired to slot drops so manual reorder survives.
 - `useSyncedViewedTask.ts` — keeps the detail overlay's viewed task fresh against live updates; closes the overlay if the task disappears.
 - `useTaskDetailEdit.ts` — the detail overlay's editable title/description draft, dirty check, and save-payload prep (resets only when the task changes).
-- `useHarnessSelector.ts` — agent-harness dropdown: installed CLIs, the curated Pi model menu (`GET /api/pi-models`), the persisted per-project choice (`{harness, piModel}`), and the round-robin pick used in `interleave` mode. `pickRunHarness()` returns `{harness, piModel}` for run/resume; the dropdown value encodes both (`pi:<provider/model>`).
+- `useHarnessSelector.ts` — agent-harness dropdown: installed CLIs + the curated Pi model menu come from the shared `useHarnessAvailability` / `usePiModelMenu` hooks; this hook keeps only the persisted per-project choice (`{harness, piModel}`) and the round-robin pick used in `interleave` mode. `pickRunHarness()` returns `{harness, piModel}` for run/resume; the dropdown value encodes both (`pi:<provider/model>`). The folder-change settings load is guarded against fast project switches by a monotonic load-id ref + `loadHarnessForFolder` (`harnessSelectorLoad.ts`, pure + unit-tested): a project-A response that resolves after switching to B is dropped, so it can't overwrite B's selection or persist a coerced patch under A.
 
 ## Task actions
 

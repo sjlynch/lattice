@@ -1,25 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { installCanvasDocument } from './domDoubles.ts';
 
 // The change-ring textures are painted on a 2D canvas, so stub just enough of
 // the DOM for `document.createElement('canvas').getContext('2d')` to let THREE
-// mint a CanvasTexture under `node --test` (no jsdom). Set before importing
-// `changeRing` matters not — texture/material creation is lazy (first ring) —
-// but the global must exist by the time a test actually builds a ring.
-const makeCtx = () => ({
-  createRadialGradient: () => ({ addColorStop: () => {} }),
-  fillRect: () => {},
-  beginPath: () => {},
-  arc: () => {},
-  stroke: () => {},
-  fill: () => {},
-});
-(globalThis as unknown as { document: unknown }).document = {
-  createElement: (tag: string) =>
-    tag === 'canvas'
-      ? { width: 0, height: 0, getContext: () => makeCtx() }
-      : {},
-};
+// mint a CanvasTexture under `node --test` (no jsdom). Installed before
+// importing `changeRing`, though timing isn't critical — texture/material
+// creation is lazy (first ring) — the global just has to exist by the time a
+// test actually builds a ring.
+installCanvasDocument();
 
 const THREE = await import('three');
 const { setNodeChangeRing, setNodeChangeRingsVisible, setChangeRingsSuppressed } =

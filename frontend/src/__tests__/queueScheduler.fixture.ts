@@ -1,3 +1,24 @@
+// Shared builders + a scenario harness for the queueScheduler suites, which are
+// split by behaviour across queueScheduler.{reducer,pendingStarts,step,
+// externalActive,preFinished}.test.ts.
+//
+// State machine (one workflow-queue instance):
+//
+//   idle ──startQueue (queued≥1)──▶ running ──auto-stop (drained)──▶ idle
+//
+// Each entry travels: queued ──dispatch──▶ started{runId:null} (in-flight)
+//   ──workflowStarted──▶ started{runId} (active) ──runFinished──▶ retired.
+//
+//   • sequential mode dispatches one entry at a time and gates behind any
+//     in-flight/active entry AND any externalActiveCount (a manual ▶ Run the
+//     queue never tracked); parallel mode fires every queued entry at once and
+//     ignores the external gate.
+//   • `step()` = reduce + read pendingStarts + report autoStop in one shot; the
+//     `starts` it returns are the entries the caller must actually dispatch.
+//   • pre-finished race: a runFinished whose runId hasn't been attached yet is
+//     buffered in `preFinishedRunIds` (bounded), then consumed by the matching
+//     workflowStarted so a late /run resolve retires the entry instead of
+//     attaching a dead id.
 import type { WorkflowQueueEntry, WorkflowRunHarnessOverride } from '../api/index.ts';
 import {
   initialQueueState,

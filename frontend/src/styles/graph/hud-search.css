@@ -1,0 +1,181 @@
+/* graph overlays */
+.graph-overlay {
+  position: absolute;
+  pointer-events: none;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: rgba(15, 17, 21, 0.7);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.graph-overlay.top-right { top: 12px; right: 12px; }
+.graph-overlay.top-left { top: 12px; left: 12px; }
+.graph-overlay.bottom-left { bottom: 12px; left: 12px; }
+
+/* Bottom-left cluster: search field + file/dir counts laid out inline.
+   The flex row owns placement, so the counts chip inside drops its own
+   absolute positioning (see .graph-counts). */
+.graph-bottom-left {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Let canvas drags through the row's empty gaps; the search field
+     re-enables pointer events on itself, the counts chip stays inert. */
+  pointer-events: none;
+}
+.graph-counts {
+  position: static;
+}
+
+/* Search field — its own pill, to the left of the counts. pointer-events
+   must be re-enabled (the base .graph-overlay disables them). */
+.graph-search {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: rgba(15, 17, 21, 0.7);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: border-color 0.12s ease;
+}
+.graph-search:focus-within { border-color: var(--accent); }
+.graph-search.invalid { border-color: var(--danger); }
+.graph-search-icon { color: var(--text-tertiary); flex: none; }
+.graph-search-input {
+  width: 150px;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 0;
+}
+.graph-search-input::placeholder { color: var(--text-tertiary); }
+.graph-search-count {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+.graph-search.invalid .graph-search-count { color: var(--danger); }
+.graph-search-clear,
+.graph-search-contents,
+.graph-search-regex {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.graph-search-clear { padding: 2px; }
+.graph-search-clear:hover { color: var(--text-primary); }
+.graph-search-contents { padding: 2px; }
+.graph-search-contents:hover { color: var(--text-secondary); }
+.graph-search-contents.active {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+.graph-search-regex {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+.graph-search-regex:hover { color: var(--text-secondary); }
+.graph-search-regex.active {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+/* Search pill + its error message stacked. Bottom-anchored cluster
+   (.graph-bottom-left grows upward), so the error sits beneath the pill while
+   the pill shifts up — it never clips off the viewport bottom edge. */
+.graph-search-shell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+/* Prev/next match stepping flanking the count. */
+.graph-search-nav {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.graph-search-step {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.graph-search-step:hover { color: var(--text-primary); }
+/* A query that matched nothing reads danger-tinted, distinct from idle. */
+.graph-search-count.none { color: var(--danger); }
+/* Backend contents-search error, surfaced beneath the pill (reuses .error-msg
+   chrome). pointer-events re-enabled so its title tooltip works. */
+.graph-search-error {
+  pointer-events: auto;
+  max-width: 240px;
+  font-size: 11px;
+  padding: 4px 8px;
+  word-break: break-word;
+}
+
+/* Floating "view mode" chip — shown while the user holds a view key
+   like `z` for the lines-of-code overlay. Centered under the appbar so
+   it never collides with the legend or the file/dir counter. */
+.loc-view-chip {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 7;
+  pointer-events: none;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(15, 17, 21, 0.85);
+  border: 1px solid var(--border-strong);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-md);
+  color: var(--text-primary);
+  white-space: nowrap;
+  animation: loc-chip-fade 0.12s ease;
+}
+@keyframes loc-chip-fade {
+  from { opacity: 0; transform: translate(-50%, -4px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
