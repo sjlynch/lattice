@@ -15,6 +15,7 @@ import {
   decodeAgentToken,
   notifyAgentActivity,
 } from '../agentActivity.js';
+import { touchAgentSession } from '../agentSessions.js';
 import { isManaged } from './tasks/activity.js';
 
 // Map a file path from a non-worktree session's hook to the project-absolute
@@ -90,6 +91,15 @@ export function buildAgentActivityRouter(): Router {
     const ack = () => res.status(204).end();
     const meta = decodeAgentToken(req.params.token);
     if (!meta) return ack();
+    // Refresh liveness so an actively-emitting lifecycle session (push /
+    // workflow step / post-merge hook) is never reaped mid-run by the
+    // absolute-age backstop. registerAgentSession runs only once at spawn, so
+    // without this the node's `lastSeen` stays frozen at `startedAt` and a
+    // session that outlives MAX_AGE_MS — a substantial workflow step, a
+    // browser-downloading QA run — loses its graph node while still active. A
+    // no-op when the session is already gone (completed/swept): presence is
+    // owned by the spawn + completion callbacks, so we never resurrect here.
+    touchAgentSession(meta.agentId);
     const event = buildAgentActivityEvent(meta, req.body, {
       agentId: meta.agentId,
       cwd: cwdFromHookBody(req.body),

@@ -1,12 +1,14 @@
 // Secret-classification normalizer: turn a raw per-tool MCP server entry into
 // Lattice's `McpServerEntry` shape, splitting out secrets per MCP plan §8.
 //
-// A LITERAL value in env that looks secret — either by var NAME (key/token/…) or
-// by VALUE SHAPE (a known token prefix like sk-/ghp_/xox, a credentialed
-// connection string, or a high-entropy opaque token) — is captured for storage
-// in ~/.lattice/mcpSecrets.json and kept OUT of the entry; a REFERENCE
-// (`${input:…}`, `${env:…}`, `$VAR`, Codex `bearer_token_env_var`) is recorded
-// as a secret env var with NO stored value, so it resolves from the ambient env.
+// A LITERAL value in env OR an HTTP header that looks secret — either by NAME
+// (key/token/auth/…) or by VALUE SHAPE (a known token prefix like sk-/ghp_/xox,
+// a credentialed connection string, or a high-entropy opaque token) — is captured
+// for storage in ~/.lattice/mcpSecrets.json and kept OUT of the entry; a
+// REFERENCE (`${input:…}`, `${env:…}`, `$VAR`, Codex `bearer_token_env_var`) is
+// recorded with NO stored value (env: resolves from the ambient env; header: a
+// placeholder the user still has to supply). Env keys go to `secretEnvVars`,
+// header names to `secretHeaders`; the resolver re-injects both at spawn.
 //
 // The value-shape check matters because globalSettings.json (where the entry's
 // inline `env` is persisted) is NOT chmod 0600 and is documented as never
@@ -129,15 +131,34 @@ export function normalizeServer(
 
   const secrets: Record<string, string> = {};
   const secretEnvVars: string[] = [];
+  const secretHeaders: string[] = [];
 
   if (isHttp) {
     entry.url = String(raw.url);
-    // Headers are kept inline for v1 (no env-var indirection for HTTP headers
-    // in the harness config). A Codex bearer_token_env_var is an ambient ref.
+    // Headers get the SAME secret classification as stdio env (below): an auth
+    // header carrying a literal key (`Authorization: Bearer sk-…`, `X-Api-Key:
+    // …`) must not land inline in the (non-0600) globalSettings.json. Detected
+    // literal header secrets route to ~/.lattice/mcpSecrets.json via header-level
+    // indirection — stored keyed by header name, recorded in `secretHeaders`,
+    // and re-injected by the resolver (claudeServerConfig.toClaudeConfig) at
+    // spawn time. Only plain headers (Accept, Content-Type, …) stay inline.
     if (raw.headers && typeof raw.headers === 'object') {
       const headers: Record<string, string> = {};
       for (const [k, v] of Object.entries(raw.headers as Record<string, unknown>)) {
-        if (typeof v === 'string') headers[k] = v;
+        if (typeof v !== 'string') continue;
+        if (isReference(v)) {
+          // ${input:…} / ${env:…} placeholder — not a real value. Record the
+          // header (so the import UI shows a key is needed) but store nothing and
+          // keep the useless placeholder out of the entry.
+          secretHeaders.push(k);
+        } else if (looksSecret(k) || looksSecretValue(v)) {
+          // Literal secret — by header NAME (Authorization/X-Api-Key/… all trip
+          // the name regex) OR value shape → secrets file, kept out of inline.
+          secrets[k] = v;
+          secretHeaders.push(k);
+        } else {
+          headers[k] = v; // plain header, fine to keep inline
+        }
       }
       if (Object.keys(headers).length > 0) entry.headers = headers;
     }
@@ -168,5 +189,6 @@ export function normalizeServer(
   }
 
   if (secretEnvVars.length > 0) entry.secretEnvVars = [...new Set(secretEnvVars)];
+  if (secretHeaders.length > 0) entry.secretHeaders = [...new Set(secretHeaders)];
   return { entry, secrets, source };
 }

@@ -42,7 +42,11 @@ const sessions = new Map<string, SessionRecord>();
 const listeners = new Set<Listener>();
 
 // Absolute safety net for lifecycle sessions whose completion callback never
-// fired. Sized well above any realistic session runtime.
+// fired. Measured from `lastSeen` (silence), NOT `startedAt` (age): an active
+// session refreshes `lastSeen` on every activity event (routes/agentActivity.ts
+// → touchAgentSession), so this only reaps a session that has gone fully quiet
+// — a long-but-active one (a substantial workflow step, a thorough QA run whose
+// first launch downloads browsers, a large push) is never swept mid-run.
 const MAX_AGE_MS = 30 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 60 * 1000;
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
@@ -128,12 +132,17 @@ function ensureSweepTimer(): void {
   if (sweepTimer) return;
   sweepTimer = setInterval(() => {
     const now = Date.now();
-    const ageCutoff = now - MAX_AGE_MS;
     const staleProjects = new Set<string>();
     for (const [id, s] of sessions) {
+      // Both conditions key off `lastSeen`, so ongoing activity always wins:
+      // an explicit idle TTL (project-instrumented sessions, lazy presence) OR
+      // the absolute MAX_AGE_MS silence backstop (lifecycle sessions). The
+      // backstop is staleness, not age — a long-but-active session keeps
+      // refreshing `lastSeen` and is never reaped while alive.
       const idleExpired =
         s.idleTtlMs !== undefined && now - s.lastSeen > s.idleTtlMs;
-      if (idleExpired || s.startedAt < ageCutoff) {
+      const staleExpired = now - s.lastSeen > MAX_AGE_MS;
+      if (idleExpired || staleExpired) {
         sessions.delete(id);
         staleProjects.add(s.projectPath);
       }

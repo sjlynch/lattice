@@ -49,6 +49,16 @@ type AstSmellContext = {
 function detectTsJsSmells(ctx: AstSmellContext): void {
   const { node, t, smellTokens } = ctx;
 
+  // These smells (loose_equality, var_keyword, type_assertion,
+  // non_null_assertion, debugger_stmt, …) are JS/TS-specific. C-family
+  // grammars (Go/Rust/Java/C#) model `a == b` as a `binary_expression`
+  // with a `==` token, and C# additionally has `variable_declaration` /
+  // `as_expression` nodes — without this gate every equality comparison
+  // and local var in those languages mis-fired a smell, depressing their
+  // health score. Mirrors detectPythonSmells's `grammar !== 'python'`
+  // early return.
+  if (!ctx.isJsFamily) return;
+
   if (ctx.isTs && t === 'predefined_type' && node.text === 'any') {
     smellTokens.anyType++;
   }

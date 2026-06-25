@@ -23,6 +23,7 @@ import {
   runPostMergeHook,
   runTeardown,
 } from './mergeRuns/teardown.js';
+import { finalizeMergeRun } from './mergeRuns/finalize.js';
 import {
   cancelRunInState,
   createRunState,
@@ -83,9 +84,11 @@ export function signalConflictWaiter(taskId: string): boolean {
   return signalConflictWaiterInState(runState, taskId);
 }
 
-// Fire-and-forget restart used by teardown's auto-restart branch. Passed in
-// (rather than referenced directly inside teardown) so teardown.ts doesn't take
-// a runtime dependency back on this module.
+// Fire-and-forget restart for tasks that became ready_to_merge mid-run. Invoked
+// by finalizeMergeRun's `restart` callback, which fires it only after the run's
+// project lock is released and the run is off 'running' — so this fresh start
+// clears initializeRunState's 409 / cross-process-lock gates instead of being
+// rejected and swallowed here.
 function restartMergeRun(projectPath: string, backendOrigin: string): void {
   startMergeRun(projectPath, backendOrigin).catch(() => {});
 }
@@ -113,41 +116,51 @@ export async function startMergeRun(
   notify(runState, { type: 'started', run: snapshot(run) });
 
   // Run the worker async. Fire-and-forget; consumers track via WS / GET.
-  (async () => {
-    console.log(`[merge-run] ${run.id} started — ${targets.length} task(s) to merge`);
+  //
+  // finalizeMergeRun guarantees the auto-restart (for tasks that became ready
+  // mid-run) fires only AFTER the project lock is released and finishRun has
+  // moved this run off 'running'. Restarting inline from runTeardown — while
+  // this run still held the lock and was still 'running' — was rejected by the
+  // fresh run's 409 / lock gates and silently swallowed.
+  void finalizeMergeRun({
+    body: async () => {
+      console.log(`[merge-run] ${run.id} started — ${targets.length} task(s) to merge`);
 
-    const { runSnapshot, baselineHead } = await runPreflight(canonicalPath, run);
-    const runCtx = {
-      projectPath: canonicalPath,
-      backendOrigin,
-      baselineHead,
-      state: runState,
-    };
+      const { runSnapshot, baselineHead } = await runPreflight(canonicalPath, run);
+      const runCtx = {
+        projectPath: canonicalPath,
+        backendOrigin,
+        baselineHead,
+        state: runState,
+      };
 
-    for (const seed of targets) {
-      const action = await processTarget(seed, run, runCtx);
-      if (action === 'halt') break;
-    }
+      for (const seed of targets) {
+        const action = await processTarget(seed, run, runCtx);
+        if (action === 'halt') break;
+      }
 
-    await runTeardown(
-      canonicalPath,
-      run,
-      runSnapshot,
-      targets,
-      backendOrigin,
-      lockMode,
-      restartMergeRun,
-    );
-    await runPostMergeHook(run, canonicalPath, backendOrigin);
-    finishRun(run);
-  })()
-    .catch((err) => {
+      const shouldRestart = await runTeardown(
+        canonicalPath,
+        run,
+        runSnapshot,
+        targets,
+        lockMode,
+      );
+      await runPostMergeHook(run, canonicalPath, backendOrigin);
+      finishRun(run);
+      return shouldRestart;
+    },
+    onError: (err) => {
       console.error('[mergeRuns] run worker crashed', err);
       run.status = 'errored';
       run.finishedAt = Date.now();
       notify(runState, { type: 'completed', run: snapshot(run) });
-    })
-    .finally(() => projectLock?.release().catch(() => undefined));
+    },
+    releaseLock: async () => {
+      await projectLock?.release().catch(() => undefined);
+    },
+    restart: () => restartMergeRun(canonicalPath, backendOrigin),
+  });
 
   return snapshot(run);
 }

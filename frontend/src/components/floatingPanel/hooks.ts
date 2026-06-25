@@ -89,6 +89,54 @@ export function useFloatingPanelEscape(open: boolean, onClose: () => void) {
   }, [open, onClose]);
 }
 
+/**
+ * Owns the document mousemove/mouseup listener lifecycle for a pointer drag
+ * gesture. A gesture snapshot of type `TState` is captured by `start(state)`
+ * and handed to `onMove` on every mousemove; `stop` (also bound to mouseup and
+ * to unmount cleanup) drops the snapshot and detaches the listeners. Callers
+ * supply only the per-move math via `onMove`.
+ */
+function useDocumentDragGesture<TState>(onMove: (state: TState, event: MouseEvent) => void) {
+  const stateRef = useRef<TState | null>(null);
+  const removeListenersRef = useRef<(() => void) | null>(null);
+
+  const stop = useCallback(() => {
+    stateRef.current = null;
+    removeListenersRef.current?.();
+    removeListenersRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return stop;
+  }, [stop]);
+
+  const start = useCallback(
+    (state: TState) => {
+      stop();
+      stateRef.current = state;
+
+      function move(moveEvent: MouseEvent) {
+        if (!stateRef.current) return;
+        onMove(stateRef.current, moveEvent);
+      }
+
+      function up() {
+        stop();
+      }
+
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+      removeListenersRef.current = () => {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+      };
+    },
+    [onMove, stop],
+  );
+
+  return { start, stop };
+}
+
 type PanelDragOptions = PanelGeometry & {
   setPos: Dispatch<SetStateAction<Pos>>;
   noDragSelector?: string;
@@ -100,22 +148,27 @@ export function usePanelDrag({
   setPos,
   noDragSelector = '.fp-no-drag',
 }: PanelDragOptions) {
-  const dragRef = useRef<PanelDragState | null>(null);
   const latestGeometryRef = useRef<PanelGeometry>({ pos, size });
   useLayoutEffect(() => {
     latestGeometryRef.current = { pos, size };
   }, [pos, size]);
 
-  const removeListenersRef = useRef<(() => void) | null>(null);
-  const stopDragging = useCallback(() => {
-    dragRef.current = null;
-    removeListenersRef.current?.();
-    removeListenersRef.current = null;
-  }, []);
-
-  useEffect(() => {
-    return stopDragging;
-  }, [stopDragging]);
+  const { start } = useDocumentDragGesture<PanelDragState>(
+    useCallback(
+      (state, moveEvent) => {
+        setPos(
+          clampPos(
+            {
+              x: state.startPosX + (moveEvent.clientX - state.startX),
+              y: state.startPosY + (moveEvent.clientY - state.startY),
+            },
+            state.size,
+          ),
+        );
+      },
+      [setPos],
+    ),
+  );
 
   return useCallback(
     (event: ReactMouseEvent) => {
@@ -123,42 +176,17 @@ export function usePanelDrag({
       if (target instanceof Element && target.closest(noDragSelector)) return;
 
       event.preventDefault();
-      stopDragging();
 
       const { pos: startPos, size: dragSize } = latestGeometryRef.current;
-      dragRef.current = {
+      start({
         startX: event.clientX,
         startY: event.clientY,
         startPosX: startPos.x,
         startPosY: startPos.y,
         size: dragSize,
-      };
-
-      function move(moveEvent: MouseEvent) {
-        if (!dragRef.current) return;
-        setPos(
-          clampPos(
-            {
-              x: dragRef.current.startPosX + (moveEvent.clientX - dragRef.current.startX),
-              y: dragRef.current.startPosY + (moveEvent.clientY - dragRef.current.startY),
-            },
-            dragRef.current.size,
-          ),
-        );
-      }
-
-      function up() {
-        stopDragging();
-      }
-
-      document.addEventListener('mousemove', move);
-      document.addEventListener('mouseup', up);
-      removeListenersRef.current = () => {
-        document.removeEventListener('mousemove', move);
-        document.removeEventListener('mouseup', up);
-      };
+      });
     },
-    [noDragSelector, setPos, stopDragging],
+    [noDragSelector, start],
   );
 }
 
@@ -168,68 +196,42 @@ type PanelResizeOptions = PanelGeometry & {
 };
 
 export function usePanelResize({ pos, size, minSize, setSize }: PanelResizeOptions) {
-  const resizeRef = useRef<PanelResizeState | null>(null);
   const latestGeometryRef = useRef<PanelGeometry & { minSize: Size }>({ pos, size, minSize });
   useLayoutEffect(() => {
     latestGeometryRef.current = { pos, size, minSize };
   }, [pos, size, minSize]);
 
-  const removeListenersRef = useRef<(() => void) | null>(null);
-  const stopResizing = useCallback(() => {
-    resizeRef.current = null;
-    removeListenersRef.current?.();
-    removeListenersRef.current = null;
-  }, []);
-
-  useEffect(() => {
-    return stopResizing;
-  }, [stopResizing]);
+  const { start } = useDocumentDragGesture<PanelResizeState>(
+    useCallback(
+      (state, moveEvent) => {
+        const dx = moveEvent.clientX - state.startX;
+        const dy = moveEvent.clientY - state.startY;
+        const maxW = window.innerWidth - state.pos.x - VIEWPORT_PAD;
+        const maxH = window.innerHeight - state.pos.y - VIEWPORT_PAD;
+        setSize({
+          width: Math.min(maxW, Math.max(state.minSize.width, state.startW + dx)),
+          height: Math.min(maxH, Math.max(state.minSize.height, state.startH + dy)),
+        });
+      },
+      [setSize],
+    ),
+  );
 
   return useCallback(
     (event: ReactMouseEvent) => {
       event.preventDefault();
       event.stopPropagation();
-      stopResizing();
 
       const { pos: startPos, size: startSize, minSize: startMinSize } = latestGeometryRef.current;
-      resizeRef.current = {
+      start({
         startX: event.clientX,
         startY: event.clientY,
         startW: startSize.width,
         startH: startSize.height,
         pos: startPos,
         minSize: startMinSize,
-      };
-
-      function move(moveEvent: MouseEvent) {
-        if (!resizeRef.current) return;
-        const dx = moveEvent.clientX - resizeRef.current.startX;
-        const dy = moveEvent.clientY - resizeRef.current.startY;
-        const maxW = window.innerWidth - resizeRef.current.pos.x - VIEWPORT_PAD;
-        const maxH = window.innerHeight - resizeRef.current.pos.y - VIEWPORT_PAD;
-        setSize({
-          width: Math.min(
-            maxW,
-            Math.max(resizeRef.current.minSize.width, resizeRef.current.startW + dx),
-          ),
-          height: Math.min(
-            maxH,
-            Math.max(resizeRef.current.minSize.height, resizeRef.current.startH + dy),
-          ),
-        });
-      }
-
-      function up() {
-        stopResizing();
-      }
-
-      document.addEventListener('mousemove', move);
-      document.addEventListener('mouseup', up);
-      removeListenersRef.current = () => {
-        document.removeEventListener('mousemove', move);
-        document.removeEventListener('mouseup', up);
-      };
+      });
     },
-    [setSize, stopResizing],
+    [start],
   );
 }

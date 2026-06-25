@@ -15,6 +15,7 @@ import {
   type LabelTextureOptions,
 } from './labelTexture';
 import { materialFor, spriteFor } from './sprites';
+import { NODE_RENDER_ORDER } from './renderOrders';
 
 const METRIC_LABEL_TEXTURE_OPTIONS: LabelTextureOptions = {
   font: 'bold 56px -apple-system, "Segoe UI", Inter, Roboto, sans-serif',
@@ -84,7 +85,7 @@ export function createMetricOverlaySpriteFactory(
       materialFor(metricShapeStyle(node, color, config.overlayKey)),
     );
     colorSprite.scale.set(settings.fileNodeSize, settings.fileNodeSize, 1);
-    colorSprite.renderOrder = 12;
+    colorSprite.renderOrder = NODE_RENDER_ORDER;
     group.add(colorSprite);
 
     const line = makeConnectorLine({

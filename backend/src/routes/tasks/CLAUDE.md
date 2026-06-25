@@ -1,8 +1,23 @@
 # backend/src/routes/tasks
 
-The task router, split by concern. `routes/tasks.ts` composes four
-sub-routers (activity → crud → run → hooks; activity first so its
-`GET /api/tasks/worktree-modified` isn't captured by crud's `/api/tasks/:id`).
+The task router, split by concern. `routes/tasks.ts` composes five
+sub-routers (worktreeModified → activity → crud → run → hooks; the first two
+register before crud so `GET /api/tasks/worktree-modified` isn't captured by
+crud's `/api/tasks/:id`).
+
+## Graph-overlay routes (`activity.ts` + `worktreeModified.ts`)
+
+Both are read-only against the disposable worktree (plain `exec`, never
+`projectGit`):
+
+- `activity.ts` — `POST /api/tasks/:id/activity` (the Claude PreToolUse/
+  PostToolUse hook → `notifyTaskActivity` → `task-activity` WS, for the focus
+  beam). Owns the worktree→project path mapping and the exported `isManaged`
+  filter, which `routes/agentActivity.ts` and `worktreeModified.ts` both import.
+- `worktreeModified.ts` — `GET /api/tasks/worktree-modified` (every file changed
+  by an in_progress / ready_to_merge task, for the `W` highlight). Owns the git
+  diff/status polling, the per-project base-branch cache, and the short-TTL
+  result cache. Preserves the response shape, TTL, and git timeout behavior.
 
 ## CRUD (`crud.ts` builds the router; handlers split by concern)
 
@@ -35,9 +50,15 @@ Idempotent Stop-hook / resolver callbacks. `hooks/index.ts`'s
   (ready_to_merge + conflict → `finalizeResolvedTask`) and the original
   in_progress → ready_to_merge flip (**only** with a branch commit; kills the
   idle pty after responding).
-- `hooks/merged.ts` — `/merged`. Resolver success → `finalizeResolvedTask`.
+- `hooks/merged.ts` — `/merged`. Resolver success → `finalizeResolvedTask`,
+  but **only while `task.conflict` is still set** (same gate `/complete`'s
+  resolver branch uses). A late `/merged` from a resolver abandoned by
+  `/merge-aborted` (the Cancel button cleared the flag) is a harmless no-op
+  rather than a silent finalize + main fast-forward.
 - `hooks/mergeAborted.ts` — `/merge-aborted`. Aborts a lingering mid-merge,
-  clears the conflict flags.
+  clears the conflict flags (which is what makes a Cancel authoritative —
+  see `/merged`'s guard above), and kills the orphaned resolver pty by
+  worktree cwd so it stops working on the abandoned resolution.
 - `hooks/stashResolved.ts` — `/stash-resolved`. Cleanup → qa, then
   auto-restart the merge run for remaining work.
 - `hooks/postMergeHookHelper.ts` — `awaitPostMergeHookOutsideRun`, shared by

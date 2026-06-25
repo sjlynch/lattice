@@ -70,6 +70,15 @@ export function buildProjectWss<TEvent>(
       return;
     }
 
+    // ws v8 re-throws a socket 'error' as an uncaughtException when no listener
+    // is registered. An abrupt client disconnect (ECONNRESET/EPIPE from a killed
+    // tab, network partition, OS sleep, or a vite-proxy hard-drop) is routine,
+    // not fatal — log-and-ignore so it can't masquerade as a backend crash. The
+    // 'close' handler below still runs and tears down the subscription. Covers
+    // every project-scoped WS (/ws/tasks, /ws/health, /ws/merge-runs, …) since
+    // they all share this connection body.
+    ws.on('error', () => { /* routine client disconnect — ignore */ });
+
     let unsub: Unsubscribe | null = null;
     let closed = false;
     ws.on('close', () => {
