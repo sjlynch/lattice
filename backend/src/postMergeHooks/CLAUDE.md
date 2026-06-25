@@ -2,6 +2,10 @@
 
 Optional per-project **post-merge hook**: after a merge (per-task `/merge` or a "Merge All" run), Lattice spawns the user-configured harness with their prompt as a one-off task, and the merge is **not** considered complete until that agent calls back. This keeps any workflow merge step / per-task merge response gated on the post-merge agent finishing. Parallels the `pushRuns/` subsystem — same scratch-dir + Stop-hook + registry-waiter shape. `../postMergeHooks.ts` is the public shim.
 
+## Shared scratch contract (`../homeScratch/`)
+
+The home-scoped scratch path guard and session-setup lifecycle are shared with pushRuns / qaRuns via **`backend/src/homeScratch/`**. `paths.ts` is one `createHomeScratchPaths(...)` call (`post-merge-hooks`/`pmh`/`[post-merge-hook]`/`hook`), and `sessionSetup.ts` materializes the scratch dir through `setupHomeScratchSession`. Post-merge keeps its **own** trigger/gate/waiter (`trigger.ts` + `session.ts`) rather than the push/QA `startHomeScratchAgentSession` spawn helper — it records the run *before* spawn (so the waiter is in place), registers the presence node only for Claude, and on spawn failure marks the run `errored` instead of throwing. **Unlike push/QA it has no cleanup or boot sweep** (its scratch is left on disk); don't assume the `homeScratch/cleanup.ts` delete applies here.
+
 ## Flow
 
 - `trigger.ts` — `triggerPostMergeHook`, the decide-and-outcome half: gate on empty prompt (`no-prompt` skip) and one-running-per-project (`already-running` skip via `getActiveHookForProject`), record the run, spawn the pty (spawn-queue `priority` band, deduped per project), and register the orange agent-session node (Claude only). Returns an outcome immediately; callers block via the waiter.

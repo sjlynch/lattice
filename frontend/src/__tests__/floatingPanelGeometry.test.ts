@@ -1,16 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { clampPos, VIEWPORT_PAD } from '../components/floatingPanel/geometry.ts';
+import { withWindow } from './domDoubles.ts';
 
 function withViewport<T>(width: number, height: number, fn: () => T): T {
-  const prev = (globalThis as { window?: unknown }).window;
-  (globalThis as { window?: unknown }).window = { innerWidth: width, innerHeight: height };
-  try {
-    return fn();
-  } finally {
-    if (prev === undefined) delete (globalThis as { window?: unknown }).window;
-    else (globalThis as { window?: unknown }).window = prev;
-  }
+  return withWindow({ innerWidth: width, innerHeight: height }, fn);
 }
 
 test('clampPos keeps a fitting panel within its bounds', () => {
