@@ -68,6 +68,12 @@ export function handleTaskComplete(backendOrigin: string) {
       if (result.kind === 'mid-merge') {
         return res.json({ ok: true, awaitingResolution: true });
       }
+      if (result.kind === 'already-finalizing') {
+        // Another caller (the merge-run worker, or a duplicate hook fire)
+        // holds the per-task merge lock and is finalizing this task. The
+        // callback is idempotent, so report success and let the holder finish.
+        return res.json({ ok: true, finalizing: true });
+      }
       if (result.kind === 'merge-conflict') {
         return res.json({
           ok: true,
