@@ -22,6 +22,7 @@ import {
 import type { ClaudeMcpServerConfig } from './claudeInject.js';
 import { resolvePlaywright } from './resolverPolicy.js';
 import { toClaudeConfig } from './claudeServerConfig.js';
+import { applyBuiltinOverride } from './settingsValidation.js';
 
 // The full catalog the user sees: built-ins (with any per-id override applied),
 // followed by user-added custom servers. Pure-ish: only reads global settings.
@@ -32,10 +33,12 @@ export async function mergedCatalog(): Promise<McpServerEntry[]> {
 
   const builtins = BUILTIN_MCP_SERVERS.map((entry) => {
     const ov = overrides[entry.id];
-    // Built-ins stay builtin:true and keep their id; an override can tweak only
-    // the safe fields (args/env/headers/runtimeNote) — sanitizeBuiltinOverrides
-    // drops command/url so an override can't re-point what the built-in runs.
-    return ov ? { ...entry, ...ov, id: entry.id, builtin: true } : entry;
+    // Built-ins stay builtin:true and keep their id/command/url; an override may
+    // tweak only the safe fields. `applyBuiltinOverride` re-pins identity + the
+    // runner from the catalog and enforces the additive-only args rule, so an
+    // override can't re-point what the built-in runs (sanitizeBuiltinOverrides
+    // already dropped command/url and any code-exec env on the read path).
+    return ov ? applyBuiltinOverride(entry, ov) : entry;
   });
 
   // Custom servers can't shadow a built-in id; if they collide, the built-in wins.

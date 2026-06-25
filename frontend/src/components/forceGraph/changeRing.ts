@@ -20,6 +20,7 @@
 import * as THREE from 'three';
 import { ringMaterial, ghostMaterial } from './changeRingMaterials';
 import type { ChangeKind } from './changeRingTextures';
+import { RING_RENDER_ORDER, NODE_RENDER_ORDER } from './renderOrders';
 
 export type { ChangeKind } from './changeRingTextures';
 
@@ -82,12 +83,13 @@ function buildChangeRingSprite(baseSize: number, kind: ChangeKind): THREE.Sprite
   // concentrically when a changed node is also selected.
   const s = baseSize * 1.6;
   ring.scale.set(s, s, 1);
-  // Sit at 11 — below the base node body (12) so the body paints over the
-  // inner part of the disc, leaving only the colored outline showing. Every
-  // node sprite runs `depthTest:false`, so renderOrder is the sole arbiter of
-  // paint order regardless of parent, which keeps the ring behind the base now
-  // that it's a sibling of the root rather than a wrapping child group.
-  ring.renderOrder = 11;
+  // Sit at RING_RENDER_ORDER — below the base node body (NODE_RENDER_ORDER) so
+  // the body paints over the inner part of the disc, leaving only the colored
+  // outline showing. Every node sprite runs `depthTest:false`, so renderOrder is
+  // the sole arbiter of paint order regardless of parent, which keeps the ring
+  // behind the base now that it's a sibling of the root rather than a wrapping
+  // child group.
+  ring.renderOrder = RING_RENDER_ORDER;
   ring.userData[CHANGE_RING_TAG] = true;
   ring.userData[CHANGE_RING_KIND] = kind;
   // Start hidden while the `W` overlay is suppressing change rings, so a rebuild
@@ -129,13 +131,13 @@ export function deletedSprite(baseSize: number): THREE.Object3D {
   const ring = new THREE.Sprite(ringMaterial('deleted'));
   const ringScale = baseSize * 1.6 * 0.7;
   ring.scale.set(ringScale, ringScale, 1);
-  ring.renderOrder = 11;
+  ring.renderOrder = RING_RENDER_ORDER;
 
   const disc = new THREE.Sprite(ghostMaterial());
   // Smaller than a normal file node so deleted files read at a glance.
   const discScale = baseSize * 0.6;
   disc.scale.set(discScale, discScale, 1);
-  disc.renderOrder = 12;
+  disc.renderOrder = NODE_RENDER_ORDER;
 
   group.add(ring);
   group.add(disc);

@@ -6,6 +6,7 @@
 // agents, and `colorIndex` slots are reused, so the cache stays tiny).
 
 import * as THREE from 'three';
+import { CLAUDE_NODE_RENDER_ORDER } from './renderOrders';
 
 const TEX_SIZE = 128;
 
@@ -91,8 +92,9 @@ function discMaterial(color: string): THREE.SpriteMaterial {
 export function makeClaudeNode(color: string, size: number): THREE.Sprite {
   const sprite = new THREE.Sprite(discMaterial(color));
   sprite.scale.set(size, size, 1);
-  // Above file sprites (12) and rings (11) so the agent is never occluded.
-  sprite.renderOrder = 13;
+  // Above file sprites (NODE_RENDER_ORDER) and rings (RING_RENDER_ORDER) so the
+  // agent is never occluded.
+  sprite.renderOrder = CLAUDE_NODE_RENDER_ORDER;
   // The agent node is decorative — never a raycast hover/box-select target.
   sprite.raycast = () => {};
   return sprite;
@@ -160,7 +162,7 @@ function satelliteMaterial(color: string): THREE.SpriteMaterial {
 export function makeSatelliteNode(color: string, size: number): THREE.Sprite {
   const sprite = new THREE.Sprite(satelliteMaterial(color));
   sprite.scale.set(size, size, 1);
-  sprite.renderOrder = 13;
+  sprite.renderOrder = CLAUDE_NODE_RENDER_ORDER;
   sprite.raycast = () => {};
   return sprite;
 }

@@ -23,6 +23,9 @@
 // the in-worktree junction/symlink stripper lives in `reparsePoints.ts`.
 
 import { projectGit } from './projectGit.js';
+// Canonical source of the branch-delete guard — imported (not re-declared)
+// so this pre-check can't drift from the policy that would actually throw.
+import { LATTICE_BRANCH_RE } from './projectGit/policy.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
 import { notifySessionsFreed } from '../spawnQueue.js';
 import { assertGitDirIntact, worktreeExists } from './state.js';
@@ -31,11 +34,10 @@ import { pruneReparsePointsUnder } from './reparsePoints.js';
 
 const CLEANUP_GIT_TIMEOUT_MS = 15_000;
 
-// Branches Lattice may delete in the project repo. Mirrors projectGit's
-// branch-delete guard (which would throw on anything else) — we pre-check
-// here so a stray non-`lattice/` branch name just gets skipped+logged
-// rather than thrown.
-const LATTICE_BRANCH_RE = /^lattice\//;
+// `LATTICE_BRANCH_RE` (imported above from projectGit's policy) is the
+// branch-delete guard projectGit would throw on for anything else — we
+// pre-check with it here so a stray non-`lattice/` branch name just gets
+// skipped+logged rather than thrown.
 
 export async function cleanupWorktreeForTask(
   repoRoot: string,

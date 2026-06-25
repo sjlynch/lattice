@@ -17,12 +17,13 @@ import {
   pickActiveAfterClose,
   pickActiveAfterCloseMany,
   pickInitialActiveId,
+  planCloseTerminals,
   removeTerminalFromList,
-  removeTerminalsFromList,
   renameTerminalInList,
   reorderTerminalInList,
   setServerIdInList,
   setStatusInList,
+  terminalIdsForTask,
 } from './terminal/terminalState';
 import { deleteBackendSession } from './terminal/terminalApi';
 
@@ -129,27 +130,25 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
   const closeTerminals = useCallback((ids: string[]) => {
     const idSet = new Set(ids);
     const prev = terminalsRef.current;
-    for (const id of ids) {
-      const target = prev.find((t) => t.id === id);
-      if (target?.serverId) deleteBackendSession(target.serverId);
-    }
-    const next = removeTerminalsFromList(prev, idSet);
+    const { serverIdsToDelete, next } = planCloseTerminals(prev, idSet);
+    for (const serverId of serverIdsToDelete) deleteBackendSession(serverId);
     setTerminals(next);
     setActiveIdState((current) =>
       pickActiveAfterCloseMany(prev, next, idSet, current),
     );
   }, []);
 
+  // Delegate to the batched closeTerminals so every terminal for the task is
+  // removed in ONE setState. Looping closeTerminal(id) instead re-read the
+  // stale terminalsRef per id (the ref only syncs in an effect after render),
+  // so the last setState — computed from the pre-loop snapshot minus just its
+  // own id — clobbered the earlier removals and resurrected the sibling tabs.
   const closeTerminalsForTask = useCallback(
     (taskId: string) => {
-      const targets = terminalsRef.current
-        .filter((t) => t.taskId === taskId)
-        .map((t) => t.id);
-      for (const id of targets) {
-        closeTerminal(id);
-      }
+      const ids = terminalIdsForTask(terminalsRef.current, taskId);
+      if (ids.length > 0) closeTerminals(ids);
     },
-    [closeTerminal],
+    [closeTerminals],
   );
 
   // Memoize the context value so its identity is stable across renders that

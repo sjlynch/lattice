@@ -1,42 +1,41 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { seedClaudeTrust } from '../claudeTrust.js';
-import { queuedCreateSession } from '../queuedCreateSession.js';
+import {
+  setupHomeScratchSession,
+  startHomeScratchAgentSession,
+} from '../homeScratch/session.js';
 import { renderPushInstructions } from './instructions.js';
 import { resolveInstructionTemplate } from '../instructionTemplates.js';
-import { assertSafePushSessionPath, createPushSessionId } from './paths.js';
+import { pushPaths } from './paths.js';
 import { recordPushRun } from './registry.js';
 import { installPushStopHook, pushAgentId } from './stopHook.js';
 import { cleanupPushSession } from './cleanup.js';
 import { registerAgentSession } from '../agentSessions.js';
 import type { PushSession } from './types.js';
 
+const PUSH_INSTRUCTIONS_FILE = 'PUSH_INSTRUCTIONS.md';
+const PUSH_COMMAND =
+  'claude --dangerously-skip-permissions "Please read PUSH_INSTRUCTIONS.md in this directory and follow it."';
+
+async function renderPush(projectPath: string): Promise<string> {
+  const template = await resolveInstructionTemplate(projectPath, 'push');
+  return renderPushInstructions(projectPath, template);
+}
+
 // Materialize the per-session directory in home-scoped scratch: writes the
 // instructions brief and installs the Stop hook so Claude calls
-// /api/push-runs/:id/done on stop.
+// /api/push-runs/:id/done on stop. Thin wrapper over the shared
+// `setupHomeScratchSession` builder.
 export async function setupPushSession(
   projectPath: string,
   backendOrigin: string,
 ): Promise<PushSession> {
-  const id = createPushSessionId();
-  const cwd = assertSafePushSessionPath(projectPath, id);
-  await fs.mkdir(cwd, { recursive: true });
-
-  // Pre-accept the workspace-trust dialog for this brand-new dir; otherwise
-  // Claude prompts on first launch and blocks the unattended push flow.
-  await seedClaudeTrust(cwd);
-
-  await installPushStopHook(cwd, id, backendOrigin, projectPath);
-
-  const instructionsFile = path.join(cwd, 'PUSH_INSTRUCTIONS.md');
-  const template = await resolveInstructionTemplate(projectPath, 'push');
-  await fs.writeFile(
-    instructionsFile,
-    renderPushInstructions(projectPath, template),
-    'utf8',
-  );
-
-  return { id, cwd, instructionsFile };
+  return setupHomeScratchSession({
+    paths: pushPaths,
+    projectPath,
+    instructionsFileName: PUSH_INSTRUCTIONS_FILE,
+    installHooks: ({ cwd, id }) =>
+      installPushStopHook(cwd, id, backendOrigin, projectPath),
+    renderInstructions: () => renderPush(projectPath),
+  });
 }
 
 export type StartedPushSession = {
@@ -55,37 +54,40 @@ export async function startPushSession(
   projectPath: string,
   backendOrigin: string,
 ): Promise<StartedPushSession> {
-  const session = await setupPushSession(projectPath, backendOrigin);
-  const command = `claude --dangerously-skip-permissions "Please read PUSH_INSTRUCTIONS.md in this directory and follow it."`;
-  // `interactive` band — user-initiated, infrequent; may use PRIORITY_RESERVE
-  // headroom so a push is not stuck behind a full batch lane.
-  const sess = await queuedCreateSession({
-    kind: 'push-run',
-    priority: 'interactive',
-    dedupeKey: `push:${session.id}`,
-    opts: { cwd: session.cwd, initialCommand: command, projectPath },
-  });
-  if ('error' in sess) {
-    await cleanupPushSession(projectPath, session.id);
-    throw new Error(sess.error);
-  }
-  recordPushRun({
-    id: session.id,
+  const started = await startHomeScratchAgentSession({
+    paths: pushPaths,
     projectPath,
-    cwd: session.cwd,
-    status: 'running',
-    createdAt: Date.now(),
-  });
-  // Presence: show an orange Claude node for this non-worktree session.
-  registerAgentSession({
-    agentId: pushAgentId(session.id),
-    projectPath,
-    label: 'push',
+    instructionsFileName: PUSH_INSTRUCTIONS_FILE,
+    installHooks: ({ cwd, id }) =>
+      installPushStopHook(cwd, id, backendOrigin, projectPath),
+    renderInstructions: () => renderPush(projectPath),
+    buildCommand: () => PUSH_COMMAND,
+    // `interactive` band — user-initiated, infrequent; may use PRIORITY_RESERVE
+    // headroom so a push is not stuck behind a full batch lane.
+    queueKind: 'push-run',
+    queuePriority: 'interactive',
+    dedupeKeyPrefix: 'push',
+    onSpawned: ({ id, cwd, serverId }) => {
+      recordPushRun({
+        id,
+        projectPath,
+        cwd,
+        status: 'running',
+        createdAt: Date.now(),
+      });
+      // Presence: show an orange Claude node for this non-worktree session.
+      registerAgentSession({
+        agentId: pushAgentId(id),
+        projectPath,
+        label: 'push',
+      });
+    },
+    cleanup: cleanupPushSession,
   });
   return {
-    id: session.id,
-    cwd: session.cwd,
-    command,
-    serverId: sess.id,
+    id: started.id,
+    cwd: started.cwd,
+    command: started.command,
+    serverId: started.serverId,
   };
 }

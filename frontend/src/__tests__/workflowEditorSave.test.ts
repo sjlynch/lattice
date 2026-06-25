@@ -83,3 +83,58 @@ test('a fresh server echo replaces an unedited editor by value', () => {
   assert.equal(editor.name, 'New name');
   assert.equal(editor.dirty, false);
 });
+
+test('a mid-save NAME edit supersedes (so the create branch keeps the stash)', () => {
+  const w = workflow();
+  const atSaveStart = editorFor(w);
+  // Renaming the workflow mid-flight also produces a fresh editor object.
+  const current: EditorState = { ...atSaveStart, name: 'Renamed mid-save', dirty: true };
+  const { superseded } = nextEditorAfterSave(atSaveStart, current, w);
+  assert.equal(superseded, true);
+});
+
+test('a mid-save VARIABLE edit supersedes (so the create branch keeps the stash)', () => {
+  const w = workflow();
+  const atSaveStart = editorFor(w);
+  const current: EditorState = {
+    ...atSaveStart,
+    variables: [{ name: 'custom_var', value: 'added mid-save' }],
+    dirty: true,
+  };
+  const { superseded } = nextEditorAfterSave(atSaveStart, current, w);
+  assert.equal(superseded, true);
+});
+
+// The create branch of save() drops the never-saved stash only when the save
+// was NOT superseded. The hook now reads `superseded` from the live editor ref
+// (never a setEditor-updater side effect that may not have run yet), so the
+// clear decision tracks the real current state. These two cases pin that gate:
+// a superseded save must keep the stash; a clean save must drop it.
+function shouldClearStash(superseded: boolean): boolean {
+  return !superseded;
+}
+
+test('clear decision: a superseded create save keeps the draft stash', () => {
+  const w = workflow();
+  const atSaveStart = editorFor(w, { workflowId: null });
+  const current: EditorState = {
+    ...atSaveStart,
+    steps: atSaveStart.steps.map((s, i) =>
+      i === 0 ? { ...s, prompt: 'typed during the create POST' } : s,
+    ),
+    dirty: true,
+  };
+  const { superseded } = nextEditorAfterSave(atSaveStart, current, w);
+  assert.equal(superseded, true);
+  // The live draft must survive — the debounced persist keeps stashing it.
+  assert.equal(shouldClearStash(superseded), false);
+});
+
+test('clear decision: a clean create save drops the draft stash', () => {
+  const w = workflow();
+  const atSaveStart = editorFor(w, { workflowId: null });
+  const { superseded } = nextEditorAfterSave(atSaveStart, atSaveStart, w);
+  assert.equal(superseded, false);
+  // Nothing changed mid-flight — the workflow is server-side now, so clear it.
+  assert.equal(shouldClearStash(superseded), true);
+});
