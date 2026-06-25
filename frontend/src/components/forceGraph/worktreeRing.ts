@@ -9,6 +9,7 @@
 // live task colors, and slots are reused, so the cache stays small).
 
 import * as THREE from 'three';
+import { WORKTREE_RING_RENDER_ORDER } from './renderOrders';
 
 const RING_TAG = 'lattice:worktree-ring';
 const SIZE = 128;
@@ -117,7 +118,7 @@ export function setNodeWorktreeRing(
   // sibling node overlapping it on screen obscured the ring. Sit well above the
   // pack so the ring is unambiguously the topmost graph element. (Change rings
   // are hidden while `W` is held — see useWorktreeHighlight — so no clash.)
-  ring.renderOrder = 30;
+  ring.renderOrder = WORKTREE_RING_RENDER_ORDER;
   ring.raycast = () => {};
   ring.userData[RING_TAG] = true;
   ring.userData[`${RING_TAG}:color`] = color;

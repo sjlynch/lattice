@@ -32,6 +32,7 @@ import * as THREE from 'three';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { createMotionSyncGate } from './motionSyncGate';
 import { getIdleController } from './idleController';
+import { LINK_RENDER_ORDER } from './renderOrders';
 
 type SimNode = { x?: number; y?: number; z?: number };
 type SimLink = { source: SimNode | string; target: SimNode | string };
@@ -179,9 +180,9 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
     geometry.setDrawRange(0, links.length * 2);
     if (!lineSegments) {
       lineSegments = new THREE.LineSegments(geometry, ensureMaterial());
-      // Match the library's link renderOrder (10) so links draw behind the
-      // depth-test-disabled node sprites (renderOrder 12), as before.
-      lineSegments.renderOrder = 10;
+      // Match the library's link renderOrder so links draw behind the
+      // depth-test-disabled node sprites (NODE_RENDER_ORDER), as before.
+      lineSegments.renderOrder = LINK_RENDER_ORDER;
       // One object spanning the whole graph — never cull it as a unit (its
       // bounding sphere leaves the frustum long before the links do).
       lineSegments.frustumCulled = false;
