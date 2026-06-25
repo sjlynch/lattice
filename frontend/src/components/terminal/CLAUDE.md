@@ -11,7 +11,14 @@ CLAUDE.md) — different directory, don't conflate.
   `active`, disposes it on deactivate. Each WebGL context counts toward Chrome's
   ~16-per-page cap; holding one per terminal made "Run All" blow past it.
 - `useTerminalConnection.ts` — the `/ws/terminal` WebSocket: connect, replay,
-  input/resize forwarding, reconnect. Holds the invariants below.
+  input/resize forwarding, reconnect. Owns the connection *state machine*
+  (`terminated` / `attachedOnce` / `attempt`) and the React effect; holds the
+  invariants below. The protocol *mechanism* lives in `terminalSocket.ts`.
+- `terminalSocket.ts` — React-free helpers for the connection: `buildTerminalWsUrl`
+  (URL building), `handleTerminalMessage` (decode + dispatch), `reconnectDelay` /
+  `canReattachTerminal` / `shouldGiveUpReconnect` (backoff/give-up decisions),
+  `forwardTerminalInput` (xterm onData/onResize → socket), `terminalNotices` (all
+  user-visible terminal-body status lines, in one place), and `MAX_RECONNECT_ATTEMPTS`.
 - `terminalConfig.ts` — `Terminal` options + theme. `clipboardPaste.ts` — Ctrl+V
   → `term.paste()` (xterm would otherwise forward ^V as a raw byte).
 
