@@ -24,6 +24,7 @@ import {
   loadWorkflowDraft,
   saveWorkflowDraft,
 } from '../workflowDraftStorage';
+import { draftForFolder, reconcileDraftPersist } from '../workflowDraftPersist';
 import {
   defaultVariables,
   makeVariable,
@@ -59,32 +60,46 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
     }
   }, [workflows, editor.workflowId, editor.dirty]);
 
-  // Restore a never-saved draft once per project, so a reload/close while
-  // mid-edit on a brand-new workflow doesn't lose it. Guarded so it never
-  // stomps an edit already in progress in this session.
+  // Load the active project's own never-saved draft. Runs once per project
+  // (restoredFor guard) so a reload/close while mid-edit on a brand-new workflow
+  // doesn't lose it. It ALSO fires on a project switch: WorkflowsLauncher takes
+  // activeFolder as a prop, so the editor isn't remounted and still holds the
+  // PREVIOUS project's never-saved draft. That draft belongs to the project it
+  // was authored in (the persist effect below flushes it back there), so we
+  // replace it with THIS project's stored draft rather than carrying it across —
+  // otherwise the new project would show, and persist, the old project's draft.
+  // A loaded (saved) workflow is reconciled by the sync effect above, so it's
+  // left untouched (see draftForFolder).
   const restoredFor = useRef<string | null>(null);
   useEffect(() => {
     if (!activeFolder || restoredFor.current === activeFolder) return;
     restoredFor.current = activeFolder;
-    setEditor((cur) => {
-      if (cur.workflowId !== null || cur.steps.length > 0 || cur.name.trim()) {
-        return cur;
-      }
-      return loadWorkflowDraft(activeFolder) ?? cur;
-    });
+    setEditor((cur) => draftForFolder(cur, loadWorkflowDraft(activeFolder)));
   }, [activeFolder]);
 
   // Debounced persist of the in-progress draft. Only never-saved drafts with
   // content are stashed (a saved workflow is reloaded from the server, and an
-  // empty draft is noise); see workflowDraftStorage.
+  // empty draft is noise); see workflowDraftStorage. The reconcile guard keeps a
+  // draft carried across a project switch from being stamped onto the new
+  // project's key — it's flushed back under the project it was authored in
+  // instead (see workflowDraftPersist).
+  const lastPersistFolder = useRef<string | null>(null);
+  const lastPersistEditor = useRef<EditorState | null>(null);
   useEffect(() => {
-    if (!activeFolder) return;
-    const persistable =
-      editor.dirty &&
-      editor.workflowId === null &&
-      (editor.steps.length > 0 || editor.name.trim() !== '');
-    if (!persistable) return;
-    const t = setTimeout(() => saveWorkflowDraft(activeFolder, editor), 500);
+    const { decision, nextFolder, nextEditor } = reconcileDraftPersist(
+      activeFolder,
+      editor,
+      lastPersistFolder.current,
+      lastPersistEditor.current,
+    );
+    lastPersistFolder.current = nextFolder;
+    lastPersistEditor.current = nextEditor;
+    if (decision.kind === 'idle') return;
+    if (decision.kind === 'flush') {
+      saveWorkflowDraft(decision.folder, editor);
+      return;
+    }
+    const t = setTimeout(() => saveWorkflowDraft(decision.folder, editor), 500);
     return () => clearTimeout(t);
   }, [activeFolder, editor]);
 
