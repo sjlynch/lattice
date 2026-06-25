@@ -83,3 +83,11 @@ shared `userSettings.json` fetch:
   `autoFocus`), wraps Tab/Shift+Tab within it, and restores focus to the opener
   on close. Used by `Modal`, `FloatingPanel`, and `TaskDetailOverlay`;
   Escape-to-close stays each wrapper's own concern.
+- `useDismissOnOutside(open, ref, onClose)` — shared popover/menu dismissal.
+  While `open`, a document `pointerdown` outside `ref`'s element and a window
+  Escape `keydown` both call `onClose` (read through a ref, so its identity never
+  re-attaches the listeners). Used by `sidebar/NewTerminalDropdown` and
+  `sidebar/hooks/useTabContextMenu`. The graph's `forceGraph/hooks/useNodeContext
+  Menu` is deliberately NOT on this hook: it's a different gesture (mousedown +
+  `.closest()` class test + deferred attach, no Escape), and adapting it would
+  need enough option flags to defeat the point.
