@@ -1,6 +1,10 @@
-// The MCP control plane's resolver. Merges the code catalog with the user's
-// global custom servers / built-in overrides, decides which are enabled for a
-// given project, folds in stored secrets, and shapes the result per harness.
+// The MCP control plane's resolver facade. Merges the code catalog with the
+// user's global custom servers / built-in overrides, decides which are enabled
+// for a given project, folds in stored secrets, and shapes the result per
+// harness. This file owns the catalog merge + the resolve orchestration; the
+// per-decision logic lives in focused pure helpers it composes:
+//   - `resolverPolicy.ts`     — Playwright enable/headless policy.
+//   - `claudeServerConfig.ts` — secret-env selection + Claude config shaping.
 //
 // `effectiveMcpServers(projectPath, harness)` is what the spawn path calls; the
 // merged-catalog helpers back the settings/MCP tab and config import.
@@ -15,10 +19,9 @@ import {
   type McpHarnessSupport,
   type McpServerEntry,
 } from './catalog.js';
-import {
-  platformizeCommand,
-  type ClaudeMcpServerConfig,
-} from './claudeInject.js';
+import type { ClaudeMcpServerConfig } from './claudeInject.js';
+import { resolvePlaywright } from './resolverPolicy.js';
+import { toClaudeConfig } from './claudeServerConfig.js';
 
 // The full catalog the user sees: built-ins (with any per-id override applied),
 // followed by user-added custom servers. Pure-ish: only reads global settings.
@@ -48,7 +51,8 @@ function harnessSupports(support: McpHarnessSupport, harness: AgentHarness): boo
 }
 
 // Context for a single resolve, distinguishing the kind of session being
-// spawned. Today it carries only `isQaRun` — see `resolvePlaywright`.
+// spawned. Today it carries only `isQaRun` — see `resolvePlaywright`
+// (`resolverPolicy.ts`).
 export type McpResolveContext = {
   // True ONLY for the QA-lane "run an e2e test" sessions. Gates the QA-scoped
   // Playwright enablement (`qaPlaywright`), which must NOT leak into ordinary
@@ -56,77 +60,6 @@ export type McpResolveContext = {
   // the global `mcpOverrides.playwright` toggle.
   isQaRun?: boolean;
 };
-
-// Whether Playwright is on for this resolve, and (if so) whether it runs
-// headless. Two independent switches feed it, matching the two UI surfaces:
-//   - `mcpOverrides.playwright` (Settings → MCP tab): GLOBAL. Injected into
-//     every Lattice-spawned Claude session for the project AND the project-root
-//     entry that the user's own root-cwd `claude` sessions read. Always headless
-//     (these are background / unattended sessions — nobody is watching them).
-//   - `qaPlaywright` (QA lane): QA-RUNS-ONLY — applies only when `isQaRun`. Its
-//     `headless` flag is the "I want to watch it test" control (default headless).
-// When both apply (a QA run with the global toggle also on), the QA headless
-// toggle wins so the QA lane's eye switch stays authoritative for QA runs.
-function resolvePlaywright(
-  settings: Pick<UserSettings, 'mcpOverrides' | 'qaPlaywright'>,
-  isQaRun: boolean,
-): { enabled: boolean; headless: boolean } {
-  const qa = settings.qaPlaywright;
-  if (isQaRun && qa?.enabled === true) {
-    return { enabled: true, headless: qa.headless !== false };
-  }
-  if (settings.mcpOverrides?.playwright === true) {
-    return { enabled: true, headless: true };
-  }
-  return { enabled: false, headless: true };
-}
-
-// All env vars whose values come from the secrets file for this entry: the
-// declared built-in key plus any imported-custom-server secret vars.
-function secretEnvVarsFor(entry: McpServerEntry): string[] {
-  const vars = new Set(entry.secretEnvVars ?? []);
-  if (entry.requiresSecret) vars.add(entry.requiresSecret.envVar);
-  return [...vars];
-}
-
-// Build the Claude per-server config for an enabled entry, folding in secrets
-// and the Playwright headless flag. `headless` is only meaningful for the
-// Playwright entry (see `resolvePlaywright`); it's ignored for every other server.
-function toClaudeConfig(
-  entry: McpServerEntry,
-  serverSecrets: Record<string, string> | undefined,
-  headless: boolean,
-): ClaudeMcpServerConfig {
-  if (entry.transport === 'http') {
-    return {
-      type: 'http',
-      url: entry.url ?? '',
-      ...(entry.headers && Object.keys(entry.headers).length > 0
-        ? { headers: entry.headers }
-        : {}),
-    };
-  }
-
-  let args = [...(entry.args ?? [])];
-  // Playwright's headless flag is computed (QA-toggle or global), not stored on args.
-  if (entry.id === 'playwright' && headless) args = [...args, '--headless'];
-
-  const env: Record<string, string> = { ...(entry.env ?? {}) };
-  for (const envVar of secretEnvVarsFor(entry)) {
-    const value = serverSecrets?.[envVar];
-    // If there's no stored value, leave the var out so the harness can inherit
-    // it from the user's ambient shell (the no-store path).
-    if (value) env[envVar] = value;
-  }
-
-  const { command, args: pArgs } = platformizeCommand(entry.command ?? '', args);
-  return {
-    type: 'stdio',
-    command,
-    args: pArgs,
-    ...(Object.keys(env).length > 0 ? { env } : {}),
-  };
-}
 
 // The PURE resolver core: given the already-loaded catalog, project settings,
 // secrets, and spawn context, decide the enabled Claude server set. No I/O —
