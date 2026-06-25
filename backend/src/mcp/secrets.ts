@@ -11,6 +11,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { latticeHomeDir } from '../projectPath.js';
 import { atomicWriteFile } from '../claudeTrust.js';
+import { runExclusive } from '../serializeWrites.js';
 
 // { [serverId]: { [envVar]: value } }
 export type McpSecrets = Record<string, Record<string, string>>;
@@ -20,6 +21,14 @@ export type RedactedMcpSecrets = Record<string, Record<string, boolean>>;
 
 function secretsFile(): string {
   return path.join(latticeHomeDir(), 'mcpSecrets.json');
+}
+
+// All read-modify-write paths over the secrets file share this key so a
+// `setMcpSecret` and a `mergeMcpSecrets` (or two of either) firing close
+// together serialize instead of each reading the same base and the later write
+// dropping the earlier secret (see ../serializeWrites.ts).
+function secretsWriteKey(): string {
+  return `mcpSecrets:${secretsFile()}`;
 }
 
 export async function readMcpSecrets(): Promise<McpSecrets> {
@@ -64,33 +73,37 @@ export async function setMcpSecret(
   envVar: string,
   value: string | null,
 ): Promise<RedactedMcpSecrets> {
-  const secrets = await readMcpSecrets();
-  if (value === null || value === '') {
-    if (secrets[serverId]) {
-      delete secrets[serverId][envVar];
-      if (Object.keys(secrets[serverId]).length === 0) delete secrets[serverId];
+  return runExclusive(secretsWriteKey(), async () => {
+    const secrets = await readMcpSecrets();
+    if (value === null || value === '') {
+      if (secrets[serverId]) {
+        delete secrets[serverId][envVar];
+        if (Object.keys(secrets[serverId]).length === 0) delete secrets[serverId];
+      }
+    } else {
+      (secrets[serverId] ??= {})[envVar] = value;
     }
-  } else {
-    (secrets[serverId] ??= {})[envVar] = value;
-  }
-  await writeMcpSecrets(secrets);
-  return redactSecrets(secrets);
+    await writeMcpSecrets(secrets);
+    return redactSecrets(secrets);
+  });
 }
 
 // Merge in multiple secrets at once (used by config import). Skips empty values.
 export async function mergeMcpSecrets(
   incoming: McpSecrets,
 ): Promise<RedactedMcpSecrets> {
-  const secrets = await readMcpSecrets();
-  for (const [serverId, vars] of Object.entries(incoming)) {
-    for (const [envVar, value] of Object.entries(vars)) {
-      if (typeof value === 'string' && value.length > 0) {
-        (secrets[serverId] ??= {})[envVar] = value;
+  return runExclusive(secretsWriteKey(), async () => {
+    const secrets = await readMcpSecrets();
+    for (const [serverId, vars] of Object.entries(incoming)) {
+      for (const [envVar, value] of Object.entries(vars)) {
+        if (typeof value === 'string' && value.length > 0) {
+          (secrets[serverId] ??= {})[envVar] = value;
+        }
       }
     }
-  }
-  await writeMcpSecrets(secrets);
-  return redactSecrets(secrets);
+    await writeMcpSecrets(secrets);
+    return redactSecrets(secrets);
+  });
 }
 
 export function redactSecrets(secrets: McpSecrets): RedactedMcpSecrets {

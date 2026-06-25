@@ -221,3 +221,56 @@ test('WorkflowStore persists workflows under .lattice/workflows.json and reloads
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('getWorkflow/updateWorkflow/deleteWorkflow resolve by id with an empty cache (post-restart)', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-workflows-restart-'));
+  try {
+    const project = canonicalProjectPath(dir);
+    // The known-projects source is the only thing pointing a fresh store at a
+    // project it hasn't loaded yet — mirror the global tasks index by handing
+    // it this project explicitly.
+    const knownProjects = async () => [project];
+
+    const seeder = new WorkflowStore({ listKnownProjects: knownProjects });
+    const created = await seeder.createWorkflow(dir, 'Restart Flow', [
+      { id: 'step_one', title: 'Only', prompt: 'Do it', mode: 'sequential', harness: 'claude' },
+    ]);
+    await seeder.flushPersist(dir);
+
+    // A fresh store stands in for the post-restart process: its in-memory cache
+    // is empty and the project was never loaded this "session". Each by-id
+    // operation must still resolve the workflow off disk.
+    const afterRestartGet = new WorkflowStore({ listKnownProjects: knownProjects });
+    const got = await afterRestartGet.getWorkflow(created.id);
+    assert.ok(got, 'getWorkflow should resolve a workflow whose project is not loaded');
+    assert.equal(got.id, created.id);
+    assert.equal(got.name, 'Restart Flow');
+
+    const afterRestartPatch = new WorkflowStore({ listKnownProjects: knownProjects });
+    const patched = await afterRestartPatch.updateWorkflow(created.id, { name: 'Renamed After Restart' });
+    assert.ok(patched, 'updateWorkflow should resolve a workflow whose project is not loaded');
+    assert.equal(patched.name, 'Renamed After Restart');
+    await afterRestartPatch.flushPersist(dir);
+    assert.equal(
+      (JSON.parse(await fs.readFile(workflowsFile(project), 'utf8')) as Workflow[])[0].name,
+      'Renamed After Restart',
+    );
+
+    const afterRestartDelete = new WorkflowStore({ listKnownProjects: knownProjects });
+    assert.equal(
+      await afterRestartDelete.deleteWorkflow(created.id),
+      true,
+      'deleteWorkflow should resolve a workflow whose project is not loaded',
+    );
+    await afterRestartDelete.flushPersist(dir);
+    assert.deepEqual(JSON.parse(await fs.readFile(workflowsFile(project), 'utf8')), []);
+
+    // A genuinely unknown id still resolves to null/false, not a throw.
+    const empty = new WorkflowStore({ listKnownProjects: knownProjects });
+    assert.equal(await empty.getWorkflow('wf_missing'), null);
+    assert.equal(await empty.deleteWorkflow('wf_missing'), false);
+    assert.equal(await empty.updateWorkflow('wf_missing', { name: 'x' }), null);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

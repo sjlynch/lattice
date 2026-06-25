@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { generateWorkflowId } from '../ids.js';
 import { ProjectStateManager } from '../projectStateManager.js';
+import { listKnownProjects as listKnownTaskProjects } from '../tasks.js';
 import {
   normalizeSteps,
   normalizeWorkflows,
@@ -19,8 +20,22 @@ export function workflowsFile(projectPath: string): string {
   return path.join(projectPath, '.lattice', WORKFLOWS_FILENAME);
 }
 
+// Where a cross-project lookup found a workflow: the project key whose cached
+// list holds it, the list itself, and the index within that list.
+type WorkflowLookup = { project: string; list: Workflow[]; idx: number };
+
+export type WorkflowStoreOptions = {
+  // Source of the project roots to scan when a by-id lookup misses the
+  // in-memory cache. Defaults to the global tasks projects index — a project
+  // with workflows is always loaded as a task project when its UI opens, so it
+  // appears there even across a backend restart. Injectable for tests.
+  listKnownProjects?: () => Promise<string[]>;
+};
+
 export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubscriber> {
-  constructor() {
+  private readonly listKnownProjects: () => Promise<string[]>;
+
+  constructor(opts: WorkflowStoreOptions = {}) {
     super({
       name: 'workflows',
       fileForProject: workflowsFile,
@@ -28,6 +43,7 @@ export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubsc
       deserialize: normalizeWorkflows,
       snapshot: (workflows) => [...workflows],
     });
+    this.listKnownProjects = opts.listKnownProjects ?? listKnownTaskProjects;
   }
 
   public async listWorkflows(projectPath: string): Promise<Workflow[]> {
@@ -35,12 +51,46 @@ export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubsc
     return [...(this.getCached(key) ?? [])];
   }
 
-  public async getWorkflow(id: string): Promise<Workflow | null> {
-    for (const list of this.cacheValues()) {
-      const found = list.find((w) => w.id === id);
-      if (found) return found;
+  // Lazily load every known project's workflows.json into the cache. The
+  // in-memory cache is empty for an unopened project (e.g. right after the
+  // dev backend's tsc -w restart) — a by-id lookup would otherwise miss a
+  // workflow that plainly exists on disk. Mirrors the task store's
+  // loadAllKnown fallback.
+  private async loadAllKnown(): Promise<void> {
+    const projects = await this.listKnownProjects();
+    for (const project of projects) {
+      if (!this.isLoaded(project)) {
+        // eslint-disable-next-line no-await-in-loop
+        await this.loadIfNeeded(project);
+      }
+    }
+  }
+
+  private findWorkflowInLoadedProjects(id: string): WorkflowLookup | null {
+    for (const [project, list] of this.cacheEntries()) {
+      const idx = list.findIndex((w) => w.id === id);
+      if (idx !== -1) return { project, list, idx };
     }
     return null;
+  }
+
+  // Resolve a workflow by id regardless of whether its project is currently
+  // loaded: try the in-memory cache first, then load every known project and
+  // try again. Mirrors the task store's withTaskAcrossProjects.
+  private async withWorkflowAcrossProjects<T>(
+    id: string,
+    fn: (lookup: WorkflowLookup) => T | Promise<T>,
+  ): Promise<T | null> {
+    const cached = this.findWorkflowInLoadedProjects(id);
+    if (cached) return fn(cached);
+    await this.loadAllKnown();
+    const loaded = this.findWorkflowInLoadedProjects(id);
+    if (loaded) return fn(loaded);
+    return null;
+  }
+
+  public async getWorkflow(id: string): Promise<Workflow | null> {
+    return this.withWorkflowAcrossProjects(id, ({ list, idx }) => list[idx]);
   }
 
   public async createWorkflow(
@@ -70,9 +120,7 @@ export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubsc
     id: string,
     updates: { name?: string; steps?: WorkflowStep[]; variables?: WorkflowVariable[] },
   ): Promise<Workflow | null> {
-    for (const [project, list] of this.cacheEntries()) {
-      const idx = list.findIndex((w) => w.id === id);
-      if (idx === -1) continue;
+    return this.withWorkflowAcrossProjects(id, ({ project, list, idx }) => {
       const prev = list[idx];
       const nextWorkflow: Workflow = {
         ...prev,
@@ -90,20 +138,17 @@ export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubsc
       this.schedulePersist(project);
       this.notifyProject(project);
       return nextWorkflow;
-    }
-    return null;
+    });
   }
 
   public async deleteWorkflow(id: string): Promise<boolean> {
-    for (const [project, list] of this.cacheEntries()) {
-      const idx = list.findIndex((w) => w.id === id);
-      if (idx === -1) continue;
+    const deleted = await this.withWorkflowAcrossProjects(id, ({ project, list, idx }) => {
       const nextList = list.filter((_, i) => i !== idx);
       this.setCached(project, nextList);
       this.schedulePersist(project);
       this.notifyProject(project);
       return true;
-    }
-    return false;
+    });
+    return deleted ?? false;
   }
 }
