@@ -1,11 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { copyVariableToken } from '../components/workflows/promptVariables.ts';
-
-// A minimal stand-in for the part of navigator.clipboard we use.
-function stubClipboard(writeText: (text: string) => Promise<void>) {
-  return { writeText } as Pick<Clipboard, 'writeText'>;
-}
+import { stubClipboard } from './domDoubles.ts';
 
 test('successful write resolves true and copies the {{token}}', async () => {
   const writes: string[] = [];

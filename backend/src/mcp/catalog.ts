@@ -49,6 +49,12 @@ export type McpServerEntry = {
   // omits it for ambient inheritance). `requiresSecret.envVar` is implicitly
   // one of these for built-ins.
   secretEnvVars?: string[];
+  // HTTP `headers` whose VALUES live in `~/.lattice/mcpSecrets.json` rather than
+  // inline in `headers` here — the header analogue of `secretEnvVars`, used by
+  // imported HTTP servers so an auth header's literal key (`Authorization:
+  // Bearer …`) never sits in the non-0600 globalSettings.json. The resolver
+  // re-injects each from the secrets file (keyed by header name) at spawn time.
+  secretHeaders?: string[];
   harnessSupport: McpHarnessSupport;
   // Free-text runtime caveat surfaced in the MCP tab (Node version, Chrome, …).
   runtimeNote?: string;

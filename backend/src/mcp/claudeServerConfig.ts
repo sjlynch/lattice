@@ -29,12 +29,19 @@ export function toClaudeConfig(
   headless: boolean,
 ): ClaudeMcpServerConfig {
   if (entry.transport === 'http') {
+    const headers: Record<string, string> = { ...(entry.headers ?? {}) };
+    // Re-inject any header whose value lives in the secrets file (an imported
+    // server's auth header — see mcp/import/normalize.ts). Kept out of the inline
+    // `headers` so globalSettings.json never holds the literal; a header with no
+    // stored value (e.g. an unfilled ${input:…} placeholder) is simply omitted.
+    for (const name of entry.secretHeaders ?? []) {
+      const value = serverSecrets?.[name];
+      if (value) headers[name] = value;
+    }
     return {
       type: 'http',
       url: entry.url ?? '',
-      ...(entry.headers && Object.keys(entry.headers).length > 0
-        ? { headers: entry.headers }
-        : {}),
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
     };
   }
 
