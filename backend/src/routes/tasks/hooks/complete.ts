@@ -13,6 +13,27 @@ import { notifySessionsFreed } from '../../../spawnQueue.js';
 import { finalizeResolvedTask } from '../finalizeResolved.js';
 import { awaitPostMergeHookOutsideRun } from './postMergeHookHelper.js';
 
+// Decide the in_progress → ready_to_merge transition from a commit-count
+// probe. Reserve `awaiting-commit` (don't flip) for a *real, observed* zero —
+// Claude finishing a turn without committing. A git error counting commits
+// (transient `index.lock`, a momentary Windows file lock, a briefly-busy
+// worktree dir) is NOT a genuine zero: the branch may well carry real
+// commits, and the Stop hook fires exactly once, so reporting "no commits"
+// here would strand a finished task at in_progress forever. Flip optimistically
+// on error instead — a branch that turns out to be genuinely empty is still
+// caught downstream by the merge's `emptyBranchOutcome`.
+export async function decideInProgressComplete(
+  countCommits: () => Promise<number>,
+): Promise<'flip' | 'awaiting-commit'> {
+  try {
+    const commits = await countCommits();
+    return commits === 0 ? 'awaiting-commit' : 'flip';
+  } catch (err) {
+    console.error('[complete] branchCommitCount failed; flipping anyway', err);
+    return 'flip';
+  }
+}
+
 // Hook callback: claude finished a turn.
 //
 // Source attribution: every callback site (Claude Stop hook curl, Pi
@@ -67,19 +88,22 @@ export function handleTaskComplete(backendOrigin: string) {
       return res.json({ ok: true });
     }
     // Only flip when there are real commits — Claude finishing without
-    // committing must NOT be reported as ready to merge.
+    // committing must NOT be reported as ready to merge. A *git error* while
+    // counting is not the same as a real zero, though (see
+    // decideInProgressComplete): flip optimistically rather than strand a
+    // committed task at in_progress.
     if (task.branch && task.projectPath) {
-      try {
-        const commits = await branchCommitCount(task.projectPath, task.branch);
-        if (commits === 0) {
-          console.warn(
-            `[complete] task ${task.id} (${task.title}) hit Stop hook with ` +
-              `no commits on ${task.branch} — leaving at in_progress.`,
-          );
-          return res.json({ ok: true, awaitingCommit: true });
-        }
-      } catch (err) {
-        console.error('[complete] branchCommitCount failed', err);
+      const branch = task.branch;
+      const projectPath = task.projectPath;
+      const decision = await decideInProgressComplete(() =>
+        branchCommitCount(projectPath, branch),
+      );
+      if (decision === 'awaiting-commit') {
+        console.warn(
+          `[complete] task ${task.id} (${task.title}) hit Stop hook with ` +
+            `no commits on ${task.branch} — leaving at in_progress.`,
+        );
+        return res.json({ ok: true, awaitingCommit: true });
       }
     }
     await updateTask(task.id, {
