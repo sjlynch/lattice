@@ -35,9 +35,15 @@ Idempotent Stop-hook / resolver callbacks. `hooks/index.ts`'s
   (ready_to_merge + conflict → `finalizeResolvedTask`) and the original
   in_progress → ready_to_merge flip (**only** with a branch commit; kills the
   idle pty after responding).
-- `hooks/merged.ts` — `/merged`. Resolver success → `finalizeResolvedTask`.
+- `hooks/merged.ts` — `/merged`. Resolver success → `finalizeResolvedTask`,
+  but **only while `task.conflict` is still set** (same gate `/complete`'s
+  resolver branch uses). A late `/merged` from a resolver abandoned by
+  `/merge-aborted` (the Cancel button cleared the flag) is a harmless no-op
+  rather than a silent finalize + main fast-forward.
 - `hooks/mergeAborted.ts` — `/merge-aborted`. Aborts a lingering mid-merge,
-  clears the conflict flags.
+  clears the conflict flags (which is what makes a Cancel authoritative —
+  see `/merged`'s guard above), and kills the orphaned resolver pty by
+  worktree cwd so it stops working on the abandoned resolution.
 - `hooks/stashResolved.ts` — `/stash-resolved`. Cleanup → qa, then
   auto-restart the merge run for remaining work.
 - `hooks/postMergeHookHelper.ts` — `awaitPostMergeHookOutsideRun`, shared by

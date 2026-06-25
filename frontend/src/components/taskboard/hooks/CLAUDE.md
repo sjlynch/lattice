@@ -14,7 +14,7 @@ the launcher calls directly.
 - `useVisibleLanes.ts` — lane-visibility toggle set for the filter chips (all visible by default).
 - `useLaneSort.ts` — per-lane arrival-date sort mode (`recent`/`oldest`/`manual`, default `recent`), persisted per project (`lattice.laneSort.<path>`); backs the lane header clock + caret. `setManual` is wired to slot drops so manual reorder survives.
 - `useSyncedViewedTask.ts` — keeps the detail overlay's viewed task fresh against live updates; closes the overlay if the task disappears.
-- `useTaskDetailEdit.ts` — the detail overlay's editable title/description draft, dirty check, and save-payload prep (resets only when the task changes).
+- `useTaskDetailEdit.ts` — the detail overlay's editable title/description draft, dirty check, and save-payload prep. Resets on a task switch; on a same-ID update it reconciles per field against a baseline ref (`reconcileEditFields`) — an untouched field adopts the server value (so a WS update lands instead of a stale local field clobbering it on Save), an edited field keeps the user's draft. `computeSavePayload` only sends fields changed vs the current server task.
 - `useHarnessSelector.ts` — agent-harness dropdown: installed CLIs, the curated Pi model menu (`GET /api/pi-models`), the persisted per-project choice (`{harness, piModel}`), and the round-robin pick used in `interleave` mode. `pickRunHarness()` returns `{harness, piModel}` for run/resume; the dropdown value encodes both (`pi:<provider/model>`).
 
 ## Task actions
