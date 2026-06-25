@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { APP_CONFIG } from '../appConfig';
+import { reconcileHiddenExtsPersist } from './hiddenExtsPersist';
 
 export function useHiddenExtensions(activeFolder: string) {
   // Per-extension visibility, persisted per project. Stored as a list of
@@ -35,9 +36,20 @@ export function useHiddenExtensions(activeFolder: string) {
     setHiddenExts(new Set());
   }, [hiddenExtsKey]);
 
-  // Persist when it changes
+  // Persist genuine mutations only. On a folder switch the key changes a render
+  // before the load effect above repopulates `hiddenExts` for the new project,
+  // so `hiddenExts` momentarily still holds the PREVIOUS project's set; writing
+  // it then would stamp project A's hidden set onto project B's key. The guard
+  // skips the write on the render where the key just changed (see
+  // reconcileHiddenExtsPersist); the next render persists the correct value.
+  const persistedKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!hiddenExtsKey) return;
+    const { write, nextKey } = reconcileHiddenExtsPersist(
+      hiddenExtsKey,
+      persistedKeyRef.current,
+    );
+    persistedKeyRef.current = nextKey;
+    if (!write || !hiddenExtsKey) return;
     try {
       localStorage.setItem(hiddenExtsKey, JSON.stringify(Array.from(hiddenExts)));
     } catch {
