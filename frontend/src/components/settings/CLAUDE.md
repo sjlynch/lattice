@@ -2,8 +2,10 @@
 
 Tab panels for the Settings modal. The parent, `SettingsDialog.tsx`, lives one
 level up in `components/`: a `Modal` with a tab strip (Terminals / Agent
-prompts / Metrics / Agents / MCP) that renders every tab and a single
-Save/Cancel footer.
+prompts / Metrics / Agents / Pi / MCP) that renders every tab and a single
+Save/Cancel footer. The dialog itself is now essentially just that chrome plus
+body rendering — all the save/dirty/close machinery lives in
+`useSettingsController.ts` (below).
 
 ## Shared tab pattern
 
@@ -17,13 +19,22 @@ Each tab is a `forwardRef` panel that:
 - renders `null` while `!active` (hooks still run before the early return, so
   the handle stays live even for a tab the user never opened).
 
-`saveSettings.ts` is the orchestrator. SettingsDialog hands it every tab's
+`useSettingsController.ts` owns everything the dialog isn't: it creates and
+holds the per-tab imperative `ref` handles, derives the per-tab **dirty** map
+(`dirtyByTab` + a `bumpDirty` tick that re-reads the non-reactive patch getters
+after each body edit), runs the save (delegating to `saveSettings.ts`), and
+gates the warn-on-unsaved-close flow (`requestClose` → `confirmUnsaved`). The
+dialog spreads the returned `refs` onto each tab and renders `saving` / `error`
+/ `dirtyByTab`. The `Tab` union lives here too.
+
+`saveSettings.ts` is the orchestrator. The controller hands it every tab's
 handle (any may be `null` if unmounted), it reads each `*Patch()`, merges the
 *defined* ones into one `PATCH /api/settings` body, then applies project Claude
 instrumentation and the global max-agents patch, and finally fires the parent
 callbacks. `useSettingsDrafts.ts` owns the handful of drafts that live on the
 parent itself rather than a tab — the terminal-default harness +
-skip-permissions, and the instrument-Claude / disable-memory toggles.
+skip-permissions, and the instrument-Claude / disable-memory / qa-auto-close
+toggles.
 
 `useOverrideDraft.ts` is the shared draft engine behind the two
 **override-merge** tabs (`InstructionTemplatesTab` + `EnvNotesTab`): both fetch
