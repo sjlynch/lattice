@@ -9,13 +9,11 @@ import {
 import { ErrorToast } from '../shared/ErrorToast';
 import { LANE_BY_ID, LANES, shortLabel } from './lanes';
 import { sortTasksForLane } from './laneSort';
-import { Lane } from './Lane';
-import { bulkRunStripFor } from './BulkRunStrip';
-import { mergeRunStripFor } from './MergeRunStrip';
 import { NewTaskOverlay } from './NewTaskOverlay';
 import { PostMergeHookRow } from './PostMergeHookRow';
 import { TaskBoardFilters } from './TaskBoardFilters';
 import { TaskBoardFooter } from './TaskBoardFooter';
+import { TaskBoardLaneGrid } from './TaskBoardLaneGrid';
 import { TaskBoardSearchEmpty } from './TaskBoardSearchEmpty';
 import { TaskBoardTitle } from './TaskBoardTitle';
 import { TaskDetailOverlay } from './TaskDetailOverlay';
@@ -122,6 +120,15 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     showError,
   );
   const postMergeHook = usePostMergeHook(activeFolder, addTerminal, showError);
+
+  // Per-lane clock/caret sort. Defaults to newest-arrival-first; dropping a
+  // card at an explicit slot switches that lane to 'manual' so the user's
+  // hand-ordering survives until they click the clock to re-sort. Read before
+  // the action hooks: the reorder math splices into this same display order so
+  // a dropped card lands at the slot the user saw (the 'manual' flip below is
+  // queued, so getLaneSortMode still reports the pre-drop mode during the drop).
+  const { getMode: getLaneSortMode, toggle: toggleLaneSort, setManual } =
+    useLaneSort(activeFolder);
   const {
     addTask,
     moveTask,
@@ -143,6 +150,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     activeFolder,
     tasks,
     grouped,
+    getLaneSortMode,
     mergeRun,
     addTerminal,
     clearSelection,
@@ -167,11 +175,6 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     filteredGrouped,
   } = useTaskSearch(tasks);
 
-  // Per-lane clock/caret sort. Defaults to newest-arrival-first; dropping a
-  // card at an explicit slot switches that lane to 'manual' so the user's
-  // hand-ordering survives until they click the clock to re-sort.
-  const { getMode: getLaneSortMode, toggle: toggleLaneSort, setManual } =
-    useLaneSort(activeFolder);
   const sortedGrouped = useMemo(() => {
     const out = {} as typeof filteredGrouped;
     for (const lane of LANES) {
@@ -282,61 +285,47 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 onClear={() => setTaskSearch('')}
               />
             ) : (
-            LANES.filter((lane) => visibleLanes.has(lane.id)).map((lane) => (
-              <Lane
-                key={lane.id}
-                lane={lane}
-                tasks={sortedGrouped[lane.id]}
+              <TaskBoardLaneGrid
+                visibleLanes={visibleLanes}
+                sortedGrouped={sortedGrouped}
+                qaTasks={filteredGrouped.qa}
+                tasks={tasks}
                 draggingId={draggingId}
                 selectedIds={selectedIds}
                 onDragStart={setDraggingId}
                 onDragEnd={handleDragEnd}
-                onAdd={() => setAddingTo(lane.id)}
+                onToggleSelect={toggleSelect}
+                onRangeSelect={rangeSelect}
+                onClearSelection={clearSelection}
+                onAdd={setAddingTo}
                 onMove={moveTask}
                 onDropAt={handleDropAt}
                 onMultiMove={moveMulti}
                 onMultiDropAt={handleMultiDropAt}
                 onDelete={deleteTask}
-                sortMode={getLaneSortMode(lane.id)}
-                onToggleSort={() => toggleLaneSort(lane.id)}
                 onRun={runTask}
                 onCancelQueuedRun={cancelQueuedRun}
                 onResume={resumeTaskAction}
                 onMerge={mergeTaskAction}
-                getFocusTerminal={getFocusTerminal}
-                onToggleSelect={toggleSelect}
-                onRangeSelect={rangeSelect}
-                onClearSelection={clearSelection}
-                onRunAll={
-                  searchActive ? undefined : runAllActionByLane[lane.id]
-                }
-                onPush={lane.id === 'qa' && hasGit ? startPush : undefined}
-                pushDisabled={!!activePush}
-                qaPlaywright={lane.id === 'qa' ? qaPlaywright : undefined}
-                onQaRun={
-                  lane.id === 'qa' && qaPlaywright.enabled
-                    ? startQaRun
-                    : undefined
-                }
-                onQaRunAll={
-                  lane.id === 'qa' && qaPlaywright.enabled && !searchActive
-                    ? () => startAllQaRuns(filteredGrouped.qa)
-                    : undefined
-                }
                 onView={setViewing}
-                strip={
-                  mergeRunStripFor(
-                    lane,
-                    sortedGrouped[lane.id],
-                    mergeRun,
-                    recentRunSummary,
-                    tasks,
-                    cancelActiveRun,
-                    dismissRecent,
-                  ) ?? bulkRunStripFor(lane, bulkStrips, dismissBulk)
-                }
+                getFocusTerminal={getFocusTerminal}
+                getLaneSortMode={getLaneSortMode}
+                onToggleSort={toggleLaneSort}
+                searchActive={searchActive}
+                runAllActionByLane={runAllActionByLane}
+                hasGit={hasGit}
+                onPush={startPush}
+                pushDisabled={!!activePush}
+                qaPlaywright={qaPlaywright}
+                onQaRun={startQaRun}
+                onQaRunAll={startAllQaRuns}
+                mergeRun={mergeRun}
+                recentRunSummary={recentRunSummary}
+                onCancelActiveRun={cancelActiveRun}
+                onDismissRecent={dismissRecent}
+                bulkStrips={bulkStrips}
+                onDismissBulk={dismissBulk}
               />
-            ))
             )}
           </div>
           <PostMergeHookRow

@@ -109,3 +109,20 @@ export function fromWorkflow(w: Workflow): EditorState {
     dirty: false,
   };
 }
+
+// Decide the editor's next state once a save's request resolves. `atSaveStart`
+// is the editor object as it stood when the save began; `current` is the
+// committed state now (read inside a functional `setEditor` updater). Every
+// edit produces a fresh editor object, so reference-identity tells us whether
+// the user typed during the in-flight request:
+//   - unchanged  → adopt the server echo (`fromWorkflow`), clearing `dirty`.
+//   - superseded → keep `current` so the mid-save edit (and its `dirty` flag)
+//     survives instead of being silently overwritten by the stale echo.
+export function nextEditorAfterSave(
+  atSaveStart: EditorState,
+  current: EditorState,
+  saved: Workflow,
+): { editor: EditorState; superseded: boolean } {
+  if (current !== atSaveStart) return { editor: current, superseded: true };
+  return { editor: fromWorkflow(saved), superseded: false };
+}
