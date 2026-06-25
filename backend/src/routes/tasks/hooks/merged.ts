@@ -23,6 +23,12 @@ export function handleTaskMerged(backendOrigin: string) {
         .status(400)
         .json({ error: 'worktree is still mid-merge — commit first.' });
     }
+    if (result.kind === 'already-finalizing') {
+      // Another caller (the merge-run worker, or a duplicate hook fire) holds
+      // the per-task merge lock and is finalizing this task. The callback is
+      // idempotent, so report success and let the holder finish.
+      return res.json({ ok: true, finalizing: true });
+    }
     if (result.kind === 'merge-conflict') {
       return res.status(409).json({
         error: 'Re-sync with main introduced new conflicts — another resolver needed',

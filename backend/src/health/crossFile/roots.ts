@@ -24,11 +24,26 @@ export const RESOLVABLE_IMPORT_EXTS = new Set<string>([
   '.ts', '.tsx', '.js', '.jsx', '.py', '.pyi',
 ]);
 
+// A `scripts`/`script`/`tools` directory segment that is NOT nested under a
+// `src/` tree. Matched against the project-relative, forward-slashed path: a
+// leading run of non-`src` segments, then the tooling segment. So
+// `scripts/x.mjs`, `tools/x.ts`, and `<pkg>/scripts/x.mjs` qualify, while
+// `src/tools/x.ts` / `frontend/src/scripts/x.ts` (application source, imported
+// like any other module) do NOT — flagging those as roots would permanently
+// hide genuine dead code under them.
+const TOOLING_DIR_RE = /^(?:(?!src\/)[^/]+\/)*(scripts?|tools)\//;
+
 // Filename/path-shape heuristics for an entry point. Pure (no fs) so the
 // watcher can recompute it cheaply on every change. Kept deliberately narrow:
 // a false "entry" only downgrades a node from green to neutral, but we'd
 // rather not silence genuine dead code, so we don't guess at `app`/`cli`/etc.
-export function isConventionalRoot(filePath: string): boolean {
+//
+// `projectRoot` anchors the scripts/tools tooling heuristic to the
+// project-relative path (the comment's stated intent). It is optional — pure
+// callers (and the unit tests) may pass an already-relative path — but the
+// scan/watcher always supply it so an ancestor `src/` *outside* the project
+// can't suppress a genuine top-level `scripts/` dir.
+export function isConventionalRoot(filePath: string, projectRoot?: string): boolean {
   const base = path.basename(filePath).toLowerCase();
   // Ambient declarations are never "called" but aren't dead code either.
   if (base.endsWith('.d.ts')) return true;
@@ -37,10 +52,15 @@ export function isConventionalRoot(filePath: string): boolean {
   if (/\.(test|spec)\.[^.]+$/.test(base)) return true;
   const norm = filePath.replace(/\\/g, '/');
   if (/(^|\/)(__tests__|__mocks__|tests?|e2e|cypress)(\/|$)/.test(norm)) return true;
-  // Build/dev/CLI tooling under a scripts|tools dir runs via `node x.mjs`,
-  // never imported by the app. Treat the whole dir as roots (their helpers
-  // then resolve live transitively).
-  if (/(^|\/)(scripts?|tools)\//.test(norm)) return true;
+  // Build/dev/CLI tooling under a project-level scripts|tools dir runs via
+  // `node x.mjs`, never imported by the app. Treat the whole dir as roots
+  // (their helpers then resolve live transitively). Scoped to the
+  // project-relative path and excluding src/-nested tooling dirs — see
+  // TOOLING_DIR_RE.
+  const rel = projectRoot
+    ? path.relative(projectRoot, filePath).replace(/\\/g, '/')
+    : norm;
+  if (rel && !rel.startsWith('..') && TOOLING_DIR_RE.test(rel)) return true;
 
   const ext = path.extname(base);
   const stem = ext ? base.slice(0, base.length - ext.length) : base;
@@ -112,7 +132,7 @@ export function detectRoots(
   const entryRegexps = opts.entryRegexps ?? [];
   const roots = new Set<string>();
   for (const f of presentFiles) {
-    if (isConventionalRoot(f) || matchesEntryGlob(f, opts.projectRoot, entryRegexps)) {
+    if (isConventionalRoot(f, opts.projectRoot) || matchesEntryGlob(f, opts.projectRoot, entryRegexps)) {
       roots.add(f);
     }
   }

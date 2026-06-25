@@ -156,12 +156,15 @@ asking for fixes/reviews:
   `status.error` is set (a failed/timed-out contents pass), a danger-tinted "no
   matches" when an active query selected nothing (distinct from idle), and
   **prev/next match navigation** — ←/→ buttons flanking an "X of Y" count, plus
-  Enter (Shift+Enter back) in the field. `ForceGraphView` owns the cursor
-  (tracked by match *id*, so its position derives from the live list and a
-  dropped id just reads "no current match") and pans the camera to each stepped
-  match via `graph.cameraPosition` (a settled-graph focus must pulse the idle
-  controller's `wakeForRefresh` across the tween, since the library steps it
-  inside the render loop the controller pauses).
+  Enter (Shift+Enter back) in the field. `hooks/useGraphSearchNavigation.ts`
+  owns the cursor (tracked by match *id*, so its position derives from the live
+  `searchMatches` list and a dropped id just reads "no current match") and pans
+  the camera to each stepped match via `graph.cameraPosition` (a settled-graph
+  focus must pulse the idle controller's `wakeForRefresh` across the tween,
+  since the library steps it inside the render loop the controller pauses). It
+  returns `{ searchMatchPosition, goPrevMatch, goNextMatch, clearCurrentMatch }`
+  — the coordinator wires the handlers/position into the HUD and calls
+  `clearCurrentMatch` on a fresh query / Escape.
 - `HealthTooltip.tsx` — measurement/composition wrapper for file health hover.
   Owns its own `pointermove` listener and writes directly to the element's
   `transform` so per-pixel cursor moves don't re-render the React tree;
@@ -194,7 +197,22 @@ asking for fixes/reviews:
   `notifyFrameRendered` (wired to the scene frame driver in
   `useForceGraphInitialization`). Halves the full-scene render cost while an
   agent is active or a label overlay is held; warmup and interaction stay
-  uncapped.
+  uncapped. `idleController.ts` is the orchestrator (visibility gate + the
+  trivial `labelPhysics`/`agents` counters + the `refresh` tail + `attach`/`get`
+  helpers); its cohesive internals are split into sibling modules:
+  - `idleControllerReasons.ts` — the reference-counted reason ledger
+    (`createReasonLedger`): the held counts plus the two derived predicates
+    (`anyHeld` / `slowOnly`) the loop scheduler keys off. Pure, no graph/DOM.
+  - `idleControllerLoop.ts` — `createLoopScheduler(graph, shouldRun, slowOnly)`:
+    the pause/resume duty-cycle engine. Owns the load-bearing deferred-pause
+    microtask, the slow-frame throttle timer, and the re-entrant-resume guard;
+    reason-agnostic (reads state via the injected predicates).
+  - `idleControllerEngine.ts` — `createEngineReason(ledger, sync)`: the
+    `engine` reason + its belt-and-braces safety timer and `isEngineHot()`.
+  - `idleControllerInteract.ts` — `createInteractReason(container, ledger,
+    sync)`: the `interact` reason + its pointer/wheel/leave DOM listeners and
+    idle tail (the tab-visibility negative gate stays in the orchestrator since
+    it folds into `shouldRun`).
 - `sceneFrameDriver.ts` — the single `scene.onBeforeRender` fan-out.
   `attachFrameDriver(graph)` (called once at init) installs the dispatcher;
   `onFrame(graph, cb)` subscribes a per-frame callback that runs at the head of
@@ -475,6 +493,12 @@ asking for fixes/reviews:
   also stashes each file node's `relForward` under `REL_FORWARD_KEY` (see
   `timelineDiff.readRelForward`) when it mints fresh clones, so `buildNodeObject`
   reads the precomputed value instead of recomputing it per node per refresh.
+  The pure shape decisions are extracted into `hooks/graphDataSyncCore.ts`
+  (link cloning, sim-state copy, `buildForceGraphData`, ghost merge,
+  `shapeFingerprint`, `patchSimNodeMetrics`, the `isMetricOnlyUpdate` fast-path
+  predicate) — no React/ForceGraph/registries — leaving the hook to own the
+  refs/effect/registry clears, the two `graph.graphData()` reads, and the
+  idle-controller calls; covered by `__tests__/graphDataSyncCore.test.ts`.
 - `useGraphTaskCreation` — modal action, prompt text, submitting + toast
   state, derived `selectedFiles`, plus `openMenuItem` / `submitTask` /
   `closeModal` actions.

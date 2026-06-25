@@ -9,6 +9,8 @@ import {
 import { parseCodexMcpServers, normalizeServer } from '../mcp/importConfigs.js';
 import { redactSecrets, secretHints } from '../mcp/secrets.js';
 import { resolveClaudeServers } from '../mcp/registry.js';
+import { resolvePlaywright } from '../mcp/resolverPolicy.js';
+import { secretEnvVarsFor, toClaudeConfig } from '../mcp/claudeServerConfig.js';
 import {
   BUILTIN_MCP_SERVERS,
   builtinMcpServerById,
@@ -251,6 +253,95 @@ test('resolve: enabling Brave injects its secret + win32-wraps the command', () 
   }
 });
 
+// ---- resolverPolicy.resolvePlaywright: the two-scope enable/headless policy ----
+//
+// Direct unit coverage of the policy helper now that it lives apart from the
+// resolve orchestration. `resolveClaudeServers` (above) is the integration view.
+
+test('resolvePlaywright: off when neither switch is set', () => {
+  assert.deepEqual(resolvePlaywright({}, false), { enabled: false, headless: true });
+  assert.deepEqual(resolvePlaywright({}, true), { enabled: false, headless: true });
+});
+
+test('resolvePlaywright: the global toggle is on for any run, always headless', () => {
+  const s = { mcpOverrides: { playwright: true } };
+  assert.deepEqual(resolvePlaywright(s, false), { enabled: true, headless: true });
+  assert.deepEqual(resolvePlaywright(s, true), { enabled: true, headless: true });
+});
+
+test('resolvePlaywright: the QA toggle is QA-runs-only and carries its headless flag', () => {
+  const headed = { qaPlaywright: { enabled: true, headless: false } };
+  // Not a QA run → never enabled by the QA toggle alone.
+  assert.equal(resolvePlaywright(headed, false).enabled, false);
+  // QA run → enabled, and the QA eye toggle wins over the global default.
+  assert.deepEqual(resolvePlaywright(headed, true), { enabled: true, headless: false });
+  // QA toggle with headless on → headless.
+  assert.deepEqual(
+    resolvePlaywright({ qaPlaywright: { enabled: true, headless: true } }, true),
+    { enabled: true, headless: true },
+  );
+});
+
+test('resolvePlaywright: on a QA run the QA headed choice beats the global toggle', () => {
+  const out = resolvePlaywright(
+    { mcpOverrides: { playwright: true }, qaPlaywright: { enabled: true, headless: false } },
+    true,
+  );
+  assert.deepEqual(out, { enabled: true, headless: false });
+});
+
+// ---- claudeServerConfig: secret-env selection + Claude config shaping ----
+
+test('secretEnvVarsFor: unions requiresSecret.envVar with secretEnvVars, deduped', () => {
+  const entry: McpServerEntry = {
+    id: 'svc',
+    label: 'Svc',
+    description: '',
+    transport: 'stdio',
+    command: 'node',
+    runtime: 'node',
+    secretEnvVars: ['EXTRA', 'BRAVE_API_KEY'],
+    requiresSecret: { envVar: 'BRAVE_API_KEY', label: 'k' },
+    harnessSupport: { claude: true, codex: false, pi: false },
+  };
+  assert.deepEqual(secretEnvVarsFor(entry).sort(), ['BRAVE_API_KEY', 'EXTRA']);
+  // No secrets declared → empty.
+  assert.deepEqual(
+    secretEnvVarsFor({ ...entry, secretEnvVars: undefined, requiresSecret: undefined }),
+    [],
+  );
+});
+
+test('toClaudeConfig: Playwright appends --headless only when headless', () => {
+  const pw = builtinMcpServerById('playwright');
+  assert.ok(pw);
+  assert.ok(asStdio(toClaudeConfig(pw, undefined, true)).args?.includes('--headless'));
+  assert.ok(!asStdio(toClaudeConfig(pw, undefined, false)).args?.includes('--headless'));
+});
+
+test('toClaudeConfig: http transport keeps url + headers, ignores headless/secrets', () => {
+  const entry: McpServerEntry = {
+    id: 'remote',
+    label: 'Remote',
+    description: '',
+    transport: 'http',
+    url: 'https://x/mcp',
+    headers: { Authorization: 'Bearer t' },
+    runtime: 'remote',
+    harnessSupport: { claude: true, codex: false, pi: false },
+  };
+  assert.deepEqual(toClaudeConfig(entry, { IGNORED: 'v' }, true), {
+    type: 'http',
+    url: 'https://x/mcp',
+    headers: { Authorization: 'Bearer t' },
+  });
+  // Empty headers object is dropped.
+  assert.deepEqual(toClaudeConfig({ ...entry, headers: {} }, undefined, false), {
+    type: 'http',
+    url: 'https://x/mcp',
+  });
+});
+
 // ---- normalizeServer: import secret-classification (security-relevant) ----
 
 test('normalize: a literal secret env value is stored, never kept inline', () => {
@@ -295,6 +386,63 @@ test('normalize: http server keeps url + records bearer_token_env_var as a ref',
   assert.equal(n.secrets.MY_TOKEN, undefined);
 });
 
+test('normalize: a literal secret VALUE is stored even when the var name is benign', () => {
+  // Regression: a prefixed key (sk-proj-…) under a non-secret-looking name must
+  // NOT land inline in globalSettings.json (not 0600) — store it in the secrets
+  // file instead, regardless of the var name.
+  const n = normalizeServer(
+    'svc',
+    { command: 'npx', args: ['svc'], env: { OPENAI_ORG: 'sk-proj-abc' } },
+    'test',
+  );
+  assert.ok(n);
+  assert.equal(n.secrets.OPENAI_ORG, 'sk-proj-abc'); // → ~/.lattice/mcpSecrets.json
+  assert.ok(n.entry.secretEnvVars?.includes('OPENAI_ORG'));
+  assert.equal(n.entry.env?.OPENAI_ORG, undefined); // never inline in globalSettings.json
+});
+
+test('normalize: value-shape secrets are caught under benign var names', () => {
+  const cases: Array<[string, string]> = [
+    ['PAT', 'ghp_0123456789abcdefABCDEF0123456789ab'], // GitHub token prefix
+    ['SLACK', 'xoxb-123456789012-abcdefghijklmnop'], // Slack bot token prefix
+    ['DSN', 'postgres://user:s3cr3t@db.example.com:5432/app'], // credentialed URI
+    ['BLOB', 'a1B2c3D4e5F6g7H8i9J0kLmNoPqRsTuV'], // high-entropy opaque token
+  ];
+  for (const [name, value] of cases) {
+    const n = normalizeServer('svc', { command: 'npx', args: ['svc'], env: { [name]: value } }, 't');
+    assert.ok(n, `${name} normalized`);
+    assert.equal(n.secrets[name], value, `${name} stored as secret`);
+    assert.ok(n.entry.secretEnvVars?.includes(name), `${name} listed as secret env var`);
+    assert.equal(n.entry.env?.[name], undefined, `${name} kept out of inline env`);
+  }
+});
+
+test('normalize: benign config (no secret name or shape) stays inline', () => {
+  const n = normalizeServer(
+    'svc',
+    {
+      command: 'npx',
+      args: ['svc'],
+      // Plain config: a word, a port, a path, a bare URL, an email — none secret.
+      env: {
+        NODE_ENV: 'production',
+        PORT: '8080',
+        CONFIG_PATH: '/usr/local/etc/svc.json',
+        ENDPOINT: 'https://api.example.com/mcp',
+        CONTACT: 'team@example.com',
+      },
+    },
+    't',
+  );
+  assert.ok(n);
+  assert.equal(n.entry.env?.NODE_ENV, 'production');
+  assert.equal(n.entry.env?.PORT, '8080');
+  assert.equal(n.entry.env?.CONFIG_PATH, '/usr/local/etc/svc.json');
+  assert.equal(n.entry.env?.ENDPOINT, 'https://api.example.com/mcp');
+  assert.equal(n.entry.env?.CONTACT, 'team@example.com');
+  assert.equal(Object.keys(n.secrets).length, 0); // nothing routed to the secrets file
+});
+
 test('normalize: runtime is detected from the command; junk is rejected', () => {
   assert.equal(normalizeServer('a', { command: 'uvx', args: [] }, 't')?.entry.runtime, 'uv');
   assert.equal(normalizeServer('b', { command: 'docker', args: [] }, 't')?.entry.runtime, 'docker');
@@ -322,10 +470,45 @@ test('sanitizeCustomServers keeps valid entries, drops idless junk, forces built
 
 test('sanitizeBuiltinOverrides keeps only the editable fields', () => {
   const out = sanitizeBuiltinOverrides({
-    playwright: { args: ['-y', '@playwright/mcp@latest', '--browser', 'firefox'], id: 'evil' },
+    playwright: {
+      args: ['-y', '@playwright/mcp@latest', '--browser', 'firefox'],
+      env: { FOO: 'bar' },
+      runtimeNote: 'tweaked',
+      id: 'evil',
+    },
     bogus: 'not an object',
   });
   assert.deepEqual(out.playwright.args, ['-y', '@playwright/mcp@latest', '--browser', 'firefox']);
+  assert.deepEqual(out.playwright.env, { FOO: 'bar' });
+  assert.equal(out.playwright.runtimeNote, 'tweaked');
   assert.ok(!('id' in out.playwright)); // identity can't be overridden
   assert.ok(!('bogus' in out));
+});
+
+test('sanitizeBuiltinOverrides drops command/url (no executable/endpoint swap)', () => {
+  // A built-in override must not be able to re-point what the server runs.
+  // Dropping command/url here keeps "definitions live in code" honest and
+  // stops "toggle a known-safe built-in" from becoming "run an arbitrary
+  // command" once enabled per-project.
+  const out = sanitizeBuiltinOverrides({
+    'brave-search': { command: 'C:/evil.exe', args: ['--pwn'], url: 'http://attacker/' },
+  });
+  assert.ok(!('command' in out['brave-search'])); // executable can't be overridden
+  assert.ok(!('url' in out['brave-search'])); // endpoint can't be overridden
+  assert.deepEqual(out['brave-search'].args, ['--pwn']); // safe field still applied
+});
+
+test('registry: a built-in override cannot replace the catalog command', () => {
+  // End-to-end: feed a malicious override through the sanitizer (the same path
+  // getGlobalSettings runs on read) and apply it the way mergedCatalog does.
+  // The built-in keeps its code-defined runner; only the safe arg tweak lands.
+  const brave = builtinMcpServerById('brave-search');
+  assert.ok(brave);
+  const overrides = sanitizeBuiltinOverrides({
+    'brave-search': { command: 'C:/evil.exe', args: ['--y', 'pwn'] },
+  });
+  const ov = overrides['brave-search'];
+  const merged = { ...brave, ...ov, id: brave.id, builtin: true as const };
+  assert.equal(merged.command, brave.command); // still 'npx', not the injected exe
+  assert.deepEqual(merged.args, ['--y', 'pwn']); // safe arg override still applies
 });
