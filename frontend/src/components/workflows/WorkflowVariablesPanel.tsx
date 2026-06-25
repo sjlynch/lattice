@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Braces, ChevronDown, ChevronRight, Info, Plus, X } from 'lucide-react';
 import type { WorkflowVariable } from '../../api';
 import {
+  copyVariableToken,
   sanitizeVariableNameInput,
   USER_INSTRUCTIONS_VAR,
 } from './promptVariables';
@@ -45,12 +46,15 @@ export function WorkflowVariablesPanel({
     });
 
   const copyToken = (v: WorkflowVariable) => {
-    // Nothing to copy in the empty placeholder (`{{…}}`) state.
-    if (!v.name || !navigator.clipboard) return;
-    void navigator.clipboard.writeText(`{{${v.name}}}`);
-    setCopiedId(v.id);
-    if (copyTimer.current) clearTimeout(copyTimer.current);
-    copyTimer.current = setTimeout(() => setCopiedId(null), 1500);
+    // The write can reject (denied permission, non-secure context, unfocused
+    // document); only flip to "Copied!" once it has actually landed, otherwise
+    // we'd give false success feedback for an empty clipboard.
+    void copyVariableToken(v.name).then((ok) => {
+      if (!ok) return;
+      setCopiedId(v.id);
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopiedId(null), 1500);
+    });
   };
 
   // Custom variable names that collide with another variable's name. Built-in

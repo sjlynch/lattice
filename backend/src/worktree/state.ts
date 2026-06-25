@@ -130,7 +130,16 @@ export async function checkBranchExists(
 }
 
 // Count of commits in the range `from..to` (i.e., commits reachable from
-// `to` but not from `from`). Returns 0 on any failure.
+// `to` but not from `from`).
+//
+// THROWS on a non-zero git exit rather than returning a count. A transient
+// git failure (a momentary `index.lock`, a brief Windows file lock, a
+// worktree dir busy for an instant) must stay distinguishable from a genuine
+// zero-commit result: callers that read a swallowed `0` as "no commits" would
+// strand a task that actually has commits on its branch (the Stop hook fires
+// exactly once, so there is no retry). Every caller either wraps this in
+// try/catch (`/complete`, the in-progress sweep) or maps the throw onto an
+// explicit error outcome (`checkBranchState`).
 export async function countBetween(
   repoRoot: string,
   from: string,
@@ -141,12 +150,21 @@ export async function countBetween(
     ['rev-list', '--count', `${from}..${to}`],
     repoRoot,
   );
-  if (r.code !== 0) return 0;
+  if (r.code !== 0) {
+    const detail = (r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`).slice(
+      0,
+      500,
+    );
+    throw new Error(
+      `git rev-list --count ${from}..${to} failed in ${repoRoot}: ${detail}`,
+    );
+  }
   const n = parseInt(r.stdout.trim(), 10);
   return Number.isFinite(n) ? n : 0;
 }
 
-// Count of commits on `branchName` that are not yet on HEAD.
+// Count of commits on `branchName` that are not yet on HEAD. Throws on a git
+// failure (see `countBetween`) so a transient error is never reported as 0.
 export async function branchCommitCount(
   repoRoot: string,
   branchName: string,
