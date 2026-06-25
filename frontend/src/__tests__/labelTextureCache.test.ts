@@ -1,54 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
+import { installCanvasDocument } from './domDoubles.ts';
 
 // ---------------------------------------------------------------------------
 // Headless DOM + GPU-dispose instrumentation.
 //
 // The label-texture path allocates real <canvas> elements and THREE textures.
-// node:test runs without a DOM or WebGL, so we stub `document.createElement`
-// (canvas + 2D context) and record every Texture/Material `.dispose()` so the
-// tests can assert exactly what got freed. labelTexture.ts creates its measure
-// context lazily, so this stub only has to exist before the first build call —
-// which is why the modules under test can be imported statically below.
+// node:test runs without a DOM or WebGL, so we install the shared canvas/2D
+// stub and record every Texture/Material `.dispose()` so the tests can assert
+// exactly what got freed. labelTexture.ts creates its measure context lazily,
+// so the stub only has to exist before the first build call — which is why the
+// modules under test can be imported statically below.
 // ---------------------------------------------------------------------------
 
-function makeCtx(): any {
-  return {
-    font: '',
-    textAlign: '',
-    textBaseline: '',
-    lineJoin: '',
-    lineWidth: 0,
-    strokeStyle: '',
-    fillStyle: '',
-    measureText: (t: string) => ({
-      actualBoundingBoxLeft: t.length * 4,
-      actualBoundingBoxRight: t.length * 4,
-      width: t.length * 8,
-    }),
-    strokeText: () => {},
-    fillText: () => {},
-    fillRect: () => {},
-    beginPath: () => {},
-    closePath: () => {},
-    moveTo: () => {},
-    lineTo: () => {},
-    arc: () => {},
-    fill: () => {},
-    stroke: () => {},
-    createRadialGradient: () => ({ addColorStop: () => {} }),
-    createLinearGradient: () => ({ addColorStop: () => {} }),
-  };
-}
-
-(globalThis as any).document = {
-  createElement: (tag: string) => {
-    if (tag !== 'canvas') throw new Error(`unexpected createElement(${tag})`);
-    const ctx = makeCtx();
-    return { width: 0, height: 0, getContext: () => ctx };
-  },
-};
+installCanvasDocument((t) => ({
+  actualBoundingBoxLeft: t.length * 4,
+  actualBoundingBoxRight: t.length * 4,
+  width: t.length * 8,
+}));
 
 const disposedTextures = new Set<object>();
 const disposedMaterials = new Set<object>();

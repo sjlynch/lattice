@@ -21,16 +21,26 @@ ordered partial folder, each `@import`ed in its own cascade order:
 - `workflows.css` → `workflows/` (`shell`, `list`, `templates`,
   `editor-shell`, `runs-shell`, `queue`, `runs`, `editor-empty`, `editor`,
   `variables`, `steps`, `actions`, `chips`)
+- `settings.css` → `settings/` (`shell` — dialog chrome + sections + controls +
+  startup list + the `SettingsInfo` info-popover; `pi` — managed endpoints +
+  advanced; `env-notes`; `prompts`; `mcp`). Shell imports first (its
+  section/control/checkbox base is built on by the later tabs).
+- `graph.css` → `graph/` (`hud-search` — overlay/search/counts + loc-view chip;
+  `overlay-key`; `context-menu` — box-select rect + selection chip + node menu;
+  `settings-panel` — gear FAB + settings popover; `toast`). Imported in the
+  original source order (each partial targets a disjoint class group).
 
 Adding a partial means adding an `@import` to the aggregator at the position
 its cascade needs — files are not auto-globbed.
 
 ## Where each feature lives
 
-- **Settings** — `settings.css` (`.settings-*`, `.startup-*`, `.env-note-*`).
-- **Graph** — `graph.css` (overlay, search/counts cluster, context menu,
-  settings fab/panel, toasts); `health-overlay.css` owns the `H`/`D` health
-  legend + tooltip; `legend.css` owns the per-extension legend.
+- **Settings** — `settings.css` aggregator → `settings/` partials (`.settings-*`,
+  `.startup-*`, `.env-note-*`, `.prompt-tpl-*`, `.mcp-*`, `.settings-info-*`).
+- **Graph** — `graph.css` aggregator → `graph/` partials (overlay, search/counts
+  cluster, context menu, settings fab/panel, toasts); `health-overlay.css` owns
+  the `H`/`D` health legend + tooltip; `legend.css` owns the per-extension
+  legend.
 - **Health** — `health-overlay.css` (`.health-legend*`, `.health-tooltip*`).
 - **Task board** — `taskboard.css` + `taskboard/` partials.
 - **Workflows** — `workflows.css` + `workflows/` partials.

@@ -2,7 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
-import { finalizeResolvedTask } from '../routes/tasks/finalizeResolved.js';
+import fs from 'node:fs/promises';
+import {
+  finalizeResolvedTask,
+  type FinalizeResolvedDeps,
+} from '../routes/tasks/finalizeResolved.js';
+import { ConflictWaiterRegistry } from '../mergeRuns/conflictWaiters.js';
 import { tryAcquire, release, isLocked } from '../mergeLocks.js';
 import type { Task } from '../tasks.js';
 
@@ -78,4 +83,111 @@ test('finalizeResolvedTask validates branch/worktree before acquiring the lock',
   assert.equal(result.kind, 'error');
   // A malformed task returns before tryAcquire, so it can never leak the lock.
   assert.equal(isLocked(task.id), false);
+});
+
+// Regression: a resolver /complete whose re-sync/finalize errors out (a git/FF
+// failure, or assertGitDirIntact throwing because .git vanished) used to return
+// WITHOUT signalling the merge-run's conflict waiter. That waiter has no
+// timeout, so the merge-run worker stayed blocked forever — holding the
+// cross-process project lock and 409-ing every later /merge and merge-run.
+// Both the `error` and `stash-conflict` outcomes must now unblock the waiter,
+// exactly as the `merge-conflict` branch already does.
+//
+// We inject deps so `resync` deterministically returns the failure outcome
+// (the real git path throws for a throwaway worktree, and is environment-
+// dependent) and `signalOrRestartMergeRun` drives a real ConflictWaiterRegistry
+// — mirroring production's signalConflictWaiter -> registry.signal wiring —
+// so the assertion is the literal "the waiting run's promise resolves".
+
+// finalizeResolvedTask runs isMidMerge(worktreePath) before resync; on a
+// non-existent dir that git spawn would ENOENT and throw, so the worktree dir
+// must actually exist (a plain, non-git dir → git rev-parse fails → not
+// mid-merge) for the stubbed resync to be reached.
+async function withExistingWorktree(
+  task: Task,
+  fn: () => Promise<void>,
+): Promise<void> {
+  await fs.mkdir(task.worktreePath!, { recursive: true });
+  try {
+    await fn();
+  } finally {
+    await fs.rm(path.dirname(task.worktreePath!), {
+      recursive: true,
+      force: true,
+    });
+  }
+}
+
+// signalOrRestartMergeRun wired to a real waiter registry, exactly as
+// production's does (signalConflictWaiter(task.id) -> registry.signal). Returns
+// the registry so the test can register a waiter for the same task id.
+function depsThatSignal(
+  waiters: ConflictWaiterRegistry,
+  resync: FinalizeResolvedDeps['resync'],
+): FinalizeResolvedDeps {
+  return {
+    resync,
+    signalOrRestartMergeRun: (t) => {
+      waiters.signal(t.id);
+    },
+  };
+}
+
+async function assertResolvesQuickly(
+  promise: Promise<unknown>,
+  message: string,
+): Promise<void> {
+  const timeout = new Promise<'timeout'>((resolve) =>
+    setTimeout(() => resolve('timeout'), 1000),
+  );
+  const winner = await Promise.race([promise.then(() => 'resolved'), timeout]);
+  assert.equal(winner, 'resolved', message);
+}
+
+test('finalizeResolvedTask signals the conflict waiter when finalize errors out', async () => {
+  const task = makeResolverTask(`error_signal_${Date.now()}`);
+  await withExistingWorktree(task, async () => {
+    const waiters = new ConflictWaiterRegistry();
+    const waiterPromise = waiters.register('run-fake', task.id);
+
+    const deps = depsThatSignal(waiters, async () => ({
+      kind: 'error',
+      phase: 'finalize',
+      message: 'simulated FF failure',
+    }));
+
+    const result = await finalizeResolvedTask(task, ORIGIN, 'complete', deps);
+    assert.equal(result.kind, 'error');
+    // Before the fix this never resolved — the merge run hung forever.
+    await assertResolvesQuickly(
+      waiterPromise,
+      'error-out finalize must unblock the waiting merge run',
+    );
+    // The lock the call acquired is released even on the error path.
+    assert.equal(isLocked(task.id), false);
+  });
+});
+
+test('finalizeResolvedTask signals the conflict waiter on a stash-conflict', async () => {
+  const task = makeResolverTask(`stash_signal_${Date.now()}`);
+  await withExistingWorktree(task, async () => {
+    const waiters = new ConflictWaiterRegistry();
+    const waiterPromise = waiters.register('run-fake', task.id);
+
+    const deps = depsThatSignal(waiters, async () => ({
+      kind: 'stash-conflict',
+      cwd: task.worktreePath!,
+      resolveCommand: 'claude --resume',
+      conflictedFiles: ['frontend/src/api.ts'],
+      message: 'stash-pop conflict',
+    }));
+
+    const result = await finalizeResolvedTask(task, ORIGIN, 'complete', deps);
+    assert.equal(result.kind, 'error');
+    await assertResolvesQuickly(
+      waiterPromise,
+      'stash-conflict finalize must unblock the waiting merge run',
+    );
+    assert.equal(isLocked(task.id), false);
+  });
 });
