@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import type { GraphNode } from '../../api';
 import type { GraphSettings } from './graphSettings';
 import {
+  disposeLabelEntry,
   type FloatingLabelEntry,
   makeConnectorLine,
   makeFloatingLabelSprite,
@@ -98,16 +99,6 @@ function shouldShowLabel(
   if (nodeDepth !== activeDepth) return false;
   if (node.kind === 'file' && !showFileLabels) return false;
   return true;
-}
-
-function disposeLabelEntry(entry: FloatingLabelEntry): void {
-  // The label texture (nameLabelTextureCache), the sprite material (shared per
-  // texture) and the connector's line material (shared per color) are all
-  // module-owned caches in floatingLabelSprite/labelTexture — disposing any of
-  // them here would break every other label still using them. The connector
-  // geometry is the only thing this entry solely owns (a per-line clone of the
-  // shared template), so it's the only thing we free. (Part A invariant.)
-  entry.line.geometry.dispose();
 }
 
 // Add or remove a node's floating name label as a sibling child of its root

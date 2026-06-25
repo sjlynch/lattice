@@ -2,6 +2,7 @@ import type { ForceGraph3DInstance } from '3d-force-graph';
 import { locLabelRegistry } from '../locOverlay';
 import { labelsRegistry } from '../labelsOverlay';
 import { healthLabelRegistry } from '../healthOverlay';
+import { disposeAndClearRegistry } from '../floatingLabelSprite';
 import { getIdleController } from '../idleController';
 
 // Sprites cached by spriteFor are reused; refresh() just re-runs
@@ -20,9 +21,12 @@ import { getIdleController } from '../idleController';
 // `onNodeHover` — which manifested as the health tooltip never appearing
 // while `h` was held.
 export function clearLabelsAndRefresh(graph: ForceGraph3DInstance | null) {
-  locLabelRegistry.clear();
-  labelsRegistry.clear();
-  healthLabelRegistry.clear();
+  // Dispose each entry's cloned connector geometry before dropping it — a bare
+  // Set.clear() leaks one BufferGeometry GPU buffer per file node every refresh,
+  // since the refresh() below replaces the node objects without disposing them.
+  disposeAndClearRegistry(locLabelRegistry);
+  disposeAndClearRegistry(labelsRegistry);
+  disposeAndClearRegistry(healthLabelRegistry);
   graph?.refresh?.();
   if (graph) {
     graph.enablePointerInteraction(false);
