@@ -13,22 +13,19 @@ import { runPostMergeHookGate } from '../postMergeHooks.js';
 import type { MergeRunLockMode } from '../mergeRuns.js';
 import type { MergeRun } from './state.js';
 
-// Fire-and-forget restart hook. Passed in by the orchestrator (rather than
-// importing startMergeRun directly) so teardown stays free of a runtime cycle
-// back to ../mergeRuns.ts.
-export type RestartMergeRun = (projectPath: string, backendOrigin: string) => void;
-
-// Restore the user's working-tree snapshot, then auto-restart for any task that
-// became ready while this run was in flight.
+// Restore the user's working-tree snapshot, then decide whether a fresh run
+// must be auto-started for any task that became ready while this run was in
+// flight. Returns that decision rather than restarting inline — the actual
+// restart is deferred by the orchestrator (mergeRuns.ts finalizeMergeRun) until
+// after finishRun and the project lock release, so the fresh run's in-process /
+// cross-process gates pass instead of being rejected and swallowed.
 export async function runTeardown(
   projectPath: string,
   run: MergeRun,
   runSnapshot: SnapshotHandle,
   targets: Task[],
-  backendOrigin: string,
   lockMode: MergeRunLockMode,
-  restart: RestartMergeRun,
-): Promise<void> {
+): Promise<boolean> {
   // Post-run snapshot restore. Only when the loop ran to completion
   // (not on cancel) — a cancelled run leaves the snapshot in place so
   // the user's mods aren't blasted with whatever partial state the FFs
@@ -50,43 +47,47 @@ export async function runTeardown(
     }
   }
 
-  await autoRestartIfNeeded(projectPath, run, targets, backendOrigin, lockMode, restart);
+  return autoRestartIfNeeded(projectPath, run, targets, lockMode);
 }
 
 // If tasks became ready_to_merge while this run was processing its
-// snapshot, they were never in `targets` and are still waiting. Auto-
-// restart so they get picked up without requiring a manual merge-all click.
+// snapshot, they were never in `targets` and are still waiting. Report that a
+// fresh run should pick them up (the orchestrator starts it after the lock is
+// released) so they merge without a manual merge-all click.
 //
 // Skip the auto-restart when this run inherited its lock — the workflow
 // Merge control step holds the lock and is responsible for looping through
-// any remaining ready_to_merge tasks itself. A fire-and-forget restart here
-// would try to acquire its own lock (with the default 'acquire' mode) and
-// fail since the workflow still holds it.
+// any remaining ready_to_merge tasks itself. A restart here would try to
+// acquire its own lock (with the default 'acquire' mode) and fail since the
+// workflow still holds it.
+//
+// `listTasksFn` is injectable purely for tests; production always uses the real
+// listTasks.
 export async function autoRestartIfNeeded(
   projectPath: string,
   run: MergeRun,
   targets: Task[],
-  backendOrigin: string,
   lockMode: MergeRunLockMode,
-  restart: RestartMergeRun,
-): Promise<void> {
-  if (!run.cancelRequested && lockMode !== 'inherit') {
-    try {
-      const allTasks = await listTasks(projectPath);
-      const seenIds = new Set(targets.map((t) => t.id));
-      const newReady = allTasks.filter(
-        (t) => t.status === 'ready_to_merge' && !t.conflict && !seenIds.has(t.id),
+  listTasksFn: typeof listTasks = listTasks,
+): Promise<boolean> {
+  if (run.cancelRequested || lockMode === 'inherit') return false;
+  try {
+    const allTasks = await listTasksFn(projectPath);
+    const seenIds = new Set(targets.map((t) => t.id));
+    const newReady = allTasks.filter(
+      (t) => t.status === 'ready_to_merge' && !t.conflict && !seenIds.has(t.id),
+    );
+    if (newReady.length > 0) {
+      console.log(
+        `[merge-run] ${newReady.length} task(s) became ready_to_merge during this run — will auto-restart after lock release`,
       );
-      if (newReady.length > 0) {
-        console.log(
-          `[merge-run] ${newReady.length} task(s) became ready_to_merge during this run — auto-restarting`,
-        );
-        restart(projectPath, backendOrigin);
-      }
-    } catch {
-      // best-effort; failure just means the user sees the remaining tasks
-      // at ready_to_merge and can trigger merge-all manually
+      return true;
     }
+    return false;
+  } catch {
+    // best-effort; failure just means the user sees the remaining tasks
+    // at ready_to_merge and can trigger merge-all manually
+    return false;
   }
 }
 

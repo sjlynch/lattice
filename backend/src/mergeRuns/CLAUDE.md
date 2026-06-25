@@ -30,11 +30,20 @@ here instead of bloating the parent file.
   `createRunRecord`. Throwing in `initializeRunState` happens before any run
   record exists.
 - `teardown.ts` — post-run teardown: `runTeardown` (copy-snapshot restore on a
-  non-cancelled run, then `autoRestartIfNeeded`), `autoRestartIfNeeded` (restart
-  for tasks that became ready mid-run, skipped when the lock was inherited), and
-  `runPostMergeHook` (the once-per-run hook gate). The restart is injected as a
-  `RestartMergeRun` callback so teardown takes no runtime dependency back on
-  `../mergeRuns.ts`.
+  non-cancelled run, then `autoRestartIfNeeded`), `autoRestartIfNeeded`
+  (**returns** whether a fresh run is needed for tasks that became ready mid-run
+  — skipped when the lock was inherited), and `runPostMergeHook` (the
+  once-per-run hook gate). Teardown only *decides* the restart; it no longer
+  fires it. The decision is a plain boolean, so teardown keeps no runtime
+  dependency back on `../mergeRuns.ts`.
+- `finalize.ts` — `finalizeMergeRun`: runs the worker `body` (preflight + loop +
+  teardown + hook + finishRun), releases the project lock in a `finally`, and
+  **then** auto-restarts iff `body` returned `true`. The restart MUST happen
+  after the lock release and after finishRun has flipped status off 'running';
+  otherwise the fresh run's in-process 409 gate / cross-process lock reject it
+  and `restartMergeRun`'s `.catch(() => {})` swallows the throw, stranding the
+  mid-run-ready tasks at ready_to_merge (no stale lock ⇒ no boot resume either).
+  A worker crash suppresses the restart.
 
 Conflict-waiter contract: after spawning a merge-conflict resolver,
 `processTarget` registers a task-id keyed waiter. Routes `/complete` and
