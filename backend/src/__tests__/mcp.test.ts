@@ -295,6 +295,63 @@ test('normalize: http server keeps url + records bearer_token_env_var as a ref',
   assert.equal(n.secrets.MY_TOKEN, undefined);
 });
 
+test('normalize: a literal secret VALUE is stored even when the var name is benign', () => {
+  // Regression: a prefixed key (sk-proj-…) under a non-secret-looking name must
+  // NOT land inline in globalSettings.json (not 0600) — store it in the secrets
+  // file instead, regardless of the var name.
+  const n = normalizeServer(
+    'svc',
+    { command: 'npx', args: ['svc'], env: { OPENAI_ORG: 'sk-proj-abc' } },
+    'test',
+  );
+  assert.ok(n);
+  assert.equal(n.secrets.OPENAI_ORG, 'sk-proj-abc'); // → ~/.lattice/mcpSecrets.json
+  assert.ok(n.entry.secretEnvVars?.includes('OPENAI_ORG'));
+  assert.equal(n.entry.env?.OPENAI_ORG, undefined); // never inline in globalSettings.json
+});
+
+test('normalize: value-shape secrets are caught under benign var names', () => {
+  const cases: Array<[string, string]> = [
+    ['PAT', 'ghp_0123456789abcdefABCDEF0123456789ab'], // GitHub token prefix
+    ['SLACK', 'xoxb-123456789012-abcdefghijklmnop'], // Slack bot token prefix
+    ['DSN', 'postgres://user:s3cr3t@db.example.com:5432/app'], // credentialed URI
+    ['BLOB', 'a1B2c3D4e5F6g7H8i9J0kLmNoPqRsTuV'], // high-entropy opaque token
+  ];
+  for (const [name, value] of cases) {
+    const n = normalizeServer('svc', { command: 'npx', args: ['svc'], env: { [name]: value } }, 't');
+    assert.ok(n, `${name} normalized`);
+    assert.equal(n.secrets[name], value, `${name} stored as secret`);
+    assert.ok(n.entry.secretEnvVars?.includes(name), `${name} listed as secret env var`);
+    assert.equal(n.entry.env?.[name], undefined, `${name} kept out of inline env`);
+  }
+});
+
+test('normalize: benign config (no secret name or shape) stays inline', () => {
+  const n = normalizeServer(
+    'svc',
+    {
+      command: 'npx',
+      args: ['svc'],
+      // Plain config: a word, a port, a path, a bare URL, an email — none secret.
+      env: {
+        NODE_ENV: 'production',
+        PORT: '8080',
+        CONFIG_PATH: '/usr/local/etc/svc.json',
+        ENDPOINT: 'https://api.example.com/mcp',
+        CONTACT: 'team@example.com',
+      },
+    },
+    't',
+  );
+  assert.ok(n);
+  assert.equal(n.entry.env?.NODE_ENV, 'production');
+  assert.equal(n.entry.env?.PORT, '8080');
+  assert.equal(n.entry.env?.CONFIG_PATH, '/usr/local/etc/svc.json');
+  assert.equal(n.entry.env?.ENDPOINT, 'https://api.example.com/mcp');
+  assert.equal(n.entry.env?.CONTACT, 'team@example.com');
+  assert.equal(Object.keys(n.secrets).length, 0); // nothing routed to the secrets file
+});
+
 test('normalize: runtime is detected from the command; junk is rejected', () => {
   assert.equal(normalizeServer('a', { command: 'uvx', args: [] }, 't')?.entry.runtime, 'uv');
   assert.equal(normalizeServer('b', { command: 'docker', args: [] }, 't')?.entry.runtime, 'docker');
