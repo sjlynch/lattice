@@ -11,7 +11,7 @@ One Express `Router` per domain. Each module exports a `buildXRouter(deps)` fact
 - `terminals.ts` — `/api/terminals` list/delete (proxies to terminal-server).
 - `tasks.ts` — task CRUD + `/run`, `/resume`, `/complete`, `/merge`, `/merged`, `/merge-aborted`, `/stash-resolved`, plus `/activity` (Claude tool-hook callback → `task-activity` WS) and `/worktree-modified` (files changed per not-yet-merged task, for the graph `W` highlight). The state-machine logic lives in `tasks/`. The activity sub-router (`tasks/activity.ts`) mounts first so `GET /api/tasks/worktree-modified` isn't captured by crud's `/api/tasks/:id`. `tasks/colorSlot.ts` assigns the persistent per-task palette slot.
 - `mergeRuns.ts` — `/api/merge-runs` start / active / get / cancel / stash-resolved.
-- `workflows.ts` — workflow CRUD + `/run` + `/api/workflow-runs/active`, plus workflow prompt-customization start/status/callback endpoints.
+- `workflows.ts` — composes the per-concern routers in `routes/workflows/`: `crud.ts` (workflow-definition list/create/update/delete), `runs.ts` (run `/run` start + Stop-hook step-completion callback + cancel + `/api/workflow-runs/active`), and `promptCustomizations.ts` (prompt-customization start/status/callback). Paths are all distinct, so mount order is not significant.
 
 ## Why factories?
 
