@@ -10,6 +10,7 @@ import {
 import {
   buildMeasuredLabelTexture,
   createLabelTextureCache,
+  releaseLabelTexture,
   type LabelTextureOptions,
 } from './labelTexture';
 import { materialFor, spriteFor } from './sprites';
@@ -114,4 +115,16 @@ export function createMetricOverlaySpriteFactory(
 
     return group;
   };
+}
+
+// Release every entry's metric-label texture refcount, then empty the registry.
+// The LOC + health overlays are torn down by clearing their registry wholesale
+// (they share `sharedMetricLabelTextureCache`); releasing here keeps the texture
+// refcounts balanced against the build-time increments so freed metric textures
+// stay reclaimable across the constant clear→refresh→rebuild cycles.
+export function clearMetricLabelRegistry(registry: Set<FloatingLabelEntry>): void {
+  for (const entry of registry) {
+    releaseLabelTexture(sharedMetricLabelTextureCache, entry.label.material.map);
+  }
+  registry.clear();
 }

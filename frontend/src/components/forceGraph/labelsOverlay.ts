@@ -14,6 +14,7 @@ import {
 import {
   buildMeasuredLabelTexture,
   createLabelTextureCache,
+  releaseLabelTexture,
   type LabelTextureOptions,
 } from './labelTexture';
 import { isGhost } from './timelineDiff';
@@ -108,6 +109,23 @@ function disposeLabelEntry(entry: FloatingLabelEntry): void {
   // geometry is the only thing this entry solely owns (a per-line clone of the
   // shared template), so it's the only thing we free. (Part A invariant.)
   entry.line.geometry.dispose();
+  // Drop this sprite's reference to its label texture so the cache can reclaim
+  // the texture once nothing else draws it (refcount-aware eviction). The
+  // texture itself is NOT disposed here — it's shared and may still be in use.
+  releaseLabelTexture(nameLabelTextureCache, entry.label.material.map);
+}
+
+// Release every active name label's texture refcount, then empty the registry.
+// The blanket teardown paths (structural swap / refresh) drop all label sprites
+// at once via the registry rather than per-entry, so they must release here to
+// keep refcounts balanced against the build-time increments — otherwise evicted-
+// but-rebuilt textures would accumulate phantom references and never be
+// reclaimable.
+export function clearNameLabelRegistry(): void {
+  for (const entry of labelsRegistry) {
+    releaseLabelTexture(nameLabelTextureCache, entry.label.material.map);
+  }
+  labelsRegistry.clear();
 }
 
 // Add or remove a node's floating name label as a sibling child of its root

@@ -5,7 +5,12 @@
 
 import type * as THREE from 'three';
 import { makeFloatingLabelSprite } from './floatingLabelSprite';
-import { buildMeasuredLabelTexture, createLabelTextureCache } from './labelTexture';
+import {
+  buildMeasuredLabelTexture,
+  createLabelTextureCache,
+  disposeLabelTextureCache,
+  releaseLabelTexture,
+} from './labelTexture';
 import {
   LABEL_OFFSET_X_FACTOR,
   LABEL_OFFSET_Y_FACTOR,
@@ -48,7 +53,13 @@ function applyFloatingLabel(
 ): void {
   let rebuilt = false;
   if (!host.label || host.labelText !== text) {
-    if (host.label) group.remove(host.label);
+    if (host.label) {
+      // Releasing before the rebuild keeps the texture refcount balanced as the
+      // basename changes (A → B → C); the old sprite's texture becomes
+      // evictable once nothing draws it.
+      releaseLabelTexture(agentLabelCache, host.label.material.map);
+      group.remove(host.label);
+    }
     const label = buildAgentLabel(text, host.color, labelSize);
     host.label = label;
     host.labelText = text;
@@ -75,12 +86,25 @@ function applyFloatingLabel(
   host.labelNodeSize = nodeSize;
 }
 
-function removeFloatingLabel(group: THREE.Group, host: LabelHost): void {
+// Remove a host's label sprite from the scene and release its texture refcount.
+// Exported so the overlay's removeAgent / disposeSatellite teardown paths free
+// the texture too (a bare group.remove would leak the refcount, keeping the
+// texture pinned in the cache for the page lifetime).
+export function removeFloatingLabel(group: THREE.Group, host: LabelHost): void {
   if (host.label) {
+    releaseLabelTexture(agentLabelCache, host.label.material.map);
     group.remove(host.label);
     host.label = undefined;
   }
   host.labelText = undefined;
+}
+
+// Dispose every texture + paired material in the agent label cache and empty
+// it. Called from AgentOverlay.destroy (project switch / unmount): without this
+// the whole cache (up to maxEntries textures + materials) survived every
+// overlay teardown for the page lifetime.
+export function disposeAgentLabelCache(): void {
+  disposeLabelTextureCache(agentLabelCache);
 }
 
 // Build/refresh the label sprite next to an agent node, showing its current

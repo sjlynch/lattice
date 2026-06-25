@@ -1,8 +1,22 @@
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { locLabelRegistry } from '../locOverlay';
-import { labelsRegistry } from '../labelsOverlay';
+import { clearNameLabelRegistry } from '../labelsOverlay';
 import { healthLabelRegistry } from '../healthOverlay';
+import { clearMetricLabelRegistry } from '../metricOverlayFactory';
 import { getIdleController } from '../idleController';
+
+// Empty all three overlay label registries, releasing each sprite's cached
+// label-texture reference as it goes (refcount-aware eviction). This is the ONE
+// place the blanket teardown is expressed — every full-rebuild path (refresh,
+// structural data swap, init teardown) routes through it so a registry is never
+// `.clear()`'d without also balancing the texture refcounts (a bare clear would
+// leak phantom references and stop the caches from ever reclaiming freed
+// textures).
+export function clearAllLabelRegistries(): void {
+  clearMetricLabelRegistry(locLabelRegistry);
+  clearMetricLabelRegistry(healthLabelRegistry);
+  clearNameLabelRegistry();
+}
 
 // Sprites cached by spriteFor are reused; refresh() just re-runs
 // nodeThreeObject. Any overlay swap orphans previously-registered
@@ -20,9 +34,7 @@ import { getIdleController } from '../idleController';
 // `onNodeHover` — which manifested as the health tooltip never appearing
 // while `h` was held.
 export function clearLabelsAndRefresh(graph: ForceGraph3DInstance | null) {
-  locLabelRegistry.clear();
-  labelsRegistry.clear();
-  healthLabelRegistry.clear();
+  clearAllLabelRegistries();
   graph?.refresh?.();
   if (graph) {
     graph.enablePointerInteraction(false);

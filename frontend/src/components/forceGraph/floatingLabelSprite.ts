@@ -71,6 +71,18 @@ function cachedLabelMaterial(texture: MeasuredLabelTexture): THREE.SpriteMateria
   return mat;
 }
 
+// Dispose and forget the cached SpriteMaterial paired with `texture`, if any.
+// The material is keyed by — and only useful with — that one texture, so when a
+// label texture is evicted/disposed (labelTexture.ts) the two are freed
+// together. A no-op when no material was ever built for the texture.
+export function disposeLabelMaterial(texture: MeasuredLabelTexture): void {
+  const mat = labelMaterialCache.get(texture);
+  if (mat) {
+    mat.dispose();
+    labelMaterialCache.delete(texture);
+  }
+}
+
 // THREE.Color cached by hex string (the connector materials only ever read it).
 const colorCache = new Map<string, THREE.Color>();
 function cachedColor(hex: string): THREE.Color {

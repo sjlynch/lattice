@@ -657,13 +657,33 @@ files below.
   a connector-geometry **template** by its constant endpoints; `metricOverlay
   Factory.ts` shares ONE label-texture cache across the health + LOC overlays
   (identical number glyphs aren't duplicated). **INVARIANT: anything cached here
-  is module-owned and must NEVER be disposed per-node.** Each connector line
-  gets its OWN `clone()` of the geometry template (the repulsion step mutates its
-  upper endpoint per-frame, so it can't be one shared instance) — that clone is
-  the *only* thing a per-node teardown owns, so `labelsOverlay.disposeLabelEntry`
-  frees the cloned geometry and nothing else (never the shared materials/
-  textures). Same rule for agent labels (`agentOverlayLabels.ts`) — their
-  textures/materials come from the same caches.
+  is module-owned and must NEVER be disposed *while a node is using it*.** Each
+  connector line gets its OWN `clone()` of the geometry template (the repulsion
+  step mutates its upper endpoint per-frame, so it can't be one shared instance)
+  — that clone is the *only* thing a per-node teardown disposes outright, so
+  `labelsOverlay.disposeLabelEntry` frees the cloned geometry and nothing else.
+- **Label-texture caches are refcount-guarded (`labelTexture.ts`).** The
+  bounded label-texture cache (`createLabelTextureCache` / `buildMeasuredLabel
+  Texture`, used by the name-label, metric, and agent-label overlays) tracks a
+  per-key refcount = number of live sprites drawing that texture. Eviction at
+  `maxEntries` reclaims the oldest entry **with refcount 0**, skipping any
+  in-use texture entirely (so it grows past the cap rather than dispose a
+  texture a mounted sprite still draws — disposing in-use textures caused
+  per-frame GPU re-upload thrash + blank labels). Reclaiming a free entry
+  disposes the texture AND its paired `SpriteMaterial` together (via
+  `floatingLabelSprite.disposeLabelMaterial`). **INVARIANT: every build must be
+  balanced by a `releaseLabelTexture` when its sprite is torn down**, or the
+  refcount over-counts and the entry never becomes reclaimable. The release
+  sites: `labelsOverlay.disposeLabelEntry` (per-node Alt-label removal) +
+  `clearAllLabelRegistries` (the single release-aware blanket teardown every
+  `graph.refresh()` / structural-swap path routes through — never `.clear()` a
+  label registry directly); and for agent labels, `agentOverlayLabels.remove
+  FloatingLabel` (rebuild-on-rename + removeAgent/disposeSatellite) plus
+  `disposeAgentLabelCache()` from `AgentOverlay.destroy` (disposes the whole
+  module-global agent cache on project switch / unmount, where the old code
+  leaked it for the page lifetime). The connector materials/colors/templates
+  (cached by value, not by sprite) remain never-disposed; only the
+  texture+material pair is refcount-managed.
 - **Skip redundant per-frame work in the APL (beams/labels/nodes).**
   `agentOverlayBeams.updateBeam` re-uploads beam geometry to the GPU only when an
   endpoint moved beyond `BEAM_MOVE_EPS` (caching the last endpoints on the beam),

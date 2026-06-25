@@ -1,17 +1,14 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import type { GitHistoryResult, GraphLink, GraphNode, ScanResult } from '../../../api';
-import { healthLabelRegistry } from '../healthOverlay';
 import { getIdleController } from '../idleController';
-import { labelsRegistry } from '../labelsOverlay';
-import { locLabelRegistry } from '../locOverlay';
 import {
   REL_FORWARD_KEY,
   buildGhostGraphData,
   isGhost,
   relForward,
 } from '../timelineDiff';
-import { clearLabelsAndRefresh } from './refresh';
+import { clearAllLabelRegistries, clearLabelsAndRefresh } from './refresh';
 
 type Args = {
   graphRef: MutableRefObject<ForceGraph3DInstance | null>;
@@ -231,9 +228,7 @@ export function useGraphDataSync({
     const graph = graphRef.current;
     if (!graph) return;
     if (!data) {
-      locLabelRegistry.clear();
-      labelsRegistry.clear();
-      healthLabelRegistry.clear();
+      clearAllLabelRegistries();
       graph.graphData({ nodes: [], links: [] });
       nodeIndexRef.current = null;
       ghostsRef.current = new Set();
@@ -320,10 +315,9 @@ export function useGraphDataSync({
     // Full structural swap. Clear the overlay registries first — the
     // library is about to detach every sprite, so old registry entries
     // would otherwise point at orphaned THREE objects until the next
-    // `cleanupStaleRegistryEntries` pass.
-    locLabelRegistry.clear();
-    labelsRegistry.clear();
-    healthLabelRegistry.clear();
+    // `cleanupStaleRegistryEntries` pass. The release-aware clear also drops
+    // each detached sprite's label-texture reference so the caches reclaim them.
+    clearAllLabelRegistries();
     graph.graphData(buildForceGraphData(graph, mergedNodes, mergedLinks, data.root));
     // The node array was replaced — drop the cached id→node index so the next
     // metric patch rebuilds it against the new array rather than the old one.
