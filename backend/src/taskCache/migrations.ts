@@ -144,14 +144,29 @@ export async function migrateLegacy(projectsIndex: ProjectsIndex): Promise<void>
 // entry points the cache calls on every project load.
 export class TaskMigrations {
   private legacyMigrated = false;
+  private legacyMigrationPromise: Promise<void> | null = null;
 
   constructor(private readonly projectsIndex: ProjectsIndex) {}
 
   // Run the legacy global → per-project migration at most once per process.
+  // Single-flight: a concurrent caller awaits the in-flight migration rather
+  // than flipping the done-flag and racing ahead to read project files before
+  // `migrateLegacy` has finished writing them. The flag flips only after the
+  // migration resolves; a failure clears the in-flight promise so a later
+  // call retries (migrateLegacy is idempotent).
   async runLegacyOnce(): Promise<void> {
     if (this.legacyMigrated) return;
-    this.legacyMigrated = true;
-    await migrateLegacy(this.projectsIndex);
+    if (!this.legacyMigrationPromise) {
+      this.legacyMigrationPromise = (async () => {
+        try {
+          await migrateLegacy(this.projectsIndex);
+          this.legacyMigrated = true;
+        } finally {
+          this.legacyMigrationPromise = null;
+        }
+      })();
+    }
+    return this.legacyMigrationPromise;
   }
 
   // First-touch in-project → home-dir migration for a single project.
