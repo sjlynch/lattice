@@ -123,6 +123,18 @@ export const Sidebar = memo(function Sidebar({
     [resetSearch, switchPanelWithoutSearchReset],
   );
 
+  // Catch-all: clear the search filter on ANY panel change, including the
+  // automatic switches usePanelState performs internally (a merge/startup
+  // panel emptying, or the active terminal pointing at another panel's tab).
+  // Those call setActivePanel directly, bypassing switchPanel above, so a
+  // stale query (e.g. typed on the Merging panel) would otherwise survive the
+  // switch and hide the newly-shown panel's terminals. resetSearch is a no-op
+  // when the filter is already empty, so the redundant call after a manual
+  // switchPanel doesn't cause an extra render.
+  useEffect(() => {
+    resetSearch();
+  }, [activePanel, resetSearch]);
+
   const { restartStartupTerminals } = useStartupTerminals({
     activeFolder,
     startupTerminals,
