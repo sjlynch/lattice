@@ -16,6 +16,17 @@ export type ProjectStateManagerOptions<TState> = {
   persistDelayMs?: number;
 };
 
+// Where a cross-project by-id lookup found an item: the project key whose
+// cached list holds it, the list, the index within it, and the item itself.
+// Used by list-backed subclasses (tasks, workflows) whose TState is an item
+// array; see findInCacheById / withItemAcrossProjects.
+export type ProjectItemLookup<TItem> = {
+  project: string;
+  list: TItem[];
+  idx: number;
+  item: TItem;
+};
+
 // Shared per-project state primitive: a canonical-project-keyed in-memory
 // cache, lazy disk bootstrap, debounced JSON persistence, and subscriber
 // bookkeeping. Domain modules keep ownership of validation/update semantics;
@@ -100,6 +111,42 @@ export class ProjectStateManager<
 
   protected cacheValues(): IterableIterator<TState> {
     return this.cache.values();
+  }
+
+  // Linear scan over every currently-loaded project's cached list for an item
+  // whose id matches. Subclasses pass their own id accessor. Only meaningful
+  // when TState is an item array (tasks, workflows); the cast is sound under
+  // that contract and contained here so the typed call sites stay clean.
+  protected findInCacheById<TItem>(
+    id: string,
+    getId: (item: TItem) => string,
+  ): ProjectItemLookup<TItem> | null {
+    for (const [project, state] of this.cacheEntries()) {
+      const list = state as unknown as TItem[];
+      const idx = list.findIndex((item) => getId(item) === id);
+      if (idx !== -1) return { project, list, idx, item: list[idx] };
+    }
+    return null;
+  }
+
+  // Resolve an item by id regardless of whether its project is currently
+  // loaded: try the in-memory cache, then run the injected load-all strategy
+  // and try once more. The strategy is injected because subclasses bulk-load
+  // differently (the task store migrates via ensureProjectLoaded; the workflow
+  // store just loadIfNeeded's each known project). Returns null if the id is
+  // present nowhere even after loading every known project.
+  protected async withItemAcrossProjects<TItem, T>(
+    id: string,
+    getId: (item: TItem) => string,
+    loadAllKnown: () => Promise<void>,
+    fn: (lookup: ProjectItemLookup<TItem>) => T | Promise<T>,
+  ): Promise<T | null> {
+    const cached = this.findInCacheById(id, getId);
+    if (cached) return fn(cached);
+    await loadAllKnown();
+    const loaded = this.findInCacheById(id, getId);
+    if (loaded) return fn(loaded);
+    return null;
   }
 
   protected async writeStateNow(projectPath: string, state: TState): Promise<void> {
