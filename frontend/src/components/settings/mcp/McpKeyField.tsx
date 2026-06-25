@@ -5,6 +5,7 @@ import {
   validateMcpServer,
   type McpSecretRequirement,
 } from '../../../api';
+import { commitMcpSecret } from './commitMcpSecret';
 
 type Props = {
   serverId: string;
@@ -39,6 +40,7 @@ export function McpKeyField({
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [test, setTest] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const commit = async () => {
     const v = value.trim();
@@ -47,17 +49,21 @@ export function McpKeyField({
       return;
     }
     setBusy(true);
-    try {
-      await setMcpSecret(serverId, requirement.envVar, v);
-      setValue('');
-      setEditing(false);
-      setTest(null);
-      onChanged();
-    } catch {
-      /* asJson throws are surfaced by the dialog's error path; keep field open */
-    } finally {
-      setBusy(false);
+    setSaveError(null);
+    const result = await commitMcpSecret(serverId, requirement.envVar, v);
+    setBusy(false);
+    if (!result.ok) {
+      // Autosave-on-blur bypasses the dialog's Save-button error path, so the
+      // failure has to surface here. Keep the field open with the typed value
+      // intact so the user can retry rather than believing the key saved.
+      setSaveError(result.error);
+      return;
     }
+    setValue('');
+    setEditing(false);
+    setTest(null);
+    setSaveError(null);
+    onChanged();
   };
 
   const clear = async () => {
@@ -66,6 +72,7 @@ export function McpKeyField({
       await setMcpSecret(serverId, requirement.envVar, null);
       setValue('');
       setTest(null);
+      setSaveError(null);
       setEditing(!envPresent);
       onChanged();
     } finally {
@@ -121,7 +128,10 @@ export function McpKeyField({
             autoComplete="off"
             spellCheck={false}
             disabled={busy}
-            onChange={(e) => setValue(e.target.value)}
+            onChange={(e) => {
+              setValue(e.target.value);
+              if (saveError) setSaveError(null);
+            }}
             onBlur={commit}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
@@ -147,12 +157,19 @@ export function McpKeyField({
               onClick={() => {
                 setValue('');
                 setEditing(false);
+                setSaveError(null);
               }}
               disabled={busy}
             >
               Cancel
             </button>
           )}
+        </div>
+      )}
+
+      {saveError && (
+        <div className="mcp-key-error" role="alert">
+          <X size={12} /> {saveError}
         </div>
       )}
 
