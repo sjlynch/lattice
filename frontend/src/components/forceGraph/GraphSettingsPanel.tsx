@@ -127,6 +127,48 @@ const NODE_MODES: { value: boolean; label: string; hint: string }[] = [
   },
 ];
 
+// A labeled segmented button group (the `.graph-settings-toggle` look), one
+// active option. Collapses the three structurally-identical mode rows
+// (repulsion / link rendering / node rendering) into a single component.
+function ToggleGroupRow<T>({
+  label,
+  ariaLabel,
+  options,
+  value,
+  onSelect,
+}: {
+  label: string;
+  ariaLabel: string;
+  options: { value: T; label: string; hint: string }[];
+  value: T;
+  onSelect: (value: T) => void;
+}) {
+  return (
+    <div className="graph-settings-row">
+      <div className="graph-settings-label">
+        <span>{label}</span>
+      </div>
+      <div className="graph-settings-toggle" role="group" aria-label={ariaLabel}>
+        {options.map((o) => (
+          <button
+            key={String(o.value)}
+            type="button"
+            title={o.hint}
+            className={
+              value === o.value
+                ? 'graph-settings-toggle-btn is-active'
+                : 'graph-settings-toggle-btn'
+            }
+            onClick={() => onSelect(o.value)}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Floating panel that mutates the GraphSettings object in the parent. Pure
 // UI — it doesn't talk to the graph directly; the parent's effects react
 // to settings changes and re-render sprites or reheat the d3 simulation.
@@ -230,28 +272,13 @@ export const GraphSettingsPanel = memo(function GraphSettingsPanel({
           <>
             {PHYSICS_ROWS.map(renderRow)}
 
-            <div className="graph-settings-row">
-              <div className="graph-settings-label">
-                <span>Repulsion mode</span>
-              </div>
-              <div className="graph-settings-toggle" role="group" aria-label="Repulsion mode">
-                {REPULSION_MODES.map((m) => (
-                  <button
-                    key={m.value}
-                    type="button"
-                    title={m.hint}
-                    className={
-                      settings.repulsionMode === m.value
-                        ? 'graph-settings-toggle-btn is-active'
-                        : 'graph-settings-toggle-btn'
-                    }
-                    onClick={() => setMode(m.value)}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <ToggleGroupRow
+              label="Repulsion mode"
+              ariaLabel="Repulsion mode"
+              options={REPULSION_MODES}
+              value={settings.repulsionMode}
+              onSelect={setMode}
+            />
             {settings.repulsionMode === 'nbody' && renderRow(THETA_ROW)}
           </>
         )}
@@ -260,53 +287,23 @@ export const GraphSettingsPanel = memo(function GraphSettingsPanel({
           <>
             {renderRow(RENDER_SCALE_ROW)}
 
-            <div className="graph-settings-row">
-              <div className="graph-settings-label">
-                <span>Link rendering</span>
-              </div>
-              <div className="graph-settings-toggle" role="group" aria-label="Link rendering">
-                {LINK_MODES.map((m) => (
-                  <button
-                    key={String(m.value)}
-                    type="button"
-                    title={m.hint}
-                    className={
-                      settings.batchedLinks === m.value
-                        ? 'graph-settings-toggle-btn is-active'
-                        : 'graph-settings-toggle-btn'
-                    }
-                    onClick={() => setBatchedLinks(m.value)}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <ToggleGroupRow
+              label="Link rendering"
+              ariaLabel="Link rendering"
+              options={LINK_MODES}
+              value={settings.batchedLinks}
+              onSelect={setBatchedLinks}
+            />
             {/* Width is meaningless for batched links (always flat). */}
             {!settings.batchedLinks && renderRow(LINK_WIDTH_ROW)}
 
-            <div className="graph-settings-row">
-              <div className="graph-settings-label">
-                <span>Node rendering</span>
-              </div>
-              <div className="graph-settings-toggle" role="group" aria-label="Node rendering">
-                {NODE_MODES.map((m) => (
-                  <button
-                    key={String(m.value)}
-                    type="button"
-                    title={m.hint}
-                    className={
-                      settings.batchedNodes === m.value
-                        ? 'graph-settings-toggle-btn is-active'
-                        : 'graph-settings-toggle-btn'
-                    }
-                    onClick={() => setBatchedNodes(m.value)}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <ToggleGroupRow
+              label="Node rendering"
+              ariaLabel="Node rendering"
+              options={NODE_MODES}
+              value={settings.batchedNodes}
+              onSelect={setBatchedNodes}
+            />
           </>
         )}
       </div>

@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ChevronDown, ChevronRight, Plus, RefreshCw, X } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import {
   fetchGlobalSettings,
   getPiModels,
@@ -13,41 +13,19 @@ import {
   type PiProvider,
 } from '../../api';
 import { useEndpointState, useProbeDetection } from './usePiEndpoints';
+import {
+  collectModelUniverse,
+  entriesToHeaders,
+  sanitizeProvidersForSave,
+} from './piTabUtils';
+import { PiEndpointCard } from './PiEndpointCard';
+import { PiModelMenu } from './PiModelMenu';
+import { SettingsInfo } from './SettingsInfo';
 
 type Props = {
   active: boolean;
   open: boolean;
 };
-
-// Drop blank/whitespace header keys and omit the map entirely when empty, so a
-// half-typed header row never reaches models.json.
-function cleanHeaders(
-  headers?: Record<string, string>,
-): Record<string, string> | undefined {
-  if (!headers) return undefined;
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(headers)) {
-    const key = k.trim();
-    if (key) out[key] = v;
-  }
-  return Object.keys(out).length ? out : undefined;
-}
-
-// Rebuild a header record from ordered [key,value] pairs. fromEntries keeps
-// insertion order (so editing a key in place doesn't reshuffle rows) and a
-// transient empty/duplicate key just collapses — fine mid-edit.
-function entriesToHeaders(entries: [string, string][]): Record<string, string> {
-  return Object.fromEntries(entries);
-}
-
-// Read a string-valued compat key for an input value.
-function compatString(
-  compat: Record<string, unknown> | undefined,
-  key: string,
-): string {
-  const v = compat?.[key];
-  return typeof v === 'string' ? v : '';
-}
 
 export type PiTabHandle = {
   // The Pi providers to persist (reconciled into models.json), or `undefined`
@@ -61,7 +39,9 @@ export type PiTabHandle = {
 
 // Machine-global Pi configuration: OpenAI-compatible endpoints (vLLM, etc.)
 // that Lattice reconciles into ~/.pi/agent/models.json, plus the curated model
-// menu surfaced as "Pi — X" rows in the harness dropdowns.
+// menu surfaced as "Pi — X" rows in the harness dropdowns. The endpoint card and
+// model-menu UI live in focused components; this tab owns the draft state, the
+// load, the edit handlers, and the imperative save-patch handle.
 export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
   { active, open },
   ref,
@@ -111,12 +91,7 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
 
   // The universe of selectable model patterns = saved models ∪ everything the
   // draft endpoints declare. Recomputed each render (cheap).
-  const universe = new Set<string>(savedModels.map((m) => m.pattern));
-  for (const p of providers) {
-    for (const m of p.models) {
-      if (p.id && m.id) universe.add(`${p.id}/${m.id}`);
-    }
-  }
+  const universe = collectModelUniverse(savedModels, providers);
 
   // Auto-include any newly-appeared pattern (a model just added to a draft
   // endpoint) in the menu, so it shows in the dropdowns by default.
@@ -139,20 +114,7 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
     () => ({
       getPiProvidersPatch: () => {
         if (!endpoints.touched) return undefined;
-        // Drop incomplete rows (need an id + baseUrl) so a half-typed endpoint
-        // isn't written to models.json; clean half-typed header rows too.
-        return providers
-          .map((p) => {
-            const headers = cleanHeaders(p.headers);
-            return {
-              ...p,
-              id: p.id.trim(),
-              baseUrl: p.baseUrl.trim(),
-              models: p.models.filter((m) => m.id.trim()),
-              headers,
-            };
-          })
-          .filter((p) => p.id && p.baseUrl);
+        return sanitizeProvidersForSave(providers);
       },
       getPiModelMenuPatch: () => {
         if (!endpoints.touched && !menuTouched) return undefined;
@@ -280,14 +242,24 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
       <div className="settings-section">
         <div className="settings-section-header">
           <div>
-            <div className="settings-section-title">Pi endpoints</div>
+            <div className="settings-section-title-row">
+              <div className="settings-section-title">Pi endpoints</div>
+              <SettingsInfo label="About Pi endpoints">
+                <p>
+                  Saving reconciles these endpoints into{' '}
+                  <code>~/.pi/agent/models.json</code>. Your hand-written
+                  providers there are preserved; Pi’s defaults in{' '}
+                  <code>settings.json</code> are never touched.
+                </p>
+                <p>
+                  The API key may be a literal, an environment variable name, or
+                  a <code>!command</code> — Pi resolves it.
+                </p>
+              </SettingsInfo>
+            </div>
             <div className="settings-section-sub">
               OpenAI-compatible model servers (e.g. a local vLLM box) Lattice
-              manages for Pi. Saving reconciles these into{' '}
-              <code>~/.pi/agent/models.json</code> (your hand-written providers
-              there are preserved; Pi’s defaults in <code>settings.json</code>{' '}
-              are never touched). The API key may be a literal, an environment
-              variable name, or a <code>!command</code> — Pi resolves it.
+              manages for Pi.
             </div>
           </div>
         </div>
@@ -299,163 +271,30 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
           </div>
         )}
 
-        {providers.map((ep, idx) => {
-          const modelIds = new Set(ep.models.map((m) => m.id));
-          const detectedIds = detected[idx] ?? [];
-          // Show detected ids plus any already on the provider (e.g. loaded).
-          const shownIds = [...new Set([...detectedIds, ...ep.models.map((m) => m.id)])];
-          return (
-            <div key={idx} className="settings-pi-endpoint">
-              <div className="settings-pi-endpoint-head">
-                <input
-                  className="text-input"
-                  style={{ width: 130 }}
-                  placeholder="provider id"
-                  value={ep.id}
-                  onChange={(e) => patchProvider(idx, { id: e.target.value })}
-                />
-                <input
-                  className="text-input"
-                  style={{ flex: 1, minWidth: 160 }}
-                  placeholder="https://host:port/v1"
-                  value={ep.baseUrl}
-                  onChange={(e) => patchProvider(idx, { baseUrl: e.target.value })}
-                />
-                <button
-                  className="icon-btn sm"
-                  onClick={() => removeProvider(idx)}
-                  title="Remove endpoint"
-                  aria-label="Remove endpoint"
-                >
-                  <X size={12} />
-                </button>
-              </div>
-              <div className="settings-pi-endpoint-head">
-                <input
-                  className="text-input"
-                  style={{ width: 130 }}
-                  placeholder="api key (optional)"
-                  value={ep.apiKey ?? ''}
-                  onChange={(e) => patchProvider(idx, { apiKey: e.target.value })}
-                />
-                <button
-                  className="btn-ghost"
-                  onClick={() => void detectModels(idx)}
-                  disabled={probing[idx]}
-                  title="Query <baseUrl>/models and list what the server offers"
-                >
-                  <RefreshCw size={11} />
-                  {probing[idx] ? 'Detecting…' : 'Detect models'}
-                </button>
-              </div>
-              {probeError[idx] && (
-                <div className="error-msg" style={{ marginTop: 4 }}>
-                  {probeError[idx]}
-                </div>
-              )}
-              {shownIds.length > 0 && (
-                <div className="settings-checkbox-list" style={{ maxHeight: 140 }}>
-                  {shownIds.map((id) => (
-                    <label key={id} className="settings-checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={modelIds.has(id)}
-                        onChange={() => toggleEndpointModel(idx, id)}
-                      />
-                      <span>{id}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-
-              <button
-                type="button"
-                className="btn-ghost settings-pi-advanced-toggle"
-                onClick={() =>
-                  setAdvancedOpen((o) => ({ ...o, [idx]: !o[idx] }))
-                }
-              >
-                {advancedOpen[idx] ? (
-                  <ChevronDown size={11} />
-                ) : (
-                  <ChevronRight size={11} />
-                )}
-                Advanced (thinking format / headers)
-              </button>
-              {advancedOpen[idx] && (
-                <div className="settings-pi-advanced">
-                  <label className="settings-pi-advanced-field">
-                    <span>Thinking format</span>
-                    <input
-                      className="text-input"
-                      placeholder="e.g. qwen-chat-template (optional)"
-                      value={compatString(ep.compat, 'thinkingFormat')}
-                      onChange={(e) =>
-                        updateCompat(idx, 'thinkingFormat', e.target.value)
-                      }
-                    />
-                  </label>
-                  <label className="settings-checkbox-row">
-                    <input
-                      type="checkbox"
-                      checked={ep.compat?.supportsDeveloperRole !== false}
-                      onChange={(e) =>
-                        updateCompat(
-                          idx,
-                          'supportsDeveloperRole',
-                          e.target.checked ? undefined : false,
-                        )
-                      }
-                    />
-                    <span>Server supports the developer role</span>
-                  </label>
-                  <div className="settings-pi-advanced-headers">
-                    <div className="settings-section-sub">
-                      Custom request headers
-                    </div>
-                    {Object.entries(ep.headers ?? {}).map(([k, v], rowIdx) => (
-                      <div key={rowIdx} className="settings-pi-endpoint-head">
-                        <input
-                          className="text-input"
-                          style={{ width: 130 }}
-                          placeholder="Header-Name"
-                          value={k}
-                          onChange={(e) =>
-                            updateHeaderKey(idx, rowIdx, e.target.value)
-                          }
-                        />
-                        <input
-                          className="text-input"
-                          style={{ flex: 1, minWidth: 120 }}
-                          placeholder="value"
-                          value={v}
-                          onChange={(e) =>
-                            updateHeaderValue(idx, rowIdx, e.target.value)
-                          }
-                        />
-                        <button
-                          className="icon-btn sm"
-                          onClick={() => removeHeader(idx, rowIdx)}
-                          title="Remove header"
-                          aria-label="Remove header"
-                        >
-                          <X size={12} />
-                        </button>
-                      </div>
-                    ))}
-                    <button
-                      className="btn-ghost"
-                      onClick={() => addHeader(idx)}
-                    >
-                      <Plus size={12} />
-                      Add header
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {providers.map((ep, idx) => (
+          <PiEndpointCard
+            key={idx}
+            endpoint={ep}
+            probing={!!probing[idx]}
+            detectedIds={detected[idx] ?? []}
+            probeError={probeError[idx]}
+            advancedOpen={!!advancedOpen[idx]}
+            onPatch={(partial) => patchProvider(idx, partial)}
+            onRemove={() => removeProvider(idx)}
+            onDetect={() => void detectModels(idx)}
+            onToggleModel={(modelId) => toggleEndpointModel(idx, modelId)}
+            onToggleAdvanced={() =>
+              setAdvancedOpen((o) => ({ ...o, [idx]: !o[idx] }))
+            }
+            onUpdateCompat={(key, value) => updateCompat(idx, key, value)}
+            onUpdateHeaderKey={(rowIdx, key) => updateHeaderKey(idx, rowIdx, key)}
+            onUpdateHeaderValue={(rowIdx, value) =>
+              updateHeaderValue(idx, rowIdx, value)
+            }
+            onAddHeader={() => addHeader(idx)}
+            onRemoveHeader={(rowIdx) => removeHeader(idx, rowIdx)}
+          />
+        ))}
 
         <button className="btn-ghost" onClick={addProvider} style={{ marginTop: 8 }}>
           <Plus size={12} />
@@ -463,39 +302,11 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
         </button>
       </div>
 
-      <div className="settings-section">
-        <div className="settings-section-header">
-          <div>
-            <div className="settings-section-title">Pi model menu</div>
-            <div className="settings-section-sub">
-              Which Pi models appear as “Pi — …” options in the harness
-              dropdowns (task board, workflow steps, post-merge hook). Includes
-              detected models from <code>pi --list-models</code> and the
-              endpoints above. Unchecking everything falls back to the default
-              menu (your custom-provider models + Pi’s current default).
-            </div>
-          </div>
-        </div>
-        {menuPatterns.length === 0 ? (
-          <div className="settings-section-sub" style={{ opacity: 0.7 }}>
-            No Pi models detected. Install the <code>pi</code> CLI or add an
-            endpoint above.
-          </div>
-        ) : (
-          <div className="settings-checkbox-list">
-            {menuPatterns.map((pattern) => (
-              <label key={pattern} className="settings-checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={menuSelected.has(pattern)}
-                  onChange={() => toggleMenu(pattern)}
-                />
-                <span>{pattern}</span>
-              </label>
-            ))}
-          </div>
-        )}
-      </div>
+      <PiModelMenu
+        patterns={menuPatterns}
+        selected={menuSelected}
+        onToggle={toggleMenu}
+      />
     </>
   );
 });

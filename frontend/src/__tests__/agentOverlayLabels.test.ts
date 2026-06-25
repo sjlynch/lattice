@@ -1,41 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
+import { installCanvasDocument } from './domDoubles.ts';
 
 // agentOverlayLabels.ts → labelTexture.ts builds its label textures from a real
 // <canvas> (at module load and per label). Node's test runner has no DOM, so
-// install a minimal canvas/2d-context stub covering only what
-// buildMeasuredLabelTexture touches. The stub is installed BEFORE the dynamic
+// install the shared canvas/2d-context stub. It's installed BEFORE the dynamic
 // import below so the module graph evaluates against it (a static import is
 // hoisted and would run labelTexture's module body first).
-function installCanvasStub(): void {
-  const g = globalThis as unknown as { document?: unknown };
-  if (g.document) return;
-  const make2dContext = () => ({
-    font: '',
-    textAlign: '',
-    textBaseline: '',
-    lineJoin: '',
-    lineWidth: 0,
-    strokeStyle: '',
-    fillStyle: '',
-    measureText: (t: string) => ({
-      actualBoundingBoxLeft: 0,
-      actualBoundingBoxRight: t.length * 10,
-      width: t.length * 10,
-    }),
-    strokeText: () => {},
-    fillText: () => {},
-  });
-  g.document = {
-    createElement: (tag: string) => {
-      if (tag !== 'canvas') throw new Error(`unexpected createElement(${tag})`);
-      return { width: 0, height: 0, getContext: () => make2dContext() };
-    },
-  };
-}
-
-installCanvasStub();
+installCanvasDocument((t) => ({
+  actualBoundingBoxLeft: 0,
+  actualBoundingBoxRight: t.length * 10,
+  width: t.length * 10,
+}));
 
 const { updateAgentLabel } = await import(
   '../components/forceGraph/agentOverlayLabels.ts'
