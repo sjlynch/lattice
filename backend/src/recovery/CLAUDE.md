@@ -14,6 +14,30 @@ Boot-time crash recovery for project/task state. `../recovery.ts` is only the st
 5. `resumeInterruptedMergeRuns` (`mergeRunResume.ts`) — called after HTTP listen so spawned resolvers can call the API.
 6. `resumeQueuedTaskRuns` (`queuedRunResume.ts`) — also called after HTTP listen. Re-enqueues task runs that were waiting in the in-memory spawn queue when the backend stopped (found via the persisted `Task.runQueued` flag). Runs *after* `sweepOrphanedWorktrees` so a worktree half-created by an interrupted run is reconciled by the re-run, not reclaimed as an orphan.
 
+## Periodic sweeps (not boot-time)
+
+`inProgressSweep.ts` is a stable facade (re-exported from `index.ts`) over the
+`inProgressSweep/` subfolder. Unlike the boot sweeps above, it runs on a timer
+(`startInProgressSweepLoop` / `stopInProgressSweepLoop`, default
+`IN_PROGRESS_SWEEP_INTERVAL_MS = 60s`), complementing boot recovery from the
+other end: an `in_progress` task whose PTY is dead **and** whose branch has a
+commit gets auto-completed (in_progress → ready_to_merge), since the Pi
+extension / explicit `/complete` curl are both best-effort and can be missed.
+
+Split by concern so the eligibility decision is auditable in isolation:
+
+- `config.ts` — the age gate (`MIN_AGE_MS`) + loop interval knobs.
+- `scheduler.ts` — timer lifecycle only (module-scoped handle, `unref`'d).
+- `sweep.ts` — project/task scanning: snapshot live session cwds once, walk
+  every known project's `in_progress` tasks, and translate each verdict into
+  logging + skip-accounting + the mutation. Owns the `SweepResult` shape.
+- `eligibility.ts` — `decideAutoComplete(...)` returns a discriminated
+  `EligibilityVerdict` (`skip` with a typed `SkipReason`, or `complete`). Read
+  only; no mutation. `too-young` / `session-live` skips are the expected-healthy
+  cases (silent, uncounted); the rest are surfaced.
+- `complete.ts` — the auto-complete mutation: read the Pi shutdown sentinel for
+  the diagnostic log, then `updateTask` to `ready_to_merge`.
+
 ## Safety invariants
 
 - Keep recovery best-effort: log a failed phase/project and continue booting.
