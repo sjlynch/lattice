@@ -115,16 +115,15 @@ function disposeLabelEntry(entry: FloatingLabelEntry): void {
   releaseLabelTexture(nameLabelTextureCache, entry.label.material.map);
 }
 
-// Release every active name label's texture refcount, then empty the registry.
-// The blanket teardown paths (structural swap / refresh) drop all label sprites
-// at once via the registry rather than per-entry, so they must release here to
-// keep refcounts balanced against the build-time increments — otherwise evicted-
-// but-rebuilt textures would accumulate phantom references and never be
-// reclaimable.
+// Release every active name label's texture refcount and dispose its cloned
+// connector geometry, then empty the registry. The blanket teardown paths
+// (structural swap / refresh) drop all label sprites at once via the registry
+// rather than per-entry, so they must release here to keep refcounts balanced
+// against the build-time increments (otherwise evicted-but-rebuilt textures
+// accumulate phantom references and never become reclaimable) AND dispose the
+// per-line connector geometry the library leaves orphaned on refresh.
 export function clearNameLabelRegistry(): void {
-  for (const entry of labelsRegistry) {
-    releaseLabelTexture(nameLabelTextureCache, entry.label.material.map);
-  }
+  for (const entry of labelsRegistry) disposeLabelEntry(entry);
   labelsRegistry.clear();
 }
 

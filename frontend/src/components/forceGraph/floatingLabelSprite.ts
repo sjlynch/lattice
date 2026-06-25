@@ -210,3 +210,25 @@ export function makeConnectorLine(config: ConnectorLineConfig): THREE.Line {
   disableRaycast(line);
   return line;
 }
+
+// Free the one GPU resource a registry entry solely owns: the per-line clone of
+// the connector geometry template (made by makeConnectorLine). The label
+// texture, the sprite material (shared per texture) and the connector line
+// material (shared per color) are all module-owned caches above — disposing any
+// of those here would break every other label still using them (the Part A
+// INVARIANT). This is the same teardown labelsOverlay's Alt overlay does per
+// node; it's exported so the metric overlays (LOC/health) share one definition.
+export function disposeLabelEntry(entry: FloatingLabelEntry): void {
+  entry.line.geometry.dispose();
+}
+
+// Dispose every entry's cloned connector geometry, then empty the registry.
+// The overlay-refresh paths used to call a bare `registry.clear()`, which
+// dropped the entries without disposing their geometry — and 3d-force-graph
+// doesn't traverse-dispose the node objects it replaces on `graph.refresh()`,
+// so each refresh while an LOC/health overlay was active stranded one cloned
+// BufferGeometry (a GPU buffer) per file node. Always dispose before clearing.
+export function disposeAndClearRegistry(registry: Set<FloatingLabelEntry>): void {
+  for (const entry of registry) disposeLabelEntry(entry);
+  registry.clear();
+}
