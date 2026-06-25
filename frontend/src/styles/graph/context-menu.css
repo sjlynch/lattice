@@ -1,0 +1,55 @@
+/* Box-select rectangle drawn on top of the 3D canvas while shift+drag
+   is in progress. pointer-events:none so it never intercepts the
+   underlying canvas mouse events. */
+.graph-select-rect {
+  position: absolute;
+  pointer-events: none;
+  z-index: 8;
+  border: 1px solid rgba(120, 200, 255, 0.85);
+  background: rgba(120, 200, 255, 0.12);
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35) inset;
+}
+
+/* "N files selected · clear" chip, top-right of the graph. */
+.graph-selection-chip {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 9;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: rgba(15, 17, 21, 0.85);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-md);
+  padding: 6px 12px;
+}
+.graph-selection-chip .sep { color: var(--text-tertiary); }
+.graph-selection-chip .link-btn {
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+}
+.graph-selection-chip .link-btn:hover { text-decoration: underline; }
+
+/* Right-click menu over selected nodes. Reuses .popover for chrome.
+   MUST stay position: absolute — useNodeContextMenu stores coords
+   relative to the graph container (clientX - rect.left), and the menu
+   renders inside the (position: relative) ForceGraphView wrapper. Using
+   position: fixed reinterprets those container-relative coords as
+   viewport coords, so the menu lands offset left/up by the sidebar +
+   topbar instead of at the cursor. */
+.graph-context-menu {
+  position: absolute;
+  z-index: 1100;
+  min-width: 200px;
+}
