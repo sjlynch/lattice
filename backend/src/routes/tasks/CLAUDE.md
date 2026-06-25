@@ -47,7 +47,16 @@ Idempotent Stop-hook / resolver callbacks. `hooks/index.ts`'s
 The resolver-finished `/complete` branch and `/merged` share the
 "re-sync with main, finalize, requeue on conflict" flow in
 `../finalizeResolved.ts`; each route only renders the discriminated result
-into its own HTTP shape.
+into its own HTTP shape. `finalizeResolvedTask` takes the per-task
+`mergeLocks` lock around its git work, so it serializes against the merge-run
+worker (`mergeRuns/processTarget.ts` + `tryFinalizeAfterResolverFinished`,
+which take the same lock) and against a duplicate hook fire (two near-
+simultaneous `/complete` curls, or `/complete` racing `/merged`) — otherwise
+two `mergeWorktreeInRepo` runs race on `.git/index.lock` + `MERGE_HEAD` in the
+one worktree. A caller that loses the race gets the `already-finalizing` result
+(rendered as `{ok:true, finalizing:true}`); the callbacks are idempotent, so the
+lock holder finishes the work. (The `finalizeQueues` promise queue only
+serializes the FF step, not this earlier in-worktree merge.)
 
 ## Stability
 

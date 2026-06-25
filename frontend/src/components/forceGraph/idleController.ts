@@ -36,26 +36,27 @@
 // one frame at a time by `notifyFrameRendered` (wired to the scene frame
 // driver at init).
 //
+// This file is the orchestrator; the moving parts live in focused siblings:
+//   - `idleControllerReasons.ts`  — the reference-counted reason ledger.
+//   - `idleControllerLoop.ts`     — the pause/resume duty-cycle scheduler
+//                                    (the load-bearing RAF-recursion + deferred
+//                                    -pause semantics).
+//   - `idleControllerEngine.ts`   — the `engine` reason + its safety timer.
+//   - `idleControllerInteract.ts` — the `interact` reason + pointer DOM wiring.
+// The orchestrator holds the tab-visibility gate, the trivial counter reasons
+// (`labelPhysics` / `agents`) and the `refresh` tail, and wires it all together.
+//
 // The controller is attached to the graph instance as `__idleController`
 // so utilities like `clearLabelsAndRefresh` and the overlay RAF loops can
 // reach it without threading another ref through every hook.
 
 import type { ForceGraph3DInstance } from '3d-force-graph';
+import { createReasonLedger } from './idleControllerReasons';
+import { createLoopScheduler } from './idleControllerLoop';
+import { createEngineReason } from './idleControllerEngine';
+import { createInteractReason } from './idleControllerInteract';
 
-const INTERACT_IDLE_MS = 350;
-const POINTER_LEAVE_TAIL_MS = 80;
 const REFRESH_TAIL_MS = 120;
-// Belt-and-braces auto-release for the `engine` reason. The library
-// normally fires `onEngineStop` within `cooldownTime` (now 8 s, see
-// useForceGraphInitialization), but on the off chance an upstream
-// change ever drops or swallows the callback we don't want the render
-// loop pinned forever. Sized comfortably above cooldownTime + a margin
-// for the warmup ticks.
-const ENGINE_SAFETY_TIMEOUT_MS = 20000;
-// Duty-cycle target when only the slow self-animations are driving the loop.
-// ~30fps halves the render cost vs the library's uncapped ~60fps while staying
-// visually smooth for node easing + beam/label fades.
-const SLOW_FRAME_MS = 1000 / 30;
 
 export type IdleController = {
   engineStarted(): void;
@@ -70,208 +71,43 @@ export type IdleController = {
   destroy(): void;
 };
 
-type Counts = {
-  engine: number;
-  interact: number;
-  refresh: number;
-  labelPhysics: number;
-  agents: number;
-};
-
 export function createIdleController(
   graph: ForceGraph3DInstance,
   container: HTMLElement,
 ): IdleController {
-  const counts: Counts = {
-    engine: 0,
-    interact: 0,
-    refresh: 0,
-    labelPhysics: 0,
-    agents: 0,
-  };
+  const ledger = createReasonLedger();
+
+  // Tab visibility is a negative gate over the held reasons (see header).
   let hidden = document.visibilityState === 'hidden';
-  // `throttleTimer` holds a pending throttled-frame resume; `pausePending`
-  // means a deferred pause microtask is already queued (coalesces repeats).
-  let throttleTimer: ReturnType<typeof setTimeout> | null = null;
-  let pausePending = false;
-  // Guards against re-entrant resumes. `graph.resumeAnimation()` synchronously
-  // runs a render tick (`_animationCycle` → `tickFrame` → `scene.onBeforeRender`)
-  // BEFORE the library re-arms its RAF id, so the id is transiently null mid-tick
-  // — meaning a `sync()` triggered from inside that render (e.g. a frame-driver
-  // callback releasing `labelPhysics`) would see null and call resume AGAIN,
-  // nesting `_animationCycle` into unbounded recursion (stack overflow). While a
-  // resume is on the stack the loop is definitionally (re)starting, so any nested
-  // resume request is a redundant no-op we simply skip.
-  let resuming = false;
+  const shouldRun = () => !hidden && ledger.anyHeld();
+  const slowOnly = () => ledger.slowOnly();
 
-  function shouldRun(): boolean {
-    if (hidden) return false;
-    return (
-      counts.engine > 0 ||
-      counts.interact > 0 ||
-      counts.refresh > 0 ||
-      counts.labelPhysics > 0 ||
-      counts.agents > 0
-    );
-  }
-
-  // True when the loop is running purely for the slow self-animations and
-  // nothing demands full responsiveness — the only case we duty-cycle.
-  function slowOnly(): boolean {
-    return (
-      counts.engine === 0 &&
-      counts.interact === 0 &&
-      counts.refresh === 0 &&
-      (counts.agents > 0 || counts.labelPhysics > 0)
-    );
-  }
-
-  function clearThrottleTimer() {
-    if (throttleTimer) {
-      clearTimeout(throttleTimer);
-      throttleTimer = null;
-    }
-  }
-
-  // Pause the render loop, but ALWAYS from a microtask so it lands BETWEEN
-  // frames. This is load-bearing: the library's `_animationCycle` re-schedules
-  // its own RAF unconditionally at the end of every frame, and `onEngineStop`
-  // fires synchronously *inside* that cycle (within `tickFrame`). A
-  // `pauseAnimation()` called straight from `engineStopped` therefore only
-  // cancels the already-fired frame and is overwritten by the cycle's trailing
-  // reschedule — so the loop would never actually stop after the layout
-  // settles (a perpetual-100%-CPU idle). Deferring to a microtask runs the
-  // cancel after the cycle returns, when the next-frame RAF is pending and
-  // genuinely cancellable.
-  //
-  // One unified check, shared by `sync` (we should stop) and
-  // `notifyFrameRendered` (throttle: pause then re-wake). Whichever queues it,
-  // the body decides from the CURRENT counts at execution time:
-  //   - a full-speed reason was (re)acquired → stay running;
-  //   - still slow-only → pause now and schedule the next throttled paint;
-  //   - nothing wants the loop → pause and stay paused.
-  function schedulePauseCheck() {
-    if (pausePending) return;
-    pausePending = true;
-    queueMicrotask(() => {
-      pausePending = false;
-      if (shouldRun() && !slowOnly()) return; // full-speed reason → keep running
-      if (throttleTimer) return; // a throttled resume is already scheduled
-      graph.pauseAnimation();
-      if (shouldRun() && slowOnly()) {
-        throttleTimer = setTimeout(() => {
-          throttleTimer = null;
-          sync();
-        }, SLOW_FRAME_MS);
-      }
-    });
-  }
-
-  // Resume the render loop, but never re-enter `_animationCycle` from inside the
-  // render tick a resume itself drives (see the `resuming` guard above). The
-  // outer resume is already (re)starting the loop, so a nested request is moot.
-  function resumeLoop() {
-    if (resuming) return;
-    resuming = true;
-    try {
-      graph.resumeAnimation();
-    } finally {
-      resuming = false;
-    }
-  }
-
-  function sync() {
-    if (!shouldRun()) {
-      clearThrottleTimer();
-      schedulePauseCheck();
-      return;
-    }
-    if (!slowOnly()) {
-      // A full-speed reason (engine/interact/refresh) is held — run uncapped.
-      clearThrottleTimer();
-      resumeLoop(); // idempotent (no-op if already running / mid-resume)
-      return;
-    }
-    // Slow-only: ensure the duty cycle is alive, but don't cut a throttle wait
-    // short — that would push the effective rate above the cap.
-    if (!throttleTimer && !pausePending) resumeLoop();
-  }
-
-  // Called once per real render frame (via the scene frame driver). In
-  // slow-only mode this drives the duty cycle: pause after this frame and
-  // re-wake SLOW_FRAME_MS later (~SLOW_FPS). A no-op outside slow-only mode.
-  function notifyFrameRendered() {
-    if (throttleTimer || pausePending) return;
-    if (!shouldRun() || !slowOnly()) return;
-    schedulePauseCheck();
-  }
+  const loop = createLoopScheduler(graph, shouldRun, slowOnly);
+  const sync = loop.sync;
 
   // ---- engine (boolean, mirrors three-forcegraph's engineRunning) -------
-  let engineHeld = false;
-  let engineSafetyTimer: ReturnType<typeof setTimeout> | null = null;
-  function clearEngineSafety() {
-    if (engineSafetyTimer) {
-      clearTimeout(engineSafetyTimer);
-      engineSafetyTimer = null;
-    }
-  }
-  function armEngineSafety() {
-    clearEngineSafety();
-    engineSafetyTimer = setTimeout(() => {
-      engineSafetyTimer = null;
-      // Library failed to fire onEngineStop within the cooldown window.
-      // Force-release so the render loop can suspend.
-      if (engineHeld) {
-        engineHeld = false;
-        counts.engine--;
-        sync();
-      }
-    }, ENGINE_SAFETY_TIMEOUT_MS);
-  }
-  function engineStarted() {
-    if (engineHeld) {
-      // Already held — just rearm the safety timer because the d3
-      // engine was just re-warmed (graphData() swap or explicit reheat).
-      armEngineSafety();
-      return;
-    }
-    engineHeld = true;
-    counts.engine++;
-    armEngineSafety();
-    sync();
-  }
-  function engineStopped() {
-    if (!engineHeld) return;
-    engineHeld = false;
-    counts.engine--;
-    clearEngineSafety();
-    sync();
-  }
-  // Whether the d3 layout is currently live (nodes may be moving this frame).
-  // Consumers that cache per-frame geometry derived from node positions (e.g.
-  // the Agent Presence Layer's graph bounds) use this to recompute only while
-  // positions can change and reuse the cache once the layout has settled.
-  function isEngineHot(): boolean {
-    return engineHeld;
-  }
+  const engine = createEngineReason(ledger, sync);
+
+  // ---- interact (pointer / wheel, owns its own DOM listeners) -----------
+  const interact = createInteractReason(container, ledger, sync);
 
   // ---- label-physics (counter, multiple overlays may be active) ---------
   function acquireLabelPhysics() {
-    counts.labelPhysics++;
+    ledger.acquire('labelPhysics');
     sync();
   }
   function releaseLabelPhysics() {
-    if (counts.labelPhysics > 0) counts.labelPhysics--;
+    ledger.release('labelPhysics');
     sync();
   }
 
   // ---- agents (Claude node + focus beams animating) ---------------------
   function acquireAgents() {
-    counts.agents++;
+    ledger.acquire('agents');
     sync();
   }
   function releaseAgents() {
-    if (counts.agents > 0) counts.agents--;
+    ledger.release('agents');
     sync();
   }
 
@@ -279,47 +115,19 @@ export function createIdleController(
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   function wakeForRefresh() {
     if (refreshTimer == null) {
-      counts.refresh++;
+      ledger.acquire('refresh');
       sync();
     } else {
       clearTimeout(refreshTimer);
     }
     refreshTimer = setTimeout(() => {
       refreshTimer = null;
-      counts.refresh--;
+      ledger.release('refresh');
       sync();
     }, REFRESH_TAIL_MS);
   }
 
-  // ---- interact (pointer / wheel) ---------------------------------------
-  let interactHeld = false;
-  let interactTimer: ReturnType<typeof setTimeout> | null = null;
-  function touchInteract(tailMs: number = INTERACT_IDLE_MS) {
-    if (!interactHeld) {
-      interactHeld = true;
-      counts.interact++;
-      sync();
-    }
-    if (interactTimer) clearTimeout(interactTimer);
-    interactTimer = setTimeout(() => {
-      interactTimer = null;
-      interactHeld = false;
-      counts.interact--;
-      sync();
-    }, tailMs);
-  }
-  const onPointerMove = () => touchInteract();
-  const onPointerDown = () => touchInteract();
-  const onWheel = () => touchInteract();
-  // Shorten the tail aggressively when the cursor leaves the canvas so an
-  // idle tab settles back to 0 CPU sooner.
-  const onPointerLeave = () => touchInteract(POINTER_LEAVE_TAIL_MS);
-
-  container.addEventListener('pointermove', onPointerMove, { passive: true });
-  container.addEventListener('pointerdown', onPointerDown, { passive: true });
-  container.addEventListener('wheel', onWheel, { passive: true });
-  container.addEventListener('pointerleave', onPointerLeave);
-
+  // ---- tab visibility (negative gate) -----------------------------------
   const onVisibility = () => {
     hidden = document.visibilityState === 'hidden';
     sync();
@@ -327,30 +135,26 @@ export function createIdleController(
   document.addEventListener('visibilitychange', onVisibility);
 
   function destroy() {
-    container.removeEventListener('pointermove', onPointerMove);
-    container.removeEventListener('pointerdown', onPointerDown);
-    container.removeEventListener('wheel', onWheel);
-    container.removeEventListener('pointerleave', onPointerLeave);
+    interact.destroy();
     document.removeEventListener('visibilitychange', onVisibility);
-    if (interactTimer) clearTimeout(interactTimer);
     if (refreshTimer) clearTimeout(refreshTimer);
-    clearThrottleTimer();
-    clearEngineSafety();
+    loop.destroy();
+    engine.destroy();
   }
 
   // Reflect the initial visibility state on construction.
   sync();
 
   return {
-    engineStarted,
-    engineStopped,
-    isEngineHot,
+    engineStarted: engine.engineStarted,
+    engineStopped: engine.engineStopped,
+    isEngineHot: engine.isEngineHot,
     acquireLabelPhysics,
     releaseLabelPhysics,
     acquireAgents,
     releaseAgents,
     wakeForRefresh,
-    notifyFrameRendered,
+    notifyFrameRendered: loop.notifyFrameRendered,
     destroy,
   };
 }
