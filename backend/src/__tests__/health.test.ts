@@ -542,6 +542,56 @@ test('reachability connects NodeNext .js-specifier imports (regression)', () => 
   assert.equal(cross.deadCodeStats?.downgraded, false, 'no resolver-gap guard trip');
 });
 
+// Case-insensitive filesystems (Windows, default macOS) resolve a specifier
+// that differs only in case from an on-disk file — the TS/JS runtime does, so
+// the resolver must too. The behavior is intentionally platform-specific, so the
+// assertions branch on the host platform (the bug only manifests on win32/macOS).
+const CASE_INSENSITIVE_HOST =
+  process.platform === 'win32' || process.platform === 'darwin';
+
+test('resolver matches a case-differing specifier on case-insensitive filesystems', () => {
+  const root = path.resolve('resolve-case-fold-fixture');
+  const caller = path.join(root, 'caller.ts');
+  const helper = path.join(root, 'helper.ts'); // lowercase on disk
+  const present = new Set([caller, helper]);
+
+  // `import './Helper.js'` (wrong case + NodeNext .js twin) → helper.ts.
+  const resolvedExt = resolveImport(caller, './Helper.js', present);
+  // `import './HELPER'` (wrong case, extensionless) → helper.ts.
+  const resolvedBare = resolveImport(caller, './HELPER', present);
+
+  if (CASE_INSENSITIVE_HOST) {
+    assert.equal(resolvedExt, helper, 'case-differing .js specifier folds to helper.ts');
+    assert.equal(resolvedBare, helper, 'case-differing extensionless specifier folds too');
+  } else {
+    assert.equal(resolvedExt, null, 'case-sensitive FS keeps the exact-case miss');
+    assert.equal(resolvedBare, null, 'case-sensitive FS keeps the exact-case miss');
+  }
+});
+
+test('case-only import mismatch is not reported dead on case-insensitive FS (regression)', () => {
+  // The win32/macOS false-dead bug: src/helper.ts on disk, imported as
+  // './Helper.js'. The runtime resolves it, but a verbatim presentFiles.has()
+  // missed, dropping the edge → helper.ts read fanIn 0 → flagged DEAD on a
+  // machine where it's actually live (and an agent might delete it).
+  if (!CASE_INSENSITIVE_HOST) return; // platform-specific; matches the runtime
+  const root = path.resolve('health-case-fold-fixture');
+  const index = path.join(root, 'src', 'index.ts'); // conventional root
+  const helper = path.join(root, 'src', 'helper.ts'); // imported with wrong case
+  const present = new Set([index, helper]);
+  const roots = detectRoots(present, { projectRoot: root });
+
+  const cross = computeCrossFile(
+    [{ filePath: index, imports: ['./Helper.js'] }],
+    present,
+    undefined,
+    { roots },
+  );
+
+  assert.equal(cross.fanIn.get(helper), 1, 'case-differing import records the edge');
+  assert.equal(cross.deadCode.get(helper), 'live', 'helper is reachable, not dead');
+});
+
 test('conventional root detection covers entries, configs, tests, and decls', () => {
   for (const f of [
     'src/index.ts',
@@ -565,9 +615,45 @@ test('conventional root detection covers entries, configs, tests, and decls', ()
     'src/components/Button.tsx',
     'lib/helper.py',
     'src/observer.ts', // not a -server/-worker suffix
+    // scripts/ or tools/ nested under src/ is application source, NOT
+    // project-level tooling — treating it as a root hides real dead code there.
+    'frontend/src/tools/formatDate.ts',
+    'src/scripts/analytics.ts',
+    'src/tools/legacyExporter.ts',
+    'packages/app/src/tools/codegen.ts',
   ]) {
     assert.equal(isConventionalRoot(f), false, `${f} should not be a root`);
   }
+});
+
+test('dead code under src/tools/ is reported dead (root heuristic is src-aware)', () => {
+  // Regression: the scripts|tools root heuristic used to match the segment
+  // ANYWHERE, so a genuinely-unused src/tools file was always classed a live
+  // root and could never surface as dead. It must now only auto-root a
+  // project-level tooling dir, not one nested under src/.
+  const root = path.resolve('health-src-tools-fixture');
+  const entry = path.join(root, 'src', 'index.ts'); // conventional root
+  const tooling = path.join(root, 'tools', 'codegen.ts'); // top-level tooling → root
+  const dead = path.join(root, 'src', 'tools', 'legacyExporter.ts'); // unused app src
+  const present = new Set([entry, tooling, dead]);
+
+  const roots = detectRoots(present, { projectRoot: root });
+  assert.equal(roots.has(entry), true, 'index.ts is a root');
+  assert.equal(roots.has(tooling), true, 'top-level tools/ dir is still a root');
+  assert.equal(roots.has(dead), false, 'src/tools/ file is NOT auto-rooted');
+
+  const cross = computeCrossFile(
+    [
+      { filePath: entry, imports: [] },
+      { filePath: tooling, imports: [] },
+      { filePath: dead, imports: [] },
+    ],
+    present,
+    undefined,
+    { roots },
+  );
+
+  assert.equal(cross.deadCode.get(dead), 'dead', 'unused src/tools file → dead');
 });
 
 test('watcher cache hydration keeps imports and metrics mirrors aligned', () => {

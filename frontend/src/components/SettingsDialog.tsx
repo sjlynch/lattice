@@ -1,34 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { TerminalSquare, ScrollText, BarChart3, Cpu, Plug, Server } from 'lucide-react';
 import { Modal } from './Modal';
-import { useConfirm } from './shared/ConfirmDialog';
 import {
   type StartupTerminal,
   type TerminalDefaultHarness,
   type TerminalLaunchSettings,
 } from '../api';
-import {
-  cleanStartupTerminals,
-  StartupTerminalsTab,
-  type StartupTerminalsTabHandle,
-} from './settings/StartupTerminalsTab';
-import {
-  EnvNotesTab,
-  type EnvNotesTabHandle,
-} from './settings/EnvNotesTab';
-import {
-  MetricsIgnoredExtsTab,
-  type MetricsIgnoredExtsTabHandle,
-} from './settings/MetricsIgnoredExtsTab';
-import { AgentsTab, type AgentsTabHandle } from './settings/AgentsTab';
-import { PiTab, type PiTabHandle } from './settings/PiTab';
-import { McpTab, type McpTabHandle } from './settings/McpTab';
-import {
-  InstructionTemplatesTab,
-  type InstructionTemplatesTabHandle,
-} from './settings/InstructionTemplatesTab';
+import { StartupTerminalsTab } from './settings/StartupTerminalsTab';
+import { EnvNotesTab } from './settings/EnvNotesTab';
+import { MetricsIgnoredExtsTab } from './settings/MetricsIgnoredExtsTab';
+import { AgentsTab } from './settings/AgentsTab';
+import { PiTab } from './settings/PiTab';
+import { McpTab } from './settings/McpTab';
+import { InstructionTemplatesTab } from './settings/InstructionTemplatesTab';
 import { useSettingsDrafts } from './settings/useSettingsDrafts';
-import { saveSettings } from './settings/saveSettings';
+import { useSettingsController, type Tab } from './settings/useSettingsController';
 
 type Props = {
   open: boolean;
@@ -41,8 +27,6 @@ type Props = {
   metricsIgnoredExts: string[];
   onMetricsIgnoredExtsChange: (next: string[]) => void | Promise<void>;
 };
-
-type Tab = 'terminals' | 'prompts' | 'metrics' | 'agents' | 'pi' | 'mcp';
 
 // Scope tells the user whether a tab's settings are machine-global (apply to
 // every project on this machine — Agents' max-agents, Pi endpoints/model menu)
@@ -62,15 +46,6 @@ const TAB_META: {
   { id: 'pi', label: 'Pi', Icon: Server, scope: 'global' },
   { id: 'mcp', label: 'MCP', Icon: Plug, scope: 'project' },
 ];
-
-const EMPTY_DIRTY: Record<Tab, boolean> = {
-  terminals: false,
-  prompts: false,
-  metrics: false,
-  agents: false,
-  pi: false,
-  mcp: false,
-};
 
 const TERMINAL_DEFAULT_OPTIONS: { value: TerminalDefaultHarness; label: string }[] = [
   { value: 'claude', label: 'Claude' },
@@ -251,129 +226,18 @@ export function SettingsDialog({
   onMetricsIgnoredExtsChange,
 }: Props) {
   const [tab, setTab] = useState<Tab>('terminals');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const drafts = useSettingsDrafts(open, activeFolder, terminalLaunchSettings);
-  const startupTerminalsRef = useRef<StartupTerminalsTabHandle>(null);
-  const envNotesRef = useRef<EnvNotesTabHandle>(null);
-  const instructionTemplatesRef = useRef<InstructionTemplatesTabHandle>(null);
-  const metricsIgnoredExtsRef = useRef<MetricsIgnoredExtsTabHandle>(null);
-  const agentsRef = useRef<AgentsTabHandle>(null);
-  const piRef = useRef<PiTabHandle>(null);
-  const mcpRef = useRef<McpTabHandle>(null);
-  const { confirmUnsaved } = useConfirm();
-  const closingRef = useRef(false);
-
-  useEffect(() => {
-    if (open) setError(null);
-  }, [open, startupTerminals]);
-
-  // Per-tab dirty: a tab is dirty when its patch getter would write something
-  // (returns non-undefined) or, for the parent-owned drafts / startup
-  // terminals, when the draft differs from what was loaded. MCP secrets are
-  // intentionally excluded — they auto-save on their own, outside Save.
-  const computeDirty = useCallback((): Record<Tab, boolean> => {
-    const startupDirty =
-      JSON.stringify(
-        startupTerminalsRef.current?.getCleanedTerminals() ??
-          cleanStartupTerminals(startupTerminals),
-      ) !== JSON.stringify(cleanStartupTerminals(startupTerminals));
-    return {
-      terminals: drafts.dirty || startupDirty,
-      prompts:
-        instructionTemplatesRef.current?.getInstructionTemplateOverridesPatch() !==
-          undefined ||
-        envNotesRef.current?.getWorktreeEnvNotesPatch() !== undefined,
-      metrics:
-        metricsIgnoredExtsRef.current?.getMetricsIgnoredExtsPatch() !== undefined,
-      agents: agentsRef.current?.getMaxConcurrentAgentsPatch() !== undefined,
-      pi:
-        piRef.current?.getPiProvidersPatch() !== undefined ||
-        piRef.current?.getPiModelMenuPatch() !== undefined,
-      mcp: mcpRef.current?.getMcpUserPatch() !== undefined,
-    };
-  }, [drafts.dirty, startupTerminals]);
-
-  // The imperative patch getters aren't reactive, so re-derive the dirty map
-  // after any edit inside the dialog body. The bump (onChange/onClick on the
-  // body) re-renders us; reading the refs in this post-commit effect avoids the
-  // one-tick staleness of reading them during render.
-  const [dirtyByTab, setDirtyByTab] = useState<Record<Tab, boolean>>(EMPTY_DIRTY);
-  const [dirtyTick, setDirtyTick] = useState(0);
-  useEffect(() => {
-    if (!open) {
-      setDirtyByTab(EMPTY_DIRTY);
-      return;
-    }
-    const next = computeDirty();
-    setDirtyByTab((prev) =>
-      TAB_META.every((t) => prev[t.id] === next[t.id]) ? prev : next,
-    );
-  }, [open, dirtyTick, computeDirty]);
-  const bumpDirty = useCallback(() => setDirtyTick((t) => t + 1), []);
-
-  const save = async () => {
-    if (!activeFolder) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await saveSettings({
-        activeFolder,
-        startupTerminals,
-        drafts: {
-          terminalDefaultHarness: drafts.terminalDefaultHarness,
-          terminalClaudeSkipPermissions: drafts.terminalClaudeSkipPermissions,
-          instrumentClaude: drafts.instrumentClaude,
-          disableMemory: drafts.disableMemory,
-          qaTerminalAutoClose: drafts.qaTerminalAutoClose,
-        },
-        handles: {
-          startupTerminals: startupTerminalsRef.current,
-          envNotes: envNotesRef.current,
-          instructionTemplates: instructionTemplatesRef.current,
-          metricsIgnoredExts: metricsIgnoredExtsRef.current,
-          agents: agentsRef.current,
-          pi: piRef.current,
-          mcp: mcpRef.current,
-        },
-        onStartupTerminalsChange,
-        onTerminalLaunchSettingsChange,
-        onMetricsIgnoredExtsChange,
-      });
-      onClose();
-    } catch (err) {
-      setError((err as Error).message || 'Failed to save settings');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // Every close path (Cancel, Escape, backdrop) routes here. With pending edits
-  // across any tab, ask Save / Discard / Cancel first instead of silently
-  // dropping them. (MCP secrets aren't in the dirty check — they auto-save.)
-  const requestClose = async () => {
-    if (saving || closingRef.current) return;
-    if (!Object.values(computeDirty()).some(Boolean)) {
-      onClose();
-      return;
-    }
-    closingRef.current = true;
-    try {
-      const choice = await confirmUnsaved({
-        message: 'You have unsaved settings changes.',
-      });
-      if (choice === 'cancel') return;
-      if (choice === 'discard') {
-        onClose();
-        return;
-      }
-      // save() closes on success (onClose) and surfaces an error + stays open
-      // on failure.
-      await save();
-    } finally {
-      closingRef.current = false;
-    }
-  };
+  const { refs, saving, error, dirtyByTab, bumpDirty, save, requestClose } =
+    useSettingsController({
+      open,
+      activeFolder,
+      drafts,
+      startupTerminals,
+      onClose,
+      onStartupTerminalsChange,
+      onTerminalLaunchSettingsChange,
+      onMetricsIgnoredExtsChange,
+    });
 
   return (
     <Modal open={open} onClose={requestClose} width={620}>
@@ -437,33 +301,33 @@ export function SettingsDialog({
             </>
           )}
           <StartupTerminalsTab
-            ref={startupTerminalsRef}
+            ref={refs.startupTerminals}
             active={tab === 'terminals'}
             open={open}
             startupTerminals={startupTerminals}
           />
           <InstructionTemplatesTab
-            ref={instructionTemplatesRef}
+            ref={refs.instructionTemplates}
             active={tab === 'prompts'}
             open={open}
             activeFolder={activeFolder}
           />
           <EnvNotesTab
-            ref={envNotesRef}
+            ref={refs.envNotes}
             active={tab === 'prompts'}
             open={open}
             activeFolder={activeFolder}
           />
           <MetricsIgnoredExtsTab
-            ref={metricsIgnoredExtsRef}
+            ref={refs.metricsIgnoredExts}
             active={tab === 'metrics'}
             open={open}
             metricsIgnoredExts={metricsIgnoredExts}
           />
-          <AgentsTab ref={agentsRef} active={tab === 'agents'} open={open} />
-          <PiTab ref={piRef} active={tab === 'pi'} open={open} />
+          <AgentsTab ref={refs.agents} active={tab === 'agents'} open={open} />
+          <PiTab ref={refs.pi} active={tab === 'pi'} open={open} />
           <McpTab
-            ref={mcpRef}
+            ref={refs.mcp}
             active={tab === 'mcp'}
             open={open}
             activeFolder={activeFolder}
