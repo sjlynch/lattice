@@ -23,29 +23,85 @@ export function countLineKinds(content: string, syntax: CommentSyntax): LineCoun
       blank++;
       continue;
     }
-    if (inBlock) {
-      comment++;
-      if (syntax.blockClose && line.includes(syntax.blockClose)) inBlock = false;
-      continue;
-    }
-    if (syntax.blockOpen && line.startsWith(syntax.blockOpen)) {
-      comment++;
-      if (!syntax.blockClose || !line.includes(syntax.blockClose, syntax.blockOpen.length)) {
-        inBlock = true;
-      }
-      continue;
-    }
-    let matchedComment = false;
-    if (syntax.line) {
-      for (const prefix of syntax.line) {
-        if (line.startsWith(prefix)) {
-          matchedComment = true;
-          break;
-        }
-      }
-    }
-    if (matchedComment) comment++;
-    else code++;
+    const result = classifyLine(line, syntax, inBlock);
+    inBlock = result.inBlock;
+    if (result.hasCode) code++;
+    else comment++;
   }
   return { total: lines.length, blank, comment, code };
+}
+
+// Scan one (already-trimmed, non-blank) line, carrying block-comment state in
+// and out. A line counts as code when it has any real code outside comments —
+// including code that follows a block comment's `*/` close on the same line.
+function classifyLine(
+  line: string,
+  syntax: CommentSyntax,
+  inBlock: boolean,
+): { hasCode: boolean; inBlock: boolean } {
+  const { blockOpen, blockClose } = syntax;
+  const linePrefixes = syntax.line ?? [];
+  const n = line.length;
+  let i = 0;
+  let hasCode = false;
+
+  while (i < n) {
+    if (inBlock) {
+      if (!blockClose) break;
+      const closeAt = line.indexOf(blockClose, i);
+      if (closeAt === -1) break;
+      inBlock = false;
+      i = closeAt + blockClose.length;
+      continue;
+    }
+
+    const ch = line[i];
+    if (ch === ' ' || ch === '\t' || ch === '\r') {
+      i++;
+      continue;
+    }
+
+    if (blockOpen && line.startsWith(blockOpen, i)) {
+      if (!blockClose) break;
+      const closeAt = line.indexOf(blockClose, i + blockOpen.length);
+      if (closeAt === -1) {
+        inBlock = true;
+        break;
+      }
+      i = closeAt + blockClose.length;
+      continue;
+    }
+
+    const linePrefix = linePrefixes.find((p) => line.startsWith(p, i));
+    if (linePrefix) break; // rest of the line is a line comment
+
+    if (ch === '"' || ch === "'" || ch === '`') {
+      hasCode = true;
+      i = skipStringLiteral(line, i);
+      continue;
+    }
+
+    hasCode = true;
+    i++;
+  }
+
+  return { hasCode, inBlock };
+}
+
+// Skip a single-line string literal; returns the index just past it (or the
+// end of the line if it doesn't close here).
+function skipStringLiteral(line: string, start: number): number {
+  const quote = line[start];
+  const n = line.length;
+  let i = start + 1;
+  while (i < n) {
+    const ch = line[i];
+    if (ch === '\\') {
+      i += 2;
+      continue;
+    }
+    if (ch === quote) return i + 1;
+    i++;
+  }
+  return n;
 }

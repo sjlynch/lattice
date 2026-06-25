@@ -166,7 +166,7 @@ therefore stay safely re-runnable.
 | DELETE | `/api/terminals/:id` | Kill a pty session |
 | GET | `/api/spawn-queue` | Debug: spawn-queue snapshot (pending/in-flight/reserved, softCap) |
 | WS | `/ws/terminal?id=&cwd=&cols=&rows=&initialCommand=` | xterm proxy via node-pty (with replay) |
-| WS | `/ws/tasks?project=` | Live task list updates + `task-spawned` events (a queued run's pty spawned) + `task-activity` (worktree Claude agent's current file) + `agent-activity` (non-worktree Claude session's current file) for the graph focus beams |
+| WS | `/ws/tasks?project=` | Live task list updates + `task-spawned` events (a queued run's pty spawned) + `task-spawn-failed` (a deferred run/resume failed for a non-CAP reason; the UI toasts it) + `task-activity` (worktree Claude agent's current file) + `agent-activity` (non-worktree Claude session's current file) for the graph focus beams |
 | WS | `/ws/agent-sessions?project=` | Presence snapshots of Claude sessions running outside a worktree (push / workflow step / post-merge hook); one orange graph node each |
 | WS | `/ws/merge-runs?project=` | Run progress + per-conflict resolver spawn events |
 

@@ -25,22 +25,31 @@ export function countUniversalSmells(
 ): SmellCounter {
   const smells: SmellCounter = new Map();
 
-  const todoMatches = content.match(TODO_RE);
+  // Each smell is measured in the context where it's meaningful:
+  //  - TODO/FIXME markers ("TODO/FIXME comments"): comments + code, never
+  //    string data → blank strings, keep comments.
+  //  - long string literals: real string/template literals, not a long run
+  //    that merely sits inside a comment → blank comments, keep strings.
+  //  - magic numbers: code only → blank both strings and comments.
+  const codeOnly = stripStringsAndComments(content, syntax);
+  const commentsKept = stripStringsAndComments(content, syntax, { comments: false });
+  const stringsKept = stripStringsAndComments(content, syntax, { strings: false });
+
+  const todoMatches = commentsKept.match(TODO_RE);
   if (todoMatches && todoMatches.length > 0) {
     bump(smells, 'todo_fixme', todoMatches.length);
   }
 
-  const longStrings = content.match(LONG_STRING_RE);
+  const longStrings = stringsKept.match(LONG_STRING_RE);
   if (longStrings && longStrings.length > 0) {
     bump(smells, 'long_string_literal', longStrings.length);
   }
 
   // Magic numbers — only count outside string literals + comments.
-  const stripped = stripStringsAndComments(content, syntax);
   let magicCount = 0;
   let m: RegExpExecArray | null;
   MAGIC_NUM_RE.lastIndex = 0;
-  while ((m = MAGIC_NUM_RE.exec(stripped)) !== null) {
+  while ((m = MAGIC_NUM_RE.exec(codeOnly)) !== null) {
     const tok = m[0];
     if (MAGIC_NUM_ALLOW.has(tok)) continue;
     magicCount++;
