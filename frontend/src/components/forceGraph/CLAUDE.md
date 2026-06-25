@@ -490,6 +490,12 @@ asking for fixes/reviews:
   also stashes each file node's `relForward` under `REL_FORWARD_KEY` (see
   `timelineDiff.readRelForward`) when it mints fresh clones, so `buildNodeObject`
   reads the precomputed value instead of recomputing it per node per refresh.
+  The pure shape decisions are extracted into `hooks/graphDataSyncCore.ts`
+  (link cloning, sim-state copy, `buildForceGraphData`, ghost merge,
+  `shapeFingerprint`, `patchSimNodeMetrics`, the `isMetricOnlyUpdate` fast-path
+  predicate) — no React/ForceGraph/registries — leaving the hook to own the
+  refs/effect/registry clears, the two `graph.graphData()` reads, and the
+  idle-controller calls; covered by `__tests__/graphDataSyncCore.test.ts`.
 - `useGraphTaskCreation` — modal action, prompt text, submitting + toast
   state, derived `selectedFiles`, plus `openMenuItem` / `submitTask` /
   `closeModal` actions.
