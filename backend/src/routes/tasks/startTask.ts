@@ -113,10 +113,13 @@ export async function startTaskById(
     // Persist the model used so a resume re-spawns with the same one.
     piModel: selectedHarness.harness === 'pi' ? piModel : undefined,
     colorIndex,
+    // The run finally spawned — drop the queued badge, the persisted execution
+    // policy, and the attempt counter so a later re-run isn't gated by boot
+    // recovery's retry ceiling.
     runQueued: undefined,
     runQueuedAt: undefined,
-    // The run finally spawned — reset the deterministic-failure counter so a
-    // later re-run isn't gated by boot recovery's retry ceiling.
+    runQueuedHarness: undefined,
+    runQueuedPiModel: undefined,
     runFailureCount: undefined,
   });
 

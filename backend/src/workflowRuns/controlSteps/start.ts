@@ -11,6 +11,21 @@ import type { Workflow } from '../../workflows.js';
 import { notify, type WorkflowRun } from '../state.js';
 import { emitControlProgress } from './shared.js';
 
+// The Pi model the Start step's spawned task agents should use. Mirrors the
+// run-level harness resolution and `effectiveStepPiModel` for regular workflow
+// steps: the run's `piModelOverride` applies, but only when the run is a Pi run
+// (Claude/codex ignore it, and a non-pi run must not pin a Pi model). Returns
+// undefined otherwise so `startTaskById` falls back to the per-project default
+// Pi model. Without this the Start step silently dropped the override and every
+// spawned task ran on the project/default model — the bug this fixes.
+export function startStepTaskPiModel(
+  run: Pick<WorkflowRun, 'harnessOverride' | 'piModelOverride'>,
+): string | undefined {
+  return normalizeAgentHarness(run.harnessOverride) === 'pi'
+    ? run.piModelOverride
+    : undefined;
+}
+
 export async function runStartStep(
   wf: Workflow,
   run: WorkflowRun,
@@ -34,6 +49,7 @@ export async function runStartStep(
     `[workflow-run] ${run.id} start step: moving ${open.length} open task(s) → in_progress`,
   );
   const harness = normalizeAgentHarness(run.harnessOverride);
+  const requestedPiModel = startStepTaskPiModel(run);
   let started = 0;
   let failed = 0;
   let firstError: string | null = null;
@@ -51,6 +67,7 @@ export async function runStartStep(
     try {
       const spawned = await startTaskById(task.id, backendOrigin, {
         requestedHarness: harness,
+        requestedPiModel,
       });
       // Surface the spawned task agent as a terminal tab. Without this,
       // the pty is pre-warmed but no UI tab is ever attached, so the
