@@ -14,10 +14,16 @@ the built-in default. `../instructionTemplates.ts` is the public shim.
   text is never re-scanned (a value containing `{{…}}`, e.g. a workflow step
   prompt with an unresolved variable, survives). Unknown tokens are left
   verbatim so a typo stays visible.
-- `defs.ts` — **leaf catalog**: the `DEFAULT_*_TEMPLATE` strings plus
+- `templates/` — one **leaf module per template** holding just that template's
+  long `DEFAULT_*_TEMPLATE` markdown string (`task.ts`, `merge.ts`, `qa.ts`,
+  `push.ts`, `postMergeHook.ts`, `workflowStep.ts`). Each imports nothing; the
+  body is the only export.
+- `defs.ts` — **leaf catalog**: re-exports the `DEFAULT_*_TEMPLATE` strings from
+  `templates/` (so existing `defs.js` import paths still resolve) and assembles
   `INSTRUCTION_TEMPLATE_CATALOG` (id / title / filename / description /
-  defaultTemplate / token docs). Imports nothing from the renderers or the
-  resolver, so both can import the defaults from here without a cycle.
+  defaultTemplate / token docs) plus the shared types. Imports nothing from the
+  renderers or the resolver, so both can import the defaults from here without a
+  cycle.
 - `resolve.ts` — `resolveInstructionTemplate(projectPath, id)`: the project's
   override (`UserSettings.instructionTemplateOverrides[id]`) if present **and
   non-empty**, else the default. The non-empty guard is a safety net — a blank
@@ -42,8 +48,9 @@ default = the built-in) argument. The **spawn callers** (`setupFiles.ts`,
 
 ## Adding / changing a template
 
-1. Edit the `DEFAULT_*_TEMPLATE` in `defs.ts` (or add a new one + a catalog
-   entry with its token docs + a new `InstructionTemplateId`).
+1. Edit the `DEFAULT_*_TEMPLATE` in its `templates/<name>.ts` leaf module (or
+   add a new leaf module + re-export it from `defs.ts` + a catalog entry with
+   its token docs + a new `InstructionTemplateId`).
 2. Keep the token set in sync between the catalog entry and the renderer's
    `applyTemplate` values map — an unknown token renders verbatim (visible bug),
    a value with no token in the template is silently dropped.
