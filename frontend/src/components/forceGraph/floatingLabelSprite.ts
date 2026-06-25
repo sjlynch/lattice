@@ -5,6 +5,7 @@ import {
   restrictSpriteRaycast,
   type SpriteUvBounds,
 } from './spritePicking';
+import { FLOATING_LABEL_RENDER_ORDER } from './renderOrders';
 
 const DEFAULT_HIT_BOUNDS = {
   minU: 0,
@@ -153,7 +154,7 @@ export function makeFloatingLabelSprite(
     sprite,
     config.hitBounds ?? texture._hitBounds ?? DEFAULT_HIT_BOUNDS,
   );
-  sprite.renderOrder = config.renderOrder ?? 999;
+  sprite.renderOrder = config.renderOrder ?? FLOATING_LABEL_RENDER_ORDER;
 
   const minScale = config.minScale ?? 6;
   const refDistance = config.refDistance ?? 200;

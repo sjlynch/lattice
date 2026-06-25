@@ -43,9 +43,11 @@ export function useHealthOverlay(
 
   // Refresh sprites + drop the previous overlay's labels when the
   // health overlay toggles. Same shape as the LOC mode effect.
-  // (We deliberately do NOT clear `hoverNode` here — the tooltip is
-  // shown for every file hover regardless of the `h` key, so a
-  // healthMode toggle shouldn't dismiss it.)
+  // (We don't clear `hoverNode` here — the tooltip shows for every file hover
+  // regardless of the `h` key, so a healthMode *activation* mustn't dismiss it.
+  // Dismissing a *stale* tooltip when the view ends is handled centrally by
+  // `useOverlayTooltipDismiss` in ForceGraphView, which clears it only on the
+  // active→inactive transition so a real hover re-acquires on the next frame.)
   useEffect(() => {
     clearLabelsAndRefresh(graphRef.current);
   }, [healthMode, graphRef]);

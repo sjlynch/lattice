@@ -5,6 +5,7 @@
 // GPU resource for the halo.
 
 import * as THREE from 'three';
+import { RING_RENDER_ORDER } from './renderOrders';
 
 const RING_COLOR = '#7ad0ff';
 // Tag used on the halo Sprite's `userData` so `setNodeHalo(off)` can
@@ -67,7 +68,7 @@ function buildHaloSprite(baseSize: number): THREE.Sprite {
   // scrubber view shows both rings concentrically.
   const s = baseSize * 1.8;
   ring.scale.set(s, s, 1);
-  ring.renderOrder = 11;
+  ring.renderOrder = RING_RENDER_ORDER;
   ring.userData[HALO_TAG] = true;
   return ring;
 }
