@@ -2,12 +2,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import ignore, { type Ignore } from 'ignore';
 import { matchIgnoredSourcePath } from './constants.js';
-import { loadProjectAliases, type ParsedAlias } from './tsconfig.js';
+import { loadProjectAliases, TSCONFIG_RE, type ParsedAlias } from './tsconfig.js';
 
 // tsconfig*.json filenames that the alias loader recognizes. Matches
-// `tsconfig.json`, `tsconfig.app.json`, `tsconfig.node.json`, etc. — kept in
-// sync with the regex in `tsconfig.ts`.
-const TSCONFIG_BASENAME_RE = /^tsconfig(?:\..+)?\.json$/;
+// `tsconfig.json`, `tsconfig.app.json`, `tsconfig.node.json`, etc. — the
+// canonical regex is imported from `tsconfig.ts` rather than re-declared so
+// the two can't drift.
+const TSCONFIG_BASENAME_RE = TSCONFIG_RE;
 
 export class ConfigReloader {
   private gitignoreMatcher: Ignore = ignore();
