@@ -36,7 +36,7 @@ const MAX_TSCONFIG_DEPTH = 4;
 // split paths across multiple files. Matching the prefix catches
 // them all; non-tsconfig files would never parse with a
 // `compilerOptions.paths` schema so the false positives are inert.
-const TSCONFIG_RE = /^tsconfig(?:\..+)?\.json$/;
+export const TSCONFIG_RE = /^tsconfig(?:\..+)?\.json$/;
 
 // Strip JSONC (line comments, block comments, trailing commas) so
 // JSON.parse can handle a real-world tsconfig. We do this in a

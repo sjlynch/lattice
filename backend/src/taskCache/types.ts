@@ -52,12 +52,22 @@ export type Task = {
   // Persisted so boot recovery can re-enqueue a run interrupted by a restart.
   runQueued?: boolean;
   runQueuedAt?: number;
-  // How many times a queued run/resume has failed deterministically (a non-CAP
-  // spawn failure — worktree setup threw, terminal-server wedged, …). Bumped by
-  // the spawn-queue thunk's failure path and used by boot recovery as a retry
-  // ceiling: a run that fails the same way every boot is not re-enqueued
-  // forever. Cleared once a run finally spawns (startTask) or the queued run is
-  // cancelled. Absent until the first failure.
+  // The execution policy a queued run must reproduce after a backend restart:
+  // the harness the user requested (absent ⇒ resolve the project/global default
+  // at spawn) and, for a Pi run, the requested Pi model. Persisted alongside
+  // `runQueued` so `resumeQueuedTaskRuns` re-enqueues with the ORIGINAL harness/
+  // model instead of silently falling back to the default. Cleared whenever the
+  // queued run is resolved (started / cancelled / failed / given up).
+  runQueuedHarness?: AgentHarness;
+  runQueuedPiModel?: string;
+  // How many times this task's queued run has been ADMITTED (attempted) without
+  // succeeding. Bumped crash-safely at admission time — BEFORE the spawn — so a
+  // run that deterministically crashes the whole process mid-spawn (never
+  // reaching a catch) still counts toward the ceiling; a CAP re-queue undoes its
+  // bump (it isn't a real attempt). Boot recovery uses it as a retry ceiling: a
+  // run that crashes the same way every boot is given up rather than re-enqueued
+  // forever. Cleared once a run finally spawns (startTask), the queued run is
+  // cancelled/failed, or boot recovery gives up. Absent until the first attempt.
   runFailureCount?: number;
   // The harness that actually ran this task's worktree agent, recorded at
   // spawn time (startTask). The graph's Claude-agent overlay reads this to
