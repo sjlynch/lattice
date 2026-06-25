@@ -194,7 +194,22 @@ asking for fixes/reviews:
   `notifyFrameRendered` (wired to the scene frame driver in
   `useForceGraphInitialization`). Halves the full-scene render cost while an
   agent is active or a label overlay is held; warmup and interaction stay
-  uncapped.
+  uncapped. `idleController.ts` is the orchestrator (visibility gate + the
+  trivial `labelPhysics`/`agents` counters + the `refresh` tail + `attach`/`get`
+  helpers); its cohesive internals are split into sibling modules:
+  - `idleControllerReasons.ts` — the reference-counted reason ledger
+    (`createReasonLedger`): the held counts plus the two derived predicates
+    (`anyHeld` / `slowOnly`) the loop scheduler keys off. Pure, no graph/DOM.
+  - `idleControllerLoop.ts` — `createLoopScheduler(graph, shouldRun, slowOnly)`:
+    the pause/resume duty-cycle engine. Owns the load-bearing deferred-pause
+    microtask, the slow-frame throttle timer, and the re-entrant-resume guard;
+    reason-agnostic (reads state via the injected predicates).
+  - `idleControllerEngine.ts` — `createEngineReason(ledger, sync)`: the
+    `engine` reason + its belt-and-braces safety timer and `isEngineHot()`.
+  - `idleControllerInteract.ts` — `createInteractReason(container, ledger,
+    sync)`: the `interact` reason + its pointer/wheel/leave DOM listeners and
+    idle tail (the tab-visibility negative gate stays in the orchestrator since
+    it folds into `shouldRun`).
 - `sceneFrameDriver.ts` — the single `scene.onBeforeRender` fan-out.
   `attachFrameDriver(graph)` (called once at init) installs the dispatcher;
   `onFrame(graph, cb)` subscribes a per-frame callback that runs at the head of
