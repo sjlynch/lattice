@@ -1,8 +1,23 @@
 # backend/src/routes/tasks
 
-The task router, split by concern. `routes/tasks.ts` composes four
-sub-routers (activity → crud → run → hooks; activity first so its
-`GET /api/tasks/worktree-modified` isn't captured by crud's `/api/tasks/:id`).
+The task router, split by concern. `routes/tasks.ts` composes five
+sub-routers (worktreeModified → activity → crud → run → hooks; the first two
+register before crud so `GET /api/tasks/worktree-modified` isn't captured by
+crud's `/api/tasks/:id`).
+
+## Graph-overlay routes (`activity.ts` + `worktreeModified.ts`)
+
+Both are read-only against the disposable worktree (plain `exec`, never
+`projectGit`):
+
+- `activity.ts` — `POST /api/tasks/:id/activity` (the Claude PreToolUse/
+  PostToolUse hook → `notifyTaskActivity` → `task-activity` WS, for the focus
+  beam). Owns the worktree→project path mapping and the exported `isManaged`
+  filter, which `routes/agentActivity.ts` and `worktreeModified.ts` both import.
+- `worktreeModified.ts` — `GET /api/tasks/worktree-modified` (every file changed
+  by an in_progress / ready_to_merge task, for the `W` highlight). Owns the git
+  diff/status polling, the per-project base-branch cache, and the short-TTL
+  result cache. Preserves the response shape, TTL, and git timeout behavior.
 
 ## CRUD (`crud.ts` builds the router; handlers split by concern)
 
