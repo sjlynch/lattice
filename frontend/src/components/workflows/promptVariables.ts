@@ -39,6 +39,28 @@ export function defaultVariables(): WorkflowVariable[] {
   return [makeVariable(USER_INSTRUCTIONS_VAR, '')];
 }
 
+// Copy a variable's `{{name}}` reference token to the clipboard. Resolves to
+// `true` only when the write actually landed: navigator.clipboard.writeText
+// rejects on permission denial, a non-secure (http) context, or an unfocused
+// document, so callers must await this and gate any "Copied!" feedback on the
+// result rather than assuming success. An empty name or absent Clipboard API is
+// a no-op that resolves to `false`.
+export async function copyVariableToken(
+  name: string,
+  clipboard: Pick<Clipboard, 'writeText'> | undefined = typeof navigator !==
+  'undefined'
+    ? navigator.clipboard
+    : undefined,
+): Promise<boolean> {
+  if (!name || !clipboard) return false;
+  try {
+    await clipboard.writeText(`{{${name}}}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Append the built-in `{{user_instructions}}` injection point to the bottom of
 // a built-in prompt (templates / quick-add chips), so every built-in step ends
 // with it by default. No-op if the prompt already references it.

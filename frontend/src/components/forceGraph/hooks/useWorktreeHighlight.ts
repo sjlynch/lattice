@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { fetchWorktreeModified } from '../../../api';
 import { taskColor } from '../../../taskColors';
-import { setNodeChangeRingsVisible } from '../changeRing';
+import { setChangeRingsSuppressed, setNodeChangeRingsVisible } from '../changeRing';
 import type { GraphSettings } from '../graphSettings';
 import { getIdleController } from '../idleController';
 import { baseSizeFor, mountedNodes, mountedRoot } from '../mountedNodes';
@@ -105,6 +105,10 @@ export function useWorktreeHighlight(
     activeRef.current = true;
     // Suppress the git change-rings immediately (before the fetch resolves)
     // so the worktree rings are the only rings on screen while `W` is held.
+    // Two parts: latch the suppression flag so any ring minted later (a full
+    // rebuild or a scrub-delta add) starts hidden, and hide the rings already
+    // mounted right now. Without the flag the rings reappear on the next refresh.
+    setChangeRingsSuppressed(true);
     setChangeRingsVisible(false);
     try {
       const tasks = await fetchWorktreeModified(activeFolder);
@@ -124,7 +128,9 @@ export function useWorktreeHighlight(
     if (!activeRef.current) return;
     activeRef.current = false;
     clearRings();
-    // Restore the git change-rings hidden on activate.
+    // Restore the git change-rings hidden on activate: lift the suppression flag
+    // (future rings build visible again) and re-show the currently-mounted ones.
+    setChangeRingsSuppressed(false);
     setChangeRingsVisible(true);
   }, [clearRings, setChangeRingsVisible]);
 

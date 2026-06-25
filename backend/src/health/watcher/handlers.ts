@@ -4,14 +4,16 @@ import { loadOrAnalyzeFile, saveCacheBestEffort } from './fileAnalysis.js';
 import { broadcast } from './subscribers.js';
 import type { ProjectWatcher } from './types.js';
 
+export type WatchEvent = 'add' | 'change';
+
 export type WatcherHandlers = {
-  onAddOrChange: (filePath: string) => Promise<void>;
+  onAddOrChange: (filePath: string, event: WatchEvent) => Promise<void>;
   onRemove: (filePath: string) => Promise<void>;
 };
 
 export function createWatcherHandlers(proj: ProjectWatcher): WatcherHandlers {
   return {
-    onAddOrChange: (filePath) => handleAddOrChange(proj, filePath),
+    onAddOrChange: (filePath, event) => handleAddOrChange(proj, filePath, event),
     onRemove: (filePath) => handleRemove(proj, filePath),
   };
 }
@@ -19,6 +21,7 @@ export function createWatcherHandlers(proj: ProjectWatcher): WatcherHandlers {
 async function handleAddOrChange(
   proj: ProjectWatcher,
   filePath: string,
+  event: WatchEvent,
 ): Promise<void> {
   // tsconfig / .gitignore reloads first — they may rewrite the alias map or the
   // ignore predicate, which feeds the per-file analysis below.
@@ -35,7 +38,12 @@ async function handleAddOrChange(
   const ext = path.extname(filePath).toLowerCase();
   if (!SOURCE_EXTS.has(ext)) return;
 
-  const analyzed = await loadOrAnalyzeFile(proj, filePath, ext);
+  // A 'change' event is proof of a write — re-analyze unconditionally rather
+  // than trusting the (mtime,size) cache, which can collide on a same-size edit
+  // with quantized mtime. 'add'/initial events may still ride the cache.
+  const analyzed = await loadOrAnalyzeFile(proj, filePath, ext, {
+    forceReanalyze: event === 'change',
+  });
   if (!analyzed) return;
 
   // A brand-new file can change the root set (it may itself be an entry point);

@@ -16,7 +16,14 @@ CLAUDE.md) — different directory, don't conflate.
   **`serverId` is likewise not a dependency** — only `active` gates the context;
   capturing an id must not churn the GL context.
 - `useTerminalConnection.ts` — the `/ws/terminal` WebSocket: connect, replay,
-  input/resize forwarding, reconnect. Holds the invariants below.
+  input/resize forwarding, reconnect. Owns the connection *state machine*
+  (`terminated` / `attachedOnce` / `attempt`) and the React effect; holds the
+  invariants below. The protocol *mechanism* lives in `terminalSocket.ts`.
+- `terminalSocket.ts` — React-free helpers for the connection: `buildTerminalWsUrl`
+  (URL building), `handleTerminalMessage` (decode + dispatch), `reconnectDelay` /
+  `canReattachTerminal` / `shouldGiveUpReconnect` (backoff/give-up decisions),
+  `forwardTerminalInput` (xterm onData/onResize → socket), `terminalNotices` (all
+  user-visible terminal-body status lines, in one place), and `MAX_RECONNECT_ATTEMPTS`.
 - `terminalConfig.ts` — `Terminal` options + theme. `clipboardPaste.ts` — Ctrl+V
   → `term.paste()` (xterm would otherwise forward ^V as a raw byte).
 
@@ -58,6 +65,7 @@ Don't "clean them up" without resurrecting the bug.
   pane and drop the first keystroke. Reading it via a ref keeps the single WS
   (and Terminal) intact on capture, while still feeding the latest id into a
   later reconnect so it re-attaches to the existing pty by id (not a fresh
-  spawn). The pure `buildTerminalWsQuery` builds the connect URL and is unit-
-  tested. Keep new dependencies out of this array unless a change genuinely
+  spawn). The connect URL is built by `terminalSocket.buildTerminalWsUrl`, whose
+  pure, window-free core `buildTerminalWsQuery` (in `connectionParams.ts`) is
+  unit-tested. Keep new dependencies out of this array unless a change genuinely
   warrants reconnecting.

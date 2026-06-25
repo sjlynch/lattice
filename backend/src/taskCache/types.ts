@@ -52,6 +52,13 @@ export type Task = {
   // Persisted so boot recovery can re-enqueue a run interrupted by a restart.
   runQueued?: boolean;
   runQueuedAt?: number;
+  // How many times a queued run/resume has failed deterministically (a non-CAP
+  // spawn failure — worktree setup threw, terminal-server wedged, …). Bumped by
+  // the spawn-queue thunk's failure path and used by boot recovery as a retry
+  // ceiling: a run that fails the same way every boot is not re-enqueued
+  // forever. Cleared once a run finally spawns (startTask) or the queued run is
+  // cancelled. Absent until the first failure.
+  runFailureCount?: number;
   // The harness that actually ran this task's worktree agent, recorded at
   // spawn time (startTask). The graph's Claude-agent overlay reads this to
   // scope itself to `claude` tasks — Codex/Pi have no PreToolUse/PostToolUse
