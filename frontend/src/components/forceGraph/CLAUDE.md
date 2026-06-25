@@ -156,12 +156,15 @@ asking for fixes/reviews:
   `status.error` is set (a failed/timed-out contents pass), a danger-tinted "no
   matches" when an active query selected nothing (distinct from idle), and
   **prev/next match navigation** — ←/→ buttons flanking an "X of Y" count, plus
-  Enter (Shift+Enter back) in the field. `ForceGraphView` owns the cursor
-  (tracked by match *id*, so its position derives from the live list and a
-  dropped id just reads "no current match") and pans the camera to each stepped
-  match via `graph.cameraPosition` (a settled-graph focus must pulse the idle
-  controller's `wakeForRefresh` across the tween, since the library steps it
-  inside the render loop the controller pauses).
+  Enter (Shift+Enter back) in the field. `hooks/useGraphSearchNavigation.ts`
+  owns the cursor (tracked by match *id*, so its position derives from the live
+  `searchMatches` list and a dropped id just reads "no current match") and pans
+  the camera to each stepped match via `graph.cameraPosition` (a settled-graph
+  focus must pulse the idle controller's `wakeForRefresh` across the tween,
+  since the library steps it inside the render loop the controller pauses). It
+  returns `{ searchMatchPosition, goPrevMatch, goNextMatch, clearCurrentMatch }`
+  — the coordinator wires the handlers/position into the HUD and calls
+  `clearCurrentMatch` on a fresh query / Escape.
 - `HealthTooltip.tsx` — measurement/composition wrapper for file health hover.
   Owns its own `pointermove` listener and writes directly to the element's
   `transform` so per-pixel cursor moves don't re-render the React tree;
