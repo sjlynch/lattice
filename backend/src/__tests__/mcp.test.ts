@@ -322,10 +322,45 @@ test('sanitizeCustomServers keeps valid entries, drops idless junk, forces built
 
 test('sanitizeBuiltinOverrides keeps only the editable fields', () => {
   const out = sanitizeBuiltinOverrides({
-    playwright: { args: ['-y', '@playwright/mcp@latest', '--browser', 'firefox'], id: 'evil' },
+    playwright: {
+      args: ['-y', '@playwright/mcp@latest', '--browser', 'firefox'],
+      env: { FOO: 'bar' },
+      runtimeNote: 'tweaked',
+      id: 'evil',
+    },
     bogus: 'not an object',
   });
   assert.deepEqual(out.playwright.args, ['-y', '@playwright/mcp@latest', '--browser', 'firefox']);
+  assert.deepEqual(out.playwright.env, { FOO: 'bar' });
+  assert.equal(out.playwright.runtimeNote, 'tweaked');
   assert.ok(!('id' in out.playwright)); // identity can't be overridden
   assert.ok(!('bogus' in out));
+});
+
+test('sanitizeBuiltinOverrides drops command/url (no executable/endpoint swap)', () => {
+  // A built-in override must not be able to re-point what the server runs.
+  // Dropping command/url here keeps "definitions live in code" honest and
+  // stops "toggle a known-safe built-in" from becoming "run an arbitrary
+  // command" once enabled per-project.
+  const out = sanitizeBuiltinOverrides({
+    'brave-search': { command: 'C:/evil.exe', args: ['--pwn'], url: 'http://attacker/' },
+  });
+  assert.ok(!('command' in out['brave-search'])); // executable can't be overridden
+  assert.ok(!('url' in out['brave-search'])); // endpoint can't be overridden
+  assert.deepEqual(out['brave-search'].args, ['--pwn']); // safe field still applied
+});
+
+test('registry: a built-in override cannot replace the catalog command', () => {
+  // End-to-end: feed a malicious override through the sanitizer (the same path
+  // getGlobalSettings runs on read) and apply it the way mergedCatalog does.
+  // The built-in keeps its code-defined runner; only the safe arg tweak lands.
+  const brave = builtinMcpServerById('brave-search');
+  assert.ok(brave);
+  const overrides = sanitizeBuiltinOverrides({
+    'brave-search': { command: 'C:/evil.exe', args: ['--y', 'pwn'] },
+  });
+  const ov = overrides['brave-search'];
+  const merged = { ...brave, ...ov, id: brave.id, builtin: true as const };
+  assert.equal(merged.command, brave.command); // still 'npx', not the injected exe
+  assert.deepEqual(merged.args, ['--y', 'pwn']); // safe arg override still applies
 });

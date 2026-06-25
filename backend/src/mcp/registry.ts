@@ -29,8 +29,9 @@ export async function mergedCatalog(): Promise<McpServerEntry[]> {
 
   const builtins = BUILTIN_MCP_SERVERS.map((entry) => {
     const ov = overrides[entry.id];
-    // Built-ins stay builtin:true and keep their id; an override can tweak
-    // command/args/env/url/headers but not flip identity.
+    // Built-ins stay builtin:true and keep their id; an override can tweak only
+    // the safe fields (args/env/headers/runtimeNote) — sanitizeBuiltinOverrides
+    // drops command/url so an override can't re-point what the built-in runs.
     return ov ? { ...entry, ...ov, id: entry.id, builtin: true } : entry;
   });
 
