@@ -14,12 +14,14 @@ import {
 import { SpawnCapacityError } from '../spawnQueue.js';
 import type { Task } from '../tasks.js';
 
-// Regression coverage for the silently-swallowed spawn-failure bug:
-// /run and /resume return {accepted:true} immediately and the real spawn runs
-// later in the queue. A non-CAP failure (worktree setup throws, terminal-server
-// wedged, worktree vanished) used to only console.error — nothing reached the
-// UI, the resume thunk had no try/catch at all, and a deterministically-failing
-// run kept `runQueued` set so boot recovery re-enqueued it forever.
+// Regression coverage for the silently-swallowed spawn-failure bug AND the
+// crash-safe retry-ceiling rework: /run and /resume return {accepted:true}
+// immediately and the real spawn runs later in the queue. A non-CAP failure
+// (worktree setup throws, terminal-server wedged, worktree vanished) must reach
+// the UI; and the attempt counter must be bumped BEFORE the spawn (crash-safe,
+// via updateTaskCrashSafe) so a run that crashes the whole process mid-spawn —
+// never reaching the catch below — still counts toward the ceiling. A CAP
+// re-queue is not a real attempt and undoes its bump.
 //
 // `runSpawnThunk` is the shared body of both queued thunks; forcing its `spawn`
 // callback to throw is the "worktree setup throws" scenario without standing up
@@ -38,21 +40,33 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
-// Capture deps: a fixed task + a recording updateTask. The real
-// task-spawn-failed event bus is used so the wiring is exercised end to end.
-function makeDeps(task: Task | null): {
+// A stateful fake store: getTask reflects accumulated updates so the at-admission
+// bump and the CAP undo read a realistic prior counter. Records updateTask and
+// updateTaskCrashSafe calls separately so a test can assert the bump went
+// through the crash-safe (disk-first) path.
+function makeStore(initial: Task | null): {
   deps: SpawnFailureDeps;
   updates: Array<Partial<Task>>;
+  crashSafeUpdates: Array<Partial<Task>>;
+  current: () => Task | null;
 } {
+  let task = initial;
   const updates: Array<Partial<Task>> = [];
+  const crashSafeUpdates: Array<Partial<Task>> = [];
   const deps: SpawnFailureDeps = {
     getTask: async () => task,
     updateTask: async (_id, u) => {
       updates.push(u as Partial<Task>);
-      return task ? { ...task, ...(u as Partial<Task>) } : null;
+      task = task ? { ...task, ...(u as Partial<Task>) } : null;
+      return task;
+    },
+    updateTaskCrashSafe: async (_id, u) => {
+      crashSafeUpdates.push(u as Partial<Task>);
+      task = task ? { ...task, ...(u as Partial<Task>) } : null;
+      return task;
     },
   };
-  return { deps, updates };
+  return { deps, updates, crashSafeUpdates, current: () => task };
 }
 
 function captureFailed(): {
@@ -64,8 +78,39 @@ function captureFailed(): {
   return { events, stop };
 }
 
-test('runSpawnThunk(run): a non-CAP failure clears runQueued, bumps the failure counter, and emits task-spawn-failed', async () => {
-  const { deps, updates } = makeDeps(makeTask());
+test('runSpawnThunk(run): bumps the attempt counter crash-safely BEFORE the spawn', async () => {
+  const store = makeStore(makeTask());
+  const { stop } = captureFailed();
+  let counterAtSpawn: number | undefined;
+  try {
+    await runSpawnThunk(
+      't1',
+      'run',
+      async () => {
+        // The spawn observes the bump already persisted — a process crash here
+        // would leave the increment on disk for boot recovery to see.
+        counterAtSpawn = store.current()?.runFailureCount;
+        return {
+          task: makeTask(),
+          worktreePath: 'C:\\wt',
+          command: 'claude',
+          serverId: 's',
+        };
+      },
+      store.deps,
+    );
+  } finally {
+    stop();
+  }
+  assert.equal(store.crashSafeUpdates.length, 1);
+  assert.equal(store.crashSafeUpdates[0].runFailureCount, 1);
+  assert.equal(counterAtSpawn, 1);
+});
+
+test('runSpawnThunk(run): a non-CAP failure clears all run-queue state and emits task-spawn-failed', async () => {
+  const store = makeStore(
+    makeTask({ runQueuedHarness: 'pi', runQueuedPiModel: 'q/q' }),
+  );
   const { events, stop } = captureFailed();
   try {
     await assert.rejects(
@@ -75,7 +120,7 @@ test('runSpawnThunk(run): a non-CAP failure clears runQueued, bumps the failure 
         async () => {
           throw new Error('worktree setup failed');
         },
-        deps,
+        store.deps,
       ),
       /worktree setup failed/,
     );
@@ -83,11 +128,18 @@ test('runSpawnThunk(run): a non-CAP failure clears runQueued, bumps the failure 
     stop();
   }
 
-  // runQueued reset + failure counter bumped (was undefined ⇒ 1).
-  assert.equal(updates.length, 1);
-  assert.equal(updates[0].runQueued, undefined);
-  assert.equal(updates[0].runQueuedAt, undefined);
-  assert.equal(updates[0].runFailureCount, 1);
+  // Attempt counted at admission (crash-safe).
+  assert.equal(store.crashSafeUpdates.length, 1);
+  assert.equal(store.crashSafeUpdates[0].runFailureCount, 1);
+
+  // The catch clears the whole queued policy so the card drops the pill and a
+  // re-run starts clean.
+  assert.equal(store.updates.length, 1);
+  assert.equal(store.updates[0].runQueued, undefined);
+  assert.equal(store.updates[0].runQueuedAt, undefined);
+  assert.equal(store.updates[0].runQueuedHarness, undefined);
+  assert.equal(store.updates[0].runQueuedPiModel, undefined);
+  assert.equal(store.updates[0].runFailureCount, undefined);
 
   // The UI signal.
   assert.equal(events.length, 1);
@@ -98,8 +150,8 @@ test('runSpawnThunk(run): a non-CAP failure clears runQueued, bumps the failure 
   assert.match(events[0].reason, /worktree setup failed/);
 });
 
-test('runSpawnThunk(run): a non-CAP failure increments an existing failure counter', async () => {
-  const { deps, updates } = makeDeps(makeTask({ runFailureCount: 2 }));
+test('runSpawnThunk(run): the at-admission bump increments an existing counter (crash-loop accrual)', async () => {
+  const store = makeStore(makeTask({ runFailureCount: 2 }));
   const { stop } = captureFailed();
   try {
     await assert.rejects(
@@ -109,17 +161,18 @@ test('runSpawnThunk(run): a non-CAP failure increments an existing failure count
         async () => {
           throw new Error('still broken');
         },
-        deps,
+        store.deps,
       ),
     );
   } finally {
     stop();
   }
-  assert.equal(updates[0].runFailureCount, 3);
+  // 2 → 3 at admission; this is the increment boot recovery accrues each boot.
+  assert.equal(store.crashSafeUpdates[0].runFailureCount, 3);
 });
 
-test('runSpawnThunk(resume): a non-CAP failure emits task-spawn-failed but touches no runQueued state', async () => {
-  const { deps, updates } = makeDeps(
+test('runSpawnThunk(resume): a non-CAP failure emits task-spawn-failed but counts nothing and touches no runQueued state', async () => {
+  const store = makeStore(
     makeTask({ status: 'in_progress', runQueued: undefined }),
   );
   const { events, stop } = captureFailed();
@@ -131,7 +184,7 @@ test('runSpawnThunk(resume): a non-CAP failure emits task-spawn-failed but touch
         async () => {
           throw new Error('worktree vanished');
         },
-        deps,
+        store.deps,
       ),
       /worktree vanished/,
     );
@@ -139,15 +192,17 @@ test('runSpawnThunk(resume): a non-CAP failure emits task-spawn-failed but touch
     stop();
   }
 
-  // Resume is transient — no persisted flag to reset, so no write.
-  assert.equal(updates.length, 0);
+  // Resume is transient — not boot-recovered, so it is never counted and has no
+  // persisted flag to reset.
+  assert.equal(store.crashSafeUpdates.length, 0);
+  assert.equal(store.updates.length, 0);
   assert.equal(events.length, 1);
   assert.equal(events[0].kind, 'resume');
   assert.match(events[0].reason, /worktree vanished/);
 });
 
-test('runSpawnThunk: a CAP failure is re-thrown untouched — no state change, no failure event', async () => {
-  const { deps, updates } = makeDeps(makeTask());
+test('runSpawnThunk(run): a CAP failure undoes the attempt bump and leaves runQueued set (no event)', async () => {
+  const store = makeStore(makeTask());
   const { events, stop } = captureFailed();
   try {
     await assert.rejects(
@@ -157,21 +212,50 @@ test('runSpawnThunk: a CAP failure is re-thrown untouched — no state change, n
         async () => {
           throw new SpawnCapacityError('no slot');
         },
-        deps,
+        store.deps,
       ),
       (err: unknown) => err instanceof SpawnCapacityError,
     );
   } finally {
     stop();
   }
+  // Bumped at admission (→1) then undone on CAP (→ undefined): a task waiting
+  // for capacity must not burn its retry budget.
+  assert.equal(store.crashSafeUpdates.length, 1);
+  assert.equal(store.crashSafeUpdates[0].runFailureCount, 1);
+  assert.equal(store.updates.length, 1);
+  assert.equal(store.updates[0].runFailureCount, undefined);
   // CAP is not a failure: the queue re-queues, so runQueued stays set and the
   // user sees nothing.
-  assert.equal(updates.length, 0);
+  assert.equal(store.current()?.runQueued, true);
   assert.equal(events.length, 0);
 });
 
-test('runSpawnThunk: a successful spawn delivers the pty via task-spawned and emits no failure', async () => {
-  const { deps, updates } = makeDeps(makeTask());
+test('runSpawnThunk(run): a CAP failure undoes to N-1 when a prior count existed', async () => {
+  const store = makeStore(makeTask({ runFailureCount: 2 }));
+  const { stop } = captureFailed();
+  try {
+    await assert.rejects(
+      runSpawnThunk(
+        't1',
+        'run',
+        async () => {
+          throw new SpawnCapacityError('no slot');
+        },
+        store.deps,
+      ),
+      (err: unknown) => err instanceof SpawnCapacityError,
+    );
+  } finally {
+    stop();
+  }
+  // 2 → 3 (admission) → 2 (CAP undo).
+  assert.equal(store.crashSafeUpdates[0].runFailureCount, 3);
+  assert.equal(store.updates[0].runFailureCount, 2);
+});
+
+test('runSpawnThunk(run): a successful spawn delivers the pty via task-spawned and emits no failure', async () => {
+  const store = makeStore(makeTask());
   const spawned: TaskSpawnedEvent[] = [];
   const failed: TaskSpawnFailedEvent[] = [];
   const stopSpawned = subscribeTaskSpawned((e) => spawned.push(e));
@@ -186,30 +270,37 @@ test('runSpawnThunk: a successful spawn delivers the pty via task-spawned and em
         command: 'claude',
         serverId: 'srv-1',
       }),
-      deps,
+      store.deps,
     );
   } finally {
     stopSpawned();
     stopFailed();
   }
   assert.equal(failed.length, 0);
-  assert.equal(updates.length, 0);
+  // The admission bump still fires; the real startTaskById clears it on success
+  // (the stub here does not, so the bump is the only update).
+  assert.equal(store.crashSafeUpdates.length, 1);
+  assert.equal(store.updates.length, 0);
   assert.equal(spawned.length, 1);
   assert.equal(spawned[0].serverId, 'srv-1');
   assert.equal(spawned[0].taskId, 't1');
 });
 
 test('reportSpawnFailure: tolerates a missing task (emits with empty routing fields, no throw)', async () => {
-  const { deps, updates } = makeDeps(null);
+  const store = makeStore(null);
   const { events, stop } = captureFailed();
   try {
-    await reportSpawnFailure('gone', 'run', new Error('boom'), deps);
+    await reportSpawnFailure('gone', 'run', new Error('boom'), store.deps);
   } finally {
     stop();
   }
-  // No task ⇒ updateTask still attempted (best-effort), event still emitted.
+  // No task ⇒ updateTask still attempted (best-effort), event still emitted. It
+  // no longer bumps the counter (that happens at admission), so the clear writes
+  // an all-undefined queue state.
   assert.equal(events.length, 1);
   assert.equal(events[0].taskId, 'gone');
   assert.equal(events[0].projectPath, '');
-  assert.equal(updates[0].runFailureCount, 1);
+  assert.equal(store.updates.length, 1);
+  assert.equal(store.updates[0].runFailureCount, undefined);
+  assert.equal(store.updates[0].runQueued, undefined);
 });
