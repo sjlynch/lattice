@@ -16,6 +16,7 @@ import {
   localStepId,
   makeAgentStep,
   makeControlStep,
+  nextEditorAfterSave,
   type EditorState,
 } from '../editorState';
 import {
@@ -130,6 +131,12 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
 
   const save = useCallback(async (): Promise<Workflow | null> => {
     if (!activeFolder) return null;
+    // Snapshot the editor as it stands when the save begins. If the user edits
+    // a step while the request is in flight, the committed state becomes a new
+    // object; reseeding from the server echo unconditionally would overwrite
+    // that edit and clear `dirty`, silently losing the change (data-loss bug).
+    // `nextEditorAfterSave` reseeds only when nothing changed mid-flight.
+    const atSaveStart = editor;
     const name = editor.name.trim() || 'Untitled workflow';
     const steps = editor.steps.map((s) => ({
       ...s,
@@ -141,20 +148,27 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
     try {
       if (editor.workflowId) {
         const w = await apiUpdateWorkflow(editor.workflowId, { name, steps, variables });
-        setEditor(fromWorkflow(w));
+        setEditor((cur) => nextEditorAfterSave(atSaveStart, cur, w).editor);
         return w;
       } else {
         const w = await apiCreateWorkflow(activeFolder, name, steps, variables);
-        setEditor(fromWorkflow(w));
-        // The never-saved draft is now persisted server-side; drop the stash.
-        clearWorkflowDraft(activeFolder);
+        let superseded = false;
+        setEditor((cur) => {
+          const next = nextEditorAfterSave(atSaveStart, cur, w);
+          superseded = next.superseded;
+          return next.editor;
+        });
+        // The never-saved draft is now persisted server-side; drop the stash —
+        // unless a mid-save edit superseded it, in which case that edit is still
+        // a live unsaved draft and the debounced persist must keep stashing it.
+        if (!superseded) clearWorkflowDraft(activeFolder);
         return w;
       }
     } catch (err) {
       onError(`Save failed: ${(err as Error).message}`);
       return null;
     }
-  }, [activeFolder, editor.workflowId, editor.name, editor.steps, editor.variables, onError]);
+  }, [activeFolder, editor, onError]);
 
   const discardEdits = useCallback(() => {
     clearWorkflowDraft(activeFolder);

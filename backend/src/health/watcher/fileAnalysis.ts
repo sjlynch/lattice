@@ -37,10 +37,23 @@ export function countLines(buf: Buffer): number {
   return count;
 }
 
+export type LoadOrAnalyzeOptions = {
+  // Skip the (mtime,size) cache and re-analyze unconditionally. Set on the
+  // watcher's 'change' path: the event itself is proof of a write, so the
+  // (mtime,size) key can't be trusted as a freshness guarantee. An in-place
+  // edit that preserves byte size whose mtimeMs resolves to the cached value
+  // (whole-second mtime quantization + chokidar's awaitWriteFinish coalescing)
+  // would otherwise return STALE cached metrics/imports and the file would
+  // never be re-analyzed. The cache stays an optimization for 'add'/initial
+  // hydration, where no write is implied.
+  forceReanalyze?: boolean;
+};
+
 export async function loadOrAnalyzeFile(
   proj: ProjectWatcher,
   filePath: string,
   ext: string,
+  opts: LoadOrAnalyzeOptions = {},
 ): Promise<AnalyzedFile | null> {
   let stat;
   try {
@@ -49,8 +62,10 @@ export async function loadOrAnalyzeFile(
     return null;
   }
 
-  const cached = proj.cache.get(filePath, stat.mtimeMs, stat.size);
-  if (cached) return cached;
+  if (!opts.forceReanalyze) {
+    const cached = proj.cache.get(filePath, stat.mtimeMs, stat.size);
+    if (cached) return cached;
+  }
 
   const read = await readFileForAnalysis(filePath);
   if (!read) return null;
