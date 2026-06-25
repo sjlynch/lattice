@@ -54,8 +54,20 @@ export class ConfigReloader {
     }
 
     if (TSCONFIG_BASENAME_RE.test(base)) {
-      this.projectAliases = await loadProjectAliases(this.projectRoot);
-      return true;
+      // Only react to a tsconfig sitting directly in the project root, mirroring
+      // the .gitignore root guard above. `loadProjectAliases` always re-walks
+      // every tsconfig in the tree, so a root-tsconfig change already refreshes
+      // the whole alias map. Firing on *any* nested tsconfig save instead
+      // (frontend/tsconfig.app.json, backend/tsconfig.json, or one the watcher
+      // sees inside a worktree) over-fires a full-project rescan +
+      // proj.watcher.add(root) + cross-file recompute on edits the root never
+      // consumes — and reloads aliases from the root regardless of which file
+      // changed. Nested edits fall through to normal analysis (return false);
+      // their aliases refresh on the next root-tsconfig change or full scan.
+      if (path.dirname(path.resolve(filePath)) === path.resolve(this.projectRoot)) {
+        this.projectAliases = await loadProjectAliases(this.projectRoot);
+        return true;
+      }
     }
 
     return false;
