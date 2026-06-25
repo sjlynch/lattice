@@ -110,6 +110,7 @@ export async function snapshotWorkingTree(
   const status = await projectGit(repoRoot, [
     'status',
     '--porcelain=v1',
+    '-z', // NUL-delimited, verbatim paths, no rename arrow — see parseStatus
     '--untracked-files=all',
   ]);
   if (status.code !== 0) {

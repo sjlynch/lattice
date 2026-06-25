@@ -115,6 +115,9 @@ export async function startTaskById(
     colorIndex,
     runQueued: undefined,
     runQueuedAt: undefined,
+    // The run finally spawned — reset the deterministic-failure counter so a
+    // later re-run isn't gated by boot recovery's retry ceiling.
+    runFailureCount: undefined,
   });
 
   return {
