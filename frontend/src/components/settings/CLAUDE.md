@@ -7,6 +7,13 @@ Save/Cancel footer. The dialog itself is now essentially just that chrome plus
 body rendering — all the save/dirty/close machinery lives in
 `useSettingsController.ts` (below).
 
+Lengthy explanatory copy lives behind `SettingsInfo` — a small `(i)` button next
+to a section title that toggles a popover (`.settings-section-title-row` lays the
+two out inline). It closes on outside-click and on Escape; its Escape handler is
+**capture-phase + `stopPropagation`** so it dismisses just the popover without
+the Modal's own Escape closing the whole dialog. Keep section titles + control
+labels always-visible and push the detail into the popover.
+
 ## Shared tab pattern
 
 Each tab is a `forwardRef` panel that:
@@ -74,6 +81,21 @@ primitive the tab reuses for its compat/header/model/detect edits) and
 callback). Note: the `PATCH /api/global-settings` route now
 passes *all* machine-global fields through (it previously forwarded only
 `maxConcurrentAgents`, silently dropping the rest).
+
+`PiTab.tsx` stays the orchestrator (load, edit handlers, draft state, the
+`PiTabHandle` save patch) but renders through focused pieces: `PiEndpointCard`
+(one managed endpoint — id/baseUrl/key/detect/model checklist + the Advanced
+toggle) wrapping `PiEndpointAdvanced` (compat + custom headers), and `PiModelMenu`
+(the curated-menu checklist). Pure sanitization/derivation lives in
+`piTabUtils.ts` (`cleanHeaders`, `entriesToHeaders`, `compatString`,
+`sanitizeProvidersForSave` = the `getPiProvidersPatch` body, `collectModelUniverse`
+= the saved∪draft pattern set) so the components stay thin and the save semantics
+stay testable. The card/advanced/menu pieces get index-pre-bound callbacks; all
+mutation still flows through `useEndpointState`'s `mutate`.
+
+After a save that changed `piProviders`/`piModelMenu`, `saveSettings` calls
+`notifyPiModelsChanged()` (`piModelMenuStore.ts`) so every mounted harness
+dropdown refetches `GET /api/pi-models` without a page reload.
 
 MCP **secrets** are separate again: stored in a `0600` file, written
 immediately on entry — never through the Save button.

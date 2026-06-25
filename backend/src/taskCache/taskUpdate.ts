@@ -59,17 +59,3 @@ export function applyTaskUpdate(
     updatedList: tasks.map((t, i) => (i === idx ? updated : t)),
   };
 }
-
-// Linear scan across every loaded project's task list looking for a task id.
-// Returns the project key, the task list it lives in, and the index inside.
-export function findTaskInProjects(
-  entries: Iterable<[string, Task[]]>,
-  id: string,
-): TaskLookup | null {
-  for (const [project, tasks] of entries) {
-    const idx = tasks.findIndex((t) => t.id === id);
-    if (idx === -1) continue;
-    return { project, tasks, idx, task: tasks[idx] };
-  }
-  return null;
-}
