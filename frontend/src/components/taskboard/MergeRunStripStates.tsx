@@ -76,7 +76,13 @@ export function ActiveStrip({
   );
 }
 
-export function ResolvingStrip({ conflicts }: { conflicts: Task[] }) {
+export function ResolvingStrip({
+  conflicts,
+  onCancel,
+}: {
+  conflicts: Task[];
+  onCancel: () => void;
+}) {
   const first = conflicts[0];
   const extra = conflicts.length - 1;
   return (
@@ -92,6 +98,14 @@ export function ResolvingStrip({ conflicts }: { conflicts: Task[] }) {
           {extra > 0 && ` + ${extra} more`}
         </div>
       </span>
+      <button
+        className="merge-run-strip-btn"
+        onClick={onCancel}
+        title="Abandon conflict resolution and return these tasks to Ready to Merge"
+        aria-label="Cancel conflict resolution"
+      >
+        Cancel
+      </button>
     </div>
   );
 }

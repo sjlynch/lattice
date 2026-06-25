@@ -15,6 +15,7 @@ export function mergeRunStripFor(
   tasks: Task[],
   onCancel: () => void,
   onDismiss: () => void,
+  onClearConflicts: () => void,
 ): ReactNode | undefined {
   if (lane.id !== 'ready_to_merge') return undefined;
   const hasConflicts = laneTasks.some((task) => task.conflict);
@@ -26,6 +27,7 @@ export function mergeRunStripFor(
       tasks={tasks}
       onCancel={onCancel}
       onDismiss={onDismiss}
+      onClearConflicts={onClearConflicts}
     />
   );
 }
@@ -42,16 +44,19 @@ export function MergeRunStrip({
   tasks,
   onCancel,
   onDismiss,
+  onClearConflicts,
 }: {
   active: MergeRun | null;
   summary: MergeRun | null;
   tasks: Task[];
   onCancel: () => void;
   onDismiss: () => void;
+  onClearConflicts: () => void;
 }) {
   const pendingConflicts = tasks.filter((t) => t.conflict);
   if (active) return <ActiveStrip run={active} tasks={tasks} onCancel={onCancel} />;
-  if (pendingConflicts.length > 0) return <ResolvingStrip conflicts={pendingConflicts} />;
+  if (pendingConflicts.length > 0)
+    return <ResolvingStrip conflicts={pendingConflicts} onCancel={onClearConflicts} />;
   if (summary) return <SummaryStrip run={summary} tasks={tasks} onDismiss={onDismiss} />;
   return null;
 }

@@ -145,6 +145,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     mergeTaskAction,
     mergeAllReady,
     cancelActiveRun,
+    clearStuckConflicts,
     markAllQaDone,
   } = useTaskActions({
     activeFolder,
@@ -322,6 +323,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 mergeRun={mergeRun}
                 recentRunSummary={recentRunSummary}
                 onCancelActiveRun={cancelActiveRun}
+                onClearStuckConflicts={clearStuckConflicts}
                 onDismissRecent={dismissRecent}
                 bulkStrips={bulkStrips}
                 onDismissBulk={dismissBulk}

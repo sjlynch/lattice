@@ -66,6 +66,7 @@ type Props = {
   mergeRun: MergeRun | null;
   recentRunSummary: MergeRun | null;
   onCancelActiveRun: () => void;
+  onClearStuckConflicts: () => void;
   onDismissRecent: () => void;
   bulkStrips: Partial<Record<BulkStripLane, BulkStripView>>;
   onDismissBulk: (lane: BulkStripLane) => void;
@@ -108,6 +109,7 @@ export function TaskBoardLaneGrid({
   mergeRun,
   recentRunSummary,
   onCancelActiveRun,
+  onClearStuckConflicts,
   onDismissRecent,
   bulkStrips,
   onDismissBulk,
@@ -161,6 +163,7 @@ export function TaskBoardLaneGrid({
               tasks,
               onCancelActiveRun,
               onDismissRecent,
+              onClearStuckConflicts,
             ) ?? bulkRunStripFor(lane, bulkStrips, onDismissBulk)
           }
         />

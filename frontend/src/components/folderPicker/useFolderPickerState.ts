@@ -56,14 +56,23 @@ export function useFolderPickerState({ open, initialPath }: UseFolderPickerState
       return;
     }
 
+    // Invalidate any directory load in flight by bumping the same seq the load
+    // path uses: a slower listDir that resolves after this create can no longer
+    // land its (now stale) listing on top of the just-created folder. Guard this
+    // create's own writes too, so a newer navigation started mid-create wins.
+    const seq = (loadSeq.current += 1);
+    const isLatest = () => seq === loadSeq.current;
+
     setCreating(true);
     setError(null);
     try {
       const result = await createDir(listing.path, folderName);
+      if (!isLatest()) return;
       setListing(result);
       setPathInput(result.path);
       setNewFolderName('');
     } catch (err) {
+      if (!isLatest()) return;
       setError((err as Error).message);
     } finally {
       setCreating(false);

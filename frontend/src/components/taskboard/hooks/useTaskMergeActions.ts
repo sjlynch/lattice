@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import {
+  abortTaskMerge as apiAbortTaskMerge,
   cancelMergeRun as apiCancelMergeRun,
   mergeTask as apiMergeTask,
   startMergeRun as apiStartMergeRun,
@@ -78,6 +79,27 @@ export function useTaskMergeActions({
     }
   }, [mergeRun, showError]);
 
+  // Escape hatch for the "Resolving N conflicts" strip: abandon every stuck
+  // conflict (resolver died / merge run was cancelled / backend restarted
+  // mid-resolution) by aborting any lingering mid-merge and clearing the
+  // conflict flag, returning each task to plain ready_to_merge. Without this
+  // the strip is a dead end — it renders whenever any ready_to_merge task has
+  // conflict:true, with no Cancel button of its own and (unlike the active-run
+  // strip) no run to cancel.
+  const clearStuckConflicts = useCallback(async () => {
+    const stuck = tasks.filter((task) => task.conflict);
+    if (stuck.length === 0) return;
+    const results = await Promise.allSettled(
+      stuck.map((task) => apiAbortTaskMerge(task.id)),
+    );
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    if (failed > 0) {
+      showError(
+        `Failed to clear ${failed} of ${stuck.length} stuck conflict${stuck.length === 1 ? '' : 's'}`,
+      );
+    }
+  }, [tasks, showError]);
+
   // Fire each move-to-done without awaiting (moveTask handles its own errors)
   // and return the ids so the caller can drive a progress strip immediately.
   const markAllQaDone = useCallback(() => {
@@ -86,5 +108,11 @@ export function useTaskMergeActions({
     return qaTasks.map((task) => task.id);
   }, [moveTask, tasks]);
 
-  return { mergeTaskAction, mergeAllReady, cancelActiveRun, markAllQaDone };
+  return {
+    mergeTaskAction,
+    mergeAllReady,
+    cancelActiveRun,
+    clearStuckConflicts,
+    markAllQaDone,
+  };
 }

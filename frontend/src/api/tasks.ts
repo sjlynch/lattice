@@ -130,6 +130,20 @@ export async function mergeTask(id: string): Promise<MergeTaskResult> {
   );
 }
 
+// Abandon an in-flight conflict resolution: aborts any lingering mid-merge in
+// the worktree and clears the task's conflict flag, returning it to
+// ready_to_merge. Same endpoint a resolver Claude curls when it gives up —
+// here it backs the "Cancel" button on the Resolving strip, the user's escape
+// hatch out of a conflict that's been orphaned (resolver died, merge run was
+// cancelled, or the backend restarted mid-resolution).
+export async function abortTaskMerge(id: string): Promise<void> {
+  await asJson<{ ok: true }>(
+    await fetch(`/api/tasks/${encodeURIComponent(id)}/merge-aborted`, {
+      method: 'POST',
+    }),
+  );
+}
+
 // `/ws/tasks` carries five message types: the full task-list snapshot; for
 // queued runs a `task-spawned` event delivering the pty (or a
 // `task-spawn-failed` event when the deferred spawn failed); `task-activity`
