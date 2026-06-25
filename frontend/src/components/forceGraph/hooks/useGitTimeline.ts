@@ -6,6 +6,7 @@ import type { GraphSettings } from '../graphSettings';
 import { getIdleController } from '../idleController';
 import { computeChangeMap } from '../timelineDiff';
 import type { ChangeKind } from '../changeRing';
+import { resetChangeRingsForProjectSwitch } from '../timelineReset';
 
 // History is fetched once per project; the scrubber range is two
 // tick indices into [0, commits.length], where commits.length is
@@ -38,11 +39,27 @@ export function useGitTimeline(
   // project changes. The scrubber drives ring colors and ghost-node
   // visibility from the cached result — no per-drag backend traffic.
   useEffect(() => {
-    if (!activeFolder) {
-      setHistory(null);
-      setRange({ left: 0, right: 0 });
-      return;
-    }
+    // Reset timeline state on EVERY active-folder change, not just to an empty
+    // folder. A project switch A→B otherwise leaves `history` — and the derived
+    // change map / ghosts — at A's values during the async window before B's git
+    // history resolves: B's freshly-built nodes then inherit A's change rings on
+    // shared paths (package.json, tsconfig.json, src/index.ts) and A's deleted-
+    // file ghost discs get injected into B's graph until B's history lands. So
+    // strip the previous project's rings/ghosts and empty `changeMapRef` up
+    // front; with `history` null the reconcile effect below is a no-op (prev map
+    // already empty) and `prepareGhostMerge` builds no ghosts until B resolves.
+    const graph = graphRef.current;
+    const touched = resetChangeRingsForProjectSwitch(
+      graph,
+      changeMapRef,
+      settingsRef.current,
+      scanRootRef.current,
+    );
+    if (touched) getIdleController(graph)?.wakeForRefresh();
+    setHistory(null);
+    setRange({ left: 0, right: 0 });
+
+    if (!activeFolder) return;
     let cancelled = false;
     fetchGitHistory(activeFolder, 10)
       .then((h) => {
@@ -60,7 +77,7 @@ export function useGitTimeline(
     return () => {
       cancelled = true;
     };
-  }, [activeFolder]);
+  }, [activeFolder, graphRef, settingsRef]);
 
   // Recompute the change map when the slider range moves, then apply the
   // prev→next diff in place: only the nodes whose ChangeKind actually flipped
