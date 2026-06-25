@@ -6,6 +6,7 @@ import {
   subscribeHarnesses,
   type HarnessAvailability,
   type PiMenuEntry,
+  type UserSettings,
 } from '../../../api';
 import {
   decodeHarnessValue,
@@ -18,6 +19,40 @@ export type { HarnessChoice };
 export type ResolvedHarness = AgentHarness;
 // What a run/resume needs: the harness plus (for Pi) the chosen model.
 export type RunHarnessSelection = { harness: AgentHarness; piModel?: string };
+
+// Side effects the loaded-settings applier drives. Injected so the
+// cancellation guard can be exercised in isolation (no React render).
+export type ApplyHarnessSettingsDeps = {
+  setPiModel: (model: string | undefined) => void;
+  setHarness: (harness: HarnessChoice) => void;
+  persistClaude: (folder: string) => void;
+  isCancelled: () => boolean;
+};
+
+// Apply a freshly-fetched settings object to the harness/piModel state,
+// coercing an uninstalled harness back to `claude`. Bails the moment
+// `isCancelled()` is true so a fetch that resolves AFTER the active folder
+// changed (or availability flipped) can never write project A's values into
+// the board now showing project B.
+export function applyLoadedHarnessSettings(
+  folder: string,
+  s: Pick<UserSettings, 'harness' | 'piModel'>,
+  avail: HarnessAvailability,
+  deps: ApplyHarnessSettingsDeps,
+): void {
+  if (deps.isCancelled()) return;
+  deps.setPiModel(s.piModel || undefined);
+  if (!isHarnessChoice(s.harness)) return;
+  const unavailable =
+    ((s.harness === 'pi' || s.harness === 'interleave') && !avail.pi) ||
+    (s.harness === 'codex' && !avail.codex);
+  if (unavailable) {
+    deps.setHarness('claude');
+    deps.persistClaude(folder);
+  } else {
+    deps.setHarness(s.harness);
+  }
+}
 
 // Owns the harness selector dropdown: which agent CLIs are installed, the
 // curated Pi model menu, the persisted per-project preference ({harness,
@@ -72,21 +107,21 @@ export function useHarnessSelector(activeFolder: string) {
   useEffect(() => {
     if (!activeFolder) return;
     if (!harnessAvailLoaded) return;
+    let cancelled = false;
     fetchUserSettings(activeFolder)
       .then((s) => {
-        setPiModelState(s.piModel || undefined);
-        if (!isHarnessChoice(s.harness)) return;
-        const unavailable =
-          ((s.harness === 'pi' || s.harness === 'interleave') && !harnessAvail.pi) ||
-          (s.harness === 'codex' && !harnessAvail.codex);
-        if (unavailable) {
-          setHarnessState('claude');
-          patchUserSettings(activeFolder, { harness: 'claude' }).catch(() => {});
-        } else {
-          setHarnessState(s.harness);
-        }
+        applyLoadedHarnessSettings(activeFolder, s, harnessAvail, {
+          setPiModel: setPiModelState,
+          setHarness: setHarnessState,
+          persistClaude: (folder) =>
+            patchUserSettings(folder, { harness: 'claude' }).catch(() => {}),
+          isCancelled: () => cancelled,
+        });
       })
       .catch(() => { /* keep default */ });
+    return () => {
+      cancelled = true;
+    };
   }, [activeFolder, harnessAvailLoaded, harnessAvail.pi, harnessAvail.codex]);
 
   // Handle a dropdown change. The encoded value carries both the harness and
