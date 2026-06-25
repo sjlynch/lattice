@@ -11,9 +11,19 @@ export const VIEWPORT_PAD = 12;
 export function clampPos(pos: Pos, size: Size): Pos {
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
+  // Floor the upper bound at VIEWPORT_PAD: when the panel is larger than the
+  // viewport (small window, or a large persisted size restored on a smaller
+  // monitor) the raw `viewport - size - PAD` max goes negative, which would
+  // otherwise pin the panel off the top-left with its header unreachable.
   return {
-    x: Math.min(Math.max(VIEWPORT_PAD, pos.x), viewportWidth - size.width - VIEWPORT_PAD),
-    y: Math.min(Math.max(VIEWPORT_PAD, pos.y), viewportHeight - size.height - VIEWPORT_PAD),
+    x: Math.min(
+      Math.max(VIEWPORT_PAD, pos.x),
+      Math.max(VIEWPORT_PAD, viewportWidth - size.width - VIEWPORT_PAD),
+    ),
+    y: Math.min(
+      Math.max(VIEWPORT_PAD, pos.y),
+      Math.max(VIEWPORT_PAD, viewportHeight - size.height - VIEWPORT_PAD),
+    ),
   };
 }
 

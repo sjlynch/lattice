@@ -16,6 +16,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { latticeHomeDir } from './projectPath.js';
+import { runExclusive } from './serializeWrites.js';
 import type { McpServerEntry } from './mcp/catalog.js';
 import {
   sanitizeCustomServers,
@@ -128,16 +129,21 @@ export async function getGlobalSettings(): Promise<GlobalSettings> {
 }
 
 // Merge-update and persist global settings; returns the full updated record.
+// Serialized against itself so two concurrent PATCHes carrying disjoint fields
+// each read the prior write's result rather than a shared stale base and
+// clobber one another (see serializeWrites.ts). One global file → one key.
 export async function updateGlobalSettings(
   patch: Partial<GlobalSettings>,
 ): Promise<GlobalSettings> {
-  const current = await getGlobalSettings();
-  const updated: GlobalSettings = { ...current, ...sanitize(patch) };
-  await fs.mkdir(latticeHomeDir(), { recursive: true });
-  await fs.writeFile(
-    globalSettingsFile(),
-    JSON.stringify(updated, null, 2),
-    'utf8',
-  );
-  return updated;
+  return runExclusive(`globalSettings:${globalSettingsFile()}`, async () => {
+    const current = await getGlobalSettings();
+    const updated: GlobalSettings = { ...current, ...sanitize(patch) };
+    await fs.mkdir(latticeHomeDir(), { recursive: true });
+    await fs.writeFile(
+      globalSettingsFile(),
+      JSON.stringify(updated, null, 2),
+      'utf8',
+    );
+    return updated;
+  });
 }

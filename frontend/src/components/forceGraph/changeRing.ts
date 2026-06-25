@@ -15,7 +15,7 @@
 //   - changeRingMaterials.ts — cached SpriteMaterials (3 rings + 1 ghost)
 // so a graph with thousands of changed nodes still allocates exactly four
 // GPU resources. Public API (setNodeChangeRing, deletedSprite,
-// setNodeChangeRingsVisible, ChangeKind) lives here.
+// setNodeChangeRingsVisible, setChangeRingsSuppressed, ChangeKind) lives here.
 
 import * as THREE from 'three';
 import { ringMaterial, ghostMaterial } from './changeRingMaterials';
@@ -31,6 +31,26 @@ const CHANGE_RING_TAG = 'lattice:changeRing';
 // Records the ChangeKind currently drawn so a delta can detect a recolor
 // (e.g. added → modified) and swap the cached material in place.
 const CHANGE_RING_KIND = 'lattice:changeRing:kind';
+
+// While the `W` worktree overlay is active it suppresses the git change-rings
+// (the two ring styles stack confusingly). `setNodeChangeRingsVisible` only
+// hides the rings mounted at the instant W activated — but a later full rebuild
+// (`buildNodeObject` → `setNodeChangeRing`) or scrub-delta add
+// (`applyChangeRingDelta` → `setNodeChangeRing`) mints *fresh* ring sprites,
+// which would default to visible and reappear, defeating the suppression. This
+// flag makes every newly-built ring start hidden while W is active; because all
+// ring creation funnels through `buildChangeRingSprite`, both paths are covered
+// at the single chokepoint. The W overlay flips it on activate/deactivate
+// (see `useWorktreeHighlight`).
+let changeRingsSuppressed = false;
+
+// Set the default visibility for change rings minted from now on. `true` while
+// the `W` worktree overlay is active so refreshes/scrubs can't surface a fresh
+// (visible) ring; `false` restores normal visibility. Pairs with
+// `setNodeChangeRingsVisible`, which handles the already-mounted rings.
+export function setChangeRingsSuppressed(suppressed: boolean): void {
+  changeRingsSuppressed = suppressed;
+}
 
 // Hide / show all timeline change-ring sprites under a node's root Group.
 // Traverses descendants so it still finds the ring whether it sits as a
@@ -70,6 +90,9 @@ function buildChangeRingSprite(baseSize: number, kind: ChangeKind): THREE.Sprite
   ring.renderOrder = 11;
   ring.userData[CHANGE_RING_TAG] = true;
   ring.userData[CHANGE_RING_KIND] = kind;
+  // Start hidden while the `W` overlay is suppressing change rings, so a rebuild
+  // or scrub that mints a fresh ring doesn't reappear over the worktree rings.
+  ring.visible = !changeRingsSuppressed;
   return ring;
 }
 

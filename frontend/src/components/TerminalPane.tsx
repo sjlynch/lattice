@@ -32,7 +32,7 @@ export function TerminalPane({
   const termRef = useRef<Terminal | null>(null);
   const webglRef = useRef<WebglAddon | null>(null);
 
-  useTerminalLifecycle({ containerRef, termRef, fitRef, webglRef, cwd, serverId });
+  useTerminalLifecycle({ containerRef, termRef, fitRef, webglRef, cwd });
   useTerminalConnection({
     termRef,
     cwd,
@@ -42,7 +42,7 @@ export function TerminalPane({
     onServerId,
     onStatus,
   });
-  useActiveTerminalWebgl({ active, termRef, fitRef, webglRef, cwd, serverId });
+  useActiveTerminalWebgl({ active, termRef, fitRef, webglRef, cwd });
 
   return <div ref={containerRef} className="term-pane" />;
 }

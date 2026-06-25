@@ -138,8 +138,8 @@ function wireWatcherEvents(proj: ProjectWatcher, watcher: FSWatcher): void {
   });
 
   const { onAddOrChange, onRemove } = createWatcherHandlers(proj);
-  watcher.on('add', (p) => { onAddOrChange(p).catch(() => { /* ignore */ }); });
-  watcher.on('change', (p) => { onAddOrChange(p).catch(() => { /* ignore */ }); });
+  watcher.on('add', (p) => { onAddOrChange(p, 'add').catch(() => { /* ignore */ }); });
+  watcher.on('change', (p) => { onAddOrChange(p, 'change').catch(() => { /* ignore */ }); });
   watcher.on('unlink', (p) => { onRemove(p).catch(() => { /* ignore */ }); });
   watcher.on('addDir', (p) => {
     if (p !== proj.root) broadcast(proj, { type: 'rescan', reason: 'directory', path: p });

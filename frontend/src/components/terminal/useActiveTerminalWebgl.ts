@@ -10,7 +10,6 @@ type UseActiveTerminalWebglArgs = {
   fitRef: RefObject<FitAddon | null>;
   webglRef: RefObject<WebglAddon | null>;
   cwd: string;
-  serverId?: string;
 };
 
 function disposeWebgl(webglRef: RefObject<WebglAddon | null>) {
@@ -28,7 +27,6 @@ export function useActiveTerminalWebgl({
   fitRef,
   webglRef,
   cwd,
-  serverId,
 }: UseActiveTerminalWebglArgs) {
   // Hold a WebGL context only while this pane is the active tab. Inactive
   // panes fall back to xterm's built-in DOM renderer (no GL resource), so
@@ -65,5 +63,8 @@ export function useActiveTerminalWebgl({
     }
 
     if (webglRef.current) disposeWebgl(webglRef);
-  }, [active, cwd, fitRef, serverId, termRef, webglRef]);
+    // serverId is intentionally NOT a dependency — capturing a session id must
+    // not dispose+reattach the WebGL context (a needless GL-context churn that
+    // fights Chrome's per-page cap). Only `active` gates the context.
+  }, [active, cwd, fitRef, termRef, webglRef]);
 }
