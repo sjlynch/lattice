@@ -10,6 +10,10 @@ import { sendJson } from '../projectEndpoint.js';
 export function buildHarnessesWss(): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
   wss.on('connection', (ws) => {
+    // Without an 'error' listener, ws v8 re-throws an underlying socket error
+    // (ECONNRESET/EPIPE from an abrupt disconnect) as a process uncaughtException.
+    // A dropped client is routine here — log-and-ignore.
+    ws.on('error', () => { /* routine client disconnect — ignore */ });
     detectHarnesses()
       .then((avail) => {
         sendJson(ws, avail);

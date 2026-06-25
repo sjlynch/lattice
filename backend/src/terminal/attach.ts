@@ -147,6 +147,14 @@ export function attachTerminal(ws: WebSocket, opts: AttachOpts) {
     }
   });
 
+  // Without an 'error' listener, ws v8 re-throws an underlying socket error
+  // (ECONNRESET/EPIPE from an abruptly-closed tab, network partition, or OS
+  // sleep) as a process-level uncaughtException, which would take down the
+  // detached terminal-server and every other live pty session with it. A
+  // dropped client is routine — log-and-ignore (the 'close' handler below
+  // still runs and drops the subscriber). Mirrors terminalWsRelay's proxy.
+  ws.on('error', () => { /* routine client disconnect — ignore */ });
+
   ws.on('close', () => {
     session.subscribers.delete(ws);
     // Intentional: do NOT kill the pty when a client disconnects. The
