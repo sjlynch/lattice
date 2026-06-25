@@ -63,16 +63,62 @@ export function normalizePythonRelativeImport(spec: string): string {
   return combined.startsWith('.') ? combined : `./${combined}`;
 }
 
+// Windows and (by default) macOS use case-insensitive filesystems: the TS/JS
+// runtime resolves `import './Helper.js'` to an on-disk `helper.ts` there, so
+// the dead-code analyzer must too. `presentFiles` holds absolute paths in exact
+// on-disk casing, so a verbatim `.has()` of a case-differing specifier misses,
+// the edge is dropped, and the target is wrongly flagged dead. On these
+// platforms we consult a case-folded index when the exact lookup misses.
+const CASE_INSENSITIVE_FS =
+  process.platform === 'win32' || process.platform === 'darwin';
+
+// Map of lowercased path → its canonical on-disk path, built once per
+// `presentFiles` Set and memoized by Set identity (a single analysis pass reuses
+// the same Set across every resolveImport call, so this is O(N) per pass rather
+// than per import). WeakMap-keyed so it's collected with the Set; safe because
+// `presentFiles` is immutable for the duration of a pass.
+const caseFoldedIndexCache = new WeakMap<Set<string>, Map<string, string>>();
+
+function caseFoldedIndex(presentFiles: Set<string>): Map<string, string> {
+  let index = caseFoldedIndexCache.get(presentFiles);
+  if (!index) {
+    index = new Map();
+    for (const f of presentFiles) {
+      const key = f.toLowerCase();
+      // First writer wins, so a deterministic canonical path is returned even on
+      // the rare case-insensitive volume that holds two files differing only in
+      // case (Set iteration order is insertion order = scan order).
+      if (!index.has(key)) index.set(key, f);
+    }
+    caseFoldedIndexCache.set(presentFiles, index);
+  }
+  return index;
+}
+
+// Membership test for a single candidate path: exact case first (the fast,
+// always-correct path), then — only on a case-insensitive filesystem — the
+// case-folded index, returning the canonical on-disk casing so the recorded
+// edge keys match the rest of the graph.
+function lookupPresent(
+  candidate: string,
+  presentFiles: Set<string>,
+): string | null {
+  if (presentFiles.has(candidate)) return candidate;
+  if (!CASE_INSENSITIVE_FS) return null;
+  return caseFoldedIndex(presentFiles).get(candidate.toLowerCase()) ?? null;
+}
+
 // Try a target absolute path with all the extensions / index-file fallbacks we'd
-// accept for a real import. Returns the first match in `presentFiles`, or null if
-// nothing landed.
+// accept for a real import. Returns the first match in `presentFiles` (in its
+// canonical on-disk casing), or null if nothing landed.
 export function tryAllExtensions(
   target: string,
   presentFiles: Set<string>,
 ): string | null {
   // 1. Exact path as written (already-extensioned imports: `.ts`, `.tsx`,
   //    `.css`, a real hand-written `.js`, …).
-  if (presentFiles.has(target)) return target;
+  const exact = lookupPresent(target, presentFiles);
+  if (exact) return exact;
 
   // 2. JS-family specifier → TS source (NodeNext). Only when the literal above
   //    missed, so a genuine `.js` sibling still wins.
@@ -81,19 +127,22 @@ export function tryAllExtensions(
   if (remaps) {
     const stem = target.slice(0, target.length - ext.length);
     for (const r of remaps) {
-      if (presentFiles.has(stem + r)) return stem + r;
+      const hit = lookupPresent(stem + r, presentFiles);
+      if (hit) return hit;
     }
   }
 
   // 3. Extensionless specifier → append each known source extension.
   for (const e of RESOLVE_EXTS) {
-    if (presentFiles.has(target + e)) return target + e;
+    const hit = lookupPresent(target + e, presentFiles);
+    if (hit) return hit;
   }
 
   // 4. Directory import → its index file.
   for (const indexFile of INDEX_FILES) {
     const candidate = path.join(target, indexFile);
-    if (presentFiles.has(candidate)) return candidate;
+    const hit = lookupPresent(candidate, presentFiles);
+    if (hit) return hit;
   }
   return null;
 }

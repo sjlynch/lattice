@@ -39,6 +39,9 @@ export type Task = {
   // admitted and the task flips to in_progress.
   runQueued?: boolean;
   runQueuedAt?: number;
+  // How many times a queued run has failed deterministically. Boot recovery
+  // uses it as a retry ceiling; cleared once the run finally spawns.
+  runFailureCount?: number;
   // The harness that ran this task's worktree agent (recorded at spawn). The
   // graph's Claude-agent overlay scopes itself to `claude` tasks.
   harness?: AgentHarness;
@@ -65,6 +68,19 @@ export type TaskSpawnedEvent = {
   command: string;
   worktreePath: string;
   serverId: string;
+  projectPath: string;
+};
+
+// Pushed on `/ws/tasks` when a queued run/resume fails for a non-CAP reason
+// (worktree setup threw, terminal-server wedged, worktree vanished). The
+// outcome can't ride the HTTP response (the spawn runs later in the queue),
+// so this is how the UI learns the run never started — it toasts the reason.
+export type TaskSpawnFailedEvent = {
+  taskId: string;
+  title: string;
+  // Which queued spawn failed, so the toast can say "start" vs "resume".
+  kind: 'run' | 'resume';
+  reason: string;
   projectPath: string;
 };
 
