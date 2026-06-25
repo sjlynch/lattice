@@ -81,6 +81,37 @@ function parseLinkColor(input: unknown): { css: string; alpha: number } {
   };
 }
 
+// Write each link's two endpoint vertices (6 floats per link) into `out`, in
+// `links` order, starting at `out[0]`. Exported for the regression test.
+//
+// Endpoints are hydrated from id strings to node refs only after graphData() is
+// applied. While a link's source/target is still a string, we must NOT skip its
+// write: on a freshly-grown buffer those slots are zero, but the draw range
+// still includes the segment, so a stale (0,0,0) vertex against the hydrated
+// partner renders a stray line converging on the world origin for a frame or
+// two. Instead, collapse a not-yet-hydrated segment to a DEGENERATE (both
+// vertices equal) line — reuse whichever endpoint is hydrated for both vertices,
+// or the origin if neither is — so it draws as an invisible zero-length line
+// until the next rebuild lands the hydrated refs.
+export function writeLinkSegments(links: SimLink[], out: Float32Array): void {
+  let w = 0;
+  for (let i = 0; i < links.length; i++) {
+    const s = links[i].source;
+    const t = links[i].target;
+    const so = typeof s === 'object' ? s : null;
+    const to = typeof t === 'object' ? t : null;
+    const a = so ?? to;
+    const b = to ?? so;
+    out[w] = a?.x ?? 0;
+    out[w + 1] = a?.y ?? 0;
+    out[w + 2] = a?.z ?? 0;
+    out[w + 3] = b?.x ?? 0;
+    out[w + 4] = b?.y ?? 0;
+    out[w + 5] = b?.z ?? 0;
+    w += 6;
+  }
+}
+
 export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLinks {
   const g = graph as unknown as LinkGraph;
   const scene = g.scene();
@@ -132,23 +163,7 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
     if (!geometry) return;
     const attr = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
     if (!attr) return;
-    let w = 0;
-    for (let i = 0; i < links.length; i++) {
-      const s = links[i].source;
-      const t = links[i].target;
-      // Endpoints are hydrated to node refs after graphData() is applied; before
-      // that they're still id strings — leave that segment at the origin until
-      // the next rebuild, by which point hydration has caught up.
-      if (typeof s === 'object' && typeof t === 'object') {
-        positions[w] = s.x ?? 0;
-        positions[w + 1] = s.y ?? 0;
-        positions[w + 2] = s.z ?? 0;
-        positions[w + 3] = t.x ?? 0;
-        positions[w + 4] = t.y ?? 0;
-        positions[w + 5] = t.z ?? 0;
-      }
-      w += 6;
-    }
+    writeLinkSegments(links, positions);
     attr.needsUpdate = true;
   }
 

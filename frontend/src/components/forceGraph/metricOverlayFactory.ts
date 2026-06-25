@@ -3,6 +3,7 @@ import type { GraphNode } from '../../api';
 import { DIR_STYLE, getStyleFor, type ExtStyle, type Shape } from '../../extensionStyles';
 import type { GraphSettings } from './graphSettings';
 import {
+  disposeLabelEntry,
   type FloatingLabelEntry,
   makeConnectorLine,
   makeFloatingLabelSprite,
@@ -10,6 +11,7 @@ import {
 import {
   buildMeasuredLabelTexture,
   createLabelTextureCache,
+  releaseLabelTexture,
   type LabelTextureOptions,
 } from './labelTexture';
 import { materialFor, spriteFor } from './sprites';
@@ -114,4 +116,20 @@ export function createMetricOverlaySpriteFactory(
 
     return group;
   };
+}
+
+// Release every entry's metric-label texture refcount, dispose its cloned
+// connector geometry, then empty the registry. The LOC + health overlays are
+// torn down by clearing their registry wholesale (they share
+// `sharedMetricLabelTextureCache`); releasing here keeps the texture refcounts
+// balanced against the build-time increments so freed metric textures stay
+// reclaimable across the constant clear→refresh→rebuild cycles, and disposing
+// each entry's per-line geometry frees the GPU buffer the library leaves
+// orphaned when `graph.refresh()` replaces the node objects.
+export function clearMetricLabelRegistry(registry: Set<FloatingLabelEntry>): void {
+  for (const entry of registry) {
+    disposeLabelEntry(entry);
+    releaseLabelTexture(sharedMetricLabelTextureCache, entry.label.material.map);
+  }
+  registry.clear();
 }

@@ -36,11 +36,16 @@ export type Beam = {
 // The label-bearing fields shared by an Agent and a Satellite, so the label
 // build/place/clear helpers (agentOverlayLabels.ts) work on either. The cached
 // label-position inputs let an unchanged position skip the redundant
-// `position.set` once the host settles (Part D).
+// `position.set` once the host settles (Part D). `labelSizeAtBuild` records the
+// label size the sprite's scale was baked at (`makeFloatingLabelSprite`), so a
+// later labelSize change rebuilds the sprite even when the text is unchanged
+// (otherwise an idle agent's label keeps its old scale until it touches a new
+// file — see applyFloatingLabel).
 export type LabelHost = {
   color: string;
   label?: THREE.Sprite;
   labelText?: string;
+  labelSizeAtBuild?: number;
   labelPosX?: number;
   labelPosY?: number;
   labelPosZ?: number;

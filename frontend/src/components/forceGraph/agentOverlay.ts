@@ -64,6 +64,8 @@ import {
 } from './agentOverlayBeams';
 import {
   clearAgentLabel,
+  disposeAgentLabelCache,
+  removeFloatingLabel,
   updateAgentLabel,
   updateSatelliteLabel,
 } from './agentOverlayLabels';
@@ -209,7 +211,9 @@ export class AgentOverlay {
     for (const sat of agent.satellites.values()) this.disposeSatellite(sat);
     agent.satellites.clear();
     this.group.remove(agent.node);
-    if (agent.label) this.group.remove(agent.label);
+    // Release the label texture (not just remove the sprite) so the cache can
+    // reclaim it once the session is gone.
+    if (agent.label) removeFloatingLabel(this.group, agent);
     this.agents.delete(taskId);
   }
 
@@ -219,7 +223,7 @@ export class AgentOverlay {
     sat.beams.clear();
     disposeBeam(this.group, sat.tether);
     this.group.remove(sat.node);
-    if (sat.label) this.group.remove(sat.label);
+    if (sat.label) removeFloatingLabel(this.group, sat);
   }
 
   // A `task-activity` / `agent-activity` event for the MAIN agent: open/refresh
@@ -482,6 +486,10 @@ export class AgentOverlay {
     for (const taskId of [...this.agents.keys()]) this.removeAgent(taskId);
     const scene = (graph as unknown as { scene: () => THREE.Scene }).scene();
     scene.remove(this.group);
+    // Dispose every agent label texture + paired material. The cache is module-
+    // global (shared by the single live overlay), so this frees the whole label
+    // texture/material set instead of leaking it for the page lifetime.
+    disposeAgentLabelCache();
   }
 
   // Prune expired beams, resolve+stash each live beam's file node (Part D), and

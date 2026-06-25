@@ -9,13 +9,11 @@ import {
 import { ErrorToast } from '../shared/ErrorToast';
 import { LANE_BY_ID, LANES, shortLabel } from './lanes';
 import { sortTasksForLane } from './laneSort';
-import { Lane } from './Lane';
-import { bulkRunStripFor } from './BulkRunStrip';
-import { mergeRunStripFor } from './MergeRunStrip';
 import { NewTaskOverlay } from './NewTaskOverlay';
 import { PostMergeHookRow } from './PostMergeHookRow';
 import { TaskBoardFilters } from './TaskBoardFilters';
 import { TaskBoardFooter } from './TaskBoardFooter';
+import { TaskBoardLaneGrid } from './TaskBoardLaneGrid';
 import { TaskBoardSearchEmpty } from './TaskBoardSearchEmpty';
 import { TaskBoardTitle } from './TaskBoardTitle';
 import { TaskDetailOverlay } from './TaskDetailOverlay';
@@ -287,61 +285,47 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
                 onClear={() => setTaskSearch('')}
               />
             ) : (
-            LANES.filter((lane) => visibleLanes.has(lane.id)).map((lane) => (
-              <Lane
-                key={lane.id}
-                lane={lane}
-                tasks={sortedGrouped[lane.id]}
+              <TaskBoardLaneGrid
+                visibleLanes={visibleLanes}
+                sortedGrouped={sortedGrouped}
+                qaTasks={filteredGrouped.qa}
+                tasks={tasks}
                 draggingId={draggingId}
                 selectedIds={selectedIds}
                 onDragStart={setDraggingId}
                 onDragEnd={handleDragEnd}
-                onAdd={() => setAddingTo(lane.id)}
+                onToggleSelect={toggleSelect}
+                onRangeSelect={rangeSelect}
+                onClearSelection={clearSelection}
+                onAdd={setAddingTo}
                 onMove={moveTask}
                 onDropAt={handleDropAt}
                 onMultiMove={moveMulti}
                 onMultiDropAt={handleMultiDropAt}
                 onDelete={deleteTask}
-                sortMode={getLaneSortMode(lane.id)}
-                onToggleSort={() => toggleLaneSort(lane.id)}
                 onRun={runTask}
                 onCancelQueuedRun={cancelQueuedRun}
                 onResume={resumeTaskAction}
                 onMerge={mergeTaskAction}
-                getFocusTerminal={getFocusTerminal}
-                onToggleSelect={toggleSelect}
-                onRangeSelect={rangeSelect}
-                onClearSelection={clearSelection}
-                onRunAll={
-                  searchActive ? undefined : runAllActionByLane[lane.id]
-                }
-                onPush={lane.id === 'qa' && hasGit ? startPush : undefined}
-                pushDisabled={!!activePush}
-                qaPlaywright={lane.id === 'qa' ? qaPlaywright : undefined}
-                onQaRun={
-                  lane.id === 'qa' && qaPlaywright.enabled
-                    ? startQaRun
-                    : undefined
-                }
-                onQaRunAll={
-                  lane.id === 'qa' && qaPlaywright.enabled && !searchActive
-                    ? () => startAllQaRuns(filteredGrouped.qa)
-                    : undefined
-                }
                 onView={setViewing}
-                strip={
-                  mergeRunStripFor(
-                    lane,
-                    sortedGrouped[lane.id],
-                    mergeRun,
-                    recentRunSummary,
-                    tasks,
-                    cancelActiveRun,
-                    dismissRecent,
-                  ) ?? bulkRunStripFor(lane, bulkStrips, dismissBulk)
-                }
+                getFocusTerminal={getFocusTerminal}
+                getLaneSortMode={getLaneSortMode}
+                onToggleSort={toggleLaneSort}
+                searchActive={searchActive}
+                runAllActionByLane={runAllActionByLane}
+                hasGit={hasGit}
+                onPush={startPush}
+                pushDisabled={!!activePush}
+                qaPlaywright={qaPlaywright}
+                onQaRun={startQaRun}
+                onQaRunAll={startAllQaRuns}
+                mergeRun={mergeRun}
+                recentRunSummary={recentRunSummary}
+                onCancelActiveRun={cancelActiveRun}
+                onDismissRecent={dismissRecent}
+                bulkStrips={bulkStrips}
+                onDismissBulk={dismissBulk}
               />
-            ))
             )}
           </div>
           <PostMergeHookRow

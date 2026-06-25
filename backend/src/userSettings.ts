@@ -6,6 +6,7 @@ import path from 'node:path';
 // of the heavy taskCache import chain.
 import { PROJECT_DIR_NAME } from './taskCache/paths.js';
 import { canonicalProjectPath } from './projectPath.js';
+import { runExclusive } from './serializeWrites.js';
 import type { AgentHarness } from './harnesses.js';
 
 export type StartupTerminal = {
@@ -130,12 +131,18 @@ export async function patchUserSettings(
   partial: Partial<UserSettings>,
 ): Promise<UserSettings> {
   const key = canonicalProjectPath(projectPath);
-  const current = await getUserSettings(key);
-  const updated = { ...current, ...partial };
-  const dir = path.join(key, PROJECT_DIR_NAME);
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(settingsFile(key), JSON.stringify(updated, null, 2), 'utf8');
-  return updated;
+  // Serialize per-project so concurrent patches with disjoint fields don't
+  // each read the same base and clobber one another's write (see
+  // serializeWrites.ts). The read happens INSIDE the critical section so each
+  // patch sees the prior write's result.
+  return runExclusive(`userSettings:${key}`, async () => {
+    const current = await getUserSettings(key);
+    const updated = { ...current, ...partial };
+    const dir = path.join(key, PROJECT_DIR_NAME);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(settingsFile(key), JSON.stringify(updated, null, 2), 'utf8');
+    return updated;
+  });
 }
 
 // Whether Claude's auto-memory should be OFF for this project. Default is

@@ -1,13 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { analyzeFile, computeCrossFile, detectRoots } from '../health/index.js';
 import { isConventionalRoot } from '../health/crossFile/roots.js';
 import { resolveImport } from '../health/crossFile/resolveImport.js';
+import { cyclicNodes, tarjan } from '../health/crossFile/cycles.js';
 import type { HealthMetrics } from '../health/index.js';
 import type { ParsedAlias } from '../health/tsconfig.js';
 import type { CacheEntry } from '../health/cache.js';
 import { hydrateWatcherState } from '../health/watcher/cacheHydration.js';
+import { loadOrAnalyzeFile } from '../health/watcher/fileAnalysis.js';
+import type { ProjectWatcher } from '../health/watcher/types.js';
 
 function smellCount(metrics: HealthMetrics, id: string): number {
   return metrics.smells.find((s) => s.id === id)?.count ?? 0;
@@ -384,6 +389,48 @@ test('cross-file analysis resolves aliases, Python relatives, duplicates, and se
   assert.equal(cross.inCycle.has(self), true, 'self import is marked cyclic');
 });
 
+// Regression: the original recursive Tarjan recursed once per edge along the
+// deepest DFS path, so call depth == longest simple import chain. A long linear
+// chain (a -> b -> ... -> zN) thousands of files deep threw `RangeError:
+// Maximum call stack size exceeded`. The iterative form keeps frames on the
+// heap and must complete cleanly on a chain far deeper than the JS call stack.
+test('Tarjan cycle detection scales to a deep import chain without stack overflow', () => {
+  const N = 20000;
+  const nodes: string[] = [];
+  const edges = new Map<string, Set<string>>();
+  for (let i = 0; i < N; i++) {
+    const file = `f${i}.ts`;
+    nodes.push(file);
+    // Each file imports the next; the last imports nothing — a pure acyclic chain.
+    edges.set(file, new Set(i + 1 < N ? [`f${i + 1}.ts`] : []));
+  }
+
+  const sccs = tarjan(nodes, edges);
+  // An acyclic chain has one singleton SCC per node and no cycles.
+  assert.equal(sccs.length, N, 'one SCC per node in an acyclic chain');
+  assert.equal(cyclicNodes(sccs, edges).size, 0, 'no node is in a cycle');
+});
+
+// Same depth, but the chain closes into a ring (cN-1 -> c0) so the whole thing
+// is one strongly-connected component. Exercises the deep descent AND the
+// SCC-collapse that happens on the unwind/return side.
+test('Tarjan detects one giant cycle across a deep chain', () => {
+  const N = 20000;
+  const nodes: string[] = [];
+  const edges = new Map<string, Set<string>>();
+  for (let i = 0; i < N; i++) {
+    const file = `c${i}.ts`;
+    nodes.push(file);
+    edges.set(file, new Set([`c${(i + 1) % N}.ts`]));
+  }
+
+  const sccs = tarjan(nodes, edges);
+  assert.equal(cyclicNodes(sccs, edges).size, N, 'every node in the ring is cyclic');
+  const big = sccs.filter((s) => s.length > 1);
+  assert.equal(big.length, 1, 'the entire ring collapses into a single SCC');
+  assert.equal(big[0].length, N, 'and that SCC spans every node');
+});
+
 test('resolver maps NodeNext .js specifiers to their TS sources', () => {
   const root = path.resolve('resolve-nodenext-fixture');
   const caller = path.join(root, 'caller.ts');
@@ -542,6 +589,56 @@ test('reachability connects NodeNext .js-specifier imports (regression)', () => 
   assert.equal(cross.deadCodeStats?.downgraded, false, 'no resolver-gap guard trip');
 });
 
+// Case-insensitive filesystems (Windows, default macOS) resolve a specifier
+// that differs only in case from an on-disk file — the TS/JS runtime does, so
+// the resolver must too. The behavior is intentionally platform-specific, so the
+// assertions branch on the host platform (the bug only manifests on win32/macOS).
+const CASE_INSENSITIVE_HOST =
+  process.platform === 'win32' || process.platform === 'darwin';
+
+test('resolver matches a case-differing specifier on case-insensitive filesystems', () => {
+  const root = path.resolve('resolve-case-fold-fixture');
+  const caller = path.join(root, 'caller.ts');
+  const helper = path.join(root, 'helper.ts'); // lowercase on disk
+  const present = new Set([caller, helper]);
+
+  // `import './Helper.js'` (wrong case + NodeNext .js twin) → helper.ts.
+  const resolvedExt = resolveImport(caller, './Helper.js', present);
+  // `import './HELPER'` (wrong case, extensionless) → helper.ts.
+  const resolvedBare = resolveImport(caller, './HELPER', present);
+
+  if (CASE_INSENSITIVE_HOST) {
+    assert.equal(resolvedExt, helper, 'case-differing .js specifier folds to helper.ts');
+    assert.equal(resolvedBare, helper, 'case-differing extensionless specifier folds too');
+  } else {
+    assert.equal(resolvedExt, null, 'case-sensitive FS keeps the exact-case miss');
+    assert.equal(resolvedBare, null, 'case-sensitive FS keeps the exact-case miss');
+  }
+});
+
+test('case-only import mismatch is not reported dead on case-insensitive FS (regression)', () => {
+  // The win32/macOS false-dead bug: src/helper.ts on disk, imported as
+  // './Helper.js'. The runtime resolves it, but a verbatim presentFiles.has()
+  // missed, dropping the edge → helper.ts read fanIn 0 → flagged DEAD on a
+  // machine where it's actually live (and an agent might delete it).
+  if (!CASE_INSENSITIVE_HOST) return; // platform-specific; matches the runtime
+  const root = path.resolve('health-case-fold-fixture');
+  const index = path.join(root, 'src', 'index.ts'); // conventional root
+  const helper = path.join(root, 'src', 'helper.ts'); // imported with wrong case
+  const present = new Set([index, helper]);
+  const roots = detectRoots(present, { projectRoot: root });
+
+  const cross = computeCrossFile(
+    [{ filePath: index, imports: ['./Helper.js'] }],
+    present,
+    undefined,
+    { roots },
+  );
+
+  assert.equal(cross.fanIn.get(helper), 1, 'case-differing import records the edge');
+  assert.equal(cross.deadCode.get(helper), 'live', 'helper is reachable, not dead');
+});
+
 test('conventional root detection covers entries, configs, tests, and decls', () => {
   for (const f of [
     'src/index.ts',
@@ -565,9 +662,45 @@ test('conventional root detection covers entries, configs, tests, and decls', ()
     'src/components/Button.tsx',
     'lib/helper.py',
     'src/observer.ts', // not a -server/-worker suffix
+    // scripts/ or tools/ nested under src/ is application source, NOT
+    // project-level tooling — treating it as a root hides real dead code there.
+    'frontend/src/tools/formatDate.ts',
+    'src/scripts/analytics.ts',
+    'src/tools/legacyExporter.ts',
+    'packages/app/src/tools/codegen.ts',
   ]) {
     assert.equal(isConventionalRoot(f), false, `${f} should not be a root`);
   }
+});
+
+test('dead code under src/tools/ is reported dead (root heuristic is src-aware)', () => {
+  // Regression: the scripts|tools root heuristic used to match the segment
+  // ANYWHERE, so a genuinely-unused src/tools file was always classed a live
+  // root and could never surface as dead. It must now only auto-root a
+  // project-level tooling dir, not one nested under src/.
+  const root = path.resolve('health-src-tools-fixture');
+  const entry = path.join(root, 'src', 'index.ts'); // conventional root
+  const tooling = path.join(root, 'tools', 'codegen.ts'); // top-level tooling → root
+  const dead = path.join(root, 'src', 'tools', 'legacyExporter.ts'); // unused app src
+  const present = new Set([entry, tooling, dead]);
+
+  const roots = detectRoots(present, { projectRoot: root });
+  assert.equal(roots.has(entry), true, 'index.ts is a root');
+  assert.equal(roots.has(tooling), true, 'top-level tools/ dir is still a root');
+  assert.equal(roots.has(dead), false, 'src/tools/ file is NOT auto-rooted');
+
+  const cross = computeCrossFile(
+    [
+      { filePath: entry, imports: [] },
+      { filePath: tooling, imports: [] },
+      { filePath: dead, imports: [] },
+    ],
+    present,
+    undefined,
+    { roots },
+  );
+
+  assert.equal(cross.deadCode.get(dead), 'dead', 'unused src/tools file → dead');
 });
 
 test('watcher cache hydration keeps imports and metrics mirrors aligned', () => {
@@ -659,6 +792,68 @@ function f(a: any, b: boolean, c: boolean, d: boolean) {
   const r = await analyzeFile(src, '.ts', src.split('\n').length);
   assert.equal(smellCount(r.metrics, 'deep_optional_chain'), 1);
   assert.equal(smellCount(r.metrics, 'deep_ternary'), 1);
+});
+
+// A (mtime,size)-keyed cache can collide on a same-size in-place edit whose
+// mtimeMs resolves to the cached value (whole-second mtime quantization +
+// chokidar awaitWriteFinish). A 'change' event is proof of a write, so it must
+// re-analyze rather than serve the stale cached metrics/imports — otherwise the
+// D/H/Z overlays and dead-code signal lag the file's real content.
+test('change event re-analyzes despite a matching (mtime,size) cache entry', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-health-stale-'));
+  try {
+    const filePath = path.join(dir, 'edited.ts');
+    // The real, current content imports './real'. A same-size edit (the failure
+    // mode) leaves stat.size unchanged, so the cache key still matches.
+    await fs.writeFile(filePath, "import { a } from './real';\nexport const x = a;\n", 'utf8');
+    const stat = await fs.stat(filePath);
+
+    // Seed the cache with STALE metrics/imports under the file's *current*
+    // (mtime,size) — exactly the collision the bug exploited.
+    const stale = new Map<string, CacheEntry>();
+    const cache = {
+      get(p: string, mtimeMs: number, size: number) {
+        const e = stale.get(p);
+        if (!e || e.mtimeMs !== mtimeMs || e.size !== size) return undefined;
+        return { metrics: e.metrics, imports: e.imports };
+      },
+      set(p: string, mtimeMs: number, size: number, metrics: HealthMetrics, imports: string[]) {
+        stale.set(p, { mtimeMs, size, metrics, imports });
+      },
+      save() { /* no-op in test */ },
+    };
+    const seed = () => {
+      stale.set(filePath, {
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        metrics: minimalMetrics({ loc: 999 }),
+        imports: ['./stale'],
+      });
+    };
+    const proj = { cache } as unknown as ProjectWatcher;
+
+    // 'add'/initial path (no forceReanalyze) trusts the matching cache entry —
+    // confirms the (mtime,size) key genuinely matches here.
+    seed();
+    const fromCache = await loadOrAnalyzeFile(proj, filePath, '.ts');
+    assert.deepEqual(fromCache?.imports, ['./stale'], 'add path serves the cache hit');
+
+    // 'change' path must bypass the matching entry and re-read the real content.
+    seed();
+    const reanalyzed = await loadOrAnalyzeFile(proj, filePath, '.ts', { forceReanalyze: true });
+    assert.ok(
+      reanalyzed?.imports.includes('./real'),
+      `expected fresh imports to include './real', got ${JSON.stringify(reanalyzed?.imports)}`,
+    );
+    assert.ok(
+      !reanalyzed?.imports.includes('./stale'),
+      'stale cached imports must not survive a change event',
+    );
+    // The re-analysis refreshes the cache entry for subsequent scans.
+    assert.deepEqual(stale.get(filePath)?.imports, ['./real'], 'cache entry refreshed');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('aggregate threshold smells are preserved', async () => {
