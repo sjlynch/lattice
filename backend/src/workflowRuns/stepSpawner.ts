@@ -33,7 +33,7 @@ import { pruneOldWorkflowRuns, writeScratchReadme } from './scratchDirectory.js'
 import { buildWorkflowStepCommand } from './commandBuilder.js';
 import { enqueueWorkflowStepSession, workflowStepAgentId } from './sessionSpawner.js';
 
-// Re-export the public surface so existing importers (routes/workflows.ts,
+// Re-export the public surface so existing importers (routes/workflows/runs.ts,
 // the workflowScratchPrune test) keep resolving these from stepSpawner.
 export { pruneOldWorkflowRuns, writeScratchReadme } from './scratchDirectory.js';
 export { workflowStepAgentId } from './sessionSpawner.js';

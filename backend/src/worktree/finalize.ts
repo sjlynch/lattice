@@ -7,66 +7,27 @@ import { updateTaskCrashSafe, type Task } from '../tasks.js';
 import { fastForwardMain, mergeWorktreeInRepo } from './merge.js';
 import { buildStashResolveCommand } from './commands.js';
 import { writeStashResolveInstructions } from './instructions.js';
-import { cleanupWorktreeForTask } from './cleanup.js';
 import { assertGitDirIntact } from './state.js';
+import { runSerializedFinalize, scheduleWorktreeCleanup } from './finalizeQueues.js';
 
 export type FinalizeOutcome =
   | { ok: true }
   | { ok: false; error: string }
   | { ok: false; stashConflict: string[]; resolveCommand: string; cwd: string };
 
-// Per-project promise queue. fastForwardMain modifies main's HEAD and
-// must not run concurrently with another finalize for the same project —
-// the second caller's branch would have been merged against a stale HEAD
-// and would no longer be a fast-forward ancestor of main.
-const finalizeQueues = new Map<string, Promise<void>>();
-
-// Per-project queue for background worktree cleanup. Cleanup runs sequentially
-// per project (so two `git worktree remove` calls don't race on .git/index.lock)
-// but is decoupled from finalize itself: a hung cleanup on Windows (where a
-// process holding the worktree dir open could deadlock `git worktree remove`)
-// must not stall the run worker, since the task is already qa-on-disk.
-const cleanupQueues = new Map<string, Promise<void>>();
-
-function scheduleWorktreeCleanup(
-  projectPath: string,
-  worktreePath: string,
-  branchName: string,
-  taskId: string,
-): void {
-  const prev = cleanupQueues.get(projectPath) ?? Promise.resolve();
-  const next = prev.then(async () => {
-    console.log(`[finalize] cleaning up worktree ${worktreePath}...`);
-    try {
-      await cleanupWorktreeForTask(projectPath, worktreePath, branchName);
-      console.log(`[finalize] worktree cleanup done for ${taskId}`);
-    } catch (err) {
-      console.error(
-        `[finalize] background cleanup failed for ${taskId} (task already qa, leaves orphaned worktree dir):`,
-        err,
-      );
-    }
-  });
-  cleanupQueues.set(projectPath, next);
-  // Detach so an unhandled rejection in this chain never crashes the process —
-  // the .then handler above already swallows errors but belt-and-braces.
-  next.catch(() => {});
-}
-
 export async function finalizeMergedTask(task: Task, backendOrigin: string): Promise<FinalizeOutcome> {
   if (!task.branch || !task.worktreePath) {
     return { ok: false, error: 'task missing branch/worktree info' };
   }
+  // Pin these as locals so their narrowing survives into the queued closure
+  // below (property narrowing on `task` would otherwise be lost there).
+  const branch = task.branch;
+  const worktreePath = task.worktreePath;
 
-  const prev = finalizeQueues.get(task.projectPath) ?? Promise.resolve();
-  let release!: () => void;
-  const slot = new Promise<void>((r) => { release = r; });
-  finalizeQueues.set(task.projectPath, slot);
-  // Swallow errors from previous finalizes so one failure doesn't jam the queue.
-  await prev.catch(() => {});
-
-  console.log(`[finalize] ${task.id} — branch=${task.branch}`);
-  try {
+  // Serialize per project: fastForwardMain moves main's HEAD and must not run
+  // concurrently with another finalize for the same project (see finalizeQueues).
+  return runSerializedFinalize(task.projectPath, async () => {
+    console.log(`[finalize] ${task.id} — branch=${branch}`);
     // Bail before any git work if .git went missing — same rationale as in
     // mergeWorktreeInRepo. Without this, an FF on a deleted repo can
     // accidentally operate on a *different* repo's gitdir found by walking
@@ -79,8 +40,8 @@ export async function finalizeMergedTask(task: Task, backendOrigin: string): Pro
     // FF main if it's behind. fastForwardMain is a no-op when main is
     // already at the branch tip (git just says "Already up to date") and
     // still handles the auto-stash + pop dance correctly.
-    console.log(`[finalize] fast-forwarding main to ${task.branch}...`);
-    let ff = await fastForwardMain(task.projectPath, task.branch);
+    console.log(`[finalize] fast-forwarding main to ${branch}...`);
+    let ff = await fastForwardMain(task.projectPath, branch);
     console.log(`[finalize] fastForwardMain → ${ff.status}${ff.status === 'error' ? `: ${ff.message}` : ff.status === 'conflict' ? ` (${ff.conflictedFiles?.join(', ')})` : ''}`);
     // If FF failed and we have a worktree, a concurrent finalize may have
     // advanced main past where this branch was last synced (two resolver
@@ -88,11 +49,11 @@ export async function finalizeMergedTask(task: Task, backendOrigin: string): Pro
     // then one finalize runs first and advances main, leaving the second
     // branch stale). Re-sync inside the queue so we see the latest HEAD and
     // retry the fast-forward exactly once.
-    if (ff.status === 'error' && task.worktreePath) {
+    if (ff.status === 'error') {
       console.log(`[finalize] ${task.id}: FF failed — re-syncing with current main and retrying`);
-      const reSync = await mergeWorktreeInRepo(task.projectPath, task.branch, task.worktreePath, task.id, backendOrigin, task.title);
+      const reSync = await mergeWorktreeInRepo(task.projectPath, branch, worktreePath, task.id, backendOrigin, task.title);
       if (reSync.status === 'clean') {
-        ff = await fastForwardMain(task.projectPath, task.branch);
+        ff = await fastForwardMain(task.projectPath, branch);
         console.log(`[finalize] retry FF → ${ff.status}${ff.status === 'error' ? `: ${ff.message}` : ''}`);
       } else if (reSync.status === 'conflict') {
         console.log(`[finalize] ${task.id}: re-sync conflict — ${reSync.conflictedFiles.join(', ')}`);
@@ -144,12 +105,10 @@ export async function finalizeMergedTask(task: Task, backendOrigin: string): Pro
     // the "100% Task N of N · k merged" stale-progress symptom).
     scheduleWorktreeCleanup(
       task.projectPath,
-      task.worktreePath,
-      task.branch,
+      worktreePath,
+      branch,
       task.id,
     );
     return { ok: true };
-  } finally {
-    release();
-  }
+  });
 }
