@@ -141,56 +141,6 @@ export function effectiveMetricsIgnoredExts(
   return [...seen];
 }
 
-export type ProjectEnvKind =
-  | 'node'
-  | 'python'
-  | 'rust'
-  | 'ruby'
-  | 'php'
-  | 'go'
-  | 'maven'
-  | 'gradle'
-  | 'dotnet';
-
-export type ProjectEnvInfo = {
-  id: ProjectEnvKind;
-  label: string;
-  heavyDir: string;
-  manager: string;
-  installCmd: string;
-  // The note Lattice would inject by default for this env.
-  defaultNote: string;
-  // What actually gets injected (user override if set, else defaultNote;
-  // '' means the user suppressed it).
-  effectiveNote: string;
-};
-
-export type ProjectEnvResponse = {
-  environments: ProjectEnvInfo[];
-};
-
-// One token (`{{name}}`) a template can interpolate, with a human-readable
-// note shown in the editor's legend.
-export type InstructionTemplateToken = {
-  name: string;
-  description: string;
-};
-
-// An editable instruction template Lattice writes for a spawned agent. Backs
-// the settings dialog's "Agent prompts" tab. `defaultTemplate` is Lattice's
-// built-in; `currentTemplate` is the project's override-or-default. Edits are
-// saved as `UserSettings.instructionTemplateOverrides[id]`. See backend
-// instructionTemplates/.
-export type InstructionTemplate = {
-  id: string;
-  title: string;
-  filename: string;
-  description: string;
-  defaultTemplate: string;
-  currentTemplate: string;
-  tokens: InstructionTemplateToken[];
-};
-
 export type { HarnessAvailability };
 
 // --- Pi model discovery (GET /api/pi-models). See backend piModels.ts. ---

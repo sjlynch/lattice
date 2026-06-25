@@ -66,27 +66,19 @@ export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubsc
     }
   }
 
-  private findWorkflowInLoadedProjects(id: string): WorkflowLookup | null {
-    for (const [project, list] of this.cacheEntries()) {
-      const idx = list.findIndex((w) => w.id === id);
-      if (idx !== -1) return { project, list, idx };
-    }
-    return null;
-  }
-
   // Resolve a workflow by id regardless of whether its project is currently
-  // loaded: try the in-memory cache first, then load every known project and
-  // try again. Mirrors the task store's withTaskAcrossProjects.
-  private async withWorkflowAcrossProjects<T>(
+  // loaded — the shared cache-miss fallback lives in ProjectStateManager;
+  // this supplies the workflow id accessor and the workflow load strategy.
+  private withWorkflowAcrossProjects<T>(
     id: string,
     fn: (lookup: WorkflowLookup) => T | Promise<T>,
   ): Promise<T | null> {
-    const cached = this.findWorkflowInLoadedProjects(id);
-    if (cached) return fn(cached);
-    await this.loadAllKnown();
-    const loaded = this.findWorkflowInLoadedProjects(id);
-    if (loaded) return fn(loaded);
-    return null;
+    return this.withItemAcrossProjects<Workflow, T>(
+      id,
+      (w) => w.id,
+      () => this.loadAllKnown(),
+      ({ project, list, idx }) => fn({ project, list, idx }),
+    );
   }
 
   public async getWorkflow(id: string): Promise<Workflow | null> {
