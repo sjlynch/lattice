@@ -46,6 +46,15 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
   const [editor, setEditor] = useState<EditorState>(emptyEditor);
   const [pickingTemplate, setPickingTemplate] = useState(false);
 
+  // Render-tracked snapshot of the live editor. An awaited save needs to read
+  // the *current* editor (to detect a mid-save edit) without depending on a
+  // `setEditor` updater running synchronously — React batches the updater in a
+  // promise continuation, so a flag mutated inside it can still be stale when
+  // the code after `setEditor` inspects it. Writing the ref during render keeps
+  // it in sync with the committed editor before any later save resolves.
+  const editorRef = useRef(editor);
+  editorRef.current = editor;
+
   // If the loaded workflow is edited from elsewhere (or deleted), refresh the
   // editor — but never clobber an in-progress edit.
   useEffect(() => {
@@ -167,12 +176,17 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
         return w;
       } else {
         const w = await apiCreateWorkflow(activeFolder, name, steps, variables);
-        let superseded = false;
-        setEditor((cur) => {
-          const next = nextEditorAfterSave(atSaveStart, cur, w);
-          superseded = next.superseded;
-          return next.editor;
-        });
+        // Read the live editor from the ref — not from a flag mutated inside the
+        // setEditor updater, which may not have run yet at this point (React
+        // batches it in this promise continuation). Deriving `superseded` from
+        // the ref keeps the editor we commit and the clear decision in sync with
+        // the actual current state.
+        const { editor: next, superseded } = nextEditorAfterSave(
+          atSaveStart,
+          editorRef.current,
+          w,
+        );
+        setEditor(next);
         // The never-saved draft is now persisted server-side; drop the stash —
         // unless a mid-save edit superseded it, in which case that edit is still
         // a live unsaved draft and the debounced persist must keep stashing it.

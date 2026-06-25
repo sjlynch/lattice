@@ -64,6 +64,13 @@ export function useWorkflowRuns(activeFolder: string) {
   }, []);
 
   useEffect(() => {
+    // Recent runs are project-scoped. The effect re-runs on every folder
+    // change (deps below), so wipe the previous project's recent runs here —
+    // unlike `activeRuns` (replaced wholesale by the new project's `hello`),
+    // nothing else clears them, and the cleanup below cancels the old
+    // project's pending dismiss timers. Without this, project A's
+    // finished/failed runs would linger forever in project B's UI.
+    setRecentRuns({});
     if (!activeFolder) {
       setActiveRuns({});
       setControlProgress({});
