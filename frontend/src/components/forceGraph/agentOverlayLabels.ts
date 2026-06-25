@@ -36,6 +36,12 @@ function buildAgentLabel(text: string, color: string, labelSize: number): THREE.
 // changed since last call (and the sprite wasn't just rebuilt to a default
 // position) — once a host settles its label stops moving, so this is a no-op
 // every idle frame otherwise (Part D).
+//
+// Rebuilds the sprite when the text OR `labelSize` changed: the sprite's scale
+// is baked in at build time (`makeFloatingLabelSprite`), so a Settings → Graph
+// 'Label size' drag must rebuild even when the displayed file is unchanged —
+// otherwise an idle/thinking agent (the common case, where the last file
+// persists) keeps its old scale until it next touches a different file.
 function applyFloatingLabel(
   group: THREE.Group,
   host: LabelHost,
@@ -47,11 +53,12 @@ function applyFloatingLabel(
   offYFactor: number,
 ): void {
   let rebuilt = false;
-  if (!host.label || host.labelText !== text) {
+  if (!host.label || host.labelText !== text || host.labelSizeAtBuild !== labelSize) {
     if (host.label) group.remove(host.label);
     const label = buildAgentLabel(text, host.color, labelSize);
     host.label = label;
     host.labelText = text;
+    host.labelSizeAtBuild = labelSize;
     group.add(label);
     rebuilt = true;
   }
@@ -81,6 +88,7 @@ function removeFloatingLabel(group: THREE.Group, host: LabelHost): void {
     host.label = undefined;
   }
   host.labelText = undefined;
+  host.labelSizeAtBuild = undefined;
 }
 
 // Build/refresh the label sprite next to an agent node, showing its current
