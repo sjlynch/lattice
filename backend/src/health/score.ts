@@ -12,6 +12,7 @@
 //     for missing data.
 
 import { TINY_FILE_LOC_THRESHOLD } from './types.js';
+import { clamp01 } from './scoreMath.js';
 import {
   SCORE_MODEL_COMPONENTS,
   scoreComponentLoss,
@@ -29,11 +30,4 @@ export function computeScore(m: ScoreInput): number {
 
   const score = (1 - clamp01(lost)) * 100;
   return Math.max(0, Math.min(100, Math.round(score)));
-}
-
-function clamp01(x: number): number {
-  if (!Number.isFinite(x)) return 0;
-  if (x < 0) return 0;
-  if (x > 1) return 1;
-  return x;
 }

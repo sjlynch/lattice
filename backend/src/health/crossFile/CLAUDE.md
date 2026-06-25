@@ -19,7 +19,23 @@ the watcher and the full scan both drive `computeCrossFile`.
   the roots = "what the live program pulls in".
 - `deadCode.ts` — `classifyDeadCode` + the `DeadCodeStats` type + the guard
   constants. Tags each file `entry`/`live`/`dead`/`uncertain`.
-- `resolveImport.ts` — extension/index/alias/Python-relative import resolution.
+- `resolveImport.ts` / `resolveImport/` — extension/index/alias/Python-relative
+  import resolution behind the `resolveImport.ts` re-export shim. Focused pure
+  modules under `resolveImport/`:
+  - `resolveImport/index.ts` — the `resolveImport()` orchestrator (Python-relative
+    normalization → tsconfig aliases → external-package bail → relative
+    filesystem candidates) plus the re-export barrel for the public surface.
+  - `resolveImport/caseFold.ts` — case-insensitive filesystem support
+    (`CASE_INSENSITIVE_FS`, the Set-identity-memoized case-folded index, and
+    `lookupPresent`, the exact-then-case-folded membership test).
+  - `resolveImport/extensionCandidates.ts` — `RESOLVE_EXTS`/`INDEX_FILES`, the
+    NodeNext `.js`/`.mjs`/`.cjs`/`.jsx` → TS-twin remap table, and
+    `tryAllExtensions` (exact → JS-to-TS remap → extensionless append → directory
+    index).
+  - `resolveImport/pythonImports.ts` — `normalizePythonRelativeImport` (`.foo` /
+    `..pkg.sub` → fs-relative spec).
+  - `resolveImport/aliasResolution.ts` — `resolveByAlias` (tsconfig path aliases,
+    baseUrl-catch-all-is-bare-only rule) + the shared `isRelativeSpec` predicate.
 - `roots.ts` — pure, synchronous, fs-free entry-point heuristics +
   `RESOLVABLE_IMPORT_EXTS`: `isConventionalRoot` (filename/path shapes),
   `globToRegExp`/`compileEntryGlobs`/`matchesEntryGlob` (the user
