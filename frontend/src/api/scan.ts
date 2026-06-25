@@ -11,6 +11,13 @@ import type {
 
 export async function fetchDefaultRoot(): Promise<string> {
   const r = await fetch('/api/default-root');
+  // Guard r.ok before r.json(): on a boot-time race the dev proxy can return a
+  // non-2xx with an HTML/text body (e.g. a 502 from Vite before :5184 is
+  // listening), and r.json() would throw a bare SyntaxError. Throwing a typed,
+  // status-bearing error here lets the boot retry path (resolveDefaultRoot)
+  // recognise it as a transient failure and back off instead of stranding the
+  // app on an empty 'no project' shell.
+  if (!r.ok) throw new Error(`default-root failed: ${r.status}`);
   const j = await r.json();
   return j.path as string;
 }
