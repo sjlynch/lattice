@@ -1,6 +1,7 @@
 import { ChevronDown, Plus } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { PiMenuEntry } from '../../api';
+import { useDismissOnOutside } from '../../hooks/useDismissOnOutside';
 
 export type ShellKind = 'claude' | 'claude-yolo' | 'pi' | 'codex' | 'terminal';
 
@@ -24,23 +25,7 @@ export function NewTerminalDropdown({ defaultKind, piMenu, onNewTerminal }: Prop
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    function onPointerDown(e: PointerEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setMenuOpen(false);
-    }
-    document.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [menuOpen]);
+  useDismissOnOutside(menuOpen, menuRef, () => setMenuOpen(false));
 
   const choose = useCallback(
     (kind: ShellKind, piModel?: string) => {

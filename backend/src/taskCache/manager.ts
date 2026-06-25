@@ -4,7 +4,7 @@ import { ProjectStateManager } from '../projectStateManager.js';
 import { TaskMigrations } from './migrations.js';
 import { projectTasksFile } from './paths.js';
 import { ProjectsIndex } from './projectsIndex.js';
-import { applyTaskUpdate, findTaskInProjects, type TaskLookup } from './taskUpdate.js';
+import { applyTaskUpdate, type TaskLookup } from './taskUpdate.js';
 import type { Task, TaskStatus, TaskSubscriber, TaskUpdates } from './types.js';
 
 export type TaskCacheManagerOptions = {
@@ -63,23 +63,21 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
     return this.cacheValues();
   }
 
-  private findTaskInLoadedProjects(id: string): TaskLookup | null {
-    return findTaskInProjects(this.cacheEntries(), id);
-  }
-
-  private async withTaskAcrossProjects<T>(
+  // Resolve a task by id even if its project isn't loaded yet — the shared
+  // cache-miss fallback lives in ProjectStateManager (covering Stop-hook
+  // callbacks for tasks whose project hasn't been opened this session). This
+  // supplies the task id accessor and the migration-triggering load strategy.
+  private withTaskAcrossProjects<T>(
     id: string,
     fn: (lookup: TaskLookup) => T | Promise<T>,
   ): Promise<T | null> {
-    const cached = this.findTaskInLoadedProjects(id);
-    if (cached) return fn(cached);
-
-    // Load every known project and try again. Covers Stop-hook callbacks for
-    // tasks whose project hasn't been opened yet this session.
-    await this.loadAllKnown();
-    const loaded = this.findTaskInLoadedProjects(id);
-    if (loaded) return fn(loaded);
-    return null;
+    return this.withItemAcrossProjects<Task, T>(
+      id,
+      (t) => t.id,
+      () => this.loadAllKnown(),
+      ({ project, list, idx, item }) =>
+        fn({ project, tasks: list, idx, task: item }),
+    );
   }
 
   // Write a task update to disk BEFORE touching the in-memory cache, then

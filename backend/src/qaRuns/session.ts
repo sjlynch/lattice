@@ -1,15 +1,11 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { seedClaudeTrust } from '../claudeTrust.js';
-import { queuedCreateSession } from '../queuedCreateSession.js';
+import { startHomeScratchAgentSession } from '../homeScratch/session.js';
 import { renderQaInstructions } from './instructions.js';
 import { resolveInstructionTemplate } from '../instructionTemplates.js';
-import { assertSafeQaSessionPath, createQaSessionId } from './paths.js';
+import { qaPaths } from './paths.js';
 import { recordQaRun } from './registry.js';
 import { installQaStopHook, qaAgentId } from './stopHook.js';
 import { cleanupQaSession } from './cleanup.js';
 import { registerAgentSession } from '../agentSessions.js';
-import type { QaSession } from './types.js';
 
 export type StartQaSessionArgs = {
   projectPath: string;
@@ -19,38 +15,24 @@ export type StartQaSessionArgs = {
   backendOrigin: string;
 };
 
-// Materialize the per-session scratch dir: writes the QA brief and installs
-// the Stop hook so Claude calls /api/qa-runs/:id/done on stop. Mirrors
-// pushRuns/session.ts (home-scoped scratch, cwd = scratch, agent cds into the
-// project).
-async function setupQaSession(args: StartQaSessionArgs): Promise<QaSession> {
-  const id = createQaSessionId();
-  const cwd = assertSafeQaSessionPath(args.projectPath, id);
-  await fs.mkdir(cwd, { recursive: true });
+const QA_INSTRUCTIONS_FILE = 'QA_INSTRUCTIONS.md';
+const QA_COMMAND =
+  'claude --dangerously-skip-permissions "Please read QA_INSTRUCTIONS.md in this directory and run the end-to-end test it describes using the Playwright MCP browser tools."';
 
-  // Pre-accept the workspace-trust dialog for this brand-new dir; otherwise
-  // Claude prompts on first launch and blocks the unattended QA flow.
-  await seedClaudeTrust(cwd);
-
-  await installQaStopHook(cwd, id, args.backendOrigin, args.projectPath);
-
-  const instructionsFile = path.join(cwd, 'QA_INSTRUCTIONS.md');
+async function renderQa(
+  args: StartQaSessionArgs,
+  qaRunId: string,
+): Promise<string> {
   const template = await resolveInstructionTemplate(args.projectPath, 'qa');
-  await fs.writeFile(
-    instructionsFile,
-    renderQaInstructions({
-      projectPath: args.projectPath,
-      qaRunId: id,
-      taskId: args.taskId,
-      taskTitle: args.taskTitle,
-      taskDescription: args.taskDescription,
-      backendOrigin: args.backendOrigin,
-      template,
-    }),
-    'utf8',
-  );
-
-  return { id, cwd, instructionsFile };
+  return renderQaInstructions({
+    projectPath: args.projectPath,
+    qaRunId,
+    taskId: args.taskId,
+    taskTitle: args.taskTitle,
+    taskDescription: args.taskDescription,
+    backendOrigin: args.backendOrigin,
+    template,
+  });
 }
 
 export type StartedQaSession = {
@@ -61,54 +43,56 @@ export type StartedQaSession = {
   serverId?: string;
 };
 
-// Full QA e2e-session spawn: materialize the session dir, pre-spawn the Claude
-// pty (with `projectPath` so the QA-lane Playwright MCP is injected), and
+// Full QA e2e-session spawn: materialize the session dir (home-scoped scratch,
+// cwd = scratch, agent cds into the project), pre-spawn the Claude pty (with
+// `projectPath` + `isQaRun` so the QA-lane Playwright MCP is injected), and
 // record the run. Throws on terminal spawn failure (after cleaning up scratch).
+// Mirrors pushRuns/session.ts via the shared `startHomeScratchAgentSession`
+// builder.
 export async function startQaSession(
   args: StartQaSessionArgs,
 ): Promise<StartedQaSession> {
-  const session = await setupQaSession(args);
-  const command = `claude --dangerously-skip-permissions "Please read QA_INSTRUCTIONS.md in this directory and run the end-to-end test it describes using the Playwright MCP browser tools."`;
-  // `interactive` band — user-initiated, infrequent; may use PRIORITY_RESERVE
-  // headroom so a QA run is not stuck behind a full batch lane.
-  const sess = await queuedCreateSession({
-    kind: 'qa-run',
-    priority: 'interactive',
-    dedupeKey: `qa:${session.id}`,
+  const started = await startHomeScratchAgentSession({
+    paths: qaPaths,
+    projectPath: args.projectPath,
+    instructionsFileName: QA_INSTRUCTIONS_FILE,
+    installHooks: ({ cwd, id }) =>
+      installQaStopHook(cwd, id, args.backendOrigin, args.projectPath),
+    renderInstructions: ({ id }) => renderQa(args, id),
+    buildCommand: () => QA_COMMAND,
+    // `interactive` band — user-initiated, infrequent; may use PRIORITY_RESERVE
+    // headroom so a QA run is not stuck behind a full batch lane.
+    queueKind: 'qa-run',
+    queuePriority: 'interactive',
+    dedupeKeyPrefix: 'qa',
     // `isQaRun` opts this session into the QA-scoped Playwright (`qaPlaywright`)
     // at the injection chokepoint — Playwright + the QA lane's headed/headless
     // choice. Ordinary task spawns don't set it, so the QA toggle never leaks
     // into them; they only get Playwright via the global `mcpOverrides` toggle.
-    opts: {
-      cwd: session.cwd,
-      initialCommand: command,
-      projectPath: args.projectPath,
-      isQaRun: true,
+    isQaRun: true,
+    onSpawned: ({ id, cwd, serverId }) => {
+      recordQaRun({
+        id,
+        taskId: args.taskId,
+        projectPath: args.projectPath,
+        cwd,
+        status: 'running',
+        createdAt: Date.now(),
+      });
+      // Presence: show an orange Claude node for this non-worktree session.
+      registerAgentSession({
+        agentId: qaAgentId(id),
+        projectPath: args.projectPath,
+        label: 'qa',
+      });
     },
-  });
-  if ('error' in sess) {
-    await cleanupQaSession(args.projectPath, session.id);
-    throw new Error(sess.error);
-  }
-  recordQaRun({
-    id: session.id,
-    taskId: args.taskId,
-    projectPath: args.projectPath,
-    cwd: session.cwd,
-    status: 'running',
-    createdAt: Date.now(),
-  });
-  // Presence: show an orange Claude node for this non-worktree session.
-  registerAgentSession({
-    agentId: qaAgentId(session.id),
-    projectPath: args.projectPath,
-    label: 'qa',
+    cleanup: cleanupQaSession,
   });
   return {
-    id: session.id,
+    id: started.id,
     taskId: args.taskId,
-    cwd: session.cwd,
-    command,
-    serverId: sess.id,
+    cwd: started.cwd,
+    command: started.command,
+    serverId: started.serverId,
   };
 }

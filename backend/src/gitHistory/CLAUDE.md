@@ -1,6 +1,6 @@
 # backend/src/gitHistory
 
-Backs the frontend timeline scrubber (`GET /api/git-history`, served by `routes/health.ts`). **One** `git log --name-status -M` round-trip per request returns every commit *and* its changed-file list, so the scrubber can derive each drag-range's change map purely client-side without re-hitting the backend. `../gitHistory.ts` is the public shim (`getGitHistory` + the types).
+Backs the frontend timeline scrubber (`GET /api/git-history`, served by `routes/health/gitInfo.ts`). **One** `git log --name-status -M` round-trip per request returns every commit *and* its changed-file list, so the scrubber can derive each drag-range's change map purely client-side without re-hitting the backend. `../gitHistory.ts` is the public shim (`getGitHistory` + the types).
 
 ## Contract
 

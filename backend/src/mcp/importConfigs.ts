@@ -83,7 +83,13 @@ export async function scanImportableServers(projectPath?: string): Promise<Impor
   const existingCustom = new Set((global.mcpCustomServers ?? []).map((s) => s.id));
 
   const servers: ImportedServerInfo[] = normalized.map((n) => {
-    const secretVars: ImportedSecretVar[] = (n.entry.secretEnvVars ?? []).map((envVar) => ({
+    // Both stdio env secrets and HTTP header secrets need surfacing so the import
+    // UI shows which keys were captured. A given server is stdio xor http, so the
+    // two name lists never overlap; dedupe defensively all the same.
+    const secretNames = [
+      ...new Set([...(n.entry.secretEnvVars ?? []), ...(n.entry.secretHeaders ?? [])]),
+    ];
+    const secretVars: ImportedSecretVar[] = secretNames.map((envVar) => ({
       envVar,
       stored: envVar in n.secrets,
     }));

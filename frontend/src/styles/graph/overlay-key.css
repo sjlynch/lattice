@@ -1,0 +1,71 @@
+/* Always-visible overlay-view key (top-left): one toggle chip per hold-key
+   graph overlay (Health/H, LOC/Z, Dead/D, Worktree/W, Labels/Alt). Clicking a
+   chip PINS that view so it persists without holding its key; the chip also
+   documents the shortcut. Gated on loaded data in ForceGraphView so it never
+   shares the corner with the scan spinner. */
+.graph-overlay-key {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 7;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 62%;
+  /* Let canvas drags through the row's empty gaps / wrapped whitespace; each
+     chip re-enables pointer events on itself (mirrors .graph-bottom-left). */
+  pointer-events: none;
+}
+.graph-overlay-chip {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px 4px 9px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: rgba(15, 17, 21, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.graph-overlay-chip:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+/* Currently showing — key held or pinned. */
+.graph-overlay-chip.is-active {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+/* Latched on via click — persists without holding the key. */
+.graph-overlay-chip.is-pinned {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.graph-overlay-chip-label { font-weight: 500; }
+.graph-overlay-chip-key {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  color: var(--text-tertiary);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+}
+.graph-overlay-chip.is-active .graph-overlay-chip-key {
+  color: var(--text-secondary);
+}
+.graph-overlay-chip.is-pinned .graph-overlay-chip-key {
+  color: #fff;
+  background: rgba(0, 0, 0, 0.22);
+  border-color: rgba(255, 255, 255, 0.25);
+}
