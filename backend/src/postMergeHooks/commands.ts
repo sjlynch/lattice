@@ -34,6 +34,8 @@ export function buildPostMergeHookCommand(args: {
   return `codex "Please read ${fileName} in this directory and complete the post-merge hook task it describes. You MUST curl the completion URL from the brief before exiting — Lattice has no Codex Stop-hook backstop and the merge run will hang otherwise."`;
 }
 
+export const POST_MERGE_HOOK_FILENAME = 'POST_MERGE_HOOK.md';
+
 export function instructionsFilePath(scratchDir: string): string {
-  return path.join(scratchDir, 'POST_MERGE_HOOK.md');
+  return path.join(scratchDir, POST_MERGE_HOOK_FILENAME);
 }
