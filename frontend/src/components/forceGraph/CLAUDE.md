@@ -263,9 +263,15 @@ asking for fixes/reviews:
   sibling-child toggle on the node root (the halo pattern):
   `setNodeChangeRing(root, kind|null, baseSize)` adds/removes/recolors the
   ring (added=green, modified=yellow), `deletedSprite` renders a ghost
-  (deleted-file) node from scratch (grey disc + red ring), and
-  `setNodeChangeRingsVisible` is the `W`-overlay momentary hide. Materials are
-  cached in `changeRingMaterials.ts` (4 GPU resources total).
+  (deleted-file) node from scratch (grey disc + red ring). The `W`-overlay
+  suppression is **two parts**: `setNodeChangeRingsVisible(root, visible)` hides
+  the rings already mounted when W activates, and the module-level
+  `setChangeRingsSuppressed(bool)` flag makes every ring minted *afterwards*
+  (full rebuild via `buildNodeObject`, or scrub-delta add via
+  `applyChangeRingDelta` — both funnel through the single `buildChangeRingSprite`
+  chokepoint) start hidden, so refreshes/scrubs can't surface a fresh visible
+  ring and defeat the suppression. Materials are cached in
+  `changeRingMaterials.ts` (4 GPU resources total).
 - `changeRingSync.ts` — `applyChangeRingDelta(graph, prevMap, nextMap,
   settings, scanRoot)` is the scrub-driven in-place toggle (mirrors
   `selectionHaloSync`): it diffs the prev/next change maps and, for only the
