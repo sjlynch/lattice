@@ -10,6 +10,7 @@ import { DIR_STYLE, getStyleFor, type ExtStyle, type Shape } from '../../extensi
 import type { DeadCodeStatus, GraphNode } from '../../api';
 import type { GraphSettings } from './graphSettings';
 import { materialFor, spriteFor } from './sprites';
+import { NODE_RENDER_ORDER } from './renderOrders';
 
 // Tri-state palette. `entry` and `uncertain` are deliberately neutral so the
 // view never confidently flags an entry point or a non-code asset as dead.
@@ -55,6 +56,6 @@ export function spriteForDeadCode(
     materialFor(deadCodeStyle(node, DEAD_CODE_COLORS[status])),
   );
   sprite.scale.set(settings.fileNodeSize, settings.fileNodeSize, 1);
-  sprite.renderOrder = 12;
+  sprite.renderOrder = NODE_RENDER_ORDER;
   return sprite;
 }
