@@ -26,6 +26,7 @@ export class ProjectStateManager<
 > {
   protected readonly cache = new Map<string, TState>();
   protected readonly loaded = new Map<string, boolean>();
+  protected readonly loadPromises = new Map<string, Promise<string>>();
   protected readonly persistTimers = new Map<string, NodeJS.Timeout>();
   protected readonly listeners = new Set<TSubscriber>();
 
@@ -56,7 +57,24 @@ export class ProjectStateManager<
   protected async loadIfNeeded(projectPath: string): Promise<string> {
     const key = this.canonicalize(projectPath);
     if (this.loaded.get(key)) return key;
-    this.loaded.set(key, true);
+    // Cache the in-flight load PROMISE, not a boolean. A second caller
+    // arriving during the `await fs.readFile` below must wait for the same
+    // load and see the populated cache — flipping `loaded` true *before* the
+    // read resolved let a concurrent reader fall through to an empty cache
+    // (transient empty board / task-not-found). `loaded` is only set once
+    // the read has actually filled the cache.
+    const inFlight = this.loadPromises.get(key);
+    if (inFlight) return inFlight;
+    const promise = this.performLoad(key);
+    this.loadPromises.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      this.loadPromises.delete(key);
+    }
+  }
+
+  private async performLoad(key: string): Promise<string> {
     try {
       const raw = await fs.readFile(this.fileForProject(key), 'utf8');
       const parsed = this.deserialize(JSON.parse(raw), key);
@@ -64,6 +82,7 @@ export class ProjectStateManager<
     } catch {
       this.cache.set(key, this.defaultState(key));
     }
+    this.loaded.set(key, true);
     return key;
   }
 

@@ -91,12 +91,25 @@ export function useTaskList(
       (event) => {
         if (!cancelled) onTaskSpawned?.(event);
       },
+      undefined,
+      undefined,
+      // A deferred run/resume failed (worktree setup threw, terminal-server
+      // wedged, …). The HTTP /run|/resume already returned {accepted:true}, so
+      // this WS event is the only way the user learns the run never started —
+      // surface it on the shared toast.
+      (event) => {
+        if (cancelled) return;
+        const verb = event.kind === 'resume' ? 'resume' : 'start';
+        showError(
+          `Failed to ${verb} "${event.title || 'task'}": ${event.reason}`,
+        );
+      },
     );
     return () => {
       cancelled = true;
       unsub();
     };
-  }, [activeFolder, onTaskSpawned]);
+  }, [activeFolder, onTaskSpawned, showError]);
 
   return { tasks, error, setError, showError };
 }
