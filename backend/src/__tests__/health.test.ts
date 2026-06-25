@@ -731,6 +731,71 @@ function f(value: any) {
   assert.equal(smellCount(r.metrics, 'non_null_assertion'), 1);
 });
 
+// Regression: detectTsJsSmells ran unconditionally for every grammar, so the
+// JS/TS-only smells (loose_equality, var_keyword, type_assertion) mis-fired on
+// C-family languages. C# `a == b` is a binary_expression with a `==` token, and
+// its `var x` local + `x as T` cast are variable_declaration / as_expression
+// nodes — none of which are "smells" in C#, where `==` is the only equality
+// operator. Those must now produce zero JS/TS smells while JS still flags them.
+test('JS/TS-only smells do not fire on C# / Go files', async () => {
+  const csharp = `
+public class Foo {
+  public bool Check(object a, object b) {
+    var x = a == b;
+    var y = a as string;
+    return x;
+  }
+}
+`;
+  const cs = await analyzeFile(csharp, '.cs', csharp.split('\n').length);
+  assert.equal(cs.metrics.language, 'csharp');
+  assert.equal(
+    smellCount(cs.metrics, 'loose_equality'),
+    0,
+    '`==` in C# is not loose equality',
+  );
+  assert.equal(
+    smellCount(cs.metrics, 'var_keyword'),
+    0,
+    'C# `var` local is not the JS `var` smell',
+  );
+  assert.equal(
+    smellCount(cs.metrics, 'type_assertion'),
+    0,
+    'C# `as` cast is not a TS type assertion',
+  );
+
+  const go = `package main
+
+func Check(a int, b int) bool {
+  if a == b {
+    return true
+  }
+  return false
+}
+`;
+  const goR = await analyzeFile(go, '.go', go.split('\n').length);
+  assert.equal(goR.metrics.language, 'go');
+  assert.equal(
+    smellCount(goR.metrics, 'loose_equality'),
+    0,
+    '`==` in Go is not loose equality',
+  );
+
+  // JS still flags `==` as loose equality.
+  const js = `
+function check(a, b) {
+  return a == b;
+}
+`;
+  const jsR = await analyzeFile(js, '.js', js.split('\n').length);
+  assert.equal(
+    smellCount(jsR.metrics, 'loose_equality'),
+    1,
+    'JS `==` still flagged as loose equality',
+  );
+});
+
 test('TS required and optional boolean parameters are counted', async () => {
   const src = `
 function flags(required: boolean, optional?: boolean, name?: string) {
