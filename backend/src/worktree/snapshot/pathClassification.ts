@@ -1,17 +1,44 @@
 import { isPathInsideRepo } from '../paths.js';
 import type { DirtyPaths, SafeDirtyPaths } from './capture.js';
 
-// Parse `git status --porcelain=v1 -uall` output. We treat anything that
-// isn't '? ?' (untracked) as 'modified' for snapshot purposes — staged,
-// unstaged, deleted, type-changed all need preserving.
+// Parse `git status --porcelain=v1 -z --untracked-files=all` output. We
+// treat anything that isn't '??' (untracked) as 'modified' for snapshot
+// purposes — staged, unstaged, deleted, type-changed all need preserving.
+//
+// We use the `-z` (machine-parse) variant on purpose. In the default
+// (newline) form git mangles two kinds of path so the snapshot copy then
+// fails ENOENT and silently omits the dirty path — violating the
+// "snapshot every dirty path" invariant:
+//   * a rename is printed as `R  old -> new` (one record), so slice(3)
+//     yields the literal string `old -> new`; and
+//   * a path with "unusual" bytes (non-ASCII, quotes, control chars) is
+//     C-quoted with surrounding double-quotes + octal escapes, e.g.
+//     `"\305\233x.txt"`.
+// The `-z` form fixes both: records are NUL-terminated (not newline),
+// pathnames are emitted verbatim (no quoting/escaping), and a rename/copy
+// drops the ` -> ` arrow — emitting the destination path first, then a
+// SECOND NUL-separated field with the source path: `R  <new>\0<old>`.
+//
+// We snapshot the destination (new) path: it's the file that exists on
+// disk and carries the user's content. The source path was removed by the
+// rename, so there's nothing to copy for it — we consume and discard that
+// trailing field so it isn't mis-read as its own record.
 export function parseStatus(out: string): DirtyPaths {
   const modified: string[] = [];
   const untracked: string[] = [];
-  for (const line of out.split(/\r?\n/)) {
-    if (!line) continue;
-    const x = line[0];
-    const y = line[1];
-    const file = line.slice(3);
+  const fields = out.split('\0');
+  for (let i = 0; i < fields.length; i++) {
+    const field = fields[i];
+    // The trailing NUL leaves an empty final element; a valid record is at
+    // least "XY <1-char path>" (length 4).
+    if (!field || field.length < 4) continue;
+    const x = field[0];
+    const y = field[1];
+    const file = field.slice(3); // skip the 2-char XY code + its space
+    // Rename/copy: the next NUL-separated field is the source path. Skip it.
+    if (x === 'R' || y === 'R' || x === 'C' || y === 'C') {
+      i += 1;
+    }
     if (x === '?' && y === '?') {
       untracked.push(file);
     } else if (x !== ' ' || y !== ' ') {
