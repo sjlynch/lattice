@@ -3,6 +3,7 @@ import type { RefObject } from 'react';
 import type { Terminal } from '@xterm/xterm';
 import { useSyncedRef } from '../../hooks/useSyncedRef';
 import type { TerminalStatus } from '../../terminal/terminalTypes';
+import { buildTerminalWsQuery } from './connectionParams';
 
 // Reconnect cap for a SERVERLESS terminal that has never attached: without a
 // session id to re-subscribe to, each fresh connect can spawn a brand-new pty,
@@ -48,6 +49,13 @@ export function useTerminalConnection({
   // because the parent re-rendered.
   const onServerIdRef = useSyncedRef(onServerId);
   const onStatusRef = useSyncedRef(onStatus);
+  // The serverId is read through a ref too. A serverless terminal CAPTURES its
+  // id from the first `attached` frame (onServerId → parent state → new prop);
+  // reading it via a ref keeps the live WS (and the single Terminal) intact on
+  // capture instead of tearing the effect down and reopening a second WS. The
+  // ref still feeds the latest id into a later reconnect so it re-attaches to
+  // the existing pty by id rather than spawning a fresh one.
+  const serverIdRef = useSyncedRef(serverId);
 
   useEffect(() => {
     const term = termRef.current!;
@@ -78,22 +86,21 @@ export function useTerminalConnection({
 
     function connect() {
       if (cancelled || terminated) return;
-      const params = new URLSearchParams({
+      // Read the latest serverId from the ref: if we captured one via an earlier
+      // `attached` frame, a reconnect re-attaches to that EXISTING pty by id
+      // (replay) instead of re-running initialCommand and spawning a fresh one.
+      const query = buildTerminalWsQuery({
         cwd,
-        cols: String(term.cols),
-        rows: String(term.rows),
+        cols: term.cols,
+        rows: term.rows,
+        serverId: serverIdRef.current,
+        initialCommand,
+        projectPath,
       });
-      if (serverId) params.set('id', serverId);
-      // Only forward initialCommand when we're creating a fresh session.
-      // For a known serverId the backend already ran the initial command
-      // when it pre-spawned the pty; passing it again would be a no-op
-      // (terminal.ts ignores it on replay) but it's needless noise.
-      if (!serverId && initialCommand) params.set('initialCommand', initialCommand);
-      if (projectPath) params.set('projectPath', projectPath);
 
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
       ws = new WebSocket(
-        `${proto}://${window.location.host}/ws/terminal?${params.toString()}`,
+        `${proto}://${window.location.host}/ws/terminal?${query}`,
       );
 
       ws.onopen = () => {
@@ -112,7 +119,7 @@ export function useTerminalConnection({
             term.write(msg.data);
           } else if (msg.type === 'attached') {
             attachedOnce = true;
-            if (msg.id && msg.id !== serverId) {
+            if (msg.id && msg.id !== serverIdRef.current) {
               onServerIdRef.current?.(msg.id);
             }
             if (msg.replayed === false) {
@@ -156,7 +163,7 @@ export function useTerminalConnection({
         // a manual page refresh. The genuine stop is `terminated`, set on a
         // clean `exit` or a `session_lost` — that is what bounds the deleted-
         // worktree runaway, not an attempt count.
-        const canReattach = Boolean(serverId) || attachedOnce;
+        const canReattach = Boolean(serverIdRef.current) || attachedOnce;
         if (!canReattach && attempt >= MAX_RECONNECT_ATTEMPTS) {
           // Serverless terminal that never attached: a reconnect here can spawn
           // a fresh pty, so it must stay bounded.
@@ -227,6 +234,14 @@ export function useTerminalConnection({
         /* ignore */
       }
     };
+    // Depends only on [cwd, termRef]. Both `serverId` and `onServerId` are
+    // intentionally excluded and read through refs (`serverIdRef`/`onServerIdRef`):
+    // a serverless terminal captures its id from the first `attached` frame, and
+    // adding serverId here would tear down the live WS — and, since the same
+    // capture also recreates the Terminal — recreate the xterm front-end the
+    // instant it connects (clear/flash, lost focus, a dropped keystroke, and a
+    // churned WebGL context). Keep new dependencies out of this array unless a
+    // change genuinely warrants reconnecting.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, serverId, termRef]);
+  }, [cwd, termRef]);
 }
