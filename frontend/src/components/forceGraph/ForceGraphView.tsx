@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { Settings as SettingsIcon } from 'lucide-react';
 import type { ScanResult } from '../../api';
@@ -26,9 +26,10 @@ import { useWorktreeHighlight } from './hooks/useWorktreeHighlight';
 import { useHoverNodeDebounce } from './hooks/useHoverNodeDebounce';
 import { useCanvasDragTracking } from './hooks/useCanvasDragTracking';
 import { useRefMirror } from './hooks/useRefMirror';
-import { getIdleController } from './idleController';
-import { clearLabelsAndRefresh } from './hooks/refresh';
-import { applySelectionHaloDelta } from './selectionHaloSync';
+import { useSelectionHaloSync } from './hooks/useSelectionHaloSync';
+import { useMetricsIgnoreRefresh } from './hooks/useMetricsIgnoreRefresh';
+import { useGraphViewKeyboard } from './hooks/useGraphViewKeyboard';
+import { useOverlayTooltipDismiss } from './hooks/useOverlayTooltipDismiss';
 
 type Props = {
   data: ScanResult | null;
@@ -265,70 +266,31 @@ export function ForceGraphView({
     closeContextMenu,
   });
 
-  // Targeted halo updates — toggle the halo Sprite on only the affected
-  // node ids instead of calling `graph.refresh()`, which re-runs
-  // `nodeThreeObject` for every node in the scene. On a 1000-file
-  // project this turns a 50–200 ms commit per click into <1 ms.
-  const prevSelectedRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    const graph = graphRef.current;
-    if (!graph) {
-      prevSelectedRef.current = selected;
-      return;
-    }
-    applySelectionHaloDelta(graph, prevSelectedRef.current, selected, settings);
-    prevSelectedRef.current = selected;
-    // Drive a few render frames so the new halo paints — the render
-    // loop is otherwise paused while the engine is settled.
-    getIdleController(graph)?.wakeForRefresh();
-    // The halo only reads node sizes (via baseSizeFor). Narrow the deps so
-    // dragging an unrelated slider (charge, link distance, label spread, …)
-    // doesn't re-run the O(N) delta and wake the loop for an unchanged
-    // selection.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, settings.fileNodeSize, settings.dirNodeSize]);
+  // Targeted halo updates — toggle the halo Sprite on only the affected node
+  // ids instead of a full `graph.refresh()` (see the hook). Runtime scene sync.
+  useSelectionHaloSync(graphRef, selected, settings);
 
-  // Same when the LOC/health ignore list changes — re-render so the new
-  // filter takes effect without touching the d3 simulation. Skip the mount
-  // run: the initial sprite build already reads the ignore set (threaded as
-  // `metricsIgnoredExtsRef` into useForceGraphInitialization), so a refresh
-  // here on first mount is a wasted full sprite rebuild + loop wake — often
-  // before any data has even loaded.
-  const ignoreListMountedRef = useRef(false);
-  useEffect(() => {
-    if (!ignoreListMountedRef.current) {
-      ignoreListMountedRef.current = true;
-      return;
-    }
-    clearLabelsAndRefresh(graphRef.current);
-  }, [metricsIgnoredExtsSet]);
+  // Re-render node sprites when the LOC/health ignore list changes so the new
+  // filter takes effect without touching the d3 simulation (skips the mount
+  // run; see the hook).
+  useMetricsIgnoreRefresh(graphRef, metricsIgnoredExtsSet);
 
-  // Clear selection / close context menu on Escape. Bound ONCE — the
-  // branch state (contextMenu / modal / searchQuery / selection) is read
-  // through refs so the listener isn't removed/re-added on every selection
-  // change or search keystroke (it previously re-bound per keystroke).
-  const contextMenuRef = useRefMirror(contextMenu);
-  const modalActionRef = useRefMirror(modalAction);
-  const searchQueryRef = useRefMirror(searchQuery);
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== 'Escape') return;
-      if (contextMenuRef.current) setContextMenu(null);
-      else if (modalActionRef.current) {
-        // Modal handles its own Escape close
-      } else if (searchQueryRef.current) {
-        // Clearing the query also clears its driven selection (useGraphSearch)
-        // and the match-navigation cursor.
-        setSearchQuery('');
-        clearCurrentMatch();
-      } else if (selectedRef.current.size > 0) {
-        setSelected(new Set());
-      }
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Escape-key behavior (close context menu → clear search → clear selection),
+  // bound once and reading its branch state through refs.
+  useGraphViewKeyboard({
+    contextMenu,
+    setContextMenu,
+    modalOpen: modalAction !== null,
+    searchQuery,
+    setSearchQuery,
+    clearCurrentMatch,
+    selectedRef,
+    setSelected,
+  });
+
+  // Dismiss a stuck hover tooltip when the LOC/health overlay view ends, so it
+  // doesn't cling to the cursor after Z/H is released (see the hook).
+  useOverlayTooltipDismiss(locMode, healthMode, cancelPendingHoverClear);
 
   // ----- Phase 3: render data + JSX overlays -----
   // Keyed off `structuralData` (stable across metric-only saves) + `hiddenExts`,

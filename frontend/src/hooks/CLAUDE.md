@@ -78,6 +78,17 @@ shared `userSettings.json` fetch:
 
 ## Other shared hooks
 
+- `useHarnessAvailability()` — live `{claude, pi, codex}` map (via
+  `subscribeHarnesses`) + a `harnessAvailLoaded` flag, shared by every harness
+  dropdown (task board / workflow overrides + steps / post-merge hook). Replaces
+  the per-feature copies; each feature keeps its own selection/persistence.
+- `usePiModelMenu()` — the curated "Pi — X" menu, read from the shared
+  `../piModelMenuStore` (`piMenuStoreCore.ts` = pure `createPiMenuStore(fetcher)`
+  core + the `getPiModels`-backed singleton). One cached list across all
+  dropdowns; `notifyPiModelsChanged()` (called from `saveSettings` after a Pi
+  providers/menu save) refetches and re-renders every mounted dropdown without a
+  page reload. Built on `useSyncExternalStore` (the store's `getMenu` keeps a
+  stable reference between loads).
 - `useFocusTrap(open)` — shared modal/dialog focus management. Returns a ref for
   the dialog container; moves focus inside on open (respecting a child's
   `autoFocus`), wraps Tab/Shift+Tab within it, and restores focus to the opener
