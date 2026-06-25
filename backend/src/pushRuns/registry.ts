@@ -40,8 +40,19 @@ export function markPushRunDone(id: string): boolean {
 
 // Forget the run after the frontend has acknowledged completion. Keeps the
 // in-memory map from growing across long sessions.
+//
+// IMPORTANT: never drop a run that is still `running`. The frontend status
+// poller calls this (via DELETE /api/push-runs/:id) whenever it sees the run
+// finished — and a *transient* `GET /api/push-runs/:id` hiccup is
+// indistinguishable from "the run is gone". Honoring that for a live run would
+// delete it from the registry before its Stop hook posts `/done`, so the later
+// `markPushRunDone` finds no run (returns false, emits no 'done' event) and any
+// 'done'-event waiter (the workflow Push control step) hangs. A live run is
+// only ever forgotten after its Stop hook has marked it `done`; an unknown id
+// is a harmless no-op. Mirrors forgetQaRun.
 export function forgetPushRun(id: string): void {
   const existing = runs.get(id);
+  if (existing && existing.status !== 'done') return;
   if (!runs.delete(id)) return;
   notify({ type: 'forgotten', id, projectPath: existing?.projectPath ?? '' });
 }

@@ -4,11 +4,47 @@ import {
   fetchPushRunStatus,
   forgetPushRun as apiForgetPushRun,
   startPushRun,
+  type PushRunStatus,
 } from '../../../api';
 import type { TerminalSpec } from '../../../TerminalsContext';
 
 type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
 type CloseTerminal = (id: string) => void;
+
+// The resolved value of one status poll: a real status object, `null` for a
+// genuine 404 (the run is truly gone), or `'error'` when the fetch itself threw
+// (network blip, a 5xx, or the `tsc -w` backend restart that happens mid-run) —
+// the caller's `.catch` maps a thrown error to this sentinel.
+export type PushPollResult = { status: PushRunStatus } | 'error' | null;
+
+type PushPollActions = {
+  closeTerminal: () => void;
+  forgetRun: () => void;
+  clearActive: () => void;
+};
+
+// Act on one resolved status poll. A push is torn down — close the local
+// terminal, DELETE the run on the backend, clear local tracking — ONLY when it
+// is genuinely finished: a real 404 (`null`, already forgotten server-side) or
+// status === 'done'. A *transient* fetch failure resolves to `'error'` and is
+// ignored here, so the poller simply retries on the next tick.
+//
+// Collapsing a transient failure into "run gone" (the pre-fix bug, which let a
+// thrown fetch become `null` and fall through to teardown) would force-close
+// the push pty mid `git commit`/`git push` AND issue a DELETE that forgets a
+// still-live run on the backend — so its later Stop-hook `/done` would find
+// nothing and emit no 'done' event. Mirrors the hardened useQaRuns poller.
+export function applyPushPoll(
+  result: PushPollResult,
+  { closeTerminal, forgetRun, clearActive }: PushPollActions,
+): void {
+  if (result === 'error') return;
+  if (!result || result.status === 'done') {
+    closeTerminal();
+    forgetRun();
+    clearActive();
+  }
+}
 
 // Owns the QA-lane Push button: probes for `.git`, kicks off a push run,
 // polls its status, and tears down the local terminal once the backend's
@@ -27,6 +63,18 @@ export function usePushRun(
     { runId: string; terminalId: string } | null
   >(null);
   const [hasGit, setHasGit] = useState(false);
+
+  // Drop the old project's push tracking when the active folder changes. The
+  // poll effect's deps ([activePush, closeTerminal]) don't change on a folder
+  // switch, so without this its 2 s interval would keep polling project A's
+  // runId and — because the Push button is disabled and `startPush`
+  // early-returns while `activePush` is non-null — leave project B unable to
+  // push for the entire duration of A's run. The old terminal is project-
+  // scoped, so no extra cleanup is needed. Mirrors useQaRuns / useMergeRunSync /
+  // usePostMergeHook.
+  useEffect(() => {
+    setActivePush(null);
+  }, [activeFolder]);
 
   // Probe for `.git` so the QA-lane Push button is hidden in non-git
   // projects (where the action is meaningless). Re-runs on folder switch.
@@ -51,16 +99,20 @@ export function usePushRun(
     let cancelled = false;
     let handle: number | null = null;
     const tick = async () => {
-      const status = await fetchPushRunStatus(activePush.runId).catch(() => null);
+      // A thrown fetch (network blip / 5xx / mid-run backend restart) resolves
+      // to the `'error'` sentinel; only a real 404 returns `null`. applyPushPoll
+      // ignores the former (retry next tick) and tears down only on a genuine
+      // 404 or status === 'done'. See its comment for why conflating the two
+      // strands a live push.
+      const result = await fetchPushRunStatus(activePush.runId).catch(
+        () => 'error' as const,
+      );
       if (cancelled) return;
-      // status === null means the run has been forgotten on the server. The
-      // only way that happens is if the user manually closed the terminal,
-      // which already triggered a DELETE; either way, we're done tracking it.
-      if (!status || status.status === 'done') {
-        closeTerminal(activePush.terminalId);
-        apiForgetPushRun(activePush.runId).catch(() => {});
-        setActivePush(null);
-      }
+      applyPushPoll(result, {
+        closeTerminal: () => closeTerminal(activePush.terminalId),
+        forgetRun: () => { apiForgetPushRun(activePush.runId).catch(() => {}); },
+        clearActive: () => setActivePush(null),
+      });
     };
     const startPolling = () => {
       if (handle === null) handle = window.setInterval(() => { void tick(); }, 2000);
