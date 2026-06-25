@@ -1,11 +1,11 @@
 import { useCallback, useMemo, useState } from 'react';
-import { GitMerge, Play, Plus, Square, Trash2, UploadCloud } from 'lucide-react';
-import { DEFAULT_PROMPTS } from './defaultPrompts';
-import { promptsWithProjectVariants } from './projectPromptVariants';
+import { Plus } from 'lucide-react';
 import type { WorkflowManager } from './hooks/useWorkflowManager';
 import { StepRow } from './StepRow';
 import { stepRunStatus } from './stepRunStatus';
+import { WorkflowEditorActions } from './WorkflowEditorActions';
 import { WorkflowEditorEmptyState } from './WorkflowEditorEmptyState';
+import { WorkflowQuickAddBar } from './WorkflowQuickAddBar';
 import { WorkflowRunStrip } from './WorkflowRunStrip';
 import { WorkflowVariablesPanel } from './WorkflowVariablesPanel';
 import { useConfirm } from '../shared/ConfirmDialog';
@@ -28,13 +28,6 @@ export function WorkflowEditorPanel({ manager }: Props) {
     customizingSteps,
     actions,
   } = manager;
-
-  // projectProfile is stable across typing, so build the project-tailored
-  // quick-add prompts once per profile rather than on every keystroke.
-  const projectPrompts = useMemo(
-    () => promptsWithProjectVariants(DEFAULT_PROMPTS, projectProfile),
-    [projectProfile],
-  );
 
   // Names of variables defined on this workflow, so the step-prompt highlight
   // can distinguish a real `{{var}}` reference from a typo'd / undefined one.
@@ -80,71 +73,11 @@ export function WorkflowEditorPanel({ manager }: Props) {
     }
   }, [confirm, deleteCurrent, deletingWorkflow]);
 
-  // When the save/queue/run buttons are disabled, name the unblock condition
-  // so a greyed button never reads as broken. Save needs a step; queue/run
-  // additionally need an open project folder.
-  const noSteps = editor.steps.length === 0;
-  const saveBlockedReason = noSteps ? 'Add a step first' : undefined;
-  const runBlockedReason = noSteps
-    ? 'Add a step first'
-    : !activeFolder
-      ? 'Open a project folder first'
-      : undefined;
-
   // The run whose progress the editor rows should mirror: the active run if
   // one is in flight, else a recently-finished one still lingering in view (so
   // a failed step stays marked red for the ~5min the errored run lingers).
   // Mirrors the precedence WorkflowRunStrip uses (active over recent).
   const statusRun = runForEditor ?? recentForEditor ?? null;
-
-  const quickAddPrompts = (
-    <div className="workflows-default-prompts">
-      <span className="workflows-default-prompts-label">Quick add</span>
-      <button
-        type="button"
-        className="workflows-prompt-chip workflows-prompt-chip-control"
-        onClick={() => actions.addControlStep('start')}
-        title="Moves every Open task to In Progress and runs each one. Skips silently if Open is empty."
-      >
-        <Play size={11} />
-        Start
-      </button>
-      <button
-        type="button"
-        className="workflows-prompt-chip workflows-prompt-chip-control"
-        onClick={() => actions.addControlStep('merge')}
-        title="Waits for In Progress to drain, then merges every Ready-to-Merge task to QA."
-      >
-        <GitMerge size={11} />
-        Merge
-      </button>
-      <button
-        type="button"
-        className="workflows-prompt-chip workflows-prompt-chip-control"
-        onClick={() => actions.addControlStep('push')}
-        title="Waits for Ready-to-Merge to drain, then pushes to remote (same as the Task Board cloud icon)."
-      >
-        <UploadCloud size={11} />
-        Push
-      </button>
-      <span className="workflows-default-prompts-separator" aria-hidden />
-      {projectPrompts.map((prompt) => {
-        const Icon = prompt.icon;
-        return (
-          <button
-            key={prompt.id}
-            type="button"
-            className="workflows-prompt-chip"
-            onClick={() => actions.addDefaultPromptStep(prompt)}
-            title={prompt.prompt}
-          >
-            <Icon size={11} />
-            {prompt.label}
-          </button>
-        );
-      })}
-    </div>
-  );
 
   return (
     <section className="workflows-editor">
@@ -206,62 +139,25 @@ export function WorkflowEditorPanel({ manager }: Props) {
               </button>
             </div>
           </div>
-          {quickAddPrompts}
-          <div className="workflows-editor-actions">
-            {editor.workflowId && (
-              <button
-                className="btn-ghost"
-                onClick={() => void handleDeleteWorkflow()}
-                disabled={deletingWorkflow}
-                style={{ color: 'var(--danger)' }}
-              >
-                <Trash2 size={12} /> {deletingWorkflow ? 'Deleting…' : 'Delete'}
-              </button>
-            )}
-            <span style={{ flex: 1 }} />
-            {editor.dirty && (
-              <button className="btn-ghost" onClick={actions.discardEdits}>
-                Discard
-              </button>
-            )}
-            <button
-              className="btn-ghost"
-              onClick={() => void actions.save()}
-              disabled={noSteps}
-              title={saveBlockedReason}
-              aria-label={saveBlockedReason}
-            >
-              {editor.workflowId ? 'Save' : 'Create'}
-            </button>
-            <button
-              className="btn-ghost"
-              onClick={() => void actions.enqueueEditorWorkflow()}
-              disabled={noSteps || !activeFolder}
-              title={runBlockedReason}
-              aria-label={runBlockedReason}
-            >
-              <Plus size={11} /> Queue
-            </button>
-            {runForEditor ? (
-              <button
-                className="btn-ghost"
-                onClick={() => void actions.stopRun(runForEditor.id)}
-                style={{ color: 'var(--danger)' }}
-              >
-                <Square size={11} fill="currentColor" /> Stop
-              </button>
-            ) : (
-              <button
-                className="btn-primary"
-                onClick={() => void actions.runEditorWorkflow()}
-                disabled={noSteps || !activeFolder}
-                title={runBlockedReason}
-                aria-label={runBlockedReason}
-              >
-                <Play size={11} fill="currentColor" /> Run
-              </button>
-            )}
-          </div>
+          <WorkflowQuickAddBar
+            projectProfile={projectProfile}
+            onAddControlStep={actions.addControlStep}
+            onAddDefaultPromptStep={actions.addDefaultPromptStep}
+          />
+          <WorkflowEditorActions
+            workflowId={editor.workflowId}
+            dirty={editor.dirty}
+            hasSteps={editor.steps.length > 0}
+            hasActiveFolder={Boolean(activeFolder)}
+            runId={runForEditor?.id ?? null}
+            deleting={deletingWorkflow}
+            onDelete={handleDeleteWorkflow}
+            onDiscard={actions.discardEdits}
+            onSave={actions.save}
+            onQueue={actions.enqueueEditorWorkflow}
+            onRun={actions.runEditorWorkflow}
+            onStop={actions.stopRun}
+          />
         </>
       )}
     </section>

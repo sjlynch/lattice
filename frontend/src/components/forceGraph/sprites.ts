@@ -20,6 +20,7 @@ import {
 import type { GraphNode } from '../../api';
 import type { GraphSettings } from './graphSettings';
 import { buildShapeTexture } from './spriteTextures';
+import { NODE_RENDER_ORDER } from './renderOrders';
 
 export { TEX_SIZE } from './spriteShapes';
 export { buildShapeTexture } from './spriteTextures';
@@ -56,8 +57,9 @@ export function spriteFor(node: GraphNode, settings: GraphSettings): THREE.Sprit
   const size =
     node.kind === 'dir' ? settings.dirNodeSize : settings.fileNodeSize;
   sprite.scale.set(size, size, 1);
-  // three-forcegraph sets renderOrder=10 on link objects, so sprites must
-  // be higher to render on top. Rings use 11, the node body uses 12.
-  sprite.renderOrder = 12;
+  // three-forcegraph sets renderOrder=10 on link objects (LINK_RENDER_ORDER), so
+  // sprites must be higher to render on top. Rings use RING_RENDER_ORDER (11),
+  // the node body uses NODE_RENDER_ORDER (12).
+  sprite.renderOrder = NODE_RENDER_ORDER;
   return sprite;
 }

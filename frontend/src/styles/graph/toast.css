@@ -1,0 +1,22 @@
+/* Floating toast confirming a task was created from the graph. */
+.graph-toast {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: rgba(15, 17, 21, 0.92);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  padding: 8px 16px;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: graph-toast-fade 0.18s ease;
+}
+@keyframes graph-toast-fade {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}

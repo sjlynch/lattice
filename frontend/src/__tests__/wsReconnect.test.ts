@@ -7,42 +7,26 @@ import {
   WS_RECONNECT_CAP_MS,
   WS_STABLE_MS,
 } from '../api/ws.ts';
+import {
+  FakeWebSocket,
+  installFakeWebSocket,
+  installManualTimers,
+  installWindow,
+  type ManualTimers,
+  type ScheduledTimer,
+} from './domDoubles.ts';
 
 // --- Fakes -----------------------------------------------------------------
 //
 // subscribeWs reaches for three globals — `WebSocket`, `window`, and the timer
-// functions. We stub all three so the reconnect lifecycle can be driven by hand
-// and the scheduled backoff delays inspected. A manual timer queue (rather than
-// node:test mock timers) keeps the scheduled delay values directly assertable.
+// functions. The shared doubles stub all three so the reconnect lifecycle can
+// be driven by hand and the scheduled backoff delays inspected. A manual timer
+// queue (rather than node:test mock timers) keeps the scheduled delay values
+// directly assertable.
 
-type Scheduled = { id: number; cb: () => void; delay: number };
-
-let scheduled: Scheduled[] = [];
-let nextTimerId = 1;
-let realSetTimeout: typeof setTimeout;
-let realClearTimeout: typeof clearTimeout;
-
-class FakeWebSocket {
-  static instances: FakeWebSocket[] = [];
-  onopen: (() => void) | null = null;
-  onmessage: ((ev: { data: string }) => void) | null = null;
-  onerror: (() => void) | null = null;
-  onclose: (() => void) | null = null;
-  closed = false;
-  constructor(public url: string) {
-    FakeWebSocket.instances.push(this);
-  }
-  close() {
-    this.closed = true;
-  }
-  // Test-side drivers for the server lifecycle.
-  serverAccept() {
-    this.onopen?.();
-  }
-  serverDrop() {
-    this.onclose?.();
-  }
-}
+let timers: ManualTimers;
+let restoreWs: () => void;
+let restoreWindow: () => void;
 
 /** The socket created by the most recent connect(). */
 function latestSocket(): FakeWebSocket {
@@ -51,54 +35,28 @@ function latestSocket(): FakeWebSocket {
   return ws;
 }
 
-/** Fire every currently-pending timer (snapshotting first so callbacks that
- *  schedule new timers don't run within the same drain). */
-function fireAll() {
-  const due = scheduled;
-  scheduled = [];
-  for (const s of due) s.cb();
-}
-
 /** The single timer pending while we wait to reconnect. */
-function pendingReconnect(): Scheduled {
+function pendingReconnect(): ScheduledTimer {
   assert.equal(
-    scheduled.length,
+    timers.scheduled.length,
     1,
-    `expected exactly one pending reconnect timer, saw ${scheduled.length}`,
+    `expected exactly one pending reconnect timer, saw ${timers.scheduled.length}`,
   );
-  return scheduled[0];
+  return timers.scheduled[0];
 }
 
 beforeEach(() => {
-  scheduled = [];
-  nextTimerId = 1;
-  FakeWebSocket.instances = [];
-  realSetTimeout = globalThis.setTimeout;
-  realClearTimeout = globalThis.clearTimeout;
-  (globalThis as unknown as { setTimeout: unknown }).setTimeout = ((
-    cb: () => void,
-    delay: number,
-  ) => {
-    const handle: Scheduled = { id: nextTimerId++, cb, delay };
-    scheduled.push(handle);
-    return handle;
-  }) as unknown as typeof setTimeout;
-  (globalThis as unknown as { clearTimeout: unknown }).clearTimeout = ((
-    handle: Scheduled,
-  ) => {
-    scheduled = scheduled.filter((s) => s !== handle);
-  }) as unknown as typeof clearTimeout;
-  (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeWebSocket;
-  (globalThis as unknown as { window: unknown }).window = {
+  timers = installManualTimers();
+  restoreWs = installFakeWebSocket();
+  restoreWindow = installWindow({
     location: { protocol: 'http:', host: 'localhost:5184' },
-  };
+  });
 });
 
 afterEach(() => {
-  globalThis.setTimeout = realSetTimeout;
-  globalThis.clearTimeout = realClearTimeout;
-  delete (globalThis as unknown as { WebSocket?: unknown }).WebSocket;
-  delete (globalThis as unknown as { window?: unknown }).window;
+  restoreWindow();
+  restoreWs();
+  timers.restore();
 });
 
 // --- wsReconnectDelay (pure curve) -----------------------------------------
@@ -126,7 +84,7 @@ test('accept-then-immediate-close grows the reconnect backoff (no tight loop)', 
     ws.serverAccept(); // arms the WS_STABLE_MS stability timer
     ws.serverDrop(); // clears it, then schedules the reconnect
     delays.push(pendingReconnect().delay);
-    fireAll(); // reconnect -> connect() creates the next socket
+    timers.fireAll(); // reconnect -> connect() creates the next socket
   }
 
   // Strictly the documented exponential curve — not a flat 250ms loop, which
@@ -145,7 +103,7 @@ test('a connection that stays open past WS_STABLE_MS resets the backoff', () => 
     const ws = latestSocket();
     ws.serverAccept();
     ws.serverDrop();
-    fireAll();
+    timers.fireAll();
   }
 
   // This connection proves stable: open, then let the stability timer fire.
@@ -153,7 +111,7 @@ test('a connection that stays open past WS_STABLE_MS resets the backoff', () => 
   ws.serverAccept();
   const stable = pendingReconnect(); // the only pending timer is the stability one
   assert.equal(stable.delay, WS_STABLE_MS);
-  fireAll(); // stability window elapses -> attempt reset to 0
+  timers.fireAll(); // stability window elapses -> attempt reset to 0
 
   // A subsequent drop now backs off from the base delay again.
   ws.serverDrop();
@@ -171,7 +129,7 @@ test('a drop within WS_STABLE_MS leaves the backoff growing', () => {
   ws.serverAccept();
   ws.serverDrop();
   assert.equal(pendingReconnect().delay, 250);
-  fireAll();
+  timers.fireAll();
 
   // Second connection opens (arming the stability timer) but drops before the
   // window elapses — the stability timer must have been cleared, so the next
@@ -191,7 +149,7 @@ test('teardown after a drop cancels the pending reconnect', () => {
   const ws = latestSocket();
   ws.serverAccept();
   ws.serverDrop();
-  assert.equal(scheduled.length, 1); // reconnect pending
+  assert.equal(timers.scheduled.length, 1); // reconnect pending
   teardown();
-  assert.equal(scheduled.length, 0); // ...and cancelled
+  assert.equal(timers.scheduled.length, 0); // ...and cancelled
 });
