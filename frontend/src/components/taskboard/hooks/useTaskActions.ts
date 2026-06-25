@@ -1,5 +1,6 @@
-import type { MergeRun, Task } from '../../../api';
+import type { MergeRun, Task, TaskStatus } from '../../../api';
 import type { TerminalSpec } from '../../../TerminalsContext';
+import type { LaneSortMode } from '../laneSort';
 import type { GroupedTasks } from './useTaskBoardState';
 import type { RunHarnessSelection } from './useHarnessSelector';
 import { useTaskCrudActions } from './useTaskCrudActions';
@@ -13,6 +14,7 @@ type UseTaskActionsArgs = {
   activeFolder: string;
   tasks: Task[];
   grouped: GroupedTasks;
+  getLaneSortMode: (status: TaskStatus) => LaneSortMode;
   mergeRun: MergeRun | null;
   addTerminal: AddTerminal;
   clearSelection: () => void;
@@ -28,6 +30,7 @@ export function useTaskActions({
   activeFolder,
   tasks,
   grouped,
+  getLaneSortMode,
   mergeRun,
   addTerminal,
   clearSelection,
@@ -39,6 +42,7 @@ export function useTaskActions({
     activeFolder,
     tasks,
     grouped,
+    getLaneSortMode,
     clearSelection,
     showError,
   });

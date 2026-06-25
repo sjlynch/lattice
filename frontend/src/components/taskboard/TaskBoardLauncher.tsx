@@ -122,6 +122,15 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     showError,
   );
   const postMergeHook = usePostMergeHook(activeFolder, addTerminal, showError);
+
+  // Per-lane clock/caret sort. Defaults to newest-arrival-first; dropping a
+  // card at an explicit slot switches that lane to 'manual' so the user's
+  // hand-ordering survives until they click the clock to re-sort. Read before
+  // the action hooks: the reorder math splices into this same display order so
+  // a dropped card lands at the slot the user saw (the 'manual' flip below is
+  // queued, so getLaneSortMode still reports the pre-drop mode during the drop).
+  const { getMode: getLaneSortMode, toggle: toggleLaneSort, setManual } =
+    useLaneSort(activeFolder);
   const {
     addTask,
     moveTask,
@@ -143,6 +152,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     activeFolder,
     tasks,
     grouped,
+    getLaneSortMode,
     mergeRun,
     addTerminal,
     clearSelection,
@@ -167,11 +177,6 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     filteredGrouped,
   } = useTaskSearch(tasks);
 
-  // Per-lane clock/caret sort. Defaults to newest-arrival-first; dropping a
-  // card at an explicit slot switches that lane to 'manual' so the user's
-  // hand-ordering survives until they click the clock to re-sort.
-  const { getMode: getLaneSortMode, toggle: toggleLaneSort, setManual } =
-    useLaneSort(activeFolder);
   const sortedGrouped = useMemo(() => {
     const out = {} as typeof filteredGrouped;
     for (const lane of LANES) {
