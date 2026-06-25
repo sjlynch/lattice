@@ -10,23 +10,49 @@ import {
   parseStatus,
 } from '../worktree/snapshot/capture.js';
 
-test('parseStatus classifies porcelain modified and untracked paths', () => {
+test('parseStatus classifies porcelain (-z) modified and untracked paths', () => {
+  // `-z` records are NUL-terminated; a rename emits the destination path,
+  // then a SECOND NUL-separated field with the source path (no ` -> `).
   const parsed = parseStatus([
     ' M src/unstaged.ts',
     'A  src/staged.ts',
     'D  src/deleted.ts',
-    'R  src/old.ts -> src/new.ts',
+    'R  src/new.ts', 'src/old.ts',
     '?? notes/todo.md',
     '',
-  ].join('\n'));
+  ].join('\0'));
 
   assert.deepEqual(parsed.modified, [
     'src/unstaged.ts',
     'src/staged.ts',
     'src/deleted.ts',
-    'src/old.ts -> src/new.ts',
+    'src/new.ts',
   ]);
   assert.deepEqual(parsed.untracked, ['notes/todo.md']);
+});
+
+test('parseStatus captures renames as their new path and non-ASCII names verbatim', () => {
+  // Regression: with the old newline parser a rename yielded the literal
+  // `old -> new` and a non-ASCII name kept its octal-quoted form (e.g.
+  // `"\305\233x.txt"`), so neither path could be copied and both were
+  // silently dropped from the snapshot. With `-z` the destination path is
+  // captured and the special-char name comes through verbatim.
+  const parsed = parseStatus([
+    'R  docs/new-name.md', 'docs/old-name.md', // staged rename
+    'RM src/renamed.ts', 'src/before.ts', // renamed then modified in worktree
+    'C  copy/dst.ts', 'copy/src.ts', // copy
+    '?? śx.txt', // non-ASCII untracked, no quoting under -z
+    ' M résumé.txt', // non-ASCII modified
+    '',
+  ].join('\0'));
+
+  assert.deepEqual(parsed.modified, [
+    'docs/new-name.md',
+    'src/renamed.ts',
+    'copy/dst.ts',
+    'résumé.txt',
+  ]);
+  assert.deepEqual(parsed.untracked, ['śx.txt']);
 });
 
 test('filterSafeDirtyPaths drops repo escape paths and keeps safe paths', async () => {

@@ -3,7 +3,14 @@
 Safety-critical copy-based working-tree snapshots. Keep the capture order in
 `capture.ts` intact:
 
-1. Parse `git status --porcelain=v1 --untracked-files=all`.
+1. Parse `git status --porcelain=v1 -z --untracked-files=all`. The `-z`
+   (machine-parse) form is required: it emits NUL-terminated records with
+   verbatim, unquoted pathnames and splits a rename/copy into a
+   destination field + a source field (no ` -> ` arrow). The default
+   newline form mangles renames (`R  old -> new`) and quotes special-char
+   names, which made those paths fail to copy and silently drop from the
+   snapshot. `parseStatus` snapshots the rename destination and discards
+   the source field.
 2. Drop any path that fails the repo-containment guard; dropped paths must not
    be copied, reset, or deleted.
 3. Create the snapshot dir and copy dirty paths, recording successes and
