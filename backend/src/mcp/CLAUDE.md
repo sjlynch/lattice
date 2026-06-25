@@ -13,16 +13,27 @@ See `plans/mcp-integration.md` (gitignored) for the full design + decisions.
   names live here so churn is a code change, not a data migration. **Invariant:
   there is no `enabledByDefault` flag** — everything is off until the resolver is
   told otherwise, so a new project loads nothing.
-- `registry.ts` — `mergedCatalog()` (built-ins ⊕ `mcpBuiltinOverrides` ⊕
-  `mcpCustomServers`) and **`effectiveMcpServers(projectPath, harness, ctx?)`** —
-  the spawn-path resolver. Computes `enabled` per project (`mcpOverrides[id] ?? false`),
-  folds in secrets, shapes the Claude config, filters by `harnessSupport`. Returns
-  `{}` for non-claude harnesses (v1). **Playwright has two scopes** (`resolvePlaywright`):
-  `mcpOverrides.playwright` is the GLOBAL toggle (any Lattice session + the
-  project-root reconcile, always headless); `qaPlaywright` is QA-runs-ONLY and
-  only applies when `ctx.isQaRun` (its `headless` flag is the QA lane's eye switch,
-  and on a QA run it wins over the global toggle). `ctx.isQaRun` is set by the
-  QA-run spawn alone; every other spawn leaves it false.
+- `registry.ts` — the resolver **facade**: `mergedCatalog()` (built-ins ⊕
+  `mcpBuiltinOverrides` ⊕ `mcpCustomServers`) and **`effectiveMcpServers(projectPath,
+  harness, ctx?)`** — the spawn-path resolver — plus the pure orchestration core
+  `resolveClaudeServers(catalog, settings, secrets, ctx)`. It owns the catalog
+  merge + the per-entry loop (the `harnessSupport` filter and the per-server
+  `mcpOverrides[id] ?? false` toggle gate); the per-decision logic is composed in
+  from two focused pure helpers (below). Returns `{}` for non-claude harnesses
+  (v1). The `McpResolveContext` type (only field: `ctx.isQaRun`, set by the QA-run
+  spawn alone) lives here as part of the public surface.
+- `resolverPolicy.ts` — **MCP resolver policy** (pure, no I/O): `resolvePlaywright`.
+  **Playwright has two scopes** — `mcpOverrides.playwright` is the GLOBAL toggle
+  (any Lattice session + the project-root reconcile, always headless); `qaPlaywright`
+  is QA-runs-ONLY and only applies when `isQaRun` (its `headless` flag is the QA
+  lane's eye switch, and on a QA run it wins over the global toggle).
+- `claudeServerConfig.ts` — **Claude config shaping** (pure, no I/O):
+  `secretEnvVarsFor(entry)` (secret-env selection: `requiresSecret.envVar` ⊕
+  `secretEnvVars`) and `toClaudeConfig(entry, serverSecrets, headless)` (shape one
+  entry into Claude's per-server config, fold in stored secrets / append the
+  Playwright `--headless` flag / win32-wrap the command). Deliberately separate
+  from `claudeInject.ts` so the resolver/secret logic stays out of the terminal-
+  server's apply path + fingerprint (see "Injection sites").
 - `secrets.ts` — read/write `~/.lattice/mcpSecrets.json` (`0600`), kept in its
   OWN file so the settings endpoints never touch secret bytes. `redactSecrets()`
   → presence booleans; `secretHints()` → `••••<last4>`. **Raw values never cross
