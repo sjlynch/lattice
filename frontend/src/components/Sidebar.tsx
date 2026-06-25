@@ -1,7 +1,7 @@
 import { RefreshCw, Search, X } from 'lucide-react';
-import { memo, useCallback, useEffect, useState } from 'react';
-import { getPiModels } from '../api';
-import type { PiMenuEntry, StartupTerminal, TerminalLaunchSettings } from '../api';
+import { memo, useCallback, useEffect } from 'react';
+import type { StartupTerminal, TerminalLaunchSettings } from '../api';
+import { usePiModelMenu } from '../hooks/usePiModelMenu';
 import { useTerminals } from '../TerminalsContext';
 import type { TerminalStatus } from '../terminal/terminalTypes';
 import { TerminalPane } from './TerminalPane';
@@ -56,20 +56,10 @@ export const Sidebar = memo(function Sidebar({
     reorderTerminal,
   } = useTerminals();
 
-  // Curated "Pi — X" model menu for the new-terminal dropdown. Machine-global,
-  // so fetched once; an empty menu just means only bare "Pi" shows.
-  const [piMenu, setPiMenu] = useState<PiMenuEntry[]>([]);
-  useEffect(() => {
-    let alive = true;
-    getPiModels()
-      .then((r) => {
-        if (alive) setPiMenu(r.menu);
-      })
-      .catch(() => { /* keep empty */ });
-    return () => {
-      alive = false;
-    };
-  }, []);
+  // Curated "Pi — X" model menu for the new-terminal dropdown, from the shared
+  // store so it refetches when Settings → Pi saves; an empty menu just means
+  // only bare "Pi" shows.
+  const piMenu = usePiModelMenu();
 
   const {
     projectTerminals,
@@ -122,6 +112,18 @@ export const Sidebar = memo(function Sidebar({
     },
     [resetSearch, switchPanelWithoutSearchReset],
   );
+
+  // Catch-all: clear the search filter on ANY panel change, including the
+  // automatic switches usePanelState performs internally (a merge/startup
+  // panel emptying, or the active terminal pointing at another panel's tab).
+  // Those call setActivePanel directly, bypassing switchPanel above, so a
+  // stale query (e.g. typed on the Merging panel) would otherwise survive the
+  // switch and hide the newly-shown panel's terminals. resetSearch is a no-op
+  // when the filter is already empty, so the redundant call after a manual
+  // switchPanel doesn't cause an extra render.
+  useEffect(() => {
+    resetSearch();
+  }, [activePanel, resetSearch]);
 
   const { restartStartupTerminals } = useStartupTerminals({
     activeFolder,

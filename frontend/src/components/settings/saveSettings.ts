@@ -7,6 +7,7 @@ import {
   type TerminalLaunchSettings,
   type UserSettings,
 } from '../../api';
+import { notifyPiModelsChanged } from '../../piModelMenuStore';
 import {
   cleanStartupTerminals,
   type StartupTerminalsTabHandle,
@@ -119,6 +120,12 @@ export async function saveSettings({
   if (piModelMenuPatch !== undefined) globalPatch.piModelMenu = piModelMenuPatch;
   if (Object.keys(globalPatch).length > 0) {
     await patchGlobalSettings(globalPatch);
+    // The Pi providers/menu feed the curated "Pi — X" dropdowns. If either
+    // changed, refresh the shared menu cache so every mounted dropdown (task
+    // board, workflow steps, post-merge hook, sidebar) updates without a reload.
+    if (piProvidersPatch !== undefined || piModelMenuPatch !== undefined) {
+      void notifyPiModelsChanged();
+    }
   }
 
   // 5. Notify the parent callbacks.

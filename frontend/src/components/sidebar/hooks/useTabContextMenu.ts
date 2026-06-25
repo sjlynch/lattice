@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
 import type { TerminalSpec } from '../../../TerminalsContext';
+import { useDismissOnOutside } from '../../../hooks/useDismissOnOutside';
 import { useConfirm } from '../../shared/ConfirmDialog';
 import type { Panel } from './usePanelState';
 
@@ -43,23 +44,9 @@ export function useTabContextMenu({
     [confirm, closeTerminals],
   );
 
-  useEffect(() => {
-    if (!tabContextMenu) return;
-    function onPointerDown(e: PointerEvent) {
-      if (tabContextMenuRef.current && !tabContextMenuRef.current.contains(e.target as Node)) {
-        setTabContextMenu(null);
-      }
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setTabContextMenu(null);
-    }
-    document.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [tabContextMenu]);
+  useDismissOnOutside(tabContextMenu !== null, tabContextMenuRef, () =>
+    setTabContextMenu(null),
+  );
 
   useEffect(() => {
     setTabContextMenu(null);

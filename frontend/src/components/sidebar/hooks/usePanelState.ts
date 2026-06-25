@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { TerminalSpec } from '../../../TerminalsContext';
+import { panelForKind, shouldFallBackToTerminals } from './panelState';
+import type { Panel } from './panelState';
 
-export type Panel = 'terminals' | 'merging' | 'startup';
+export type { Panel };
 
 type UsePanelStateArgs = {
   activeId: string | null;
@@ -36,10 +38,8 @@ export function usePanelState({
 
   // When the Merging/Startup panel disappears, fall back to regular terminals.
   useEffect(() => {
-    const panelDisappeared =
-      (mergeTerminals.length === 0 && activePanel === 'merging') ||
-      (startupTerminalsList.length === 0 && activePanel === 'startup');
-    if (!panelDisappeared) return;
+    if (!shouldFallBackToTerminals(activePanel, mergeTerminals.length, startupTerminalsList.length))
+      return;
 
     setActivePanel('terminals');
     if (!activeId && regularTerminals.length > 0) {
@@ -62,8 +62,7 @@ export function usePanelState({
     if (!activeId) return;
     const t = projectTerminals.find((p) => p.id === activeId);
     if (!t) return;
-    const target: Panel =
-      t.kind === 'merge' ? 'merging' : t.kind === 'startup' ? 'startup' : 'terminals';
+    const target = panelForKind(t.kind);
     if (target !== activePanel) setActivePanel(target);
   }, [activeId, projectTerminals, activePanel]);
 

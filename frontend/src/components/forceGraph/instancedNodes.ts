@@ -49,6 +49,7 @@ import { createMotionSyncGate } from './motionSyncGate';
 import { getIdleController } from './idleController';
 import { materialFor } from './sprites';
 import { isGhost } from './timelineDiff';
+import { NODE_RENDER_ORDER } from './renderOrders';
 
 type SimNode = GraphNode & { x?: number; y?: number; z?: number };
 
@@ -191,10 +192,11 @@ export function createInstancedNodes(
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     // One object spanning the whole graph; its (unmaintained) bounding sphere
     // would wrongly cull it. Never raycast it — the per-node sprites are the
-    // pick targets. Match the sprite renderOrder (12) so draw order is unchanged.
+    // pick targets. Match the sprite renderOrder (NODE_RENDER_ORDER) so draw
+    // order is unchanged.
     mesh.frustumCulled = false;
     mesh.raycast = () => {};
-    mesh.renderOrder = 12;
+    mesh.renderOrder = NODE_RENDER_ORDER;
     mesh.userData['lattice:batchedNodes'] = true;
     scene.add(mesh);
     return { mesh, material, nodes: [], capacity };

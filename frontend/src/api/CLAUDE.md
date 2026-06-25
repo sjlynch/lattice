@@ -8,10 +8,16 @@ Backend bindings, grouped by domain. `import { ... } from '../api'` resolves to 
 - `http.ts` — `asJson<T>(r)` extracts `{error}` from non-2xx responses so toasts get real messages.
 - `ws.ts` — `subscribeWs<T>(pathWithQuery, onMessage)`. Auto-reconnects with exponential backoff (cap 5 s). Every WS subscriber here uses it.
 - `scan.ts` — folder browsing + recursive source scan.
+- `health.ts` — `subscribeHealth(project, cb)`: the `/ws/health` `HealthUpdate` stream (one per file save / tree change).
 - `settings.ts` — per-project `UserSettings`.
+- `globalSettings.ts` — machine-global settings (`maxConcurrentAgents`, MCP custom/override defs, `piModelMenu`, `piProviders`): `fetchGlobalSettings`, `patchGlobalSettings`.
+- `mcp.ts` — MCP control-plane: `fetchMcpCatalog`, redacted-secret get/set (`fetchMcpSecrets`/`setMcpSecret`), `fetchMcpEnvPresence`, `validateMcpServer`, and other-tool import `scanMcpImport`/`applyMcpImport`. Raw secret values never cross this boundary.
 - `tasks.ts` — task CRUD + `runTask`, `resumeTask`, `mergeTask`, `subscribeTasks`.
 - `mergeRuns.ts` — `startMergeRun`, `getActiveMergeRun`, `cancelMergeRun`, `subscribeMergeRuns`.
 - `workflows.ts` — workflow CRUD + `startWorkflow`, prompt-customization start/status helpers, `subscribeWorkflows`, `subscribeWorkflowRuns`.
+- `pushRuns.ts` — push-run lifecycle (commit + push the project via a Claude session): `checkGit`, `startPushRun`, `fetchPushRunStatus`, `forgetPushRun`.
+- `qaRuns.ts` — QA e2e-run lifecycle (Playwright Claude over one merged task; mirrors `pushRuns`): `startQaRun`, `fetchQaRunStatus`, `forgetQaRun`.
+- `postMergeHooks.ts` — post-merge hook run state: `getActivePostMergeHook`, `abortPostMergeHook`, `subscribePostMergeHooks`.
 
 ## Adding an endpoint
 
