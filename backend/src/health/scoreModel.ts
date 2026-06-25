@@ -1,4 +1,5 @@
 import type { HealthMetrics } from './types.js';
+import { norm } from './scoreMath.js';
 import {
   SCORE_COMPONENT_METADATA,
   type ScoreComponentId,
@@ -49,16 +50,4 @@ export function scoreComponentLoss(
     0,
     component.healthyThreshold - component.unhealthyThreshold,
   );
-}
-
-function clamp01(x: number): number {
-  if (!Number.isFinite(x)) return 0;
-  if (x < 0) return 0;
-  if (x > 1) return 1;
-  return x;
-}
-
-function norm(x: number, lo: number, hi: number): number {
-  if (hi <= lo) return 0;
-  return clamp01((x - lo) / (hi - lo));
 }

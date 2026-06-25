@@ -29,10 +29,25 @@ function signalOrRestartMergeRun(task: Task, backendOrigin: string): void {
   }
 }
 
+// Injectable seam (production default below). `finalizeResolvedTask` drives a
+// git re-sync + an in-process merge-run signal; the regression test overrides
+// both so it can force an `error` / `stash-conflict` outcome and assert the
+// waiting run gets unblocked — without spawning git or the merge-run singleton.
+export type FinalizeResolvedDeps = {
+  resync: typeof resyncWithMainAndFinalize;
+  signalOrRestartMergeRun: (task: Task, backendOrigin: string) => void;
+};
+
+const productionDeps: FinalizeResolvedDeps = {
+  resync: resyncWithMainAndFinalize,
+  signalOrRestartMergeRun,
+};
+
 export async function finalizeResolvedTask(
   task: Task,
   backendOrigin: string,
   source: ResolverHookSource,
+  deps: FinalizeResolvedDeps = productionDeps,
 ): Promise<FinalizeResolvedResult> {
   if (!task.branch || !task.worktreePath) {
     return {
@@ -61,7 +76,7 @@ export async function finalizeResolvedTask(
     return { kind: 'already-finalizing' };
   }
   try {
-    return await runFinalize(task, task.worktreePath, backendOrigin, source);
+    return await runFinalize(task, task.worktreePath, backendOrigin, source, deps);
   } finally {
     release(task.id);
   }
@@ -75,6 +90,7 @@ async function runFinalize(
   worktreePath: string,
   backendOrigin: string,
   source: ResolverHookSource,
+  deps: FinalizeResolvedDeps,
 ): Promise<FinalizeResolvedResult> {
   if (await isMidMerge(worktreePath)) {
     if (source === 'complete') {
@@ -92,7 +108,7 @@ async function runFinalize(
   // to fail. Merging again absorbs those new main commits; if that also
   // conflicts we need another resolver pass. If main is already an ancestor
   // of the worktree branch, skip the re-sync.
-  const outcome = await resyncWithMainAndFinalize(task, backendOrigin, {
+  const outcome = await deps.resync(task, backendOrigin, {
     skipIfMainAncestor: true,
     onMainAlreadyIncorporated: () => {
       console.log(
@@ -109,7 +125,7 @@ async function runFinalize(
     }
     // Unblock any waiting merge run so it can move on to the next task;
     // this task stays conflicted and will be picked up on the next merge-all.
-    signalOrRestartMergeRun(task, backendOrigin);
+    deps.signalOrRestartMergeRun(task, backendOrigin);
     return {
       kind: 'merge-conflict',
       conflictedFiles: outcome.conflictedFiles,
@@ -130,6 +146,13 @@ async function runFinalize(
         );
       }
     }
+    // A merge-run worker parks on the conflict waiter for this task and only
+    // resumes when something signals it. The waiter has no timeout, so an
+    // error-out finalize that returns without signalling would hang the run
+    // forever — holding the cross-process project lock and 409-ing every
+    // later /merge and merge-run. Unblock it (mirroring the merge-conflict
+    // branch above); the run's circuit breaker then continues or halts cleanly.
+    deps.signalOrRestartMergeRun(task, backendOrigin);
     return { kind: 'error', phase: outcome.phase, message: outcome.message };
   }
 
@@ -139,6 +162,8 @@ async function runFinalize(
         `[complete] finalize after resolution failed: ${outcome.message}`,
       );
     }
+    // Same hang-forever hazard as the `error` branch — unblock the waiting run.
+    deps.signalOrRestartMergeRun(task, backendOrigin);
     return { kind: 'error', phase: 'stash', message: outcome.message };
   }
 
@@ -146,6 +171,6 @@ async function runFinalize(
   // continue to the next task with the updated main HEAD. If no run is
   // waiting (e.g. the run was killed by a backend restart), start a fresh
   // one to pick up any remaining ready_to_merge tasks.
-  signalOrRestartMergeRun(task, backendOrigin);
+  deps.signalOrRestartMergeRun(task, backendOrigin);
   return { kind: 'finalized' };
 }

@@ -42,6 +42,16 @@ async function readCommits(repoRoot: string, limit: number): Promise<GitCommit[]
   const r = await exec(
     'git',
     [
+      // core.quotePath=false makes git emit non-ASCII paths (accented/CJK
+      // filenames) literally as UTF-8 instead of C-quoting them (e.g.
+      // `"na\303\257ve.ts"`). Without it those paths reach the parser
+      // double-quoted + octal-escaped and never match the graph's
+      // file-node id, so the commit's change-ring silently vanishes. The
+      // status path already disables quoting via `git status -z`; this is
+      // the matching fix for the log path (the `-c <name=value>` global
+      // option must precede the `log` subcommand).
+      '-c',
+      'core.quotePath=false',
       'log',
       `-${clampLogLimit(limit)}`,
       '--no-merges',

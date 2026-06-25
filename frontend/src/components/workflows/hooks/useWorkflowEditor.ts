@@ -24,6 +24,7 @@ import {
   loadWorkflowDraft,
   saveWorkflowDraft,
 } from '../workflowDraftStorage';
+import { draftForFolder, reconcileDraftPersist } from '../workflowDraftPersist';
 import {
   defaultVariables,
   makeVariable,
@@ -45,6 +46,15 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
   const [editor, setEditor] = useState<EditorState>(emptyEditor);
   const [pickingTemplate, setPickingTemplate] = useState(false);
 
+  // Render-tracked snapshot of the live editor. An awaited save needs to read
+  // the *current* editor (to detect a mid-save edit) without depending on a
+  // `setEditor` updater running synchronously — React batches the updater in a
+  // promise continuation, so a flag mutated inside it can still be stale when
+  // the code after `setEditor` inspects it. Writing the ref during render keeps
+  // it in sync with the committed editor before any later save resolves.
+  const editorRef = useRef(editor);
+  editorRef.current = editor;
+
   // If the loaded workflow is edited from elsewhere (or deleted), refresh the
   // editor — but never clobber an in-progress edit.
   useEffect(() => {
@@ -59,32 +69,46 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
     }
   }, [workflows, editor.workflowId, editor.dirty]);
 
-  // Restore a never-saved draft once per project, so a reload/close while
-  // mid-edit on a brand-new workflow doesn't lose it. Guarded so it never
-  // stomps an edit already in progress in this session.
+  // Load the active project's own never-saved draft. Runs once per project
+  // (restoredFor guard) so a reload/close while mid-edit on a brand-new workflow
+  // doesn't lose it. It ALSO fires on a project switch: WorkflowsLauncher takes
+  // activeFolder as a prop, so the editor isn't remounted and still holds the
+  // PREVIOUS project's never-saved draft. That draft belongs to the project it
+  // was authored in (the persist effect below flushes it back there), so we
+  // replace it with THIS project's stored draft rather than carrying it across —
+  // otherwise the new project would show, and persist, the old project's draft.
+  // A loaded (saved) workflow is reconciled by the sync effect above, so it's
+  // left untouched (see draftForFolder).
   const restoredFor = useRef<string | null>(null);
   useEffect(() => {
     if (!activeFolder || restoredFor.current === activeFolder) return;
     restoredFor.current = activeFolder;
-    setEditor((cur) => {
-      if (cur.workflowId !== null || cur.steps.length > 0 || cur.name.trim()) {
-        return cur;
-      }
-      return loadWorkflowDraft(activeFolder) ?? cur;
-    });
+    setEditor((cur) => draftForFolder(cur, loadWorkflowDraft(activeFolder)));
   }, [activeFolder]);
 
   // Debounced persist of the in-progress draft. Only never-saved drafts with
   // content are stashed (a saved workflow is reloaded from the server, and an
-  // empty draft is noise); see workflowDraftStorage.
+  // empty draft is noise); see workflowDraftStorage. The reconcile guard keeps a
+  // draft carried across a project switch from being stamped onto the new
+  // project's key — it's flushed back under the project it was authored in
+  // instead (see workflowDraftPersist).
+  const lastPersistFolder = useRef<string | null>(null);
+  const lastPersistEditor = useRef<EditorState | null>(null);
   useEffect(() => {
-    if (!activeFolder) return;
-    const persistable =
-      editor.dirty &&
-      editor.workflowId === null &&
-      (editor.steps.length > 0 || editor.name.trim() !== '');
-    if (!persistable) return;
-    const t = setTimeout(() => saveWorkflowDraft(activeFolder, editor), 500);
+    const { decision, nextFolder, nextEditor } = reconcileDraftPersist(
+      activeFolder,
+      editor,
+      lastPersistFolder.current,
+      lastPersistEditor.current,
+    );
+    lastPersistFolder.current = nextFolder;
+    lastPersistEditor.current = nextEditor;
+    if (decision.kind === 'idle') return;
+    if (decision.kind === 'flush') {
+      saveWorkflowDraft(decision.folder, editor);
+      return;
+    }
+    const t = setTimeout(() => saveWorkflowDraft(decision.folder, editor), 500);
     return () => clearTimeout(t);
   }, [activeFolder, editor]);
 
@@ -152,12 +176,17 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
         return w;
       } else {
         const w = await apiCreateWorkflow(activeFolder, name, steps, variables);
-        let superseded = false;
-        setEditor((cur) => {
-          const next = nextEditorAfterSave(atSaveStart, cur, w);
-          superseded = next.superseded;
-          return next.editor;
-        });
+        // Read the live editor from the ref — not from a flag mutated inside the
+        // setEditor updater, which may not have run yet at this point (React
+        // batches it in this promise continuation). Deriving `superseded` from
+        // the ref keeps the editor we commit and the clear decision in sync with
+        // the actual current state.
+        const { editor: next, superseded } = nextEditorAfterSave(
+          atSaveStart,
+          editorRef.current,
+          w,
+        );
+        setEditor(next);
         // The never-saved draft is now persisted server-side; drop the stash —
         // unless a mid-save edit superseded it, in which case that edit is still
         // a live unsaved draft and the debounced persist must keep stashing it.

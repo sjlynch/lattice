@@ -69,9 +69,10 @@ losing tasks.
   - `listKnownProjects(projectsIndex)`: the full project list, for the
     boot-time orphaned-worktree sweep.
 - `taskUpdate.ts` — small pure helpers shared by `manager.ts`:
-  `stampTimestamps` (status-transition timestamp inference),
-  `applyTaskUpdate` (immutable list-with-one-item-replaced), and
-  `findTaskInProjects` (linear scan over loaded projects for a task id).
+  `stampTimestamps` (status-transition timestamp inference) and
+  `applyTaskUpdate` (immutable list-with-one-item-replaced). The cross-project
+  by-id scan + cache-miss fallback now live in the shared base class
+  (`ProjectStateManager.findInCacheById` / `withItemAcrossProjects`).
 - `types.ts` — `Task`, `TaskStatus`, `TaskUpdates`, `TaskSubscriber`.
 
 ## Ordering invariant

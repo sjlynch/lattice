@@ -1,12 +1,8 @@
-import fs from 'node:fs/promises';
-import { seedClaudeTrust } from '../claudeTrust.js';
-import { instructionsFilePath } from './commands.js';
+import { setupHomeScratchSession } from '../homeScratch/session.js';
+import { POST_MERGE_HOOK_FILENAME } from './commands.js';
 import { renderPostMergeHookInstructions } from './instructions.js';
 import { resolveInstructionTemplate } from '../instructionTemplates.js';
-import {
-  assertSafePostMergeHookPath,
-  createPostMergeHookId,
-} from './paths.js';
+import { postMergeHookPaths } from './paths.js';
 import {
   installPostMergeHookStopHook,
   postMergeHookCallbackUrl,
@@ -14,7 +10,9 @@ import {
 import type { PostMergeHookSession } from './types.js';
 
 // Materialize the scratch dir: write the brief and install the harness's
-// Stop-hook / extension plumbing. Mirrors pushRuns/session.ts:setupPushSession.
+// Stop-hook / extension plumbing. Thin wrapper over the shared
+// `setupHomeScratchSession` builder (mirrors pushRuns/qaRuns session setup);
+// the harness-specific completion plumbing + brief wording stay here.
 //
 // This is the filesystem + trust-seeding half of a post-merge hook: it owns
 // the throwaway scratch dir, seeds Claude's workspace trust so the first
@@ -28,36 +26,33 @@ export async function setupPostMergeHookSession(args: {
   harness: PostMergeHookSession['harness'];
 }): Promise<PostMergeHookSession> {
   const { projectPath, backendOrigin, prompt, harness } = args;
-  const id = createPostMergeHookId();
-  const cwd = assertSafePostMergeHookPath(projectPath, id);
-  await fs.mkdir(cwd, { recursive: true });
-
-  // Trust the scratch dir for Claude so the very first launch doesn't stall
-  // on the workspace-trust dialog. Project-root trust isn't our concern here.
-  await seedClaudeTrust(cwd);
-
-  await installPostMergeHookStopHook({
-    scratchDir: cwd,
-    id,
-    backendOrigin,
+  const session = await setupHomeScratchSession({
+    paths: postMergeHookPaths,
     projectPath,
-    harness,
+    instructionsFileName: POST_MERGE_HOOK_FILENAME,
+    installHooks: ({ cwd, id }) =>
+      installPostMergeHookStopHook({
+        scratchDir: cwd,
+        id,
+        backendOrigin,
+        projectPath,
+        harness,
+      }),
+    renderInstructions: async ({ id }) => {
+      const callbackUrl = postMergeHookCallbackUrl(id, backendOrigin);
+      const template = await resolveInstructionTemplate(
+        projectPath,
+        'post-merge-hook',
+      );
+      return renderPostMergeHookInstructions({
+        projectPath,
+        prompt,
+        callbackUrl,
+        harness,
+        template,
+      });
+    },
   });
 
-  const callbackUrl = postMergeHookCallbackUrl(id, backendOrigin);
-  const instructionsFile = instructionsFilePath(cwd);
-  const template = await resolveInstructionTemplate(projectPath, 'post-merge-hook');
-  await fs.writeFile(
-    instructionsFile,
-    renderPostMergeHookInstructions({
-      projectPath,
-      prompt,
-      callbackUrl,
-      harness,
-      template,
-    }),
-    'utf8',
-  );
-
-  return { id, cwd, instructionsFile, harness };
+  return { ...session, harness };
 }

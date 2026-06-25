@@ -26,6 +26,36 @@ export function removeTerminalsFromList(
   return terminals.filter((t) => !idSet.has(t.id));
 }
 
+// The ids of every terminal belonging to a task. Collected in one pass so a
+// batched close can remove them all atomically — looping a single-close that
+// re-reads a stale snapshot per id drops all-but-one setState and "resurrects"
+// the siblings it already removed.
+export function terminalIdsForTask(
+  terminals: TerminalSpec[],
+  taskId: string,
+): string[] {
+  return terminals.filter((t) => t.taskId === taskId).map((t) => t.id);
+}
+
+// Plan a batched close: which backend serverIds need a DELETE and what the
+// terminal list looks like afterwards. Walks the list once and dedupes on the
+// id set, so a serverId is returned at most once even if `closedIds` repeats an
+// id — the DELETE side effect must fire exactly once per session (a double
+// DELETE in <100ms crashed node-pty's Windows helper, see TerminalsContext).
+export function planCloseTerminals(
+  terminals: TerminalSpec[],
+  closedIds: Set<string>,
+): { serverIdsToDelete: string[]; next: TerminalSpec[] } {
+  const serverIdsToDelete: string[] = [];
+  for (const t of terminals) {
+    if (closedIds.has(t.id) && t.serverId) serverIdsToDelete.push(t.serverId);
+  }
+  return {
+    serverIdsToDelete,
+    next: removeTerminalsFromList(terminals, closedIds),
+  };
+}
+
 export function setServerIdInList(
   terminals: TerminalSpec[],
   id: string,

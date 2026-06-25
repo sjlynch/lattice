@@ -70,6 +70,28 @@ test('parseGitLogNameStatus parses rename and copy records as delete/add pairs',
   ]);
 });
 
+test('parseGitLogNameStatus keeps non-ASCII paths literal (core.quotePath=false output)', () => {
+  // With `-c core.quotePath=false`, git emits accented/CJK filenames
+  // literally as UTF-8 rather than C-quoting them (`"caf\303\251.ts"`).
+  // The parser must preserve those bytes so the path equals the graph's
+  // file-node id and the commit change-ring resolves.
+  const out =
+    `${commitHeader('4444444444444444444444444444444444444444', '4444444', 'Dora', 1700000004, 'unicode')}\n` +
+    `M\tcafé.ts\n` +
+    `A\t日本語.ts\n` +
+    `R100\tnaïve\\old.ts\tnaïve/new.ts\n`;
+
+  const commits = parseGitLogNameStatus(out);
+
+  assert.equal(commits.length, 1);
+  assert.deepEqual(commits[0].changes, [
+    { path: 'café.ts', status: 'M' },
+    { path: '日本語.ts', status: 'A' },
+    { path: 'naïve/old.ts', status: 'D' },
+    { path: 'naïve/new.ts', status: 'A', oldPath: 'naïve/old.ts' },
+  ]);
+});
+
 test('parseGitStatusPorcelain parses untracked, added, modified, deleted, and backslash paths', () => {
   const result = parseGitStatusPorcelain(
     `?? untracked.ts\0` +
