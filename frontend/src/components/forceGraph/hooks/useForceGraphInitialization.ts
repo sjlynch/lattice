@@ -1,12 +1,10 @@
 import { useLayoutEffect, type MutableRefObject } from 'react';
 import ForceGraph3D, { type ForceGraph3DInstance } from '3d-force-graph';
 import type { GraphNode } from '../../../api';
-import { healthLabelRegistry } from '../healthOverlay';
-import { labelsRegistry } from '../labelsOverlay';
-import { locLabelRegistry } from '../locOverlay';
 import { attachNodeMotionDriver } from '../nodeMotionDriver';
 import { attachIdleController, createIdleController } from '../idleController';
 import { attachFrameDriver, onFrame } from '../sceneFrameDriver';
+import { clearAllLabelRegistries } from './refresh';
 import {
   buildNodeObject,
   nativeNodeLabel,
@@ -118,9 +116,7 @@ export function useForceGraphInitialization(
       offThrottleFrame();
       idle.destroy();
       teardownResize();
-      locLabelRegistry.clear();
-      labelsRegistry.clear();
-      healthLabelRegistry.clear();
+      clearAllLabelRegistries();
       graph._destructor?.();
       graphRef.current = null;
     };

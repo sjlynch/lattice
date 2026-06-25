@@ -6,12 +6,24 @@ the tab-list state/storage/pty-DELETE logic lives in `../../terminal/` (its own
 CLAUDE.md) — different directory, don't conflate.
 
 - `useTerminalLifecycle.ts` — creates/disposes the `Terminal` + `FitAddon` and
-  a `ResizeObserver`. Does **not** attach the WebglAddon.
+  a `ResizeObserver`. Does **not** attach the WebglAddon. **`serverId` is not a
+  dependency** — capturing a backend session id is an attach detail and must not
+  dispose+recreate the Terminal. A pane keeps its single Terminal/FitAddon for
+  its whole life.
 - `useActiveTerminalWebgl.ts` — attaches a `WebglAddon` only while this pane is
   `active`, disposes it on deactivate. Each WebGL context counts toward Chrome's
   ~16-per-page cap; holding one per terminal made "Run All" blow past it.
+  **`serverId` is likewise not a dependency** — only `active` gates the context;
+  capturing an id must not churn the GL context.
 - `useTerminalConnection.ts` — the `/ws/terminal` WebSocket: connect, replay,
-  input/resize forwarding, reconnect. Holds the invariants below.
+  input/resize forwarding, reconnect. Owns the connection *state machine*
+  (`terminated` / `attachedOnce` / `attempt`) and the React effect; holds the
+  invariants below. The protocol *mechanism* lives in `terminalSocket.ts`.
+- `terminalSocket.ts` — React-free helpers for the connection: `buildTerminalWsUrl`
+  (URL building), `handleTerminalMessage` (decode + dispatch), `reconnectDelay` /
+  `canReattachTerminal` / `shouldGiveUpReconnect` (backoff/give-up decisions),
+  `forwardTerminalInput` (xterm onData/onResize → socket), `terminalNotices` (all
+  user-visible terminal-body status lines, in one place), and `MAX_RECONNECT_ATTEMPTS`.
 - `terminalConfig.ts` — `Terminal` options + theme. `clipboardPaste.ts` — Ctrl+V
   → `term.paste()` (xterm would otherwise forward ^V as a raw byte).
 
@@ -41,9 +53,19 @@ Don't "clean them up" without resurrecting the bug.
   doomed pty → close → … spawns thousands). Don't "unify" the two paths into a
   single attempt cap.
 
-- **The narrow deps array + `eslint-disable exhaustive-deps` is deliberate**
-  (~L212). The effect depends only on `[cwd, serverId, termRef]`. `onServerId`
-  is intentionally excluded and read through a `useSyncedRef` (`onServerIdRef`):
-  adding it would re-subscribe — tearing down and rebuilding the WS — every time
-  the parent re-renders with a new callback identity. Keep new dependencies out
-  of this array unless a change genuinely warrants reconnecting.
+- **The narrow deps array + `eslint-disable exhaustive-deps` is deliberate**.
+  The effect depends only on `[cwd, termRef]`. Both `onServerId` **and**
+  `serverId` are intentionally excluded and read through `useSyncedRef`s
+  (`onServerIdRef` / `serverIdRef`). For `onServerId`: a new callback identity
+  each parent render would otherwise re-subscribe (tear down + rebuild the WS).
+  For `serverId`: a serverless terminal *captures* its id from the first
+  `attached` frame (`onServerId` → parent state → new `serverId` prop); if it
+  were a dep, that capture would tear down the live WS and reopen a second one —
+  and, because the same capture used to recreate the Terminal, flash/clear the
+  pane and drop the first keystroke. Reading it via a ref keeps the single WS
+  (and Terminal) intact on capture, while still feeding the latest id into a
+  later reconnect so it re-attaches to the existing pty by id (not a fresh
+  spawn). The connect URL is built by `terminalSocket.buildTerminalWsUrl`, whose
+  pure, window-free core `buildTerminalWsQuery` (in `connectionParams.ts`) is
+  unit-tested. Keep new dependencies out of this array unless a change genuinely
+  warrants reconnecting.

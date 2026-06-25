@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createDir, listDir, type DirListing } from '../../api';
+import { loadDirectory } from './loadDirectory';
 
 export type FolderPickerState = {
   pathInput: string;
@@ -29,22 +30,23 @@ export function useFolderPickerState({ open, initialPath }: UseFolderPickerState
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Monotonic request id so only the latest navigation updates state — stale
+  // out-of-order listDir responses are ignored (see loadDirectory).
+  const loadSeq = useRef(0);
 
-  const load = useCallback(async (target?: string) => {
-    setLoading(true);
-    setError(null);
-    // Navigating into a new folder clears any highlighted row (Windows-style).
-    setSelectedPath(null);
-    try {
-      const result = await listDir(target);
-      setListing(result);
-      setPathInput(result.path);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const load = useCallback(
+    (target?: string) =>
+      loadDirectory(target, {
+        listDir,
+        seqRef: loadSeq,
+        setLoading,
+        setError,
+        setSelectedPath,
+        setListing,
+        setPathInput,
+      }),
+    [],
+  );
 
   const createFolder = useCallback(async () => {
     if (!listing) return;

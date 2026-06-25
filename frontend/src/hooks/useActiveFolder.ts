@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { fetchDefaultRoot } from '../api';
 import { APP_CONFIG } from '../appConfig';
 import { canonicalProjectPath } from '../projectPath';
+import { resolveDefaultRoot } from './resolveDefaultRoot';
 
 function readStoredActiveFolder(): string {
   try {
@@ -54,11 +55,24 @@ export function useActiveFolder() {
   // If the tab had no stored folder (fresh tab), fall back to the backend's
   // default project. The stored case is already handled by the useState seed
   // above, so we only call fetchDefaultRoot when activeFolder is still empty.
+  // A boot-time failure (the backend still starting → a 502/parse error) is
+  // transient: retry with backoff rather than permanently clearing to '' and
+  // stranding the user on a blank shell. resolveDefaultRoot resolves to '' only
+  // once retries are exhausted, which is the same empty-shell fallback as before.
   useEffect(() => {
     if (activeFolder) return;
-    fetchDefaultRoot()
-      .then(setActiveFolder)
-      .catch(() => setActiveFolder(''));
+    let cancelled = false;
+    resolveDefaultRoot({
+      fetchRoot: fetchDefaultRoot,
+      isCancelled: () => cancelled,
+      onRetry: (err, attempt) =>
+        console.warn(`default-root fetch failed (retry ${attempt + 1})`, err),
+    }).then((root) => {
+      if (!cancelled) setActiveFolder(root);
+    });
+    return () => {
+      cancelled = true;
+    };
     // Only run on mount — once the user picks a folder we don't want to keep
     // refetching the default if they later clear it.
     // eslint-disable-next-line react-hooks/exhaustive-deps

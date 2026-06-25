@@ -12,7 +12,6 @@ type UseTerminalLifecycleArgs = {
   fitRef: RefObject<FitAddon | null>;
   webglRef: RefObject<WebglAddon | null>;
   cwd: string;
-  serverId?: string;
 };
 
 export function useTerminalLifecycle({
@@ -21,7 +20,6 @@ export function useTerminalLifecycle({
   fitRef,
   webglRef,
   cwd,
-  serverId,
 }: UseTerminalLifecycleArgs) {
   useEffect(() => {
     if (!containerRef.current) return;
@@ -61,5 +59,9 @@ export function useTerminalLifecycle({
       webglRef.current = null;
       term.dispose();
     };
-  }, [containerRef, cwd, fitRef, serverId, termRef, webglRef]);
+    // serverId is intentionally NOT a dependency: capturing a backend session
+    // id is an attach detail and must not dispose+recreate the Terminal/FitAddon
+    // (which clears the screen, drops focus, and churns a WebGL context). The
+    // single Terminal lives for the pane's whole life. See terminal/CLAUDE.md.
+  }, [containerRef, cwd, fitRef, termRef, webglRef]);
 }

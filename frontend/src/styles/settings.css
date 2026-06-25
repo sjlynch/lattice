@@ -670,6 +670,13 @@
 .mcp-test-result.fail {
   color: var(--danger);
 }
+.mcp-key-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--danger);
+}
 
 /* Add custom + import */
 .mcp-add-toggle {

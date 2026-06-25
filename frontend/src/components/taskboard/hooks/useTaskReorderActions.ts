@@ -4,6 +4,8 @@ import {
   type Task,
   type TaskStatus,
 } from '../../../api';
+import { sortTasksForLane, type LaneSortMode } from '../laneSort';
+import { appendOrder, multiDropOrder, singleDropOrder } from '../reorderMath';
 import { compareTasksForLane, type GroupedTasks } from './useTaskBoardState';
 
 function selectedTasksInLaneOrder(tasks: Task[], ids: string[]): Task[] {
@@ -17,6 +19,7 @@ type UseTaskReorderActionsArgs = {
   activeFolder: string;
   tasks: Task[];
   grouped: GroupedTasks;
+  getLaneSortMode: (status: TaskStatus) => LaneSortMode;
   clearSelection: () => void;
   showError: (message: string) => void;
 };
@@ -28,25 +31,37 @@ export function useTaskReorderActions({
   activeFolder,
   tasks,
   grouped,
+  getLaneSortMode,
   clearSelection,
   showError,
 }: UseTaskReorderActionsArgs) {
+  // The destination lane in the SAME order the user sees it on the board.
+  // Drop indices (targetIndex/hoverIndex) are measured against the lane's
+  // visible order (sortTasksForLane), not the raw sortOrder grouping — so the
+  // reorder math must splice into that exact array or the card lands at the
+  // wrong slot. `getLaneSortMode` still returns the pre-drop mode here (the
+  // 'manual' flip from the drop handler is queued, not yet applied), which is
+  // precisely the ordering the index was derived from.
+  const displayedLane = useCallback(
+    (status: TaskStatus): Task[] =>
+      sortTasksForLane(grouped[status], status, getLaneSortMode(status)),
+    [grouped, getLaneSortMode],
+  );
   // Move multiple tasks to a lane without a specific slot index (append).
   const moveMulti = useCallback(
     async (ids: string[], targetStatus: TaskStatus) => {
       if (!activeFolder) return;
       const srcTasks = selectedTasksInLaneOrder(tasks, ids);
       if (!srcTasks.length) return;
-      const newLane = grouped[targetStatus].filter((task) => !ids.includes(task.id));
-      newLane.push(...srcTasks);
+      const order = appendOrder(displayedLane(targetStatus), srcTasks, ids);
       try {
-        await apiReorderTasks(activeFolder, targetStatus, newLane.map((task) => task.id));
+        await apiReorderTasks(activeFolder, targetStatus, order);
         clearSelection();
       } catch (err) {
         showError((err as Error).message);
       }
     },
-    [activeFolder, clearSelection, grouped, showError, tasks],
+    [activeFolder, clearSelection, displayedLane, showError, tasks],
   );
 
   // Drop multiple tasks at a specific position in the target lane.
@@ -55,22 +70,20 @@ export function useTaskReorderActions({
       if (!activeFolder) return;
       const srcTasks = selectedTasksInLaneOrder(tasks, ids);
       if (!srcTasks.length) return;
-      const targetLane = grouped[targetStatus].slice();
-      const remaining = targetLane.filter((task) => !ids.includes(task.id));
-      let insertAt = targetIndex;
-      for (let i = 0; i < targetIndex && i < targetLane.length; i++) {
-        if (ids.includes(targetLane[i].id)) insertAt--;
-      }
-      insertAt = Math.max(0, Math.min(insertAt, remaining.length));
-      remaining.splice(insertAt, 0, ...srcTasks);
+      const order = multiDropOrder(
+        displayedLane(targetStatus),
+        srcTasks,
+        ids,
+        targetIndex,
+      );
       try {
-        await apiReorderTasks(activeFolder, targetStatus, remaining.map((task) => task.id));
+        await apiReorderTasks(activeFolder, targetStatus, order);
         clearSelection();
       } catch (err) {
         showError((err as Error).message);
       }
     },
-    [activeFolder, clearSelection, grouped, showError, tasks],
+    [activeFolder, clearSelection, displayedLane, showError, tasks],
   );
 
   // Drop handler used by lane drop slots. `targetIndex` is the position in
@@ -80,23 +93,20 @@ export function useTaskReorderActions({
       if (!activeFolder) return;
       const task = tasks.find((candidate) => candidate.id === id);
       if (!task) return;
-      const lane = grouped[targetStatus].slice();
-      const fromIdx = lane.findIndex((candidate) => candidate.id === id);
-      let insertAt = targetIndex;
-      if (fromIdx !== -1) {
-        lane.splice(fromIdx, 1);
-        if (fromIdx < insertAt) insertAt -= 1;
-      }
-      insertAt = Math.max(0, Math.min(insertAt, lane.length));
-      if (fromIdx === insertAt && task.status === targetStatus) return;
-      lane.splice(insertAt, 0, task);
+      const order = singleDropOrder(
+        displayedLane(targetStatus),
+        task,
+        targetStatus,
+        targetIndex,
+      );
+      if (!order) return; // no-op: dropped onto its own current slot
       try {
-        await apiReorderTasks(activeFolder, targetStatus, lane.map((candidate) => candidate.id));
+        await apiReorderTasks(activeFolder, targetStatus, order);
       } catch (err) {
         showError((err as Error).message);
       }
     },
-    [activeFolder, grouped, showError, tasks],
+    [activeFolder, displayedLane, showError, tasks],
   );
 
   return { moveMulti, dropAtMulti, dropAt };
