@@ -5,6 +5,7 @@ import { healthLabelRegistry } from '../healthOverlay';
 import { getIdleController } from '../idleController';
 import { labelsRegistry } from '../labelsOverlay';
 import { locLabelRegistry } from '../locOverlay';
+import { disposeAndClearRegistry } from '../floatingLabelSprite';
 import {
   REL_FORWARD_KEY,
   buildGhostGraphData,
@@ -231,9 +232,9 @@ export function useGraphDataSync({
     const graph = graphRef.current;
     if (!graph) return;
     if (!data) {
-      locLabelRegistry.clear();
-      labelsRegistry.clear();
-      healthLabelRegistry.clear();
+      disposeAndClearRegistry(locLabelRegistry);
+      disposeAndClearRegistry(labelsRegistry);
+      disposeAndClearRegistry(healthLabelRegistry);
       graph.graphData({ nodes: [], links: [] });
       nodeIndexRef.current = null;
       ghostsRef.current = new Set();
@@ -320,10 +321,11 @@ export function useGraphDataSync({
     // Full structural swap. Clear the overlay registries first — the
     // library is about to detach every sprite, so old registry entries
     // would otherwise point at orphaned THREE objects until the next
-    // `cleanupStaleRegistryEntries` pass.
-    locLabelRegistry.clear();
-    labelsRegistry.clear();
-    healthLabelRegistry.clear();
+    // `cleanupStaleRegistryEntries` pass. Dispose each entry's cloned connector
+    // geometry as we drop it (a bare clear leaks those GPU buffers).
+    disposeAndClearRegistry(locLabelRegistry);
+    disposeAndClearRegistry(labelsRegistry);
+    disposeAndClearRegistry(healthLabelRegistry);
     graph.graphData(buildForceGraphData(graph, mergedNodes, mergedLinks, data.root));
     // The node array was replaced — drop the cached id→node index so the next
     // metric patch rebuilds it against the new array rather than the old one.
