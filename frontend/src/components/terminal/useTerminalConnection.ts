@@ -3,25 +3,21 @@ import type { RefObject } from 'react';
 import type { Terminal } from '@xterm/xterm';
 import { useSyncedRef } from '../../hooks/useSyncedRef';
 import type { TerminalStatus } from '../../terminal/terminalTypes';
+import {
+  MAX_RECONNECT_ATTEMPTS,
+  buildTerminalWsUrl,
+  canReattachTerminal,
+  forwardTerminalInput,
+  handleTerminalMessage,
+  reconnectDelay,
+  shouldGiveUpReconnect,
+  terminalNotices,
+} from './terminalSocket';
 
-// Reconnect cap for a SERVERLESS terminal that has never attached: without a
-// session id to re-subscribe to, each fresh connect can spawn a brand-new pty,
-// so unbounded retries there could leak orphan ptys if the connect flaps. A
-// terminal we CAN re-attach to (it has a serverId, or captured one via a prior
-// `attached`) is not capped — see the onclose handler.
-export const MAX_RECONNECT_ATTEMPTS = 6;
-// Backoff ceiling. Delays grow 250ms → 500 → … and then hold here, so a long
-// outage keeps being retried roughly every 10s rather than giving up.
-const RECONNECT_MAX_DELAY_MS = 10_000;
-
-type TerminalMessage = {
-  type?: string;
-  data?: string;
-  id?: string;
-  replayed?: boolean;
-  message?: string;
-  exitCode?: number;
-};
+// Re-exported for back-compat: the cap itself, and the protocol mechanism it
+// belongs to, now live in ./terminalSocket. This hook owns the connection state
+// machine and orchestrates those focused helpers.
+export { MAX_RECONNECT_ATTEMPTS };
 
 type UseTerminalConnectionArgs = {
   termRef: RefObject<Terminal | null>;
@@ -71,75 +67,46 @@ export function useTerminalConnection({
     let attachedOnce = false;
 
     // Notify the parent of a health transition. Mirrors the terminal-body
-    // messages below; never influences reconnect behaviour.
+    // notices; never influences reconnect behaviour.
     const reportStatus = (status: TerminalStatus, exitCode?: number) => {
       onStatusRef.current?.(status, exitCode);
     };
 
     function connect() {
       if (cancelled || terminated) return;
-      const params = new URLSearchParams({
-        cwd,
-        cols: String(term.cols),
-        rows: String(term.rows),
-      });
-      if (serverId) params.set('id', serverId);
-      // Only forward initialCommand when we're creating a fresh session.
-      // For a known serverId the backend already ran the initial command
-      // when it pre-spawned the pty; passing it again would be a no-op
-      // (terminal.ts ignores it on replay) but it's needless noise.
-      if (!serverId && initialCommand) params.set('initialCommand', initialCommand);
-      if (projectPath) params.set('projectPath', projectPath);
-
-      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
       ws = new WebSocket(
-        `${proto}://${window.location.host}/ws/terminal?${params.toString()}`,
+        buildTerminalWsUrl({
+          cwd,
+          cols: term.cols,
+          rows: term.rows,
+          serverId,
+          initialCommand,
+          projectPath,
+        }),
       );
 
       ws.onopen = () => {
         attempt = 0;
         if (reconnectingShown) {
-          term.write('\r\n\x1b[2m[reconnected]\x1b[0m\r\n');
+          terminalNotices.reconnected(term);
           reconnectingShown = false;
         }
         reportStatus('live');
       };
 
       ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data) as TerminalMessage;
-          if (msg.type === 'data' && typeof msg.data === 'string') {
-            term.write(msg.data);
-          } else if (msg.type === 'attached') {
+        handleTerminalMessage(ev.data, {
+          term,
+          serverId,
+          onAttached: () => {
             attachedOnce = true;
-            if (msg.id && msg.id !== serverId) {
-              onServerIdRef.current?.(msg.id);
-            }
-            if (msg.replayed === false) {
-              // Brand new session — clear any leftover xterm content.
-              term.clear();
-            }
-          } else if (msg.type === 'error') {
-            term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
-          } else if (msg.type === 'exit') {
-            term.write(`\r\n\x1b[2m[exited ${msg.exitCode}]\x1b[0m\r\n`);
-            // The pty is gone for good. Mark terminated so the WS close
-            // that follows doesn't trigger a reconnect (which on a
-            // cleaned-up worktree would create a doomed-to-exit pty,
-            // feeding back into another close → another reconnect →
-            // runaway).
+          },
+          onServerId: (id) => onServerIdRef.current?.(id),
+          onTerminated: (status, exitCode) => {
             terminated = true;
-            reportStatus('exited', msg.exitCode);
-          } else if (msg.type === 'session_lost') {
-            term.write(
-              `\r\n\x1b[2m[${msg.message ?? 'session lost'}]\x1b[0m\r\n`,
-            );
-            terminated = true;
-            reportStatus('dead');
-          }
-        } catch {
-          /* ignore */
-        }
+            reportStatus(status, exitCode);
+          },
+        });
       };
 
       ws.onerror = () => {
@@ -156,48 +123,27 @@ export function useTerminalConnection({
         // a manual page refresh. The genuine stop is `terminated`, set on a
         // clean `exit` or a `session_lost` — that is what bounds the deleted-
         // worktree runaway, not an attempt count.
-        const canReattach = Boolean(serverId) || attachedOnce;
-        if (!canReattach && attempt >= MAX_RECONNECT_ATTEMPTS) {
+        const canReattach = canReattachTerminal(serverId, attachedOnce);
+        if (shouldGiveUpReconnect(canReattach, attempt)) {
           // Serverless terminal that never attached: a reconnect here can spawn
           // a fresh pty, so it must stay bounded.
-          term.write(
-            '\r\n\x1b[31m[connection lost — gave up after ' +
-              MAX_RECONNECT_ATTEMPTS +
-              ' reconnect attempts. Close this tab and start a new terminal if needed.]\x1b[0m\r\n',
-          );
+          terminalNotices.gaveUp(term);
           terminated = true;
           reportStatus('dead');
           return;
         }
         if (!reconnectingShown) {
-          term.write(
-            '\r\n\x1b[2m[connection lost — reconnecting…]\x1b[0m\r\n',
-          );
+          terminalNotices.reconnecting(term);
           reconnectingShown = true;
           reportStatus('reconnecting');
         }
-        // Cap the exponent so the delay tops out at the ceiling instead of
-        // overflowing once `attempt` grows large during a long outage.
-        const delay = Math.min(
-          RECONNECT_MAX_DELAY_MS,
-          250 * 2 ** Math.min(attempt, 6),
-        );
+        const delay = reconnectDelay(attempt);
         attempt += 1;
         retryTimer = setTimeout(connect, delay);
       };
     }
 
-    const dataDisposable = term.onData((data) => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'input', data }));
-      }
-    });
-
-    const resizeDisposable = term.onResize(({ cols, rows }) => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-      }
-    });
+    const io = forwardTerminalInput(term, () => ws);
 
     // Defer the actual connect by one task tick so React StrictMode's
     // synchronous cleanup (which sets cancelled=true) runs before we
@@ -217,8 +163,7 @@ export function useTerminalConnection({
       cancelled = true;
       clearTimeout(connectTimer);
       if (retryTimer) clearTimeout(retryTimer);
-      dataDisposable.dispose();
-      resizeDisposable.dispose();
+      io.dispose();
       // Just close the WS — the backend keeps the pty alive so a refresh
       // (or remount) reattaches via the persisted serverId.
       try {
