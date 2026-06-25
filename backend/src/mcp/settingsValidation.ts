@@ -63,6 +63,17 @@ export function sanitizeCustomServers(raw: unknown): McpServerEntry[] {
   return out;
 }
 
+// A built-in override may only TWEAK a catalog entry — never re-point what it
+// runs. `command` and `url` are deliberately DROPPED here (not just unknown
+// junk): a built-in's runner lives in code (catalog.ts), which is the whole
+// point of "definitions live in code". Letting an override swap `command`/`url`
+// silently turned "toggle a known-safe built-in" into "run an arbitrary
+// command / hit an arbitrary endpoint" the moment that built-in was enabled
+// per-project — a trust escalation reachable by anyone who can PATCH
+// /api/global-settings, with no allow-list in the way. So only the safe tuning /
+// presentational fields survive: args, env, headers, runtimeNote. To change
+// what a server runs, edit the catalog or add a custom server (which is
+// builtin:false and gated as untrusted).
 export function sanitizeBuiltinOverrides(
   raw: unknown,
 ): Record<string, Partial<McpServerEntry>> {
@@ -72,11 +83,11 @@ export function sanitizeBuiltinOverrides(
     if (!ov || typeof ov !== 'object') continue;
     const o = ov as Record<string, unknown>;
     const partial: Partial<McpServerEntry> = {};
-    if (typeof o.command === 'string') partial.command = o.command;
+    // command / url are intentionally omitted — see the header note.
     if (Array.isArray(o.args)) partial.args = o.args.filter((a) => typeof a === 'string');
     if (o.env && typeof o.env === 'object') partial.env = stringRecord(o.env);
-    if (typeof o.url === 'string') partial.url = o.url;
     if (o.headers && typeof o.headers === 'object') partial.headers = stringRecord(o.headers);
+    if (typeof o.runtimeNote === 'string') partial.runtimeNote = o.runtimeNote;
     if (Object.keys(partial).length > 0) out[id] = partial;
   }
   return out;

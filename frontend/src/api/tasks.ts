@@ -10,6 +10,7 @@ import type {
   Task,
   TaskActivityEvent,
   TaskSpawnedEvent,
+  TaskSpawnFailedEvent,
   TaskStatus,
   WorktreeModifiedTask,
 } from './types';
@@ -129,15 +130,18 @@ export async function mergeTask(id: string): Promise<MergeTaskResult> {
   );
 }
 
-// `/ws/tasks` carries four message types: the full task-list snapshot; for
-// queued runs a `task-spawned` event delivering the pty; `task-activity`
+// `/ws/tasks` carries five message types: the full task-list snapshot; for
+// queued runs a `task-spawned` event delivering the pty (or a
+// `task-spawn-failed` event when the deferred spawn failed); `task-activity`
 // events naming the file a Claude worktree agent is touching; and
 // `agent-activity` events naming the file a Claude session OUTSIDE a worktree
-// is touching. `onSpawned` lazy-mounts the terminal; `onActivity` /
-// `onAgentActivity` drive the graph focus beams.
+// is touching. `onSpawned` lazy-mounts the terminal; `onSpawnFailed` toasts a
+// failed deferred spawn; `onActivity` / `onAgentActivity` drive the graph
+// focus beams.
 type TasksWsMessage =
   | { type: 'tasks'; tasks: Task[] }
   | ({ type: 'task-spawned' } & TaskSpawnedEvent)
+  | ({ type: 'task-spawn-failed' } & TaskSpawnFailedEvent)
   | ({ type: 'task-activity' } & TaskActivityEvent)
   | ({ type: 'agent-activity' } & AgentActivityEvent);
 
@@ -155,12 +159,14 @@ export function subscribeTasks(
   onSpawned?: (event: TaskSpawnedEvent) => void,
   onActivity?: (event: TaskActivityEvent) => void,
   onAgentActivity?: (event: AgentActivityEvent) => void,
+  onSpawnFailed?: (event: TaskSpawnFailedEvent) => void,
 ): () => void {
   return subscribeWsShared<TasksWsMessage>(
     `/ws/tasks?project=${encodeURIComponent(projectPath)}`,
     (msg) => {
       if (msg.type === 'tasks') onUpdate(msg.tasks);
       else if (msg.type === 'task-spawned') onSpawned?.(msg);
+      else if (msg.type === 'task-spawn-failed') onSpawnFailed?.(msg);
       else if (msg.type === 'task-activity') onActivity?.(msg);
       else if (msg.type === 'agent-activity') onAgentActivity?.(msg);
     },
