@@ -6,6 +6,7 @@
 
 import { isMidMerge, resyncWithMainAndFinalize } from '../../worktree.js';
 import { signalConflictWaiter, startMergeRun } from '../../mergeRuns.js';
+import { release, tryAcquire } from '../../mergeLocks.js';
 import type { Task } from '../../tasks.js';
 
 export type ResolverHookSource = 'complete' | 'merged';
@@ -13,6 +14,7 @@ export type ResolverHookSource = 'complete' | 'merged';
 export type FinalizeResolvedResult =
   | { kind: 'mid-merge' }
   | { kind: 'finalized' }
+  | { kind: 'already-finalizing' }
   | {
       kind: 'merge-conflict';
       conflictedFiles: string[];
@@ -40,7 +42,41 @@ export async function finalizeResolvedTask(
     };
   }
 
-  if (await isMidMerge(task.worktreePath)) {
+  // Serialize against the merge-run worker (processTarget /
+  // tryFinalizeAfterResolverFinished both take this same per-task lock) and
+  // against a concurrent resolver-hook fire (two near-simultaneous /complete
+  // curls, or /complete racing /merged) on the same per-task lock. Without
+  // it, two resyncWithMainAndFinalize -> mergeWorktreeInRepo invocations race
+  // on .git/index.lock + MERGE_HEAD in the one worktree and corrupt its
+  // merge state. The hook callbacks are idempotent and retried, so a caller
+  // that loses the race just reports 'already-finalizing'; the holder finishes
+  // the work. (finalizeQueues only serializes the FF step, not this earlier
+  // in-worktree merge — so the lock must be taken here.)
+  if (!tryAcquire(task.id)) {
+    if (source === 'complete') {
+      console.log(
+        `[complete] task ${task.id}: finalize already in progress (lock held) — skipping`,
+      );
+    }
+    return { kind: 'already-finalizing' };
+  }
+  try {
+    return await runFinalize(task, task.worktreePath, backendOrigin, source);
+  } finally {
+    release(task.id);
+  }
+}
+
+// Lock-held body. Split out only so the acquire/release wrapper above stays
+// readable; the validated worktree path is passed in so this never re-reads a
+// possibly-undefined field.
+async function runFinalize(
+  task: Task,
+  worktreePath: string,
+  backendOrigin: string,
+  source: ResolverHookSource,
+): Promise<FinalizeResolvedResult> {
+  if (await isMidMerge(worktreePath)) {
     if (source === 'complete') {
       // Resolver hasn't committed yet (Stop fired mid-resolution).
       console.log(
