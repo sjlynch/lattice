@@ -565,9 +565,45 @@ test('conventional root detection covers entries, configs, tests, and decls', ()
     'src/components/Button.tsx',
     'lib/helper.py',
     'src/observer.ts', // not a -server/-worker suffix
+    // scripts/ or tools/ nested under src/ is application source, NOT
+    // project-level tooling — treating it as a root hides real dead code there.
+    'frontend/src/tools/formatDate.ts',
+    'src/scripts/analytics.ts',
+    'src/tools/legacyExporter.ts',
+    'packages/app/src/tools/codegen.ts',
   ]) {
     assert.equal(isConventionalRoot(f), false, `${f} should not be a root`);
   }
+});
+
+test('dead code under src/tools/ is reported dead (root heuristic is src-aware)', () => {
+  // Regression: the scripts|tools root heuristic used to match the segment
+  // ANYWHERE, so a genuinely-unused src/tools file was always classed a live
+  // root and could never surface as dead. It must now only auto-root a
+  // project-level tooling dir, not one nested under src/.
+  const root = path.resolve('health-src-tools-fixture');
+  const entry = path.join(root, 'src', 'index.ts'); // conventional root
+  const tooling = path.join(root, 'tools', 'codegen.ts'); // top-level tooling → root
+  const dead = path.join(root, 'src', 'tools', 'legacyExporter.ts'); // unused app src
+  const present = new Set([entry, tooling, dead]);
+
+  const roots = detectRoots(present, { projectRoot: root });
+  assert.equal(roots.has(entry), true, 'index.ts is a root');
+  assert.equal(roots.has(tooling), true, 'top-level tools/ dir is still a root');
+  assert.equal(roots.has(dead), false, 'src/tools/ file is NOT auto-rooted');
+
+  const cross = computeCrossFile(
+    [
+      { filePath: entry, imports: [] },
+      { filePath: tooling, imports: [] },
+      { filePath: dead, imports: [] },
+    ],
+    present,
+    undefined,
+    { roots },
+  );
+
+  assert.equal(cross.deadCode.get(dead), 'dead', 'unused src/tools file → dead');
 });
 
 test('watcher cache hydration keeps imports and metrics mirrors aligned', () => {
