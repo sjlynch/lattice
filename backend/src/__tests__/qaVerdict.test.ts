@@ -4,10 +4,12 @@ import { parseVerdictBody } from '../routes/qaRuns.js';
 import { renderQaInstructions } from '../qaRuns/instructions.js';
 import {
   applyQaVerdict,
+  applyRecordedQaVerdict,
   forgetQaRun,
   getQaRun,
   markQaRunDone,
   recordQaRun,
+  recordQaVerdict,
 } from '../qaRuns.js';
 
 // ---------- parseVerdictBody ----------
@@ -124,4 +126,56 @@ test('forgetQaRun: drops a run once it is marked done', () => {
   markQaRunDone(id);
   forgetQaRun(id);
   assert.equal(getQaRun(id), undefined, 'a done run is forgotten normally');
+});
+
+// ---------- applyRecordedQaVerdict (Stop-hook /done backstop) ----------
+//
+// The qa → done transition must not hinge on the agent's explicit /verdict curl
+// landing. Mirroring how in_progress → ready_to_merge fires from the reliable
+// Stop hook / Pi completion extension, the QA Stop hook's /done callback
+// re-applies whatever verdict was recorded. These guard that the backstop
+// reaches the promotion path (or correctly stays out of it).
+
+test('applyRecordedQaVerdict: untracked run reports tracked:false', async () => {
+  const outcome = await applyRecordedQaVerdict('qa_never_recorded');
+  assert.equal(outcome.tracked, false);
+  assert.equal(outcome.moved, false);
+});
+
+test('applyRecordedQaVerdict: tracked run with no verdict does not move', async () => {
+  const id = 'qa_backstop_no_verdict';
+  makeRunningRun(id);
+  const outcome = await applyRecordedQaVerdict(id);
+  assert.equal(outcome.tracked, true);
+  assert.equal(outcome.moved, false);
+  assert.equal(outcome.reason, 'no verdict recorded');
+  markQaRunDone(id);
+  forgetQaRun(id);
+});
+
+test('applyRecordedQaVerdict: a recorded confident PASS drives the transition from /done', async () => {
+  const id = 'qa_backstop_confident_pass';
+  makeRunningRun(id);
+  // Simulate the agent's /verdict curl having recorded a confident pass.
+  recordQaVerdict(id, { passed: true, confident: true, receivedAt: 1 });
+  // The Stop hook's /done now re-applies it. The move itself no-ops only
+  // because the throwaway task id doesn't exist — the point is that the
+  // backstop reaches the promotion path (task lookup) instead of leaving the
+  // run untouched (the old "pure cleanup" /done that stranded passed tasks).
+  const outcome = await applyRecordedQaVerdict(id);
+  assert.equal(outcome.tracked, true);
+  assert.equal(outcome.reason, 'task not found');
+  markQaRunDone(id);
+  forgetQaRun(id);
+});
+
+test('applyRecordedQaVerdict: a recorded FAIL is never promoted', async () => {
+  const id = 'qa_backstop_fail';
+  makeRunningRun(id);
+  recordQaVerdict(id, { passed: false, confident: true, receivedAt: 1 });
+  const outcome = await applyRecordedQaVerdict(id);
+  assert.equal(outcome.moved, false);
+  assert.equal(outcome.reason, 'verdict: fail');
+  markQaRunDone(id);
+  forgetQaRun(id);
 });

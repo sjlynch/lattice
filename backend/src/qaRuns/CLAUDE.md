@@ -28,8 +28,19 @@ Differences from pushRuns:
   and, on a **confident PASS**, auto-advances the task `qa → done` (guarded:
   only when the task is still in the `qa` lane); a FAIL or an unsure PASS leaves
   it for a human. pushRuns has no `verdict.ts` — its `/done` Stop callback is
-  pure cleanup. The verdict is posted *before* the session stops so it lands
-  while the run is still tracked.
+  pure cleanup. **The qa → done transition has two triggers, mirroring how
+  in_progress → ready_to_merge fires from the model's explicit curl AND the
+  reliable Stop hook / Pi completion extension** (so it never hinges on the
+  model remembering): `applyQaVerdict` is the agent's explicit `/verdict` curl
+  (the fast path, applied while the run is still tracked), and
+  `applyRecordedQaVerdict` is the **`/done` Stop-hook backstop** — it re-applies
+  whatever verdict was recorded, so the transition still fires if the explicit
+  curl never landed (it failed, the agent forgot it, or it raced `/done`). Both
+  funnel through the idempotent `promoteOnConfidentPass`, so either firing — or
+  both — advances the task exactly once. A run that stops with **no** recorded
+  verdict is left in QA for a human (the Stop hook can't synthesize a pass/fail),
+  same as a fail or an unsure pass. So `/done` is no longer pure cleanup; it is
+  the QA analogue of the Claude Stop hook / Pi extension that closes the lane.
 - **Spawn sets `isQaRun: true`** so the MCP injection chokepoint adds the
   QA-scoped Playwright (with the lane's headed/headless choice); ordinary task
   spawns never set it.

@@ -18,5 +18,5 @@ export { startQaSession } from './qaRuns/session.js';
 export type { StartedQaSession, StartQaSessionArgs } from './qaRuns/session.js';
 export { cleanupQaSession } from './qaRuns/cleanup.js';
 export { qaAgentId } from './qaRuns/stopHook.js';
-export { applyQaVerdict } from './qaRuns/verdict.js';
+export { applyQaVerdict, applyRecordedQaVerdict } from './qaRuns/verdict.js';
 export type { QaVerdictInput, QaVerdictOutcome } from './qaRuns/verdict.js';

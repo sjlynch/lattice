@@ -9,6 +9,7 @@ import { canonicalProjectPath } from '../projectPath.js';
 import { getTask } from '../tasks.js';
 import {
   applyQaVerdict,
+  applyRecordedQaVerdict,
   cleanupQaSession,
   forgetQaRun,
   getQaRun,
@@ -115,6 +116,13 @@ export function buildQaRunsRouter(backendOrigin: string): Router {
     // Drop the graph node regardless of whether the run is still tracked.
     unregisterAgentSession(qaAgentId(req.params.id));
     if (!run) return res.json({ ok: true });
+    // Backstop the qa → done transition off the reliable Stop hook, the way
+    // in_progress → ready_to_merge fires from the Stop hook / Pi completion
+    // extension rather than the model's memory. If the agent's explicit
+    // /verdict curl already advanced the task this is an idempotent no-op; if
+    // that move was missed (or raced this callback) the recorded confident PASS
+    // is applied here. A fail / unsure / absent verdict still leaves it in QA.
+    await applyRecordedQaVerdict(run.id);
     markQaRunDone(run.id);
     // Resolve once whether the QA terminal should auto-close (default: stay
     // open so the user can read the verdict/output) and record it on the run so
