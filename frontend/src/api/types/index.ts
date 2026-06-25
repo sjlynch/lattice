@@ -5,6 +5,8 @@ export * from './health';
 export * from './scan';
 export * from './gitHistory';
 export * from './settings';
+export * from './projectEnv';
+export * from './instructionTemplates';
 export * from './tasks';
 export * from './runs';
 export * from './postMergeHooks';
