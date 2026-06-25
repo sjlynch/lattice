@@ -40,9 +40,9 @@ modules after.
 | `appbar.css` | `.appbar*`, `.fab` (taskboard launcher), `.wf-run-chip*` (workflow status chip) |
 | `sidebar.css` | `.sidebar-*` — panel tabs, terminal tab strip, empty state, search, new-menu |
 | `modal.css` | `.modal-backdrop`, `.modal`, `.modal-header/body/footer` (+ `@keyframes modal-fade`) |
-| `settings.css` | `.settings-*`, `.startup-*`, `.env-note-*` (Agent instructions tab) |
+| `settings.css` | Settings aggregator. Ordered partials under `styles/settings/`: `shell` (chrome/sections/controls/startup/`.settings-info-*`), `pi`, `env-notes`, `prompts`, `mcp` |
 | `folder-picker.css` | `.path-row`, `.drive-*`, `.create-folder-*`, `.dir-list/row` |
-| `graph.css` | `.graph-overlay`, `.graph-bottom-left` (search+counts cluster) / `.graph-search*` / `.graph-counts`, `.loc-view-chip`, `.graph-select-rect`, `.graph-selection-chip`, `.graph-context-menu`, `.graph-settings-fab/panel`, `.graph-toast` (+ overlay `@keyframes`) |
+| `graph.css` | Graph aggregator. Ordered partials under `styles/graph/`: `hud-search` (`.graph-overlay`/`.graph-bottom-left`/`.graph-search*`/`.graph-counts`/`.loc-view-chip`), `overlay-key`, `context-menu` (`.graph-select-rect`/`.graph-selection-chip`/`.graph-context-menu`), `settings-panel` (`.graph-settings-fab/panel`), `toast` |
 | `terminal.css` | `.term-pane` |
 | `floating-panel.css` | `.floating-panel*` (titlebar, body, resize grip) |
 | `taskboard.css` | Taskboard aggregator. Ordered partials live under `styles/taskboard/`: `shell`, `lanes`, `cards`, `filters`, `lane-actions`, `detail`, `toast`, `forms` |
