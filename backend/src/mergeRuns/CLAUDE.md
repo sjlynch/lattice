@@ -51,3 +51,14 @@ Conflict-waiter contract: after spawning a merge-conflict resolver,
 or requeued that same task; `cancelRun` unblocks the waiter whose entry belongs
 to the cancelled run. A missing waiter means the backend restarted, so the
 caller should start a fresh merge run.
+
+The worker parks on that waiter via `resolverSpawn.ts` `parkOnConflictResolver`,
+which **drops the per-task `mergeLocks` lock before waiting** (registering the
+waiter first — the entry is recorded synchronously, so a racing signal can't be
+missed). It must: the signal comes from the resolver's `/complete` →
+`finalizeResolvedTask`, which takes that same per-task lock to re-sync + FF main
++ signal. Holding the lock across the park makes that finalize lose `tryAcquire`,
+return `already-finalizing` without signalling, and the run hangs forever (with
+the resolver pty stranded — only the finalize's worktree cleanup kills it). The
+mid-merge re-spawn waiter (`flaggedConflict.ts` `tryRespawnMidMergeResolver`)
+parks before any lock is acquired, so it is already lock-free.

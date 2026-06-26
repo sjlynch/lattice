@@ -102,6 +102,16 @@ one worktree. A caller that loses the race gets the `already-finalizing` result
 lock holder finishes the work. (The `finalizeQueues` promise queue only
 serializes the FF step, not this earlier in-worktree merge.)
 
+This back-off is correct ONLY because the lock holder is actively *doing* the
+git work. The merge-run worker therefore must NOT hold the lock while merely
+*parked* on a conflict waiter: it drops it before waiting
+(`mergeRuns/resolverSpawn.ts` `parkOnConflictResolver`). The resolver's
+Stop-hook `/complete` is the thing that finalizes + signals that waiter, and it
+needs the same per-task lock to do so — if the parked worker still held it,
+`/complete` would back off with `already-finalizing` and never signal, hanging
+the run forever (and leaving the resolver pty alive, since only the finalize's
+worktree cleanup tears it down).
+
 ## Stability
 
 Route paths, methods, status codes, response shapes, and idempotency are part
