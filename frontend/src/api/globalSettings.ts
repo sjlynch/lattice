@@ -1,6 +1,6 @@
 // Machine-global settings (not per-project). Backend: src/globalSettings.ts.
 
-import { asJson } from './http';
+import { asJson, patchJson } from './http';
 import type { McpServerEntry } from './mcp';
 
 export type PiProviderModel = {
@@ -46,11 +46,5 @@ export async function fetchGlobalSettings(): Promise<GlobalSettings> {
 export async function patchGlobalSettings(
   patch: Partial<GlobalSettings>,
 ): Promise<GlobalSettings> {
-  return asJson<GlobalSettings>(
-    await fetch('/api/global-settings', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    }),
-  );
+  return patchJson<GlobalSettings>('/api/global-settings', patch);
 }

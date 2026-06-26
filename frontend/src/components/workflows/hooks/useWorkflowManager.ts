@@ -175,6 +175,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
   });
 
   const runActions = useWorkflowRunActions({
+    activeFolder,
     editor,
     workflowsById,
     save: editorState.save,

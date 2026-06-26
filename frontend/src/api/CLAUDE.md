@@ -5,7 +5,7 @@ Backend bindings, grouped by domain. `import { ... } from '../api'` resolves to 
 ## Modules
 
 - `types/` — domain-split shared API types (scan/health, settings, tasks, workflows, runs, git history). `types.ts` is a compatibility re-export shim.
-- `http.ts` — `asJson<T>(r)` extracts `{error}` from non-2xx responses so toasts get real messages.
+- `http.ts` — `asJson<T>(r)` extracts `{error}` from non-2xx responses so toasts get real messages; `postJson`/`patchJson`/`deleteJson` centralize JSON request formation.
 - `ws.ts` — `subscribeWs<T>(pathWithQuery, onMessage)`. Auto-reconnects with exponential backoff (cap 5 s). Every WS subscriber here uses it.
 - `scan.ts` — folder browsing + recursive source scan.
 - `health.ts` — `subscribeHealth(project, cb)`: the `/ws/health` `HealthUpdate` stream (one per file save / tree change).
@@ -22,6 +22,6 @@ Backend bindings, grouped by domain. `import { ... } from '../api'` resolves to 
 ## Adding an endpoint
 
 1. Type goes in the matching `types/<domain>.ts` file, and is re-exported by `types/index.ts`.
-2. Function goes in the matching domain file. Use `asJson` for non-WS calls.
+2. Function goes in the matching domain file. Use `asJson` for simple GETs and `postJson`/`patchJson`/`deleteJson` for JSON writes.
 3. WS endpoints: call `subscribeWs(path, cb)` directly — don't reinvent reconnect/backoff.
 4. New domains: add a file + add `export *` to `index.ts`.

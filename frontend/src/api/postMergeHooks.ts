@@ -3,7 +3,7 @@
 // expose the active/recent run + Stop-hook completion callbacks so the
 // taskboard row can render the running terminal banner and an Abort button.
 
-import { asJson } from './http';
+import { postJson } from './http';
 import { subscribeWs } from './ws';
 import type {
   PostMergeHookEvent,
@@ -22,10 +22,8 @@ export async function getActivePostMergeHook(
 }
 
 export async function abortPostMergeHook(id: string): Promise<void> {
-  await asJson<{ ok: true }>(
-    await fetch(`/api/post-merge-hooks/${encodeURIComponent(id)}/abort`, {
-      method: 'POST',
-    }),
+  await postJson<{ ok: true }>(
+    `/api/post-merge-hooks/${encodeURIComponent(id)}/abort`,
   );
 }
 
