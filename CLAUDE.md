@@ -195,7 +195,12 @@ Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
   toggle chips with their shortcuts — **clicking a chip pins that view** so it
   latches on without holding the key (`hooks/useOverlayPins.ts`; each overlay
   hook composes `held || pinned`), making the hidden Z/D/W/Alt views
-  discoverable. The **`D`** dead-code view colors each file by
+  discoverable. While a **metric view** (`H`/`Z`/`D`) is active the graph is
+  pared down to just the metric signal: ghost (deleted-file) nodes and
+  metrics-ignored-ext files (`.json`, `.md`, … — see `DEFAULT_METRICS_IGNORED_EXTS`)
+  are hidden and timeline change-rings are suppressed, all so the per-file
+  coloring reads cleanly (`hooks/useGraphFilter.ts` + `nodeObjectFactory.ts`).
+  The **`D`** dead-code view colors each file by
   reachability from detected entry points — green = reachable, red =
   dead/orphaned, grey = entry point or uncertain (asset / unsupported language /
   dynamic-only). Classification is computed in `backend/src/health/crossFile/`

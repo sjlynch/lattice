@@ -39,7 +39,12 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
   the **only** one with live scene state to tear down (fetches worktree-modified
   files, rings them per task color, strips on deactivate/project-change/unmount).
 - `useGraphFilter` — swaps the `nodeVisibility`/`linkVisibility` accessors for
-  `hiddenExts` (no sim restart).
+  `hiddenExts` (no sim restart). While a metric view (`h`/`z`/`d`) is active it
+  also hides ghost (deleted-file) nodes and metrics-ignored-ext files (`.json`,
+  …) so the colored view stays uncluttered — reading `metricOverlayActiveRef`
+  live, re-evaluated by the view-toggle refresh. The same flag short-circuits
+  `useGitTimeline`'s scrub delta (no rings/ghosts painted while a view is held)
+  and drives a `useBatchedLinks` re-capture (drop links to the hidden nodes).
 
 ## Search, selection, drag, hover
 

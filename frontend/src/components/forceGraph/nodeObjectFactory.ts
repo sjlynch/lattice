@@ -103,17 +103,22 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
 
   root.add(base);
 
+  // True while any recolor view (health `h` / loc `z` / dead `d`) owns the
+  // sprite. These views deliberately strip the graph down to just the metric
+  // signal: ghost nodes and metrics-ignored files are hidden (see
+  // `useGraphFilter`) and timeline change-rings are suppressed below — they
+  // make it harder to read the per-file health/loc/dead coloring.
+  const metricOverlayActive =
+    refs.healthModeRef.current ||
+    refs.locModeRef.current ||
+    refs.deadModeRef.current;
+
   // Batched-node rendering: the InstancedMesh draws the plain base shape, so
   // hide the per-node base sprite (it stays raycastable → still the hover/click
   // pick proxy; its halo/ring/label siblings stay visible). Only in the base
   // view — when a recolor overlay (health/loc/dead) owns the sprite, the
   // instanced mesh hides itself instead, so the overlay sprite must stay shown.
-  if (
-    refs.batchedNodesRef.current &&
-    !refs.healthModeRef.current &&
-    !refs.locModeRef.current &&
-    !refs.deadModeRef.current
-  ) {
+  if (refs.batchedNodesRef.current && !metricOverlayActive) {
     base.visible = false;
   }
 
@@ -132,7 +137,12 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
   // timeline mutates the map).
   const rel = node.kind === 'file' ? readRelForward(node, rootData) : '';
   const kind = rel ? refs.changeMapRef.current.get(rel) : undefined;
-  if (kind && kind !== 'deleted') {
+  // Suppressed while a metric view is active — change-rings stack confusingly
+  // with the health/loc/dead coloring and obscure the signal the view is for.
+  // The scrub-delta path (`applyChangeRingDelta`) is short-circuited too so
+  // scrubbing while a view is held can't mint fresh rings; releasing the view
+  // refreshes and re-adds them from the live change map.
+  if (!metricOverlayActive && kind && kind !== 'deleted') {
     setNodeChangeRing(root, kind, baseSize);
   }
 
@@ -142,12 +152,7 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
   // here too keeps labels correct through full rebuilds (data swap, size/metric
   // refresh) that happen while Alt is held. Suppressed while a recolor overlay
   // (health / loc / dead) owns the sprite, matching the overlay precedence.
-  if (
-    refs.labelModeRef.current &&
-    !refs.healthModeRef.current &&
-    !refs.locModeRef.current &&
-    !refs.deadModeRef.current
-  ) {
+  if (refs.labelModeRef.current && !metricOverlayActive) {
     const d = refs.nodeDepthsRef.current.get(node.id) ?? 0;
     applyNodeLabelState(
       root,
