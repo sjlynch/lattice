@@ -22,6 +22,13 @@ export function useBatchedLinks(
   // from `history`), so without this dep the controller would keep rendering the
   // orphaned pre-swap link objects. Re-rebuild on every swap to re-capture.
   dataGeneration: number,
+  // True while a metric view (health/loc/dead) is active. Those views hide
+  // ghost nodes and metrics-ignored files via `linkVisibility`, so the batched
+  // link buffer must re-capture on the toggle — otherwise links to the now-
+  // hidden nodes would stay drawn as stray lines into empty space (the per-link
+  // fallback re-reads visibility on the toggle's refresh; the batched buffer
+  // only re-reads on rebuild).
+  metricOverlayActive: boolean,
 ) {
   const ctrlRef = useRef<InstancedLinks | null>(null);
 
@@ -52,5 +59,5 @@ export function useBatchedLinks(
   useEffect(() => {
     if (!enabled) return;
     ctrlRef.current?.rebuild();
-  }, [enabled, structuralData, hiddenExts, dataGeneration]);
+  }, [enabled, structuralData, hiddenExts, dataGeneration, metricOverlayActive]);
 }

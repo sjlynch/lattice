@@ -131,6 +131,7 @@ export function ForceGraphView({
     containerRef,
     data,
     hiddenExts,
+    metricsIgnoredExtsRef,
     healthMode,
     onHealthModeChange,
     selected,
@@ -159,6 +160,12 @@ export function ForceGraphView({
     onHoverNodeChange: debouncedSetHoverNode,
   });
 
+  // True while a recolor view (health/loc/dead) is showing. These views pare the
+  // graph down to the metric signal — hiding ghost nodes + metrics-ignored files
+  // and suppressing change-rings — so the batched-link buffer must re-capture
+  // its visible set when this flips (see useBatchedLinks).
+  const metricOverlayActive = healthMode || locMode || deadMode;
+
   const resetSelection = useCallback(() => setSelected(new Set()), []);
 
   // `dataGeneration` bumps on every full graphData() swap (incl. the git-history
@@ -185,6 +192,7 @@ export function ForceGraphView({
     structuralData,
     hiddenExts,
     dataGeneration,
+    metricOverlayActive,
   );
 
   // Batched node rendering: draw the base node shapes as a few instanced meshes

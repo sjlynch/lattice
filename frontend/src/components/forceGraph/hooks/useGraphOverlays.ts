@@ -1,4 +1,4 @@
-import type { MutableRefObject } from 'react';
+import { useRef, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import type { ScanResult } from '../../../api';
 import { useDeadCodeOverlay } from './useDeadCodeOverlay';
@@ -16,6 +16,9 @@ type UseGraphOverlaysArgs = {
   containerRef: MutableRefObject<HTMLDivElement | null>;
   data: ScanResult | null;
   hiddenExts: Set<string>;
+  // Extensions (lowercased, leading-dot) skipped by the metric overlays. Hidden
+  // from the graph entirely while a health/loc/dead view is active.
+  metricsIgnoredExtsRef: MutableRefObject<Set<string>>;
   healthMode: boolean;
   onHealthModeChange: (mode: boolean) => void;
   // Current node selection — narrows the Alt label overlay to just these nodes.
@@ -32,6 +35,7 @@ export function useGraphOverlays({
   containerRef,
   data,
   hiddenExts,
+  metricsIgnoredExtsRef,
   healthMode,
   onHealthModeChange,
   selected,
@@ -41,11 +45,18 @@ export function useGraphOverlays({
     graphRef,
   );
 
+  // Live "is a health/loc/dead view showing" flag, shared by the timeline (skip
+  // its scrub delta) and the filter (hide ghosts + ignored-ext files). Assigned
+  // below once locMode/deadMode are known; read live inside those hooks' effects
+  // and accessors, so the in-render assignment lands before they fire.
+  const metricOverlayActiveRef = useRef(false);
+
   const { history, range, setRange, changeMapRef } = useGitTimeline(
     activeFolder,
     graphRef,
     settingsRef,
     data,
+    metricOverlayActiveRef,
   );
 
   // Pin state for the hold-key overlays — a pin latches a view on without
@@ -76,7 +87,18 @@ export function useGraphOverlays({
     pinned.labels,
   );
 
-  useGraphFilter(graphRef, hiddenExts, changeMapRef);
+  // Keep the shared flag current for the timeline/filter effects that read it
+  // live. Assigning during render (rather than in an effect) means the value is
+  // already correct when those hooks' refresh-driven accessors next run.
+  metricOverlayActiveRef.current = healthMode || locMode || deadMode;
+
+  useGraphFilter(
+    graphRef,
+    hiddenExts,
+    changeMapRef,
+    metricsIgnoredExtsRef,
+    metricOverlayActiveRef,
+  );
 
   return {
     settings,

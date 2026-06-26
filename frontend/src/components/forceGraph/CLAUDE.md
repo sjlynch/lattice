@@ -37,7 +37,10 @@ label physics in `labelPhysics/CLAUDE.md`.
 **Node sprites & recolor overlays**
 - `nodeObjectFactory.ts` — `buildNodeObject`: the ghost/health/loc/dead/base
   sprite decision tree (recolor precedence health > loc > dead > base) + the
-  change-ring/selection-halo sibling children. Handed to `nodeThreeObject`.
+  change-ring/selection-halo sibling children. Handed to `nodeThreeObject`. While
+  a metric view (health/loc/dead) is active it skips the change-ring child (they
+  obscure the coloring); ghosts + metrics-ignored files are hidden by
+  `useGraphFilter` instead.
 - `sprites` / `spriteShapes` / `spriteTextures` / `spritePicking` — per-(ext,
   shape,color) `SpriteMaterial` cache, shape geometry, canvas→`CanvasTexture`
   (sets `colorSpace = SRGBColorSpace`), sprite-quad pick bounds.

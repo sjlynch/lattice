@@ -21,6 +21,12 @@ export function useGitTimeline(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   settingsRef: MutableRefObject<GraphSettings>,
   data: ScanResult | null,
+  // True while a metric view (health/loc/dead) is showing. The change map still
+  // updates underneath, but its rings/ghosts are suppressed in those views — so
+  // the in-place scrub delta is skipped (it'd re-add a ring or re-show a ghost
+  // the active view hid). Releasing the view runs a full refresh that re-syncs
+  // every node from the latest map.
+  metricOverlayActiveRef: MutableRefObject<boolean>,
 ) {
   const [history, setHistory] = useState<GitHistoryResult | null>(null);
   const [range, setRange] = useState<{ left: number; right: number }>({
@@ -100,6 +106,10 @@ export function useGitTimeline(
     changeMapRef.current = next;
     const graph = graphRef.current;
     if (!graph) return;
+    // While a metric view is active its refresh already stripped every ring and
+    // hid the ghosts; keep the map current (so releasing the view re-syncs to
+    // the scrubbed position) but don't paint the delta back in.
+    if (metricOverlayActiveRef.current) return;
     const changed = applyChangeRingDelta(
       graph,
       prev,
@@ -110,7 +120,7 @@ export function useGitTimeline(
     // Wake a few frames so the added/removed rings + ghost toggles paint; the
     // render loop is otherwise paused once the engine has settled.
     if (changed) getIdleController(graph)?.wakeForRefresh();
-  }, [history, range, graphRef, settingsRef]);
+  }, [history, range, graphRef, settingsRef, metricOverlayActiveRef]);
 
   return { history, range, setRange, changeMapRef };
 }
