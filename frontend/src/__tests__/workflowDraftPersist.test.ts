@@ -133,7 +133,13 @@ test('draftForFolder swaps a carried-over draft for the new project’s stored d
   assert.equal(cleared.name, '');
 });
 
-test('draftForFolder leaves a loaded (saved) workflow untouched', () => {
+test('draftForFolder clears a loaded (saved) workflow on project switch', () => {
   const saved: EditorState = { ...draft('saved'), workflowId: 'wf1' };
-  assert.equal(draftForFolder(saved, draft('B draft')), saved);
+  const stored = draft('B draft');
+  assert.equal(draftForFolder(saved, stored), stored);
+
+  const cleared = draftForFolder(saved, null);
+  assert.equal(cleared.workflowId, null);
+  assert.equal(cleared.steps.length, 0);
+  assert.equal(cleared.name, '');
 });

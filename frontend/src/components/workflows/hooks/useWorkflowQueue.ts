@@ -74,11 +74,17 @@ export function useWorkflowQueue({
   // still reading the freshest values. A stable dispatch keeps the
   // activeRuns-diff effect from re-running on every render.
   const stateRef = useRef(state);
+  const activeFolderRef = useRef(activeFolder);
+  const activeFolderGenerationRef = useRef(0);
   const workflowsByIdRef = useRef(workflowsById);
   const runWorkflowRef = useRef(runWorkflow);
   const recentRunsRef = useRef(recentRuns);
   const activeRunsRef = useRef(activeRuns);
   stateRef.current = state;
+  if (activeFolderRef.current !== activeFolder) {
+    activeFolderRef.current = activeFolder;
+    activeFolderGenerationRef.current += 1;
+  }
   workflowsByIdRef.current = workflowsById;
   runWorkflowRef.current = runWorkflow;
   recentRunsRef.current = recentRuns;
@@ -99,15 +105,26 @@ export function useWorkflowQueue({
     setState(result.state);
 
     for (const entry of result.starts) {
+      const startProject = activeFolderRef.current;
+      const startGeneration = activeFolderGenerationRef.current;
       const wf = workflowsByIdRef.current.get(entry.workflowId);
-      if (!wf) {
-        // Workflow disappeared between enqueue and start. Recover.
+      if (!wf || !startProject || wf.projectPath !== startProject) {
+        // Workflow disappeared between enqueue and start (or belonged to a
+        // previous project's stale map). Recover in the current queue only.
         dispatch({ type: 'dispatchFailed', entryId: entry.id });
         continue;
       }
       void (async () => {
         const run = await runWorkflowRef.current(wf, entry);
-        if (run) {
+        if (
+          activeFolderRef.current !== startProject ||
+          activeFolderGenerationRef.current !== startGeneration
+        ) {
+          // The request belongs to the project we left. Do not attach its result
+          // (or failure) to the newly active project's queue state.
+          return;
+        }
+        if (run && run.projectPath === startProject) {
           dispatch({ type: 'workflowStarted', entryId: entry.id, runId: run.id });
         } else {
           dispatch({ type: 'dispatchFailed', entryId: entry.id });
