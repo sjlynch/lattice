@@ -6,8 +6,10 @@ import { groupTasksByStatus } from '../components/taskboard/hooks/useTaskBoardSt
 import {
   appendOrder,
   multiDropOrder,
+  selectedTasksInVisibleOrder,
   singleDropOrder,
 } from '../components/taskboard/reorderMath.ts';
+import { compareTasksForLane } from '../components/taskboard/hooks/useTaskBoardState.ts';
 
 function task(id: string, over: Partial<Task> = {}): Task {
   return {
@@ -92,4 +94,54 @@ test('cross-lane single drop inserts a foreign task at the visible slot', () => 
   const incoming = task('X', { status: 'ready_to_merge' });
   const order = singleDropOrder(displayedInProgress(), incoming, 'in_progress', 2);
   assert.deepEqual(order, ['A', 'C', 'X', 'B']);
+});
+
+// An 'oldest'-sorted lane shows tasks by arrival ascending — here [B, C, A],
+// the reverse of compareTasksForLane's (sortOrder ?? -createdAt) order [C, B, A].
+function displayedOldestInProgress(): Task[] {
+  const grouped = groupTasksByStatus([A, B, C]);
+  return sortTasksForLane(grouped.in_progress, 'in_progress', 'oldest');
+}
+
+test('fixture: oldest display order is the reverse of grouped order', () => {
+  assert.deepEqual(displayedOldestInProgress().map((t) => t.id), ['B', 'C', 'A']);
+});
+
+test('multi-drag block keeps the visible order, not sortOrder/createdAt order', () => {
+  // Visible (oldest): [B, C, A]. Select B and C — visibly B sits above C.
+  const srcTasks = selectedTasksInVisibleOrder(displayedOldestInProgress(), [
+    'B',
+    'C',
+  ]);
+  assert.deepEqual(srcTasks.map((t) => t.id), ['B', 'C']);
+  // Drop the pair at the end of the lane.
+  const order = multiDropOrder(displayedOldestInProgress(), srcTasks, ['B', 'C'], 3);
+  // B stays above C, matching what the user saw.
+  assert.deepEqual(order, ['A', 'B', 'C']);
+});
+
+test('regression: the old grouped-sort block would land the pair reversed', () => {
+  // The pre-fix code built the moved block via ids.map(find).sort(
+  // compareTasksForLane), i.e. sortOrder ?? -createdAt → [C, B] for these two,
+  // the REVERSE of the visible [B, C]. Splicing that in persists C above B.
+  const buggyBlock = ['B', 'C']
+    .map((id) => [A, B, C].find((t) => t.id === id)!)
+    .sort(compareTasksForLane);
+  assert.deepEqual(buggyBlock.map((t) => t.id), ['C', 'B']);
+  const buggyOrder = multiDropOrder(
+    displayedOldestInProgress(),
+    buggyBlock,
+    ['B', 'C'],
+    3,
+  );
+  assert.deepEqual(buggyOrder, ['A', 'C', 'B']);
+  // The fixed path preserves the visible order instead.
+  const fixedBlock = selectedTasksInVisibleOrder(displayedOldestInProgress(), [
+    'B',
+    'C',
+  ]);
+  assert.notDeepEqual(
+    multiDropOrder(displayedOldestInProgress(), fixedBlock, ['B', 'C'], 3),
+    buggyOrder,
+  );
 });

@@ -8,6 +8,7 @@ import {
 import { useTerminals } from '../../../TerminalsContext';
 import { useStructuralScan } from '../../../hooks/useStructuralScan';
 import { fromWorkflow } from '../editorState';
+import type { QueueMode, QueueState } from '../queueScheduler';
 import { useCollapsedSteps } from './useCollapsedSteps';
 import { useWorkflowEditor } from './useWorkflowEditor';
 import { useWorkflowErrorHandler } from './useWorkflowErrorHandler';
@@ -15,13 +16,104 @@ import { useWorkflowHarnessOverrides } from './useWorkflowHarnessOverrides';
 import { useWorkflowList } from './useWorkflowList';
 import { useWorkflowQueue } from './useWorkflowQueue';
 import { useWorkflowQueueActions } from './useWorkflowQueueActions';
-import { useWorkflowQueueSelectors } from './useWorkflowQueueSelectors';
+import {
+  useWorkflowQueueSelectors,
+  type WorkflowQueueSelectors,
+} from './useWorkflowQueueSelectors';
 import { useWorkflowRunActions } from './useWorkflowRunActions';
 import { useWorkflowRuns } from './useWorkflowRuns';
+import { useWorkflowRunViews } from './useWorkflowRunViews';
 import { useWorkflowPromptCustomization } from './useWorkflowPromptCustomization';
 import { detectProjectPromptProfile } from '../projectPromptVariants';
 
 export type { QueueMode } from '../queueScheduler';
+
+// The queue slice the panels render: scheduler state joined with the derived
+// selectors. Assembled by `buildQueueView` so the hook body stays declarative.
+type QueueView = {
+  mode: QueueMode;
+  queuedEntries: WorkflowQueueEntry[];
+  queuedWorkflowIds: string[];
+  queuedItems: WorkflowQueueSelectors['queuedItems'];
+  running: boolean;
+  busy: boolean;
+  disabled: boolean;
+  status: string;
+};
+
+function buildQueueView(
+  queueState: QueueState,
+  selectors: WorkflowQueueSelectors,
+  queuedWorkflowIds: string[],
+): QueueView {
+  return {
+    mode: queueState.mode,
+    queuedEntries: queueState.queued,
+    queuedWorkflowIds,
+    queuedItems: selectors.queuedItems,
+    running: queueState.running,
+    busy: selectors.busy,
+    disabled: selectors.disabled,
+    status: selectors.status,
+  };
+}
+
+// Flattens the intent-level actions the panels call into one object. A fresh
+// object each render (matching the previous inline literal); the underlying
+// callbacks are stable, so this allocation is cheap and identity-irrelevant.
+function buildActions(parts: {
+  editorState: ReturnType<typeof useWorkflowEditor>;
+  promptCustomization: ReturnType<typeof useWorkflowPromptCustomization>;
+  harnessState: ReturnType<typeof useWorkflowHarnessOverrides>;
+  runActions: ReturnType<typeof useWorkflowRunActions>;
+  queueActions: ReturnType<typeof useWorkflowQueueActions>;
+  selectWorkflow: (wf: Workflow) => void;
+  updateEditorName: (name: string) => void;
+  dismissRecent: (id: string) => void;
+}) {
+  const {
+    editorState,
+    promptCustomization,
+    harnessState,
+    runActions,
+    queueActions,
+    selectWorkflow,
+    updateEditorName,
+    dismissRecent,
+  } = parts;
+  return {
+    setPickingTemplate: editorState.setPickingTemplate,
+    newBlank: editorState.newBlank,
+    newFromTemplate: editorState.newFromTemplate,
+    save: editorState.save,
+    discardEdits: editorState.discardEdits,
+    deleteCurrent: editorState.deleteCurrent,
+    patchStep: editorState.patchStep,
+    removeStep: editorState.removeStep,
+    addStep: editorState.addStep,
+    addControlStep: editorState.addControlStep,
+    addDefaultPromptStep: editorState.addDefaultPromptStep,
+    reorderSteps: editorState.reorderSteps,
+    patchVariable: editorState.patchVariable,
+    addVariable: editorState.addVariable,
+    removeVariable: editorState.removeVariable,
+    selectWorkflow,
+    updateEditorName,
+    customizeStepPrompt: promptCustomization.customizeStepPrompt,
+    setWorkflowHarnessOverride: harnessState.setWorkflowHarnessOverride,
+    runWorkflow: runActions.runWorkflow,
+    runEditorWorkflow: runActions.runEditorWorkflow,
+    enqueueWorkflow: queueActions.enqueueWorkflow,
+    enqueueEditorWorkflow: queueActions.enqueueEditorWorkflow,
+    removeQueuedWorkflow: queueActions.removeQueuedWorkflow,
+    startQueuedWorkflows: queueActions.startQueuedWorkflows,
+    setQueueMode: queueActions.setQueueMode,
+    stopQueue: queueActions.stopQueue,
+    clearQueue: queueActions.clearQueue,
+    stopRun: runActions.stopRun,
+    dismissRecent,
+  };
+}
 
 // Composes the workflow feature's data hooks into one interface for the UI.
 // Components render state from here and dispatch intent-level actions such as
@@ -30,7 +122,9 @@ export type { QueueMode } from '../queueScheduler';
 // The composition order matters: harness overrides feed run/queue actions,
 // run actions feed the queue scheduler (queued entries fire through the same
 // runWorkflow callback), and the queue scheduler's state feeds the selectors
-// that render the queue panel.
+// that render the queue panel. The derived run views and the queue/actions
+// object assembly are split into `useWorkflowRunViews` / `buildQueueView` /
+// `buildActions` so this body reads as wiring.
 export function useWorkflowManager(activeFolder: string, scanResult: ScanResult | null) {
   const { error, showError, clearError } = useWorkflowErrorHandler();
   const { addTerminal } = useTerminals();
@@ -58,7 +152,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     onError: showError,
   });
 
-  const { editor, setEditor, save } = editorState;
+  const { editor, setEditor } = editorState;
   const promptCustomization = useWorkflowPromptCustomization({
     activeFolder,
     steps: editor.steps,
@@ -73,28 +167,17 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     return map;
   }, [workflows]);
 
-  const activeRunList = useMemo(
-    () => Object.values(activeRuns).sort((a, b) => a.startedAt - b.startedAt),
-    [activeRuns],
-  );
-
-  // Recently-finished runs that ended in failure (errored or cancelled). These
-  // linger ~5min in `recentRuns` (vs ~10s for completed) so the user has a
-  // chance to spot a failure they otherwise wouldn't have seen — see
-  // `useWorkflowRuns` for the linger policy. Surfaced as a small navbar chip
-  // and a section in the runs aside.
-  const recentFailedRunList = useMemo(
-    () =>
-      Object.values(recentRuns)
-        .filter((r) => r.status === 'errored' || r.status === 'cancelled')
-        .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0)),
-    [recentRuns],
-  );
+  const runViews = useWorkflowRunViews({
+    activeRuns,
+    recentRuns,
+    controlProgress,
+    editorWorkflowId: editor.workflowId,
+  });
 
   const runActions = useWorkflowRunActions({
     editor,
     workflowsById,
-    save,
+    save: editorState.save,
     addActiveRun,
     getWorkflowHarnessOverride: harnessState.getWorkflowHarnessOverride,
     getWorkflowPiModelOverride: harnessState.getWorkflowPiModelOverride,
@@ -110,6 +193,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
   );
 
   const { state: queueState, dispatch: dispatchQueue } = useWorkflowQueue({
+    activeFolder,
     workflowsById,
     runWorkflow: runQueuedWorkflow,
     activeRuns,
@@ -119,7 +203,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
   const queueActions = useWorkflowQueueActions({
     editor,
     workflowsById,
-    save,
+    save: editorState.save,
     getWorkflowHarnessOverride: harnessState.getWorkflowHarnessOverride,
     getWorkflowPiModelOverride: harnessState.getWorkflowPiModelOverride,
     dispatchQueue,
@@ -143,31 +227,6 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     }));
   }, [setEditor]);
 
-  // Find any active/recent run for the currently-edited workflow so the
-  // strip in the editor head reflects the right run. Memoized so the scan
-  // only reruns when the run maps or the edited workflow change.
-  const runForEditor = useMemo(
-    () =>
-      editor.workflowId
-        ? Object.values(activeRuns).find(
-            (r) => r.workflowId === editor.workflowId,
-          )
-        : undefined,
-    [activeRuns, editor.workflowId],
-  );
-  const controlProgressForEditor = runForEditor
-    ? controlProgress[runForEditor.id]
-    : undefined;
-  const recentForEditor = useMemo(
-    () =>
-      editor.workflowId
-        ? Object.values(recentRuns).find(
-            (r) => r.workflowId === editor.workflowId,
-          )
-        : undefined,
-    [recentRuns, editor.workflowId],
-  );
-
   const queuedWorkflowIds = useMemo(
     () => queueState.queued.map((entry) => entry.workflowId),
     [queueState.queued],
@@ -180,12 +239,12 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     workflows,
     sortedWorkflows,
     activeRuns,
-    activeRunList,
+    activeRunList: runViews.activeRunList,
     recentRuns,
-    recentFailedRunList,
-    runForEditor,
-    controlProgressForEditor,
-    recentForEditor,
+    recentFailedRunList: runViews.recentFailedRunList,
+    runForEditor: runViews.runForEditor,
+    controlProgressForEditor: runViews.controlProgressForEditor,
+    recentForEditor: runViews.recentForEditor,
     editor,
     pickingTemplate: editorState.pickingTemplate,
     harnessAvail: harnessState.harnessAvail,
@@ -195,49 +254,18 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     getWorkflowPiModelOverride: harnessState.getWorkflowPiModelOverride,
     projectProfile,
     customizingSteps: promptCustomization.customizingSteps,
-    queue: {
-      mode: queueState.mode,
-      queuedEntries: queueState.queued,
-      queuedWorkflowIds,
-      queuedItems: queueSelectors.queuedItems,
-      running: queueState.running,
-      busy: queueSelectors.busy,
-      disabled: queueSelectors.disabled,
-      status: queueSelectors.status,
-    },
+    queue: buildQueueView(queueState, queueSelectors, queuedWorkflowIds),
     collapsedSteps,
-    actions: {
-      setPickingTemplate: editorState.setPickingTemplate,
-      newBlank: editorState.newBlank,
-      newFromTemplate: editorState.newFromTemplate,
-      save,
-      discardEdits: editorState.discardEdits,
-      deleteCurrent: editorState.deleteCurrent,
-      patchStep: editorState.patchStep,
-      removeStep: editorState.removeStep,
-      addStep: editorState.addStep,
-      addControlStep: editorState.addControlStep,
-      addDefaultPromptStep: editorState.addDefaultPromptStep,
-      reorderSteps: editorState.reorderSteps,
-      patchVariable: editorState.patchVariable,
-      addVariable: editorState.addVariable,
-      removeVariable: editorState.removeVariable,
+    actions: buildActions({
+      editorState,
+      promptCustomization,
+      harnessState,
+      runActions,
+      queueActions,
       selectWorkflow,
       updateEditorName,
-      customizeStepPrompt: promptCustomization.customizeStepPrompt,
-      setWorkflowHarnessOverride: harnessState.setWorkflowHarnessOverride,
-      runWorkflow: runActions.runWorkflow,
-      runEditorWorkflow: runActions.runEditorWorkflow,
-      enqueueWorkflow: queueActions.enqueueWorkflow,
-      enqueueEditorWorkflow: queueActions.enqueueEditorWorkflow,
-      removeQueuedWorkflow: queueActions.removeQueuedWorkflow,
-      startQueuedWorkflows: queueActions.startQueuedWorkflows,
-      setQueueMode: queueActions.setQueueMode,
-      stopQueue: queueActions.stopQueue,
-      clearQueue: queueActions.clearQueue,
-      stopRun: runActions.stopRun,
       dismissRecent,
-    },
+    }),
   };
 }
 
