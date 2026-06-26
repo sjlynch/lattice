@@ -9,10 +9,12 @@ body rendering — all the save/dirty/close machinery lives in
 
 Lengthy explanatory copy lives behind `SettingsInfo` — a small `(i)` button next
 to a section title that toggles a popover (`.settings-section-title-row` lays the
-two out inline). It closes on outside-click and on Escape; its Escape handler is
-**capture-phase + `stopPropagation`** so it dismisses just the popover without
-the Modal's own Escape closing the whole dialog. Keep section titles + control
-labels always-visible and push the detail into the popover.
+two out inline). `SettingsSection.tsx` provides the shared presentational section
+chrome (and a checkbox wrapper) for that title row; keep it structural-only so
+callers own behavior. `SettingsInfo` closes on outside-click and on Escape; its
+Escape handler is **capture-phase + `stopPropagation`** so it dismisses just the
+popover without the Modal's own Escape closing the whole dialog. Keep section
+titles + control labels always-visible and push the detail into the popover.
 
 ## Shared tab pattern
 
@@ -41,10 +43,13 @@ instrumentation and the global max-agents patch, and finally fires the parent
 callbacks. `useSettingsDrafts.ts` owns the handful of drafts that live on the
 parent itself rather than a tab — the terminal-default harness +
 skip-permissions, and the instrument-Claude / disable-memory / qa-auto-close
-toggles. `TerminalSettingsSections.tsx` renders those four sections (the
-project-settings block atop the Terminals tab); it's a plain `drafts`-driven
-component with no ref handle, since the controller persists those drafts —
-`SettingsDialog` just composes it ahead of the `StartupTerminalsTab` panel.
+toggles. Its async settings load updates fetched baselines but seeds only
+untouched toggle drafts, so a late GET never overwrites edits made while the
+dialog was opening. `TerminalSettingsSections.tsx` renders those four sections
+(the project-settings block atop the Terminals tab); it's a plain
+`drafts`-driven component with no ref handle, since the controller persists
+those drafts — `SettingsDialog` just composes it ahead of the
+`StartupTerminalsTab` panel.
 
 `useOverrideDraft.ts` is the shared draft engine behind the two
 **override-merge** tabs (`InstructionTemplatesTab` + `EnvNotesTab`): both fetch

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fetchUserSettings,
   type TerminalDefaultHarness,
@@ -45,6 +45,14 @@ export function useSettingsDrafts(
   const [loadedDisableMemory, setLoadedDisableMemory] = useState(true);
   const [loadedQaTerminalAutoClose, setLoadedQaTerminalAutoClose] =
     useState(false);
+  // A settings GET can resolve after the user has already toggled one of these
+  // fields. Track touched state outside render so the late response can update
+  // dirty baselines without clobbering the user's draft value.
+  const fetchedToggleTouchedRef = useRef({
+    instrumentClaude: false,
+    disableMemory: false,
+    qaTerminalAutoClose: false,
+  });
 
   // Reseed the terminal-default drafts from the latest saved settings each
   // time the dialog opens.
@@ -56,23 +64,45 @@ export function useSettingsDrafts(
     );
   }, [open, terminalLaunchSettings]);
 
-  // The instrument toggle isn't part of terminalLaunchSettings, so fetch it
-  // fresh when the dialog opens.
+  const setInstrumentClaudeDraft = useCallback((value: boolean) => {
+    fetchedToggleTouchedRef.current.instrumentClaude = true;
+    setInstrumentClaude(value);
+  }, []);
+
+  const setDisableMemoryDraft = useCallback((value: boolean) => {
+    fetchedToggleTouchedRef.current.disableMemory = true;
+    setDisableMemory(value);
+  }, []);
+
+  const setQaTerminalAutoCloseDraft = useCallback((value: boolean) => {
+    fetchedToggleTouchedRef.current.qaTerminalAutoClose = true;
+    setQaTerminalAutoClose(value);
+  }, []);
+
+  // The instrument/memory/QA toggles aren't part of terminalLaunchSettings, so
+  // fetch them fresh when the dialog opens. Seed only untouched drafts; always
+  // refresh the loaded baselines so dirty reflects the saved value.
   useEffect(() => {
     if (!open || !activeFolder) return;
     let cancelled = false;
+    fetchedToggleTouchedRef.current = {
+      instrumentClaude: false,
+      disableMemory: false,
+      qaTerminalAutoClose: false,
+    };
     fetchUserSettings(activeFolder)
       .then((s) => {
         if (!cancelled) {
           const instrument = s.instrumentProjectClaudeSessions !== false;
           const memory = s.disableClaudeMemory !== false;
           const qaAutoClose = s.qaTerminalAutoClose === true;
-          setInstrumentClaude(instrument);
+          const touched = fetchedToggleTouchedRef.current;
           setLoadedInstrumentClaude(instrument);
-          setDisableMemory(memory);
+          if (!touched.instrumentClaude) setInstrumentClaude(instrument);
           setLoadedDisableMemory(memory);
-          setQaTerminalAutoClose(qaAutoClose);
+          if (!touched.disableMemory) setDisableMemory(memory);
           setLoadedQaTerminalAutoClose(qaAutoClose);
+          if (!touched.qaTerminalAutoClose) setQaTerminalAutoClose(qaAutoClose);
         }
       })
       .catch(() => { /* keep current draft */ });
@@ -93,11 +123,11 @@ export function useSettingsDrafts(
     terminalClaudeSkipPermissions,
     setTerminalClaudeSkipPermissions,
     instrumentClaude,
-    setInstrumentClaude,
+    setInstrumentClaude: setInstrumentClaudeDraft,
     disableMemory,
-    setDisableMemory,
+    setDisableMemory: setDisableMemoryDraft,
     qaTerminalAutoClose,
-    setQaTerminalAutoClose,
+    setQaTerminalAutoClose: setQaTerminalAutoCloseDraft,
     dirty,
   };
 }

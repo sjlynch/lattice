@@ -1,5 +1,5 @@
 import { type TerminalDefaultHarness } from '../../api';
-import { SettingsInfo } from './SettingsInfo';
+import { CheckboxSettingsSection, SettingsSection } from './SettingsSection';
 import type { SettingsDrafts } from './useSettingsDrafts';
 
 // The project/terminal settings sections that make up the top of the Terminals
@@ -28,21 +28,16 @@ function TerminalDefaultSettingsSection({
   onTerminalClaudeSkipPermissionsChange,
 }: TerminalDefaultSettingsSectionProps) {
   return (
-    <div className="settings-section">
-      <div className="settings-section-header">
-        <div>
-          <div className="settings-section-title-row">
-            <div className="settings-section-title">New terminal default</div>
-            <SettingsInfo label="About the new terminal default">
-              <p>
-                Choose what the terminal panel’s + button opens by default. The
-                chevron menu still lets you pick a different terminal for one-off
-                launches.
-              </p>
-            </SettingsInfo>
-          </div>
-        </div>
-      </div>
+    <SettingsSection
+      title="New terminal default"
+      infoLabel="About the new terminal default"
+      info={(
+        <p>
+          Choose what the terminal panel’s + button opens by default. The chevron
+          menu still lets you pick a different terminal for one-off launches.
+        </p>
+      )}
+    >
       <div className="settings-control-row">
         <label className="settings-control-label" htmlFor="terminal-default-harness">
           Default harness
@@ -72,7 +67,7 @@ function TerminalDefaultSettingsSection({
           <span>Launch Claude with --dangerously-skip-permissions</span>
         </label>
       )}
-    </div>
+    </SettingsSection>
   );
 }
 
@@ -86,36 +81,27 @@ function ClaudeInstrumentationSection({
   onChange,
 }: ClaudeInstrumentationSectionProps) {
   return (
-    <div className="settings-section">
-      <div className="settings-section-header">
-        <div>
-          <div className="settings-section-title-row">
-            <div className="settings-section-title">Show Claude sessions on the graph</div>
-            <SettingsInfo label="About showing Claude sessions on the graph">
-              <p>
-                Adds activity hooks to this project’s{' '}
-                <code>.claude/settings.local.json</code> so any Claude session
-                working in this project — even ones you launch yourself in a
-                terminal — appears as an orange node with focus beams.
-              </p>
-              <p>
-                Your own Claude config is preserved; turning this off removes
-                Lattice’s hooks. Sessions must be (re)started to pick up the
-                change.
-              </p>
-            </SettingsInfo>
-          </div>
-        </div>
-      </div>
-      <label className="settings-checkbox-row">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(e) => onChange(e.target.checked)}
-        />
-        <span>Instrument Claude sessions in this project</span>
-      </label>
-    </div>
+    <CheckboxSettingsSection
+      title="Show Claude sessions on the graph"
+      infoLabel="About showing Claude sessions on the graph"
+      info={(
+        <>
+          <p>
+            Adds activity hooks to this project’s{' '}
+            <code>.claude/settings.local.json</code> so any Claude session working
+            in this project — even ones you launch yourself in a terminal —
+            appears as an orange node with focus beams.
+          </p>
+          <p>
+            Your own Claude config is preserved; turning this off removes
+            Lattice’s hooks. Sessions must be (re)started to pick up the change.
+          </p>
+        </>
+      )}
+      checked={enabled}
+      onChange={onChange}
+      label="Instrument Claude sessions in this project"
+    />
   );
 }
 
@@ -126,38 +112,29 @@ type ClaudeMemorySectionProps = {
 
 function ClaudeMemorySection({ disabled, onChange }: ClaudeMemorySectionProps) {
   return (
-    <div className="settings-section">
-      <div className="settings-section-header">
-        <div>
-          <div className="settings-section-title-row">
-            <div className="settings-section-title">Turn off Claude memory for this project</div>
-            <SettingsInfo label="About turning off Claude memory">
-              <p>
-                Disables Claude Code’s auto-memory for this project — both the
-                agents Lattice runs in worktrees and any Claude session you start
-                yourself in the project tree. Recommended when running many
-                agents in parallel, since they would otherwise share and thrash
-                one project memory store.
-              </p>
-              <p>
-                Written per-project (the project’s{' '}
-                <code>.claude/settings.local.json</code> plus an env var on
-                spawned agents); your machine-global Claude memory in other
-                projects is left untouched.
-              </p>
-            </SettingsInfo>
-          </div>
-        </div>
-      </div>
-      <label className="settings-checkbox-row">
-        <input
-          type="checkbox"
-          checked={disabled}
-          onChange={(e) => onChange(e.target.checked)}
-        />
-        <span>Disable Claude auto-memory for this project</span>
-      </label>
-    </div>
+    <CheckboxSettingsSection
+      title="Turn off Claude memory for this project"
+      infoLabel="About turning off Claude memory"
+      info={(
+        <>
+          <p>
+            Disables Claude Code’s auto-memory for this project — both the agents
+            Lattice runs in worktrees and any Claude session you start yourself in
+            the project tree. Recommended when running many agents in parallel,
+            since they would otherwise share and thrash one project memory store.
+          </p>
+          <p>
+            Written per-project (the project’s{' '}
+            <code>.claude/settings.local.json</code> plus an env var on spawned
+            agents); your machine-global Claude memory in other projects is left
+            untouched.
+          </p>
+        </>
+      )}
+      checked={disabled}
+      onChange={onChange}
+      label="Disable Claude auto-memory for this project"
+    />
   );
 }
 
@@ -168,35 +145,25 @@ type QaTerminalSectionProps = {
 
 function QaTerminalSection({ autoClose, onChange }: QaTerminalSectionProps) {
   return (
-    <div className="settings-section">
-      <div className="settings-section-header">
-        <div>
-          <div className="settings-section-title-row">
-            <div className="settings-section-title">QA e2e test terminal</div>
-            <SettingsInfo label="About the QA e2e test terminal">
-              <p>
-                When a QA-lane end-to-end (Playwright) test finishes, its
-                terminal stays open by default so you can read the PASS/FAIL
-                verdict and output. Enable this to auto-close it the moment the
-                run completes.
-              </p>
-              <p>
-                The task’s qa&nbsp;→&nbsp;done auto-advance is unaffected either
-                way.
-              </p>
-            </SettingsInfo>
-          </div>
-        </div>
-      </div>
-      <label className="settings-checkbox-row">
-        <input
-          type="checkbox"
-          checked={autoClose}
-          onChange={(e) => onChange(e.target.checked)}
-        />
-        <span>Auto-close the QA e2e terminal when its run finishes</span>
-      </label>
-    </div>
+    <CheckboxSettingsSection
+      title="QA e2e test terminal"
+      infoLabel="About the QA e2e test terminal"
+      info={(
+        <>
+          <p>
+            When a QA-lane end-to-end (Playwright) test finishes, its terminal
+            stays open by default so you can read the PASS/FAIL verdict and
+            output. Enable this to auto-close it the moment the run completes.
+          </p>
+          <p>
+            The task’s qa&nbsp;→&nbsp;done auto-advance is unaffected either way.
+          </p>
+        </>
+      )}
+      checked={autoClose}
+      onChange={onChange}
+      label="Auto-close the QA e2e terminal when its run finishes"
+    />
   );
 }
 
