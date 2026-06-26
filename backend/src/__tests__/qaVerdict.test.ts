@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseVerdictBody } from '../routes/qaRuns.js';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import express from 'express';
+import { buildQaRunsRouter, parseVerdictBody } from '../routes/qaRuns.js';
 import { renderQaInstructions } from '../qaRuns/instructions.js';
 import {
   applyQaVerdict,
@@ -11,6 +14,7 @@ import {
   recordQaRun,
   recordQaVerdict,
 } from '../qaRuns.js';
+import type { Task, TaskStatus } from '../tasks.js';
 
 // ---------- parseVerdictBody ----------
 //
@@ -178,4 +182,125 @@ test('applyRecordedQaVerdict: a recorded FAIL is never promoted', async () => {
   assert.equal(outcome.reason, 'verdict: fail');
   markQaRunDone(id);
   forgetQaRun(id);
+});
+
+// ---------- POST /api/qa-runs status guard ----------
+//
+// A QA e2e session must only start for a task that's actually in the QA lane.
+// A stale/miswired frontend call (or a direct API hit) against an
+// open/in_progress/ready_to_merge/done task would burn an agent/PTY on unmerged
+// or already-shipped code and append a misleading verdict — and a confident
+// PASS recorded from such a run could later promote the wrong code state to
+// done. The route must reject every non-QA status with 409 and spawn nothing,
+// while a genuine QA-lane task still starts a run.
+
+function fixtureTask(status: TaskStatus): Task {
+  return {
+    id: 't_qa_guard',
+    projectPath: 'C:/dev/proj',
+    title: 'My feature',
+    description: 'Does a thing',
+    status,
+    createdAt: 0,
+  };
+}
+
+// Mount the real router with getTask/startQaSession stubbed, so we exercise the
+// actual route guards over HTTP without touching the task DB or spawning a
+// Claude session. `startCalls()` counts how many times a session would have been
+// started — i.e. whether any session/registry entry was created.
+async function withQaRunsHarness(
+  task: Task | null,
+  fn: (ctx: {
+    post: (body: unknown) => Promise<{ status: number; body: { error?: string; taskId?: string; serverId?: string } }>;
+    startCalls: () => number;
+  }) => Promise<void>,
+): Promise<void> {
+  let startCalls = 0;
+  const app = express();
+  app.use(express.json());
+  app.use(
+    buildQaRunsRouter('http://127.0.0.1:5184', {
+      getTask: async () => task,
+      startQaSession: async (args) => {
+        startCalls += 1;
+        return {
+          id: 'qa_stub_run',
+          taskId: args.taskId,
+          cwd: 'C:/scratch/qa_stub_run',
+          command: 'claude --dangerously-skip-permissions "..."',
+          serverId: 'srv_stub',
+        };
+      },
+    }),
+  );
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  const post = async (body: unknown) => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/qa-runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return {
+      status: res.status,
+      body: (await res.json()) as { error?: string; taskId?: string; serverId?: string },
+    };
+  };
+  try {
+    await fn({ post, startCalls: () => startCalls });
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+const NON_QA_STATUSES: TaskStatus[] = [
+  'backlog',
+  'open',
+  'in_progress',
+  'ready_to_merge',
+  'done',
+  'deleted',
+];
+
+for (const status of NON_QA_STATUSES) {
+  test(`POST /api/qa-runs: refuses to start a QA run for a ${status} task (409, no session)`, async () => {
+    await withQaRunsHarness(fixtureTask(status), async ({ post, startCalls }) => {
+      const res = await post({ project: 'C:/dev/proj', taskId: 't_qa_guard' });
+      assert.equal(res.status, 409, `expected 409 for status=${status}`);
+      assert.match(res.body.error ?? '', /not in QA/i);
+      // The whole point of the fix: no Playwright session / registry entry was
+      // created for a task that isn't in the QA lane.
+      assert.equal(startCalls(), 0, `a ${status} task must spawn no QA session`);
+    });
+  });
+}
+
+test('POST /api/qa-runs: starts a QA run for a task in the QA lane', async () => {
+  await withQaRunsHarness(fixtureTask('qa'), async ({ post, startCalls }) => {
+    const res = await post({ project: 'C:/dev/proj', taskId: 't_qa_guard' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.taskId, 't_qa_guard');
+    assert.equal(res.body.serverId, 'srv_stub');
+    assert.equal(startCalls(), 1, 'a qa-lane task must start exactly one session');
+  });
+});
+
+test('POST /api/qa-runs: a missing task is 404 and spawns nothing', async () => {
+  await withQaRunsHarness(null, async ({ post, startCalls }) => {
+    const res = await post({ project: 'C:/dev/proj', taskId: 't_qa_guard' });
+    assert.equal(res.status, 404);
+    assert.equal(startCalls(), 0);
+  });
+});
+
+test('POST /api/qa-runs: a task in another project is rejected and spawns nothing', async () => {
+  // Ownership guard precedes the status guard: even a qa-lane task can't be run
+  // under the wrong project.
+  await withQaRunsHarness(fixtureTask('qa'), async ({ post, startCalls }) => {
+    const res = await post({ project: 'C:/dev/other', taskId: 't_qa_guard' });
+    assert.equal(res.status, 400);
+    assert.equal(startCalls(), 0);
+  });
 });

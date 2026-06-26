@@ -91,17 +91,24 @@ asking for fixes/reviews:
 
 ## Modules
 
-- `ForceGraphView.tsx` — coordinator. Holds `selected`/`hoverNode`/`showSettings`,
-  threads refs through `useGraphOverlays` + `useForceGraphInitialization`, and
-  composes the small `Graph*` overlay components below. The imperative scene
-  syncs and the keyboard handling now live in their own focused hooks rather than
-  inline effects: `useSelectionHaloSync` (halo delta on selection change),
+- `ForceGraphView.tsx` — coordinator. Holds `selected`/`hoverNode`, threads refs
+  through `useGraphOverlays` + `useForceGraphInitialization`, and composes the
+  small `Graph*` overlay components below. The imperative scene syncs and the
+  keyboard handling live in their own focused hooks rather than inline effects:
+  `useSelectionHaloSync` (halo delta on selection change),
   `useMetricsIgnoreRefresh` (sprite refresh on ignore-list change),
   `useGraphViewKeyboard` (the Escape chord: close menu → clear search → clear
   selection), and `useOverlayTooltipDismiss` (the LOC/health tooltip-dismissal
   fix); the hover debounce and pointer-drag tracking live in
-  `useHoverNodeDebounce` / `useCanvasDragTracking`. The only logic left inline is
-  the counts/overlay-active memos and the JSX. **Hover is gated off while
+  `useHoverNodeDebounce` / `useCanvasDragTracking`. The remaining coordinator
+  concerns are likewise factored out: `useGraphSearchController` owns the search
+  query/toggle state + the two search hooks + the bar handlers (returning the
+  `searchQuery`/`setSearchQuery`/`clearCurrentMatch` the Escape chord also reads);
+  `useGraphCounts` is the structure-keyed file/dir/hidden HUD counts memo;
+  `useOverlayActive` is the `held || pinned` "which views are showing" memo for
+  the overlay-key chips; and the settings panel + gear FAB (with their own
+  open/close state) live in the `GraphSettingsChrome` component. What's left
+  inline is the `handleRangeChange` timeline callback and the JSX. **Hover is gated off while
   a pointer is dragging** (`pointerDraggingRef`, owned by the coordinator, set by
   `useCanvasDragTracking`'s pointerdown-on-canvas / window-pointerup effect and
   read by `useHoverNodeDebounce`): the library raycasts hover every render frame,
@@ -131,6 +138,11 @@ asking for fixes/reviews:
   the selection chip, the right-click popover, and the create-task modal. The
   HUD's bottom-left also hosts the search bar (`GraphSearchBar.tsx`) inline with
   the file/dir counts.
+- `GraphSettingsChrome.tsx` — the settings panel (`GraphSettingsPanel`) plus its
+  bottom-right gear FAB, bundled with their own local open/close state (nothing
+  outside the pair reads it). Takes `settings`/`onChange`/`project`; rendered as a
+  sibling fragment so the DOM order (panel before FAB) matches when this lived
+  inline in `ForceGraphView`.
 - `GraphOverlayKey.tsx` — the always-visible top-left key for the hold-key
   overlays: one toggle chip per view (Health/H, LOC/Z, Dead/D, Worktree/W,
   Labels/Alt). A chip is **lit** while its view is showing (`active` = held OR
@@ -139,7 +151,8 @@ asking for fixes/reviews:
   persists without holding the key — making the otherwise-invisible Z/D/W/Alt
   power-features discoverable. Pin state lives in `hooks/useOverlayPins.ts`;
   ForceGraphView gates the key on loaded data (so it never shares the corner
-  with the scan spinner) and builds the `active` record from the overlay modes.
+  with the scan spinner) and builds the `active` record from the overlay modes
+  via `hooks/useOverlayActive.ts` (the memoised `held || pinned` record).
 - `GraphSearchBar.tsx` + `searchMatcher.ts` + `hooks/useGraphSearch.ts` — the
   file search bar. `buildSearchRegExp` (searchMatcher) turns a query into a
   case-insensitive matcher: `*`/`?` wildcards by default, raw regex when the
@@ -434,7 +447,14 @@ asking for fixes/reviews:
   lit cylinders they replace, so the configured link opacity is damped
   (`FLAT_LINE_OPACITY_SCALE`). Driven per-frame off the shared scene frame driver
   via `hooks/useBatchedLinks.ts`; rebuild (buffer resize) on a structural swap /
-  hidden-ext change. Flat 1px lines (the `linkWidth: 0` look); **default-on**
+  hidden-ext change / **every full `graphData()` swap** (a `dataGeneration`
+  counter from `useGraphDataSync`, so the controller re-captures the fresh link
+  array even when the swap is a history-only ghost merge that leaves
+  `structuralData` unchanged). When the buffer must **grow**, the old position
+  `BufferAttribute`'s GPU buffer is freed via `geometry.dispose()` first (three
+  never deletes a replaced attribute's buffer on `setAttribute`), and the new one
+  is allocated with `CAPACITY_SLACK` headroom so growth (and the free) is rare.
+  Flat 1px lines (the `linkWidth: 0` look); **default-on**
   (`DEFAULT_SETTINGS.batchedLinks: true`). Low-risk because links carry no
   overlays and aren't pick targets. The node half is `instancedNodes.ts`.
 - `instancedNodes.ts` — `createInstancedNodes(graph, opts)`: batched node
@@ -463,7 +483,10 @@ asking for fixes/reviews:
   per-node path. The mesh only ever draws the base (no-overlay) view, the
   orbit-cost steady state. Ghosts keep their per-node sprite (excluded here).
   Driven by `hooks/useInstancedNodes.ts`; rebuild (regroup + buffer resize) on a
-  structural swap / hidden-ext change / node-size change. **Default-on**
+  structural swap / hidden-ext change / node-size change / **every full
+  `graphData()` swap** (the same `dataGeneration` counter as batched links, so
+  the per-style meshes re-capture the fresh node array after a history-only ghost
+  merge that doesn't touch `structuralData`). **Default-on**
   (`DEFAULT_SETTINGS.batchedNodes: true`).
 - `nodeMotionDriver.ts` — single fan-out over three-forcegraph's one-slot
   node-motion callbacks (`onEngineTick` + `onNodeDrag` + `onNodeDragEnd`; mirrors
@@ -590,15 +613,28 @@ asking for fixes/reviews:
   after init (so the library's `linkVisibility` accessor is installed),
   subscribes its per-frame sync to the scene frame driver, toggles it on
   `settings.batchedLinks`, and rebuilds the batched geometry on a structural
-  swap / hidden-ext change. Mounted after `useGraphDataSync` in `ForceGraphView`.
+  swap / hidden-ext change / `dataGeneration` bump (every full `graphData()`
+  swap — see below). Mounted after `useGraphDataSync` in `ForceGraphView`.
 - `useInstancedNodes` — owns the `instancedNodes.ts` controller (the node
   analogue of `useBatchedLinks`): creates it once after init, subscribes its
   per-frame `onFrame` to the scene frame driver, toggles on `settings.batchedNodes`
   (a runtime toggle also fires `clearLabelsAndRefresh` so `nodeObjectFactory`
   flips the per-node base sprite's `.visible`), and rebuilds the instance buffers
-  on a structural swap / hidden-ext / node-size change. Passes the controller a
+  on a structural swap / hidden-ext / node-size change / `dataGeneration` bump.
+  Passes the controller a
   live `settingsRef` + an `isBaseView()` built from the health/loc/dead mode refs.
   Mounted after `useBatchedLinks`.
+- **`dataGeneration` (re-capture after a `graphData()` swap).** Both batched
+  controllers cache the node/link object arrays at their last `rebuild()` and
+  read them in `syncPositions`, so a full `graph.graphData(...)` swap (which
+  replaces every node/link object) must trigger a re-capture. The structural
+  rebuild deps (`useStructuralScan`, keyed on `data.links` identity) miss the
+  git-history **ghost merge**: ghost nodes derive from `history`, not `data`, so
+  when history resolves ~1s after open the shape changes and `useGraphDataSync`
+  swaps while `data`/`data.links` are unchanged. `useGraphDataSync` therefore
+  bumps a `dataGeneration` counter on *every* full swap and `ForceGraphView`
+  threads it into both rebuild effects' deps. Without it the controllers froze on
+  the orphaned pre-swap objects (graph visibly stuck mid-layout on open).
 - `useNodeDragBehavior` — two drag-UX behaviors, registered via the motion
   driver's `onNodeDragMove` drag channel (always active, independent of the
   batched toggles): (1) **physics-active drag** — so a dragged node's children
@@ -653,6 +689,23 @@ asking for fixes/reviews:
   re-fire `onNodeHover` and restore it iff the cursor is genuinely still over a
   node (normal hover/mouseout preserved). Only fires on deactivation — entering an
   overlay must not dismiss a legitimately-hovered tooltip.
+- `useGraphSearchController` — owns the search query + regex/contents toggle
+  state and wires `useGraphSearch` (filename + opt-in contents passes → shared
+  selection) to `useGraphSearchNavigation` (prev/next match cursor + camera
+  focus). Returns the HUD-ready status/position/handlers (`toggleSearchRegex`,
+  `toggleSearchContents`, `handleSearchQueryChange`) plus the
+  `searchQuery`/`setSearchQuery`/`clearCurrentMatch` the Escape chord
+  (`useGraphViewKeyboard`) reads. Handlers use the functional-updater form so
+  they stay stable (keeping the memoized HUD off the per-keystroke render path).
+- `useGraphCounts` — the file/dir/hidden HUD-counts memo, keyed off the
+  structure-stable scan reference (`useStructuralScan`) + `hiddenExts` so it skips
+  the O(N) recount on metric-only saves, and returns the prior object identity
+  when the three numbers are unchanged (so the memoized HUD doesn't re-render on a
+  same-shape rescan). Extracted from the coordinator's inline `countsRef`/memo.
+- `useOverlayActive` — the memoised `held || pinned` "which overlay views are
+  showing" record (`OverlayPins` shape) for the `GraphOverlayKey` chips' lit
+  state. Folds the per-overlay effective modes from `useGraphOverlays` /
+  `useWorktreeHighlight` (+ App-owned `healthMode`) into the chip `active` prop.
 - `useNodeContextMenu` / `useBoxSelect` / `useRefMirror` /
   `refresh.ts` — small focused helpers consumed directly by the coordinator.
 - `hooks/boxSelectGeometry.ts` — pure rectangle/projection hit-testing helpers

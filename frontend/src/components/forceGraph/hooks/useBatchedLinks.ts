@@ -16,6 +16,12 @@ export function useBatchedLinks(
   // hidden-extension change, never on a metric-only HealthUpdate.
   structuralData: ScanResult | null,
   hiddenExts: Set<string>,
+  // Bumped by useGraphDataSync on every full graphData() swap (which replaces
+  // the link object array). Some swaps — notably the git-history ghost merge —
+  // don't change `structuralData` (it keys on `data.links`, but ghosts derive
+  // from `history`), so without this dep the controller would keep rendering the
+  // orphaned pre-swap link objects. Re-rebuild on every swap to re-capture.
+  dataGeneration: number,
 ) {
   const ctrlRef = useRef<InstancedLinks | null>(null);
 
@@ -46,5 +52,5 @@ export function useBatchedLinks(
   useEffect(() => {
     if (!enabled) return;
     ctrlRef.current?.rebuild();
-  }, [enabled, structuralData, hiddenExts]);
+  }, [enabled, structuralData, hiddenExts, dataGeneration]);
 }

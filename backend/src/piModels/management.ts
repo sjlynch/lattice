@@ -65,6 +65,17 @@ export async function reconcilePiModelsJson(): Promise<void> {
     return;
   }
 
+  // Defend against duplicate managed ids reaching the upsert (getGlobalSettings
+  // already de-dupes, but a hand-edited globalSettings.json could bypass it):
+  // models.json's `providers` map is keyed by id, so a later duplicate would
+  // silently clobber the earlier one. Keep the first occurrence of each id.
+  const seenIds = new Set<string>();
+  providers = providers.filter((p) => {
+    if (seenIds.has(p.id)) return false;
+    seenIds.add(p.id);
+    return true;
+  });
+
   let prevManaged: string[] = [];
   try {
     const parsed = JSON.parse(await fs.readFile(managedProvidersSidecar(), 'utf8'));
