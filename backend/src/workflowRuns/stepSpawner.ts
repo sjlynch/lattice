@@ -48,11 +48,18 @@ export async function spawnWorkflowStep(
   const runDir = path.join(workflowStepsRoot, run.id);
   const stepDir = path.join(runDir, `step-${stepIndex}`);
   await fs.mkdir(stepDir, { recursive: true });
-  // Mark the run dir as scratch (and prune older runs) on the first step.
-  // Done after mkdir so the run dir definitely exists; idempotent on later
-  // steps because writeScratchReadme no-ops if the README is already there.
-  await writeScratchReadme(runDir);
-  if (stepIndex === 0) {
+  // Mark the run dir as scratch (and prune older runs) the first time this run
+  // materializes its scratch dir. Done after mkdir so the run dir definitely
+  // exists; writeScratchReadme returns true only on that first materialization
+  // (it no-ops once the README is present), so prune runs exactly once per run.
+  //
+  // We key off that signal rather than `stepIndex === 0` on purpose: control
+  // steps (start/merge/push) run headless and never call spawnWorkflowStep, so
+  // for a start-first workflow the first spawn here is at stepIndex >= 1. The
+  // old `=== 0` guard meant pruning never ran for such runs and the wfrun_*
+  // scratch grew without bound.
+  const freshRunDir = await writeScratchReadme(runDir);
+  if (freshRunDir) {
     await pruneOldWorkflowRuns(workflowStepsRoot, run.id);
   }
 

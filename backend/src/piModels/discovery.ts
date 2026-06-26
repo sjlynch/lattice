@@ -82,7 +82,11 @@ export function parsePiListModels(stdout: string): PiModelInfo[] {
   return out;
 }
 
-async function runListModels(): Promise<string> {
+// Run `pi --list-models`, returning the combined output on a SUCCESSFUL spawn
+// (even if empty) or `null` on a TRANSIENT failure (timeout / spawn error).
+// The null-vs-string distinction is load-bearing: loadModels must not cache a
+// transient failure as a successful empty listing (see reconcileModelsCache).
+async function runListModels(): Promise<string | null> {
   const r = await spawnWithTimeout('pi', ['--list-models'], {
     // shell:true so Windows resolves `pi` → `pi.cmd`; args are static.
     shell: process.platform === 'win32',
@@ -90,9 +94,32 @@ async function runListModels(): Promise<string> {
   });
   // Pi prints the table to STDERR, not stdout — parse the combined output so
   // we're robust to that (and to any future change). A timeout or spawn error
-  // degrades to empty output (→ []).
-  if (r.timedOut || r.error) return '';
+  // is a transient failure, signalled as null so we don't memoize it.
+  if (r.timedOut || r.error) return null;
   return r.combined;
+}
+
+// Decide what loadModels returns and caches given a fresh probe result and the
+// existing cache. Extracted + exported so the transient-failure behaviour is
+// unit-testable without spawning `pi`.
+//
+// `raw === null` means the probe FAILED transiently (timeout / spawn error). We
+// must NOT overwrite (or even create) the cache with an empty list in that case
+// — doing so would blank the menu and drop curated built-in models (which live
+// only in `pi --list-models`, never in models.json) for the full TTL. Instead
+// fall back to the last good cache if we have one (a stale list beats a blank
+// menu), else return [] for just this call WITHOUT memoizing it so the next
+// call re-probes immediately rather than waiting out the TTL.
+export function reconcileModelsCache(
+  raw: string | null,
+  prev: { at: number; models: PiModelInfo[] } | null,
+  now: number,
+): { models: PiModelInfo[]; cache: { at: number; models: PiModelInfo[] } | null } {
+  if (raw === null) {
+    return { models: prev?.models ?? [], cache: prev };
+  }
+  const models = parsePiListModels(raw);
+  return { models, cache: { at: now, models } };
 }
 
 async function loadModels(): Promise<PiModelInfo[]> {
@@ -100,8 +127,12 @@ async function loadModels(): Promise<PiModelInfo[]> {
   if (modelsCache && now - modelsCache.at < PI_MODELS_CONFIG.modelsCacheTtlMs) {
     return modelsCache.models;
   }
-  const models = parsePiListModels(await runListModels());
-  modelsCache = { at: now, models };
+  const { models, cache } = reconcileModelsCache(
+    await runListModels(),
+    modelsCache,
+    now,
+  );
+  modelsCache = cache;
   return models;
 }
 

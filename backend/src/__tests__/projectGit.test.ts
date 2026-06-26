@@ -48,6 +48,10 @@ test('projectGit policy covers each mutating subcommand validator', () => {
 
   allowed(['branch', '-d', 'lattice/old']);
   denied(['branch', '--copy', 'main', 'main-copy']);
+  // Grouped/forced forms are fine as long as every operand is lattice/*.
+  allowed(['branch', '-fd', 'lattice/foo-abc']);
+  allowed(['branch', '-D', 'lattice/a', 'lattice/b']);
+  allowed(['branch', '-f', 'lattice/foo-abc', 'lattice/start']);
 
   allowed(['merge', '--abort']);
   allowed(['merge', '--continue']);
@@ -82,6 +86,19 @@ test('projectGit policy refuses everything that could damage the repo', () => {
   denied(['branch', '-d', 'develop']);
   denied(['branch', '-D']); // no target
   denied(['branch', '-m', 'main', 'old-main']);
+  // EVERY operand must be lattice/* — not just the last. `-D main lattice/x`
+  // deletes both, so it must be refused on `main`.
+  denied(['branch', '-D', 'main', 'lattice/x']);
+  denied(['branch', '-d', 'lattice/x', 'develop']);
+  // Combined/grouped short flags still express delete intent: `-fd main` is a
+  // force-delete of main, not an inert list/create.
+  denied(['branch', '-fd', 'main']);
+  denied(['branch', '-Df', 'main']);
+  denied(['branch', '--delete', 'main']);
+  // Force on the create form resets an existing ref (`-f main origin/main`
+  // moves main) — refused unless every operand is lattice/*.
+  denied(['branch', '-f', 'main', 'origin/main']);
+  denied(['branch', '--force', 'main', 'origin/main']);
   // A real (non-ff) merge in the project tree would write conflict markers
   // into vite-watched files.
   denied(['merge', 'lattice/foo']);

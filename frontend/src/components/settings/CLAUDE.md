@@ -41,7 +41,10 @@ instrumentation and the global max-agents patch, and finally fires the parent
 callbacks. `useSettingsDrafts.ts` owns the handful of drafts that live on the
 parent itself rather than a tab — the terminal-default harness +
 skip-permissions, and the instrument-Claude / disable-memory / qa-auto-close
-toggles.
+toggles. `TerminalSettingsSections.tsx` renders those four sections (the
+project-settings block atop the Terminals tab); it's a plain `drafts`-driven
+component with no ref handle, since the controller persists those drafts —
+`SettingsDialog` just composes it ahead of the `StartupTerminalsTab` panel.
 
 `useOverrideDraft.ts` is the shared draft engine behind the two
 **override-merge** tabs (`InstructionTemplatesTab` + `EnvNotesTab`): both fetch
