@@ -16,21 +16,48 @@ import type { Workflow } from '../../workflows.js';
 import { subscribe, type WorkflowRun } from '../state.js';
 import { emitControlProgress, waitForLaneEmpty } from './shared.js';
 
+// Injectable seam (production default below). The Phase B drain loop is the
+// trickiest part of this step to get right (it's what infinite-looped on
+// persistently-erroring tasks), so the regression test overrides these to
+// simulate a clean-merging task plus two that error every round — without
+// spawning a real merge run / git — and asserts the step aborts instead of
+// spinning forever.
+export type MergeStepDeps = {
+  listTasks: typeof listTasks;
+  startMergeRun: typeof startMergeRun;
+  getMergeRun: typeof getMergeRun;
+  cancelMergeRun: typeof cancelMergeRun;
+  subscribeMergeRuns: typeof subscribeMergeRuns;
+  subscribeWorkflowRuns: typeof subscribe;
+  waitForLaneEmpty: typeof waitForLaneEmpty;
+};
+
+const productionDeps: MergeStepDeps = {
+  listTasks,
+  startMergeRun,
+  getMergeRun,
+  cancelMergeRun,
+  subscribeMergeRuns,
+  subscribeWorkflowRuns: subscribe,
+  waitForLaneEmpty,
+};
+
 export async function runMergeStep(
   wf: Workflow,
   run: WorkflowRun,
   stepIndex: number,
   backendOrigin: string,
+  deps: MergeStepDeps = productionDeps,
 ): Promise<void> {
   // Cancellation propagation: when the workflow run is cancelled, abort any
   // inner merge run we kicked off. Subscribe once for the whole step.
   let activeMergeRunId: string | null = null;
-  const wfUnsub = subscribe((ev) => {
+  const wfUnsub = deps.subscribeWorkflowRuns((ev) => {
     if (ev.type !== 'cancelled') return;
     if (!('run' in ev) || ev.run.id !== run.id) return;
     if (activeMergeRunId) {
       try {
-        cancelMergeRun(activeMergeRunId);
+        deps.cancelMergeRun(activeMergeRunId);
       } catch {
         // best-effort
       }
@@ -47,7 +74,7 @@ export async function runMergeStep(
       1,
       'waiting for In Progress tasks to finish',
     );
-    await waitForLaneEmpty(wf.projectPath, run, 'in_progress', (count, total) => {
+    await deps.waitForLaneEmpty(wf.projectPath, run, 'in_progress', (count, total) => {
       const finished = Math.max(0, total - count);
       emitControlProgress(
         run,
@@ -61,14 +88,28 @@ export async function runMergeStep(
     if (run.status !== 'running') return;
 
     // Phase B: drain Ready-to-Merge. Loop until the lane is empty — a single
-    // merge run may leave conflict-flagged tasks in flight (resolver Claudes),
-    // and when they finalize the tasks pop back to ready_to_merge and we
-    // re-run. Bail out if a merge run errors so we don't infinite-loop.
-    let lastErrorCount = 0;
+    // merge run resolves conflicts in-process (it blocks on each resolver Stop
+    // hook), so by the time it finishes, every task it touched has either left
+    // the lane (merged → qa) or been re-queued at ready_to_merge. We re-run to
+    // pick up the re-queued / conflict-flagged ones.
+    //
+    // Termination guard: bail out the moment a round makes NO forward progress,
+    // i.e. not a single task left the ready_to_merge lane. Persistently-
+    // erroring tasks (a card dragged in with no branch/worktree, a held merge
+    // lock, an uncaught per-task error) get pushed to the run's `errored` list
+    // but are LEFT at ready_to_merge by processTarget, so they reappear every
+    // round. The previous guard only tripped when the per-round error COUNT
+    // strictly increased (`errored.length > lastErrorCount`), but each
+    // startMergeRun builds a fresh MergeRun with `errored: []`, so a steady
+    // error count (round 2+ with the same stuck tasks) slipped past it and the
+    // step looped forever — holding the per-project run-lock and burning CPU.
+    // Comparing the lane id-set before/after each run catches it regardless of
+    // the error count.
     while (run.status === 'running') {
-      const cur = await listTasks(wf.projectPath);
+      const cur = await deps.listTasks(wf.projectPath);
       const ready = cur.filter((t) => t.status === 'ready_to_merge');
       if (ready.length === 0) break;
+      const readyIdsBefore = ready.map((t) => t.id);
 
       emitControlProgress(
         run,
@@ -79,30 +120,34 @@ export async function runMergeStep(
         `merging ${ready.length} task(s)`,
       );
 
-      const mergeRun = await startMergeRun(wf.projectPath, backendOrigin, {
+      const mergeRun = await deps.startMergeRun(wf.projectPath, backendOrigin, {
         lockMode: 'inherit',
       });
       activeMergeRunId = mergeRun.id;
-      await waitForMergeRunFinished(mergeRun.id);
+      await waitForMergeRunFinished(mergeRun.id, deps);
       activeMergeRunId = null;
       if (run.status !== 'running') return;
 
-      const finishedRun = getMergeRun(mergeRun.id);
-      if (finishedRun && finishedRun.errored.length > lastErrorCount) {
-        // New errors this round. If the lane is unchanged after the run,
-        // we'd loop forever — surface the failure.
-        lastErrorCount = finishedRun.errored.length;
-        const afterTasks = await listTasks(wf.projectPath);
-        const stillReady = afterTasks
+      const afterTasks = await deps.listTasks(wf.projectPath);
+      const stillReady = new Set(
+        afterTasks
           .filter((t) => t.status === 'ready_to_merge')
-          .map((t) => t.id);
-        const sameSet = stillReady.length === ready.length &&
-          stillReady.every((id) => ready.some((r) => r.id === id));
-        if (sameSet) {
-          throw new Error(
-            `merge run completed with ${finishedRun.errored.length} error(s) and ready-to-merge lane unchanged; aborting`,
-          );
-        }
+          .map((t) => t.id),
+      );
+      // Forward progress = at least one task that was ready before the run is
+      // no longer ready (merged → qa, deleted, or pulled to another lane). If
+      // every pre-run task is STILL ready, the run accomplished nothing and
+      // re-running would loop forever — abort so the run errors out (and the
+      // project lock is released) instead of spinning.
+      const someLeftLane = readyIdsBefore.some((id) => !stillReady.has(id));
+      if (!someLeftLane) {
+        const finishedRun = deps.getMergeRun(mergeRun.id);
+        const errorCount = finishedRun?.errored.length ?? 0;
+        throw new Error(
+          `merge step made no progress: ${readyIdsBefore.length} task(s) ` +
+            `still ready-to-merge after a full merge run (${errorCount} ` +
+            `errored); aborting to avoid an infinite loop`,
+        );
       }
     }
 
@@ -112,17 +157,20 @@ export async function runMergeStep(
   }
 }
 
-function waitForMergeRunFinished(mergeRunId: string): Promise<void> {
+function waitForMergeRunFinished(
+  mergeRunId: string,
+  deps: Pick<MergeStepDeps, 'getMergeRun' | 'subscribeMergeRuns'>,
+): Promise<void> {
   return new Promise<void>((resolve) => {
     // Check in case it finished synchronously between startMergeRun returning
     // and our subscribe. Defensive — startMergeRun's worker is fire-and-forget
     // so this should never trigger, but cheap to verify.
-    const initial = getMergeRun(mergeRunId);
+    const initial = deps.getMergeRun(mergeRunId);
     if (initial && initial.status !== 'running') {
       resolve();
       return;
     }
-    const unsub = subscribeMergeRuns((ev) => {
+    const unsub = deps.subscribeMergeRuns((ev) => {
       if (ev.type !== 'completed' && ev.type !== 'cancelled') return;
       if (ev.run.id !== mergeRunId) return;
       unsub();

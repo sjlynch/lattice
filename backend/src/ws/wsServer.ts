@@ -7,6 +7,7 @@
 import type http from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { WebSocketServer } from 'ws';
+import { isAllowedOrigin } from '../wsOriginAllowlist.js';
 import { buildAgentSessionsWss } from './endpoints/agentSessions.js';
 import { buildHarnessesWss } from './endpoints/harnesses.js';
 import { buildHealthWss } from './endpoints/health.js';
@@ -19,25 +20,8 @@ import { buildWorkflowsWss } from './endpoints/workflows.js';
 
 type WebSocketRoute = readonly [path: string, wss: WebSocketServer];
 
-// Cross-Site WebSocket Hijacking defence. Browsers always send an immutable
-// `Origin` header on a WS handshake and cannot forge it from a cross-site
-// page, so rejecting any browser-supplied Origin outside this allowlist fully
-// closes the drive-by-RCE hole (a malicious page can't open /ws/terminal and
-// run an `initialCommand`). Non-browser clients (the node terminal relay,
-// curl) send NO Origin header — those are allowed through, since they are not
-// the CSWSH threat and the server is loopback-bound anyway. Both the
-// `localhost` and `127.0.0.1` forms are listed because the user may load the
-// app from either; dropping one breaks terminals + all live WS updates.
-const ALLOWED_WS_ORIGINS: ReadonlySet<string> = new Set([
-  'http://localhost:5183',
-  'http://127.0.0.1:5183',
-]);
-
-function isAllowedOrigin(origin: string | undefined): boolean {
-  // Absent Origin = non-browser client (relay/curl), not the CSWSH threat.
-  if (origin === undefined) return true;
-  return ALLOWED_WS_ORIGINS.has(origin);
-}
+// CSWSH origin allowlist is shared with the detached terminal-server (:5185)
+// via `../wsOriginAllowlist.ts` so the two can't drift — see that module.
 
 function buildWebSocketRoutes(): WebSocketRoute[] {
   return [
