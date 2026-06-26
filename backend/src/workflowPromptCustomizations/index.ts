@@ -48,6 +48,15 @@ export async function completeWorkflowPromptCustomization(
 ): Promise<WorkflowPromptCustomization | null> {
   const request = getMutableWorkflowPromptCustomization(id);
   if (!request) return null;
+  // Idempotent: once a customization reaches a terminal status, later
+  // /complete calls are no-ops. The always-installed Stop-hook backstop
+  // re-POSTs after the model already submitted a good prompt; if
+  // CUSTOMIZED_PROMPT.md is gone at Stop time it POSTs {prompt:''}, which
+  // without this guard would overwrite a 'completed' record to 'errored'
+  // and make a polling frontend discard a perfectly good customization.
+  if (request.status !== 'running') {
+    return cloneWorkflowPromptCustomization(request);
+  }
   if (typeof prompt !== 'string' || !prompt.trim()) {
     request.status = 'errored';
     request.error = 'customized prompt was empty';

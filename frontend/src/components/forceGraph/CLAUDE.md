@@ -91,17 +91,24 @@ asking for fixes/reviews:
 
 ## Modules
 
-- `ForceGraphView.tsx` — coordinator. Holds `selected`/`hoverNode`/`showSettings`,
-  threads refs through `useGraphOverlays` + `useForceGraphInitialization`, and
-  composes the small `Graph*` overlay components below. The imperative scene
-  syncs and the keyboard handling now live in their own focused hooks rather than
-  inline effects: `useSelectionHaloSync` (halo delta on selection change),
+- `ForceGraphView.tsx` — coordinator. Holds `selected`/`hoverNode`, threads refs
+  through `useGraphOverlays` + `useForceGraphInitialization`, and composes the
+  small `Graph*` overlay components below. The imperative scene syncs and the
+  keyboard handling live in their own focused hooks rather than inline effects:
+  `useSelectionHaloSync` (halo delta on selection change),
   `useMetricsIgnoreRefresh` (sprite refresh on ignore-list change),
   `useGraphViewKeyboard` (the Escape chord: close menu → clear search → clear
   selection), and `useOverlayTooltipDismiss` (the LOC/health tooltip-dismissal
   fix); the hover debounce and pointer-drag tracking live in
-  `useHoverNodeDebounce` / `useCanvasDragTracking`. The only logic left inline is
-  the counts/overlay-active memos and the JSX. **Hover is gated off while
+  `useHoverNodeDebounce` / `useCanvasDragTracking`. The remaining coordinator
+  concerns are likewise factored out: `useGraphSearchController` owns the search
+  query/toggle state + the two search hooks + the bar handlers (returning the
+  `searchQuery`/`setSearchQuery`/`clearCurrentMatch` the Escape chord also reads);
+  `useGraphCounts` is the structure-keyed file/dir/hidden HUD counts memo;
+  `useOverlayActive` is the `held || pinned` "which views are showing" memo for
+  the overlay-key chips; and the settings panel + gear FAB (with their own
+  open/close state) live in the `GraphSettingsChrome` component. What's left
+  inline is the `handleRangeChange` timeline callback and the JSX. **Hover is gated off while
   a pointer is dragging** (`pointerDraggingRef`, owned by the coordinator, set by
   `useCanvasDragTracking`'s pointerdown-on-canvas / window-pointerup effect and
   read by `useHoverNodeDebounce`): the library raycasts hover every render frame,
@@ -131,6 +138,11 @@ asking for fixes/reviews:
   the selection chip, the right-click popover, and the create-task modal. The
   HUD's bottom-left also hosts the search bar (`GraphSearchBar.tsx`) inline with
   the file/dir counts.
+- `GraphSettingsChrome.tsx` — the settings panel (`GraphSettingsPanel`) plus its
+  bottom-right gear FAB, bundled with their own local open/close state (nothing
+  outside the pair reads it). Takes `settings`/`onChange`/`project`; rendered as a
+  sibling fragment so the DOM order (panel before FAB) matches when this lived
+  inline in `ForceGraphView`.
 - `GraphOverlayKey.tsx` — the always-visible top-left key for the hold-key
   overlays: one toggle chip per view (Health/H, LOC/Z, Dead/D, Worktree/W,
   Labels/Alt). A chip is **lit** while its view is showing (`active` = held OR
@@ -139,7 +151,8 @@ asking for fixes/reviews:
   persists without holding the key — making the otherwise-invisible Z/D/W/Alt
   power-features discoverable. Pin state lives in `hooks/useOverlayPins.ts`;
   ForceGraphView gates the key on loaded data (so it never shares the corner
-  with the scan spinner) and builds the `active` record from the overlay modes.
+  with the scan spinner) and builds the `active` record from the overlay modes
+  via `hooks/useOverlayActive.ts` (the memoised `held || pinned` record).
 - `GraphSearchBar.tsx` + `searchMatcher.ts` + `hooks/useGraphSearch.ts` — the
   file search bar. `buildSearchRegExp` (searchMatcher) turns a query into a
   case-insensitive matcher: `*`/`?` wildcards by default, raw regex when the
@@ -653,6 +666,23 @@ asking for fixes/reviews:
   re-fire `onNodeHover` and restore it iff the cursor is genuinely still over a
   node (normal hover/mouseout preserved). Only fires on deactivation — entering an
   overlay must not dismiss a legitimately-hovered tooltip.
+- `useGraphSearchController` — owns the search query + regex/contents toggle
+  state and wires `useGraphSearch` (filename + opt-in contents passes → shared
+  selection) to `useGraphSearchNavigation` (prev/next match cursor + camera
+  focus). Returns the HUD-ready status/position/handlers (`toggleSearchRegex`,
+  `toggleSearchContents`, `handleSearchQueryChange`) plus the
+  `searchQuery`/`setSearchQuery`/`clearCurrentMatch` the Escape chord
+  (`useGraphViewKeyboard`) reads. Handlers use the functional-updater form so
+  they stay stable (keeping the memoized HUD off the per-keystroke render path).
+- `useGraphCounts` — the file/dir/hidden HUD-counts memo, keyed off the
+  structure-stable scan reference (`useStructuralScan`) + `hiddenExts` so it skips
+  the O(N) recount on metric-only saves, and returns the prior object identity
+  when the three numbers are unchanged (so the memoized HUD doesn't re-render on a
+  same-shape rescan). Extracted from the coordinator's inline `countsRef`/memo.
+- `useOverlayActive` — the memoised `held || pinned` "which overlay views are
+  showing" record (`OverlayPins` shape) for the `GraphOverlayKey` chips' lit
+  state. Folds the per-overlay effective modes from `useGraphOverlays` /
+  `useWorktreeHighlight` (+ App-owned `healthMode`) into the chip `active` prop.
 - `useNodeContextMenu` / `useBoxSelect` / `useRefMirror` /
   `refresh.ts` — small focused helpers consumed directly by the coordinator.
 - `hooks/boxSelectGeometry.ts` — pure rectangle/projection hit-testing helpers

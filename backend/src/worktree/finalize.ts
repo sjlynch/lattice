@@ -3,17 +3,24 @@
 // mergeWorktreeInRepo, from /complete and /merged after a resolver Claude
 // finishes, and from the merge-run worker.
 
-import { updateTaskCrashSafe, type Task } from '../tasks.js';
+import { updateTask, updateTaskCrashSafe, type Task } from '../tasks.js';
 import { fastForwardMain, mergeWorktreeInRepo } from './merge.js';
-import { buildStashResolveCommand } from './commands.js';
-import { writeStashResolveInstructions } from './instructions.js';
+import { buildConflictResolveCommand, buildStashResolveCommand } from './commands.js';
+import { writeMergeInstructions, writeStashResolveInstructions } from './instructions.js';
 import { assertGitDirIntact } from './state.js';
 import { runSerializedFinalize, scheduleWorktreeCleanup } from './finalizeQueues.js';
 
 export type FinalizeOutcome =
   | { ok: true }
   | { ok: false; error: string }
-  | { ok: false; stashConflict: string[]; resolveCommand: string; cwd: string };
+  | { ok: false; stashConflict: string[]; resolveCommand: string; cwd: string }
+  | {
+      ok: false;
+      mergeConflict: string[];
+      resolveCommand: string;
+      relativePath: string;
+      cwd: string;
+    };
 
 export async function finalizeMergedTask(task: Task, backendOrigin: string): Promise<FinalizeOutcome> {
   if (!task.branch || !task.worktreePath) {
@@ -57,9 +64,31 @@ export async function finalizeMergedTask(task: Task, backendOrigin: string): Pro
         console.log(`[finalize] retry FF → ${ff.status}${ff.status === 'error' ? `: ${ff.message}` : ''}`);
       } else if (reSync.status === 'conflict') {
         console.log(`[finalize] ${task.id}: re-sync conflict — ${reSync.conflictedFiles.join(', ')}`);
+        // mergeWorktreeInRepo/handleMergeConflict has already left the
+        // worktree mid-merge (MERGE_HEAD + conflict markers) and reinstalled
+        // the Stop hook. Handle this exactly like a first-pass conflict
+        // (mirror resyncFinalize's conflict branch): write the resolver
+        // instructions, flag the task so the UI/run can re-spawn a resolver,
+        // and return a resolvable outcome instead of a bare error — otherwise
+        // the task is stranded at ready_to_merge with a leftover mid-merge
+        // worktree and no second resolver.
+        const { relativePath } = await writeMergeInstructions(
+          task,
+          branch,
+          reSync.conflictedFiles,
+          backendOrigin,
+          worktreePath,
+        );
+        await updateTask(task.id, {
+          conflict: true,
+          conflictStartedAt: Date.now(),
+        });
         return {
           ok: false,
-          error: `Re-sync with main introduced new conflicts: ${reSync.conflictedFiles.join(', ')}`,
+          mergeConflict: reSync.conflictedFiles,
+          resolveCommand: buildConflictResolveCommand(relativePath),
+          relativePath,
+          cwd: worktreePath,
         };
       } else {
         console.log(`[finalize] ${task.id}: re-sync error: ${reSync.message}`);
