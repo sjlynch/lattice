@@ -30,6 +30,17 @@ single source of truth for all three.
     Used by push + QA, whose flows are exact mirrors. Post-merge keeps its own
     trigger/gate/waiter (`postMergeHooks/trigger.ts`) but reuses the materialize
     half.
+- `agentSession.ts` — `createHomeScratchAgentSession(spec)`: the push/QA mirror
+  factory layered on `startHomeScratchAgentSession`. From a static per-run-type
+  `spec` (paths, instructions filename, fixed command, queue kind / dedupe
+  prefix, `isQaRun?`, presence `agentId`/`label`, cleanup) it returns a `start(args)`
+  function that drives one spawn and folds in the boilerplate both run-types
+  shared verbatim — the command wrapper, the `interactive` queue band, and the
+  orange-presence `registerAgentSession` call. The genuinely per-run-type pieces
+  stay explicit as `args`: `installHooks`, `renderInstructions`, and `recordRun`
+  (the feature's registry write). Push/QA `session.ts` are thin adapters over
+  this; post-merge does **not** use it (no presence node / registry of this
+  shape). New shared spawn boilerplate goes here, not in the per-feature dirs.
 - `cleanup.ts` — `cleanupHomeScratchSession({paths, projectPath, id, logLabel})`:
   the bounded recursive scratch delete (kill the PTY holding the dir handle →
   `notifySessionsFreed` → strip reparse points → `fsRmWithRetries`), gated
