@@ -15,3 +15,24 @@ export async function asJson<T>(r: Response): Promise<T> {
   }
   return (await r.json()) as T;
 }
+
+function jsonRequestInit(method: 'POST' | 'PATCH', body?: unknown): RequestInit {
+  const init: RequestInit = { method };
+  if (body !== undefined) {
+    init.headers = { 'Content-Type': 'application/json' };
+    init.body = JSON.stringify(body);
+  }
+  return init;
+}
+
+export async function postJson<T>(url: string, body?: unknown): Promise<T> {
+  return asJson<T>(await fetch(url, jsonRequestInit('POST', body)));
+}
+
+export async function patchJson<T>(url: string, body?: unknown): Promise<T> {
+  return asJson<T>(await fetch(url, jsonRequestInit('PATCH', body)));
+}
+
+export async function deleteJson<T>(url: string): Promise<T> {
+  return asJson<T>(await fetch(url, { method: 'DELETE' }));
+}

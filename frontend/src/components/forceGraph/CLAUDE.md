@@ -22,8 +22,9 @@ label physics in `labelPhysics/CLAUDE.md`.
 
 **Coordinator & chrome (React)**
 - `ForceGraphView.tsx` — coordinator: holds `selected`/`hoverNode`, threads refs
-  through `useGraphOverlays` + `useForceGraphInitialization`, composes the
-  `Graph*` overlay components. Imperative syncs + keyboard live in focused hooks.
+  through `useGraphOverlays` + `useForceGraphInitialization`, then hands render
+  props to the presentational `GraphViewChrome`/`GraphViewOverlays` helpers in
+  the same file. Imperative syncs + keyboard live in focused hooks.
 - `GraphHud` / `GraphSelectionChip` / `GraphContextMenu` / `GraphTaskModal` /
   `GraphSearchBar` / `GraphOverlayKey` / `GraphSettingsChrome` /
   `GraphSettingsPanel` — render-only HUD/chip/popover/modal/search/overlay-key/
@@ -80,10 +81,11 @@ label physics in `labelPhysics/CLAUDE.md`.
   callbacks + the "re-upload positions this frame?" gate for batched renders.
 
 **Batched (instanced) renderers**
-- `instancedLinks.ts` / `instancedNodes.ts` — collapse the library's per-link
-  `Line`s / per-node `Group`s into one `LineSegments` / a few `InstancedMesh`es
-  to cut orbit-time draw calls. Default-on; re-upload positions only on node-motion
-  frames; re-capture object arrays on every `graphData()` swap (`dataGeneration`
+- `instancedLinks.ts` / `instancedNodes.ts` (+ `instancedBatching.ts` shared
+  lifecycle helpers) — collapse the library's per-link `Line`s / per-node
+  `Group`s into one `LineSegments` / a few `InstancedMesh`es to cut orbit-time
+  draw calls. Default-on; re-upload positions only on node-motion frames;
+  re-capture object arrays on every `graphData()` swap (`dataGeneration`
   invariant). Driven by `hooks/useBatchedLinks` / `hooks/useInstancedNodes`.
 
 **Settings, physics, misc**

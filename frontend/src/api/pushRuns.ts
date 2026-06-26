@@ -2,7 +2,7 @@
 // active project, and poll for completion so the UI can auto-close the
 // terminal once Claude's Stop hook has fired on the backend.
 
-import { asJson } from './http';
+import { asJson, postJson } from './http';
 import type { PushRunStatus, StartPushRunResult } from './types';
 export type { PushRunStatus, StartPushRunResult } from './types';
 
@@ -13,13 +13,9 @@ export async function checkGit(projectPath: string): Promise<{ hasGit: boolean }
 }
 
 export async function startPushRun(projectPath: string): Promise<StartPushRunResult> {
-  return asJson<StartPushRunResult>(
-    await fetch('/api/push-runs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project: projectPath }),
-    }),
-  );
+  return postJson<StartPushRunResult>('/api/push-runs', {
+    project: projectPath,
+  });
 }
 
 export async function fetchPushRunStatus(id: string): Promise<{ status: PushRunStatus } | null> {
