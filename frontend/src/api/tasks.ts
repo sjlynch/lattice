@@ -1,6 +1,6 @@
 // Task CRUD + lifecycle (run, resume, merge) + live subscription.
 
-import { asJson } from './http';
+import { asJson, deleteJson, patchJson, postJson } from './http';
 import { subscribeWs, subscribeWsShared } from './ws';
 import type {
   AgentActivityEvent,
@@ -41,26 +41,14 @@ export async function createTask(
   title: string,
   description?: string,
 ): Promise<Task> {
-  return asJson<Task>(
-    await fetch('/api/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project: projectPath, title, description }),
-    }),
-  );
+  return postJson<Task>('/api/tasks', { project: projectPath, title, description });
 }
 
 export async function updateTask(
   id: string,
   updates: Partial<Pick<Task, 'title' | 'description' | 'status'>>,
 ): Promise<Task> {
-  return asJson<Task>(
-    await fetch(`/api/tasks/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
-    }),
-  );
+  return patchJson<Task>(`/api/tasks/${encodeURIComponent(id)}`, updates);
 }
 
 export async function reorderTasks(
@@ -68,21 +56,15 @@ export async function reorderTasks(
   status: TaskStatus,
   ids: string[],
 ): Promise<void> {
-  await asJson<{ ok: true }>(
-    await fetch('/api/tasks/reorder', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project: projectPath, status, ids }),
-    }),
-  );
+  await postJson<{ ok: true }>('/api/tasks/reorder', {
+    project: projectPath,
+    status,
+    ids,
+  });
 }
 
 export async function deleteTask(id: string): Promise<void> {
-  await asJson<{ ok: true }>(
-    await fetch(`/api/tasks/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    }),
-  );
+  await deleteJson<{ ok: true }>(`/api/tasks/${encodeURIComponent(id)}`);
 }
 
 export async function runTask(
@@ -90,13 +72,10 @@ export async function runTask(
   harness?: AgentHarness,
   piModel?: string,
 ): Promise<RunTaskResult> {
-  return asJson<RunTaskResult>(
-    await fetch(`/api/tasks/${encodeURIComponent(id)}/run`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ harness, piModel }),
-    }),
-  );
+  return postJson<RunTaskResult>(`/api/tasks/${encodeURIComponent(id)}/run`, {
+    harness,
+    piModel,
+  });
 }
 
 export async function resumeTask(
@@ -104,30 +83,21 @@ export async function resumeTask(
   harness?: AgentHarness,
   piModel?: string,
 ): Promise<RunTaskResult> {
-  return asJson<RunTaskResult>(
-    await fetch(`/api/tasks/${encodeURIComponent(id)}/resume`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ harness, piModel }),
-    }),
-  );
+  return postJson<RunTaskResult>(`/api/tasks/${encodeURIComponent(id)}/resume`, {
+    harness,
+    piModel,
+  });
 }
 
 // Drop a queued task run back to a plain Open task. Returns the updated task.
 export async function cancelQueuedRun(id: string): Promise<Task> {
-  return asJson<Task>(
-    await fetch(`/api/tasks/${encodeURIComponent(id)}/cancel-queued-run`, {
-      method: 'POST',
-    }),
+  return postJson<Task>(
+    `/api/tasks/${encodeURIComponent(id)}/cancel-queued-run`,
   );
 }
 
 export async function mergeTask(id: string): Promise<MergeTaskResult> {
-  return asJson<MergeTaskResult>(
-    await fetch(`/api/tasks/${encodeURIComponent(id)}/merge`, {
-      method: 'POST',
-    }),
-  );
+  return postJson<MergeTaskResult>(`/api/tasks/${encodeURIComponent(id)}/merge`);
 }
 
 // Abandon an in-flight conflict resolution: aborts any lingering mid-merge in
@@ -137,10 +107,8 @@ export async function mergeTask(id: string): Promise<MergeTaskResult> {
 // hatch out of a conflict that's been orphaned (resolver died, merge run was
 // cancelled, or the backend restarted mid-resolution).
 export async function abortTaskMerge(id: string): Promise<void> {
-  await asJson<{ ok: true }>(
-    await fetch(`/api/tasks/${encodeURIComponent(id)}/merge-aborted`, {
-      method: 'POST',
-    }),
+  await postJson<{ ok: true }>(
+    `/api/tasks/${encodeURIComponent(id)}/merge-aborted`,
   );
 }
 
