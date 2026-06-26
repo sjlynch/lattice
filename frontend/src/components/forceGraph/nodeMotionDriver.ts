@@ -45,6 +45,11 @@ type MotionDriver = {
   // Run BEFORE the motion dispatch on a drag event, so any position mutation
   // they make is already in place when the batched-geometry sync reads it.
   dragListeners: Set<DragListener>;
+  // Cached drag-iteration array, rebuilt only on membership change — same
+  // no-alloc / no-mid-iteration-mutation contract as `list`/`dirty` above, so
+  // a per-pointer-move drag stops spreading the Set into a fresh array.
+  dragList: DragListener[];
+  dragDirty: boolean;
 };
 
 type WithDriver = { [KEY]?: MotionDriver };
@@ -66,6 +71,8 @@ export function attachNodeMotionDriver(graph: object): void {
     list: [],
     dirty: false,
     dragListeners: new Set(),
+    dragList: [],
+    dragDirty: false,
   };
   holder[KEY] = driver;
 
@@ -84,7 +91,12 @@ export function attachNodeMotionDriver(graph: object): void {
   // batched-geometry sync re-reads the just-mutated positions.
   const onDrag = (node: unknown, translate: unknown, isEnd: boolean) => {
     if (driver.dragListeners.size > 0) {
-      for (const cb of [...driver.dragListeners]) cb(node, translate, isEnd);
+      if (driver.dragDirty) {
+        driver.dragList = [...driver.dragListeners];
+        driver.dragDirty = false;
+      }
+      const dragList = driver.dragList;
+      for (let i = 0; i < dragList.length; i++) dragList[i](node, translate, isEnd);
     }
     dispatch();
   };
@@ -119,7 +131,9 @@ export function onNodeDragMove(
   attachNodeMotionDriver(graph);
   const driver = (graph as WithDriver)[KEY]!;
   driver.dragListeners.add(cb);
+  driver.dragDirty = true;
   return () => {
     driver.dragListeners.delete(cb);
+    driver.dragDirty = true;
   };
 }
