@@ -92,55 +92,69 @@ export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubsc
     variables?: WorkflowVariable[],
   ): Promise<Workflow> {
     const key = await this.loadIfNeeded(projectPath);
-    const list = this.getCached(key) ?? [];
-    const workflow: Workflow = {
-      id: generateWorkflowId(),
-      projectPath: key,
-      name: name.trim() || 'Untitled workflow',
-      steps: normalizeSteps(steps),
-      variables: normalizeWorkflowVariables(variables),
-      createdAt: Date.now(),
-    };
-    const next = [...list, workflow];
-    this.setCached(key, next);
-    this.schedulePersist(key);
-    this.notifyProject(key);
-    return workflow;
+    // Read-modify-write under the per-project lock so two concurrent creates
+    // (each reading `[]` and writing only its own entry) don't clobber.
+    return this.runProjectWrite(key, () => {
+      const list = this.getCached(key) ?? [];
+      const workflow: Workflow = {
+        id: generateWorkflowId(),
+        projectPath: key,
+        name: name.trim() || 'Untitled workflow',
+        steps: normalizeSteps(steps),
+        variables: normalizeWorkflowVariables(variables),
+        createdAt: Date.now(),
+      };
+      const next = [...list, workflow];
+      this.setCached(key, next);
+      this.schedulePersist(key);
+      this.notifyProject(key);
+      return workflow;
+    });
   }
 
   public async updateWorkflow(
     id: string,
     updates: { name?: string; steps?: WorkflowStep[]; variables?: WorkflowVariable[] },
   ): Promise<Workflow | null> {
-    return this.withWorkflowAcrossProjects(id, ({ project, list, idx }) => {
-      const prev = list[idx];
-      const nextWorkflow: Workflow = {
-        ...prev,
-        name:
-          typeof updates.name === 'string' && updates.name.trim()
-            ? updates.name.trim()
-            : prev.name,
-        steps: updates.steps ? normalizeSteps(updates.steps) : prev.steps,
-        variables: updates.variables
-          ? normalizeWorkflowVariables(updates.variables)
-          : normalizeWorkflowVariables(prev.variables),
-      };
-      const nextList = list.map((w, i) => (i === idx ? nextWorkflow : w));
-      this.setCached(project, nextList);
-      this.schedulePersist(project);
-      this.notifyProject(project);
-      return nextWorkflow;
-    });
+    return this.withLockedItemAcrossProjects<Workflow, Workflow>(
+      id,
+      (w) => w.id,
+      () => this.loadAllKnown(),
+      ({ project, list, idx }) => {
+        const prev = list[idx];
+        const nextWorkflow: Workflow = {
+          ...prev,
+          name:
+            typeof updates.name === 'string' && updates.name.trim()
+              ? updates.name.trim()
+              : prev.name,
+          steps: updates.steps ? normalizeSteps(updates.steps) : prev.steps,
+          variables: updates.variables
+            ? normalizeWorkflowVariables(updates.variables)
+            : normalizeWorkflowVariables(prev.variables),
+        };
+        const nextList = list.map((w, i) => (i === idx ? nextWorkflow : w));
+        this.setCached(project, nextList);
+        this.schedulePersist(project);
+        this.notifyProject(project);
+        return nextWorkflow;
+      },
+    );
   }
 
   public async deleteWorkflow(id: string): Promise<boolean> {
-    const deleted = await this.withWorkflowAcrossProjects(id, ({ project, list, idx }) => {
-      const nextList = list.filter((_, i) => i !== idx);
-      this.setCached(project, nextList);
-      this.schedulePersist(project);
-      this.notifyProject(project);
-      return true;
-    });
+    const deleted = await this.withLockedItemAcrossProjects<Workflow, boolean>(
+      id,
+      (w) => w.id,
+      () => this.loadAllKnown(),
+      ({ project, list, idx }) => {
+        const nextList = list.filter((_, i) => i !== idx);
+        this.setCached(project, nextList);
+        this.schedulePersist(project);
+        this.notifyProject(project);
+        return true;
+      },
+    );
     return deleted ?? false;
   }
 }
