@@ -16,7 +16,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { canonicalProjectPath } from './projectPath.js';
-import { encodeAgentToken } from './agentActivity.js';
+import { encodeAgentToken } from './agentActivityTokens.js';
 
 const URL_MARKER = '/api/project-activity/';
 const FILE_TOOL_MATCHER = 'Read|Edit|Write|MultiEdit|NotebookEdit';
