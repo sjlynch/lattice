@@ -21,13 +21,18 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Files whose bytes affect terminal-server runtime behavior. Add to this
 // list whenever a new file becomes part of the terminal-server's import
 // graph. Files are hashed in declaration order so the resulting digest
-// is reproducible.
-const FINGERPRINT_FILES = [
+// is reproducible. A structural regression test
+// (`__tests__/terminalFingerprint.test.ts`) walks terminal-server.js's
+// static import graph and fails if any reachable runtime module is missing
+// here, so an omission can't silently let a stale orphan keep serving old
+// behavior.
+export const FINGERPRINT_FILES = [
   'terminal-server.js',
   'terminalServer/processGuards.js',
   'terminalServer/routes.js',
   'terminalServer/shutdown.js',
   'terminalServer/websocket.js',
+  'terminalServer/parentWatch.js',
   'terminal.js',
   'terminal/sessionTypes.js',
   'terminal/sessionStore.js',
@@ -40,6 +45,19 @@ const FINGERPRINT_FILES = [
   'terminal/sessionLifecycle.js',
   'terminal/attach.js',
   'terminal/kill.js',
+  // Shared tunables/helpers the terminal/* runtime modules import. These
+  // define behavior the running server bakes in at boot — terminalConfig
+  // (MAX_TERMINAL_SESSIONS, the SCROLLBACK_* sizes,
+  // INITIAL_COMMAND_WRITE_DELAY_MS — consumed by createSession /
+  // scrollbackStore / sessionLifecycle), ids (the session-id scheme used by
+  // createSession), and projectPath (canonicalProjectPath / projectHash used
+  // for the env breadcrumbs launchContext stamps). Omitting them let an edit
+  // to a terminal tunable compute the SAME fingerprint as a still-running
+  // orphan, so probeServer reused the orphan and the change silently never
+  // took effect until a manual kill.
+  'terminalConfig.js',
+  'ids.js',
+  'projectPath.js',
   'processTree.js',
   // Discovery breadcrumbs the terminal-server stamps into every pty: the
   // banner (imported by sessionLifecycle) and the generated API doc. Their
