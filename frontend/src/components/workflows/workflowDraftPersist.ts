@@ -62,14 +62,13 @@ export function reconcileDraftPersist(
 
 // Decide the editor state to show for a project, given the editor currently held
 // and that project's stored draft. The restore effect only runs on a genuine
-// project change, so a never-saved draft held now was authored under the project
-// we're leaving — replace it with this project's own draft (or an empty editor)
-// rather than carrying it across. A loaded (saved) workflow is reconciled by the
-// sync effect, so leave it untouched.
+// project change, so anything held now (never-saved draft OR loaded saved
+// workflow) was authored under the project we're leaving — replace it with this
+// project's own draft (or an empty editor) rather than carrying it across while
+// the new project's saved list is still loading.
 export function draftForFolder(
-  current: EditorState,
+  _current: EditorState,
   stored: EditorState | null,
 ): EditorState {
-  if (current.workflowId !== null) return current;
   return stored ?? emptyEditor();
 }

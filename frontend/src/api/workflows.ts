@@ -1,7 +1,7 @@
 // Workflow CRUD, run start, and live subscriptions for both definitions
 // and runs.
 
-import { asJson } from './http';
+import { asJson, deleteJson, patchJson, postJson } from './http';
 import { subscribeWs } from './ws';
 import type {
   StartWorkflowPromptCustomizationInput,
@@ -27,34 +27,23 @@ export async function createWorkflow(
   steps: WorkflowStep[],
   variables?: WorkflowVariable[],
 ): Promise<Workflow> {
-  return asJson<Workflow>(
-    await fetch('/api/workflows', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project: projectPath, name, steps, variables }),
-    }),
-  );
+  return postJson<Workflow>('/api/workflows', {
+    project: projectPath,
+    name,
+    steps,
+    variables,
+  });
 }
 
 export async function updateWorkflow(
   id: string,
   updates: { name?: string; steps?: WorkflowStep[]; variables?: WorkflowVariable[] },
 ): Promise<Workflow> {
-  return asJson<Workflow>(
-    await fetch(`/api/workflows/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
-    }),
-  );
+  return patchJson<Workflow>(`/api/workflows/${encodeURIComponent(id)}`, updates);
 }
 
 export async function deleteWorkflow(id: string): Promise<void> {
-  await asJson<{ ok: true }>(
-    await fetch(`/api/workflows/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    }),
-  );
+  await deleteJson<{ ok: true }>(`/api/workflows/${encodeURIComponent(id)}`);
 }
 
 export async function startWorkflow(
@@ -62,20 +51,12 @@ export async function startWorkflow(
   options: WorkflowRunStartOptions = {},
 ): Promise<WorkflowRunResult> {
   const harnessOverride = options.harnessOverride ?? options.modelOverride ?? null;
-  const body = harnessOverride
-    ? JSON.stringify({ harnessOverride, piModelOverride: options.piModelOverride })
-    : undefined;
-  return asJson<WorkflowRunResult>(
-    await fetch(`/api/workflows/${encodeURIComponent(id)}/run`, {
-      method: 'POST',
-      ...(body
-        ? {
-            headers: { 'Content-Type': 'application/json' },
-            body,
-          }
-        : {}),
-    }),
-  );
+  return harnessOverride
+    ? postJson<WorkflowRunResult>(`/api/workflows/${encodeURIComponent(id)}/run`, {
+        harnessOverride,
+        piModelOverride: options.piModelOverride,
+      })
+    : postJson<WorkflowRunResult>(`/api/workflows/${encodeURIComponent(id)}/run`);
 }
 
 // HTTP fallback for the active workflow runs of a project. Authoritative
@@ -101,22 +82,17 @@ export async function fetchActiveWorkflowRuns(
 }
 
 export async function cancelWorkflowRun(runId: string): Promise<void> {
-  await asJson<{ ok: true }>(
-    await fetch(`/api/workflow-runs/${encodeURIComponent(runId)}/cancel`, {
-      method: 'POST',
-    }),
+  await postJson<{ ok: true }>(
+    `/api/workflow-runs/${encodeURIComponent(runId)}/cancel`,
   );
 }
 
 export async function startWorkflowPromptCustomization(
   input: StartWorkflowPromptCustomizationInput,
 ): Promise<WorkflowPromptCustomization> {
-  return asJson<WorkflowPromptCustomization>(
-    await fetch('/api/workflow-prompt-customizations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
-    }),
+  return postJson<WorkflowPromptCustomization>(
+    '/api/workflow-prompt-customizations',
+    input,
   );
 }
 

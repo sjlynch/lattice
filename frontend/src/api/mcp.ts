@@ -2,7 +2,7 @@
 // Raw secret values never cross this boundary — the secrets endpoints return
 // presence booleans + last-4 hints only.
 
-import { asJson } from './http';
+import { patchJson, postJson } from './http';
 
 export type McpRuntime = 'node' | 'uv' | 'docker' | 'remote';
 
@@ -84,13 +84,11 @@ export async function setMcpSecret(
   envVar: string,
   value: string | null,
 ): Promise<{ redacted: RedactedMcpSecrets }> {
-  return asJson<{ redacted: RedactedMcpSecrets }>(
-    await fetch('/api/mcp-secrets', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ serverId, envVar, value }),
-    }),
-  );
+  return patchJson<{ redacted: RedactedMcpSecrets }>('/api/mcp-secrets', {
+    serverId,
+    envVar,
+    value,
+  });
 }
 
 export async function fetchMcpEnvPresence(): Promise<{ presence: McpEnvPresence }> {
@@ -104,13 +102,7 @@ export async function fetchMcpEnvPresence(): Promise<{ presence: McpEnvPresence 
 }
 
 export async function validateMcpServer(serverId: string): Promise<McpValidationResult> {
-  return asJson<McpValidationResult>(
-    await fetch('/api/mcp/validate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ serverId }),
-    }),
-  );
+  return postJson<McpValidationResult>('/api/mcp/validate', { serverId });
 }
 
 export async function scanMcpImport(project?: string): Promise<ImportScanResult> {
@@ -128,11 +120,5 @@ export async function applyMcpImport(
   ids: string[],
   project?: string,
 ): Promise<ImportApplyResult> {
-  return asJson<ImportApplyResult>(
-    await fetch('/api/mcp-import', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids, project }),
-    }),
-  );
+  return postJson<ImportApplyResult>('/api/mcp-import', { ids, project });
 }

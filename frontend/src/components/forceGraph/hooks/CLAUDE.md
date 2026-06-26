@@ -77,6 +77,11 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
 
 ## Render-vs-physics splits (settings effects, all guarded)
 
+`useGraphSettings` keeps its public `{ settings, setSettings, settingsRef }`
+shape but is internally split by concern: per-project persistence/ref mirroring,
+sprite/metric-label refresh, physics/repulsion application, pixel ratio, and link
+width.
+
 Settings effects skip work on the initial mount and on an empty/unmounted graph
 (`nodeThreeObject` reads `settingsRef` live, so the data-sync build already uses
 current values — a pre-population refresh/reheat is a byte-identical wake):

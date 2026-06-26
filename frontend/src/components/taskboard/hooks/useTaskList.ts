@@ -48,7 +48,10 @@ export function useTaskList(
   activeFolder: string,
   onTaskSpawned?: (event: TaskSpawnedEvent) => void,
 ) {
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [taskState, setTaskState] = useState<{
+    project: string;
+    tasks: Task[];
+  }>({ project: '', tasks: [] });
   const [error, setError] = useState<string | null>(null);
   // Hold the auto-dismiss timer so we can clear it on unmount / before
   // re-scheduling instead of leaking a 5 s timer per error (mirrors the
@@ -74,19 +77,39 @@ export function useTaskList(
   // Initial load + WS subscription per active folder.
   useEffect(() => {
     if (!activeFolder) {
-      setTasks([]);
+      setTaskState((prev) =>
+        prev.project === '' && prev.tasks.length === 0
+          ? prev
+          : { project: '', tasks: [] },
+      );
       return;
     }
     let cancelled = false;
     fetchTasks(activeFolder)
       .then((ts) => {
-        if (!cancelled) setTasks((prev) => structurallyShareTasks(prev, ts));
+        if (!cancelled) {
+          setTaskState((prev) => ({
+            project: activeFolder,
+            tasks: structurallyShareTasks(
+              prev.project === activeFolder ? prev.tasks : [],
+              ts,
+            ),
+          }));
+        }
       })
       .catch((err) => console.error('fetchTasks', err));
     const unsub = subscribeTasks(
       activeFolder,
       (ts) => {
-        if (!cancelled) setTasks((prev) => structurallyShareTasks(prev, ts));
+        if (!cancelled) {
+          setTaskState((prev) => ({
+            project: activeFolder,
+            tasks: structurallyShareTasks(
+              prev.project === activeFolder ? prev.tasks : [],
+              ts,
+            ),
+          }));
+        }
       },
       (event) => {
         if (!cancelled) onTaskSpawned?.(event);
@@ -110,6 +133,12 @@ export function useTaskList(
       unsub();
     };
   }, [activeFolder, onTaskSpawned, showError]);
+
+  // During a project switch, render an empty/actionless list until the new
+  // project's fetch or WS hello has authoritatively populated this state. That
+  // prevents task IDs from project A being visible under project B's header for
+  // even one render while the new request is still in flight.
+  const tasks = taskState.project === activeFolder ? taskState.tasks : [];
 
   return { tasks, error, setError, showError };
 }

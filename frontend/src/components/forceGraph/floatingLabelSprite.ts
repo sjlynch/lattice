@@ -139,6 +139,14 @@ function connectorGeometryTemplate(
 // skipped (Part C). The scale is a pure function of camera distance, so when
 // nothing moved beyond this it's unchanged; small enough to be sub-pixel.
 const SCALE_RECOMPUTE_EPS = 0.01;
+// Minimum screen-facing label scale when no caller override is supplied.
+const DEFAULT_MIN_SCALE = 6;
+// Camera-distance reference used to grow labels when no caller override exists.
+const DEFAULT_REF_DISTANCE = 200;
+// Connector start Y on the node when no caller-specific anchor is supplied.
+const DEFAULT_NODE_ANCHOR_Y = 3;
+// Gap between connector endpoint and label baseline when no override is supplied.
+const DEFAULT_LABEL_GAP = 4;
 
 export function makeFloatingLabelSprite(
   texture: MeasuredLabelTexture,
@@ -156,8 +164,8 @@ export function makeFloatingLabelSprite(
   );
   sprite.renderOrder = config.renderOrder ?? FLOATING_LABEL_RENDER_ORDER;
 
-  const minScale = config.minScale ?? 6;
-  const refDistance = config.refDistance ?? 200;
+  const minScale = config.minScale ?? DEFAULT_MIN_SCALE;
+  const refDistance = config.refDistance ?? DEFAULT_REF_DISTANCE;
   const _pos = new THREE.Vector3();
   // Memoised camera + label world position from the last scale recompute (NaN
   // until the first render, which always computes). When neither moved beyond
@@ -197,8 +205,8 @@ export function makeFloatingLabelSprite(
 }
 
 export function makeConnectorLine(config: ConnectorLineConfig): THREE.Line {
-  const nodeAnchorY = config.nodeAnchorY ?? 3;
-  const labelGap = config.labelGap ?? 4;
+  const nodeAnchorY = config.nodeAnchorY ?? DEFAULT_NODE_ANCHOR_Y;
+  const labelGap = config.labelGap ?? DEFAULT_LABEL_GAP;
   // Per-line clone of the shared template (its upper endpoint is mutated each
   // frame by the repulsion step, so it can't be shared as one instance).
   const lineGeom = connectorGeometryTemplate(

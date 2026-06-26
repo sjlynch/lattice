@@ -1,11 +1,8 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Kanban } from 'lucide-react';
 import { FloatingPanel } from '../FloatingPanel';
-import { useTerminals } from '../../TerminalsContext';
-import { type TaskStatus } from '../../api';
 import { ErrorToast } from '../shared/ErrorToast';
 import { LANE_BY_ID, LANES } from './lanes';
-import { sortTasksForLane } from './laneSort';
 import { NewTaskOverlay } from './NewTaskOverlay';
 import { PostMergeHookRow } from './PostMergeHookRow';
 import { TaskBoardFilters } from './TaskBoardFilters';
@@ -14,184 +11,18 @@ import { TaskBoardLaneGrid } from './TaskBoardLaneGrid';
 import { TaskBoardSearchEmpty } from './TaskBoardSearchEmpty';
 import { TaskBoardTitle } from './TaskBoardTitle';
 import { TaskDetailOverlay } from './TaskDetailOverlay';
-import { useMergeRunSync } from './hooks/useMergeRunSync';
-import { usePostMergeHook } from './hooks/usePostMergeHook';
-import { usePushRun } from './hooks/usePushRun';
-import { useHarnessSelector } from './hooks/useHarnessSelector';
-import { useQaPlaywright } from './hooks/useQaPlaywright';
-import { useQaRuns } from './hooks/useQaRuns';
-import { useLaneSort } from './hooks/useLaneSort';
-import { useLaneBulkActions } from './hooks/useLaneBulkActions';
-import { useTaskActions } from './hooks/useTaskActions';
-import { useTaskBoardState } from './hooks/useTaskBoardState';
-import { useTaskSearch } from './hooks/useTaskSearch';
-import { useTaskSpawnHandler } from './hooks/useTaskSpawnHandler';
-import { useTaskTerminals } from './hooks/useTaskTerminals';
-import { useSyncedViewedTask } from './hooks/useSyncedViewedTask';
-import { useVisibleLanes } from './hooks/useVisibleLanes';
+import { useTaskBoardController } from './hooks/useTaskBoardController';
 
 type Props = {
   activeFolder: string;
 };
 
-// Top-level Task Board: opens the floating panel and renders the lanes.
-// Data-sync/state responsibilities live in hooks under ./hooks; this
-// component wires those hooks to the JSX shell and keeps UI-only state local.
+// Top-level Task Board: opens the floating panel and renders the lanes. The
+// controller hook owns task/terminal/merge/QA wiring so this component stays a
+// FloatingPanel/chrome shell plus the JSX placement of overlays and rows.
 export function TaskBoardLauncher({ activeFolder }: Props) {
   const [open, setOpen] = useState(false);
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [addingTo, setAddingTo] = useState<TaskStatus | null>(null);
-
-  // Stable so it doesn't defeat React.memo(TaskCard) on every re-render.
-  const handleDragEnd = useCallback(() => setDraggingId(null), []);
-
-  const { visibleLanes, toggleLane } = useVisibleLanes();
-
-  const {
-    addTerminal,
-    closeTerminal,
-    closeTerminals,
-    closeTerminalsForTask,
-    terminals,
-    setActiveId,
-  } = useTerminals();
-
-  // `task-spawned` → mount the (queued) task's terminal + ping the resume strip.
-  // `setBulkSpawnNotifier` bridges in the strip's notifier later (it's produced
-  // after the task list, which needs `handleTaskSpawned`).
-  const { handleTaskSpawned, setBulkSpawnNotifier } =
-    useTaskSpawnHandler(addTerminal);
-
-  const {
-    tasks,
-    grouped,
-    activeCount,
-    error,
-    setError,
-    showError,
-    selectedIds,
-    clearSelection,
-    toggleSelect,
-    rangeSelect,
-  } = useTaskBoardState(activeFolder, handleTaskSpawned);
-  const { mergeRun, recentRunSummary, dismissRecent } = useMergeRunSync(
-    activeFolder,
-    addTerminal,
-    showError,
-  );
-  const { activePush, startPush, hasGit } = usePushRun(
-    activeFolder,
-    addTerminal,
-    closeTerminal,
-    showError,
-  );
-  const { harness, piModel, piMenu, selectHarness, harnessAvail, pickRunHarness } =
-    useHarnessSelector(activeFolder);
-  const qaPlaywright = useQaPlaywright(activeFolder);
-  const { startQaRun, startAllQaRuns } = useQaRuns(
-    activeFolder,
-    addTerminal,
-    closeTerminal,
-    showError,
-  );
-  const postMergeHook = usePostMergeHook(activeFolder, addTerminal, showError);
-
-  // Per-lane clock/caret sort. Defaults to newest-arrival-first; dropping a
-  // card at an explicit slot switches that lane to 'manual' so the user's
-  // hand-ordering survives until they click the clock to re-sort. Read before
-  // the action hooks: the reorder math splices into this same display order so
-  // a dropped card lands at the slot the user saw (the 'manual' flip below is
-  // queued, so getLaneSortMode still reports the pre-drop mode during the drop).
-  const { getMode: getLaneSortMode, toggle: toggleLaneSort, setManual } =
-    useLaneSort(activeFolder);
-  const {
-    addTask,
-    moveTask,
-    moveMulti,
-    dropAtMulti,
-    dropAt,
-    editTask,
-    deleteTask,
-    runTask,
-    runAllOpen,
-    cancelQueuedRun,
-    resumeTaskAction,
-    resumeAllInProgress,
-    mergeTaskAction,
-    mergeAllReady,
-    cancelActiveRun,
-    clearStuckConflicts,
-    markAllQaDone,
-  } = useTaskActions({
-    activeFolder,
-    tasks,
-    grouped,
-    getLaneSortMode,
-    mergeRun,
-    addTerminal,
-    clearSelection,
-    pickRunHarness,
-    showError,
-  });
-
-  // Live progress strips for the Open/In Progress/QA lane bulk actions
-  // (mirrors the Ready-to-Merge MergeRunStrip), plus the per-lane "run all"
-  // action map. Owns the strip state and bridges the resume notifier back to
-  // the spawn handler via `setBulkSpawnNotifier`.
-  const { runAllActionByLane, bulkStrips, dismissBulk } = useLaneBulkActions({
-    tasks,
-    setBulkSpawnNotifier,
-    runAllOpen,
-    resumeAllInProgress,
-    mergeAllReady,
-    markAllQaDone,
-  });
-
-  const {
-    taskSearch,
-    setTaskSearch,
-    searchActive,
-    filteredTasks,
-    filteredGrouped,
-  } = useTaskSearch(tasks);
-
-  const sortedGrouped = useMemo(() => {
-    const out = {} as typeof filteredGrouped;
-    for (const lane of LANES) {
-      out[lane.id] = sortTasksForLane(
-        filteredGrouped[lane.id],
-        lane.id,
-        getLaneSortMode(lane.id),
-      );
-    }
-    return out;
-  }, [filteredGrouped, getLaneSortMode]);
-
-  const handleDropAt = useCallback(
-    (id: string, status: TaskStatus, index: number) => {
-      setManual(status);
-      dropAt(id, status, index);
-    },
-    [setManual, dropAt],
-  );
-  const handleMultiDropAt = useCallback(
-    (ids: string[], status: TaskStatus, index: number) => {
-      setManual(status);
-      dropAtMulti(ids, status, index);
-    },
-    [setManual, dropAtMulti],
-  );
-
-  const { getFocusTerminal, focusTerminalByServerId } = useTaskTerminals({
-    activeFolder,
-    tasks,
-    terminals,
-    addTerminal,
-    closeTerminals,
-    closeTerminalsForTask,
-    setActiveId,
-  });
-  const [viewing, setViewing] = useSyncedViewedTask(tasks);
+  const board = useTaskBoardController(activeFolder);
 
   return (
     <>
@@ -203,7 +34,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
       >
         <Kanban size={15} />
         <span>Tasks</span>
-        {activeCount > 0 && (
+        {board.activeCount > 0 && (
           <span
             style={{
               fontSize: 11,
@@ -211,7 +42,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
               marginLeft: 2,
             }}
           >
-            · {activeCount}
+            · {board.activeCount}
           </span>
         )}
       </button>
@@ -220,7 +51,10 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
         open={open}
         onClose={() => setOpen(false)}
         title={
-          <TaskBoardTitle taskSearch={taskSearch} setTaskSearch={setTaskSearch} />
+          <TaskBoardTitle
+            taskSearch={board.taskSearch}
+            setTaskSearch={board.setTaskSearch}
+          />
         }
         defaultSize={{ width: 720, height: 620 }}
         minSize={{ width: 460, height: 380 }}
@@ -228,122 +62,111 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
       >
         <TaskBoardFilters
           lanes={LANES}
-          visibleLanes={visibleLanes}
-          grouped={filteredGrouped}
-          harness={harness}
-          piModel={piModel}
-          piMenu={piMenu}
-          selectHarness={selectHarness}
-          harnessAvail={harnessAvail}
-          onToggleLane={toggleLane}
+          visibleLanes={board.visibleLanes}
+          grouped={board.filteredGrouped}
+          harness={board.harness}
+          piModel={board.piModel}
+          piMenu={board.piMenu}
+          selectHarness={board.selectHarness}
+          harnessAvail={board.harnessAvail}
+          onToggleLane={board.toggleLane}
         />
         <div className="taskboard-body">
           <div className="taskboard-scroll">
-            {searchActive && filteredTasks.length === 0 ? (
+            {board.searchActive && board.filteredTasks.length === 0 ? (
               <TaskBoardSearchEmpty
-                query={taskSearch.trim()}
-                onClear={() => setTaskSearch('')}
+                query={board.taskSearch.trim()}
+                onClear={() => board.setTaskSearch('')}
               />
             ) : (
               <TaskBoardLaneGrid
-                visibleLanes={visibleLanes}
-                sortedGrouped={sortedGrouped}
-                qaTasks={filteredGrouped.qa}
-                tasks={tasks}
-                draggingId={draggingId}
-                selectedIds={selectedIds}
-                onDragStart={setDraggingId}
-                onDragEnd={handleDragEnd}
-                onToggleSelect={toggleSelect}
-                onRangeSelect={rangeSelect}
-                onClearSelection={clearSelection}
-                onAdd={setAddingTo}
-                onMove={moveTask}
-                onDropAt={handleDropAt}
-                onMultiMove={moveMulti}
-                onMultiDropAt={handleMultiDropAt}
-                onDelete={deleteTask}
-                onRun={runTask}
-                onCancelQueuedRun={cancelQueuedRun}
-                onResume={resumeTaskAction}
-                onMerge={mergeTaskAction}
-                onView={setViewing}
-                getFocusTerminal={getFocusTerminal}
-                getLaneSortMode={getLaneSortMode}
-                onToggleSort={toggleLaneSort}
-                searchActive={searchActive}
-                runAllActionByLane={runAllActionByLane}
-                hasGit={hasGit}
-                onPush={startPush}
-                pushDisabled={!!activePush}
-                qaPlaywright={qaPlaywright}
-                onQaRun={startQaRun}
-                onQaRunAll={startAllQaRuns}
-                mergeRun={mergeRun}
-                recentRunSummary={recentRunSummary}
-                onCancelActiveRun={cancelActiveRun}
-                onClearStuckConflicts={clearStuckConflicts}
-                onDismissRecent={dismissRecent}
-                bulkStrips={bulkStrips}
-                onDismissBulk={dismissBulk}
+                visibleLanes={board.visibleLanes}
+                sortedGrouped={board.sortedGrouped}
+                qaTasks={board.filteredGrouped.qa}
+                tasks={board.tasks}
+                draggingId={board.draggingId}
+                selectedIds={board.selectedIds}
+                onDragStart={board.setDraggingId}
+                onDragEnd={board.handleDragEnd}
+                onToggleSelect={board.toggleSelect}
+                onRangeSelect={board.rangeSelect}
+                onClearSelection={board.clearSelection}
+                onAdd={board.setAddingTo}
+                onMove={board.moveTask}
+                onDropAt={board.handleDropAt}
+                onMultiMove={board.moveMulti}
+                onMultiDropAt={board.handleMultiDropAt}
+                onDelete={board.deleteTask}
+                onRun={board.runTask}
+                onCancelQueuedRun={board.cancelQueuedRun}
+                onResume={board.resumeTaskAction}
+                onMerge={board.mergeTaskAction}
+                onView={board.setViewing}
+                getFocusTerminal={board.getFocusTerminal}
+                getLaneSortMode={board.getLaneSortMode}
+                onToggleSort={board.toggleLaneSort}
+                searchActive={board.searchActive}
+                runAllActionByLane={board.runAllActionByLane}
+                hasGit={board.hasGit}
+                onPush={board.startPush}
+                pushDisabled={!!board.activePush}
+                qaPlaywright={board.qaPlaywright}
+                onQaRun={board.startQaRun}
+                onQaRunAll={board.startAllQaRuns}
+                mergeRun={board.mergeRun}
+                recentRunSummary={board.recentRunSummary}
+                onCancelActiveRun={board.cancelActiveRun}
+                onClearStuckConflicts={board.clearStuckConflicts}
+                onDismissRecent={board.dismissRecent}
+                bulkStrips={board.bulkStrips}
+                onDismissBulk={board.dismissBulk}
               />
             )}
           </div>
           <PostMergeHookRow
-            prompt={postMergeHook.form.prompt}
-            enabled={postMergeHook.form.enabled}
-            harness={postMergeHook.form.harness}
-            piModel={postMergeHook.form.piModel}
-            piMenu={piMenu}
-            harnessAvail={harnessAvail}
-            active={postMergeHook.active}
-            recent={postMergeHook.recent}
-            saving={postMergeHook.saving}
-            onSavePrompt={postMergeHook.savePrompt}
-            onToggleEnabled={postMergeHook.saveEnabled}
-            onSaveHarness={postMergeHook.saveHarness}
-            onAbort={postMergeHook.abort}
-            onFocusActiveTerminal={focusTerminalByServerId(
-              postMergeHook.active?.serverId,
-            )}
+            prompt={board.postMergeHook.form.prompt}
+            enabled={board.postMergeHook.form.enabled}
+            harness={board.postMergeHook.form.harness}
+            piModel={board.postMergeHook.form.piModel}
+            piMenu={board.piMenu}
+            harnessAvail={board.harnessAvail}
+            active={board.postMergeHook.active}
+            recent={board.postMergeHook.recent}
+            saving={board.postMergeHook.saving}
+            onSavePrompt={board.postMergeHook.savePrompt}
+            onToggleEnabled={board.postMergeHook.saveEnabled}
+            onSaveHarness={board.postMergeHook.saveHarness}
+            onAbort={board.postMergeHook.abort}
+            onFocusActiveTerminal={board.focusPostMergeTerminal}
           />
-          {addingTo && (
+          {board.addingTo && (
             <NewTaskOverlay
-              lane={LANE_BY_ID[addingTo]}
-              onCancel={() => setAddingTo(null)}
-              onSubmit={async (title, desc) => {
-                if (await addTask(addingTo, title, desc)) setAddingTo(null);
-              }}
+              lane={LANE_BY_ID[board.addingTo]}
+              onCancel={() => board.setAddingTo(null)}
+              onSubmit={board.submitNewTask}
             />
           )}
-          {viewing && (
+          {board.viewing && (
             <TaskDetailOverlay
-              task={viewing}
-              onClose={() => setViewing(null)}
-              onMove={(status) => moveTask(viewing.id, status)}
-              onDelete={async () => {
-                if (await deleteTask(viewing.id)) setViewing(null);
-              }}
-              onSave={(updates) => editTask(viewing.id, updates)}
-              onRun={
-                viewing.status === 'open' ||
-                (viewing.status === 'in_progress' && !viewing.worktreePath)
-                  ? () => {
-                      runTask(viewing);
-                      setViewing(null);
-                    }
-                  : undefined
-              }
+              task={board.viewing}
+              onClose={() => board.setViewing(null)}
+              onMove={board.moveViewingTask}
+              onDelete={board.deleteViewingTask}
+              onSave={board.saveViewingTask}
+              onRun={board.runViewingTask}
             />
           )}
-          {error && (
-            <ErrorToast message={error} onDismiss={() => setError(null)} />
+          {board.error && (
+            <ErrorToast
+              message={board.error}
+              onDismiss={() => board.setError(null)}
+            />
           )}
         </div>
         <TaskBoardFooter
-          tasks={tasks}
-          filteredTasks={filteredTasks}
-          searchActive={searchActive}
+          tasks={board.tasks}
+          filteredTasks={board.filteredTasks}
+          searchActive={board.searchActive}
         />
       </FloatingPanel>
     </>

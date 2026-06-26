@@ -1,6 +1,6 @@
 // Per-project user settings (sidebar width, harness preferences, terminal defaults).
 
-import { asJson } from './http';
+import { asJson, patchJson, postJson } from './http';
 import type {
   HarnessAvailability,
   InstructionTemplate,
@@ -31,13 +31,10 @@ export async function probePiEndpoint(
   baseUrl: string,
   apiKey?: string,
 ): Promise<string[]> {
-  const data = await asJson<{ models: string[] }>(
-    await fetch('/api/pi-endpoints/probe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ baseUrl, apiKey }),
-    }),
-  );
+  const data = await postJson<{ models: string[] }>('/api/pi-endpoints/probe', {
+    baseUrl,
+    apiKey,
+  });
   return data.models;
 }
 
@@ -66,12 +63,9 @@ export async function patchUserSettings(
   projectPath: string,
   partial: Partial<UserSettings>,
 ): Promise<UserSettings> {
-  return asJson<UserSettings>(
-    await fetch(`/api/settings?project=${encodeURIComponent(projectPath)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(partial),
-    }),
+  return patchJson<UserSettings>(
+    `/api/settings?project=${encodeURIComponent(projectPath)}`,
+    partial,
   );
 }
 
@@ -83,11 +77,7 @@ export async function ensureProjectInstrumentation(
   projectPath: string,
 ): Promise<void> {
   try {
-    await fetch('/api/project-instrumentation', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project: projectPath }),
-    });
+    await postJson('/api/project-instrumentation', { project: projectPath });
   } catch {
     /* best-effort */
   }

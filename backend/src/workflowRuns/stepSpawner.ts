@@ -18,7 +18,7 @@ import fs from 'node:fs/promises';
 import { installClaudeHooks } from '../claudeStopHook.js';
 import { installPiCompletionExtension } from '../piExtension.js';
 import { installPiSubagentsShim } from '../piSubagents.js';
-import { buildAgentActivityUrl } from '../agentActivity.js';
+import { buildAgentActivityUrl } from '../agentActivityTokens.js';
 import type { Workflow } from '../workflows.js';
 import { renderHelperScript } from './renderHelperScript.js';
 import { resolveInstructionTemplate } from '../instructionTemplates.js';
