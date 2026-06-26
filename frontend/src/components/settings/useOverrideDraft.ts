@@ -44,9 +44,11 @@ export type OverrideDraft<T> = {
   setDraft: (id: string, text: string) => void;
   resetDraft: (item: T) => void;
   resetAll: () => void;
-  // The full desired override map to persist, or `undefined` until the seeding
-  // fetch has completed. That `undefined` is the clobber-guard: a Save before
-  // the load finishes must not rewrite overrides this tab never actually edited.
+  // The full desired override map to persist, or `undefined` when the user
+  // hasn't edited this tab (the load hasn't finished, or it finished but no
+  // draft was touched). That `undefined` is the clobber-guard *and* the dirty
+  // signal: a Save before load — or one for a tab merely opened, never edited —
+  // must not rewrite overrides, and must not report the tab dirty.
   getPatch: () => Record<string, string> | undefined;
 };
 
@@ -68,6 +70,11 @@ export function useOverrideDraft<T>(config: OverrideDraftConfig<T>): OverrideDra
   const [existingOverrides, setExistingOverrides] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  // True once the user actually edits a draft (setDraft/resetDraft/resetAll).
+  // `loaded` alone can't gate dirtiness: once a load settles, getPatch() would
+  // always return a (possibly unchanged) map, so merely opening this tab would
+  // mark it dirty. Reset on every re-seed so a fresh load starts clean.
+  const [touched, setTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -82,6 +89,8 @@ export function useOverrideDraft<T>(config: OverrideDraftConfig<T>): OverrideDra
         setItems(list);
         setDraftMap(Object.fromEntries(list.map((item) => [idOf(item), currentOf(item)])));
         setExistingOverrides(readOverrides(settings));
+        // Re-seeding drops any unsaved edits, so the tab is no longer touched.
+        setTouched(false);
         // Only flip `loaded` on success — a failed fetch leaves the clobber-
         // guard armed so getPatch() returns undefined instead of an empty map.
         setLoaded(true);
@@ -102,24 +111,27 @@ export function useOverrideDraft<T>(config: OverrideDraftConfig<T>): OverrideDra
 
   const setDraft = useCallback((id: string, text: string) => {
     setDraftMap((d) => ({ ...d, [id]: text }));
+    setTouched(true);
   }, []);
 
   const resetDraft = useCallback(
     (item: T) => {
       setDraftMap((d) => ({ ...d, [idOf(item)]: defaultOf(item) }));
+      setTouched(true);
     },
     [idOf, defaultOf],
   );
 
   const resetAll = useCallback(() => {
     setDraftMap(Object.fromEntries(items.map((item) => [idOf(item), defaultOf(item)])));
+    setTouched(true);
   }, [items, idOf, defaultOf]);
 
   // Build the map to persist: keep overrides for ids we don't manage, then for
   // each item drop the key when the draft matches the default (or is blank),
   // else store the edited text.
   const getPatch = useCallback((): Record<string, string> | undefined => {
-    if (!loaded) return undefined;
+    if (!loaded || !touched) return undefined;
     const next: Record<string, string> = { ...existingOverrides };
     for (const item of items) {
       const id = idOf(item);
@@ -131,7 +143,7 @@ export function useOverrideDraft<T>(config: OverrideDraftConfig<T>): OverrideDra
       }
     }
     return next;
-  }, [loaded, existingOverrides, items, draftMap, idOf, currentOf, matchesDefault]);
+  }, [loaded, touched, existingOverrides, items, draftMap, idOf, currentOf, matchesDefault]);
 
   return { items, draftMap, loading, error, setDraft, resetDraft, resetAll, getPatch };
 }

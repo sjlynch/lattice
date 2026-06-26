@@ -7,6 +7,22 @@ import type { Task, TaskStatus } from '../../api';
 // the card lands at a different slot than the drop indicator showed. The hook
 // (useTaskReorderActions) wires these to the API; tests exercise them directly.
 
+// The selected cards in the SAME top-to-bottom order they appear in their
+// source lane. `displayedSourceLane` is that lane's *visible* order (after
+// sortTasksForLane); filtering it preserves what the user sees. Ordering the
+// block by compareTasksForLane (sortOrder ?? -createdAt) instead would land the
+// moved cards internally reordered whenever the lane's visible order diverges
+// from createdAt order (e.g. an 'oldest'-sorted lane, or 'recent' where arrival
+// stamps differ from createdAt) — and that wrong order would then be persisted
+// as the new manual order.
+export function selectedTasksInVisibleOrder(
+  displayedSourceLane: Task[],
+  ids: string[],
+): Task[] {
+  const idSet = new Set(ids);
+  return displayedSourceLane.filter((task) => idSet.has(task.id));
+}
+
 // New id ordering after dropping a single card at `targetIndex`. `lane` is the
 // destination lane's visible order; `task` may originate from another lane (then
 // it isn't already in `lane`). Returns null for a no-op (dropped onto its own

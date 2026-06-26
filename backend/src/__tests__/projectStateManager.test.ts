@@ -40,6 +40,19 @@ class TestStore extends ProjectStateManager<number[]> {
   loadedNow(projectPath: string): boolean {
     return this.isLoaded(projectPath);
   }
+
+  // Expose the protected write + per-project lock for the BUG 1 / BUG 2 tests.
+  write(projectPath: string, state: number[]): Promise<void> {
+    return this.writeStateNow(projectPath, state);
+  }
+
+  locked<T>(projectPath: string, fn: () => T | Promise<T>): Promise<T> {
+    return this.runProjectWrite(projectPath, fn);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function tmpFile(contents: string): Promise<string> {
@@ -111,6 +124,123 @@ test('a missing state file resolves to the default state for all racers', async 
   const [a, b] = await Promise.all([store.read(project), store.read(project)]);
   assert.deepEqual(a, []);
   assert.deepEqual(b, []);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+// ---------- BUG 1: atomic writes + corrupt-load guard ----------
+//
+// The debounced persist (100ms) fires constantly while the dev backend is
+// frequently killed/restarted (tsc -w). A kill/power-loss mid-write used to
+// truncate tasks.json; on next boot performLoad's JSON.parse threw and was
+// swallowed identically to "file missing" → loaded [] → the next write of any
+// kind persisted the empty list over the still-recoverable corrupt file,
+// making the loss permanent and silent. The fix: atomic temp→rename writes
+// (a crash can't truncate the live file) and a load path that distinguishes
+// ENOENT (legit empty) from a parse failure (preserve the bytes, never default).
+
+test('ENOENT loads the default state without creating a .corrupt-* sidecar', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-psm-'));
+  const missing = path.join(dir, 'state.json');
+  const store = new TestStore(missing);
+
+  assert.deepEqual(await store.read('/tmp/p'), []);
+  const entries = await fs.readdir(dir);
+  assert.equal(
+    entries.filter((e) => e.includes('.corrupt-')).length,
+    0,
+    'a genuinely-missing file must not be treated as corruption',
+  );
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('a truncated/corrupt file is preserved and never silently replaced by the default', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-psm-'));
+  const file = path.join(dir, 'state.json');
+  // Exactly what a kill mid-persist leaves behind: valid JSON, then truncated.
+  const truncated = '[{"id":"a"},{"id":"b","v';
+  await fs.writeFile(file, truncated, 'utf8');
+  const store = new TestStore(file);
+
+  // Load must NOT throw and must fall back to empty in memory...
+  assert.deepEqual(await store.read('C:/proj'), []);
+
+  // ...but the original bytes must be preserved in a `.corrupt-*` sidecar and
+  // the bad file moved aside, so a later write can't clobber the recoverable
+  // data with [].
+  const corruptAfterLoad = (await fs.readdir(dir)).filter((e) =>
+    e.includes('.corrupt-'),
+  );
+  assert.equal(corruptAfterLoad.length, 1, 'expected one .corrupt-* sidecar');
+  assert.equal(
+    await fs.readFile(path.join(dir, corruptAfterLoad[0]), 'utf8'),
+    truncated,
+    'the original truncated bytes must be preserved verbatim',
+  );
+
+  // Now mutate (the next write of any kind). The loader must not have left the
+  // data exposed to a silent []-overwrite: the live file holds the new state,
+  // and the original bytes are still safe in the sidecar.
+  await store.write('C:/proj', [1, 2, 3]);
+  assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')), [1, 2, 3]);
+  assert.equal(
+    await fs.readFile(path.join(dir, corruptAfterLoad[0]), 'utf8'),
+    truncated,
+    'the corrupt sidecar must survive the subsequent write',
+  );
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('writeStateNow is atomic (temp→rename) and leaves no temp orphan', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-psm-'));
+  const file = path.join(dir, 'state.json');
+  const store = new TestStore(file);
+
+  await store.write('C:/p', [9, 8, 7]);
+  assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')), [9, 8, 7]);
+  const leftovers = (await fs.readdir(dir)).filter((e) => e.endsWith('.tmp'));
+  assert.equal(leftovers.length, 0, 'no temp file should survive a successful write');
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+// ---------- BUG 2: per-project write lock (base primitive) ----------
+
+test('runProjectWrite serializes same-project writers but lets different projects overlap', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-psm-'));
+  const store = new TestStore(path.join(dir, 'state.json'));
+
+  // Same project: the slow A must fully settle before the fast B starts — no
+  // interleaving of one project's read-modify-writes.
+  const order: string[] = [];
+  await Promise.all([
+    store.locked('C:/same', async () => {
+      order.push('A:start');
+      await sleep(25);
+      order.push('A:end');
+    }),
+    store.locked('C:/same', async () => {
+      order.push('B:start');
+      order.push('B:end');
+    }),
+  ]);
+  assert.deepEqual(order, ['A:start', 'A:end', 'B:start', 'B:end']);
+
+  // Different projects: both enter before either finishes (no cross-key block).
+  const order2: string[] = [];
+  await Promise.all([
+    store.locked('C:/p1', async () => {
+      order2.push('p1:start');
+      await sleep(20);
+    }),
+    store.locked('C:/p2', async () => {
+      order2.push('p2:start');
+      await sleep(20);
+    }),
+  ]);
+  assert.deepEqual(order2.sort(), ['p1:start', 'p2:start']);
 
   await fs.rm(dir, { recursive: true, force: true });
 });

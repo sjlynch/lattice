@@ -36,11 +36,10 @@ function formatMergeResult(result: MergeOutcome): string {
 }
 
 function formatFinalizeResult(fin: FinalizeOutcome): string {
-  return fin.ok
-    ? 'ok'
-    : ('stashConflict' in fin
-        ? `stash-conflict (${fin.stashConflict.join(', ')})`
-        : `error: ${'error' in fin ? fin.error : '?'}`);
+  if (fin.ok) return 'ok';
+  if ('stashConflict' in fin) return `stash-conflict (${fin.stashConflict.join(', ')})`;
+  if ('mergeConflict' in fin) return `merge-conflict (${fin.mergeConflict.join(', ')})`;
+  return `error: ${'error' in fin ? fin.error : '?'}`;
 }
 
 function mergeRunResyncOptions(

@@ -29,6 +29,13 @@ function externalActiveContext(
 }
 
 type Args = {
+  // The active project. Queue state is per-project — switching projects must
+  // never show queued/running status from the previous project, nor
+  // dispatchFail-drop the prior project's pending entry. WorkflowsLauncher is
+  // NOT remounted on a project switch (TopAppBar renders it without a key), so
+  // this hook resets its own state when activeFolder changes (mirrors the
+  // folder-change reset in useWorkflowRuns).
+  activeFolder: string;
   workflowsById: Map<string, Workflow>;
   // Triggers an HTTP /run for the given queued entry. Returns the run record
   // on success and null on failure (e.g. backend rejected, network error).
@@ -55,6 +62,7 @@ type Args = {
 // `dispatch` is stable (empty deps) — so consumers can include it in effect
 // dep arrays without re-running the effect on every render.
 export function useWorkflowQueue({
+  activeFolder,
   workflowsById,
   runWorkflow,
   activeRuns,
@@ -75,6 +83,10 @@ export function useWorkflowQueue({
   runWorkflowRef.current = runWorkflow;
   recentRunsRef.current = recentRuns;
   activeRunsRef.current = activeRuns;
+
+  // Baseline for the activeRuns-diff effect below. Declared here (not at the
+  // effect) so the project-reset effect can re-baseline it too.
+  const prevActiveRef = useRef(activeRuns);
 
   const dispatch = useCallback((action: QueueAction) => {
     const ctx = externalActiveContext(stateRef.current, activeRunsRef.current);
@@ -104,6 +116,25 @@ export function useWorkflowQueue({
     }
   }, []);
 
+  // Reset per-project queue state when the active project changes. The queue
+  // (mode/running/queued/started/preFinishedRunIds) belongs to the project it
+  // was built in, and WorkflowsLauncher isn't remounted across a project
+  // switch — so without this the new project would render the previous
+  // project's queued/running status, and the activeRuns-diff below would fire
+  // runFinished for the old project's runs (retiring a started entry and
+  // making the scheduler try — then dispatchFail-drop — a queued entry that
+  // only exists in the old project's workflowsById). Mirrors the
+  // folder-change reset in useWorkflowRuns.
+  useEffect(() => {
+    setState(initialQueueState);
+    // Keep the dispatch-visible snapshot in lockstep with the reset so any
+    // dispatch before the next render reads the pristine state.
+    stateRef.current = initialQueueState;
+    // Re-baseline the diff so the new project's `hello` replacing activeRuns
+    // doesn't read as "the previous project's runs finished".
+    prevActiveRef.current = activeRunsRef.current;
+  }, [activeFolder]);
+
   // Watch `activeRuns` for runs that disappeared since the last render —
   // that's the signal the workflow finished. Dispatch runFinished so the
   // scheduler can pick up the next queued workflow (sequential) or auto-stop
@@ -114,7 +145,6 @@ export function useWorkflowQueue({
   // event that removed it from `activeRuns`) so the scheduler can decide
   // whether to cascade into the next sequential workflow (only on
   // 'completed') or stop the queue (on 'errored'/'cancelled').
-  const prevActiveRef = useRef(activeRuns);
   useEffect(() => {
     const prev = prevActiveRef.current;
     if (prev !== activeRuns) {

@@ -30,9 +30,14 @@ imports from `'../workflows.js'`; this directory holds the implementation.
   list/get/create/update/delete with debounced persistence and per-project
   `(projectPath, workflows)` subscriber fan-out. Unlike tasks (which moved to
   `~/.lattice/`), `workflows.json` still lives **in-project** at
-  `<project>/.lattice/` (`WORKFLOWS_FILENAME` / `workflowsFile` here). By-id ops
-  use `withWorkflowAcrossProjects` (cache → `loadAllKnown` fallback) so a lookup
-  resolves even for an unopened project after a backend restart.
+  `<project>/.lattice/` (`WORKFLOWS_FILENAME` / `workflowsFile` here). Read-only
+  by-id ops use `withWorkflowAcrossProjects` (cache → `loadAllKnown` fallback) so
+  a lookup resolves even for an unopened project after a backend restart;
+  mutating ops (create/update/delete) run under the base's per-project write lock
+  (create via `runProjectWrite`, update/delete via `withLockedItemAcrossProjects`)
+  so two concurrent edits can't clobber via a read-before-write race. The base
+  also gives this store atomic temp→rename writes + the corrupt-load guard for
+  free (see `taskCache/CLAUDE.md` "Crash-safety contract").
 
 ## Served by
 
