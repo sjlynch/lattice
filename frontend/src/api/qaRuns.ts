@@ -3,7 +3,7 @@
 // UI can auto-close the terminal once Claude's Stop hook has fired on the
 // backend. Mirrors pushRuns.ts.
 
-import { asJson } from './http';
+import { asJson, postJson } from './http';
 import type { QaRunStatus, StartQaRunResult } from './types';
 export type { QaRunStatus, StartQaRunResult } from './types';
 
@@ -11,13 +11,10 @@ export async function startQaRun(
   projectPath: string,
   taskId: string,
 ): Promise<StartQaRunResult> {
-  return asJson<StartQaRunResult>(
-    await fetch('/api/qa-runs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project: projectPath, taskId }),
-    }),
-  );
+  return postJson<StartQaRunResult>('/api/qa-runs', {
+    project: projectPath,
+    taskId,
+  });
 }
 
 export async function fetchQaRunStatus(

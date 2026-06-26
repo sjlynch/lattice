@@ -1,7 +1,7 @@
 // Filesystem-side endpoints: default project root, recursive source scan,
 // and folder browser used by the FolderPicker.
 
-import { asJson } from './http';
+import { asJson, postJson } from './http';
 import type {
   DirListing,
   GitHistoryResult,
@@ -81,11 +81,5 @@ export async function listDir(folderPath?: string): Promise<DirListing> {
 }
 
 export async function createDir(parentPath: string, name: string): Promise<DirListing> {
-  return asJson<DirListing>(
-    await fetch('/api/create-dir', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ parent: parentPath, name }),
-    }),
-  );
+  return postJson<DirListing>('/api/create-dir', { parent: parentPath, name });
 }
