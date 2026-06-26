@@ -12,33 +12,48 @@ const RING_COLOR = '#7ad0ff';
 // locate the existing ring without iterating the whole child list.
 const HALO_TAG = 'lattice:halo';
 
+// Ring geometry, expressed as fractions of SIZE so the texture scales
+// cleanly (the named-constant style of `changeRingTextures.ts`). The glow
+// gradient peaks at the ring radius and the colored band spans
+// RING_GRADIENT_INNER_STOP..RING_GRADIENT_OUTER_STOP of its sweep.
+const SIZE = 128;
+const RING_RADIUS = SIZE * 0.42;
+const RING_WIDTH = SIZE * 0.04;
+const RING_GLOW_SPREAD = RING_WIDTH * 1.5;
+const RING_GRADIENT_INNER_STOP = 0.45;
+const RING_GRADIENT_OUTER_STOP = 0.55;
+
 let _ringTexture: THREE.CanvasTexture | null = null;
 function ringTexture(): THREE.CanvasTexture {
   if (_ringTexture) return _ringTexture;
-  const SIZE = 128;
   const canvas = document.createElement('canvas');
   canvas.width = SIZE;
   canvas.height = SIZE;
   const ctx = canvas.getContext('2d')!;
   const cx = SIZE / 2;
   const cy = SIZE / 2;
-  const ringR = SIZE * 0.42;
-  const ringW = SIZE * 0.04;
 
   // Soft glow so the ring still reads against a similarly-colored sprite.
-  const grad = ctx.createRadialGradient(cx, cy, ringR - ringW * 1.5, cx, cy, ringR + ringW * 1.5);
+  const grad = ctx.createRadialGradient(
+    cx,
+    cy,
+    RING_RADIUS - RING_GLOW_SPREAD,
+    cx,
+    cy,
+    RING_RADIUS + RING_GLOW_SPREAD,
+  );
   grad.addColorStop(0, 'rgba(0,0,0,0)');
-  grad.addColorStop(0.45, RING_COLOR + 'aa');
-  grad.addColorStop(0.55, RING_COLOR + 'aa');
+  grad.addColorStop(RING_GRADIENT_INNER_STOP, RING_COLOR + 'aa');
+  grad.addColorStop(RING_GRADIENT_OUTER_STOP, RING_COLOR + 'aa');
   grad.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, SIZE, SIZE);
 
   // Crisp thin solid stroke on top.
   ctx.beginPath();
-  ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+  ctx.arc(cx, cy, RING_RADIUS, 0, Math.PI * 2);
   ctx.strokeStyle = RING_COLOR;
-  ctx.lineWidth = ringW;
+  ctx.lineWidth = RING_WIDTH;
   ctx.stroke();
 
   const tex = new THREE.CanvasTexture(canvas);
