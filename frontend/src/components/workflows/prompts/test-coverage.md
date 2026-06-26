@@ -1,0 +1,11 @@
+Analyze this codebase and its existing test suite to find genuine, high-impact gaps in unit-test coverage, and file a small, focused set of test tasks on the Lattice task board for this active project. The goal is a lean, high-signal suite — not maximum coverage. A handful of well-chosen tests on the riskiest code is worth far more than dozens of shallow ones.
+
+Read the existing tests first. Before proposing anything, understand what is already covered — never file a test for behavior an existing test already exercises. Strongly prefer extending an existing test file (add cases or parametrize) over creating a new one, and keep new test files to a minimum.
+
+Prioritize ruthlessly. Target the code most likely to break and most costly when it does: complex or branchy logic, pure functions with many edge cases, parsing/validation, state machines, money/auth/permissions, and data-integrity or error-handling paths — favoring modules with recent churn or a history of bugs. Skip low-value targets entirely: trivial getters/wrappers, type-only files, configuration/glue, generated code, and anything better served by an integration or end-to-end test.
+
+Consolidate rather than multiply. Where existing tests overlap, duplicate each other, or are split across files that should be one, file a task to combine them — merging redundant tests is as valuable as adding a missing one, and keeps the suite fast and maintainable.
+
+This prompt may be run many times against the same project, so guard hard against piling up redundant work. Treat both the existing test suite and the current task board as the source of truth: read the board first and do not file a task for a gap that is already covered, already requested, or a near-duplicate of an existing task. File only the few highest-impact gaps you actually find — if the important paths are already well covered, create no tasks and say so plainly. Quality and non-duplication over quantity.
+
+For each task, name the exact file and function under test, the specific behavior or edge case to cover and the concrete risk it guards against, and whether the work is to extend an existing test, add a new one, or consolidate existing tests. Do not create duplicate tasks.

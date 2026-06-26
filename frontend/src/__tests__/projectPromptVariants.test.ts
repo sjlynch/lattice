@@ -93,6 +93,15 @@ test('inferPromptTemplateId and promptTemplateTitle use the ordered template met
     [{ title: 'Combine task backlog', prompt: '' }, 'combine-tasks', 'Combine Tasks'],
     [{ title: ' PMF ', prompt: '' }, 'pmf', 'PMF'],
     [{ title: 'Security', prompt: '' }, 'security', 'Security'],
+    [{ title: 'Test coverage gaps', prompt: '' }, 'test-coverage', 'Test Coverage'],
+    [
+      {
+        title: 'Coverage pass',
+        prompt: 'Analyze this codebase and its existing test suite to find genuine gaps.',
+      },
+      'test-coverage',
+      'Test Coverage',
+    ],
     [{ title: 'Brainstorm options', prompt: '' }, 'brainstorm', 'Brainstorm'],
     [
       {

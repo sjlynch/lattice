@@ -8,6 +8,7 @@ export type PromptTemplateId =
   | 'combine-tasks'
   | 'pmf'
   | 'security'
+  | 'test-coverage'
   | 'brainstorm';
 
 export type PromptTemplateMatchInput = {
@@ -60,6 +61,13 @@ const PROMPT_TEMPLATE_METADATA: readonly PromptTemplateMetadata[] = [
     matches: ({ title, prompt }) =>
       title === 'security' ||
       prompt.startsWith('analyze this codebase specifically for security vulnerabilities'),
+  },
+  {
+    id: 'test-coverage',
+    title: 'Test Coverage',
+    matches: ({ title, prompt }) =>
+      title.includes('test coverage') ||
+      prompt.startsWith('analyze this codebase and its existing test suite'),
   },
   {
     id: 'brainstorm',
