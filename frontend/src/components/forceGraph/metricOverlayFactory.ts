@@ -88,32 +88,41 @@ export function createMetricOverlaySpriteFactory(
     colorSprite.renderOrder = NODE_RENDER_ORDER;
     group.add(colorSprite);
 
-    const line = makeConnectorLine({
-      color,
-      labelY: config.labelY,
-      opacity: 0.9,
-    });
-    group.add(line);
+    // The numeric value label (+ its connector line) is opt-in. In most
+    // projects the labels overlap so heavily they obscure the recolor they
+    // annotate, so they default off (`settings.metricLabels`) — the tinted
+    // shape alone still conveys the health/LOC band by color. When off we skip
+    // the connector/label/registry entry entirely so there's nothing for the
+    // per-frame repulsion loop to relax. The colored sprite is still the
+    // hover/pick target, so the health tooltip works with or without the label.
+    if (settings.metricLabels) {
+      const line = makeConnectorLine({
+        color,
+        labelY: config.labelY,
+        opacity: 0.9,
+      });
+      group.add(line);
 
-    const texture = buildMeasuredLabelTexture(
-      sharedMetricLabelTextureCache,
-      String(value),
-      color,
-      METRIC_LABEL_TEXTURE_OPTIONS,
-    );
-    const label = makeFloatingLabelSprite(texture, settings.labelSize, {
-      heightMultiplier: METRIC_LABEL_HEIGHT_MULT,
-      maxScale: 100,
-      aspectFallback: 1,
-      // Numeric metric labels are already measured tightly. Let the whole
-      // sprite quad count as hoverable so health-score labels reliably anchor
-      // the health tooltip after the shared-label refactor.
-      hitBounds: METRIC_LABEL_HIT_BOUNDS,
-    });
-    label.position.set(0, config.labelY, 0);
-    group.add(label);
+      const texture = buildMeasuredLabelTexture(
+        sharedMetricLabelTextureCache,
+        String(value),
+        color,
+        METRIC_LABEL_TEXTURE_OPTIONS,
+      );
+      const label = makeFloatingLabelSprite(texture, settings.labelSize, {
+        heightMultiplier: METRIC_LABEL_HEIGHT_MULT,
+        maxScale: 100,
+        aspectFallback: 1,
+        // Numeric metric labels are already measured tightly. Let the whole
+        // sprite quad count as hoverable so health-score labels reliably anchor
+        // the health tooltip after the shared-label refactor.
+        hitBounds: METRIC_LABEL_HIT_BOUNDS,
+      });
+      label.position.set(0, config.labelY, 0);
+      group.add(label);
 
-    config.registry.add({ label, line });
+      config.registry.add({ label, line });
+    }
 
     return group;
   };

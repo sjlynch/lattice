@@ -50,6 +50,13 @@ export type GraphSettings = {
   // recolor overlays (health/loc/dead) fall back to the per-node sprite path.
   // Default-on. See `instancedNodes.ts`.
   batchedNodes: boolean;
+  // Show the numeric value labels (+ their connector lines) on the LOC (`z`)
+  // and code-health (`h`) recolor overlays. Off by default: in most projects
+  // the labels overlap so heavily they obscure the very recolor they annotate,
+  // and the tinted shape already conveys the band by color. When on, each
+  // measured file node sprouts its connector + number again. Affects only the
+  // metric overlays — the Alt name-label overlay is unrelated.
+  metricLabels: boolean;
   // Renderer pixel-ratio cap ("Render scale"). The WebGL drawing buffer is sized
   // to `min(devicePixelRatio, pixelRatio)` — so values below the device ratio
   // render fewer pixels per frame (softer, but a large fill-rate saving). The big
@@ -84,6 +91,10 @@ export const DEFAULT_SETTINGS: GraphSettings = {
   // per-node sprite (see nodeObjectFactory / instancedNodes).
   batchedLinks: true,
   batchedNodes: true,
+  // Off by default — the LOC/health overlays start as pure recolors. In most
+  // projects the per-node value labels overlap too much to read; opt in via the
+  // graph settings panel when a sparser view makes them useful.
+  metricLabels: false,
   pixelRatio: 1.5,
 };
 

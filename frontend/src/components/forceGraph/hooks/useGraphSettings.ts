@@ -50,7 +50,8 @@ export function useGraphSettings(
     }
   }, [activeFolder, settings]);
 
-  // Re-render sprites when render-only settings (sizes) change.
+  // Re-render sprites when render-only sprite settings (node/label sizes, and
+  // whether the LOC/health metric labels are shown) change.
   //
   // Guarded against two redundant refreshes: (1) the *initial mount*, and
   // (2) any run where no nodes are mounted yet. `nodeThreeObject` reads
@@ -58,30 +59,40 @@ export function useGraphSettings(
   // sprites at the current sizes — a refresh before/at that point just
   // clears the label registries and wakes the idle loop for a
   // byte-identical rebuild. The previous-size ref also makes a settings
-  // *object* swap that doesn't actually change a size (e.g. a project
+  // *object* swap that doesn't actually change a value (e.g. a project
   // switch landing on identical values) a no-op. Live slider drags still
   // refresh: the size changes, nodes are mounted, so the guard falls
-  // through.
+  // through. Toggling `metricLabels` adds/removes each metric node's
+  // connector + number, so it routes through the same rebuild.
   const appliedSizesRef = useRef({
     fileNodeSize: settings.fileNodeSize,
     dirNodeSize: settings.dirNodeSize,
     labelSize: settings.labelSize,
+    metricLabels: settings.metricLabels,
   });
   useEffect(() => {
     const prev = appliedSizesRef.current;
     const changed =
       prev.fileNodeSize !== settings.fileNodeSize ||
       prev.dirNodeSize !== settings.dirNodeSize ||
-      prev.labelSize !== settings.labelSize;
+      prev.labelSize !== settings.labelSize ||
+      prev.metricLabels !== settings.metricLabels;
     appliedSizesRef.current = {
       fileNodeSize: settings.fileNodeSize,
       dirNodeSize: settings.dirNodeSize,
       labelSize: settings.labelSize,
+      metricLabels: settings.metricLabels,
     };
     const g = graphRef.current;
     if (!changed || !g || g.graphData().nodes.length === 0) return;
     clearLabelsAndRefresh(g);
-  }, [settings.fileNodeSize, settings.dirNodeSize, settings.labelSize, graphRef]);
+  }, [
+    settings.fileNodeSize,
+    settings.dirNodeSize,
+    settings.labelSize,
+    settings.metricLabels,
+    graphRef,
+  ]);
 
   // labelSpread doesn't need its own effect: the overlay RAFs run
   // continuously while their key is held and read

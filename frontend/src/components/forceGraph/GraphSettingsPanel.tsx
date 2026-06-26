@@ -127,6 +127,18 @@ const NODE_MODES: { value: boolean; label: string; hint: string }[] = [
   },
 ];
 
+// Whether the LOC (Z) / health (H) overlays draw their per-node numeric value
+// labels. Off by default — in dense projects the labels overlap so much they
+// obscure the recolor; the tinted shapes alone still read by color.
+const METRIC_LABEL_MODES: { value: boolean; label: string; hint: string }[] = [
+  { value: false, label: 'Off', hint: 'color only — no overlapping numbers (default)' },
+  {
+    value: true,
+    label: 'On',
+    hint: 'show the numeric value above each node on the Health (H) and LOC (Z) views',
+  },
+];
+
 // A labeled segmented button group (the `.graph-settings-toggle` look), one
 // active option. Collapses the three structurally-identical mode rows
 // (repulsion / link rendering / node rendering) into a single component.
@@ -207,6 +219,9 @@ export const GraphSettingsPanel = memo(function GraphSettingsPanel({
   const setBatchedNodes = (on: boolean) =>
     onChange({ ...settings, batchedNodes: on });
 
+  const setMetricLabels = (on: boolean) =>
+    onChange({ ...settings, metricLabels: on });
+
   const renderRow = (row: SliderRow) => {
     const v = settings[row.key];
     const formatted = row.format ? row.format(v) : String(v);
@@ -266,7 +281,19 @@ export const GraphSettingsPanel = memo(function GraphSettingsPanel({
       </div>
 
       <div className="graph-settings-body">
-        {activeTab === 'sizes' && NODE_ROWS.map(renderRow)}
+        {activeTab === 'sizes' && (
+          <>
+            {NODE_ROWS.map(renderRow)}
+
+            <ToggleGroupRow
+              label="Metric labels (H/Z)"
+              ariaLabel="Metric labels"
+              options={METRIC_LABEL_MODES}
+              value={settings.metricLabels}
+              onSelect={setMetricLabels}
+            />
+          </>
+        )}
 
         {activeTab === 'physics' && (
           <>
