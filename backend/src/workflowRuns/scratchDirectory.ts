@@ -39,11 +39,17 @@ that agent — query the API.
 This dir is automatically pruned after ${WORKFLOW_RUN_RETENTION} runs.
 `;
 
-export async function writeScratchReadme(runDir: string): Promise<void> {
+// Tag the run dir as scratch. Returns true if this call freshly materialized
+// the run dir's README (i.e. it is the FIRST step to spawn for this run),
+// false if the README already existed (a later step). Callers use the `true`
+// signal to run once-per-run setup like pruning, instead of keying off
+// `stepIndex === 0` — which misses any run whose step 0 is a headless control
+// step (start/merge/push), since those never spawn into the scratch dir.
+export async function writeScratchReadme(runDir: string): Promise<boolean> {
   const readmePath = path.join(runDir, 'README.md');
   try {
     await fs.access(readmePath);
-    return;
+    return false;
   } catch {
     // fall through to write
   }
@@ -52,6 +58,7 @@ export async function writeScratchReadme(runDir: string): Promise<void> {
   } catch (err) {
     console.warn(`[workflow-step] failed to write scratch README at ${readmePath}:`, err);
   }
+  return true;
 }
 
 // Prune older wfrun_* directories so they stop accumulating misleading

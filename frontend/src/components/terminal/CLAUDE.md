@@ -53,6 +53,17 @@ Don't "clean them up" without resurrecting the bug.
   doomed pty → close → … spawns thousands). Don't "unify" the two paths into a
   single attempt cap.
 
+- **The backoff resets on a STABILITY timer, not in `onopen`**. `attempt` is
+  zeroed only after a connection survives `RECONNECT_STABLE_MS` (~3s) — a timer
+  armed in `onopen` and *cleared in `onclose`* — never the instant the socket
+  opens. Resetting in `onopen` looks equivalent and is the bug: a backend that
+  completes the WS upgrade (101 → `onopen`) then immediately closes (half-booted
+  behind a proxy) would zero the counter every open, so `reconnectDelay(0)` pins
+  the loop at the 250ms floor, `shouldGiveUpReconnect` is never reached, and a
+  *serverless* terminal re-runs its `initialCommand` — spawning a fresh pty —
+  every ~250ms forever. Mirrors `api/ws.ts`'s `subscribeWs` `WS_STABLE_MS`.
+  Regression: `__tests__/terminalReconnectStability.test.ts`.
+
 - **The narrow deps array + `eslint-disable exhaustive-deps` is deliberate**.
   The effect depends only on `[cwd, termRef]`. Both `onServerId` **and**
   `serverId` are intentionally excluded and read through `useSyncedRef`s

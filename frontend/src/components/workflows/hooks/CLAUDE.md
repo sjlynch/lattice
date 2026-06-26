@@ -5,18 +5,42 @@ Private hooks behind the Workflows feature. Components should import
 there.
 
 - `useWorkflowManager.ts` — feature-level composer: saved-list/editor/run/queue
-  state, harness overrides, prompt-customization state/actions, and intent-level actions for the panels.
+  state, harness overrides, prompt-customization state/actions, and intent-level
+  actions for the panels. The derived run views and the queue/actions object
+  assembly are split out (`useWorkflowRunViews` + the local `buildQueueView` /
+  `buildActions` helpers) so the body reads as plain wiring.
 - `useWorkflowList.ts` — hydrate/sort saved workflows and stay synced via
   `/ws/workflows`.
-- `useWorkflowEditor.ts` — mutable editor draft plus save/discard/delete,
-  templates, prompt chips, and step reorder/patch actions.
+- `useWorkflowEditor.ts` — mutable editor draft plus save/discard/delete and
+  templates. The bulk is split into two focused helpers it composes:
+  `useEditorDraftLifecycle` (the reconcile/restore/persist effects + their
+  cross-project draft guards) and `useEditorMutationActions` (the pure
+  step/variable `setEditor` updaters — patch/add/remove/reorder, control-step
+  and default-prompt additions).
+- `useEditorDraftLifecycle.ts` — the editor's draft side effects: keep a loaded
+  workflow reconciled against the live list, restore/persist the per-project
+  never-saved draft, and guard one project's draft from leaking onto another's
+  storage key on a project switch. Returns nothing.
+- `useEditorMutationActions.ts` — the editor's step/variable mutation actions,
+  every one a pure `setEditor` updater depending only on the stable setter (no
+  API/draft concerns).
+- `useWorkflowRunViews.ts` — derived run views for the manager: the sorted
+  active-run list, the recently-failed list (navbar chip + runs aside), and the
+  active/recent/control-progress run that belongs to the currently-edited
+  workflow.
 - `useWorkflowQueue.ts` — React adapter around the pure `queueScheduler`; starts
   queued runs and advances from active-run diffs. Feeds the scheduler a
   `StepContext` each tick — the count of active runs the queue didn't dispatch
   (a manual ▶ Run, or another tab). That external count makes the sequential
   gate wait behind a manual run and makes an enqueue auto-start the queue when a
   run is already in flight (so "queue it while one is playing" runs the new
-  entry without a second Start-queue click).
+  entry without a second Start-queue click). Queue state is **per-project**:
+  WorkflowsLauncher isn't remounted on a project switch, so the hook resets to
+  `initialQueueState` on an `activeFolder` change (mirroring `useWorkflowRuns`)
+  and re-baselines its activeRuns diff — otherwise the new project would render
+  the previous project's running/queued status and the diff would
+  dispatchFail-drop the prior project's pending entry. Regression-covered in
+  `src/__tests__/useWorkflowQueueProjectScope.test.ts`.
 - `useWorkflowRuns.ts` — `/ws/workflow-runs` state, recent-run linger, and
   per-step terminal spawning through `TerminalsContext`. Thin wiring over the
   three helpers below.

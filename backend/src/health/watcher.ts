@@ -25,12 +25,32 @@ import type {
 
 export type { HealthUpdate };
 
-const watchers = new Map<string, ProjectWatcher>();
+// Keyed by the in-flight (or settled) CREATION PROMISE, not the resolved
+// ProjectWatcher. ensureWatcher memoizes the promise synchronously — before any
+// await — so concurrent first-subscriptions for one root all await the SAME
+// build instead of each constructing a full ProjectWatcher (two chokidar
+// watchers + two HealthCache writers, the second silently orphaning the first).
+// Same in-flight-promise memo as deadCode.ts.
+const watchers = new Map<string, Promise<ProjectWatcher>>();
 
-async function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
+function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
   const existing = watchers.get(projectRoot);
   if (existing) return existing;
 
+  // Insert the promise BEFORE the first await in createWatcher so a second
+  // caller in the same tick (two WS connects at boot, a reconnect storm, HMR)
+  // sees it and shares this build.
+  const creation = createWatcher(projectRoot);
+  watchers.set(projectRoot, creation);
+  // A failed build must not poison the slot forever — drop it so the next
+  // subscriber retries from scratch (mirrors deadCode.ts's memo eviction).
+  creation.catch(() => {
+    if (watchers.get(projectRoot) === creation) watchers.delete(projectRoot);
+  });
+  return creation;
+}
+
+async function createWatcher(projectRoot: string): Promise<ProjectWatcher> {
   const cache = new HealthCache(projectRoot);
   await cache.load();
 
@@ -76,7 +96,6 @@ async function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
   proj.watcher = watcher;
   wireWatcherEvents(proj, watcher);
 
-  watchers.set(projectRoot, proj);
   ensureShutdownFlushHook();
   return proj;
 }
@@ -85,7 +104,12 @@ async function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
 // so a coalesced write that hasn't fired yet isn't lost. Never rejects
 // (HealthCache.flush swallows write errors).
 export async function flushWatcherCaches(): Promise<void> {
-  await Promise.all([...watchers.values()].map((proj) => proj.cache.flush()));
+  // Values are creation promises now; resolve each (swallowing a failed build)
+  // before flushing its cache.
+  const projs = await Promise.all(
+    [...watchers.values()].map((p) => p.catch(() => null)),
+  );
+  await Promise.all(projs.map((proj) => proj?.cache.flush()));
 }
 
 let shutdownFlushRegistered = false;
@@ -170,13 +194,43 @@ export function seedWatcherState(
   metricsByFile: Map<string, HealthMetrics>,
 ): void {
   const abs = canonicalProjectPath(projectRoot);
-  const proj = watchers.get(abs);
-  if (!proj) return;
-  proj.imports.clear();
-  proj.metrics.clear();
-  for (const [k, v] of importsByFile) proj.imports.set(k, v);
-  for (const [k, v] of metricsByFile) proj.metrics.set(k, v);
-  // The seeded membership can differ from what the memoized root set was built
-  // on (a rescan, file-tree change, or cache-version bump), so drop it.
-  proj.crossFile.invalidateRoots();
+  const pending = watchers.get(abs);
+  if (!pending) return;
+  // The map holds the creation promise; seed once it resolves (the caller's
+  // maps aren't mutated after this call, so deferring is safe). A watcher still
+  // building gets seeded as soon as it's ready instead of being missed.
+  void pending
+    .then((proj) => {
+      proj.imports.clear();
+      proj.metrics.clear();
+      for (const [k, v] of importsByFile) proj.imports.set(k, v);
+      for (const [k, v] of metricsByFile) proj.metrics.set(k, v);
+      // The seeded membership can differ from what the memoized root set was
+      // built on (a rescan, file-tree change, or cache-version bump), so drop it.
+      proj.crossFile.invalidateRoots();
+    })
+    .catch(() => { /* watcher build failed; nothing to seed */ });
+}
+
+// Test-only: number of project watchers currently tracked (incl. in-flight
+// builds). Lets the de-dup regression test assert exactly one watcher exists
+// after concurrent first-subscriptions.
+export function _watcherCountForTest(): number {
+  return watchers.size;
+}
+
+// Test-only: close every watcher and clear the map so suites don't leak
+// persistent chokidar FSWatchers (which would keep the event loop alive)
+// across tests.
+export async function _resetWatchersForTest(): Promise<void> {
+  const pending = [...watchers.values()];
+  watchers.clear();
+  await Promise.all(
+    pending.map(async (p) => {
+      try {
+        const proj = await p;
+        await proj.watcher.close();
+      } catch { /* build failed or already closed */ }
+    }),
+  );
 }

@@ -89,6 +89,31 @@ read so the cache sees restored disk state.
   one-way transitions (`ready_to_merge → qa`) where losing the update
   would leave the system inconsistent. Cancels any pending debounce timer
   on success so the cache and disk stay in sync.
+- **Per-project write lock (in the `ProjectStateManager` base).** Every
+  read-modify-write — `createTask` / `updateTask` / `deleteTask` /
+  `reorderTasksInLane` / `updateTaskCrashSafe` — runs through
+  `runProjectWrite(project, fn)` (a `serializeWrites.runExclusive` chain keyed
+  by store-name + canonical project). Without it, `updateTaskCrashSafe`'s
+  disk-write `await` was a window where a sibling mutation (a Run-All
+  run-attempt bump on another task, a Stop-hook `/complete` flip, a
+  `createTask`) landed in cache and then got reverted when the crash-safe
+  update resumed and committed its **pre-await** full-list snapshot — and its
+  `cancelPendingPersist` even dropped the sibling's scheduled persist.
+  `updateTaskCrashSafe` now additionally **re-reads the live cache after the
+  disk write** and re-applies only its one task's delta, never the snapshot.
+  By-id mutators use `withLockedItemAcrossProjects` (resolve project → take the
+  lock → re-find the item in the live cache → mutate). The read-only by-id
+  helpers (`getTask` via `withTaskAcrossProjects` →
+  `withItemAcrossProjects`) stay **unlocked**.
+- **Atomic writes + corrupt-load guard (base `writeStateNow` / `performLoad`).**
+  `writeStateNow` routes through the shared `atomicWriteFile` (temp→rename, with
+  the Windows file-lock retry) so a crash/kill mid-write can't truncate the live
+  file. `performLoad` distinguishes ENOENT (legit empty → default) from a
+  `JSON.parse` failure (a truncated/corrupt DB): on a parse failure it moves the
+  bad file aside to a `<file>.corrupt-<ts>` sidecar and loads an empty state, so
+  the next persist can't silently overwrite the still-recoverable bytes with
+  `[]`. If the bytes can't be preserved at all, the key is write-protected and
+  `writeStateNow` refuses to overwrite it.
 - Every merge run takes a `backupTasksFile` snapshot up front; boot
   recovery (`restoreAllProjectsFromBackup`) restores from it if the main
   file is missing/corrupt.

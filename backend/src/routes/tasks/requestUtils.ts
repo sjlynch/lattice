@@ -1,5 +1,6 @@
 import type { Response } from 'express';
 import type { TaskStatus } from '../../tasks.js';
+import { parseMarkdownDoc, type ParsedMarkdownDoc } from './markdownBatch.js';
 
 // Shared happy-path wrapper for the tasks CRUD handlers. `fn` runs the
 // handler body and either returns the success payload (sent as JSON) or
@@ -57,4 +58,24 @@ export function isValidTaskStatus(status: unknown): status is TaskStatus {
 
 export function statusValidationError(field: 'status' | 'fromStatus'): string {
   return `${field} must be one of: ${VALID_STATUSES.join(', ')}`;
+}
+
+// The "JSON body OR text/markdown / text/plain body" convention shared by the
+// task write handlers (PATCH /api/tasks/:id, /append-summary, /upsert). The
+// `textOrMarkdownBody` parser in crud.ts hands us a string for a markdown /
+// plain-text body and a parsed object for JSON. Classify (and parse the
+// markdown) once here so each handler reads a single discriminated shape rather
+// than re-deriving `typeof req.body === 'string'` — and re-calling
+// parseMarkdownDoc — inline. Each handler picks what it needs off the result:
+// /update reads `doc.tasks[0]` (or falls back to the raw `source`),
+// /append-summary takes the raw `source`, /upsert reads all of `doc.tasks`.
+export type NormalizedBody =
+  | { kind: 'markdown'; source: string; doc: ParsedMarkdownDoc }
+  | { kind: 'json'; json: Record<string, unknown> };
+
+export function normalizeBody(body: unknown): NormalizedBody {
+  if (typeof body === 'string') {
+    return { kind: 'markdown', source: body, doc: parseMarkdownDoc(body) };
+  }
+  return { kind: 'json', json: (body ?? {}) as Record<string, unknown> };
 }

@@ -10,17 +10,28 @@ import {
   type Task,
   type TaskStatus,
 } from '../../tasks.js';
-import {
-  parseMarkdownDoc,
-  type ParsedTaskBlock,
-} from './markdownBatch.js';
+import { canonicalProjectPath } from '../../projectPath.js';
+import type { ParsedTaskBlock } from './markdownBatch.js';
 import {
   isValidTaskStatus,
+  normalizeBody,
   resolveProject,
   respondJson,
   statusValidationError,
 } from './requestUtils.js';
-import type { TaskIdRequest } from './crudTypes.js';
+import type { TaskIdRequest, TaskPatch } from './crudTypes.js';
+
+// Assemble the task-patch from a parsed markdown block. Shared by the single
+// PATCH markdown path and the upsert loop, which previously open-coded the
+// identical title + optional-description + optional-status build. Status is
+// cast through here; callers validate it first (PATCH inline, upsert in its
+// up-front validation loop) so an invalid value never reaches this.
+function blockToPatch(block: ParsedTaskBlock): TaskPatch {
+  const patch: TaskPatch = { title: block.title };
+  if (block.description !== undefined) patch.description = block.description;
+  if (block.status) patch.status = block.status as TaskStatus;
+  return patch;
+}
 
 // Accepts EITHER a JSON body ({title?, description?, status?}) OR a
 // text/markdown / text/plain body. For markdown:
@@ -34,31 +45,22 @@ export async function handleTaskUpdate(
   req: TaskIdRequest,
   res: Response,
 ): Promise<void> {
-  let updates: { title?: string; description?: string; status?: TaskStatus };
-  if (typeof req.body === 'string') {
-    const md = req.body;
-    const doc = parseMarkdownDoc(md);
-    if (doc.tasks.length > 0) {
-      const t = doc.tasks[0];
-      updates = { title: t.title };
-      if (t.description !== undefined) updates.description = t.description;
-      if (t.status) {
-        if (!isValidTaskStatus(t.status)) {
-          res.status(400).json({ error: statusValidationError('status') });
-          return;
-        }
-        updates.status = t.status;
+  const parsed = normalizeBody(req.body);
+  let updates: TaskPatch;
+  if (parsed.kind === 'markdown') {
+    const block = parsed.doc.tasks[0];
+    if (block) {
+      if (block.status && !isValidTaskStatus(block.status)) {
+        res.status(400).json({ error: statusValidationError('status') });
+        return;
       }
+      updates = blockToPatch(block);
     } else {
       // No heading found — treat the whole body as a description replacement.
-      updates = { description: md.trim() };
+      updates = { description: parsed.source.trim() };
     }
   } else {
-    updates = (req.body || {}) as {
-      title?: string;
-      description?: string;
-      status?: TaskStatus;
-    };
+    updates = parsed.json as TaskPatch;
   }
   await respondJson(res, async () => {
     const updated = await updateTask(req.params.id, updates);
@@ -92,10 +94,11 @@ export async function handleTaskAppendSummary(
   req: TaskIdRequest,
   res: Response,
 ): Promise<void> {
+  const parsed = normalizeBody(req.body);
   const summary =
-    typeof req.body === 'string'
-      ? req.body
-      : (req.body as { summary?: string } | null)?.summary;
+    parsed.kind === 'markdown'
+      ? parsed.source
+      : (parsed.json as { summary?: string }).summary;
   if (!summary?.trim()) {
     res.status(400).json({ error: 'summary required' });
     return;
@@ -121,7 +124,7 @@ export async function handleTaskAppendSummary(
 // independent; missing IDs are reported in the response but do not fail
 // the batch. Like single PATCH, idempotent on no-op updates.
 type BulkUpdateRequest = Request<unknown, unknown, {
-  updates?: Array<{ id?: string; title?: string; description?: string; status?: TaskStatus }>;
+  updates?: Array<{ id?: string } & TaskPatch>;
 }>;
 
 export async function handleTaskBulkUpdate(
@@ -129,7 +132,7 @@ export async function handleTaskBulkUpdate(
   res: Response,
 ): Promise<void> {
   const body = (req.body ?? {}) as {
-    updates?: Array<{ id?: string; title?: string; description?: string; status?: TaskStatus }>;
+    updates?: Array<{ id?: string } & TaskPatch>;
   };
   const updates = body.updates;
   if (!Array.isArray(updates) || updates.length === 0) {
@@ -161,6 +164,25 @@ export async function handleTaskBulkUpdate(
   });
 }
 
+// Decide how an id-bearing upsert block must be treated relative to the
+// upsert's resolved project. `updateTask` resolves a task id across EVERY known
+// project, so without this an upsert scoped to project B could mutate project
+// A's task just because the pasted markdown carried A's `{id=...}` (a
+// round-trip doc from another project, or a stale agent scratch file) —
+// cross-project data corruption while the caller thinks they're editing B.
+//   - no such id anywhere        → 'missing'
+//   - id exists, another project → 'foreign'  (never updated; reported distinctly)
+//   - id exists in this project  → 'update'
+export function classifyUpsertTarget(
+  existing: Pick<Task, 'projectPath'> | null | undefined,
+  canonicalProject: string,
+): 'update' | 'foreign' | 'missing' {
+  if (!existing) return 'missing';
+  return canonicalProjectPath(existing.projectPath) === canonicalProject
+    ? 'update'
+    : 'foreign';
+}
+
 // Upsert from markdown — the "backlog as a document" workflow. Accepts the
 // same markdown grammar as GET ?format=markdown, so a "GET → edit → POST"
 // round trip works with zero JSON. Headings with `{id=...}` update existing
@@ -179,14 +201,13 @@ export async function handleTaskUpsert(
     res.status(400).json({ error: 'project required (query string or JSON body)' });
     return;
   }
-  let blocks: ParsedTaskBlock[];
-  if (typeof req.body === 'string') {
-    const doc = parseMarkdownDoc(req.body);
-    blocks = doc.tasks;
-  } else {
-    const body = (req.body ?? {}) as { tasks?: ParsedTaskBlock[] };
-    blocks = Array.isArray(body.tasks) ? body.tasks : [];
-  }
+  const parsed = normalizeBody(req.body);
+  const blocks: ParsedTaskBlock[] =
+    parsed.kind === 'markdown'
+      ? parsed.doc.tasks
+      : Array.isArray(parsed.json.tasks)
+        ? (parsed.json.tasks as ParsedTaskBlock[])
+        : [];
   if (blocks.length === 0) {
     res.status(400).json({
       error: 'no tasks parsed — markdown body needs `# Heading` lines, or JSON body needs {tasks:[...]}',
@@ -206,18 +227,29 @@ export async function handleTaskUpsert(
       return;
     }
   }
+  const canonicalProject = canonicalProjectPath(project);
   await respondJson(res, async () => {
     const created: Task[] = [];
     const updated: Task[] = [];
     const missing: string[] = [];
+    const foreign: string[] = [];
     for (const b of blocks) {
       if (b.id) {
-        const patch: { title: string; description?: string; status?: TaskStatus } = {
-          title: b.title,
-        };
-        if (b.description !== undefined) patch.description = b.description;
-        if (b.status) patch.status = b.status as TaskStatus;
-        const result = await updateTask(b.id, patch);
+        // Project-scoping guard: only update a task that already belongs to
+        // THIS project. updateTask resolves ids across every project, so an
+        // unguarded update of a foreign id would silently mutate another
+        // project's task. Report missing/foreign distinctly; never update.
+        const existing = await getTask(b.id);
+        const target = classifyUpsertTarget(existing, canonicalProject);
+        if (target === 'missing') {
+          missing.push(b.id);
+          continue;
+        }
+        if (target === 'foreign') {
+          foreign.push(b.id);
+          continue;
+        }
+        const result = await updateTask(b.id, blockToPatch(b));
         if (result) updated.push(result);
         else missing.push(b.id);
       } else {
@@ -234,6 +266,7 @@ export async function handleTaskUpsert(
       created: created.length,
       updated: updated.length,
       missing,
+      foreign,
       tasks: { created, updated },
     };
   });

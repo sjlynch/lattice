@@ -42,8 +42,21 @@ export function parseVerdictBody(
   return { passed, confident };
 }
 
-export function buildQaRunsRouter(backendOrigin: string): Router {
+// Injectable seams for the route-level regression test, so it can exercise the
+// real guards without touching the task DB or spawning a Claude session.
+// Production passes nothing and gets the real `getTask` / `startQaSession`.
+export type QaRunsRouterDeps = {
+  getTask?: typeof getTask;
+  startQaSession?: typeof startQaSession;
+};
+
+export function buildQaRunsRouter(
+  backendOrigin: string,
+  deps: QaRunsRouterDeps = {},
+): Router {
   const r = Router();
+  const lookupTask = deps.getTask ?? getTask;
+  const startSession = deps.startQaSession ?? startQaSession;
 
   r.post('/api/qa-runs', async (req, res) => {
     const body = (req.body || {}) as { project?: string; taskId?: string };
@@ -51,15 +64,27 @@ export function buildQaRunsRouter(backendOrigin: string): Router {
     if (!body.taskId) return res.status(400).json({ error: 'taskId required' });
     const project = canonicalProjectPath(body.project);
 
-    const task = await getTask(body.taskId);
+    const task = await lookupTask(body.taskId);
     if (!task) return res.status(404).json({ error: 'task not found' });
     // Defensive: a QA run only makes sense against the task's own project.
     if (canonicalProjectPath(task.projectPath) !== project) {
       return res.status(400).json({ error: 'task does not belong to project' });
     }
+    // A QA e2e session only makes sense for a task that's actually in the QA
+    // lane (merged, awaiting verification). Starting one for an
+    // open/in_progress/ready_to_merge/done task — via a stale/miswired frontend
+    // call or a direct API hit — would burn an agent/PTY exercising unmerged or
+    // already-shipped code and append a misleading verdict; worse, if that task
+    // later reaches QA, a confident PASS recorded from this stale run could
+    // promote it to done against the wrong code state. Reject and spawn nothing.
+    if (task.status !== 'qa') {
+      return res
+        .status(409)
+        .json({ error: `task is not in QA (status=${task.status})` });
+    }
 
     try {
-      const started = await startQaSession({
+      const started = await startSession({
         projectPath: project,
         taskId: task.id,
         taskTitle: task.title,

@@ -1,12 +1,11 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
-import { Settings as SettingsIcon } from 'lucide-react';
 import type { ScanResult } from '../../api';
 import { GraphContextMenu } from './GraphContextMenu';
 import { GraphHud } from './GraphHud';
 import { GraphOverlayKey } from './GraphOverlayKey';
 import { GraphSelectionChip } from './GraphSelectionChip';
-import { GraphSettingsPanel } from './GraphSettingsPanel';
+import { GraphSettingsChrome } from './GraphSettingsChrome';
 import { GraphTaskModal } from './GraphTaskModal';
 import { TimelineScrubber } from './TimelineScrubber';
 import { useStructuralScan } from '../../hooks/useStructuralScan';
@@ -16,12 +15,13 @@ import { useBatchedLinks } from './hooks/useBatchedLinks';
 import { useInstancedNodes } from './hooks/useInstancedNodes';
 import { useNodeDragBehavior } from './hooks/useNodeDragBehavior';
 import { useForceGraphInitialization } from './hooks/useForceGraphInitialization';
+import { useGraphCounts } from './hooks/useGraphCounts';
 import { useGraphDataSync } from './hooks/useGraphDataSync';
 import { useGraphOverlays } from './hooks/useGraphOverlays';
-import { useGraphSearch } from './hooks/useGraphSearch';
-import { useGraphSearchNavigation } from './hooks/useGraphSearchNavigation';
+import { useGraphSearchController } from './hooks/useGraphSearchController';
 import { useGraphTaskCreation } from './hooks/useGraphTaskCreation';
 import { useNodeContextMenu } from './hooks/useNodeContextMenu';
+import { useOverlayActive } from './hooks/useOverlayActive';
 import { useWorktreeHighlight } from './hooks/useWorktreeHighlight';
 import { useHoverNodeDebounce } from './hooks/useHoverNodeDebounce';
 import { useCanvasDragTracking } from './hooks/useCanvasDragTracking';
@@ -67,11 +67,6 @@ export function ForceGraphView({
   const graphRef = useRef<ForceGraph3DInstance | null>(null);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [showSettings, setShowSettings] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchRegex, setSearchRegex] = useState(false);
-  // File-contents search is opt-in — name-only is the zero-cost default.
-  const [searchContents, setSearchContents] = useState(false);
 
   // Hover tooltip state + its null-transition debounce (see the hook). Hover is
   // gated off while a pointer is dragging the canvas: the shared
@@ -225,29 +220,24 @@ export function ForceGraphView({
     pinned.worktree,
   );
 
-  // Search bar: filename matches (instant, client-side) + file-contents matches
-  // (debounced backend pass) both feed the shared `selected` set, so a match
-  // shows the standard selection ring. `searchMatches` is the ordered id list
-  // backing prev/next match navigation.
-  const { status: searchStatus, matches: searchMatches } = useGraphSearch({
-    data,
-    activeFolder,
-    query: searchQuery,
-    regex: searchRegex,
-    contents: searchContents,
-    setSelected,
-  });
-
-  // Prev/next match navigation + camera focus: cursor state (tracked by match
-  // *id*), the prev/next handlers, and the camera tween / idle-wake pulse all
-  // live in their own hook. A fresh query / Escape clears the cursor via the
-  // returned `clearCurrentMatch`.
+  // Search: query + regex/contents toggle state, the filename/contents passes,
+  // and the prev/next match cursor are all wired together in the controller. It
+  // returns the HUD-ready handlers/status/position plus the
+  // `searchQuery`/`setSearchQuery`/`clearCurrentMatch` the Escape chord needs.
   const {
+    searchQuery,
+    setSearchQuery,
+    searchRegex,
+    searchContents,
+    toggleSearchRegex,
+    toggleSearchContents,
+    handleSearchQueryChange,
+    searchStatus,
     searchMatchPosition,
     goPrevMatch,
     goNextMatch,
     clearCurrentMatch,
-  } = useGraphSearchNavigation({ graphRef, searchMatches });
+  } = useGraphSearchController({ data, activeFolder, graphRef, setSelected });
 
   const { contextMenu, setContextMenu } = useNodeContextMenu(containerRef);
   const closeContextMenu = useCallback(() => setContextMenu(null), [setContextMenu]);
@@ -304,55 +294,11 @@ export function ForceGraphView({
   useOverlayTooltipDismiss(locMode, healthMode, cancelPendingHoverClear);
 
   // ----- Phase 3: render data + JSX overlays -----
-  // Keyed off `structuralData` (stable across metric-only saves) + `hiddenExts`,
-  // so it no longer recomputes on every HealthUpdate. The ref-compare still
-  // reuses the prior object when the three numbers are unchanged (e.g. a
-  // same-shape rescan), so the memoized HUD doesn't re-render needlessly.
-  const countsRef = useRef({ files: 0, dirs: 0, hidden: 0 });
-  const counts = useMemo(() => {
-    let files = 0;
-    let dirs = 0;
-    let hidden = 0;
-    if (structuralData) {
-      for (const n of structuralData.nodes) {
-        if (n.kind === 'dir') {
-          dirs++;
-        } else {
-          const key = n.ext ? n.ext.toLowerCase() : '*';
-          if (hiddenExts.has(key)) hidden++;
-          else files++;
-        }
-      }
-    }
-    const prev = countsRef.current;
-    if (prev.files === files && prev.dirs === dirs && prev.hidden === hidden) {
-      return prev;
-    }
-    const next = { files, dirs, hidden };
-    countsRef.current = next;
-    return next;
-  }, [structuralData, hiddenExts]);
+  // File/dir/hidden counts for the HUD chip — keyed off the structure-stable
+  // scan reference so it skips the O(N) recount on every metric-only save.
+  const counts = useGraphCounts(structuralData, hiddenExts);
 
-  // Stable handlers so the memoized HUD / search bar / timeline don't
-  // re-render on every hover/search keystroke. Functional-updater form
-  // keeps the deps empty.
-  const toggleSearchRegex = useCallback(() => setSearchRegex((v) => !v), []);
-  const toggleSearchContents = useCallback(
-    () => setSearchContents((v) => !v),
-    [],
-  );
-  // Any query change is a fresh search, so drop the current-match cursor (the
-  // "X of Y" only reappears once the user steps again). Stable — both setters
-  // are stable, so the memoized HUD stays off the per-keystroke render path.
-  const handleSearchQueryChange = useCallback(
-    (q: string) => {
-      setSearchQuery(q);
-      clearCurrentMatch();
-    },
-    [clearCurrentMatch],
-  );
-  const toggleSettings = useCallback(() => setShowSettings((v) => !v), []);
-  const closeSettings = useCallback(() => setShowSettings(false), []);
+  // Stable range handler so the memoized timeline doesn't re-render needlessly.
   const handleRangeChange = useCallback(
     (l: number, r: number) =>
       setRange((cur) =>
@@ -362,19 +308,14 @@ export function ForceGraphView({
   );
 
   // Which overlay views are currently *showing* (held OR pinned), for the
-  // overlay-key chips' lit "active" state. `healthMode` is the App-owned
-  // effective value (already composed in useHealthOverlay); the rest come back
-  // from useGraphOverlays / useWorktreeHighlight already folded with their pins.
-  const overlayActive = useMemo(
-    () => ({
-      health: healthMode,
-      loc: locMode,
-      dead: deadMode,
-      worktree: worktreeActive,
-      labels: labelMode,
-    }),
-    [healthMode, locMode, deadMode, worktreeActive, labelMode],
-  );
+  // overlay-key chips' lit "active" state.
+  const overlayActive = useOverlayActive({
+    health: healthMode,
+    loc: locMode,
+    dead: deadMode,
+    worktree: worktreeActive,
+    labels: labelMode,
+  });
 
   // The bottom-anchored counts chip and gear FAB shift up when the
   // timeline is visible so the timeline can claim the entire viewport
@@ -474,23 +415,11 @@ export function ForceGraphView({
         </div>
       )}
 
-      {showSettings && (
-        <GraphSettingsPanel
-          settings={settings}
-          onChange={setSettings}
-          onClose={closeSettings}
-          project={activeFolder}
-        />
-      )}
-
-      <button
-        className={`graph-settings-fab${showSettings ? ' active' : ''}`}
-        onClick={toggleSettings}
-        aria-label="Graph settings"
-        title="Graph settings"
-      >
-        <SettingsIcon size={16} />
-      </button>
+      <GraphSettingsChrome
+        settings={settings}
+        onChange={setSettings}
+        project={activeFolder}
+      />
     </div>
   );
 }
