@@ -18,6 +18,18 @@ export const MAX_RECONNECT_ATTEMPTS = 6;
 // Backoff ceiling. Delays grow 250ms → 500 → … and then hold here, so a long
 // outage keeps being retried roughly every 10s rather than giving up.
 const RECONNECT_MAX_DELAY_MS = 10_000;
+// How long a connection must stay open before it counts as HEALTHY and the
+// backoff is allowed to reset. Mirrors api/ws.ts's WS_STABLE_MS. Resetting
+// `attempt` the instant `onopen` fires lets a backend that completes the WS
+// upgrade then immediately closes (a half-booted backend behind a proxy) pin the
+// counter at 0: the backoff never grows past the 250ms floor, the give-up cap is
+// never reached, and the client hammers /ws/terminal every ~250ms — re-running
+// initialCommand and spawning a fresh pty each loop for a serverless terminal.
+// Resetting only AFTER the socket survives this window makes a flapping backend
+// back off (250ms→…→10s) while a serverless terminal still honours the cap.
+// Exported so the regression test can distinguish the stability timer from a
+// reconnect timer by its delay.
+export const RECONNECT_STABLE_MS = 3000;
 
 export type TerminalMessage = {
   type?: string;
