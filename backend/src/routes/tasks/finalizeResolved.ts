@@ -67,7 +67,8 @@ export async function finalizeResolvedTask(
   // that loses the race just reports 'already-finalizing'; the holder finishes
   // the work. (finalizeQueues only serializes the FF step, not this earlier
   // in-worktree merge — so the lock must be taken here.)
-  if (!tryAcquire(task.id)) {
+  const lock = tryAcquire(task.id);
+  if (!lock) {
     if (source === 'complete') {
       console.log(
         `[complete] task ${task.id}: finalize already in progress (lock held) — skipping`,
@@ -78,7 +79,7 @@ export async function finalizeResolvedTask(
   try {
     return await runFinalize(task, task.worktreePath, backendOrigin, source, deps);
   } finally {
-    release(task.id);
+    release(lock);
   }
 }
 

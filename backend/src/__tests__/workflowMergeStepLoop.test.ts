@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   runMergeStep,
+  waitForMergeRunFinished,
   type MergeStepDeps,
 } from '../workflowRuns/controlSteps/merge.js';
 import type { Task } from '../tasks.js';
@@ -155,4 +156,33 @@ test('merge step is a no-op when the ready_to_merge lane is already empty', asyn
   const { deps, rounds } = makeDeps([], () => []);
   await runMergeStep(makeWorkflow(), makeRun(), 0, 'http://localhost', deps);
   assert.equal(rounds(), 0, 'no merge run started for an empty lane');
+});
+
+test('waitForMergeRunFinished re-checks after subscribing so fast completion is not missed', async () => {
+  const run = makeMergeRun('mr_race', []);
+  run.status = 'running';
+  let subscribed = false;
+  let unsubscribed = false;
+
+  const deps = {
+    getMergeRun: (id: string) => (id === run.id ? { ...run } : null),
+    subscribeMergeRuns: () => {
+      subscribed = true;
+      // Simulate the old race window: a worker completes after a caller's
+      // first snapshot observes `running`, but before its event listener is
+      // actually installed/able to observe the completion event. The fixed
+      // waiter subscribes first, then re-checks this completed snapshot.
+      run.status = 'completed';
+      return () => {
+        unsubscribed = true;
+      };
+    },
+  };
+
+  await Promise.race([
+    waitForMergeRunFinished(run.id, deps),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 500)),
+  ]);
+  assert.equal(subscribed, true);
+  assert.equal(unsubscribed, true);
 });

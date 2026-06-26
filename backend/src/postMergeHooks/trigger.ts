@@ -1,7 +1,12 @@
-import { queuedCreateSession } from '../queuedCreateSession.js';
+import {
+  queuedCreateSession,
+  type QueuedCreateSessionArgs,
+} from '../queuedCreateSession.js';
 import { normalizeAgentHarness } from '../harnesses.js';
 import { normalizePiModel } from '../piModels.js';
 import { getUserSettings } from '../userSettings.js';
+import type { UserSettings } from '../userSettings/types.js';
+import type { CreateSessionResult } from '../terminalServerClient.js';
 import { buildPostMergeHookCommand } from './commands.js';
 import {
   finishPostMergeHook,
@@ -12,7 +17,7 @@ import {
 import { postMergeHookAgentId } from './stopHook.js';
 import { registerAgentSession } from '../agentSessions.js';
 import { setupPostMergeHookSession } from './sessionSetup.js';
-import type { PostMergeHookRun } from './types.js';
+import type { PostMergeHookRun, PostMergeHookSession } from './types.js';
 
 export type TriggerPostMergeHookOptions = {
   projectPath: string;
@@ -26,6 +31,42 @@ export type TriggerPostMergeHookOutcome =
   | { kind: 'skipped'; reason: 'already-running'; existing: PostMergeHookRun }
   | { kind: 'started'; run: PostMergeHookRun; serverId?: string }
   | { kind: 'error'; message: string };
+
+export type TriggerPostMergeHookDeps = {
+  getUserSettings: (projectPath: string) => Promise<UserSettings>;
+  getActiveHookForProject: (projectPath: string) => PostMergeHookRun | null;
+  setupPostMergeHookSession: (args: {
+    projectPath: string;
+    backendOrigin: string;
+    prompt: string;
+    harness: PostMergeHookSession['harness'];
+  }) => Promise<PostMergeHookSession>;
+  recordPostMergeHook: (run: PostMergeHookRun) => void;
+  queuedCreateSession: (
+    args: QueuedCreateSessionArgs,
+  ) => Promise<CreateSessionResult>;
+  finishPostMergeHook: (
+    id: string,
+    status: 'completed' | 'aborted' | 'errored',
+    error?: string,
+  ) => PostMergeHookRun | null;
+  patchPostMergeHook: (
+    id: string,
+    patch: Partial<PostMergeHookRun>,
+  ) => PostMergeHookRun | null;
+  registerAgentSession: typeof registerAgentSession;
+};
+
+const defaultTriggerPostMergeHookDeps: TriggerPostMergeHookDeps = {
+  getUserSettings,
+  getActiveHookForProject,
+  setupPostMergeHookSession,
+  recordPostMergeHook,
+  queuedCreateSession,
+  finishPostMergeHook,
+  patchPostMergeHook,
+  registerAgentSession,
+};
 
 // Triggers a post-merge hook and returns immediately with an outcome
 // describing whether one started. Callers that need to block until the hook
@@ -45,8 +86,15 @@ export type TriggerPostMergeHookOutcome =
 export async function triggerPostMergeHook(
   options: TriggerPostMergeHookOptions,
 ): Promise<TriggerPostMergeHookOutcome> {
+  return triggerPostMergeHookWithDeps(options, defaultTriggerPostMergeHookDeps);
+}
+
+export async function triggerPostMergeHookWithDeps(
+  options: TriggerPostMergeHookOptions,
+  deps: TriggerPostMergeHookDeps,
+): Promise<TriggerPostMergeHookOutcome> {
   const { projectPath, backendOrigin, trigger } = options;
-  const settings = await getUserSettings(projectPath);
+  const settings = await deps.getUserSettings(projectPath);
   const prompt = (settings.postMergeHookPrompt ?? '').trim();
   if (!prompt) return { kind: 'skipped', reason: 'no-prompt' };
   // Master toggle: run only when explicitly enabled. Absent counts as enabled
@@ -55,7 +103,7 @@ export async function triggerPostMergeHook(
     return { kind: 'skipped', reason: 'disabled' };
   }
 
-  const existing = getActiveHookForProject(projectPath);
+  const existing = deps.getActiveHookForProject(projectPath);
   if (existing) {
     return { kind: 'skipped', reason: 'already-running', existing };
   }
@@ -63,7 +111,7 @@ export async function triggerPostMergeHook(
   const harness = normalizeAgentHarness(settings.postMergeHookHarness);
 
   try {
-    const session = await setupPostMergeHookSession({
+    const session = await deps.setupPostMergeHookSession({
       projectPath,
       backendOrigin,
       prompt,
@@ -89,7 +137,7 @@ export async function triggerPostMergeHook(
       startedAt: Date.now(),
       trigger,
     };
-    recordPostMergeHook(run);
+    deps.recordPostMergeHook(run);
 
     const command = buildPostMergeHookCommand({
       harness,
@@ -105,7 +153,7 @@ export async function triggerPostMergeHook(
 
     // `priority` band — the post-merge hook gates merge-run / manual-merge
     // completion, so it must not be starved behind batch task spawns.
-    const sess = await queuedCreateSession({
+    const sess = await deps.queuedCreateSession({
       kind: 'post-merge-hook',
       priority: 'priority',
       dedupeKey: `post-merge-hook:${projectPath}`,
@@ -117,16 +165,16 @@ export async function triggerPostMergeHook(
       console.error(
         `[post-merge-hook] spawn failed for run ${session.id}: ${sess.error}`,
       );
-      finishPostMergeHook(session.id, 'errored', sess.error);
+      deps.finishPostMergeHook(session.id, 'errored', sess.error);
       return { kind: 'error', message: sess.error };
     }
 
-    const updated = patchPostMergeHook(session.id, { serverId: sess.id });
+    const updated = deps.patchPostMergeHook(session.id, { serverId: sess.id });
     // Presence: orange Claude node for this non-worktree session. Only for
     // Claude — a Pi/codex hook isn't a "Claude session" and has no activity
     // hooks, so it gets no node.
     if (harness === 'claude') {
-      registerAgentSession({
+      deps.registerAgentSession({
         agentId: postMergeHookAgentId(session.id),
         projectPath,
         label: 'post-merge hook',

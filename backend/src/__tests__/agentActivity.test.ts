@@ -4,7 +4,7 @@ import {
   buildAgentActivityUrl,
   decodeAgentToken,
   encodeAgentToken,
-} from '../agentActivity.js';
+} from '../agentActivityTokens.js';
 
 // The agent-activity token round-trips the routing info (agent id, project,
 // label) through a URL-path-safe string. It must survive a Windows project

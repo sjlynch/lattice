@@ -70,6 +70,15 @@ test('stripStringsAndComments keeps code inside ${...} interpolations', () => {
   assert.ok(stripped.includes('42'));
 });
 
+test('stripStringsAndComments blanks strings and comments inside interpolations', () => {
+  const source = 'const x = `value ${"ignored }" /* hidden 99 */ + 7} here`;';
+  const stripped = stripStringsAndComments(source, TS_SYNTAX);
+  assert.equal(stripped.length, source.length);
+  assert.equal(stripped.includes('ignored'), false);
+  assert.equal(stripped.includes('hidden 99'), false);
+  assert.ok(stripped.includes('+ 7'));
+});
+
 test('regex disambiguation does not let a JSX close tag swallow later code', () => {
   // Without treating `<`/`>` as value-enders the `/` in `</a>` scanned ahead
   // to the division `/` and blanked the `6` in between.

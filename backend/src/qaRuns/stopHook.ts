@@ -1,5 +1,5 @@
 import { installClaudeHooks } from '../claudeStopHook.js';
-import { buildAgentActivityUrl } from '../agentActivity.js';
+import { buildAgentActivityUrl } from '../agentActivityTokens.js';
 
 export function qaDoneCallbackUrl(id: string, backendOrigin: string): string {
   return `${backendOrigin}/api/qa-runs/${id}/done`;
