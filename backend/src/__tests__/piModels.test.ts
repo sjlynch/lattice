@@ -84,6 +84,22 @@ test('sanitizePiProviders keeps well-formed providers and drops junk', () => {
   assert.equal(out[0].models[0].contextWindow, 204800);
 });
 
+test('sanitizePiProviders drops duplicate ids, keeping the first (no silent models.json clobber)', () => {
+  const out = sanitizePiProviders([
+    { id: 'endpoint-1', baseUrl: 'http://a/v1', models: [{ id: 'm-a' }] },
+    { id: 'endpoint-1', baseUrl: 'http://b/v1', models: [{ id: 'm-b' }] },
+    { id: 'other', baseUrl: 'http://c/v1', models: [] },
+  ]);
+  assert.deepEqual(
+    out.map((p) => p.id),
+    ['endpoint-1', 'other'],
+  );
+  // The FIRST endpoint-1 wins — the later duplicate is dropped, so reconcile
+  // (which upserts into an id-keyed models.json) can't silently overwrite it.
+  assert.equal(out[0].baseUrl, 'http://a/v1');
+  assert.equal(out[0].models[0].id, 'm-a');
+});
+
 test('sanitizePiProviders returns [] for non-arrays', () => {
   assert.deepEqual(sanitizePiProviders(undefined), []);
   assert.deepEqual(sanitizePiProviders({}), []);

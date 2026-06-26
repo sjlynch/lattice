@@ -73,25 +73,38 @@ plus a per-endpoint **Advanced** section (compat `thinkingFormat` +
 of this into `~/.pi/agent/models.json`, plus the curated "Pi — X" model-menu
 checklist. (A keyless endpoint is written with `apiKey: "local"` so Pi doesn't
 reject the whole file — see `backend/src/piModels.ts`.) `PiTab`'s draft state
-lives in two focused hooks in `usePiEndpoints.ts`: `useEndpointState` (the
+lives in three focused hooks in `usePiEndpoints.ts`: `useEndpointState` (the
 endpoint list + `touched` flag + `patch`/`add`/`remove`, and a shared `mutate`
-primitive the tab reuses for its compat/header/model/detect edits) and
-`useProbeDetection` (per-row `probing`/`detected`/`probeError` + the
-`/api/pi-endpoints/probe` flow, reporting ids back via an `onDetected`
-callback). Note: the `PATCH /api/global-settings` route now
-passes *all* machine-global fields through (it previously forwarded only
-`maxConcurrentAgents`, silently dropping the rest).
+primitive the editors reuse for their compat/header/model/detect edits;
+`add` derives the next `endpoint-N` id from the current list via
+`nextEndpointId` so a fresh row never re-mints a saved id), `useProbeDetection`
+(per-endpoint `probing`/`detected`/`probeError` + the `/api/pi-endpoints/probe`
+flow, reporting ids back via an `onDetected` callback, plus `dropEndpoint(id)`
+to forget a removed endpoint's state), and `usePiEndpointEditors(endpoints,
+probe, providers)` (the ~dozen per-endpoint field editors — `updateCompat`,
+the header mutators sharing one `mutateHeaderEntries` body, `toggleEndpointModel`,
+`detectModels` — extracted out of `PiTab.tsx`). **All per-endpoint transient
+state — `useProbeDetection`'s three maps and `PiTab`'s `advancedOpen` — is keyed
+by the endpoint's stable `ep.id`, not its array index** (the React `key` is
+`ep.id` too), so removing a non-last endpoint never misattributes a survivor's
+detected list / Advanced section / probe error; removal drops that id's entries.
+Note: the `PATCH /api/global-settings` route now passes *all* machine-global
+fields through (it previously forwarded only `maxConcurrentAgents`, silently
+dropping the rest).
 
-`PiTab.tsx` stays the orchestrator (load, edit handlers, draft state, the
-`PiTabHandle` save patch) but renders through focused pieces: `PiEndpointCard`
+`PiTab.tsx` stays the orchestrator (load, draft state, menu wiring, the
+`PiTabHandle` save patch) — with the per-endpoint editors now in
+`usePiEndpointEditors` — and renders through focused pieces: `PiEndpointCard`
 (one managed endpoint — id/baseUrl/key/detect/model checklist + the Advanced
 toggle) wrapping `PiEndpointAdvanced` (compat + custom headers), and `PiModelMenu`
 (the curated-menu checklist). Pure sanitization/derivation lives in
 `piTabUtils.ts` (`cleanHeaders`, `entriesToHeaders`, `compatString`,
-`sanitizeProvidersForSave` = the `getPiProvidersPatch` body, `collectModelUniverse`
-= the saved∪draft pattern set) so the components stay thin and the save semantics
-stay testable. The card/advanced/menu pieces get index-pre-bound callbacks; all
-mutation still flows through `useEndpointState`'s `mutate`.
+`sanitizeProvidersForSave` = the `getPiProvidersPatch` body — which also dedupes
+duplicate ids so a hand-typed collision can't clobber models.json on reconcile —
+`nextEndpointId`, `dropEndpointKey`, `collectModelUniverse` = the saved∪draft
+pattern set) so the components stay thin and the save semantics stay testable.
+The card/advanced/menu pieces get index-pre-bound callbacks; all mutation still
+flows through `useEndpointState`'s `mutate`.
 
 After a save that changed `piProviders`/`piModelMenu`, `saveSettings` calls
 `notifyPiModelsChanged()` (`piModelMenuStore.ts`) so every mounted harness

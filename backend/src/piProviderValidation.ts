@@ -29,16 +29,21 @@ export type PiProvider = {
 };
 
 // Defensive shape validation for Lattice-managed Pi providers. Keeps only
-// well-formed entries (a non-empty id + baseUrl and at least the model id).
-// Exported for unit testing.
+// well-formed entries (a non-empty id + baseUrl and at least the model id) and
+// rejects duplicate ids (keeping the first). Exported for unit testing.
 export function sanitizePiProviders(raw: unknown): PiProvider[] {
   if (!Array.isArray(raw)) return [];
   const out: PiProvider[] = [];
+  const seen = new Set<string>();
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue;
     const e = item as Record<string, unknown>;
     if (typeof e.id !== 'string' || !e.id.trim()) continue;
     if (typeof e.baseUrl !== 'string' || !e.baseUrl.trim()) continue;
+    // models.json is keyed by provider id, so a second provider sharing an id
+    // would silently overwrite the first on reconcile while globalSettings
+    // still showed both rows. Drop the later duplicate.
+    if (seen.has(e.id.trim())) continue;
     const models: PiProviderModel[] = [];
     if (Array.isArray(e.models)) {
       for (const m of e.models) {
@@ -70,6 +75,7 @@ export function sanitizePiProviders(raw: unknown): PiProvider[] {
     if (e.compat && typeof e.compat === 'object') {
       provider.compat = e.compat as Record<string, unknown>;
     }
+    seen.add(provider.id);
     out.push(provider);
   }
   return out;
