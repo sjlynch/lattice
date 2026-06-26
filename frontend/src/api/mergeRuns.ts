@@ -1,17 +1,11 @@
 // Merge-run lifecycle (start, status, cancel) + live event subscription.
 
-import { asJson } from './http';
+import { postJson } from './http';
 import { subscribeWs } from './ws';
 import type { MergeRun, MergeRunEvent } from './types';
 
 export async function startMergeRun(projectPath: string): Promise<MergeRun> {
-  return asJson<MergeRun>(
-    await fetch('/api/merge-runs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project: projectPath }),
-    }),
-  );
+  return postJson<MergeRun>('/api/merge-runs', { project: projectPath });
 }
 
 export async function getActiveMergeRun(
@@ -25,10 +19,8 @@ export async function getActiveMergeRun(
 }
 
 export async function cancelMergeRun(runId: string): Promise<void> {
-  await asJson<{ ok: true }>(
-    await fetch(`/api/merge-runs/${encodeURIComponent(runId)}/cancel`, {
-      method: 'POST',
-    }),
+  await postJson<{ ok: true }>(
+    `/api/merge-runs/${encodeURIComponent(runId)}/cancel`,
   );
 }
 

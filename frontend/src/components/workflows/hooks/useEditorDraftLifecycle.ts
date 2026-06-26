@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { Workflow } from '../../../api';
 import { emptyEditor, fromWorkflow, type EditorState } from '../editorState';
@@ -26,6 +26,19 @@ export function useEditorDraftLifecycle({
   workflows,
   activeFolder,
 }: Args): void {
+  // A saved workflow belongs to the project whose list produced it. Clear it
+  // before paint on a project switch so the previous project's workflow cannot
+  // flash in the editor (or expose stale Save/Run/Delete actions) while the new
+  // project's list is still fetching. Never-saved drafts are left to the
+  // passive restore/persist effects below so they can be flushed under the
+  // project they were authored in before being replaced.
+  const savedResetFor = useRef(activeFolder);
+  useLayoutEffect(() => {
+    if (savedResetFor.current === activeFolder) return;
+    savedResetFor.current = activeFolder;
+    setEditor((cur) => (cur.workflowId ? emptyEditor() : cur));
+  }, [activeFolder, setEditor]);
+
   // If the loaded workflow is edited from elsewhere (or deleted), refresh the
   // editor — but never clobber an in-progress edit.
   useEffect(() => {
@@ -48,8 +61,9 @@ export function useEditorDraftLifecycle({
   // was authored in (the persist effect below flushes it back there), so we
   // replace it with THIS project's stored draft rather than carrying it across —
   // otherwise the new project would show, and persist, the old project's draft.
-  // A loaded (saved) workflow is reconciled by the sync effect above, so it's
-  // left untouched (see draftForFolder).
+  // A loaded (saved) workflow from the previous project is cleared here too;
+  // waiting for the new project's saved-list fetch would leave stale editor
+  // actions visible/clickable during the pending window.
   const restoredFor = useRef<string | null>(null);
   useEffect(() => {
     if (!activeFolder || restoredFor.current === activeFolder) return;
