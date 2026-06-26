@@ -2,7 +2,7 @@ import { installClaudeHooks } from '../claudeStopHook.js';
 import type { AgentHarness } from '../harnesses.js';
 import { installPiCompletionExtension } from '../piExtension.js';
 import { installPiSubagentsShim } from '../piSubagents.js';
-import { buildAgentActivityUrl } from '../agentActivity.js';
+import { buildAgentActivityUrl } from '../agentActivityTokens.js';
 
 export function postMergeHookCallbackUrl(
   id: string,

@@ -1,7 +1,7 @@
 // POST /api/agent-activity/:token — PreToolUse/PostToolUse hook callback for
 // Claude sessions that run OUTSIDE a task worktree (push runs, workflow
-// steps, post-merge hooks). The token (see agentActivity.ts) carries the
-// agent id, project, and label; the body is Claude's hook JSON. We map the
+// steps, post-merge hooks). The token (see agentActivityTokens.ts) carries
+// the agent id, project, and label; the body is Claude's hook JSON. We map the
 // touched file to a project-absolute path and emit an `agent-activity` event
 // so the graph draws an orange Claude node + focus beam.
 
@@ -10,11 +10,8 @@ import { Router } from 'express';
 import { canonicalProjectPath } from '../projectPath.js';
 import { cwdFromHookBody } from '../claudeHookBody.js';
 import { decodeActivityHook } from '../activityHook.js';
-import {
-  type AgentActivityEvent,
-  decodeAgentToken,
-  notifyAgentActivity,
-} from '../agentActivity.js';
+import { type AgentActivityEvent, notifyAgentActivity } from '../agentActivity.js';
+import { decodeAgentToken } from '../agentActivityTokens.js';
 import { touchAgentSession } from '../agentSessions.js';
 import { isManaged } from './tasks/activity.js';
 

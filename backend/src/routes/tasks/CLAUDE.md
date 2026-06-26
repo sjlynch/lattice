@@ -30,8 +30,12 @@ the implementations live in focused modules:
   `partitionByProject` is the foreign-task integrity filter every
   project-scoped read runs.
 - `crudCreate.ts` — create / batch-create (JSON array, `{tasks}`, or markdown).
-- `crudUpdate.ts` — patch / bulk-update / upsert / append-summary. The
-  markdown-or-JSON body ergonomics (heredoc-friendly) live here.
+- `crudUpdate.ts` — thin patch / bulk-update / upsert / append-summary route
+  handlers. The markdown-or-JSON body ergonomics (heredoc-friendly) are split
+  into focused helpers: `crudUpdateBody.ts` (body normalization + block→patch),
+  `crudUpdateValidation.ts` (bulk/upsert upfront validation), and
+  `crudUpdateUpsert.ts` (project-scoped upsert application +
+  `classifyUpsertTarget`).
 - `crudTransition.ts` — bulk status transition (by `ids` or `fromStatus`
   lane) + per-lane reorder.
 - `crudDelete.ts` — delete + cancel-queued-run; both clear spawn-queue state
