@@ -33,6 +33,9 @@ export const FINGERPRINT_FILES = [
   'terminalServer/shutdown.js',
   'terminalServer/websocket.js',
   'terminalServer/parentWatch.js',
+  // The shared CSWSH origin allowlist the websocket upgrade handler enforces.
+  // A change to which Origins are accepted must invalidate a stale orphan.
+  'wsOriginAllowlist.js',
   'terminal.js',
   'terminal/sessionTypes.js',
   'terminal/sessionStore.js',
