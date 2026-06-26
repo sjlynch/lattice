@@ -1,13 +1,16 @@
 # frontend/src/components/taskboard/hooks
 
 Where the taskboard's real logic lives. `TaskBoardLauncher.tsx` is a thin
-wiring shell — it composes these hooks and renders them to JSX. Most are
-consumed via the composers (`useTaskBoardState`, `useTaskActions`); the rest
-the launcher calls directly.
+FloatingPanel/JSX shell; `useTaskBoardController.ts` composes the task, merge,
+push, QA, post-merge, harness, search, lane-sort, selection, and terminal
+hooks into the single shape the launcher renders. Most lower-level hooks are
+consumed via composers (`useTaskBoardController`, `useTaskBoardState`,
+`useTaskActions`) rather than directly by components.
 
 ## State / data-sync
 
-- `useTaskList.ts` — per-folder task list: initial fetch + live `/ws/tasks` subscription, structural sharing so unchanged cards skip re-render, and the shared error-toast slot (`showError`).
+- `useTaskList.ts` — per-folder task list: initial fetch + live `/ws/tasks` subscription, structural sharing so unchanged cards skip re-render, and the shared error-toast slot (`showError`). Its returned list is project-guarded: on folder switch it reports `[]` until the new folder's fetch/WS snapshot arrives, so stale task IDs are never rendered/actionable under the next project.
+- `useTaskBoardController.ts` — top-level taskboard controller: composes the concern hooks below and derives launcher handlers (sorted lanes, slot-drop wrappers, detail/new-task overlay actions, post-merge terminal focus). Keep new cross-concern wiring here so `TaskBoardLauncher.tsx` stays mostly panel chrome.
 - `useTaskBoardState.ts` — composes `useTaskList` + `useTaskSelection`; adds lane grouping/sorting and derived board counts.
 - `useTaskSearch.ts` — case-insensitive search box state; derives `filteredTasks`/`filteredGrouped` and the `searchActive` flag that gates lane "run all".
 - `useTaskSelection.ts` — multi-selection on cards: selected ids, shift-range anchor, and the lane the selection is anchored in (cross-lane ranges reset).
@@ -42,4 +45,4 @@ the launcher calls directly.
 - `useTaskTerminals.ts` — composer over the three lifecycle hooks below (focus + cleanup + reattach); the launcher wires all of taskboard's post-task-list terminal lifecycle in one call and gets back just the focus helpers (`getFocusTerminal` / `focusTerminalByServerId`).
 - `useTaskTerminalCleanup.ts` — closes task terminals on lifecycle transitions: qa/done/deleted close all, ready-to-merge closes only the worktree-agent pty (resolvers left alone).
 - `useTaskTerminalFocus.ts` — task→pty focus map (`getFocusTerminal`) plus a serverId-based focuser for the post-merge hook row (which has no task).
-- `useTaskTerminalReattach.ts` — one-shot on board load: re-mounts terminals for `in_progress` tasks whose pty is alive in the terminal-server but not mounted in this browser tab.
+- `useTaskTerminalReattach.ts` — one-shot on board load: re-mounts terminals for `in_progress` tasks whose pty is alive in the terminal-server but not mounted in this browser tab. It only claims the per-project one-shot after a successful `/api/terminals` parse and uses bounded retry/backoff for transient HTTP/JSON failures or startup no-session races.
