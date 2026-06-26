@@ -17,7 +17,11 @@ boot-sweep (`recovery/qaSessionSweep.ts → sweepOrphanedQaSessions`) contract.
 The path guard, session-setup lifecycle, and bounded cleanup are shared via
 **`../homeScratch/`** — `paths.ts` / `cleanup.ts` / `session.ts` here are thin
 wrappers passing the `qa`/`[qaRuns]`/`qa session` config (and `isQaRun: true`)
-into that factory. **See `pushRuns/CLAUDE.md` and `homeScratch/CLAUDE.md` for
+into those builders. `session.ts` specifically goes through the
+`createHomeScratchAgentSession(spec)` mirror factory (shared command / queue /
+presence-node / cleanup wiring); only the QA brief, hook install, and
+`recordQaRun` write stay here, and the `spec` carries `isQaRun: true`. **See
+`pushRuns/CLAUDE.md` and `homeScratch/CLAUDE.md` for
 that shared shape** — including that the registry is non-persisted (stale-at-boot
 ⇒ swept) and that `assertSafeQaSessionPath` is part of the repo's
 `.git`-deletion defence layer. **Edit one, check the other.**

@@ -45,12 +45,13 @@ guard, which is part of the repo's `.git`-deletion defence layer (see the root
   `assertSafePushSessionPath` + `assertNotReparsePoint`). On failure it leaves
   the dir for the boot sweep rather than forcing the delete.
 - `session.ts` — `startPushSession` / `setupPushSession`, thin wrappers over the
-  shared `startHomeScratchAgentSession` / `setupHomeScratchSession` builder:
-  mkdir scratch, `seedClaudeTrust`, install the Stop hook, render the brief,
-  spawn the pty via `queuedCreateSession` (`cwd = scratch` so Claude reads the
-  Stop hook from cwd; the brief `cd`s into the project), record the run, register
-  the orange agent-session graph node. Only the push-specific brief, command, and
-  registry calls stay here.
+  shared `homeScratch/` builders: `startPushSession` goes through the
+  `createHomeScratchAgentSession(spec)` mirror factory (which owns the command,
+  `interactive` queue band, presence-node registration, and cleanup wiring);
+  `setupPushSession` is the materialize-only `setupHomeScratchSession`. Only the
+  push-specific brief, hook install, and registry record (`recordPushRun`) stay
+  here — passed to the factory's `start` per call. `qaRuns/session.ts` is the
+  exact mirror (its `spec` adds `isQaRun: true`).
 - `stopHook.ts` — installs the Claude Stop hook (→ `/api/push-runs/:id/done`) +
   activity hook; defines the stable `pushAgentId`.
 - `instructions.ts` — renders `PUSH_INSTRUCTIONS.md` from the editable `push`
