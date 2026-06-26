@@ -1,13 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Kanban } from 'lucide-react';
 import { FloatingPanel } from '../FloatingPanel';
 import { useTerminals } from '../../TerminalsContext';
-import {
-  type TaskSpawnedEvent,
-  type TaskStatus,
-} from '../../api';
+import { type TaskStatus } from '../../api';
 import { ErrorToast } from '../shared/ErrorToast';
-import { LANE_BY_ID, LANES, shortLabel } from './lanes';
+import { LANE_BY_ID, LANES } from './lanes';
 import { sortTasksForLane } from './laneSort';
 import { NewTaskOverlay } from './NewTaskOverlay';
 import { PostMergeHookRow } from './PostMergeHookRow';
@@ -24,13 +21,12 @@ import { useHarnessSelector } from './hooks/useHarnessSelector';
 import { useQaPlaywright } from './hooks/useQaPlaywright';
 import { useQaRuns } from './hooks/useQaRuns';
 import { useLaneSort } from './hooks/useLaneSort';
-import { useBulkRunStrips } from './hooks/useBulkRunStrips';
+import { useLaneBulkActions } from './hooks/useLaneBulkActions';
 import { useTaskActions } from './hooks/useTaskActions';
 import { useTaskBoardState } from './hooks/useTaskBoardState';
 import { useTaskSearch } from './hooks/useTaskSearch';
-import { useTaskTerminalCleanup } from './hooks/useTaskTerminalCleanup';
-import { useTaskTerminalFocus } from './hooks/useTaskTerminalFocus';
-import { useTaskTerminalReattach } from './hooks/useTaskTerminalReattach';
+import { useTaskSpawnHandler } from './hooks/useTaskSpawnHandler';
+import { useTaskTerminals } from './hooks/useTaskTerminals';
 import { useSyncedViewedTask } from './hooks/useSyncedViewedTask';
 import { useVisibleLanes } from './hooks/useVisibleLanes';
 
@@ -49,11 +45,6 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   // Stable so it doesn't defeat React.memo(TaskCard) on every re-render.
   const handleDragEnd = useCallback(() => setDraggingId(null), []);
 
-  // `noteBulkSpawned` is produced by a hook that runs *after* the task list
-  // (which needs `handleTaskSpawned`), so reach it through a ref to break the
-  // declaration cycle. Resume's progress strip rides these spawn events.
-  const noteBulkSpawnedRef = useRef<((taskId: string) => void) | null>(null);
-
   const { visibleLanes, toggleLane } = useVisibleLanes();
 
   const {
@@ -65,27 +56,11 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     setActiveId,
   } = useTerminals();
 
-  // A queued task's run has no pty at request time; when the spawn queue
-  // admits it the backend emits `task-spawned` over /ws/tasks. Mount the
-  // task's terminal here (lazy — the pane only renders on activation). Every
-  // tab watching the project mounts it, matching the workflow step model.
-  const handleTaskSpawned = useCallback(
-    (event: TaskSpawnedEvent) => {
-      noteBulkSpawnedRef.current?.(event.taskId);
-      addTerminal(
-        {
-          label: shortLabel(event.title),
-          cwd: event.worktreePath,
-          initialCommand: event.command,
-          taskId: event.taskId,
-          projectPath: event.projectPath,
-          serverId: event.serverId,
-        },
-        false,
-      );
-    },
-    [addTerminal],
-  );
+  // `task-spawned` → mount the (queued) task's terminal + ping the resume strip.
+  // `setBulkSpawnNotifier` bridges in the strip's notifier later (it's produced
+  // after the task list, which needs `handleTaskSpawned`).
+  const { handleTaskSpawned, setBulkSpawnNotifier } =
+    useTaskSpawnHandler(addTerminal);
 
   const {
     tasks,
@@ -160,13 +135,17 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
   });
 
   // Live progress strips for the Open/In Progress/QA lane bulk actions
-  // (mirrors the Ready-to-Merge MergeRunStrip). `noteBulkSpawned` is reached
-  // from `handleTaskSpawned` via a ref since it's defined before this hook.
-  const { bulkStrips, beginBulk, noteBulkSpawned, dismissBulk } =
-    useBulkRunStrips(tasks);
-  useEffect(() => {
-    noteBulkSpawnedRef.current = noteBulkSpawned;
-  }, [noteBulkSpawned]);
+  // (mirrors the Ready-to-Merge MergeRunStrip), plus the per-lane "run all"
+  // action map. Owns the strip state and bridges the resume notifier back to
+  // the spawn handler via `setBulkSpawnNotifier`.
+  const { runAllActionByLane, bulkStrips, dismissBulk } = useLaneBulkActions({
+    tasks,
+    setBulkSpawnNotifier,
+    runAllOpen,
+    resumeAllInProgress,
+    mergeAllReady,
+    markAllQaDone,
+  });
 
   const {
     taskSearch,
@@ -203,36 +182,16 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
     [setManual, dropAtMulti],
   );
 
-  const { getFocusTerminal, focusTerminalByServerId } = useTaskTerminalFocus(
-    terminals,
-    tasks,
-    setActiveId,
-  );
-
-  useTaskTerminalCleanup(
+  const { getFocusTerminal, focusTerminalByServerId } = useTaskTerminals({
+    activeFolder,
     tasks,
     terminals,
-    closeTerminalsForTask,
+    addTerminal,
     closeTerminals,
-  );
-  // Re-mount terminals for in_progress tasks whose pty is still alive but
-  // was never delivered to this tab (queued task admitted while all tabs
-  // were closed; fresh tab after a backend restart).
-  useTaskTerminalReattach(activeFolder, tasks, terminals, addTerminal);
+    closeTerminalsForTask,
+    setActiveId,
+  });
   const [viewing, setViewing] = useSyncedViewedTask(tasks);
-
-  // Fire the bulk action and start its progress strip off the ids it targeted
-  // (merge-all keeps its own backend-run strip via mergeRunStripFor).
-  const runAllActionByLane = useMemo<Partial<Record<TaskStatus, () => void>>>(
-    () => ({
-      open: () => beginBulk('open', runAllOpen(), 'run'),
-      in_progress: () =>
-        beginBulk('in_progress', resumeAllInProgress(), 'resume'),
-      ready_to_merge: mergeAllReady,
-      qa: () => beginBulk('qa', markAllQaDone(), 'qa-done'),
-    }),
-    [beginBulk, runAllOpen, resumeAllInProgress, mergeAllReady, markAllQaDone],
-  );
 
   return (
     <>

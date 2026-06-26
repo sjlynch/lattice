@@ -43,8 +43,15 @@ export function usePostMergeHook(
 
   // Load saved prompt + harness on folder change.
   useEffect(() => {
-    if (!activeFolder) return;
     let cancelled = false;
+    // Reset to defaults synchronously BEFORE the fetch resolves — mirrors the
+    // sibling hydrate effect's active/recent reset. Without this, a project
+    // switch leaves the PREVIOUS project's prompt in the form until the new
+    // fetch lands (a transient flash), and if that fetch rejects the catch
+    // below "keeps defaults" that are actually the old project's — so a later
+    // savePrompt/saveHarness would patch project A's prompt onto project B.
+    setForm({ prompt: '', harness: 'claude' });
+    if (!activeFolder) return;
     fetchUserSettings(activeFolder)
       .then((s) => {
         if (cancelled) return;
@@ -55,7 +62,7 @@ export function usePostMergeHook(
         });
       })
       .catch(() => {
-        /* keep defaults */
+        /* keep the defaults reset above — never retain the prior project's form */
       });
     return () => {
       cancelled = true;

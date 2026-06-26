@@ -44,12 +44,21 @@ export function useTaskCrudActions({ activeFolder, showError }: UseTaskCrudActio
     [showError],
   );
 
+  // Resolves true only when the backend PATCH succeeds. The detail overlay
+  // awaits this and stays open (preserving the in-progress edits) on false, so
+  // a failed save is observable instead of silently dismissing the modal as if
+  // it had landed.
   const editTask = useCallback(
-    async (id: string, updates: { title?: string; description?: string }) => {
+    async (
+      id: string,
+      updates: { title?: string; description?: string },
+    ): Promise<boolean> => {
       try {
         await apiUpdateTask(id, updates);
+        return true;
       } catch (err) {
         showError((err as Error).message);
+        return false;
       }
     },
     [showError],

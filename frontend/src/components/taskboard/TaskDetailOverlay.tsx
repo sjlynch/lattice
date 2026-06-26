@@ -24,13 +24,17 @@ export function TaskDetailOverlay({
   onClose: () => void;
   onMove: (status: TaskStatus) => void;
   onDelete: () => void | Promise<unknown>;
-  onSave: (updates: { title?: string; description?: string }) => void;
+  // Resolves true once the backend update lands. A false (or rejected) result
+  // keeps the overlay open with the edited fields intact so the failure is
+  // visible and retryable.
+  onSave: (updates: { title?: string; description?: string }) => Promise<boolean>;
   onRun?: () => void;
 }) {
   const { editTitle, setEditTitle, editDesc, setEditDesc, dirty, prepareSave } =
     useTaskDetailEdit(task);
   const { confirm } = useConfirm();
   const [deleting, setDeleting] = useState(false);
+  const [saving, setSaving] = useState(false);
   // Mounted only while open, so the trap is always active here.
   const dialogRef = useFocusTrap<HTMLDivElement>(true);
 
@@ -52,12 +56,29 @@ export function TaskDetailOverlay({
     }
   }
 
-  function saveEdit() {
+  async function saveEdit() {
+    if (saving) return;
     const updates = prepareSave();
-    if (updates) onSave(updates);
-    // Saving closes the overlay — clicking Save (or pressing Enter) is a
-    // "done editing" gesture, so dismiss rather than leaving it open.
-    onClose();
+    // Nothing dirty — Save / Enter is a "done editing" dismiss, so just close.
+    if (!updates) {
+      onClose();
+      return;
+    }
+    setSaving(true);
+    let ok = false;
+    try {
+      ok = await onSave(updates);
+    } catch {
+      ok = false;
+    }
+    // Close only after the backend confirms. On failure keep the overlay open
+    // with the edited fields intact (the edit action already toasted the error)
+    // so the user can retry instead of the modal vanishing as if it saved.
+    if (ok) {
+      onClose();
+      return;
+    }
+    setSaving(false);
   }
 
   useEffect(() => {
@@ -162,9 +183,9 @@ export function TaskDetailOverlay({
           <button
             className="btn-primary"
             onClick={saveEdit}
-            disabled={!dirty}
+            disabled={!dirty || saving}
           >
-            Save
+            {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
       </div>

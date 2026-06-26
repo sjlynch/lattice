@@ -20,10 +20,11 @@ the launcher calls directly.
 ## Task actions
 
 - `useTaskActions.ts` — composes the four per-concern action hooks below into the single shape the launcher consumes. Add new actions in the matching focused hook, not here.
-- `useTaskCrudActions.ts` — add/edit/delete plus the plain status-change `moveTask`.
+- `useTaskCrudActions.ts` — add/edit/delete plus the plain status-change `moveTask`. `editTask`/`addTask`/`deleteTask` resolve `Promise<boolean>` (false on failure, after toasting) so callers can keep a modal open on a rejected save — `TaskDetailOverlay` awaits `editTask` and closes only on success.
 - `useTaskReorderActions.ts` — drag/drop reorder math (`dropAt`/`moveMulti`/`dropAtMulti`); computes a lane's new ID order and ships one batched reorder.
 - `useTaskLifecycleActions.ts` — `runTask`/`resumeTaskAction` + the lane-level "run/resume all"; requests go through the backend spawn queue (terminals mount later via the `task-spawned` event). The "run/resume all" variants (and `markAllQaDone`) return the ids they targeted so the launcher can drive a progress strip.
-- `useBulkRunStrips.ts` — per-lane progress strips for the Open/In Progress/QA bulk actions (the Ready-to-Merge lane keeps its own `useMergeRunSync` strip). `beginBulk(lane, ids, kind)` starts tracking against the targeted ids; the strip clears once each task has spawned (left its lane) or been queued, then flips to a short auto-dismissing summary. Resume has no task-state signal, so its completion rides `task-spawned` via `noteBulkSpawned` (fed from the launcher's spawn handler through a ref).
+- `useBulkRunStrips.ts` — per-lane progress strips for the Open/In Progress/QA bulk actions (the Ready-to-Merge lane keeps its own `useMergeRunSync` strip). `beginBulk(lane, ids, kind)` starts tracking against the targeted ids; the strip clears once each task has spawned (left its lane) or been queued, then flips to a short auto-dismissing summary. Resume has no task-state signal, so its completion rides `task-spawned` via `noteBulkSpawned` (fed from the spawn handler through a ref).
+- `useLaneBulkActions.ts` — owns `useBulkRunStrips` and assembles the per-lane `runAllActionByLane` map the lane grid renders (each Open/In-Progress/QA "run all" wraps its ids in `beginBulk`; Ready-to-Merge is `mergeAllReady` verbatim). Bridges the resume-strip's `noteBulkSpawned` back to `useTaskSpawnHandler` via `setBulkSpawnNotifier`. Pulled out of the launcher so it stays panel/layout composition.
 - `useTaskMergeActions.ts` — per-task `mergeTaskAction` (resolver-Claude spawn on conflict), `mergeAllReady`, `cancelActiveRun`, `clearStuckConflicts` (Resolving-strip escape hatch — `POST /merge-aborted` per orphaned conflict task), and `markAllQaDone`.
 - `useLaneDropTargets.ts` — lane-level drop targeting: background-hover state, per-slot hover index, and the `slotProps` factory `Lane.tsx` uses; drives the reorder actions above.
 
@@ -37,6 +38,8 @@ the launcher calls directly.
 
 ## Terminal lifecycle
 
+- `useTaskSpawnHandler.ts` — builds the `/ws/tasks` `task-spawned` handler (mount the queued task's terminal + ping the resume strip). Runs *before* the task list (which needs the handler), so the resume-strip notifier is bridged in later through a ref via the stable `setBulkSpawnNotifier`. Consumed by `useLaneBulkActions`.
+- `useTaskTerminals.ts` — composer over the three lifecycle hooks below (focus + cleanup + reattach); the launcher wires all of taskboard's post-task-list terminal lifecycle in one call and gets back just the focus helpers (`getFocusTerminal` / `focusTerminalByServerId`).
 - `useTaskTerminalCleanup.ts` — closes task terminals on lifecycle transitions: qa/done/deleted close all, ready-to-merge closes only the worktree-agent pty (resolvers left alone).
 - `useTaskTerminalFocus.ts` — task→pty focus map (`getFocusTerminal`) plus a serverId-based focuser for the post-merge hook row (which has no task).
 - `useTaskTerminalReattach.ts` — one-shot on board load: re-mounts terminals for `in_progress` tasks whose pty is alive in the terminal-server but not mounted in this browser tab.
