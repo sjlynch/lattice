@@ -49,7 +49,12 @@ function finalizeFailureMessage(
   fin: Extract<FinalizeOutcome, { ok: false }>,
 ): string {
   if ('error' in fin) return fin.error;
-  return `Stash-pop conflict on ${fin.stashConflict.length} file(s) — Claude resolver spawned`;
+  if ('stashConflict' in fin) {
+    return `Stash-pop conflict on ${fin.stashConflict.length} file(s) — Claude resolver spawned`;
+  }
+  // merge-conflict is intercepted by the caller before this runs; handled
+  // here only so the union stays exhaustive.
+  return `Re-sync with main conflicted on ${fin.mergeConflict.length} file(s) — Claude resolver spawned`;
 }
 
 export async function resyncWithMainAndFinalize(
@@ -126,6 +131,20 @@ export async function resyncWithMainAndFinalize(
   opts.onFinalizeResult?.(fin);
   if (fin.ok) {
     return { kind: 'finalized' };
+  }
+  if ('mergeConflict' in fin) {
+    // The retry re-sync inside finalize conflicted (a sibling task advanced
+    // main onto an overlapping hunk). finalize already wrote
+    // MERGE_INSTRUCTIONS.md + flagged the task; surface it as a resolvable
+    // merge-conflict so the caller spawns a second resolver, exactly like a
+    // first-pass conflict.
+    return {
+      kind: 'merge-conflict',
+      conflictedFiles: fin.mergeConflict,
+      relativePath: fin.relativePath,
+      command: fin.resolveCommand,
+      cwd: fin.cwd,
+    };
   }
   const message = finalizeFailureMessage(fin);
   if ('stashConflict' in fin) {

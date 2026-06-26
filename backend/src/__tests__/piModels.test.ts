@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parsePiListModels } from '../piModels.js';
+import { parsePiListModels, reconcileModelsCache } from '../piModels.js';
 import { sanitizePiProviders } from '../globalSettings.js';
 import { normalizePiModel, buildPiModelFlag } from '../worktree/commands.js';
 
@@ -34,6 +34,46 @@ test('parsePiListModels parses the table and skips the header', () => {
 test('parsePiListModels returns [] for empty / non-table output', () => {
   assert.deepEqual(parsePiListModels(''), []);
   assert.deepEqual(parsePiListModels('error: pi not configured'), []);
+});
+
+// A transient `pi --list-models` failure (timeout / spawn error) is signalled
+// to reconcileModelsCache as `raw === null`. It must NOT be cached as a
+// successful empty listing — otherwise the menu blanks and curated built-in
+// models (which live only in `pi --list-models`, not models.json) vanish for
+// the full 30s TTL. A successful-but-empty listing ('') is a real result and
+// IS cached.
+test('reconcileModelsCache does not cache a transient failure', () => {
+  // No prior cache + failure → empty list for this call, but nothing memoized
+  // (cache stays null) so the very next call re-probes.
+  const cold = reconcileModelsCache(null, null, 1000);
+  assert.deepEqual(cold.models, []);
+  assert.equal(cold.cache, null);
+});
+
+test('reconcileModelsCache keeps the last good cache on a transient failure', () => {
+  // A built-in OAuth model (openai-codex/...) only ever appears in
+  // `pi --list-models`, never models.json — so the cached listing is the only
+  // thing keeping a curated built-in alive. A failed re-probe must preserve it.
+  const good = reconcileModelsCache(
+    'openai-codex  gpt-5.5  272K  128K  yes  yes',
+    null,
+    1000,
+  );
+  assert.equal(good.models[0].pattern, 'openai-codex/gpt-5.5');
+  assert.ok(good.cache);
+
+  // Now the probe fails: the stale-but-good cache (and its `at`) is returned
+  // unchanged, so the built-in survives and the TTL still lets a later success
+  // refresh it.
+  const failed = reconcileModelsCache(null, good.cache, 99_999);
+  assert.equal(failed.models[0].pattern, 'openai-codex/gpt-5.5');
+  assert.equal(failed.cache, good.cache);
+});
+
+test('reconcileModelsCache caches a successful (even empty) listing', () => {
+  const empty = reconcileModelsCache('', null, 2000);
+  assert.deepEqual(empty.models, []);
+  assert.deepEqual(empty.cache, { at: 2000, models: [] });
 });
 
 test('normalizePiModel accepts provider/model patterns and rejects junk', () => {
