@@ -1,6 +1,7 @@
 import type { Server } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { attachTerminal } from '../terminal.js';
+import { isAllowedOrigin } from '../wsOriginAllowlist.js';
 
 export function createTerminalWebSocketServer(): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
@@ -22,6 +23,17 @@ export function attachTerminalWebSocketUpgrade(
   wss: WebSocketServer,
 ): void {
   server.on('upgrade', (req, socket, head) => {
+    // CSWSH defence. This detached server owns the pty and runs `initialCommand`
+    // on a fresh session, so a drive-by page reaching it is arbitrary command
+    // execution. WS handshakes aren't bound by same-origin policy, so a browser-
+    // supplied Origin outside the allowlist is rejected here, before the upgrade
+    // — mirroring the main server's gate. Absent-Origin clients (the node relay,
+    // curl) are allowed so legitimate terminals keep working. See
+    // `../wsOriginAllowlist.ts`.
+    if (!isAllowedOrigin(req.headers.origin)) {
+      socket.destroy();
+      return;
+    }
     if (new URL(req.url || '', 'http://localhost').pathname === '/ws/terminal') {
       wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
     } else {

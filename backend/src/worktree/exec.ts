@@ -30,7 +30,15 @@ export function exec(
     }
     child.stdout.on('data', (d) => (stdout += d.toString()));
     child.stderr.on('data', (d) => (stderr += d.toString()));
-    child.on('close', (code) => {
+    // 'close' fires with (code, signal). A process terminated by a signal
+    // arrives with code===null and signal set; reporting it as exit 0 would
+    // let a signal-killed `git rev-list --count` (POSIX SIGKILL/OOM, an
+    // external kill, a git crash-by-signal) masquerade as a successful empty
+    // result — and countBetween, which throws on non-zero precisely so a
+    // transient git failure is never misread as '0 commits', would instead
+    // see {code:0, stdout:''}, parse NaN→0, and strand a task's commits
+    // unmerged. So a signal death MUST surface as a non-zero code.
+    child.on('close', (code, signal) => {
       if (timer) clearTimeout(timer);
       if (timedOut) {
         resolve({
@@ -39,7 +47,7 @@ export function exec(
           code: code ?? 124,
         });
       } else {
-        resolve({ stdout, stderr, code: code ?? 0 });
+        resolve({ stdout, stderr, code: code ?? (signal ? 137 : 1) });
       }
     });
     child.on('error', (err) => {

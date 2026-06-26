@@ -1,14 +1,11 @@
-import {
-  setupHomeScratchSession,
-  startHomeScratchAgentSession,
-} from '../homeScratch/session.js';
+import { setupHomeScratchSession } from '../homeScratch/session.js';
+import { createHomeScratchAgentSession } from '../homeScratch/agentSession.js';
 import { renderPushInstructions } from './instructions.js';
 import { resolveInstructionTemplate } from '../instructionTemplates.js';
 import { pushPaths } from './paths.js';
 import { recordPushRun } from './registry.js';
 import { installPushStopHook, pushAgentId } from './stopHook.js';
 import { cleanupPushSession } from './cleanup.js';
-import { registerAgentSession } from '../agentSessions.js';
 import type { PushSession } from './types.js';
 
 const PUSH_INSTRUCTIONS_FILE = 'PUSH_INSTRUCTIONS.md';
@@ -45,6 +42,20 @@ export type StartedPushSession = {
   serverId?: string;
 };
 
+// The shared mirror skeleton (command, queue metadata, presence node, cleanup).
+// Only the push-specific brief, hook install, and registry record are passed in
+// per call by `startPushSession`.
+const startPushAgentSession = createHomeScratchAgentSession({
+  paths: pushPaths,
+  instructionsFileName: PUSH_INSTRUCTIONS_FILE,
+  command: PUSH_COMMAND,
+  queueKind: 'push-run',
+  dedupeKeyPrefix: 'push',
+  agentId: pushAgentId,
+  presenceLabel: 'push',
+  cleanup: cleanupPushSession,
+});
+
 // Full push-session spawn: materialize the session dir, pre-spawn the Claude
 // pty, and record the run. Shared between the /api/push-runs HTTP route and
 // the workflow Push control step so both go through identical setup.
@@ -54,35 +65,19 @@ export async function startPushSession(
   projectPath: string,
   backendOrigin: string,
 ): Promise<StartedPushSession> {
-  const started = await startHomeScratchAgentSession({
-    paths: pushPaths,
+  const started = await startPushAgentSession({
     projectPath,
-    instructionsFileName: PUSH_INSTRUCTIONS_FILE,
     installHooks: ({ cwd, id }) =>
       installPushStopHook(cwd, id, backendOrigin, projectPath),
     renderInstructions: () => renderPush(projectPath),
-    buildCommand: () => PUSH_COMMAND,
-    // `interactive` band — user-initiated, infrequent; may use PRIORITY_RESERVE
-    // headroom so a push is not stuck behind a full batch lane.
-    queueKind: 'push-run',
-    queuePriority: 'interactive',
-    dedupeKeyPrefix: 'push',
-    onSpawned: ({ id, cwd, serverId }) => {
+    recordRun: ({ id, cwd }) =>
       recordPushRun({
         id,
         projectPath,
         cwd,
         status: 'running',
         createdAt: Date.now(),
-      });
-      // Presence: show an orange Claude node for this non-worktree session.
-      registerAgentSession({
-        agentId: pushAgentId(id),
-        projectPath,
-        label: 'push',
-      });
-    },
-    cleanup: cleanupPushSession,
+      }),
   });
   return {
     id: started.id,
