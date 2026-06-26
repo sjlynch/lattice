@@ -12,10 +12,14 @@ import {
   type PiModelInfo,
   type PiProvider,
 } from '../../api';
-import { useEndpointState, useProbeDetection } from './usePiEndpoints';
+import {
+  useEndpointState,
+  useProbeDetection,
+  usePiEndpointEditors,
+} from './usePiEndpoints';
 import {
   collectModelUniverse,
-  entriesToHeaders,
+  dropEndpointKey,
   sanitizeProvidersForSave,
 } from './piTabUtils';
 import { PiEndpointCard } from './PiEndpointCard';
@@ -52,12 +56,18 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
   const probe = useProbeDetection();
   const { providers } = endpoints;
   const { probing, detected, probeError } = probe;
+  // The per-endpoint field editors (compat / headers / model checklist /
+  // detect). Index-bound by the render below; provider mutations flow through
+  // `endpoints.mutate`.
+  const editors = usePiEndpointEditors(endpoints, probe, providers);
 
   const [savedModels, setSavedModels] = useState<PiModelInfo[]>([]);
   const [menuSelected, setMenuSelected] = useState<Set<string>>(new Set());
   const [menuTouched, setMenuTouched] = useState(false);
-  // Which endpoints have their "Advanced" (compat / headers) section open.
-  const [advancedOpen, setAdvancedOpen] = useState<Record<number, boolean>>({});
+  // Which endpoints have their "Advanced" (compat / headers) section open —
+  // keyed by the endpoint's stable id (not its array index) so removing an
+  // earlier endpoint can't shift the Advanced section onto a different card.
+  const [advancedOpen, setAdvancedOpen] = useState<Record<string, boolean>>({});
   // Patterns we've already reflected into menuSelected — so a newly-added
   // endpoint model defaults to shown, but a model the user later unchecks
   // doesn't get auto-re-added on the next render.
@@ -130,100 +140,14 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
 
   const patchProvider = endpoints.patch;
   const addProvider = endpoints.add;
-  const removeProvider = endpoints.remove;
 
-  // Set/clear a single `compat` key (empty/undefined removes it; the whole
-  // compat object is dropped once it's empty so we don't write `compat: {}`).
-  const updateCompat = (
-    idx: number,
-    key: string,
-    value: string | boolean | undefined,
-  ) => {
-    endpoints.mutate((cur) =>
-      cur.map((p, i) => {
-        if (i !== idx) return p;
-        const compat: Record<string, unknown> = { ...(p.compat ?? {}) };
-        if (value === undefined || value === '') delete compat[key];
-        else compat[key] = value;
-        const next = { ...p };
-        if (Object.keys(compat).length) next.compat = compat;
-        else delete next.compat;
-        return next;
-      }),
-    );
+  // Remove an endpoint and forget its id-keyed transient state (probe results /
+  // Advanced toggle) so a survivor never inherits it.
+  const removeEndpoint = (idx: number, id: string) => {
+    endpoints.remove(idx);
+    probe.dropEndpoint(id);
+    setAdvancedOpen((o) => dropEndpointKey(o, id));
   };
-
-  const setHeaderEntries = (idx: number, entries: [string, string][]) => {
-    endpoints.mutate((cur) =>
-      cur.map((p, i) =>
-        i === idx ? { ...p, headers: entriesToHeaders(entries) } : p,
-      ),
-    );
-  };
-
-  // Read endpoint `idx`'s header rows as ordered entries, let `fn` mutate them
-  // in place, then write the result back — the shared body of the four header
-  // mutators below.
-  const mutateHeaderEntries = (
-    idx: number,
-    fn: (entries: [string, string][]) => void,
-  ) => {
-    const entries = Object.entries(providers[idx]?.headers ?? {});
-    fn(entries);
-    setHeaderEntries(idx, entries);
-  };
-
-  const updateHeaderKey = (idx: number, rowIdx: number, key: string) =>
-    mutateHeaderEntries(idx, (entries) => {
-      if (entries[rowIdx]) entries[rowIdx] = [key, entries[rowIdx][1]];
-    });
-
-  const updateHeaderValue = (idx: number, rowIdx: number, value: string) =>
-    mutateHeaderEntries(idx, (entries) => {
-      if (entries[rowIdx]) entries[rowIdx] = [entries[rowIdx][0], value];
-    });
-
-  const addHeader = (idx: number) =>
-    mutateHeaderEntries(idx, (entries) => {
-      // Unique placeholder key so a second "add" never collides with a blank one.
-      entries.push([`header-${entries.length + 1}`, '']);
-    });
-
-  const removeHeader = (idx: number, rowIdx: number) =>
-    mutateHeaderEntries(idx, (entries) => {
-      entries.splice(rowIdx, 1);
-    });
-
-  const toggleEndpointModel = (idx: number, modelId: string) => {
-    endpoints.mutate((cur) =>
-      cur.map((p, i) => {
-        if (i !== idx) return p;
-        const has = p.models.some((m) => m.id === modelId);
-        return {
-          ...p,
-          models: has
-            ? p.models.filter((m) => m.id !== modelId)
-            : [...p.models, { id: modelId }],
-        };
-      }),
-    );
-  };
-
-  const detectModels = (idx: number) =>
-    probe.detect(idx, providers[idx], (ids) =>
-      endpoints.mutate((cur) =>
-        cur.map((p, i) =>
-          i === idx
-            ? {
-                ...p,
-                models: ids.map(
-                  (id) => p.models.find((m) => m.id === id) ?? { id },
-                ),
-              }
-            : p,
-        ),
-      ),
-    );
 
   const toggleMenu = (pattern: string) => {
     setMenuTouched(true);
@@ -273,26 +197,28 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
 
         {providers.map((ep, idx) => (
           <PiEndpointCard
-            key={idx}
+            key={ep.id}
             endpoint={ep}
-            probing={!!probing[idx]}
-            detectedIds={detected[idx] ?? []}
-            probeError={probeError[idx]}
-            advancedOpen={!!advancedOpen[idx]}
+            probing={!!probing[ep.id]}
+            detectedIds={detected[ep.id] ?? []}
+            probeError={probeError[ep.id]}
+            advancedOpen={!!advancedOpen[ep.id]}
             onPatch={(partial) => patchProvider(idx, partial)}
-            onRemove={() => removeProvider(idx)}
-            onDetect={() => void detectModels(idx)}
-            onToggleModel={(modelId) => toggleEndpointModel(idx, modelId)}
+            onRemove={() => removeEndpoint(idx, ep.id)}
+            onDetect={() => void editors.detectModels(idx)}
+            onToggleModel={(modelId) => editors.toggleEndpointModel(idx, modelId)}
             onToggleAdvanced={() =>
-              setAdvancedOpen((o) => ({ ...o, [idx]: !o[idx] }))
+              setAdvancedOpen((o) => ({ ...o, [ep.id]: !o[ep.id] }))
             }
-            onUpdateCompat={(key, value) => updateCompat(idx, key, value)}
-            onUpdateHeaderKey={(rowIdx, key) => updateHeaderKey(idx, rowIdx, key)}
+            onUpdateCompat={(key, value) => editors.updateCompat(idx, key, value)}
+            onUpdateHeaderKey={(rowIdx, key) =>
+              editors.updateHeaderKey(idx, rowIdx, key)
+            }
             onUpdateHeaderValue={(rowIdx, value) =>
-              updateHeaderValue(idx, rowIdx, value)
+              editors.updateHeaderValue(idx, rowIdx, value)
             }
-            onAddHeader={() => addHeader(idx)}
-            onRemoveHeader={(rowIdx) => removeHeader(idx, rowIdx)}
+            onAddHeader={() => editors.addHeader(idx)}
+            onRemoveHeader={(rowIdx) => editors.removeHeader(idx, rowIdx)}
           />
         ))}
 

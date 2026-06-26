@@ -5,6 +5,7 @@ import { useSyncedRef } from '../../hooks/useSyncedRef';
 import type { TerminalStatus } from '../../terminal/terminalTypes';
 import {
   MAX_RECONNECT_ATTEMPTS,
+  RECONNECT_STABLE_MS,
   buildTerminalWsUrl,
   canReattachTerminal,
   forwardTerminalInput,
@@ -60,6 +61,13 @@ export function useTerminalConnection({
     let cancelled = false;
     let attempt = 0;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    // Armed on every open; fires only if the socket survives RECONNECT_STABLE_MS,
+    // and ONLY then resets the backoff. Cleared on close so an accept-then-
+    // immediate-close never reaches it. This — not `attempt = 0` in onopen — is
+    // what keeps a flapping backend backing off instead of spinning a ~250ms
+    // reconnect loop (and re-spawning a serverless pty each iteration). Mirrors
+    // the stability timer in api/ws.ts's subscribeWs.
+    let stableTimer: ReturnType<typeof setTimeout> | null = null;
     let reconnectingShown = false;
     // Once the pty has signalled it is gone (clean exit, or backend says
     // session_lost), stop reconnecting. Without this, every WS close —
@@ -79,6 +87,13 @@ export function useTerminalConnection({
       onStatusRef.current?.(status, exitCode);
     };
 
+    const clearStableTimer = () => {
+      if (stableTimer) {
+        clearTimeout(stableTimer);
+        stableTimer = null;
+      }
+    };
+
     function connect() {
       if (cancelled || terminated) return;
       // Read the latest serverId from the ref: if we captured one via an earlier
@@ -96,7 +111,16 @@ export function useTerminalConnection({
       );
 
       ws.onopen = () => {
-        attempt = 0;
+        // Don't reset the backoff yet — a backend can complete the upgrade and
+        // then immediately drop. Arm a timer that zeroes `attempt` only once the
+        // socket has stayed open long enough to be healthy; the onclose clears it
+        // so an accept-then-immediate-close never resets the counter. (Resetting
+        // here was the bug: it pinned the backoff at the 250ms floor forever.)
+        clearStableTimer();
+        stableTimer = setTimeout(() => {
+          attempt = 0;
+          stableTimer = null;
+        }, RECONNECT_STABLE_MS);
         if (reconnectingShown) {
           terminalNotices.reconnected(term);
           reconnectingShown = false;
@@ -126,6 +150,9 @@ export function useTerminalConnection({
       };
 
       ws.onclose = () => {
+        // Clear the pending stability timer first: a close before it fires means
+        // the connection never proved healthy, so the backoff must keep growing.
+        clearStableTimer();
         if (cancelled || terminated) return;
         // A terminal we can re-attach to (has a serverId, or captured one via
         // an earlier `attached` this session) reconnects to its EXISTING pty —
@@ -175,6 +202,7 @@ export function useTerminalConnection({
       cancelled = true;
       clearTimeout(connectTimer);
       if (retryTimer) clearTimeout(retryTimer);
+      clearStableTimer();
       io.dispose();
       // Just close the WS — the backend keeps the pty alive so a refresh
       // (or remount) reattaches via the persisted serverId.

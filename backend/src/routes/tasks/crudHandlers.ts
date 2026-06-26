@@ -26,6 +26,7 @@ export {
   appendSummaryText,
   handleTaskBulkUpdate,
   handleTaskUpsert,
+  classifyUpsertTarget,
 } from './crudUpdate.js';
 export {
   handleTaskTransition,

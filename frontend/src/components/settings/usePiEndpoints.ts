@@ -1,20 +1,20 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { probePiEndpoint, type PiProvider } from '../../api';
+import { dropEndpointKey, entriesToHeaders, nextEndpointId } from './piTabUtils';
 
-// A blank provider row.
-function blankProvider(seq: number): PiProvider {
-  return { id: `endpoint-${seq}`, baseUrl: '', models: [] };
+// A blank provider row with a stable, non-colliding generated id.
+function blankProvider(id: string): PiProvider {
+  return { id, baseUrl: '', models: [] };
 }
 
 // Owns the draft endpoint list, its touched flag (the save clobber-guard), and
 // the patch/add/remove mutators. `mutate` is the shared "apply an updater and
-// mark touched" primitive the component reuses for its compat / header / model
-// / detect edits. `setProviders` / `setTouched` are exposed raw for the initial
-// load, which must replace the list WITHOUT marking it touched.
+// mark touched" primitive the editor hook reuses for its compat / header /
+// model / detect edits. `setProviders` / `setTouched` are exposed raw for the
+// initial load, which must replace the list WITHOUT marking it touched.
 export function useEndpointState() {
   const [providers, setProviders] = useState<PiProvider[]>([]);
   const [touched, setTouched] = useState(false);
-  const seqRef = useRef(0);
 
   const mutate = (updater: (cur: PiProvider[]) => PiProvider[]) => {
     setTouched(true);
@@ -24,7 +24,9 @@ export function useEndpointState() {
   const patch = (idx: number, partial: Partial<PiProvider>) =>
     mutate((cur) => cur.map((p, i) => (i === idx ? { ...p, ...partial } : p)));
 
-  const add = () => mutate((cur) => [...cur, blankProvider(++seqRef.current)]);
+  // Derive the next id from the current list rather than a per-mount counter,
+  // so adding a row after loading a saved `endpoint-1` can never re-mint it.
+  const add = () => mutate((cur) => [...cur, blankProvider(nextEndpointId(cur))]);
 
   const remove = (idx: number) =>
     mutate((cur) => cur.filter((_, i) => i !== idx));
@@ -33,13 +35,16 @@ export function useEndpointState() {
 }
 
 // Owns the per-endpoint "Detect models" transient state (probing / detected /
-// probeError), keyed by row index, plus the probe flow itself. `detect` reports
-// the discovered ids back through `onDetected` so the caller can pre-select
-// them on the provider; it never touches provider state directly.
+// probeError) and the probe flow itself. Keyed by the endpoint's STABLE id (not
+// its array index) so removing an earlier endpoint never misattributes a
+// survivor's detected list / error to it. `detect` reports the discovered ids
+// back through `onDetected` so the caller can pre-select them on the provider;
+// it never touches provider state directly. `dropEndpoint` forgets one id's
+// entries when that endpoint is removed.
 export function useProbeDetection() {
-  const [probing, setProbing] = useState<Record<number, boolean>>({});
-  const [detected, setDetected] = useState<Record<number, string[]>>({});
-  const [probeError, setProbeError] = useState<Record<number, string>>({});
+  const [probing, setProbing] = useState<Record<string, boolean>>({});
+  const [detected, setDetected] = useState<Record<string, string[]>>({});
+  const [probeError, setProbeError] = useState<Record<string, string>>({});
 
   const reset = () => {
     setProbing({});
@@ -47,34 +52,158 @@ export function useProbeDetection() {
     setProbeError({});
   };
 
+  const dropEndpoint = (id: string) => {
+    setProbing((p) => dropEndpointKey(p, id));
+    setDetected((d) => dropEndpointKey(d, id));
+    setProbeError((e) => dropEndpointKey(e, id));
+  };
+
   const detect = async (
-    idx: number,
+    id: string,
     ep: PiProvider | undefined,
     onDetected: (ids: string[]) => void,
   ) => {
     if (!ep?.baseUrl.trim()) {
-      setProbeError((e) => ({ ...e, [idx]: 'Enter a base URL first.' }));
+      setProbeError((e) => ({ ...e, [id]: 'Enter a base URL first.' }));
       return;
     }
-    setProbing((p) => ({ ...p, [idx]: true }));
-    setProbeError((e) => ({ ...e, [idx]: '' }));
+    setProbing((p) => ({ ...p, [id]: true }));
+    setProbeError((e) => ({ ...e, [id]: '' }));
     try {
       const ids = await probePiEndpoint(
         ep.baseUrl.trim(),
         ep.apiKey?.trim() || undefined,
       );
-      setDetected((d) => ({ ...d, [idx]: ids }));
+      setDetected((d) => ({ ...d, [id]: ids }));
       // Pre-select all detected models (the common case); the user can uncheck.
       onDetected(ids);
     } catch (err) {
       setProbeError((e) => ({
         ...e,
-        [idx]: (err as Error).message || 'Probe failed',
+        [id]: (err as Error).message || 'Probe failed',
       }));
     } finally {
-      setProbing((p) => ({ ...p, [idx]: false }));
+      setProbing((p) => ({ ...p, [id]: false }));
     }
   };
 
-  return { probing, detected, probeError, reset, detect };
+  return { probing, detected, probeError, reset, detect, dropEndpoint };
+}
+
+// The per-endpoint field editors — compat / headers / model checklist / detect —
+// extracted from PiTab so the tab body stays draft-state + menu wiring + render.
+// Every editor mutates the draft endpoint list through `endpoints.mutate` and is
+// addressed by row index (provider mutations are index-based); the probe state
+// `detect` touches is keyed by the endpoint's stable id. Returns the handler bag
+// the PiEndpointCard rows need.
+export function usePiEndpointEditors(
+  endpoints: ReturnType<typeof useEndpointState>,
+  probe: ReturnType<typeof useProbeDetection>,
+  providers: PiProvider[],
+) {
+  // Set/clear a single `compat` key (empty/undefined removes it; the whole
+  // compat object is dropped once it's empty so we don't write `compat: {}`).
+  const updateCompat = (
+    idx: number,
+    key: string,
+    value: string | boolean | undefined,
+  ) => {
+    endpoints.mutate((cur) =>
+      cur.map((p, i) => {
+        if (i !== idx) return p;
+        const compat: Record<string, unknown> = { ...(p.compat ?? {}) };
+        if (value === undefined || value === '') delete compat[key];
+        else compat[key] = value;
+        const next = { ...p };
+        if (Object.keys(compat).length) next.compat = compat;
+        else delete next.compat;
+        return next;
+      }),
+    );
+  };
+
+  const setHeaderEntries = (idx: number, entries: [string, string][]) => {
+    endpoints.mutate((cur) =>
+      cur.map((p, i) =>
+        i === idx ? { ...p, headers: entriesToHeaders(entries) } : p,
+      ),
+    );
+  };
+
+  // Read endpoint `idx`'s header rows as ordered entries, let `fn` mutate them
+  // in place, then write the result back — the shared body of the four header
+  // mutators below.
+  const mutateHeaderEntries = (
+    idx: number,
+    fn: (entries: [string, string][]) => void,
+  ) => {
+    const entries = Object.entries(providers[idx]?.headers ?? {});
+    fn(entries);
+    setHeaderEntries(idx, entries);
+  };
+
+  const updateHeaderKey = (idx: number, rowIdx: number, key: string) =>
+    mutateHeaderEntries(idx, (entries) => {
+      if (entries[rowIdx]) entries[rowIdx] = [key, entries[rowIdx][1]];
+    });
+
+  const updateHeaderValue = (idx: number, rowIdx: number, value: string) =>
+    mutateHeaderEntries(idx, (entries) => {
+      if (entries[rowIdx]) entries[rowIdx] = [entries[rowIdx][0], value];
+    });
+
+  const addHeader = (idx: number) =>
+    mutateHeaderEntries(idx, (entries) => {
+      // Unique placeholder key so a second "add" never collides with a blank one.
+      entries.push([`header-${entries.length + 1}`, '']);
+    });
+
+  const removeHeader = (idx: number, rowIdx: number) =>
+    mutateHeaderEntries(idx, (entries) => {
+      entries.splice(rowIdx, 1);
+    });
+
+  const toggleEndpointModel = (idx: number, modelId: string) => {
+    endpoints.mutate((cur) =>
+      cur.map((p, i) => {
+        if (i !== idx) return p;
+        const has = p.models.some((m) => m.id === modelId);
+        return {
+          ...p,
+          models: has
+            ? p.models.filter((m) => m.id !== modelId)
+            : [...p.models, { id: modelId }],
+        };
+      }),
+    );
+  };
+
+  const detectModels = (idx: number) => {
+    const ep = providers[idx];
+    if (!ep) return;
+    return probe.detect(ep.id, ep, (ids) =>
+      endpoints.mutate((cur) =>
+        cur.map((p, i) =>
+          i === idx
+            ? {
+                ...p,
+                models: ids.map(
+                  (id) => p.models.find((m) => m.id === id) ?? { id },
+                ),
+              }
+            : p,
+        ),
+      ),
+    );
+  };
+
+  return {
+    updateCompat,
+    updateHeaderKey,
+    updateHeaderValue,
+    addHeader,
+    removeHeader,
+    toggleEndpointModel,
+    detectModels,
+  };
 }
