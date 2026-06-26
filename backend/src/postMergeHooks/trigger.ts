@@ -22,6 +22,7 @@ export type TriggerPostMergeHookOptions = {
 
 export type TriggerPostMergeHookOutcome =
   | { kind: 'skipped'; reason: 'no-prompt' }
+  | { kind: 'skipped'; reason: 'disabled' }
   | { kind: 'skipped'; reason: 'already-running'; existing: PostMergeHookRun }
   | { kind: 'started'; run: PostMergeHookRun; serverId?: string }
   | { kind: 'error'; message: string };
@@ -32,6 +33,8 @@ export type TriggerPostMergeHookOutcome =
 // `runPostMergeHookGate` in session.ts).
 //
 // Empty prompt → skipped (no-op so callers can fire-and-await unconditionally).
+// Toggle off (`postMergeHookEnabled === false`) → skipped, even with a prompt:
+// the master switch lets a user pause the hook without losing their prompt.
 // Hook already running for this project → skipped; caller should await the
 // existing one (which they typically already do via the same waiter promise).
 //
@@ -46,6 +49,11 @@ export async function triggerPostMergeHook(
   const settings = await getUserSettings(projectPath);
   const prompt = (settings.postMergeHookPrompt ?? '').trim();
   if (!prompt) return { kind: 'skipped', reason: 'no-prompt' };
+  // Master toggle: run only when explicitly enabled. Absent counts as enabled
+  // so a previously-configured prompt keeps firing (see isPostMergeHookEnabled).
+  if (settings.postMergeHookEnabled === false) {
+    return { kind: 'skipped', reason: 'disabled' };
+  }
 
   const existing = getActiveHookForProject(projectPath);
   if (existing) {

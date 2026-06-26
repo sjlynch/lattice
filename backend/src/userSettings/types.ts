@@ -52,6 +52,12 @@ export type UserSettings = {
   // its explicit curl) fires the hook-complete callback. This blocks the
   // workflow Merge control step from advancing as well.
   postMergeHookPrompt?: string;
+  // Master on/off switch for the post-merge hook. The hook fires only when
+  // it is enabled AND `postMergeHookPrompt` is non-empty — the toggle lets a
+  // user pause the hook without losing their prompt text. Default is ON
+  // (absent counts as `true`) so an existing configured prompt keeps firing;
+  // see `isPostMergeHookEnabled` in features.ts.
+  postMergeHookEnabled?: boolean;
   postMergeHookHarness?: AgentHarness;
   // Pi model for the post-merge hook, used only when postMergeHookHarness is
   // `pi`. Sibling to postMergeHookHarness (see `piModel` above).

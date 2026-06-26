@@ -18,7 +18,14 @@ export async function runPostMergeHookGate(
   options: TriggerPostMergeHookOptions,
 ): Promise<PostMergeHookRun | null> {
   const outcome = await triggerPostMergeHook(options);
-  if (outcome.kind === 'skipped' && outcome.reason === 'no-prompt') return null;
+  // 'no-prompt' (nothing to run) and 'disabled' (master toggle off) are both
+  // no-ops — the merge completes without gating on a hook.
+  if (
+    outcome.kind === 'skipped' &&
+    (outcome.reason === 'no-prompt' || outcome.reason === 'disabled')
+  ) {
+    return null;
+  }
   if (outcome.kind === 'skipped' && outcome.reason === 'already-running') {
     // Another caller already started a hook for this project; await it.
     await waitForPostMergeHook(outcome.existing.id);

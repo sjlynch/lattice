@@ -18,11 +18,20 @@
   background: color-mix(in srgb, var(--warn, #f0a000) 8%, transparent);
 }
 
+/* Header row: the expand/collapse strip plus the master Enabled switch.
+   The strip flexes to fill; the switch is a fixed control on the right so it
+   can be toggled without expanding the row. */
+.post-merge-hook-header {
+  display: flex;
+  align-items: center;
+}
+
 .post-merge-hook-strip {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 6px 10px;
   background: transparent;
   border: none;
@@ -31,6 +40,30 @@
   font: inherit;
   text-align: left;
   min-height: 28px;
+}
+
+.post-merge-hook-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.post-merge-hook-switch input {
+  margin: 0;
+  accent-color: var(--accent, #6c8cff);
+  cursor: pointer;
+}
+
+.post-merge-hook-switch:hover {
+  color: var(--text-primary);
 }
 
 .post-merge-hook-strip:hover {

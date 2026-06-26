@@ -14,6 +14,9 @@ type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
 
 export type PostMergeHookFormState = {
   prompt: string;
+  // Master on/off switch. The hook fires only when enabled AND prompt is
+  // non-empty. Default ON (absent persisted value counts as enabled).
+  enabled: boolean;
   harness: AgentHarness;
   // Pi model for the hook; used only when harness is `pi`.
   piModel?: string;
@@ -29,6 +32,7 @@ export function usePostMergeHook(
 ) {
   const [form, setForm] = useState<PostMergeHookFormState>({
     prompt: '',
+    enabled: true,
     harness: 'claude',
   });
   const [active, setActive] = useState<PostMergeHookRun | null>(null);
@@ -50,13 +54,15 @@ export function usePostMergeHook(
     // fetch lands (a transient flash), and if that fetch rejects the catch
     // below "keeps defaults" that are actually the old project's — so a later
     // savePrompt/saveHarness would patch project A's prompt onto project B.
-    setForm({ prompt: '', harness: 'claude' });
+    setForm({ prompt: '', enabled: true, harness: 'claude' });
     if (!activeFolder) return;
     fetchUserSettings(activeFolder)
       .then((s) => {
         if (cancelled) return;
         setForm({
           prompt: typeof s.postMergeHookPrompt === 'string' ? s.postMergeHookPrompt : '',
+          // Absent counts as enabled — mirrors the backend default.
+          enabled: s.postMergeHookEnabled !== false,
           harness: normalizeAgentHarness(s.postMergeHookHarness),
           piModel: s.postMergeHookPiModel || undefined,
         });
@@ -145,6 +151,18 @@ export function usePostMergeHook(
     [activeFolder, showError],
   );
 
+  const saveEnabled = useCallback(
+    (next: boolean) => {
+      setForm((prev) => ({ ...prev, enabled: next }));
+      if (!activeFolder) return;
+      setSaving(true);
+      patchUserSettings(activeFolder, { postMergeHookEnabled: next })
+        .catch((err) => showError(`Saving hook toggle failed: ${(err as Error).message}`))
+        .finally(() => setSaving(false));
+    },
+    [activeFolder, showError],
+  );
+
   const saveHarness = useCallback(
     (next: AgentHarness, piModel?: string) => {
       setForm((prev) => ({ ...prev, harness: next, piModel }));
@@ -176,6 +194,7 @@ export function usePostMergeHook(
     recent,
     saving,
     savePrompt,
+    saveEnabled,
     saveHarness,
     abort,
   };

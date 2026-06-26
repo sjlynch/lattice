@@ -87,7 +87,7 @@ afterEach(() => {
   }
 });
 
-let latestForm: PostMergeHookFormState = { prompt: '', harness: 'claude' };
+let latestForm: PostMergeHookFormState = { prompt: '', enabled: true, harness: 'claude' };
 function Harness({ folder }: { folder: string }) {
   const { form } = usePostMergeHook(
     folder,
@@ -138,6 +138,11 @@ test("a project switch whose settings fetch rejects resets the form instead of k
     latestForm.harness,
     'claude',
     'the harness resets to the default too',
+  );
+  assert.equal(
+    latestForm.enabled,
+    true,
+    'the enabled toggle resets to its default (on) too',
   );
 
   act(() => renderer.unmount());

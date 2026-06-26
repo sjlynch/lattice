@@ -8,7 +8,7 @@ The home-scoped scratch path guard and session-setup lifecycle are shared with p
 
 ## Flow
 
-- `trigger.ts` — `triggerPostMergeHook`, the decide-and-outcome half: gate on empty prompt (`no-prompt` skip) and one-running-per-project (`already-running` skip via `getActiveHookForProject`), record the run, spawn the pty (spawn-queue `priority` band, deduped per project), and register the orange agent-session node (Claude only). Returns an outcome immediately; callers block via the waiter.
+- `trigger.ts` — `triggerPostMergeHook`, the decide-and-outcome half: gate on empty prompt (`no-prompt` skip), the master enable toggle (`disabled` skip when `postMergeHookEnabled === false`, even with a prompt — `isPostMergeHookEnabled` defaults ON), and one-running-per-project (`already-running` skip via `getActiveHookForProject`), record the run, spawn the pty (spawn-queue `priority` band, deduped per project), and register the orange agent-session node (Claude only). Returns an outcome immediately; callers block via the waiter.
 - `session.ts` — `runPostMergeHookGate`, the thin trigger + `waitForPostMergeHook` coordinator. The merge-run finisher / per-task finalize `await` this so the merge stays gated until the hook reaches a terminal status.
 - `sessionSetup.ts` — the filesystem/trust half: mkdir the scratch dir, `seedClaudeTrust` (trust-only), install the completion plumbing, render the brief. Mirrors `pushRuns/session.ts`.
 - `paths.ts` — scratch lives at `~/.lattice/per-project/<hash>/post-merge-hooks/<id>/` (home-scoped, **outside** the repo). `assertSafePostMergeHookPath` refuses any id/dir not strictly under that root or that lands inside the project, so the bounded recursive cleanup can never reach the repo.

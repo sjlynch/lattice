@@ -12,6 +12,18 @@ export async function isClaudeMemoryDisabled(
   return settings.disableClaudeMemory !== false;
 }
 
+// Whether the post-merge hook is enabled for this project. The hook still
+// also requires a non-empty `postMergeHookPrompt` to fire (see trigger.ts);
+// this is the master on/off switch that lets a user pause it without clearing
+// the prompt. Default is ON (memory of an existing prompt keeps working) — an
+// absent setting counts as `true`; only an explicit `false` disables.
+export async function isPostMergeHookEnabled(
+  projectPath: string,
+): Promise<boolean> {
+  const settings = await getUserSettings(projectPath);
+  return settings.postMergeHookEnabled !== false;
+}
+
 // Whether a QA-lane e2e (Playwright) terminal should AUTO-CLOSE when its run
 // finishes. Default is "stay open" (absent/false) so the user can read the
 // PASS/FAIL verdict and output; only an explicit `true` opts into auto-close.

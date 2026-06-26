@@ -291,6 +291,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
           </div>
           <PostMergeHookRow
             prompt={postMergeHook.form.prompt}
+            enabled={postMergeHook.form.enabled}
             harness={postMergeHook.form.harness}
             piModel={postMergeHook.form.piModel}
             piMenu={piMenu}
@@ -299,6 +300,7 @@ export function TaskBoardLauncher({ activeFolder }: Props) {
             recent={postMergeHook.recent}
             saving={postMergeHook.saving}
             onSavePrompt={postMergeHook.savePrompt}
+            onToggleEnabled={postMergeHook.saveEnabled}
             onSaveHarness={postMergeHook.saveHarness}
             onAbort={postMergeHook.abort}
             onFocusActiveTerminal={focusTerminalByServerId(

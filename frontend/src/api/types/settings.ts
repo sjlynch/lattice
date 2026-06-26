@@ -32,6 +32,10 @@ export type UserSettings = {
   metricsIgnoredExts?: string[];
   // Optional post-merge hook. See backend userSettings.ts.
   postMergeHookPrompt?: string;
+  // Master on/off switch for the post-merge hook. The hook fires only when it
+  // is enabled AND `postMergeHookPrompt` is non-empty. Default ON — absent
+  // counts as `true`. See backend userSettings.ts.
+  postMergeHookEnabled?: boolean;
   postMergeHookHarness?: AgentHarness;
   // Pi model for the post-merge hook, used only when postMergeHookHarness is `pi`.
   postMergeHookPiModel?: string;
