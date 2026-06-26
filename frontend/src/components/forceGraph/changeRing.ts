@@ -53,18 +53,19 @@ export function setChangeRingsSuppressed(suppressed: boolean): void {
   changeRingsSuppressed = suppressed;
 }
 
-// Hide / show all timeline change-ring sprites under a node's root Group.
-// Traverses descendants so it still finds the ring whether it sits as a
-// direct child of the root (real file nodes — see `setNodeChangeRing`) or
-// nested inside the ghost composite (`deletedSprite`'s ring is untagged, so
-// only the former is affected; the ghost disc/ring are left alone).
+// Hide / show a node's timeline change-ring sprite. Tagged rings are only
+// ever added as DIRECT children of the root (see `setNodeChangeRing` ->
+// `root.add`), so a direct-children scan (matching `findChangeRingChild`
+// below) suffices and avoids walking each node's base sprite / halo / label
+// on every W activate/deactivate. The deleted-node ghost composite's ring is
+// untagged on purpose, so it's left alone (the ghost disc/ring stay visible).
 export function setNodeChangeRingsVisible(
   root: THREE.Object3D,
   visible: boolean,
 ): void {
-  root.traverse((obj) => {
-    if (obj.userData[CHANGE_RING_TAG]) obj.visible = visible;
-  });
+  for (const child of root.children) {
+    if (child.userData[CHANGE_RING_TAG]) child.visible = visible;
+  }
 }
 
 function findChangeRingChild(root: THREE.Object3D): THREE.Sprite | null {

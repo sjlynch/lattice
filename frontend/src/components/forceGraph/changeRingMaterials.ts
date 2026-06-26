@@ -33,18 +33,17 @@ export function ringMaterial(kind: ChangeKind): THREE.SpriteMaterial {
   return mat;
 }
 
-// Single ghost material — keyed in a map purely to mirror the ring cache;
-// there is only ever one entry, built lazily on first use.
-const ghostMaterialCache = new Map<'ghost', THREE.SpriteMaterial>();
+// Single ghost material — there is only ever one, so a plain memoized
+// module variable (the lazy-singleton pattern in `halo.ts`) is clearer than
+// a one-key map.
+let ghostMaterialCache: THREE.SpriteMaterial | null = null;
 
 export function ghostMaterial(): THREE.SpriteMaterial {
-  let mat = ghostMaterialCache.get('ghost');
-  if (!mat) {
-    mat = new THREE.SpriteMaterial({
+  if (!ghostMaterialCache) {
+    ghostMaterialCache = new THREE.SpriteMaterial({
       map: buildGhostTexture(),
       ...SPRITE_MATERIAL_OPTS,
     });
-    ghostMaterialCache.set('ghost', mat);
   }
-  return mat;
+  return ghostMaterialCache;
 }
