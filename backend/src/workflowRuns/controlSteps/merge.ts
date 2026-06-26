@@ -157,24 +157,34 @@ export async function runMergeStep(
   }
 }
 
-function waitForMergeRunFinished(
+export function waitForMergeRunFinished(
   mergeRunId: string,
   deps: Pick<MergeStepDeps, 'getMergeRun' | 'subscribeMergeRuns'>,
 ): Promise<void> {
   return new Promise<void>((resolve) => {
-    // Check in case it finished synchronously between startMergeRun returning
-    // and our subscribe. Defensive — startMergeRun's worker is fire-and-forget
-    // so this should never trigger, but cheap to verify.
-    const initial = deps.getMergeRun(mergeRunId);
-    if (initial && initial.status !== 'running') {
+    let settled = false;
+    let unsub: (() => void) | null = null;
+    let unsubscribeAfterAssign = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (unsub) unsub();
+      else unsubscribeAfterAssign = true;
       resolve();
-      return;
-    }
-    const unsub = deps.subscribeMergeRuns((ev) => {
+    };
+
+    // Subscribe BEFORE checking the current snapshot. The old check-then-
+    // subscribe flow could miss a fast worker that completed in the gap after
+    // getMergeRun(id) returned `running` but before subscribeMergeRuns() was
+    // installed, leaving workflow Merge control steps parked forever.
+    unsub = deps.subscribeMergeRuns((ev) => {
       if (ev.type !== 'completed' && ev.type !== 'cancelled') return;
       if (ev.run.id !== mergeRunId) return;
-      unsub();
-      resolve();
+      finish();
     });
+    if (unsubscribeAfterAssign) unsub();
+
+    const current = deps.getMergeRun(mergeRunId);
+    if (current && current.status !== 'running') finish();
   });
 }

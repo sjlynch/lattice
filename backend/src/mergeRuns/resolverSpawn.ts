@@ -5,7 +5,7 @@ import {
 } from '../worktree.js';
 import { listConflictedFiles } from '../worktree/state.js';
 import { type Task } from '../tasks.js';
-import { release } from '../mergeLocks.js';
+import { release, type MergeLockToken } from '../mergeLocks.js';
 import { queuedCreateSession } from '../queuedCreateSession.js';
 import {
   notify,
@@ -36,10 +36,10 @@ import type {
 export async function parkOnConflictResolver(
   state: RunState,
   runId: string,
-  taskId: string,
+  lock: MergeLockToken,
 ): Promise<void> {
-  const waitForResolver = registerConflictWaiter(state, runId, taskId);
-  release(taskId);
+  const waitForResolver = registerConflictWaiter(state, runId, lock.taskId);
+  release(lock);
   await waitForResolver;
 }
 
@@ -168,6 +168,7 @@ export async function handleResyncOutcome(
   run: MergeRun,
   runCtx: ProcessTargetContext,
   outcome: ResyncOutcome,
+  lock?: MergeLockToken,
 ): Promise<ProcessOutcome> {
   if (outcome.kind === 'finalized') {
     run.merged.push(task.id);
@@ -232,7 +233,12 @@ export async function handleResyncOutcome(
     // resolver's /complete finalize needs that same lock, so holding it across
     // the wait would deadlock the run (see the helper's note).
     console.log(`[merge-run] waiting for conflict resolver on task ${task.id}...`);
-    await parkOnConflictResolver(runCtx.state, run.id, task.id);
+    if (!lock) {
+      throw new Error(
+        `merge-conflict wait for ${task.id} requires the caller's merge lock token`,
+      );
+    }
+    await parkOnConflictResolver(runCtx.state, run.id, lock);
     console.log(`[merge-run] conflict resolver done for task ${task.id} — resuming run`);
     return { kind: 'awaiting-resolver' };
   }

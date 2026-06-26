@@ -120,7 +120,8 @@ export async function tryFinalizeAfterResolverFinished(
     `[merge-run] task ${task.id}: main already incorporated in branch — finalizing directly`,
   );
   let outcome: ProcessOutcome;
-  if (!tryAcquire(task.id)) {
+  const lock = tryAcquire(task.id);
+  if (!lock) {
     console.warn(`[merge-run] task ${task.id} lock held — skipping`);
     run.errored.push({
       taskId: task.id,
@@ -128,13 +129,15 @@ export async function tryFinalizeAfterResolverFinished(
     });
     outcome = { kind: 'errored' };
   } else {
+    let lockHeld = true;
     try {
       const resyncOutcome = await resyncWithMainAndFinalize(
         task,
         runCtx.backendOrigin,
         mergeRunResyncOptions(task, { assumeMainAlreadyIncorporated: true }),
       );
-      outcome = await handleResyncOutcome(task, run, runCtx, resyncOutcome);
+      outcome = await handleResyncOutcome(task, run, runCtx, resyncOutcome, lock);
+      if (outcome.kind === 'awaiting-resolver') lockHeld = false;
     } catch (err) {
       console.error(`[merge-run] uncaught error finalizing ${task.id}:`, err);
       run.errored.push({
@@ -143,7 +146,7 @@ export async function tryFinalizeAfterResolverFinished(
       });
       outcome = { kind: 'errored' };
     } finally {
-      release(task.id);
+      if (lockHeld) release(lock);
     }
   }
 
