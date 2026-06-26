@@ -41,6 +41,29 @@ the implementations live in focused modules:
 Keep the markdown/`text/plain` body handling intact — those routes use the
 shared `textOrMarkdownBody` parser in `crud.ts`.
 
+## Queued spawns (`queuedSpawn.ts` barrel; split by concern)
+
+`runRoute.ts` / `resumeRoute.ts` / `crudDelete.ts` / `recovery/queuedRunResume.ts`
+and the `queuedSpawn.test.ts` suite import the queued-spawn surface from
+`queuedSpawn.ts`, a **compatibility barrel** keeping that path stable while the
+implementation lives in focused modules. Each queued thunk does the FULL spawn
+(worktree + pty) and delivers its terminal over the `task-spawned` WS event; a
+non-CAP failure emits `task-spawn-failed` instead. **Keep the crash-safe retry
+semantics intact** — the attempt counter is bumped disk-first BEFORE the spawn
+(`updateTaskCrashSafe`) so a process-crashing spawn still counts, a CAP re-queue
+undoes that bump, and any other failure clears the run-queue state:
+
+- `queuedSpawnAdmission.ts` — admission state: the `task-run:`/`task-resume:`
+  dedupe keys, the persisted run-queue policy a run carries across a restart
+  (and its `CLEARED_RUN_QUEUE_STATE` inverse), and the injectable
+  `SpawnFailureDeps` failure-path I/O.
+- `queuedSpawnFailure.ts` — the shared thunk body (`runSpawnThunk`): crash-safe
+  at-admission attempt counting, CAP retry undo, and terminal-failure reporting
+  (`reportSpawnFailure` → `task-spawn-failed`).
+- `queuedSpawnEnqueue.ts` — the run/resume enqueue wrappers (`enqueueTaskRun` /
+  `enqueueTaskResume`) plus cancellation (`cancelQueuedTaskSpawns` /
+  `dequeueTaskRun`).
+
 ## Worktree lifecycle hooks (`hooks/`)
 
 Idempotent Stop-hook / resolver callbacks. `hooks/index.ts`'s
