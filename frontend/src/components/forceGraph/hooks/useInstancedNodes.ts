@@ -27,6 +27,13 @@ export function useInstancedNodes(
     locModeRef: MutableRefObject<boolean>;
     deadModeRef: MutableRefObject<boolean>;
   },
+  // Bumped by useGraphDataSync on every full graphData() swap (which replaces
+  // the node object array the controller captures per styleKey). Some swaps —
+  // notably the git-history ghost merge — leave `structuralData` unchanged (it
+  // keys on `data.links`, but ghosts derive from `history`), so without this dep
+  // the meshes would keep tracking orphaned pre-swap node objects. Re-rebuild on
+  // every swap to re-capture.
+  dataGeneration: number,
 ) {
   const ctrlRef = useRef<InstancedNodes | null>(null);
   const mountedRef = useRef(false);
@@ -75,5 +82,12 @@ export function useInstancedNodes(
   useEffect(() => {
     if (!enabled) return;
     ctrlRef.current?.rebuild();
-  }, [enabled, structuralData, hiddenExts, settings.fileNodeSize, settings.dirNodeSize]);
+  }, [
+    enabled,
+    structuralData,
+    hiddenExts,
+    settings.fileNodeSize,
+    settings.dirNodeSize,
+    dataGeneration,
+  ]);
 }

@@ -54,6 +54,12 @@ type LinkGraph = {
 // batched look so the lines stay as subtle connectors.
 const FLAT_LINE_OPACITY_SCALE = 0.55;
 
+// Extra link slots reserved when the position buffer has to grow, so a few
+// added/un-hidden links don't force a reallocation every rebuild. Mirrors
+// instancedNodes' CAPACITY_SLACK — makes the buffer-replacement (and the GPU
+// free below) rare rather than per-growth.
+const CAPACITY_SLACK = 64;
+
 export type InstancedLinks = {
   setEnabled(on: boolean): void;
   /** Re-read the visible link set + resize the buffer (structural / filter change). */
@@ -174,7 +180,18 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
     const needed = links.length * 2 * 3;
     if (!geometry) geometry = new THREE.BufferGeometry();
     if (positions.length < needed) {
-      positions = new Float32Array(needed);
+      // Free the previous position attribute's GPU buffer before swapping in the
+      // larger one. three.js does NOT delete a replaced BufferAttribute's GPU
+      // buffer on setAttribute — it's freed only via the renderer's
+      // attributes.remove(), which only geometry.dispose() (over the attributes
+      // still in the geometry) routes to. Without this, every growth (un-hiding
+      // an ext, added files, first hydration) orphaned the prior buffer on the
+      // GPU until unmount. Dispose BEFORE the swap, while the old attribute is
+      // still in the geometry; the next render re-uploads the new buffer (the
+      // geometry re-registers its dispose listener automatically). Grow with
+      // slack so this realloc+free is rare (mirrors instancedNodes).
+      if (geometry.getAttribute('position')) geometry.dispose();
+      positions = new Float32Array((links.length + CAPACITY_SLACK) * 2 * 3);
       geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     }
     geometry.setDrawRange(0, links.length * 2);

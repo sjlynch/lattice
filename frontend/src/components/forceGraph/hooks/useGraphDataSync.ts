@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MutableRefObject } from 'react';
+import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import type { GitHistoryResult, ScanResult } from '../../../api';
 import { getIdleController } from '../idleController';
@@ -72,6 +72,18 @@ export function useGraphDataSync({
   deadModeRef,
 }: Args) {
   const ghostsRef = useRef<Set<string>>(new Set());
+  // Bumped on every *full graphData() swap* (the only path that replaces the
+  // node/link object arrays). The batched renderers (instancedLinks /
+  // instancedNodes) capture those arrays at their last rebuild and read them in
+  // syncPositions, so they MUST re-capture after a swap. A swap can happen on a
+  // signal the batched rebuild effects don't otherwise see: those key off
+  // `useStructuralScan` (memoized purely on `data.links` identity), but the
+  // ghost set folded into the swap derives from `history`, not `data` — so when
+  // git history resolves (~1s after open) and adds deleted-file ghosts, the
+  // shape changes and we swap while `data`/`data.links` are unchanged. Threading
+  // this counter into the rebuild effects' deps drives a re-capture on every
+  // swap, including those history-only ones.
+  const [dataGeneration, setDataGeneration] = useState(0);
   // Fingerprint of the *last graphData() push*. Compared against each
   // incoming ScanResult to choose between the fast-patch and full-swap
   // paths. `null` forces a full swap on first load and after teardown.
@@ -179,6 +191,11 @@ export function useGraphDataSync({
     lastShapeRef.current = nextShape;
     prevDataRef.current = data;
     prevHistoryRef.current = history;
+    // The node/link arrays were just replaced — bump the generation so the
+    // batched renderers re-capture them (their rebuild effects depend on this).
+    // Functional update: doesn't read `dataGeneration`, so the effect needn't
+    // depend on it (no re-swap loop — this effect keys only on data/history).
+    setDataGeneration((g) => g + 1);
     // graphData() restarts the d3 force engine — let the idle controller
     // know so it keeps the render loop running until onEngineStop fires.
     getIdleController(graph)?.engineStarted();
@@ -186,5 +203,5 @@ export function useGraphDataSync({
     onResetSelection();
   }, [data, history, graphRef, onResetSelection, healthModeRef, locModeRef, deadModeRef]);
 
-  return { ghostsRef };
+  return { ghostsRef, dataGeneration };
 }

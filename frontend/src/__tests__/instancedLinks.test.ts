@@ -1,6 +1,123 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeLinkSegments } from '../components/forceGraph/instancedLinks.ts';
+import * as THREE from 'three';
+import {
+  writeLinkSegments,
+  createInstancedLinks,
+} from '../components/forceGraph/instancedLinks.ts';
+
+type Vec = { x: number; y: number; z: number };
+type Link = { source: Vec; target: Vec };
+
+// Minimal stand-in for the bits of the ForceGraph3D instance the controller
+// reads. `graphData().links` is swappable so a test can simulate a full
+// graphData() swap (the ghost-merge case) and re-rebuild.
+function makeMockGraph(initial: Link[]) {
+  const scene = new THREE.Scene();
+  let links = initial;
+  const graph = {
+    scene: () => scene,
+    graphData: () => ({ links, nodes: [] }),
+    linkVisibility: () => undefined, // → every link visible
+    linkColor: () => '#f0f0f0',
+    linkOpacity: () => 1,
+    linkThreeObject: () => {},
+    // node-motion driver sinks (gate.attach subscribes through these)
+    onEngineTick: () => {},
+    onNodeDrag: () => {},
+    onNodeDragEnd: () => {},
+  };
+  return {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    graph: graph as any,
+    setLinks: (l: Link[]) => {
+      links = l;
+    },
+    batched: () =>
+      scene.children.find(
+        (o) => o.userData['lattice:batchedLinks'],
+      ) as THREE.LineSegments | undefined,
+  };
+}
+
+function makeLinks(n: number): Link[] {
+  const out: Link[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push({ source: { x: i, y: 0, z: 0 }, target: { x: i, y: 1, z: 0 } });
+  }
+  return out;
+}
+
+// BUG 1 regression: after a full graphData() swap replaces the link array with
+// fresh objects (the git-history ghost merge does this without changing
+// `data.links`), the controller must re-capture the new array on rebuild() —
+// otherwise syncPositions keeps reading the orphaned pre-swap objects and the
+// links freeze at stale positions.
+test('rebuild re-captures the link array after a graphData swap', () => {
+  const before: Link[] = [
+    { source: { x: 1, y: 0, z: 0 }, target: { x: 2, y: 0, z: 0 } },
+  ];
+  const mock = makeMockGraph(before);
+  const ctrl = createInstancedLinks(mock.graph);
+  ctrl.setEnabled(true); // first rebuild captures `before`
+
+  const posBefore = mock.batched()!.geometry.getAttribute('position');
+  assert.deepEqual([...posBefore.array].slice(0, 6), [1, 0, 0, 2, 0, 0]);
+
+  // Simulate the swap: brand-new link + node objects at new coordinates.
+  mock.setLinks([
+    { source: { x: 10, y: 0, z: 0 }, target: { x: 20, y: 0, z: 0 } },
+  ]);
+  ctrl.rebuild();
+
+  const posAfter = mock.batched()!.geometry.getAttribute('position');
+  // Reads the post-swap objects, not the orphaned pre-swap ones.
+  assert.deepEqual([...posAfter.array].slice(0, 6), [10, 0, 0, 20, 0, 0]);
+
+  ctrl.dispose();
+});
+
+// BUG 2 regression: growing the visible link set past the buffer must FREE the
+// old position attribute's GPU buffer (via geometry.dispose(), the only route to
+// the renderer's gl.deleteBuffer) before swapping in the larger one — otherwise
+// the prior buffer leaks on the GPU every growth. With CAPACITY_SLACK, a growth
+// reserves headroom so within-capacity rebuilds don't realloc/free at all.
+test('growing the link buffer frees the old GPU buffer (geometry.dispose) with slack', () => {
+  const mock = makeMockGraph(makeLinks(1));
+  const ctrl = createInstancedLinks(mock.graph);
+  ctrl.setEnabled(true); // first allocation — no prior attribute, no free
+
+  const geom = mock.batched()!.geometry;
+  let disposeCount = 0;
+  const realDispose = geom.dispose.bind(geom);
+  geom.dispose = () => {
+    disposeCount++;
+    realDispose();
+  };
+
+  const attr0 = geom.getAttribute('position');
+  const cap0 = attr0.array.length;
+  // Slack means the 1-link buffer already holds many links' worth of floats.
+  assert.ok(cap0 >= 1 * 2 * 3, 'buffer at least fits the visible links');
+
+  // Grow well past the slack capacity → must reallocate AND free the old buffer.
+  mock.setLinks(makeLinks(400));
+  ctrl.rebuild();
+  const attr1 = geom.getAttribute('position');
+  assert.equal(disposeCount, 1, 'old buffer freed exactly once on growth');
+  assert.notEqual(attr1, attr0, 'position attribute replaced on growth');
+  assert.ok(attr1.array.length >= 400 * 2 * 3, 'buffer grew to fit');
+
+  // A rebuild that still fits in the (slack-padded) buffer must NOT realloc/free.
+  mock.setLinks(makeLinks(420));
+  ctrl.rebuild();
+  assert.equal(disposeCount, 1, 'no extra free while within capacity (slack)');
+  assert.equal(geom.getAttribute('position'), attr1, 'same buffer reused');
+
+  // Restore so the controller's own dispose() doesn't double-count, then tear down.
+  geom.dispose = realDispose;
+  ctrl.dispose();
+});
 
 // A fully-hydrated link writes its two real endpoints, source first.
 test('hydrated link writes both endpoints in order', () => {

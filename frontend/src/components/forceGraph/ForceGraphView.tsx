@@ -166,7 +166,11 @@ export function ForceGraphView({
 
   const resetSelection = useCallback(() => setSelected(new Set()), []);
 
-  useGraphDataSync({
+  // `dataGeneration` bumps on every full graphData() swap (incl. the git-history
+  // ghost merge, which doesn't touch `structuralData`). Threaded into the
+  // batched renderers below so they re-capture the fresh node/link arrays after
+  // a swap instead of rendering the orphaned pre-swap objects.
+  const { dataGeneration } = useGraphDataSync({
     graphRef,
     data,
     history,
@@ -180,7 +184,13 @@ export function ForceGraphView({
   // single LineSegments so orbiting a settled graph isn't E extra draw calls per
   // frame. Keyed off `structuralData` (the visible link set only changes on a
   // structural swap or a hidden-ext change, not on metric-only HealthUpdates).
-  useBatchedLinks(graphRef, settings.batchedLinks, structuralData, hiddenExts);
+  useBatchedLinks(
+    graphRef,
+    settings.batchedLinks,
+    structuralData,
+    hiddenExts,
+    dataGeneration,
+  );
 
   // Batched node rendering: draw the base node shapes as a few instanced meshes
   // (one per file type) instead of N Sprite-bearing Groups, so orbiting a
@@ -195,6 +205,7 @@ export function ForceGraphView({
     hiddenExts,
     settings,
     { settingsRef, healthModeRef, locModeRef, deadModeRef },
+    dataGeneration,
   );
 
   // Drag UX: dragging a node carries its descendant subtree along and locks the

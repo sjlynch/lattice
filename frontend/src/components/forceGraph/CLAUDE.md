@@ -434,7 +434,14 @@ asking for fixes/reviews:
   lit cylinders they replace, so the configured link opacity is damped
   (`FLAT_LINE_OPACITY_SCALE`). Driven per-frame off the shared scene frame driver
   via `hooks/useBatchedLinks.ts`; rebuild (buffer resize) on a structural swap /
-  hidden-ext change. Flat 1px lines (the `linkWidth: 0` look); **default-on**
+  hidden-ext change / **every full `graphData()` swap** (a `dataGeneration`
+  counter from `useGraphDataSync`, so the controller re-captures the fresh link
+  array even when the swap is a history-only ghost merge that leaves
+  `structuralData` unchanged). When the buffer must **grow**, the old position
+  `BufferAttribute`'s GPU buffer is freed via `geometry.dispose()` first (three
+  never deletes a replaced attribute's buffer on `setAttribute`), and the new one
+  is allocated with `CAPACITY_SLACK` headroom so growth (and the free) is rare.
+  Flat 1px lines (the `linkWidth: 0` look); **default-on**
   (`DEFAULT_SETTINGS.batchedLinks: true`). Low-risk because links carry no
   overlays and aren't pick targets. The node half is `instancedNodes.ts`.
 - `instancedNodes.ts` — `createInstancedNodes(graph, opts)`: batched node
@@ -463,7 +470,10 @@ asking for fixes/reviews:
   per-node path. The mesh only ever draws the base (no-overlay) view, the
   orbit-cost steady state. Ghosts keep their per-node sprite (excluded here).
   Driven by `hooks/useInstancedNodes.ts`; rebuild (regroup + buffer resize) on a
-  structural swap / hidden-ext change / node-size change. **Default-on**
+  structural swap / hidden-ext change / node-size change / **every full
+  `graphData()` swap** (the same `dataGeneration` counter as batched links, so
+  the per-style meshes re-capture the fresh node array after a history-only ghost
+  merge that doesn't touch `structuralData`). **Default-on**
   (`DEFAULT_SETTINGS.batchedNodes: true`).
 - `nodeMotionDriver.ts` — single fan-out over three-forcegraph's one-slot
   node-motion callbacks (`onEngineTick` + `onNodeDrag` + `onNodeDragEnd`; mirrors
@@ -590,15 +600,28 @@ asking for fixes/reviews:
   after init (so the library's `linkVisibility` accessor is installed),
   subscribes its per-frame sync to the scene frame driver, toggles it on
   `settings.batchedLinks`, and rebuilds the batched geometry on a structural
-  swap / hidden-ext change. Mounted after `useGraphDataSync` in `ForceGraphView`.
+  swap / hidden-ext change / `dataGeneration` bump (every full `graphData()`
+  swap — see below). Mounted after `useGraphDataSync` in `ForceGraphView`.
 - `useInstancedNodes` — owns the `instancedNodes.ts` controller (the node
   analogue of `useBatchedLinks`): creates it once after init, subscribes its
   per-frame `onFrame` to the scene frame driver, toggles on `settings.batchedNodes`
   (a runtime toggle also fires `clearLabelsAndRefresh` so `nodeObjectFactory`
   flips the per-node base sprite's `.visible`), and rebuilds the instance buffers
-  on a structural swap / hidden-ext / node-size change. Passes the controller a
+  on a structural swap / hidden-ext / node-size change / `dataGeneration` bump.
+  Passes the controller a
   live `settingsRef` + an `isBaseView()` built from the health/loc/dead mode refs.
   Mounted after `useBatchedLinks`.
+- **`dataGeneration` (re-capture after a `graphData()` swap).** Both batched
+  controllers cache the node/link object arrays at their last `rebuild()` and
+  read them in `syncPositions`, so a full `graph.graphData(...)` swap (which
+  replaces every node/link object) must trigger a re-capture. The structural
+  rebuild deps (`useStructuralScan`, keyed on `data.links` identity) miss the
+  git-history **ghost merge**: ghost nodes derive from `history`, not `data`, so
+  when history resolves ~1s after open the shape changes and `useGraphDataSync`
+  swaps while `data`/`data.links` are unchanged. `useGraphDataSync` therefore
+  bumps a `dataGeneration` counter on *every* full swap and `ForceGraphView`
+  threads it into both rebuild effects' deps. Without it the controllers froze on
+  the orphaned pre-swap objects (graph visibly stuck mid-layout on open).
 - `useNodeDragBehavior` — two drag-UX behaviors, registered via the motion
   driver's `onNodeDragMove` drag channel (always active, independent of the
   batched toggles): (1) **physics-active drag** — so a dragged node's children
