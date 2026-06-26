@@ -12,17 +12,28 @@ function localCellSize(linkDistance: number): number {
   return Math.max(40, linkDistance * 2);
 }
 
-// Owns the GraphSettings state, mirrored ref, and per-project
-// localStorage persistence. Also drives sprite-size refreshes and
-// physics reheats when the user tweaks values from the panel.
-//
-// The ref keeps the latest value visible to THREE callbacks
-// (nodeThreeObject is wired once at mount) while the state drives the
-// panel UI.
-export function useGraphSettings(
-  activeFolder: string,
-  graphRef: MutableRefObject<ForceGraph3DInstance | null>,
-) {
+type GraphRef = MutableRefObject<ForceGraph3DInstance | null>;
+
+type SpriteRefreshSettings = Pick<
+  GraphSettings,
+  'fileNodeSize' | 'dirNodeSize' | 'labelSize' | 'metricLabels'
+>;
+
+type PhysicsSettings = Pick<
+  GraphSettings,
+  | 'dagLevelDistance'
+  | 'velocityDecay'
+  | 'chargeStrength'
+  | 'linkDistance'
+  | 'chargeTheta'
+  | 'repulsionMode'
+>;
+
+function hasMountedNodes(g: ForceGraph3DInstance): boolean {
+  return g.graphData().nodes.length > 0;
+}
+
+function usePerProjectGraphSettings(activeFolder: string) {
   const [settings, setSettings] = useState<GraphSettings>(() =>
     loadSettings(activeFolder),
   );
@@ -50,6 +61,13 @@ export function useGraphSettings(
     }
   }, [activeFolder, settings]);
 
+  return { settings, setSettings, settingsRef };
+}
+
+function useSpriteAndMetricLabelRefresh(
+  settings: SpriteRefreshSettings,
+  graphRef: GraphRef,
+): void {
   // Re-render sprites when render-only sprite settings (node/label sizes, and
   // whether the LOC/health metric labels are shown) change.
   //
@@ -64,12 +82,7 @@ export function useGraphSettings(
   // refresh: the size changes, nodes are mounted, so the guard falls
   // through. Toggling `metricLabels` adds/removes each metric node's
   // connector + number, so it routes through the same rebuild.
-  const appliedSizesRef = useRef({
-    fileNodeSize: settings.fileNodeSize,
-    dirNodeSize: settings.dirNodeSize,
-    labelSize: settings.labelSize,
-    metricLabels: settings.metricLabels,
-  });
+  const appliedSizesRef = useRef<SpriteRefreshSettings>(settings);
   useEffect(() => {
     const prev = appliedSizesRef.current;
     const changed =
@@ -77,14 +90,9 @@ export function useGraphSettings(
       prev.dirNodeSize !== settings.dirNodeSize ||
       prev.labelSize !== settings.labelSize ||
       prev.metricLabels !== settings.metricLabels;
-    appliedSizesRef.current = {
-      fileNodeSize: settings.fileNodeSize,
-      dirNodeSize: settings.dirNodeSize,
-      labelSize: settings.labelSize,
-      metricLabels: settings.metricLabels,
-    };
+    appliedSizesRef.current = settings;
     const g = graphRef.current;
-    if (!changed || !g || g.graphData().nodes.length === 0) return;
+    if (!changed || !g || !hasMountedNodes(g)) return;
     clearLabelsAndRefresh(g);
   }, [
     settings.fileNodeSize,
@@ -93,12 +101,12 @@ export function useGraphSettings(
     settings.metricLabels,
     graphRef,
   ]);
+}
 
-  // labelSpread doesn't need its own effect: the overlay RAFs run
-  // continuously while their key is held and read
-  // `settingsRef.current.labelSpread` fresh every tick, so the new
-  // minDist takes effect on the next frame after the slider moves.
-
+function usePhysicsAndRepulsionSettings(
+  settings: PhysicsSettings,
+  graphRef: GraphRef,
+): void {
   // Apply physics + DAG settings to the running simulation. Reheats so
   // changes visibly take effect.
   //
@@ -130,14 +138,8 @@ export function useGraphSettings(
   >(null);
   // Our O(N) tree-aware repulsion, created lazily and reused across mode flips.
   const localForceRef = useRef<LocalRepulsionForce | null>(null);
-  const appliedPhysicsRef = useRef({
-    dagLevelDistance: settings.dagLevelDistance,
-    velocityDecay: settings.velocityDecay,
-    chargeStrength: settings.chargeStrength,
-    linkDistance: settings.linkDistance,
-    chargeTheta: settings.chargeTheta,
-    repulsionMode: settings.repulsionMode,
-  });
+  const appliedPhysicsRef = useRef<PhysicsSettings>(settings);
+
   useEffect(() => {
     const g = graphRef.current;
     if (!g) return;
@@ -186,15 +188,8 @@ export function useGraphSettings(
       prev.linkDistance !== settings.linkDistance ||
       prev.chargeTheta !== settings.chargeTheta ||
       prev.repulsionMode !== settings.repulsionMode;
-    appliedPhysicsRef.current = {
-      dagLevelDistance: settings.dagLevelDistance,
-      velocityDecay: settings.velocityDecay,
-      chargeStrength: settings.chargeStrength,
-      linkDistance: settings.linkDistance,
-      chargeTheta: settings.chargeTheta,
-      repulsionMode: settings.repulsionMode,
-    };
-    if (!changed || g.graphData().nodes.length === 0) return;
+    appliedPhysicsRef.current = settings;
+    if (!changed || !hasMountedNodes(g)) return;
 
     const timer = setTimeout(() => {
       if (graphRef.current === g) {
@@ -212,7 +207,12 @@ export function useGraphSettings(
     settings.repulsionMode,
     graphRef,
   ]);
+}
 
+function useRenderPixelRatioSetting(
+  settings: Pick<GraphSettings, 'pixelRatio'>,
+  graphRef: GraphRef,
+): void {
   // Render scale (pixelRatio): re-size the WebGL drawing buffer to the new cap.
   // Guarded like the other render-only effects — skip the initial mount (init's
   // `configureRenderer` already applied it) and re-apply only on an actual
@@ -228,7 +228,12 @@ export function useGraphSettings(
     applyRenderPixelRatio(g, settings.pixelRatio);
     getIdleController(g)?.wakeForRefresh();
   }, [settings.pixelRatio, graphRef]);
+}
 
+function useLinkWidthSetting(
+  settings: Pick<GraphSettings, 'linkWidth'>,
+  graphRef: GraphRef,
+): void {
   // Link width is a render-only prop (no physics reheat). Changing it rebuilds
   // the link objects, so wake the loop a few frames to paint them. Guarded like
   // the size effect: skip the initial mount and any run with no nodes mounted
@@ -239,10 +244,36 @@ export function useGraphSettings(
     const changed = prev !== settings.linkWidth;
     appliedLinkWidthRef.current = settings.linkWidth;
     const g = graphRef.current;
-    if (!changed || !g || g.graphData().nodes.length === 0) return;
+    if (!changed || !g || !hasMountedNodes(g)) return;
     g.linkWidth(settings.linkWidth);
     getIdleController(g)?.wakeForRefresh();
   }, [settings.linkWidth, graphRef]);
+}
 
-  return { settings, setSettings, settingsRef };
+// Owns the GraphSettings state, mirrored ref, and per-project
+// localStorage persistence. Also drives sprite-size refreshes and
+// physics reheats when the user tweaks values from the panel.
+//
+// The ref keeps the latest value visible to THREE callbacks
+// (nodeThreeObject is wired once at mount) while the state drives the
+// panel UI.
+export function useGraphSettings(
+  activeFolder: string,
+  graphRef: MutableRefObject<ForceGraph3DInstance | null>,
+) {
+  const graphSettings = usePerProjectGraphSettings(activeFolder);
+  const { settings } = graphSettings;
+
+  useSpriteAndMetricLabelRefresh(settings, graphRef);
+
+  // labelSpread doesn't need its own effect: the overlay RAFs run
+  // continuously while their key is held and read
+  // `settingsRef.current.labelSpread` fresh every tick, so the new
+  // minDist takes effect on the next frame after the slider moves.
+
+  usePhysicsAndRepulsionSettings(settings, graphRef);
+  useRenderPixelRatioSetting(settings, graphRef);
+  useLinkWidthSetting(settings, graphRef);
+
+  return graphSettings;
 }

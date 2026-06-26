@@ -31,7 +31,11 @@
 import * as THREE from 'three';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { createMotionSyncGate } from './motionSyncGate';
-import { getIdleController } from './idleController';
+import {
+  capacityWithSlack,
+  visibilityPredicate,
+  wakeInstancedRefresh,
+} from './instancedBatching';
 import { LINK_RENDER_ORDER } from './renderOrders';
 
 type SimNode = { x?: number; y?: number; z?: number };
@@ -136,15 +140,10 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
 
   function visibleLinks(): SimLink[] {
     const all = g.graphData().links || [];
-    const raw = g.linkVisibility();
     // Reuse the library's own visibility accessor (installed by useGraphFilter)
     // so the batched set matches what the per-link objects would have shown —
     // no duplicated hidden-ext / ghost predicate.
-    if (typeof raw === 'function') {
-      const fn = raw as (l: SimLink) => unknown;
-      return all.filter((l) => !!fn(l));
-    }
-    return raw === undefined || !!raw ? all.slice() : [];
+    return all.filter(visibilityPredicate<SimLink>(g.linkVisibility()));
   }
 
   function ensureMaterial(): THREE.LineBasicMaterial {
@@ -191,7 +190,9 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
       // geometry re-registers its dispose listener automatically). Grow with
       // slack so this realloc+free is rare (mirrors instancedNodes).
       if (geometry.getAttribute('position')) geometry.dispose();
-      positions = new Float32Array((links.length + CAPACITY_SLACK) * 2 * 3);
+      positions = new Float32Array(
+        capacityWithSlack(links.length, CAPACITY_SLACK) * 2 * 3,
+      );
       geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     }
     geometry.setDrawRange(0, links.length * 2);
@@ -214,7 +215,7 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
     syncPositions();
     // The loop may be paused (settled graph) when the user toggles this on or a
     // filter changes the set — wake a few frames so the rebuilt lines paint.
-    getIdleController(graph)?.wakeForRefresh();
+    wakeInstancedRefresh(graph);
   }
 
   function onFrame(): void {
@@ -238,7 +239,7 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
       g.linkThreeObject(null);
       gate.detach();
       if (lineSegments) lineSegments.visible = false;
-      getIdleController(graph)?.wakeForRefresh();
+      wakeInstancedRefresh(graph);
     }
   }
 

@@ -46,7 +46,12 @@ import {
 import type { GraphNode } from '../../api';
 import type { GraphSettings } from './graphSettings';
 import { createMotionSyncGate } from './motionSyncGate';
-import { getIdleController } from './idleController';
+import {
+  capacityWithSlack,
+  disposeMapValues,
+  visibilityPredicate,
+  wakeInstancedRefresh,
+} from './instancedBatching';
 import { materialFor } from './sprites';
 import { isGhost } from './timelineDiff';
 import { NODE_RENDER_ORDER } from './renderOrders';
@@ -215,11 +220,7 @@ export function createInstancedNodes(
   // nodes grouped by base styleKey.
   function collectGroups(): Map<string, { style: ExtStyle; nodes: SimNode[] }> {
     const all = g.graphData().nodes || [];
-    const raw = g.nodeVisibility();
-    const isVisible =
-      typeof raw === 'function'
-        ? (n: SimNode) => !!(raw as (n: SimNode) => unknown)(n)
-        : () => true;
+    const isVisible = visibilityPredicate<SimNode>(g.nodeVisibility(), true);
     const groups = new Map<string, { style: ExtStyle; nodes: SimNode[] }>();
     for (let i = 0; i < all.length; i++) {
       const n = all[i];
@@ -247,7 +248,7 @@ export function createInstancedNodes(
       let sm = meshes.get(key);
       if (!sm || sm.capacity < count) {
         if (sm) disposeStyleMesh(sm);
-        sm = createStyleMesh(grp.style, count + CAPACITY_SLACK);
+        sm = createStyleMesh(grp.style, capacityWithSlack(count, CAPACITY_SLACK));
         meshes.set(key, sm);
       }
       sm.nodes = grp.nodes;
@@ -273,7 +274,7 @@ export function createInstancedNodes(
     // Force a position sync on the next painted frame too (positions captured
     // here may be pre-hydration on a fresh structural swap).
     gate.markDirty();
-    getIdleController(graph)?.wakeForRefresh();
+    wakeInstancedRefresh(graph);
   }
 
   // Update only the translation columns from the live sim positions (the hot
@@ -317,16 +318,14 @@ export function createInstancedNodes(
       rebuild();
     } else {
       gate.detach();
-      for (const sm of meshes.values()) disposeStyleMesh(sm);
-      meshes.clear();
-      getIdleController(graph)?.wakeForRefresh();
+      disposeMapValues(meshes, disposeStyleMesh);
+      wakeInstancedRefresh(graph);
     }
   }
 
   function dispose(): void {
     gate.detach();
-    for (const sm of meshes.values()) disposeStyleMesh(sm);
-    meshes.clear();
+    disposeMapValues(meshes, disposeStyleMesh);
     quad.dispose();
   }
 
