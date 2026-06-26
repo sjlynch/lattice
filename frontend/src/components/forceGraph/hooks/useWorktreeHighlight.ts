@@ -5,7 +5,13 @@ import { taskColor } from '../../../taskColors';
 import { setChangeRingsSuppressed, setNodeChangeRingsVisible } from '../changeRing';
 import type { GraphSettings } from '../graphSettings';
 import { getIdleController } from '../idleController';
-import { baseSizeFor, mountedNodes, mountedRoot } from '../mountedNodes';
+import {
+  baseSizeFor,
+  mountedNodes,
+  mountedNodesById,
+  mountedRoot,
+  type MountedNode,
+} from '../mountedNodes';
 import { setNodeWorktreeRing } from '../worktreeRing';
 import { momentaryLetterMode, useHoldKeyMode } from './useHoldKeyMode';
 
@@ -61,8 +67,13 @@ export function useWorktreeHighlight(
       appliedRef.current.clear();
       return;
     }
-    for (const node of mountedNodes(graph)) {
-      if (typeof node.id !== 'string' || !appliedRef.current.has(node.id)) continue;
+    // Strip only the previously-ringed ids, resolving each through one
+    // id→node index, instead of scanning every mounted node to test
+    // membership of the (usually small) applied set.
+    const byId = mountedNodesById(graph);
+    for (const id of appliedRef.current) {
+      const node = byId.get(id);
+      if (!node) continue;
       const root = mountedRoot(node);
       if (root) setNodeWorktreeRing(root, false, '', 0);
     }
@@ -76,23 +87,31 @@ export function useWorktreeHighlight(
       if (!graph) return;
       const settings = settingsRef.current;
       const next = new Set<string>();
-      for (const node of mountedNodes(graph)) {
-        if (typeof node.id !== 'string' || typeof node.path !== 'string') continue;
-        const color = pathColors.get(normalizePath(node.path));
-        const root = mountedRoot(node);
-        if (!root) continue;
-        if (color) {
-          setNodeWorktreeRing(root, true, color, baseSizeFor(node, settings));
-          next.add(node.id);
-        }
-      }
-      // Strip any previously-ringed node that's no longer in the set.
+      // Single pass over every mounted node: ring the matching files into
+      // `next` and, in the same walk, index each node by id so the strip
+      // phase can reach previously-ringed nodes without a second full scan.
+      // Mirrors the incremental diff in selectionHaloSync.ts — O(N) + O(applied)
+      // rather than the old O(2N).
+      const byId = new Map<string, MountedNode>();
       for (const node of mountedNodes(graph)) {
         if (typeof node.id !== 'string') continue;
-        if (appliedRef.current.has(node.id) && !next.has(node.id)) {
-          const root = mountedRoot(node);
-          if (root) setNodeWorktreeRing(root, false, '', 0);
-        }
+        byId.set(node.id, node);
+        if (typeof node.path !== 'string') continue;
+        const color = pathColors.get(normalizePath(node.path));
+        if (!color) continue;
+        const root = mountedRoot(node);
+        if (!root) continue;
+        setNodeWorktreeRing(root, true, color, baseSizeFor(node, settings));
+        next.add(node.id);
+      }
+      // Strip any previously-ringed node no longer in the set — work is
+      // proportional to the previous set (prev minus next), not the whole graph.
+      for (const id of appliedRef.current) {
+        if (next.has(id)) continue;
+        const node = byId.get(id);
+        if (!node) continue;
+        const root = mountedRoot(node);
+        if (root) setNodeWorktreeRing(root, false, '', 0);
       }
       appliedRef.current = next;
       getIdleController(graph)?.wakeForRefresh();
