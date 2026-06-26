@@ -38,7 +38,8 @@ test('finalizeResolvedTask backs off when the per-task merge lock is held', asyn
   // Simulate the merge-run worker (processTarget / tryFinalizeAfterResolver-
   // Finished) — or a concurrent /complete fire — already holding the lock and
   // running mergeWorktreeInRepo in the worktree.
-  assert.equal(tryAcquire(task.id), true);
+  const lock = tryAcquire(task.id);
+  assert.notEqual(lock, null);
   try {
     const result = await finalizeResolvedTask(task, ORIGIN, 'complete');
     // It must NOT run a second git merge in the same worktree; it reports the
@@ -47,7 +48,7 @@ test('finalizeResolvedTask backs off when the per-task merge lock is held', asyn
     // And it must not have released the lock it never acquired.
     assert.equal(isLocked(task.id), true);
   } finally {
-    release(task.id);
+    release(lock!);
   }
   assert.equal(isLocked(task.id), false);
 });

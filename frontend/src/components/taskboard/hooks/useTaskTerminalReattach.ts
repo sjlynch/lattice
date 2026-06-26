@@ -5,6 +5,8 @@ import { shortLabel } from '../lanes';
 
 type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
 
+export const TASK_TERMINAL_REATTACH_RETRY_DELAYS_MS = [250, 500, 1000, 2000];
+
 // Normalize a path for comparison: forward slashes, no trailing slash,
 // lower-case (Windows paths are case-insensitive).
 function normalizePath(p: string): string {
@@ -49,21 +51,40 @@ export function useTaskTerminalReattach(
       (t) => t.status === 'in_progress' && !!t.worktreePath,
     );
     // Tasks may not have loaded on the first render — wait for them before
-    // claiming the one-shot (the guard is set only once there is work).
+    // starting the one-shot reattach attempt.
     if (inProgress.length === 0) return;
-    reattachedFor.current = activeFolder;
 
-    void (async () => {
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleRetry = (attempt: number) => {
+      if (cancelled || activeFolderRef.current !== activeFolder) return;
+      const delay = TASK_TERMINAL_REATTACH_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined) {
+        // Bounded backoff exhausted: consider the one-shot complete for this
+        // folder so every task-list update does not poll /api/terminals forever.
+        reattachedFor.current = activeFolder;
+        return;
+      }
+      retryTimer = setTimeout(() => {
+        void attemptReattach(attempt + 1);
+      }, delay);
+    };
+
+    const attemptReattach = async (attempt: number) => {
       let sessions: Array<{ id: string; cwd: string }>;
       try {
         const r = await fetch('/api/terminals');
-        if (!r.ok) return;
-        sessions = await r.json();
+        if (!r.ok) throw new Error(`terminal list failed: ${r.status}`);
+        const parsed = await r.json();
+        if (!Array.isArray(parsed)) throw new Error('terminal list was not an array');
+        sessions = parsed as Array<{ id: string; cwd: string }>;
       } catch {
+        scheduleRetry(attempt);
         return;
       }
       // The user switched projects while we were fetching — drop the result.
-      if (activeFolderRef.current !== activeFolder) return;
+      if (cancelled || activeFolderRef.current !== activeFolder) return;
 
       const mounted = terminalsRef.current;
       const mountedTaskIds = new Set(
@@ -72,6 +93,7 @@ export function useTaskTerminalReattach(
       const mountedServerIds = new Set(
         mounted.map((t) => t.serverId).filter(Boolean),
       );
+      let missingSession = false;
 
       for (const task of inProgress) {
         if (mountedTaskIds.has(task.id)) continue;
@@ -79,7 +101,10 @@ export function useTaskTerminalReattach(
         const session = sessions.find(
           (s) => normalizePath(s.cwd) === wt && !mountedServerIds.has(s.id),
         );
-        if (!session) continue;
+        if (!session) {
+          missingSession = true;
+          continue;
+        }
         // No initialCommand — the pty is already running; the spec attaches
         // to the live session by serverId and replays its buffer.
         addTerminal(
@@ -92,8 +117,26 @@ export function useTaskTerminalReattach(
           },
           false,
         );
+        mountedTaskIds.add(task.id);
         mountedServerIds.add(session.id);
       }
-    })();
+
+      if (missingSession) {
+        scheduleRetry(attempt);
+        return;
+      }
+      // Claim the guard only after a successful /api/terminals response (and
+      // after any no-session startup race has either resolved or exhausted the
+      // bounded retry above). Transient HTTP/JSON failures therefore do not
+      // permanently suppress reattach for this project.
+      reattachedFor.current = activeFolder;
+    };
+
+    void attemptReattach(0);
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [activeFolder, tasks, addTerminal]);
 }

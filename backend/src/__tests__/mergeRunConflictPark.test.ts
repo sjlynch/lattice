@@ -15,7 +15,8 @@ import { tryAcquire, release, isLocked } from '../mergeLocks.js';
 // it), so the resolver session never closed.
 //
 // parkOnConflictResolver must drop the lock before waiting (registering the
-// waiter first, synchronously, so a racing signal can't be missed).
+// waiter first, synchronously, so a racing signal can't be missed) and the
+// worker must not later release a lock it no longer owns.
 
 async function nextTick(): Promise<void> {
   await Promise.resolve();
@@ -26,10 +27,11 @@ test('parkOnConflictResolver releases the per-task merge lock before waiting', a
   const taskId = `t_park_release_${Date.now()}`;
 
   // The worker holds the lock through the git merge that produced the conflict.
-  assert.equal(tryAcquire(taskId), true);
+  const workerLock = tryAcquire(taskId);
+  assert.notEqual(workerLock, null);
 
   let resumed = false;
-  const parked = parkOnConflictResolver(state, 'run-park', taskId).then(() => {
+  const parked = parkOnConflictResolver(state, 'run-park', workerLock!).then(() => {
     resumed = true;
   });
   // registerConflictWaiter + release run synchronously before the await, so the
@@ -40,14 +42,29 @@ test('parkOnConflictResolver releases the per-task merge lock before waiting', a
   assert.equal(isLocked(taskId), false, 'lock must be released before parking');
   assert.equal(resumed, false, 'worker must still be parked until signalled');
 
-  // Mirror the resolver finalize: it can acquire the lock (it could not before
-  // the fix), then signals the same task id, which resumes the worker.
-  assert.equal(tryAcquire(taskId), true, 'finalizer can acquire the freed lock');
-  release(taskId);
+  // Mirror production ordering in finalizeResolvedTask: the finalizer acquires
+  // the lock, performs the git work, signals the waiter while it still owns the
+  // lock, then releases in its finally. A second caller must not be able to
+  // acquire until that finalizer release happens.
+  const finalizerLock = tryAcquire(taskId);
+  assert.notEqual(finalizerLock, null, 'finalizer can acquire the freed lock');
   assert.equal(signalConflictWaiterInState(state, taskId), true);
+  assert.equal(
+    tryAcquire(taskId),
+    null,
+    'no second acquire is possible until the finalizer releases',
+  );
+  assert.equal(
+    release(workerLock!),
+    false,
+    'a stale worker token must not clear the finalizer-owned lock',
+  );
+  assert.equal(isLocked(taskId), true);
+  release(finalizerLock!);
 
   await parked;
   assert.equal(resumed, true, 'signalled worker resumes');
+  assert.equal(isLocked(taskId), false);
 });
 
 test('parkOnConflictResolver still resumes when /complete signals before the await settles', async () => {
@@ -56,8 +73,9 @@ test('parkOnConflictResolver still resumes when /complete signals before the awa
   const state = createRunState();
   const taskId = `t_park_race_${Date.now()}`;
 
-  assert.equal(tryAcquire(taskId), true);
-  const parked = parkOnConflictResolver(state, 'run-race', taskId);
+  const workerLock = tryAcquire(taskId);
+  assert.notEqual(workerLock, null);
+  const parked = parkOnConflictResolver(state, 'run-race', workerLock!);
   // Signal immediately — before yielding back to the parked await.
   assert.equal(isLocked(taskId), false);
   assert.equal(signalConflictWaiterInState(state, taskId), true);

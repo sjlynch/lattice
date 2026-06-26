@@ -4,7 +4,7 @@ Components behind the Tasks button. `TaskBoard.tsx` (parent dir) is a re-export 
 
 ## Modules
 
-- `TaskBoardLauncher.tsx` — top-level component that owns panel-only UI state and wires taskboard hooks to JSX.
+- `TaskBoardLauncher.tsx` — top-level component that owns panel-only UI state and renders the FloatingPanel/chrome; taskboard hook composition lives in `hooks/useTaskBoardController.ts`.
 - `TaskBoardTitle.tsx` — FloatingPanel titlebar: title label + case-insensitive search box (Escape / ✕ clear).
 - `TaskBoardFooter.tsx` — footer summary line: total/matching count, running-vs-queued spawn-queue indicator, interaction hints.
 - `TaskBoardFilters.tsx` — lane visibility chips plus the task harness selector.
@@ -19,10 +19,12 @@ Components behind the Tasks button. `TaskBoard.tsx` (parent dir) is a re-export 
 - `StuckPill.tsx` — "stuck Nm" surfaced after a conflict resolver runs > 3 min.
 - `lanes.ts` — `LANES` array, `LANE_BY_ID` map, `DRAG_MIME` constant, `shortLabel()`, `parseDragPayload()`.
 - `laneSort.ts` — per-lane arrival-date sort: `LaneSortMode` (`recent`/`oldest`/`manual`, default `recent`), `arrivalTime(task, status)` (the lane-specific arrival stamp — startedAt/completedAt/mergedAt/doneAt, else createdAt), and `sortTasksForLane()`. Drives the lane header's clock + up/down caret control.
+- `hooks/useTaskBoardController.ts` — top-level controller hook that composes task/merge/push/QA/post-merge/harness/search/lane-sort/selection/terminal concerns and returns the handlers/data the launcher renders.
 - `hooks/useTaskBoardState.ts` — combines task-list syncing, lane grouping/sorting, active counts, and multi-selection.
 - `hooks/useTaskSearch.ts` — search box state + case-insensitive title/description filtering; derives `filteredTasks`/`filteredGrouped` and the `searchActive` flag that gates lane run-all.
 - `hooks/useVisibleLanes.ts` — lane visibility toggle set (all visible by default).
 - `hooks/useLaneSort.ts` — per-lane `LaneSortMode` state (default `recent` = newest arrival on top), persisted per project under `lattice.laneSort.<path>`. `toggle` flips recent↔oldest; `setManual` is called when a card is dropped at an explicit slot so hand-ordering wins until the clock is clicked again.
+- `hooks/useTaskList.ts` — fetches/subscribes to project tasks and returns an empty guarded list while switching folders until the new project's fetch/WS snapshot arrives, preventing stale cards from staying actionable under another project.
 - `hooks/useTaskTerminalFocus.ts` — task→pty focus map (`getFocusTerminal`) plus a serverId-based focuser for the post-merge hook row.
 - `hooks/useTaskTerminalCleanup.ts` — closes task terminals on lifecycle transitions (terminal statuses and ready-to-merge non-merge cleanup).
 - `hooks/useSyncedViewedTask.ts` — keeps the task detail overlay's viewed task object fresh with live task-list updates.
@@ -34,6 +36,7 @@ Components behind the Tasks button. `TaskBoard.tsx` (parent dir) is a re-export 
 - `hooks/useQaPlaywright.ts` — the QA-lane Playwright MCP toggle (`userSettings.qaPlaywright`: enabled + headless). QA-e2e-runs-only — separate from the *global* `mcpOverrides.playwright` toggle in Settings → MCP. The backend reads it at spawn and applies it only to QA runs (`isQaRun`); `headless` is the eye-switch ("watch it test").
 - `hooks/useQaRuns.ts` — QA-lane "run an e2e test" actions (`startQaRun`/`startAllQaRuns`), gated on `useQaPlaywright().enabled`. Each spawns a Playwright Claude session via `POST /api/qa-runs` in its own terminal tab and polls `/api/qa-runs/:id` to auto-close on done. The terminal carries **no** `taskId` (the task is in the `qa` lane; `useTaskTerminalCleanup` would otherwise close it instantly), so runs are tracked here by terminal id.
 - `hooks/useLaneDropTargets.ts` — `isOver` + `hoverIndex` state, lane-background `onDragOver/onDragLeave/onDrop`, and `slotProps(idx)` factory used by `Lane.tsx`. Lane-background drops do status-only moves; slot drops set both status and position.
+- `hooks/useTaskTerminalReattach.ts` — reattaches live but unmounted in-progress task ptys from `/api/terminals`; transient terminal-list failures and no-session startup races retry with bounded backoff before the per-project one-shot is claimed.
 
 ## Styles
 

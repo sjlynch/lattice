@@ -8,16 +8,24 @@
 // for our single-backend topology — and is released even if the caller
 // throws.
 
-const inFlight = new Set<string>();
+export type MergeLockToken = {
+  readonly taskId: string;
+  readonly owner: symbol;
+};
 
-export function tryAcquire(taskId: string): boolean {
-  if (inFlight.has(taskId)) return false;
-  inFlight.add(taskId);
-  return true;
+const inFlight = new Map<string, symbol>();
+
+export function tryAcquire(taskId: string): MergeLockToken | null {
+  if (inFlight.has(taskId)) return null;
+  const owner = Symbol(taskId);
+  inFlight.set(taskId, owner);
+  return { taskId, owner };
 }
 
-export function release(taskId: string): void {
-  inFlight.delete(taskId);
+export function release(token: MergeLockToken): boolean {
+  if (inFlight.get(token.taskId) !== token.owner) return false;
+  inFlight.delete(token.taskId);
+  return true;
 }
 
 export function isLocked(taskId: string): boolean {

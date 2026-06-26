@@ -8,11 +8,12 @@ export async function withManualMergeLock<T>(
   taskId: string,
   callback: () => Promise<T>,
 ): Promise<ManualMergeLockResult<T>> {
-  if (!tryAcquire(taskId)) return { acquired: false };
+  const lock = tryAcquire(taskId);
+  if (!lock) return { acquired: false };
 
   try {
     return { acquired: true, value: await callback() };
   } finally {
-    release(taskId);
+    release(lock);
   }
 }
