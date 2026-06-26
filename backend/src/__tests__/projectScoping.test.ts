@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { partitionByProject } from '../routes/tasks/crudHandlers.js';
+import {
+  classifyUpsertTarget,
+  partitionByProject,
+} from '../routes/tasks/crudHandlers.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import type { Task } from '../tasks.js';
 
@@ -58,4 +61,40 @@ test('partitionByProject: case-different drive letters do not count as foreign',
   );
   assert.equal(safe.length, 1);
   assert.equal(foreign.length, 0);
+});
+
+// ---------- classifyUpsertTarget ----------
+//
+// The project-scoping guard for POST /api/tasks/upsert?project=X. `updateTask`
+// resolves an id across EVERY known project, so before the guard an upsert
+// against B containing a {id=...} that actually belongs to A would mutate A's
+// task — pasting a round-trip markdown doc from one project into another's
+// upsert endpoint silently corrupted the wrong project. The guard fetches the
+// existing task and compares canonical project paths, treating a foreign id as
+// 'foreign' (reported, never updated) so /upsert only ever touches its own
+// project's tasks.
+
+test("classifyUpsertTarget: another project's task id is foreign, never updated", () => {
+  // Upsert is scoped to project B (react-chorus); the pasted doc carried
+  // project A's (ody/rewrite) task id. It must NOT be updated — A stays
+  // untouched and the id is reported as foreign.
+  const aTask = task('t_from_A', ODY);
+  assert.equal(classifyUpsertTarget(aTask, canonicalProjectPath(RC)), 'foreign');
+});
+
+test('classifyUpsertTarget: an unknown id anywhere is missing', () => {
+  assert.equal(classifyUpsertTarget(null, canonicalProjectPath(RC)), 'missing');
+  assert.equal(classifyUpsertTarget(undefined, canonicalProjectPath(RC)), 'missing');
+});
+
+test('classifyUpsertTarget: an id in the same project is updatable', () => {
+  const bTask = task('t_in_B', RC);
+  assert.equal(classifyUpsertTarget(bTask, canonicalProjectPath(RC)), 'update');
+});
+
+test('classifyUpsertTarget: same project via case-different drive still updates', () => {
+  // Canonicalization must run on both sides so a lowercase-drive stored path
+  // isn't misread as foreign (which would wrongly skip a legitimate update).
+  const lowered = task('t_in_B', 'c:\\development\\react-chorus');
+  assert.equal(classifyUpsertTarget(lowered, canonicalProjectPath(RC)), 'update');
 });
