@@ -91,9 +91,39 @@ label physics in `labelPhysics/CLAUDE.md`.
 **Settings, physics, misc**
 - `graphSettings.ts` — `GraphSettings`/`DEFAULT_SETTINGS`/`loadSettings`; perf
   fields `chargeTheta`/`repulsionMode`/`linkWidth`/`batchedLinks`/`batchedNodes`/
-  `pixelRatio` (layout CPU `forceManyBody` and orbit CPU draw-calls+fill differ).
+  `pixelRatio` (layout CPU `forceManyBody` and orbit CPU draw-calls+fill differ);
+  "Spread" tab fields `alphaDecay`/`warmupTicks`/`collideRadius` (neutral/off by
+  default) + `tidyLayoutOnLoad`/`tidySpread` (the radial untangle below — **on by
+  default**).
 - `localRepulsionForce.ts` — O(N) linked-cell `charge` for `repulsionMode==='local'`.
+  `layoutShapeForces.ts` — `forceCollideXZ`, the optional, off-by-default X/Z-plane
+  "Spread" force giving even, non-overlapping node spacing. Fades with `alpha`
+  (settle contract) and skips Y (pinned by the DAG). Registered by
+  `hooks/useGraphSettings`' `useLayoutShapeSettings` (with `alphaDecay`/`warmupTicks`)
+  only while `collideRadius > 0`.
+- `radialTidyLayout.ts` (`computeRadialTidyLayout`/`tidyRingStep`, pure/tested) +
+  `hooks/useRadialTidyLayout` — the **on-load untangler**. The scan is a
+  containment *tree*; the library's default phyllotaxis-spiral seed ignores it and
+  the engine settles sibling subtrees into a tangled "cord nest". Instead we seed
+  each node at its **radial tidy-tree** position — every subtree gets its own
+  angular wedge (sized by leaf count), radius growing with directory depth — so
+  sibling wedges never overlap and the seed is effectively planar (≈0 link
+  crossings). The engine then settles *from* the seed: radially-symmetric forces
+  preserve the angular separation while the global charge declumps each directory's
+  file cluster into 2D area. `tidyRingStep` is adaptive (`≈ sqrt(N)*linkDistance /
+  maxDepth`, floored at `dagLevelDistance`) so the seed lands at ~half the
+  force-directed natural radius — compact enough that the engine expands *outward*
+  from it (which declumps) rather than contracting (which freezes clumps). Runs
+  once per project on first data populate (guarded against file-save re-scans) and
+  on demand via the Spread tab's "Untangle now" button. **Apply + reheat are
+  atomic** in one deferred macrotask: on load the engine is still hot from the
+  data-load reheat, so writing the seed and leaving the reheat for a later frame
+  lets the strong center repulsion scatter the crowded shallow nodes before they
+  settle — re-tangling. Measured ~5–6× fewer X/Z link crossings than the raw
+  library seed. On unless `tidyLayoutOnLoad` is off.
   `sceneSetup.ts` — camera/OrbitControls lock + resize observer + `applyRenderPixelRatio`.
+  `cameraState.ts` — pure load/save/read of the persisted camera view (used by
+  `hooks/useCameraPersistence`).
   `depthMap` + `useNodeDepthCache` — Alt-label depth bands; `menu.ts` /
   `renderOrders.ts` — right-click items / z-layer constants.
 
@@ -149,4 +179,7 @@ render-vs-physics splits, the Escape chord). See `hooks/CLAUDE.md`.
 ## Camera
 
 `up = (0,1,0)`; polar clamped to `[0, 0.75π]`; OrbitControls (not Trackball);
-`dagMode = 'td'`. Configured in `sceneSetup.configureCameraControls`.
+`dagMode = 'td'`. Configured in `sceneSetup.configureCameraControls`. The view
+(position + orbit target — `up` is locked so those two fully determine it) is
+persisted per project and restored across refresh/project switch by
+`hooks/useCameraPersistence` (load/save/read in `cameraState.ts`).

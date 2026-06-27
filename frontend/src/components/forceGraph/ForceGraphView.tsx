@@ -22,6 +22,8 @@ import { useBatchedLinks } from './hooks/useBatchedLinks';
 import { useInstancedNodes } from './hooks/useInstancedNodes';
 import { useNodeDragBehavior } from './hooks/useNodeDragBehavior';
 import { useForceGraphInitialization } from './hooks/useForceGraphInitialization';
+import { useCameraPersistence } from './hooks/useCameraPersistence';
+import { useRadialTidyLayout } from './hooks/useRadialTidyLayout';
 import { useGraphCounts } from './hooks/useGraphCounts';
 import { useGraphDataSync } from './hooks/useGraphDataSync';
 import { useGraphOverlays } from './hooks/useGraphOverlays';
@@ -274,6 +276,10 @@ export function ForceGraphView({
     onHoverNodeChange: debouncedSetHoverNode,
   });
 
+  // Save the camera position/orbit target per project and restore it on mount /
+  // project switch, so a page refresh keeps the user's vantage point.
+  useCameraPersistence(graphRef, activeFolder);
+
   // True while a recolor view (health/loc/dead) is showing. These views pare the
   // graph down to the metric signal — hiding ghost nodes + metrics-ignored files
   // and suppressing change-rings — so the batched-link buffer must re-capture
@@ -295,6 +301,17 @@ export function ForceGraphView({
     locModeRef,
     deadModeRef,
   });
+
+  // Radial tidy-tree untangle: on first load (and via the Spread tab's "Untangle
+  // now" button) seed each subtree into its own angular wedge so sibling
+  // subtrees don't tangle, then let the physics settle from that seed. On by
+  // default. Placed after the data sync so the nodes are in the sim.
+  const runLayout = useRadialTidyLayout(
+    graphRef,
+    structuralData,
+    settingsRef,
+    activeFolder,
+  );
 
   // Batched link rendering: collapse the library's per-link Line objects into a
   // single LineSegments so orbiting a settled graph isn't E extra draw calls per
@@ -509,6 +526,7 @@ export function ForceGraphView({
           settings,
           onChange: setSettings,
           project: activeFolder,
+          onRunLayout: runLayout,
         },
       }}
     />

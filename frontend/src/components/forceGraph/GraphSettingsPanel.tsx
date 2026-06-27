@@ -9,10 +9,11 @@ import {
 // Horizontal tabs replacing the old flat section dividers — one group of
 // controls visible at a time so the panel can't grow taller than the viewport
 // (paired with the body's max-height/overflow guard in graph.css).
-type TabKey = 'sizes' | 'physics' | 'rendering';
+type TabKey = 'sizes' | 'physics' | 'spread' | 'rendering';
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'sizes', label: 'Sizes' },
   { key: 'physics', label: 'Physics' },
+  { key: 'spread', label: 'Spread' },
   { key: 'rendering', label: 'Rendering' },
 ];
 
@@ -74,6 +75,51 @@ const PHYSICS_ROWS: SliderRow[] = [
   },
 ];
 
+// The "Spread" tab — how open the layout settles and what shape it takes. These
+// engine-cooling/collision knobs default to neutral (no change to the
+// out-of-the-box settle); see the field docs in graphSettings.ts.
+const SPREAD_ROWS: SliderRow[] = [
+  {
+    key: 'alphaDecay',
+    label: 'Settle rate (α decay)',
+    min: 0.005,
+    max: 0.06,
+    step: 0.001,
+    format: (v) =>
+      `${v.toFixed(3)}${v <= 0.012 ? ' (more spread)' : v >= 0.04 ? ' (tight)' : ''}`,
+  },
+  {
+    key: 'warmupTicks',
+    label: 'Pre-settle ticks',
+    min: 0,
+    max: 200,
+    step: 5,
+    format: (v) => (v === 0 ? 'off' : `${v} ticks`),
+  },
+  {
+    key: 'collideRadius',
+    label: 'Node spacing',
+    min: 0,
+    max: 60,
+    step: 1,
+    format: (v) => (v === 0 ? 'off' : String(v)),
+  },
+];
+
+// The radial tidy-tree untangle (Spread tab). One slider — how wide the seed
+// rings are; the "Untangle now" button below re-applies it with the current
+// values. Whether it runs automatically on load is the toggle beneath.
+const TIDY_ROWS: SliderRow[] = [
+  {
+    key: 'tidySpread',
+    label: 'Radial spread',
+    min: 0.3,
+    max: 2.5,
+    step: 0.05,
+    format: (v) => `${v.toFixed(2)}×${v === 1 ? ' (auto)' : ''}`,
+  },
+];
+
 // Only meaningful in n-body mode; shown right under the mode toggle.
 const THETA_ROW: SliderRow = {
   key: 'chargeTheta',
@@ -124,6 +170,20 @@ const NODE_MODES: { value: boolean; label: string; hint: string }[] = [
     value: true,
     label: 'Batched (fast)',
     hint: 'instanced shapes — ~1 draw call per file type when orbiting (default)',
+  },
+];
+
+// Whether the radial tidy-tree untangle runs automatically on each load.
+const TIDY_ONLOAD_MODES: { value: boolean; label: string; hint: string }[] = [
+  {
+    value: true,
+    label: 'On load',
+    hint: 'untangle into a radial tidy tree each time the project loads (default)',
+  },
+  {
+    value: false,
+    label: 'Off',
+    hint: "keep the library's raw seed; use the button below to untangle on demand",
   },
 ];
 
@@ -189,11 +249,14 @@ export const GraphSettingsPanel = memo(function GraphSettingsPanel({
   onChange,
   onClose,
   project,
+  onRunLayout,
 }: {
   settings: GraphSettings;
   onChange: (next: GraphSettings) => void;
   onClose: () => void;
   project: string;
+  // Imperatively re-apply the radial tidy-tree untangle with the current settings.
+  onRunLayout?: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<TabKey>(() => loadActiveTab(project));
 
@@ -221,6 +284,9 @@ export const GraphSettingsPanel = memo(function GraphSettingsPanel({
 
   const setMetricLabels = (on: boolean) =>
     onChange({ ...settings, metricLabels: on });
+
+  const setTidyLayoutOnLoad = (on: boolean) =>
+    onChange({ ...settings, tidyLayoutOnLoad: on });
 
   const renderRow = (row: SliderRow) => {
     const v = settings[row.key];
@@ -307,6 +373,31 @@ export const GraphSettingsPanel = memo(function GraphSettingsPanel({
               onSelect={setMode}
             />
             {settings.repulsionMode === 'nbody' && renderRow(THETA_ROW)}
+          </>
+        )}
+
+        {activeTab === 'spread' && (
+          <>
+            <ToggleGroupRow
+              label="Untangle (radial tidy tree)"
+              ariaLabel="Untangle on load"
+              options={TIDY_ONLOAD_MODES}
+              value={settings.tidyLayoutOnLoad}
+              onSelect={setTidyLayoutOnLoad}
+            />
+            {TIDY_ROWS.map(renderRow)}
+            <div className="graph-settings-row">
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => onRunLayout?.()}
+                title="Re-seed the graph as a radial tidy tree and settle"
+              >
+                Untangle now
+              </button>
+            </div>
+
+            {SPREAD_ROWS.map(renderRow)}
           </>
         )}
 

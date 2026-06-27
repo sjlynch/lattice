@@ -3,6 +3,7 @@ import type { ForceGraph3DInstance } from '3d-force-graph';
 import { loadSettings, type GraphSettings } from '../graphSettings';
 import { getIdleController } from '../idleController';
 import { forceLocalRepulsion, type LocalRepulsionForce } from '../localRepulsionForce';
+import { forceCollideXZ, type CollideForceXZ } from '../layoutShapeForces';
 import { applyRenderPixelRatio } from '../sceneSetup';
 import { clearLabelsAndRefresh } from './refresh';
 
@@ -209,6 +210,68 @@ function usePhysicsAndRepulsionSettings(
   ]);
 }
 
+type LayoutShapeSettings = Pick<
+  GraphSettings,
+  'alphaDecay' | 'warmupTicks' | 'collideRadius'
+>;
+
+function useLayoutShapeSettings(
+  settings: LayoutShapeSettings,
+  graphRef: GraphRef,
+): void {
+  // The "Spread" tab: engine-cooling knobs (alphaDecay/warmupTicks) plus two
+  // optional X/Z-plane forces (collision spacing + radial shell). Mirrors the
+  // physics effect's shape — push values on *every* run (so a persisted
+  // non-default isn't left at the d3/library default after a reload) but only
+  // reheat on an actual change to a populated graph.
+  //
+  // The collide force is lazily created, kept across toggles, and registered
+  // under its own simulation slot ('collide') only while its radius is non-zero
+  // — removed (`d3Force(name, null)`) when off — so it costs nothing in a
+  // default layout.
+  const collideForceRef = useRef<CollideForceXZ | null>(null);
+  const appliedRef = useRef<LayoutShapeSettings>(settings);
+
+  useEffect(() => {
+    const g = graphRef.current;
+    if (!g) return;
+
+    g.d3AlphaDecay(settings.alphaDecay);
+    g.warmupTicks(settings.warmupTicks);
+
+    const d3Force = g.d3Force as unknown as (
+      name: string,
+      force?: unknown,
+    ) => unknown;
+
+    if (settings.collideRadius > 0) {
+      if (!collideForceRef.current) collideForceRef.current = forceCollideXZ();
+      collideForceRef.current.radius(settings.collideRadius);
+      if (d3Force('collide') !== collideForceRef.current) {
+        d3Force('collide', collideForceRef.current);
+      }
+    } else if (d3Force('collide')) {
+      d3Force('collide', null);
+    }
+
+    const prev = appliedRef.current;
+    const changed =
+      prev.alphaDecay !== settings.alphaDecay ||
+      prev.warmupTicks !== settings.warmupTicks ||
+      prev.collideRadius !== settings.collideRadius;
+    appliedRef.current = settings;
+    if (!changed || !hasMountedNodes(g)) return;
+
+    const timer = setTimeout(() => {
+      if (graphRef.current === g) {
+        g.d3ReheatSimulation();
+        getIdleController(g)?.engineStarted();
+      }
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [settings.alphaDecay, settings.warmupTicks, settings.collideRadius, graphRef]);
+}
+
 function useRenderPixelRatioSetting(
   settings: Pick<GraphSettings, 'pixelRatio'>,
   graphRef: GraphRef,
@@ -272,6 +335,7 @@ export function useGraphSettings(
   // minDist takes effect on the next frame after the slider moves.
 
   usePhysicsAndRepulsionSettings(settings, graphRef);
+  useLayoutShapeSettings(settings, graphRef);
   useRenderPixelRatioSetting(settings, graphRef);
   useLinkWidthSetting(settings, graphRef);
 

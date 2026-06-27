@@ -6,8 +6,9 @@
 //             default. `chargeTheta` tunes its accuracy/cost.
 //   'local' — an O(N) tree-aware grid repulsion (`localRepulsionForce.ts`):
 //             dramatically cheaper per tick because the file graph is a
-//             containment tree, so global n-body is overkill. Opt-in while the
-//             layout aesthetics are evaluated; flip the default once happy.
+//             containment tree, so global n-body is overkill. **Now the
+//             default** — measured dramatically cheaper with comparable layout
+//             aesthetics.
 export type RepulsionMode = 'nbody' | 'local';
 
 export type GraphSettings = {
@@ -57,6 +58,35 @@ export type GraphSettings = {
   // measured file node sprouts its connector + number again. Affects only the
   // metric overlays — the Alt name-label overlay is unrelated.
   metricLabels: boolean;
+  // --- "Spread / layout shape" knobs (the settings panel's Spread tab) ---
+  //
+  // d3 simulation alpha-decay rate. Lower = the engine runs more ticks before
+  // it freezes, so repulsion has longer to relax the graph into a wider, more
+  // open layout; higher freezes sooner (tighter/clumpier). d3's default is
+  // 0.0228; we default a touch lower (0.014) for more spread. Applied live via
+  // `graph.d3AlphaDecay`; bounded by the cooldownTicks/cooldownTime/d3AlphaMin
+  // set at init.
+  alphaDecay: number;
+  // Physics ticks the engine runs BEFORE the first render (and before each
+  // reheat), so on page load the graph appears already settled/spread instead
+  // of visibly animating outward from the seeded clump. 0 = render from frame 1;
+  // we default to 15. High values briefly block the reheat while they run.
+  warmupTicks: number;
+  // Node-collision radius in the X/Z plane (world units). >0 installs
+  // `forceCollideXZ`, which keeps any two nodes ≥ ~2× this apart for even,
+  // non-overlapping spacing. 0 = off (no collision force).
+  collideRadius: number;
+  // --- Radial tidy-tree untangle (see hooks/useRadialTidyLayout) ---
+  // On page load, seed the graph as a radial tidy tree (each subtree in its own
+  // angular wedge, radius ∝ directory depth) so sibling subtrees don't tangle,
+  // then let the physics settle from that seed. Unlike the other Spread knobs
+  // this defaults ON — it's the fix for the "cord nest" load tangle. Turn off to
+  // keep the library's raw phyllotaxis seed.
+  tidyLayoutOnLoad: boolean;
+  // Multiplier on the auto-computed radial ring spacing (the "Radial spread"
+  // slider). 1 = the auto-tuned value (seed at ~half the force-directed natural
+  // radius); higher seeds wider, lower tighter. See `radialTidyLayout.tidyRingStep`.
+  tidySpread: number;
   // Renderer pixel-ratio cap ("Render scale"). The WebGL drawing buffer is sized
   // to `min(devicePixelRatio, pixelRatio)` — so values below the device ratio
   // render fewer pixels per frame (softer, but a large fill-rate saving). The big
@@ -77,13 +107,18 @@ export const DEFAULT_SETTINGS: GraphSettings = {
   labelSize: 3.0,
   labelSpread: 1.5,
   dagLevelDistance: 50,
-  chargeStrength: -30,
-  linkDistance: 30,
+  // Stronger repulsion + longer links than the library baseline (-30 / 30) for a
+  // wider, more open layout that reads better with the radial untangle below.
+  chargeStrength: -55,
+  linkDistance: 50,
   velocityDecay: 0.4,
   // ~3× cheaper n-body than d3's 0.9 default, with negligible visual change —
   // a safe across-the-board win for the "graph updating eats CPU" symptom.
+  // (Only applies in `repulsionMode: 'nbody'`; the default is now 'local'.)
   chargeTheta: 1.5,
-  repulsionMode: 'nbody',
+  // O(N) tree-aware repulsion by default — much cheaper per tick than global
+  // n-body on the containment-tree graph, with comparable spread.
+  repulsionMode: 'local',
   linkWidth: 0.7,
   // Default-on: collapse the per-frame node/link draw calls to a handful so
   // orbiting a large graph stays cheap out of the box. Picking, halos, rings,
@@ -95,6 +130,16 @@ export const DEFAULT_SETTINGS: GraphSettings = {
   // projects the per-node value labels overlap too much to read; opt in via the
   // graph settings panel when a sparser view makes them useful.
   metricLabels: false,
+  // Spread/shape knobs. A slower-than-d3 alpha decay (0.014 vs 0.0228) lets the
+  // engine run more ticks so it relaxes into a wider, more open layout, and a
+  // short warmup pre-settles it so it appears spread on load instead of visibly
+  // expanding. No collision by default. The radial tidy-tree untangle is ON by
+  // default (it's the cord-nest fix) at the auto spread.
+  alphaDecay: 0.014,
+  warmupTicks: 15,
+  collideRadius: 0,
+  tidyLayoutOnLoad: true,
+  tidySpread: 1,
   pixelRatio: 1.5,
 };
 

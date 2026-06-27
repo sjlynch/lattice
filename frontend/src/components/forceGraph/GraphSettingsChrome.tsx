@@ -8,6 +8,8 @@ type Props = {
   onChange: (next: GraphSettings) => void;
   // Active project — used by the panel for per-project tab persistence.
   project: string;
+  // Imperatively re-apply the radial tidy-tree untangle (Spread tab button).
+  onRunLayout?: () => void;
 };
 
 // The graph settings panel plus its bottom-right gear FAB. Owns the local
@@ -15,7 +17,12 @@ type Props = {
 // panel and the panel's close button / FAB closes it. Rendered as a sibling
 // fragment so the DOM order (panel before FAB) is unchanged from when this lived
 // inline in ForceGraphView.
-export function GraphSettingsChrome({ settings, onChange, project }: Props) {
+export function GraphSettingsChrome({
+  settings,
+  onChange,
+  project,
+  onRunLayout,
+}: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const toggleSettings = useCallback(() => setShowSettings((v) => !v), []);
   const closeSettings = useCallback(() => setShowSettings(false), []);
@@ -28,6 +35,7 @@ export function GraphSettingsChrome({ settings, onChange, project }: Props) {
           onChange={onChange}
           onClose={closeSettings}
           project={project}
+          onRunLayout={onRunLayout}
         />
       )}
 

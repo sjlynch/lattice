@@ -17,7 +17,7 @@ list, with feature-scoped stylesheets in `styles/` (see
 
 ## Per-project state keys
 
-- `localStorage`: `lattice.hiddenExts.<path>`, `lattice.graphSettings.<path>`, `lattice.graphSettingsTab.<path>`, `lattice.<panel>.window`.
+- `localStorage`: `lattice.hiddenExts.<path>`, `lattice.graphSettings.<path>`, `lattice.graphSettingsTab.<path>`, `lattice.graphCamera.<path>` (saved camera position + orbit target, restored on refresh/project switch), `lattice.<panel>.window`.
 - `sessionStorage`: `lattice.activeFolder`, `lattice.terminals` (both per-tab so multiple tabs each track their own project + terminal list independently).
 - Backend: `<project>/.lattice/userSettings.json` (sidebar width, harness).
 

@@ -11,6 +11,23 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
 - `useForceGraphInitialization` — mounts `ForceGraph3D` once; lifecycle wiring
   only (accessor closures delegate to `nodeObjectFactory`, scene/camera to
   `sceneSetup`). Sets the d3 cooldown bounds and wires the frame/motion drivers.
+- `useRadialTidyLayout` — the on-load untangler. Fires once per project on first
+  data populate (and on demand via the returned `runLayout`, wired to the Spread
+  tab's "Untangle now" button): seeds each node at its radial tidy-tree X/Z
+  (`../radialTidyLayout.computeRadialTidyLayout` — every subtree in its own angular
+  wedge sized by leaf count, radius ∝ directory depth) so sibling subtrees can't
+  tangle, then lets the engine settle from that seed. **Apply + reheat are atomic**
+  in one deferred macrotask (the defer dodges the first-reheat `state.layout` crash;
+  the atomicity stops the still-hot load engine from scattering the crowded shallow
+  nodes between write and reheat — which re-tangles). A per-project guard ref stops
+  file-save re-scans from re-seeding a graph the user has since arranged. Auto-run
+  gated on `tidyLayoutOnLoad` (on by default); the manual trigger always runs.
+- `useCameraPersistence` — persists the camera (position + orbit target) per
+  project to `localStorage` (`lattice.graphCamera.<path>`, debounced off the
+  OrbitControls `change` event via `../cameraState`) and re-aims it to the saved
+  view on mount / project switch, so a page refresh keeps the vantage point. The
+  library only auto-fits while the camera is at its construction default, so a
+  restored non-default view survives later data loads.
 - `useGraphDataSync` — pushes ScanResult + ghost history into `graphData`. A
   metric-only HealthUpdate (same node ids/links) takes the **fast-patch path**:
   fields are written onto the in-place sim nodes and `graph.refresh()` runs
@@ -79,8 +96,8 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
 
 `useGraphSettings` keeps its public `{ settings, setSettings, settingsRef }`
 shape but is internally split by concern: per-project persistence/ref mirroring,
-sprite/metric-label refresh, physics/repulsion application, pixel ratio, and link
-width.
+sprite/metric-label refresh, physics/repulsion application, layout-shape ("Spread"
+tab) forces, pixel ratio, and link width.
 
 Settings effects skip work on the initial mount and on an empty/unmounted graph
 (`nodeThreeObject` reads `settingsRef` live, so the data-sync build already uses
@@ -90,5 +107,10 @@ current values — a pre-population refresh/reheat is a byte-identical wake):
   `d3Force` + `d3ReheatSimulation`; the force pokes run on *every* run (incl.
   setup) so persisted non-defaults aren't left at d3 defaults. `repulsionMode`
   swaps `forceManyBody`↔`forceLocalRepulsion` only when the active force changes.
+- **Layout shape** (`alphaDecay`/`warmupTicks`/`collideRadius`) →
+  `useLayoutShapeSettings`: push `d3AlphaDecay`/`warmupTicks` every run;
+  install/remove the `forceCollideXZ` sim slot when its knob crosses 0; reheat on
+  change to a populated graph (same guard/defer as physics). All neutral by
+  default, so a default layout is untouched.
 - **`linkWidth`** / **`pixelRatio`** → render-only prop + `wakeForRefresh`, no
   reheat. `batchedLinks`/`batchedNodes` are owned by their hooks, not effects.
