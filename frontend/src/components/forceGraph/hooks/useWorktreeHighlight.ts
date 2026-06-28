@@ -42,6 +42,14 @@ export function useWorktreeHighlight(
   // Guards against a stale fetch (key released before it resolved) painting
   // rings after the fact.
   const activeRef = useRef(false);
+  // Bumped on every activation. A project switch while active runs cleanup
+  // (deactivate, activeRef → false) then immediately re-activates (activeRef →
+  // true) for the new folder, so the bare `activeRef` boolean can't tell a late
+  // fetch from the OLD project apart from the current activation — and that late
+  // fetch's paths miss the new graph, so its applyRings strips the new project's
+  // correct rings. Capture this id per activation and bail after the await if it
+  // moved on.
+  const runIdRef = useRef(0);
   // `held` tracks just the `W` key; the effective state is held OR pinned.
   const [held, setHeld] = useState(false);
 
@@ -122,6 +130,7 @@ export function useWorktreeHighlight(
   const activate = useCallback(async () => {
     if (activeRef.current || !activeFolder) return;
     activeRef.current = true;
+    const runId = ++runIdRef.current;
     // Suppress the git change-rings immediately (before the fetch resolves)
     // so the worktree rings are the only rings on screen while `W` is held.
     // Two parts: latch the suppression flag so any ring minted later (a full
@@ -131,7 +140,9 @@ export function useWorktreeHighlight(
     setChangeRingsVisible(false);
     try {
       const tasks = await fetchWorktreeModified(activeFolder);
-      if (!activeRef.current) return; // released while fetching
+      // Released while fetching, or a project switch re-activated for a different
+      // folder since this fetch began — either way these results are stale.
+      if (!activeRef.current || runIdRef.current !== runId) return;
       const pathColors = new Map<string, string>();
       for (const t of tasks) {
         const color = taskColor({ id: t.taskId, colorIndex: t.colorIndex });

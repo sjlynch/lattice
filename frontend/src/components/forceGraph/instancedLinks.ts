@@ -209,10 +209,19 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
       scene.add(lineSegments);
     }
     lineSegments.visible = true;
-    // Sync the rebuilt buffer directly so the new lines paint this frame; the
-    // gate's dirty flag is untouched (it's always clear here — only rebuild ever
-    // set it, and it cleared it again the same call).
+    // Sync the rebuilt buffer directly so the new lines paint this frame.
     syncPositions();
+    // Also force a sync on the next painted frame. On a fresh structural swap the
+    // links captured above can still be pre-hydration (string source/target), so
+    // the immediate syncPositions writes DEGENERATE (collapsed, invisible)
+    // segments — see writeLinkSegments. The engine reheat would normally re-sync
+    // them on its next motion tick, but a swap that reheats an already-settled
+    // graph (e.g. the git-history ghost merge ~1s after open) can consume its
+    // warmupTicks synchronously and produce no painted-frame motion, leaving the
+    // degenerate buffer drawn until a drag/refresh forces a re-sync. markDirty
+    // guarantees one post-hydration re-sync on the woken frame below. Mirrors
+    // instancedNodes.rebuild().
+    gate.markDirty();
     // The loop may be paused (settled graph) when the user toggles this on or a
     // filter changes the set — wake a few frames so the rebuilt lines paint.
     wakeInstancedRefresh(graph);

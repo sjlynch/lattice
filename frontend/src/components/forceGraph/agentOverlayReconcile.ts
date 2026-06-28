@@ -96,6 +96,11 @@ export function reconcileAgents(
       existing.node = makeClaudeNode(d.color, ctx.nodeSize * NODE_SCALE_MULTIPLIER);
       existing.node.position.copy(existing.pos);
       ctx.group.add(existing.node);
+      // The label texture is baked with the agent color at build time and is only
+      // rebuilt on a text/labelSize change — never on a recolor. Drop it (refcount
+      // released, currentFile untouched) so the next tick's updateAgentLabel
+      // rebuilds it in the new color instead of leaving it stuck in the old one.
+      if (existing.label) removeFloatingLabel(ctx.group, existing);
       // Recolor satellites + tethers to match (existing beams age out in the
       // old color; new ones pick up the new color).
       const ss = ctx.nodeSize * NODE_SCALE_MULTIPLIER * SATELLITE_SCALE;
@@ -106,6 +111,8 @@ export function reconcileAgents(
         sat.node.position.copy(sat.pos);
         ctx.group.add(sat.node);
         sat.tether.material.color.set(d.color);
+        // Same baked-color label issue for the satellite's type label.
+        if (sat.label) removeFloatingLabel(ctx.group, sat);
       }
       changed = true;
     }
