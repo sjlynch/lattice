@@ -1,8 +1,10 @@
 # frontend/src
 
-Vite + React + TS. Hand-written CSS — `index.css` is an ordered `@import`
-list, with feature-scoped stylesheets in `styles/` (see
-`components/CLAUDE.md` for the style map). No MUI, no styled-components.
+Vite + React + TS. This file is the authoritative frontend navigation doc
+(the package `README.md` is mostly the stock Vite template). Hand-written CSS —
+`index.css` is an ordered `@import` list, with feature-scoped stylesheets in
+`styles/` (see `components/CLAUDE.md` for the style map). No MUI, no
+styled-components.
 
 ## Layout
 
