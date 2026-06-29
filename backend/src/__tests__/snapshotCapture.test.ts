@@ -5,10 +5,12 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import {
   buildSnapshotCleanupPlan,
+  cleanupCapturedUntrackedPaths,
   copyDirtyPathsToSnapshot,
   filterSafeDirtyPaths,
   parseStatus,
 } from '../worktree/snapshot/capture.js';
+import { restoreSnapshot } from '../worktree/snapshot/restore.js';
 
 test('parseStatus classifies porcelain (-z) modified and untracked paths', () => {
   // `-z` records are NUL-terminated; a rename emits the destination path,
@@ -109,4 +111,127 @@ test('buildSnapshotCleanupPlan resets/deletes only successfully copied paths', (
 
   assert.deepEqual(plan.resetTracked, ['src/ok.ts']);
   assert.deepEqual(plan.deleteUntracked, ['new.txt']);
+});
+
+test('restoreSnapshot restores safe files and removes snapshot only after full success', async () => {
+  const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-restore-repo-'));
+  const snapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-restore-'));
+  try {
+    await fs.mkdir(path.join(snapshotDir, 'src'), { recursive: true });
+    await fs.mkdir(path.join(repoRoot, 'src'), { recursive: true });
+    await fs.writeFile(path.join(snapshotDir, 'src', 'tracked.ts'), 'user edit', 'utf8');
+    await fs.writeFile(path.join(snapshotDir, 'new.txt'), 'new file', 'utf8');
+    await fs.writeFile(path.join(repoRoot, 'src', 'tracked.ts'), 'fast-forwarded', 'utf8');
+
+    await restoreSnapshot(
+      { dir: snapshotDir, modifiedTracked: ['src/tracked.ts'], untracked: ['new.txt'] },
+      repoRoot,
+    );
+
+    assert.equal(await fs.readFile(path.join(repoRoot, 'src', 'tracked.ts'), 'utf8'), 'user edit');
+    assert.equal(await fs.readFile(path.join(repoRoot, 'new.txt'), 'utf8'), 'new file');
+    await assert.rejects(fs.access(snapshotDir), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(repoRoot, { recursive: true, force: true });
+    await fs.rm(snapshotDir, { recursive: true, force: true });
+  }
+});
+
+test('restoreSnapshot refuses unsafe manifest paths and keeps snapshot for recovery', async () => {
+  const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-safe-repo-'));
+  const snapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-safe-'));
+  const outside = path.join(os.tmpdir(), `lattice-snapshot-outside-${Date.now()}.txt`);
+  try {
+    await fs.writeFile(outside, 'outside original', 'utf8');
+    await restoreSnapshot(
+      { dir: snapshotDir, modifiedTracked: ['../outside.txt', outside], untracked: [] },
+      repoRoot,
+    );
+
+    assert.equal(await fs.readFile(outside, 'utf8'), 'outside original');
+    await fs.access(snapshotDir);
+  } finally {
+    await fs.rm(repoRoot, { recursive: true, force: true });
+    await fs.rm(snapshotDir, { recursive: true, force: true });
+    await fs.rm(outside, { force: true });
+  }
+});
+
+test('restoreSnapshot treats a missing snapshot source as failure and keeps snapshot', async () => {
+  const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-missing-repo-'));
+  const snapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-missing-'));
+  try {
+    await restoreSnapshot(
+      { dir: snapshotDir, modifiedTracked: ['missing.ts'], untracked: [] },
+      repoRoot,
+    );
+
+    await assert.rejects(fs.access(path.join(repoRoot, 'missing.ts')), { code: 'ENOENT' });
+    await fs.access(snapshotDir);
+  } finally {
+    await fs.rm(repoRoot, { recursive: true, force: true });
+    await fs.rm(snapshotDir, { recursive: true, force: true });
+  }
+});
+
+test('snapshot capture and restore preserve symlinks without copying outside contents', async () => {
+  const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-link-repo-'));
+  const snapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-link-'));
+  const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-link-outside-'));
+  const outsideUntracked = path.join(outsideDir, 'untracked-target.txt');
+  const outsideTracked = path.join(outsideDir, 'tracked-target.txt');
+  const untrackedLink = path.join(repoRoot, 'untracked-link.txt');
+  const trackedLink = path.join(repoRoot, 'tracked-link.txt');
+  try {
+    await fs.writeFile(outsideUntracked, 'outside untracked secret', 'utf8');
+    await fs.writeFile(outsideTracked, 'outside tracked secret', 'utf8');
+    try {
+      await fs.symlink(outsideUntracked, untrackedLink);
+      await fs.symlink(outsideTracked, trackedLink);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EPERM' || code === 'EACCES' || code === 'ENOTSUP') return;
+      throw err;
+    }
+
+    const copied = await copyDirtyPathsToSnapshot(repoRoot, snapshotDir, {
+      modified: ['tracked-link.txt'],
+      untracked: ['untracked-link.txt'],
+    });
+
+    assert.deepEqual(copied, {
+      copiedModified: ['tracked-link.txt'],
+      copiedUntracked: ['untracked-link.txt'],
+      copyFailures: [],
+    });
+    assert.equal((await fs.lstat(path.join(snapshotDir, 'untracked-link.txt'))).isSymbolicLink(), true);
+    assert.equal((await fs.lstat(path.join(snapshotDir, 'tracked-link.txt'))).isSymbolicLink(), true);
+    assert.equal(await fs.readlink(path.join(snapshotDir, 'untracked-link.txt')), outsideUntracked);
+    assert.equal(await fs.readlink(path.join(snapshotDir, 'tracked-link.txt')), outsideTracked);
+
+    await cleanupCapturedUntrackedPaths(repoRoot, ['untracked-link.txt']);
+    await fs.rm(trackedLink, { force: true });
+    await fs.writeFile(trackedLink, 'fast-forward regular file', 'utf8');
+
+    await restoreSnapshot(
+      {
+        dir: snapshotDir,
+        modifiedTracked: ['tracked-link.txt'],
+        untracked: ['untracked-link.txt'],
+      },
+      repoRoot,
+    );
+
+    assert.equal((await fs.lstat(untrackedLink)).isSymbolicLink(), true);
+    assert.equal((await fs.lstat(trackedLink)).isSymbolicLink(), true);
+    assert.equal(await fs.readlink(untrackedLink), outsideUntracked);
+    assert.equal(await fs.readlink(trackedLink), outsideTracked);
+    assert.equal(await fs.readFile(outsideUntracked, 'utf8'), 'outside untracked secret');
+    assert.equal(await fs.readFile(outsideTracked, 'utf8'), 'outside tracked secret');
+    await assert.rejects(fs.access(snapshotDir), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(repoRoot, { recursive: true, force: true });
+    await fs.rm(snapshotDir, { recursive: true, force: true });
+    await fs.rm(outsideDir, { recursive: true, force: true });
+  }
 });

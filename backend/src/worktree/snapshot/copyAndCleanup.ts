@@ -3,6 +3,26 @@ import fs from 'node:fs/promises';
 import { projectGit } from '../projectGit.js';
 import type { DirtyPaths, SnapshotCopyResult } from './capture.js';
 
+async function assertNoSymlinkParents(root: string, file: string): Promise<void> {
+  const parts = file.split(/[\\/]+/).filter(Boolean);
+  let current = root;
+  for (const part of parts.slice(0, -1)) {
+    current = path.join(current, part);
+    try {
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`parent directory is a symlink: ${current}`);
+      }
+      if (!stat.isDirectory()) {
+        throw new Error(`parent path is not a directory: ${current}`);
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw err;
+    }
+  }
+}
+
 async function copySnapshotPath(
   repoRoot: string,
   snapshotDir: string,
@@ -11,8 +31,21 @@ async function copySnapshotPath(
   const src = path.join(repoRoot, file);
   const dst = path.join(snapshotDir, file);
   try {
+    await assertNoSymlinkParents(repoRoot, file);
+    const stat = await fs.lstat(src);
+    if (!stat.isFile() && !stat.isSymbolicLink()) {
+      throw new Error('not a regular file or symlink');
+    }
     await fs.mkdir(path.dirname(dst), { recursive: true });
-    await fs.copyFile(src, dst);
+    if (stat.isSymbolicLink()) {
+      // Preserve the link itself. `copyFile` follows symlinks, which would
+      // leak outside-repo file contents when a dirty repo symlink targets a
+      // path elsewhere on disk, and restore would turn the link into a file.
+      const target = await fs.readlink(src);
+      await fs.symlink(target, dst);
+    } else {
+      await fs.copyFile(src, dst);
+    }
     return true;
   } catch (err) {
     console.warn(

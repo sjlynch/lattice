@@ -3,6 +3,79 @@ import fs from 'node:fs/promises';
 import { isPathInsideRepo } from '../paths.js';
 import type { SnapshotHandle } from './manifest.js';
 
+async function assertNoSymlinkParents(root: string, file: string): Promise<void> {
+  const parts = file.split(/[\\/]+/).filter(Boolean);
+  let current = root;
+  for (const part of parts.slice(0, -1)) {
+    current = path.join(current, part);
+    try {
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`snapshot parent directory is a symlink: ${current}`);
+      }
+      if (!stat.isDirectory()) {
+        throw new Error(`snapshot parent path is not a directory: ${current}`);
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw err;
+    }
+  }
+}
+
+async function ensureSafeParentDirectory(repoRoot: string, file: string): Promise<void> {
+  const parts = file.split(/[\\/]+/).filter(Boolean);
+  let current = repoRoot;
+  for (const part of parts.slice(0, -1)) {
+    current = path.join(current, part);
+    try {
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`parent directory is a symlink: ${current}`);
+      }
+      if (!stat.isDirectory()) {
+        throw new Error(`parent path is not a directory: ${current}`);
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      await fs.mkdir(current);
+    }
+  }
+}
+
+async function removeExistingPathNoFollow(dst: string): Promise<void> {
+  try {
+    await fs.rm(dst, { force: true, recursive: false });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // Directories are not valid snapshot file entries. Leave them in place and
+    // let the restore fail rather than recursively deleting user data.
+    if (code !== 'ENOENT') throw err;
+  }
+}
+
+async function restoreSnapshotPath(
+  snapshotDir: string,
+  repoRoot: string,
+  file: string,
+): Promise<void> {
+  const src = path.join(snapshotDir, file);
+  const dst = path.join(repoRoot, file);
+  await assertNoSymlinkParents(snapshotDir, file);
+  const stat = await fs.lstat(src);
+  if (!stat.isFile() && !stat.isSymbolicLink()) {
+    throw new Error('snapshot source is not a regular file or symlink');
+  }
+  await ensureSafeParentDirectory(repoRoot, file);
+  await removeExistingPathNoFollow(dst);
+  if (stat.isSymbolicLink()) {
+    const target = await fs.readlink(src);
+    await fs.symlink(target, dst);
+  } else {
+    await fs.copyFile(src, dst);
+  }
+}
+
 // Restore everything in the snapshot back into the working tree. Files
 // the FF brought in for paths we'd snapshotted will be overwritten by the
 // user's snapshotted version — this is intentional (see module header).
@@ -36,11 +109,8 @@ export async function restoreSnapshot(
   }
   let failed = unsafe.length;
   for (const file of safe) {
-    const src = path.join(handle.dir, file);
-    const dst = path.join(repoRoot, file);
     try {
-      await fs.mkdir(path.dirname(dst), { recursive: true });
-      await fs.copyFile(src, dst);
+      await restoreSnapshotPath(handle.dir, repoRoot, file);
     } catch (err) {
       failed += 1;
       console.warn(
