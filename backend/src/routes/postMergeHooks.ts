@@ -21,6 +21,8 @@ import { canonicalProjectPath } from '../projectPath.js';
 import { proxyKillSession } from '../terminalProxy.js';
 import { postMergeHookAgentId } from '../postMergeHooks/stopHook.js';
 import { unregisterAgentSession } from '../agentSessions.js';
+import { cleanupPostMergeHookSession } from '../postMergeHooks/cleanup.js';
+import { finishHomeScratchDoneResponse } from '../homeScratch/routes.js';
 
 export function buildPostMergeHooksRouter(): Router {
   const r = Router();
@@ -36,7 +38,7 @@ export function buildPostMergeHooksRouter(): Router {
     res.json({ active: null, recent });
   });
 
-  r.post('/api/post-merge-hooks/:id/complete', (req, res) => {
+  r.post('/api/post-merge-hooks/:id/complete', async (req, res) => {
     const id = req.params.id;
     const source =
       typeof req.query.source === 'string' ? req.query.source : 'unknown';
@@ -52,13 +54,16 @@ export function buildPostMergeHooksRouter(): Router {
         (errParam ? ` error=${JSON.stringify(errParam)}` : '') +
         (existing ? '' : ' (idempotent: already finished/forgotten)'),
     );
-    if (!existing) {
-      // Idempotent — a duplicate POST after the hook has been forgotten is a
-      // no-op. The harness may have curled twice (explicit + Stop hook).
-      return res.json({ ok: true });
-    }
-    finishPostMergeHook(id, errParam ? 'errored' : 'completed', errParam);
-    res.json({ ok: true });
+    await finishHomeScratchDoneResponse({
+      res,
+      run: existing,
+      onRun: (tracked) => {
+        finishPostMergeHook(id, errParam ? 'errored' : 'completed', errParam);
+        // Cleanup off the response path: the Stop hook fires while the pty is
+        // still winding down, and Windows may need retries after it exits.
+        void cleanupPostMergeHookSession(tracked.projectPath, tracked.id);
+      },
+    });
   });
 
   r.post('/api/post-merge-hooks/:id/abort', async (req, res) => {
@@ -75,6 +80,7 @@ export function buildPostMergeHooksRouter(): Router {
       }
     }
     finishPostMergeHook(id, 'aborted', 'aborted by user');
+    void cleanupPostMergeHookSession(existing.projectPath, existing.id);
     res.json({ ok: true });
   });
 
