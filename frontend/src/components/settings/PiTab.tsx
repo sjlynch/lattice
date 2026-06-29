@@ -1,15 +1,7 @@
-import {
-  forwardRef,
-  useEffect,
-  useImperativeHandle,
-  useRef,
-  useState,
-} from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
 import { Plus } from 'lucide-react';
 import {
   fetchGlobalSettings,
-  getPiModels,
-  type PiModelInfo,
   type PiProvider,
 } from '../../api';
 import {
@@ -17,14 +9,11 @@ import {
   useProbeDetection,
   usePiEndpointEditors,
 } from './usePiEndpoints';
-import {
-  collectModelUniverse,
-  dropEndpointKey,
-  sanitizeProvidersForSave,
-} from './piTabUtils';
+import { dropEndpointKey, sanitizeProvidersForSave } from './piTabUtils';
 import { PiEndpointCard } from './PiEndpointCard';
 import { PiModelMenu } from './PiModelMenu';
 import { SettingsInfo } from './SettingsInfo';
+import { usePiModelMenuDraft } from './usePiModelMenuDraft';
 
 type Props = {
   active: boolean;
@@ -43,9 +32,9 @@ export type PiTabHandle = {
 
 // Machine-global Pi configuration: OpenAI-compatible endpoints (vLLM, etc.)
 // that Lattice reconciles into ~/.pi/agent/models.json, plus the curated model
-// menu surfaced as "Pi — X" rows in the harness dropdowns. The endpoint card and
-// model-menu UI live in focused components; this tab owns the draft state, the
-// load, the edit handlers, and the imperative save-patch handle.
+// menu surfaced as "Pi — X" rows in the harness dropdowns. Focused hooks own the
+// endpoint editors and model-menu draft; this tab coordinates loading, transient
+// card state, rendering, and the imperative save-patch handle.
 export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
   { active, open },
   ref,
@@ -61,36 +50,20 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
   // `endpoints.mutate`.
   const editors = usePiEndpointEditors(endpoints, probe, providers);
 
-  const [savedModels, setSavedModels] = useState<PiModelInfo[]>([]);
-  const [menuSelected, setMenuSelected] = useState<Set<string>>(new Set());
-  const [menuTouched, setMenuTouched] = useState(false);
+  const modelMenu = usePiModelMenuDraft(open, providers);
   // Which endpoints have their "Advanced" (compat / headers) section open —
   // keyed by the endpoint's stable id (not its array index) so removing an
   // earlier endpoint can't shift the Advanced section onto a different card.
   const [advancedOpen, setAdvancedOpen] = useState<Record<string, boolean>>({});
-  // Patterns we've already reflected into menuSelected — so a newly-added
-  // endpoint model defaults to shown, but a model the user later unchecks
-  // doesn't get auto-re-added on the next render.
-  const seenRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     endpoints.setTouched(false);
-    setMenuTouched(false);
     probe.reset();
     fetchGlobalSettings()
       .then((s) => {
         if (!cancelled) endpoints.setProviders(s.piProviders ?? []);
-      })
-      .catch(() => { /* leave empty */ });
-    getPiModels()
-      .then((r) => {
-        if (cancelled) return;
-        setSavedModels(r.models);
-        const seed = new Set(r.menu.map((m) => m.pattern));
-        setMenuSelected(seed);
-        seenRef.current = new Set(r.models.map((m) => m.pattern));
       })
       .catch(() => { /* leave empty */ });
     return () => {
@@ -99,26 +72,6 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // The universe of selectable model patterns = saved models ∪ everything the
-  // draft endpoints declare. Recomputed each render (cheap).
-  const universe = collectModelUniverse(savedModels, providers);
-
-  // Auto-include any newly-appeared pattern (a model just added to a draft
-  // endpoint) in the menu, so it shows in the dropdowns by default.
-  useEffect(() => {
-    let changed = false;
-    const next = new Set(menuSelected);
-    for (const pattern of universe) {
-      if (!seenRef.current.has(pattern)) {
-        seenRef.current.add(pattern);
-        next.add(pattern);
-        changed = true;
-      }
-    }
-    if (changed) setMenuSelected(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providers, savedModels]);
-
   useImperativeHandle(
     ref,
     () => ({
@@ -126,14 +79,9 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
         if (!endpoints.touched) return undefined;
         return sanitizeProvidersForSave(providers);
       },
-      getPiModelMenuPatch: () => {
-        if (!endpoints.touched && !menuTouched) return undefined;
-        return [...menuSelected].filter((p) => universe.has(p));
-      },
+      getPiModelMenuPatch: () => modelMenu.getPatch(endpoints.touched),
     }),
-    // universe / providers / menuSelected are all derived from the deps below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [endpoints.touched, menuTouched, providers, menuSelected, savedModels],
+    [endpoints.touched, modelMenu, providers],
   );
 
   if (!active) return null;
@@ -148,18 +96,6 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
     probe.dropEndpoint(id);
     setAdvancedOpen((o) => dropEndpointKey(o, id));
   };
-
-  const toggleMenu = (pattern: string) => {
-    setMenuTouched(true);
-    setMenuSelected((cur) => {
-      const next = new Set(cur);
-      if (next.has(pattern)) next.delete(pattern);
-      else next.add(pattern);
-      return next;
-    });
-  };
-
-  const menuPatterns = [...universe].sort();
 
   return (
     <>
@@ -229,9 +165,9 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
       </div>
 
       <PiModelMenu
-        patterns={menuPatterns}
-        selected={menuSelected}
-        onToggle={toggleMenu}
+        patterns={modelMenu.patterns}
+        selected={modelMenu.selected}
+        onToggle={modelMenu.toggle}
       />
     </>
   );
