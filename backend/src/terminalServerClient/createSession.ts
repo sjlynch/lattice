@@ -6,6 +6,7 @@ import {
 import { resolveManagedClaudeServers } from '../mcp/registry.js';
 import { isClaudeMemoryDisabled } from '../userSettings.js';
 import type { ClaudeMcpServerConfig } from '../mcp/claudeInject.js';
+import { terminalServerAuthHeaders } from '../terminalServerAuth.js';
 
 export type CreateSessionOptions = {
   cwd?: string;
@@ -124,7 +125,7 @@ export async function tryCreateSessionOnce(
   try {
     res = await fetch(`${BASE}/sessions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...terminalServerAuthHeaders() },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(CREATE_SESSION_TIMEOUT_MS),
     });

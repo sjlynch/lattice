@@ -1,4 +1,5 @@
 import { BASE } from '../terminalServerLifecycle.js';
+import { terminalServerAuthHeaders } from '../terminalServerAuth.js';
 
 // Tell the detached terminal server to kill all sessions and exit. Called
 // by the dev orchestrator on Ctrl+C; the terminal server does not naturally
@@ -10,6 +11,7 @@ export async function proxyShutdown(): Promise<void> {
   try {
     await fetch(`${BASE}/shutdown`, {
       method: 'POST',
+      headers: terminalServerAuthHeaders(),
       signal: AbortSignal.timeout(SHUTDOWN_POST_TIMEOUT_MS),
     });
   } catch {

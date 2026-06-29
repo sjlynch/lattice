@@ -11,6 +11,7 @@ import { ensureClaudeConfigValid } from './claudeConfigGuard.js';
 import { pruneStaleClaudeProjectEntries } from './claudeTrust.js';
 import { clearTerminalScrollback } from './terminal/scrollbackStore.js';
 import { computeTerminalFingerprint } from './terminalFingerprint.js';
+import { TERMINAL_SERVER_TOKEN_ENV } from './terminalServerAuth.js';
 import { installTerminalProcessGuards } from './terminalServer/processGuards.js';
 import { registerTerminalRoutes } from './terminalServer/routes.js';
 import {
@@ -25,7 +26,18 @@ import { watchParentProcess } from './terminalServer/parentWatch.js';
 
 installTerminalProcessGuards();
 
-const PORT = Number(process.env.TERMINAL_PORT) || 5185;
+const TERMINAL_PORT_DEFAULT = 5185;
+const CLAUDE_CONFIG_BACKUP_INTERVAL_MS = 60_000;
+const STALE_CLAUDE_PROJECT_PRUNE_INTERVAL_MS = 5 * 60_000;
+
+const PORT = Number(process.env.TERMINAL_PORT) || TERMINAL_PORT_DEFAULT;
+const TERMINAL_AUTH_TOKEN = process.env[TERMINAL_SERVER_TOKEN_ENV] ?? '';
+if (!TERMINAL_AUTH_TOKEN) {
+  console.error(
+    `[lattice-terminal] missing ${TERMINAL_SERVER_TOKEN_ENV}; refusing to expose terminal control routes`,
+  );
+  process.exit(1);
+}
 
 // Content-hash of the terminal-server's own runtime files (computed once at
 // startup, frozen for the process lifetime). Replaces the hand-maintained
@@ -39,6 +51,7 @@ const shutdown = createTerminalShutdown();
 registerTerminalRoutes(app, {
   fingerprint: TERMINAL_FINGERPRINT,
   shutdown,
+  authToken: TERMINAL_AUTH_TOKEN,
 });
 
 const server = http.createServer(app);
@@ -73,7 +86,7 @@ server.listen(PORT, '127.0.0.1', () => {
 // than Claude's own writes, so we mostly observe stable state.
 const claudeConfigInterval = setInterval(() => {
   void ensureClaudeConfigValid({ refreshBackup: true });
-}, 60_000);
+}, CLAUDE_CONFIG_BACKUP_INTERVAL_MS);
 claudeConfigInterval.unref();
 
 // Periodic: cap ~/.claude.json bloat from THIS long-lived process. Every spawn
@@ -88,7 +101,7 @@ claudeConfigInterval.unref();
 // so it can't race a spawn-time write.
 const claudeConfigPruneInterval = setInterval(() => {
   void pruneStaleClaudeProjectEntries();
-}, 5 * 60_000);
+}, STALE_CLAUDE_PROJECT_PRUNE_INTERVAL_MS);
 claudeConfigPruneInterval.unref();
 
 wireTerminalShutdownSignals(shutdown);
