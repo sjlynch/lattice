@@ -1,37 +1,20 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback } from 'react';
 import { useTerminals } from '../../../TerminalsContext';
 import { type TaskStatus } from '../../../api';
-import { LANES } from '../lanes';
-import { sortTasksForLane } from '../laneSort';
-import { useMergeRunSync } from './useMergeRunSync';
-import { usePostMergeHook } from './usePostMergeHook';
-import { usePushRun } from './usePushRun';
-import { useHarnessSelector } from './useHarnessSelector';
-import { useQaPlaywright } from './useQaPlaywright';
-import { useQaRuns } from './useQaRuns';
-import { useLaneSort } from './useLaneSort';
 import { useLaneBulkActions } from './useLaneBulkActions';
 import { useTaskActions } from './useTaskActions';
-import { useTaskBoardState } from './useTaskBoardState';
-import { useTaskSearch } from './useTaskSearch';
+import { useTaskBoardDataView } from './useTaskBoardDataView';
+import { useTaskBoardDetailActions } from './useTaskBoardDetailActions';
+import { useTaskBoardRunControllers } from './useTaskBoardRunControllers';
 import { useTaskSpawnHandler } from './useTaskSpawnHandler';
 import { useTaskTerminals } from './useTaskTerminals';
-import { useSyncedViewedTask } from './useSyncedViewedTask';
-import { useVisibleLanes } from './useVisibleLanes';
 
-// Central controller for the taskboard panel. It composes the task, merge,
-// push, QA, post-merge, harness, lane-sort, search, selection, and terminal
-// hooks into one shape so TaskBoardLauncher can stay focused on FloatingPanel
-// chrome and JSX placement.
+// Central controller for the taskboard panel. It composes three focused slices:
+// data/view state, run controllers, and detail/editing actions. Keeping the
+// slices separate makes this hook cross-concern wiring rather than another home
+// for taskboard business logic, while preserving the public shape consumed by
+// TaskBoardLauncher.
 export function useTaskBoardController(activeFolder: string) {
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [addingTo, setAddingTo] = useState<TaskStatus | null>(null);
-
-  // Stable so it doesn't defeat React.memo(TaskCard) on every re-render.
-  const handleDragEnd = useCallback(() => setDraggingId(null), []);
-
-  const { visibleLanes, toggleLane } = useVisibleLanes();
-
   const {
     addTerminal,
     closeTerminal,
@@ -47,6 +30,7 @@ export function useTaskBoardController(activeFolder: string) {
   const { handleTaskSpawned, setBulkSpawnNotifier } =
     useTaskSpawnHandler(addTerminal);
 
+  const data = useTaskBoardDataView(activeFolder, handleTaskSpawned);
   const {
     tasks,
     grouped,
@@ -58,39 +42,58 @@ export function useTaskBoardController(activeFolder: string) {
     clearSelection,
     toggleSelect,
     rangeSelect,
-  } = useTaskBoardState(activeFolder, handleTaskSpawned);
+    visibleLanes,
+    toggleLane,
+    getLaneSortMode,
+    toggleLaneSort,
+    setManual,
+    taskSearch,
+    setTaskSearch,
+    searchActive,
+    filteredTasks,
+    filteredGrouped,
+    sortedGrouped,
+    draggingId,
+    setDraggingId,
+    handleDragEnd,
+  } = data;
 
-  const { mergeRun, recentRunSummary, dismissRecent } = useMergeRunSync(
-    activeFolder,
-    addTerminal,
-    showError,
-  );
-  const { activePush, startPush, hasGit } = usePushRun(
+  const runs = useTaskBoardRunControllers(
     activeFolder,
     addTerminal,
     closeTerminal,
     showError,
   );
-  const { harness, piModel, piMenu, selectHarness, harnessAvail, pickRunHarness } =
-    useHarnessSelector(activeFolder);
-  const qaPlaywright = useQaPlaywright(activeFolder);
-  const { startQaRun, startAllQaRuns } = useQaRuns(
+  const {
+    mergeRun,
+    recentRunSummary,
+    dismissRecent,
+    activePush,
+    startPush,
+    hasGit,
+    harness,
+    piModel,
+    piMenu,
+    selectHarness,
+    harnessAvail,
+    pickRunHarness,
+    qaPlaywright,
+    startQaRun,
+    startAllQaRuns,
+    postMergeHook,
+  } = runs;
+
+  const taskActions = useTaskActions({
     activeFolder,
+    tasks,
+    grouped,
+    getLaneSortMode,
+    mergeRun,
     addTerminal,
-    closeTerminal,
+    clearSelection,
+    pickRunHarness,
     showError,
-  );
-  const postMergeHook = usePostMergeHook(activeFolder, addTerminal, showError);
-
-  // Per-lane clock/caret sort. Defaults to newest-arrival-first; dropping a
-  // card at an explicit slot switches that lane to 'manual' so the user's
-  // hand-ordering survives until they click the clock to re-sort. Read before
-  // the action hooks: the reorder math splices into this same display order so
-  // a dropped card lands at the slot the user saw (the 'manual' flip below is
-  // queued, so getLaneSortMode still reports the pre-drop mode during the drop).
-  const { getMode: getLaneSortMode, toggle: toggleLaneSort, setManual } =
-    useLaneSort(activeFolder);
-
+  });
   const {
     addTask,
     moveTask,
@@ -109,17 +112,7 @@ export function useTaskBoardController(activeFolder: string) {
     cancelActiveRun,
     clearStuckConflicts,
     markAllQaDone,
-  } = useTaskActions({
-    activeFolder,
-    tasks,
-    grouped,
-    getLaneSortMode,
-    mergeRun,
-    addTerminal,
-    clearSelection,
-    pickRunHarness,
-    showError,
-  });
+  } = taskActions;
 
   // Live progress strips for the Open/In Progress/QA lane bulk actions
   // (mirrors the Ready-to-Merge MergeRunStrip), plus the per-lane "run all"
@@ -134,26 +127,9 @@ export function useTaskBoardController(activeFolder: string) {
     markAllQaDone,
   });
 
-  const {
-    taskSearch,
-    setTaskSearch,
-    searchActive,
-    filteredTasks,
-    filteredGrouped,
-  } = useTaskSearch(tasks);
-
-  const sortedGrouped = useMemo(() => {
-    const out = {} as typeof filteredGrouped;
-    for (const lane of LANES) {
-      out[lane.id] = sortTasksForLane(
-        filteredGrouped[lane.id],
-        lane.id,
-        getLaneSortMode(lane.id),
-      );
-    }
-    return out;
-  }, [filteredGrouped, getLaneSortMode]);
-
+  // The reorder math splices into the display order the user saw. Dropping at
+  // an explicit slot flips that lane to manual before delegating to the task
+  // action so the hand-ordering survives until the next clock toggle.
   const handleDropAt = useCallback(
     (id: string, status: TaskStatus, index: number) => {
       setManual(status);
@@ -178,50 +154,15 @@ export function useTaskBoardController(activeFolder: string) {
     closeTerminalsForTask,
     setActiveId,
   });
-  const [viewing, setViewing] = useSyncedViewedTask(tasks);
 
-  const submitNewTask = useCallback(
-    async (title: string, desc?: string) => {
-      if (!addingTo) return;
-      if (await addTask(addingTo, title, desc)) setAddingTo(null);
-    },
-    [addTask, addingTo],
-  );
-
-  const moveViewingTask = useCallback(
-    (status: TaskStatus) => {
-      if (!viewing) return;
-      moveTask(viewing.id, status);
-    },
-    [moveTask, viewing],
-  );
-
-  const deleteViewingTask = useCallback(async () => {
-    if (!viewing) return;
-    if (await deleteTask(viewing.id)) setViewing(null);
-  }, [deleteTask, setViewing, viewing]);
-
-  const saveViewingTask = useCallback(
-    (updates: { title?: string; description?: string }) => {
-      if (!viewing) return Promise.resolve(false);
-      return editTask(viewing.id, updates);
-    },
-    [editTask, viewing],
-  );
-
-  const runViewingTask = useMemo(() => {
-    if (
-      !viewing ||
-      (viewing.status !== 'open' &&
-        !(viewing.status === 'in_progress' && !viewing.worktreePath))
-    ) {
-      return undefined;
-    }
-    return () => {
-      runTask(viewing);
-      setViewing(null);
-    };
-  }, [runTask, setViewing, viewing]);
+  const detail = useTaskBoardDetailActions({
+    tasks,
+    addTask,
+    moveTask,
+    deleteTask,
+    editTask,
+    runTask,
+  });
 
   const focusPostMergeTerminal = focusTerminalByServerId(
     postMergeHook.active?.serverId,
@@ -236,7 +177,7 @@ export function useTaskBoardController(activeFolder: string) {
     clearSelection,
     clearStuckConflicts,
     deleteTask,
-    deleteViewingTask,
+    deleteViewingTask: detail.deleteViewingTask,
     dismissBulk,
     dismissRecent,
     draggingId,
@@ -257,7 +198,7 @@ export function useTaskBoardController(activeFolder: string) {
     mergeTaskAction,
     moveMulti,
     moveTask,
-    moveViewingTask,
+    moveViewingTask: detail.moveViewingTask,
     piMenu,
     piModel,
     postMergeHook,
@@ -267,28 +208,28 @@ export function useTaskBoardController(activeFolder: string) {
     resumeTaskAction,
     runAllActionByLane,
     runTask,
-    runViewingTask,
-    saveViewingTask,
+    runViewingTask: detail.runViewingTask,
+    saveViewingTask: detail.saveViewingTask,
     searchActive,
     selectHarness,
     selectedIds,
-    setAddingTo,
+    setAddingTo: detail.setAddingTo,
     setDraggingId,
     setError,
     setTaskSearch,
-    setViewing,
+    setViewing: detail.setViewing,
     sortedGrouped,
     startPush,
     startQaRun,
     startAllQaRuns,
-    submitNewTask,
+    submitNewTask: detail.submitNewTask,
     taskSearch,
     tasks,
     toggleLane,
     toggleLaneSort,
     toggleSelect,
     visibleLanes,
-    viewing,
-    addingTo,
+    viewing: detail.viewing,
+    addingTo: detail.addingTo,
   };
 }
