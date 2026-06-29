@@ -5,19 +5,15 @@ import { useSyncedRef } from '../../hooks/useSyncedRef';
 import type { TerminalStatus } from '../../terminal/terminalTypes';
 import {
   MAX_RECONNECT_ATTEMPTS,
-  RECONNECT_STABLE_MS,
   buildTerminalWsUrl,
-  canReattachTerminal,
   forwardTerminalInput,
   handleTerminalMessage,
-  reconnectDelay,
-  shouldGiveUpReconnect,
   terminalNotices,
 } from './terminalSocket';
+import { createTerminalReconnectController } from './terminalReconnectController';
 
-// Re-exported for back-compat: the cap itself, and the protocol mechanism it
-// belongs to, now live in ./terminalSocket. This hook owns the connection state
-// machine and orchestrates those focused helpers.
+// Re-exported for back-compat: the cap itself lives in ./terminalSocket, while
+// the reconnect lifecycle state machine now lives in ./terminalReconnectController.
 export { MAX_RECONNECT_ATTEMPTS };
 
 type UseTerminalConnectionArgs = {
@@ -58,44 +54,24 @@ export function useTerminalConnection({
     if (!term) return;
 
     let ws: WebSocket | null = null;
-    let cancelled = false;
-    let attempt = 0;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    // Armed on every open; fires only if the socket survives RECONNECT_STABLE_MS,
-    // and ONLY then resets the backoff. Cleared on close so an accept-then-
-    // immediate-close never reaches it. This — not `attempt = 0` in onopen — is
-    // what keeps a flapping backend backing off instead of spinning a ~250ms
-    // reconnect loop (and re-spawning a serverless pty each iteration). Mirrors
-    // the stability timer in api/ws.ts's subscribeWs.
-    let stableTimer: ReturnType<typeof setTimeout> | null = null;
-    let reconnectingShown = false;
-    // Once the pty has signalled it is gone (clean exit, or backend says
-    // session_lost), stop reconnecting. Without this, every WS close —
-    // including the one immediately following a clean pty exit — would
-    // trigger a fresh connect, which on a deleted-worktree session
-    // produces a feedback loop that spawns thousands of doomed ptys.
-    let terminated = false;
-    // True once this connection has received an `attached` frame — i.e. the
-    // terminal-server owns a live pty that a reconnect just re-subscribes to
-    // (idempotent). Lets a terminal that started life serverless still
-    // reconnect indefinitely, since it captured a session id on first attach.
-    let attachedOnce = false;
 
-    // Notify the parent of a health transition. Mirrors the terminal-body
-    // notices; never influences reconnect behaviour.
-    const reportStatus = (status: TerminalStatus, exitCode?: number) => {
-      onStatusRef.current?.(status, exitCode);
-    };
-
-    const clearStableTimer = () => {
-      if (stableTimer) {
-        clearTimeout(stableTimer);
-        stableTimer = null;
-      }
-    };
+    const controller = createTerminalReconnectController({
+      getServerId: () => serverIdRef.current,
+      reconnect: () => connect(),
+      setTimer: (callback, delay) => setTimeout(callback, delay),
+      clearTimer: (timer) => clearTimeout(timer),
+      // Notify the parent of a health transition. Mirrors the terminal-body
+      // notices; never influences reconnect behaviour.
+      onStatus: (status: TerminalStatus, exitCode?: number) => {
+        onStatusRef.current?.(status, exitCode);
+      },
+      onReconnected: () => terminalNotices.reconnected(term),
+      onReconnecting: () => terminalNotices.reconnecting(term),
+      onGaveUp: () => terminalNotices.gaveUp(term),
+    });
 
     function connect() {
-      if (cancelled || terminated) return;
+      if (!controller.canConnect()) return;
       // Read the latest serverId from the ref: if we captured one via an earlier
       // `attached` frame, a reconnect re-attaches to that EXISTING pty by id
       // (replay) instead of re-running initialCommand and spawning a fresh one.
@@ -111,21 +87,7 @@ export function useTerminalConnection({
       );
 
       ws.onopen = () => {
-        // Don't reset the backoff yet — a backend can complete the upgrade and
-        // then immediately drop. Arm a timer that zeroes `attempt` only once the
-        // socket has stayed open long enough to be healthy; the onclose clears it
-        // so an accept-then-immediate-close never resets the counter. (Resetting
-        // here was the bug: it pinned the backoff at the 250ms floor forever.)
-        clearStableTimer();
-        stableTimer = setTimeout(() => {
-          attempt = 0;
-          stableTimer = null;
-        }, RECONNECT_STABLE_MS);
-        if (reconnectingShown) {
-          terminalNotices.reconnected(term);
-          reconnectingShown = false;
-        }
-        reportStatus('live');
+        controller.handleOpen();
       };
 
       ws.onmessage = (ev) => {
@@ -135,12 +97,11 @@ export function useTerminalConnection({
           // a re-attach to the same pty doesn't re-fire onServerId.
           serverId: serverIdRef.current,
           onAttached: () => {
-            attachedOnce = true;
+            controller.handleAttached();
           },
           onServerId: (id) => onServerIdRef.current?.(id),
           onTerminated: (status, exitCode) => {
-            terminated = true;
-            reportStatus(status, exitCode);
+            controller.handleTerminated(status, exitCode);
           },
         });
       };
@@ -150,42 +111,14 @@ export function useTerminalConnection({
       };
 
       ws.onclose = () => {
-        // Clear the pending stability timer first: a close before it fires means
-        // the connection never proved healthy, so the backoff must keep growing.
-        clearStableTimer();
-        if (cancelled || terminated) return;
-        // A terminal we can re-attach to (has a serverId, or captured one via
-        // an earlier `attached` this session) reconnects to its EXISTING pty —
-        // idempotent and safe to retry forever. So ride out a transient outage
-        // (main-backend restart/stall, or a wedged upstream proxy under a heavy
-        // "Run All" burst) with capped backoff instead of giving up and forcing
-        // a manual page refresh. The genuine stop is `terminated`, set on a
-        // clean `exit` or a `session_lost` — that is what bounds the deleted-
-        // worktree runaway, not an attempt count.
-        const canReattach = canReattachTerminal(serverIdRef.current, attachedOnce);
-        if (shouldGiveUpReconnect(canReattach, attempt)) {
-          // Serverless terminal that never attached: a reconnect here can spawn
-          // a fresh pty, so it must stay bounded.
-          terminalNotices.gaveUp(term);
-          terminated = true;
-          reportStatus('dead');
-          return;
-        }
-        if (!reconnectingShown) {
-          terminalNotices.reconnecting(term);
-          reconnectingShown = true;
-          reportStatus('reconnecting');
-        }
-        const delay = reconnectDelay(attempt);
-        attempt += 1;
-        retryTimer = setTimeout(connect, delay);
+        controller.handleClose();
       };
     }
 
     const io = forwardTerminalInput(term, () => ws);
 
     // Defer the actual connect by one task tick so React StrictMode's
-    // synchronous cleanup (which sets cancelled=true) runs before we
+    // synchronous cleanup (which calls controller.cancel()) runs before we
     // initiate the WS handshake. Without this, the first effect run
     // opens a WS that the backend has already begun upgrading before
     // the cleanup can abort it — when we lack a serverId (a fresh
@@ -195,14 +128,12 @@ export function useTerminalConnection({
     // initialCommand. For port-binding commands like `npm run dev`,
     // the second fails with "address in use". This delay is also
     // production-safe — a 0 ms task hop is imperceptible.
-    reportStatus('connecting');
+    controller.startConnecting();
     const connectTimer = setTimeout(connect, 0);
 
     return () => {
-      cancelled = true;
+      controller.cancel();
       clearTimeout(connectTimer);
-      if (retryTimer) clearTimeout(retryTimer);
-      clearStableTimer();
       io.dispose();
       // Just close the WS — the backend keeps the pty alive so a refresh
       // (or remount) reattaches via the persisted serverId.

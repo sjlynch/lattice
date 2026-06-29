@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyProjectActivityEvent } from '../routes/projectClaude.js';
+import { applyProjectActivityEvent } from '../projectClaude/lifecycle.js';
 import {
   listAgentSessions,
   unregisterAgentSession,

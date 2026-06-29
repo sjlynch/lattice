@@ -16,6 +16,10 @@ import {
 } from '../pushRuns.js';
 import { pushAgentId } from '../pushRuns/stopHook.js';
 import { unregisterAgentSession } from '../agentSessions.js';
+import {
+  deleteHomeScratchRunResponse,
+  finishHomeScratchDoneResponse,
+} from '../homeScratch/routes.js';
 
 export function buildPushRunsRouter(backendOrigin: string): Router {
   const r = Router();
@@ -72,22 +76,30 @@ export function buildPushRunsRouter(backendOrigin: string): Router {
   // Stop-hook callback. Idempotent: a duplicate POST after the run has been
   // forgotten just no-ops.
   r.post('/api/push-runs/:id/done', async (req, res) => {
-    const run = getPushRun(req.params.id);
+    const id = req.params.id;
+    const run = getPushRun(id);
     // Drop the graph node regardless of whether the run is still tracked.
-    unregisterAgentSession(pushAgentId(req.params.id));
-    if (!run) return res.json({ ok: true });
-    markPushRunDone(run.id);
-    // Cleanup the home-scoped scratch dir off the response path so a slow
-    // Windows fs.rm doesn't keep the curl call open past its 5s timeout.
-    void cleanupPushSession(run.projectPath, run.id);
-    res.json({ ok: true });
+    unregisterAgentSession(pushAgentId(id));
+    await finishHomeScratchDoneResponse({
+      res,
+      run,
+      onRun: (tracked) => {
+        markPushRunDone(tracked.id);
+        // Cleanup the home-scoped scratch dir off the response path so a slow
+        // Windows fs.rm doesn't keep the curl call open past its 5s timeout.
+        void cleanupPushSession(tracked.projectPath, tracked.id);
+      },
+    });
   });
 
   // Allow the frontend to drop the run from the registry once it's seen the
   // 'done' status — keeps the map from growing forever in long sessions.
   r.delete('/api/push-runs/:id', (req, res) => {
-    forgetPushRun(req.params.id);
-    res.json({ ok: true });
+    deleteHomeScratchRunResponse({
+      res,
+      id: req.params.id,
+      forget: forgetPushRun,
+    });
   });
 
   return r;

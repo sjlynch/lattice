@@ -10,7 +10,9 @@ consumed via composers (`useTaskBoardController`, `useTaskBoardState`,
 ## State / data-sync
 
 - `useTaskList.ts` — per-folder task list: initial fetch + live `/ws/tasks` subscription, structural sharing so unchanged cards skip re-render, and the shared error-toast slot (`showError`). Its returned list is project-guarded: on folder switch it reports `[]` until the new folder's fetch/WS snapshot arrives, so stale task IDs are never rendered/actionable under the next project.
-- `useTaskBoardController.ts` — top-level taskboard controller: composes the concern hooks below and derives launcher handlers (sorted lanes, slot-drop wrappers, detail/new-task overlay actions, post-merge terminal focus). Keep new cross-concern wiring here so `TaskBoardLauncher.tsx` stays mostly panel chrome.
+- `useTaskBoardController.ts` — top-level taskboard controller: composes the concern hooks below and derives only cross-concern handlers (slot-drop wrappers, bulk strips, terminal focus). Keep new cross-concern wiring here so `TaskBoardLauncher.tsx` stays mostly panel chrome.
+- `useTaskBoardDataView.ts` — data/view slice: lane visibility, task list + grouping/selection, search filtering, display sorting, and drag affordances.
+- `useTaskBoardDetailActions.ts` — detail/editing slice: viewed task sync, new-task overlay lane, and the callbacks that adapt CRUD/run actions to the viewed task.
 - `useTaskBoardState.ts` — composes `useTaskList` + `useTaskSelection`; adds lane grouping/sorting and derived board counts.
 - `useTaskSearch.ts` — case-insensitive search box state; derives `filteredTasks`/`filteredGrouped` and the `searchActive` flag that gates lane "run all".
 - `useTaskSelection.ts` — multi-selection on cards: selected ids, shift-range anchor, and the lane the selection is anchored in (cross-lane ranges reset).
@@ -33,7 +35,9 @@ consumed via composers (`useTaskBoardController`, `useTaskBoardState`,
 
 ## Run orchestration
 
+- `useTaskBoardRunControllers.ts` — run-controller slice that composes merge-all, push, harness/model, QA Playwright, QA runs, and post-merge hook state for the top-level controller.
 - `useMergeRunSync.ts` — hydrates + live-syncs the backend "merge all" run; spawns the resolver Claude on conflict events and toasts each new per-task error once.
+- `useVisibilityPolling.ts` — shared lifecycle shell for visibility-aware interval polling with cancellation guards; callers keep domain-specific status/error handling and terminal cleanup decisions.
 - `usePushRun.ts` — QA-lane Push button: probes for `.git`, starts a push run, polls it, and tears down the local terminal when the Stop hook flips it to `done`.
 - `useQaRuns.ts` — QA-lane "run e2e test" buttons; spawns a Playwright Claude per run (tracked by terminal id — deliberately no `taskId`) and polls to auto-close on `done`.
 - `useQaPlaywright.ts` — reads/persists the QA-lane Playwright MCP toggle (`userSettings.qaPlaywright`); the backend reads it at spawn time (QA runs only).
