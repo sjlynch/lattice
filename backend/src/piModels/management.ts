@@ -144,17 +144,15 @@ export async function reconcilePiModelsJson(): Promise<void> {
   }
 }
 
-// For a probe, resolve an apiKey hint to a literal bearer token: a `!command`
-// is NOT executed (no arbitrary exec on a probe), an UPPER_SNAKE name that
-// exists in the environment is read from there, otherwise it's treated as a
-// literal. Local vLLM servers typically need no real key.
+// For a probe, use only a literal apiKey value as the bearer token. Pi itself
+// can resolve env-var names / !commands when the saved provider is later used,
+// but a user-supplied probe URL must never receive arbitrary ambient process
+// secrets. A `!command` is also not executed during probes.
 function resolveProbeKey(apiKey?: string): string | undefined {
-  if (!apiKey) return undefined;
-  if (apiKey.startsWith('!')) return undefined;
-  if (/^[A-Z][A-Z0-9_]*$/.test(apiKey) && process.env[apiKey]) {
-    return process.env[apiKey];
-  }
-  return apiKey;
+  const key = apiKey?.trim();
+  if (!key) return undefined;
+  if (key.startsWith('!')) return undefined;
+  return key;
 }
 
 // "Detect models" for the Settings → Pi endpoint form: GET <baseUrl>/models
