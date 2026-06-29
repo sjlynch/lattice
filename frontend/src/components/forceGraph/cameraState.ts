@@ -5,6 +5,7 @@
 // page refresh — or a project switch and back — lands on the same vantage point.
 
 import type { ForceGraph3DInstance } from '3d-force-graph';
+import { latticeStorageKeys, safeLocalStorageGetItem, safeLocalStorageSetItem } from '../../storage/latticeLocalStorage';
 
 export type Vec3 = { x: number; y: number; z: number };
 
@@ -12,8 +13,6 @@ export type CameraState = {
   position: Vec3;
   target: Vec3;
 };
-
-const KEY_PREFIX = 'lattice.graphCamera.';
 
 function isFiniteVec(v: unknown): v is Vec3 {
   if (!v || typeof v !== 'object') return false;
@@ -34,25 +33,24 @@ function isFiniteVec(v: unknown): v is Vec3 {
 export function loadCameraState(project: string): CameraState | null {
   if (!project) return null;
   try {
-    const raw = localStorage.getItem(`${KEY_PREFIX}${project}`);
+    const raw = safeLocalStorageGetItem(latticeStorageKeys.graphCamera(project));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<CameraState>;
     if (isFiniteVec(parsed.position) && isFiniteVec(parsed.target)) {
       return { position: parsed.position, target: parsed.target };
     }
   } catch {
-    /* ignore corrupt JSON / unavailable storage */
+    /* ignore corrupt JSON */
   }
   return null;
 }
 
 export function saveCameraState(project: string, state: CameraState): void {
   if (!project) return;
-  try {
-    localStorage.setItem(`${KEY_PREFIX}${project}`, JSON.stringify(state));
-  } catch {
-    /* ignore quota / unavailable storage */
-  }
+  safeLocalStorageSetItem(
+    latticeStorageKeys.graphCamera(project),
+    JSON.stringify(state),
+  );
 }
 
 // Snapshot the graph's live camera position + orbit target. Returns null if the
