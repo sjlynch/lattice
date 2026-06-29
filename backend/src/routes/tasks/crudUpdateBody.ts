@@ -41,6 +41,9 @@ export function taskPatchFromBody(body: unknown): ParseResult<TaskPatch> {
     }
     return { ok: true, value: blockToPatch(block) };
   }
+  if (parsed.json.status !== undefined && !isValidTaskStatus(parsed.json.status)) {
+    return { ok: false, error: statusValidationError('status') };
+  }
   return { ok: true, value: parsed.json as TaskPatch };
 }
 
