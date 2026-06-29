@@ -11,7 +11,7 @@ import {
   completeWorkflowStep,
   cancelWorkflowRun,
 } from '../../workflowRuns.js';
-import { workflowStepAgentId } from '../../workflowRuns/stepSpawner.js';
+import { forgetWorkflowStepSession, workflowStepAgentId } from '../../workflowRuns/stepSpawner.js';
 import { unregisterAgentSession } from '../../agentSessions.js';
 
 export function buildWorkflowRunsRouter(backendOrigin: string): Router {
@@ -49,6 +49,7 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
     );
     // Drop this step's graph node; the next step (if any) registers its own.
     unregisterAgentSession(workflowStepAgentId(req.params.runId, stepIndex));
+    forgetWorkflowStepSession(req.params.runId, stepIndex);
     await completeWorkflowStep(req.params.runId, stepIndex, backendOrigin);
     res.json({ ok: true });
   });

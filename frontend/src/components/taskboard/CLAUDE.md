@@ -4,7 +4,8 @@ Components behind the Tasks button. `TaskBoard.tsx` (parent dir) is a re-export 
 
 ## Modules
 
-- `TaskBoardLauncher.tsx` — top-level component that owns panel-only UI state and renders the FloatingPanel/chrome; taskboard hook composition lives in `hooks/useTaskBoardController.ts`.
+- `TaskBoardLauncher.tsx` — top-level component that owns panel-only UI state and renders the FAB + FloatingPanel/chrome; taskboard hook composition lives in `hooks/useTaskBoardController.ts`.
+- `TaskBoardPanelBody.tsx` — fans the controller's stable public surface into filters, lanes, overlays, post-merge row, and footer so the launcher stays chrome-only.
 - `TaskBoardTitle.tsx` — FloatingPanel titlebar: title label + case-insensitive search box (Escape / ✕ clear).
 - `TaskBoardFooter.tsx` — footer summary line: total/matching count, running-vs-queued spawn-queue indicator, interaction hints.
 - `TaskBoardFilters.tsx` — lane visibility chips plus the task harness selector.
@@ -19,7 +20,11 @@ Components behind the Tasks button. `TaskBoard.tsx` (parent dir) is a re-export 
 - `StuckPill.tsx` — "stuck Nm" surfaced after a conflict resolver runs > 3 min.
 - `lanes.ts` — `LANES` array, `LANE_BY_ID` map, `DRAG_MIME` constant, `shortLabel()`, `parseDragPayload()`.
 - `laneSort.ts` — per-lane arrival-date sort: `LaneSortMode` (`recent`/`oldest`/`manual`, default `recent`), `arrivalTime(task, status)` (the lane-specific arrival stamp — startedAt/completedAt/mergedAt/doneAt, else createdAt), and `sortTasksForLane()`. Drives the lane header's clock + up/down caret control.
-- `hooks/useTaskBoardController.ts` — top-level controller hook that composes task/merge/push/QA/post-merge/harness/search/lane-sort/selection/terminal concerns and returns the handlers/data the launcher renders.
+- `hooks/useTaskBoardController.ts` — top-level controller hook that composes data/view, run-controller, detail/editing, action, bulk-strip, and terminal concerns and returns the handlers/data the launcher renders.
+- `hooks/useTaskBoardDataView.ts` — data/view slice for lane visibility, task list/grouping/selection, search filtering, display sorting, and drag state.
+- `hooks/useTaskBoardDetailActions.ts` — new-task/detail overlay slice: synced viewed task plus callbacks adapting CRUD/run actions to the current overlay task.
+- `hooks/useTaskBoardRunControllers.ts` — run-controller slice for merge-all, push, harness/model selection, QA Playwright/runs, and post-merge hook state.
+- `hooks/useVisibilityPolling.ts` — shared lifecycle shell for visibility-aware interval polling with cancellation guards; push/QA callers keep their domain status and terminal-cleanup decisions.
 - `hooks/useTaskBoardState.ts` — combines task-list syncing, lane grouping/sorting, active counts, and multi-selection.
 - `hooks/useTaskSearch.ts` — search box state + case-insensitive title/description filtering; derives `filteredTasks`/`filteredGrouped` and the `searchActive` flag that gates lane run-all.
 - `hooks/useVisibleLanes.ts` — lane visibility toggle set (all visible by default).

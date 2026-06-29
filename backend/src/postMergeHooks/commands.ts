@@ -1,6 +1,6 @@
 import path from 'node:path';
+import { buildAgentCommand } from '../agentCommandBuilder.js';
 import type { AgentHarness } from '../harnesses.js';
-import { buildPiModelFlag } from '../worktree/commands.js';
 
 // Build the single-line shell command that launches the chosen harness for a
 // post-merge hook. The pty's cwd is the home-scoped scratch dir (so the
@@ -23,15 +23,20 @@ export function buildPostMergeHookCommand(args: {
   const { harness, instructionsFile, piModel } = args;
   const fileName = path.basename(instructionsFile);
 
-  if (harness === 'claude') {
-    return `claude --dangerously-skip-permissions "Please read ${fileName} in this directory and complete the post-merge hook task it describes. Follow the completion instructions at the end carefully — Lattice is blocking the merge step waiting for your callback."`;
+  if (harness === 'codex') {
+    // Codex has no Stop-hook / shutdown-extension backstop, so emphasise the
+    // explicit callback in the prompt.
+    return buildAgentCommand({
+      harness,
+      prompt: `Please read ${fileName} in this directory and complete the post-merge hook task it describes. You MUST curl the completion URL from the brief before exiting — Lattice has no Codex Stop-hook backstop and the merge run will hang otherwise.`,
+    });
   }
-  if (harness === 'pi') {
-    return `pi${buildPiModelFlag(piModel)} "Please read ${fileName} in this directory and complete the post-merge hook task it describes. Follow the completion instructions at the end carefully — Lattice is blocking the merge step waiting for your callback."`;
-  }
-  // Codex has no Stop-hook / shutdown-extension backstop, so emphasise the
-  // explicit callback in the prompt.
-  return `codex "Please read ${fileName} in this directory and complete the post-merge hook task it describes. You MUST curl the completion URL from the brief before exiting — Lattice has no Codex Stop-hook backstop and the merge run will hang otherwise."`;
+
+  return buildAgentCommand({
+    harness,
+    piModel,
+    prompt: `Please read ${fileName} in this directory and complete the post-merge hook task it describes. Follow the completion instructions at the end carefully — Lattice is blocking the merge step waiting for your callback.`,
+  });
 }
 
 export const POST_MERGE_HOOK_FILENAME = 'POST_MERGE_HOOK.md';

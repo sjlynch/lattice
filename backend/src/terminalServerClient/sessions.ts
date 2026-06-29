@@ -1,4 +1,5 @@
 import { BASE } from '../terminalServerLifecycle.js';
+import { terminalServerAuthHeaders } from '../terminalServerAuth.js';
 
 // Hard timeout shared by the three cheap session probes below (list / count /
 // kill-by-cwd). All three are best-effort reads against the detached
@@ -12,7 +13,9 @@ const SESSIONS_PROBE_TIMEOUT_MS = 3_000;
 
 export async function proxyListSessions(): Promise<unknown[]> {
   try {
-    const res = await fetch(`${BASE}/sessions`);
+    const res = await fetch(`${BASE}/sessions`, {
+      headers: terminalServerAuthHeaders(),
+    });
     return res.ok ? ((await res.json()) as unknown[]) : [];
   } catch {
     return [];
@@ -28,6 +31,7 @@ export async function proxyListSessions(): Promise<unknown[]> {
 export async function proxyListSessionsOrNull(): Promise<unknown[] | null> {
   try {
     const res = await fetch(`${BASE}/sessions`, {
+      headers: terminalServerAuthHeaders(),
       signal: AbortSignal.timeout(SESSIONS_PROBE_TIMEOUT_MS),
     });
     if (!res.ok) return null;
@@ -45,6 +49,7 @@ export async function proxyListSessionsOrNull(): Promise<unknown[] | null> {
 export async function proxyCountSessions(): Promise<number | null> {
   try {
     const res = await fetch(`${BASE}/sessions`, {
+      headers: terminalServerAuthHeaders(),
       signal: AbortSignal.timeout(SESSIONS_PROBE_TIMEOUT_MS),
     });
     if (!res.ok) return null;
@@ -68,6 +73,7 @@ export async function proxyKillSessionsByCwd(worktreePath: string): Promise<void
       `${BASE}/sessions/by-cwd?cwd=${encodeURIComponent(worktreePath)}`,
       {
         method: 'DELETE',
+        headers: terminalServerAuthHeaders(),
         signal: AbortSignal.timeout(SESSIONS_PROBE_TIMEOUT_MS),
       },
     );
@@ -97,7 +103,7 @@ export async function proxyKillSession(id: string): Promise<boolean> {
   try {
     const res = await fetch(
       `${BASE}/sessions/${encodeURIComponent(id)}`,
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: terminalServerAuthHeaders() },
     );
     return res.ok;
   } catch {

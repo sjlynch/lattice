@@ -17,6 +17,7 @@ function makeDeps(settings: UserSettings): {
     queued: Parameters<TriggerPostMergeHookDeps['queuedCreateSession']>[0][];
     recorded: PostMergeHookRun[];
     registered: Parameters<TriggerPostMergeHookDeps['registerAgentSession']>[0][];
+    cleaned: { projectPath: string; id: string }[];
   };
 } {
   let currentRun: PostMergeHookRun | null = null;
@@ -29,6 +30,7 @@ function makeDeps(settings: UserSettings): {
     registered: [] as Parameters<
       TriggerPostMergeHookDeps['registerAgentSession']
     >[0][],
+    cleaned: [] as { projectPath: string; id: string }[],
   };
 
   const deps: TriggerPostMergeHookDeps = {
@@ -63,6 +65,9 @@ function makeDeps(settings: UserSettings): {
     },
     registerAgentSession: (session) => {
       calls.registered.push(session);
+    },
+    cleanupPostMergeHookSession: async (projectPath, id) => {
+      calls.cleaned.push({ projectPath, id });
     },
   };
 
@@ -121,4 +126,25 @@ test('triggerPostMergeHook treats absent postMergeHookEnabled as enabled when a 
   assert.equal(calls.queued.length, 1);
   assert.equal(calls.queued[0].kind, 'post-merge-hook');
   assert.equal(calls.recorded.length, 1);
+  assert.equal(calls.cleaned.length, 0);
+});
+
+test('triggerPostMergeHook cleans pmh scratch when queued spawn fails', async () => {
+  const { deps, calls } = makeDeps({
+    postMergeHookPrompt: 'run the post-merge checks',
+  });
+  deps.queuedCreateSession = async (args) => {
+    calls.queued.push(args);
+    return { error: 'spawn queue rejected' };
+  };
+
+  const outcome = await triggerPostMergeHookWithDeps(
+    { projectPath: PROJECT, backendOrigin: ORIGIN, trigger: 'manual-merge' },
+    deps,
+  );
+
+  assert.deepEqual(outcome, { kind: 'error', message: 'spawn queue rejected' });
+  assert.equal(calls.recorded.length, 1);
+  assert.equal(calls.cleaned.length, 1);
+  assert.deepEqual(calls.cleaned[0], { projectPath: PROJECT, id: 'pmh_test' });
 });

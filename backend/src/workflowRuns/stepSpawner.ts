@@ -19,7 +19,7 @@ import { installClaudeHooks } from '../claudeStopHook.js';
 import { installPiCompletionExtension } from '../piExtension.js';
 import { installPiSubagentsShim } from '../piSubagents.js';
 import { buildAgentActivityUrl } from '../agentActivityTokens.js';
-import type { Workflow } from '../workflows.js';
+import type { Workflow, WorkflowStepHarness } from '../workflows.js';
 import { renderHelperScript } from './renderHelperScript.js';
 import { resolveInstructionTemplate } from '../instructionTemplates.js';
 import {
@@ -27,7 +27,7 @@ import {
   effectiveStepPiModel,
   renderStepMarkdown,
 } from './stepMarkdown.js';
-import { getProjectDirtyState } from './projectDirtyState.js';
+import { getProjectDirtyState, type DirtyStateSummary } from './projectDirtyState.js';
 import { notify, snapshot, type WorkflowRun } from './state.js';
 import { pruneOldWorkflowRuns, writeScratchReadme } from './scratchDirectory.js';
 import { buildWorkflowStepCommand } from './commandBuilder.js';
@@ -36,14 +36,20 @@ import { enqueueWorkflowStepSession, workflowStepAgentId } from './sessionSpawne
 // Re-export the public surface so existing importers (routes/workflows/runs.ts,
 // the workflowScratchPrune test) keep resolving these from stepSpawner.
 export { pruneOldWorkflowRuns, writeScratchReadme } from './scratchDirectory.js';
-export { workflowStepAgentId } from './sessionSpawner.js';
+export { forgetWorkflowStepSession, workflowStepAgentId } from './sessionSpawner.js';
 
-export async function spawnWorkflowStep(
+type PreparedStepScratch = {
+  workflowStepsRoot: string;
+  runDir: string;
+  stepDir: string;
+  stepFile: string;
+};
+
+async function prepareStepScratch(
   wf: Workflow,
   run: WorkflowRun,
   stepIndex: number,
-  backendOrigin: string,
-): Promise<{ command: string; cwd: string }> {
+): Promise<PreparedStepScratch> {
   const workflowStepsRoot = path.join(wf.projectPath, '.lattice', 'workflow-steps');
   const runDir = path.join(workflowStepsRoot, run.id);
   const stepDir = path.join(runDir, `step-${stepIndex}`);
@@ -62,24 +68,41 @@ export async function spawnWorkflowStep(
   if (freshRunDir) {
     await pruneOldWorkflowRuns(workflowStepsRoot, run.id);
   }
+  return {
+    workflowStepsRoot,
+    runDir,
+    stepDir,
+    stepFile: path.join(stepDir, 'WORKFLOW_STEP.md'),
+  };
+}
 
-  const stepFile = path.join(stepDir, 'WORKFLOW_STEP.md');
-  const harness = effectiveStepHarness(wf, run, stepIndex);
+function logDirtyState(run: WorkflowRun, stepIndex: number, dirtyState: DirtyStateSummary): void {
+  const total =
+    dirtyState.modified.length + dirtyState.deleted.length + dirtyState.untracked.length;
+  console.log(
+    `[workflow-step] ${run.id} step ${stepIndex}: project working tree is dirty ` +
+      `(${dirtyState.modified.length}M / ${dirtyState.deleted.length}D / ${dirtyState.untracked.length}?? = ${total} paths); ` +
+      `injecting divergence warning into WORKFLOW_STEP.md`,
+  );
+}
+
+async function writeStepAssets(args: {
+  wf: Workflow;
+  run: WorkflowRun;
+  stepIndex: number;
+  backendOrigin: string;
+  stepDir: string;
+  stepFile: string;
+}): Promise<void> {
+  const { wf, run, stepIndex, backendOrigin, stepDir, stepFile } = args;
   // Best-effort working-tree-drift probe — if the project repo has
   // uncommitted changes, the rendered WORKFLOW_STEP.md gets a warning
   // banner so the planner doesn't synthesize tasks against paths that
   // only exist on disk (worktrees check out HEAD, not the working tree).
   // Probe failures resolve to `null` and just suppress the banner.
   const dirtyState = await getProjectDirtyState(wf.projectPath);
-  if (dirtyState) {
-    const total =
-      dirtyState.modified.length + dirtyState.deleted.length + dirtyState.untracked.length;
-    console.log(
-      `[workflow-step] ${run.id} step ${stepIndex}: project working tree is dirty ` +
-        `(${dirtyState.modified.length}M / ${dirtyState.deleted.length}D / ${dirtyState.untracked.length}?? = ${total} paths); ` +
-        `injecting divergence warning into WORKFLOW_STEP.md`,
-    );
-  }
+  if (dirtyState) logDirtyState(run, stepIndex, dirtyState);
+
   const stepTemplate = await resolveInstructionTemplate(wf.projectPath, 'workflow-step');
   await fs.writeFile(
     stepFile,
@@ -93,7 +116,17 @@ export async function spawnWorkflowStep(
     renderHelperScript(wf.projectPath, backendOrigin),
     'utf8',
   );
+}
 
+async function installStepCallbacks(args: {
+  wf: Workflow;
+  run: WorkflowRun;
+  stepIndex: number;
+  backendOrigin: string;
+  stepDir: string;
+  harness: WorkflowStepHarness;
+}): Promise<void> {
+  const { wf, run, stepIndex, backendOrigin, stepDir, harness } = args;
   const completionUrl = `${backendOrigin}/api/workflow-runs/${run.id}/steps/${stepIndex}/complete`;
   // Always install BOTH backstops regardless of harness (defence-in-depth):
   // a harness switch mid-run would otherwise lose the callback, and the
@@ -126,25 +159,56 @@ export async function spawnWorkflowStep(
     `[workflow-step] installed Claude+Pi backstops for run ${run.id} step ${stepIndex} ` +
       `(active harness=${harness}, dir=${stepDir})`,
   );
+}
 
+function spawnStepSession(args: {
+  wf: Workflow;
+  run: WorkflowRun;
+  stepIndex: number;
+  stepDir: string;
+  stepFile: string;
+  harness: WorkflowStepHarness;
+}): string {
+  const { wf, run, stepIndex, stepDir, stepFile, harness } = args;
   const command = buildWorkflowStepCommand(
     stepFile,
     harness,
     effectiveStepPiModel(wf, run, stepIndex),
   );
 
-  enqueueWorkflowStepSession({
-    run,
-    stepIndex,
-    projectPath: wf.projectPath,
-    stepDir,
-    command,
-    harness,
-  });
+  if (run.status === 'running' && run.currentStepIndex === stepIndex) {
+    enqueueWorkflowStepSession({
+      run,
+      stepIndex,
+      projectPath: wf.projectPath,
+      stepDir,
+      command,
+      harness,
+    });
+  }
+
+  return command;
+}
+
+export async function spawnWorkflowStep(
+  wf: Workflow,
+  run: WorkflowRun,
+  stepIndex: number,
+  backendOrigin: string,
+): Promise<{ command: string; cwd: string }> {
+  const { stepDir, stepFile } = await prepareStepScratch(wf, run, stepIndex);
+  const harness = effectiveStepHarness(wf, run, stepIndex);
+
+  await writeStepAssets({ wf, run, stepIndex, backendOrigin, stepDir, stepFile });
+  await installStepCallbacks({ wf, run, stepIndex, backendOrigin, stepDir, harness });
+  const command = spawnStepSession({ wf, run, stepIndex, stepDir, stepFile, harness });
 
   // Emit progress now — the step is the run's current step whether its pty
-  // is spawning immediately or waiting in the queue.
-  notify({ type: 'progress', run: snapshot(run) });
+  // is spawning immediately or waiting in the queue. If cancellation raced
+  // with scratch setup, do not resurrect/update the cancelled run.
+  if (run.status === 'running' && run.currentStepIndex === stepIndex) {
+    notify({ type: 'progress', run: snapshot(run) });
+  }
 
   return { command, cwd: stepDir };
 }

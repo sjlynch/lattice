@@ -1,3 +1,5 @@
+import { latticeStorageKeys, safeLocalStorageGetItem, safeLocalStorageSetItem } from '../../storage/latticeLocalStorage';
+
 // User-tweakable graph render + physics settings, persisted per project.
 // Sliders that drive these live in GraphSettingsPanel.
 
@@ -146,11 +148,19 @@ export const DEFAULT_SETTINGS: GraphSettings = {
 export function loadSettings(project: string): GraphSettings {
   if (!project) return { ...DEFAULT_SETTINGS };
   try {
-    const raw = localStorage.getItem(`lattice.graphSettings.${project}`);
+    const raw = safeLocalStorageGetItem(latticeStorageKeys.graphSettings(project));
     if (!raw) return { ...DEFAULT_SETTINGS };
     const parsed = JSON.parse(raw) as Partial<GraphSettings>;
     return { ...DEFAULT_SETTINGS, ...parsed };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
+}
+
+export function saveSettings(project: string, settings: GraphSettings): boolean {
+  if (!project) return false;
+  return safeLocalStorageSetItem(
+    latticeStorageKeys.graphSettings(project),
+    JSON.stringify(settings),
+  );
 }

@@ -1,4 +1,5 @@
 import { createHomeScratchAgentSession } from '../homeScratch/agentSession.js';
+import { buildAgentCommand } from '../agentCommandBuilder.js';
 import { renderQaInstructions } from './instructions.js';
 import { resolveInstructionTemplate } from '../instructionTemplates.js';
 import { qaPaths } from './paths.js';
@@ -15,8 +16,10 @@ export type StartQaSessionArgs = {
 };
 
 const QA_INSTRUCTIONS_FILE = 'QA_INSTRUCTIONS.md';
-const QA_COMMAND =
-  'claude --dangerously-skip-permissions "Please read QA_INSTRUCTIONS.md in this directory and run the end-to-end test it describes using the Playwright MCP browser tools."';
+const QA_COMMAND = buildAgentCommand({
+  harness: 'claude',
+  prompt: 'Please read QA_INSTRUCTIONS.md in this directory and run the end-to-end test it describes using the Playwright MCP browser tools.',
+});
 
 async function renderQa(
   args: StartQaSessionArgs,

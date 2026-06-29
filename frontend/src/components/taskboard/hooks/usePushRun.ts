@@ -7,6 +7,10 @@ import {
   type PushRunStatus,
 } from '../../../api';
 import type { TerminalSpec } from '../../../TerminalsContext';
+import {
+  pollWithErrorSentinel,
+  useVisibilityPolling,
+} from './useVisibilityPolling';
 
 type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
 type CloseTerminal = (id: string) => void;
@@ -93,55 +97,35 @@ export function usePushRun(
   // Poll the active push run; when the backend's Stop hook flips it to
   // `done`, close the local terminal and forget the run. 2 s feels live
   // without hammering the backend (the Claude session is busy doing git
-  // operations, not running an inner loop).
-  useEffect(() => {
-    if (!activePush) return;
-    let cancelled = false;
-    let handle: number | null = null;
-    const tick = async () => {
+  // operations, not running an inner loop). The visibility-aware interval
+  // lifecycle is shared with QA polling; push-specific completion semantics
+  // stay here via applyPushPoll.
+  const pollActivePush = useCallback(
+    async (isCancelled: () => boolean) => {
+      if (!activePush) return;
       // A thrown fetch (network blip / 5xx / mid-run backend restart) resolves
       // to the `'error'` sentinel; only a real 404 returns `null`. applyPushPoll
       // ignores the former (retry next tick) and tears down only on a genuine
       // 404 or status === 'done'. See its comment for why conflating the two
       // strands a live push.
-      const result = await fetchPushRunStatus(activePush.runId).catch(
-        () => 'error' as const,
+      const result = await pollWithErrorSentinel(() =>
+        fetchPushRunStatus(activePush.runId),
       );
-      if (cancelled) return;
+      if (isCancelled()) return;
       applyPushPoll(result, {
         closeTerminal: () => closeTerminal(activePush.terminalId),
         forgetRun: () => { apiForgetPushRun(activePush.runId).catch(() => {}); },
         clearActive: () => setActivePush(null),
       });
-    };
-    const startPolling = () => {
-      if (handle === null) handle = window.setInterval(() => { void tick(); }, 2000);
-    };
-    const stopPolling = () => {
-      if (handle !== null) {
-        window.clearInterval(handle);
-        handle = null;
-      }
-    };
-    // Pause polling while the tab is backgrounded — the run keeps progressing
-    // on the backend, so there's no point hammering it from a hidden tab.
-    // Resume (with an immediate check) when the tab is foregrounded again.
-    const onVisibility = () => {
-      if (document.visibilityState === 'hidden') {
-        stopPolling();
-      } else {
-        void tick();
-        startPolling();
-      }
-    };
-    if (document.visibilityState !== 'hidden') startPolling();
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      cancelled = true;
-      stopPolling();
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [activePush, closeTerminal]);
+    },
+    [activePush, closeTerminal],
+  );
+
+  useVisibilityPolling({
+    enabled: !!activePush,
+    intervalMs: 2000,
+    poll: pollActivePush,
+  });
 
   const startPush = useCallback(async () => {
     if (!activeFolder || activePush) return;

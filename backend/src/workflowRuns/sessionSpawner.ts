@@ -3,9 +3,9 @@
 // (stepSpawner.ts); this module only routes the pty allocation through the
 // spawn queue and, for a Claude step, registers the orange presence node.
 
-import { proxyCreateSession } from '../terminalProxy.js';
+import { proxyCreateSession, proxyKillSession } from '../terminalProxy.js';
 import type { CreateSessionResult } from '../terminalServerClient.js';
-import { enqueueSpawn, SpawnCapacityError } from '../spawnQueue.js';
+import { cancelSpawn, enqueueSpawn, notifySessionsFreed, SpawnCapacityError } from '../spawnQueue.js';
 import { registerAgentSession, unregisterAgentSession } from '../agentSessions.js';
 import type { Workflow } from '../workflows.js';
 import { notify, snapshot, type WorkflowRun } from './state.js';
@@ -16,6 +16,27 @@ export function workflowStepAgentId(runId: string, stepIndex: number): string {
   return `wf:${runId}:${stepIndex}`;
 }
 
+function workflowStepDedupeKey(runId: string, stepIndex: number): string {
+  return `wf-step:${runId}:${stepIndex}`;
+}
+
+type WorkflowStepSpawnRecord = {
+  runId: string;
+  stepIndex: number;
+  dedupeKey: string;
+  serverId?: string;
+};
+
+const stepSpawnRecords = new Map<string, WorkflowStepSpawnRecord>();
+
+function recordKey(runId: string, stepIndex: number): string {
+  return `${runId}:${stepIndex}`;
+}
+
+function isCurrentRunningStep(run: WorkflowRun, stepIndex: number): boolean {
+  return run.status === 'running' && run.currentStepIndex === stepIndex;
+}
+
 // Route the pty allocation through the spawn queue (fire-and-forget, like
 // task runs): the step dir is materialized by the caller, only the pty waits
 // for concurrency headroom. `step-spawned` fires from inside the thunk so it
@@ -24,9 +45,10 @@ export function workflowStepAgentId(runId: string, stepIndex: number): string {
 // pre-queue flow, just deferred.
 export type WorkflowStepSessionDeps = {
   proxyCreateSession: typeof proxyCreateSession;
+  proxyKillSession: typeof proxyKillSession;
 };
 
-const productionDeps: WorkflowStepSessionDeps = { proxyCreateSession };
+const productionDeps: WorkflowStepSessionDeps = { proxyCreateSession, proxyKillSession };
 
 function markWorkflowStepSpawnErrored(
   run: WorkflowRun,
@@ -34,14 +56,47 @@ function markWorkflowStepSpawnErrored(
   error: string,
 ): void {
   unregisterAgentSession(workflowStepAgentId(run.id, stepIndex));
+  stepSpawnRecords.delete(recordKey(run.id, stepIndex));
   // A queued spawn may settle after cancellation or after a stale completion
   // callback advanced the run. In that case, do not overwrite the terminal
   // state; just make sure any speculative presence node is gone.
-  if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return;
+  if (!isCurrentRunningStep(run, stepIndex)) return;
   run.status = 'errored';
   run.finishedAt = Date.now();
   run.error = `workflow step ${stepIndex + 1} failed to spawn: ${error}`;
   notify({ type: 'errored', run: snapshot(run) });
+}
+
+async function killWorkflowStepServer(
+  serverId: string,
+  deps: Pick<WorkflowStepSessionDeps, 'proxyKillSession'>,
+): Promise<void> {
+  const killed = await deps.proxyKillSession(serverId);
+  if (killed) notifySessionsFreed();
+}
+
+export function forgetWorkflowStepSession(runId: string, stepIndex: number): void {
+  stepSpawnRecords.delete(recordKey(runId, stepIndex));
+}
+
+export function cancelWorkflowStepSessions(
+  runId: string,
+  deps: Pick<WorkflowStepSessionDeps, 'proxyKillSession'> = productionDeps,
+): void {
+  const records = [...stepSpawnRecords.values()].filter((record) => record.runId === runId);
+  for (const record of records) {
+    cancelSpawn(record.dedupeKey);
+    unregisterAgentSession(workflowStepAgentId(record.runId, record.stepIndex));
+    if (record.serverId) {
+      void killWorkflowStepServer(record.serverId, deps).catch((err) => {
+        console.warn(
+          `[workflow-run] ${record.runId} step ${record.stepIndex}: kill session ${record.serverId} failed:`,
+          err,
+        );
+      });
+    }
+    stepSpawnRecords.delete(recordKey(record.runId, record.stepIndex));
+  }
 }
 
 export function enqueueWorkflowStepSession(opts: {
@@ -51,20 +106,45 @@ export function enqueueWorkflowStepSession(opts: {
   stepDir: string;
   command: string;
   harness: Workflow['steps'][number]['harness'];
-  deps?: WorkflowStepSessionDeps;
+  deps?: Partial<WorkflowStepSessionDeps>;
 }): Promise<void> {
   const { run, stepIndex, projectPath, stepDir, command, harness } = opts;
-  const deps = opts.deps ?? productionDeps;
+  const deps = { ...productionDeps, ...(opts.deps ?? {}) };
+  const dedupeKey = workflowStepDedupeKey(run.id, stepIndex);
+  const spawnRecord: WorkflowStepSpawnRecord = {
+    runId: run.id,
+    stepIndex,
+    dedupeKey,
+  };
+  stepSpawnRecords.set(recordKey(run.id, stepIndex), spawnRecord);
+
   const { done } = enqueueSpawn<void>({
     kind: 'workflow-step',
     priority: 'batch',
-    dedupeKey: `wf-step:${run.id}:${stepIndex}`,
+    dedupeKey,
     thunk: async () => {
+      if (!isCurrentRunningStep(run, stepIndex)) {
+        unregisterAgentSession(workflowStepAgentId(run.id, stepIndex));
+        stepSpawnRecords.delete(recordKey(run.id, stepIndex));
+        throw new Error(`workflow step ${run.id}/${stepIndex}: spawn cancelled`);
+      }
+
       const sess: CreateSessionResult = await deps.proxyCreateSession({
         cwd: stepDir,
         initialCommand: command,
         projectPath,
       });
+
+      if (!isCurrentRunningStep(run, stepIndex)) {
+        unregisterAgentSession(workflowStepAgentId(run.id, stepIndex));
+        if ('id' in sess) {
+          spawnRecord.serverId = sess.id;
+          await killWorkflowStepServer(sess.id, deps);
+        }
+        stepSpawnRecords.delete(recordKey(run.id, stepIndex));
+        throw new Error(`workflow step ${run.id}/${stepIndex}: spawn cancelled`);
+      }
+
       if ('error' in sess) {
         if (sess.code === 'CAP') {
           throw new SpawnCapacityError(
@@ -79,7 +159,9 @@ export function enqueueWorkflowStepSession(opts: {
           `workflow step ${run.id}/${stepIndex}: terminal session failed: ${sess.error}`,
         );
       }
-      if ('id' in sess && harness === 'claude') {
+
+      spawnRecord.serverId = sess.id;
+      if (harness === 'claude') {
         // Presence: orange Claude node for this non-worktree session. Claude
         // only — a Pi/codex step isn't a "Claude session" and never fires the
         // activity hooks, so it gets no node.
@@ -97,7 +179,7 @@ export function enqueueWorkflowStepSession(opts: {
         stepIndex,
         command,
         cwd: stepDir,
-        serverId: 'id' in sess ? sess.id : undefined,
+        serverId: sess.id,
       });
     },
   });

@@ -1,9 +1,8 @@
-// Assembles the harness command line for a workflow step. Thin glue over
-// the pure per-harness builders in worktree/commands.ts — kept here (rather
-// than folded into that module) because the harness→builder dispatch is
-// workflow-step-specific and reads off `Workflow['steps'][number]['harness']`.
+// Assembles the harness command line for a workflow step. Intent-specific
+// prompt text stays here; shared harness syntax (Claude permissions, Pi model
+// flag, Codex prompt quoting) lives in agentCommandBuilder.ts.
 
-import { buildClaudeCommand, buildCodexCommand, buildPiCommand } from '../worktree/commands.js';
+import { buildAgentCommand, promptFileName } from '../agentCommandBuilder.js';
 import type { Workflow } from '../workflows.js';
 
 export function buildWorkflowStepCommand(
@@ -11,7 +10,11 @@ export function buildWorkflowStepCommand(
   harness: Workflow['steps'][number]['harness'],
   piModel?: string,
 ): string {
-  if (harness === 'pi') return buildPiCommand(stepFile, piModel);
-  if (harness === 'codex') return buildCodexCommand(stepFile);
-  return buildClaudeCommand(stepFile);
+  const resolvedHarness = harness ?? 'claude';
+  const fileName = promptFileName(stepFile);
+  return buildAgentCommand({
+    harness: resolvedHarness,
+    piModel,
+    prompt: `Please read ${fileName} and complete the task described in it.`,
+  });
 }
