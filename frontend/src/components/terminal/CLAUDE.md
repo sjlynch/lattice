@@ -15,10 +15,14 @@ CLAUDE.md) — different directory, don't conflate.
   ~16-per-page cap; holding one per terminal made "Run All" blow past it.
   **`serverId` is likewise not a dependency** — only `active` gates the context;
   capturing an id must not churn the GL context.
-- `useTerminalConnection.ts` — the `/ws/terminal` WebSocket: connect, replay,
-  input/resize forwarding, reconnect. Owns the connection *state machine*
-  (`terminated` / `attachedOnce` / `attempt`) and the React effect; holds the
-  invariants below. The protocol *mechanism* lives in `terminalSocket.ts`.
+- `useTerminalConnection.ts` — the `/ws/terminal` WebSocket wiring: React refs,
+  effect lifecycle, WebSocket construction, xterm input/resize forwarding, and
+  message dispatch. The reconnect state machine is delegated to
+  `terminalReconnectController.ts`; keep the narrow effect deps invariant below.
+- `terminalReconnectController.ts` — React/xterm/WebSocket-free reconnect
+  lifecycle controller. Owns `terminated` / `attachedOnce` / `attempt`, the
+  stability and retry timers, reconnect/give-up transitions, and status/notice
+  callbacks injected by the hook.
 - `terminalSocket.ts` — React-free helpers for the connection: `buildTerminalWsUrl`
   (URL building), `handleTerminalMessage` (decode + dispatch), `reconnectDelay` /
   `canReattachTerminal` / `shouldGiveUpReconnect` (backoff/give-up decisions),
@@ -27,21 +31,21 @@ CLAUDE.md) — different directory, don't conflate.
 - `terminalConfig.ts` — `Terminal` options + theme. `clipboardPaste.ts` — Ctrl+V
   → `term.paste()` (xterm would otherwise forward ^V as a raw byte).
 
-## Load-bearing invariants in `useTerminalConnection.ts`
+## Load-bearing invariants in the terminal connection lifecycle
 
 These look like accidents and are not — each fixes a specific past incident.
 Don't "clean them up" without resurrecting the bug.
 
-- **`setTimeout(connect, 0)` is required, not a smell** (~L185). It defers the
-  WS open by one task tick so React StrictMode's synchronous cleanup (which sets
-  `cancelled = true`) runs *before* the handshake starts. Connect synchronously
+- **`setTimeout(connect, 0)` is required, not a smell**. It defers the
+  WS open by one task tick so React StrictMode's synchronous cleanup (which calls
+  `controller.cancel()`) runs *before* the handshake starts. Connect synchronously
   and the first effect run opens a serverless WS the backend has already begun
   upgrading into a pty before cleanup can abort it; the second run opens another
   → **two ptys running the same `initialCommand`** (port-binding commands like
   `npm run dev` then fail "address in use"). The 0 ms hop is imperceptible in
   prod.
 
-- **What bounds reconnect is `terminated`, not the attempt count** (~L144). The
+- **What bounds reconnect is `terminated`, not the attempt count**. The
   attempt cap (`MAX_RECONNECT_ATTEMPTS`) applies **only** to a *serverless*
   terminal that never attached — there a reconnect can spawn a *fresh* pty, so
   it must stay bounded. A terminal we can re-attach to (has a `serverId`, or
