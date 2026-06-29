@@ -1,7 +1,7 @@
 // POST /api/pi-endpoints/probe — "Detect models" for the Settings → Pi
 // endpoint form: GET <baseUrl>/models on an OpenAI-compatible server and return
-// the model ids. Body `{baseUrl, apiKey?}`. Errors (bad URL / unreachable /
-// non-200) come back as a 400 with the message so the form can surface it.
+// the model ids. JSON body `{baseUrl, apiKey?}`. Errors (bad URL / unreachable
+// / non-200) come back as a 400 with the message so the form can surface it.
 
 import { Router } from 'express';
 import { probeEndpointModels } from '../../piModels.js';
@@ -10,6 +10,9 @@ export function buildPiEndpointsRouter(): Router {
   const r = Router();
 
   r.post('/api/pi-endpoints/probe', async (req, res) => {
+    if (!req.is('application/json')) {
+      return res.status(415).json({ error: 'application/json required' });
+    }
     const body = (req.body || {}) as { baseUrl?: unknown; apiKey?: unknown };
     if (typeof body.baseUrl !== 'string' || !body.baseUrl.trim()) {
       return res.status(400).json({ error: 'baseUrl required' });

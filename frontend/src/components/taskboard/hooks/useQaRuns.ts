@@ -7,6 +7,10 @@ import {
 } from '../../../api';
 import type { TerminalSpec } from '../../../TerminalsContext';
 import { shortLabel } from '../lanes';
+import {
+  pollWithErrorSentinel,
+  useVisibilityPolling,
+} from './useVisibilityPolling';
 
 type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
 type CloseTerminal = (id: string) => void;
@@ -43,14 +47,11 @@ export function useQaRuns(
   }, [activeFolder]);
 
   // Poll active runs; when the backend's Stop hook flips one to `done` (or it
-  // 404s — already forgotten), close its terminal and forget it. Pauses while
-  // the tab is hidden (the runs keep progressing on the backend).
-  useEffect(() => {
-    if (activeRuns.length === 0) return;
-    let cancelled = false;
-    let handle: number | null = null;
-
-    const tick = async () => {
+  // 404s — already forgotten), close its terminal and forget it. The interval,
+  // visibility pause/resume, and cancellation shell is shared with push polling;
+  // QA-specific auto-close / verdict-preserving behavior stays here.
+  const pollActiveRuns = useCallback(
+    async (isCancelled: () => boolean) => {
       const settled: string[] = [];
       await Promise.all(
         activeRuns.map(async (run) => {
@@ -61,10 +62,10 @@ export function useQaRuns(
           // null only for a real 404 (genuinely gone); a thrown error (network
           // blip, backend momentarily busy) is caught to 'error' and skipped —
           // we just retry on the next tick.
-          const status = await fetchQaRunStatus(run.runId).catch(
-            () => 'error' as const,
+          const status = await pollWithErrorSentinel(() =>
+            fetchQaRunStatus(run.runId),
           );
-          if (cancelled || status === 'error') return;
+          if (isCancelled() || status === 'error') return;
           if (!status || status.status === 'done') {
             // Tear down the terminal tab only when the run resolved with
             // auto-close enabled. The default (and a bare 404 — run already
@@ -77,35 +78,18 @@ export function useQaRuns(
           }
         }),
       );
-      if (cancelled || settled.length === 0) return;
+      if (isCancelled() || settled.length === 0) return;
       const done = new Set(settled);
       setActiveRuns((prev) => prev.filter((r) => !done.has(r.runId)));
-    };
+    },
+    [activeRuns, closeTerminal],
+  );
 
-    const start = () => {
-      if (handle === null) handle = window.setInterval(() => void tick(), 2500);
-    };
-    const stop = () => {
-      if (handle !== null) {
-        window.clearInterval(handle);
-        handle = null;
-      }
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === 'hidden') stop();
-      else {
-        void tick();
-        start();
-      }
-    };
-    if (document.visibilityState !== 'hidden') start();
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      cancelled = true;
-      stop();
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [activeRuns, closeTerminal]);
+  useVisibilityPolling({
+    enabled: activeRuns.length > 0,
+    intervalMs: 2500,
+    poll: pollActiveRuns,
+  });
 
   const startQaRun = useCallback(
     async (task: Task) => {

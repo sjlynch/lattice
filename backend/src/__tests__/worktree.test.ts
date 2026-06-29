@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { parseWorktreesPorcelain } from '../worktree.js';
+import { exec } from '../worktree/exec.js';
+import { reconcileStaleState } from '../worktree/reconcile.js';
+import { withTempDir } from './helpers/tempDir.js';
 
 test('parseWorktreesPorcelain handles main + linked + detached', () => {
   const sample = [
@@ -41,4 +46,31 @@ test('parseWorktreesPorcelain handles CRLF line endings', () => {
   assert.equal(parsed.length, 1);
   assert.equal(parsed[0].path, 'C:/x');
   assert.equal(parsed[0].branch, 'refs/heads/main');
+});
+
+test('reconcileStaleState refuses to remove a stale target outside managed worktrees', async () => {
+  await withTempDir('lattice-reconcile-guard-', async (root) => {
+    const repoRoot = path.join(root, 'repo');
+    const outsideDir = path.join(root, 'outside-user-dir');
+    const sentinel = path.join(outsideDir, 'keep.txt');
+    await fs.mkdir(repoRoot, { recursive: true });
+    await fs.mkdir(outsideDir, { recursive: true });
+    await fs.writeFile(sentinel, 'do not delete', 'utf8');
+
+    const init = await exec('git', ['init', '-q'], repoRoot);
+    assert.equal(init.code, 0, init.stderr);
+
+    const originalError = console.error;
+    console.error = () => undefined;
+    try {
+      assert.equal(
+        await reconcileStaleState(repoRoot, 'lattice/test-id', outsideDir),
+        false,
+      );
+    } finally {
+      console.error = originalError;
+    }
+
+    assert.equal(await fs.readFile(sentinel, 'utf8'), 'do not delete');
+  });
 });
