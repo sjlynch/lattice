@@ -45,8 +45,19 @@ single source of truth for all three.
   the bounded recursive scratch delete (kill the PTY holding the dir handle →
   `notifySessionsFreed` → strip reparse points → `fsRmWithRetries`), gated
   through the feature's `assertSafeSessionPath` + `assertNotReparsePoint`. On
-  failure it leaves the dir for the boot sweep. Used by push + QA. (Post-merge
-  has no cleanup/boot-sweep — see its `CLAUDE.md`.)
+  failure it leaves the dir for the boot sweep. Used by push, QA, and
+  post-merge hook cleanup wrappers.
+- `registry.ts` — `createOneOffRunRegistry(...)`: the tiny shared in-memory
+  lifecycle for push + QA (`record`, guarded `forget` that preserves running
+  runs, `markDone` stamping `doneAt`, optional event fan-out). QA-specific
+  verdict fields and push-specific subscriptions remain in their feature
+  registries.
+- `routes.ts` — small idempotent `{ok:true}` response shells for scratch-backed
+  `/done` and frontend-acknowledgement `DELETE` routes. Route-specific behavior
+  stays in the route files.
+- `sweep.ts` — shared boot sweep for scratch roots: collect live terminal cwd
+  roots once, iterate known projects' scratch dirs, skip dirs with live PTYs,
+  and delegate id/root validation + deletion to the feature cleanup wrapper.
 
 ## Per-feature config
 

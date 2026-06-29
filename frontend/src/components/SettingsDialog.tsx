@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { TerminalSquare, ScrollText, BarChart3, Cpu, Plug, Server } from 'lucide-react';
 import { Modal } from './Modal';
 import {
   type StartupTerminal,
@@ -14,7 +13,8 @@ import { PiTab } from './settings/PiTab';
 import { McpTab } from './settings/McpTab';
 import { InstructionTemplatesTab } from './settings/InstructionTemplatesTab';
 import { useSettingsDrafts } from './settings/useSettingsDrafts';
-import { useSettingsController, type Tab } from './settings/useSettingsController';
+import { useSettingsController } from './settings/useSettingsController';
+import { SETTINGS_TABS, type Tab } from './settings/settingsTabs';
 
 type Props = {
   open: boolean;
@@ -27,25 +27,6 @@ type Props = {
   metricsIgnoredExts: string[];
   onMetricsIgnoredExtsChange: (next: string[]) => void | Promise<void>;
 };
-
-// Scope tells the user whether a tab's settings are machine-global (apply to
-// every project on this machine — Agents' max-agents, Pi endpoints/model menu)
-// or per-project (only the active folder). Drives the per-tab scope badge.
-type TabScope = 'global' | 'project';
-
-const TAB_META: {
-  id: Tab;
-  label: string;
-  Icon: typeof TerminalSquare;
-  scope: TabScope;
-}[] = [
-  { id: 'terminals', label: 'Terminals', Icon: TerminalSquare, scope: 'project' },
-  { id: 'prompts', label: 'Agent prompts', Icon: ScrollText, scope: 'project' },
-  { id: 'metrics', label: 'Metrics', Icon: BarChart3, scope: 'project' },
-  { id: 'agents', label: 'Agents', Icon: Cpu, scope: 'global' },
-  { id: 'pi', label: 'Pi', Icon: Server, scope: 'global' },
-  { id: 'mcp', label: 'MCP', Icon: Plug, scope: 'project' },
-];
 
 export function SettingsDialog({
   open,
@@ -81,7 +62,7 @@ export function SettingsDialog({
       </div>
       <div className="settings-body">
         <div className="settings-tabs">
-          {TAB_META.map(({ id, label, Icon, scope }) => (
+          {SETTINGS_TABS.map(({ id, label, Icon, scope }) => (
             <button
               key={id}
               className={`settings-tab ${tab === id ? 'active' : ''}`}
