@@ -46,7 +46,7 @@ Express server (`:5184`) plus a detached PTY subprocess on `:5185`.
 - **Crash-safe ordering**: `updateTaskCrashSafe` writes disk before cache. Used for `ready_to_merge → qa` transitions.
 - **Merge in worktree, not main** — see `worktree/merge.ts`. Main's tree only ever changes via fast-forward.
 - **All project-repo git goes through `projectGit`** — never raw `exec('git', …, repoRoot)`. Worktree-side git stays on `exec` (disposable, and it needs the real `git merge` that `projectGit` forbids).
-- **No `fs.rm({recursive})` on anything inside a project** — worktrees live outside the project tree; worktree teardown delegates the recursive delete to `git worktree remove`. Push-run cleanup is an intentional recursive scratch delete, and it is bounded to `~/.lattice/per-project/<hash>/push/<id>/` with path + reparse-point guards.
+- **No `fs.rm({recursive})` on anything inside a project** — worktrees live outside the project tree; worktree teardown delegates the recursive delete to `git worktree remove`. One-off scratch cleanup (push / QA / post-merge hooks) is an intentional recursive delete, and it is bounded to `~/.lattice/per-project/<hash>/{push,qa,post-merge-hooks}/<id>/` with path + reparse-point guards.
 
 ## Type-check
 

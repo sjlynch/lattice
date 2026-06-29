@@ -1,20 +1,8 @@
-import {
-  useCallback,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentProps,
-  type RefObject,
-} from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import type { ScanResult } from '../../api';
-import { GraphContextMenu } from './GraphContextMenu';
-import { GraphHud } from './GraphHud';
-import { GraphOverlayKey } from './GraphOverlayKey';
-import { GraphSelectionChip } from './GraphSelectionChip';
-import { GraphSettingsChrome } from './GraphSettingsChrome';
-import { GraphTaskModal } from './GraphTaskModal';
-import { TimelineScrubber } from './TimelineScrubber';
+import { GraphViewChrome } from './GraphViewChrome';
+import { useGraphViewChromeModel } from './useGraphViewChromeModel';
 import { useStructuralScan } from '../../hooks/useStructuralScan';
 import { useBoxSelect } from './hooks/useBoxSelect';
 import { useAgentOverlay } from './hooks/useAgentOverlay';
@@ -24,13 +12,11 @@ import { useNodeDragBehavior } from './hooks/useNodeDragBehavior';
 import { useForceGraphInitialization } from './hooks/useForceGraphInitialization';
 import { useCameraPersistence } from './hooks/useCameraPersistence';
 import { useRadialTidyLayout } from './hooks/useRadialTidyLayout';
-import { useGraphCounts } from './hooks/useGraphCounts';
 import { useGraphDataSync } from './hooks/useGraphDataSync';
 import { useGraphOverlays } from './hooks/useGraphOverlays';
 import { useGraphSearchController } from './hooks/useGraphSearchController';
 import { useGraphTaskCreation } from './hooks/useGraphTaskCreation';
 import { useNodeContextMenu } from './hooks/useNodeContextMenu';
-import { useOverlayActive } from './hooks/useOverlayActive';
 import { useWorktreeHighlight } from './hooks/useWorktreeHighlight';
 import { useHoverNodeDebounce } from './hooks/useHoverNodeDebounce';
 import { useCanvasDragTracking } from './hooks/useCanvasDragTracking';
@@ -56,113 +42,6 @@ type Props = {
   healthMode: boolean;
   onHealthModeChange: (mode: boolean) => void;
 };
-
-type HudChromeProps = ComponentProps<typeof GraphHud>;
-type OverlayKeyChromeProps = ComponentProps<typeof GraphOverlayKey> & {
-  show: boolean;
-};
-type TimelineChromeProps = ComponentProps<typeof TimelineScrubber> & {
-  show: boolean;
-};
-type DragRectChromeProps = {
-  dragRect: { x1: number; y1: number; x2: number; y2: number } | null;
-};
-type SelectionChipChromeProps = ComponentProps<typeof GraphSelectionChip>;
-type ContextMenuChromeProps = ComponentProps<typeof GraphContextMenu>;
-type TaskModalChromeProps = ComponentProps<typeof GraphTaskModal>;
-type ToastChromeProps = { toast: string | null };
-type SettingsChromeProps = ComponentProps<typeof GraphSettingsChrome>;
-
-type GraphViewOverlaysProps = {
-  hud: HudChromeProps;
-  overlayKey: OverlayKeyChromeProps;
-  timeline: TimelineChromeProps;
-  drag: DragRectChromeProps;
-  selection: SelectionChipChromeProps;
-  contextMenu: ContextMenuChromeProps;
-  taskModal: TaskModalChromeProps;
-  toast: ToastChromeProps;
-  settings: SettingsChromeProps;
-};
-
-type GraphViewChromeProps = {
-  hasTimeline: boolean;
-  containerRef: RefObject<HTMLDivElement | null>;
-  overlays: GraphViewOverlaysProps;
-};
-
-function GraphViewChrome({
-  hasTimeline,
-  containerRef,
-  overlays,
-}: GraphViewChromeProps) {
-  return (
-    <div
-      className={hasTimeline ? 'has-timeline' : undefined}
-      style={{ position: 'relative', width: '100%', height: '100%' }}
-    >
-      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
-      <GraphViewOverlays {...overlays} />
-    </div>
-  );
-}
-
-function GraphViewOverlays({
-  hud,
-  overlayKey,
-  timeline,
-  drag,
-  selection,
-  contextMenu,
-  taskModal,
-  toast,
-  settings,
-}: GraphViewOverlaysProps) {
-  const { show: showOverlayKey, ...overlayKeyProps } = overlayKey;
-  const { show: showTimeline, ...timelineProps } = timeline;
-
-  return (
-    <>
-      <GraphHud {...hud} />
-
-      {/* Always-visible key for the hold-key overlays (top-left). Each chip
-          documents a view + shortcut and pins it on click. Gated on loaded data
-          so it never overlaps the top-left scan spinner (loading is true only
-          while data is null). */}
-      {showOverlayKey && <GraphOverlayKey {...overlayKeyProps} />}
-
-      {showTimeline && (
-        <div className="timeline-bar">
-          <TimelineScrubber {...timelineProps} />
-        </div>
-      )}
-
-      {drag.dragRect && (
-        <div
-          className="graph-select-rect"
-          style={{
-            left: Math.min(drag.dragRect.x1, drag.dragRect.x2),
-            top: Math.min(drag.dragRect.y1, drag.dragRect.y2),
-            width: Math.abs(drag.dragRect.x2 - drag.dragRect.x1),
-            height: Math.abs(drag.dragRect.y2 - drag.dragRect.y1),
-          }}
-        />
-      )}
-
-      <GraphSelectionChip {...selection} />
-      <GraphContextMenu {...contextMenu} />
-      <GraphTaskModal {...taskModal} />
-
-      {toast.toast && (
-        <div className="graph-toast" role="status">
-          {toast.toast}
-        </div>
-      )}
-
-      <GraphSettingsChrome {...settings} />
-    </>
-  );
-}
 
 // Hosts the 3d-force-graph instance and stitches together the per-concern
 // hooks under ./hooks/: graph initialization, settings persistence, git
@@ -433,102 +312,61 @@ export function ForceGraphView({
   useOverlayTooltipDismiss(locMode, healthMode, cancelPendingHoverClear);
 
   // ----- Phase 3: render data + JSX overlays -----
-  // File/dir/hidden counts for the HUD chip — keyed off the structure-stable
-  // scan reference so it skips the O(N) recount on every metric-only save.
-  const counts = useGraphCounts(structuralData, hiddenExts);
-
-  // Stable range handler so the memoized timeline doesn't re-render needlessly.
-  const handleRangeChange = useCallback(
-    (l: number, r: number) =>
-      setRange((cur) =>
-        cur.left === l && cur.right === r ? cur : { left: l, right: r },
-      ),
-    [setRange],
-  );
-
-  // Which overlay views are currently *showing* (held OR pinned), for the
-  // overlay-key chips' lit "active" state.
-  const overlayActive = useOverlayActive({
-    health: healthMode,
-    loc: locMode,
-    dead: deadMode,
-    worktree: worktreeActive,
-    labels: labelMode,
+  const chrome = useGraphViewChromeModel({
+    containerRef,
+    loading,
+    data,
+    structuralData,
+    hiddenExts,
+    activeFolder,
+    history,
+    range,
+    setRange,
+    modes: {
+      healthMode,
+      locMode,
+      deadMode,
+      labelMode,
+      labelLevel,
+      labelShift,
+      worktreeActive,
+    },
+    maxDepthRef,
+    maxDirDepthRef,
+    selected,
+    resetSelection,
+    hoverNode,
+    contextMenu,
+    search: {
+      searchQuery,
+      onSearchQueryChange: handleSearchQueryChange,
+      searchRegex,
+      onSearchRegexToggle: toggleSearchRegex,
+      searchContents,
+      onSearchContentsToggle: toggleSearchContents,
+      searchStatus,
+      searchMatchPosition,
+      onSearchPrevMatch: goPrevMatch,
+      onSearchNextMatch: goNextMatch,
+    },
+    pinned,
+    togglePin,
+    dragRect,
+    openMenuItem,
+    taskModal: {
+      action: modalAction,
+      promptText,
+      onPromptChange: setPromptText,
+      submitting,
+      selectedFiles,
+      onSubmit: submitTask,
+      onClose: closeModal,
+    },
+    toast,
+    settings,
+    setSettings,
+    runLayout,
   });
 
-  // The bottom-anchored counts chip and gear FAB shift up when the
-  // timeline is visible so the timeline can claim the entire viewport
-  // bottom edge.
-  const hasTimeline =
-    !!history && history.isRepo && history.commits.length > 0;
-
-  return (
-    <GraphViewChrome
-      hasTimeline={hasTimeline}
-      containerRef={containerRef}
-      overlays={{
-        hud: {
-          loading,
-          hasData: !!data,
-          counts,
-          healthMode,
-          locMode,
-          deadMode,
-          labelMode,
-          labelLevel,
-          maxDepth: labelShift ? maxDepthRef.current : maxDirDepthRef.current,
-          selectionCount: selected.size,
-          // Suppress the file hover tooltip while the right-click menu is open
-          // so it doesn't sit over the menu. Gating (rather than a one-shot
-          // clear) also keeps it from flickering back if the raycaster re-hovers
-          // the still-under-cursor node while the menu is up.
-          hoverNode: contextMenu ? null : hoverNode,
-          searchQuery,
-          onSearchQueryChange: handleSearchQueryChange,
-          searchRegex,
-          onSearchRegexToggle: toggleSearchRegex,
-          searchContents,
-          onSearchContentsToggle: toggleSearchContents,
-          searchStatus,
-          searchMatchPosition,
-          onSearchPrevMatch: goPrevMatch,
-          onSearchNextMatch: goNextMatch,
-        },
-        overlayKey: {
-          show: !!data,
-          pinned,
-          active: overlayActive,
-          onTogglePin: togglePin,
-        },
-        timeline: {
-          show: hasTimeline,
-          commits: history?.commits ?? [],
-          left: range.left,
-          right: range.right,
-          onChange: handleRangeChange,
-          hasUncommitted: (history?.uncommitted.changes.length ?? 0) > 0,
-        },
-        drag: { dragRect },
-        selection: { count: selected.size, onClear: resetSelection },
-        contextMenu: { position: contextMenu, onPick: openMenuItem },
-        taskModal: {
-          action: modalAction,
-          promptText,
-          onPromptChange: setPromptText,
-          submitting,
-          selectedFiles,
-          rootPath: data?.root || activeFolder,
-          onSubmit: submitTask,
-          onClose: closeModal,
-        },
-        toast: { toast },
-        settings: {
-          settings,
-          onChange: setSettings,
-          project: activeFolder,
-          onRunLayout: runLayout,
-        },
-      }}
-    />
-  );
+  return <GraphViewChrome {...chrome} />;
 }
