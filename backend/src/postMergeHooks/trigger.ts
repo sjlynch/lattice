@@ -17,6 +17,7 @@ import {
 import { postMergeHookAgentId } from './stopHook.js';
 import { registerAgentSession } from '../agentSessions.js';
 import { setupPostMergeHookSession } from './sessionSetup.js';
+import { cleanupPostMergeHookSession } from './cleanup.js';
 import type { PostMergeHookRun, PostMergeHookSession } from './types.js';
 
 export type TriggerPostMergeHookOptions = {
@@ -55,6 +56,7 @@ export type TriggerPostMergeHookDeps = {
     patch: Partial<PostMergeHookRun>,
   ) => PostMergeHookRun | null;
   registerAgentSession: typeof registerAgentSession;
+  cleanupPostMergeHookSession: (projectPath: string, id: string) => Promise<void>;
 };
 
 const defaultTriggerPostMergeHookDeps: TriggerPostMergeHookDeps = {
@@ -66,6 +68,7 @@ const defaultTriggerPostMergeHookDeps: TriggerPostMergeHookDeps = {
   finishPostMergeHook,
   patchPostMergeHook,
   registerAgentSession,
+  cleanupPostMergeHookSession,
 };
 
 // Triggers a post-merge hook and returns immediately with an outcome
@@ -110,8 +113,11 @@ export async function triggerPostMergeHookWithDeps(
 
   const harness = normalizeAgentHarness(settings.postMergeHookHarness);
 
+  let session: PostMergeHookSession | null = null;
+  let recorded = false;
+
   try {
-    const session = await deps.setupPostMergeHookSession({
+    session = await deps.setupPostMergeHookSession({
       projectPath,
       backendOrigin,
       prompt,
@@ -138,6 +144,7 @@ export async function triggerPostMergeHookWithDeps(
       trigger,
     };
     deps.recordPostMergeHook(run);
+    recorded = true;
 
     const command = buildPostMergeHookCommand({
       harness,
@@ -166,6 +173,7 @@ export async function triggerPostMergeHookWithDeps(
         `[post-merge-hook] spawn failed for run ${session.id}: ${sess.error}`,
       );
       deps.finishPostMergeHook(session.id, 'errored', sess.error);
+      await deps.cleanupPostMergeHookSession(projectPath, session.id);
       return { kind: 'error', message: sess.error };
     }
 
@@ -184,6 +192,10 @@ export async function triggerPostMergeHookWithDeps(
   } catch (err) {
     const message = (err as Error).message;
     console.error('[post-merge-hook] trigger failed:', err);
+    if (session) {
+      if (recorded) deps.finishPostMergeHook(session.id, 'errored', message);
+      await deps.cleanupPostMergeHookSession(projectPath, session.id);
+    }
     return { kind: 'error', message };
   }
 }

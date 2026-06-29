@@ -1,0 +1,17 @@
+# backend/src/routes/settings
+
+Sub-routers composed by `routes/settings.ts`. Paths are distinct, so mount order
+is not significant within this folder.
+
+- `userSettings.ts` — per-project `GET/PATCH /api/settings`; persists to the
+  project's `.lattice/userSettings.json` via `userSettings.ts`.
+- `projectEnv.ts` — read-only `GET /api/project-env`, exposing detected
+  package-manager env notes used in task instructions.
+- `instructionTemplates.ts` — editable prompt templates for task/merge/QA/push/
+  post-merge/workflow prompts.
+- `piModels.ts` — `GET /api/pi-models`; reads detected Pi models plus curated
+  menu from global settings.
+- `piEndpoints.ts` — `POST /api/pi-endpoints/probe`; OpenAI-compatible
+  `/models` probe for Settings → Pi.
+- Keep per-project settings separate from machine-global settings; the latter
+  live in `routes/globalSettings.ts`.

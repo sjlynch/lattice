@@ -1,4 +1,8 @@
-import express, { type ErrorRequestHandler, type Express } from 'express';
+import express, {
+  type ErrorRequestHandler,
+  type Express,
+  type RequestHandler,
+} from 'express';
 // Monkey-patches Express 4 to forward async-handler rejections to the
 // error middleware below, so a route that throws never returns a generic
 // non-JSON 500 — the toast always has a real message to show.
@@ -35,13 +39,26 @@ export function createBackendApp(options: BackendAppOptions): Express {
 // The SPA is same-origin via vite's dev-server proxy and never relies on
 // CORS response headers, so a strict allowlist is invisible to the app while
 // blocking cross-origin attackers. Only the vite dev origin (both loopback
-// spellings) is permitted; everything else gets no CORS headers and is thus
-// rejected by the browser's same-origin policy. curl/agent task-seeding is
-// unaffected — CORS is browser-enforced only.
+// spellings) is permitted. curl/agent task-seeding is unaffected because those
+// requests send no Origin header.
 const ALLOWED_ORIGINS = new Set([
   'http://localhost:5183',
   'http://127.0.0.1:5183',
 ]);
+
+const SAFE_HTTP_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+function isAllowedOrigin(origin: string | undefined): boolean {
+  return !origin || ALLOWED_ORIGINS.has(origin);
+}
+
+export const rejectDisallowedUnsafeOrigin: RequestHandler = (req, res, next) => {
+  const origin = req.get('origin');
+  if (!SAFE_HTTP_METHODS.has(req.method) && !isAllowedOrigin(origin)) {
+    return res.status(403).json({ error: 'origin not allowed' });
+  }
+  next();
+};
 
 export function mountBaseMiddleware(app: Express): void {
   app.use(
@@ -57,6 +74,10 @@ export function mountBaseMiddleware(app: Express): void {
       },
     }),
   );
+  // CORS alone only withholds response headers; it does not stop a malicious
+  // page from submitting a simple form POST. Reject cross-origin unsafe methods
+  // before any body parser or route handler can perform side effects.
+  app.use(rejectDisallowedUnsafeOrigin);
   // 25mb so a Claude PreToolUse/PostToolUse hook can POST a large `Write`
   // tool_input (the whole file body) to /api/tasks/:id/activity without
   // tripping the default 100kb limit. Localhost-only personal tool; the

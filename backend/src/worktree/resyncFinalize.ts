@@ -45,6 +45,38 @@ export type ResyncFinalizeOptions = {
   onFinalizeResult?: (result: FinalizeOutcome) => void;
 };
 
+type ResyncContext = {
+  task: Task;
+  backendOrigin: string;
+  branch: string;
+  worktreePath: string;
+};
+
+function buildResyncContext(
+  task: Task,
+  backendOrigin: string,
+): ResyncContext | ResyncOutcome {
+  if (!task.branch || !task.worktreePath) {
+    return {
+      kind: 'error',
+      phase: 'merge',
+      message: 'task missing branch/worktree info',
+    };
+  }
+  return {
+    task,
+    backendOrigin,
+    branch: task.branch,
+    worktreePath: task.worktreePath,
+  };
+}
+
+function isResyncOutcome(
+  value: ResyncContext | ResyncOutcome,
+): value is ResyncOutcome {
+  return 'kind' in value;
+}
+
 function finalizeFailureMessage(
   fin: Extract<FinalizeOutcome, { ok: false }>,
 ): string {
@@ -57,104 +89,162 @@ function finalizeFailureMessage(
   return `Re-sync with main conflicted on ${fin.mergeConflict.length} file(s) — Claude resolver spawned`;
 }
 
+async function mainAlreadyIncorporated(
+  ctx: ResyncContext,
+  opts: ResyncFinalizeOptions,
+): Promise<boolean> {
+  if (opts.assumeMainAlreadyIncorporated) return true;
+  if (!opts.skipIfMainAncestor) return false;
+
+  try {
+    const incorporated = await mainIsAncestorOfWorktree(
+      ctx.task.projectPath,
+      ctx.worktreePath,
+    );
+    if (incorporated) {
+      opts.onMainAlreadyIncorporated?.();
+    }
+    return incorporated;
+  } catch (err) {
+    opts.onAncestorCheckError?.(err);
+    return false;
+  }
+}
+
+async function mergeMainIntoWorktree(
+  ctx: ResyncContext,
+  opts: ResyncFinalizeOptions,
+): Promise<MergeOutcome> {
+  opts.onBeforeMerge?.();
+  const mergeResult = await mergeWorktreeInRepo(
+    ctx.task.projectPath,
+    ctx.branch,
+    ctx.worktreePath,
+    ctx.task.id,
+    ctx.backendOrigin,
+    ctx.task.title,
+  );
+  opts.onMergeResult?.(mergeResult);
+  return mergeResult;
+}
+
+async function mergeIfNeeded(
+  ctx: ResyncContext,
+  opts: ResyncFinalizeOptions,
+): Promise<MergeOutcome> {
+  if (await mainAlreadyIncorporated(ctx, opts)) {
+    return { status: 'clean' };
+  }
+  return mergeMainIntoWorktree(ctx, opts);
+}
+
+async function markTaskMergeConflict(taskId: string): Promise<void> {
+  await updateTask(taskId, {
+    conflict: true,
+    conflictStartedAt: Date.now(),
+  });
+}
+
+async function writeMergeConflictResyncOutcome(
+  ctx: ResyncContext,
+  mergeResult: Extract<MergeOutcome, { status: 'conflict' }>,
+  opts: ResyncFinalizeOptions,
+): Promise<ResyncOutcome> {
+  opts.onBeforeWriteMergeInstructions?.(mergeResult);
+  const { relativePath } = await writeMergeInstructions(
+    ctx.task,
+    ctx.branch,
+    mergeResult.conflictedFiles,
+    ctx.backendOrigin,
+    ctx.worktreePath,
+  );
+  await markTaskMergeConflict(ctx.task.id);
+  return {
+    kind: 'merge-conflict',
+    conflictedFiles: mergeResult.conflictedFiles,
+    relativePath,
+    command: buildConflictResolveCommand(relativePath),
+    cwd: ctx.worktreePath,
+  };
+}
+
+async function handleMergeResult(
+  ctx: ResyncContext,
+  mergeResult: MergeOutcome,
+  opts: ResyncFinalizeOptions,
+): Promise<ResyncOutcome | null> {
+  if (mergeResult.status === 'conflict') {
+    return writeMergeConflictResyncOutcome(ctx, mergeResult, opts);
+  }
+  if (mergeResult.status === 'error') {
+    return { kind: 'error', phase: 'merge', message: mergeResult.message };
+  }
+  return null;
+}
+
+function shapeMergeConflictFinalizeOutcome(
+  fin: Extract<FinalizeOutcome, { ok: false; mergeConflict: string[] }>,
+): ResyncOutcome {
+  // The retry re-sync inside finalize conflicted (a sibling task advanced
+  // main onto an overlapping hunk). finalize already wrote
+  // MERGE_INSTRUCTIONS.md + flagged the task; surface it as a resolvable
+  // merge-conflict so the caller spawns a second resolver, exactly like a
+  // first-pass conflict.
+  return {
+    kind: 'merge-conflict',
+    conflictedFiles: fin.mergeConflict,
+    relativePath: fin.relativePath,
+    command: fin.resolveCommand,
+    cwd: fin.cwd,
+  };
+}
+
+function shapeStashConflictFinalizeOutcome(
+  fin: Extract<FinalizeOutcome, { ok: false; stashConflict: string[] }>,
+  message: string,
+): ResyncOutcome {
+  return {
+    kind: 'stash-conflict',
+    cwd: fin.cwd,
+    resolveCommand: fin.resolveCommand,
+    conflictedFiles: fin.stashConflict,
+    message,
+  };
+}
+
+function shapeFinalizeFailure(
+  fin: Extract<FinalizeOutcome, { ok: false }>,
+): ResyncOutcome {
+  if ('mergeConflict' in fin) return shapeMergeConflictFinalizeOutcome(fin);
+  const message = finalizeFailureMessage(fin);
+  if ('stashConflict' in fin) return shapeStashConflictFinalizeOutcome(fin, message);
+  return { kind: 'error', phase: 'finalize', message };
+}
+
+async function finalizeAfterCleanMerge(
+  ctx: ResyncContext,
+  opts: ResyncFinalizeOptions,
+): Promise<ResyncOutcome> {
+  opts.onBeforeFinalize?.();
+  const fin = await finalizeMergedTask(ctx.task, ctx.backendOrigin);
+  opts.onFinalizeResult?.(fin);
+  if (fin.ok) {
+    return { kind: 'finalized' };
+  }
+  return shapeFinalizeFailure(fin);
+}
+
 export async function resyncWithMainAndFinalize(
   task: Task,
   backendOrigin: string,
   opts: ResyncFinalizeOptions = {},
 ): Promise<ResyncOutcome> {
-  if (!task.branch || !task.worktreePath) {
-    return {
-      kind: 'error',
-      phase: 'merge',
-      message: 'task missing branch/worktree info',
-    };
-  }
+  const ctx = buildResyncContext(task, backendOrigin);
+  if (isResyncOutcome(ctx)) return ctx;
 
-  let mainAlreadyIncorporated = !!opts.assumeMainAlreadyIncorporated;
-  if (!mainAlreadyIncorporated && opts.skipIfMainAncestor) {
-    try {
-      mainAlreadyIncorporated = await mainIsAncestorOfWorktree(
-        task.projectPath,
-        task.worktreePath,
-      );
-    } catch (err) {
-      opts.onAncestorCheckError?.(err);
-      mainAlreadyIncorporated = false;
-    }
-    if (mainAlreadyIncorporated) {
-      opts.onMainAlreadyIncorporated?.();
-    }
-  }
+  const mergeResult = await mergeIfNeeded(ctx, opts);
+  const mergeOutcome = await handleMergeResult(ctx, mergeResult, opts);
+  if (mergeOutcome) return mergeOutcome;
 
-  let mergeResult: MergeOutcome = { status: 'clean' };
-  if (!mainAlreadyIncorporated) {
-    opts.onBeforeMerge?.();
-    mergeResult = await mergeWorktreeInRepo(
-      task.projectPath,
-      task.branch,
-      task.worktreePath,
-      task.id,
-      backendOrigin,
-      task.title,
-    );
-    opts.onMergeResult?.(mergeResult);
-  }
-
-  if (mergeResult.status === 'conflict') {
-    opts.onBeforeWriteMergeInstructions?.(mergeResult);
-    const { relativePath } = await writeMergeInstructions(
-      task,
-      task.branch,
-      mergeResult.conflictedFiles,
-      backendOrigin,
-      task.worktreePath,
-    );
-    await updateTask(task.id, {
-      conflict: true,
-      conflictStartedAt: Date.now(),
-    });
-    return {
-      kind: 'merge-conflict',
-      conflictedFiles: mergeResult.conflictedFiles,
-      relativePath,
-      command: buildConflictResolveCommand(relativePath),
-      cwd: task.worktreePath,
-    };
-  }
-
-  if (mergeResult.status === 'error') {
-    return { kind: 'error', phase: 'merge', message: mergeResult.message };
-  }
-
-  opts.onBeforeFinalize?.();
-  const fin = await finalizeMergedTask(task, backendOrigin);
-  opts.onFinalizeResult?.(fin);
-  if (fin.ok) {
-    return { kind: 'finalized' };
-  }
-  if ('mergeConflict' in fin) {
-    // The retry re-sync inside finalize conflicted (a sibling task advanced
-    // main onto an overlapping hunk). finalize already wrote
-    // MERGE_INSTRUCTIONS.md + flagged the task; surface it as a resolvable
-    // merge-conflict so the caller spawns a second resolver, exactly like a
-    // first-pass conflict.
-    return {
-      kind: 'merge-conflict',
-      conflictedFiles: fin.mergeConflict,
-      relativePath: fin.relativePath,
-      command: fin.resolveCommand,
-      cwd: fin.cwd,
-    };
-  }
-  const message = finalizeFailureMessage(fin);
-  if ('stashConflict' in fin) {
-    return {
-      kind: 'stash-conflict',
-      cwd: fin.cwd,
-      resolveCommand: fin.resolveCommand,
-      conflictedFiles: fin.stashConflict,
-      message,
-    };
-  }
-  return { kind: 'error', phase: 'finalize', message };
+  return finalizeAfterCleanMerge(ctx, opts);
 }

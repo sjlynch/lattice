@@ -3,6 +3,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { forceKillByPort } from './forceKillByPort.js';
 import { computeTerminalFingerprint } from './terminalFingerprint.js';
+import {
+  getTerminalServerAuthToken,
+  terminalServerAuthHeaders,
+  TERMINAL_SERVER_TOKEN_ENV,
+} from './terminalServerAuth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const TERMINAL_PORT = Number(process.env.TERMINAL_PORT) || 5185;
@@ -54,6 +59,7 @@ export async function shutdownStale(): Promise<void> {
   try {
     await fetch(`${BASE}/shutdown`, {
       method: 'POST',
+      headers: terminalServerAuthHeaders(),
       signal: AbortSignal.timeout(SHUTDOWN_STALE_TIMEOUT_MS),
     });
   } catch {
@@ -95,6 +101,7 @@ export async function spawnAndWait(): Promise<void> {
   // restarts of `dist/index.js` (whose PID changes) don't re-trigger the
   // termination — only the orchestrator going away does.
   const parentPid = process.ppid || process.pid;
+  const terminalAuthToken = getTerminalServerAuthToken();
   const child = spawn(process.execPath, [script], {
     detached: true,
     windowsHide: true,
@@ -104,6 +111,7 @@ export async function spawnAndWait(): Promise<void> {
       TERMINAL_PORT: String(TERMINAL_PORT),
       LATTICE_API_PORT: String(apiPort),
       BACKEND_PARENT_PID: String(parentPid),
+      [TERMINAL_SERVER_TOKEN_ENV]: terminalAuthToken,
     },
   });
   child.unref();

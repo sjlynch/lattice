@@ -29,6 +29,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const FINGERPRINT_FILES = [
   'terminal-server.js',
   'terminalServer/processGuards.js',
+  'terminalServer/createSessionHandler.js',
   'terminalServer/routes.js',
   'terminalServer/shutdown.js',
   'terminalServer/websocket.js',
@@ -36,6 +37,7 @@ export const FINGERPRINT_FILES = [
   // The shared CSWSH origin allowlist the websocket upgrade handler enforces.
   // A change to which Origins are accepted must invalidate a stale orphan.
   'wsOriginAllowlist.js',
+  'terminalServerAuth.js',
   'terminal.js',
   'terminal/sessionTypes.js',
   'terminal/sessionStore.js',

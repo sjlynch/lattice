@@ -20,6 +20,10 @@ import {
 } from '../qaRuns.js';
 import { unregisterAgentSession } from '../agentSessions.js';
 import { isQaTerminalAutoCloseEnabled } from '../userSettings.js';
+import {
+  deleteHomeScratchRunResponse,
+  finishHomeScratchDoneResponse,
+} from '../homeScratch/routes.js';
 
 // Tolerantly read a PASS/confident verdict out of the agent's POST body. The
 // brief tells it to send `{ "verdict": "pass"|"fail", "confidence": "high"|"low" }`,
@@ -137,40 +141,50 @@ export function buildQaRunsRouter(
   // Stop-hook callback. Idempotent: a duplicate POST after the run has been
   // forgotten just no-ops.
   r.post('/api/qa-runs/:id/done', async (req, res) => {
-    const run = getQaRun(req.params.id);
+    const id = req.params.id;
+    const run = getQaRun(id);
     // Drop the graph node regardless of whether the run is still tracked.
-    unregisterAgentSession(qaAgentId(req.params.id));
-    if (!run) return res.json({ ok: true });
-    // Backstop the qa → done transition off the reliable Stop hook, the way
-    // in_progress → ready_to_merge fires from the Stop hook / Pi completion
-    // extension rather than the model's memory. If the agent's explicit
-    // /verdict curl already advanced the task this is an idempotent no-op; if
-    // that move was missed (or raced this callback) the recorded confident PASS
-    // is applied here. A fail / unsure / absent verdict still leaves it in QA.
-    await applyRecordedQaVerdict(run.id);
-    markQaRunDone(run.id);
-    // Resolve once whether the QA terminal should auto-close (default: stay
-    // open so the user can read the verdict/output) and record it on the run so
-    // the frontend poller mirrors the same decision when it next sees `done`.
-    const autoClose = await isQaTerminalAutoCloseEnabled(run.projectPath);
-    recordQaRunAutoClose(run.id, autoClose);
-    if (autoClose) {
-      // Auto-close: tear down the pty + reclaim the home-scoped scratch dir off
-      // the response path so a slow Windows fs.rm doesn't keep the curl call
-      // open past its 5s timeout. (The original pre-toggle behavior.)
-      void cleanupQaSession(run.projectPath, run.id);
-    }
-    // Stay-open: leave the live pty + scratch in place so the terminal stays
-    // readable. The boot-time sweep (sweepOrphanedQaSessions) reclaims the
-    // scratch dir on the next restart, and closing the tab kills the pty.
-    res.json({ ok: true });
+    unregisterAgentSession(qaAgentId(id));
+    await finishHomeScratchDoneResponse({
+      res,
+      run,
+      onRun: async (tracked) => {
+        // Backstop the qa → done transition off the reliable Stop hook, the way
+        // in_progress → ready_to_merge fires from the Stop hook / Pi completion
+        // extension rather than the model's memory. If the agent's explicit
+        // /verdict curl already advanced the task this is an idempotent no-op;
+        // if that move was missed (or raced this callback) the recorded
+        // confident PASS is applied here. A fail / unsure / absent verdict
+        // still leaves it in QA.
+        await applyRecordedQaVerdict(tracked.id);
+        markQaRunDone(tracked.id);
+        // Resolve once whether the QA terminal should auto-close (default:
+        // stay open so the user can read the verdict/output) and record it on
+        // the run so the frontend poller mirrors the same decision when it next
+        // sees `done`.
+        const autoClose = await isQaTerminalAutoCloseEnabled(tracked.projectPath);
+        recordQaRunAutoClose(tracked.id, autoClose);
+        if (autoClose) {
+          // Auto-close: tear down the pty + reclaim the home-scoped scratch dir
+          // off the response path so a slow Windows fs.rm doesn't keep the curl
+          // call open past its 5s timeout. (The original pre-toggle behavior.)
+          void cleanupQaSession(tracked.projectPath, tracked.id);
+        }
+        // Stay-open: leave the live pty + scratch in place so the terminal stays
+        // readable. The boot-time sweep (sweepOrphanedQaSessions) reclaims the
+        // scratch dir on the next restart, and closing the tab kills the pty.
+      },
+    });
   });
 
   // Allow the frontend to drop the run from the registry once it's seen the
   // 'done' status — keeps the map from growing forever in long sessions.
   r.delete('/api/qa-runs/:id', (req, res) => {
-    forgetQaRun(req.params.id);
-    res.json({ ok: true });
+    deleteHomeScratchRunResponse({
+      res,
+      id: req.params.id,
+      forget: forgetQaRun,
+    });
   });
 
   return r;

@@ -114,11 +114,15 @@ therefore stay safely re-runnable.
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/api/health` | Liveness probe |
+| GET | `/api/harnesses?refresh=1` | Detected agent CLIs (`claude` / `pi` / `codex`) for harness dropdowns |
 | GET | `/api/default-root` | Default project for the UI |
 | GET | `/api/scan?path=` | Recursive source-file scan, gitignore-aware |
 | GET | `/api/search?project=&q=&regex=` | File-*contents* search (gitignore-aware grep); returns `{matches, scanned, truncated}` where `matches` are absolute paths == graph file-node ids. Backs the graph search bar's contents pass (filename matches are client-side). `regex=1` for raw regex, else `*`/`?` wildcards |
 | GET | `/api/health/dead-code?project=` | Files the analyzer confidently flags unreachable (`{files, total, scannedAt}`); 60s-memoized scan. Backs the dead-code note in `LATTICE_TASK.md` + agent self-investigation |
+| GET | `/api/git-history?path=&limit=` | Timeline scrubber history (`git log --name-status -M`) |
+| GET | `/api/git-branch?path=` | Current branch label for the navbar |
 | GET | `/api/list-dir?path=` | Folder browser (folder picker) |
+| POST | `/api/create-dir` | Folder picker create-directory helper `{parent, name}` |
 | GET | `/api/settings?project=` | Read per-project user settings |
 | PATCH | `/api/settings?project=` | Merge-update per-project user settings |
 | GET | `/api/instruction-templates?project=` | Editable agent instruction templates (task/merge/QA/push/post-merge/workflow): each template's `defaultTemplate`, the project's `currentTemplate` (override-or-default), and its `{{token}}` docs. Backs Settings → Agent prompts; edits save via PATCH `/api/settings` (`instructionTemplateOverrides`) |
@@ -134,12 +138,19 @@ therefore stay safely re-runnable.
 | GET | `/api/mcp-import/scan?project=` | Scan other tools' MCP configs (Claude Code / Cursor / Codex / VS Code / Windsurf), secrets redacted |
 | POST | `/api/mcp-import` | Apply selected imports `{ids, project?}` → add custom-server defs + store literal keys |
 | GET | `/api/project-env?project=` | Auto-detected package-manager envs + the "fresh worktree, don't reinstall" notes (default + effective) |
-| GET | `/api/tasks?project=` | List tasks for a project |
+| GET | `/api/projects` | Known project roots + hashes, for agent sanity checks |
+| GET | `/api/tasks?project=&status=&format=markdown` | List tasks for a project; `format=markdown` returns a round-trippable markdown document for agent editing |
+| GET | `/api/tasks/summary?project=` | Counts by task status for a project |
 | GET | `/api/tasks/worktree-modified?project=` | Files changed by each not-yet-merged task (in_progress + ready_to_merge); drives the graph's `W` worktree-highlight |
 | GET | `/api/tasks/:id` | Fetch a single task |
 | POST | `/api/tasks` | Create `{project, title, description?}` |
-| POST | `/api/tasks/batch` | Batch-create `{project, tasks:[{title,description?}]}` — returns array |
-| PATCH | `/api/tasks/:id` | Update `title` / `description` / `status` |
+| POST | `/api/tasks/batch` | Batch-create JSON tasks or `text/markdown` `# Heading` blocks — returns array |
+| POST | `/api/tasks/bulk-update` | Apply multiple `{id, patch}` updates in one request |
+| POST | `/api/tasks/upsert` | Upsert tasks from markdown/JSON; headings with `{id=...}` update, headings without ids create |
+| POST | `/api/tasks/transition` | Bulk status transition by explicit `ids` or `{fromStatus, project}` |
+| PATCH | `/api/tasks/:id` | Update `title` / `description` / `status`; accepts JSON or text/markdown description bodies |
+| POST | `/api/tasks/reorder` | Persist per-lane task order `{project, status, ids}` |
+| POST | `/api/tasks/:id/append-summary` | Append a markdown/plain-text summary beneath the task description |
 | DELETE | `/api/tasks/:id` | Remove |
 | POST | `/api/tasks/:id/cancel-queued-run` | Drop a queued run back to a plain Open task |
 | POST | `/api/tasks/:id/run` | Enqueue an Open task's run on the spawn queue; returns `{accepted, queued}` (pty delivered later via the `task-spawned` WS event) |
@@ -152,16 +163,36 @@ therefore stay safely re-runnable.
 | POST | `/api/tasks/:id/merge` | Attempt git merge; conflict pre-creates resolver pty, returns `serverId` |
 | POST | `/api/tasks/:id/merged` | Resolver-Claude callback after a successful merge |
 | POST | `/api/tasks/:id/merge-aborted` | Resolver-Claude callback if it gave up |
+| POST | `/api/tasks/:id/stash-resolved` | Callback after a stash/snapshot conflict resolver finishes |
 | POST | `/api/merge-runs` | Body `{project}` — start a merge-all run |
 | GET | `/api/merge-runs/active?project=` | Active run for a project, or `null` |
 | GET | `/api/merge-runs/:id` | Run snapshot |
 | POST | `/api/merge-runs/:id/cancel` | Request cancellation (run finishes current task and stops) |
+| POST | `/api/merge-runs/:id/stash-resolved` | Callback after a post-run stash/snapshot conflict resolver finishes |
+| GET | `/api/workflows?project=` | List workflow definitions for a project |
+| POST | `/api/workflows` | Create a workflow definition |
+| PATCH | `/api/workflows/:id` | Update a workflow definition |
+| DELETE | `/api/workflows/:id` | Delete a workflow definition |
 | POST | `/api/workflows/:id/run` | Start a workflow run (spawns step 0 terminal) |
 | POST | `/api/workflow-prompt-customizations` | Spawn selected harness to tailor a workflow step prompt |
 | GET | `/api/workflow-prompt-customizations/:id` | Poll prompt-customization status/result |
 | POST | `/api/workflow-prompt-customizations/:id/complete` | Harness callback with customized prompt |
 | POST | `/api/workflow-runs/:runId/steps/:n/complete` | Stop-hook callback — advances to next step |
+| POST | `/api/workflow-runs/:runId/cancel` | Cancel an active workflow run |
 | GET | `/api/workflow-runs/active?project=` | Active workflow runs for a project |
+| GET | `/api/git-check?path=` | Repo probe for the QA-lane Push button |
+| POST | `/api/push-runs` | Start a one-off Claude push session |
+| GET | `/api/push-runs/:id` | Push-run status poll |
+| POST | `/api/push-runs/:id/done` | Push-run Stop-hook callback |
+| DELETE | `/api/push-runs/:id` | Forget a completed push-run record |
+| POST | `/api/qa-runs` | Start a QA e2e Playwright-Claude session for a QA-lane task |
+| GET | `/api/qa-runs/:id` | QA-run status/verdict poll |
+| POST | `/api/qa-runs/:id/verdict` | Structured QA verdict callback; confident PASS may promote qa → done |
+| POST | `/api/qa-runs/:id/done` | QA-run Stop-hook backstop/cleanup callback |
+| DELETE | `/api/qa-runs/:id` | Forget a completed QA-run record |
+| GET | `/api/post-merge-hooks/active?project=` | Active or most-recent post-merge hook for UI rehydration |
+| POST | `/api/post-merge-hooks/:id/complete` | Post-merge hook Stop-hook completion/error callback |
+| POST | `/api/post-merge-hooks/:id/abort` | Abort an active post-merge hook |
 | GET | `/api/terminals` | Debug: list active pty sessions |
 | DELETE | `/api/terminals/:id` | Kill a pty session |
 | GET | `/api/spawn-queue` | Debug: spawn-queue snapshot (pending/in-flight/reserved, softCap) |
@@ -169,8 +200,13 @@ therefore stay safely re-runnable.
 | WS | `/ws/tasks?project=` | Live task list updates + `task-spawned` events (a queued run's pty spawned) + `task-spawn-failed` (a deferred run/resume failed for a non-CAP reason; the UI toasts it) + `task-activity` (worktree Claude agent's current file) + `agent-activity` (non-worktree Claude session's current file) for the graph focus beams |
 | WS | `/ws/agent-sessions?project=` | Presence snapshots of Claude sessions running outside a worktree (push / workflow step / post-merge hook); one orange graph node each |
 | WS | `/ws/merge-runs?project=` | Run progress + per-conflict resolver spawn events |
+| WS | `/ws/post-merge-hooks?project=` | Post-merge hook active/recent state updates |
+| WS | `/ws/workflows?project=` | Workflow definition updates |
+| WS | `/ws/workflow-runs?project=` | Workflow run lifecycle + per-step terminal spawn events |
+| WS | `/ws/health?project=` | Incremental file-health updates from the watcher |
+| WS | `/ws/harnesses` | Harness availability snapshots/refresh notifications |
 
-Both WS endpoints share the HTTP server via a single `upgrade` dispatcher
+All WS endpoints share the HTTP server via a single `upgrade` dispatcher
 (`noServer: true`); routing by `pathname` so multiple WSs can coexist.
 
 ## Conventions

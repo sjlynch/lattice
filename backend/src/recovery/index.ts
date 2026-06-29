@@ -15,6 +15,7 @@ import { checkBranchExists, recoverPendingSnapshots } from '../worktree.js';
 import { sweepOrphanedWorktrees } from './worktreeSweep.js';
 import { sweepOrphanedPushSessions } from './pushSessionSweep.js';
 import { sweepOrphanedQaSessions } from './qaSessionSweep.js';
+import { sweepOrphanedPostMergeHookSessions } from './postMergeHookSweep.js';
 import {
   sweepStaleClaudeProjectEntries,
   sweepOrphanedClaudeConfigTempFiles,
@@ -25,6 +26,7 @@ export { resumeQueuedTaskRuns } from './queuedRunResume.js';
 export { sweepOrphanedWorktrees } from './worktreeSweep.js';
 export { sweepOrphanedPushSessions } from './pushSessionSweep.js';
 export { sweepOrphanedQaSessions } from './qaSessionSweep.js';
+export { sweepOrphanedPostMergeHookSessions } from './postMergeHookSweep.js';
 export {
   sweepStaleClaudeProjectEntries,
   sweepOrphanedClaudeConfigTempFiles,
@@ -64,7 +66,10 @@ export async function recoverOrphanedTasks(): Promise<void> {
   // Phase 1e: same convergence layer for QA e2e-run scratch dirs.
   await runStartupRecoveryStep('sweepOrphanedQaSessions', () => sweepOrphanedQaSessions());
 
-  // Phase 1f: reclaim dead `projects[<cwd>]` entries in ~/.claude.json that
+  // Phase 1f: same convergence layer for post-merge hook scratch dirs.
+  await runStartupRecoveryStep('sweepOrphanedPostMergeHookSessions', () => sweepOrphanedPostMergeHookSessions());
+
+  // Phase 1g: reclaim dead `projects[<cwd>]` entries in ~/.claude.json that
   // point at Lattice ephemeral worktree/scratch dirs already removed (incl. the
   // ones the sweeps above just reclaimed). Each spawn pre-seeds one such entry
   // (trust + managed MCP) and nothing else prunes them, so the map grew by one
@@ -72,7 +77,7 @@ export async function recoverOrphanedTasks(): Promise<void> {
   // recovery/claudeConfigSweep.ts.
   await runStartupRecoveryStep('sweepStaleClaudeProjectEntries', () => sweepStaleClaudeProjectEntries());
 
-  // Phase 1g: delete orphaned ~/.claude.json.lattice-*.tmp temps left by a
+  // Phase 1h: delete orphaned ~/.claude.json.lattice-*.tmp temps left by a
   // writer hard-killed between its temp write and rename. The fixed
   // atomic-write path now cleans up on a failed rename, but this reclaims
   // legacy orphans (and any from a true hard-kill). See claudeConfigSweep.ts.
