@@ -23,9 +23,14 @@ import type { DirtyPaths, SafeDirtyPaths } from './capture.js';
 // disk and carries the user's content. The source path was removed by the
 // rename, so there's nothing to copy for it — we consume and discard that
 // trailing field so it isn't mis-read as its own record.
-export function parseStatus(out: string): DirtyPaths {
-  const modified: string[] = [];
-  const untracked: string[] = [];
+export type StatusRecord = {
+  x: string;
+  y: string;
+  file: string;
+};
+
+export function parseStatusRecords(out: string): StatusRecord[] {
+  const records: StatusRecord[] = [];
   const fields = out.split('\0');
   for (let i = 0; i < fields.length; i++) {
     const field = fields[i];
@@ -35,10 +40,19 @@ export function parseStatus(out: string): DirtyPaths {
     const x = field[0];
     const y = field[1];
     const file = field.slice(3); // skip the 2-char XY code + its space
+    records.push({ x, y, file });
     // Rename/copy: the next NUL-separated field is the source path. Skip it.
     if (x === 'R' || y === 'R' || x === 'C' || y === 'C') {
       i += 1;
     }
+  }
+  return records;
+}
+
+export function parseStatus(out: string): DirtyPaths {
+  const modified: string[] = [];
+  const untracked: string[] = [];
+  for (const { x, y, file } of parseStatusRecords(out)) {
     if (x === '?' && y === '?') {
       untracked.push(file);
     } else if (x !== ' ' || y !== ' ') {
