@@ -22,9 +22,14 @@ label physics in `labelPhysics/CLAUDE.md`.
 
 **Coordinator & chrome (React)**
 - `ForceGraphView.tsx` — coordinator: holds `selected`/`hoverNode`, threads refs
-  through `useGraphOverlays` + `useForceGraphInitialization`, then hands render
-  props to the presentational `GraphViewChrome`/`GraphViewOverlays` helpers in
-  the same file. Imperative syncs + keyboard live in focused hooks.
+  through `useGraphOverlays` + `useForceGraphInitialization`, and stays focused
+  on graph lifecycle / scene runtime orchestration. Imperative syncs + keyboard
+  live in focused hooks.
+- `useGraphViewChromeModel.ts` — shapes the coordinator's state into HUD,
+  overlay-key, timeline, selection, context-menu, task-modal, toast, and settings
+  chrome props (including counts, timeline range handler, and active-pin state).
+- `GraphViewChrome.tsx` / `GraphViewOverlays.tsx` — render-only viewport wrapper
+  and overlay composition.
 - `GraphHud` / `GraphSelectionChip` / `GraphContextMenu` / `GraphTaskModal` /
   `GraphSearchBar` / `GraphOverlayKey` / `GraphSettingsChrome` /
   `GraphSettingsPanel` — render-only HUD/chip/popover/modal/search/overlay-key/
