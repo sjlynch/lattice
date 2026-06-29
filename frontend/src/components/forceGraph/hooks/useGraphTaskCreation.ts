@@ -56,12 +56,12 @@ export function useGraphTaskCreation({
   );
 
   const submitTask = useCallback(async () => {
-    if (!modalAction || !activeFolder) return;
+    if (!modalAction || !activeFolder || !data) return;
     const trimmed = promptText.trim();
     if (!trimmed) return;
     const titleSnippet = trimmed.replace(/\s+/g, ' ').slice(0, 60);
     const title = `${modalAction.verb}: ${titleSnippet}`;
-    const root = data?.root || activeFolder;
+    const root = data.root;
     const fileLines = selectedFiles
       .map((n) => `- ${relPath(n.path, root)}`)
       .join('\n');

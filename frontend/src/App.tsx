@@ -114,6 +114,7 @@ function App() {
                 from blanking the sidebar / task board. */}
             <ErrorBoundary compact title="The file graph crashed">
               <ForceGraphView
+                key={activeFolder || 'no-project'}
                 data={scanResult}
                 loading={loading}
                 hiddenExts={hiddenExts}
