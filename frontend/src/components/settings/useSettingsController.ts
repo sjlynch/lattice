@@ -1,13 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useConfirm } from '../shared/ConfirmDialog';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   type StartupTerminal,
   type TerminalLaunchSettings,
 } from '../../api';
-import {
-  cleanStartupTerminals,
-  type StartupTerminalsTabHandle,
-} from './StartupTerminalsTab';
+import { type StartupTerminalsTabHandle } from './StartupTerminalsTab';
 import { type EnvNotesTabHandle } from './EnvNotesTab';
 import { type InstructionTemplatesTabHandle } from './InstructionTemplatesTab';
 import { type MetricsIgnoredExtsTabHandle } from './MetricsIgnoredExtsTab';
@@ -16,17 +12,10 @@ import { type PiTabHandle } from './PiTab';
 import { type McpTabHandle } from './McpTab';
 import { saveSettings } from './saveSettings';
 import { type SettingsDrafts } from './useSettingsDrafts';
+import { useSettingsDirty } from './useSettingsDirty';
+import { useSettingsCloseFlow } from './useSettingsCloseFlow';
 
-export type Tab = 'terminals' | 'prompts' | 'metrics' | 'agents' | 'pi' | 'mcp';
-
-const EMPTY_DIRTY: Record<Tab, boolean> = {
-  terminals: false,
-  prompts: false,
-  metrics: false,
-  agents: false,
-  pi: false,
-  mcp: false,
-};
+export type { Tab } from './settingsTabs';
 
 type SettingsControllerParams = {
   open: boolean;
@@ -39,11 +28,9 @@ type SettingsControllerParams = {
   onMetricsIgnoredExtsChange: (next: string[]) => void | Promise<void>;
 };
 
-// Owns everything about the Settings modal that isn't tab chrome or body
-// rendering: the per-tab imperative handles, the derived per-tab dirty map,
-// the save orchestration (delegating to `saveSettings`), and the
-// warn-on-unsaved-close flow. The dialog spreads `refs` onto each tab panel
-// and renders the returned state; it carries no save/dirty logic itself.
+// Owns the Settings modal's per-tab imperative handles and save orchestration.
+// Focused hooks below derive the dirty map and gate the warn-on-unsaved-close
+// flow, keeping this controller as the coordinator the dialog consumes.
 export function useSettingsController({
   open,
   activeFolder,
@@ -63,58 +50,37 @@ export function useSettingsController({
   const agentsRef = useRef<AgentsTabHandle>(null);
   const piRef = useRef<PiTabHandle>(null);
   const mcpRef = useRef<McpTabHandle>(null);
-  const { confirmUnsaved } = useConfirm();
-  const closingRef = useRef(false);
+  const refs = useMemo(
+    () => ({
+      startupTerminals: startupTerminalsRef,
+      envNotes: envNotesRef,
+      instructionTemplates: instructionTemplatesRef,
+      metricsIgnoredExts: metricsIgnoredExtsRef,
+      agents: agentsRef,
+      pi: piRef,
+      mcp: mcpRef,
+    }),
+    [
+      agentsRef,
+      envNotesRef,
+      instructionTemplatesRef,
+      mcpRef,
+      metricsIgnoredExtsRef,
+      piRef,
+      startupTerminalsRef,
+    ],
+  );
 
   useEffect(() => {
     if (open) setError(null);
   }, [open, startupTerminals]);
 
-  // Per-tab dirty: a tab is dirty when its patch getter would write something
-  // (returns non-undefined) or, for the parent-owned drafts / startup
-  // terminals, when the draft differs from what was loaded. MCP secrets are
-  // intentionally excluded — they auto-save on their own, outside Save.
-  const computeDirty = useCallback((): Record<Tab, boolean> => {
-    const startupDirty =
-      JSON.stringify(
-        startupTerminalsRef.current?.getCleanedTerminals() ??
-          cleanStartupTerminals(startupTerminals),
-      ) !== JSON.stringify(cleanStartupTerminals(startupTerminals));
-    return {
-      terminals: drafts.dirty || startupDirty,
-      prompts:
-        instructionTemplatesRef.current?.getInstructionTemplateOverridesPatch() !==
-          undefined ||
-        envNotesRef.current?.getWorktreeEnvNotesPatch() !== undefined,
-      metrics:
-        metricsIgnoredExtsRef.current?.getMetricsIgnoredExtsPatch() !== undefined,
-      agents: agentsRef.current?.getMaxConcurrentAgentsPatch() !== undefined,
-      pi:
-        piRef.current?.getPiProvidersPatch() !== undefined ||
-        piRef.current?.getPiModelMenuPatch() !== undefined,
-      mcp: mcpRef.current?.getMcpUserPatch() !== undefined,
-    };
-  }, [drafts.dirty, startupTerminals]);
-
-  // The imperative patch getters aren't reactive, so re-derive the dirty map
-  // after any edit inside the dialog body. The bump (onChange/onClick on the
-  // body) re-renders us; reading the refs in this post-commit effect avoids the
-  // one-tick staleness of reading them during render.
-  const [dirtyByTab, setDirtyByTab] = useState<Record<Tab, boolean>>(EMPTY_DIRTY);
-  const [dirtyTick, setDirtyTick] = useState(0);
-  useEffect(() => {
-    if (!open) {
-      setDirtyByTab(EMPTY_DIRTY);
-      return;
-    }
-    const next = computeDirty();
-    setDirtyByTab((prev) =>
-      (Object.keys(next) as Tab[]).every((id) => prev[id] === next[id])
-        ? prev
-        : next,
-    );
-  }, [open, dirtyTick, computeDirty]);
-  const bumpDirty = useCallback(() => setDirtyTick((t) => t + 1), []);
+  const { dirtyByTab, bumpDirty, computeDirty } = useSettingsDirty({
+    open,
+    drafts,
+    startupTerminals,
+    refs,
+  });
 
   const save = async () => {
     if (!activeFolder) return;
@@ -152,43 +118,15 @@ export function useSettingsController({
     }
   };
 
-  // Every close path (Cancel, Escape, backdrop) routes here. With pending edits
-  // across any tab, ask Save / Discard / Cancel first instead of silently
-  // dropping them. (MCP secrets aren't in the dirty check — they auto-save.)
-  const requestClose = async () => {
-    if (saving || closingRef.current) return;
-    if (!Object.values(computeDirty()).some(Boolean)) {
-      onClose();
-      return;
-    }
-    closingRef.current = true;
-    try {
-      const choice = await confirmUnsaved({
-        message: 'You have unsaved settings changes.',
-      });
-      if (choice === 'cancel') return;
-      if (choice === 'discard') {
-        onClose();
-        return;
-      }
-      // save() closes on success (onClose) and surfaces an error + stays open
-      // on failure.
-      await save();
-    } finally {
-      closingRef.current = false;
-    }
-  };
+  const requestClose = useSettingsCloseFlow({
+    saving,
+    computeDirty,
+    save,
+    onClose,
+  });
 
   return {
-    refs: {
-      startupTerminals: startupTerminalsRef,
-      envNotes: envNotesRef,
-      instructionTemplates: instructionTemplatesRef,
-      metricsIgnoredExts: metricsIgnoredExtsRef,
-      agents: agentsRef,
-      pi: piRef,
-      mcp: mcpRef,
-    },
+    refs,
     saving,
     error,
     dirtyByTab,

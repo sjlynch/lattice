@@ -5,9 +5,9 @@ import { buildTerminalWsQuery, type TerminalWsQueryArgs } from './connectionPara
 // Mechanism behind `useTerminalConnection` — the `/ws/terminal` protocol with
 // no React in it: URL building, message decoding, reconnect/backoff maths, the
 // user-visible terminal-body notices, and xterm input/resize forwarding. The
-// hook owns the connection *state machine* (terminated / attachedOnce / attempt)
-// and wires these focused helpers together; the load-bearing invariants are
-// documented at each call site there and in this directory's CLAUDE.md.
+// reconnect lifecycle *state machine* (terminated / attachedOnce / attempt)
+// lives in `terminalReconnectController.ts`; the hook wires these focused
+// helpers to React refs, xterm, and the WebSocket instance.
 
 // Reconnect cap for a SERVERLESS terminal that has never attached: without a
 // session id to re-subscribe to, each fresh connect can spawn a brand-new pty,
