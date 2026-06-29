@@ -1,5 +1,6 @@
 import { setupHomeScratchSession } from '../homeScratch/session.js';
 import { createHomeScratchAgentSession } from '../homeScratch/agentSession.js';
+import { buildAgentCommand } from '../agentCommandBuilder.js';
 import { renderPushInstructions } from './instructions.js';
 import { resolveInstructionTemplate } from '../instructionTemplates.js';
 import { pushPaths } from './paths.js';
@@ -9,8 +10,10 @@ import { cleanupPushSession } from './cleanup.js';
 import type { PushSession } from './types.js';
 
 const PUSH_INSTRUCTIONS_FILE = 'PUSH_INSTRUCTIONS.md';
-const PUSH_COMMAND =
-  'claude --dangerously-skip-permissions "Please read PUSH_INSTRUCTIONS.md in this directory and follow it."';
+const PUSH_COMMAND = buildAgentCommand({
+  harness: 'claude',
+  prompt: 'Please read PUSH_INSTRUCTIONS.md in this directory and follow it.',
+});
 
 async function renderPush(projectPath: string): Promise<string> {
   const template = await resolveInstructionTemplate(projectPath, 'push');
