@@ -28,13 +28,14 @@ Each tab is a `forwardRef` panel that:
 - renders `null` while `!active` (hooks still run before the early return, so
   the handle stays live even for a tab the user never opened).
 
-`useSettingsController.ts` owns everything the dialog isn't: it creates and
-holds the per-tab imperative `ref` handles, derives the per-tab **dirty** map
-(`dirtyByTab` + a `bumpDirty` tick that re-reads the non-reactive patch getters
-after each body edit), runs the save (delegating to `saveSettings.ts`), and
-gates the warn-on-unsaved-close flow (`requestClose` → `confirmUnsaved`). The
-dialog spreads the returned `refs` onto each tab and renders `saving` / `error`
-/ `dirtyByTab`. The `Tab` union lives here too.
+`useSettingsController.ts` owns the per-tab imperative `ref` handles and runs
+the save (delegating to `saveSettings.ts`). Focused helpers keep the rest small:
+`settingsTabs.ts` is the tab metadata + `Tab` union, `useSettingsDirty.ts`
+derives the per-tab **dirty** map (`dirtyByTab` + a `bumpDirty` tick that
+re-reads the non-reactive patch getters after each body edit), and
+`useSettingsCloseFlow.ts` gates the warn-on-unsaved-close flow (`requestClose`
+→ `confirmUnsaved`). The dialog spreads the returned `refs` onto each tab and
+renders `saving` / `error` / `dirtyByTab`.
 
 `saveSettings.ts` is the orchestrator. The controller hands it every tab's
 handle (any may be `null` if unmounted), it reads each `*Patch()`, merges the
@@ -100,9 +101,10 @@ Note: the `PATCH /api/global-settings` route now passes *all* machine-global
 fields through (it previously forwarded only `maxConcurrentAgents`, silently
 dropping the rest).
 
-`PiTab.tsx` stays the orchestrator (load, draft state, menu wiring, the
-`PiTabHandle` save patch) — with the per-endpoint editors now in
-`usePiEndpointEditors` — and renders through focused pieces: `PiEndpointCard`
+`PiTab.tsx` stays the orchestrator (loads endpoint providers, wires the
+`PiTabHandle` save patch) — with the per-endpoint editors in
+`usePiEndpointEditors` and the model-menu draft/auto-include behavior in
+`usePiModelMenuDraft` — and renders through focused pieces: `PiEndpointCard`
 (one managed endpoint — id/baseUrl/key/detect/model checklist + the Advanced
 toggle) wrapping `PiEndpointAdvanced` (compat + custom headers), and `PiModelMenu`
 (the curated-menu checklist). Pure sanitization/derivation lives in
