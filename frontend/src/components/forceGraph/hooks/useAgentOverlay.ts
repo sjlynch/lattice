@@ -208,6 +208,7 @@ export function useAgentOverlay(
       overlay.setSizes(
         settingsRef.current.fileNodeSize,
         settingsRef.current.labelSize,
+        settingsRef.current.showSubagentLabels,
       );
       // While the layout is live, file nodes move under the beams, so the graph
       // bounds (hover-line height) must be recomputed; once settled they're

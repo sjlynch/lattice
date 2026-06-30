@@ -253,9 +253,11 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   (PreToolUse/PostToolUse hooks → `/activity` → `task-activity` WS) a TTL-
   fading focus beam links the node to each file node. **Subagents** (Task/Agent
   tool) the Claude spawns appear as smaller **satellite** nodes that follow the
-  parent, each with its own focus beams and an `agent_type` label — driven by
-  Claude's `SubagentStart`/`SubagentStop` hooks plus the subagent's own tool-use
-  hooks (which carry `agent_id`). Holding **`W`** outlines every file changed by
+  parent, each with its own focus beams and (off by default) an `agent_type`
+  label — toggle the labels on via Graph settings → Sizes → "Subagent labels"
+  (`graphSettings.showSubagentLabels`); the orbs themselves always show. Driven
+  by Claude's `SubagentStart`/`SubagentStop` hooks plus the subagent's own
+  tool-use hooks (which carry `agent_id`). Holding **`W`** outlines every file changed by
   a not-yet-merged task in that task's color. Claude-only for now (Codex/Pi lack
   the activity/subagent hooks). See
   `frontend/src/components/forceGraph/CLAUDE.md`.

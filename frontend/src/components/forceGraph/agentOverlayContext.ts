@@ -34,6 +34,11 @@ export interface AgentOverlayCtx {
   // (same as the Alt-label overlay) so agent labels read at the same scale as
   // file labels. Default mirrors graphSettings until the first tick sets it.
   labelSize: number;
+  // Whether to draw the per-subagent type label next to each satellite orb.
+  // Off by default (the orbs alone convey presence); kept in sync with the
+  // graph's `showSubagentLabels` setting each frame via setSizes. The orbs
+  // themselves are always drawn — this only gates their text labels.
+  showSubagentLabels: boolean;
   // Monotonic spawn counter — feeds each fresh agent's parked-spiral slot.
   spawnCount: number;
   // Smoothed Y of the hover line (above the graph top). Computed from live node
@@ -65,6 +70,7 @@ export function createAgentOverlayCtx(
     pathIndex: new AgentPathIndex(),
     nodeSize,
     labelSize: 3.0,
+    showSubagentLabels: false,
     spawnCount: 0,
     hoverLine: new HoverLine(),
     sinceBoundsRecheck: 0,

@@ -180,3 +180,16 @@ export const METRIC_LABEL_MODES: ToggleOption<boolean>[] = [
     hint: 'show the numeric value above each node on the Health (H) and LOC (Z) views',
   },
 ];
+
+// Whether each subagent satellite orb draws its type label (e.g. 'Explore') in
+// the Agent Presence Layer. Off by default — the orbs alone convey that an
+// agent spawned subagents; the labels add clutter without much signal. The orbs
+// themselves are always shown either way.
+export const SUBAGENT_LABEL_MODES: ToggleOption<boolean>[] = [
+  { value: false, label: 'Off', hint: 'satellite orbs only — no type labels (default)' },
+  {
+    value: true,
+    label: 'On',
+    hint: "show each subagent's type label next to its satellite orb",
+  },
+];

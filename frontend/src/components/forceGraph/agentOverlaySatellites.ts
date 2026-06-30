@@ -119,7 +119,13 @@ export function updateSatellites(
     }
     // Tether parent → satellite (constant opacity; geometry only).
     updateBeamEndpoints(sat.tether, agent.pos, sat.pos);
-    updateSatelliteLabel(ctx.group, sat, ctx.labelSize, ctx.nodeSize);
+    // The type label is opt-in (off by default — the orb alone shows presence).
+    // When toggled off at runtime, drop any label this satellite already has.
+    if (ctx.showSubagentLabels) {
+      updateSatelliteLabel(ctx.group, sat, ctx.labelSize, ctx.nodeSize);
+    } else if (sat.label) {
+      removeFloatingLabel(ctx.group, sat);
+    }
     updateBeamGeometries(ctx, sat.beams, sat.pos, now, SATELLITE_BEAM_OPACITY_FACTOR);
   }
   return moving;

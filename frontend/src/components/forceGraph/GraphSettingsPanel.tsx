@@ -15,6 +15,7 @@ import {
   RENDER_SCALE_ROW,
   REPULSION_MODES,
   SPREAD_ROWS,
+  SUBAGENT_LABEL_MODES,
   TABS,
   THETA_ROW,
   TIDY_ONLOAD_MODES,
@@ -73,6 +74,9 @@ export const GraphSettingsPanel = memo(function GraphSettingsPanel({
 
   const setMetricLabels = (on: boolean) =>
     onChange({ ...settings, metricLabels: on });
+
+  const setShowSubagentLabels = (on: boolean) =>
+    onChange({ ...settings, showSubagentLabels: on });
 
   const setTidyLayoutOnLoad = (on: boolean) =>
     onChange({ ...settings, tidyLayoutOnLoad: on });
@@ -134,6 +138,14 @@ export const GraphSettingsPanel = memo(function GraphSettingsPanel({
               options={METRIC_LABEL_MODES}
               value={settings.metricLabels}
               onSelect={setMetricLabels}
+            />
+
+            <ToggleGroupRow
+              label="Subagent labels"
+              ariaLabel="Subagent labels"
+              options={SUBAGENT_LABEL_MODES}
+              value={settings.showSubagentLabels}
+              onSelect={setShowSubagentLabels}
             />
           </>
         )}

@@ -60,6 +60,12 @@ export type GraphSettings = {
   // measured file node sprouts its connector + number again. Affects only the
   // metric overlays — the Alt name-label overlay is unrelated.
   metricLabels: boolean;
+  // Show the per-subagent type label (e.g. 'Explore') next to each satellite
+  // orb in the Agent Presence Layer. Off by default — the satellite orbs alone
+  // already convey "this agent spawned N subagents", and the type labels add
+  // visual clutter without much signal. The satellite orbs themselves are
+  // always shown regardless; this only toggles their text labels.
+  showSubagentLabels: boolean;
   // --- "Spread / layout shape" knobs (the settings panel's Spread tab) ---
   //
   // d3 simulation alpha-decay rate. Lower = the engine runs more ticks before
@@ -132,6 +138,9 @@ export const DEFAULT_SETTINGS: GraphSettings = {
   // projects the per-node value labels overlap too much to read; opt in via the
   // graph settings panel when a sparser view makes them useful.
   metricLabels: false,
+  // Off by default — the satellite orbs already show subagent presence; the
+  // type labels are extra clutter. Opt in via the graph settings panel.
+  showSubagentLabels: false,
   // Spread/shape knobs. A slower-than-d3 alpha decay (0.014 vs 0.0228) lets the
   // engine run more ticks so it relaxes into a wider, more open layout, and a
   // short warmup pre-settles it so it appears spread on load instead of visibly

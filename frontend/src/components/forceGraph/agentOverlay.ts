@@ -70,9 +70,12 @@ export class AgentOverlay {
     this.ctx = createAgentOverlayCtx(graph, nodeSize);
   }
 
-  setSizes(nodeSize: number, labelSize: number): void {
+  setSizes(nodeSize: number, labelSize: number, showSubagentLabels: boolean): void {
     const ctx = this.ctx;
     ctx.labelSize = labelSize;
+    // Pushed every frame (before the nodeSize early-out) so a Settings toggle
+    // takes effect on the next satellite update — see updateSatellites.
+    ctx.showSubagentLabels = showSubagentLabels;
     if (nodeSize === ctx.nodeSize) return;
     ctx.nodeSize = nodeSize;
     const s = nodeSize * NODE_SCALE_MULTIPLIER;

@@ -17,6 +17,9 @@ installCanvasDocument((t) => ({
 const { updateAgentLabel } = await import(
   '../components/forceGraph/agentOverlayLabels.ts'
 );
+const { createSatellite, updateSatellites } = await import(
+  '../components/forceGraph/agentOverlaySatellites.ts'
+);
 const { LABEL_SPRITE_CONFIG } = await import(
   '../components/forceGraph/agentOverlayConstants.ts'
 );
@@ -70,4 +73,46 @@ test('agent label is reused when neither file nor labelSize changed', () => {
   // Idle frame: nothing changed — must NOT rebuild (avoid per-frame churn).
   updateAgentLabel(group, agent, 4, 10);
   assert.equal(agent.label, first, 'same sprite reused when nothing changed');
+});
+
+// updateSatellites only reads these fields off the ctx; the rest of the overlay
+// state is irrelevant to the label gate, so a partial stand-in keeps the test
+// focused (an empty beams map skips updateBeamGeometries' pathIndex use).
+function makeCtx(showSubagentLabels: boolean) {
+  return {
+    group: new THREE.Group(),
+    nodeSize: 10,
+    labelSize: 3,
+    showSubagentLabels,
+    tmpB: new THREE.Vector3(),
+  } as unknown as Parameters<typeof updateSatellites>[0];
+}
+
+function makeSatAgent() {
+  return {
+    color: '#ffffff',
+    pos: new THREE.Vector3(0, 0, 0),
+    satellites: new Map(),
+  } as unknown as Parameters<typeof createSatellite>[1];
+}
+
+test('satellite type label is gated on showSubagentLabels and toggles live', () => {
+  const ctx = makeCtx(false);
+  const agent = makeSatAgent();
+  const now = 1000; // hold `now` steady so the idle-reap TTL never trips
+  const sat = createSatellite(ctx, agent, 'sub-1', 'Explore', now);
+
+  // Off (the default): a satellite update shows the orb but builds no label.
+  updateSatellites(ctx, agent, now);
+  assert.equal(sat.label, undefined, 'no label while showSubagentLabels is off');
+
+  // Toggled on at runtime: the next update builds the type label.
+  ctx.showSubagentLabels = true;
+  updateSatellites(ctx, agent, now);
+  assert.ok(sat.label, 'label built once showSubagentLabels turns on');
+
+  // Toggled back off: the existing label is removed (not left stranded).
+  ctx.showSubagentLabels = false;
+  updateSatellites(ctx, agent, now);
+  assert.equal(sat.label, undefined, 'label removed when toggled off again');
 });
