@@ -2,6 +2,7 @@
 // and folder browser used by the FolderPicker.
 
 import { asJson, postJson } from './http';
+import { subscribeWs } from './ws';
 import type {
   DirListing,
   GitHistoryResult,
@@ -71,6 +72,23 @@ export async function fetchGitBranch(folderPath: string): Promise<string | null>
   } catch {
     return null;
   }
+}
+
+export type GitBranchUpdate = { type: 'git-branch'; branch: string | null };
+
+// Live subscription to the active project's current git branch. The backend
+// watches `.git/HEAD` and pushes the branch on connect and again whenever it
+// changes (a terminal or the user runs `git checkout`), so the navbar chip
+// updates without a page refresh. Returns an unsubscribe fn (auto-reconnects
+// via subscribeWs). Replaces polling/one-shot fetchGitBranch for the navbar.
+export function subscribeGitBranch(
+  project: string,
+  onBranch: (branch: string | null) => void,
+): () => void {
+  const url = `/ws/git-branch?project=${encodeURIComponent(project)}`;
+  return subscribeWs<GitBranchUpdate>(url, (msg) => {
+    if (msg && msg.type === 'git-branch') onBranch(msg.branch ?? null);
+  });
 }
 
 export async function listDir(folderPath?: string): Promise<DirListing> {

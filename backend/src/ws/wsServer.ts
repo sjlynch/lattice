@@ -9,6 +9,7 @@ import type { Duplex } from 'node:stream';
 import type { WebSocketServer } from 'ws';
 import { isAllowedOrigin } from '../wsOriginAllowlist.js';
 import { buildAgentSessionsWss } from './endpoints/agentSessions.js';
+import { buildGitBranchWss } from './endpoints/gitBranch.js';
 import { buildHarnessesWss } from './endpoints/harnesses.js';
 import { buildHealthWss } from './endpoints/health.js';
 import { buildMergeRunsWss } from './endpoints/mergeRuns.js';
@@ -33,6 +34,7 @@ function buildWebSocketRoutes(): WebSocketRoute[] {
     ['/ws/workflows', buildWorkflowsWss()],
     ['/ws/workflow-runs', buildWorkflowRunsWss()],
     ['/ws/health', buildHealthWss()],
+    ['/ws/git-branch', buildGitBranchWss()],
     ['/ws/harnesses', buildHarnessesWss()],
   ];
 }

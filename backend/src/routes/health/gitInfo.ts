@@ -1,36 +1,12 @@
 // Read-only git facts about the active project folder shown in the navbar:
 // the commit timeline (`/api/git-history`, backs the timeline scrubber via
 // ../../gitHistory.ts) and the current branch indicator (`/api/git-branch`).
+// The branch derivation itself lives in ../../gitBranch.ts, shared with the
+// `/ws/git-branch` live watcher that pushes updates on checkout.
 
 import { Router } from 'express';
 import { getGitHistory } from '../../gitHistory.js';
-import { exec } from '../../worktree/exec.js';
-
-const GIT_BRANCH_TIMEOUT_MS = 4000;
-
-// Current branch of a repo's working tree (the active project folder shown in
-// the navbar). `rev-parse --abbrev-ref HEAD` yields the branch name, or the
-// literal "HEAD" when detached — in which case we surface the short sha so the
-// navbar shows something meaningful instead of a bare "HEAD". Returns null when
-// the folder isn't a git repo (or git isn't available), so the navbar can just
-// omit the branch indicator.
-async function getCurrentBranch(repoRoot: string): Promise<string | null> {
-  try {
-    const r = await exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot, {
-      timeoutMs: GIT_BRANCH_TIMEOUT_MS,
-    });
-    const name = r.stdout.trim();
-    if (r.code !== 0 || !name) return null;
-    if (name !== 'HEAD') return name;
-    const sha = await exec('git', ['rev-parse', '--short', 'HEAD'], repoRoot, {
-      timeoutMs: GIT_BRANCH_TIMEOUT_MS,
-    });
-    const short = sha.stdout.trim();
-    return short ? `detached @ ${short}` : null;
-  } catch {
-    return null;
-  }
-}
+import { getCurrentBranch } from '../../gitBranch.js';
 
 export function buildGitInfoRouter(defaultRoot: string): Router {
   const r = Router();

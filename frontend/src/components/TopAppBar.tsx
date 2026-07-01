@@ -4,7 +4,7 @@ import { FolderPicker } from './FolderPicker';
 import { TaskBoardLauncher } from './TaskBoard';
 import { WorkflowsLauncher } from './Workflows';
 import { SettingsDialog } from './SettingsDialog';
-import { fetchGitBranch } from '../api';
+import { subscribeGitBranch } from '../api';
 import type { ScanResult, StartupTerminal, TerminalLaunchSettings } from '../api';
 
 type Props = {
@@ -42,23 +42,19 @@ export const TopAppBar = memo(function TopAppBar({
     ? activeFolder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || activeFolder
     : '(no folder)';
 
-  // Resolve the active folder's current git branch for the navbar indicator.
-  // Cleared immediately on folder change so a stale branch from the previous
-  // project never lingers, and guarded so a slow lookup that resolves after
-  // another switch doesn't overwrite the newer folder's branch.
+  // Live-track the active folder's current git branch for the navbar indicator.
+  // A WS subscription pushes the branch on connect and again whenever a terminal
+  // (a Claude console) or the user switches branches, so the chip updates without
+  // a page refresh. Cleared immediately on folder change so a stale branch from
+  // the previous project never lingers; tearing down the subscription drops any
+  // late message from the old folder, so no extra guard is needed.
   useEffect(() => {
     if (!activeFolder) {
       setBranch(null);
       return;
     }
-    let cancelled = false;
     setBranch(null);
-    fetchGitBranch(activeFolder).then((b) => {
-      if (!cancelled) setBranch(b);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return subscribeGitBranch(activeFolder, setBranch);
   }, [activeFolder]);
 
   return (

@@ -120,7 +120,7 @@ therefore stay safely re-runnable.
 | GET | `/api/search?project=&q=&regex=` | File-*contents* search (gitignore-aware grep); returns `{matches, scanned, truncated}` where `matches` are absolute paths == graph file-node ids. Backs the graph search bar's contents pass (filename matches are client-side). `regex=1` for raw regex, else `*`/`?` wildcards |
 | GET | `/api/health/dead-code?project=` | Files the analyzer confidently flags unreachable (`{files, total, scannedAt}`); 60s-memoized scan. Backs the dead-code note in `LATTICE_TASK.md` + agent self-investigation |
 | GET | `/api/git-history?path=&limit=` | Timeline scrubber history (`git log --name-status -M`) |
-| GET | `/api/git-branch?path=` | Current branch label for the navbar |
+| GET | `/api/git-branch?path=` | Current branch label for the navbar (one-shot; the navbar itself uses the `/ws/git-branch` live stream) |
 | GET | `/api/list-dir?path=` | Folder browser (folder picker) |
 | POST | `/api/create-dir` | Folder picker create-directory helper `{parent, name}` |
 | GET | `/api/settings?project=` | Read per-project user settings |
@@ -204,6 +204,7 @@ therefore stay safely re-runnable.
 | WS | `/ws/workflows?project=` | Workflow definition updates |
 | WS | `/ws/workflow-runs?project=` | Workflow run lifecycle + per-step terminal spawn events |
 | WS | `/ws/health?project=` | Incremental file-health updates from the watcher |
+| WS | `/ws/git-branch?project=` | Current git branch of the active project, pushed on connect and on every `.git/HEAD` change (checkout) so the navbar chip updates live |
 | WS | `/ws/harnesses` | Harness availability snapshots/refresh notifications |
 
 All WS endpoints share the HTTP server via a single `upgrade` dispatcher
