@@ -1,20 +1,20 @@
-// Pi endpoint MANAGEMENT for Lattice — the write side of Pi model config.
+// Pi models.json RECONCILIATION for Lattice — the "sync managed providers into
+// ~/.pi/agent/models.json" half of Pi endpoint management.
 //
-// Two operations back the Settings → Pi tab:
 //   - reconcilePiModelsJson(): upsert globalSettings.piProviders INTO
 //     ~/.pi/agent/models.json (preserving hand-written providers) so a custom
 //     OpenAI-compatible endpoint (vLLM, …) becomes selectable.
-//   - probeEndpointModels(): GET <baseUrl>/models for the "Detect models" button.
 //
-// Read-only DISCOVERY (pi --list-models parsing, menu curation) lives in
-// ./discovery.ts; reconcile invalidates that module's cache via
-// resetPiModelsCache so a newly-added provider shows up immediately.
+// The endpoint-probe half ("Detect models") lives in ./probe.ts. Read-only
+// DISCOVERY (pi --list-models parsing, menu curation) lives in ./discovery.ts;
+// reconcile invalidates that module's cache via resetPiModelsCache so a
+// newly-added provider shows up immediately.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { latticeHomeDir } from '../projectPath.js';
 import { getGlobalSettings, type PiProvider } from '../globalSettings.js';
-import { PI_MODELS_CONFIG, piAgentDir } from './config.js';
+import { piAgentDir } from './config.js';
 import { resetPiModelsCache } from './discovery.js';
 
 // Sidecar listing the provider ids Lattice manages in models.json, so a
@@ -141,41 +141,5 @@ export async function reconcilePiModelsJson(): Promise<void> {
     resetPiModelsCache();
   } catch (err) {
     console.warn('[pi-models] reconcile failed:', err);
-  }
-}
-
-// For a probe, use only a literal apiKey value as the bearer token. Pi itself
-// can resolve env-var names / !commands when the saved provider is later used,
-// but a user-supplied probe URL must never receive arbitrary ambient process
-// secrets. A `!command` is also not executed during probes.
-function resolveProbeKey(apiKey?: string): string | undefined {
-  const key = apiKey?.trim();
-  if (!key) return undefined;
-  if (key.startsWith('!')) return undefined;
-  return key;
-}
-
-// "Detect models" for the Settings → Pi endpoint form: GET <baseUrl>/models
-// (OpenAI-compatible) and return the model ids. Throws on a non-OK response
-// or network error so the route can surface it.
-export async function probeEndpointModels(
-  baseUrl: string,
-  apiKey?: string,
-): Promise<string[]> {
-  const url = `${baseUrl.trim().replace(/\/+$/, '')}/models`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PI_MODELS_CONFIG.probeTimeoutMs);
-  try {
-    const headers: Record<string, string> = {};
-    const key = resolveProbeKey(apiKey);
-    if (key) headers.Authorization = `Bearer ${key}`;
-    const r = await fetch(url, { headers, signal: controller.signal });
-    if (!r.ok) throw new Error(`endpoint returned HTTP ${r.status}`);
-    const j = (await r.json()) as { data?: Array<{ id?: unknown }> };
-    return (j?.data ?? [])
-      .map((m) => m?.id)
-      .filter((x): x is string => typeof x === 'string' && !!x);
-  } finally {
-    clearTimeout(timer);
   }
 }

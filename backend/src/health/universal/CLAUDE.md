@@ -3,8 +3,12 @@
 Regex/lexer fallbacks used when a language lacks a tree-sitter grammar or when
 AST metrics need a text-level pass.
 
-- `strip.ts` owns `stripStringsAndComments`; it must preserve input length and
-  newline positions so downstream ranges/line counts stay aligned.
+- `strip.ts` owns `stripStringsAndComments` (the scanner core plus
+  string/comment/template lexing); it must preserve input length and newline
+  positions so downstream ranges/line counts stay aligned.
+- `stripRegex.ts` holds the JS/TS-only regex-vs-division disambiguation
+  (`consumeRegexLiteral`), which `strip.ts` invokes for the JS family so a
+  regex like `/[0-9]{3}/` is blanked as a string rather than read as division.
 - The lexer distinguishes string, template interpolation, line-comment, and
   block-comment modes. Template `${...}` code is intentionally re-entered so
   regex smells can still see expressions inside templates.

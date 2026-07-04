@@ -55,6 +55,12 @@ import {
 import { materialFor } from './sprites';
 import { isGhost } from './timelineDiff';
 import { NODE_RENDER_ORDER } from './renderOrders';
+import {
+  MATRIX_ELEMENTS,
+  TRANSLATION_OFFSET,
+  writeMatrix4x4,
+  writeVertexTriple,
+} from './matrixBuffer';
 
 type SimNode = GraphNode & { x?: number; y?: number; z?: number };
 
@@ -130,35 +136,6 @@ function makeBillboardMaterial(texture: THREE.Texture): THREE.MeshBasicMaterial 
   // one compiled program (they differ only by the `map` uniform).
   mat.customProgramCacheKey = () => 'lattice:billboardNode';
   return mat;
-}
-
-// Write a scale+translation matrix into instanceMatrix.array at instance `i`
-// (column-major). Avoids allocating a THREE.Matrix4 per node per rebuild.
-function writeMatrix(
-  arr: Float32Array,
-  i: number,
-  scale: number,
-  x: number,
-  y: number,
-  z: number,
-): void {
-  const o = i * 16;
-  arr[o] = scale;
-  arr[o + 1] = 0;
-  arr[o + 2] = 0;
-  arr[o + 3] = 0;
-  arr[o + 4] = 0;
-  arr[o + 5] = scale;
-  arr[o + 6] = 0;
-  arr[o + 7] = 0;
-  arr[o + 8] = 0;
-  arr[o + 9] = 0;
-  arr[o + 10] = 1;
-  arr[o + 11] = 0;
-  arr[o + 12] = x;
-  arr[o + 13] = y;
-  arr[o + 14] = z;
-  arr[o + 15] = 1;
 }
 
 export function createInstancedNodes(
@@ -256,7 +233,14 @@ export function createInstancedNodes(
       const arr = sm.mesh.instanceMatrix.array as Float32Array;
       for (let i = 0; i < count; i++) {
         const n = grp.nodes[i];
-        writeMatrix(arr, i, scaleFor(n, s), n.x ?? 0, n.y ?? 0, n.z ?? 0);
+        writeMatrix4x4(
+          arr,
+          i * MATRIX_ELEMENTS,
+          scaleFor(n, s),
+          n.x ?? 0,
+          n.y ?? 0,
+          n.z ?? 0,
+        );
       }
       sm.mesh.instanceMatrix.needsUpdate = true;
       sm.mesh.visible = visible;
@@ -285,10 +269,13 @@ export function createInstancedNodes(
       const nodes = sm.nodes;
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
-        const o = i * 16;
-        arr[o + 12] = n.x ?? 0;
-        arr[o + 13] = n.y ?? 0;
-        arr[o + 14] = n.z ?? 0;
+        writeVertexTriple(
+          arr,
+          i * MATRIX_ELEMENTS + TRANSLATION_OFFSET,
+          n.x ?? 0,
+          n.y ?? 0,
+          n.z ?? 0,
+        );
       }
       sm.mesh.instanceMatrix.needsUpdate = true;
     }

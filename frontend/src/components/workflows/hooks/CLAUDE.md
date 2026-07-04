@@ -63,4 +63,9 @@ there.
 - `useWorkflowErrorHandler.ts` — shared auto-dismissing error toast state.
 - `useWorkflowPromptCustomization.ts` — owns per-step customization state,
   custom-step instruction prompting, terminal creation, polling, editor patching,
-  and prompt-customization errors.
+  and prompt-customization errors. The poll loop is the extracted, unit-tested
+  `pollPromptCustomization` (injected `sleep`/`getStatus`/`isCancelled`); each
+  run is bound to a per-`activeFolder` session token whose `useEffect` cleanup
+  cancels it on unmount or project switch, so a stale customization can't patch
+  the editor / toast against a different project or setState after unmount.
+  Covered by `src/__tests__/workflowPromptCustomizationCancel.test.ts`.
