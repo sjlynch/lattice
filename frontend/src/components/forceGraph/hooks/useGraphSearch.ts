@@ -39,6 +39,21 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
+// The inputs a contents pass was run for. A result is only allowed to
+// contribute to the union while these still match the current search — see the
+// stale-scope note on the contents effect below.
+type ContentScope = { project: string; query: string; regex: boolean };
+type ContentResult = { scope: ContentScope; matches: Set<string>; truncated: boolean };
+
+function scopeIsCurrent(
+  scope: ContentScope,
+  project: string,
+  query: string,
+  regex: boolean,
+): boolean {
+  return scope.project === project && scope.query === query && scope.regex === regex;
+}
+
 // Drives the graph's search bar. Filename matches are computed client-side off
 // the loaded graph (instant); file-contents matches come from a debounced,
 // cancelable backend call. Both feed the shared `selected` set so they reuse
@@ -87,24 +102,34 @@ export function useGraphSearch(params: {
     return ids;
   }, [structuralData, matcher]);
 
-  const [contentMatches, setContentMatches] = useState<Set<string>>(new Set());
+  // The contents result carries the scope it was produced for. It's a single
+  // shared piece of state across every project/query, so on a folder or query
+  // change the previous scope's absolute file ids linger in it until the new
+  // pass resolves — including them blindly would briefly union (and select) old
+  // project ids. The scope tag lets every consumer synchronously ignore a stale
+  // result on the very render the inputs change (before this effect re-runs).
+  const [contentResult, setContentResult] = useState<ContentResult | null>(null);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [truncated, setTruncated] = useState(false);
 
   // Debounced, cancelable contents pass. Skipped entirely unless the contents
   // toggle is on. Deps intentionally exclude `data` — see the snapshot note.
   useEffect(() => {
     if (!contents || !matcher || trimmed.length < CONTENT_MIN_LEN || !activeFolder) {
-      setContentMatches(new Set());
+      setContentResult(null);
       setSearching(false);
       setError(null);
-      setTruncated(false);
       return;
     }
+    // Capture the scope this run searches so the async result can be tagged with
+    // it (and rejected by consumers if the inputs have since moved on).
+    const scope: ContentScope = { project: activeFolder, query: trimmed, regex };
     const controller = new AbortController();
     let cancelled = false;
     setSearching(true);
+    // Drop a prior scope's error the moment a new search starts, so a stale
+    // failure can't cling to the fresh scope.
+    setError(null);
     const timer = setTimeout(() => {
       searchProjectContents(activeFolder, {
         query: trimmed,
@@ -113,14 +138,13 @@ export function useGraphSearch(params: {
       })
         .then((res) => {
           if (cancelled) return;
-          setContentMatches(new Set(res.matches));
-          setTruncated(res.truncated);
+          setContentResult({ scope, matches: new Set(res.matches), truncated: res.truncated });
           setError(null);
         })
         .catch((e: unknown) => {
           if (cancelled || controller.signal.aborted) return;
           setError(e instanceof Error ? e.message : String(e));
-          setContentMatches(new Set());
+          setContentResult(null);
         })
         .finally(() => {
           if (!cancelled) setSearching(false);
@@ -133,13 +157,19 @@ export function useGraphSearch(params: {
     };
   }, [trimmed, regex, contents, matcher, activeFolder]);
 
-  // Combined match set; recomputed when either pass changes.
+  // Combined match set; recomputed when either pass changes. A contents result
+  // only counts while it was produced for the *current* `{ activeFolder,
+  // trimmed, regex }` scope — a stale one (folder/query/mode just changed, its
+  // replacement not yet resolved) is ignored, so old-project ids never enter
+  // the union (and hence never reach `setSelected`).
   const union = useMemo(() => {
     if (trimmed.length === 0) return new Set<string>();
     const s = new Set<string>(fileNameMatches);
-    for (const id of contentMatches) s.add(id);
+    if (contentResult && scopeIsCurrent(contentResult.scope, activeFolder, trimmed, regex)) {
+      for (const id of contentResult.matches) s.add(id);
+    }
     return s;
-  }, [trimmed, fileNameMatches, contentMatches]);
+  }, [trimmed, regex, activeFolder, fileNameMatches, contentResult]);
 
   // Push the combined set into the shared selection. Only restore to empty on
   // clear if *we* were the last to drive the selection. Guarded against
@@ -172,6 +202,12 @@ export function useGraphSearch(params: {
   // never churns that memo.
   const active = trimmed.length > 0;
   const matchCount = union.size;
+  // Only an in-scope result can be truncated; a stale scope's cap flag must not
+  // bleed into the new folder/query.
+  const truncated =
+    contentResult !== null &&
+    scopeIsCurrent(contentResult.scope, activeFolder, trimmed, regex) &&
+    contentResult.truncated;
   const status = useMemo(
     () => ({ active, invalidRegex, searching, error, matchCount, truncated }),
     [active, invalidRegex, searching, error, matchCount, truncated],
