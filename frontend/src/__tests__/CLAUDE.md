@@ -25,3 +25,14 @@ Pure-helper suites pinning a single source of truth (not exhaustive):
   (`taskColors.ts`): golden-angle hue walk, mod-3 saturation/lightness band
   cycling, abs+trunc index normalisation, and the deterministic id-hash fallback
   slot. Expected `hsl()` strings are computed from the module constants.
+- `copyVariableToken.test.ts` / `promptVariables.test.ts` — the workflow
+  variable grammar in `components/workflows/promptVariables.ts`, which must stay
+  mirrored to the backend interpolator (`backend/src/workflows/interpolate.ts`).
+  `copyVariableToken` covers the clipboard write; `promptVariables` pins the
+  editor-overlay grammar: `splitPromptSegments` resets the shared stateful `/g`
+  `VAR_TOKEN_RE.lastIndex` per call, captures the trimmed name for inner-
+  whitespace tokens (`{{ scope }}`), and keeps invalid token-looking text plain
+  (so the overlay never promises a substitution the backend won't perform);
+  `withUserInstructions` trims + appends `{{user_instructions}}` exactly once
+  (just the token for a blank prompt); `ensureUserInstructions` prepends the
+  built-in without duplicating or reordering an existing one.
