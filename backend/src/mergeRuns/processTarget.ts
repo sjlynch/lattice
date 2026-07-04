@@ -4,7 +4,6 @@ import {
   type MergeOutcome,
 } from '../worktree.js';
 import { getTask, type Task } from '../tasks.js';
-import { release, tryAcquire } from '../mergeLocks.js';
 import {
   notify,
   snapshot,
@@ -14,6 +13,7 @@ import {
 import { handleFlaggedConflictTask } from './flaggedConflict.js';
 import { finishTaskAndCheckIntegrity } from './repoIntegrity.js';
 import { handleResyncOutcome } from './resolverSpawn.js';
+import { withMergeLock } from './withMergeLock.js';
 
 export type ProcessTargetContext = {
   projectPath: string;
@@ -148,37 +148,18 @@ export async function processTarget(
     return processTargetResultForOutcome(run, flaggedConflictResult.outcome);
   }
 
-  const lock = tryAcquire(task.id);
-  if (!lock) {
-    console.warn(`[merge-run] task ${task.id} lock held — skipping`);
-    run.errored.push({
-      taskId: task.id,
-      error: 'merge lock held by another caller; skipped',
-    });
-    run.processed += 1;
-    return 'continue';
-  }
-
-  let outcome: ProcessOutcome;
-  let lockHeld = true;
-  try {
+  const locked = await withMergeLock(task, run, 'for task', async (lock) => {
     const resyncOutcome = await resyncWithMainAndFinalize(
       task,
       runCtx.backendOrigin,
       mergeRunResyncOptions(task),
     );
-    outcome = await handleResyncOutcome(task, run, runCtx, resyncOutcome, lock);
-    if (outcome.kind === 'awaiting-resolver') lockHeld = false;
-  } catch (err) {
-    console.error(`[merge-run] uncaught error for task ${task.id}:`, err);
-    run.errored.push({
-      taskId: task.id,
-      error: (err as Error).message ?? 'unknown error',
-    });
-    outcome = { kind: 'errored' };
-  } finally {
-    if (lockHeld) release(lock);
+    return handleResyncOutcome(task, run, runCtx, resyncOutcome, lock);
+  });
+  if (locked.kind === 'lock-unavailable') {
+    run.processed += 1;
+    return 'continue';
   }
 
-  return finishWithIntegrity(run, runCtx, task.id, outcome);
+  return finishWithIntegrity(run, runCtx, task.id, locked.outcome);
 }

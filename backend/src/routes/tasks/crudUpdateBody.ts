@@ -5,7 +5,7 @@
 import type { TaskStatus } from '../../tasks.js';
 import type { ParsedTaskBlock } from './markdownBatch.js';
 import { isValidTaskStatus, normalizeBody, statusValidationError } from './requestUtils.js';
-import type { TaskPatch } from './crudTypes.js';
+import { pickTaskPatch, type TaskPatch } from './crudTypes.js';
 
 export type ParseResult<T> =
   | { ok: true; value: T }
@@ -44,7 +44,9 @@ export function taskPatchFromBody(body: unknown): ParseResult<TaskPatch> {
   if (parsed.json.status !== undefined && !isValidTaskStatus(parsed.json.status)) {
     return { ok: false, error: statusValidationError('status') };
   }
-  return { ok: true, value: parsed.json as TaskPatch };
+  // Whitelist onto {title, description, status} — never cast the raw body
+  // through (mass-assignment: worktreePath/branch/conflict/… are internal).
+  return { ok: true, value: pickTaskPatch(parsed.json) };
 }
 
 // Accepts EITHER a JSON body ({summary}) OR a text/markdown / text/plain body

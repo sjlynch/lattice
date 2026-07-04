@@ -3,10 +3,11 @@
 // mergeWorktreeInRepo, from /complete and /merged after a resolver Claude
 // finishes, and from the merge-run worker.
 
-import { updateTask, updateTaskCrashSafe, type Task } from '../tasks.js';
+import { updateTaskCrashSafe, type Task } from '../tasks.js';
 import { fastForwardMain, mergeWorktreeInRepo, type MergeOutcome } from './merge.js';
-import { buildConflictResolveCommand, buildStashResolveCommand } from './commands.js';
-import { writeMergeInstructions, writeStashResolveInstructions } from './instructions.js';
+import { buildStashResolveCommand } from './commands.js';
+import { writeStashResolveInstructions } from './instructions.js';
+import { prepareMergeConflictOutcome } from './mergeConflict.js';
 import { assertGitDirIntact } from './state.js';
 import { runSerializedFinalize, scheduleWorktreeCleanup } from './finalizeQueues.js';
 
@@ -146,13 +147,6 @@ async function fastForwardWithOneResyncRetry(
   return retryFastForwardAfterResyncFailure(ctx, ff);
 }
 
-async function markTaskMergeConflict(taskId: string): Promise<void> {
-  await updateTask(taskId, {
-    conflict: true,
-    conflictStartedAt: Date.now(),
-  });
-}
-
 async function writeMergeConflictFinalizeOutcome(
   ctx: FinalizeContext,
   conflictedFiles: string[],
@@ -164,18 +158,17 @@ async function writeMergeConflictFinalizeOutcome(
   // the task so the UI/run can re-spawn a resolver, and return a resolvable
   // outcome instead of a bare error — otherwise the task is stranded at
   // ready_to_merge with a leftover mid-merge worktree and no second resolver.
-  const { relativePath } = await writeMergeInstructions(
-    ctx.task,
-    ctx.branch,
+  const { relativePath, command } = await prepareMergeConflictOutcome({
+    task: ctx.task,
+    branch: ctx.branch,
     conflictedFiles,
-    ctx.backendOrigin,
-    ctx.worktreePath,
-  );
-  await markTaskMergeConflict(ctx.task.id);
+    backendOrigin: ctx.backendOrigin,
+    worktreePath: ctx.worktreePath,
+  });
   return {
     ok: false,
     mergeConflict: conflictedFiles,
-    resolveCommand: buildConflictResolveCommand(relativePath),
+    resolveCommand: command,
     relativePath,
     cwd: ctx.worktreePath,
   };

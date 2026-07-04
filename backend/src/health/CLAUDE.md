@@ -89,10 +89,17 @@ Halstead token counts and a Maintainability Index, and folded into a composite
 - `scoreModel.ts` — backend-only adapter that adds metric extractor functions to
   `scoreMetadata.ts` components for scoring
 - `score.ts` + `constants.ts` — final score calculation over the score model; shared thresholds
-- `watcher.ts` + `watcher/` — chokidar wiring plus extracted watcher helpers:
-  `cacheHydration.ts` (cache → in-memory graph mirror), `fileAnalysis.ts`
-  (read/LOC count/cache-or-analyze), `handlers.ts` (add/change/remove event
-  handlers), `subscribers.ts` (broadcast-safe subscriber fan-out), and `types.ts`
+- `watcher.ts` + `watcher/` — `watcher.ts` is a thin facade owning the
+  singleton `watchers` map (`ensureWatcher` promise memoization) plus the
+  shutdown-flush lifecycle hooks (`flushWatcherCaches`, the once-only
+  process-exit handlers) and the public surface (`subscribeHealth`,
+  `seedWatcherState`, test helpers, `HealthUpdate` type). `watcher/` holds the
+  extracted helpers: `setup.ts` (`createWatcher` — per-root construction plus
+  the chokidar-creation + event-wiring; takes the facade's shutdown-flush
+  registrar as a callback), `cacheHydration.ts` (cache → in-memory graph
+  mirror), `fileAnalysis.ts` (read/LOC count/cache-or-analyze), `handlers.ts`
+  (add/change/remove event handlers), `subscribers.ts` (broadcast-safe
+  subscriber fan-out), and `types.ts`
 - `cache.ts` — LRU file-content cache; `tsconfig.ts` — tsconfig alias resolution
 - `types.ts` — `HealthMetrics` / `HealthSmellId` definitions
 
