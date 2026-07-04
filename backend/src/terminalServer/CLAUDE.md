@@ -38,8 +38,11 @@ version constant.
 ## Layout
 
 - `processGuards.ts` — `installTerminalProcessGuards()`: swallow node-pty's known
-  Windows cleanup throw (everything else logs). Installed first, before any PTY
-  can throw asynchronously.
+  Windows cleanup throw; every other uncaught exception/rejection is logged and
+  then fails fast (exit 1) rather than leaving this detached process running in
+  an undefined state (the main backend respawns it on demand). Installed first,
+  before any PTY can throw asynchronously. Fail-fast contract regression-covered
+  by `../__tests__/processGuards.test.ts`.
 - `routes.ts` — `registerTerminalRoutes(app, { fingerprint, shutdown, authToken })`:
   the JSON HTTP surface — `GET /health` (returns the fingerprint), protected
   `GET /sessions`, `POST /sessions`, `DELETE /sessions/by-cwd` (**must** precede
