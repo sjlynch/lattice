@@ -25,6 +25,19 @@ test('validateNewFolderName trims names and rejects unsafe segments', () => {
   if (process.platform === 'win32') {
     assert.throws(() => validateNewFolderName('bad<name'), /characters Windows does not allow/);
     assert.throws(() => validateNewFolderName('trailing.'), /cannot end with a space or period/);
+
+    // Reserved DOS device names are rejected regardless of case or extension.
+    for (const reserved of ['CON', 'con', 'PRN', 'AUX', 'NUL', 'NUL.txt', 'COM1', 'com9', 'LPT1', 'LPT9']) {
+      assert.throws(
+        () => validateNewFolderName(reserved),
+        /reserved Windows device name/,
+        `expected ${reserved} to be rejected`,
+      );
+    }
+    // Boundary names that are NOT reserved stay allowed.
+    for (const allowed of ['COM10', 'LPT10', 'COM0', 'CONSOLE', 'NULable', 'my-con']) {
+      assert.equal(validateNewFolderName(allowed), allowed, `expected ${allowed} to be allowed`);
+    }
   }
 });
 
