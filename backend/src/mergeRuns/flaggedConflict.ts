@@ -5,13 +5,13 @@ import {
   type ResyncFinalizeOptions,
 } from '../worktree.js';
 import { type Task } from '../tasks.js';
-import { release, tryAcquire } from '../mergeLocks.js';
 import { finishTaskAndCheckIntegrity } from './repoIntegrity.js';
 import {
   handleResyncOutcome,
   respawnResolverForFlaggedConflict,
 } from './resolverSpawn.js';
 import { registerConflictWaiter, type MergeRun } from './state.js';
+import { withMergeLock } from './withMergeLock.js';
 import type {
   ProcessOutcome,
   ProcessTargetContext,
@@ -119,36 +119,16 @@ export async function tryFinalizeAfterResolverFinished(
   console.log(
     `[merge-run] task ${task.id}: main already incorporated in branch — finalizing directly`,
   );
-  let outcome: ProcessOutcome;
-  const lock = tryAcquire(task.id);
-  if (!lock) {
-    console.warn(`[merge-run] task ${task.id} lock held — skipping`);
-    run.errored.push({
-      taskId: task.id,
-      error: 'merge lock held by another caller; skipped',
-    });
-    outcome = { kind: 'errored' };
-  } else {
-    let lockHeld = true;
-    try {
-      const resyncOutcome = await resyncWithMainAndFinalize(
-        task,
-        runCtx.backendOrigin,
-        mergeRunResyncOptions(task, { assumeMainAlreadyIncorporated: true }),
-      );
-      outcome = await handleResyncOutcome(task, run, runCtx, resyncOutcome, lock);
-      if (outcome.kind === 'awaiting-resolver') lockHeld = false;
-    } catch (err) {
-      console.error(`[merge-run] uncaught error finalizing ${task.id}:`, err);
-      run.errored.push({
-        taskId: task.id,
-        error: (err as Error).message ?? 'unknown error',
-      });
-      outcome = { kind: 'errored' };
-    } finally {
-      if (lockHeld) release(lock);
-    }
-  }
+  const locked = await withMergeLock(task, run, 'finalizing', async (lock) => {
+    const resyncOutcome = await resyncWithMainAndFinalize(
+      task,
+      runCtx.backendOrigin,
+      mergeRunResyncOptions(task, { assumeMainAlreadyIncorporated: true }),
+    );
+    return handleResyncOutcome(task, run, runCtx, resyncOutcome, lock);
+  });
+  const outcome: ProcessOutcome =
+    locked.kind === 'lock-unavailable' ? { kind: 'errored' } : locked.outcome;
 
   const checkedOutcome = await finishTaskAndCheckIntegrity(run, runCtx, task.id, outcome);
   return handled(checkedOutcome);
