@@ -7,9 +7,14 @@ renders is driven by the App-level `healthMode` prop.
 ## Files
 
 - `HealthLegendPanel.tsx` — the health legend panel layout shown while `h` is held
-- `healthComponents.ts` — health-component UI labels/detail copy. Score ids,
-  weights, thresholds, and ordering are imported from the backend's serializable
-  `backend/src/health/scoreMetadata.ts`; do not duplicate those values here.
+- `healthComponents.ts` — assembly logic that maps the backend's serializable
+  `backend/src/health/scoreMetadata.ts` (score ids, weights, thresholds,
+  ordering — do not duplicate those values here) onto the UI copy, exposing the
+  `HealthComponentId` / `DetailEntry` / `HealthComponent` types and the
+  assembled `HEALTH_COMPONENTS`.
+- `healthComponentCopy.ts` — the static explanatory copy (`HEALTH_COMPONENT_COPY`):
+  per-component label, one-line note, and structured tooltip detail. Kept apart
+  from the assembly logic above so the large prose block stays isolated.
 - `HealthInfoIcon.tsx` — info icon and portal-rendered popover for each health row
 - `LegendRow.tsx` — render-only extension row button used by the default legend
 - `useLegendRows.ts` — extension tallying plus visible/all-known row derivation
