@@ -8,7 +8,8 @@
 //   - listModels.ts — `pi --list-models` execution + TTL cache.
 //   - files.ts      — read-only models.json/settings.json readers.
 //   - menu.ts       — default/curated harness menu construction.
-//   - management.ts — write side: reconcilePiModelsJson + probeEndpointModels.
+//   - reconcile.ts  — write side: reconcilePiModelsJson (models.json sync).
+//   - probe.ts      — write side: probeEndpointModels ("Detect models").
 //   - config.ts     — shared timeout/TTL config object + the ~/.pi/agent path.
 //
 // This barrel keeps the historical `./piModels.js` import path working for
@@ -16,4 +17,5 @@
 // tasks, workflow steps, the test) — the public surface is unchanged.
 
 export * from './piModels/discovery.js';
-export * from './piModels/management.js';
+export * from './piModels/reconcile.js';
+export * from './piModels/probe.js';

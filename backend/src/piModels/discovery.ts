@@ -19,7 +19,7 @@
 // per-spawn via the `--model` flag (see worktree/commands.ts buildPiModelFlag);
 // Pi's global defaults in ~/.pi/agent/settings.json are never touched. Endpoint
 // MANAGEMENT (reconcile + probe, which DO write models.json) lives in
-// ./management.ts.
+// ./reconcile.ts and ./probe.ts.
 //
 // This file is the stable public facade for the read-only side. The focused
 // implementation modules keep parsing/cache/file-reading/menu curation separate
