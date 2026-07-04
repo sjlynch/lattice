@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Task, TaskStatus } from '../../../api';
+import type { Task } from '../../../api';
+import type {
+  BulkKind,
+  BulkStripLane,
+  BulkStripRecord,
+} from '../bulkStripProgress';
+import { deriveCounts } from '../bulkStripProgress';
 
-// The three lane-level bulk actions that spawn/transition tasks and so get a
-// lightweight progress strip (mirroring the Ready-to-Merge MergeRunStrip):
-//   open        → "Run all"  (enqueue a worktree run per Open task)
-//   in_progress → "Resume all" (re-spawn each task with a worktree)
-//   qa          → "Mark all done"
-export type BulkStripLane = 'open' | 'in_progress' | 'qa';
-export type BulkKind = 'run' | 'resume' | 'qa-done';
+// Re-exported here so consumers keep importing the bulk-strip vocabulary from
+// this hook; the pure classifier + record shape now live in bulkStripProgress.
+export type { BulkStripLane, BulkKind } from '../bulkStripProgress';
 
 // What the strip component renders: live progress counts + phase.
 export type BulkStripView = {
@@ -22,17 +24,6 @@ export type BulkStripView = {
   queued: number;
 };
 
-type BulkStripRecord = {
-  lane: BulkStripLane;
-  kind: BulkKind;
-  // Task ids targeted at click time — progress is measured against this set.
-  ids: string[];
-  total: number;
-  // resume only: ids delivered via the `task-spawned` WS event.
-  spawnedIds: Set<string>;
-  phase: 'active' | 'done';
-};
-
 type LaneTimers = {
   // Backstop: a task that errors back to plain Open (or a resume that never
   // spawns) would otherwise leave the strip spinning forever.
@@ -40,35 +31,13 @@ type LaneTimers = {
   dismiss?: ReturnType<typeof setTimeout>;
 };
 
+// Force a strip stuck in its active phase to flip to its summary, so a task
+// that errors back to Open (or a resume that never spawns) can't spin forever.
 const SAFETY_MS = 12000;
+// How long the done-phase "Started N tasks" summary lingers before it clears.
 const DISMISS_MS = 5000;
 
 const BULK_LANES: BulkStripLane[] = ['open', 'in_progress', 'qa'];
-
-// Classify each targeted task as spawned / queued / still-pending from the
-// live task list (resume has no task-state signal, so it rides spawnedIds).
-function deriveCounts(rec: BulkStripRecord, byId: Map<string, Task>) {
-  let spawned = 0;
-  let queued = 0;
-  let pending = 0;
-  for (const id of rec.ids) {
-    if (rec.kind === 'resume') {
-      if (rec.spawnedIds.has(id)) spawned++;
-      else pending++;
-      continue;
-    }
-    const task = byId.get(id);
-    const homeLane: TaskStatus = rec.kind === 'run' ? 'open' : 'qa';
-    if (!task || task.status !== homeLane) {
-      spawned++; // left its lane → the action took effect for this task
-    } else if (rec.kind === 'run' && task.runQueued) {
-      queued++; // accepted by the spawn queue, badge now shows on the card
-    } else {
-      pending++; // request still in flight (or errored back to Open)
-    }
-  }
-  return { spawned, queued, pending };
-}
 
 // Per-lane progress strips for the Open / In Progress / QA bulk actions. The
 // active strip clears as soon as every targeted task has been spawned or

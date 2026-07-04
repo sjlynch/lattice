@@ -17,7 +17,7 @@ export const PI_MODELS_CONFIG = {
 
 // `~/.pi/agent` — where Pi keeps models.json (custom providers + friendly
 // names) and settings.json (default model). Shared by discovery (read-only)
-// and management (reconcile writes models.json here).
+// and reconcile (reconcile.ts writes models.json here).
 export function piAgentDir(): string {
   return path.join(os.homedir(), '.pi', 'agent');
 }
