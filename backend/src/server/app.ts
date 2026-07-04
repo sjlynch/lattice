@@ -46,15 +46,24 @@ const ALLOWED_ORIGINS = new Set([
   'http://127.0.0.1:5183',
 ]);
 
-const SAFE_HTTP_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
-
 function isAllowedOrigin(origin: string | undefined): boolean {
   return !origin || ALLOWED_ORIGINS.has(origin);
 }
 
+// Reject any cross-origin request — one carrying a present, non-allowlisted
+// Origin header. Same-origin browser requests, curl, and server-side hooks send
+// no Origin (or the allowlisted vite origin) and pass untouched.
+//
+// This deliberately covers "safe" methods (GET/HEAD) too, not just POST: our
+// GET endpoints do real work — `/api/search` runs a user-supplied regex over
+// every source file, and `/api/scan` walks an attacker-chosen filesystem path —
+// so a drive-by page's `fetch(url, { mode: 'no-cors' })` must be blocked from
+// triggering them cross-origin (the browser hides the opaque response, but the
+// server still burns the CPU/IO otherwise). OPTIONS preflight is handled by the
+// cors() layer above and is exempt so it can complete normally.
 export const rejectDisallowedUnsafeOrigin: RequestHandler = (req, res, next) => {
   const origin = req.get('origin');
-  if (!SAFE_HTTP_METHODS.has(req.method) && !isAllowedOrigin(origin)) {
+  if (req.method !== 'OPTIONS' && !isAllowedOrigin(origin)) {
     return res.status(403).json({ error: 'origin not allowed' });
   }
   next();
@@ -75,8 +84,9 @@ export function mountBaseMiddleware(app: Express): void {
     }),
   );
   // CORS alone only withholds response headers; it does not stop a malicious
-  // page from submitting a simple form POST. Reject cross-origin unsafe methods
-  // before any body parser or route handler can perform side effects.
+  // page from submitting a simple form POST or a drive-by no-cors GET. Reject
+  // any cross-origin request before a body parser or route handler can perform
+  // side effects or burn CPU/IO on the attacker's behalf.
   app.use(rejectDisallowedUnsafeOrigin);
   // 25mb so a Claude PreToolUse/PostToolUse hook can POST a large `Write`
   // tool_input (the whole file body) to /api/tasks/:id/activity without

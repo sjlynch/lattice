@@ -4,7 +4,7 @@ import type {
   WorkflowQueueEntry,
   WorkflowRun,
 } from '../../../api';
-import type { QueueState } from '../queueScheduler';
+import { startedActive, type QueueState } from '../queueScheduler';
 
 type Args = {
   queueState: QueueState;
@@ -15,6 +15,12 @@ type Args = {
 export type WorkflowQueueSelectors = {
   queuedItems: Array<{ entry: WorkflowQueueEntry; workflow: Workflow }>;
   busy: boolean;
+  // True while the scheduler holds dispatched entries (in-flight or running).
+  // The queue panel disables the Sequential/Parallel buttons on
+  // `running || startedActive` so they can't look enabled while the reducer's
+  // setMode guard would still reject the change (parallel mode clears
+  // `running` before its runs drain out of `started`).
+  startedActive: boolean;
   disabled: boolean;
   status: string;
 };
@@ -56,5 +62,5 @@ export function useWorkflowQueueSelectors({
       ? `${queueState.queued.length} workflow${queueState.queued.length === 1 ? '' : 's'} queued.`
       : 'Queue saved workflows, then choose sequential or parallel start.';
 
-  return { queuedItems, busy, disabled, status };
+  return { queuedItems, busy, startedActive: startedActive(queueState), disabled, status };
 }

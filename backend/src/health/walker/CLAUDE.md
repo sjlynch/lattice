@@ -20,8 +20,10 @@ single recursive AST pass unless a metric truly needs a second pass.
   operator handling.
 - `depth.ts` — optional-chain and ternary depth helpers used by smell checks.
 - `smells.ts` — AST-driven smell detection split into TS/JS, Python, and
-  generic structural detectors, plus helpers for import strings, console-noise
-  calls, mixed exports, and call leaf names.
+  generic structural detectors.
+- `astUtils.ts` — generic tree-sitter accessors (not smell detection) shared
+  by `visitors.ts`/`smells.ts`: `stripStringQuotes`, `isImportSpecifierString`,
+  `isConsoleLogish`, `countExportBindings`, `leafIdentifier`.
 
 Add language shape in `../nodeKinds/` first; only special-case here when node
 semantics differ beyond the shared kind sets.

@@ -11,6 +11,7 @@ import {
   type HarnessAvailability,
 } from '../../harnesses';
 import type { PiMenuEntry, PostMergeHookRun } from '../../api';
+import { isPostMergeHookConfigured, postMergeHookStatusLabel } from './postMergeHookStatus';
 
 type Props = {
   prompt: string;
@@ -28,27 +29,6 @@ type Props = {
   onAbort: () => void;
   onFocusActiveTerminal: (() => void) | null;
 };
-
-// Status chip shown in the collapsed strip. The active state is the strong
-// signal (it pulses); the recent state degrades to a quieter result label.
-// `configured` = a non-empty prompt; `enabled` = the master toggle. The hook
-// only fires when BOTH hold, so a configured-but-disabled hook reads as off.
-function statusLabel(
-  active: PostMergeHookRun | null,
-  recent: PostMergeHookRun | null,
-  configured: boolean,
-  enabled: boolean,
-): { text: string; tone: 'running' | 'ok' | 'warn' | 'idle' | 'off' } {
-  if (active) return { text: 'Hook running', tone: 'running' };
-  if (recent) {
-    if (recent.status === 'completed') return { text: 'Last hook: ok', tone: 'ok' };
-    if (recent.status === 'aborted') return { text: 'Last hook: aborted', tone: 'warn' };
-    if (recent.status === 'errored') return { text: 'Last hook: error', tone: 'warn' };
-  }
-  if (!configured) return { text: 'Off', tone: 'off' };
-  if (!enabled) return { text: 'Disabled', tone: 'off' };
-  return { text: 'Configured', tone: 'idle' };
-}
 
 export function PostMergeHookRow({
   prompt,
@@ -91,8 +71,8 @@ export function PostMergeHookRow({
     return () => window.clearTimeout(handle);
   }, [draftPrompt, prompt, onSavePrompt]);
 
-  const configured = prompt.trim().length > 0;
-  const status = statusLabel(active, recent, configured, enabled);
+  const configured = isPostMergeHookConfigured(prompt);
+  const status = postMergeHookStatusLabel(active, recent, configured, enabled);
   const harnessOptions = buildHarnessOptions({
     harnessAvail,
     piMenu,

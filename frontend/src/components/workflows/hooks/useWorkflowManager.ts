@@ -37,6 +37,7 @@ type QueueView = {
   queuedItems: WorkflowQueueSelectors['queuedItems'];
   running: boolean;
   busy: boolean;
+  startedActive: boolean;
   disabled: boolean;
   status: string;
 };
@@ -53,6 +54,7 @@ function buildQueueView(
     queuedItems: selectors.queuedItems,
     running: queueState.running,
     busy: selectors.busy,
+    startedActive: selectors.startedActive,
     disabled: selectors.disabled,
     status: selectors.status,
   };

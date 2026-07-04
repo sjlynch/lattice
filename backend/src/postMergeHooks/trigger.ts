@@ -3,6 +3,7 @@ import {
   type QueuedCreateSessionArgs,
 } from '../queuedCreateSession.js';
 import { normalizeAgentHarness } from '../harnesses.js';
+import type { AgentHarness } from '../harnesses.js';
 import { normalizePiModel } from '../piModels.js';
 import { getUserSettings } from '../userSettings.js';
 import type { UserSettings } from '../userSettings/types.js';
@@ -96,22 +97,68 @@ export async function triggerPostMergeHookWithDeps(
   options: TriggerPostMergeHookOptions,
   deps: TriggerPostMergeHookDeps,
 ): Promise<TriggerPostMergeHookOutcome> {
-  const { projectPath, backendOrigin, trigger } = options;
+  const prepared = await validateAndPrepare(options, deps);
+  if (prepared.kind === 'skip') return prepared.outcome;
+  return spawnAndRegister(options, deps, prepared);
+}
+
+// Outcome of the validation phase: either a terminal skip outcome (empty
+// prompt / master toggle off / hook already running) that the coordinator
+// returns verbatim, or the prepared inputs the spawn phase needs.
+type PreparedPostMergeHook =
+  | { kind: 'skip'; outcome: TriggerPostMergeHookOutcome }
+  | {
+      kind: 'proceed';
+      settings: UserSettings;
+      prompt: string;
+      harness: AgentHarness;
+    };
+
+// The gate half: resolve settings and run the three skip gates in order
+// (no-prompt → disabled → already-running), then normalize the harness.
+// No filesystem/spawn side effects — pure decision logic — so the coordinator
+// can bail early without any cleanup.
+async function validateAndPrepare(
+  options: TriggerPostMergeHookOptions,
+  deps: TriggerPostMergeHookDeps,
+): Promise<PreparedPostMergeHook> {
+  const { projectPath } = options;
   const settings = await deps.getUserSettings(projectPath);
   const prompt = (settings.postMergeHookPrompt ?? '').trim();
-  if (!prompt) return { kind: 'skipped', reason: 'no-prompt' };
+  if (!prompt) {
+    return { kind: 'skip', outcome: { kind: 'skipped', reason: 'no-prompt' } };
+  }
   // Master toggle: run only when explicitly enabled. Absent counts as enabled
   // so a previously-configured prompt keeps firing (see isPostMergeHookEnabled).
   if (settings.postMergeHookEnabled === false) {
-    return { kind: 'skipped', reason: 'disabled' };
+    return { kind: 'skip', outcome: { kind: 'skipped', reason: 'disabled' } };
   }
 
   const existing = deps.getActiveHookForProject(projectPath);
   if (existing) {
-    return { kind: 'skipped', reason: 'already-running', existing };
+    return {
+      kind: 'skip',
+      outcome: { kind: 'skipped', reason: 'already-running', existing },
+    };
   }
 
   const harness = normalizeAgentHarness(settings.postMergeHookHarness);
+  return { kind: 'proceed', settings, prompt, harness };
+}
+
+// The side-effecting half: set up the scratch session, record the run, build
+// the command, spawn the pty, and register the agent-session node. Owns its own
+// error cleanup so a failure at any step (thrown or a spawn `error` result)
+// finishes the run `errored` (only once it's been recorded) and removes the
+// scratch dir before returning the error outcome — preserving the original
+// cleanup ordering.
+async function spawnAndRegister(
+  options: TriggerPostMergeHookOptions,
+  deps: TriggerPostMergeHookDeps,
+  prepared: Extract<PreparedPostMergeHook, { kind: 'proceed' }>,
+): Promise<TriggerPostMergeHookOutcome> {
+  const { projectPath, backendOrigin, trigger } = options;
+  const { settings, prompt, harness } = prepared;
 
   let session: PostMergeHookSession | null = null;
   let recorded = false;

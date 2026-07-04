@@ -84,8 +84,9 @@ export function handleWorkflowRunEvent(
 }
 
 // Subscribes to `/ws/workflow-runs` and routes each event through focused state
-// reducers / terminal-spawn mappers. Clearing empty-folder state stays here so
-// the top-level hook remains a small composition of lifecycle helpers.
+// reducers / terminal-spawn mappers. Clearing project-scoped state on every
+// folder change stays here so the top-level hook remains a small composition of
+// lifecycle helpers.
 export function useWorkflowRunSubscription({
   activeFolder,
   addTerminal,
@@ -94,11 +95,16 @@ export function useWorkflowRunSubscription({
   addRecentRun,
 }: WorkflowRunSubscriptionArgs) {
   useEffect(() => {
-    if (!activeFolder) {
-      setActiveRuns({});
-      setControlProgress({});
-      return;
-    }
+    // Active runs are project-scoped. Drop the previous project's runs (and any
+    // in-flight control progress) immediately on EVERY folder change — matching
+    // the saved-list (`useWorkflowList`) and recent-runs (`useWorkflowRecentRuns`)
+    // per-project clearing — so project A's runs never leak into project B in
+    // the window before B's WS hello / recovery fetch repopulates from scratch.
+    // Leaking them stalls B's sequential queue (the leaked count keeps the gate
+    // waiting) and shows A's running workflow under B's navbar chip.
+    setActiveRuns({});
+    setControlProgress({});
+    if (!activeFolder) return;
 
     let cancelled = false;
     const unsub = subscribeWorkflowRuns(activeFolder, (ev) => {

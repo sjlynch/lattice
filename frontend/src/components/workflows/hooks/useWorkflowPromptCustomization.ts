@@ -1,7 +1,15 @@
-import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import {
   getWorkflowPromptCustomization,
   startWorkflowPromptCustomization,
+  type WorkflowPromptCustomization,
   type WorkflowPromptTemplateId,
   type WorkflowStep,
 } from '../../../api';
@@ -28,6 +36,65 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Dependencies for the prompt-customization poll loop, injected so the loop is
+// free of React and timer globals (and thus unit-testable). `isCancelled`
+// returns true once the customization's owning session ends — the hook
+// unmounted or the active project changed — at which point every post-await
+// result is dropped: a customization started for project A can never patch the
+// editor or toast an error against project B, and the ~6-minute poll never
+// setStates after unmount.
+export type PromptCustomizationPollDeps = {
+  getStatus: (id: string) => Promise<WorkflowPromptCustomization>;
+  sleep: (ms: number) => Promise<void>;
+  isCancelled: () => boolean;
+  onCompleted: (resultPrompt: string) => void;
+  onError: (message: string) => void;
+  onExhausted: () => void;
+  onSettled: () => void;
+};
+
+// Poll the backend registry until the customization completes, errors, or the
+// attempt budget is exhausted. Every state-producing callback is gated behind
+// `isCancelled()` (checked after each await) so a cancelled session emits
+// nothing but the `onSettled` cleanup.
+export async function pollPromptCustomization(
+  id: string,
+  deps: PromptCustomizationPollDeps,
+): Promise<void> {
+  const { getStatus, sleep: wait, isCancelled } = deps;
+  try {
+    for (
+      let attempt = 0;
+      attempt < WORKFLOW_PROMPT_CUSTOMIZATION_MAX_ATTEMPTS;
+      attempt += 1
+    ) {
+      await wait(WORKFLOW_PROMPT_CUSTOMIZATION_POLL_INTERVAL_MS);
+      if (isCancelled()) return;
+      const latest = await getStatus(id);
+      if (isCancelled()) return;
+      if (latest.status === 'completed' && latest.resultPrompt) {
+        deps.onCompleted(latest.resultPrompt);
+        return;
+      }
+      if (latest.status === 'errored') {
+        deps.onError(
+          `Prompt customization failed: ${latest.error ?? 'unknown error'}`,
+        );
+        return;
+      }
+    }
+    if (isCancelled()) return;
+    deps.onExhausted();
+  } catch (err) {
+    if (isCancelled()) return;
+    deps.onError(
+      `Prompt customization polling failed: ${(err as Error).message}`,
+    );
+  } finally {
+    deps.onSettled();
+  }
+}
+
 // Owns the workflow prompt-customization session lifecycle: prompting for
 // custom-step instructions, spawning the selected harness terminal, polling the
 // backend registry, and patching the editor when the revised prompt arrives.
@@ -46,6 +113,31 @@ export function useWorkflowPromptCustomization({
   // passed to as `onCustomize`.
   const stepsRef = useRef(steps);
   stepsRef.current = steps;
+
+  // True only while this hook instance is mounted; the poll loop reads it before
+  // its terminal `setCustomizingSteps` so it never sets state after unmount.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Each in-flight poll loop captures the current "session" — a token tied to
+  // the active project. On unmount OR when `activeFolder` changes the effect
+  // cleanup marks that session cancelled, so the loop stops polling and drops
+  // any pending setEditor/showError. This guarantees a customization started for
+  // project A never patches/toasts project B and kills the setState-after-
+  // unmount warnings from the previously un-cancellable ~6-minute poll.
+  const sessionRef = useRef<{ cancelled: boolean }>({ cancelled: false });
+  useEffect(() => {
+    const session = { cancelled: false };
+    sessionRef.current = session;
+    return () => {
+      session.cancelled = true;
+    };
+  }, [activeFolder]);
 
   const customizeStepPrompt = useCallback(async (index: number) => {
     if (!activeFolder) {
@@ -72,6 +164,19 @@ export function useWorkflowPromptCustomization({
     }
 
     const harness = normalizeAgentHarness(step.harness);
+    // Bind this customization to the active project's session; every result it
+    // produces is dropped once the user leaves the project (or the panel).
+    const session = sessionRef.current;
+    const clearSpinner = () => {
+      if (!mountedRef.current) return;
+      setCustomizingSteps((cur) => {
+        if (!(step.id in cur)) return cur;
+        const next = { ...cur };
+        delete next[step.id];
+        return next;
+      });
+    };
+
     setCustomizingSteps((cur) => ({ ...cur, [step.id]: 'starting' }));
     try {
       const templateTitle = promptTemplateTitle(inferredTemplateId);
@@ -84,7 +189,6 @@ export function useWorkflowPromptCustomization({
         ...(customInstructions ? { customInstructions } : {}),
         harness,
       });
-      setCustomizingSteps((cur) => ({ ...cur, [step.id]: request.id }));
       addTerminal({
         label: `customize:${step.title.trim() || index + 1}`,
         cwd: request.cwd,
@@ -92,46 +196,38 @@ export function useWorkflowPromptCustomization({
         projectPath: activeFolder,
         serverId: request.serverId,
       });
+      // The user may have left the project/panel during the start request; if so
+      // don't begin polling — just drop the spinner.
+      if (session.cancelled) {
+        clearSpinner();
+        return;
+      }
+      setCustomizingSteps((cur) => ({ ...cur, [step.id]: request.id }));
 
-      void (async () => {
-        try {
-          for (let attempt = 0; attempt < WORKFLOW_PROMPT_CUSTOMIZATION_MAX_ATTEMPTS; attempt += 1) {
-            await sleep(WORKFLOW_PROMPT_CUSTOMIZATION_POLL_INTERVAL_MS);
-            const latest = await getWorkflowPromptCustomization(request.id);
-            if (latest.status === 'completed' && latest.resultPrompt) {
-              setEditor((cur) => {
-                const idx = cur.steps.findIndex((candidate) => candidate.id === step.id);
-                if (idx === -1) return cur;
-                const nextSteps = cur.steps.map((candidate, i) =>
-                  i === idx ? { ...candidate, prompt: latest.resultPrompt! } : candidate,
-                );
-                return { ...cur, steps: nextSteps, dirty: true };
-              });
-              return;
-            }
-            if (latest.status === 'errored') {
-              showError(`Prompt customization failed: ${latest.error ?? 'unknown error'}`);
-              return;
-            }
-          }
-          showError('Prompt customization is still running; check the customization terminal.');
-        } catch (err) {
-          showError(`Prompt customization polling failed: ${(err as Error).message}`);
-        } finally {
-          setCustomizingSteps((cur) => {
-            const next = { ...cur };
-            delete next[step.id];
-            return next;
+      void pollPromptCustomization(request.id, {
+        getStatus: getWorkflowPromptCustomization,
+        sleep,
+        isCancelled: () => session.cancelled,
+        onCompleted: (resultPrompt) => {
+          setEditor((cur) => {
+            const idx = cur.steps.findIndex((candidate) => candidate.id === step.id);
+            if (idx === -1) return cur;
+            const nextSteps = cur.steps.map((candidate, i) =>
+              i === idx ? { ...candidate, prompt: resultPrompt } : candidate,
+            );
+            return { ...cur, steps: nextSteps, dirty: true };
           });
-        }
-      })();
-    } catch (err) {
-      setCustomizingSteps((cur) => {
-        const next = { ...cur };
-        delete next[step.id];
-        return next;
+        },
+        onError: showError,
+        onExhausted: () =>
+          showError('Prompt customization is still running; check the customization terminal.'),
+        onSettled: clearSpinner,
       });
-      showError(`Prompt customization failed: ${(err as Error).message}`);
+    } catch (err) {
+      clearSpinner();
+      if (!session.cancelled) {
+        showError(`Prompt customization failed: ${(err as Error).message}`);
+      }
     }
   }, [activeFolder, addTerminal, setEditor, showError]);
 
