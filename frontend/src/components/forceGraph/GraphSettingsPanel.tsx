@@ -1,10 +1,6 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useState, type ReactElement } from 'react';
 import { RotateCcw } from 'lucide-react';
-import {
-  DEFAULT_SETTINGS,
-  type GraphSettings,
-  type RepulsionMode,
-} from './graphSettings';
+import { DEFAULT_SETTINGS, type GraphSettings } from './graphSettings';
 import {
   LINK_MODES,
   LINK_WIDTH_ROW,
@@ -20,15 +16,144 @@ import {
   THETA_ROW,
   TIDY_ONLOAD_MODES,
   TIDY_ROWS,
-  type NumericKey,
-  type SliderRow,
+  type SetField,
   type TabKey,
 } from './graphSettingsPanel/config';
-import { SliderRowControl, ToggleGroupRow } from './graphSettingsPanel/controls';
+import {
+  SliderRowControl,
+  SliderRows,
+  ToggleGroupRow,
+} from './graphSettingsPanel/controls';
 import {
   loadActiveGraphSettingsTab,
   saveActiveGraphSettingsTab,
 } from './graphSettingsPanel/tabStorage';
+
+// Props each tab body receives: the live settings, the shared field-setter
+// factory, and (Spread only) the imperative layout re-run.
+type TabProps = {
+  settings: GraphSettings;
+  set: SetField;
+  onRunLayout?: () => void;
+};
+
+function SizesTab({ settings, set }: TabProps) {
+  return (
+    <>
+      <SliderRows rows={NODE_ROWS} settings={settings} set={set} />
+
+      <ToggleGroupRow
+        label="Metric labels (H/Z)"
+        ariaLabel="Metric labels"
+        options={METRIC_LABEL_MODES}
+        value={settings.metricLabels}
+        onSelect={set('metricLabels')}
+      />
+
+      <ToggleGroupRow
+        label="Subagent labels"
+        ariaLabel="Subagent labels"
+        options={SUBAGENT_LABEL_MODES}
+        value={settings.showSubagentLabels}
+        onSelect={set('showSubagentLabels')}
+      />
+    </>
+  );
+}
+
+function PhysicsTab({ settings, set }: TabProps) {
+  return (
+    <>
+      <SliderRows rows={PHYSICS_ROWS} settings={settings} set={set} />
+
+      <ToggleGroupRow
+        label="Repulsion mode"
+        ariaLabel="Repulsion mode"
+        options={REPULSION_MODES}
+        value={settings.repulsionMode}
+        onSelect={set('repulsionMode')}
+      />
+      {settings.repulsionMode === 'nbody' && (
+        <SliderRowControl
+          row={THETA_ROW}
+          settings={settings}
+          onChange={set(THETA_ROW.key)}
+        />
+      )}
+    </>
+  );
+}
+
+function SpreadTab({ settings, set, onRunLayout }: TabProps) {
+  return (
+    <>
+      <ToggleGroupRow
+        label="Untangle (radial tidy tree)"
+        ariaLabel="Untangle on load"
+        options={TIDY_ONLOAD_MODES}
+        value={settings.tidyLayoutOnLoad}
+        onSelect={set('tidyLayoutOnLoad')}
+      />
+      <SliderRows rows={TIDY_ROWS} settings={settings} set={set} />
+      <div className="graph-settings-row">
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={() => onRunLayout?.()}
+          title="Re-seed the graph as a radial tidy tree and settle"
+        >
+          Untangle now
+        </button>
+      </div>
+
+      <SliderRows rows={SPREAD_ROWS} settings={settings} set={set} />
+    </>
+  );
+}
+
+function RenderingTab({ settings, set }: TabProps) {
+  return (
+    <>
+      <SliderRowControl
+        row={RENDER_SCALE_ROW}
+        settings={settings}
+        onChange={set(RENDER_SCALE_ROW.key)}
+      />
+
+      <ToggleGroupRow
+        label="Link rendering"
+        ariaLabel="Link rendering"
+        options={LINK_MODES}
+        value={settings.batchedLinks}
+        onSelect={set('batchedLinks')}
+      />
+      {/* Width is meaningless for batched links (always flat). */}
+      {!settings.batchedLinks && (
+        <SliderRowControl
+          row={LINK_WIDTH_ROW}
+          settings={settings}
+          onChange={set(LINK_WIDTH_ROW.key)}
+        />
+      )}
+
+      <ToggleGroupRow
+        label="Node rendering"
+        ariaLabel="Node rendering"
+        options={NODE_MODES}
+        value={settings.batchedNodes}
+        onSelect={set('batchedNodes')}
+      />
+    </>
+  );
+}
+
+// The four tabs' bodies, keyed by TabKey — the panel's structure at a glance.
+const TAB_CONTENT: Record<TabKey, (props: TabProps) => ReactElement> = {
+  sizes: SizesTab,
+  physics: PhysicsTab,
+  spread: SpreadTab,
+  rendering: RenderingTab,
+};
 
 // Floating panel that mutates the GraphSettings object in the parent. Pure
 // UI — it doesn't talk to the graph directly; the parent's effects react
@@ -60,35 +185,11 @@ export const GraphSettingsPanel = memo(function GraphSettingsPanel({
     saveActiveGraphSettingsTab(project, tab);
   };
 
-  const setField = (key: NumericKey, value: number) =>
-    onChange({ ...settings, [key]: value });
+  // Single field-setter factory: bind a settings key, get a value-taking setter
+  // that emits the merged GraphSettings. Replaces the former per-field setters.
+  const set: SetField = (key) => (value) => onChange({ ...settings, [key]: value });
 
-  const setMode = (mode: RepulsionMode) =>
-    onChange({ ...settings, repulsionMode: mode });
-
-  const setBatchedLinks = (on: boolean) =>
-    onChange({ ...settings, batchedLinks: on });
-
-  const setBatchedNodes = (on: boolean) =>
-    onChange({ ...settings, batchedNodes: on });
-
-  const setMetricLabels = (on: boolean) =>
-    onChange({ ...settings, metricLabels: on });
-
-  const setShowSubagentLabels = (on: boolean) =>
-    onChange({ ...settings, showSubagentLabels: on });
-
-  const setTidyLayoutOnLoad = (on: boolean) =>
-    onChange({ ...settings, tidyLayoutOnLoad: on });
-
-  const renderRow = (row: SliderRow) => (
-    <SliderRowControl
-      key={row.key}
-      row={row}
-      settings={settings}
-      onChange={setField}
-    />
-  );
+  const ActiveTabContent = TAB_CONTENT[activeTab];
 
   return (
     <div className="graph-settings-panel" role="dialog" aria-label="Graph settings">
@@ -128,91 +229,7 @@ export const GraphSettingsPanel = memo(function GraphSettingsPanel({
       </div>
 
       <div className="graph-settings-body">
-        {activeTab === 'sizes' && (
-          <>
-            {NODE_ROWS.map(renderRow)}
-
-            <ToggleGroupRow
-              label="Metric labels (H/Z)"
-              ariaLabel="Metric labels"
-              options={METRIC_LABEL_MODES}
-              value={settings.metricLabels}
-              onSelect={setMetricLabels}
-            />
-
-            <ToggleGroupRow
-              label="Subagent labels"
-              ariaLabel="Subagent labels"
-              options={SUBAGENT_LABEL_MODES}
-              value={settings.showSubagentLabels}
-              onSelect={setShowSubagentLabels}
-            />
-          </>
-        )}
-
-        {activeTab === 'physics' && (
-          <>
-            {PHYSICS_ROWS.map(renderRow)}
-
-            <ToggleGroupRow
-              label="Repulsion mode"
-              ariaLabel="Repulsion mode"
-              options={REPULSION_MODES}
-              value={settings.repulsionMode}
-              onSelect={setMode}
-            />
-            {settings.repulsionMode === 'nbody' && renderRow(THETA_ROW)}
-          </>
-        )}
-
-        {activeTab === 'spread' && (
-          <>
-            <ToggleGroupRow
-              label="Untangle (radial tidy tree)"
-              ariaLabel="Untangle on load"
-              options={TIDY_ONLOAD_MODES}
-              value={settings.tidyLayoutOnLoad}
-              onSelect={setTidyLayoutOnLoad}
-            />
-            {TIDY_ROWS.map(renderRow)}
-            <div className="graph-settings-row">
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={() => onRunLayout?.()}
-                title="Re-seed the graph as a radial tidy tree and settle"
-              >
-                Untangle now
-              </button>
-            </div>
-
-            {SPREAD_ROWS.map(renderRow)}
-          </>
-        )}
-
-        {activeTab === 'rendering' && (
-          <>
-            {renderRow(RENDER_SCALE_ROW)}
-
-            <ToggleGroupRow
-              label="Link rendering"
-              ariaLabel="Link rendering"
-              options={LINK_MODES}
-              value={settings.batchedLinks}
-              onSelect={setBatchedLinks}
-            />
-            {/* Width is meaningless for batched links (always flat). */}
-            {!settings.batchedLinks && renderRow(LINK_WIDTH_ROW)}
-
-            <ToggleGroupRow
-              label="Node rendering"
-              ariaLabel="Node rendering"
-              options={NODE_MODES}
-              value={settings.batchedNodes}
-              onSelect={setBatchedNodes}
-            />
-          </>
-        )}
+        <ActiveTabContent settings={settings} set={set} onRunLayout={onRunLayout} />
       </div>
 
       <div className="graph-settings-footer">

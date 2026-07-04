@@ -62,19 +62,28 @@ explicit-curl callbacks — never by polling task state.
   dispatcher: it owns the per-project run-lock lifecycle (acquire →
   kind→worker dispatch → **release BEFORE `completeStep`**), cancellation /
   not-running guards, and the public surface (`executeControlStep`,
-  `CompleteStepCallback`). The per-kind workers live under `controlSteps/`:
+  `CompleteStepCallback`). **See `controlSteps/CLAUDE.md`** for the lane-
+  transition map and the load-bearing invariants (run-lock lifecycle, the
+  bounded-wait requirement, start-step hard-cap handling, the push cancel/spawn
+  race). The per-kind workers live under `controlSteps/`:
   - `controlSteps/start.ts` — `runStartStep`: move every Open task to In
     Progress and run it (one `workflow-task-spawned` terminal tab each);
-    throws if it started none so a no-op run doesn't silently "succeed".
-  - `controlSteps/merge.ts` — `runMergeStep`: Phase A drains In Progress,
-    Phase B loops merge runs (`lockMode: 'inherit'`) until Ready-to-Merge
-    is empty, with the unchanged-lane error-loop guard.
-  - `controlSteps/push.ts` — `runPushStep`: drain Ready-to-Merge, spawn a
-    push session, wait for its Stop hook with the `PUSH_STEP_TIMEOUT_MS`
-    (15 min) backstop and prompt cancel/pty cleanup.
+    throws if it started none so a no-op run doesn't silently "succeed". A
+    terminal-server hard-cap spawn (`throwOnCapacity`) is **not** swallowed —
+    the task stays Open, is re-queued on the spawn queue, and isn't counted as
+    started.
+  - `controlSteps/merge.ts` — `runMergeStep`: Phase A drains In Progress
+    (bounded by `PHASE_A_DRAIN_TIMEOUT_MS`), Phase B loops merge runs
+    (`lockMode: 'inherit'`) until Ready-to-Merge is empty, with the
+    unchanged-lane error-loop guard.
+  - `controlSteps/push.ts` — `runPushStep`: drain Ready-to-Merge (bounded),
+    spawn a push session, wait for its Stop hook with the `PUSH_STEP_TIMEOUT_MS`
+    (15 min) backstop and prompt cancel/pty cleanup — including a post-spawn
+    re-check so a cancel that lands *during* the spawn still kills the session.
   - `controlSteps/shared.ts` — `waitForLaneEmpty` (lane-drain subscription,
-    subscribes before the initial read; resolves on cancellation) and
-    `emitControlProgress` (the single `step-control-progress` WS shaper).
+    subscribes before the initial read; resolves on cancellation, **rejects on
+    an optional `maxWaitMs` timeout** so a stuck lane can't leak the run-lock)
+    and `emitControlProgress` (the single `step-control-progress` WS shaper).
 
 ## Adding a step-completion harness
 

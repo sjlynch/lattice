@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { initialQueueState, reduceQueue } from '../components/workflows/queueScheduler.ts';
+import {
+  initialQueueState,
+  reduceQueue,
+  shouldAutoStop,
+  startedActive,
+} from '../components/workflows/queueScheduler.ts';
 import { entryIds, queued, queueState, scenario, started } from './queueScheduler.fixture.ts';
 
 // Pure reducer semantics: enqueue / removeFromQueue / clearQueue, the
@@ -111,6 +116,46 @@ test('setMode is ignored while running or while runs are in flight', () => {
 test('setMode flips the mode when idle', () => {
   const state = reduceQueue(initialQueueState, { type: 'setMode', mode: 'parallel' });
   assert.equal(state.mode, 'parallel');
+});
+
+test('setMode stays rejected while parallel runs are still active after auto-stop', () => {
+  // Regression: parallel mode flips `running` off the moment every dispatch
+  // settles (shouldAutoStop → true), but the runs stay in `started` until each
+  // runFinished. The mode buttons key off `running || startedActive`, so they
+  // must stay disabled — and the reducer's setMode guard must agree — for the
+  // whole window those runs remain active. Previously the buttons keyed only
+  // on `running`, so they looked enabled while clicking them was a silent
+  // no-op.
+  const q = scenario()
+    .setMode('parallel')
+    .enqueue('q1', 'wf1')
+    .enqueue('q2', 'wf2')
+    .startQueue()
+    .workflowStarted('q1', 'run1');
+
+  // Both runIds now attached, no runFinished yet: the queue's dispatch job is
+  // done (auto-stop), but the runs are still executing.
+  q.workflowStarted('q2', 'run2');
+  assert.equal(q.autoStop, true, 'parallel queue auto-stops once every dispatch settles');
+  assert.equal(q.state.running, false, 'running cleared by the auto-stop');
+  assert.deepEqual(q.startedIds().sort(), ['q1', 'q2'], 'runs remain in started until runFinished');
+
+  // shouldAutoStop is what drove the flip: on the still-running snapshot it is
+  // true even though nothing has finished.
+  assert.equal(
+    shouldAutoStop({ ...q.state, running: true }),
+    true,
+    'every dispatch settled → shouldAutoStop true with runs still active',
+  );
+
+  // The reducer rejects the mode change while runs are still in `started`…
+  const afterSetMode = reduceQueue(q.state, { type: 'setMode', mode: 'sequential' });
+  assert.equal(afterSetMode.mode, 'parallel', 'setMode is a no-op while runs are still active');
+
+  // …and the derived button-disabled flag agrees (stays true), so the button
+  // and the guard can never disagree.
+  assert.equal(startedActive(q.state), true);
+  assert.equal(q.state.running || startedActive(q.state), true, 'mode buttons stay disabled');
 });
 
 // ---------- runFinished bookkeeping (runId-keyed) ----------

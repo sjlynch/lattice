@@ -92,6 +92,14 @@ export async function recoverPendingSnapshots(): Promise<void> {
         `[snapshot] auto-restoring ${manifest.label} snapshot ` +
           `(${safeFiles.length} file(s)) → ${manifest.repoRoot}`,
       );
+      // guardStaleOverwrite: this is a DEFERRED restore — the snapshot was
+      // retained (a cancelled run, or a partial-failure retain) and is only
+      // now being re-applied, possibly long after capture and across a
+      // restart. In between, the user may have re-done or edited these files
+      // (routine in dev under tsc -w). Unlike an immediate in-session restore,
+      // silently overwriting them here is data loss, so any path whose on-disk
+      // content diverged from the capture is preserved and the snapshot's
+      // version is dropped beside it for manual review.
       await restoreSnapshot(
         {
           dir: snapDir,
@@ -99,6 +107,7 @@ export async function recoverPendingSnapshots(): Promise<void> {
           untracked: manifest.untracked ?? [],
         },
         manifest.repoRoot,
+        { guardStaleOverwrite: true },
       );
     }
   }

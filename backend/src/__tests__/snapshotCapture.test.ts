@@ -10,7 +10,10 @@ import {
   filterSafeDirtyPaths,
   parseStatus,
 } from '../worktree/snapshot/capture.js';
-import { restoreSnapshot } from '../worktree/snapshot/restore.js';
+import {
+  restoreSnapshot,
+  SNAPSHOT_CONFLICT_SUFFIX,
+} from '../worktree/snapshot/restore.js';
 
 test('parseStatus classifies porcelain (-z) modified and untracked paths', () => {
   // `-z` records are NUL-terminated; a rename emits the destination path,
@@ -154,6 +157,134 @@ test('restoreSnapshot refuses unsafe manifest paths and keeps snapshot for recov
     await fs.rm(repoRoot, { recursive: true, force: true });
     await fs.rm(snapshotDir, { recursive: true, force: true });
     await fs.rm(outside, { force: true });
+  }
+});
+
+test('restoreSnapshot refuses a manifest listing .git/HEAD and never touches the gitdir (BUG 1)', async () => {
+  const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-gitguard-repo-'));
+  const snapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-gitguard-'));
+  try {
+    // The repo's real gitdir contents we must never clobber.
+    await fs.mkdir(path.join(repoRoot, '.git'), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf8');
+    // A tampered/corrupt snapshot carrying a matching payload for .git/HEAD.
+    await fs.mkdir(path.join(snapshotDir, '.git'), { recursive: true });
+    await fs.writeFile(path.join(snapshotDir, '.git', 'HEAD'), 'ref: refs/heads/attacker\n', 'utf8');
+
+    await restoreSnapshot(
+      { dir: snapshotDir, modifiedTracked: ['.git/HEAD'], untracked: [] },
+      repoRoot,
+    );
+
+    // The gitdir is untouched and the snapshot is retained for inspection.
+    assert.equal(
+      await fs.readFile(path.join(repoRoot, '.git', 'HEAD'), 'utf8'),
+      'ref: refs/heads/main\n',
+    );
+    await fs.access(snapshotDir);
+  } finally {
+    await fs.rm(repoRoot, { recursive: true, force: true });
+    await fs.rm(snapshotDir, { recursive: true, force: true });
+  }
+});
+
+test('restoreSnapshot (guardStaleOverwrite) does not clobber a path changed since capture (BUG 2)', async () => {
+  // Mirrors boot recovery (recoverPendingSnapshots) re-applying a retained
+  // snapshot: the user re-did their edit after a cancelled run, so on-disk
+  // content differs from what the snapshot captured. It must NOT be silently
+  // overwritten — the captured version is dropped beside it instead.
+  const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-stale-repo-'));
+  const snapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-stale-'));
+  try {
+    await fs.mkdir(path.join(snapshotDir, 'src'), { recursive: true });
+    await fs.mkdir(path.join(repoRoot, 'src'), { recursive: true });
+    await fs.writeFile(path.join(snapshotDir, 'src', 'tracked.ts'), 'USER_V1 (captured)', 'utf8');
+    // What the user re-typed after their change vanished on cancel.
+    await fs.writeFile(path.join(repoRoot, 'src', 'tracked.ts'), 'USER_V2 (redo)', 'utf8');
+
+    await restoreSnapshot(
+      { dir: snapshotDir, modifiedTracked: ['src/tracked.ts'], untracked: [] },
+      repoRoot,
+      { guardStaleOverwrite: true },
+    );
+
+    // On-disk redo preserved; captured version parked as a .lattice-conflict.
+    assert.equal(
+      await fs.readFile(path.join(repoRoot, 'src', 'tracked.ts'), 'utf8'),
+      'USER_V2 (redo)',
+    );
+    assert.equal(
+      await fs.readFile(
+        path.join(repoRoot, 'src', 'tracked.ts' + SNAPSHOT_CONFLICT_SUFFIX),
+        'utf8',
+      ),
+      'USER_V1 (captured)',
+    );
+    // Snapshot retained because a path diverged.
+    await fs.access(snapshotDir);
+  } finally {
+    await fs.rm(repoRoot, { recursive: true, force: true });
+    await fs.rm(snapshotDir, { recursive: true, force: true });
+  }
+});
+
+test('restoreSnapshot (guardStaleOverwrite) restores absent/unchanged paths without conflict copies', async () => {
+  const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-stale-ok-repo-'));
+  const snapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-stale-ok-'));
+  try {
+    // Untracked file the run deleted and the user did NOT recreate (absent).
+    await fs.writeFile(path.join(snapshotDir, 'new.txt'), 'brand new', 'utf8');
+    // Tracked file whose on-disk content coincidentally already matches capture.
+    await fs.mkdir(path.join(snapshotDir, 'src'), { recursive: true });
+    await fs.mkdir(path.join(repoRoot, 'src'), { recursive: true });
+    await fs.writeFile(path.join(snapshotDir, 'src', 'same.ts'), 'identical', 'utf8');
+    await fs.writeFile(path.join(repoRoot, 'src', 'same.ts'), 'identical', 'utf8');
+
+    await restoreSnapshot(
+      { dir: snapshotDir, modifiedTracked: ['src/same.ts'], untracked: ['new.txt'] },
+      repoRoot,
+      { guardStaleOverwrite: true },
+    );
+
+    assert.equal(await fs.readFile(path.join(repoRoot, 'new.txt'), 'utf8'), 'brand new');
+    assert.equal(await fs.readFile(path.join(repoRoot, 'src', 'same.ts'), 'utf8'), 'identical');
+    // Nothing diverged, so no conflict copies and the snapshot dir is removed.
+    await assert.rejects(
+      fs.access(path.join(repoRoot, 'new.txt' + SNAPSHOT_CONFLICT_SUFFIX)),
+      { code: 'ENOENT' },
+    );
+    await assert.rejects(fs.access(snapshotDir), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(repoRoot, { recursive: true, force: true });
+    await fs.rm(snapshotDir, { recursive: true, force: true });
+  }
+});
+
+test('restoreSnapshot without the guard still lets snapshot win over newer on-disk content', async () => {
+  // The immediate in-session restore (teardown / fastForwardMain) intentionally
+  // overwrites — snapshot content wins over whatever the FF brought in.
+  const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-nowin-repo-'));
+  const snapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-nowin-'));
+  try {
+    await fs.mkdir(path.join(snapshotDir, 'src'), { recursive: true });
+    await fs.mkdir(path.join(repoRoot, 'src'), { recursive: true });
+    await fs.writeFile(path.join(snapshotDir, 'src', 'x.ts'), 'snapshot', 'utf8');
+    await fs.writeFile(path.join(repoRoot, 'src', 'x.ts'), 'fast-forwarded', 'utf8');
+
+    await restoreSnapshot(
+      { dir: snapshotDir, modifiedTracked: ['src/x.ts'], untracked: [] },
+      repoRoot,
+    );
+
+    assert.equal(await fs.readFile(path.join(repoRoot, 'src', 'x.ts'), 'utf8'), 'snapshot');
+    await assert.rejects(
+      fs.access(path.join(repoRoot, 'src', 'x.ts' + SNAPSHOT_CONFLICT_SUFFIX)),
+      { code: 'ENOENT' },
+    );
+    await assert.rejects(fs.access(snapshotDir), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(repoRoot, { recursive: true, force: true });
+    await fs.rm(snapshotDir, { recursive: true, force: true });
   }
 });
 
