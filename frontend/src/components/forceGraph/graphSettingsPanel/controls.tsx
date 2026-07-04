@@ -1,5 +1,5 @@
 import type { GraphSettings } from '../graphSettings';
-import type { NumericKey, SliderRow, ToggleOption } from './config';
+import type { SetField, SliderRow, ToggleOption } from './config';
 
 export function SliderRowControl({
   row,
@@ -8,7 +8,7 @@ export function SliderRowControl({
 }: {
   row: SliderRow;
   settings: GraphSettings;
-  onChange: (key: NumericKey, value: number) => void;
+  onChange: (value: number) => void;
 }) {
   const v = settings[row.key];
   const formatted = row.format ? row.format(v) : String(v);
@@ -24,9 +24,34 @@ export function SliderRowControl({
         max={row.max}
         step={row.step}
         value={v}
-        onChange={(e) => onChange(row.key, Number(e.target.value))}
+        onChange={(e) => onChange(Number(e.target.value))}
       />
     </div>
+  );
+}
+
+// A run of slider rows, each bound to the shared field-setter factory. Keeps
+// the per-tab bodies declarative (`<SliderRows rows={NODE_ROWS} … />`).
+export function SliderRows({
+  rows,
+  settings,
+  set,
+}: {
+  rows: SliderRow[];
+  settings: GraphSettings;
+  set: SetField;
+}) {
+  return (
+    <>
+      {rows.map((row) => (
+        <SliderRowControl
+          key={row.key}
+          row={row}
+          settings={settings}
+          onChange={set(row.key)}
+        />
+      ))}
+    </>
   );
 }
 

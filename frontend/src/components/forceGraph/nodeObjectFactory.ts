@@ -9,8 +9,9 @@ import { spriteForHealth } from './healthOverlay';
 import { applyNodeLabelState } from './labelsOverlay';
 import { spriteForLoc } from './locOverlay';
 import { baseSizeFor } from './mountedNodes';
+import { decideSpriteState } from './spriteDecision';
 import { spriteFor } from './sprites';
-import { isGhost, readRelForward } from './timelineDiff';
+import { isGhost } from './timelineDiff';
 
 // Refs the node-object factory reads to pick the right sprite for the
 // current overlay/selection state without forcing the parent hook to
@@ -61,64 +62,51 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
   const root = new THREE.Group();
   root.userData['lattice:nodeRoot'] = true;
 
+  // Pure decision pass: all overlay/selection precedence lives in
+  // `decideSpriteState` (which sprite, whether to hide it when batched, whether
+  // to attach ring/halo/label). This function just applies the result as a
+  // linear sequence of scene mutations.
+  const d = decideSpriteState(node, refs);
+
   // Ghost nodes (deleted files surfaced from git history) only exist in
   // the graph because the scrubber range picks up a delete event
   // somewhere — render them as a small grey disc with a red ring
   // instead of running spriteFor on a path that has no real file behind
   // it.
-  if (isGhost(node)) {
+  if (d.baseKind === 'ghost') {
     root.add(deletedSprite(s.fileNodeSize));
-    if (refs.selectedRef.current.has(node.id)) {
+    if (d.selected) {
       setNodeHalo(root, true, s.fileNodeSize);
     }
     return root;
   }
 
-  // For the LOC and health overlays, fall back to the plain sprite when
-  // the file's extension is on the per-project ignore list — e.g.
-  // config/prose files by default. Directories aren't measured by either
-  // overlay anyway, so the check is file-only.
-  // `node.ext` is always lowercase at the source (the scanner lowercases it,
-  // ghosts too) and the ignore Set is built from lowercased exts — so compare
-  // directly and skip the per-node `.toLowerCase()` allocation that ran for
-  // every file on every refresh.
-  const ignored =
-    node.kind === 'file' &&
-    !!node.ext &&
-    refs.metricsIgnoredExtsRef.current.has(node.ext);
-
+  // Recolor precedence (health > loc > dead > base) was resolved into
+  // `d.baseKind`; build the matching sprite. The overlay materials themselves
+  // are cached inside the individual overlay modules.
   let base: THREE.Object3D;
-  if (refs.healthModeRef.current && !ignored) {
-    base = spriteForHealth(node, s);
-  } else if (refs.locModeRef.current && !ignored) {
-    base = spriteForLoc(node, s);
-  } else if (refs.deadModeRef.current) {
-    // Not gated on `ignored`: dead-code is about reachability, not metrics, so
-    // every file gets the green/red/grey treatment (config/prose files just
-    // resolve to neutral "uncertain" rather than falling back to ext color).
-    base = spriteForDeadCode(node, s);
-  } else {
-    base = spriteFor(node, s);
+  switch (d.baseKind) {
+    case 'health':
+      base = spriteForHealth(node, s);
+      break;
+    case 'loc':
+      base = spriteForLoc(node, s);
+      break;
+    case 'dead':
+      base = spriteForDeadCode(node, s);
+      break;
+    default:
+      base = spriteFor(node, s);
   }
 
   root.add(base);
-
-  // True while any recolor view (health `h` / loc `z` / dead `d`) owns the
-  // sprite. These views deliberately strip the graph down to just the metric
-  // signal: ghost nodes and metrics-ignored files are hidden (see
-  // `useGraphFilter`) and timeline change-rings are suppressed below — they
-  // make it harder to read the per-file health/loc/dead coloring.
-  const metricOverlayActive =
-    refs.healthModeRef.current ||
-    refs.locModeRef.current ||
-    refs.deadModeRef.current;
 
   // Batched-node rendering: the InstancedMesh draws the plain base shape, so
   // hide the per-node base sprite (it stays raycastable → still the hover/click
   // pick proxy; its halo/ring/label siblings stay visible). Only in the base
   // view — when a recolor overlay (health/loc/dead) owns the sprite, the
   // instanced mesh hides itself instead, so the overlay sprite must stay shown.
-  if (refs.batchedNodesRef.current && !metricOverlayActive) {
+  if (d.hideBase) {
     base.visible = false;
   }
 
@@ -129,37 +117,22 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
   // change-set flip goes through `applyChangeRingDelta`, never `graph.refresh`.
   // The halo (1.8×) is larger than the change ring (1.6×) so a node that's
   // both changed and selected shows both rings concentrically.
-  const rootData = refs.dataRef.current?.root || '';
-  // `readRelForward` returns the value precomputed once per scan in
-  // `buildForceGraphData` (falling back to a fresh compute for any node that
-  // didn't come through it), so this no longer re-derives relForward on every
-  // refresh. Only the changeMap lookup below is genuinely live (scrubbing the
-  // timeline mutates the map).
-  const rel = node.kind === 'file' ? readRelForward(node, rootData) : '';
-  const kind = rel ? refs.changeMapRef.current.get(rel) : undefined;
-  // Suppressed while a metric view is active — change-rings stack confusingly
-  // with the health/loc/dead coloring and obscure the signal the view is for.
-  // The scrub-delta path (`applyChangeRingDelta`) is short-circuited too so
-  // scrubbing while a view is held can't mint fresh rings; releasing the view
-  // refreshes and re-adds them from the live change map.
-  if (!metricOverlayActive && kind && kind !== 'deleted') {
-    setNodeChangeRing(root, kind, baseSize);
+  if (d.changeRingKind) {
+    setNodeChangeRing(root, d.changeRingKind, baseSize);
   }
 
   // Name labels (Alt overlay) hang off the root as sibling children so the
   // active depth band / Shift gate can be toggled in place by the delta walker
   // without a global sprite rebuild — see `applyNodeLabelState`. Building it
   // here too keeps labels correct through full rebuilds (data swap, size/metric
-  // refresh) that happen while Alt is held. Suppressed while a recolor overlay
-  // (health / loc / dead) owns the sprite, matching the overlay precedence.
-  if (refs.labelModeRef.current && !metricOverlayActive) {
-    const d = refs.nodeDepthsRef.current.get(node.id) ?? 0;
+  // refresh) that happen while Alt is held.
+  if (d.showLabel) {
     applyNodeLabelState(
       root,
       node,
       s,
       refs.labelLevelRef.current,
-      d,
+      d.labelDepth,
       refs.labelShiftRef.current,
       // With an active selection, the Alt overlay shows only the selected
       // nodes' labels — keep that true through full sprite rebuilds too.
@@ -167,7 +140,7 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
     );
   }
 
-  if (refs.selectedRef.current.has(node.id)) {
+  if (d.selected) {
     setNodeHalo(root, true, baseSize);
   }
   return root;

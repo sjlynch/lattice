@@ -12,6 +12,13 @@ export const TABS: { key: TabKey; label: string }[] = [
   { key: 'rendering', label: 'Rendering' },
 ];
 
+// Curried setter factory shared by the panel + row controls: bind a settings
+// key, get back a value-taking setter that emits the updated GraphSettings.
+// One of these replaces the panel's former ~8 near-identical spread setters.
+export type SetField = <K extends keyof GraphSettings>(
+  key: K,
+) => (value: GraphSettings[K]) => void;
+
 // SliderRow only drives the numeric settings; non-numeric settings (e.g.
 // repulsionMode) get bespoke controls below.
 export type NumericKey = {
