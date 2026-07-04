@@ -37,6 +37,7 @@ import {
   wakeInstancedRefresh,
 } from './instancedBatching';
 import { LINK_RENDER_ORDER } from './renderOrders';
+import { writeVertexTriple } from './matrixBuffer';
 
 type SimNode = { x?: number; y?: number; z?: number };
 type SimLink = { source: SimNode | string; target: SimNode | string };
@@ -113,12 +114,8 @@ export function writeLinkSegments(links: SimLink[], out: Float32Array): void {
     const to = typeof t === 'object' ? t : null;
     const a = so ?? to;
     const b = to ?? so;
-    out[w] = a?.x ?? 0;
-    out[w + 1] = a?.y ?? 0;
-    out[w + 2] = a?.z ?? 0;
-    out[w + 3] = b?.x ?? 0;
-    out[w + 4] = b?.y ?? 0;
-    out[w + 5] = b?.z ?? 0;
+    writeVertexTriple(out, w, a?.x ?? 0, a?.y ?? 0, a?.z ?? 0);
+    writeVertexTriple(out, w + 3, b?.x ?? 0, b?.y ?? 0, b?.z ?? 0);
     w += 6;
   }
 }
