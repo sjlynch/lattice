@@ -6,6 +6,16 @@ side effect can each be reasoned about (and changed) on their own.
 
 - `terminalTypes.ts` — `TerminalSpec`, `Persisted`, `Ctx`. Re-exported as
   `TerminalSpec` from `../TerminalsContext` for backward compat.
+- `terminalScope.ts` — pure per-project scoping predicate for the sidebar
+  terminal list (`terminalBelongsToProject` + `isPathWithin`/`normalizeDirPath`).
+  A terminal with a recorded `projectPath` matches that project exactly. A
+  **legacy** terminal persisted before `projectPath` existed (field missing) is
+  scoped by its `cwd` — shown only when `cwd` equals/descends from the active
+  folder. **Do NOT reintroduce the old `!projectPath` catch-all** (`filter((t)
+  => !t.projectPath || t.projectPath === activeFolder)`): it listed — and let
+  `useTerminalGroups`/the Sidebar auto-select — a legacy terminal whose `cwd`
+  points at project A while the UI was showing project B, i.e. a shell from the
+  wrong repo. Consumed by `components/sidebar/hooks/useTerminalGroups.ts`.
 - `terminalStorage.ts` — `STORAGE_KEY = 'lattice.terminals'`, `loadPersisted`,
   `persist`. sessionStorage, not localStorage, so each browser tab tracks its
   own terminal list (two tabs on `lattice.terminals` would race writes).
