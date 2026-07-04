@@ -19,7 +19,19 @@ export function useTaskBoardDataView(
   const handleDragEnd = useCallback(() => setDraggingId(null), []);
   const { visibleLanes, toggleLane } = useVisibleLanes();
 
-  const boardState = useTaskBoardState(activeFolder, onTaskSpawned);
+  // Per-lane clock/caret sort. Defaults to newest-arrival-first; dropping a
+  // card at an explicit slot switches that lane to 'manual' so the user's
+  // hand-ordering survives until they click the clock to re-sort. Read before
+  // board state so shift-range selection can slice each lane in its visible
+  // (sortTasksForLane) order rather than the raw sortOrder grouping.
+  const { getMode: getLaneSortMode, toggle: toggleLaneSort, setManual } =
+    useLaneSort(activeFolder);
+
+  const boardState = useTaskBoardState(
+    activeFolder,
+    getLaneSortMode,
+    onTaskSpawned,
+  );
   const {
     tasks,
     grouped,
@@ -32,12 +44,6 @@ export function useTaskBoardDataView(
     toggleSelect,
     rangeSelect,
   } = boardState;
-
-  // Per-lane clock/caret sort. Defaults to newest-arrival-first; dropping a
-  // card at an explicit slot switches that lane to 'manual' so the user's
-  // hand-ordering survives until they click the clock to re-sort.
-  const { getMode: getLaneSortMode, toggle: toggleLaneSort, setManual } =
-    useLaneSort(activeFolder);
 
   const {
     taskSearch,
