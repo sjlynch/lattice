@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { SpriteUvBounds } from './spritePicking';
-import { disposeLabelMaterial } from './floatingLabelSprite';
+import { disposeLabelMaterial } from './labelSpriteResources';
 
 export type MeasuredLabelTexture = THREE.CanvasTexture & {
   _aspect?: number;

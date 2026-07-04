@@ -39,32 +39,6 @@ function findPackageDir(packageName: string): string {
   throw new Error(`Could not locate ${packageName} via node_modules walk from ${__dirname}`);
 }
 
-// Map our file extensions to the wasm grammars shipped by
-// `@vscode/tree-sitter-wasm`. Extensions outside this map fall back
-// to the universal text-based analyzer. We use VSCode's bundle
-// instead of `tree-sitter-wasms` because the latter ships grammars
-// built against an older ABI that's incompatible with current
-// `web-tree-sitter` runtimes.
-const GRAMMAR_BY_EXT: Record<string, string> = {
-  '.ts': 'tree-sitter-typescript.wasm',
-  '.tsx': 'tree-sitter-tsx.wasm',
-  '.js': 'tree-sitter-javascript.wasm',
-  '.jsx': 'tree-sitter-javascript.wasm',
-  '.mjs': 'tree-sitter-javascript.wasm',
-  '.cjs': 'tree-sitter-javascript.wasm',
-  '.py': 'tree-sitter-python.wasm',
-  '.pyi': 'tree-sitter-python.wasm',
-  // Tier-2: shipped in @vscode/tree-sitter-wasm but not previously
-  // wired up. These get full AST analysis (CC, cognitive, nesting,
-  // function records); cross-file imports stay unresolved because
-  // each language has its own module system we don't model.
-  '.go': 'tree-sitter-go.wasm',
-  '.rs': 'tree-sitter-rust.wasm',
-  '.java': 'tree-sitter-java.wasm',
-  '.cs': 'tree-sitter-c-sharp.wasm',
-  '.rb': 'tree-sitter-ruby.wasm',
-};
-
 export type GrammarKey =
   | 'typescript'
   | 'tsx'
@@ -76,33 +50,46 @@ export type GrammarKey =
   | 'csharp'
   | 'ruby';
 
+// Single source of truth for language support: each grammar's stable key,
+// the wasm bundle shipped by `@vscode/tree-sitter-wasm`, and the file
+// extensions that map to it. Both the ext → wasm loader table
+// (`GRAMMAR_BY_EXT`) and the ext → key lookup behind `grammarKeyForExt` are
+// derived from this list, so adding a language is a single edit here rather
+// than two mirrored edits that can drift apart.
+//
+// We use VSCode's bundle instead of `tree-sitter-wasms` because the latter
+// ships grammars built against an older ABI that's incompatible with current
+// `web-tree-sitter` runtimes. Tier-2 grammars (go/rust/java/csharp/ruby) get
+// full AST analysis (CC, cognitive, nesting, function records); cross-file
+// imports stay unresolved because each language has its own module system we
+// don't model.
+const GRAMMARS: ReadonlyArray<{
+  key: GrammarKey;
+  wasm: string;
+  exts: readonly string[];
+}> = [
+  { key: 'typescript', wasm: 'tree-sitter-typescript.wasm', exts: ['.ts'] },
+  { key: 'tsx', wasm: 'tree-sitter-tsx.wasm', exts: ['.tsx'] },
+  { key: 'javascript', wasm: 'tree-sitter-javascript.wasm', exts: ['.js', '.jsx', '.mjs', '.cjs'] },
+  { key: 'python', wasm: 'tree-sitter-python.wasm', exts: ['.py', '.pyi'] },
+  { key: 'go', wasm: 'tree-sitter-go.wasm', exts: ['.go'] },
+  { key: 'rust', wasm: 'tree-sitter-rust.wasm', exts: ['.rs'] },
+  { key: 'java', wasm: 'tree-sitter-java.wasm', exts: ['.java'] },
+  { key: 'csharp', wasm: 'tree-sitter-c-sharp.wasm', exts: ['.cs'] },
+  { key: 'ruby', wasm: 'tree-sitter-ruby.wasm', exts: ['.rb'] },
+];
+
+// Extensions outside this map fall back to the universal text-based analyzer.
+const GRAMMAR_BY_EXT: Record<string, string> = Object.fromEntries(
+  GRAMMARS.flatMap((g) => g.exts.map((ext): [string, string] => [ext, g.wasm])),
+);
+
+const GRAMMAR_KEY_BY_EXT: Record<string, GrammarKey> = Object.fromEntries(
+  GRAMMARS.flatMap((g) => g.exts.map((ext): [string, GrammarKey] => [ext, g.key])),
+);
+
 export function grammarKeyForExt(ext: string): GrammarKey | null {
-  switch (ext) {
-    case '.ts':
-      return 'typescript';
-    case '.tsx':
-      return 'tsx';
-    case '.js':
-    case '.jsx':
-    case '.mjs':
-    case '.cjs':
-      return 'javascript';
-    case '.py':
-    case '.pyi':
-      return 'python';
-    case '.go':
-      return 'go';
-    case '.rs':
-      return 'rust';
-    case '.java':
-      return 'java';
-    case '.cs':
-      return 'csharp';
-    case '.rb':
-      return 'ruby';
-    default:
-      return null;
-  }
+  return GRAMMAR_KEY_BY_EXT[ext] ?? null;
 }
 
 // Resolve the path to the `tree-sitter-wasms` package's `out/` folder
