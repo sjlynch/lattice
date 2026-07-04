@@ -1,11 +1,6 @@
-import { useState } from 'react';
 import { Check, Eye, EyeOff, ExternalLink, X } from 'lucide-react';
-import {
-  setMcpSecret,
-  validateMcpServer,
-  type McpSecretRequirement,
-} from '../../../api';
-import { commitMcpSecret } from './commitMcpSecret';
+import { type McpSecretRequirement } from '../../../api';
+import { useSecretField } from './useSecretField';
 
 type Props = {
   serverId: string;
@@ -24,8 +19,9 @@ type Props = {
 
 // The §8 masked-but-confirmable key field: ambient-detected state, inline entry,
 // "Get a key" deep link, show/hide, last-4 confirmation, autosave-on-blur, and a
-// one-click Test. Secrets autosave immediately (separate store) — they do NOT
-// wait for the dialog's Save button.
+// one-click Test. The edit/commit/clear/test state machine lives in
+// useSecretField; this component is just its rendering. Secrets autosave
+// immediately (separate store) — they do NOT wait for the dialog's Save button.
 export function McpKeyField({
   serverId,
   requirement,
@@ -35,63 +31,14 @@ export function McpKeyField({
   onChanged,
   testable,
 }: Props) {
-  const [editing, setEditing] = useState(!stored && !envPresent);
-  const [value, setValue] = useState('');
-  const [reveal, setReveal] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [test, setTest] = useState<{ ok: boolean; msg: string } | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
-  const commit = async () => {
-    const v = value.trim();
-    if (!v) {
-      setEditing(stored ? false : !envPresent);
-      return;
-    }
-    setBusy(true);
-    setSaveError(null);
-    const result = await commitMcpSecret(serverId, requirement.envVar, v);
-    setBusy(false);
-    if (!result.ok) {
-      // Autosave-on-blur bypasses the dialog's Save-button error path, so the
-      // failure has to surface here. Keep the field open with the typed value
-      // intact so the user can retry rather than believing the key saved.
-      setSaveError(result.error);
-      return;
-    }
-    setValue('');
-    setEditing(false);
-    setTest(null);
-    setSaveError(null);
-    onChanged();
-  };
-
-  const clear = async () => {
-    setBusy(true);
-    try {
-      await setMcpSecret(serverId, requirement.envVar, null);
-      setValue('');
-      setTest(null);
-      setSaveError(null);
-      setEditing(!envPresent);
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const runTest = async () => {
-    setBusy(true);
-    setTest(null);
-    try {
-      const res = await validateMcpServer(serverId);
-      setTest({ ok: res.ok, msg: res.ok ? 'Key works.' : res.error || 'Failed.' });
-    } catch (err) {
-      setTest({ ok: false, msg: (err as Error).message });
-    } finally {
-      setBusy(false);
-    }
-  };
+  const field = useSecretField({
+    serverId,
+    envVar: requirement.envVar,
+    stored,
+    envPresent,
+    onChanged,
+  });
+  const { editing, value, reveal, busy, test, saveError } = field;
 
   return (
     <div className="mcp-key-field">
@@ -100,10 +47,10 @@ export function McpKeyField({
       {!editing && stored && (
         <div className="mcp-key-stored">
           <span className="mcp-key-hint">{hint || '••••••••'}</span>
-          <button className="mcp-link-btn" onClick={() => setEditing(true)} disabled={busy}>
+          <button className="mcp-link-btn" onClick={field.startEditing} disabled={busy}>
             Replace
           </button>
-          <button className="mcp-link-btn danger" onClick={clear} disabled={busy}>
+          <button className="mcp-link-btn danger" onClick={field.clear} disabled={busy}>
             Clear
           </button>
         </div>
@@ -112,7 +59,7 @@ export function McpKeyField({
       {!editing && !stored && envPresent && (
         <div className="mcp-key-ambient">
           Detected from your environment ✓ — no entry needed.
-          <button className="mcp-link-btn" onClick={() => setEditing(true)} disabled={busy}>
+          <button className="mcp-link-btn" onClick={field.startEditing} disabled={busy}>
             Override
           </button>
         </div>
@@ -128,15 +75,12 @@ export function McpKeyField({
             autoComplete="off"
             spellCheck={false}
             disabled={busy}
-            onChange={(e) => {
-              setValue(e.target.value);
-              if (saveError) setSaveError(null);
-            }}
-            onBlur={commit}
+            onChange={(e) => field.changeValue(e.target.value)}
+            onBlur={field.commit}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
-                void commit();
+                void field.commit();
               }
             }}
           />
@@ -145,7 +89,7 @@ export function McpKeyField({
             type="button"
             title={reveal ? 'Hide' : 'Show'}
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => setReveal((r) => !r)}
+            onClick={field.toggleReveal}
           >
             {reveal ? <EyeOff size={13} /> : <Eye size={13} />}
           </button>
@@ -154,11 +98,7 @@ export function McpKeyField({
               className="mcp-link-btn"
               type="button"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                setValue('');
-                setEditing(false);
-                setSaveError(null);
-              }}
+              onClick={field.cancelEditing}
               disabled={busy}
             >
               Cancel
@@ -185,7 +125,7 @@ export function McpKeyField({
           </a>
         )}
         {testable && (stored || envPresent) && (
-          <button className="mcp-link-btn" onClick={runTest} disabled={busy}>
+          <button className="mcp-link-btn" onClick={field.runTest} disabled={busy}>
             {busy ? 'Testing…' : 'Test'}
           </button>
         )}

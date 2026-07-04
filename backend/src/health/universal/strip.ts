@@ -1,4 +1,5 @@
 import type { CommentSyntax } from './commentSyntax.js';
+import { consumeRegexLiteral } from './stripRegex.js';
 
 export type StripOptions = {
   // Blank string / template / regex literals. Default true.
@@ -7,25 +8,7 @@ export type StripOptions = {
   comments?: boolean;
 };
 
-// Keywords after which a `/` begins a regex literal rather than division.
-const REGEX_PRECEDING_KEYWORDS = new Set([
-  'return',
-  'typeof',
-  'instanceof',
-  'in',
-  'of',
-  'new',
-  'delete',
-  'void',
-  'do',
-  'else',
-  'yield',
-  'await',
-  'throw',
-  'case',
-]);
-
-type StripScanner = {
+export type StripScanner = {
   content: string;
   n: number;
   i: number;
@@ -63,72 +46,6 @@ function emitComment(scanner: StripScanner, ch: string): void {
 function emitString(scanner: StripScanner, ch: string): void {
   if (scanner.blankStrings) blankChar(scanner, ch);
   else scanner.out.push(ch);
-}
-
-// Is a `/` at the cursor a regex literal (vs division)? Scan the emitted
-// output back to the previous significant token; division can only follow a
-// value-producing token (identifier, number, closing bracket, string, …).
-function regexAllowedHere(out: string[]): boolean {
-  let k = out.length - 1;
-  while (k >= 0 && (out[k] === ' ' || out[k] === '\t' || out[k] === '\r' || out[k] === '\n')) {
-    k--;
-  }
-  if (k < 0) return true;
-  const p = out[k];
-  // Value-ending tokens mean the `/` is division, not a regex. `<`/`>` are
-  // here so JSX closing tags (`</div>`) never kick off a stray regex scan.
-  if (/[\w$)\]}"'`<>\/]/.test(p)) {
-    if (/[\w$]/.test(p)) {
-      // Identifier/number/keyword — only a few keywords take a regex next.
-      let s = k;
-      while (s >= 0 && /[\w$]/.test(out[s])) s--;
-      return REGEX_PRECEDING_KEYWORDS.has(out.slice(s + 1, k + 1).join(''));
-    }
-    return false;
-  }
-  return true;
-}
-
-// scanner.content[scanner.i] === '/'. Index just past a single-line regex
-// literal (incl. flags), or -1 when it isn't one (so the `/` is treated as
-// division).
-function scanRegexLiteral(scanner: StripScanner): number {
-  const { content, n } = scanner;
-  let j = scanner.i + 1;
-  let inClass = false;
-  while (j < n) {
-    const ch = content[j];
-    if (ch === '\n') return -1;
-    if (ch === '\\') {
-      if (j + 1 >= n || content[j + 1] === '\n') return -1;
-      j += 2;
-      continue;
-    }
-    if (inClass) {
-      if (ch === ']') inClass = false;
-      j++;
-      continue;
-    }
-    if (ch === '[') {
-      inClass = true;
-      j++;
-      continue;
-    }
-    if (ch === '/') {
-      j++;
-      while (j < n && /[a-z]/i.test(content[j])) j++;
-      return j;
-    }
-    j++;
-  }
-  return -1;
-}
-
-function consumeRegex(scanner: StripScanner): boolean {
-  const end = scanRegexLiteral(scanner);
-  if (end === -1) return false;
-  for (; scanner.i < end; scanner.i++) emitString(scanner, scanner.content[scanner.i]);
-  return true;
 }
 
 function consumeBlockComment(scanner: StripScanner): void {
@@ -247,7 +164,9 @@ function consumeNonCode(scanner: StripScanner): boolean {
     consumeTemplate(scanner);
     return true;
   }
-  if (scanner.blankStrings && ch === '/' && regexAllowedHere(scanner.out) && consumeRegex(scanner)) {
+  // Regex literals are a JS/TS concern; delegate that disambiguation to the
+  // sibling module (a no-op for other languages, where a `/` is just division).
+  if (scanner.blankStrings && ch === '/' && consumeRegexLiteral(scanner, emitString)) {
     return true;
   }
   return false;
