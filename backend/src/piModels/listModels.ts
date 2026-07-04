@@ -37,7 +37,7 @@ export async function loadModels(): Promise<PiModelInfo[]> {
 }
 
 // Force a re-probe of `pi --list-models` — call after reconciling models.json
-// (management.ts) so a newly-added provider shows up without waiting out the TTL.
+// (reconcile.ts) so a newly-added provider shows up without waiting out the TTL.
 export function resetPiModelsCache(): void {
   modelsCache = null;
 }

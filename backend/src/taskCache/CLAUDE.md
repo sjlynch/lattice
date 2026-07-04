@@ -37,6 +37,16 @@ losing tasks.
   Owns CRUD/reorder, `updateTaskCrashSafe` (disk-before-cache), and
   `ensureProjectLoaded`/`loadAllKnown` (which trigger migrations on
   first touch). Exposes `loadedTasks()` for recovery's read-only scans.
+  `updateTaskCrashSafe` keeps the per-project lock + subscriber notify here
+  and delegates the invariant-heavy disk-write / live-cache re-sync to
+  `crashSafeUpdate.ts`.
+- `crashSafeUpdate.ts` — `applyCrashSafeTaskUpdate(ops, project, list, idx,
+  id, updates)`: the disk-before-cache core (write disk first, cancel pending
+  debounce, re-read the LIVE cache and re-apply only this task's delta — never
+  the pre-write snapshot). Pure of the manager's cache internals: the caller
+  binds `writeStateNow`/`cancelPendingPersist`/`getCached`/`setCached` to the
+  live instance so subclass overrides still dispatch. MUST run under the
+  manager's per-project write lock.
 - `paths.ts` — single source of truth for `~/.lattice/` and per-project
   paths (`projectTasksFile`, `projectTasksBackupFile`, `homeProjectDir`,
   `LEGACY_GLOBAL_TASKS`).
