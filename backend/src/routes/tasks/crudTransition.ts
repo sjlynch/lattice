@@ -75,6 +75,10 @@ export async function handleTaskReorder(
     res.status(400).json({ error: 'project, status, ids required' });
     return;
   }
+  if (!isValidTaskStatus(status)) {
+    res.status(400).json({ error: statusValidationError('status') });
+    return;
+  }
   await respondJson(res, async () => {
     const ok = await reorderTasksInLane(project, status, ids);
     if (!ok) {
