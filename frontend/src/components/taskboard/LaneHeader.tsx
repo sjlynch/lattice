@@ -1,20 +1,19 @@
 import {
-  CheckCheck,
   ChevronDown,
   ChevronUp,
   Clock,
   Eye,
   EyeOff,
-  GitMerge,
   Globe,
   Play,
   Plus,
   UploadCloud,
 } from 'lucide-react';
-import type { Task, TaskStatus } from '../../api';
+import type { Task } from '../../api';
 import type { Lane as LaneDef } from './lanes';
 import type { LaneSortMode } from './laneSort';
 import type { QaPlaywrightControls } from './hooks/useQaPlaywright';
+import { laneRunAllConfig } from './laneRunAllConfig';
 
 type Props = {
   lane: LaneDef;
@@ -184,49 +183,4 @@ export function LaneHeader({
       </div>
     </div>
   );
-}
-
-// Lane-specific bulk-action presentation. Centralized here so the JSX
-// above stays focused on layout rather than per-lane copy.
-function laneRunAllConfig(id: TaskStatus, tasks: Task[]) {
-  switch (id) {
-    case 'ready_to_merge':
-      return {
-        cls: 'merge',
-        disabled: tasks.length === 0,
-        title: 'Merge every Ready-to-Merge task (stops on first conflict)',
-        aria: 'Merge all ready tasks',
-        disabledReason: 'No tasks in this lane',
-        icon: <GitMerge size={11} />,
-      };
-    case 'in_progress':
-      return {
-        cls: 'resume',
-        disabled: tasks.filter((t) => !!t.worktreePath).length === 0,
-        title: 'Resume every In Progress task with an existing worktree',
-        aria: 'Resume all in-progress tasks',
-        disabledReason: 'No In-Progress task has a worktree to resume',
-        icon: <Play size={11} fill="currentColor" />,
-      };
-    case 'qa':
-      return {
-        cls: 'qa-done',
-        disabled: tasks.length === 0,
-        title: 'Mark every QA task as Done',
-        aria: 'Mark all QA tasks done',
-        disabledReason: 'No tasks in this lane',
-        icon: <CheckCheck size={12} />,
-      };
-    case 'open':
-      return {
-        cls: '',
-        disabled: tasks.length === 0,
-        title: 'Run every task in Open in a new worktree',
-        aria: 'Run all open tasks',
-        disabledReason: 'No tasks in this lane',
-        icon: <Play size={11} fill="currentColor" />,
-      };
-    default:
-      return null;
-  }
 }

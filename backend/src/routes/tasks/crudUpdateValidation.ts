@@ -3,7 +3,7 @@
 // the same 400 response shapes the route historically returned.
 
 import { isValidTaskStatus, statusValidationError } from './requestUtils.js';
-import type { TaskPatch } from './crudTypes.js';
+import { pickTaskPatch, type TaskPatch } from './crudTypes.js';
 import type { ParsedTaskBlock } from './markdownBatch.js';
 
 export type BulkTaskUpdate = { id?: string } & TaskPatch;
@@ -17,6 +17,10 @@ export function bulkUpdatesFromBody(body: unknown): ValidationResult<BulkTaskUpd
   if (!Array.isArray(updates) || updates.length === 0) {
     return { ok: false, error: 'updates must be a non-empty array' };
   }
+  // Whitelist each update onto {id, title, description, status}. Returning the
+  // caller's objects verbatim let the handler spread arbitrary internal fields
+  // (worktreePath/branch/conflict/…) into updateTask — a mass-assignment hole.
+  const projected: BulkTaskUpdate[] = [];
   for (let i = 0; i < updates.length; i++) {
     const u = updates[i];
     if (!u || typeof u.id !== 'string' || !u.id.trim()) {
@@ -25,8 +29,9 @@ export function bulkUpdatesFromBody(body: unknown): ValidationResult<BulkTaskUpd
     if (u.status !== undefined && !isValidTaskStatus(u.status)) {
       return { ok: false, error: `updates[${i}].${statusValidationError('status')}` };
     }
+    projected.push({ id: u.id, ...pickTaskPatch(u) });
   }
-  return { ok: true, value: updates };
+  return { ok: true, value: projected };
 }
 
 export function validateUpsertBlocks(blocks: ParsedTaskBlock[]): string | null {
