@@ -1,6 +1,5 @@
 import {
-  buildConflictResolveCommand,
-  writeMergeInstructions,
+  prepareMergeConflictOutcome,
   type ResyncOutcome,
 } from '../worktree.js';
 import { listConflictedFiles } from '../worktree/state.js';
@@ -133,14 +132,16 @@ export async function respawnResolverForFlaggedConflict(
   runCtx: ProcessTargetContext,
 ): Promise<ResolverSpawnResult> {
   const conflictedFiles = await listConflictedFiles(task.worktreePath!);
-  const { relativePath } = await writeMergeInstructions(
+  // markConflict:false — this task is already conflict-flagged (that's why we
+  // re-spawn), so re-flagging would needlessly reset conflictStartedAt.
+  const { command } = await prepareMergeConflictOutcome({
     task,
-    task.branch!,
+    branch: task.branch!,
     conflictedFiles,
-    runCtx.backendOrigin,
-    task.worktreePath!,
-  );
-  const command = buildConflictResolveCommand(relativePath);
+    backendOrigin: runCtx.backendOrigin,
+    worktreePath: task.worktreePath!,
+    markConflict: false,
+  });
   return spawnAndRecord({
     task,
     run,
