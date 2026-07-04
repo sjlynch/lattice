@@ -79,6 +79,38 @@ test('Pi endpoint probes do not resolve env-var apiKey hints', async () => {
   }
 });
 
+test('a cross-origin GET (drive-by no-cors) is rejected before the handler runs', async () => {
+  // /api/search and /api/scan are GETs that do real work (a user regex over
+  // every file; a filesystem walk). A malicious page's `fetch(url,
+  // {mode:'no-cors'})` sends an Origin header — that must be rejected even
+  // though GET is a "safe" method. Same-origin requests send no Origin.
+  const app = express();
+  mountBaseMiddleware(app);
+  let handlerRuns = 0;
+  app.get('/api/probe-target', (_req, res) => {
+    handlerRuns += 1;
+    res.json({ ok: true });
+  });
+  const server: Server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const blocked = await fetch(`${base}/api/probe-target`, {
+      headers: { Origin: 'http://evil.test' },
+    });
+    assert.equal(blocked.status, 403);
+    assert.equal(handlerRuns, 0, 'handler must not run for a cross-origin GET');
+
+    // No Origin (same-origin / curl) passes through to the handler.
+    const allowed = await fetch(`${base}/api/probe-target`);
+    assert.equal(allowed.status, 200);
+    assert.equal(handlerRuns, 1);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test('Pi endpoint probe accepts JSON only', async () => {
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;

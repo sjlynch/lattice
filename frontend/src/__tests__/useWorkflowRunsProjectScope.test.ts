@@ -43,12 +43,27 @@ function latestSocket(): FakeWebSocket {
   return ws;
 }
 
-// The hook's most recently rendered `recentRuns`, captured each render.
+// The hook's most recently rendered maps, captured each render.
 let latestRecentRuns: Record<string, WorkflowRun> = {};
+let latestActiveRuns: Record<string, WorkflowRun> = {};
 function Harness({ folder }: { folder: string }) {
-  const { recentRuns } = useWorkflowRuns(folder);
+  const { recentRuns, activeRuns } = useWorkflowRuns(folder);
   latestRecentRuns = recentRuns;
+  latestActiveRuns = activeRuns;
   return null;
+}
+
+function runningRun(id: string, projectPath: string): WorkflowRun {
+  return {
+    id,
+    workflowId: `wf-${id}`,
+    workflowName: `flow ${id}`,
+    projectPath,
+    status: 'running',
+    startedAt: 0,
+    totalSteps: 2,
+    currentStepIndex: 0,
+  };
 }
 
 function erroredRun(id: string, projectPath: string): WorkflowRun {
@@ -80,6 +95,7 @@ const g = globalThis as unknown as Record<string, unknown>;
 beforeEach(() => {
   FakeWebSocket.instances = [];
   latestRecentRuns = {};
+  latestActiveRuns = {};
   saved = {
     IS_REACT_ACT_ENVIRONMENT: g.IS_REACT_ACT_ENVIRONMENT,
     React: g.React,
@@ -159,6 +175,63 @@ test('recent runs from the previous project are cleared on folder change', () =>
     latestRecentRuns,
     {},
     "switching projects must clear the previous project's recent runs",
+  );
+
+  act(() => {
+    renderer!.unmount();
+  });
+});
+
+test('active runs from the previous project are cleared immediately on folder change', () => {
+  let renderer: ReturnType<typeof TestRenderer.create> | null = null;
+  const tree = (folder: string) =>
+    React.createElement(
+      TerminalsProvider,
+      null,
+      React.createElement(Harness, { folder }),
+    );
+
+  // Mount on project A.
+  act(() => {
+    renderer = TestRenderer.create(tree('C:/project-A'));
+  });
+
+  // A's WS `hello` snapshot delivers one active run.
+  act(() => {
+    latestSocket().emit({
+      type: 'hello',
+      runs: [runningRun('run-A1', 'C:/project-A')],
+    });
+  });
+  assert.deepEqual(
+    Object.keys(latestActiveRuns),
+    ['run-A1'],
+    'project A should hold its active run before the switch',
+  );
+
+  // Switch to project B. B's own `hello`/fetch has not arrived yet — the
+  // previous project's active runs must be dropped immediately so they never
+  // leak into B (stale navbar chip + a stalled sequential-queue Start).
+  act(() => {
+    renderer!.update(tree('C:/project-B'));
+  });
+  assert.deepEqual(
+    latestActiveRuns,
+    {},
+    "switching projects must clear the previous project's active runs before B's hello arrives",
+  );
+
+  // B's hello repopulates from scratch with only B's runs.
+  act(() => {
+    latestSocket().emit({
+      type: 'hello',
+      runs: [runningRun('run-B1', 'C:/project-B')],
+    });
+  });
+  assert.deepEqual(
+    Object.keys(latestActiveRuns),
+    ['run-B1'],
+    "project B's hello should repopulate active runs from scratch",
   );
 
   act(() => {

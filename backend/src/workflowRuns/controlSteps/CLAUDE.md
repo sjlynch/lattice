@@ -1,0 +1,104 @@
+# backend/src/workflowRuns/controlSteps
+
+The per-kind workers for **headless** workflow steps — `start` / `merge` /
+`push` — that run server-side against Lattice's own task pipeline instead of
+spawning an agent. `../controlStep.ts` is the thin dispatcher (lock lifecycle +
+kind→worker routing); each worker lives here. These files hold subtle,
+easy-to-break timing/lock invariants; read this before touching them.
+
+## Lane-transition map
+
+| Step | Drains (waits until empty) | Fills / advances |
+|------|----------------------------|------------------|
+| `start` | — (reads the **Open** lane) | Open → In Progress (spawns each) |
+| `merge` | In Progress (Phase A), then Ready-to-Merge (Phase B loop) | Ready-to-Merge → QA (via inner merge runs) |
+| `push`  | Ready-to-Merge | pushes `main` to the remote (no lane change) |
+
+## Cross-process project run-lock (the load-bearing invariant)
+
+`controlStep.ts` acquires the per-project run-lock
+(`~/.lattice/per-project/<hash>/run.lock`, `label: workflow-<kind>:<runId>`)
+for the worker and **releases it in its `finally`** — even on throw — *before*
+calling `completeStep`. While it's held, `scripts/dev.mjs` defers backend
+restarts and a manual `/merge` can't race the workflow.
+
+**Every wait inside a control step MUST be bounded.** If a worker blocks
+forever, its `finally` never runs, the lock is held forever, and *all* future
+merge runs / control steps for that project are blocked (and dev.mjs keeps
+deferring restarts). This is why `waitForLaneEmpty` (below) and the push
+session wait both have timeouts. `runControlStepWorker` takes injectable deps
+(`acquireLock` + the three runners) so the release-on-throw path is unit-tested
+(`__tests__/workflowLaneWaitTimeout.test.ts`).
+
+## `shared.ts` — `waitForLaneEmpty` / `emitControlProgress`
+
+`waitForLaneEmpty(project, run, laneStatus, onProgress, maxWaitMs?, deps?)` —
+the lane-drain used by both merge Phase A and push:
+
+- Resolves when the lane count hits **0** OR the run leaves `'running'`
+  (cancellation). Subscribes to the task store **before** the initial
+  `listTasks` read so a transition in the gap isn't missed; also subscribes to
+  workflow-run events so a cancel resolves it promptly.
+- **Bounded wait (`maxWaitMs`)**: on expiry it **rejects** with a clear error.
+  A lane can legitimately never drain — a task in it whose agent died without
+  committing is refused auto-completion by the in-progress sweep
+  (`recovery/inProgressSweep/eligibility.ts`, `no-commits` → skip) — so an
+  unbounded wait would hang the worker and leak the run-lock (see above). Merge
+  Phase A passes `PHASE_A_DRAIN_TIMEOUT_MS` (30 min); push passes
+  `PUSH_DRAIN_TIMEOUT_MS` (15 min). `deps` is injectable only for the tests.
+
+`emitControlProgress` is the single shaper for the `step-control-progress` WS
+event so every worker reports progress identically.
+
+## `start.ts` — `runStartStep`
+
+Moves every Open task to In Progress and runs it (the Task Board **Run All**
+path), emitting one `workflow-task-spawned` terminal tab per task.
+
+- **Harness/Pi-model picker** mirrors Run All via
+  `resolveStartStepHarnessPicker`: a run-level `harnessOverride` pins every task
+  (Pi override carries its `piModelOverride`); with no override the per-project
+  default applies (`interleave` expands to the same alternating claude/pi mix).
+- **Hard-cap handling (do not regress)**: each spawn passes
+  `throwOnCapacity: true`. When the terminal-server hard cap rejects a spawn
+  (`SpawnCapacityError`), `startTaskById` throws **before** flipping the task to
+  in_progress, so the task stays **Open** (no phantom in_progress-without-agent,
+  no orphan pty). The step then re-queues it via `enqueueTaskRun` (the spawn
+  queue, so it starts when a slot frees) and counts it as **neither started nor
+  failed** — a cap deferral is forward progress. Without `throwOnCapacity` the
+  cap was swallowed: the task was force-flipped to in_progress with no agent and
+  counted as started, leaving excess tasks stuck forever and manufacturing the
+  stuck lane that hangs the Merge step. The "started 0 → throw" guard fires only
+  when *nothing* started *and nothing* was cap-deferred. Covered by
+  `__tests__/workflowStartStepCap.test.ts`.
+
+## `merge.ts` — `runMergeStep`
+
+Phase A drains In Progress (bounded, above). Phase B loops merge runs
+(`lockMode: 'inherit'` so they don't deadlock on the lock this worker holds)
+until Ready-to-Merge is empty, with an **id-set progress guard**: it aborts the
+moment a full merge run leaves the ready_to_merge id-set unchanged (a
+persistently-erroring task is left in the lane by `processTarget`, so comparing
+the lane before/after — not the error *count* — is what stops the infinite
+loop). Covered by `__tests__/workflowMergeStepLoop.test.ts`.
+
+## `push.ts` — `runPushStep`
+
+Drains Ready-to-Merge, then spawns a push session (Task Board cloud-icon path)
+and waits for its Stop hook.
+
+- **Subscribe before spawn**: the push-run `done` and workflow-run
+  `cancelled/errored` subscribers are attached *before* `startPushSession`, so a
+  fast `done` / a cancel can't slip past. `sessionServerId` is unknown until
+  `startPushSession` resolves — the subscriber captures it by closure.
+- **`PUSH_STEP_TIMEOUT_MS` (15 min)** backstop: if Claude died before its Stop
+  hook fired, the wait would otherwise hang forever — the timer kills the pty
+  and resolves.
+- **Cancel/spawn race (do not regress)**: cancelling the run *while*
+  `startPushSession` is in flight runs the cancel handler with
+  `sessionServerId` still `undefined`, so it kills nothing. A `cancelled` flag
+  is set, and a **post-spawn re-check** (`cancelled || run.status !== 'running'`)
+  kills the resolved `session.serverId` and returns without emitting
+  `step-spawned` / `'push complete'` — otherwise a cancelled push still runs
+  `git push` to completion and orphans the pty. Mirrors the existing post-spawn
+  "already `done`" guard. Covered by `__tests__/workflowPushStepCancel.test.ts`.

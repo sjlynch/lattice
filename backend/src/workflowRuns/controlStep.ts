@@ -46,6 +46,26 @@ export type CompleteStepCallback = (
   backendOrigin: string,
 ) => Promise<void>;
 
+// Injectable seam (production default below). The lock lifecycle — acquire,
+// then release in the `finally` even when the per-kind worker throws — is the
+// critical invariant this file owns: every wait inside a control step MUST be
+// bounded (see waitForLaneEmpty's Fix 2 timeout) or the lock leaks. The
+// regression test overrides these to make a worker throw and assert the lock's
+// release() still runs (the run.lock is freed) and the step does not advance.
+export type ControlStepWorkerDeps = {
+  acquireLock: typeof acquireProjectRunLock;
+  runStart: typeof runStartStep;
+  runMerge: typeof runMergeStep;
+  runPush: typeof runPushStep;
+};
+
+const productionWorkerDeps: ControlStepWorkerDeps = {
+  acquireLock: acquireProjectRunLock,
+  runStart: runStartStep,
+  runMerge: runMergeStep,
+  runPush: runPushStep,
+};
+
 // Fire-and-forget orchestration entry point. Mirrors spawnWorkflowStep's
 // shape (called by the orchestrator, returns quickly) but the long-running
 // work continues in a worker that calls completeStep itself when done.
@@ -59,12 +79,13 @@ export function executeControlStep(
   void runControlStepWorker(wf, run, stepIndex, backendOrigin, completeStep);
 }
 
-async function runControlStepWorker(
+export async function runControlStepWorker(
   wf: Workflow,
   run: WorkflowRun,
   stepIndex: number,
   backendOrigin: string,
   completeStep: CompleteStepCallback,
+  deps: ControlStepWorkerDeps = productionWorkerDeps,
 ): Promise<void> {
   const step = wf.steps[stepIndex];
   const kind: WorkflowStepKind = step.kind ?? 'agent';
@@ -74,7 +95,7 @@ async function runControlStepWorker(
   let workerError: Error | null = null;
 
   try {
-    lock = await acquireProjectRunLock(wf.projectPath, lockLabel);
+    lock = await deps.acquireLock(wf.projectPath, lockLabel);
   } catch (err) {
     if (err instanceof ProjectRunLockedError) {
       // Log loud — historically this is the most common reason a workflow
@@ -102,11 +123,11 @@ async function runControlStepWorker(
     );
     try {
       if (kind === 'start') {
-        await runStartStep(wf, run, stepIndex, backendOrigin);
+        await deps.runStart(wf, run, stepIndex, backendOrigin);
       } else if (kind === 'merge') {
-        await runMergeStep(wf, run, stepIndex, backendOrigin);
+        await deps.runMerge(wf, run, stepIndex, backendOrigin);
       } else if (kind === 'push') {
-        await runPushStep(wf, run, stepIndex, backendOrigin);
+        await deps.runPush(wf, run, stepIndex, backendOrigin);
       } else {
         throw new Error(`unsupported control-step kind: ${kind}`);
       }

@@ -19,6 +19,7 @@ import {
   pickInitialActiveId,
   planCloseTerminals,
   removeTerminalFromList,
+  removeTerminalsFromList,
   renameTerminalInList,
   reorderTerminalInList,
   setServerIdInList,
@@ -91,8 +92,14 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
       cwd: target.cwd,
     });
     if (target.serverId) deleteBackendSession(target.serverId);
+    // Remove functionally so a close batched with sibling closes in one React
+    // tick composes onto the latest list, instead of the last setState — built
+    // from this same pre-batch snapshot minus just its own id — clobbering the
+    // earlier removals. The DELETE + active-id fallback still derive from `prev`
+    // once, outside the updater (StrictMode double-invokes updaters, so a DELETE
+    // in there would fire twice).
     const next = removeTerminalFromList(prev, id);
-    setTerminals(next);
+    setTerminals((current) => removeTerminalFromList(current, id));
     setActiveIdState((current) =>
       pickActiveAfterClose(prev, next, id, current),
     );
@@ -132,7 +139,18 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
     const prev = terminalsRef.current;
     const { serverIdsToDelete, next } = planCloseTerminals(prev, idSet);
     for (const serverId of serverIdsToDelete) deleteBackendSession(serverId);
-    setTerminals(next);
+    // Apply the removal functionally. useTaskTerminalCleanup fires
+    // closeTerminalsForTask (→ closeTerminals) once PER finalizing task in a
+    // synchronous loop, and every call reads the SAME pre-batch terminalsRef
+    // (it only re-syncs in the [terminals] effect, never mid-batch). A direct
+    // setTerminals(next) meant React kept only the LAST call's result — that
+    // snapshot minus just its own task's ids — so every other finalizing task's
+    // terminals were resurrected as dead 'session lost' tabs (their backend
+    // sessions had already been DELETEd). Removing off the live `current` list
+    // makes the calls compose. The DELETE set + active-id fallback still come
+    // from the single `prev` snapshot (disjoint per task, and kept out of the
+    // StrictMode-double-invoked updater).
+    setTerminals((current) => removeTerminalsFromList(current, idSet));
     setActiveIdState((current) =>
       pickActiveAfterCloseMany(prev, next, idSet, current),
     );
@@ -143,6 +161,10 @@ export function TerminalsProvider({ children }: { children: ReactNode }) {
   // stale terminalsRef per id (the ref only syncs in an effect after render),
   // so the last setState — computed from the pre-loop snapshot minus just its
   // own id — clobbered the earlier removals and resurrected the sibling tabs.
+  // closeTerminals now also removes functionally, so even several
+  // closeTerminalsForTask calls batched in one update (multiple tasks finalizing
+  // at once — a Merge All, a multi-select delete) compose instead of the last
+  // one clobbering the rest.
   const closeTerminalsForTask = useCallback(
     (taskId: string) => {
       const ids = terminalIdsForTask(terminalsRef.current, taskId);
