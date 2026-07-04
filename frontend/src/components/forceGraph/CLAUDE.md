@@ -41,20 +41,30 @@ label physics in `labelPhysics/CLAUDE.md`.
   `timelineReset`) — git timeline scrubber UI + range math.
 
 **Node sprites & recolor overlays**
-- `nodeObjectFactory.ts` — `buildNodeObject`: the ghost/health/loc/dead/base
-  sprite decision tree (recolor precedence health > loc > dead > base) + the
-  change-ring/selection-halo sibling children. Handed to `nodeThreeObject`. While
-  a metric view (health/loc/dead) is active it skips the change-ring child (they
-  obscure the coloring); ghosts + metrics-ignored files are hidden by
-  `useGraphFilter` instead.
+- `nodeObjectFactory.ts` — `buildNodeObject`: builds a node's THREE root by
+  applying the decision from `spriteDecision.ts` as a flat sequence (build base
+  sprite, hide-if-batched, attach change-ring/label/halo sibling children).
+  Handed to `nodeThreeObject`.
+- `spriteDecision.ts` — `decideSpriteState`: the pure ghost/health/loc/dead/base
+  decision tree (recolor precedence health > loc > dead > base) returning a
+  plain, THREE-free `SpriteDecision` (baseKind + hide-when-batched + which
+  ring/label/halo to attach). While a metric view (health/loc/dead) is active it
+  suppresses the change-ring + label (they obscure the coloring); ghosts +
+  metrics-ignored files are hidden by `useGraphFilter` instead.
 - `sprites` / `spriteShapes` / `spriteTextures` / `spritePicking` — per-(ext,
   shape,color) `SpriteMaterial` cache, shape geometry, canvas→`CanvasTexture`
   (sets `colorSpace = SRGBColorSpace`), sprite-quad pick bounds.
 - `locOverlay` / `healthOverlay` / `deadCodeOverlay` / `labelsOverlay` — overlay
   configs + per-overlay registries. `deadCodeOverlay` is a pure recolor;
   `labelsOverlay.applyNodeLabelState` is the per-node Alt name-label toggle.
-- `labelTexture` / `floatingLabelSprite` / `metricOverlayFactory` — shared,
-  module-owned (refcount-guarded) label-texture/sprite/connector caches.
+- `labelTexture` / `labelSpriteResources` / `floatingLabelSprite` /
+  `metricOverlayFactory` — shared, module-owned (refcount-guarded)
+  label-texture/sprite/connector caches. `labelSpriteResources` holds the four
+  cache layers (label material, color, line material, connector geometry
+  template) + `disposeLabelMaterial`, with the "never dispose a shared resource
+  per-node" INVARIANT; `floatingLabelSprite` is just the public factories
+  (`makeFloatingLabelSprite`/`makeConnectorLine`/`disposeLabelEntry`) that draw
+  on them.
 - `labelSync.ts` — in-place Alt-overlay delta walker (no `graph.refresh()`).
   `labelRepulsion` (facade) + `labelRepulsionFrames` (scene-frame-driven, holds
   `labelPhysics` only while labels move) + `labelPhysics/` (pure physics, own doc).
