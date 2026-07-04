@@ -2,20 +2,14 @@
 // Lattice state in `<project>/.lattice/health-cache.json`. The key is the
 // absolute file path; entries carry the file's mtime + size so a stale
 // cache can be rejected without re-analyzing every file on every scan.
+//
+// This module owns only the in-memory state and its transitions
+// (load/get/set/delete/prune/save/flush). The location/version constants live
+// in cachePaths.ts and the crash-safe read/write machinery in cacheFile.ts.
 
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import type { HealthMetrics } from './types.js';
-
-// Bump on schema changes — old caches are rejected on load when the
-// version doesn't match, forcing re-analysis with the new pipeline.
-// v3: import extraction now captures `export … from` re-exports and dynamic
-// `import()`/`require()`, and the resolver maps NodeNext `.js` specifiers to
-// their `.ts` sources — the cached `imports` arrays from v2 predate all three,
-// so reuse would keep the dead-code graph disconnected.
-const CACHE_VERSION = 3;
-const CACHE_DIRNAME = '.lattice';
-const CACHE_FILENAME = 'health-cache.json';
+import { CACHE_VERSION } from './cachePaths.js';
+import { readCacheFile, writeCacheFile } from './cacheFile.js';
 
 // Quiet period before a coalesced write fires. A burst of set()/delete()
 // calls (a branch switch, a formatter touching many files, the watcher
@@ -45,49 +39,6 @@ function emptyCache(): CacheFile {
   return { version: CACHE_VERSION, files: {} };
 }
 
-function cachePath(projectRoot: string): string {
-  return path.join(projectRoot, CACHE_DIRNAME, CACHE_FILENAME);
-}
-
-// Monotonic suffix so two writers in the same process+millisecond still get
-// distinct temp names (the cross-instance race this whole writer guards
-// against would otherwise reuse one temp path).
-let tmpSeq = 0;
-
-// On Windows `fs.rename` over an existing target throws EPERM/EBUSY/EACCES
-// when another handle has it briefly open; a short bounded retry lets the swap
-// land once that handle closes (mirrors claudeTrust/configFile.ts).
-const RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100];
-
-// Atomic write: serialize into a unique temp under the same dir, then rename
-// over the target. rename is atomic on POSIX and ~atomic on Windows, so a
-// reader (or a second concurrent writer) never observes a half-written file —
-// the whole point, since the scanner's HealthCache and the watcher's both
-// target one <root>/.lattice/health-cache.json. The temp shares the cache
-// dir so the rename stays on one filesystem.
-async function atomicWriteCache(target: string, content: string): Promise<void> {
-  const tmp = `${target}.${process.pid}-${tmpSeq++}.tmp`;
-  try {
-    await fs.writeFile(tmp, content, 'utf8');
-    for (let i = 0; ; i++) {
-      try {
-        await fs.rename(tmp, target);
-        return;
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        const transient = code === 'EPERM' || code === 'EBUSY' || code === 'EACCES';
-        if (!transient || i >= RENAME_RETRY_DELAYS_MS.length) throw err;
-        await new Promise((r) => setTimeout(r, RENAME_RETRY_DELAYS_MS[i]));
-      }
-    }
-  } catch (err) {
-    // Best-effort: drop the temp so a failed write doesn't leak it. unlink (not
-    // a recursive rm) on a single file inside the project is safe.
-    await fs.unlink(tmp).catch(() => { /* ignore */ });
-    throw err;
-  }
-}
-
 export class HealthCache {
   private projectRoot: string;
   private data: CacheFile = emptyCache();
@@ -108,7 +59,7 @@ export class HealthCache {
 
   async load(): Promise<void> {
     try {
-      const raw = await fs.readFile(cachePath(this.projectRoot), 'utf8');
+      const raw = await readCacheFile(this.projectRoot);
       const parsed = JSON.parse(raw) as CacheFile;
       if (parsed && parsed.version === CACHE_VERSION && parsed.files) {
         this.data = parsed;
@@ -212,8 +163,7 @@ export class HealthCache {
     const snapshot = JSON.stringify(this.data);
     this.dirty = false;
     try {
-      await fs.mkdir(path.join(this.projectRoot, CACHE_DIRNAME), { recursive: true });
-      await atomicWriteCache(cachePath(this.projectRoot), snapshot);
+      await writeCacheFile(this.projectRoot, snapshot);
     } catch {
       // Best-effort cache. Re-arm the dirty flag so the next save()
       // tries again instead of leaving the on-disk file stale.

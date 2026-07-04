@@ -100,7 +100,16 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   mirror), `fileAnalysis.ts` (read/LOC count/cache-or-analyze), `handlers.ts`
   (add/change/remove event handlers), `subscribers.ts` (broadcast-safe
   subscriber fan-out), and `types.ts`
-- `cache.ts` — LRU file-content cache; `tsconfig.ts` — tsconfig alias resolution
+- `cache.ts` + `cachePaths.ts` + `cacheFile.ts` — persistent per-file health
+  cache at `<project>/.lattice/health-cache.json`, keyed by absolute path with
+  `(mtime,size)` staleness. `cache.ts` is the `HealthCache` class: in-memory
+  state + its load/get/set/delete/prune/save/flush transitions, debounced
+  coalesced writes, save-chain serialization, dirty-bit rearm-on-failure.
+  `cachePaths.ts` owns the location + `CACHE_VERSION` (bump it on any import-
+  extraction/resolver change — see the crossFile cache-coupling note above).
+  `cacheFile.ts` owns the crash-safe I/O: raw read plus the same-dir temp
+  write → atomic rename (transient-Windows-rename retry + temp cleanup).
+  `tsconfig.ts` — tsconfig alias resolution
 - `types.ts` — `HealthMetrics` / `HealthSmellId` definitions
 
 Adding a smell: update `types.ts` (id + label), emit it from `walker/` or
