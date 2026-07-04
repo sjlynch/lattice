@@ -56,8 +56,8 @@ Halstead token counts and a Maintainability Index, and folded into a composite
     `baseUrl`-relative bare imports via a `tsconfig.ts` catch-all alias (bare
     specifiers only — relative imports always resolve against the importer);
     and the walker captures `export … from` re-exports + string-literal dynamic
-    `import()`/`require()` (`walker/visitors.ts`) so barrels and lazy routes
-    aren't orphaned.
+    `import()`/`require()` (`walker/importEdges.ts`, delegated from
+    `walker/visitors.ts`) so barrels and lazy routes aren't orphaned.
   - **Entry-point roots** (`roots.ts`): conventional filenames (`index`/`main`/
     `*.config.*`/tests/`.d.ts`), standalone process/CLI entries (`*-server`,
     `*.worker`, files under a `scripts/`|`tools/` dir — spawned by path, never
