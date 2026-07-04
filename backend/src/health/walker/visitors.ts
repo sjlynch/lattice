@@ -1,14 +1,14 @@
 import type { Node } from 'web-tree-sitter';
 import { computeComplexityAdds, detectElseIf } from './complexity.js';
 import { recordFunction } from './functionRecord.js';
+import { detectAstSmells } from './smells.js';
 import {
   countExportBindings,
-  detectAstSmells,
   isConsoleLogish,
   isImportSpecifierString,
   leafIdentifier,
   stripStringQuotes,
-} from './smells.js';
+} from './astUtils.js';
 import { currentFunction, type WalkerContext } from './context.js';
 
 export function handleComment(ctx: WalkerContext, node: Node, t: string): boolean {
