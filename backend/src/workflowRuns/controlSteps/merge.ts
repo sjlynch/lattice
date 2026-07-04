@@ -16,6 +16,13 @@ import type { Workflow } from '../../workflows.js';
 import { subscribe, type WorkflowRun } from '../state.js';
 import { emitControlProgress, waitForLaneEmpty } from './shared.js';
 
+// Backstop for Phase A (Fix 2). An in_progress task whose agent died without
+// committing is never auto-completed (the in-progress sweep skips no-commit
+// tasks), so the lane never drains on its own. Bound the wait so a stuck agent
+// can't hang the worker forever holding the cross-process project run-lock. 30
+// min is generous for real coding work; a dev restart during the wait clears it.
+const PHASE_A_DRAIN_TIMEOUT_MS = 30 * 60 * 1000;
+
 // Injectable seam (production default below). The Phase B drain loop is the
 // trickiest part of this step to get right (it's what infinite-looped on
 // persistently-erroring tasks), so the regression test overrides these to
@@ -74,17 +81,23 @@ export async function runMergeStep(
       1,
       'waiting for In Progress tasks to finish',
     );
-    await deps.waitForLaneEmpty(wf.projectPath, run, 'in_progress', (count, total) => {
-      const finished = Math.max(0, total - count);
-      emitControlProgress(
-        run,
-        stepIndex,
-        'merge',
-        finished,
-        total,
-        `In Progress draining: ${count} remaining`,
-      );
-    });
+    await deps.waitForLaneEmpty(
+      wf.projectPath,
+      run,
+      'in_progress',
+      (count, total) => {
+        const finished = Math.max(0, total - count);
+        emitControlProgress(
+          run,
+          stepIndex,
+          'merge',
+          finished,
+          total,
+          `In Progress draining: ${count} remaining`,
+        );
+      },
+      PHASE_A_DRAIN_TIMEOUT_MS,
+    );
     if (run.status !== 'running') return;
 
     // Phase B: drain Ready-to-Merge. Loop until the lane is empty — a single
