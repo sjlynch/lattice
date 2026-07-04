@@ -1,12 +1,28 @@
 import { useCallback, useRef } from 'react';
 import {
   cancelWorkflowRun as apiCancelWorkflowRun,
+  HttpError,
   startWorkflow as apiStartWorkflow,
   type Workflow,
   type WorkflowRun,
   type WorkflowRunHarnessOverride,
 } from '../../../api';
 import type { EditorState } from '../editorState';
+
+// Options threaded from the sequential queue into a run start.
+export type StartRunOptions = {
+  // Ask the backend to 409 if a run is already active for the project. Set by
+  // the sequential queue; a resulting 409 surfaces as `{ status: 'busy' }` (the
+  // queue requeues), never an error toast.
+  requireNoActiveRun?: boolean;
+};
+
+// Outcome of a run-start attempt. `busy` (backend 409) is distinct from
+// `failed` so the queue can requeue-and-retry rather than drop the entry.
+export type StartOutcome =
+  | { status: 'started'; run: WorkflowRun }
+  | { status: 'busy' }
+  | { status: 'failed' };
 
 type Args = {
   activeFolder: string;
@@ -43,24 +59,32 @@ export function useWorkflowRunActions({
     workflowId: string,
     harnessOverride: WorkflowRunHarnessOverride = null,
     piModelOverride?: string,
-  ): Promise<WorkflowRun | null> => {
+    opts?: StartRunOptions,
+  ): Promise<StartOutcome> => {
     const requestedProject = activeFolderRef.current;
     const requestedGeneration = activeFolderGenerationRef.current;
-    if (!requestedProject) return null;
+    if (!requestedProject) return { status: 'failed' };
     try {
-      const res = await apiStartWorkflow(workflowId, { harnessOverride, piModelOverride });
+      const res = await apiStartWorkflow(workflowId, {
+        harnessOverride,
+        piModelOverride,
+        requireNoActiveRun: opts?.requireNoActiveRun,
+      });
       if (
         activeFolderRef.current !== requestedProject ||
         activeFolderGenerationRef.current !== requestedGeneration ||
         res.run.projectPath !== requestedProject
       ) {
-        return null;
+        return { status: 'failed' };
       }
       addActiveRun(res.run);
-      return res.run;
+      return { status: 'started', run: res.run };
     } catch (err) {
+      // 409 = the backend's sequential guard rejected this start because a run
+      // is already active. Not a user-facing error — the queue requeues.
+      if (err instanceof HttpError && err.status === 409) return { status: 'busy' };
       onError(`Run failed: ${(err as Error).message}`);
-      return null;
+      return { status: 'failed' };
     }
   }, [addActiveRun, onError]);
 
@@ -68,11 +92,14 @@ export function useWorkflowRunActions({
     workflowId: string,
     harnessOverride: WorkflowRunHarnessOverride = getWorkflowHarnessOverride(workflowId),
     piModelOverride: string | undefined = getWorkflowPiModelOverride(workflowId),
-  ): Promise<WorkflowRun | null> => {
+    opts?: StartRunOptions,
+  ): Promise<StartOutcome> => {
     const requestedProject = activeFolderRef.current;
     const requestedGeneration = activeFolderGenerationRef.current;
     const wf = workflowsById.get(workflowId);
-    if (!requestedProject || !wf || wf.projectPath !== requestedProject) return null;
+    if (!requestedProject || !wf || wf.projectPath !== requestedProject) {
+      return { status: 'failed' };
+    }
 
     let targetId = wf.id;
     if (editor.dirty && editor.workflowId === wf.id) {
@@ -84,11 +111,11 @@ export function useWorkflowRunActions({
         activeFolderGenerationRef.current !== requestedGeneration ||
         saved.projectPath !== requestedProject
       ) {
-        return null;
+        return { status: 'failed' };
       }
       targetId = saved.id;
     }
-    return startWorkflowDefinition(targetId, harnessOverride, piModelOverride);
+    return startWorkflowDefinition(targetId, harnessOverride, piModelOverride, opts);
   }, [
     editor.dirty,
     editor.workflowId,

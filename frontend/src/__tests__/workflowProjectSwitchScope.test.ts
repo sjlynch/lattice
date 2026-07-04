@@ -6,7 +6,10 @@ import type { Workflow, WorkflowRun } from '../api';
 import { FakeWebSocket } from './domDoubles.ts';
 import { emptyEditor } from '../components/workflows/editorState.ts';
 import { useWorkflowList } from '../components/workflows/hooks/useWorkflowList.ts';
-import { useWorkflowRunActions } from '../components/workflows/hooks/useWorkflowRunActions.ts';
+import {
+  useWorkflowRunActions,
+  type StartOutcome,
+} from '../components/workflows/hooks/useWorkflowRunActions.ts';
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -147,7 +150,9 @@ test("workflow list clears the previous project's saved workflows while the new 
   act(() => renderer.unmount());
 });
 
-let latestRunWorkflow: (workflowId: string) => Promise<WorkflowRun | null> = async () => null;
+let latestRunWorkflow: (workflowId: string) => Promise<StartOutcome> = async () => ({
+  status: 'failed',
+});
 let addedRuns: WorkflowRun[] = [];
 
 function RunActionsHarness({
@@ -198,7 +203,7 @@ test("a delayed run response from the previous project is not inserted into the 
     renderer = TestRenderer.create(tree(folderA, mapA));
   });
 
-  let pendingRun!: Promise<WorkflowRun | null>;
+  let pendingRun!: Promise<StartOutcome>;
   await act(async () => {
     pendingRun = latestRunWorkflow('wfA');
   });
@@ -207,14 +212,16 @@ test("a delayed run response from the previous project is not inserted into the 
     renderer.update(tree(folderB, mapB));
   });
 
-  let resolvedRun: WorkflowRun | null = null;
+  let resolvedRun: StartOutcome | null = null;
   await act(async () => {
     runAResponse.resolve(responseJson({ run: run('run-A', 'wfA', folderA) }));
     resolvedRun = await pendingRun;
     await flush();
   });
 
-  assert.equal(resolvedRun, null, 'the stale project-A run result is ignored');
+  // Stale cross-project result → dropped as 'failed' (was `null` before the
+  // StartOutcome contract; the queue treats 'failed' the same way).
+  assert.deepEqual(resolvedRun, { status: 'failed' }, 'the stale project-A run result is ignored');
   assert.deepEqual(
     addedRuns,
     [],
@@ -223,7 +230,7 @@ test("a delayed run response from the previous project is not inserted into the 
 
   await act(async () => {
     const bRun = await latestRunWorkflow('wfB');
-    assert.equal(bRun?.id, 'run-B');
+    assert.equal(bRun.status === 'started' ? bRun.run.id : null, 'run-B');
   });
   assert.deepEqual(
     addedRuns.map((r) => r.id),

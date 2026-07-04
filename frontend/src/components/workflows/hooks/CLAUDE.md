@@ -34,7 +34,14 @@ there.
   (a manual ▶ Run, or another tab). That external count makes the sequential
   gate wait behind a manual run and makes an enqueue auto-start the queue when a
   run is already in flight (so "queue it while one is playing" runs the new
-  entry without a second Start-queue click). Queue state is **per-project**:
+  entry without a second Start-queue click). The `externalActiveCount` gate is
+  best-effort (it only sees *this* tab's `activeRuns`, so a run's startup window
+  or a second tab can slip past it), so **sequential** dispatches also pass
+  `requireNoActiveRun` to the backend, which 409s if a run is already active.
+  The hook maps a start to one of three `StartOutcome`s: `started` (attach the
+  runId), `busy` (the 409 — `dispatchRejected` requeues the entry to retry when
+  the slot frees, no error toast), or `failed` (drop). Parallel dispatches omit
+  the flag — concurrency there is intentional. Queue state is **per-project**:
   WorkflowsLauncher isn't remounted on a project switch, so the hook resets to
   `initialQueueState` on an `activeFolder` change (mirroring `useWorkflowRuns`)
   and re-baselines its activeRuns diff — otherwise the new project would render
@@ -63,9 +70,4 @@ there.
 - `useWorkflowErrorHandler.ts` — shared auto-dismissing error toast state.
 - `useWorkflowPromptCustomization.ts` — owns per-step customization state,
   custom-step instruction prompting, terminal creation, polling, editor patching,
-  and prompt-customization errors. The poll loop is the extracted, unit-tested
-  `pollPromptCustomization` (injected `sleep`/`getStatus`/`isCancelled`); each
-  run is bound to a per-`activeFolder` session token whose `useEffect` cleanup
-  cancels it on unmount or project switch, so a stale customization can't patch
-  the editor / toast against a different project or setState after unmount.
-  Covered by `src/__tests__/workflowPromptCustomizationCancel.test.ts`.
+  and prompt-customization errors.

@@ -3,7 +3,6 @@ import {
   type ScanResult,
   type Workflow,
   type WorkflowQueueEntry,
-  type WorkflowRun,
 } from '../../../api';
 import { useTerminals } from '../../../TerminalsContext';
 import { useStructuralScan } from '../../../hooks/useStructuralScan';
@@ -20,7 +19,7 @@ import {
   useWorkflowQueueSelectors,
   type WorkflowQueueSelectors,
 } from './useWorkflowQueueSelectors';
-import { useWorkflowRunActions } from './useWorkflowRunActions';
+import { useWorkflowRunActions, type StartOutcome, type StartRunOptions } from './useWorkflowRunActions';
 import { useWorkflowRuns } from './useWorkflowRuns';
 import { useWorkflowRunViews } from './useWorkflowRunViews';
 import { useWorkflowPromptCustomization } from './useWorkflowPromptCustomization';
@@ -188,10 +187,15 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
   });
 
   const runQueuedWorkflow = useCallback(
-    (wf: Workflow, entry: WorkflowQueueEntry): Promise<WorkflowRun | null> =>
+    (
+      wf: Workflow,
+      entry: WorkflowQueueEntry,
+      opts?: StartRunOptions,
+    ): Promise<StartOutcome> =>
       // Each entry captured its own override at enqueue time — pass both fields
       // through so a queued "Pi — X" run uses the model it was queued with.
-      runActions.runWorkflow(wf.id, entry.harnessOverride, entry.piModelOverride),
+      // `opts` carries the sequential requireNoActiveRun flag from the queue.
+      runActions.runWorkflow(wf.id, entry.harnessOverride, entry.piModelOverride, opts),
     [runActions],
   );
 

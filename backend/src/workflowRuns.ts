@@ -27,6 +27,7 @@ import {
 import { normalizePiModel } from './worktree/commands.js';
 import { generateWorkflowRunId } from './ids.js';
 import {
+  getActiveRunsForProject,
   notify,
   runs,
   snapshot,
@@ -51,7 +52,37 @@ export type StartWorkflowRunOptions = {
   harnessOverride?: WorkflowRunHarnessOverride;
   // Pi model override, applied to every step when harnessOverride is `pi`.
   piModelOverride?: string;
+  // Sequential-queue intent: refuse to start (throw WorkflowRunConflictError →
+  // HTTP 409) if a run is already active for this project. Manual ▶ Run and
+  // parallel-queue starts omit it — concurrency is intentional there. This is
+  // the authoritative backend guard behind the frontend's best-effort
+  // sequential gate, which reads only the frontend's `activeRuns` snapshot and
+  // therefore has a startup-window / multi-tab race a lone client can't close.
+  requireNoActiveRun?: boolean;
 };
+
+// Thrown by `startWorkflowRun` when `requireNoActiveRun` is set but a run is
+// already active for the project. `routes/workflows/runs.ts` maps it to a 409
+// (distinct from other 400s) so the frontend queue can requeue + retry rather
+// than dropping the entry.
+export class WorkflowRunConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkflowRunConflictError';
+  }
+}
+
+// Refuse a new run while another is active for the same project. Throwing here
+// — before any run record / `started` notify / spawn — keeps a rejected start
+// side-effect-free.
+export function assertNoActiveWorkflowRun(projectPath: string): void {
+  const active = getActiveRunsForProject(projectPath);
+  if (active.length > 0) {
+    throw new WorkflowRunConflictError(
+      `a workflow run is already active for this project (${active.length} running)`,
+    );
+  }
+}
 
 // Picks the right executor for a step. Agent steps run through the existing
 // pty-pre-spawn path; control steps (start/merge/push) run through the
@@ -87,6 +118,11 @@ export async function startWorkflowRun(
   const wf = await getWorkflow(workflowId);
   if (!wf) throw new Error('workflow not found');
   if (wf.steps.length === 0) throw new Error('workflow has no steps');
+
+  // Authoritative sequential guard: when the caller demands an empty slot
+  // (sequential-queue dispatch), reject if a run is already active. Runs before
+  // any run record / notify / spawn so a rejected start is atomic.
+  if (options.requireNoActiveRun) assertNoActiveWorkflowRun(wf.projectPath);
 
   const harnessOverride = normalizeWorkflowRunHarnessOverride(options.harnessOverride);
   // Only carry a model override when the run is overriding to Pi.

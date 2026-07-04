@@ -138,6 +138,10 @@ export class QueueScenario {
     return this.step({ type: 'dispatchFailed', entryId });
   }
 
+  dispatchRejected(entryId: string): this {
+    return this.step({ type: 'dispatchRejected', entryId });
+  }
+
   runFinished(runId: string): this {
     return this.step({ type: 'runFinished', runId });
   }

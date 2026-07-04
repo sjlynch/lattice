@@ -10,6 +10,7 @@ import {
   startWorkflowRun,
   completeWorkflowStep,
   cancelWorkflowRun,
+  WorkflowRunConflictError,
 } from '../../workflowRuns.js';
 import { forgetWorkflowStepSession, workflowStepAgentId } from '../../workflowRuns/stepSpawner.js';
 import { unregisterAgentSession } from '../../agentSessions.js';
@@ -29,9 +30,18 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
         harnessOverride,
         piModelOverride:
           typeof body.piModelOverride === 'string' ? body.piModelOverride : undefined,
+        // Sequential-queue dispatch asks for an empty slot; the queue requeues
+        // on the 409 below. Manual/parallel starts omit the flag.
+        requireNoActiveRun: body.requireNoActiveRun === true,
       });
       res.json({ run });
     } catch (err) {
+      // A sequential start that lost the race for the single slot is a 409, not
+      // a 400 — the frontend queue treats it as "still busy, retry" instead of
+      // surfacing an error toast.
+      if (err instanceof WorkflowRunConflictError) {
+        return res.status(409).json({ error: err.message, code: 'active-run-exists' });
+      }
       res.status(400).json({ error: (err as Error).message });
     }
   });

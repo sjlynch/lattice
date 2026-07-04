@@ -7,6 +7,7 @@ import {
   type QueueState,
   type StepContext,
 } from '../queueScheduler';
+import type { StartOutcome, StartRunOptions } from './useWorkflowRunActions';
 
 // Count the active runs the queue itself didn't dispatch (a manual ▶ Run, or a
 // run from another tab). Queue-owned runs are the ones whose runId is attached
@@ -37,12 +38,15 @@ type Args = {
   // folder-change reset in useWorkflowRuns).
   activeFolder: string;
   workflowsById: Map<string, Workflow>;
-  // Triggers an HTTP /run for the given queued entry. Returns the run record
-  // on success and null on failure (e.g. backend rejected, network error).
+  // Triggers an HTTP /run for the given queued entry. Returns a discriminated
+  // outcome: `started` (attach the runId), `busy` (backend 409 — requeue and
+  // retry when the slot frees), or `failed` (drop the entry). `opts` carries
+  // the sequential `requireNoActiveRun` flag.
   runWorkflow: (
     wf: Workflow,
     entry: WorkflowQueueEntry,
-  ) => Promise<WorkflowRun | null>;
+    opts?: StartRunOptions,
+  ) => Promise<StartOutcome>;
   // Current set of runs the backend considers active (driven by the
   // /ws/workflow-runs `hello`/`started`/`progress`/`completed` events).
   activeRuns: Record<string, WorkflowRun>;
@@ -104,6 +108,13 @@ export function useWorkflowQueue({
     stateRef.current = result.state;
     setState(result.state);
 
+    // Sequential dispatch demands an empty slot: ask the backend to 409 if a
+    // run is already active for the project. This is the authoritative guard
+    // that closes the startup-window / multi-tab race the frontend
+    // `externalActiveCount` gate can't see. Parallel intentionally allows
+    // concurrency, so it omits the flag.
+    const requireNoActiveRun = result.state.mode === 'sequential';
+
     for (const entry of result.starts) {
       const startProject = activeFolderRef.current;
       const startGeneration = activeFolderGenerationRef.current;
@@ -115,7 +126,7 @@ export function useWorkflowQueue({
         continue;
       }
       void (async () => {
-        const run = await runWorkflowRef.current(wf, entry);
+        const outcome = await runWorkflowRef.current(wf, entry, { requireNoActiveRun });
         if (
           activeFolderRef.current !== startProject ||
           activeFolderGenerationRef.current !== startGeneration
@@ -124,8 +135,12 @@ export function useWorkflowQueue({
           // (or failure) to the newly active project's queue state.
           return;
         }
-        if (run && run.projectPath === startProject) {
-          dispatch({ type: 'workflowStarted', entryId: entry.id, runId: run.id });
+        if (outcome.status === 'started' && outcome.run.projectPath === startProject) {
+          dispatch({ type: 'workflowStarted', entryId: entry.id, runId: outcome.run.id });
+        } else if (outcome.status === 'busy') {
+          // Backend rejected the start (409): a run is already active. Requeue
+          // and wait for the active run's runFinished to free the slot.
+          dispatch({ type: 'dispatchRejected', entryId: entry.id });
         } else {
           dispatch({ type: 'dispatchFailed', entryId: entry.id });
         }

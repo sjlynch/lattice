@@ -62,28 +62,19 @@ explicit-curl callbacks — never by polling task state.
   dispatcher: it owns the per-project run-lock lifecycle (acquire →
   kind→worker dispatch → **release BEFORE `completeStep`**), cancellation /
   not-running guards, and the public surface (`executeControlStep`,
-  `CompleteStepCallback`). **See `controlSteps/CLAUDE.md`** for the lane-
-  transition map and the load-bearing invariants (run-lock lifecycle, the
-  bounded-wait requirement, start-step hard-cap handling, the push cancel/spawn
-  race). The per-kind workers live under `controlSteps/`:
+  `CompleteStepCallback`). The per-kind workers live under `controlSteps/`:
   - `controlSteps/start.ts` — `runStartStep`: move every Open task to In
     Progress and run it (one `workflow-task-spawned` terminal tab each);
-    throws if it started none so a no-op run doesn't silently "succeed". A
-    terminal-server hard-cap spawn (`throwOnCapacity`) is **not** swallowed —
-    the task stays Open, is re-queued on the spawn queue, and isn't counted as
-    started.
-  - `controlSteps/merge.ts` — `runMergeStep`: Phase A drains In Progress
-    (bounded by `PHASE_A_DRAIN_TIMEOUT_MS`), Phase B loops merge runs
-    (`lockMode: 'inherit'`) until Ready-to-Merge is empty, with the
-    unchanged-lane error-loop guard.
-  - `controlSteps/push.ts` — `runPushStep`: drain Ready-to-Merge (bounded),
-    spawn a push session, wait for its Stop hook with the `PUSH_STEP_TIMEOUT_MS`
-    (15 min) backstop and prompt cancel/pty cleanup — including a post-spawn
-    re-check so a cancel that lands *during* the spawn still kills the session.
+    throws if it started none so a no-op run doesn't silently "succeed".
+  - `controlSteps/merge.ts` — `runMergeStep`: Phase A drains In Progress,
+    Phase B loops merge runs (`lockMode: 'inherit'`) until Ready-to-Merge
+    is empty, with the unchanged-lane error-loop guard.
+  - `controlSteps/push.ts` — `runPushStep`: drain Ready-to-Merge, spawn a
+    push session, wait for its Stop hook with the `PUSH_STEP_TIMEOUT_MS`
+    (15 min) backstop and prompt cancel/pty cleanup.
   - `controlSteps/shared.ts` — `waitForLaneEmpty` (lane-drain subscription,
-    subscribes before the initial read; resolves on cancellation, **rejects on
-    an optional `maxWaitMs` timeout** so a stuck lane can't leak the run-lock)
-    and `emitControlProgress` (the single `step-control-progress` WS shaper).
+    subscribes before the initial read; resolves on cancellation) and
+    `emitControlProgress` (the single `step-control-progress` WS shaper).
 
 ## Adding a step-completion harness
 
@@ -109,3 +100,15 @@ explicit-curl callbacks — never by polling task state.
   cancel pending `wf-step:<runId>:<step>` queue entries, unregister the
   presence node, and kill any tracked `serverId`; queued thunks must re-check
   run status/current step before and after `proxyCreateSession`.
+- **One active run per project is enforceable, not automatic.** The backend
+  accepts concurrent runs by default — parallel queue mode and manual ▶ Run
+  are intentional. A caller that wants the single-slot guarantee passes
+  `requireNoActiveRun` to `startWorkflowRun`, which calls
+  `assertNoActiveWorkflowRun` and throws `WorkflowRunConflictError`
+  (`routes/workflows/runs.ts` → **HTTP 409**) if any run is `running` for the
+  project — *before* any run record / `started` notify / spawn, so a rejected
+  start is side-effect-free. The frontend **sequential** queue sets the flag so
+  its best-effort `activeRuns` gate can't be raced (a run's startup window, or a
+  second browser tab) into starting two runs at once; on the 409 the queue
+  requeues the entry and retries when the slot frees. Parallel/manual starts
+  omit the flag.

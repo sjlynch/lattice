@@ -64,6 +64,10 @@ export type WorkflowRunStartOptions = {
   modelOverride?: WorkflowRunModelOverride;
   // Pi model override for the run, applied when the override harness is `pi`.
   piModelOverride?: string;
+  // Sequential-queue dispatch: ask the backend to 409 if a run is already
+  // active for the project (the queue then requeues + retries when the slot
+  // frees). Manual ▶ Run and parallel-queue starts leave it unset.
+  requireNoActiveRun?: boolean;
 };
 
 export type WorkflowRunResult = {

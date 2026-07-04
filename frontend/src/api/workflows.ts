@@ -51,12 +51,19 @@ export async function startWorkflow(
   options: WorkflowRunStartOptions = {},
 ): Promise<WorkflowRunResult> {
   const harnessOverride = options.harnessOverride ?? options.modelOverride ?? null;
-  return harnessOverride
-    ? postJson<WorkflowRunResult>(`/api/workflows/${encodeURIComponent(id)}/run`, {
-        harnessOverride,
-        piModelOverride: options.piModelOverride,
-      })
-    : postJson<WorkflowRunResult>(`/api/workflows/${encodeURIComponent(id)}/run`);
+  const body: Record<string, unknown> = {};
+  if (harnessOverride) {
+    body.harnessOverride = harnessOverride;
+    if (options.piModelOverride) body.piModelOverride = options.piModelOverride;
+  }
+  // Sequential-queue dispatch asks the backend to 409 if a run is already
+  // active (see WorkflowRunStartOptions). asJson throws an HttpError(409) the
+  // caller branches on to requeue.
+  if (options.requireNoActiveRun) body.requireNoActiveRun = true;
+  const url = `/api/workflows/${encodeURIComponent(id)}/run`;
+  return Object.keys(body).length > 0
+    ? postJson<WorkflowRunResult>(url, body)
+    : postJson<WorkflowRunResult>(url);
 }
 
 // HTTP fallback for the active workflow runs of a project. Authoritative

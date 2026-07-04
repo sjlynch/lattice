@@ -3,6 +3,7 @@
 // modules grouped by domain.
 
 export * from './types';
+export { HttpError } from './http';
 export * from './scan';
 export * from './settings';
 export * from './globalSettings';

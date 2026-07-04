@@ -71,9 +71,12 @@ type Props = {
 
 function Harness({ activeFolder, workflowsById, activeRuns }: Props) {
   const runWorkflow = React.useCallback(
-    (wf: Workflow, e: WorkflowQueueEntry): Promise<WorkflowRun | null> => {
+    (wf: Workflow, e: WorkflowQueueEntry) => {
       runWorkflowCalls.push({ workflowId: wf.id, entryId: e.id });
-      return Promise.resolve(run(`run-${e.id}`, wf.id, wf.projectPath));
+      return Promise.resolve({
+        status: 'started' as const,
+        run: run(`run-${e.id}`, wf.id, wf.projectPath),
+      });
     },
     [],
   );

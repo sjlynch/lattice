@@ -76,6 +76,13 @@ export type QueueAction =
   // The /run HTTP errored or threw client-side. The run never existed
   // server-side from the queue's perspective.
   | { type: 'dispatchFailed'; entryId: string }
+  // The /run HTTP returned 409 — the backend's authoritative sequential guard
+  // rejected the start because a run is already active for the project. Unlike
+  // dispatchFailed this is NOT a failure: put the entry back at the FRONT of
+  // the queue so it retries once the active run frees the slot (the next
+  // runFinished re-evaluates pendingStarts). Closes the startup-window /
+  // multi-tab race the frontend-only externalActiveCount gate can't see.
+  | { type: 'dispatchRejected'; entryId: string }
   // A run finished server-side (WS completed/cancelled/errored). Matched by
   // runId because workflowId alone is ambiguous when the same workflow is
   // queued multiple times. `status` lets sequential mode bail when a
@@ -92,7 +99,7 @@ type QueueMutationAction = Extract<
 type RunningModeAction = Extract<QueueAction, { type: 'setMode' | 'startQueue' | 'stopQueue' }>;
 type DispatchLifecycleAction = Extract<
   QueueAction,
-  { type: 'dispatchStart' | 'workflowStarted' | 'dispatchFailed' }
+  { type: 'dispatchStart' | 'workflowStarted' | 'dispatchFailed' | 'dispatchRejected' }
 >;
 type RunLifecycleAction = Extract<QueueAction, { type: 'runFinished' }>;
 
@@ -141,15 +148,9 @@ function reduceRunningMode(state: QueueState, action: RunningModeAction): QueueS
   switch (action.type) {
     case 'setMode':
       // Disallow mid-flight mode changes — semantics would be murky
-      // (mid-parallel switching to sequential, or vice versa). The QueuePanel
-      // disables the Sequential/Parallel buttons on this exact condition
-      // (`running || startedActive`, see `startedActive`) so the button state
-      // and this guard never disagree. They previously keyed only on
-      // `running`, which parallel mode clears the moment every dispatch settles
-      // — while the runs stay in `started` — leaving the buttons *looking*
-      // enabled but silently no-op for the (possibly multi-minute) duration
-      // those runs remained active.
-      if (state.running || startedActive(state)) return state;
+      // (mid-parallel switching to sequential, or vice versa). The UI also
+      // disables the buttons while running, so this is a defensive check.
+      if (state.running || state.started.length > 0) return state;
       if (state.mode === action.mode) return state;
       return { ...state, mode: action.mode };
 
@@ -216,6 +217,34 @@ function reduceDispatchLifecycle(state: QueueState, action: DispatchLifecycleAct
       if (idx === -1) return state;
       return { ...state, started: removeStartedEntry(state.started, idx) };
     }
+
+    case 'dispatchRejected': {
+      // 409 "slot busy": move the entry out of `started` and back to the FRONT
+      // of `queued` so it's the next to retry (preserving FIFO intent). The
+      // subsequent `step` re-evaluates pendingStarts — it re-dispatches only if
+      // the slot is genuinely free now, otherwise the entry waits for the
+      // active run's runFinished. `running` is intentionally left on.
+      const idx = state.started.findIndex(
+        (entry) => entry.id === action.entryId && entry.runId === null,
+      );
+      if (idx === -1) return state;
+      const rejected = state.started[idx];
+      const requeued: WorkflowQueueEntry = {
+        id: rejected.id,
+        workflowId: rejected.workflowId,
+        harnessOverride: rejected.harnessOverride,
+        // Only carry the model key when it was set — keep the entry shape
+        // identical to the original enqueue (no explicit `undefined`).
+        ...(rejected.piModelOverride !== undefined
+          ? { piModelOverride: rejected.piModelOverride }
+          : {}),
+      };
+      return {
+        ...state,
+        started: removeStartedEntry(state.started, idx),
+        queued: [requeued, ...state.queued],
+      };
+    }
   }
 }
 
@@ -266,6 +295,7 @@ export function reduceQueue(state: QueueState, action: QueueAction): QueueState 
     case 'dispatchStart':
     case 'workflowStarted':
     case 'dispatchFailed':
+    case 'dispatchRejected':
       return reduceDispatchLifecycle(state, action);
 
     case 'runFinished':
@@ -326,15 +356,12 @@ function parallelDispatchesSettled(state: QueueState): boolean {
   return state.started.every((entry) => entry.runId !== null);
 }
 
-// Whether the queue currently holds dispatched entries — in-flight (runId
-// still null) OR started and still running server-side. This is the second
-// half of the `setMode` guard (`running || startedActive`): the UI reads it to
-// keep the Sequential/Parallel buttons disabled for exactly as long as the
-// reducer would reject a mode change. It matters because parallel mode flips
-// `running` to false as soon as every dispatch settles (see
-// `parallelDispatchesSettled`) while the runs themselves stay in `started`
-// until each `runFinished` — so `running` alone under-reports when a mode
-// change is still locked.
+// True while the scheduler still holds dispatched entries — in-flight (runId
+// null) or attached to an active run. The queue panel disables the
+// Sequential/Parallel mode buttons on `running || startedActive` so they can't
+// look enabled while the reducer's `setMode` guard would still reject the
+// change: parallel mode clears `running` the moment every dispatch settles
+// (shouldAutoStop) but the runs linger in `started` until each runFinished.
 export function startedActive(state: QueueState): boolean {
   return state.started.length > 0;
 }
