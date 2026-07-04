@@ -17,9 +17,17 @@ side effect can each be reasoned about (and changed) on their own.
   inside the closed terminal's project-scoped panel; single-close clamps the
   prior index there, while multi-close walks backward to the first survivor.
   `closeTerminalsForTask` collects ids via `terminalIdsForTask` and delegates
-  to the batched `closeTerminals` (which plans the DELETE set + post-close list
-  with `planCloseTerminals`) so all of a task's terminals drop in ONE setState
-  — looping single-close per id re-read a stale ref and resurrected siblings.
+  to the batched `closeTerminals` (which plans the DELETE set with
+  `planCloseTerminals`) so all of a task's terminals drop in ONE setState —
+  looping single-close per id re-read a stale ref and resurrected siblings.
+  `closeTerminals`/`closeTerminal` remove from the list **functionally**
+  (`setTerminals(current => removeTerminals(current, idSet))`) so that when
+  `useTaskTerminalCleanup` loops `closeTerminalsForTask` once per finalizing
+  task in one React batch (Merge All finishing several resolvers, a multi-select
+  delete), each call composes onto the latest list instead of the last
+  non-functional `setTerminals` clobbering the earlier tasks' removals. The
+  DELETE set + active-id fallback are still derived from the single pre-batch
+  `terminalsRef` snapshot, kept out of the StrictMode-double-invoked updater.
   `planCloseTerminals` walks the list once keyed by the id set, so a serverId
   DELETEs at most once even if an id repeats.
 - `terminalApi.ts` — `deleteBackendSession(serverId)`. The one side effect

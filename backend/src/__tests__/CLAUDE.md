@@ -13,3 +13,15 @@ this directory unless a helper belongs under `helpers/`.
   leaks, real dev-server dependencies, or long-lived timers.
 - When testing route handlers, build the router/app in-process rather than
   starting the backend server.
+
+## Suite index
+
+- `agentCommandBuilder.test.ts` — `buildAgentCommand()` harness framing
+  (claude/pi/codex) + its private `shellDoubleQuoted()` prompt-quoting guard
+  (double-quote/backslash/dollar/backtick each escaped once; injection prompts
+  neutralised). Pure unit test, no spawning.
+- `worktree.merge.branchState.test.ts` — `checkBranchState()` merge state
+  machine across all four outcomes (error/already-merged/empty/ahead); pins the
+  safety invariant that a THROWN commit-count surfaces as `error` (never a
+  silent empty/already-merged), stubbing the `../state.js` git reads via the
+  module's injectable deps seam.

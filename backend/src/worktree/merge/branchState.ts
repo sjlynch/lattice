@@ -10,13 +10,31 @@ export type BranchStateCheck =
   | { kind: 'ahead'; commits: number }
   | { kind: 'error'; outcome: MergeOutcome };
 
+// Injectable seam (production default below). checkBranchState's whole job is
+// to classify a couple of git reads correctly — including the safety-critical
+// case where counting commits THROWS (a transient failure must surface as
+// `error`, never be silently misread as an empty / already-merged branch that
+// drops the merge). The regression test overrides these two reads so it can
+// drive every branch (throw / 0+ancestor / 0+not-ancestor / N>0) and assert the
+// short-circuits, without spawning git.
+export type BranchStateDeps = {
+  branchCommitCount: typeof branchCommitCount;
+  branchIsAncestorOfHead: typeof branchIsAncestorOfHead;
+};
+
+const productionDeps: BranchStateDeps = {
+  branchCommitCount,
+  branchIsAncestorOfHead,
+};
+
 export async function checkBranchState(
   repoRoot: string,
   branchName: string,
+  deps: BranchStateDeps = productionDeps,
 ): Promise<BranchStateCheck> {
   let commits: number;
   try {
-    commits = await branchCommitCount(repoRoot, branchName);
+    commits = await deps.branchCommitCount(repoRoot, branchName);
   } catch (err) {
     // A git error counting commits is NOT a genuine zero — don't let a
     // transient failure be misread as an empty / already-merged branch (which
@@ -33,7 +51,7 @@ export async function checkBranchState(
     };
   }
   if (commits === 0) {
-    const isAncestor = await branchIsAncestorOfHead(repoRoot, branchName);
+    const isAncestor = await deps.branchIsAncestorOfHead(repoRoot, branchName);
     if (isAncestor) {
       // All branch commits are already in main — it was previously merged
       // (including the case where main was fast-forwarded exactly to the

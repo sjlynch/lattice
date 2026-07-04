@@ -141,9 +141,15 @@ function reduceRunningMode(state: QueueState, action: RunningModeAction): QueueS
   switch (action.type) {
     case 'setMode':
       // Disallow mid-flight mode changes — semantics would be murky
-      // (mid-parallel switching to sequential, or vice versa). The UI also
-      // disables the buttons while running, so this is a defensive check.
-      if (state.running || state.started.length > 0) return state;
+      // (mid-parallel switching to sequential, or vice versa). The QueuePanel
+      // disables the Sequential/Parallel buttons on this exact condition
+      // (`running || startedActive`, see `startedActive`) so the button state
+      // and this guard never disagree. They previously keyed only on
+      // `running`, which parallel mode clears the moment every dispatch settles
+      // — while the runs stay in `started` — leaving the buttons *looking*
+      // enabled but silently no-op for the (possibly multi-minute) duration
+      // those runs remained active.
+      if (state.running || startedActive(state)) return state;
       if (state.mode === action.mode) return state;
       return { ...state, mode: action.mode };
 
@@ -318,6 +324,19 @@ function parallelDispatchesSettled(state: QueueState): boolean {
   // either dispatched successfully (runId attached) or failed-and-cleared,
   // the queue's job is done. Outstanding runs continue independently.
   return state.started.every((entry) => entry.runId !== null);
+}
+
+// Whether the queue currently holds dispatched entries — in-flight (runId
+// still null) OR started and still running server-side. This is the second
+// half of the `setMode` guard (`running || startedActive`): the UI reads it to
+// keep the Sequential/Parallel buttons disabled for exactly as long as the
+// reducer would reject a mode change. It matters because parallel mode flips
+// `running` to false as soon as every dispatch settles (see
+// `parallelDispatchesSettled`) while the runs themselves stay in `started`
+// until each `runFinished` — so `running` alone under-reports when a mode
+// change is still locked.
+export function startedActive(state: QueueState): boolean {
+  return state.started.length > 0;
 }
 
 // Whether the queue has nothing left to do. Used by the runtime to flip

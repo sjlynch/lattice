@@ -2,10 +2,10 @@
 // branch for tasks that became ready mid-run, and the post-merge hook gate.
 //
 // Extracted from startMergeRun (../mergeRuns.ts). The safety invariants live
-// here now and must be preserved exactly: snapshot restore only on a
-// non-cancelled run (a cancelled run keeps its snapshot for recoverPending-
-// Snapshots on next boot), auto-restart only when this run owns its lock, and
-// the hook gate only when something actually landed in qa.
+// here now and must be preserved exactly: the snapshot is restored promptly
+// in-session even on cancel (NOT deferred to the next boot — see below),
+// auto-restart only when this run owns its lock, and the hook gate only when
+// something actually landed in qa.
 
 import { restoreSnapshot, type SnapshotHandle } from '../worktree.js';
 import { listTasks, type Task } from '../tasks.js';
@@ -26,19 +26,25 @@ export async function runTeardown(
   targets: Task[],
   lockMode: MergeRunLockMode,
 ): Promise<boolean> {
-  // Post-run snapshot restore. Only when the loop ran to completion
-  // (not on cancel) — a cancelled run leaves the snapshot in place so
-  // the user's mods aren't blasted with whatever partial state the FFs
-  // left. The snapshot dir survives across server restarts and
-  // recoverPendingSnapshots will restore it on next boot.
+  // Post-run snapshot restore — on cancel too. This used to be gated on
+  // `!run.cancelRequested`, deferring a cancelled run's snapshot to the next
+  // boot's recoverPendingSnapshots. That deferral was a data-loss trap: the
+  // user watches their uncommitted changes vanish (we reset the tree to take
+  // the snapshot), and if they re-do or edit those files before the backend
+  // restarts (routine in dev under tsc -w) the deferred boot restore silently
+  // clobbers the redo. Restoring here, in-session, closes that window — the
+  // tree is still exactly as the run left it (the user hasn't had a chance to
+  // touch it), so snapshot-wins is safe, and on success the snapshot dir is
+  // removed so there is nothing for boot recovery to re-apply.
   //
   // Unlike the prior stash-based path, restore here can never produce a
   // "conflict" outcome — copy-based restore is last-writer-wins on
   // overlap. Conservative: the user's snapshotted files always win
   // over whatever the FF brought in. Worst case is a dirty working
   // tree the user can review with `git status` / `git diff`.
-  if (runSnapshot.dir && !run.cancelRequested) {
-    console.log(`[merge-run] restoring run snapshot → ${runSnapshot.dir}`);
+  if (runSnapshot.dir) {
+    const kind = run.cancelRequested ? 'cancelled run ' : 'run ';
+    console.log(`[merge-run] restoring ${kind}snapshot → ${runSnapshot.dir}`);
     try {
       await restoreSnapshot(runSnapshot, projectPath);
       console.log(`[merge-run] snapshot restored`);

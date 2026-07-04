@@ -23,14 +23,24 @@ here instead of bloating the parent file.
 - `processTarget.ts` — per-task state machine: re-read task state, honor the
   merge lock, retry flagged conflicts, re-sync/finalize, spawn resolver PTYs,
   update run progress, and run the repo-integrity check.
+- `withMergeLock.ts` — shared per-task merge-lock lifecycle used by
+  `processTarget` and `flaggedConflict`'s `tryFinalizeAfterResolverFinished`:
+  `tryAcquire`, record the "lock held" error and report `lock-unavailable` on
+  failure, else run the work under a try/finally that releases the lock unless
+  the work handed it off early (an `awaiting-resolver` outcome parks on the
+  conflict waiter, which releases the lock itself). Callers decide the
+  lock-unavailable follow-up (skip vs. errored-outcome), so the helper only
+  reports it.
 - `lifecycle.ts` — run-startup helpers: `initializeRunState` (canonicalize +
   load + in-process active-run/409 gate + cross-process lock acquire, honoring
   `lockMode: 'inherit'`), `filterAndSortTargets` (ready_to_merge incl.
   conflict-flagged, createdAt-ascending — the ordering invariant), and
   `createRunRecord`. Throwing in `initializeRunState` happens before any run
   record exists.
-- `teardown.ts` — post-run teardown: `runTeardown` (copy-snapshot restore on a
-  non-cancelled run, then `autoRestartIfNeeded`), `autoRestartIfNeeded`
+- `teardown.ts` — post-run teardown: `runTeardown` (copy-snapshot restore
+  in-session, **on cancel too** — deferring a cancelled run's snapshot to the
+  next boot let a user's re-done edits be clobbered, so it restores now while
+  the tree is untouched; then `autoRestartIfNeeded`), `autoRestartIfNeeded`
   (**returns** whether a fresh run is needed for tasks that became ready mid-run
   — skipped when the lock was inherited), and `runPostMergeHook` (the
   once-per-run hook gate). Teardown only *decides* the restart; it no longer

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Task } from '../api';
-import { sortTasksForLane } from '../components/taskboard/laneSort.ts';
+import type { Task, TaskStatus } from '../api';
+import { arrivalTime, sortTasksForLane } from '../components/taskboard/laneSort.ts';
 import { groupTasksByStatus } from '../components/taskboard/hooks/useTaskBoardState.ts';
 import {
   appendOrder,
@@ -143,5 +143,125 @@ test('regression: the old grouped-sort block would land the pair reversed', () =
   assert.notDeepEqual(
     multiDropOrder(displayedOldestInProgress(), fixedBlock, ['B', 'C'], 3),
     buggyOrder,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// arrivalTime: the per-status arrival stamp + its updatedAt→createdAt fallback
+// chain. Only the in_progress branch (startedAt) is exercised above; a wrong
+// stamp mapping would silently sort a lane by the wrong time.
+// ---------------------------------------------------------------------------
+
+// A task carrying a DISTINCT value for every stamp, so each branch's pick is
+// unambiguous: createdAt < updatedAt < startedAt < completedAt < mergedAt < doneAt.
+const stamped = task('stamped', {
+  createdAt: 1,
+  updatedAt: 2,
+  startedAt: 3,
+  completedAt: 4,
+  mergedAt: 5,
+  doneAt: 6,
+});
+
+test('arrivalTime picks the lane-specific stamp for each status', () => {
+  assert.equal(arrivalTime(stamped, 'in_progress'), 3); // startedAt
+  assert.equal(arrivalTime(stamped, 'ready_to_merge'), 4); // completedAt
+  assert.equal(arrivalTime(stamped, 'qa'), 5); // mergedAt
+  assert.equal(arrivalTime(stamped, 'done'), 6); // doneAt
+  assert.equal(arrivalTime(stamped, 'deleted'), 2); // updatedAt (when binned)
+  assert.equal(arrivalTime(stamped, 'open'), 1); // createdAt
+  assert.equal(arrivalTime(stamped, 'backlog'), 1); // createdAt
+  // An unrecognised status hits the switch default → createdAt.
+  assert.equal(arrivalTime(stamped, 'weird' as TaskStatus), 1);
+});
+
+test('arrivalTime falls back updatedAt→createdAt when the primary stamp is missing', () => {
+  // ready_to_merge with no completedAt uses updatedAt; with neither, createdAt.
+  assert.equal(
+    arrivalTime(task('r1', { createdAt: 1, updatedAt: 2 }), 'ready_to_merge'),
+    2,
+  );
+  assert.equal(arrivalTime(task('r2', { createdAt: 1 }), 'ready_to_merge'), 1);
+  // in_progress (startedAt), qa (mergedAt) and done (doneAt) fall back alike.
+  assert.equal(
+    arrivalTime(task('i1', { createdAt: 1, updatedAt: 2 }), 'in_progress'),
+    2,
+  );
+  assert.equal(arrivalTime(task('i2', { createdAt: 1 }), 'in_progress'), 1);
+  assert.equal(arrivalTime(task('q1', { createdAt: 1, updatedAt: 2 }), 'qa'), 2);
+  assert.equal(arrivalTime(task('q2', { createdAt: 1 }), 'qa'), 1);
+  assert.equal(
+    arrivalTime(task('d1', { createdAt: 1, updatedAt: 2 }), 'done'),
+    2,
+  );
+  assert.equal(arrivalTime(task('d2', { createdAt: 1 }), 'done'), 1);
+  // deleted's PRIMARY stamp is already updatedAt, so with no updatedAt it lands
+  // straight on createdAt.
+  assert.equal(arrivalTime(task('x1', { createdAt: 1 }), 'deleted'), 1);
+});
+
+// ---------------------------------------------------------------------------
+// sortTasksForLane: tiebreaker chain + direction symmetry + manual passthrough.
+// ---------------------------------------------------------------------------
+
+test("'manual' mode returns the input order unchanged", () => {
+  // Grouped order [C, B, A] is deliberately NOT arrival order; manual must not
+  // reorder it (hand-drag order wins until the clock is clicked).
+  const out = sortTasksForLane([C, B, A], 'in_progress', 'manual');
+  assert.deepEqual(out.map((t) => t.id), ['C', 'B', 'A']);
+});
+
+test('equal arrivalTime falls back to createdAt, and createdAt follows the sort direction', () => {
+  // Same startedAt (arrival tie), different createdAt → createdAt breaks the tie
+  // in the SAME direction as the arrival key would have.
+  const P = task('P', { createdAt: 10, startedAt: 500 });
+  const Q = task('Q', { createdAt: 20, startedAt: 500 });
+  // recent (newest first): higher createdAt wins → Q before P.
+  assert.deepEqual(
+    sortTasksForLane([P, Q], 'in_progress', 'recent').map((t) => t.id),
+    ['Q', 'P'],
+  );
+  // oldest (oldest first): lower createdAt wins → P before Q.
+  assert.deepEqual(
+    sortTasksForLane([P, Q], 'in_progress', 'oldest').map((t) => t.id),
+    ['P', 'Q'],
+  );
+});
+
+test('recent and oldest apply one direction to both the arrival key and the createdAt tiebreaker', () => {
+  // Two tasks tie on arrival (startedAt 900) but differ on createdAt, plus an
+  // earlier arrival. oldest must be the exact mirror of recent across BOTH keys.
+  const early = task('E', { createdAt: 1, startedAt: 100 });
+  const lateHi = task('H', { createdAt: 30, startedAt: 900 });
+  const lateLo = task('L', { createdAt: 20, startedAt: 900 });
+  // recent: arrival desc, then createdAt desc within the 900 tie.
+  assert.deepEqual(
+    sortTasksForLane([early, lateLo, lateHi], 'in_progress', 'recent').map(
+      (t) => t.id,
+    ),
+    ['H', 'L', 'E'],
+  );
+  // oldest: arrival asc, then createdAt asc — the reverse of recent.
+  assert.deepEqual(
+    sortTasksForLane([early, lateLo, lateHi], 'in_progress', 'oldest').map(
+      (t) => t.id,
+    ),
+    ['E', 'L', 'H'],
+  );
+});
+
+test('a total arrival+createdAt tie falls back to a stable ascending id compare', () => {
+  // When both stamps tie, id is the final deterministic tiebreaker. It is a
+  // plain ascending string compare that does NOT flip with direction, so both
+  // modes agree — keeping equal-time cards from reshuffling between sorts.
+  const a1 = task('a1', { createdAt: 5, startedAt: 500 });
+  const b1 = task('b1', { createdAt: 5, startedAt: 500 });
+  assert.deepEqual(
+    sortTasksForLane([b1, a1], 'in_progress', 'recent').map((t) => t.id),
+    ['a1', 'b1'],
+  );
+  assert.deepEqual(
+    sortTasksForLane([b1, a1], 'in_progress', 'oldest').map((t) => t.id),
+    ['a1', 'b1'],
   );
 });

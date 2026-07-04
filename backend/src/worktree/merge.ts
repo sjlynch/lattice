@@ -6,7 +6,11 @@
 import { projectGit } from './projectGit.js';
 import { isMidMerge, gitDirExists } from './state.js';
 import { assertSafeForStash } from './stash.js';
-import { snapshotWorkingTree, restoreSnapshot } from './snapshot.js';
+import {
+  snapshotWorkingTree,
+  restoreSnapshot,
+  type SnapshotHandle,
+} from './snapshot.js';
 import { untrackOwnedFilesPostMerge } from './mergeOwnedFiles.js';
 import { installStopHook } from './setup.js';
 import {
@@ -34,10 +38,37 @@ export type MergeOutcome =
 // Used after the in-worktree merge succeeds so the resolved branch tip
 // becomes main's new tip without ever putting conflict markers in main's
 // working files.
+//
+// Reads as three linear phases (see the private helpers below): preflight +
+// snapshot, perform the FF, restore the snapshot. None of the git commands,
+// their ordering, or the snapshot behavior changed in the extraction.
 export async function fastForwardMain(
   repoRoot: string,
   branchName: string,
 ): Promise<MergeOutcome> {
+  const prepared = await prepareFastForward(repoRoot, branchName);
+  if (!prepared.ok) return prepared.outcome;
+
+  const ff = await performFastForward(repoRoot, branchName, prepared.snapshot);
+  if (!ff.ok) return ff.outcome;
+
+  await restoreAfterFastForward(repoRoot, prepared.snapshot);
+  return { status: 'clean' };
+}
+
+type FastForwardPreparation =
+  | { ok: true; snapshot: SnapshotHandle | undefined }
+  | { ok: false; outcome: MergeOutcome };
+
+// Phase 1 — preflight + snapshot. Assert `.git` is present, confirm
+// `git status` succeeds, and (only when the working tree is dirty) copy it
+// into a snapshot so the FF sees a clean tree. Returns the snapshot handle
+// (undefined when the tree was already clean); any git/snapshot failure is
+// surfaced as an error outcome for the orchestrator to return verbatim.
+async function prepareFastForward(
+  repoRoot: string,
+  branchName: string,
+): Promise<FastForwardPreparation> {
   // Pre-flight: a missing .git is the "we are about to lose user data"
   // signal. Bail before running any further git command rather than
   // letting the cascade continue (the worktree merge already passed, so
@@ -45,43 +76,67 @@ export async function fastForwardMain(
   // iteration with the repo in a broken state).
   if (!(await gitDirExists(repoRoot))) {
     return {
-      status: 'error',
-      message:
-        `Cannot fast-forward: ${repoRoot}/.git is missing. The repository ` +
-        `has been catastrophically corrupted; restore it (e.g. \`git init\` + ` +
-        `\`git fetch origin\` + \`git reset --hard origin/main\`) before ` +
-        `retrying.`,
+      ok: false,
+      outcome: {
+        status: 'error',
+        message:
+          `Cannot fast-forward: ${repoRoot}/.git is missing. The repository ` +
+          `has been catastrophically corrupted; restore it (e.g. \`git init\` + ` +
+          `\`git fetch origin\` + \`git reset --hard origin/main\`) before ` +
+          `retrying.`,
+      },
     };
   }
   const status = await projectGit(repoRoot, ['status', '--porcelain']);
   if (status.code !== 0) {
     return {
-      status: 'error',
-      message: status.stderr.trim() || 'git status failed before fast-forward',
+      ok: false,
+      outcome: {
+        status: 'error',
+        message:
+          status.stderr.trim() || 'git status failed before fast-forward',
+      },
     };
   }
   // Snapshot the working tree if dirty so the FF sees a clean tree. The
   // snapshot is a directory copy under ~/.lattice/snapshots, NOT a
   // `git stash` — see snapshot.ts for why. assertSafeForStash refuses if
   // .git is missing or essentials aren't excluded.
-  let snapshot;
-  if (status.stdout.trim().length > 0) {
-    try {
-      await assertSafeForStash(repoRoot);
-    } catch (err) {
-      return { status: 'error', message: (err as Error).message };
-    }
-    try {
-      snapshot = await snapshotWorkingTree(repoRoot, `fastfwd-${branchName}`);
-    } catch (err) {
-      return {
+  if (status.stdout.trim().length === 0) {
+    return { ok: true, snapshot: undefined };
+  }
+  try {
+    await assertSafeForStash(repoRoot);
+  } catch (err) {
+    return {
+      ok: false,
+      outcome: { status: 'error', message: (err as Error).message },
+    };
+  }
+  try {
+    const snapshot = await snapshotWorkingTree(repoRoot, `fastfwd-${branchName}`);
+    return { ok: true, snapshot };
+  } catch (err) {
+    return {
+      ok: false,
+      outcome: {
         status: 'error',
         message:
           'Failed to snapshot before fast-forward: ' + (err as Error).message,
-      };
-    }
+      },
+    };
   }
+}
 
+// Phase 2 — the fast-forward itself: `git merge --ff-only`. On failure the
+// snapshot is restored (the FF changed nothing, so the tree is back at its
+// pre-FF HEAD and the user's mods belong on top of that exactly as before)
+// and the FF error is surfaced.
+async function performFastForward(
+  repoRoot: string,
+  branchName: string,
+  snapshot: SnapshotHandle | undefined,
+): Promise<{ ok: true } | { ok: false; outcome: MergeOutcome }> {
   const ff = await projectGit(repoRoot, ['merge', '--ff-only', branchName]);
   if (ff.code !== 0) {
     // FF failed. Restore the snapshot so the user's mods come back, then
@@ -92,29 +147,39 @@ export async function fastForwardMain(
       await restoreSnapshot(snapshot, repoRoot).catch(() => undefined);
     }
     return {
-      status: 'error',
-      message:
-        `Fast-forward of main to ${branchName} failed: ` +
-        (ff.stderr.trim() || ff.stdout.trim() || 'git merge --ff-only failed'),
+      ok: false,
+      outcome: {
+        status: 'error',
+        message:
+          `Fast-forward of main to ${branchName} failed: ` +
+          (ff.stderr.trim() ||
+            ff.stdout.trim() ||
+            'git merge --ff-only failed'),
+      },
     };
   }
+  return { ok: true };
+}
 
+// Phase 3 — restore the snapshot after a successful FF. HEAD has moved;
+// restore copies the user's snapshotted versions back over whatever the FF
+// brought in for those paths. This is last-writer-wins (snapshot wins on
+// overlap) — see snapshot.ts header for the rationale. No "conflict"
+// outcome here, unlike the old stash-pop path; if the user really had
+// overlapping changes they'll see them as a dirty working tree post-restore
+// and can reconcile with `git diff`. A restore failure is logged, not
+// fatal — the FF already landed.
+async function restoreAfterFastForward(
+  repoRoot: string,
+  snapshot: SnapshotHandle | undefined,
+): Promise<void> {
   if (snapshot && snapshot.dir) {
-    // FF succeeded; HEAD has moved. Restore copies the user's snapshotted
-    // versions back over whatever the FF brought in for those paths. This
-    // is last-writer-wins (snapshot wins on overlap) — see snapshot.ts
-    // header for the rationale. No "conflict" outcome here, unlike the
-    // old stash-pop path; if the user really had overlapping changes
-    // they'll see them as a dirty working tree post-restore and can
-    // reconcile with `git diff`.
     await restoreSnapshot(snapshot, repoRoot).catch((err) => {
       console.warn(
         `[fastForwardMain] snapshot restore failed (continuing): ${(err as Error).message}`,
       );
     });
   }
-
-  return { status: 'clean' };
 }
 
 export async function mergeWorktreeInRepo(

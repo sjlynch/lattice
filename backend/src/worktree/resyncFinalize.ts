@@ -2,10 +2,9 @@
 // Callers keep their own HTTP / merge-run response shaping; this module only
 // performs the common git + task-state transitions.
 
-import { updateTask, type Task } from '../tasks.js';
-import { buildConflictResolveCommand } from './commands.js';
+import { type Task } from '../tasks.js';
 import { finalizeMergedTask, type FinalizeOutcome } from './finalize.js';
-import { writeMergeInstructions } from './instructions.js';
+import { prepareMergeConflictOutcome } from './mergeConflict.js';
 import { mergeWorktreeInRepo, type MergeOutcome } from './merge.js';
 import { mainIsAncestorOfWorktree } from './state.js';
 
@@ -138,32 +137,24 @@ async function mergeIfNeeded(
   return mergeMainIntoWorktree(ctx, opts);
 }
 
-async function markTaskMergeConflict(taskId: string): Promise<void> {
-  await updateTask(taskId, {
-    conflict: true,
-    conflictStartedAt: Date.now(),
-  });
-}
-
 async function writeMergeConflictResyncOutcome(
   ctx: ResyncContext,
   mergeResult: Extract<MergeOutcome, { status: 'conflict' }>,
   opts: ResyncFinalizeOptions,
 ): Promise<ResyncOutcome> {
   opts.onBeforeWriteMergeInstructions?.(mergeResult);
-  const { relativePath } = await writeMergeInstructions(
-    ctx.task,
-    ctx.branch,
-    mergeResult.conflictedFiles,
-    ctx.backendOrigin,
-    ctx.worktreePath,
-  );
-  await markTaskMergeConflict(ctx.task.id);
+  const { relativePath, command } = await prepareMergeConflictOutcome({
+    task: ctx.task,
+    branch: ctx.branch,
+    conflictedFiles: mergeResult.conflictedFiles,
+    backendOrigin: ctx.backendOrigin,
+    worktreePath: ctx.worktreePath,
+  });
   return {
     kind: 'merge-conflict',
     conflictedFiles: mergeResult.conflictedFiles,
     relativePath,
-    command: buildConflictResolveCommand(relativePath),
+    command,
     cwd: ctx.worktreePath,
   };
 }
