@@ -1,6 +1,7 @@
 import { generateTaskId } from '../ids.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { ProjectStateManager } from '../projectStateManager.js';
+import { applyCrashSafeTaskUpdate } from './crashSafeUpdate.js';
 import { TaskMigrations } from './migrations.js';
 import { projectTasksFile } from './paths.js';
 import { ProjectsIndex } from './projectsIndex.js';
@@ -80,18 +81,13 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
     );
   }
 
-  // Write a task update to disk BEFORE touching the in-memory cache, then
-  // sync the cache to match. If the server crashes between the disk write
-  // and the cache update, the next boot reads the correct state from disk.
-  // Use this for critical one-way transitions (e.g. ready_to_merge → qa)
-  // where losing the update would leave the system in an inconsistent state.
-  //
-  // Runs under the shared per-project write lock so it cannot interleave with
-  // a sibling create/update for the same project (the lost-concurrent-mutation
-  // bug): a Stop-hook flip or a sibling run-attempt bump landing during the
-  // disk write used to be reverted when this resumed and committed its pre-await
-  // snapshot. Inside the lock, after the disk write, we re-read the LIVE cache
-  // and re-apply only this task's delta — never the whole pre-write snapshot.
+  // Crash-safe task update: disk-before-cache with a live-cache re-sync. Runs
+  // under the shared per-project write lock so it cannot interleave with a
+  // sibling create/update for the same project (the lost-concurrent-mutation
+  // bug). The invariant-heavy disk-write / snapshot-re-read / live-cache re-sync
+  // logic lives in `applyCrashSafeTaskUpdate`; this method owns the lock and the
+  // subscriber notification. The cache ops are bound to `this` so subclass
+  // overrides (e.g. a test's fake writeStateNow) still dispatch virtually.
   public async updateTaskCrashSafe(
     id: string,
     updates: TaskUpdates,
@@ -101,30 +97,20 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
       (t) => t.id,
       () => this.loadAllKnown(),
       async ({ project, list, idx }) => {
-        const { updated, updatedList } = applyTaskUpdate(list, idx, updates);
-        // Step 1: write to disk FIRST. A crash here leaves disk as it was — safe.
-        try {
-          await this.writeStateNow(project, updatedList);
-        } catch (e) {
-          console.error('[tasks] updateTaskCrashSafe disk write failed:', e);
-          return null;
-        }
-        // Disk is up to date; drop any pending debounce so it can't later flush
-        // a staler snapshot over it.
-        this.cancelPendingPersist(project);
-        // Step 2: sync the cache. Re-read the LIVE cache and re-apply only this
-        // task's delta to THAT array, never the pre-write snapshot — so a
-        // sibling mutation committed during the disk write isn't reverted. The
-        // per-project lock already excludes concurrent writers; this also keeps
-        // the path correct against any future writer that bypasses the lock.
-        const live = this.getCached(project) ?? [];
-        const liveIdx = live.findIndex((t) => t.id === id);
-        const synced =
-          liveIdx === -1
-            ? updatedList
-            : live.map((t, i) => (i === liveIdx ? updated : t));
-        this.setCached(project, synced);
-        this.notifyProject(project);
+        const updated = await applyCrashSafeTaskUpdate(
+          {
+            writeStateNow: (p, l) => this.writeStateNow(p, l),
+            cancelPendingPersist: (p) => this.cancelPendingPersist(p),
+            getCached: (p) => this.getCached(p),
+            setCached: (p, l) => this.setCached(p, l),
+          },
+          project,
+          list,
+          idx,
+          id,
+          updates,
+        );
+        if (updated) this.notifyProject(project);
         return updated;
       },
     );

@@ -53,6 +53,13 @@ export {
 } from './worktree/instructions.js';
 
 export {
+  prepareMergeConflictOutcome,
+  markTaskMergeConflict,
+  type PreparedMergeConflict,
+  type PrepareMergeConflictInput,
+} from './worktree/mergeConflict.js';
+
+export {
   detectProjectEnvironments,
   describeProjectEnvs,
   resolveEnvNotesForInstructions,
