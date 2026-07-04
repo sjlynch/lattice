@@ -29,8 +29,10 @@ here instead of bloating the parent file.
   conflict-flagged, createdAt-ascending — the ordering invariant), and
   `createRunRecord`. Throwing in `initializeRunState` happens before any run
   record exists.
-- `teardown.ts` — post-run teardown: `runTeardown` (copy-snapshot restore on a
-  non-cancelled run, then `autoRestartIfNeeded`), `autoRestartIfNeeded`
+- `teardown.ts` — post-run teardown: `runTeardown` (copy-snapshot restore
+  in-session, **on cancel too** — deferring a cancelled run's snapshot to the
+  next boot let a user's re-done edits be clobbered, so it restores now while
+  the tree is untouched; then `autoRestartIfNeeded`), `autoRestartIfNeeded`
   (**returns** whether a fresh run is needed for tasks that became ready mid-run
   — skipped when the lock was inherited), and `runPostMergeHook` (the
   once-per-run hook gate). Teardown only *decides* the restart; it no longer
