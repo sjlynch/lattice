@@ -57,8 +57,14 @@ label physics in `labelPhysics/CLAUDE.md`.
 - `locOverlay` / `healthOverlay` / `deadCodeOverlay` / `labelsOverlay` — overlay
   configs + per-overlay registries. `deadCodeOverlay` is a pure recolor;
   `labelsOverlay.applyNodeLabelState` is the per-node Alt name-label toggle.
-- `labelTexture` / `floatingLabelSprite` / `metricOverlayFactory` — shared,
-  module-owned (refcount-guarded) label-texture/sprite/connector caches.
+- `labelTexture` / `labelSpriteResources` / `floatingLabelSprite` /
+  `metricOverlayFactory` — shared, module-owned (refcount-guarded)
+  label-texture/sprite/connector caches. `labelSpriteResources` holds the four
+  cache layers (label material, color, line material, connector geometry
+  template) + `disposeLabelMaterial`, with the "never dispose a shared resource
+  per-node" INVARIANT; `floatingLabelSprite` is just the public factories
+  (`makeFloatingLabelSprite`/`makeConnectorLine`/`disposeLabelEntry`) that draw
+  on them.
 - `labelSync.ts` — in-place Alt-overlay delta walker (no `graph.refresh()`).
   `labelRepulsion` (facade) + `labelRepulsionFrames` (scene-frame-driven, holds
   `labelPhysics` only while labels move) + `labelPhysics/` (pure physics, own doc).
