@@ -1,7 +1,7 @@
 # backend/src/piModels
 
 Pi model config for the harness dropdowns. `../piModels.ts` is a re-export
-barrel (`export *` from `discovery` + `management`); every consumer
+barrel (`export *` from `discovery` + `reconcile` + `probe`); every consumer
 (`routes/settings`, `routes/globalSettings`, `server/startup`, tasks, workflow
 steps, tests) keeps importing from `'../piModels.js'`. The load-bearing split
 is **read vs. write of Pi config**.
@@ -34,13 +34,16 @@ is **read vs. write of Pi config**.
 
 ## Write-side management
 
-- `management.ts` — `reconcilePiModelsJson()` upserts
+- `reconcile.ts` — `reconcilePiModelsJson()` upserts
   `globalSettings.piProviders` into `~/.pi/agent/models.json` (atomic
   temp→rename), preserving every hand-written provider and precisely deleting
   removed-managed ones via the `~/.lattice/piManagedProviders.json` sidecar.
   Every managed provider always gets an `apiKey` (defaults `"local"`) — one
-  keyless provider makes Pi reject the *whole* file. `probeEndpointModels`
-  backs the "Detect models" button; reconcile invalidates discovery's cache.
+  keyless provider makes Pi reject the *whole* file. Reconcile invalidates
+  discovery's cache.
+- `probe.ts` — `probeEndpointModels()` GETs `<baseUrl>/models` (OpenAI-compatible)
+  behind the "Detect models" button; only a literal `apiKey` becomes the bearer
+  token (never ambient env / `!command` secrets).
 - `config.ts` — tunables (`PI_MODELS_CONFIG`: list/probe timeouts, cache TTL)
   + `piAgentDir()` (`~/.pi/agent`), shared by both sides.
 

@@ -55,12 +55,16 @@ See `plans/mcp-integration.md` (gitignored) for the full design + decisions.
   still supplies). `scanImportableServers` surfaces both lists in the preview.
   This file is now a thin orchestrator (`scanImportableServers`/`applyImport` +
   dedupe) that re-exports the public surface; the concerns live under `import/`:
-  - `import/normalize.ts` — `normalizeServer` + the secret-classification helpers
-    and the `Normalized`/`RawServer` types (security-relevant; test-pinned). The
-    same name/value secret classification runs over HTTP headers, not just stdio
-    env, so an imported auth header's literal key never lands in globalSettings.json
-    — it routes to the secrets file (keyed by header name) via `secretHeaders`,
-    and `claudeServerConfig.toClaudeConfig` re-injects it at spawn.
+  - `import/normalize.ts` — `normalizeServer` + the `Normalized`/`RawServer` types
+    (shape assembly; test-pinned), consuming `import/secretDetection.ts` for the
+    per-value classification. The same name/value secret classification runs over
+    HTTP headers, not just stdio env, so an imported auth header's literal key
+    never lands in globalSettings.json — it routes to the secrets file (keyed by
+    header name) via `secretHeaders`, and `claudeServerConfig.toClaudeConfig`
+    re-injects it at spawn.
+  - `import/secretDetection.ts` — the security-relevant secret-classification core
+    (`looksSecret`/`looksSecretValue`/`isReference` + regex/entropy internals),
+    split out so the detection surface is auditable in isolation.
   - `import/codexToml.ts` — the minimal `[mcp_servers.*]`-only TOML reader
     (`parseCodexMcpServers`; no dep added; test-pinned).
   - `import/sources.ts` — the five per-tool `collect*` config readers plus the
