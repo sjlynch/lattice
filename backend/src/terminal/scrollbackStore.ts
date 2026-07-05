@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { latticeHomeDir, terminalScrollbackDir } from '../projectPath.js';
+import { terminalScrollbackDir } from '../projectPath.js';
 import { TERMINAL_CONFIG } from '../terminalConfig.js';
+import { readTail } from './scrollbackLogFile.js';
 
 // Per-session terminal scrollback, persisted to a small on-disk append log so
 // the replay window can be large without holding all history in memory.
@@ -18,6 +19,10 @@ import { TERMINAL_CONFIG } from '../terminalConfig.js';
 // the store transparently DEGRADES to a bounded in-memory tail (the old
 // behavior, just larger) so a terminal never breaks because scrollback
 // couldn't be written.
+//
+// This module owns the pending-buffer/degraded-mode state machine; the
+// low-level file-tail mechanics live in `scrollbackLogFile.ts` and the
+// boot-time directory wipe in `scrollbackCleanup.ts`.
 
 export type ScrollbackStoreOptions = {
   // Directory the log file lives in. Defaults to the shared
@@ -28,35 +33,6 @@ export type ScrollbackStoreOptions = {
   maxDiskBytes?: number;
   compactKeepBytes?: number;
 };
-
-const NEWLINE = 0x0a;
-
-// Drop a partial leading line so a windowed replay never begins mid-escape-
-// sequence (which would render as garbage on the first visible line). If the
-// window has no newline (one enormous line) we keep it as-is.
-function trimToLineStart(buf: Buffer): Buffer {
-  const nl = buf.indexOf(NEWLINE);
-  if (nl >= 0 && nl < buf.length - 1) return buf.subarray(nl + 1);
-  return buf;
-}
-
-// Read the last `maxBytes` bytes of a file, trimmed to a line boundary.
-// Byte-level (Buffer) so multibyte UTF-8 in the body is never corrupted; only
-// the dropped partial first line is affected. Throws if the file is missing.
-function readTail(filePath: string, maxBytes: number): Buffer {
-  const fd = fs.openSync(filePath, 'r');
-  try {
-    const size = fs.fstatSync(fd).size;
-    const start = size > maxBytes ? size - maxBytes : 0;
-    const len = size - start;
-    if (len <= 0) return Buffer.alloc(0);
-    const buf = Buffer.allocUnsafe(len);
-    fs.readSync(fd, buf, 0, len, start);
-    return start > 0 ? trimToLineStart(buf) : buf;
-  } finally {
-    fs.closeSync(fd);
-  }
-}
 
 export class ScrollbackStore {
   private readonly filePath: string;
@@ -181,30 +157,5 @@ export class ScrollbackStore {
       const removed = this.pending.shift();
       if (removed) this.pendingBytes -= Buffer.byteLength(removed);
     }
-  }
-}
-
-// Wipe the scrollback directory. Called once at terminal-server boot: a
-// restart loses every in-memory session (attach with a stale id returns
-// session_lost), so any log left on disk is an orphan. Path-guarded to the
-// dedicated home-scoped directory so it can never touch a project tree.
-export function clearTerminalScrollback(): void {
-  const dir = path.resolve(terminalScrollbackDir());
-  const home = path.resolve(latticeHomeDir());
-  if (
-    path.basename(dir) !== 'terminal-scrollback' ||
-    !(dir === path.join(home, 'terminal-scrollback'))
-  ) {
-    return;
-  }
-  try {
-    fs.rmSync(dir, { recursive: true, force: true });
-  } catch {
-    /* ignore */
-  }
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-  } catch {
-    /* ignore */
   }
 }
