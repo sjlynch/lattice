@@ -1,11 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { Braces, ChevronDown, ChevronRight, Info, Plus, X } from 'lucide-react';
+import { Braces, Info, Plus } from 'lucide-react';
 import type { WorkflowVariable } from '../../api';
-import {
-  copyVariableToken,
-  sanitizeVariableNameInput,
-  USER_INSTRUCTIONS_VAR,
-} from './promptVariables';
+import { USER_INSTRUCTIONS_VAR } from './promptVariables';
+import { WorkflowVariableCard } from './WorkflowVariableCard';
+import { useWorkflowVariablesPanelState } from './useWorkflowVariablesPanelState';
 
 // The "Variables" section at the top of the workflow editor. Each variable is
 // a collapsible card (like the step rows) holding a name + a free-form value
@@ -24,38 +21,8 @@ export function WorkflowVariablesPanel({
   onAdd: () => void;
   onRemove: (idx: number) => void;
 }) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [showInfo, setShowInfo] = useState(false);
-  // Id of the variable whose `{{token}}` was just click-copied (drives the
-  // brief "Copied!" label swap). A single ref-held timer resets it after ~1.5s.
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
-      if (copyTimer.current) clearTimeout(copyTimer.current);
-    },
-    [],
-  );
-
-  const toggle = (id: string) =>
-    setCollapsed((cur) => {
-      const next = new Set(cur);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-  const copyToken = (v: WorkflowVariable) => {
-    // The write can reject (denied permission, non-secure context, unfocused
-    // document); only flip to "Copied!" once it has actually landed, otherwise
-    // we'd give false success feedback for an empty clipboard.
-    void copyVariableToken(v.name).then((ok) => {
-      if (!ok) return;
-      setCopiedId(v.id);
-      if (copyTimer.current) clearTimeout(copyTimer.current);
-      copyTimer.current = setTimeout(() => setCopiedId(null), 1500);
-    });
-  };
+  const { isCollapsed, toggle, showInfo, setShowInfo, copiedId, copyToken } =
+    useWorkflowVariablesPanelState();
 
   // Custom variable names that collide with another variable's name. Built-in
   // and empty names are excluded; substitution silently shadows on a clash.
@@ -112,88 +79,20 @@ export function WorkflowVariablesPanel({
       <div className="workflows-vars-list">
         {variables.map((v, idx) => {
           const builtin = v.name === USER_INSTRUCTIONS_VAR;
-          const isCollapsed = collapsed.has(v.id);
           const duplicate = !builtin && !!v.name && (nameCounts.get(v.name) ?? 0) > 1;
-          const copied = copiedId === v.id;
           return (
-            <div
+            <WorkflowVariableCard
               key={v.id}
-              className={`workflows-var ${isCollapsed ? 'collapsed' : ''}`}
-            >
-              <div className="workflows-var-row">
-                <button
-                  type="button"
-                  className="icon-btn sm workflows-var-collapse"
-                  onClick={() => toggle(v.id)}
-                  title={isCollapsed ? 'Expand variable' : 'Collapse variable'}
-                  aria-label={isCollapsed ? 'Expand variable' : 'Collapse variable'}
-                  aria-expanded={!isCollapsed}
-                >
-                  {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-                </button>
-                <input
-                  className={`task-card-form-input workflows-var-name${
-                    duplicate ? ' workflows-var-name--dup' : ''
-                  }`}
-                  value={v.name}
-                  placeholder="variable_name"
-                  readOnly={builtin}
-                  disabled={builtin}
-                  title={
-                    builtin
-                      ? 'Built-in variable — appended to every built-in step'
-                      : duplicate
-                        ? 'Variable name already in use'
-                        : 'Variable name (letters, digits, underscores)'
-                  }
-                  onChange={(e) =>
-                    onPatch(idx, { name: sanitizeVariableNameInput(e.target.value) })
-                  }
-                />
-                <button
-                  type="button"
-                  className="workflows-var-token"
-                  onClick={() => copyToken(v)}
-                  disabled={!v.name}
-                  title={
-                    !v.name
-                      ? 'Name this variable to reference it'
-                      : copied
-                        ? 'Copied!'
-                        : 'Click to copy — reference this in a step prompt'
-                  }
-                  aria-label={
-                    v.name
-                      ? `Copy {{${v.name}}} to clipboard`
-                      : 'Variable reference token'
-                  }
-                >
-                  {copied ? 'Copied!' : `{{${v.name || '…'}}}`}
-                </button>
-                {!builtin && (
-                  <button
-                    className="icon-btn sm"
-                    onClick={() => onRemove(idx)}
-                    title="Remove variable"
-                    aria-label="Remove variable"
-                  >
-                    <X size={12} />
-                  </button>
-                )}
-              </div>
-              {!isCollapsed && (
-                <textarea
-                  className="task-card-form-input task-card-form-textarea workflows-var-value"
-                  placeholder={
-                    builtin
-                      ? 'Instructions injected into every step that includes {{user_instructions}} (leave empty for none).'
-                      : 'Value substituted wherever this variable is referenced.'
-                  }
-                  value={v.value}
-                  onChange={(e) => onPatch(idx, { value: e.target.value })}
-                />
-              )}
-            </div>
+              variable={v}
+              index={idx}
+              duplicate={duplicate}
+              collapsed={isCollapsed(v.id)}
+              copied={copiedId === v.id}
+              onToggle={toggle}
+              onCopyToken={copyToken}
+              onPatch={onPatch}
+              onRemove={onRemove}
+            />
           );
         })}
       </div>

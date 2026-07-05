@@ -9,6 +9,11 @@ import {
   leafIdentifier,
   stripStringQuotes,
 } from './astUtils.js';
+import {
+  handleDynamicImportEdge,
+  handleImportStatement,
+  handleReExportEdge,
+} from './importEdges.js';
 import { currentFunction, type WalkerContext } from './context.js';
 
 export function handleComment(ctx: WalkerContext, node: Node, t: string): boolean {
@@ -70,18 +75,7 @@ export function handleImportsAndStrings(
   node: Node,
   t: string,
 ): void {
-  if (ctx.kinds.import.has(t)) {
-    const src = importSourceText(ctx, node, t);
-    if (src) ctx.result.imports.push(src);
-    if (ctx.grammar === 'python' && t === 'import_from_statement') {
-      for (const c of node.children) {
-        if (c && c.type === 'wildcard_import') {
-          ctx.result.smellTokens.wildcardImport++;
-          break;
-        }
-      }
-    }
-  }
+  handleImportStatement(ctx, node, t);
 
   if (!ctx.kinds.string.has(t) || isImportSpecifierString(node)) return;
 
@@ -125,16 +119,9 @@ export function handleExportTracking(
     return;
   }
 
-  // Re-exports (`export { x } from './m'`, `export * from './m'`) are import
-  // edges for reachability purposes — the file pulls in `./m`. The plain
-  // import visitor doesn't see them (they're export_statements), so capture
-  // the source here. Without this, files reached only through a barrel index
-  // look orphaned to the dead-code pass.
-  const source = node.childForFieldName('source');
-  if (source) {
-    const spec = stripStringQuotes(source.text);
-    if (spec) ctx.result.imports.push(spec);
-  }
+  // Re-exports (`export { x } from './m'`) are import edges — capture the
+  // source. Binding counting below stays here (it's a smell signal).
+  handleReExportEdge(ctx, node);
 
   const isDefault = node.children.some((c) => c?.type === 'default');
   if (isDefault) ctx.exportState.hasDefaultExport = true;
@@ -186,19 +173,7 @@ export function handleCallExpression(
 
   const calleeText = callee.text;
 
-  // Dynamic imports / requires (`import('./m')`, `require('./m')`) with a
-  // string-literal specifier are real import edges — capture them for the
-  // dead-code reachability pass so lazily-loaded route components aren't
-  // mistaken for orphans. Only string literals are resolvable; computed
-  // specifiers (`import(path)`) are left to the "uncertain" bucket.
-  if (ctx.isJsFamily && (calleeText === 'import' || calleeText === 'require')) {
-    const args = node.childForFieldName('arguments');
-    const first = args?.namedChild(0);
-    if (first && first.type === 'string') {
-      const spec = stripStringQuotes(first.text);
-      if (spec) ctx.result.imports.push(spec);
-    }
-  }
+  handleDynamicImportEdge(ctx, node, calleeText);
 
   if (ctx.isJsFamily && isConsoleLogish(calleeText)) {
     ctx.result.smellTokens.consoleCalls++;
@@ -215,27 +190,4 @@ export function handleCallExpression(
 
   const leafName = leafIdentifier(callee);
   if (leafName) fn.calls.add(leafName);
-}
-
-// Pull the source path off an import-statement node. Field names differ between
-// grammars and even between Python's two import statement kinds.
-function importSourceText(
-  ctx: WalkerContext,
-  node: Node,
-  t: string,
-): string | null {
-  if (ctx.grammar === 'python') {
-    if (t === 'import_from_statement') {
-      const mod = node.childForFieldName('module_name');
-      return mod?.text ?? null;
-    }
-    // import_statement: `import a.b.c[, d.e]`
-    const name = node.childForFieldName('name');
-    return name?.text ?? null;
-  }
-
-  // TS/JS: import_statement with a `source` field.
-  const src = node.childForFieldName('source');
-  if (!src) return null;
-  return stripStringQuotes(src.text);
 }
