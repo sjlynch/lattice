@@ -9,6 +9,7 @@
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { IGNORE_DIR_NAMES, SOURCE_EXTS } from './health/constants.js';
 
 // Candidate locations probed in order: explicit override, PATH, then the
@@ -83,6 +84,78 @@ export type RipgrepSearchParams = {
 
 export type RipgrepSearchResult = { matches: string[]; truncated: boolean };
 
+// Incremental collector for `rg --files-with-matches --null` output. rg emits
+// each matching path terminated by a NUL byte; a single stdout chunk can split a
+// path — and even a multi-byte UTF-8 code point — across the boundary, so we
+// decode with a StringDecoder (which holds back incomplete byte sequences) and
+// keep a `carry` string for the partial trailing path between chunks.
+//
+// The point of parsing incrementally (rather than `Buffer.concat` at close) is
+// early termination: we stop as soon as ONE complete path beyond `limit`
+// arrives — that single extra path is all we need to know the result is
+// truncated — so the caller can kill rg without buffering (and re-parsing) the
+// rest of the repo's matches. `matches` never grows past `limit`.
+export class RgPathCollector {
+  private readonly decoder = new StringDecoder('utf8');
+  private carry = '';
+  readonly matches: string[] = [];
+  truncated = false;
+  // Set once we've seen `limit + 1` complete paths: enough to know the result
+  // is truncated. The caller treats this as "kill rg and stop reading".
+  done = false;
+
+  constructor(
+    private readonly root: string,
+    private readonly limit: number,
+  ) {}
+
+  // Feed one stdout chunk. Returns `true` once enough paths have been collected
+  // to determine truncation (the caller should then kill rg and ignore the
+  // remaining stream). Idempotent/cheap after `done` — extra chunks are dropped
+  // rather than decoded or buffered, keeping memory bounded on a broad query.
+  push(chunk: Buffer): boolean {
+    if (this.done) return true;
+    this.carry += this.decoder.write(chunk);
+    return this.drain();
+  }
+
+  // Flush after rg closes on its own: decode any bytes still held by the
+  // decoder, then count a final path that had no trailing NUL. rg always
+  // terminates each path with a NUL, but this stays defensive so the semantics
+  // match the old `Buffer.concat(out).split('\0').filter(Boolean)` path exactly.
+  end(): void {
+    if (this.done) return;
+    this.carry += this.decoder.end();
+    if (this.drain()) return;
+    const tail = this.carry;
+    this.carry = '';
+    if (tail) this.accept(tail);
+  }
+
+  // Consume every complete (NUL-terminated) path currently in `carry`.
+  private drain(): boolean {
+    let idx: number;
+    while (!this.done && (idx = this.carry.indexOf('\0')) !== -1) {
+      const rel = this.carry.slice(0, idx);
+      this.carry = this.carry.slice(idx + 1);
+      if (rel) this.accept(rel);
+    }
+    return this.done;
+  }
+
+  private accept(rel: string): void {
+    if (this.matches.length < this.limit) {
+      this.matches.push(path.resolve(this.root, rel));
+    } else {
+      // One complete path beyond the cap ⇒ there are > limit matches. Record
+      // truncation, drop the carry, and signal the caller to stop.
+      this.truncated = true;
+      this.done = true;
+      this.carry = '';
+    }
+  }
+}
+
 // Run rg over `root`, returning absolute paths of files whose contents match.
 // Rejects on an rg error (exit 2) — e.g. a pattern rg's regex engine can't
 // compile — so the caller can fall back to the JS path for that query.
@@ -114,45 +187,67 @@ export function searchWithRipgrep(
     args.push('--regexp', params.regexSource, '--', root);
 
     const proc = spawn(rgCmd, args, { windowsHide: true });
-    const out: Buffer[] = [];
+    const collector = new RgPathCollector(root, params.limit);
     let stderr = '';
-    let killed = false;
+    let cancelled = false; // caller asked to stop (superseded request)
+    let earlyKilled = false; // we killed rg after collecting enough
+    let settled = false;
+
+    const finish = (result: RipgrepSearchResult): void => {
+      if (settled) return;
+      settled = true;
+      clearInterval(cancelTimer);
+      resolve(result);
+    };
+    const fail = (err: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearInterval(cancelTimer);
+      reject(err);
+    };
 
     const cancelTimer = setInterval(() => {
-      if (params.isCancelled?.() && !killed) {
-        killed = true;
+      if (params.isCancelled?.() && !cancelled && !earlyKilled && !collector.done) {
+        cancelled = true;
         proc.kill();
       }
     }, 100);
 
-    proc.stdout.on('data', (d: Buffer) => out.push(d));
+    proc.stdout.on('data', (d: Buffer) => {
+      // Once cancelled/early-killed we don't decode further chunks — this is
+      // what bounds memory when a broad query would otherwise match the repo.
+      if (settled || cancelled || earlyKilled) return;
+      if (collector.push(d)) {
+        // Enough paths to know it's truncated — terminate rg now instead of
+        // buffering the rest of its output. The intentional kill is
+        // distinguished from a cancellation below (it resolves, not empties).
+        earlyKilled = true;
+        proc.kill();
+      }
+    });
     proc.stderr.on('data', (d: Buffer) => {
       stderr += d.toString();
     });
-    proc.on('error', (err) => {
-      clearInterval(cancelTimer);
-      reject(err);
-    });
+    proc.on('error', (err) => fail(err));
     proc.on('close', (code) => {
-      clearInterval(cancelTimer);
-      if (killed) {
-        resolve({ matches: [], truncated: false });
+      if (cancelled) {
+        // Superseded request — caller ignores the result; match prior behavior.
+        finish({ matches: [], truncated: false });
+        return;
+      }
+      if (earlyKilled || collector.done) {
+        // We stopped rg deliberately after hitting the cap; the non-zero exit
+        // from the kill is expected, not an error.
+        finish({ matches: collector.matches, truncated: true });
         return;
       }
       // rg exit codes: 0 = matches, 1 = no matches, 2 = error.
       if (code === 2) {
-        reject(new Error(stderr.trim() || 'ripgrep error'));
+        fail(new Error(stderr.trim() || 'ripgrep error'));
         return;
       }
-      const all = Buffer.concat(out)
-        .toString('utf8')
-        .split('\0')
-        .filter(Boolean)
-        .map((rel) => path.resolve(root, rel));
-      resolve({
-        matches: all.slice(0, params.limit),
-        truncated: all.length > params.limit,
-      });
+      collector.end();
+      finish({ matches: collector.matches, truncated: collector.truncated });
     });
   });
 }

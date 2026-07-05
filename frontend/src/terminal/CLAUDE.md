@@ -6,14 +6,34 @@ side effect can each be reasoned about (and changed) on their own.
 
 - `terminalTypes.ts` — `TerminalSpec`, `Persisted`, `Ctx`. Re-exported as
   `TerminalSpec` from `../TerminalsContext` for backward compat.
+- `terminalScope.ts` — pure per-project scoping predicate for the sidebar
+  terminal list (`terminalBelongsToProject` + `isPathWithin`/`normalizeDirPath`).
+  A terminal with a recorded `projectPath` matches that project exactly. A
+  **legacy** terminal persisted before `projectPath` existed (field missing) is
+  scoped by its `cwd` — shown only when `cwd` equals/descends from the active
+  folder. **Do NOT reintroduce the old `!projectPath` catch-all** (`filter((t)
+  => !t.projectPath || t.projectPath === activeFolder)`): it listed — and let
+  `useTerminalGroups`/the Sidebar auto-select — a legacy terminal whose `cwd`
+  points at project A while the UI was showing project B, i.e. a shell from the
+  wrong repo. Consumed by `components/sidebar/hooks/useTerminalGroups.ts`.
 - `terminalStorage.ts` — `STORAGE_KEY = 'lattice.terminals'`, `loadPersisted`,
   `persist`. sessionStorage, not localStorage, so each browser tab tracks its
   own terminal list (two tabs on `lattice.terminals` would race writes).
-- `terminalState.ts` — pure functions: `newTerminalId`, list ops
+- `terminalState.ts` — barrel that re-exports the pure functions from the two
+  modules below, so `./terminalState` stays the stable import surface for
+  `TerminalsContext` and the tests.
+- `terminalListOps.ts` — pure terminal-list mutations: `newTerminalId`, list ops
   (`addTerminalToList`, `removeTerminalFromList`, `removeTerminalsFromList`,
-  `terminalIdsForTask`, `planCloseTerminals`, `setServerIdInList`), and
-  active-id selection policies (`pickInitialActiveId`, `pickActiveAfterAdd`,
-  `pickActiveAfterClose`, `pickActiveAfterCloseMany`). Close fallbacks stay
+  `terminalIdsForTask`, `planCloseTerminals`, `setServerIdInList`,
+  `setStatusInList`, `renameTerminalInList`, `reorderTerminalInList`). No
+  active-id policy here — these only transform the list. `setStatusInList`
+  returns the SAME array reference when nothing changed; `planCloseTerminals`
+  walks the list once keyed by the id set (serverId DELETEs at most once).
+- `terminalActivePolicy.ts` — active-id selection policies (`pickInitialActiveId`,
+  `pickActiveAfterAdd`, `pickActiveAfterClose`, `pickActiveAfterCloseMany`) plus
+  the private project-scoped panel grouping helpers they depend on
+  (`terminalPanelKind` / `isSameFallbackGroup` / `terminalsInFallbackGroup`).
+  Close fallbacks stay
   inside the closed terminal's project-scoped panel; single-close clamps the
   prior index there, while multi-close walks backward to the first survivor.
   `closeTerminalsForTask` collects ids via `terminalIdsForTask` and delegates
@@ -35,5 +55,7 @@ side effect can each be reasoned about (and changed) on their own.
   re-runs updaters and would fire two DELETEs in <100ms, which on Windows
   crashed node-pty's helper subprocess and the whole backend with it.
 
-If you add a new mutation, put the data transform in `terminalState.ts` and
-keep `fetch`/IO calls in the context callbacks (or `terminalApi.ts`).
+If you add a new mutation, put the data transform in `terminalListOps.ts` (or a
+new active-id rule in `terminalActivePolicy.ts`), re-export it from the
+`terminalState.ts` barrel, and keep `fetch`/IO calls in the context callbacks
+(or `terminalApi.ts`).

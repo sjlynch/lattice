@@ -1,13 +1,17 @@
 import { useMemo } from 'react';
 import type { TerminalSpec } from '../../../TerminalsContext';
+import { terminalBelongsToProject } from '../../../terminal/terminalScope';
 
 export function useTerminalGroups(terminals: TerminalSpec[], activeFolder: string) {
-  // Per-project scoping: terminals are only listed when their projectPath
-  // matches the current activeFolder. Legacy terminals saved without a
-  // projectPath still show (treated as belonging to whatever's active).
+  // Per-project scoping: terminals are only listed when they belong to the
+  // current activeFolder. A terminal with a recorded projectPath matches that
+  // project exactly; a LEGACY terminal saved without a projectPath is scoped by
+  // its cwd (shown only when cwd equals/descends from activeFolder) rather than
+  // falling through to whatever project is active — that catch-all let a
+  // wrong-repo shell appear (and be auto-selected) in every project. See
+  // terminalScope.ts.
   const projectTerminals = useMemo(
-    () =>
-      terminals.filter((t) => !t.projectPath || t.projectPath === activeFolder),
+    () => terminals.filter((t) => terminalBelongsToProject(t, activeFolder)),
     [terminals, activeFolder],
   );
   const regularTerminals = useMemo(

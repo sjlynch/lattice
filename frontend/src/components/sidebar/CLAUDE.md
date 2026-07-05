@@ -20,6 +20,11 @@ Implementation pieces for `../Sidebar.tsx`.
   correct under panel/search filtering).
 - `SidebarEmptyState.tsx` — per-panel empty messaging.
 - `hooks/useTerminalGroups.ts` — project-scoped regular/merge/startup grouping.
+  Scoping goes through `terminal/terminalScope.ts`'s `terminalBelongsToProject`:
+  a terminal is listed only when its `projectPath` matches the active folder, or
+  (for **legacy** specs missing `projectPath`) when its `cwd` equals/descends
+  from it. Never fall back to showing `!projectPath` terminals in every project
+  — that surfaced a wrong-repo shell after a sessionStorage-shape upgrade.
 - `hooks/usePanelState.ts` — active panel + `activeId` reconciliation and
   auto-switching when merge/startup tabs appear.
 - `hooks/useTerminalSearch.ts` / `useTabScrolling.ts` — filter state and tab
