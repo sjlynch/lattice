@@ -5,9 +5,13 @@ import type { AddressInfo } from 'node:net';
 import express from 'express';
 import type { RequestHandler } from 'express';
 import { registerTerminalRoutes } from '../terminalServer/routes.js';
-import { TERMINAL_SERVER_AUTH_HEADER } from '../terminalServerAuth.js';
+import { TERMINAL_SERVER_AUTH_HEADER, tokenMatches } from '../terminalServerAuth.js';
 
 const AUTH_TOKEN = 'test-terminal-token-1234567890abcdef';
+// A wrong token of the SAME byte length exercises the timingSafeEqual branch;
+// a DIFFERENT length exercises the length guard that must short-circuit before it.
+const WRONG_TOKEN_SAME_LENGTH = 'x'.repeat(AUTH_TOKEN.length);
+const WRONG_TOKEN_DIFF_LENGTH = 'short-wrong-token';
 
 type Harness = {
   port: number;
@@ -103,6 +107,57 @@ test('terminal-server HTTP rejects missing-token mutation requests', async () =>
   }
 });
 
+test('terminal-server HTTP rejects a same-length wrong token on /sessions without calling precreate', async () => {
+  const h = await startHarness();
+  try {
+    const res = await fetch(url(h, '/sessions'), {
+      method: 'POST',
+      headers: {
+        [TERMINAL_SERVER_AUTH_HEADER]: WRONG_TOKEN_SAME_LENGTH,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ cwd: process.cwd() }),
+    });
+    assert.equal(res.status, 401);
+    assert.equal(h.sessionCalls(), 0, 'precreateSession() must not run');
+  } finally {
+    await h.close();
+  }
+});
+
+test('terminal-server HTTP rejects a different-length wrong token on /sessions without calling precreate', async () => {
+  const h = await startHarness();
+  try {
+    const res = await fetch(url(h, '/sessions'), {
+      method: 'POST',
+      headers: {
+        [TERMINAL_SERVER_AUTH_HEADER]: WRONG_TOKEN_DIFF_LENGTH,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ cwd: process.cwd() }),
+    });
+    assert.equal(res.status, 401);
+    assert.equal(h.sessionCalls(), 0, 'precreateSession() must not run');
+  } finally {
+    await h.close();
+  }
+});
+
+test('terminal-server HTTP rejects a wrong token on /shutdown without calling shutdown', async () => {
+  const h = await startHarness();
+  try {
+    const res = await fetch(url(h, '/shutdown'), {
+      method: 'POST',
+      headers: { [TERMINAL_SERVER_AUTH_HEADER]: WRONG_TOKEN_SAME_LENGTH },
+    });
+    assert.equal(res.status, 401);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(h.shutdownCalls(), 0, 'shutdown() must not run');
+  } finally {
+    await h.close();
+  }
+});
+
 test('terminal-server HTTP allows token-bearing backend /sessions and /shutdown', async () => {
   const h = await startHarness();
   try {
@@ -125,4 +180,26 @@ test('terminal-server HTTP allows token-bearing backend /sessions and /shutdown'
   } finally {
     await h.close();
   }
+});
+
+test('tokenMatches: exact match returns true', () => {
+  assert.equal(tokenMatches(AUTH_TOKEN, AUTH_TOKEN), true);
+});
+
+test('tokenMatches: missing or empty tokens return false', () => {
+  assert.equal(tokenMatches(AUTH_TOKEN, undefined), false);
+  assert.equal(tokenMatches(AUTH_TOKEN, ''), false);
+  assert.equal(tokenMatches('', AUTH_TOKEN), false);
+});
+
+test('tokenMatches: unequal-length tokens return false without throwing', () => {
+  // timingSafeEqual throws on differing buffer lengths; the length guard must
+  // short-circuit before it is reached. Asserting no throw pins that guard.
+  assert.doesNotThrow(() => tokenMatches(AUTH_TOKEN, WRONG_TOKEN_DIFF_LENGTH));
+  assert.equal(tokenMatches(AUTH_TOKEN, WRONG_TOKEN_DIFF_LENGTH), false);
+  assert.equal(tokenMatches(AUTH_TOKEN, `${AUTH_TOKEN}extra`), false);
+});
+
+test('tokenMatches: same-length mismatch returns false', () => {
+  assert.equal(tokenMatches(AUTH_TOKEN, WRONG_TOKEN_SAME_LENGTH), false);
 });
