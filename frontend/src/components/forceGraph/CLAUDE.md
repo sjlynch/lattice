@@ -38,7 +38,15 @@ label physics in `labelPhysics/CLAUDE.md`.
   `tooltipPosition`/`cursorTracker`/`healthScoreContributions`) — file-health hover
   tooltip; writes its own `transform` so cursor moves don't re-render React.
 - `TimelineScrubber.tsx` (+ `timelineRange`/`useTimelineScrubberDrag`/`timelineDiff`/
-  `timelineReset`) — git timeline scrubber UI + range math.
+  `timelineReset`) — git timeline scrubber UI + range math. `timelineDiff`'s
+  `buildGhostGraphData` mints one **ghost node per historical path missing from
+  the current scan** (dedup'd across commits + uncommitted changes; paths still
+  present in the scan are never ghosted), all in forward-slash relative-to-root
+  space via `relForward`. **Parent-linking invariant:** a ghost links to the
+  nearest existing *ancestor directory* node — walking `a/b/c` → `a/b` → `a` —
+  and falls back to the scan-root node id when none exist, so deleted/renamed
+  files always attach somewhere real rather than dangling. See
+  `__tests__/timelineDiff.test.ts`.
 
 **Node sprites & recolor overlays**
 - `nodeObjectFactory.ts` — `buildNodeObject`: builds a node's THREE root by
