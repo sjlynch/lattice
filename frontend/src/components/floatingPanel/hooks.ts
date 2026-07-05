@@ -44,6 +44,8 @@ type PanelResizeState = {
 type FloatingPanelState = PanelGeometry & {
   setPos: Dispatch<SetStateAction<Pos>>;
   setSize: Dispatch<SetStateAction<Size>>;
+  maximized: boolean;
+  toggleMaximize: () => void;
 };
 
 export function useFloatingPanelState(
@@ -61,6 +63,11 @@ export function useFloatingPanelState(
   });
   const [size, setSize] = useState<Size>(initialGeometry.size);
   const [pos, setPos] = useState<Pos>(initialGeometry.pos);
+  // Windows-style maximize toggle. While maximized the panel fills the window
+  // (rendered via CSS in FloatingPanel); `pos`/`size` are left untouched so a
+  // restore returns to the exact previous position and dimensions.
+  const [maximized, setMaximized] = useState(false);
+  const toggleMaximize = useCallback(() => setMaximized((m) => !m), []);
 
   const latestSizeRef = useRef(size);
   useLayoutEffect(() => {
@@ -75,7 +82,7 @@ export function useFloatingPanelState(
     persistFloatingPanelGeometry(storageKey, pos, size);
   }, [storageKey, pos, size]);
 
-  return { pos, size, setPos, setSize };
+  return { pos, size, setPos, setSize, maximized, toggleMaximize };
 }
 
 export function useFloatingPanelEscape(open: boolean, onClose: () => void) {

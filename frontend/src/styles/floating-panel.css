@@ -12,6 +12,15 @@
   min-width: 280px;
   min-height: 200px;
 }
+/* Maximized: fill the window with squared-off, borderless chrome (OS-style). */
+.floating-panel.maximized {
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+}
+.floating-panel.maximized .floating-panel-titlebar {
+  cursor: default;
+}
 .floating-panel-titlebar {
   display: flex;
   align-items: center;
@@ -22,6 +31,12 @@
   user-select: none;
   cursor: move;
   flex: 0 0 auto;
+}
+.floating-panel-titlebar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  cursor: default;
 }
 .floating-panel-title {
   font-size: 12px;
