@@ -9,7 +9,7 @@ import http from 'node:http';
 import express from 'express';
 import { ensureClaudeConfigValid } from './claudeConfigGuard.js';
 import { pruneStaleClaudeProjectEntries } from './claudeTrust.js';
-import { clearTerminalScrollback } from './terminal/scrollbackStore.js';
+import { clearTerminalScrollback } from './terminal/scrollbackCleanup.js';
 import { computeTerminalFingerprint } from './terminalFingerprint.js';
 import { TERMINAL_SERVER_TOKEN_ENV } from './terminalServerAuth.js';
 import { installTerminalProcessGuards } from './terminalServer/processGuards.js';
