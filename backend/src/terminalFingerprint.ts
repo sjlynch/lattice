@@ -42,6 +42,8 @@ export const FINGERPRINT_FILES = [
   'terminal/sessionTypes.js',
   'terminal/sessionStore.js',
   'terminal/scrollbackStore.js',
+  'terminal/scrollbackLogFile.js',
+  'terminal/scrollbackCleanup.js',
   'terminal/createSession.js',
   'terminal/launchContext.js',
   'terminal/windowsPath.js',
