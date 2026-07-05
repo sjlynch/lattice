@@ -23,6 +23,23 @@ here instead of bloating the parent file.
 - `processTarget.ts` — per-task state machine: re-read task state, honor the
   merge lock, retry flagged conflicts, re-sync/finalize, spawn resolver PTYs,
   update run progress, and run the repo-integrity check.
+- `resolverSpawn.ts` + `resolverSpawn/` — conflict-resolver spawn subsystem
+  (`resolverSpawn.ts` is the re-export facade; existing `./resolverSpawn.js`
+  imports keep working). Split by concern so the spawn *mechanics* stay
+  separate from the *policy* that drives them:
+  - `resolverSpawn/park.ts` — `parkOnConflictResolver`: registers the conflict
+    waiter then **drops the per-task merge lock before waiting** (the
+    resolver's `/complete` finalize needs that same lock — see its deadlock
+    note). The lock-release semantics live here.
+  - `resolverSpawn/spawn.ts` — terminal-session spawn/notify/record mechanics:
+    `queuedCreateSession` on the `priority` band (headroom above softCap),
+    conflict notification, `spawnAndRecord`/`recordAndSpawn` (which own the
+    `run.conflicted` array update — successful spawn only), and
+    `respawnResolverForFlaggedConflict`.
+  - `resolverSpawn/handleOutcome.ts` — `handleResyncOutcome`: the higher-level
+    policy deciding, per `ResyncOutcome`, whether to finalize (push
+    `run.merged`), park on a resolver, cancel the run after a stash conflict,
+    or record a `run.errored` entry.
 - `withMergeLock.ts` — shared per-task merge-lock lifecycle used by
   `processTarget` and `flaggedConflict`'s `tryFinalizeAfterResolverFinished`:
   `tryAcquire`, record the "lock held" error and report `lock-unavailable` on
