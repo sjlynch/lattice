@@ -3,9 +3,12 @@
 // closes itself when Claude stops (via a settings.local.json Stop hook). The
 // QA-lane Playwright toggle must be on for the project, or the Playwright MCP
 // won't be injected — the frontend only surfaces the buttons in that case.
+//
+// This file is just route wiring: the request guards, response shaping, and
+// verdict-body parsing live in focused helpers under `./qaRuns/`, and the QA
+// lifecycle (spawn / verdict / cleanup) stays in the `../qaRuns` modules.
 
 import { Router } from 'express';
-import { canonicalProjectPath } from '../projectPath.js';
 import { getTask } from '../tasks.js';
 import {
   applyQaVerdict,
@@ -24,27 +27,13 @@ import {
   deleteHomeScratchRunResponse,
   finishHomeScratchDoneResponse,
 } from '../homeScratch/routes.js';
+import { parseVerdictBody } from './qaRuns/verdictBody.js';
+import { resolveQaRunStart } from './qaRuns/startGuard.js';
+import { polledQaRunResponse, startedQaRunResponse } from './qaRuns/responses.js';
 
-// Tolerantly read a PASS/confident verdict out of the agent's POST body. The
-// brief tells it to send `{ "verdict": "pass"|"fail", "confidence": "high"|"low" }`,
-// but we also accept the boolean shorthand (`passed` / `confident`) so a small
-// wording drift in a user-edited QA template still advances the task.
-export function parseVerdictBody(
-  body: unknown,
-): { passed: boolean; confident: boolean } {
-  const b = (body || {}) as {
-    verdict?: unknown;
-    confidence?: unknown;
-    passed?: unknown;
-    confident?: unknown;
-  };
-  const verdict = typeof b.verdict === 'string' ? b.verdict.trim().toLowerCase() : '';
-  const confidence =
-    typeof b.confidence === 'string' ? b.confidence.trim().toLowerCase() : '';
-  const passed = b.passed === true || verdict === 'pass' || verdict === 'passed';
-  const confident = b.confident === true || confidence === 'high';
-  return { passed, confident };
-}
+// Re-exported for the route-level regression tests, which assert the verdict
+// parsing directly.
+export { parseVerdictBody };
 
 // Injectable seams for the route-level regression test, so it can exercise the
 // real guards without touching the task DB or spawning a Claude session.
@@ -63,45 +52,20 @@ export function buildQaRunsRouter(
   const startSession = deps.startQaSession ?? startQaSession;
 
   r.post('/api/qa-runs', async (req, res) => {
-    const body = (req.body || {}) as { project?: string; taskId?: string };
-    if (!body.project) return res.status(400).json({ error: 'project required' });
-    if (!body.taskId) return res.status(400).json({ error: 'taskId required' });
-    const project = canonicalProjectPath(body.project);
-
-    const task = await lookupTask(body.taskId);
-    if (!task) return res.status(404).json({ error: 'task not found' });
-    // Defensive: a QA run only makes sense against the task's own project.
-    if (canonicalProjectPath(task.projectPath) !== project) {
-      return res.status(400).json({ error: 'task does not belong to project' });
-    }
-    // A QA e2e session only makes sense for a task that's actually in the QA
-    // lane (merged, awaiting verification). Starting one for an
-    // open/in_progress/ready_to_merge/done task — via a stale/miswired frontend
-    // call or a direct API hit — would burn an agent/PTY exercising unmerged or
-    // already-shipped code and append a misleading verdict; worse, if that task
-    // later reaches QA, a confident PASS recorded from this stale run could
-    // promote it to done against the wrong code state. Reject and spawn nothing.
-    if (task.status !== 'qa') {
-      return res
-        .status(409)
-        .json({ error: `task is not in QA (status=${task.status})` });
+    const resolved = await resolveQaRunStart(req.body, lookupTask);
+    if (!resolved.ok) {
+      return res.status(resolved.status).json({ error: resolved.error });
     }
 
     try {
       const started = await startSession({
-        projectPath: project,
-        taskId: task.id,
-        taskTitle: task.title,
-        taskDescription: task.description,
+        projectPath: resolved.project,
+        taskId: resolved.task.id,
+        taskTitle: resolved.task.title,
+        taskDescription: resolved.task.description,
         backendOrigin,
       });
-      res.json({
-        id: started.id,
-        taskId: started.taskId,
-        command: started.command,
-        cwd: started.cwd,
-        serverId: started.serverId,
-      });
+      res.json(startedQaRunResponse(started));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -111,17 +75,7 @@ export function buildQaRunsRouter(
   r.get('/api/qa-runs/:id', (req, res) => {
     const run = getQaRun(req.params.id);
     if (!run) return res.status(404).json({ error: 'not found' });
-    res.json({
-      id: run.id,
-      status: run.status,
-      taskId: run.taskId,
-      projectPath: run.projectPath,
-      verdict: run.verdict,
-      movedToDone: run.movedToDone,
-      // Resolved at `/done` time; the frontend poller closes the tab only when
-      // this is true (default is stay-open).
-      autoCloseTerminal: run.autoCloseTerminal,
-    });
+    res.json(polledQaRunResponse(run));
   });
 
   // Verdict callback — the agent's final step. A confident PASS promotes the

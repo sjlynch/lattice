@@ -1,5 +1,10 @@
 import path from 'node:path';
 
+// Windows reserved DOS device names. Reserved regardless of extension, so
+// `NUL`, `nul`, and `NUL.txt` are all forbidden while boundary names like
+// `COM10` / `LPT10` remain allowed.
+const WIN32_RESERVED_DEVICE_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+
 export function validateNewFolderName(name: string): string {
   const folderName = name.trim();
   if (!folderName) throw new Error('Folder name is required');
@@ -18,6 +23,9 @@ export function validateNewFolderName(name: string): string {
     }
     if (/[ .]$/.test(folderName)) {
       throw new Error('Folder name cannot end with a space or period on Windows');
+    }
+    if (WIN32_RESERVED_DEVICE_NAME.test(folderName)) {
+      throw new Error('Folder name is a reserved Windows device name');
     }
   }
   return folderName;

@@ -31,6 +31,17 @@ backend scan + health WS
     (`REMOVED_RESCAN_DEBOUNCE_MS`) backend rescan to drop now-empty dirs; a fresh
     `scanFolder` response rebuilds the tree. Watcher events before the initial
     scan lands are dropped (the scan is authoritative during boot).
+- `projectScanScheduler.ts` — `useProjectScanScheduler`, the two effects behind
+  `useProjectScan` (initial retrying scan + live-update subscription). It reads
+  as orchestration only; the timer/fencing mechanics live in three focused
+  modules it wires together: `scanSnapshot.ts` (the `ProjectScanSnapshot`
+  state-shape helpers — `snapshotFor*` / `patchSnapshot`, no timers),
+  `scanRetry.ts` (`retryDelay` backoff math + `useRequestIdFence`, the monotonic
+  request-id fence both effects use to drop stale in-flight scans), and
+  `healthUpdateScheduler.ts` (`createHealthUpdateScheduler` — owns the
+  `METRIC_BATCH_MS` metric-batch queue, the structural-rescan debounce, the long
+  `REMOVED_RESCAN_DEBOUNCE_MS` removed-file rescan, and the retrying backend
+  rescan; the effect just forwards gated events to `handleEvent`/`dispose`).
 - `scanResultPatch.ts` — pure (no React) `ScanResult`-patch helpers.
   `patchUpdatedFiles` builds one path→index map, clones only nodes whose metrics
   actually changed, and returns `prev` unchanged on a no-op (→ no render).

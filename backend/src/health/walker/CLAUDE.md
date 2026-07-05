@@ -24,6 +24,14 @@ single recursive AST pass unless a metric truly needs a second pass.
 - `astUtils.ts` — generic tree-sitter accessors (not smell detection) shared
   by `visitors.ts`/`smells.ts`: `stripStringQuotes`, `isImportSpecifierString`,
   `isConsoleLogish`, `countExportBindings`, `leafIdentifier`.
+- `importEdges.ts` — import-edge extraction the cross-file dead-code pass
+  depends on, kept out of the smell/complexity visitors: `handleImportStatement`
+  (TS/JS import sources + Python `import`/`import_from` + the wildcard-import
+  smell), `handleReExportEdge` (`export … from` re-export sources), and
+  `handleDynamicImportEdge` (string-literal `import()`/`require()`). The
+  visitors (`handleImportsAndStrings`/`handleExportTracking`/
+  `handleCallExpression`) delegate here; binding-count/smell logic stays in
+  `visitors.ts`.
 
 Add language shape in `../nodeKinds/` first; only special-case here when node
 semantics differ beyond the shared kind sets.
