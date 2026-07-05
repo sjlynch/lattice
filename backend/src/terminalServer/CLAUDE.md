@@ -38,16 +38,23 @@ version constant.
 ## Layout
 
 - `processGuards.ts` — `installTerminalProcessGuards()`: swallow node-pty's known
-  Windows cleanup throw (everything else logs). Installed first, before any PTY
-  can throw asynchronously.
+  Windows cleanup throw; every other uncaught exception/rejection is logged and
+  then fails fast (exit 1) rather than leaving this detached process running in
+  an undefined state (the main backend respawns it on demand). Installed first,
+  before any PTY can throw asynchronously. Fail-fast contract regression-covered
+  by `../__tests__/processGuards.test.ts`.
 - `routes.ts` — `registerTerminalRoutes(app, { fingerprint, shutdown, authToken })`:
   the JSON HTTP surface — `GET /health` (returns the fingerprint), protected
   `GET /sessions`, `POST /sessions`, `DELETE /sessions/by-cwd` (**must** precede
   `/:id` — Express matches in registration order), `DELETE /sessions/:id`, and
   `POST /shutdown`. Protected routes reject disallowed browser `Origin`s and
-  require the shared terminal-server token header. A catch-all 404 + error
-  middleware force a **JSON-only** body so the client's `await res.json()` never
-  explodes on stray HTML.
+  require the shared terminal-server token header. The token must ride in a
+  **custom** header (`x-lattice-terminal-token`), constant-time-compared via
+  `tokenMatches` — a custom header is the invariant that keeps a browser
+  form-POST (can't set custom headers) or a cross-site fetch (can't read the
+  response) from driving PTY create/shutdown against the loopback port. A
+  catch-all 404 + error middleware force a **JSON-only** body so the client's
+  `await res.json()` never explodes on stray HTML.
 - `createSessionHandler.ts` — `POST /sessions` implementation: pre-create a pty;
   applies the backend-resolved Claude config, returns `{ id }`, or
   `503 {code:'CAP'}` at the hard cap.
