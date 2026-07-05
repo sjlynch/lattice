@@ -58,9 +58,18 @@ owns the node-pty processes.
   `killSessionsByCwd` (used by worktree teardown).
 - `scrollbackStore.ts` — the disk-backed replay concern: a per-session append
   log under `~/.lattice/terminal-scrollback` so a large replay window stays off
-  the heap, degrading to a bounded in-memory tail if disk is unavailable.
-  `clearTerminalScrollback` wipes the dir at boot (every in-memory session is
-  gone after a restart, so its logs are orphans).
+  the heap, degrading to a bounded in-memory tail if disk is unavailable. Owns
+  the pending-buffer/degraded-mode state machine (append/flush/compact/replay);
+  the low-level file mechanics and the boot-time wipe live in the two helpers
+  below.
+- `scrollbackLogFile.ts` — pure, stateless file-tail helpers `trimToLineStart`
+  (drop a partial leading line so a windowed replay never begins mid-escape-
+  sequence) and `readTail` (byte-level last-`maxBytes` read, trimmed to a line
+  boundary). Used by `ScrollbackStore` for both replay and inline compaction.
+- `scrollbackCleanup.ts` — `clearTerminalScrollback`: wipes the scrollback dir
+  at boot (every in-memory session is gone after a restart, so its logs are
+  orphans). Path-guarded to the home-scoped `~/.lattice/terminal-scrollback` so
+  it can never touch a project tree.
 
 ## Flow
 
