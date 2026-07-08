@@ -4,7 +4,7 @@ import { GraphSearchBar } from './GraphSearchBar';
 import { HealthTooltip } from './HealthTooltip';
 import type { SearchStatus } from './hooks/useGraphSearch';
 
-type Counts = { files: number; dirs: number; hidden: number };
+type Counts = { files: number; dirs: number; hidden: number; loc: number };
 
 type Props = {
   loading: boolean;
@@ -122,7 +122,8 @@ export const GraphHud = memo(function GraphHud({
           />
           <div className="graph-overlay graph-counts">
             <span>
-              {counts.files} files · {counts.dirs} dirs
+              {counts.files} files · {counts.dirs} dirs ·{' '}
+              {counts.loc.toLocaleString()} LOC
               {counts.hidden > 0 && (
                 <span style={{ color: 'var(--text-tertiary)' }}>
                   {' '}
