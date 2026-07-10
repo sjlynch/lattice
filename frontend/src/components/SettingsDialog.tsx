@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Modal } from './Modal';
+import { FloatingPanel } from './FloatingPanel';
 import {
   type StartupTerminal,
   type TerminalLaunchSettings,
@@ -54,8 +54,14 @@ export function SettingsDialog({
     });
 
   return (
-    <Modal open={open} onClose={requestClose} width={620}>
-      <div className="modal-header">Settings</div>
+    <FloatingPanel
+      open={open}
+      onClose={requestClose}
+      title="Settings"
+      defaultSize={{ width: 640, height: 640 }}
+      minSize={{ width: 440, height: 400 }}
+      storageKey="lattice.settings.window"
+    >
       <div className="settings-scope-note">
         Global settings apply to all projects on this machine; per-project
         settings affect only the active folder.
@@ -140,6 +146,6 @@ export function SettingsDialog({
           {saving ? 'Saving…' : 'Save'}
         </button>
       </div>
-    </Modal>
+    </FloatingPanel>
   );
 }

@@ -1,8 +1,10 @@
 # frontend/src/components/settings
 
-Tab panels for the Settings modal. The parent, `SettingsDialog.tsx`, lives one
-level up in `components/`: a `Modal` with a tab strip (Terminals / Agent
-prompts / Metrics / Agents / Pi / MCP) that renders every tab and a single
+Tab panels for the Settings dialog. The parent, `SettingsDialog.tsx`, lives one
+level up in `components/`: a **`FloatingPanel`** (draggable/resizable/
+maximizable, no backdrop so the app stays interactive; titlebar `×`/maximize;
+geometry persisted under `lattice.settings.window`) with a tab strip (Terminals /
+Agent prompts / Metrics / Agents / Pi / MCP) that renders every tab and a single
 Save/Cancel footer. The dialog itself is now essentially just that chrome plus
 body rendering — all the save/dirty/close machinery lives in
 `useSettingsController.ts` (below).
@@ -13,7 +15,7 @@ two out inline). `SettingsSection.tsx` provides the shared presentational sectio
 chrome (and a checkbox wrapper) for that title row; keep it structural-only so
 callers own behavior. `SettingsInfo` closes on outside-click and on Escape; its
 Escape handler is **capture-phase + `stopPropagation`** so it dismisses just the
-popover without the Modal's own Escape closing the whole dialog. Keep section
+popover without the FloatingPanel's own Escape closing the whole dialog. Keep section
 titles + control labels always-visible and push the detail into the popover.
 
 ## Shared tab pattern
