@@ -19,8 +19,9 @@ export function buildPostMergeHookCommand(args: {
   harness: AgentHarness;
   instructionsFile: string;
   piModel?: string;
+  codexYolo?: boolean;
 }): string {
-  const { harness, instructionsFile, piModel } = args;
+  const { harness, instructionsFile, piModel, codexYolo } = args;
   const fileName = path.basename(instructionsFile);
 
   if (harness === 'codex') {
@@ -28,6 +29,7 @@ export function buildPostMergeHookCommand(args: {
     // explicit callback in the prompt.
     return buildAgentCommand({
       harness,
+      codexYolo,
       prompt: `Please read ${fileName} in this directory and complete the post-merge hook task it describes. You MUST curl the completion URL from the brief before exiting — Lattice has no Codex Stop-hook backstop and the merge run will hang otherwise.`,
     });
   }

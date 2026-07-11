@@ -11,6 +11,7 @@ import { worktreeExists } from '../../worktree.js';
 import { SpawnCapacityError } from '../../spawnQueue.js';
 import { normalizeAgentHarness } from '../../harnesses.js';
 import { normalizePiModel, resolvePiModel } from '../../piModels.js';
+import { isCodexYoloEnabled } from '../../userSettings.js';
 import { selectHarnessCommand } from './harnessFactory.js';
 
 export type ResumeTaskByIdResult = {
@@ -59,10 +60,14 @@ export async function resumeTaskById(
         normalizePiModel(task.piModel) ??
         (await resolvePiModel(task.projectPath))
       : undefined;
+  // Resolve the Codex `--yolo` toggle only for a Codex resume (default ON).
+  const codexYolo =
+    harness === 'codex' ? await isCodexYoloEnabled(task.projectPath) : undefined;
   const selectedHarness = selectHarnessCommand(task, {
     requestedHarness,
     mode: 'resume',
     piModel,
+    codexYolo,
   });
   const spawn = await selectedHarness.createSession({
     taskFile,

@@ -45,11 +45,14 @@ handle (any may be `null` if unmounted), it reads each `*Patch()`, merges the
 instrumentation and the global max-agents patch, and finally fires the parent
 callbacks. `useSettingsDrafts.ts` owns the handful of drafts that live on the
 parent itself rather than a tab — the terminal-default harness +
-skip-permissions, and the instrument-Claude / disable-memory / qa-auto-close
-toggles. Its async settings load updates fetched baselines but seeds only
-untouched toggle drafts, so a late GET never overwrites edits made while the
-dialog was opening. `TerminalSettingsSections.tsx` renders those four sections
-(the project-settings block atop the Terminals tab); it's a plain
+skip-permissions, the Codex `--yolo` toggle (default ON — part of
+`terminalLaunchSettings`, so it's reseeded synchronously with the harness/skip
+drafts and feeds the sidebar's new-Codex-terminal command as well as being read
+by the backend for every Codex spawn), and the instrument-Claude /
+disable-memory / qa-auto-close toggles. Its async settings load updates fetched
+baselines but seeds only untouched toggle drafts, so a late GET never overwrites
+edits made while the dialog was opening. `TerminalSettingsSections.tsx` renders
+those sections (the project-settings block atop the Terminals tab); it's a plain
 `drafts`-driven component with no ref handle, since the controller persists
 those drafts — `SettingsDialog` just composes it ahead of the
 `StartupTerminalsTab` panel.

@@ -51,9 +51,25 @@ test('pi branch with a VALID piModel: quoted --model precedes the prompt', () =>
   );
 });
 
-test('codex branch: bare `codex` + quoted prompt', () => {
+test('codex branch: --yolo by default + quoted prompt', () => {
+  // --yolo (Codex's permission bypass) is ON by default, matching the
+  // default-on UserSettings.codexYolo. An un-threaded call still gets it.
   assert.equal(
     buildAgentCommand({ harness: 'codex', prompt: 'do the thing' }),
+    'codex --yolo "do the thing"',
+  );
+});
+
+test('codex branch with codexYolo:true: explicit --yolo', () => {
+  assert.equal(
+    buildAgentCommand({ harness: 'codex', prompt: 'do the thing', codexYolo: true }),
+    'codex --yolo "do the thing"',
+  );
+});
+
+test('codex branch with codexYolo:false: plain `codex` (no --yolo)', () => {
+  assert.equal(
+    buildAgentCommand({ harness: 'codex', prompt: 'do the thing', codexYolo: false }),
     'codex "do the thing"',
   );
 });

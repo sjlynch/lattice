@@ -14,6 +14,8 @@ export type SettingsDrafts = {
   setTerminalDefaultHarness: (value: TerminalDefaultHarness) => void;
   terminalClaudeSkipPermissions: boolean;
   setTerminalClaudeSkipPermissions: (value: boolean) => void;
+  codexYolo: boolean;
+  setCodexYolo: (value: boolean) => void;
   instrumentClaude: boolean;
   setInstrumentClaude: (value: boolean) => void;
   disableMemory: boolean;
@@ -34,6 +36,9 @@ export function useSettingsDrafts(
     useState<TerminalDefaultHarness>(terminalLaunchSettings.terminalDefaultHarness);
   const [terminalClaudeSkipPermissions, setTerminalClaudeSkipPermissions] =
     useState(terminalLaunchSettings.terminalClaudeSkipPermissions);
+  // Codex `--yolo` toggle — default ON (part of terminalLaunchSettings, so it's
+  // reseeded from the same synchronous slice as the harness/skip drafts).
+  const [codexYolo, setCodexYolo] = useState(terminalLaunchSettings.codexYolo);
   // Default ON (opt-out) — absent setting counts as enabled.
   const [instrumentClaude, setInstrumentClaude] = useState(true);
   // Default ON (memory disabled) — absent setting counts as "off".
@@ -62,6 +67,7 @@ export function useSettingsDrafts(
     setTerminalClaudeSkipPermissions(
       terminalLaunchSettings.terminalClaudeSkipPermissions,
     );
+    setCodexYolo(terminalLaunchSettings.codexYolo);
   }, [open, terminalLaunchSettings]);
 
   const setInstrumentClaudeDraft = useCallback((value: boolean) => {
@@ -113,6 +119,7 @@ export function useSettingsDrafts(
     terminalDefaultHarness !== terminalLaunchSettings.terminalDefaultHarness ||
     terminalClaudeSkipPermissions !==
       terminalLaunchSettings.terminalClaudeSkipPermissions ||
+    codexYolo !== terminalLaunchSettings.codexYolo ||
     instrumentClaude !== loadedInstrumentClaude ||
     disableMemory !== loadedDisableMemory ||
     qaTerminalAutoClose !== loadedQaTerminalAutoClose;
@@ -122,6 +129,8 @@ export function useSettingsDrafts(
     setTerminalDefaultHarness,
     terminalClaudeSkipPermissions,
     setTerminalClaudeSkipPermissions,
+    codexYolo,
+    setCodexYolo,
     instrumentClaude,
     setInstrumentClaude: setInstrumentClaudeDraft,
     disableMemory,

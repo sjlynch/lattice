@@ -11,6 +11,10 @@ export type TerminalDefaultHarness = AgentHarness | 'terminal';
 export type TerminalLaunchSettings = {
   terminalDefaultHarness: TerminalDefaultHarness;
   terminalClaudeSkipPermissions: boolean;
+  // Whether Codex launches with `--yolo` (its analogue of Claude's
+  // `--dangerously-skip-permissions`). Drives the sidebar's new-Codex-terminal
+  // default; also read by the backend for every Codex agent spawn. Default ON.
+  codexYolo: boolean;
 };
 
 export type UserSettings = {
@@ -22,6 +26,12 @@ export type UserSettings = {
   startupTerminals?: StartupTerminal[];
   terminalDefaultHarness?: TerminalDefaultHarness;
   terminalClaudeSkipPermissions?: boolean;
+  // Whether Codex launches with `--yolo` for this project (its analogue of
+  // Claude's `--dangerously-skip-permissions`). Applies to every Codex session
+  // Lattice spawns plus the sidebar's new-Codex-terminal default. Default ON —
+  // absent counts as `true`; only an explicit `false` runs plain `codex`. See
+  // backend userSettings.ts.
+  codexYolo?: boolean;
   workflowStepsCollapsed?: Record<string, boolean>;
   // Per-env override of the auto-injected "fresh worktree, don't reinstall"
   // note in task instructions. Key = env id; '' suppresses the note;
@@ -108,7 +118,7 @@ export function isTerminalDefaultHarness(
 export function normalizeTerminalLaunchSettings(
   settings: Pick<
     UserSettings,
-    'terminalDefaultHarness' | 'terminalClaudeSkipPermissions'
+    'terminalDefaultHarness' | 'terminalClaudeSkipPermissions' | 'codexYolo'
   > | null | undefined,
 ): TerminalLaunchSettings {
   const defaultHarness = settings?.terminalDefaultHarness;
@@ -120,6 +130,8 @@ export function normalizeTerminalLaunchSettings(
       typeof settings?.terminalClaudeSkipPermissions === 'boolean'
         ? settings.terminalClaudeSkipPermissions
         : true,
+    // Default ON — only an explicit `false` disables `--yolo`.
+    codexYolo: settings?.codexYolo !== false,
   };
 }
 

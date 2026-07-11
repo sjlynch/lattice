@@ -2,7 +2,7 @@
 //
 // Call sites keep the intent-specific prompt text local, while this module
 // owns the repeated harness syntax: Claude's permission bypass, Pi's safe
-// --model flag, Codex's plain prompt argument, and shell quoting.
+// --model flag, Codex's --yolo permission bypass, and shell quoting.
 
 import path from 'node:path';
 import type { AgentHarness } from './harnesses.js';
@@ -44,6 +44,13 @@ export function buildAgentCommand(args: {
   harness: AgentHarness;
   prompt: string;
   piModel?: string;
+  // Whether to launch Codex with `--yolo` (its analogue of Claude's
+  // `--dangerously-skip-permissions`: run tool calls without prompting). ON by
+  // default — only an explicit `false` drops the flag. Ignored for
+  // claude/pi. Resolved per-project from UserSettings.codexYolo at the spawn
+  // sites (isCodexYoloEnabled); the default here keeps un-threaded call sites
+  // matching the default-on setting.
+  codexYolo?: boolean;
 }): string {
   const quotedPrompt = shellDoubleQuoted(args.prompt);
   if (args.harness === 'claude') {
@@ -52,5 +59,6 @@ export function buildAgentCommand(args: {
   if (args.harness === 'pi') {
     return `pi${buildPiModelFlag(args.piModel)} ${quotedPrompt}`;
   }
-  return `codex ${quotedPrompt}`;
+  const yolo = args.codexYolo === false ? '' : ' --yolo';
+  return `codex${yolo} ${quotedPrompt}`;
 }

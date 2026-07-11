@@ -9,7 +9,11 @@ Implementation pieces for `../Sidebar.tsx`.
   `piMenu`). Picking one spawns `pi --model "<provider/model>"` — per-spawn model
   selection, same as the taskboard/workflow harness pickers. `createTerminalSpec`
   builds that command (guarded by `harnesses.isValidPiModel`) and a short
-  `pi <model> N` tab label.
+  `pi <model> N` tab label. A new **Codex** terminal launches `codex --yolo` by
+  default (Codex's permission bypass, the analogue of the dangerous-Claude
+  `--dangerously-skip-permissions`); `createTerminalSpec` drops the flag to plain
+  `codex` when the `codexYolo` setting (Settings → Terminals) is off — the flag
+  is passed down from `terminalLaunchSettings.codexYolo`.
 - `SidebarPanelTabs.tsx` — Terminals / Merging / Startup panel switcher.
 - `SidebarTabsBar.tsx` — scrollable terminal tabs, close buttons, the
   right-click entry point, double-click-to-rename (inline `<input>`;

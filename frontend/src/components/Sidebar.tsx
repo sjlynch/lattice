@@ -136,10 +136,16 @@ export const Sidebar = memo(function Sidebar({
   const newTerminal = useCallback(
     (kind: ShellKind, piModel?: string) => {
       addTerminal(
-        createTerminalSpec(kind, activeFolder, projectTerminals.length + 1, piModel),
+        createTerminalSpec(
+          kind,
+          activeFolder,
+          projectTerminals.length + 1,
+          piModel,
+          terminalLaunchSettings.codexYolo,
+        ),
       );
     },
-    [addTerminal, activeFolder, projectTerminals.length],
+    [addTerminal, activeFolder, projectTerminals.length, terminalLaunchSettings.codexYolo],
   );
 
   const handleServerId = useCallback(

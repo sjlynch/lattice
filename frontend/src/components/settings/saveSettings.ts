@@ -23,6 +23,7 @@ import { type McpTabHandle } from './McpTab';
 type SaveDrafts = {
   terminalDefaultHarness: TerminalDefaultHarness;
   terminalClaudeSkipPermissions: boolean;
+  codexYolo: boolean;
   instrumentClaude: boolean;
   disableMemory: boolean;
   qaTerminalAutoClose: boolean;
@@ -74,6 +75,7 @@ export async function saveSettings({
   const terminalLaunchPatch: TerminalLaunchSettings = {
     terminalDefaultHarness: drafts.terminalDefaultHarness,
     terminalClaudeSkipPermissions: drafts.terminalClaudeSkipPermissions,
+    codexYolo: drafts.codexYolo,
   };
   const patch: Partial<UserSettings> = {
     startupTerminals: cleaned,

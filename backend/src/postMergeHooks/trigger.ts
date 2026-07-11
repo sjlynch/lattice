@@ -198,6 +198,8 @@ async function spawnAndRegister(
       instructionsFile: session.instructionsFile,
       piModel:
         harness === 'pi' ? normalizePiModel(settings.postMergeHookPiModel) : undefined,
+      // Codex `--yolo` toggle (default ON — only explicit `false` disables).
+      codexYolo: harness === 'codex' ? settings.codexYolo !== false : undefined,
     });
 
     console.log(

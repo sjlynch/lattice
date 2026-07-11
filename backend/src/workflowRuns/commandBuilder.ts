@@ -9,12 +9,14 @@ export function buildWorkflowStepCommand(
   stepFile: string,
   harness: Workflow['steps'][number]['harness'],
   piModel?: string,
+  codexYolo?: boolean,
 ): string {
   const resolvedHarness = harness ?? 'claude';
   const fileName = promptFileName(stepFile);
   return buildAgentCommand({
     harness: resolvedHarness,
     piModel,
+    codexYolo,
     prompt: `Please read ${fileName} and complete the task described in it.`,
   });
 }

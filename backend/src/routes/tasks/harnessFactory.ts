@@ -22,6 +22,10 @@ type SelectHarnessCommandOptions = {
   // `pi`. The caller (startTask/resumeTask) does the body→task→settings
   // resolution; this just binds it into the Pi command builder.
   piModel?: string;
+  // Resolved `--yolo` toggle; only applied when the harness is `codex`. The
+  // caller resolves it from UserSettings.codexYolo (default ON); this binds it
+  // into the Codex command builder. Absent means "use the default (ON)".
+  codexYolo?: boolean;
 };
 
 export type CreateSessionOutcome = {
@@ -47,15 +51,16 @@ function getCommandBuilder(
   harness: TaskHarness,
   mode: HarnessMode,
   piModel?: string,
+  codexYolo?: boolean,
 ): CommandBuilder {
   if (mode === 'resume') {
     if (harness === 'pi') return (taskFile) => buildPiResumeCommand(taskFile, piModel);
-    if (harness === 'codex') return buildCodexResumeCommand;
+    if (harness === 'codex') return (taskFile) => buildCodexResumeCommand(taskFile, codexYolo);
     return buildResumeCommand;
   }
 
   if (harness === 'pi') return (taskFile) => buildPiCommand(taskFile, piModel);
-  if (harness === 'codex') return buildCodexCommand;
+  if (harness === 'codex') return (taskFile) => buildCodexCommand(taskFile, codexYolo);
   return buildClaudeCommand;
 }
 
@@ -64,7 +69,12 @@ export function selectHarnessCommand(
   options: SelectHarnessCommandOptions,
 ): SelectedHarnessCommand {
   const harness = normalizeAgentHarness(options.requestedHarness);
-  const commandBuilder = getCommandBuilder(harness, options.mode, options.piModel);
+  const commandBuilder = getCommandBuilder(
+    harness,
+    options.mode,
+    options.piModel,
+    options.codexYolo,
+  );
 
   return {
     harness,

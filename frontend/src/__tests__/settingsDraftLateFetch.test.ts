@@ -11,6 +11,7 @@ import {
 const TERMINAL_SETTINGS: TerminalLaunchSettings = {
   terminalDefaultHarness: 'claude',
   terminalClaudeSkipPermissions: false,
+  codexYolo: true,
 };
 
 type FetchResponse = { ok: boolean; json: () => Promise<UserSettings> };

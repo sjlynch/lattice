@@ -93,6 +93,7 @@ export function useSettingsController({
         drafts: {
           terminalDefaultHarness: drafts.terminalDefaultHarness,
           terminalClaudeSkipPermissions: drafts.terminalClaudeSkipPermissions,
+          codexYolo: drafts.codexYolo,
           instrumentClaude: drafts.instrumentClaude,
           disableMemory: drafts.disableMemory,
           qaTerminalAutoClose: drafts.qaTerminalAutoClose,

@@ -71,6 +71,38 @@ function TerminalDefaultSettingsSection({
   );
 }
 
+type CodexYoloSectionProps = {
+  enabled: boolean;
+  onChange: (value: boolean) => void;
+};
+
+function CodexYoloSection({ enabled, onChange }: CodexYoloSectionProps) {
+  return (
+    <CheckboxSettingsSection
+      title="Run Codex with --yolo"
+      infoLabel="About running Codex with --yolo"
+      info={(
+        <>
+          <p>
+            Launches every Codex session Lattice spawns — task runs, workflow
+            steps, the post-merge hook, prompt customization, and new Codex
+            terminals — with <code>--yolo</code>, Codex’s analogue of Claude’s{' '}
+            <code>--dangerously-skip-permissions</code>: it runs tool calls
+            without pausing to ask.
+          </p>
+          <p>
+            On by default. Turn it off to launch plain <code>codex</code>, which
+            prompts for approval before acting.
+          </p>
+        </>
+      )}
+      checked={enabled}
+      onChange={onChange}
+      label="Launch Codex with --yolo (skip approval prompts)"
+    />
+  );
+}
+
 type ClaudeInstrumentationSectionProps = {
   enabled: boolean;
   onChange: (value: boolean) => void;
@@ -179,6 +211,7 @@ export function TerminalSettingsSections({ drafts }: { drafts: SettingsDrafts })
         onTerminalDefaultHarnessChange={drafts.setTerminalDefaultHarness}
         onTerminalClaudeSkipPermissionsChange={drafts.setTerminalClaudeSkipPermissions}
       />
+      <CodexYoloSection enabled={drafts.codexYolo} onChange={drafts.setCodexYolo} />
       <ClaudeInstrumentationSection
         enabled={drafts.instrumentClaude}
         onChange={drafts.setInstrumentClaude}

@@ -22,4 +22,5 @@ export {
   isClaudeMemoryDisabled,
   isQaTerminalAutoCloseEnabled,
   isPostMergeHookEnabled,
+  isCodexYoloEnabled,
 } from './features.js';

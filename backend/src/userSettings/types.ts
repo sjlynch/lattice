@@ -19,6 +19,14 @@ export type UserSettings = {
   startupTerminals?: StartupTerminal[];
   terminalDefaultHarness?: TerminalDefaultHarness;
   terminalClaudeSkipPermissions?: boolean;
+  // Whether Codex is launched with `--yolo` (its analogue of Claude's
+  // `--dangerously-skip-permissions`: run tool calls without prompting).
+  // Applies to EVERY Codex session Lattice spawns — task runs/resumes,
+  // workflow steps, the post-merge hook, prompt customization — plus the
+  // sidebar's new-Codex-terminal default. Default is ON: an absent setting
+  // counts as `true`, only an explicit `false` runs plain `codex`. See
+  // `isCodexYoloEnabled` in features.ts.
+  codexYolo?: boolean;
   // Per-step collapse state for the workflow editor, keyed by step id.
   // Only collapsed=true entries are persisted to keep the file tidy.
   workflowStepsCollapsed?: Record<string, boolean>;

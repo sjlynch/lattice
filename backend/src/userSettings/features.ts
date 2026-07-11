@@ -24,6 +24,18 @@ export async function isPostMergeHookEnabled(
   return settings.postMergeHookEnabled !== false;
 }
 
+// Whether Codex should be launched with `--yolo` for this project (its
+// analogue of Claude's `--dangerously-skip-permissions`). Default is ON — an
+// absent setting counts as `true`; only an explicit `false` runs plain `codex`.
+// Read at every Codex spawn (task run/resume, workflow step, post-merge hook,
+// prompt customization) to decide whether to append the flag.
+export async function isCodexYoloEnabled(
+  projectPath: string,
+): Promise<boolean> {
+  const settings = await getUserSettings(projectPath);
+  return settings.codexYolo !== false;
+}
+
 // Whether a QA-lane e2e (Playwright) terminal should AUTO-CLOSE when its run
 // finishes. Default is "stay open" (absent/false) so the user can read the
 // PASS/FAIL verdict and output; only an explicit `true` opts into auto-close.

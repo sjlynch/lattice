@@ -10,6 +10,7 @@ import { setupTaskWorktree } from '../../worktree.js';
 import { SpawnCapacityError } from '../../spawnQueue.js';
 import { normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
 import { normalizePiModel, resolvePiModel } from '../../piModels.js';
+import { isCodexYoloEnabled } from '../../userSettings.js';
 import { selectHarnessCommand } from './harnessFactory.js';
 import { assignColorSlot } from './colorSlot.js';
 
@@ -76,10 +77,14 @@ export async function startTaskById(
       ? normalizePiModel(options.requestedPiModel) ??
         (await resolvePiModel(task.projectPath))
       : undefined;
+  // Resolve the Codex `--yolo` toggle only for a Codex run (default ON).
+  const codexYolo =
+    harness === 'codex' ? await isCodexYoloEnabled(task.projectPath) : undefined;
   const selectedHarness = selectHarnessCommand(task, {
     requestedHarness: options.requestedHarness,
     mode: 'run',
     piModel,
+    codexYolo,
   });
   const result = await setupTaskWorktree(
     task.projectPath,

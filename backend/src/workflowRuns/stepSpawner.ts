@@ -22,6 +22,7 @@ import { buildAgentActivityUrl } from '../agentActivityTokens.js';
 import type { Workflow, WorkflowStepHarness } from '../workflows.js';
 import { renderHelperScript } from './renderHelperScript.js';
 import { resolveInstructionTemplate } from '../instructionTemplates.js';
+import { isCodexYoloEnabled } from '../userSettings.js';
 import {
   effectiveStepHarness,
   effectiveStepPiModel,
@@ -168,12 +169,14 @@ function spawnStepSession(args: {
   stepDir: string;
   stepFile: string;
   harness: WorkflowStepHarness;
+  codexYolo?: boolean;
 }): string {
-  const { wf, run, stepIndex, stepDir, stepFile, harness } = args;
+  const { wf, run, stepIndex, stepDir, stepFile, harness, codexYolo } = args;
   const command = buildWorkflowStepCommand(
     stepFile,
     harness,
     effectiveStepPiModel(wf, run, stepIndex),
+    codexYolo,
   );
 
   if (run.status === 'running' && run.currentStepIndex === stepIndex) {
@@ -201,7 +204,18 @@ export async function spawnWorkflowStep(
 
   await writeStepAssets({ wf, run, stepIndex, backendOrigin, stepDir, stepFile });
   await installStepCallbacks({ wf, run, stepIndex, backendOrigin, stepDir, harness });
-  const command = spawnStepSession({ wf, run, stepIndex, stepDir, stepFile, harness });
+  // Resolve the Codex `--yolo` toggle only for a Codex step (default ON).
+  const codexYolo =
+    harness === 'codex' ? await isCodexYoloEnabled(wf.projectPath) : undefined;
+  const command = spawnStepSession({
+    wf,
+    run,
+    stepIndex,
+    stepDir,
+    stepFile,
+    harness,
+    codexYolo,
+  });
 
   // Emit progress now — the step is the run's current step whether its pty
   // is spawning immediately or waiting in the queue. If cancellation raced

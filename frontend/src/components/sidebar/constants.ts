@@ -2,11 +2,14 @@ import type { TerminalSpec } from '../../TerminalsContext';
 import { isValidPiModel } from '../../harnesses';
 import type { ShellKind } from './NewTerminalDropdown';
 
+// `codex` defaults to `--yolo` (its permission bypass, the analogue of
+// claude-yolo); createTerminalSpec drops the flag when the codexYolo setting is
+// off.
 const KIND_INITIAL_COMMAND: Record<ShellKind, string | undefined> = {
   claude: 'claude',
   'claude-yolo': 'claude --dangerously-skip-permissions',
   pi: 'pi',
-  codex: 'codex',
+  codex: 'codex --yolo',
   terminal: undefined,
 };
 
@@ -29,14 +32,19 @@ export function createTerminalSpec(
   activeFolder: string,
   count: number,
   piModel?: string,
+  codexYolo?: boolean,
 ): Omit<TerminalSpec, 'id'> {
   // A Pi terminal can carry a specific model — selection is per-spawn via the
   // `--model` flag (never Pi's global settings). Validate before it reaches the
   // shell command string (the menu source is trusted, this is defence in depth).
   const usePiModel = kind === 'pi' && isValidPiModel(piModel);
+  // Codex launches with `--yolo` by default (its permission bypass); the
+  // Settings toggle can drop it. Absent codexYolo counts as ON.
   const initialCommand = usePiModel
     ? `pi --model "${piModel}"`
-    : KIND_INITIAL_COMMAND[kind];
+    : kind === 'codex' && codexYolo === false
+      ? 'codex'
+      : KIND_INITIAL_COMMAND[kind];
   const label = usePiModel
     ? `pi ${piModelShortLabel(piModel!)} ${count}`
     : `${KIND_LABEL_PREFIX[kind]} ${count}`;

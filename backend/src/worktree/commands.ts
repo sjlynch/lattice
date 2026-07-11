@@ -46,18 +46,20 @@ export function buildPiResumeCommand(taskFile: string, piModel?: string): string
   });
 }
 
-export function buildCodexCommand(taskFile: string): string {
+export function buildCodexCommand(taskFile: string, codexYolo?: boolean): string {
   const fileName = promptFileName(taskFile);
   return buildAgentCommand({
     harness: 'codex',
+    codexYolo,
     prompt: `Please read ${fileName} and complete the task described in it.`,
   });
 }
 
-export function buildCodexResumeCommand(taskFile: string): string {
+export function buildCodexResumeCommand(taskFile: string, codexYolo?: boolean): string {
   const fileName = promptFileName(taskFile);
   return buildAgentCommand({
     harness: 'codex',
+    codexYolo,
     prompt: `Please read ${fileName} and continue this task. Run 'git log --oneline -10' and 'git status' first to see any existing progress before deciding what to do next; don't redo work that's already committed.`,
   });
 }
