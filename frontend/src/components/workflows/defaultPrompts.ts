@@ -1,4 +1,4 @@
-import { Bug, FlaskConical, Lightbulb, Merge, ShieldAlert, Target, Wrench } from 'lucide-react';
+import { BookText, Bug, FlaskConical, Lightbulb, Merge, ShieldAlert, Target, Wrench } from 'lucide-react';
 import refactorPrompt from './prompts/refactor.md?raw';
 import combineTasksPrompt from './prompts/combine-tasks.md?raw';
 import pmfPrompt from './prompts/pmf.md?raw';
@@ -6,6 +6,7 @@ import brainstormPrompt from './prompts/brainstorm.md?raw';
 import bugCatcherPrompt from './prompts/bug-catcher.md?raw';
 import securityPrompt from './prompts/security.md?raw';
 import testCoveragePrompt from './prompts/test-coverage.md?raw';
+import documentationPrompt from './prompts/documentation.md?raw';
 
 export type DefaultPrompt = {
   id: string;
@@ -67,5 +68,12 @@ export const DEFAULT_PROMPTS: DefaultPrompt[] = [
     label: 'Brainstorm',
     icon: Lightbulb,
     prompt: brainstormPrompt,
+  },
+  {
+    id: 'documentation',
+    title: 'Documentation',
+    label: 'Documentation',
+    icon: BookText,
+    prompt: documentationPrompt,
   },
 ];

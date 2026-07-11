@@ -9,7 +9,8 @@ export type PromptTemplateId =
   | 'pmf'
   | 'security'
   | 'test-coverage'
-  | 'brainstorm';
+  | 'brainstorm'
+  | 'documentation';
 
 export type PromptTemplateMatchInput = {
   title: string;
@@ -75,6 +76,13 @@ const PROMPT_TEMPLATE_METADATA: readonly PromptTemplateMetadata[] = [
     matches: ({ title, prompt }) =>
       title.includes('brainstorm') ||
       prompt.startsWith('brainstorm 3–5 distinct approaches'),
+  },
+  {
+    id: 'documentation',
+    title: 'Documentation',
+    matches: ({ title, prompt }) =>
+      title.includes('documentation') ||
+      prompt.startsWith('survey this project and bring its documentation'),
   },
 ];
 
