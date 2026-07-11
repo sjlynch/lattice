@@ -81,12 +81,6 @@ export function SettingsDialog({
             >
               <Icon size={12} />
               {label}
-              <span
-                className={`settings-tab-scope ${scope}`}
-                aria-label={scope === 'global' ? 'Global setting' : 'Per-project setting'}
-              >
-                {scope === 'global' ? 'Global' : 'Project'}
-              </span>
               {dirtyByTab[id] && (
                 <span className="settings-tab-dirty" aria-label="Unsaved changes" />
               )}

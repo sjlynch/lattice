@@ -48,25 +48,6 @@
   color: var(--text-primary);
   background: var(--bg-active);
 }
-/* Scope badge — Global (machine-wide) vs Project (active folder). */
-.settings-tab-scope {
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  padding: 1px 4px;
-  border-radius: var(--radius-pill);
-  color: var(--text-tertiary);
-  background: var(--bg-active);
-}
-.settings-tab-scope.global {
-  color: #c89cff;
-  background: rgba(200, 156, 255, 0.14);
-}
-.settings-tab-scope.project {
-  color: #7fc4ff;
-  background: rgba(106, 169, 255, 0.12);
-}
 /* Unsaved-changes dot on a tab whose drafts differ from what was loaded. */
 .settings-tab-dirty {
   width: 6px;
