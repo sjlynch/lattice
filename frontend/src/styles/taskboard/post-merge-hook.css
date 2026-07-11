@@ -80,7 +80,7 @@
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 999px;
-  background: var(--surface-2);
+  background: var(--bg-elev);
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -93,22 +93,22 @@
 }
 
 .post-merge-hook-chip-ok {
-  background: color-mix(in srgb, var(--accent, #6c8cff) 18%, var(--surface-2));
+  background: color-mix(in srgb, var(--accent, #6c8cff) 18%, var(--bg-elev));
   color: var(--text-primary);
 }
 
 .post-merge-hook-chip-warn {
-  background: color-mix(in srgb, var(--danger, #d05050) 25%, var(--surface-2));
+  background: color-mix(in srgb, var(--danger, #d05050) 25%, var(--bg-elev));
   color: var(--text-primary);
 }
 
 .post-merge-hook-chip-idle {
-  background: color-mix(in srgb, var(--accent, #6c8cff) 12%, var(--surface-2));
+  background: color-mix(in srgb, var(--accent, #6c8cff) 12%, var(--bg-elev));
   color: var(--text-secondary);
 }
 
 .post-merge-hook-chip-off {
-  background: var(--surface-2);
+  background: var(--bg-elev);
   color: var(--text-tertiary);
 }
 
@@ -154,7 +154,7 @@
   padding: 3px 8px;
   font-size: 11px;
   border: 1px solid var(--border, #2c2c3a);
-  background: var(--surface-1);
+  background: var(--bg-elev);
   color: var(--text-primary);
   cursor: pointer;
 }
@@ -166,7 +166,7 @@
 
 .post-merge-hook-btn-ghost:hover,
 .post-merge-hook-btn-danger:hover {
-  background: var(--surface-2);
+  background: var(--bg-elev);
 }
 
 .post-merge-hook-form {
@@ -180,7 +180,7 @@
 .post-merge-hook-textarea {
   width: 100%;
   resize: vertical;
-  background: var(--surface-1);
+  background: var(--bg-elev);
   color: var(--text-primary);
   border: 1px solid var(--border, #2c2c3a);
   border-radius: 6px;
@@ -212,7 +212,7 @@
 }
 
 .post-merge-hook-field select {
-  background: var(--surface-1);
+  background: var(--bg-elev);
   color: var(--text-primary);
   border: 1px solid var(--border, #2c2c3a);
   border-radius: 5px;
@@ -225,6 +225,26 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.post-merge-hook-field select:hover,
+.post-merge-hook-field select:focus {
+  border-color: var(--accent, #6c8cff);
+  outline: none;
+}
+
+/* On-theme dropdown list: the native <option> popup would otherwise render
+   with a light OS background and inherit the control's light text — the
+   white-on-white the theme fix is about. Pin it to the panel surface and use
+   the app accent for the checked entry (same pattern as workflow step rows). */
+.post-merge-hook-field select option {
+  background: var(--bg-elev);
+  color: var(--text-primary);
+}
+
+.post-merge-hook-field select option:checked {
+  background: var(--accent-bg);
+  color: var(--text-primary);
 }
 
 .post-merge-hook-hint {
