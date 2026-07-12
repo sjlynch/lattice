@@ -18,7 +18,8 @@ owns the node-pty processes.
 - `launchContext.ts` — `buildSessionLaunchContext`: resolves shell, cwd
   (validated to exist — refusing a doomed spawn that would feed a reconnect
   loop), size, projectPath, and the env (Lattice breadcrumb vars +
-  `$LATTICE_DOCS`); calls `windowsPath` + `envSetup` to shape PATH/overhead env.
+  `$LATTICE_DOCS`); calls `windowsPath` + `envSetup` to shape PATH/overhead env,
+  then routes the initial command through `codexTrust`.
   Shell resolution is `resolveDefaultShell(env, platform)` (exported, injectable
   for tests): per-spawn `opts.shell` → `LATTICE_DEFAULT_SHELL` env override (the
   detached terminal-server can't read settings files, so the escape hatch is
@@ -36,6 +37,12 @@ owns the node-pty processes.
   `DISABLE_AUTOUPDATER`/`DISABLE_TELEMETRY`/… vars so each spawned Claude skips
   per-launch overhead (multiplied under fan-out). Defaults only — never
   overrides a value the user set.
+- `codexTrust.ts` — recognizes Lattice-started `codex` initial commands and
+  injects Codex's one-shot `--config projects.<cwd>.trust_level='trusted'`
+  override. The dynamic TOML value rides in the child PTY environment with
+  shell-specific expansion syntax, so paths are not interpolated into shell
+  source. This trusts the cwd only for that Codex process and never writes the
+  user's `~/.codex/config.toml`.
 - `createSession.ts` — `createSession`: the spawn orchestrator (session-cap
   check → `buildSessionLaunchContext` → `pty.spawn` → build `Session` →
   `addSession` → `wireSessionPtyEvents` + banner + initialCommand).

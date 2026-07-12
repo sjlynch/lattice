@@ -5,6 +5,7 @@ import { canonicalProjectPath, projectHash } from '../projectPath.js';
 import type { CreateOpts } from './sessionTypes.js';
 import { applyFreshWindowsPath } from './windowsPath.js';
 import { applyClaudeOverheadEnv } from './envSetup.js';
+import { configureCodexProjectTrust } from './codexTrust.js';
 
 // Resolve the pty's default shell. Order: explicit per-spawn override
 // (`opts.shell`, handled by the caller) → `LATTICE_DEFAULT_SHELL` operator
@@ -41,6 +42,7 @@ export type SessionLaunchContext = {
   projectPath: string;
   env: { [key: string]: string };
   docPath: string | null;
+  initialCommand?: string;
 };
 
 export function buildSessionLaunchContext(
@@ -82,14 +84,23 @@ export function buildSessionLaunchContext(
   applyFreshWindowsPath(baseEnv);
   applyClaudeOverheadEnv(baseEnv);
 
+  const env = { ...baseEnv, ...latticeEnv };
+  const initialCommand = configureCodexProjectTrust(
+    opts.initialCommand,
+    cwd,
+    shell,
+    env,
+  );
+
   return {
     shell,
     cwd,
     cols,
     rows,
     projectPath,
-    env: { ...baseEnv, ...latticeEnv },
+    env,
     docPath,
+    initialCommand,
   };
 }
 

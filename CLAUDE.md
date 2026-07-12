@@ -377,6 +377,12 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   `<TerminalPane>` only on first activation. This keeps "Run All" from
   blowing past Chrome's per-page WebGL context cap, since each xterm
   WebglAddon allocates its own context.
+- **Codex trust is per terminal, not global.** The detached terminal launch
+  context recognizes a Codex initial command and injects the documented
+  one-shot `projects.<cwd>.trust_level='trusted'` config override through a
+  child-only environment variable. Lattice-spawned Codex agents therefore skip
+  the folder-trust gate without writing `~/.codex/config.toml` or changing
+  Codex sessions launched outside Lattice.
 
 ## Ports
 

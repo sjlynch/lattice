@@ -59,8 +59,10 @@ export function createSessionHandler(
       // the body. Keeping resolution out of this long-lived detached process is
       // what lets a spawn-policy change be a backend-only edit (no respawn,
       // never stale). Best-effort + Claude-only: `applyClaudeProjectConfig`
-      // swallows its own errors, and pi/codex have no trust gate so applying for
-      // them would just churn the config file.
+      // swallows its own errors, and applying Claude's config format for
+      // pi/codex would just churn an unrelated file. Codex trust is handled
+      // separately by the PTY launch context as a process-local `--config`
+      // override.
       const isClaudeCmd = /^\s*claude\b/.test(body.initialCommand ?? '');
       if (body.cwd && isClaudeCmd) {
         await applyConfig(body.cwd, {

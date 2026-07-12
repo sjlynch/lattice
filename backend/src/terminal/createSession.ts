@@ -88,7 +88,7 @@ export function createSession(
 
   wireSessionPtyEvents(session);
   addLatticeBanner(session, context.docPath);
-  scheduleInitialCommand(term, opts.initialCommand);
+  scheduleInitialCommand(term, context.initialCommand);
 
   return session;
 }
