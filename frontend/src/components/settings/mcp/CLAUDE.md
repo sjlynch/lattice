@@ -13,3 +13,8 @@ MCP-tab-only UI rendered by `settings/McpTab.tsx`.
   with the dialog footer.
 - Keep Playwright's global MCP toggle distinct from the QA-lane Playwright
   setting; see `backend/src/mcp/CLAUDE.md` for the split.
+- The Playwright row carries a cross-harness **"Show browser"** switch
+  (`McpServerRow`'s `HeadedToggle` → `mcpPlaywrightHeaded`) that runs the browser
+  headed for the sessions it's enabled in. It saves with the dialog footer like
+  the enable toggles (its own `headedTouched` clobber-guard in `McpTab`), and is
+  independent of the QA lane's own headed/headless eye switch.

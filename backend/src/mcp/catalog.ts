@@ -69,14 +69,23 @@ export const BUILTIN_MCP_SERVERS: McpServerEntry[] = [
     id: 'playwright',
     label: 'Playwright',
     description:
-      'Browser automation for end-to-end / QA testing. Toggle it from the QA ' +
-      'lane; the headless switch there controls --headless.',
+      'Browser automation for end-to-end / QA testing. Enable it per harness, ' +
+      'then flip "Show browser" to run it headed (a visible window) when you ' +
+      'want to watch. The QA lane has its own separate Playwright toggle.',
     transport: 'stdio',
     command: 'npx',
-    args: ['-y', '@playwright/mcp@latest'],
+    // `--isolated` is REQUIRED, not optional: `@playwright/mcp` otherwise reuses
+    // ONE shared persistent profile dir (`%LOCALAPPDATA%/ms-playwright-mcp/
+    // mcp-chrome-<hash>`), and a SECOND instance wanting it dies with "Browser is
+    // already in use … use --isolated to run multiple instances". Lattice injects
+    // Playwright into many concurrent sessions (several Pi/Codex/Claude agents, a
+    // QA run alongside a sidebar terminal, …), so a shared profile means only one
+    // can run at a time. `--isolated` gives each session its own in-memory profile
+    // (discarded on close) — no lock, no collision, clean slate per run.
+    args: ['-y', '@playwright/mcp@latest', '--isolated'],
     runtime: 'node',
     runtimeNote: 'First run downloads browsers, so the first QA spawn is slow.',
-    harnessSupport: { claude: true, codex: true, pi: false },
+    harnessSupport: { claude: true, codex: true, pi: true },
     builtin: true,
   },
   {
@@ -90,7 +99,7 @@ export const BUILTIN_MCP_SERVERS: McpServerEntry[] = [
     args: ['-y', 'chrome-devtools-mcp@latest'],
     runtime: 'node',
     runtimeNote: 'Needs Node 22+ and an installed Chrome.',
-    harnessSupport: { claude: true, codex: true, pi: false },
+    harnessSupport: { claude: true, codex: true, pi: true },
     builtin: true,
   },
   {
@@ -103,7 +112,7 @@ export const BUILTIN_MCP_SERVERS: McpServerEntry[] = [
     command: 'npx',
     args: ['-y', '@upstash/context7-mcp'],
     runtime: 'node',
-    harnessSupport: { claude: true, codex: true, pi: false },
+    harnessSupport: { claude: true, codex: true, pi: true },
     builtin: true,
   },
   {
@@ -120,7 +129,7 @@ export const BUILTIN_MCP_SERVERS: McpServerEntry[] = [
       label: 'Brave Search API key',
       getKeyUrl: 'https://api-dashboard.search.brave.com/app/keys',
     },
-    harnessSupport: { claude: true, codex: true, pi: false },
+    harnessSupport: { claude: true, codex: true, pi: true },
     builtin: true,
   },
 ];

@@ -1,0 +1,177 @@
+// Pi MCP shaping + config reconcile: the Pi shaper (resolvePiServers /
+// toPiServerConfig) and the `.pi/mcp.json` marker reconcile
+// (reconcilePiMcpDocument). Companion to mcp.harness.test.ts (Codex) and
+// mcp.resolver.test.ts (Claude).
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { resolvePiServers } from '../mcp/registry.js';
+import { toPiServerConfig } from '../mcp/piServerConfig.js';
+import { reconcilePiMcpDocument } from '../piMcp/config.js';
+import {
+  BUILTIN_MCP_SERVERS,
+  builtinMcpServerById,
+  type McpServerEntry,
+} from '../mcp/catalog.js';
+
+// ---- toPiServerConfig ----
+
+test('toPiServerConfig: stdio Playwright — eager lifecycle, direct tools, headless arg, no secret env', () => {
+  const pw = builtinMcpServerById('playwright')!;
+  const { config, env } = toPiServerConfig(pw, undefined, true);
+  assert.equal(config.lifecycle, 'eager');
+  assert.equal(config.directTools, true); // register tools individually (parity)
+  assert.ok(config.args?.includes('--headless'));
+  // `--isolated` so concurrent Pi sessions don't collide on the shared profile.
+  assert.ok(config.args?.includes('--isolated'));
+  assert.deepEqual(env, {});
+  if (process.platform === 'win32') {
+    assert.equal(config.command, 'cmd'); // platformized npx
+    assert.deepEqual(config.args?.slice(0, 2), ['/c', 'npx']);
+  } else {
+    assert.equal(config.command, 'npx');
+  }
+});
+
+test('toPiServerConfig: headless=false omits --headless', () => {
+  const pw = builtinMcpServerById('playwright')!;
+  assert.ok(!toPiServerConfig(pw, undefined, false).config.args?.includes('--headless'));
+});
+
+test('toPiServerConfig: a stored stdio secret rides the pty env, NOT the JSON file', () => {
+  const brave = builtinMcpServerById('brave-search')!;
+  const { config, env } = toPiServerConfig(brave, { BRAVE_API_KEY: 'sk-secret' }, false);
+  // Value only in the pty-env map; nothing secret in the config the extension
+  // reads (it inherits the child's process.env — no ${VAR} interpolation).
+  assert.deepEqual(env, { BRAVE_API_KEY: 'sk-secret' });
+  assert.equal(config.env, undefined);
+  assert.ok(!JSON.stringify(config).includes('sk-secret'));
+});
+
+test('toPiServerConfig: http references a secret header via ${VAR}, value in pty env only', () => {
+  const entry: McpServerEntry = {
+    id: 'remote-api',
+    label: 'Remote',
+    description: '',
+    transport: 'http',
+    url: 'https://x/mcp',
+    headers: { Accept: 'application/json' },
+    secretHeaders: ['Authorization'],
+    runtime: 'remote',
+    harnessSupport: { claude: true, codex: true, pi: true },
+  };
+  const { config, env } = toPiServerConfig(entry, { Authorization: 'Bearer sk-1' }, false);
+  // Adapter infers transport from `url` presence — the type carries no
+  // `transport` field (enforced at compile time).
+  assert.equal(config.url, 'https://x/mcp');
+  assert.equal(config.lifecycle, 'eager');
+  assert.equal(config.directTools, true);
+  // Static header kept verbatim; the secret header is a ${VAR} reference the
+  // adapter interpolates at spawn — the literal never lands in the JSON file.
+  const varName = 'LATTICE_MCP_REMOTE_API_AUTHORIZATION';
+  assert.deepEqual(config.headers, {
+    Accept: 'application/json',
+    Authorization: `\${${varName}}`,
+  });
+  assert.ok(!JSON.stringify(config).includes('sk-1'));
+  // Value only in the pty-env map, under the shared Codex/Pi naming.
+  assert.deepEqual(env, { [varName]: 'Bearer sk-1' });
+});
+
+test('toPiServerConfig: http with an unfilled secret header omits it (no empty ref)', () => {
+  const entry: McpServerEntry = {
+    id: 'remote-api',
+    label: 'Remote',
+    description: '',
+    transport: 'http',
+    url: 'https://x/mcp',
+    secretHeaders: ['Authorization'],
+    runtime: 'remote',
+    harnessSupport: { claude: true, codex: true, pi: true },
+  };
+  const { config, env } = toPiServerConfig(entry, undefined, false);
+  // No stored value → the header is left for the user to supply; nothing emitted.
+  assert.equal(config.headers, undefined);
+  assert.deepEqual(env, {});
+});
+
+// ---- resolvePiServers ----
+
+test('resolvePiServers: reads mcpHarnessOverrides.pi only, keyed by server id', () => {
+  const settings = { mcpHarnessOverrides: { pi: { playwright: true, context7: true } } };
+  const { mcpServers, env } = resolvePiServers(BUILTIN_MCP_SERVERS, settings, {});
+  assert.deepEqual(Object.keys(mcpServers).sort(), ['context7', 'playwright']);
+  assert.deepEqual(env, {});
+  // Claude / Codex maps don't leak into Pi.
+  assert.deepEqual(
+    resolvePiServers(BUILTIN_MCP_SERVERS, { mcpOverrides: { context7: true } }, {}),
+    { mcpServers: {}, env: {} },
+  );
+  assert.deepEqual(
+    resolvePiServers(
+      BUILTIN_MCP_SERVERS,
+      { mcpHarnessOverrides: { codex: { context7: true } } },
+      {},
+    ),
+    { mcpServers: {}, env: {} },
+  );
+});
+
+test('resolvePiServers: aggregates secret env for enabled keyed servers', () => {
+  const settings = { mcpHarnessOverrides: { pi: { 'brave-search': true } } };
+  const { mcpServers, env } = resolvePiServers(BUILTIN_MCP_SERVERS, settings, {
+    'brave-search': { BRAVE_API_KEY: 'sk-z' },
+  });
+  assert.ok('brave-search' in mcpServers);
+  assert.deepEqual(env, { BRAVE_API_KEY: 'sk-z' });
+});
+
+// ---- reconcilePiMcpDocument: the .pi/mcp.json marker reconcile ----
+
+const cfg = (command: string) => ({ command, lifecycle: 'eager' as const });
+
+test('reconcile: adds managed servers + writes the marker on a fresh doc', () => {
+  const out = reconcilePiMcpDocument({}, { playwright: cfg('cmd') });
+  assert.deepEqual(out?.mcpServers, { playwright: cfg('cmd') });
+  assert.deepEqual(out?.__latticeManagedMcp, ['playwright']);
+});
+
+test('reconcile: preserves the user’s own servers, only manages ours', () => {
+  const existing = {
+    mcpServers: { myServer: { command: 'node' } },
+  };
+  const out = reconcilePiMcpDocument(existing, { playwright: cfg('cmd') });
+  assert.deepEqual(out?.mcpServers, {
+    myServer: { command: 'node' },
+    playwright: cfg('cmd'),
+  });
+  assert.deepEqual(out?.__latticeManagedMcp, ['playwright']);
+});
+
+test('reconcile: strips a previously-managed server that is now disabled', () => {
+  const existing = {
+    mcpServers: { myServer: { command: 'node' }, playwright: cfg('cmd'), context7: cfg('cmd') },
+    __latticeManagedMcp: ['playwright', 'context7'],
+  };
+  // Now only context7 is managed → playwright (ours) is removed, myServer (user) stays.
+  const out = reconcilePiMcpDocument(existing, { context7: cfg('cmd') });
+  assert.deepEqual(Object.keys(out!.mcpServers!).sort(), ['context7', 'myServer']);
+  assert.deepEqual(out?.__latticeManagedMcp, ['context7']);
+});
+
+test('reconcile: managed→empty strips all ours + drops the marker', () => {
+  const existing = {
+    mcpServers: { myServer: { command: 'node' }, playwright: cfg('cmd') },
+    __latticeManagedMcp: ['playwright'],
+  };
+  const out = reconcilePiMcpDocument(existing, {});
+  assert.deepEqual(out?.mcpServers, { myServer: { command: 'node' } });
+  assert.ok(!('__latticeManagedMcp' in out!));
+});
+
+test('reconcile: no managed + no prior marker → null (skip the write entirely)', () => {
+  assert.equal(reconcilePiMcpDocument({}, {}), null);
+  assert.equal(
+    reconcilePiMcpDocument({ mcpServers: { userOwn: { command: 'x' } } }, {}),
+    null,
+  );
+});

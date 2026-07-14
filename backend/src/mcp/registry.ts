@@ -22,6 +22,8 @@ import {
 import type { ClaudeMcpServerConfig } from './claudeInject.js';
 import { resolvePlaywright } from './resolverPolicy.js';
 import { toClaudeConfig } from './claudeServerConfig.js';
+import { toCodexServerConfig } from './codexServerConfig.js';
+import { toPiServerConfig, type PiMcpServerConfig } from './piServerConfig.js';
 import { applyBuiltinOverride } from './settingsValidation.js';
 
 // The full catalog the user sees: built-ins (with any per-id override applied),
@@ -65,48 +67,176 @@ export type McpResolveContext = {
   isQaRun?: boolean;
 };
 
-// The PURE resolver core: given the already-loaded catalog, project settings,
-// secrets, and spawn context, decide the enabled Claude server set. No I/O —
-// this is the unit of logic worth testing exhaustively (all-off default, global
-// vs QA-only Playwright + headless flag, secret inject-vs-omit, harnessSupport
-// filter, custom merge). `effectiveMcpServers` is the thin I/O wrapper around it.
-export function resolveClaudeServers(
-  catalog: McpServerEntry[],
-  settings: Pick<UserSettings, 'mcpOverrides' | 'qaPlaywright'>,
-  secrets: McpSecrets,
-  ctx: McpResolveContext = {},
-): Record<string, ClaudeMcpServerConfig> {
-  const isQaRun = ctx.isQaRun === true;
+// The per-project settings the resolver reads. `mcpOverrides` is CLAUDE's map
+// (plus the Playwright global toggle); `mcpHarnessOverrides` is the nested
+// codex/pi map; `qaPlaywright` is the Claude-only QA scope.
+type ResolveSettings = Pick<
+  UserSettings,
+  'mcpOverrides' | 'qaPlaywright' | 'mcpHarnessOverrides' | 'mcpPlaywrightHeaded'
+>;
 
-  const out: Record<string, ClaudeMcpServerConfig> = {};
+// One entry that survived the enable + harness-support filter, paired with the
+// data a per-harness shaper needs (its stored secrets + the computed Playwright
+// headless flag). This is the harness-NEUTRAL core the three shapers share.
+export type ResolvedMcpEntry = {
+  entry: McpServerEntry;
+  serverSecrets: Record<string, string> | undefined;
+  // Meaningful only for the Playwright entry (see resolvePlaywright).
+  headless: boolean;
+};
+
+// Is this server toggled on for `harness`? Claude reads the legacy `mcpOverrides`
+// map; codex/pi read the nested `mcpHarnessOverrides[harness]` map. Default OFF
+// everywhere (the all-off invariant).
+function harnessToggleOn(
+  settings: ResolveSettings,
+  harness: AgentHarness,
+  id: string,
+): boolean {
+  if (harness === 'claude') return settings.mcpOverrides?.[id] === true;
+  return settings.mcpHarnessOverrides?.[harness]?.[id] === true;
+}
+
+// The PURE, harness-neutral resolver core: given the loaded catalog, project
+// settings, secrets, target harness, and spawn context, decide the enabled
+// entry set. No I/O — this is the unit of logic worth testing exhaustively
+// (all-off default, per-harness independence, global vs QA-only Playwright +
+// headless flag, harnessSupport filter, custom merge). The three per-harness
+// shapers (`resolveClaudeServers` / `resolveCodexServers` / `resolvePiServers`)
+// map this into their own config shapes.
+export function resolveMcpEntries(
+  catalog: McpServerEntry[],
+  settings: ResolveSettings,
+  secrets: McpSecrets,
+  harness: AgentHarness,
+  ctx: McpResolveContext = {},
+): ResolvedMcpEntry[] {
+  const isQaRun = ctx.isQaRun === true;
+  const out: ResolvedMcpEntry[] = [];
   for (const entry of catalog) {
-    if (!harnessSupports(entry.harnessSupport, 'claude')) continue;
+    if (!harnessSupports(entry.harnessSupport, harness)) continue;
+    let enabled = false;
+    let headless = false;
     if (entry.id === 'playwright') {
-      // Playwright has two scopes (global vs QA-only) and a computed headless
-      // flag, so it doesn't go through the plain `mcpOverrides` gate.
-      const pw = resolvePlaywright(settings, isQaRun);
-      if (!pw.enabled) continue;
-      out[entry.id] = toClaudeConfig(entry, secrets[entry.id], pw.headless);
+      if (harness === 'claude') {
+        // Claude Playwright has two scopes (global vs QA-only) + a computed
+        // headless flag, so it doesn't go through the plain toggle gate.
+        const pw = resolvePlaywright(settings, isQaRun);
+        enabled = pw.enabled;
+        headless = pw.headless;
+      } else {
+        // codex/pi: a plain per-harness toggle (no QA scope — the QA runner
+        // stays Claude-only; see the plan D7). Headless unless the MCP-tab
+        // "headed" toggle is on — the same `mcpPlaywrightHeaded` opt-in Claude's
+        // global toggle honors, so "watch the browser" works across all harnesses.
+        enabled = harnessToggleOn(settings, harness, entry.id);
+        headless = settings.mcpPlaywrightHeaded !== true;
+      }
     } else {
-      // Everything else: the per-project `mcpOverrides[id]` toggle, default OFF.
-      if (settings.mcpOverrides?.[entry.id] !== true) continue;
-      out[entry.id] = toClaudeConfig(entry, secrets[entry.id], false);
+      enabled = harnessToggleOn(settings, harness, entry.id);
     }
+    if (!enabled) continue;
+    out.push({ entry, serverSecrets: secrets[entry.id], headless });
   }
   return out;
 }
 
-// The spawn-path resolver: server name → Claude config for everything enabled
-// for `projectPath` and supported by `harness`. Returns {} for harnesses without
-// MCP support yet (codex v2, pi until the plugin lands). `ctx.isQaRun` opts the
+// Claude shaper: enabled entry set → Claude `mcpServers` config. Thin wrapper
+// over the neutral core; kept as the stable name the Claude apply path imports.
+export function resolveClaudeServers(
+  catalog: McpServerEntry[],
+  settings: ResolveSettings,
+  secrets: McpSecrets,
+  ctx: McpResolveContext = {},
+): Record<string, ClaudeMcpServerConfig> {
+  const out: Record<string, ClaudeMcpServerConfig> = {};
+  for (const { entry, serverSecrets, headless } of resolveMcpEntries(
+    catalog,
+    settings,
+    secrets,
+    'claude',
+    ctx,
+  )) {
+    out[entry.id] = toClaudeConfig(entry, serverSecrets, headless);
+  }
+  return out;
+}
+
+// The resolved Codex spawn payload: one inline-TOML `-c` override string per
+// enabled server (the terminal-server turns each into a `--config` arg with
+// shell-correct env-var referencing) and the secret env the child pty carries.
+export type CodexMcpResolution = {
+  configArgs: string[];
+  env: Record<string, string>;
+};
+
+// Codex shaper: enabled entry set → `-c` override args + secret env. Codex has
+// no QA-scoped Playwright, so ctx is always the default.
+export function resolveCodexServers(
+  catalog: McpServerEntry[],
+  settings: ResolveSettings,
+  secrets: McpSecrets,
+): CodexMcpResolution {
+  const configArgs: string[] = [];
+  const env: Record<string, string> = {};
+  for (const { entry, serverSecrets, headless } of resolveMcpEntries(
+    catalog,
+    settings,
+    secrets,
+    'codex',
+    {},
+  )) {
+    const shaped = toCodexServerConfig(entry, serverSecrets, headless);
+    configArgs.push(shaped.configArg);
+    Object.assign(env, shaped.env);
+  }
+  return { configArgs, env };
+}
+
+// The resolved Pi spawn payload: the `mcpServers` map for `<cwd>/.pi/mcp.json`
+// (server id → config, read by pi-mcp-adapter) and the secret env the child
+// pty carries (stdio secrets the adapter inherits via process.env).
+export type PiMcpResolution = {
+  mcpServers: Record<string, PiMcpServerConfig>;
+  env: Record<string, string>;
+};
+
+// Pi shaper: enabled entry set → `.pi/mcp.json` server map + secret env. Like
+// Codex, Pi has no QA-scoped Playwright.
+export function resolvePiServers(
+  catalog: McpServerEntry[],
+  settings: ResolveSettings,
+  secrets: McpSecrets,
+): PiMcpResolution {
+  const mcpServers: Record<string, PiMcpServerConfig> = {};
+  const env: Record<string, string> = {};
+  for (const { entry, serverSecrets, headless } of resolveMcpEntries(
+    catalog,
+    settings,
+    secrets,
+    'pi',
+    {},
+  )) {
+    const shaped = toPiServerConfig(entry, serverSecrets, headless);
+    mcpServers[entry.id] = shaped.config;
+    Object.assign(env, shaped.env);
+  }
+  return { mcpServers, env };
+}
+
+// The Claude spawn-path resolver: server name → Claude config for everything
+// enabled for `projectPath` and supported by Claude. `ctx.isQaRun` opts the
 // spawn into the QA-scoped Playwright (see `resolvePlaywright`); omit it for
 // ordinary sessions (task / sidebar / push / workflow / project-root reconcile).
+// Codex/Pi have their own resolvers (`resolveManagedCodexServers` /
+// `resolveManagedPiServers`) since their config shapes differ.
 export async function effectiveMcpServers(
   projectPath: string,
   harness: AgentHarness,
   ctx: McpResolveContext = {},
 ): Promise<Record<string, ClaudeMcpServerConfig>> {
-  // v1 only injects into Claude; short-circuit other harnesses.
+  // This resolver returns CLAUDE's config shape; other harnesses shape
+  // differently and go through their own resolver.
   if (harness !== 'claude') return {};
 
   const [catalog, settings, secrets] = await Promise.all([
@@ -135,6 +265,53 @@ export async function resolveManagedClaudeServers(
   } catch (err) {
     console.warn(
       `[mcp] resolve failed for ${projectPath}: ${(err as Error).message}`,
+    );
+    return null;
+  }
+}
+
+// Best-effort Codex analogue of `resolveManagedClaudeServers`: resolve the
+// enabled Codex `-c` overrides + secret env for `projectPath`, returning `null`
+// (not throwing) so a resolve failure degrades to a plain Codex spawn and never
+// blocks it. Called by the spawn chokepoint (`resolveHarnessSpawnBody`), which
+// ships the result to the terminal-server; the terminal-server injects the
+// `--config` args + pty env (no policy resolution there). See mcp/CLAUDE.md.
+export async function resolveManagedCodexServers(
+  projectPath: string,
+): Promise<CodexMcpResolution | null> {
+  try {
+    const [catalog, settings, secrets] = await Promise.all([
+      mergedCatalog(),
+      getUserSettings(projectPath),
+      readMcpSecrets(),
+    ]);
+    return resolveCodexServers(catalog, settings, secrets);
+  } catch (err) {
+    console.warn(
+      `[mcp] codex resolve failed for ${projectPath}: ${(err as Error).message}`,
+    );
+    return null;
+  }
+}
+
+// Best-effort Pi analogue: resolve the enabled Pi server map + secret env for
+// `projectPath`, returning `null` (not throwing) so a resolve failure degrades
+// to a plain Pi spawn. Called by the Pi spawn chokepoint (`applyPiMcpForSpawn`),
+// which writes `<cwd>/.pi/mcp.json` + the extension shim and ships the secret
+// env to the pty. See mcp/CLAUDE.md.
+export async function resolveManagedPiServers(
+  projectPath: string,
+): Promise<PiMcpResolution | null> {
+  try {
+    const [catalog, settings, secrets] = await Promise.all([
+      mergedCatalog(),
+      getUserSettings(projectPath),
+      readMcpSecrets(),
+    ]);
+    return resolvePiServers(catalog, settings, secrets);
+  } catch (err) {
+    console.warn(
+      `[mcp] pi resolve failed for ${projectPath}: ${(err as Error).message}`,
     );
     return null;
   }

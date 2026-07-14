@@ -4,11 +4,14 @@ import type { ShellKind } from './NewTerminalDropdown';
 
 // `codex` defaults to `--yolo` (its permission bypass, the analogue of
 // claude-yolo); createTerminalSpec drops the flag when the codexYolo setting is
-// off.
+// off. `pi` carries `--approve` (its project-trust flag) so official Pi ≥0.74
+// loads Lattice's cwd-local `.pi/extensions/` shims (MCP adapter, subagents,
+// completion) + `.pi/mcp.json` at the project root — same flag the backend adds
+// at every spawn site (agentCommandBuilder.ts). Per-run trust only.
 const KIND_INITIAL_COMMAND: Record<ShellKind, string | undefined> = {
   claude: 'claude',
   'claude-yolo': 'claude --dangerously-skip-permissions',
-  pi: 'pi',
+  pi: 'pi --approve',
   codex: 'codex --yolo',
   terminal: undefined,
 };
@@ -41,7 +44,7 @@ export function createTerminalSpec(
   // Codex launches with `--yolo` by default (its permission bypass); the
   // Settings toggle can drop it. Absent codexYolo counts as ON.
   const initialCommand = usePiModel
-    ? `pi --model "${piModel}"`
+    ? `pi --approve --model "${piModel}"`
     : kind === 'codex' && codexYolo === false
       ? 'codex'
       : KIND_INITIAL_COMMAND[kind];

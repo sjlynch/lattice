@@ -57,3 +57,7 @@ LATTICE_TASK.md
 
 # lattice-managed (do not remove)
 .pi/extensions/lattice-subagents.ts
+
+# lattice-managed (do not remove)
+.pi/extensions/lattice-mcp.ts
+.pi/mcp.json

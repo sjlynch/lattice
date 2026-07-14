@@ -9,13 +9,19 @@ export type TerminalSessionRequestBody = {
   rows?: number;
   initialCommand?: string;
   projectPath?: string;
-  // Pre-resolved by the BACKEND (terminalServerClient.resolveClaudeSpawnBody)
+  // Pre-resolved by the BACKEND (terminalServerClient.resolveHarnessSpawnBody)
   // and applied verbatim here — the terminal-server resolves no policy.
-  // `managedMcpServers` is the server set to reconcile into `projects[<cwd>]`
-  // (or `null` for a trust-only seed); `disableClaudeMemory` is the resolved
-  // auto-memory opt-out for the pty env.
+  // `managedMcpServers` is the CLAUDE server set to reconcile into
+  // `projects[<cwd>]` (or `null` for a trust-only seed); `disableClaudeMemory`
+  // is the resolved auto-memory opt-out for the pty env.
   managedMcpServers?: Record<string, ClaudeMcpServerConfig> | null;
   disableClaudeMemory?: boolean;
+  // CODEX MCP: the backend-resolved inline-TOML `-c` override strings (one per
+  // enabled server). Turned into `--config` args by the pty launch context
+  // (configureCodexProjectMcp). `managedMcpEnv` carries the secret env values
+  // those overrides reference by name — merged into the child pty env only.
+  managedCodexConfigArgs?: string[];
+  managedMcpEnv?: Record<string, string>;
 };
 
 export type CreateSessionHandlerDeps = {
@@ -76,6 +82,10 @@ export function createSessionHandler(
         initialCommand: body.initialCommand,
         projectPath: body.projectPath,
         disableClaudeMemory: body.disableClaudeMemory ?? false,
+        // Codex MCP: applied by the launch context (config args → `--config`
+        // flags, secret env → child pty env). No-ops for non-Codex spawns.
+        managedCodexConfigArgs: body.managedCodexConfigArgs,
+        managedMcpEnv: body.managedMcpEnv,
       });
       if ('error' in result) {
         // A hard-cap refusal is 503 ("at capacity") so the backend proxy can

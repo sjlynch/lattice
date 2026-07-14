@@ -43,7 +43,10 @@ export function McpAddCustom({ existingIds, onAdd }: Props) {
       description: 'Custom server.',
       transport,
       runtime: transport === 'http' ? 'remote' : 'node',
-      harnessSupport: { claude: true, codex: true, pi: false },
+      // Supported on all three harnesses by default; the per-harness row toggles
+      // gate which actually load it. (Pi HTTP auth-header secrets aren't
+      // supported — stdio custom servers are the fully-featured Pi case.)
+      harnessSupport: { claude: true, codex: true, pi: true },
       builtin: false,
     };
     if (transport === 'stdio') {

@@ -118,11 +118,17 @@ test('applyBuiltinOverride: additive browser flags are preserved', () => {
   const pw = builtinMcpServerById('playwright');
   assert.ok(pw);
   const merged = applyBuiltinOverride(pw, {
-    args: ['-y', '@playwright/mcp@latest', '--browser', 'firefox'],
+    args: ['-y', '@playwright/mcp@latest', '--isolated', '--browser', 'firefox'],
   });
-  // The override reproduced the catalog launcher/package spec, then appended a
-  // safe flag — accepted verbatim.
-  assert.deepEqual(merged.args, ['-y', '@playwright/mcp@latest', '--browser', 'firefox']);
+  // The override reproduced the catalog launcher/package spec + baked-in flags
+  // (incl. --isolated), then appended a safe flag — accepted verbatim.
+  assert.deepEqual(merged.args, [
+    '-y',
+    '@playwright/mcp@latest',
+    '--isolated',
+    '--browser',
+    'firefox',
+  ]);
   assert.equal(merged.command, pw.command);
 });
 

@@ -14,8 +14,8 @@ from `'../piSubagents.js'`.
   outside any project tree). That writes a project-local
   `<dir>/.pi/settings.json` + `<dir>/.pi/npm/node_modules/…`; the user's global
   config stays `packages: []`.
-- **Per-cwd discovery shim, not `-e`.** Pi auto-discovers `<cwd>/.pi/extensions/*.ts`
-  but **cwd-exact** (it does not walk up). So we drop a tiny re-export shim
+- **Per-cwd discovery shim, not `-e`.** Pi discovers `<cwd>/.pi/extensions/*.ts`
+  **cwd-exact** (it does not walk up). So we drop a tiny re-export shim
   `lattice-subagents.ts` (`export { default } from "<shared entry>"`) in each
   session cwd we want it in — every Lattice-spawned Pi session (worktree task,
   workflow step, post-merge hook, prompt customization) **plus the project root**
@@ -23,6 +23,12 @@ from `'../piSubagents.js'`.
   gets it too). `-e` would only reach command lines Lattice itself builds; the
   discovery shim is what reaches a manually-typed `pi`. The shim coexists with
   `lattice-complete.ts` and is gitignored/excluded via `worktree/managedFiles.ts`.
+- **Requires `--approve` on official Pi ≥0.74.** Pi's project-trust gate skips
+  cwd-local `.pi/extensions/` in a non-interactive/untrusted spawn, so this shim
+  (and `lattice-complete.ts`, and the MCP shim) only load because Lattice spawns
+  Pi with `--approve` (`agentCommandBuilder.ts`) — per-run trust of the cwd's
+  project-local files. A manually-typed `pi` at the project root without
+  `--approve` will prompt for trust interactively (the user can accept).
 
 ## Modules
 

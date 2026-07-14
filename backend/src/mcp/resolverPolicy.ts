@@ -8,14 +8,17 @@ import type { UserSettings } from '../userSettings.js';
 // headless. Two independent switches feed it, matching the two UI surfaces:
 //   - `mcpOverrides.playwright` (Settings → MCP tab): GLOBAL. Injected into
 //     every Lattice-spawned Claude session for the project AND the project-root
-//     entry that the user's own root-cwd `claude` sessions read. Always headless
-//     (these are background / unattended sessions — nobody is watching them).
+//     entry that the user's own root-cwd `claude` sessions read. Headless by
+//     default (unattended background sessions shouldn't pop a browser) UNLESS the
+//     MCP-tab "headed" toggle (`mcpPlaywrightHeaded`) is on — the opt-in for
+//     watching a session drive the browser.
 //   - `qaPlaywright` (QA lane): QA-RUNS-ONLY — applies only when `isQaRun`. Its
 //     `headless` flag is the "I want to watch it test" control (default headless).
 // When both apply (a QA run with the global toggle also on), the QA headless
-// toggle wins so the QA lane's eye switch stays authoritative for QA runs.
+// toggle wins so the QA lane's eye switch stays authoritative for QA runs —
+// `mcpPlaywrightHeaded` never overrides a QA run.
 export function resolvePlaywright(
-  settings: Pick<UserSettings, 'mcpOverrides' | 'qaPlaywright'>,
+  settings: Pick<UserSettings, 'mcpOverrides' | 'qaPlaywright' | 'mcpPlaywrightHeaded'>,
   isQaRun: boolean,
 ): { enabled: boolean; headless: boolean } {
   const qa = settings.qaPlaywright;
@@ -23,7 +26,7 @@ export function resolvePlaywright(
     return { enabled: true, headless: qa.headless !== false };
   }
   if (settings.mcpOverrides?.playwright === true) {
-    return { enabled: true, headless: true };
+    return { enabled: true, headless: settings.mcpPlaywrightHeaded !== true };
   }
   return { enabled: false, headless: true };
 }

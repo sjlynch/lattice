@@ -6,6 +6,7 @@ import {
   getPiSubagentsEntry,
   installPiSubagentsShim,
 } from '../piSubagents.js';
+import { ensurePiMcpInstalled } from '../piMcp.js';
 import { applyClaudeProjectConfig } from '../claudeTrust.js';
 import { resolveManagedClaudeServers } from '../mcp/registry.js';
 import {
@@ -90,4 +91,10 @@ function installProjectPiSubagentsShim(root: string): void {
       await installPiSubagentsShim({ dir: root }).catch(() => {});
     })
     .catch(() => {});
+  // Also pre-warm the pi-mcp-adapter install so a sidebar `pi` at the project
+  // root that has an MCP server enabled finds a shim target on first spawn. We
+  // do NOT drop the MCP shim / .pi/mcp.json at the project root here — that's
+  // done at the spawn chokepoint (applyPiMcpForSpawn), gated on the toggle, so
+  // a project with no Pi MCP enabled never gets the files (see plan D8).
+  void ensurePiMcpInstalled().catch(() => {});
 }

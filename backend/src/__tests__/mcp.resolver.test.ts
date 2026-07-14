@@ -43,6 +43,17 @@ test('resolve: global Playwright (mcpOverrides) is on for any session, headless'
   assert.ok('playwright' in onQaRun);
 });
 
+test('resolve: mcpPlaywrightHeaded runs the global Playwright headed', () => {
+  // The "Show browser" opt-in drops --headless for ordinary (non-QA) sessions.
+  const out = resolveClaudeServers(
+    BUILTIN_MCP_SERVERS,
+    { mcpOverrides: { playwright: true }, mcpPlaywrightHeaded: true },
+    {},
+  );
+  assert.ok('playwright' in out);
+  assert.ok(!asStdio(out.playwright).args?.includes('--headless'));
+});
+
 test('resolve: QA Playwright (qaPlaywright) is QA-runs-only', () => {
   const settings = { qaPlaywright: { enabled: true, headless: true } };
   // Not a QA run → NOT injected: the QA toggle never leaks into ordinary
@@ -153,10 +164,25 @@ test('resolvePlaywright: off when neither switch is set', () => {
   assert.deepEqual(resolvePlaywright({}, true), { enabled: false, headless: true });
 });
 
-test('resolvePlaywright: the global toggle is on for any run, always headless', () => {
+test('resolvePlaywright: the global toggle is on for any run, headless by default', () => {
   const s = { mcpOverrides: { playwright: true } };
   assert.deepEqual(resolvePlaywright(s, false), { enabled: true, headless: true });
   assert.deepEqual(resolvePlaywright(s, true), { enabled: true, headless: true });
+});
+
+test('resolvePlaywright: mcpPlaywrightHeaded flips the global toggle to headed', () => {
+  // The MCP-tab "Show browser" opt-in: enabled + headed for a non-QA run.
+  const s = { mcpOverrides: { playwright: true }, mcpPlaywrightHeaded: true };
+  assert.deepEqual(resolvePlaywright(s, false), { enabled: true, headless: false });
+  // It must NOT hijack a QA run — with no qaPlaywright the global path still
+  // applies (headed), but the QA eye toggle stays authoritative when present.
+  assert.deepEqual(
+    resolvePlaywright(
+      { ...s, qaPlaywright: { enabled: true, headless: true } },
+      true,
+    ),
+    { enabled: true, headless: true },
+  );
 });
 
 test('resolvePlaywright: the QA toggle is QA-runs-only and carries its headless flag', () => {
@@ -207,6 +233,10 @@ test('toClaudeConfig: Playwright appends --headless only when headless', () => {
   assert.ok(pw);
   assert.ok(asStdio(toClaudeConfig(pw, undefined, true)).args?.includes('--headless'));
   assert.ok(!asStdio(toClaudeConfig(pw, undefined, false)).args?.includes('--headless'));
+  // `--isolated` is always present (both headed + headless) so concurrent
+  // Playwright sessions never collide on the shared browser profile.
+  assert.ok(asStdio(toClaudeConfig(pw, undefined, true)).args?.includes('--isolated'));
+  assert.ok(asStdio(toClaudeConfig(pw, undefined, false)).args?.includes('--isolated'));
 });
 
 test('toClaudeConfig: http transport keeps url + plain headers, ignores headless', () => {

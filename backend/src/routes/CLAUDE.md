@@ -16,7 +16,12 @@ projectClaude, mergeRuns, postMergeHooks, pushRuns, qaRuns, workflows.
 - `globalSettings.ts` — `/api/global-settings` machine-global PATCH/GET;
   applies spawn softCap live and reconciles Pi providers when changed.
 - `mcp.ts` — MCP catalog, secrets, env presence, validation, and config import.
-- `terminals.ts` — debug terminal list/delete proxying to the terminal-server.
+- `terminals.ts` — terminal list (debug) + `DELETE /api/terminals/:id`, plus
+  **`POST /api/terminals`**: pre-create a pty via `proxyCreateSession` and return
+  its `serverId`, so a sidebar-launched harness terminal joins the same spawn
+  chokepoint (`resolveHarnessSpawnBody`) as tasks and gets its Codex/Pi MCP config
+  applied (a serverless `/ws/terminal` connect would bypass it). Debug
+  spawn-queue snapshot too.
 - `tasks.ts` — task CRUD/list/summary/projects, markdown batch/upsert,
   bulk-update, transition, reorder, append-summary, run/resume/merge, worktree
   hook callbacks (`complete`/`merged`/`merge-aborted`/`stash-resolved`), task

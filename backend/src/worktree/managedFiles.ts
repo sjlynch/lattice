@@ -25,15 +25,20 @@
 // (Pi's analogue of the Claude Stop hook — see installPiCompletionExtension in
 // stopHook.ts); `.pi/extensions/lattice-subagents.ts` is the pi-subagents
 // loader shim (see piSubagents.ts) Lattice drops alongside it (and at the
-// project root for manual terminal-panel `pi` sessions). The exact paths (not
-// the whole `.pi/` dir) are listed so a project that legitimately tracks its
-// own `.pi/` settings isn't disturbed.
+// project root for manual terminal-panel `pi` sessions);
+// `.pi/extensions/lattice-mcp.ts` is the pi-mcp-adapter loader shim and
+// `.pi/mcp.json` its per-cwd server config (see piMcp.ts), both dropped only
+// when the project enables ≥1 Pi MCP server. The exact paths (not the whole
+// `.pi/` dir) are listed so a project that legitimately tracks its own `.pi/`
+// settings isn't disturbed.
 export const LATTICE_OWNED_FILE_PATHS = [
   'LATTICE_TASK.md',
   'MERGE_INSTRUCTIONS.md',
   '.claude/settings.local.json',
   '.pi/extensions/lattice-complete.ts',
   '.pi/extensions/lattice-subagents.ts',
+  '.pi/extensions/lattice-mcp.ts',
+  '.pi/mcp.json',
 ] as const;
 
 // Patterns for the worktree-local exclude file. STASH_CONFLICT_*.md is a
@@ -51,6 +56,8 @@ export const LATTICE_EXCLUDE_PATTERNS = [
   '.pi/extensions/lattice-complete.ts',
   '.pi/extensions/lattice-last-shutdown.json',
   '.pi/extensions/lattice-subagents.ts',
+  '.pi/extensions/lattice-mcp.ts',
+  '.pi/mcp.json',
 ] as const;
 
 // .gitignore entries appended to the project's repo-root .gitignore.
@@ -66,6 +73,8 @@ export const LATTICE_GITIGNORE_ENTRIES = [
   '.pi/extensions/lattice-complete.ts',
   '.pi/extensions/lattice-last-shutdown.json',
   '.pi/extensions/lattice-subagents.ts',
+  '.pi/extensions/lattice-mcp.ts',
+  '.pi/mcp.json',
 ] as const;
 
 // Conflict paths that always resolve to "ours" (the worktree's version).

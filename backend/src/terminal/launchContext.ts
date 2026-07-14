@@ -5,7 +5,10 @@ import { canonicalProjectPath, projectHash } from '../projectPath.js';
 import type { CreateOpts } from './sessionTypes.js';
 import { applyFreshWindowsPath } from './windowsPath.js';
 import { applyClaudeOverheadEnv } from './envSetup.js';
-import { configureCodexProjectTrust } from './codexTrust.js';
+import {
+  configureCodexProjectMcp,
+  configureCodexProjectTrust,
+} from './codexTrust.js';
 
 // Resolve the pty's default shell. Order: explicit per-spawn override
 // (`opts.shell`, handled by the caller) → `LATTICE_DEFAULT_SHELL` operator
@@ -84,10 +87,21 @@ export function buildSessionLaunchContext(
   applyFreshWindowsPath(baseEnv);
   applyClaudeOverheadEnv(baseEnv);
 
-  const env = { ...baseEnv, ...latticeEnv };
-  const initialCommand = configureCodexProjectTrust(
-    opts.initialCommand,
-    cwd,
+  // Secret env for managed MCP servers (Codex `env_vars`/`env_http_headers`
+  // reference these by name). Merged into THIS child pty's env only — the
+  // backend resolved the values and shipped them as data; they never touch the
+  // terminal-server's own process env. Layered under latticeEnv (breadcrumbs win
+  // on any name clash, though these are collision-resistant LATTICE_MCP_* / real
+  // secret var names).
+  const env = { ...baseEnv, ...(opts.managedMcpEnv ?? {}), ...latticeEnv };
+  // Codex per-terminal config: trust override, then the managed MCP `-c`
+  // overrides. Both rewrite a leading `codex` command and stash their dynamic
+  // TOML values in child env vars the command references (never shell source);
+  // both no-op for non-Codex commands.
+  const trusted = configureCodexProjectTrust(opts.initialCommand, cwd, shell, env);
+  const initialCommand = configureCodexProjectMcp(
+    trusted,
+    opts.managedCodexConfigArgs,
     shell,
     env,
   );

@@ -1,8 +1,9 @@
 // Shared shell command assembly for agent harnesses.
 //
 // Call sites keep the intent-specific prompt text local, while this module
-// owns the repeated harness syntax: Claude's permission bypass, Pi's safe
-// --model flag, Codex's --yolo permission bypass, and shell quoting.
+// owns the repeated harness syntax: Claude's permission bypass, Pi's
+// --approve project-trust flag + safe --model flag, Codex's --yolo permission
+// bypass, and shell quoting.
 
 import path from 'node:path';
 import type { AgentHarness } from './harnesses.js';
@@ -57,7 +58,12 @@ export function buildAgentCommand(args: {
     return `claude --dangerously-skip-permissions ${quotedPrompt}`;
   }
   if (args.harness === 'pi') {
-    return `pi${buildPiModelFlag(args.piModel)} ${quotedPrompt}`;
+    // `--approve` trusts the session cwd's project-local files for this run —
+    // required since official Pi ≥0.74's project-trust gate otherwise skips
+    // Lattice's cwd-local `.pi/extensions/` shims (MCP adapter, subagents,
+    // completion) and `.pi/mcp.json` in a non-interactive/never-trusted spawn.
+    // Per-run only; never persists trust to the user's global Pi config.
+    return `pi --approve${buildPiModelFlag(args.piModel)} ${quotedPrompt}`;
   }
   const yolo = args.codexYolo === false ? '' : ' --yolo';
   return `codex${yolo} ${quotedPrompt}`;

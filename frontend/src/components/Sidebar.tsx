@@ -4,6 +4,7 @@ import type { StartupTerminal, TerminalLaunchSettings } from '../api';
 import { usePiModelMenu } from '../hooks/usePiModelMenu';
 import { useTerminals } from '../TerminalsContext';
 import type { TerminalStatus } from '../terminal/terminalTypes';
+import { createBackendSession } from '../terminal/terminalApi';
 import { TerminalPane } from './TerminalPane';
 import { createTerminalSpec } from './sidebar/constants';
 import { NewTerminalDropdown } from './sidebar/NewTerminalDropdown';
@@ -134,16 +135,32 @@ export const Sidebar = memo(function Sidebar({
   });
 
   const newTerminal = useCallback(
-    (kind: ShellKind, piModel?: string) => {
-      addTerminal(
-        createTerminalSpec(
-          kind,
-          activeFolder,
-          projectTerminals.length + 1,
-          piModel,
-          terminalLaunchSettings.codexYolo,
-        ),
+    async (kind: ShellKind, piModel?: string) => {
+      const spec = createTerminalSpec(
+        kind,
+        activeFolder,
+        projectTerminals.length + 1,
+        piModel,
+        terminalLaunchSettings.codexYolo,
       );
+      // A harness terminal (claude/pi/codex — anything with an initialCommand)
+      // must resolve its MCP config at the backend spawn chokepoint. Pre-create
+      // the pty via POST /api/terminals and attach by the returned serverId, so
+      // Codex `-c` MCP args + Pi `.pi/mcp.json` are applied before the shell
+      // starts. A serverless connect bypasses that (only Claude survives, via
+      // the persistent ~/.claude.json reconcile). A plain terminal (no
+      // initialCommand) or a pre-create failure falls back to the serverless
+      // connect, which addTerminal's WS wiring already handles.
+      let serverId: string | undefined;
+      if (spec.initialCommand) {
+        serverId =
+          (await createBackendSession({
+            cwd: spec.cwd,
+            initialCommand: spec.initialCommand,
+            projectPath: spec.projectPath,
+          })) ?? undefined;
+      }
+      addTerminal({ ...spec, serverId });
     },
     [addTerminal, activeFolder, projectTerminals.length, terminalLaunchSettings.codexYolo],
   );

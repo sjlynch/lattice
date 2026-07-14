@@ -283,24 +283,38 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   `~/.lattice/` scratch are skipped (handled by their own machinery). A
   session must be (re)started to pick up newly-installed hooks.
 - **MCP servers** are curated once at the Lattice level and injected into the
-  Claude sessions Lattice spawns. Built-in catalog is in code
+  **Claude, Codex, and Pi** sessions Lattice spawns. Built-in catalog is in code
   (`backend/src/mcp/catalog.ts`); definitions/overrides live in
-  `globalSettings.json`, per-project on/off in `userSettings.json`
-  (`mcpOverrides` + `qaPlaywright`), secrets in their own `0600`
-  `~/.lattice/mcpSecrets.json`. **Everything is off by default.** Per-spawn
-  injection is at the terminal-server `POST /sessions` chokepoint
-  (`ensureTrustedClaudeDir(cwd, { projectPath, isQaRun })` → reconcile into
-  `projects[<cwd>].mcpServers`); a *global* enable is **also** reconciled
-  persistently into the user's own `projects[<projectRoot>]` entry on project
-  open / settings save (`routes/projectClaude.ts`), so it reaches sidebar
-  terminals and a `claude` the user starts themselves at the project root. v1 =
-  Claude only (Codex v2, Pi via a plugin later).
+  `globalSettings.json`, per-project on/off in `userSettings.json` — `mcpOverrides`
+  (Claude) + `mcpHarnessOverrides` (Codex/Pi) + `qaPlaywright` — secrets in their
+  own `0600` `~/.lattice/mcpSecrets.json`. **Everything is off by default**, with
+  three independent per-harness switches per server (enabling for one harness
+  never loads it into another). Injection is resolved in the backend at the spawn
+  chokepoint (`resolveHarnessSpawnBody`) and applied per harness: **Claude** →
+  reconcile into `projects[<cwd>].mcpServers` in `~/.claude.json` (terminal-server
+  `applyClaudeProjectConfig`; a *global* enable also lands persistently in the
+  user's own `projects[<projectRoot>]` entry on project open / settings save via
+  `routes/projectClaude.ts`, so it reaches sidebar terminals + a hand-started
+  `claude`); **Codex** → per-invocation `-c "mcp_servers.lattice_<id>={…}"`
+  inline-TOML overrides on the command (`terminal/codexTrust.ts`, secrets in pty
+  env by name, never `~/.codex/config.toml`); **Pi** → the third-party
+  `pi-mcp-adapter` (for official Pi ≥0.74; private Lattice-owned install) loaded
+  via a cwd-exact shim, reading a Lattice-written `<cwd>/.pi/mcp.json`
+  (`backend/src/piMcp/`, never the user's global Pi config; HTTP-header secrets
+  ride `${VAR}` refs). v1 covers Lattice-created launches only. See
+  `backend/src/mcp/CLAUDE.md`.
 - **Playwright has two independent toggles** (the only server with this split):
-  the **Settings → MCP tab** toggle (`mcpOverrides.playwright`) is *global* —
-  injected into every Lattice-spawned Claude session for the project plus the
-  user's own project-root sessions, always headless. The **QA-lane Globe/eye**
-  buttons (`qaPlaywright`) are *QA-e2e-runs-only* and carry the headed/headless
-  switch ("watch it test"); they never leak into ordinary task/sidebar sessions
+  the **Settings → MCP tab** toggle (`mcpOverrides.playwright` for Claude,
+  `mcpHarnessOverrides.{codex,pi}.playwright` for the others) is *global* —
+  injected into every Lattice-spawned session for the project (plus the user's
+  own project-root Claude), headless by default. A single cross-harness **"Show
+  browser"** switch on that row (`mcpPlaywrightHeaded`) flips it to *headed* (a
+  visible window) for those sessions when you want to watch — resolved in
+  `mcp/resolverPolicy.ts` (Claude) + `mcp/registry.ts` (codex/pi). The
+  **QA-lane Globe/eye** buttons (`qaPlaywright`) are a *separate*
+  *QA-e2e-runs-only* enable + headed/headless switch ("watch it test") that
+  stays authoritative for QA runs (`mcpPlaywrightHeaded` never overrides a QA
+  run); they never leak into ordinary task/sidebar sessions
   (gated on the spawn's `isQaRun`). When the QA Globe is on, the QA lane shows a
   per-task ▶ "run e2e test" button and a lane-header "run all e2e tests" button:
   each spawns a one-off QA-scoped-Playwright Claude session

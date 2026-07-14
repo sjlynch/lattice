@@ -62,11 +62,22 @@ export type UserSettings = {
   // backend userSettings.ts.
   disableClaudeMemory?: boolean;
   // Per-project MCP-server on/off overrides, keyed by catalog server id.
-  // Missing = OFF (the all-off-by-default invariant). `mcpOverrides.playwright`
+  // Missing = OFF (the all-off-by-default invariant). This is CLAUDE's toggle
+  // map (Codex/Pi use `mcpHarnessOverrides` below). `mcpOverrides.playwright`
   // is the GLOBAL Playwright toggle (Settings → MCP tab): injected into every
   // Lattice-spawned Claude session for the project and reconciled into the
   // user's own project-root config. See backend mcp/registry.ts.
   mcpOverrides?: Record<string, boolean>;
+  // Per-harness MCP toggle maps for Codex and Pi (Claude keeps `mcpOverrides`).
+  // `{ codex?: { [id]: boolean }, pi?: { [id]: boolean } }`; missing = OFF. Three
+  // independent switches per server so enabling for one harness never loads it
+  // into another. See backend mcp/registry.ts.
+  mcpHarnessOverrides?: Partial<Record<'codex' | 'pi', Record<string, boolean>>>;
+  // When true, the MCP-tab Playwright server runs HEADED (visible browser) for
+  // every Lattice-spawned session it's enabled in (Claude global + Codex/Pi
+  // toggles). Absent/false = headless. QA-lane runs are unaffected — they keep
+  // `qaPlaywright.headless`. See backend mcp/resolverPolicy.ts + registry.ts.
+  mcpPlaywrightHeaded?: boolean;
   // Backs the QA-lane Playwright buttons — QA e2e runs ONLY (separate from the
   // global `mcpOverrides.playwright`). `enabled` injects Playwright into QA
   // "run an e2e test" sessions; `headless` (the eye toggle) appends --headless.

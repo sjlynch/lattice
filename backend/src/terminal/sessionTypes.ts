@@ -38,6 +38,14 @@ export type CreateOpts = {
   // Claude session doesn't read/write auto-memory. Resolved per-project at the
   // POST /sessions chokepoint from `UserSettings.disableClaudeMemory`.
   disableClaudeMemory?: boolean;
+  // Codex MCP (backend-resolved, applied here): the inline-TOML `-c` override
+  // strings turned into `--config` flags on the Codex command by
+  // configureCodexProjectMcp. No-op for non-Codex commands / empty list.
+  managedCodexConfigArgs?: string[];
+  // Secret env values the child pty must carry for its managed MCP servers
+  // (referenced BY NAME from the Codex overrides). Merged into the pty env only
+  // — never the terminal-server's own process env.
+  managedMcpEnv?: Record<string, string>;
 };
 
 export type AttachOpts = {

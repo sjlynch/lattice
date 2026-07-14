@@ -20,14 +20,14 @@ test('claude branch: --dangerously-skip-permissions + quoted prompt', () => {
   );
 });
 
-test('pi branch with no piModel: bare `pi` + quoted prompt (no --model)', () => {
+test('pi branch with no piModel: `pi --approve` + quoted prompt (no --model)', () => {
   assert.equal(
     buildAgentCommand({ harness: 'pi', prompt: 'do the thing' }),
-    'pi "do the thing"',
+    'pi --approve "do the thing"',
   );
 });
 
-test('pi branch with an INVALID piModel: still no --model flag', () => {
+test('pi branch with an INVALID piModel: still no --model flag (keeps --approve)', () => {
   // An un-normalizable value (buildPiModelFlag rejects it) must fall back to
   // Pi's own default model — never interpolate the junk into the command line.
   assert.equal(
@@ -36,18 +36,18 @@ test('pi branch with an INVALID piModel: still no --model flag', () => {
       prompt: 'do the thing',
       piModel: 'not a model',
     }),
-    'pi "do the thing"',
+    'pi --approve "do the thing"',
   );
 });
 
-test('pi branch with a VALID piModel: quoted --model precedes the prompt', () => {
+test('pi branch with a VALID piModel: --approve then quoted --model precede the prompt', () => {
   assert.equal(
     buildAgentCommand({
       harness: 'pi',
       prompt: 'do the thing',
       piModel: 'qwen-local/qwen',
     }),
-    'pi --model "qwen-local/qwen" "do the thing"',
+    'pi --approve --model "qwen-local/qwen" "do the thing"',
   );
 });
 

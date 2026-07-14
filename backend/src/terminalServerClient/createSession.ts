@@ -3,7 +3,11 @@ import {
   ensureTerminalServer,
   respawn,
 } from '../terminalServerLifecycle.js';
-import { resolveManagedClaudeServers } from '../mcp/registry.js';
+import {
+  resolveManagedClaudeServers,
+  resolveManagedCodexServers,
+} from '../mcp/registry.js';
+import { applyPiMcpForSpawn } from '../piMcp.js';
 import { isClaudeMemoryDisabled } from '../userSettings.js';
 import type { ClaudeMcpServerConfig } from '../mcp/claudeInject.js';
 import { terminalServerAuthHeaders } from '../terminalServerAuth.js';
@@ -35,28 +39,71 @@ export type SessionWireBody = CreateSessionOptions & {
   // Whether to set `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` on the pty. Resolved here
   // from `UserSettings.disableClaudeMemory`. Absent for non-Claude spawns.
   disableClaudeMemory?: boolean;
+  // The backend-resolved Codex MCP `-c` override strings (inline TOML, one per
+  // enabled server). The terminal-server turns each into a `--config` arg with
+  // shell-correct env-var referencing. Absent for non-Codex spawns / no servers.
+  managedCodexConfigArgs?: string[];
+  // Secret env values the child pty must carry for its managed MCP servers
+  // (Codex `env_vars` / `env_http_headers` reference these by NAME; the value
+  // never enters argv or config). Merged into the pty env in the terminal-server
+  // (launchContext), never into the backend's own process env. Absent when there
+  // are no secret-bearing managed servers.
+  managedMcpEnv?: Record<string, string>;
 };
 
 function isClaudeCommand(initialCommand: string | undefined): boolean {
   return /^\s*claude\b/.test(initialCommand ?? '');
 }
 
-// Resolve the per-spawn Claude config (managed MCP servers + memory opt-out) in
-// the always-fresh main backend and fold it into the wire body. Best-effort: a
-// resolve failure degrades to a trust-only seed and Claude's default memory.
-// Runs for Claude commands only; pi/codex/plain shells pass through untouched.
-async function resolveClaudeSpawnBody(
+function isCodexCommand(initialCommand: string | undefined): boolean {
+  return /^\s*codex(?:\.(?:exe|cmd|ps1))?\b/i.test(initialCommand ?? '');
+}
+
+function isPiCommand(initialCommand: string | undefined): boolean {
+  // `\b` after `pi` keeps `pip`/`pixi`/`ping` from matching (no boundary between
+  // `i` and the next word char); matches `pi`, `pi --model …`, `pi.cmd`, …
+  return /^\s*pi(?:\.(?:exe|cmd|ps1))?\b/i.test(initialCommand ?? '');
+}
+
+// Resolve the per-spawn agent config in the always-fresh main backend and fold
+// it into the wire body — the terminal-server only APPLIES the result (it never
+// resolves policy). Best-effort throughout: a resolve failure degrades to a
+// plain spawn. Runs per harness:
+//   - claude → managed MCP server set (+ memory opt-out), shipped as wire data.
+//   - codex  → `-c` inline-TOML MCP overrides (+ secret env for the pty).
+//   - pi     → write `<cwd>/.pi/mcp.json` + extension shim here (Pi's mechanism
+//              is cwd-local files, not wire data); only the secret env rides
+//              the wire. See piMcp.ts.
+// Plain shells pass through untouched.
+async function resolveHarnessSpawnBody(
   opts: CreateSessionOptions,
 ): Promise<SessionWireBody> {
-  if (!opts.cwd || !isClaudeCommand(opts.initialCommand)) return opts;
-  // No projectPath → trust-only seed (managed: null) + Claude's default memory.
-  const managedMcpServers = opts.projectPath
-    ? await resolveManagedClaudeServers(opts.projectPath, { isQaRun: opts.isQaRun })
-    : null;
-  const disableClaudeMemory = opts.projectPath
-    ? await isClaudeMemoryDisabled(opts.projectPath).catch(() => false)
-    : false;
-  return { ...opts, managedMcpServers, disableClaudeMemory };
+  if (!opts.cwd) return opts;
+  if (isClaudeCommand(opts.initialCommand)) {
+    // No projectPath → trust-only seed (managed: null) + Claude's default memory.
+    const managedMcpServers = opts.projectPath
+      ? await resolveManagedClaudeServers(opts.projectPath, { isQaRun: opts.isQaRun })
+      : null;
+    const disableClaudeMemory = opts.projectPath
+      ? await isClaudeMemoryDisabled(opts.projectPath).catch(() => false)
+      : false;
+    return { ...opts, managedMcpServers, disableClaudeMemory };
+  }
+  if (isCodexCommand(opts.initialCommand) && opts.projectPath) {
+    const codex = await resolveManagedCodexServers(opts.projectPath);
+    if (!codex || codex.configArgs.length === 0) return opts;
+    return {
+      ...opts,
+      managedCodexConfigArgs: codex.configArgs,
+      ...(Object.keys(codex.env).length > 0 ? { managedMcpEnv: codex.env } : {}),
+    };
+  }
+  if (isPiCommand(opts.initialCommand) && opts.projectPath) {
+    const env = await applyPiMcpForSpawn(opts.cwd, opts.projectPath);
+    if (Object.keys(env).length > 0) return { ...opts, managedMcpEnv: env };
+    return opts;
+  }
+  return opts;
 }
 
 // Hard timeout on a single POST /sessions. Generous on purpose: a normal pty
@@ -98,9 +145,9 @@ export async function proxyCreateSession(
   opts: CreateSessionOptions,
 ): Promise<CreateSessionResult> {
   await ensureTerminalServer();
-  // Resolve the Claude spawn config ONCE (so a retry reuses the same body) and
-  // in the always-fresh backend — the terminal-server only applies it.
-  const body = await resolveClaudeSpawnBody(opts);
+  // Resolve the per-harness spawn config ONCE (so a retry reuses the same body)
+  // and in the always-fresh backend — the terminal-server only applies it.
+  const body = await resolveHarnessSpawnBody(opts);
   const first = await tryCreateSessionOnce(body);
   if ('id' in first) return first;
   // Retry once if the failure was non-JSON (stale server / unrelated listener

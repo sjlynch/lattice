@@ -31,6 +31,9 @@ export type McpServerEntry = {
   runtime: McpRuntime;
   requiresSecret?: McpSecretRequirement;
   secretEnvVars?: string[];
+  // HTTP header names whose values live in the secrets file (an imported auth
+  // header). Mirror of the backend field; the resolver re-injects them at spawn.
+  secretHeaders?: string[];
   harnessSupport: McpHarnessSupport;
   runtimeNote?: string;
   builtin?: boolean;

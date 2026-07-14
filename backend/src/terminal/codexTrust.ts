@@ -15,6 +15,14 @@
 export const LATTICE_CODEX_TRUST_OVERRIDE_ENV =
   'LATTICE_CODEX_TRUST_OVERRIDE';
 
+// Env var name for the i-th Lattice-managed MCP `-c` override (see
+// configureCodexProjectMcp). Kept out of the shell command for the same reason
+// as the trust override: the TOML value carries braces/quotes/commas that we do
+// not want to shell-quote or expose in the command line.
+export function codexMcpOverrideEnv(index: number): string {
+  return `LATTICE_CODEX_MCP_${index}`;
+}
+
 const CODEX_COMMAND_RE = /^(\s*codex(?:\.(?:exe|cmd|ps1))?)(?=\s|$)/i;
 
 export function buildCodexTrustOverride(cwd: string): string {
@@ -28,10 +36,13 @@ function shellName(shell: string): string {
   return shell.split(/[\\/]/).at(-1)?.toLowerCase() ?? '';
 }
 
-function trustOverrideReference(shell: string): string {
+// A quoted, shell-correct reference to `$VAR` so the dynamic value expands from
+// the child pty environment rather than being interpolated into shell source.
+// cmd → `"%VAR%"`, PowerShell → `"$env:VAR"`, POSIX → `"$VAR"`.
+function shellEnvRef(shell: string, varName: string): string {
   const name = shellName(shell);
   if (name === 'cmd' || name === 'cmd.exe') {
-    return `"%${LATTICE_CODEX_TRUST_OVERRIDE_ENV}%"`;
+    return `"%${varName}%"`;
   }
   if (
     name === 'powershell' ||
@@ -39,9 +50,9 @@ function trustOverrideReference(shell: string): string {
     name === 'pwsh' ||
     name === 'pwsh.exe'
   ) {
-    return `"$env:${LATTICE_CODEX_TRUST_OVERRIDE_ENV}"`;
+    return `"$env:${varName}"`;
   }
-  return `"$${LATTICE_CODEX_TRUST_OVERRIDE_ENV}"`;
+  return `"$${varName}"`;
 }
 
 /**
@@ -63,5 +74,42 @@ export function configureCodexProjectTrust(
 
   env[LATTICE_CODEX_TRUST_OVERRIDE_ENV] = buildCodexTrustOverride(cwd);
   const rest = initialCommand.slice(match[0].length);
-  return `${match[1]} --config ${trustOverrideReference(shell)}${rest}`;
+  return `${match[1]} --config ${shellEnvRef(shell, LATTICE_CODEX_TRUST_OVERRIDE_ENV)}${rest}`;
+}
+
+/**
+ * Inject Lattice's managed MCP servers into a Lattice-started Codex command as
+ * per-invocation `--config "mcp_servers.<id>={…}"` overrides. `configArgs` are
+ * the backend-resolved inline-TOML strings (one per enabled server); the secret
+ * env values they reference were already merged into `env` upstream.
+ *
+ * Each override string rides in its own child-env var (`LATTICE_CODEX_MCP_<i>`)
+ * and the command references it — the TOML (braces/quotes/commas) never enters
+ * shell source, mirroring the trust override. Non-Codex commands and an empty
+ * arg list are returned unchanged. Runs AFTER configureCodexProjectTrust; the
+ * extra `--config` flags sit alongside the trust one (order is irrelevant for
+ * distinct dotted keys).
+ *
+ * `env` is mutated only when the command actually launches Codex with ≥1 server.
+ */
+export function configureCodexProjectMcp(
+  initialCommand: string | undefined,
+  configArgs: string[] | undefined,
+  shell: string,
+  env: Record<string, string>,
+): string | undefined {
+  if (!initialCommand || !configArgs || configArgs.length === 0) {
+    return initialCommand;
+  }
+  const match = CODEX_COMMAND_RE.exec(initialCommand);
+  if (!match) return initialCommand;
+
+  const flags: string[] = [];
+  configArgs.forEach((arg, i) => {
+    const varName = codexMcpOverrideEnv(i);
+    env[varName] = arg;
+    flags.push(`--config ${shellEnvRef(shell, varName)}`);
+  });
+  const rest = initialCommand.slice(match[0].length);
+  return `${match[1]} ${flags.join(' ')}${rest}`;
 }

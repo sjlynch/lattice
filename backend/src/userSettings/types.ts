@@ -93,7 +93,29 @@ export type UserSettings = {
   // toggle (Settings → MCP tab): injected into every Lattice-spawned Claude
   // session for the project AND reconciled into the user's own project-root
   // entry. The QA-lane `qaPlaywright` toggle below is separate and QA-runs-only.
+  //
+  // NOTE: `mcpOverrides` remains CLAUDE's toggle map (kept for back-compat and
+  // because Claude's Playwright has the extra QA scope). Codex and Pi use the
+  // nested `mcpHarnessOverrides` below — three independent per-harness switches
+  // per server, so enabling a server for one harness never loads it into another.
   mcpOverrides?: Record<string, boolean>;
+  // Per-harness MCP toggle maps for Codex and Pi (Claude keeps `mcpOverrides`).
+  // Shape: `{ codex?: { [serverId]: boolean }, pi?: { [serverId]: boolean } }`.
+  // A missing harness map or a missing entry means OFF (all-off-by-default). The
+  // backend reads this at every Codex/Pi spawn to decide what to inject (see
+  // `mcp/registry.ts` → `resolveCodexServers` / `resolvePiServers`). Unlike
+  // Claude, Codex/Pi have no QA-scoped Playwright — Playwright here is just a
+  // per-harness toggle (headless unless `mcpPlaywrightHeaded` below is set).
+  mcpHarnessOverrides?: Partial<Record<'codex' | 'pi', Record<string, boolean>>>;
+  // When true, the MCP-tab Playwright server runs HEADED (a visible browser
+  // window) for every Lattice-spawned session it's enabled in — Claude's global
+  // toggle AND the Codex/Pi per-harness toggles. Absent/false = headless (the
+  // default: unattended background sessions shouldn't pop a browser). This is
+  // the "I want to watch it drive the browser" opt-in for ordinary task/sidebar/
+  // workflow sessions. It does NOT affect QA-lane runs — those keep their own
+  // headed/headless eye switch (`qaPlaywright.headless`), which stays
+  // authoritative for QA. See `mcp/resolverPolicy.ts` + `mcp/registry.ts`.
+  mcpPlaywrightHeaded?: boolean;
   // Backs the QA-lane Playwright buttons — QA e2e runs ONLY (not a global
   // enable; that's `mcpOverrides.playwright`). `enabled` injects the Playwright
   // MCP into QA-lane "run an e2e test" sessions; `headless` (the eye toggle, the

@@ -4,12 +4,27 @@ Implementation pieces for `../Sidebar.tsx`.
 
 - `NewTerminalDropdown.tsx` — plus/chevron menu for Claude, dangerous Claude,
   Pi, Codex, and plain terminal sessions; command defaults live in `constants.ts`.
+  **Sidebar harness launches pre-create their pty through the backend.**
+  `Sidebar.tsx`'s `newTerminal` calls `createBackendSession` (`terminal/terminalApi.ts`
+  → `POST /api/terminals`) for any spec with an `initialCommand`, then `addTerminal`s
+  with the returned `serverId` so the pane attaches to the already-configured pty
+  by id. This is what routes a Codex/Pi terminal through the spawn chokepoint
+  (`resolveHarnessSpawnBody`) so its MCP config is applied — a serverless
+  `/ws/terminal` connect bypasses that, and only Claude survives it (via the
+  persistent `~/.claude.json` reconcile). A plain terminal (no `initialCommand`)
+  or a pre-create failure falls back to the serverless connect. NOTE: startup
+  terminals (`useStartupTerminals`) still connect serverlessly — a harness set as
+  a startup command would not get MCP; the manual dropdown is the covered path.
   Beneath bare "Pi" it also lists one **"Pi — <model>"** row per curated Pi model
   (the `GET /api/pi-models` `.menu`, fetched once in `Sidebar.tsx` and passed as
-  `piMenu`). Picking one spawns `pi --model "<provider/model>"` — per-spawn model
-  selection, same as the taskboard/workflow harness pickers. `createTerminalSpec`
-  builds that command (guarded by `harnesses.isValidPiModel`) and a short
-  `pi <model> N` tab label. A new **Codex** terminal launches `codex --yolo` by
+  `piMenu`). Picking one spawns `pi --approve --model "<provider/model>"` —
+  per-spawn model selection, same as the taskboard/workflow harness pickers.
+  `createTerminalSpec` builds that command (guarded by `harnesses.isValidPiModel`)
+  and a short `pi <model> N` tab label. Bare Pi launches `pi --approve`; that
+  project-trust flag (official Pi ≥0.74) is what lets a project-root sidebar `pi`
+  load Lattice's cwd-local `.pi/extensions/` shims (MCP / subagents / completion)
+  + `.pi/mcp.json` — the same flag the backend adds at every spawn site
+  (`agentCommandBuilder.ts`). A new **Codex** terminal launches `codex --yolo` by
   default (Codex's permission bypass, the analogue of the dangerous-Claude
   `--dangerously-skip-permissions`); `createTerminalSpec` drops the flag to plain
   `codex` when the `codexYolo` setting (Settings → Terminals) is off — the flag

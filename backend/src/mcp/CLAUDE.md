@@ -1,10 +1,88 @@
 # backend/src/mcp
 
 The MCP (Model Context Protocol) control plane. Lattice is the single place a
-user curates/toggles MCP servers; Lattice injects the enabled set into every
-Claude session it spawns, instead of each harness carrying its own MCP config.
+user curates/toggles MCP servers; Lattice injects the enabled set into the
+Claude, Codex, and Pi sessions it spawns, instead of each harness carrying its
+own MCP config.
 
-See `plans/mcp-integration.md` (gitignored) for the full design + decisions.
+See `plans/mcp-integration.md` + `plans/mcp-codex-pi-harness-plan.md` (both
+gitignored) for the full design + decisions.
+
+## Per-harness toggles (Claude / Codex / Pi)
+
+Every catalog server can be enabled **independently per harness**. Claude keeps
+the legacy `UserSettings.mcpOverrides` map (plus its QA-scoped Playwright);
+Codex and Pi use the nested `UserSettings.mcpHarnessOverrides` (`{ codex?: {
+[id]: boolean }, pi?: { [id]: boolean } }`). Everything is off by default;
+enabling a server for one harness never loads it into another. The
+`McpHarnessSupport {claude,codex,pi}` per-server capability flags gate which
+harnesses can even offer a server.
+
+The resolver core is harness-neutral: **`resolveMcpEntries(catalog, settings,
+secrets, harness, ctx)`** applies the support filter + the per-harness toggle
+(Claude's Playwright two-scope policy still runs only for Claude; Codex/Pi treat
+Playwright as a plain toggle, no QA scope). Playwright is **headless by default**
+for all three harnesses; the cross-harness `mcpPlaywrightHeaded` setting (the MCP
+tab's "Show browser" switch) flips the non-QA path to headed — QA runs keep their
+own `qaPlaywright.headless` eye switch, which `mcpPlaywrightHeaded` never
+overrides. Three shapers map
+its output into each harness's config: `resolveClaudeServers` (→ Claude
+`mcpServers`), `resolveCodexServers` (→ `-c` inline-TOML overrides + secret env),
+`resolvePiServers` (→ `.pi/mcp.json` server map + secret env).
+
+### Codex mechanism (`codexServerConfig.ts`)
+Per-invocation `-c "mcp_servers.<lattice_id>={…}"` inline-TOML overrides (value
+parsed as TOML, dotted key MERGES so the user's own servers survive), mirroring
+`terminal/codexTrust.ts`'s trust override — never writes `~/.codex/config.toml`.
+Secrets ride the pty env by NAME: stdio → `env_vars=['VAR']`, HTTP header →
+`env_http_headers={Header='VAR'}` / `bearer_token_env_var` (value in pty env,
+never argv). The backend resolves the strings; the terminal-server turns each
+into a `--config` flag referencing an env var (`configureCodexProjectMcp` in
+`terminal/codexTrust.ts`), so braces/quotes never enter shell source.
+
+### Pi mechanism (`piServerConfig.ts` + `../piMcp/`)
+Pi has no native MCP, so Lattice loads the third-party **`pi-mcp-adapter`**
+(for official Pi `@earendil-works/pi-*` ≥0.74; private, Lattice-owned install
+under `~/.lattice/pi-mcp-adapter/` — never the user's global Pi config, same
+pattern as `piSubagents/`) and drops two cwd-local files into each
+Lattice-spawned Pi session: `<cwd>/.pi/mcp.json` (the enabled server set,
+reconciled with a `__latticeManagedMcp` marker so the user's own servers
+survive) + `<cwd>/.pi/extensions/lattice-mcp.ts` (the loader shim Pi
+auto-discovers cwd-exactly). Written by the **backend** at the spawn chokepoint
+(`piMcp.ts` `applyPiMcpForSpawn`) — Pi's mechanism is cwd files, not wire data,
+and the files must exist before Pi starts. Each server carries `lifecycle:
+'eager'` (connect at session start) + `directTools: true` (individual tools when
+the adapter's metadata cache is warm; on a cold worktree it registers the
+always-present `mcp()` proxy tool instead — either way the tools are reachable).
+
+**Project-trust gate (official Pi ≥0.74):** Pi no longer auto-loads cwd-local
+`.pi/extensions/` (the adapter shim) or reads them unless the project is
+*trusted* — a non-interactive/never-trusted spawn silently skips them. Lattice
+therefore spawns Pi with **`--approve`** (`agentCommandBuilder.ts`, the Pi
+analogue of Claude's `--dangerously-skip-permissions` / Codex's `--yolo`), which
+trusts the session cwd's project-local files **for that run only** (never
+persisted to the user's global Pi config). This one flag is what makes the MCP
+shim — *and* the pre-existing pi-subagents + completion shims — load at all under
+official Pi; without it the whole cwd-extension mechanism is inert. stdio secrets ride the pty env — the adapter's
+`resolveEnv` merges each server's `env` with the child `process.env`, so the
+value is omitted from the JSON file. HTTP header secrets are now **supported**:
+the adapter interpolates `${VAR}` in `headers`, so a secret header is a `${VAR}`
+reference with the value in the pty env (shared `secretHeaderEnvVar` naming with
+Codex) — superseding the old `pi-mcp-extension` "headers dropped" limitation.
+
+### v1 coverage
+Lattice-created launches only (task/resume, workflow step, prompt customization,
+post-merge hook, sidebar harness launcher — all funnel through
+`proxyCreateSession` → `resolveHarnessSpawnBody`). The sidebar launcher reaches
+that chokepoint via **`POST /api/terminals`** (`routes/terminals.ts`), which
+pre-creates the pty and hands the frontend a `serverId` to attach by — WITHOUT
+it, a sidebar terminal connects serverlessly to `/ws/terminal` (the pty is built
+straight from the WS query params), so Codex/Pi get no MCP and only Claude
+survives via its persistent `~/.claude.json` reconcile. A harness typed into an
+already-open plain shell is still not observable at the chokepoint, and Lattice
+does not write a tracked `.codex/config.toml` / a proactive project-root
+`.pi/mcp.json` just to cover it. (Startup-configured harness terminals also stay
+serverless for now — see `frontend/src/components/sidebar/CLAUDE.md`.)
 
 ## Modules
 
@@ -12,7 +90,12 @@ See `plans/mcp-integration.md` (gitignored) for the full design + decisions.
   chrome-devtools, context7, brave-search) + the `McpServerEntry` type. Package
   names live here so churn is a code change, not a data migration. **Invariant:
   there is no `enabledByDefault` flag** — everything is off until the resolver is
-  told otherwise, so a new project loads nothing.
+  told otherwise, so a new project loads nothing. **Playwright ships `--isolated`
+  in its catalog args** (not optional): `@playwright/mcp` otherwise shares ONE
+  persistent profile dir, so a second concurrent instance dies with "Browser is
+  already in use" — and Lattice injects Playwright into many concurrent sessions.
+  `--isolated` gives each its own throwaway in-memory profile. The three shapers
+  append `--headless` on top of this when the resolved `headless` is true.
 - `registry.ts` — the resolver **facade**: `mergedCatalog()` (built-ins ⊕
   `mcpBuiltinOverrides` ⊕ `mcpCustomServers`) and **`effectiveMcpServers(projectPath,
   harness, ctx?)`** — the spawn-path resolver — plus the pure orchestration core
@@ -24,9 +107,10 @@ See `plans/mcp-integration.md` (gitignored) for the full design + decisions.
   spawn alone) lives here as part of the public surface.
 - `resolverPolicy.ts` — **MCP resolver policy** (pure, no I/O): `resolvePlaywright`.
   **Playwright has two scopes** — `mcpOverrides.playwright` is the GLOBAL toggle
-  (any Lattice session + the project-root reconcile, always headless); `qaPlaywright`
-  is QA-runs-ONLY and only applies when `isQaRun` (its `headless` flag is the QA
-  lane's eye switch, and on a QA run it wins over the global toggle).
+  (any Lattice session + the project-root reconcile, headless unless
+  `mcpPlaywrightHeaded` is on); `qaPlaywright` is QA-runs-ONLY and only applies
+  when `isQaRun` (its `headless` flag is the QA lane's eye switch, and on a QA run
+  it wins over the global toggle — `mcpPlaywrightHeaded` never touches a QA run).
 - `claudeServerConfig.ts` — **Claude config shaping** (pure, no I/O):
   `secretEnvVarsFor(entry)` (secret-env selection: `requiresSecret.envVar` ⊕
   `secretEnvVars`) and `toClaudeConfig(entry, serverSecrets, headless)` (shape one
@@ -35,6 +119,18 @@ See `plans/mcp-integration.md` (gitignored) for the full design + decisions.
   `--headless` flag / win32-wrap the command). Deliberately separate
   from `claudeInject.ts` so the resolver/secret logic stays out of the terminal-
   server's apply path + fingerprint (see "Injection sites").
+- `codexServerConfig.ts` — **Codex config shaping** (pure, no I/O):
+  `toCodexServerConfig(entry, secrets, headless)` → one `-c` inline-TOML override
+  string (`mcp_servers.lattice_<id>={…}`) + the secret env for the pty.
+  `safeCodexServerId` namespaces/underscores catalog ids. A JSON string is a
+  valid TOML basic string (same trick as `codexTrust`), so `JSON.stringify` is
+  the string/array renderer.
+- `piServerConfig.ts` — **Pi config shaping** (pure, no I/O):
+  `toPiServerConfig(entry, secrets, headless)` → one `pi-mcp-adapter` server
+  config (for `.pi/mcp.json`) + the secret env for the pty. `lifecycle: 'eager'`
+  + `directTools: true`; stdio secrets omitted from the file (inherited via
+  process.env); HTTP secret headers written as `${VAR}` references (value in pty
+  env, shared `secretHeaderEnvVar` naming with Codex). See `../piMcp/`.
 - `secrets.ts` — read/write `~/.lattice/mcpSecrets.json` (`0600`), kept in its
   OWN file so the settings endpoints never touch secret bytes. `redactSecrets()`
   → presence booleans; `secretHints()` → `••••<last4>`. **Raw values never cross
