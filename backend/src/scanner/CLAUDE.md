@@ -16,11 +16,27 @@ the next:
    tree gitignore-aware and returns `{files, directories}` (every
    directory crossed, plus every file whose extension is in
    `SOURCE_EXTS`). `collectSourceFiles` is the files-only shortcut.
-3. **`fileMetrics.ts`** — `computeFileMetrics(files, {cache})` stats +
-   reads each file once via `readForAnalysis` (skips contents past
-   `LOC_MAX_BYTES`), then runs `analyzeFile` for per-file health unless
-   the `HealthCache` already has a matching `(mtime, size)` entry.
-   Returns the `FileMetric[]` consumed by the next two phases.
+3. **`fileMetrics.ts`** — `computeFileMetrics(files, {cache})` runs in three
+   phases: (1) main-thread stat + `(mtime,size)` `HealthCache` lookup per file
+   (cheap, non-hanging); (2) cache-*misses* are analyzed in an **isolated worker
+   thread** via `healthWorkerRunner.ts` so a pathological file can't freeze the
+   backend's main event loop; (3) an in-thread fallback (`readForAnalysis` +
+   `analyzeFile`, the pre-worker path) for any job the worker couldn't handle.
+   Returns the `FileMetric[]` consumed by the next two phases (order preserved).
+   - **`readForAnalysis.ts`** — the single-file read + LOC count + minified/
+     oversize content-drop guard (`isMinifiedForAnalysis`, shared with the
+     watcher). Extracted into its own module so the worker imports just this +
+     `analyze.js`; `fileMetrics.ts` re-exports it for back-compat.
+   - **`healthWorkerRunner.ts`** — `runHealthAnalysis(jobs, {onResult, …})`:
+     spawns an inline-eval worker (dynamic-imports the compiled `analyze.js` +
+     `readForAnalysis.js` by URL — under tsx/`src` those `.js` siblings don't
+     exist, so it reports the jobs as `unhandled` and the caller falls back
+     in-thread, i.e. never worse than before). A **per-file stall watchdog**
+     (default 10 s, resets on each completed file so it can't false-positive on
+     a big healthy scan) terminates a genuinely-hung file, marks it unanalyzable,
+     respawns, and continues. The worker is side-effect-free (reads + posts
+     only), so terminating it is safe. Injectable worker factory + `moduleUrls`
+     for testing (`__tests__/scannerHealthWorkerRunner.test.ts`).
 4. **`coupling.ts`** — `computeCoupling(metrics, aliases)` feeds the
    per-file `imports` lists into `computeCrossFile` to produce the
    cross-file `CouplingMap` (fan-in/fan-out etc.).

@@ -7,6 +7,7 @@
 import type { HealthMetrics } from './types.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { createWatcher } from './watcher/setup.js';
+import { disposeIsolatedAnalyzer } from './watcher/isolatedAnalyze.js';
 import type {
   HealthUpdate,
   ProjectWatcher,
@@ -67,6 +68,9 @@ function ensureShutdownFlushHook(): void {
   shutdownFlushRegistered = true;
 
   const flushThenExit = () => {
+    // Release the warm analysis worker thread; it's unref()'d so it never blocks
+    // exit, but disposing it promptly on a graceful signal is tidier.
+    disposeIsolatedAnalyzer();
     void Promise.race([
       flushWatcherCaches(),
       new Promise((resolve) => setTimeout(resolve, 1000)),

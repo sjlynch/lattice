@@ -1,7 +1,17 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { analyzeFile, HealthCache, type HealthMetrics } from '../health/index.js';
-import { LOC_MAX_BYTES } from '../health/constants.js';
+import { readForAnalysis } from './readForAnalysis.js';
+import {
+  runHealthAnalysis,
+  type AnalysisJob,
+  type JobAnalysis,
+} from './healthWorkerRunner.js';
+
+// Re-exported for back-compat: scanner.ts's facade and scannerFileMetrics.test.ts
+// import readForAnalysis from here.
+export { readForAnalysis };
+export type { ReadResult } from './readForAnalysis.js';
 
 export type FileMetric = {
   filePath: string;
@@ -14,66 +24,12 @@ export type FileMetric = {
   imports: string[];
 };
 
-type ReadResult = {
-  loc?: number;
-  content?: string;
-};
-
-// A file is treated as minified/generated when its average line length
-// exceeds this. Real source rarely averages >400 chars/line even in
-// long-line styles; minified bundles routinely hit thousands. We pair
-// this with a minimum size threshold so tiny single-line scripts
-// (a one-liner config) don't get falsely flagged.
-const MINIFIED_AVG_LINE_LEN = 400;
-const MINIFIED_MIN_BYTES = 64 * 1024;
-
-// Read the file once, count newlines, and return the decoded content
-// when small enough for the health analyzer. Two cutoffs:
-//   - LOC_MAX_BYTES (5 MB): skip both LOC and health entirely.
-//   - minified-bundle heuristic: keep the LOC count (newline counting
-//     is fast) but DROP the content so analyzeFile / the universal
-//     smell regexes never see it. LONG_STRING_RE has a {200,} quantifier
-//     over a negative-lookahead alternation, and MAGIC_NUM_RE matches
-//     every numeric literal — both cause catastrophic backtracking /
-//     millions of matches on a multi-MB minified bundle and can pin a
-//     CPU core for minutes, starving every other concurrent scan / WS /
-//     API request. A tracked bundle drop-in at the repo root (e.g.
-//     a 2.6 MB `tle-api.js`) is the realistic case. The file still
-//     appears as a graph node — it just has no health metrics, which
-//     it couldn't meaningfully produce anyway.
-export async function readForAnalysis(filePath: string): Promise<ReadResult> {
-  try {
-    const buf = await fs.readFile(filePath);
-    if (buf.length === 0) return { loc: 0, content: '' };
-    if (buf.length > LOC_MAX_BYTES) return {};
-    let count = 0;
-    let idx = 0;
-    while ((idx = buf.indexOf(0x0a, idx)) !== -1) {
-      count++;
-      idx++;
-    }
-    if (buf[buf.length - 1] !== 0x0a) count++;
-
-    if (
-      buf.length >= MINIFIED_MIN_BYTES &&
-      buf.length / Math.max(1, count) >= MINIFIED_AVG_LINE_LEN
-    ) {
-      return { loc: count };
-    }
-
-    return { loc: count, content: buf.toString('utf8') };
-  } catch {
-    return {};
-  }
-}
-
-// How often to yield to the event loop during analysis. tree-sitter
-// parse + AST walk is fully synchronous CPU work; without periodic
-// yields a scan over a few thousand files starves every other request
-// (other projects' /api/scan, /api/settings, WS upgrades) for the entire
-// scan duration — a 30 s scan over project A locks out a freshly-opened
-// tab on project B for the same 30 s. setImmediate at this cadence
-// costs almost nothing per file but keeps the express loop processing.
+// How often to yield to the event loop during the main-thread stat/cache pass.
+// The heavy AST/regex analysis now runs in a worker (see healthWorkerRunner),
+// but the per-file stat + cache lookup and the in-thread FALLBACK still run
+// here; without periodic yields a scan over a few thousand files would starve
+// every other request (other projects' /api/scan, /api/settings, WS upgrades)
+// for the whole pass. setImmediate at this cadence costs almost nothing.
 const YIELD_EVERY_N_FILES = 25;
 
 export type ComputeFileMetricsOptions = {
@@ -92,12 +48,18 @@ export class ScanCancelledError extends Error {
   }
 }
 
+type MissJob = AnalysisJob & { hasStat: boolean; size: number; mtimeMs: number };
+
 export async function computeFileMetrics(
   files: string[],
   options: ComputeFileMetricsOptions = {},
 ): Promise<FileMetric[]> {
-  const out: FileMetric[] = [];
+  // Filled by index so the returned array preserves input order regardless of
+  // when each file's analysis lands (cache hit inline, worker result later).
+  const out: FileMetric[] = new Array(files.length);
+  const misses: MissJob[] = [];
 
+  // ── Phase 1 (main thread): stat + cache lookup. Cheap and non-hanging. ──
   for (let i = 0; i < files.length; i += 1) {
     if (i > 0 && i % YIELD_EVERY_N_FILES === 0) {
       await new Promise<void>((r) => setImmediate(r));
@@ -120,29 +82,78 @@ export async function computeFileMetrics(
       // skip cache hits because the stat tuple is unknown.
     }
 
-    // Cache hit (matching mtime + size) skips the read + analysis
-    // entirely — the typical scan after a no-op refresh costs only
-    // the directory walk + stat per file.
+    // Cache hit (matching mtime + size) skips read + analysis entirely — the
+    // typical scan after a no-op refresh costs only the directory walk + stat.
     const cached = hasStat ? options.cache?.get(filePath, mtimeMs, size) : undefined;
-    let healthDetails: HealthMetrics | undefined;
-    let imports: string[] = [];
-    let loc: number | undefined;
     if (cached) {
-      healthDetails = cached.metrics;
-      imports = cached.imports;
-      loc = healthDetails.loc;
+      out[i] = {
+        filePath,
+        name,
+        ext,
+        size,
+        mtimeMs,
+        loc: cached.metrics.loc,
+        healthDetails: cached.metrics,
+        imports: cached.imports,
+      };
     } else {
-      const read = await readForAnalysis(filePath);
-      loc = read.loc;
-      if (read.content !== undefined && loc !== undefined) {
-        const result = await analyzeFile(read.content, ext, loc);
-        healthDetails = result.metrics;
-        imports = result.imports;
-        if (hasStat) options.cache?.set(filePath, mtimeMs, size, healthDetails, imports);
+      // Placeholder graph node; loc/health filled in by the analysis result.
+      out[i] = { filePath, name, ext, size, mtimeMs, loc: undefined, healthDetails: undefined, imports: [] };
+      misses.push({ index: i, filePath, ext, hasStat, size, mtimeMs });
+    }
+  }
+
+  if (misses.length === 0) return out;
+
+  const missByIndex = new Map(misses.map((m) => [m.index, m]));
+  const apply = (index: number, loc: number | undefined, analysis: JobAnalysis | null): void => {
+    const slot = out[index];
+    if (loc !== undefined) slot.loc = loc;
+    if (analysis) {
+      slot.healthDetails = analysis.metrics;
+      slot.imports = analysis.imports;
+      const m = missByIndex.get(index);
+      if (m?.hasStat && loc !== undefined) {
+        options.cache?.set(files[index], m.mtimeMs, m.size, analysis.metrics, analysis.imports);
       }
     }
+  };
 
-    out.push({ filePath, name, ext, size, mtimeMs, loc, healthDetails, imports });
+  // ── Phase 2: analyze cache-misses in an ISOLATED WORKER. A file whose
+  // analysis hangs pins only the worker thread; the main event loop keeps
+  // serving. The per-file stall watchdog inside runHealthAnalysis terminates a
+  // genuinely-hung file and continues. Anything the worker couldn't handle
+  // (worker unavailable — e.g. from `src` under tsx — or a respawn-limit tail)
+  // comes back as `unhandled` for the in-thread fallback below. ──
+  const jobs: AnalysisJob[] = misses.map((m) => ({ index: m.index, filePath: m.filePath, ext: m.ext }));
+  const { unhandled } = await runHealthAnalysis(jobs, {
+    isCancelled: options.isCancelled,
+    onResult: (r) => apply(r.index, r.loc, r.analysis),
+  });
+  if (options.isCancelled?.()) throw new ScanCancelledError();
+
+  // ── Phase 3: in-thread fallback (same behaviour as before the worker) for
+  // jobs the worker didn't handle. Note the watchdog already emitted+skipped any
+  // culprit before handing back its tail, so we never re-run a hanging file. ──
+  for (let k = 0; k < unhandled.length; k += 1) {
+    if (k > 0 && k % YIELD_EVERY_N_FILES === 0) {
+      await new Promise<void>((r) => setImmediate(r));
+      if (options.isCancelled?.()) throw new ScanCancelledError();
+    }
+    const job = unhandled[k];
+    const read = await readForAnalysis(job.filePath);
+    let analysis: JobAnalysis | null = null;
+    if (read.content !== undefined && read.loc !== undefined) {
+      try {
+        const result = await analyzeFile(read.content, job.ext, read.loc);
+        analysis = { metrics: result.metrics, imports: result.imports };
+      } catch (err) {
+        if (process.env.LATTICE_HEALTH_DEBUG) {
+          console.error(`[health] analyze failed for ${job.filePath}:`, err);
+        }
+      }
+    }
+    apply(job.index, read.loc, analysis);
   }
 
   return out;

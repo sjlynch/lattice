@@ -14,6 +14,31 @@ export const GOD_FUNCTION_MIN_OTHERS = 4;
 export const GOD_FUNCTION_CALL_FRACTION = 0.5;
 export const LOC_MAX_BYTES = 5 * 1024 * 1024;
 
+// A file is treated as minified/generated (and NOT fed to the analyzer) when its
+// average line length exceeds this. Real source rarely averages >400 chars/line
+// even in long-line styles; minified bundles routinely hit thousands. Paired with
+// a minimum size so tiny one-liner scripts/configs aren't falsely flagged.
+export const MINIFIED_AVG_LINE_LEN = 400;
+export const MINIFIED_MIN_BYTES = 64 * 1024;
+
+// Single source of truth for "is this content too pathological to run the health
+// analyzer / universal smell regexes over?". The universal regexes (LONG_STRING_RE,
+// MAGIC_NUM_RE, …) run synchronously on the main thread over every scanned file;
+// on a multi-MB minified bundle MAGIC_NUM_RE alone matches millions of numeric
+// literals and can pin a CPU core for minutes, starving every other scan / WS /
+// API request. Both read paths — the scan (scanner/fileMetrics.ts) AND the watcher
+// (health/watcher/fileAnalysis.ts) — MUST consult this so the guard can't drift
+// between them (the watcher path historically lacked it, so a `change` event on a
+// big bundle bypassed the protection the scan path had). The file still appears as
+// a graph node; it just carries no health metrics, which it couldn't meaningfully
+// produce anyway.
+export function isMinifiedForAnalysis(byteLength: number, lineCount: number): boolean {
+  return (
+    byteLength >= MINIFIED_MIN_BYTES &&
+    byteLength / Math.max(1, lineCount) >= MINIFIED_AVG_LINE_LEN
+  );
+}
+
 export const SOURCE_EXTS = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
   '.py', '.pyi', '.go', '.rs', '.java', '.kt', '.kts', '.scala', '.gradle', '.groovy',

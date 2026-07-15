@@ -9,7 +9,14 @@ export function bump(smells: SmellCounter, id: HealthSmellId, by = 1): void {
 }
 
 const TODO_RE = /\b(TODO|FIXME|HACK|XXX)\b/g;
-const LONG_STRING_RE = /(["'`])(?:\\.|(?!\1).){200,}\1/g;
+// NB: the non-escape branch is `[^\\\r\n]`, NOT `.` — a backslash must be
+// consumable by ONLY the `\\.` escape branch. Allowing `.` to also match a lone
+// backslash makes a backslash run tileable in exponentially many ways, so a line
+// like an unterminated Windows path (`"C:\a\a\a…` with no closing quote) triggers
+// catastrophic backtracking and hangs the whole health scan (ReDoS). Excluding
+// `\r\n` (which `.` already skips) keeps the match single-line as before, so it
+// can't run past a missing closing quote into the next line's quote.
+const LONG_STRING_RE = /(["'`])(?:\\.|(?!\1)[^\\\r\n]){200,}\1/g;
 const MAGIC_NUM_RE = /(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])/g;
 const MAGIC_NUM_ALLOW = new Set(['0', '1', '-1', '2', '10', '100', '1000']);
 

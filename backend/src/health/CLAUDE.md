@@ -99,7 +99,19 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   registrar as a callback), `cacheHydration.ts` (cache → in-memory graph
   mirror), `fileAnalysis.ts` (read/LOC count/cache-or-analyze), `handlers.ts`
   (add/change/remove event handlers), `subscribers.ts` (broadcast-safe
-  subscriber fan-out), and `types.ts`
+  subscriber fan-out), `isolatedAnalyze.ts`, and `types.ts`.
+  `isolatedAnalyze.ts` runs each changed file's analysis in a **warm persistent
+  worker thread** (`IsolatedAnalyzer` singleton, serial single-in-flight queue,
+  per-file stall watchdog) so a pathological changed file can only pin the worker
+  thread, never freeze the backend event loop — the watcher analogue of the
+  scan's `scanner/healthWorkerRunner.ts`. It reuses ONE warm worker (tree-sitter
+  WASM init amortized: ~117 ms first file, ~1 ms after) to avoid a per-event
+  spawn storm on a checkout/format-all. `analyzeContentIsolated` throws
+  `WorkerUnavailableError` when the worker can't be used (e.g. `src` under tsx);
+  `fileAnalysis.ts` then falls back to in-thread `analyzeFile` (a `null` result,
+  by contrast, is a watchdog/analysis skip and is NOT retried in-thread). The
+  worker is `unref()`'d and disposed on graceful shutdown (`watcher.ts`
+  `flushThenExit`).
 - `cache.ts` + `cachePaths.ts` + `cacheFile.ts` — persistent per-file health
   cache at `<project>/.lattice/health-cache.json`, keyed by absolute path with
   `(mtime,size)` staleness. `cache.ts` is the `HealthCache` class: in-memory
