@@ -23,14 +23,20 @@
 //                       used to be held while any agent existed — the
 //                       render-on-demand regression this file's contract now
 //                       guards against.)
+//   - `halo`          : the selection-halo pulse is animating. Held by
+//                       `useSelectionHaloPulse` while (and only while) a
+//                       selection exists, so the shared ring material can be
+//                       re-tinted each frame; released when the selection
+//                       clears so the loop suspends.
 //
 // Tab visibility is a negative gate: when the tab is hidden the loop is
 // fully paused regardless of held reasons.
 //
 // Frame-rate throttle: when the ONLY held reasons are the slow self-animations
-// (`agents` and/or `labelPhysics`) — i.e. no `engine` warmup, `interact`, or
-// `refresh` tail demanding full responsiveness — the loop is duty-cycled down
-// to ~SLOW_FPS via pause/resume. Those eases/fades read fine at a reduced rate,
+// (`agents`, `labelPhysics`, and/or the selection-halo `halo` pulse) — i.e. no
+// `engine` warmup, `interact`, or `refresh` tail demanding full responsiveness
+// — the loop is duty-cycled down to ~SLOW_FPS via pause/resume. Those
+// eases/fades/pulses read fine at a reduced rate,
 // so this roughly halves the full-scene render cost while an agent is active or
 // a label overlay is held, without affecting interaction or layout warmup. Fed
 // one frame at a time by `notifyFrameRendered` (wired to the scene frame
@@ -66,6 +72,8 @@ export type IdleController = {
   releaseLabelPhysics(): void;
   acquireAgents(): void;
   releaseAgents(): void;
+  acquireHalo(): void;
+  releaseHalo(): void;
   wakeForRefresh(): void;
   notifyFrameRendered(): void;
   destroy(): void;
@@ -111,6 +119,16 @@ export function createIdleController(
     sync();
   }
 
+  // ---- halo (selection-halo pulse animating) ----------------------------
+  function acquireHalo() {
+    ledger.acquire('halo');
+    sync();
+  }
+  function releaseHalo() {
+    ledger.release('halo');
+    sync();
+  }
+
   // ---- refresh (short tail after refresh() / settings tweak) ------------
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   function wakeForRefresh() {
@@ -153,6 +171,8 @@ export function createIdleController(
     releaseLabelPhysics,
     acquireAgents,
     releaseAgents,
+    acquireHalo,
+    releaseHalo,
     wakeForRefresh,
     notifyFrameRendered: loop.notifyFrameRendered,
     destroy,

@@ -126,6 +126,28 @@ export const LINK_WIDTH_ROW: SliderRow = {
   format: (v) => (v === 0 ? 'flat lines' : `${v.toFixed(1)} (tubes)`),
 };
 
+// The selection-halo glow knobs (Rendering tab). The pulsing bloom that
+// brightens selected nodes — strength is its peak opacity (0 = ring only), size
+// its radius as a multiple of node size. See halo.ts.
+export const SELECTION_GLOW_ROWS: SliderRow[] = [
+  {
+    key: 'selectionGlowStrength',
+    label: 'Selection glow',
+    min: 0,
+    max: 1,
+    step: 0.05,
+    format: (v) => (v === 0 ? 'off (ring only)' : v.toFixed(2)),
+  },
+  {
+    key: 'selectionGlowScale',
+    label: 'Selection glow size',
+    min: 0.8,
+    max: 3,
+    step: 0.1,
+    format: (v) => `${v.toFixed(1)}×`,
+  },
+];
+
 // Renderer pixel-ratio cap. The big lever when the browser is software-rendering
 // (no GPU hardware acceleration) — lower it to render fewer pixels per frame.
 export const RENDER_SCALE_ROW: SliderRow = {

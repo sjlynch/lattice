@@ -9,8 +9,10 @@ label physics in `labelPhysics/CLAUDE.md`.
 - **Idle controller** (`idleController.ts`) — the render-on-demand gate: a
   reference-counted wrapper around `pauseAnimation`/`resumeAnimation` that
   suspends the RAF loop unless a **reason** is held (`engine`, `interact`,
-  `refresh`, `labelPhysics`, `agents`; minus a tab-hidden gate). THE perf contract:
-  a settled, un-interacted scene reaches 0 frames (see invariants).
+  `refresh`, `labelPhysics`, `agents`, `halo`; minus a tab-hidden gate). THE perf
+  contract: a settled, un-interacted scene reaches 0 frames (see invariants).
+  `agents`/`labelPhysics`/`halo` are the *slow-only* reasons — when they're the
+  only thing awake the loop duty-cycles to ~30fps.
 - **Agent Presence Layer (APL)** (`agentOverlay*.ts` + `hooks/useAgentOverlay`)
   — where live Claude agents work: per agent a free-floating **presence node**,
   fading **focus beams** to files it touches, a file **label**, and a **satellite**
@@ -78,7 +80,15 @@ label physics in `labelPhysics/CLAUDE.md`.
   `labelPhysics` only while labels move) + `labelPhysics/` (pure physics, own doc).
 
 **Sibling-child ring/halo toggles ("the halo pattern")**
-- `halo` + `selectionHaloSync`, `worktreeRing` (`W`), `changeRing` +
+- `halo` + `selectionHaloSync` (toggle the halo per changed id) + the
+  `useSelectionHaloPulse` hook. The halo is a Group of two shared-material
+  sprites: a **ring** below the node body (an outline, `RING_RENDER_ORDER`) and
+  an additive-white **glow** just above it (`SELECTION_GLOW_RENDER_ORDER`) that
+  brightens the node itself. The pulse animates both shared materials (ring tint
+  brighter/whiter ⇄ base, glow opacity 0 ⇄ peak) in lock-step while any node is
+  selected — O(1) per frame regardless of selection size; holds the idle
+  controller's slow-only `halo` reason only while selected. `worktreeRing`
+  (`W`), `changeRing` +
   `changeRingSync` + `changeRing{Materials,Textures}` (timeline git rings, two-part
   `W`-suppression). Each toggles a ring as a sibling child of the node root for
   only the changed ids — never `graph.refresh()`.
@@ -117,7 +127,9 @@ label physics in `labelPhysics/CLAUDE.md`.
   `pixelRatio` (layout CPU `forceManyBody` and orbit CPU draw-calls+fill differ);
   "Spread" tab fields `alphaDecay`/`warmupTicks`/`collideRadius` (neutral/off by
   default) + `tidyLayoutOnLoad`/`tidySpread` (the radial untangle below — **on by
-  default**).
+  default**); "Rendering" tab selection-glow fields
+  `selectionGlowStrength`/`selectionGlowScale` (the pulsing bloom over selected
+  nodes — see `halo.ts` + `hooks/useSelectionGlowSettings`).
 - `localRepulsionForce.ts` — O(N) linked-cell `charge` for `repulsionMode==='local'`.
   `layoutShapeForces.ts` — `forceCollideXZ`, the optional, off-by-default X/Z-plane
   "Spread" force giving even, non-overlapping node spacing. Fades with `alpha`

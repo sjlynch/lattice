@@ -10,6 +10,7 @@ import {
   PHYSICS_ROWS,
   RENDER_SCALE_ROW,
   REPULSION_MODES,
+  SELECTION_GLOW_ROWS,
   SPREAD_ROWS,
   SUBAGENT_LABEL_MODES,
   TABS,
@@ -143,6 +144,10 @@ function RenderingTab({ settings, set }: TabProps) {
         value={settings.batchedNodes}
         onSelect={set('batchedNodes')}
       />
+
+      {/* Selection-halo glow: how bright/large the pulsing bloom over selected
+          nodes is (the ring itself is unaffected). See halo.ts. */}
+      <SliderRows rows={SELECTION_GLOW_ROWS} settings={settings} set={set} />
     </>
   );
 }

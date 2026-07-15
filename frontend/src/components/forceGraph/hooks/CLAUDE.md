@@ -70,7 +70,14 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
   the shared `selected` set) and `useGraphSearchNavigation` (prev/next cursor +
   camera focus, pulsing `wakeForRefresh` across the tween).
 - `useSelectionHaloSync` — in-place selection-halo delta (toggles only changed
-  ids + `wakeForRefresh`, never a full refresh). `useBoxSelect` +
+  ids + `wakeForRefresh`, never a full refresh). `useSelectionHaloPulse` —
+  animates the single shared halo material's tint (brighter/whiter ⇄ base) while
+  any node is selected so rings pop in dense graphs; O(1) per frame, holds the
+  idle controller's slow-only `halo` reason (30fps) only while selected.
+  `useSelectionGlowSettings` — pushes the Rendering-tab glow knobs
+  (`selectionGlowStrength`/`selectionGlowScale`) into `halo.ts` (strength read
+  live per frame; a size change rebuilds the current selection's halos in place
+  via `rebuildSelectionHalos`, O(selected), not a full refresh). `useBoxSelect` +
   `boxSelectGeometry` + `orbitControlLock` — shift-drag rectangle select.
 - `useNodeContextMenu` — right-click popover. `useGraphTaskCreation` — create-task
   modal state. `useGraphViewKeyboard` — the Escape chord (menu → search → select).

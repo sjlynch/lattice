@@ -13,8 +13,9 @@
 //
 //   9   — agent group / focus beams   (AGENT_GROUP_RENDER_ORDER / BEAM_RENDER_ORDER)
 //   10  — links                        LINK_RENDER_ORDER
-//   11  — change rings / selection halo RING_RENDER_ORDER
+//   11  — change rings / selection ring RING_RENDER_ORDER
 //   12  — node bodies / metric+dead overlays / ghost disc / batched mesh  NODE_RENDER_ORDER
+//   12.5— selection glow (pulsing bloom over selected nodes)  SELECTION_GLOW_RENDER_ORDER
 //   13  — Claude agent nodes + satellites  CLAUDE_NODE_RENDER_ORDER
 //   14  — agent file labels            (LABEL_RENDER_ORDER)
 //   30  — worktree rings               WORKTREE_RING_RENDER_ORDER
@@ -40,6 +41,12 @@ export const RING_RENDER_ORDER = 11;
 // deleted-node ghost disc, and the batched-node InstancedMesh — all the same
 // on-screen "node body" layer, just above the rings (11) and links (10).
 export const NODE_RENDER_ORDER = 12;
+
+// The selection glow: an additive white bloom drawn just OVER the node body
+// (fractional, so it's unambiguously above NODE_RENDER_ORDER=12 yet still below
+// the Claude agent node at 13) that pulses to brighten selected nodes. Paired
+// with the selection ring at RING_RENDER_ORDER (11), which stays below the body.
+export const SELECTION_GLOW_RENDER_ORDER = 12.5;
 
 // The free-floating Claude agent node and its subagent satellites — above every
 // file body (12) and ring (11) so the live agent is never occluded.

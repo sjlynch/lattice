@@ -63,3 +63,28 @@ export function applySelectionHaloDelta(
     if (root) setNodeHalo(root, true, baseSizeFor(node, settings));
   }
 }
+
+// Rebuild the halo (ring + glow) on every currently-selected mounted node so a
+// change to a build-time halo knob — the glow scale, read by `halo.ts` when the
+// group is built — takes effect on the existing selection without a full
+// `graph.refresh()` (which would rebuild all N node sprites). O(selected):
+// halos only exist on selected nodes. Toggling off-then-on re-reads the live
+// `_glowScale` in `buildHaloGroup`.
+export function rebuildSelectionHalos(
+  graph: ForceGraph3DInstance,
+  selected: Set<string>,
+  settings: GraphSettings,
+): void {
+  if (selected.size === 0) return;
+  const byId = mountedNodesById(graph);
+  if (byId.size === 0) return;
+  for (const id of selected) {
+    const node = byId.get(id);
+    if (!node) continue;
+    const root = mountedRoot(node);
+    if (!root) continue;
+    const baseSize = baseSizeFor(node, settings);
+    setNodeHalo(root, false, baseSize);
+    setNodeHalo(root, true, baseSize);
+  }
+}

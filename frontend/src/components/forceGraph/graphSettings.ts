@@ -95,6 +95,14 @@ export type GraphSettings = {
   // slider). 1 = the auto-tuned value (seed at ~half the force-directed natural
   // radius); higher seeds wider, lower tighter. See `radialTidyLayout.tidyRingStep`.
   tidySpread: number;
+  // --- Selection-halo glow (Rendering tab) ---
+  // The pulsing additive-white bloom drawn over selected nodes so they brighten
+  // and stay visible in dense graphs (see halo.ts). `selectionGlowStrength` is
+  // its peak opacity: 0 = no node brightening (just the pulsing ring), 1 = a
+  // strong white flash. `selectionGlowScale` is the bloom radius as a multiple
+  // of the node's size. Both live-tunable; applied via hooks/useSelectionGlowSettings.
+  selectionGlowStrength: number;
+  selectionGlowScale: number;
   // Renderer pixel-ratio cap ("Render scale"). The WebGL drawing buffer is sized
   // to `min(devicePixelRatio, pixelRatio)` — so values below the device ratio
   // render fewer pixels per frame (softer, but a large fill-rate saving). The big
@@ -151,6 +159,10 @@ export const DEFAULT_SETTINGS: GraphSettings = {
   collideRadius: 0,
   tidyLayoutOnLoad: true,
   tidySpread: 1,
+  // Selection glow: a moderate bloom (0.5 peak opacity) at 1.5× node size —
+  // clearly brightens selected nodes without washing them white.
+  selectionGlowStrength: 0.5,
+  selectionGlowScale: 1.5,
   pixelRatio: 1.5,
 };
 

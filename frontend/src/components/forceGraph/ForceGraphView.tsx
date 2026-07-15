@@ -22,6 +22,8 @@ import { useHoverNodeDebounce } from './hooks/useHoverNodeDebounce';
 import { useCanvasDragTracking } from './hooks/useCanvasDragTracking';
 import { useRefMirror } from './hooks/useRefMirror';
 import { useSelectionHaloSync } from './hooks/useSelectionHaloSync';
+import { useSelectionHaloPulse } from './hooks/useSelectionHaloPulse';
+import { useSelectionGlowSettings } from './hooks/useSelectionGlowSettings';
 import { useMetricsIgnoreRefresh } from './hooks/useMetricsIgnoreRefresh';
 import { useGraphViewKeyboard } from './hooks/useGraphViewKeyboard';
 import { useOverlayTooltipDismiss } from './hooks/useOverlayTooltipDismiss';
@@ -288,6 +290,13 @@ export function ForceGraphView({
   // Targeted halo updates — toggle the halo Sprite on only the affected node
   // ids instead of a full `graph.refresh()` (see the hook). Runtime scene sync.
   useSelectionHaloSync(graphRef, selected, settings);
+  // Pulse the shared halo material (brighter/whiter ⇄ base) while any node is
+  // selected so selection rings stay visible in dense graphs. O(1) per frame;
+  // holds the idle controller's slow-only `halo` reason only while selected.
+  useSelectionHaloPulse(graphRef, selected.size > 0);
+  // Push the Rendering-tab glow knobs (strength/size) into the halo module and
+  // apply changes to the current selection (strength live, size rebuilds halos).
+  useSelectionGlowSettings(settings, graphRef, selected);
 
   // Re-render node sprites when the LOC/health ignore list changes so the new
   // filter takes effect without touching the d3 simulation (skips the mount
