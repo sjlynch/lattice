@@ -11,7 +11,7 @@ easy-to-break timing/lock invariants; read this before touching them.
 | Step | Drains (waits until empty) | Fills / advances |
 |------|----------------------------|------------------|
 | `start` | — (reads the **Open** lane) | Open → In Progress (spawns each) |
-| `merge` | In Progress (Phase A), then Ready-to-Merge (Phase B loop) | Ready-to-Merge → QA (via inner merge runs) |
+| `merge` | In Progress (Phase A), then Ready-to-Merge (Phase B loop), then the post-merge hook (Phase C) | Ready-to-Merge → QA (via inner merge runs) |
 | `push`  | Ready-to-Merge | pushes `main` to the remote (no lane change) |
 
 ## Cross-process project run-lock (the load-bearing invariant)
@@ -47,6 +47,16 @@ the lane-drain used by both merge Phase A and push:
   Phase A passes `PHASE_A_DRAIN_TIMEOUT_MS` (30 min); push passes
   `PUSH_DRAIN_TIMEOUT_MS` (15 min). `deps` is injectable only for the tests.
 
+`waitForPostMergeHookIdle(project, run, onActive, maxWaitMs?, deps?)` — the
+merge step's **Phase C** gate. Resolves when no post-merge hook is `running` for
+the project (or the run is cancelled); bounded, so a hook agent that dies
+without calling `/complete` can't leak the run-lock. Same subscribe-before-read
+race guard as `waitForLaneEmpty`. Its subscriber is deliberately **not**
+filtered by project — `getActiveHookForProject` canonicalizes the path it
+compares while `ev.run.projectPath` is the raw string the trigger was handed, so
+a `!==` filter would drop our own project's events; re-evaluate on every (rare)
+hook event and let the canonicalizing lookup decide.
+
 `emitControlProgress` is the single shaper for the `step-control-progress` WS
 event so every worker reports progress identically.
 
@@ -81,6 +91,29 @@ moment a full merge run leaves the ready_to_merge id-set unchanged (a
 persistently-erroring task is left in the lane by `processTarget`, so comparing
 the lane before/after — not the error *count* — is what stops the infinite
 loop). Covered by `__tests__/workflowMergeStepLoop.test.ts`.
+
+**Phase C — the post-merge hook gate (do not regress).** The step must not
+report `merge complete` while a post-merge hook is running for the project, or
+the workflow run finishes and the frontend queue starts the NEXT workflow's step
+1 on top of the live hook agent. It is *not* enough that Phase B awaits its merge
+runs:
+
+- A hook fired **by a merge run** is already gated — `mergeRuns.ts` awaits
+  `runPostMergeHook` *before* `finishRun`, so `waitForMergeRunFinished` waits it
+  out transitively. Keep that ordering.
+- A hook fired **outside a run** is not. `awaitPostMergeHookOutsideRun`
+  (`routes/tasks/hooks/`: the resolver `/complete` branch, `/merged`,
+  `/stash-resolved`) skips when a merge run is active — i.e. it fires *precisely*
+  when no `finishRun` will gate it. `/stash-resolved` does so by design when its
+  auto-restarted run picks up no work.
+
+The queue can't close this itself: its only sequential gate,
+`assertNoActiveWorkflowRun`, counts **workflow runs, not hooks**. Making
+`requireNoActiveRun` 409 on a live hook would also stall the queue — its 409
+retry is driven by `runFinished` (a workflow run leaving `activeRuns`), and a
+hook finishing emits no such event. So the wait belongs here, where the step
+already owns "all merging for this workflow is done" and the wait is bounded.
+Covered by `__tests__/workflowMergeStepPostMergeHook.test.ts`.
 
 ## `push.ts` — `runPushStep`
 

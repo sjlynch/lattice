@@ -68,7 +68,10 @@ explicit-curl callbacks — never by polling task state.
     throws if it started none so a no-op run doesn't silently "succeed".
   - `controlSteps/merge.ts` — `runMergeStep`: Phase A drains In Progress,
     Phase B loops merge runs (`lockMode: 'inherit'`) until Ready-to-Merge
-    is empty, with the unchanged-lane error-loop guard.
+    is empty, with the unchanged-lane error-loop guard, and Phase C waits
+    out any running post-merge hook (incl. ones fired *outside* a merge run
+    by `awaitPostMergeHookOutsideRun`, which nothing else gates) so a queued
+    workflow can't start on top of the previous one's hook.
   - `controlSteps/push.ts` — `runPushStep`: drain Ready-to-Merge, spawn a
     push session, wait for its Stop hook with the `PUSH_STEP_TIMEOUT_MS`
     (15 min) backstop and prompt cancel/pty cleanup.
@@ -112,3 +115,10 @@ explicit-curl callbacks — never by polling task state.
   second browser tab) into starting two runs at once; on the 409 the queue
   requeues the entry and retries when the slot frees. Parallel/manual starts
   omit the flag.
+- **The single slot counts workflow runs, not post-merge hooks.**
+  `assertNoActiveWorkflowRun` deliberately ignores hooks, and adding them there
+  would stall the queue: the 409 retry is re-evaluated only on `runFinished` (a
+  workflow run leaving the frontend's `activeRuns`), and a post-merge hook
+  finishing emits no such event — the requeued entry would wait for a signal
+  that never comes. Hook exclusion is enforced *upstream* instead, by the merge
+  control step's Phase C gate (see `controlSteps/CLAUDE.md`). Keep it there.

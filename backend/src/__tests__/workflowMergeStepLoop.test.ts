@@ -98,6 +98,7 @@ function makeDeps(
     subscribeMergeRuns: () => () => undefined,
     subscribeWorkflowRuns: () => () => undefined,
     waitForLaneEmpty: async () => undefined, // Phase A: In Progress already empty
+    waitForPostMergeHookIdle: async () => undefined, // Phase C: no hook configured
   };
 
   return { deps, rounds: () => round };

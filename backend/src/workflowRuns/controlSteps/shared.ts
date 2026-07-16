@@ -1,12 +1,18 @@
 // Shared helpers for the control-step workers (start / merge / push).
 //
 // `waitForLaneEmpty` is the lane-drain subscription used by both the merge
-// and push steps; `emitControlProgress` is the single place that shapes the
+// and push steps; `waitForPostMergeHookIdle` is the merge step's post-merge
+// hook gate; `emitControlProgress` is the single place that shapes the
 // `step-control-progress` WS payload so every worker reports progress the
 // same way.
 
 import { listTasks, subscribe as subscribeTasks } from '../../tasks.js';
 import type { Task, TaskStatus } from '../../tasks.js';
+import {
+  getActiveHookForProject,
+  subscribePostMergeHooks,
+  type PostMergeHookRun,
+} from '../../postMergeHooks.js';
 import type { WorkflowStepKind } from '../../workflows.js';
 import { notify, subscribe, type WorkflowRun } from '../state.js';
 
@@ -125,6 +131,121 @@ export function waitForLaneEmpty(
       if (settled) return;
       if (evaluate(initial)) finish();
     });
+  });
+}
+
+// The post-merge-hook registry subscriptions `waitForPostMergeHookIdle` leans
+// on, injectable so the gate can be unit-tested without a real hook session.
+export type PostMergeHookWaitDeps = {
+  getActiveHookForProject: typeof getActiveHookForProject;
+  subscribePostMergeHooks: typeof subscribePostMergeHooks;
+  subscribeRun: typeof subscribe;
+};
+
+const productionPostMergeHookWaitDeps: PostMergeHookWaitDeps = {
+  getActiveHookForProject,
+  subscribePostMergeHooks,
+  subscribeRun: subscribe,
+};
+
+// Resolve once NO post-merge hook is running for `projectPath` (or the
+// workflow run is no longer 'running' — cancellation).
+//
+// Why the merge step needs this even though a merge run already gates itself:
+// `mergeRuns.ts` awaits `runPostMergeHook` before `finishRun`, so a hook fired
+// *by a run* is covered — the step's `waitForMergeRunFinished` transitively
+// waits for it. But a hook can also fire from `awaitPostMergeHookOutsideRun`
+// (`routes/tasks/hooks/` — the resolver `/complete` branch, `/merged`, and
+// `/stash-resolved`), which by definition runs when NO merge run is active, so
+// no run's `finishRun` gates it. Without this the step would report "merge
+// complete", the workflow run would finish, and the frontend queue — whose only
+// sequential gate is `assertNoActiveWorkflowRun`, which counts workflow runs and
+// not hooks — would dispatch the NEXT workflow's step 1 alongside the still-
+// running hook. Gating here (rather than in the queue) keeps the wait bounded
+// and keeps the queue from stalling on a signal it can't observe.
+//
+// Same shape as waitForLaneEmpty: subscribe BEFORE the initial read so a
+// `finished` event in the gap isn't missed, and honour the same BOUNDED-WAIT
+// invariant — a hook agent that dies without calling back must not hang the
+// worker and leak the cross-process project run-lock, so expiry REJECTS.
+export function waitForPostMergeHookIdle(
+  projectPath: string,
+  run: WorkflowRun,
+  onActive: (hook: PostMergeHookRun) => void,
+  maxWaitMs?: number,
+  deps: PostMergeHookWaitDeps = productionPostMergeHookWaitDeps,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let reportedId: string | null = null;
+    let lastActiveId: string | null = null;
+    let unsubHooks: (() => void) | null = null;
+    let unsubRun: (() => void) | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const cleanup = () => {
+      unsubHooks?.();
+      unsubRun?.();
+      if (timer) clearTimeout(timer);
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+
+    // True once the gate is open. Reports each hook we wait on exactly once —
+    // keyed by id, so a chatty `progress` stream can't spam the run strip with
+    // duplicate lines, but a *second* hook starting while we're still parked
+    // (one finishes, another fires) still gets its own line.
+    const evaluate = (): boolean => {
+      if (run.status !== 'running') return true;
+      const active = deps.getActiveHookForProject(projectPath);
+      if (!active) return true;
+      lastActiveId = active.id;
+      if (reportedId !== active.id) {
+        reportedId = active.id;
+        onActive(active);
+      }
+      return false;
+    };
+
+    if (maxWaitMs !== undefined && maxWaitMs > 0) {
+      timer = setTimeout(() => {
+        fail(
+          new Error(
+            `waitForPostMergeHookIdle: post-merge hook ${lastActiveId ?? '(unknown)'} ` +
+              `did not finish within ${maxWaitMs}ms — aborting so the project ` +
+              `run-lock is released`,
+          ),
+        );
+      }, maxWaitMs);
+      timer.unref?.();
+    }
+
+    // Subscribe FIRST so a hook finishing between our subscribe and the
+    // initial evaluate() can't slip past. Deliberately NOT filtered by
+    // project: `getActiveHookForProject` canonicalizes the path it compares,
+    // while `ev.run.projectPath` is whatever string the trigger was handed, so
+    // a raw !== filter here would drop events for our own project. Re-evaluate
+    // on every hook event and let the canonicalizing lookup decide — hook
+    // events are rare, so the extra map scans are free.
+    unsubHooks = deps.subscribePostMergeHooks(() => {
+      if (evaluate()) finish();
+    });
+    unsubRun = deps.subscribeRun((ev) => {
+      if (!('run' in ev) || ev.run.id !== run.id) return;
+      if (ev.type === 'cancelled' || ev.type === 'errored') finish();
+    });
+
+    if (evaluate()) finish();
   });
 }
 

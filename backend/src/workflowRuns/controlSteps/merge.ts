@@ -1,9 +1,11 @@
-// 'merge' control step — drain In Progress, then drain Ready-to-Merge.
+// 'merge' control step — drain In Progress, then drain Ready-to-Merge, then
+// wait out the post-merge hook.
 //
 // Phase A waits for In Progress to drain; Phase B triggers merge runs until
-// Ready-to-Merge is empty. Inner merge runs inherit this step's project
-// run-lock (`lockMode: 'inherit'`) so they don't deadlock against the lock the
-// control-step worker already holds.
+// Ready-to-Merge is empty; Phase C blocks until no post-merge hook is running.
+// Inner merge runs inherit this step's project run-lock (`lockMode: 'inherit'`)
+// so they don't deadlock against the lock the control-step worker already
+// holds.
 
 import { listTasks } from '../../tasks.js';
 import {
@@ -14,7 +16,11 @@ import {
 } from '../../mergeRuns.js';
 import type { Workflow } from '../../workflows.js';
 import { subscribe, type WorkflowRun } from '../state.js';
-import { emitControlProgress, waitForLaneEmpty } from './shared.js';
+import {
+  emitControlProgress,
+  waitForLaneEmpty,
+  waitForPostMergeHookIdle,
+} from './shared.js';
 
 // Backstop for Phase A (Fix 2). An in_progress task whose agent died without
 // committing is never auto-completed (the in-progress sweep skips no-commit
@@ -22,6 +28,12 @@ import { emitControlProgress, waitForLaneEmpty } from './shared.js';
 // can't hang the worker forever holding the cross-process project run-lock. 30
 // min is generous for real coding work; a dev restart during the wait clears it.
 const PHASE_A_DRAIN_TIMEOUT_MS = 30 * 60 * 1000;
+
+// Backstop for Phase C. Same reasoning as Phase A: the hook agent can die
+// without ever calling /complete, and an unbounded wait would hang the worker
+// and leak the project run-lock. The hook prompt is a full agent task, so give
+// it the same 30 min.
+const PHASE_C_HOOK_TIMEOUT_MS = 30 * 60 * 1000;
 
 // Injectable seam (production default below). The Phase B drain loop is the
 // trickiest part of this step to get right (it's what infinite-looped on
@@ -37,6 +49,7 @@ export type MergeStepDeps = {
   subscribeMergeRuns: typeof subscribeMergeRuns;
   subscribeWorkflowRuns: typeof subscribe;
   waitForLaneEmpty: typeof waitForLaneEmpty;
+  waitForPostMergeHookIdle: typeof waitForPostMergeHookIdle;
 };
 
 const productionDeps: MergeStepDeps = {
@@ -47,6 +60,7 @@ const productionDeps: MergeStepDeps = {
   subscribeMergeRuns,
   subscribeWorkflowRuns: subscribe,
   waitForLaneEmpty,
+  waitForPostMergeHookIdle,
 };
 
 export async function runMergeStep(
@@ -163,6 +177,36 @@ export async function runMergeStep(
         );
       }
     }
+
+    // Phase C: wait out the post-merge hook.
+    //
+    // A hook fired BY a merge run is already covered — mergeRuns.ts awaits
+    // runPostMergeHook before finishRun, so Phase B's waitForMergeRunFinished
+    // transitively waited for it and this resolves immediately. What this
+    // catches is a hook fired OUTSIDE a run by `awaitPostMergeHookOutsideRun`
+    // (routes/tasks/hooks/: the resolver `/complete` branch, `/merged`,
+    // `/stash-resolved`) — those fire precisely when no merge run is active, so
+    // nothing else gates them. Completing the step with one of those in flight
+    // lets the workflow run finish, and the frontend queue's only sequential
+    // gate (`assertNoActiveWorkflowRun`) counts workflow runs, not hooks — so it
+    // would start the next queued workflow's step 1 on top of a still-running
+    // post-merge agent, exactly the overlap this phase exists to prevent.
+    await deps.waitForPostMergeHookIdle(
+      wf.projectPath,
+      run,
+      (hook) => {
+        emitControlProgress(
+          run,
+          stepIndex,
+          'merge',
+          0,
+          1,
+          `waiting for the post-merge hook (${hook.harness}) to finish`,
+        );
+      },
+      PHASE_C_HOOK_TIMEOUT_MS,
+    );
+    if (run.status !== 'running') return;
 
     emitControlProgress(run, stepIndex, 'merge', 1, 1, 'merge complete');
   } finally {
