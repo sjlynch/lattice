@@ -91,6 +91,25 @@ export function subscribeGitBranch(
   });
 }
 
+export type GitStatusUpdate = { type: 'git-status'; signature: string };
+
+// Live "git status changed" signal for the active project. The backend watches
+// the repo's .git metadata + working tree and pushes a compact signature on
+// connect and whenever a commit/stage/checkout or a working-tree edit changes
+// it. The timeline scrubber re-fetches git history on a new signature (deduped
+// against the one it last fetched), so the commit list + uncommitted-changes
+// view update without a page refresh. Returns an unsubscribe fn (auto-reconnects
+// via subscribeWs).
+export function subscribeGitStatus(
+  project: string,
+  onSignature: (signature: string) => void,
+): () => void {
+  const url = `/ws/git-status?project=${encodeURIComponent(project)}`;
+  return subscribeWs<GitStatusUpdate>(url, (msg) => {
+    if (msg && msg.type === 'git-status') onSignature(msg.signature ?? '');
+  });
+}
+
 export async function listDir(folderPath?: string): Promise<DirListing> {
   const url = folderPath
     ? `/api/list-dir?path=${encodeURIComponent(folderPath)}`

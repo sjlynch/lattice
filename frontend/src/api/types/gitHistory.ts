@@ -23,4 +23,8 @@ export type GitHistoryResult = {
   isRepo: boolean;
   commits: GitCommit[];
   uncommitted: GitUncommitted;
+  // Compact fingerprint of the current repo state (HEAD + dirty set). Used to
+  // dedupe the /ws/git-status live-refresh against the value last fetched here.
+  // Empty string when the folder isn't a git repo.
+  signature: string;
 };

@@ -7,4 +7,5 @@ WebSocket endpoints all use `WebSocketServer({ noServer: true })` and are dispat
 - `endpoints/` — endpoint-specific initial payloads/subscriptions for terminal,
   tasks, agent-sessions, merge-runs, post-merge-hooks, workflows,
   workflow-runs, health, git-branch (navbar branch chip, `.git/HEAD` watcher),
-  and harness availability.
+  git-status (timeline-scrubber live refresh, `.git`-metadata + working-tree
+  watcher), and harness availability.

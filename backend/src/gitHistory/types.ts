@@ -27,4 +27,9 @@ export type GitHistoryResult = {
   // the scrubber.
   commits: GitCommit[];
   uncommitted: GitUncommitted;
+  // Compact fingerprint of the current repo state (HEAD + dirty set); see
+  // gitHistory/signature.ts. The frontend uses it to dedupe the /ws/git-status
+  // live-refresh (skip a re-fetch when the pushed signature matches the last
+  // one it already fetched). Empty string when the folder isn't a git repo.
+  signature: string;
 };

@@ -69,6 +69,30 @@ export function formatTimelineTickLabel(
   return `${commit.shortSha} · ${commit.subject} · ${fmtAge(commit.date, now)}`;
 }
 
+// After a background git-history refresh (a commit made / undone, or the tree
+// going dirty/clean while the tab is open) the working-tree tick can shift index
+// because commits.length changed. Map the user's current [left,right] range onto
+// the new tick space so a live update never yanks their scrubber:
+//   - the default full range stays full (the common untouched-scrubber case,
+//     incl. an empty repo's first commit) — so "watch the WT go clean" works;
+//   - a right handle parked on the OLD working-tree slot follows to the NEW one;
+//   - otherwise indices are preserved, clamped into the new [0, newWtIdx] range.
+// oldWtIdx/newWtIdx are the working-tree tick index = commits.length before and
+// after the refresh.
+export function reconcileTimelineRange(
+  range: TimelineRange,
+  oldWtIdx: number,
+  newWtIdx: number,
+): TimelineRange {
+  const wt = Math.max(0, newWtIdx);
+  if (range.left === 0 && range.right === oldWtIdx) {
+    return { left: 0, right: wt };
+  }
+  const right = range.right === oldWtIdx ? wt : Math.min(range.right, wt);
+  const left = Math.min(Math.max(0, range.left), right);
+  return { left, right };
+}
+
 export function rangeForHandleMove(
   handle: TimelineHandle,
   idx: number,

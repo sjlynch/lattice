@@ -8,6 +8,7 @@ import path from 'node:path';
 import { exec } from '../worktree/exec.js';
 import { gitLogFormat, parseGitLogNameStatus } from './parseLog.js';
 import { parseGitStatusPorcelain } from './parseStatus.js';
+import { computeStatusSignature } from './signature.js';
 import type { GitCommit, GitHistoryResult, GitUncommitted } from './types.js';
 
 export type {
@@ -89,12 +90,15 @@ export async function getGitHistory(
 ): Promise<GitHistoryResult> {
   const abs = path.resolve(repoRoot);
   if (!(await isGitRepo(abs))) {
-    return { isRepo: false, commits: [], uncommitted: { changes: [] } };
+    return { isRepo: false, commits: [], uncommitted: { changes: [] }, signature: '' };
   }
-  // Fetch in parallel — they're independent git invocations.
-  const [commits, uncommitted] = await Promise.all([
+  // Fetch in parallel — they're independent git invocations. The signature is
+  // computed the same way the /ws/git-status watcher computes it, so the
+  // frontend can dedupe a live refresh against the value it last fetched here.
+  const [commits, uncommitted, signature] = await Promise.all([
     readCommits(abs, limit),
     readUncommitted(abs),
+    computeStatusSignature(abs),
   ]);
-  return { isRepo: true, commits, uncommitted };
+  return { isRepo: true, commits, uncommitted, signature };
 }

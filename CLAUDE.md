@@ -205,6 +205,7 @@ therefore stay safely re-runnable.
 | WS | `/ws/workflow-runs?project=` | Workflow run lifecycle + per-step terminal spawn events |
 | WS | `/ws/health?project=` | Incremental file-health updates from the watcher |
 | WS | `/ws/git-branch?project=` | Current git branch of the active project, pushed on connect and on every `.git/HEAD` change (checkout) so the navbar chip updates live |
+| WS | `/ws/git-status?project=` | Compact git-status *signature* (HEAD + dirty set) for the active project, pushed on connect and whenever a commit/stage/checkout or a working-tree edit changes it. The timeline scrubber re-fetches `/api/git-history` on a new signature (deduped against the one it last fetched), so the commit list + uncommitted view update live instead of only on page refresh |
 | WS | `/ws/harnesses` | Harness availability snapshots/refresh notifications |
 
 All WS endpoints share the HTTP server via a single `upgrade` dispatcher

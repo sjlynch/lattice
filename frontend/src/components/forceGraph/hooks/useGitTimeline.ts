@@ -1,21 +1,44 @@
-import { useEffect, useRef, useState, type MutableRefObject } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
-import { fetchGitHistory, type GitHistoryResult, type ScanResult } from '../../../api';
+import {
+  fetchGitHistory,
+  subscribeGitStatus,
+  type GitHistoryResult,
+  type ScanResult,
+} from '../../../api';
 import { applyChangeRingDelta } from '../changeRingSync';
 import type { GraphSettings } from '../graphSettings';
 import { getIdleController } from '../idleController';
 import { computeChangeMap } from '../timelineDiff';
+import { reconcileTimelineRange } from '../timelineRange';
 import type { ChangeKind } from '../changeRing';
 import { resetChangeRingsForProjectSwitch } from '../timelineReset';
 
-// History is fetched once per project; the scrubber range is two
-// tick indices into [0, commits.length], where commits.length is
-// the working-tree slot. Defaults to [oldest, WT] so the user sees
-// every change ringed when they land on the project.
+const EMPTY_HISTORY: GitHistoryResult = {
+  isRepo: false,
+  commits: [],
+  uncommitted: { changes: [] },
+  signature: '',
+};
+
+// History is fetched once per project *and then kept live*: the backend's
+// /ws/git-status watcher pushes a compact signature whenever the repo state
+// changes (a commit, stage, checkout, or a working-tree edit), and we re-fetch
+// on a new signature. Without this the scrubber's commit list + uncommitted
+// view stayed stale until a full page refresh — so a commit still showed the
+// old "dirty" state and a fresh edit never lit up. The scrubber range is two
+// tick indices into [0, commits.length], where commits.length is the working-
+// tree slot. Defaults to [oldest, WT] so the user sees every change ringed.
 //
-// changeMap (rel-path → kind) is recomputed on every range/history
-// change. Stored in a ref so the nodeThreeObject closure (wired once
-// at mount) reads the latest map without forcing a re-mount.
+// changeMap (rel-path → kind) is recomputed on every range/history change.
+// Stored in a ref so the nodeThreeObject closure (wired once at mount) reads
+// the latest map without forcing a re-mount.
 export function useGitTimeline(
   activeFolder: string,
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
@@ -34,6 +57,15 @@ export function useGitTimeline(
     right: 0,
   });
   const changeMapRef = useRef<Map<string, ChangeKind>>(new Map());
+  // Mirrors of the latest loaded history + its signature, read live by the
+  // status-watcher callback (registered once per project) so it can dedupe the
+  // pushed signal and reconcile the range without depending on `history`.
+  const historyRef = useRef<GitHistoryResult | null>(null);
+  const lastSigRef = useRef('');
+  // Monotonic load id: a newer fetch supersedes an older one so out-of-order
+  // resolutions (e.g. a slow initial load landing after a fast live refresh)
+  // can't clobber the newer state.
+  const seqRef = useRef(0);
   // Scan root is read live by the delta walker to resolve real file nodes'
   // absolute paths to the rel-paths the change map is keyed by — matching
   // `nodeObjectFactory` (`dataRef.current?.root`). Mirrored each render so
@@ -41,19 +73,47 @@ export function useGitTimeline(
   const scanRootRef = useRef('');
   scanRootRef.current = data?.root ?? '';
 
-  // Fetch the last 10 commits + uncommitted status whenever the active
-  // project changes. The scrubber drives ring colors and ghost-node
-  // visibility from the cached result — no per-drag backend traffic.
+  // Apply a freshly-fetched history: update the mirrors + state and reconcile
+  // the scrubber range into the (possibly shifted) new tick space. From the
+  // reset baseline (historyRef null, range {0,0}) this yields the full
+  // [0, commits.length] range, i.e. the first-load default.
+  const applyHistory = useCallback((h: GitHistoryResult) => {
+    const oldWt = historyRef.current?.commits.length ?? 0;
+    const newWt = h.commits.length;
+    lastSigRef.current = h.signature;
+    historyRef.current = h;
+    setHistory(h);
+    setRange((prev) => reconcileTimelineRange(prev, oldWt, newWt));
+  }, []);
+
+  const loadHistory = useCallback(
+    (folder: string) => {
+      const my = ++seqRef.current;
+      fetchGitHistory(folder, 10)
+        .then((h) => {
+          if (my !== seqRef.current) return; // superseded by a newer load
+          applyHistory(h);
+        })
+        .catch(() => {
+          if (my !== seqRef.current) return;
+          // Only blank the timeline on the INITIAL load (nothing loaded yet); a
+          // transient failure during a live refresh keeps the last good history
+          // rather than flashing "no git history".
+          if (!historyRef.current) applyHistory(EMPTY_HISTORY);
+        });
+    },
+    [applyHistory],
+  );
+
+  // Reset + first fetch whenever the active project changes. A project switch
+  // A→B otherwise leaves `history` — and the derived change map / ghosts — at
+  // A's values during the async window before B resolves: B's freshly-built
+  // nodes then inherit A's change rings on shared paths (package.json, …) and
+  // A's deleted-file ghosts get injected into B's graph. So strip the previous
+  // project's rings/ghosts and empty `changeMapRef` up front; with `history`
+  // null the reconcile effect below is a no-op and `prepareGhostMerge` builds
+  // no ghosts until B resolves.
   useEffect(() => {
-    // Reset timeline state on EVERY active-folder change, not just to an empty
-    // folder. A project switch A→B otherwise leaves `history` — and the derived
-    // change map / ghosts — at A's values during the async window before B's git
-    // history resolves: B's freshly-built nodes then inherit A's change rings on
-    // shared paths (package.json, tsconfig.json, src/index.ts) and A's deleted-
-    // file ghost discs get injected into B's graph until B's history lands. So
-    // strip the previous project's rings/ghosts and empty `changeMapRef` up
-    // front; with `history` null the reconcile effect below is a no-op (prev map
-    // already empty) and `prepareGhostMerge` builds no ghosts until B resolves.
     const graph = graphRef.current;
     const touched = resetChangeRingsForProjectSwitch(
       graph,
@@ -62,37 +122,36 @@ export function useGitTimeline(
       scanRootRef.current,
     );
     if (touched) getIdleController(graph)?.wakeForRefresh();
+    historyRef.current = null;
+    lastSigRef.current = '';
+    seqRef.current++; // invalidate any in-flight load from the previous folder
     setHistory(null);
     setRange({ left: 0, right: 0 });
 
     if (!activeFolder) return;
-    let cancelled = false;
-    fetchGitHistory(activeFolder, 10)
-      .then((h) => {
-        if (cancelled) return;
-        setHistory(h);
-        // Default to the full range so every change in the loaded
-        // window is visible at first paint.
-        const last = h.commits.length; // tick index of working-tree slot
-        setRange({ left: 0, right: last });
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setHistory({ isRepo: false, commits: [], uncommitted: { changes: [] } });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeFolder, graphRef, settingsRef]);
+    loadHistory(activeFolder);
+  }, [activeFolder, graphRef, settingsRef, loadHistory]);
 
-  // Recompute the change map when the slider range moves, then apply the
-  // prev→next diff in place: only the nodes whose ChangeKind actually flipped
-  // get their ring added/removed/recolored (and ghost nodes whose presence
-  // flipped get their visibility toggled). The scrubber emits range changes
-  // continuously while dragging and many adjacent ticks share the exact same
-  // change set, so `applyChangeRingDelta` no-ops (and we skip the wake) when
-  // nothing changed. This replaced a `graph.refresh()` that rebuilt every
-  // node's THREE object on every flip — see `changeRingSync`.
+  // Keep the loaded history live. The backend pushes the current signature on
+  // connect and on every change; we re-fetch only when it differs from the one
+  // we last loaded (so the on-connect / reconnect snapshot is a no-op unless
+  // something actually changed while we weren't looking).
+  useEffect(() => {
+    if (!activeFolder) return;
+    return subscribeGitStatus(activeFolder, (signature) => {
+      if (signature === lastSigRef.current) return;
+      loadHistory(activeFolder);
+    });
+  }, [activeFolder, loadHistory]);
+
+  // Recompute the change map when the slider range moves (or history updates),
+  // then apply the prev→next diff in place: only the nodes whose ChangeKind
+  // actually flipped get their ring added/removed/recolored (and ghost nodes
+  // whose presence flipped get their visibility toggled). The scrubber emits
+  // range changes continuously while dragging and many adjacent ticks share the
+  // exact same change set, so `applyChangeRingDelta` no-ops (and we skip the
+  // wake) when nothing changed. This replaced a `graph.refresh()` that rebuilt
+  // every node's THREE object on every flip — see `changeRingSync`.
   useEffect(() => {
     const prev = changeMapRef.current;
     const next = history

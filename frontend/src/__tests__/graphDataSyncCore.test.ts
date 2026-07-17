@@ -21,7 +21,7 @@ function fileNode(id: string, overrides: Partial<GraphNode> = {}): GraphNode {
 }
 
 function noHistory(): GitHistoryResult {
-  return { isRepo: false, commits: [], uncommitted: { changes: [] } };
+  return { isRepo: false, commits: [], uncommitted: { changes: [] }, signature: '' };
 }
 
 test('linkEndpointId reads strings, object ids, and falls back to path', () => {
@@ -182,6 +182,7 @@ test('prepareGhostMerge adds ghosts for history paths missing from the scan', ()
       },
     ],
     uncommitted: { changes: [] },
+    signature: 'sig',
   };
   const { ghostIds, mergedNodes, mergedLinks } = prepareGhostMerge(data, history);
   const ghostId = `${GHOST_PREFIX}gone.ts`;

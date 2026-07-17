@@ -7,6 +7,7 @@ import {
   nearestHandleForIndex,
   rangeForHandleMove,
   rangeForTrackSelection,
+  reconcileTimelineRange,
   tickIndexFromClientX,
   tickPositionsForCount,
 } from '../components/forceGraph/timelineRange.ts';
@@ -64,5 +65,55 @@ test('rangeForTrackSelection applies nearest-handle and carry behavior', () => {
   assert.deepEqual(rangeForTrackSelection(5, 3, 3), {
     handle: 'left',
     range: { left: 5, right: 5 },
+  });
+});
+
+// Regression: when a background git-status refresh reloads history (a commit
+// made/undone while the tab is open), the working-tree tick shifts index and
+// the scrubber range must follow so the live update never yanks the user off
+// the working tree — the core of the "still shows uncommitted after commit" fix.
+test('reconcileTimelineRange keeps the default full range spanning the new working tree', () => {
+  // 5 commits (WT tick = 5). A new commit while capped at fewer than the limit
+  // pushes the WT tick to 6; the untouched full range must still cover it so
+  // the (now clean) working tree stays selected and re-rings.
+  assert.deepEqual(reconcileTimelineRange({ left: 0, right: 5 }, 5, 6), {
+    left: 0,
+    right: 6,
+  });
+  // Empty repo's first commit: WT tick 0 → 1, full range grows to include the
+  // new commit rather than collapsing onto the working tree.
+  assert.deepEqual(reconcileTimelineRange({ left: 0, right: 0 }, 0, 1), {
+    left: 0,
+    right: 1,
+  });
+  // History window capped (10 commits): a new commit drops the oldest, so the
+  // tick count is unchanged and the full range is untouched.
+  assert.deepEqual(reconcileTimelineRange({ left: 0, right: 10 }, 10, 10), {
+    left: 0,
+    right: 10,
+  });
+});
+
+test('reconcileTimelineRange keeps a right handle parked on the working tree pinned to it', () => {
+  // Left scrubbed into history, right on the WT slot: the right handle follows
+  // the working tree to its new index; the left index is preserved.
+  assert.deepEqual(reconcileTimelineRange({ left: 3, right: 8 }, 8, 9), {
+    left: 3,
+    right: 9,
+  });
+});
+
+test('reconcileTimelineRange preserves and clamps a range parked inside history', () => {
+  // Both handles inspecting historical commits (not on the WT): indices are
+  // preserved when they still fit...
+  assert.deepEqual(reconcileTimelineRange({ left: 2, right: 5 }, 8, 9), {
+    left: 2,
+    right: 5,
+  });
+  // ...and clamped into [0, newWt] when a commit was undone (WT tick shrank),
+  // never leaving a handle past the end of the new tick space.
+  assert.deepEqual(reconcileTimelineRange({ left: 6, right: 7 }, 8, 4), {
+    left: 4,
+    right: 4,
   });
 });

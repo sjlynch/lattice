@@ -48,7 +48,13 @@ label physics in `labelPhysics/CLAUDE.md`.
   nearest existing *ancestor directory* node — walking `a/b/c` → `a/b` → `a` —
   and falls back to the scan-root node id when none exist, so deleted/renamed
   files always attach somewhere real rather than dangling. See
-  `__tests__/timelineDiff.test.ts`.
+  `__tests__/timelineDiff.test.ts`. `hooks/useGitTimeline` keeps history **live**:
+  besides the once-per-project fetch it subscribes to `subscribeGitStatus`
+  (`/ws/git-status`) and re-fetches on a new signature (deduped vs the last one),
+  so a commit / working-tree edit updates the commit list + dirty rings without a
+  page refresh. `timelineRange.reconcileTimelineRange` remaps the scrubber range
+  onto the new tick space so a live update never yanks the handles (tested in
+  `__tests__/timelineRange.test.ts`).
 
 **Node sprites & recolor overlays**
 - `nodeObjectFactory.ts` — `buildNodeObject`: builds a node's THREE root by

@@ -7,7 +7,7 @@ Backend bindings, grouped by domain. `import { ... } from '../api'` resolves to 
 - `types/` — domain-split shared API types (scan/health, settings, tasks, workflows, runs, git history). `types.ts` is a compatibility re-export shim.
 - `http.ts` — `asJson<T>(r)` extracts `{error}` from non-2xx responses so toasts get real messages; `postJson`/`patchJson`/`deleteJson` centralize JSON request formation.
 - `ws.ts` — `subscribeWs<T>(pathWithQuery, onMessage)`. Auto-reconnects with exponential backoff (cap 5 s). Every WS subscriber here uses it.
-- `scan.ts` — folder browsing + recursive source scan; git history/branch helpers, incl. `subscribeGitBranch(project, cb)` (the `/ws/git-branch` live navbar-chip stream — pushes the branch on connect + on every checkout).
+- `scan.ts` — folder browsing + recursive source scan; git history/branch helpers, incl. `subscribeGitBranch(project, cb)` (the `/ws/git-branch` live navbar-chip stream — pushes the branch on connect + on every checkout) and `subscribeGitStatus(project, cb)` (the `/ws/git-status` stream — pushes a compact status signature on connect + whenever a commit/edit changes it, so the timeline scrubber can live-refresh `fetchGitHistory`, deduping on `GitHistoryResult.signature`).
 - `health.ts` — `subscribeHealth(project, cb)`: the `/ws/health` `HealthUpdate` stream (one per file save / tree change).
 - `settings.ts` — per-project `UserSettings`.
 - `globalSettings.ts` — machine-global settings (`maxConcurrentAgents`, MCP custom/override defs, `piModelMenu`, `piProviders`): `fetchGlobalSettings`, `patchGlobalSettings`.
