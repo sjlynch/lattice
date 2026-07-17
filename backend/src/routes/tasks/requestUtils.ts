@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { Response } from 'express';
 import type { TaskStatus } from '../../tasks.js';
 import { parseMarkdownDoc, type ParsedMarkdownDoc } from './markdownBatch.js';
@@ -50,6 +51,26 @@ export function resolveProject(req: { query: unknown; body: unknown }): string {
     return (b as Record<string, string>).project;
   }
   return '';
+}
+
+// Read endpoints (list / summary) intentionally do NOT require the project
+// directory to exist — listing a deleted project's tasks is a feature of
+// home-scoped storage. But a NON-absolute project is always shell-escaping
+// damage: canonicalProjectPath's path.resolve() would invent a bogus absolute
+// path rooted at the backend's cwd. Reject it loudly (400) so the caller sees
+// the mangling instead of a silently-empty result. Only call this once the
+// project is known non-empty (an omitted project has its own "required" 400).
+// Returns true when it's safe to proceed; otherwise it has already sent the 400.
+export function requireAbsoluteProject(project: string, res: Response): boolean {
+  if (path.isAbsolute(project)) return true;
+  res.status(400).json({
+    error:
+      `project must be an absolute path, got ${JSON.stringify(project)}. ` +
+      `A relative or drive-relative path almost always means backslashes were ` +
+      `stripped by shell escaping (e.g. C:\\development\\proj arriving as ` +
+      `"C:developmentproj"). Pass the full absolute path.`,
+  });
+  return false;
 }
 
 export function isValidTaskStatus(status: unknown): status is TaskStatus {

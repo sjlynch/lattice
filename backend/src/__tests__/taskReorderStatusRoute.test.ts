@@ -33,6 +33,9 @@ test('POST /api/tasks/reorder rejects an off-enum status and leaves the task unt
 
   const project = path.join(tmpHome, 'project');
   await mkdir(project, { recursive: true });
+  // Task creation requires a git repo (validateProjectForCreate). A .git marker
+  // satisfies the same probe production uses without shelling out to git init.
+  await mkdir(path.join(project, '.git'), { recursive: true });
 
   let server: http.Server | null = null;
   try {

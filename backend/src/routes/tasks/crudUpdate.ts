@@ -5,6 +5,7 @@
 import type { Request, Response } from 'express';
 import { getTask, updateTask, type Task } from '../../tasks.js';
 import { resolveProject, respondJson } from './requestUtils.js';
+import { validateProjectForCreate } from './projectValidation.js';
 import type { TaskIdRequest } from './crudTypes.js';
 import {
   summaryFromBody,
@@ -139,8 +140,9 @@ export async function handleTaskUpsert(
   res: Response,
 ): Promise<void> {
   const project = resolveProject(req);
-  if (!project) {
-    res.status(400).json({ error: 'project required (query string or JSON body)' });
+  const check = await validateProjectForCreate(project);
+  if (!check.ok) {
+    res.status(400).json({ error: check.error });
     return;
   }
 
@@ -151,5 +153,5 @@ export async function handleTaskUpsert(
     return;
   }
 
-  await respondJson(res, () => applyProjectScopedUpsert(project, blocks));
+  await respondJson(res, () => applyProjectScopedUpsert(check.canonical, blocks));
 }

@@ -5,6 +5,7 @@ import type { Request, Response } from 'express';
 import { createTask } from '../../tasks.js';
 import { parseMarkdownTasks } from './markdownBatch.js';
 import { resolveProject, respondJson } from './requestUtils.js';
+import { validateProjectForCreate } from './projectValidation.js';
 
 type TaskDraft = { title: string; description?: string };
 type JsonBatchTask = { title?: string; description?: string };
@@ -17,11 +18,16 @@ export async function handleTaskCreate(
   const body = (req.body || {}) as { title?: string; description?: string };
   const title = body.title;
   const description = body.description;
-  if (!project || !title?.trim()) {
-    res.status(400).json({ error: 'project and title required' });
+  if (!title?.trim()) {
+    res.status(400).json({ error: 'title required' });
     return;
   }
-  await respondJson(res, () => createTask(project, title, description));
+  const check = await validateProjectForCreate(project);
+  if (!check.ok) {
+    res.status(400).json({ error: check.error });
+    return;
+  }
+  await respondJson(res, () => createTask(check.canonical, title, description));
 }
 
 export async function handleTaskBatchCreate(
@@ -29,8 +35,9 @@ export async function handleTaskBatchCreate(
   res: Response,
 ): Promise<void> {
   const project = resolveProject(req);
-  if (!project) {
-    res.status(400).json({ error: 'project required (query string or JSON body)' });
+  const check = await validateProjectForCreate(project);
+  if (!check.ok) {
+    res.status(400).json({ error: check.error });
     return;
   }
   let parsed: TaskDraft[];
@@ -61,6 +68,6 @@ export async function handleTaskBatchCreate(
     }));
   }
   await respondJson(res, () =>
-    Promise.all(parsed.map((t) => createTask(project, t.title, t.description))),
+    Promise.all(parsed.map((t) => createTask(check.canonical, t.title, t.description))),
   );
 }

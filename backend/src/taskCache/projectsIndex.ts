@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { canonicalProjectPath } from '../projectPath.js';
 import { LATTICE_HOME, PROJECTS_INDEX } from './paths.js';
+import { shouldPruneProjectEntry } from './pruneIndex.js';
 
 export class ProjectsIndex {
   private readonly knownProjects = new Set<string>();
@@ -55,11 +56,13 @@ export class ProjectsIndex {
       }
       if (!Array.isArray(list)) return;
 
-      // Canonicalize every entry. If two entries collapse to the same canonical
-      // form (e.g. `f:\rust_etl` and `F:\rust_etl` on Windows), the duplicate is
-      // dropped. Both pointed at the same on-disk tasks.json anyway, so there's
-      // nothing to merge — we're just deduping the index.
+      // Canonicalize + de-dup every entry. If two entries collapse to the same
+      // canonical form (e.g. `f:\rust_etl` and `F:\rust_etl` on Windows), the
+      // duplicate is dropped. Both pointed at the same on-disk tasks.json anyway,
+      // so there's nothing to merge — we're just deduping the index.
       let dirty = false;
+      const candidates: string[] = [];
+      const seen = new Set<string>();
       for (const p of list) {
         if (typeof p !== 'string' || !p) {
           dirty = true;
@@ -67,14 +70,40 @@ export class ProjectsIndex {
         }
         const canonical = canonicalProjectPath(p);
         if (canonical !== p) dirty = true;
-        if (this.knownProjects.has(canonical)) {
+        if (seen.has(canonical)) {
           dirty = true;
           continue;
         }
-        this.knownProjects.add(canonical);
+        seen.add(canonical);
+        candidates.push(canonical);
       }
+
+      // Prune accumulated junk (temp-dir scratch, mangled paths, phantom entries
+      // that a mangled request resolved to). Conservative — a real project is
+      // never dropped: anything that exists on disk, or still has task data, is
+      // kept. See pruneIndex.ts. Runs at boot so a restart self-cleans the index
+      // and it can't grow without bound.
+      const pruneFlags = await Promise.all(
+        candidates.map((c) => shouldPruneProjectEntry(c)),
+      );
+      let pruned = 0;
+      for (let i = 0; i < candidates.length; i++) {
+        if (pruneFlags[i]) {
+          pruned += 1;
+          dirty = true;
+          continue;
+        }
+        this.knownProjects.add(candidates[i]);
+      }
+
       if (dirty) {
         await this.persistKnownProjects().catch(() => {});
+      }
+      if (pruned > 0) {
+        console.log(
+          `[tasks] pruned ${pruned} stale project ` +
+            `entr${pruned === 1 ? 'y' : 'ies'} from ~/.lattice/projects.json`,
+        );
       }
     } finally {
       this.knownLoaded = true;

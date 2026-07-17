@@ -11,7 +11,7 @@ import {
 } from '../../tasks.js';
 import { canonicalProjectPath, projectHash } from '../../projectPath.js';
 import { serializeTasksAsMarkdown } from './markdownBatch.js';
-import { respondJson } from './requestUtils.js';
+import { requireAbsoluteProject, respondJson } from './requestUtils.js';
 import type { TaskIdRequest } from './crudTypes.js';
 
 // Partition a flat task list into those whose canonical projectPath matches
@@ -55,6 +55,7 @@ export async function handleTaskList(
     res.status(400).json({ error: 'project required' });
     return;
   }
+  if (!requireAbsoluteProject(project, res)) return;
   const canonicalProject = canonicalProjectPath(project);
   const hash = projectHash(canonicalProject);
   // Optional `?status=` filter so callers (esp. AI agents driving the API
@@ -107,6 +108,7 @@ export async function handleTaskSummary(
     res.status(400).json({ error: 'project required' });
     return;
   }
+  if (!requireAbsoluteProject(project, res)) return;
   const canonicalProject = canonicalProjectPath(project);
   const hash = projectHash(canonicalProject);
   await respondJson(res, async () => {

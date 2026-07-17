@@ -28,6 +28,9 @@ test('PATCH /api/tasks/:id rejects an invalid JSON status and leaves the task in
 
   const project = path.join(tmpHome, 'project');
   await mkdir(project, { recursive: true });
+  // Task creation requires a git repo (validateProjectForCreate). A .git marker
+  // satisfies the same probe production uses without shelling out to git init.
+  await mkdir(path.join(project, '.git'), { recursive: true });
 
   let server: http.Server | null = null;
   try {
