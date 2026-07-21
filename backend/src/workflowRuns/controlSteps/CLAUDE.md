@@ -51,7 +51,10 @@ the lane-drain used by both merge Phase A and push:
 merge step's **Phase C** gate. Resolves when no post-merge hook is `running` for
 the project (or the run is cancelled); bounded, so a hook agent that dies
 without calling `/complete` can't leak the run-lock. Same subscribe-before-read
-race guard as `waitForLaneEmpty`. Its subscriber is deliberately **not**
+race guard as `waitForLaneEmpty`. It also waits through the trigger's
+pre-record settings-read marker and keeps its initial idle subscription alive
+for one event-loop turn, closing the task-QA-notify → hook-record gap. Its
+subscriber is deliberately **not**
 filtered by project — `getActiveHookForProject` canonicalizes the path it
 compares while `ev.run.projectPath` is the raw string the trigger was handed, so
 a `!==` filter would drop our own project's events; re-evaluate on every (rare)

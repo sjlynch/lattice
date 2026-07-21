@@ -38,9 +38,11 @@ there.
   best-effort (it only sees *this* tab's `activeRuns`, so a run's startup window
   or a second tab can slip past it), so **sequential** dispatches also pass
   `requireNoActiveRun` to the backend, which 409s if a run is already active.
-  The hook maps a start to one of three `StartOutcome`s: `started` (attach the
-  runId), `busy` (the 409 — `dispatchRejected` requeues the entry to retry when
-  the slot frees, no error toast), or `failed` (drop). Parallel dispatches omit
+  The hook maps a start to one of four `StartOutcome`s: `started` (attach the
+  runId), `finished` (the completion WS beat the `/run` response; buffer the
+  finish then attach/consume the run id so the queue cannot stall), `busy` (the
+  409 — `dispatchRejected` requeues the entry to retry when the slot frees, no
+  error toast), or `failed` (drop). Parallel dispatches omit
   the flag — concurrency there is intentional. Queue state is **per-project**:
   WorkflowsLauncher isn't remounted on a project switch, so the hook resets to
   `initialQueueState` on an `activeFolder` change (mirroring `useWorkflowRuns`)

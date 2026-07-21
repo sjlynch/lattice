@@ -145,8 +145,14 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
 
   const collapsedSteps = useCollapsedSteps(activeFolder);
   const { workflows, sortedWorkflows } = useWorkflowList(activeFolder);
-  const { activeRuns, recentRuns, controlProgress, addActiveRun, dismissRecent } =
-    useWorkflowRuns(activeFolder);
+  const {
+    activeRuns,
+    recentRuns,
+    controlProgress,
+    addActiveRun,
+    getRecentRun,
+    dismissRecent,
+  } = useWorkflowRuns(activeFolder);
   const editorState = useWorkflowEditor({
     workflows,
     activeFolder,
@@ -181,6 +187,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     workflowsById,
     save: editorState.save,
     addActiveRun,
+    getRecentRun,
     getWorkflowHarnessOverride: harnessState.getWorkflowHarnessOverride,
     getWorkflowPiModelOverride: harnessState.getWorkflowPiModelOverride,
     onError: showError,

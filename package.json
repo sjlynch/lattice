@@ -4,9 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "node scripts/preflight.mjs && node scripts/orchestrate.mjs",
-    "install:all": "npm install && npm --prefix backend install && npm --prefix frontend install"
+    "install:all": "npm install && npm --prefix backend install && npm --prefix frontend install",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "concurrently": "^9.1.0"
   }
 }

@@ -64,6 +64,8 @@ let saved: Record<string, unknown>;
 
 beforeEach(() => {
   FakeWebSocket.instances = [];
+  addedRuns = [];
+  recentRuns = {};
   saved = {
     IS_REACT_ACT_ENVIRONMENT: g.IS_REACT_ACT_ENVIRONMENT,
     React: g.React,
@@ -154,6 +156,7 @@ let latestRunWorkflow: (workflowId: string) => Promise<StartOutcome> = async () 
   status: 'failed',
 });
 let addedRuns: WorkflowRun[] = [];
+let recentRuns: Record<string, WorkflowRun> = {};
 
 function RunActionsHarness({
   folder,
@@ -168,6 +171,7 @@ function RunActionsHarness({
     workflowsById,
     save: async () => null,
     addActiveRun: (r) => { addedRuns.push(r); },
+    getRecentRun: (id) => recentRuns[id] ?? null,
     getWorkflowHarnessOverride: () => null,
     getWorkflowPiModelOverride: () => undefined,
     onError: (msg) => { throw new Error(msg); },
@@ -186,6 +190,7 @@ test("a delayed run response from the previous project is not inserted into the 
   const runAResponse = deferred<unknown>();
 
   addedRuns = [];
+  recentRuns = {};
   g.fetch = (url: string) => {
     const raw = String(url);
     if (raw.includes('/api/workflows/wfA/run')) return runAResponse.promise;
@@ -238,5 +243,38 @@ test("a delayed run response from the previous project is not inserted into the 
     'the currently active project can still add its own run',
   );
 
+  act(() => renderer.unmount());
+});
+
+test('a run completed over WS before /run resolves is returned as finished, not resurrected', async () => {
+  const folder = 'C:/project-fast';
+  const wf = workflow('wf-fast', folder);
+  const fastRun = run('run-fast', wf.id, folder);
+  const completedRun: WorkflowRun = {
+    ...fastRun,
+    status: 'completed',
+    finishedAt: 10,
+  };
+  addedRuns = [];
+  recentRuns = { [completedRun.id]: completedRun };
+  g.fetch = () => Promise.resolve(responseJson({ run: fastRun }));
+
+  let renderer!: ReturnType<typeof TestRenderer.create>;
+  await act(async () => {
+    renderer = TestRenderer.create(
+      React.createElement(RunActionsHarness, {
+        folder,
+        workflowsById: new Map([[wf.id, wf]]),
+      }),
+    );
+  });
+
+  let outcome!: StartOutcome;
+  await act(async () => {
+    outcome = await latestRunWorkflow(wf.id);
+  });
+
+  assert.deepEqual(outcome, { status: 'finished', run: completedRun });
+  assert.deepEqual(addedRuns, [], 'the stale running response must not re-add the run');
   act(() => renderer.unmount());
 });

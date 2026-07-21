@@ -21,6 +21,9 @@ export type StartRunOptions = {
 // `failed` so the queue can requeue-and-retry rather than drop the entry.
 export type StartOutcome =
   | { status: 'started'; run: WorkflowRun }
+  // WS completion beat the /run response. The queue must consume this as a
+  // pre-finished run instead of attaching a dead run id and stalling.
+  | { status: 'finished'; run: WorkflowRun }
   | { status: 'busy' }
   | { status: 'failed' };
 
@@ -30,6 +33,7 @@ type Args = {
   workflowsById: Map<string, Workflow>;
   save: () => Promise<Workflow | null>;
   addActiveRun: (run: WorkflowRun) => void;
+  getRecentRun: (runId: string) => WorkflowRun | null;
   getWorkflowHarnessOverride: (workflowId: string) => WorkflowRunHarnessOverride;
   getWorkflowPiModelOverride: (workflowId: string) => string | undefined;
   onError: (msg: string) => void;
@@ -44,6 +48,7 @@ export function useWorkflowRunActions({
   workflowsById,
   save,
   addActiveRun,
+  getRecentRun,
   getWorkflowHarnessOverride,
   getWorkflowPiModelOverride,
   onError,
@@ -77,6 +82,10 @@ export function useWorkflowRunActions({
       ) {
         return { status: 'failed' };
       }
+      const alreadyFinished = getRecentRun(res.run.id);
+      if (alreadyFinished) {
+        return { status: 'finished', run: alreadyFinished };
+      }
       addActiveRun(res.run);
       return { status: 'started', run: res.run };
     } catch (err) {
@@ -86,7 +95,7 @@ export function useWorkflowRunActions({
       onError(`Run failed: ${(err as Error).message}`);
       return { status: 'failed' };
     }
-  }, [addActiveRun, onError]);
+  }, [addActiveRun, getRecentRun, onError]);
 
   const runWorkflow = useCallback(async (
     workflowId: string,

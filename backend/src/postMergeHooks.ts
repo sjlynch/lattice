@@ -17,11 +17,14 @@ export type {
 } from './postMergeHooks/types.js';
 export type { PostMergeHookEvent } from './postMergeHooks/registry.js';
 export {
+  beginPostMergeHookTrigger,
   finishPostMergeHook,
   getActiveHookForProject,
   getMostRecentHookForProject,
   getPostMergeHook,
+  hasPendingPostMergeHookTrigger,
   subscribePostMergeHooks,
+  subscribePostMergeHookTriggers,
   waitForPostMergeHook,
 } from './postMergeHooks/registry.js';
 export { runPostMergeHookGate } from './postMergeHooks/session.js';

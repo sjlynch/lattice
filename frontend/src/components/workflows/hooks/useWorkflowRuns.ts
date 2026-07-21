@@ -58,8 +58,26 @@ export function useWorkflowRuns(activeFolder: string) {
   });
 
   const addActiveRun = useCallback((run: WorkflowRun) => {
-    setActiveRuns((cur) => upsertRun(cur, run));
+    // A very fast control-only workflow can complete over WS before its /run
+    // HTTP response returns. Never resurrect that finalized run from the stale
+    // response snapshot.
+    if (recentRunsRef.current[run.id]) return;
+    setActiveRuns((cur) =>
+      recentRunsRef.current[run.id] ? cur : upsertRun(cur, run),
+    );
   }, []);
 
-  return { activeRuns, recentRuns, controlProgress, addActiveRun, dismissRecent };
+  const getRecentRun = useCallback(
+    (runId: string): WorkflowRun | null => recentRunsRef.current[runId] ?? null,
+    [],
+  );
+
+  return {
+    activeRuns,
+    recentRuns,
+    controlProgress,
+    addActiveRun,
+    getRecentRun,
+    dismissRecent,
+  };
 }

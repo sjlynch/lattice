@@ -39,13 +39,16 @@ export type HomeScratchSessionContext = {
 export async function setupHomeScratchSession(args: {
   paths: HomeScratchPaths;
   projectPath: string;
+  // A caller may reserve an id before asynchronous filesystem setup when its
+  // in-flight state must be observable immediately.
+  id?: string;
   instructionsFileName: string;
   installHooks: (ctx: HomeScratchSessionContext) => Promise<void>;
   renderInstructions: (
     ctx: HomeScratchSessionContext,
   ) => string | Promise<string>;
 }): Promise<HomeScratchSession> {
-  const id = args.paths.createSessionId();
+  const id = args.id ?? args.paths.createSessionId();
   const cwd = args.paths.assertSafeSessionPath(args.projectPath, id);
   await fs.mkdir(cwd, { recursive: true });
 

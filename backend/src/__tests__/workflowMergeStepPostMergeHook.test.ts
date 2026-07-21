@@ -2,7 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runMergeStep, type MergeStepDeps } from '../workflowRuns/controlSteps/merge.js';
 import { waitForPostMergeHookIdle } from '../workflowRuns/controlSteps/shared.js';
-import type { PostMergeHookEvent, PostMergeHookRun } from '../postMergeHooks.js';
+import {
+  beginPostMergeHookTrigger,
+  hasPendingPostMergeHookTrigger,
+  subscribePostMergeHookTriggers,
+  type PostMergeHookEvent,
+  type PostMergeHookRun,
+} from '../postMergeHooks.js';
 import type { Task } from '../tasks.js';
 import type { MergeRun } from '../mergeRuns/state.js';
 import type { Workflow } from '../workflows.js';
@@ -171,6 +177,58 @@ test('waitForPostMergeHookIdle resolves immediately when no hook is running', as
     subscribePostMergeHooks: () => () => undefined,
     subscribeRun: () => () => undefined,
   });
+});
+
+test('waitForPostMergeHookIdle catches a hook that starts during the initial idle turn', async () => {
+  let active: PostMergeHookRun | null = null;
+  let emit: ((ev: PostMergeHookEvent) => void) | null = null;
+  const gate = waitForPostMergeHookIdle(PROJECT, makeRun(), () => undefined, 1000, {
+    getActiveHookForProject: () => active,
+    subscribePostMergeHooks: (fn) => {
+      emit = fn;
+      return () => undefined;
+    },
+    subscribeRun: () => () => undefined,
+  });
+
+  // A task finalizer can publish its QA transition (waking the Merge step)
+  // immediately before it records the post-merge hook. The first idle read
+  // must not resolve/unsubscribe so eagerly that this started event is lost.
+  active = makeHook();
+  emit!({ type: 'started', run: active });
+
+  let settled = false;
+  void gate.then(() => {
+    settled = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(settled, false, 'the just-started hook must keep Phase C closed');
+
+  const completed = makeHook({ status: 'completed' });
+  active = null;
+  emit!({ type: 'finished', run: completed });
+  await gate;
+});
+
+test('waitForPostMergeHookIdle blocks while a trigger is reading settings before record', async () => {
+  const endPending = beginPostMergeHookTrigger(PROJECT);
+  const gate = waitForPostMergeHookIdle(PROJECT, makeRun(), () => undefined, 1000, {
+    getActiveHookForProject: () => null,
+    subscribePostMergeHooks: () => () => undefined,
+    subscribeRun: () => () => undefined,
+    hasPendingPostMergeHookTrigger,
+    subscribePostMergeHookTriggers,
+  });
+
+  let settled = false;
+  void gate.then(() => {
+    settled = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(settled, false, 'the pre-record trigger window must keep Phase C closed');
+
+  endPending();
+  await gate;
 });
 
 test('waitForPostMergeHookIdle blocks until the running hook finishes', async () => {

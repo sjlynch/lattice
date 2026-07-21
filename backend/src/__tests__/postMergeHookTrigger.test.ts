@@ -4,6 +4,7 @@ import {
   triggerPostMergeHookWithDeps,
   type TriggerPostMergeHookDeps,
 } from '../postMergeHooks/trigger.js';
+import { hasPendingPostMergeHookTrigger } from '../postMergeHooks/registry.js';
 import type { UserSettings } from '../userSettings/types.js';
 import type { PostMergeHookRun } from '../postMergeHooks/types.js';
 
@@ -35,13 +36,14 @@ function makeDeps(settings: UserSettings): {
 
   const deps: TriggerPostMergeHookDeps = {
     getUserSettings: async () => settings,
-    getActiveHookForProject: () => null,
+    getActiveHookForProject: () =>
+      currentRun?.status === 'running' ? currentRun : null,
     setupPostMergeHookSession: async (args) => {
       calls.setup.push(args);
       return {
-        id: 'pmh_test',
-        cwd: '/tmp/lattice/pmh_test',
-        instructionsFile: '/tmp/lattice/pmh_test/POST_MERGE_HOOK.md',
+        id: args.id,
+        cwd: `/tmp/lattice/${args.id}`,
+        instructionsFile: `/tmp/lattice/${args.id}/POST_MERGE_HOOK.md`,
         harness: args.harness,
       };
     },
@@ -146,5 +148,130 @@ test('triggerPostMergeHook cleans pmh scratch when queued spawn fails', async ()
   assert.deepEqual(outcome, { kind: 'error', message: 'spawn queue rejected' });
   assert.equal(calls.recorded.length, 1);
   assert.equal(calls.cleaned.length, 1);
-  assert.deepEqual(calls.cleaned[0], { projectPath: PROJECT, id: 'pmh_test' });
+  assert.deepEqual(calls.cleaned[0], {
+    projectPath: PROJECT,
+    id: calls.recorded[0].id,
+  });
+});
+
+test('triggerPostMergeHook finishes and cleans an early record when scratch setup fails', async () => {
+  const { deps, calls } = makeDeps({
+    postMergeHookPrompt: 'run the post-merge checks',
+  });
+  deps.setupPostMergeHookSession = async (args) => {
+    calls.setup.push(args);
+    throw new Error('scratch setup failed');
+  };
+
+  const outcome = await triggerPostMergeHookWithDeps(
+    { projectPath: PROJECT, backendOrigin: ORIGIN, trigger: 'manual-merge' },
+    deps,
+  );
+
+  assert.deepEqual(outcome, { kind: 'error', message: 'scratch setup failed' });
+  assert.equal(calls.recorded.length, 1, 'the launch reservation is visible');
+  assert.deepEqual(calls.cleaned, [
+    { projectPath: PROJECT, id: calls.recorded[0].id },
+  ]);
+  assert.equal(calls.queued.length, 0);
+});
+
+test('trigger records the hook before asynchronous scratch setup finishes', async () => {
+  const { deps, calls } = makeDeps({
+    postMergeHookPrompt: 'run the post-merge checks',
+  });
+  let releaseSetup: () => void = () => undefined;
+  const setupBlocked = new Promise<void>((resolve) => {
+    releaseSetup = resolve;
+  });
+  deps.setupPostMergeHookSession = async (args) => {
+    calls.setup.push(args);
+    await setupBlocked;
+    return {
+      id: args.id,
+      cwd: `/tmp/lattice/${args.id}`,
+      instructionsFile: `/tmp/lattice/${args.id}/POST_MERGE_HOOK.md`,
+      harness: args.harness,
+    };
+  };
+
+  const pending = triggerPostMergeHookWithDeps(
+    { projectPath: PROJECT, backendOrigin: ORIGIN, trigger: 'manual-merge' },
+    deps,
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(calls.setup.length, 1, 'scratch setup is in flight');
+  assert.equal(calls.queued.length, 0, 'pty spawn has not begun');
+  assert.equal(calls.recorded.length, 1, 'the gate can already see a running hook');
+  assert.equal(calls.recorded[0].status, 'running');
+
+  releaseSetup();
+  const outcome = await pending;
+  assert.equal(outcome.kind, 'started');
+});
+
+test('trigger exposes the pre-record settings-read window to the Merge-step gate', async () => {
+  const settings: UserSettings = {
+    postMergeHookPrompt: 'run the post-merge checks',
+  };
+  const { deps } = makeDeps(settings);
+  let releaseSettings: () => void = () => undefined;
+  const settingsBlocked = new Promise<void>((resolve) => {
+    releaseSettings = resolve;
+  });
+  deps.getUserSettings = async () => {
+    await settingsBlocked;
+    return settings;
+  };
+
+  const pending = triggerPostMergeHookWithDeps(
+    { projectPath: PROJECT, backendOrigin: ORIGIN, trigger: 'manual-merge' },
+    deps,
+  );
+  assert.equal(hasPendingPostMergeHookTrigger(PROJECT), true);
+
+  releaseSettings();
+  await pending;
+  assert.equal(hasPendingPostMergeHookTrigger(PROJECT), false);
+});
+
+test('simultaneous triggers atomically claim one hook for the project', async () => {
+  const settings: UserSettings = {
+    postMergeHookPrompt: 'run the post-merge checks',
+  };
+  const { deps, calls } = makeDeps(settings);
+  let settingsReads = 0;
+  let releaseSettings: () => void = () => undefined;
+  const bothReading = new Promise<void>((resolve) => {
+    releaseSettings = resolve;
+  });
+  deps.getUserSettings = async () => {
+    settingsReads += 1;
+    if (settingsReads === 2) releaseSettings();
+    await bothReading;
+    return settings;
+  };
+
+  const options = {
+    projectPath: PROJECT,
+    backendOrigin: ORIGIN,
+    trigger: 'manual-merge' as const,
+  };
+  const [first, second] = await Promise.all([
+    triggerPostMergeHookWithDeps(options, deps),
+    triggerPostMergeHookWithDeps(options, deps),
+  ]);
+
+  assert.deepEqual(
+    [first.kind, second.kind].sort(),
+    ['skipped', 'started'],
+    'one trigger starts and the other joins the existing run',
+  );
+  const skipped = first.kind === 'skipped' ? first : second;
+  assert.equal(skipped.kind, 'skipped');
+  if (skipped.kind === 'skipped') assert.equal(skipped.reason, 'already-running');
+  assert.equal(calls.recorded.length, 1);
+  assert.equal(calls.setup.length, 1);
+  assert.equal(calls.queued.length, 1);
 });

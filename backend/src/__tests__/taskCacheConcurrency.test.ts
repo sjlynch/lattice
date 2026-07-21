@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
 import { TaskCacheManager } from '../taskCache/manager.js';
 import { ProjectsIndex } from '../taskCache/projectsIndex.js';
 import { TaskMigrations } from '../taskCache/migrations.js';
@@ -63,6 +65,7 @@ function fakeIndex(): ProjectsIndex {
     loadKnownProjects: async () => {},
     has: () => true,
     add: () => {},
+    remove: () => false,
     persistKnownProjects: async () => {},
     values: () => [][Symbol.iterator](),
   } as unknown as ProjectsIndex;
@@ -165,6 +168,36 @@ test('updateTaskCrashSafe does not drop a concurrent createTask', async () => {
     1,
     'the crash-safe bump must survive too',
   );
+
+  store.cancelPersist(project);
+});
+
+test('deleting the final task removes a disposable temp project from the live index', async () => {
+  const project = canonicalProjectPath(
+    path.join(os.tmpdir(), 'lattice-delete-final-task-cleanup'),
+  );
+  const removed: string[] = [];
+  let persistCount = 0;
+  const index = {
+    loadKnownProjects: async () => {},
+    has: () => true,
+    add: () => {},
+    remove: (candidate: string) => {
+      removed.push(candidate);
+      return true;
+    },
+    persistKnownProjects: async () => {
+      persistCount += 1;
+    },
+    values: () => [][Symbol.iterator](),
+  } as unknown as ProjectsIndex;
+  const store = new TestTaskCache({ projectsIndex: index, migrations: fakeMigrations() });
+  store.seed(project, [mkTask('scratch-task', project)]);
+
+  assert.equal(await store.deleteTask('scratch-task'), true);
+  assert.deepEqual(store.peek(project), []);
+  assert.deepEqual(removed, [project]);
+  assert.equal(persistCount, 1);
 
   store.cancelPersist(project);
 });

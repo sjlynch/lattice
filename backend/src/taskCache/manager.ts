@@ -5,6 +5,7 @@ import { ProjectStateManager } from '../projectStateManager.js';
 import { applyCrashSafeTaskUpdate } from './crashSafeUpdate.js';
 import { TaskMigrations } from './migrations.js';
 import { projectTasksFile } from './paths.js';
+import { isStructurallyJunkPath } from './pruneIndex.js';
 import { ProjectsIndex } from './projectsIndex.js';
 import { applyTaskUpdate, type TaskLookup } from './taskUpdate.js';
 import type { Task, TaskStatus, TaskSubscriber, TaskUpdates } from './types.js';
@@ -211,10 +212,23 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
       id,
       (t) => t.id,
       () => this.loadAllKnown(),
-      ({ project, list, idx }) => {
-        this.setCached(project, list.filter((_, i) => i !== idx));
+      async ({ project, list, idx }) => {
+        const remaining = list.filter((_, i) => i !== idx);
+        this.setCached(project, remaining);
         this.schedulePersist(project);
         this.notifyProject(project);
+
+        // Scratch projects are intentionally omitted from the durable project
+        // index at boot. Remove an empty one immediately as well so disposable
+        // E2E/reproduction projects do not accumulate during a long-lived dev
+        // server session.
+        if (
+          remaining.length === 0 &&
+          isStructurallyJunkPath(project) &&
+          this.projectsIndex.remove(project)
+        ) {
+          await this.projectsIndex.persistKnownProjects();
+        }
         return true;
       },
     );

@@ -10,6 +10,7 @@ import type { UserSettings } from '../userSettings/types.js';
 import type { CreateSessionResult } from '../terminalServerClient.js';
 import { buildPostMergeHookCommand } from './commands.js';
 import {
+  beginPostMergeHookTrigger,
   finishPostMergeHook,
   getActiveHookForProject,
   patchPostMergeHook,
@@ -19,6 +20,10 @@ import { postMergeHookAgentId } from './stopHook.js';
 import { registerAgentSession } from '../agentSessions.js';
 import { setupPostMergeHookSession } from './sessionSetup.js';
 import { cleanupPostMergeHookSession } from './cleanup.js';
+import {
+  assertSafePostMergeHookPath,
+  createPostMergeHookId,
+} from './paths.js';
 import type { PostMergeHookRun, PostMergeHookSession } from './types.js';
 
 export type TriggerPostMergeHookOptions = {
@@ -42,6 +47,7 @@ export type TriggerPostMergeHookDeps = {
     backendOrigin: string;
     prompt: string;
     harness: PostMergeHookSession['harness'];
+    id: string;
   }) => Promise<PostMergeHookSession>;
   recordPostMergeHook: (run: PostMergeHookRun) => void;
   queuedCreateSession: (
@@ -97,9 +103,17 @@ export async function triggerPostMergeHookWithDeps(
   options: TriggerPostMergeHookOptions,
   deps: TriggerPostMergeHookDeps,
 ): Promise<TriggerPostMergeHookOutcome> {
-  const prepared = await validateAndPrepare(options, deps);
-  if (prepared.kind === 'skip') return prepared.outcome;
-  return spawnAndRegister(options, deps, prepared);
+  // Mark intent synchronously, before the settings read. The Merge-step gate
+  // watches this pre-record state so it cannot declare the project idle while
+  // an uncached settings read is still preparing a hook.
+  const endPending = beginPostMergeHookTrigger(options.projectPath);
+  try {
+    const prepared = await validateAndPrepare(options, deps);
+    if (prepared.kind === 'skip') return prepared.outcome;
+    return await spawnAndRegister(options, deps, prepared);
+  } finally {
+    endPending();
+  }
 }
 
 // Outcome of the validation phase: either a terminal skip outcome (empty
@@ -146,8 +160,9 @@ async function validateAndPrepare(
   return { kind: 'proceed', settings, prompt, harness };
 }
 
-// The side-effecting half: set up the scratch session, record the run, build
-// the command, spawn the pty, and register the agent-session node. Owns its own
+// The side-effecting half: reserve + record the run, set up its scratch
+// session, build the command, spawn the pty, and register the agent-session
+// node. Owns its own
 // error cleanup so a failure at any step (thrown or a spawn `error` result)
 // finishes the run `errored` (only once it's been recorded) and removes the
 // scratch dir before returning the error outcome — preserving the original
@@ -160,39 +175,48 @@ async function spawnAndRegister(
   const { projectPath, backendOrigin, trigger } = options;
   const { settings, prompt, harness } = prepared;
 
-  let session: PostMergeHookSession | null = null;
-  let recorded = false;
+  // validateAndPrepare necessarily awaits settings. Two trigger calls can
+  // therefore both pass its earlier active-run check before either resumes.
+  // Re-check and synchronously record before the first await; this is the
+  // atomic per-project claim in JavaScript's run-to-completion turn.
+  const existing = deps.getActiveHookForProject(projectPath);
+  if (existing) {
+    return { kind: 'skipped', reason: 'already-running', existing };
+  }
+
+  const id = createPostMergeHookId();
+  const cwd = assertSafePostMergeHookPath(projectPath, id);
+  const run: PostMergeHookRun = {
+    id,
+    projectPath,
+    harness,
+    prompt,
+    cwd,
+    status: 'running',
+    startedAt: Date.now(),
+    trigger,
+  };
+  deps.recordPostMergeHook(run);
 
   try {
-    session = await deps.setupPostMergeHookSession({
+    const session = await deps.setupPostMergeHookSession({
       projectPath,
       backendOrigin,
       prompt,
       harness,
+      id,
     });
 
-    // Record the run BEFORE creating the pty so the waiter map is in place
-    // if the harness curls /complete unusually fast (e.g. on a network-cached
-    // command). The pty cwd is the *scratch dir* — same pattern as pushRuns.
+    // The run is already visible before scratch setup and pty creation, so the
+    // workflow Merge-step gate cannot observe a false idle window here. The
+    // waiter map is also in place if the harness curls /complete unusually
+    // fast. The pty cwd is the scratch dir, matching pushRuns.
     // Claude reads `.claude/settings.local.json` (Stop hook) from cwd, and
     // Pi loads `.pi/extensions/` from cwd; running with cwd=projectPath would
     // miss both backstops and the merge run would hang waiting for a Stop
     // hook callback that never fires (this exact bug shipped in the first
     // cut). The agent cds into the project as its first step — see
     // renderPostMergeHookInstructions.
-    const run: PostMergeHookRun = {
-      id: session.id,
-      projectPath,
-      harness,
-      prompt,
-      cwd: session.cwd,
-      status: 'running',
-      startedAt: Date.now(),
-      trigger,
-    };
-    deps.recordPostMergeHook(run);
-    recorded = true;
-
     const command = buildPostMergeHookCommand({
       harness,
       instructionsFile: session.instructionsFile,
@@ -203,7 +227,7 @@ async function spawnAndRegister(
     });
 
     console.log(
-      `[post-merge-hook] spawning ${harness} for run ${session.id} ` +
+      `[post-merge-hook] spawning ${harness} for run ${id} ` +
         `(trigger=${trigger}, cwd=${session.cwd}, prompt=${prompt.length}ch)`,
     );
 
@@ -219,20 +243,20 @@ async function spawnAndRegister(
     if ('error' in sess) {
       // Spawn failed — mark the hook errored so anyone awaiting it unblocks.
       console.error(
-        `[post-merge-hook] spawn failed for run ${session.id}: ${sess.error}`,
+        `[post-merge-hook] spawn failed for run ${id}: ${sess.error}`,
       );
-      deps.finishPostMergeHook(session.id, 'errored', sess.error);
-      await deps.cleanupPostMergeHookSession(projectPath, session.id);
+      deps.finishPostMergeHook(id, 'errored', sess.error);
+      await deps.cleanupPostMergeHookSession(projectPath, id);
       return { kind: 'error', message: sess.error };
     }
 
-    const updated = deps.patchPostMergeHook(session.id, { serverId: sess.id });
+    const updated = deps.patchPostMergeHook(id, { serverId: sess.id });
     // Presence: orange Claude node for this non-worktree session. Only for
     // Claude — a Pi/codex hook isn't a "Claude session" and has no activity
     // hooks, so it gets no node.
     if (harness === 'claude') {
       deps.registerAgentSession({
-        agentId: postMergeHookAgentId(session.id),
+        agentId: postMergeHookAgentId(id),
         projectPath,
         label: 'post-merge hook',
       });
@@ -241,10 +265,8 @@ async function spawnAndRegister(
   } catch (err) {
     const message = (err as Error).message;
     console.error('[post-merge-hook] trigger failed:', err);
-    if (session) {
-      if (recorded) deps.finishPostMergeHook(session.id, 'errored', message);
-      await deps.cleanupPostMergeHookSession(projectPath, session.id);
-    }
+    deps.finishPostMergeHook(id, 'errored', message);
+    await deps.cleanupPostMergeHookSession(projectPath, id);
     return { kind: 'error', message };
   }
 }

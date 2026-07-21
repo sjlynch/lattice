@@ -10,7 +10,9 @@ import { listTasks, subscribe as subscribeTasks } from '../../tasks.js';
 import type { Task, TaskStatus } from '../../tasks.js';
 import {
   getActiveHookForProject,
+  hasPendingPostMergeHookTrigger,
   subscribePostMergeHooks,
+  subscribePostMergeHookTriggers,
   type PostMergeHookRun,
 } from '../../postMergeHooks.js';
 import type { WorkflowStepKind } from '../../workflows.js';
@@ -140,12 +142,16 @@ export type PostMergeHookWaitDeps = {
   getActiveHookForProject: typeof getActiveHookForProject;
   subscribePostMergeHooks: typeof subscribePostMergeHooks;
   subscribeRun: typeof subscribe;
+  hasPendingPostMergeHookTrigger?: typeof hasPendingPostMergeHookTrigger;
+  subscribePostMergeHookTriggers?: typeof subscribePostMergeHookTriggers;
 };
 
 const productionPostMergeHookWaitDeps: PostMergeHookWaitDeps = {
   getActiveHookForProject,
   subscribePostMergeHooks,
   subscribeRun: subscribe,
+  hasPendingPostMergeHookTrigger,
+  subscribePostMergeHookTriggers,
 };
 
 // Resolve once NO post-merge hook is running for `projectPath` (or the
@@ -180,13 +186,17 @@ export function waitForPostMergeHookIdle(
     let reportedId: string | null = null;
     let lastActiveId: string | null = null;
     let unsubHooks: (() => void) | null = null;
+    let unsubTriggers: (() => void) | null = null;
     let unsubRun: (() => void) | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let idleCheck: ReturnType<typeof setImmediate> | null = null;
 
     const cleanup = () => {
       unsubHooks?.();
+      unsubTriggers?.();
       unsubRun?.();
       if (timer) clearTimeout(timer);
+      if (idleCheck) clearImmediate(idleCheck);
     };
     const finish = () => {
       if (settled) return;
@@ -208,13 +218,36 @@ export function waitForPostMergeHookIdle(
     const evaluate = (): boolean => {
       if (run.status !== 'running') return true;
       const active = deps.getActiveHookForProject(projectPath);
-      if (!active) return true;
+      if (!active) {
+        return !(deps.hasPendingPostMergeHookTrigger?.(projectPath) ?? false);
+      }
       lastActiveId = active.id;
       if (reportedId !== active.id) {
         reportedId = active.id;
         onActive(active);
       }
       return false;
+    };
+
+    // Do not resolve on the same turn as the first idle observation. A task
+    // finalizer publishes its QA transition before its continuation invokes
+    // the post-merge hook; that task event can wake the Merge step and reach
+    // Phase C in the narrow gap between those operations. Keeping the
+    // subscription alive through one event-loop turn lets the hook's
+    // synchronous `recordPostMergeHook` event close the gate before it opens.
+    const reevaluate = (): void => {
+      if (!evaluate()) {
+        if (idleCheck) {
+          clearImmediate(idleCheck);
+          idleCheck = null;
+        }
+        return;
+      }
+      if (idleCheck || settled) return;
+      idleCheck = setImmediate(() => {
+        idleCheck = null;
+        if (evaluate()) finish();
+      });
     };
 
     if (maxWaitMs !== undefined && maxWaitMs > 0) {
@@ -238,14 +271,17 @@ export function waitForPostMergeHookIdle(
     // on every hook event and let the canonicalizing lookup decide — hook
     // events are rare, so the extra map scans are free.
     unsubHooks = deps.subscribePostMergeHooks(() => {
-      if (evaluate()) finish();
+      reevaluate();
     });
+    unsubTriggers = deps.subscribePostMergeHookTriggers?.(() => {
+      reevaluate();
+    }) ?? null;
     unsubRun = deps.subscribeRun((ev) => {
       if (!('run' in ev) || ev.run.id !== run.id) return;
       if (ev.type === 'cancelled' || ev.type === 'errored') finish();
     });
 
-    if (evaluate()) finish();
+    reevaluate();
   });
 }
 

@@ -35,11 +35,9 @@ export function useWorkflowRecentRuns(activeFolder: string) {
     let active = true;
     const dismissals = createRecentDismissalScheduler((id) => {
       if (!active) return;
-      setRecentRuns((cur) => {
-        const next = removeKey(cur, id);
-        recentRunsRef.current = next;
-        return next;
-      });
+      const next = removeKey(recentRunsRef.current, id);
+      recentRunsRef.current = next;
+      setRecentRuns(next);
     });
     schedulerRef.current = dismissals;
 
@@ -51,20 +49,19 @@ export function useWorkflowRecentRuns(activeFolder: string) {
   }, [activeFolder]);
 
   const addRecentRun = useCallback((run: WorkflowRun) => {
-    setRecentRuns((cur) => {
-      const next = addRecentRunToMap(cur, run);
-      recentRunsRef.current = next;
-      return next;
-    });
+    // Update the ref synchronously, before React schedules a render. A fast
+    // workflow's completion WS and /run response can land in the same turn;
+    // the response path must be able to see the completed run immediately.
+    const next = addRecentRunToMap(recentRunsRef.current, run);
+    recentRunsRef.current = next;
+    setRecentRuns(next);
     schedulerRef.current?.schedule(run.id, run.status);
   }, []);
 
   const dismissRecent = useCallback((id: string) => {
-    setRecentRuns((cur) => {
-      const next = removeKey(cur, id);
-      recentRunsRef.current = next;
-      return next;
-    });
+    const next = removeKey(recentRunsRef.current, id);
+    recentRunsRef.current = next;
+    setRecentRuns(next);
   }, []);
 
   return { recentRuns, recentRunsRef, addRecentRun, dismissRecent };

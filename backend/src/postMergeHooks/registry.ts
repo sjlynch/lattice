@@ -26,6 +26,13 @@ type Entry = {
 
 const entries = new Map<string, Entry>();
 
+// A trigger must read settings before it can construct the full run record.
+// Keep that pre-record launch window visible to the workflow Merge-step gate;
+// otherwise Phase C can observe "idle" while a hook is already starting.
+const pendingTriggerCounts = new Map<string, number>();
+type TriggerListener = (projectPath: string) => void;
+const triggerListeners = new Set<TriggerListener>();
+
 export type PostMergeHookEvent =
   | { type: 'started'; run: PostMergeHookRun }
   | { type: 'progress'; run: PostMergeHookRun }
@@ -51,10 +58,56 @@ export function subscribePostMergeHooks(fn: Listener): () => void {
   };
 }
 
+export function beginPostMergeHookTrigger(projectPath: string): () => void {
+  const key = canonicalProjectPath(projectPath);
+  pendingTriggerCounts.set(key, (pendingTriggerCounts.get(key) ?? 0) + 1);
+  for (const fn of triggerListeners) {
+    try {
+      fn(key);
+    } catch (err) {
+      console.error('[post-merge-hook] trigger listener threw:', err);
+    }
+  }
+
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    const remaining = (pendingTriggerCounts.get(key) ?? 1) - 1;
+    if (remaining > 0) pendingTriggerCounts.set(key, remaining);
+    else pendingTriggerCounts.delete(key);
+    for (const fn of triggerListeners) {
+      try {
+        fn(key);
+      } catch (err) {
+        console.error('[post-merge-hook] trigger listener threw:', err);
+      }
+    }
+  };
+}
+
+export function hasPendingPostMergeHookTrigger(projectPath: string): boolean {
+  return (pendingTriggerCounts.get(canonicalProjectPath(projectPath)) ?? 0) > 0;
+}
+
+export function subscribePostMergeHookTriggers(fn: TriggerListener): () => void {
+  triggerListeners.add(fn);
+  return () => {
+    triggerListeners.delete(fn);
+  };
+}
+
 export function recordPostMergeHook(run: PostMergeHookRun): void {
-  entries.set(run.id, { run, waiters: [] });
-  pruneHistoryFor(run.projectPath, run.id);
-  notify({ type: 'started', run: { ...run } });
+  // Lookups canonicalize their query, so the stored side must do the same or
+  // a path variant (notably a lower-case Windows drive) makes a live hook
+  // invisible to the workflow Merge-step gate.
+  const canonicalRun = {
+    ...run,
+    projectPath: canonicalProjectPath(run.projectPath),
+  };
+  entries.set(canonicalRun.id, { run: canonicalRun, waiters: [] });
+  pruneHistoryFor(canonicalRun.projectPath, canonicalRun.id);
+  notify({ type: 'started', run: { ...canonicalRun } });
 }
 
 function pruneHistoryFor(projectPath: string, keepId: string): void {

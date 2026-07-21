@@ -24,11 +24,13 @@ export async function setupPostMergeHookSession(args: {
   backendOrigin: string;
   prompt: string;
   harness: PostMergeHookSession['harness'];
+  id?: string;
 }): Promise<PostMergeHookSession> {
-  const { projectPath, backendOrigin, prompt, harness } = args;
+  const { projectPath, backendOrigin, prompt, harness, id } = args;
   const session = await setupHomeScratchSession({
     paths: postMergeHookPaths,
     projectPath,
+    id,
     instructionsFileName: POST_MERGE_HOOK_FILENAME,
     installHooks: ({ cwd, id }) =>
       installPostMergeHookStopHook({

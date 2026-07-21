@@ -20,6 +20,10 @@ export class ProjectsIndex {
     this.knownProjects.add(projectPath);
   }
 
+  public remove(projectPath: string): boolean {
+    return this.knownProjects.delete(canonicalProjectPath(projectPath));
+  }
+
   public values(): IterableIterator<string> {
     return this.knownProjects.values();
   }
