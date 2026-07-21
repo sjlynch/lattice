@@ -94,6 +94,15 @@ export type UserSettings = {
   // or blank entry means "use Lattice's default". See backend
   // instructionTemplates/.
   instructionTemplateOverrides?: Record<string, string>;
+  // Per-project, per-harness overrides of the AGENT'S OWN system prompt (the
+  // harness's built-in prompt, not a Lattice brief). Keyed by harness, each with
+  // an independent `append` (added on top of the built-in prompt) and `replace`
+  // (swaps it entirely); a missing/blank side leaves that side alone. Edited in
+  // Settings → Agent prompts ("Harness system prompts"). See backend
+  // harnessSystemPrompts/.
+  harnessSystemPrompts?: Partial<
+    Record<'claude' | 'codex' | 'pi', { append?: string; replace?: string }>
+  >;
 };
 
 // Extensions Lattice ignores by default in the LOC and code-health overlays.

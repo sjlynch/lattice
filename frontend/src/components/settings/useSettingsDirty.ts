@@ -5,6 +5,7 @@ import {
 } from './StartupTerminalsTab';
 import { type EnvNotesTabHandle } from './EnvNotesTab';
 import { type InstructionTemplatesTabHandle } from './InstructionTemplatesTab';
+import { type HarnessSystemPromptsTabHandle } from './HarnessSystemPromptsTab';
 import { type MetricsIgnoredExtsTabHandle } from './MetricsIgnoredExtsTab';
 import { type AgentsTabHandle } from './AgentsTab';
 import { type PiTabHandle } from './PiTab';
@@ -26,6 +27,7 @@ export type SettingsTabRefs = {
   startupTerminals: RefObject<StartupTerminalsTabHandle | null>;
   envNotes: RefObject<EnvNotesTabHandle | null>;
   instructionTemplates: RefObject<InstructionTemplatesTabHandle | null>;
+  harnessSystemPrompts: RefObject<HarnessSystemPromptsTabHandle | null>;
   metricsIgnoredExts: RefObject<MetricsIgnoredExtsTabHandle | null>;
   agents: RefObject<AgentsTabHandle | null>;
   pi: RefObject<PiTabHandle | null>;
@@ -60,7 +62,10 @@ export function useSettingsDirty({
       terminals: drafts.dirty || startupDirty,
       prompts:
         refs.instructionTemplates.current?.getInstructionTemplateOverridesPatch() !==
-          undefined || refs.envNotes.current?.getWorktreeEnvNotesPatch() !== undefined,
+          undefined ||
+        refs.harnessSystemPrompts.current?.getHarnessSystemPromptsPatch() !==
+          undefined ||
+        refs.envNotes.current?.getWorktreeEnvNotesPatch() !== undefined,
       metrics:
         refs.metricsIgnoredExts.current?.getMetricsIgnoredExtsPatch() !== undefined,
       agents: refs.agents.current?.getMaxConcurrentAgentsPatch() !== undefined,

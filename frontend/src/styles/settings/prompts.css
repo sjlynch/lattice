@@ -146,3 +146,80 @@
   white-space: nowrap;
   max-width: 260px;
 }
+
+/* "Agent prompts" tab — Harness system prompts section (append/replace per
+   harness + read-only default view). Reuses the .prompt-tpl-card chrome. */
+.hsp-field-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+.hsp-field-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+}
+.hsp-field-tag-warn {
+  color: #e7b686;
+  background: rgba(231, 160, 134, 0.14);
+  border-color: rgba(231, 160, 134, 0.3);
+}
+.hsp-field-desc {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  margin-top: -2px;
+}
+.hsp-default {
+  margin: 0;
+  padding: 9px 11px;
+  max-height: 240px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: #0f1115;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+.hsp-source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  margin-top: -2px;
+  font-size: 10.5px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.hsp-source-link:hover {
+  text-decoration: underline;
+}
+.hsp-source-link svg {
+  flex: 0 0 auto;
+}
+.hsp-warning {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: #e7b686;
+  background: rgba(231, 160, 134, 0.1);
+  border: 1px solid rgba(231, 160, 134, 0.28);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+}

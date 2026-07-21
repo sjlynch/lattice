@@ -7,6 +7,7 @@ export * from './gitHistory';
 export * from './settings';
 export * from './projectEnv';
 export * from './instructionTemplates';
+export * from './harnessSystemPrompts';
 export * from './tasks';
 export * from './runs';
 export * from './postMergeHooks';

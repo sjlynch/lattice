@@ -22,6 +22,13 @@ export type TerminalSessionRequestBody = {
   // those overrides reference by name — merged into the child pty env only.
   managedCodexConfigArgs?: string[];
   managedMcpEnv?: Record<string, string>;
+  // Per-project harness system-prompt override (backend-resolved). Claude: the
+  // scratch-file paths for --system-prompt-file / --append-system-prompt-file.
+  // Codex: the developer_instructions / model_instructions_file `-c` overrides.
+  // Applied by the pty launch context; no-op for the wrong harness / when absent.
+  claudeSystemPromptReplaceFile?: string;
+  claudeSystemPromptAppendFile?: string;
+  codexSystemPromptConfigArgs?: string[];
 };
 
 export type CreateSessionHandlerDeps = {
@@ -86,6 +93,11 @@ export function createSessionHandler(
         // flags, secret env → child pty env). No-ops for non-Codex spawns.
         managedCodexConfigArgs: body.managedCodexConfigArgs,
         managedMcpEnv: body.managedMcpEnv,
+        // Harness system-prompt override: applied by the launch context per
+        // harness (Claude flags / Codex `-c`). No-ops when absent.
+        claudeSystemPromptReplaceFile: body.claudeSystemPromptReplaceFile,
+        claudeSystemPromptAppendFile: body.claudeSystemPromptAppendFile,
+        codexSystemPromptConfigArgs: body.codexSystemPromptConfigArgs,
       });
       if ('error' in result) {
         // A hard-cap refusal is 503 ("at capacity") so the backend proxy can

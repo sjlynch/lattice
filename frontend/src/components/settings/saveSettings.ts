@@ -14,6 +14,7 @@ import {
 } from './StartupTerminalsTab';
 import { type EnvNotesTabHandle } from './EnvNotesTab';
 import { type InstructionTemplatesTabHandle } from './InstructionTemplatesTab';
+import { type HarnessSystemPromptsTabHandle } from './HarnessSystemPromptsTab';
 import { type MetricsIgnoredExtsTabHandle } from './MetricsIgnoredExtsTab';
 import { type AgentsTabHandle } from './AgentsTab';
 import { type PiTabHandle } from './PiTab';
@@ -35,6 +36,7 @@ type SaveHandles = {
   startupTerminals: StartupTerminalsTabHandle | null;
   envNotes: EnvNotesTabHandle | null;
   instructionTemplates: InstructionTemplatesTabHandle | null;
+  harnessSystemPrompts: HarnessSystemPromptsTabHandle | null;
   metricsIgnoredExts: MetricsIgnoredExtsTabHandle | null;
   agents: AgentsTabHandle | null;
   pi: PiTabHandle | null;
@@ -94,6 +96,13 @@ export async function saveSettings({
     handles.instructionTemplates?.getInstructionTemplateOverridesPatch();
   if (templatesPatch !== undefined) {
     patch.instructionTemplateOverrides = templatesPatch;
+  }
+  // Per-harness system-prompt overrides (same clobber-guard: the patch is the
+  // full desired map, only present once the editor has loaded and been edited).
+  const harnessSystemPromptsPatch =
+    handles.harnessSystemPrompts?.getHarnessSystemPromptsPatch();
+  if (harnessSystemPromptsPatch !== undefined) {
+    patch.harnessSystemPrompts = harnessSystemPromptsPatch;
   }
   const metricsExtsPatch = handles.metricsIgnoredExts?.getMetricsIgnoredExtsPatch();
   if (metricsExtsPatch !== undefined) {

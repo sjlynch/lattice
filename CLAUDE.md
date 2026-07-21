@@ -126,6 +126,7 @@ therefore stay safely re-runnable.
 | GET | `/api/settings?project=` | Read per-project user settings |
 | PATCH | `/api/settings?project=` | Merge-update per-project user settings |
 | GET | `/api/instruction-templates?project=` | Editable agent instruction templates (task/merge/QA/push/post-merge/workflow): each template's `defaultTemplate`, the project's `currentTemplate` (override-or-default), and its `{{token}}` docs. Backs Settings → Agent prompts; edits save via PATCH `/api/settings` (`instructionTemplateOverrides`) |
+| GET | `/api/harness-system-prompts?project=` | Per-harness (`claude`/`codex`/`pi`) **system-prompt** editor data: each harness's read-only default overview + the project's current Append/Replace override. Backs Settings → Agent prompts ("Harness system prompts"); edits save via PATCH `/api/settings` (`harnessSystemPrompts`), injected at every spawn of that harness. See `backend/src/harnessSystemPrompts/` |
 | GET | `/api/global-settings` | Read machine-global settings (`maxConcurrentAgents`, `mcpCustomServers`, `mcpBuiltinOverrides`, `piModelMenu`, `piProviders`) |
 | PATCH | `/api/global-settings` | Update machine-global settings (applies the spawn-queue softCap live; carries MCP custom-server defs / built-in overrides; `piModelMenu` curates the Pi-model dropdown; `piProviders` reconciles into `~/.pi/agent/models.json`) |
 | GET | `/api/pi-models` | Pi models for the harness dropdowns: full `pi --list-models` list, the curated "Pi — X" `menu` (`globalSettings.piModelMenu` or the default), and Pi's current `defaultPattern`. Machine-global; empty when `pi` isn't installed. See `backend/src/piModels.ts` |
@@ -398,6 +399,19 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   child-only environment variable. Lattice-spawned Codex agents therefore skip
   the folder-trust gate without writing `~/.codex/config.toml` or changing
   Codex sessions launched outside Lattice.
+- **Per-harness system-prompt overrides** let a project customize each agent's
+  *own* built-in system prompt (distinct from the Lattice-authored briefs in
+  `instructionTemplates/`). Two independent fields per harness — **Append**
+  (added on top of the built-in prompt) and **Replace** (swaps it) — edited in
+  Settings → Agent prompts and stored on `UserSettings.harnessSystemPrompts`.
+  Injected at the one spawn chokepoint (`resolveHarnessSpawnBody`) per harness:
+  Claude `--(append-)system-prompt-file` (scratch file + flag applied in the
+  terminal-server), Codex `developer_instructions` / `model_instructions_file`
+  (`-c` overrides), Pi a Lattice `before_agent_start` extension (cwd files, like
+  the MCP shim). Claude's built-in prompt is proprietary so the editor shows an
+  "unviewable" note (the override still works); Codex/Pi show their open-source
+  defaults. Replacing is discouraged everywhere (warned in the UI). See
+  `backend/src/harnessSystemPrompts/CLAUDE.md`.
 
 ## Ports
 

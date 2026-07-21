@@ -61,3 +61,7 @@ LATTICE_TASK.md
 # lattice-managed (do not remove)
 .pi/extensions/lattice-mcp.ts
 .pi/mcp.json
+
+# lattice-managed (do not remove)
+.pi/extensions/lattice-system-prompt.ts
+.pi/extensions/lattice-system-prompt.json

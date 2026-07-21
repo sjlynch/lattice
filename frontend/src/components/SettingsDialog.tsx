@@ -12,6 +12,7 @@ import { AgentsTab } from './settings/AgentsTab';
 import { PiTab } from './settings/PiTab';
 import { McpTab } from './settings/McpTab';
 import { InstructionTemplatesTab } from './settings/InstructionTemplatesTab';
+import { HarnessSystemPromptsTab } from './settings/HarnessSystemPromptsTab';
 import { useSettingsDrafts } from './settings/useSettingsDrafts';
 import { useSettingsController } from './settings/useSettingsController';
 import { SETTINGS_TABS, type Tab } from './settings/settingsTabs';
@@ -98,6 +99,12 @@ export function SettingsDialog({
             active={tab === 'terminals'}
             open={open}
             startupTerminals={startupTerminals}
+          />
+          <HarnessSystemPromptsTab
+            ref={refs.harnessSystemPrompts}
+            active={tab === 'prompts'}
+            open={open}
+            activeFolder={activeFolder}
           />
           <InstructionTemplatesTab
             ref={refs.instructionTemplates}

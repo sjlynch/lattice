@@ -4,6 +4,7 @@
 //   - userSettings.ts        : /api/settings (GET/PATCH per-project settings)
 //   - projectEnv.ts          : /api/project-env (package-manager env probe)
 //   - instructionTemplates.ts: /api/instruction-templates (Agent prompts tab)
+//   - harnessSystemPrompts.ts: /api/harness-system-prompts (Agent prompts tab)
 //   - piModels.ts            : /api/pi-models (Pi model list + curated menu)
 //   - piEndpoints.ts         : /api/pi-endpoints/probe (Pi "Detect models")
 //
@@ -13,6 +14,7 @@ import { Router } from 'express';
 import { buildUserSettingsRouter } from './settings/userSettings.js';
 import { buildProjectEnvRouter } from './settings/projectEnv.js';
 import { buildInstructionTemplatesRouter } from './settings/instructionTemplates.js';
+import { buildHarnessSystemPromptsRouter } from './settings/harnessSystemPrompts.js';
 import { buildPiModelsRouter } from './settings/piModels.js';
 import { buildPiEndpointsRouter } from './settings/piEndpoints.js';
 
@@ -21,6 +23,7 @@ export function buildSettingsRouter(): Router {
   r.use(buildUserSettingsRouter());
   r.use(buildProjectEnvRouter());
   r.use(buildInstructionTemplatesRouter());
+  r.use(buildHarnessSystemPromptsRouter());
   r.use(buildPiModelsRouter());
   r.use(buildPiEndpointsRouter());
   return r;

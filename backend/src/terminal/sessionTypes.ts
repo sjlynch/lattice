@@ -46,6 +46,16 @@ export type CreateOpts = {
   // (referenced BY NAME from the Codex overrides). Merged into the pty env only
   // — never the terminal-server's own process env.
   managedMcpEnv?: Record<string, string>;
+  // Per-project system-prompt override (backend-resolved, applied here).
+  // Claude: absolute scratch-file paths for the `--system-prompt-file` (replace)
+  // and `--append-system-prompt-file` (append) flags, added by
+  // configureClaudeSystemPrompt. Codex: the `developer_instructions` /
+  // `model_instructions_file` `-c` overrides, added by configureCodexSystemPrompt.
+  // All no-op for the wrong harness / when absent. (Pi's override is cwd-local
+  // files the backend already wrote, so it needs nothing here.)
+  claudeSystemPromptReplaceFile?: string;
+  claudeSystemPromptAppendFile?: string;
+  codexSystemPromptConfigArgs?: string[];
 };
 
 export type AttachOpts = {

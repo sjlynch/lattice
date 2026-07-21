@@ -9,6 +9,10 @@ is not significant within this folder.
   package-manager env notes used in task instructions.
 - `instructionTemplates.ts` — editable prompt templates for task/merge/QA/push/
   post-merge/workflow prompts.
+- `harnessSystemPrompts.ts` — read-only `GET /api/harness-system-prompts`: each
+  harness's default system-prompt overview + the project's current Append/Replace
+  override. Edits save through `PATCH /api/settings` (`harnessSystemPrompts`). See
+  `backend/src/harnessSystemPrompts/`.
 - `piModels.ts` — `GET /api/pi-models`; reads detected Pi models plus curated
   menu from global settings.
 - `piEndpoints.ts` — `POST /api/pi-endpoints/probe`; OpenAI-compatible

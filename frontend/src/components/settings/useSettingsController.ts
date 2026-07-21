@@ -6,6 +6,7 @@ import {
 import { type StartupTerminalsTabHandle } from './StartupTerminalsTab';
 import { type EnvNotesTabHandle } from './EnvNotesTab';
 import { type InstructionTemplatesTabHandle } from './InstructionTemplatesTab';
+import { type HarnessSystemPromptsTabHandle } from './HarnessSystemPromptsTab';
 import { type MetricsIgnoredExtsTabHandle } from './MetricsIgnoredExtsTab';
 import { type AgentsTabHandle } from './AgentsTab';
 import { type PiTabHandle } from './PiTab';
@@ -46,6 +47,7 @@ export function useSettingsController({
   const startupTerminalsRef = useRef<StartupTerminalsTabHandle>(null);
   const envNotesRef = useRef<EnvNotesTabHandle>(null);
   const instructionTemplatesRef = useRef<InstructionTemplatesTabHandle>(null);
+  const harnessSystemPromptsRef = useRef<HarnessSystemPromptsTabHandle>(null);
   const metricsIgnoredExtsRef = useRef<MetricsIgnoredExtsTabHandle>(null);
   const agentsRef = useRef<AgentsTabHandle>(null);
   const piRef = useRef<PiTabHandle>(null);
@@ -55,6 +57,7 @@ export function useSettingsController({
       startupTerminals: startupTerminalsRef,
       envNotes: envNotesRef,
       instructionTemplates: instructionTemplatesRef,
+      harnessSystemPrompts: harnessSystemPromptsRef,
       metricsIgnoredExts: metricsIgnoredExtsRef,
       agents: agentsRef,
       pi: piRef,
@@ -63,6 +66,7 @@ export function useSettingsController({
     [
       agentsRef,
       envNotesRef,
+      harnessSystemPromptsRef,
       instructionTemplatesRef,
       mcpRef,
       metricsIgnoredExtsRef,
@@ -102,6 +106,7 @@ export function useSettingsController({
           startupTerminals: startupTerminalsRef.current,
           envNotes: envNotesRef.current,
           instructionTemplates: instructionTemplatesRef.current,
+          harnessSystemPrompts: harnessSystemPromptsRef.current,
           metricsIgnoredExts: metricsIgnoredExtsRef.current,
           agents: agentsRef.current,
           pi: piRef.current,

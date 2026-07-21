@@ -42,7 +42,19 @@ owns the node-pty processes.
   override. The dynamic TOML value rides in the child PTY environment with
   shell-specific expansion syntax, so paths are not interpolated into shell
   source. This trusts the cwd only for that Codex process and never writes the
-  user's `~/.codex/config.toml`.
+  user's `~/.codex/config.toml`. Also home to the shared `--config`-injection
+  helper (`applyCodexConfigArgs`, exported `shellEnvRef`) and its two consumers:
+  `configureCodexProjectMcp` (managed MCP overrides) and
+  `configureCodexSystemPrompt` (the per-project system-prompt override —
+  `developer_instructions`/`model_instructions_file`, on its own
+  `LATTICE_CODEX_SYS_<i>` env-var series so it coexists with MCP).
+- `claudeSystemPrompt.ts` — the Claude analogue: rewrites a Lattice-started
+  `claude` command to add `--system-prompt-file` (replace) / `--append-system-
+  prompt-file` (append) for the per-project harness system-prompt override. The
+  backend wrote the prompt to a scratch file and shipped its path; the path
+  rides a child-env var referenced via `shellEnvRef` (never shell source),
+  mirroring codexTrust. No-op for non-Claude commands / no override. See
+  `harnessSystemPrompts/`.
 - `createSession.ts` — `createSession`: the spawn orchestrator (session-cap
   check → `buildSessionLaunchContext` → `pty.spawn` → build `Session` →
   `addSession` → `wireSessionPtyEvents` + banner + initialCommand).

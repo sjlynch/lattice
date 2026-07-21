@@ -71,10 +71,19 @@ clobber-guard logic.
 ## Where each setting persists
 
 **Per-project** — `userSettings.json`, via `PATCH /api/settings`:
-`InstructionTemplatesTab` + `EnvNotesTab` (both on the Agent-prompts tab),
-`MetricsIgnoredExtsTab`, `StartupTerminalsTab`, the MCP per-project enables
-(`mcpOverrides`), plus the parent's terminal-default / instrument / memory
-drafts.
+`InstructionTemplatesTab` + `HarnessSystemPromptsTab` + `EnvNotesTab` (all three
+on the Agent-prompts tab), `MetricsIgnoredExtsTab`, `StartupTerminalsTab`, the
+MCP per-project enables (`mcpOverrides`), plus the parent's terminal-default /
+instrument / memory drafts.
+
+`HarnessSystemPromptsTab` edits `UserSettings.harnessSystemPrompts` (per-harness
+`{append, replace}` — the agent's own built-in system prompt, not a Lattice
+brief). It fetches `GET /api/harness-system-prompts` (default overview + current
+override) via a bespoke draft hook (the saved shape is nested, not the flat
+`Record<string,string>` the shared `useOverrideDraft` handles) with the same
+`undefined`-until-loaded clobber-guard, and its `getHarnessSystemPromptsPatch()`
+returns the full desired map. Read-only harness *defaults* come from
+`backend/src/harnessSystemPrompts/`.
 
 **Machine-global** — `globalSettings.json`, via `PATCH /api/global-settings`:
 `AgentsTab` (`maxConcurrentAgents`), `PiTab` (`piProviders` + `piModelMenu`),

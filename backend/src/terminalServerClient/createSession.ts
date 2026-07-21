@@ -8,6 +8,12 @@ import {
   resolveManagedCodexServers,
 } from '../mcp/registry.js';
 import { applyPiMcpForSpawn } from '../piMcp.js';
+import {
+  prepareClaudeSystemPrompt,
+  prepareCodexSystemPrompt,
+  preparePiSystemPrompt,
+  type ClaudeSystemPromptFiles,
+} from '../harnessSystemPrompts.js';
 import { isClaudeMemoryDisabled } from '../userSettings.js';
 import type { ClaudeMcpServerConfig } from '../mcp/claudeInject.js';
 import { terminalServerAuthHeaders } from '../terminalServerAuth.js';
@@ -49,6 +55,15 @@ export type SessionWireBody = CreateSessionOptions & {
   // (launchContext), never into the backend's own process env. Absent when there
   // are no secret-bearing managed servers.
   managedMcpEnv?: Record<string, string>;
+  // Per-project harness system-prompt override, resolved here and applied by the
+  // terminal-server's launch context. Claude: absolute scratch-file paths for
+  // `--system-prompt-file` (replace) / `--append-system-prompt-file` (append).
+  // Codex: `developer_instructions` / `model_instructions_file` `-c` overrides.
+  // Absent for the wrong harness or when nothing is configured. (Pi's override is
+  // cwd-local files the backend wrote at resolve time, so it rides no wire field.)
+  claudeSystemPromptReplaceFile?: string;
+  claudeSystemPromptAppendFile?: string;
+  codexSystemPromptConfigArgs?: string[];
 };
 
 function isClaudeCommand(initialCommand: string | undefined): boolean {
@@ -69,11 +84,12 @@ function isPiCommand(initialCommand: string | undefined): boolean {
 // it into the wire body — the terminal-server only APPLIES the result (it never
 // resolves policy). Best-effort throughout: a resolve failure degrades to a
 // plain spawn. Runs per harness:
-//   - claude → managed MCP server set (+ memory opt-out), shipped as wire data.
-//   - codex  → `-c` inline-TOML MCP overrides (+ secret env for the pty).
-//   - pi     → write `<cwd>/.pi/mcp.json` + extension shim here (Pi's mechanism
-//              is cwd-local files, not wire data); only the secret env rides
-//              the wire. See piMcp.ts.
+//   - claude → managed MCP server set (+ memory opt-out) + system-prompt files,
+//              shipped as wire data.
+//   - codex  → `-c` inline-TOML MCP + system-prompt overrides (+ secret env).
+//   - pi     → write `<cwd>/.pi/mcp.json` + extension shims here (Pi's mechanism
+//              is cwd-local files, not wire data), incl. the system-prompt
+//              extension; only the secret env rides the wire. See piMcp.ts.
 // Plain shells pass through untouched.
 async function resolveHarnessSpawnBody(
   opts: CreateSessionOptions,
@@ -87,19 +103,45 @@ async function resolveHarnessSpawnBody(
     const disableClaudeMemory = opts.projectPath
       ? await isClaudeMemoryDisabled(opts.projectPath).catch(() => false)
       : false;
-    return { ...opts, managedMcpServers, disableClaudeMemory };
+    const sysPrompt: ClaudeSystemPromptFiles = opts.projectPath
+      ? await prepareClaudeSystemPrompt(opts.projectPath).catch(() => ({}))
+      : {};
+    return {
+      ...opts,
+      managedMcpServers,
+      disableClaudeMemory,
+      ...(sysPrompt.replaceFile
+        ? { claudeSystemPromptReplaceFile: sysPrompt.replaceFile }
+        : {}),
+      ...(sysPrompt.appendFile
+        ? { claudeSystemPromptAppendFile: sysPrompt.appendFile }
+        : {}),
+    };
   }
   if (isCodexCommand(opts.initialCommand) && opts.projectPath) {
     const codex = await resolveManagedCodexServers(opts.projectPath);
-    if (!codex || codex.configArgs.length === 0) return opts;
+    const sysPrompt = await prepareCodexSystemPrompt(opts.projectPath).catch(
+      () => ({ configArgs: [] as string[] }),
+    );
+    const mcpArgs = codex?.configArgs ?? [];
+    const env = codex?.env ?? {};
+    // Nothing to inject → plain spawn.
+    if (mcpArgs.length === 0 && sysPrompt.configArgs.length === 0) return opts;
     return {
       ...opts,
-      managedCodexConfigArgs: codex.configArgs,
-      ...(Object.keys(codex.env).length > 0 ? { managedMcpEnv: codex.env } : {}),
+      ...(mcpArgs.length > 0 ? { managedCodexConfigArgs: mcpArgs } : {}),
+      ...(sysPrompt.configArgs.length > 0
+        ? { codexSystemPromptConfigArgs: sysPrompt.configArgs }
+        : {}),
+      ...(Object.keys(env).length > 0 ? { managedMcpEnv: env } : {}),
     };
   }
   if (isPiCommand(opts.initialCommand) && opts.projectPath) {
     const env = await applyPiMcpForSpawn(opts.cwd, opts.projectPath);
+    // Reconcile the Pi system-prompt extension in the cwd (installs it when
+    // there's an override, strips a stale one otherwise). Cwd-local files, so
+    // nothing rides the wire — like the MCP shim.
+    await preparePiSystemPrompt(opts.cwd, opts.projectPath).catch(() => {});
     if (Object.keys(env).length > 0) return { ...opts, managedMcpEnv: env };
     return opts;
   }

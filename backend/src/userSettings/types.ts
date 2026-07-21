@@ -137,4 +137,16 @@ export type UserSettings = {
   // entry means "use the built-in default". Edited in Settings → Agent prompts
   // and applied at spawn via resolveInstructionTemplate.
   instructionTemplateOverrides?: Record<string, string>;
+  // Per-project, per-harness overrides of the AGENT'S OWN system prompt (not a
+  // Lattice-authored brief — the harness's built-in prompt). Keyed by harness
+  // (`claude` | `codex` | `pi`), each with an independent `append` (added on
+  // top of the built-in prompt) and `replace` (swaps it entirely) string; a
+  // missing/blank side leaves that side of the built-in prompt alone. Edited in
+  // Settings → Agent prompts ("Harness system prompts") and injected at every
+  // spawn of that harness in this project (Claude `--(append-)system-prompt-file`,
+  // Codex `developer_instructions`/`model_instructions_file`, a Pi
+  // `before_agent_start` extension). See harnessSystemPrompts/.
+  harnessSystemPrompts?: Partial<
+    Record<'claude' | 'codex' | 'pi', { append?: string; replace?: string }>
+  >;
 };

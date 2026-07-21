@@ -3,6 +3,7 @@
 import { asJson, patchJson, postJson } from './http';
 import type {
   HarnessAvailability,
+  HarnessSystemPromptEntry,
   InstructionTemplate,
   PiModelsResult,
   ProjectEnvResponse,
@@ -106,4 +107,18 @@ export async function fetchInstructionTemplates(
     await fetch(`/api/instruction-templates?project=${encodeURIComponent(projectPath)}`),
   );
   return data.templates;
+}
+
+// Per-harness system-prompt editor data: each harness's read-only default
+// overview plus the project's current Append / Replace override text. Backs the
+// "Harness system prompts" section of the settings dialog's "Agent prompts" tab.
+export async function fetchHarnessSystemPrompts(
+  projectPath: string,
+): Promise<HarnessSystemPromptEntry[]> {
+  const data = await asJson<{ harnesses: HarnessSystemPromptEntry[] }>(
+    await fetch(
+      `/api/harness-system-prompts?project=${encodeURIComponent(projectPath)}`,
+    ),
+  );
+  return data.harnesses;
 }

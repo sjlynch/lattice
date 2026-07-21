@@ -38,6 +38,8 @@ export const LATTICE_OWNED_FILE_PATHS = [
   '.pi/extensions/lattice-complete.ts',
   '.pi/extensions/lattice-subagents.ts',
   '.pi/extensions/lattice-mcp.ts',
+  '.pi/extensions/lattice-system-prompt.ts',
+  '.pi/extensions/lattice-system-prompt.json',
   '.pi/mcp.json',
 ] as const;
 
@@ -57,6 +59,8 @@ export const LATTICE_EXCLUDE_PATTERNS = [
   '.pi/extensions/lattice-last-shutdown.json',
   '.pi/extensions/lattice-subagents.ts',
   '.pi/extensions/lattice-mcp.ts',
+  '.pi/extensions/lattice-system-prompt.ts',
+  '.pi/extensions/lattice-system-prompt.json',
   '.pi/mcp.json',
 ] as const;
 
@@ -74,6 +78,8 @@ export const LATTICE_GITIGNORE_ENTRIES = [
   '.pi/extensions/lattice-last-shutdown.json',
   '.pi/extensions/lattice-subagents.ts',
   '.pi/extensions/lattice-mcp.ts',
+  '.pi/extensions/lattice-system-prompt.ts',
+  '.pi/extensions/lattice-system-prompt.json',
   '.pi/mcp.json',
 ] as const;
 

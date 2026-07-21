@@ -8,7 +8,9 @@ import { applyClaudeOverheadEnv } from './envSetup.js';
 import {
   configureCodexProjectMcp,
   configureCodexProjectTrust,
+  configureCodexSystemPrompt,
 } from './codexTrust.js';
+import { configureClaudeSystemPrompt } from './claudeSystemPrompt.js';
 
 // Resolve the pty's default shell. Order: explicit per-spawn override
 // (`opts.shell`, handled by the caller) → `LATTICE_DEFAULT_SHELL` operator
@@ -94,14 +96,32 @@ export function buildSessionLaunchContext(
   // on any name clash, though these are collision-resistant LATTICE_MCP_* / real
   // secret var names).
   const env = { ...baseEnv, ...(opts.managedMcpEnv ?? {}), ...latticeEnv };
-  // Codex per-terminal config: trust override, then the managed MCP `-c`
-  // overrides. Both rewrite a leading `codex` command and stash their dynamic
-  // TOML values in child env vars the command references (never shell source);
-  // both no-op for non-Codex commands.
-  const trusted = configureCodexProjectTrust(opts.initialCommand, cwd, shell, env);
-  const initialCommand = configureCodexProjectMcp(
+  // Per-harness command rewriting. Each rewriter matches only its own harness's
+  // leading command and no-ops otherwise, so chaining them is safe (a command
+  // launches exactly one harness). Dynamic values (paths / TOML) ride in child
+  // env vars the command references, never in shell source.
+  //   - Claude: system-prompt override flags (replace/append files).
+  //   - Codex : trust override, managed MCP `-c` overrides, system-prompt `-c`
+  //             overrides.
+  const claudeSysApplied = configureClaudeSystemPrompt(
+    opts.initialCommand,
+    {
+      replaceFile: opts.claudeSystemPromptReplaceFile,
+      appendFile: opts.claudeSystemPromptAppendFile,
+    },
+    shell,
+    env,
+  );
+  const trusted = configureCodexProjectTrust(claudeSysApplied, cwd, shell, env);
+  const withMcp = configureCodexProjectMcp(
     trusted,
     opts.managedCodexConfigArgs,
+    shell,
+    env,
+  );
+  const initialCommand = configureCodexSystemPrompt(
+    withMcp,
+    opts.codexSystemPromptConfigArgs,
     shell,
     env,
   );

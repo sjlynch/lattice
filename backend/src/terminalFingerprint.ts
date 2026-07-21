@@ -47,6 +47,7 @@ export const FINGERPRINT_FILES = [
   'terminal/createSession.js',
   'terminal/launchContext.js',
   'terminal/codexTrust.js',
+  'terminal/claudeSystemPrompt.js',
   'terminal/windowsPath.js',
   'terminal/envSetup.js',
   'terminal/broadcast.js',

@@ -23,6 +23,13 @@ export function codexMcpOverrideEnv(index: number): string {
   return `LATTICE_CODEX_MCP_${index}`;
 }
 
+// Env var name for the i-th Lattice-managed system-prompt `-c` override (see
+// configureCodexSystemPrompt). A distinct series from the MCP one so both can
+// coexist on one command without clobbering each other's env vars.
+export function codexSystemPromptOverrideEnv(index: number): string {
+  return `LATTICE_CODEX_SYS_${index}`;
+}
+
 const CODEX_COMMAND_RE = /^(\s*codex(?:\.(?:exe|cmd|ps1))?)(?=\s|$)/i;
 
 export function buildCodexTrustOverride(cwd: string): string {
@@ -38,8 +45,10 @@ function shellName(shell: string): string {
 
 // A quoted, shell-correct reference to `$VAR` so the dynamic value expands from
 // the child pty environment rather than being interpolated into shell source.
-// cmd → `"%VAR%"`, PowerShell → `"$env:VAR"`, POSIX → `"$VAR"`.
-function shellEnvRef(shell: string, varName: string): string {
+// cmd → `"%VAR%"`, PowerShell → `"$env:VAR"`, POSIX → `"$VAR"`. Exported so the
+// Claude system-prompt rewriter (claudeSystemPrompt.ts) can reference a
+// path-bearing child-env var the same way.
+export function shellEnvRef(shell: string, varName: string): string {
   const name = shellName(shell);
   if (name === 'cmd' || name === 'cmd.exe') {
     return `"%${varName}%"`;
@@ -98,6 +107,50 @@ export function configureCodexProjectMcp(
   shell: string,
   env: Record<string, string>,
 ): string | undefined {
+  return applyCodexConfigArgs(
+    initialCommand,
+    configArgs,
+    codexMcpOverrideEnv,
+    shell,
+    env,
+  );
+}
+
+/**
+ * Inject Lattice's per-project system-prompt override into a Lattice-started
+ * Codex command as `--config` overrides (`developer_instructions=…` for append,
+ * `model_instructions_file=…` for replace). Mechanically identical to
+ * configureCodexProjectMcp but on its own `LATTICE_CODEX_SYS_<i>` env-var series
+ * so it can coexist with the MCP overrides on one command. Non-Codex commands
+ * and an empty arg list are returned unchanged.
+ */
+export function configureCodexSystemPrompt(
+  initialCommand: string | undefined,
+  configArgs: string[] | undefined,
+  shell: string,
+  env: Record<string, string>,
+): string | undefined {
+  return applyCodexConfigArgs(
+    initialCommand,
+    configArgs,
+    codexSystemPromptOverrideEnv,
+    shell,
+    env,
+  );
+}
+
+// Shared body for the `--config`-injecting rewriters: for each inline-TOML
+// override string, stash it in a child-env var (named by `envNameFor(i)`) and
+// add a `--config "$VAR"` flag right after the leading `codex`. The TOML value
+// (braces/quotes/paths) never enters shell source. No-op for a non-Codex command
+// or an empty list. `env` is mutated only when it actually rewrites the command.
+function applyCodexConfigArgs(
+  initialCommand: string | undefined,
+  configArgs: string[] | undefined,
+  envNameFor: (index: number) => string,
+  shell: string,
+  env: Record<string, string>,
+): string | undefined {
   if (!initialCommand || !configArgs || configArgs.length === 0) {
     return initialCommand;
   }
@@ -106,7 +159,7 @@ export function configureCodexProjectMcp(
 
   const flags: string[] = [];
   configArgs.forEach((arg, i) => {
-    const varName = codexMcpOverrideEnv(i);
+    const varName = envNameFor(i);
     env[varName] = arg;
     flags.push(`--config ${shellEnvRef(shell, varName)}`);
   });
