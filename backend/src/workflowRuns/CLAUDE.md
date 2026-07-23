@@ -35,6 +35,23 @@ explicit-curl callbacks — never by polling task state.
 - `commandBuilder.ts` — `buildWorkflowStepCommand`: workflow-step prompt
   wording plus harness dispatch through the shared `agentCommandBuilder.ts`
   utility (Claude permission flag, Pi model flag, Codex prompt quoting).
+- `stopHookGate.ts` — the **Claude Stop-hook quiescence gate**. Claude's `Stop`
+  hook is not a reliable "session fully done" signal when the step agent uses the
+  Task tool: it fires early and repeatedly (reproduced against Claude Code
+  2.1.218 — a `Stop` landing while a subagent was still running, ~8s before the
+  session truly ended). The first premature `Stop` used to advance the run and
+  spawn step N+1 while step N's agent kept working → steps ran in parallel
+  (intermittent — "sometimes the steps overlap"). So a Stop-hook-sourced
+  `/complete` (`source=claude-stop-hook-*`) no longer advances directly:
+  `requestStopHookStepComplete` waits until the step session is **quiescent** (no
+  subagents in flight AND no signal — tool use / subagent start-stop / a later
+  Stop — for `STOP_HOOK_SETTLE_MS`), then advances once. The model's own explicit
+  curl and Pi's `session_shutdown` extension are deliberate end-of-work signals
+  and still advance immediately; control steps never hit the route. Fed by
+  `../agentQuiescence.ts` (per-session `liveSubagents` / `lastSignalAt`), which
+  the agent-activity route (`routes/agentActivity.ts`) updates from the very
+  hooks that already drive the graph's satellites. `cancelStopHookGate` clears a
+  pending gate on run cancel.
 - `sessionSpawner.ts` — `workflowStepAgentId` + `enqueueWorkflowStepSession`:
   routes the pty allocation through the spawn queue (fire-and-forget), tracks
   each step's dedupe key / spawned `serverId` for cancellation, registers the
@@ -96,6 +113,13 @@ explicit-curl callbacks — never by polling task state.
 - Step advancement is sequential and **idempotent**: `completeWorkflowStep`
   claims `currentStepIndex` synchronously before any await so a duplicate
   Stop-hook fire is a no-op.
+- **Claude Stop-hook completions are quiescence-gated, not immediate** (see
+  `stopHookGate.ts`). This is the fix for "workflow steps sometimes run in
+  parallel": Claude's `Stop` hook fires early/repeatedly when the step agent
+  spawns subagents, and an eager advance overlapped step N with step N+1. Keep
+  the gate on the `claude-stop-hook-*` source only — the explicit-curl / Pi
+  sources are intentional and must stay immediate, and control steps call
+  `completeWorkflowStep` directly (never through the gated route).
 - The Claude Stop hook is installed for every step regardless of harness
   — same reasoning as task worktrees: a stuck step may need Claude to
   finish it manually.

@@ -1,0 +1,111 @@
+// Quiescence gate for the Claude Stop-hook step-completion callback.
+//
+// Why this exists: a workflow step advances when its agent's session ends,
+// which for a Claude step is detected by the `Stop` hook POSTing
+// `/api/workflow-runs/:runId/steps/:n/complete`. But Claude's `Stop` hook is
+// not a reliable "session fully done" signal when the step agent uses the Task
+// tool — it fires early and repeatedly (reproduced: a Stop landing while a
+// subagent was still running, ~8s before the session truly ended). The FIRST
+// such premature Stop used to advance the run immediately, spawning step N+1
+// while step N's agent kept working → the steps ran in parallel (intermittent,
+// exactly "sometimes the steps overlap").
+//
+// The fix, applied only to the Stop-hook-sourced completion (the model's own
+// explicit curl and Pi's session_shutdown extension are intentional end-of-work
+// signals and keep advancing immediately): don't advance on the Stop itself.
+// Instead wait until the session is QUIESCENT — no subagents in flight and no
+// signal of any kind (tool use, subagent start/stop, or a later Stop) for a
+// short settle window. Because the real Stop always arrives last and premature
+// Stops are followed by more activity and/or the final Stop, the quiet window
+// lands on the genuine end of the step. `agentQuiescence.ts` supplies the
+// per-session liveSubagents / lastSignalAt this reads; the activity route feeds
+// it from the very hooks that already drive the graph.
+
+import { getRun } from './state.js';
+import { workflowStepAgentId } from './sessionSpawner.js';
+import { agentQuiescence, noteAgentSignal } from '../agentQuiescence.js';
+
+// Advance only after the session has been fully quiet (no subagents live, no
+// signal) for this long. Long enough to bridge the gap between a premature Stop
+// and the real one, short enough to add only a small tail to a step's runtime.
+export const STOP_HOOK_SETTLE_MS = 4000;
+// How often to re-check quiescence while waiting.
+export const STOP_HOOK_POLL_MS = 1000;
+
+type GateTiming = { settleMs: number; pollMs: number };
+
+type PendingGate = {
+  stepIndex: number;
+  timer: ReturnType<typeof setTimeout>;
+};
+
+// One pending gate per run — a run has a single current step, and the guard
+// below re-checks `currentStepIndex` on every tick, so a stale gate for an
+// already-advanced step is a no-op that clears itself.
+const pending = new Map<string, PendingGate>();
+
+function clearGate(runId: string): void {
+  const g = pending.get(runId);
+  if (g) {
+    clearTimeout(g.timer);
+    pending.delete(runId);
+  }
+}
+
+// Request a Stop-hook-driven advance of (runId, stepIndex). Idempotent and
+// safe to call repeatedly as duplicate/premature Stops arrive: each call feeds
+// the Stop in as a fresh signal (extending the settle window) but only one
+// poll loop runs per run. `advance` is invoked at most once, when the session
+// goes quiescent while this step is still the run's current step.
+export function requestStopHookStepComplete(
+  runId: string,
+  stepIndex: number,
+  advance: () => void,
+  timing: GateTiming = { settleMs: STOP_HOOK_SETTLE_MS, pollMs: STOP_HOOK_POLL_MS },
+): void {
+  const run = getRun(runId);
+  // Same idempotency guard as completeWorkflowStep: ignore a Stop for a run
+  // that isn't running or a step that is no longer current (a late final Stop
+  // for a step we already advanced past).
+  if (!run || run.status !== 'running' || run.currentStepIndex !== stepIndex) return;
+
+  const agentId = workflowStepAgentId(runId, stepIndex);
+  // Count this Stop as a signal so the settle window is measured from the most
+  // recent Stop, not just from tool/subagent activity — repeated Stops keep
+  // pushing the window out until they stop coming.
+  noteAgentSignal(agentId);
+
+  const existing = pending.get(runId);
+  if (existing && existing.stepIndex === stepIndex) return; // poll already running
+
+  const tick = (): void => {
+    const r = getRun(runId);
+    if (!r || r.status !== 'running' || r.currentStepIndex !== stepIndex) {
+      clearGate(runId);
+      return;
+    }
+    const q = agentQuiescence(agentId);
+    if (q.liveSubagents === 0 && q.quietForMs >= timing.settleMs) {
+      clearGate(runId);
+      advance();
+      return;
+    }
+    schedule(); // still working (subagent live or recent signal) — keep waiting
+  };
+
+  const schedule = (): void => {
+    const timer = setTimeout(tick, timing.pollMs);
+    timer.unref?.();
+    pending.set(runId, { stepIndex, timer });
+  };
+
+  // Replace any stale gate (defensive — a gate for a prior step should already
+  // have cleared itself on its guard) and start the poll loop.
+  clearGate(runId);
+  schedule();
+}
+
+// Cancel a pending gate (run cancelled). No-op if none is pending.
+export function cancelStopHookGate(runId: string): void {
+  clearGate(runId);
+}

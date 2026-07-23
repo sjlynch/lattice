@@ -36,6 +36,7 @@ import {
 import { spawnWorkflowStep } from './workflowRuns/stepSpawner.js';
 import { executeControlStep } from './workflowRuns/controlStep.js';
 import { cancelWorkflowStepSessions } from './workflowRuns/sessionSpawner.js';
+import { cancelStopHookGate } from './workflowRuns/stopHookGate.js';
 
 export type {
   WorkflowRun,
@@ -165,6 +166,7 @@ export function cancelWorkflowRun(runId: string): boolean {
   run.status = 'cancelled';
   run.finishedAt = Date.now();
   cancelWorkflowStepSessions(run.id);
+  cancelStopHookGate(run.id);
   notify({ type: 'cancelled', run: snapshot(run) });
   console.log(`[workflow-run] ${run.id} cancelled`);
   return true;

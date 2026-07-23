@@ -13,6 +13,11 @@ import { decodeActivityHook } from '../activityHook.js';
 import { type AgentActivityEvent, notifyAgentActivity } from '../agentActivity.js';
 import { decodeAgentToken } from '../agentActivityTokens.js';
 import { touchAgentSession } from '../agentSessions.js';
+import {
+  noteAgentSignal,
+  noteSubagentStart,
+  noteSubagentStop,
+} from '../agentQuiescence.js';
 import { isManaged } from './tasks/activity.js';
 
 // Map a file path from a non-worktree session's hook to the project-absolute
@@ -101,7 +106,18 @@ export function buildAgentActivityRouter(): Router {
       agentId: meta.agentId,
       cwd: cwdFromHookBody(req.body),
     });
-    if (event) notifyAgentActivity(event);
+    if (event) {
+      notifyAgentActivity(event);
+      // Feed the workflow-step quiescence tracker (only workflow-step sessions
+      // consume it — see workflowRuns/stopHookGate.ts). Every hook is a "still
+      // alive" signal; SubagentStart/Stop additionally move the live-subagent
+      // count the gate uses to reject a Stop that fires while a subagent runs.
+      if (meta.agentId.startsWith('wf:')) {
+        if (event.lifecycle === 'spawn') noteSubagentStart(meta.agentId);
+        else if (event.lifecycle === 'stop') noteSubagentStop(meta.agentId);
+        else noteAgentSignal(meta.agentId);
+      }
+    }
     return ack();
   });
 

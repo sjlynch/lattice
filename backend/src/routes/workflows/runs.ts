@@ -13,7 +13,9 @@ import {
   WorkflowRunConflictError,
 } from '../../workflowRuns.js';
 import { forgetWorkflowStepSession, workflowStepAgentId } from '../../workflowRuns/stepSpawner.js';
+import { requestStopHookStepComplete } from '../../workflowRuns/stopHookGate.js';
 import { unregisterAgentSession } from '../../agentSessions.js';
+import { forgetAgentQuiescence } from '../../agentQuiescence.js';
 
 export function buildWorkflowRunsRouter(backendOrigin: string): Router {
   const r = Router();
@@ -52,15 +54,37 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
   // traced to its origin in the logs.
   r.post('/api/workflow-runs/:runId/steps/:stepIndex/complete', async (req, res) => {
     const source = typeof req.query.source === 'string' ? req.query.source : 'unknown';
+    const runId = req.params.runId;
     const stepIndex = parseInt(req.params.stepIndex, 10);
     if (isNaN(stepIndex)) return res.status(400).json({ error: 'invalid stepIndex' });
     console.log(
-      `[workflow-step-complete] run=${req.params.runId} step=${stepIndex} source=${source}`,
+      `[workflow-step-complete] run=${runId} step=${stepIndex} source=${source}`,
     );
-    // Drop this step's graph node; the next step (if any) registers its own.
-    unregisterAgentSession(workflowStepAgentId(req.params.runId, stepIndex));
-    forgetWorkflowStepSession(req.params.runId, stepIndex);
-    await completeWorkflowStep(req.params.runId, stepIndex, backendOrigin);
+
+    const agentId = workflowStepAgentId(runId, stepIndex);
+    // The actual advance: drop this step's graph node + quiescence state (the
+    // next step registers its own), then advance the run. Runs when the
+    // completion is genuine — immediately for a model/extension-sourced curl,
+    // or once the session goes quiescent for a Stop-hook-sourced one.
+    const advance = (): Promise<void> => {
+      unregisterAgentSession(agentId);
+      forgetWorkflowStepSession(runId, stepIndex);
+      forgetAgentQuiescence(agentId);
+      return completeWorkflowStep(runId, stepIndex, backendOrigin);
+    };
+
+    // Claude's `Stop` hook fires early and repeatedly when the step agent uses
+    // subagents (Task tool), so a Stop-sourced completion advanced the run while
+    // the step was still working → steps ran in parallel. Gate it on the session
+    // going quiescent (stopHookGate.ts). The model's own explicit curl
+    // (`model-explicit-curl`) and Pi's `session_shutdown` extension are
+    // deliberate end-of-work signals and advance immediately; control steps
+    // never reach this route.
+    if (source.startsWith('claude-stop-hook')) {
+      requestStopHookStepComplete(runId, stepIndex, () => void advance());
+      return res.json({ ok: true, gated: true });
+    }
+    await advance();
     res.json({ ok: true });
   });
 
