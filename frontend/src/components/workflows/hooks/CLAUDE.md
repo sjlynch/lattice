@@ -42,7 +42,13 @@ there.
   runId), `finished` (the completion WS beat the `/run` response; buffer the
   finish then attach/consume the run id so the queue cannot stall), `busy` (the
   409 — `dispatchRejected` requeues the entry to retry when the slot frees, no
-  error toast), or `failed` (drop). Parallel dispatches omit
+  error toast), or `failed` (drop). The activeRuns-diff `runFinished` uses a
+  `?? 'errored'` fallback (not `'completed'`): a run leaving `activeRuns` with no
+  `recentRuns` entry never got a terminal WS event — it vanished from a `hello`
+  full-replace, i.e. the backend lost the non-persisted run to a restart/crash.
+  Treating that as `'errored'` STOPS the sequential queue instead of cascading
+  the next workflow onto the killed run's still-pending tasks (the "second
+  workflow continues, leaving open + unmerged tasks" bug). Parallel dispatches omit
   the flag — concurrency there is intentional. Queue state is **per-project**:
   WorkflowsLauncher isn't remounted on a project switch, so the hook resets to
   `initialQueueState` on an `activeFolder` change (mirroring `useWorkflowRuns`)

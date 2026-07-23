@@ -192,12 +192,26 @@ export function useWorkflowQueue({
   // event that removed it from `activeRuns`) so the scheduler can decide
   // whether to cascade into the next sequential workflow (only on
   // 'completed') or stop the queue (on 'errored'/'cancelled').
+  //
+  // The `?? 'errored'` fallback is load-bearing. A real terminal WS event
+  // (completed/errored/cancelled) ALWAYS records the run in `recentRuns` before
+  // removing it from `activeRuns`, so a run that left `activeRuns` with NO
+  // `recentRuns` entry did not finish normally — it vanished from a `hello`
+  // full-replace, which only happens when the backend lost the run (a restart
+  // or crash wiped the in-memory, non-persisted workflow run). Such a run is
+  // interrupted, NOT completed. Defaulting to 'completed' (the old behaviour)
+  // made the sequential queue cascade straight into the next workflow while the
+  // killed one's tasks were still mid-pipeline — the "the second workflow
+  // continues even though the first isn't done, leaving open + unmerged tasks"
+  // bug. Treating it as 'errored' stops the queue instead (the reducer cascades
+  // only on 'completed'), so the user decides how to proceed; boot recovery
+  // separately drains the interrupted run's orphaned ready_to_merge tasks.
   useEffect(() => {
     const prev = prevActiveRef.current;
     if (prev !== activeRuns) {
       for (const id of Object.keys(prev)) {
         if (!activeRuns[id]) {
-          const status = recentRunsRef.current[id]?.status ?? 'completed';
+          const status = recentRunsRef.current[id]?.status ?? 'errored';
           dispatch({ type: 'runFinished', runId: id, status });
         }
       }
