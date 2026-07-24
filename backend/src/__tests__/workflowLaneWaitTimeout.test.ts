@@ -18,6 +18,13 @@ import type { ProjectRunLockHandle } from '../projectRunLock.js';
 // run.lock stays held forever — blocking all future merge runs / control steps.
 // The fix gives waitForLaneEmpty a bounded max-wait that REJECTS on expiry so
 // the worker's catch errors the run and its finally releases the lock.
+//
+// Follow-up regression: the bound is a NO-PROGRESS timeout, not a total one. A
+// fixed total timeout erroring a lane that is still steadily draining stranded a
+// whole workflow's completed tasks — the Merge step's Phase A 30-min wall clock
+// fired ~5s before the last of 29 codex tasks finished, so Phase B never merged.
+// The last test here pins that a lane which keeps draining (past maxWaitMs in
+// total, but never idle for a full window) must NOT time out.
 
 const PROJECT = '/project';
 
@@ -70,8 +77,57 @@ test('waitForLaneEmpty rejects on timeout when the lane never drains', async () 
 
     const result = await settled;
     assert.equal(result.ok, false, 'a never-draining lane must reject, not hang');
-    assert.match((result as { err: Error }).err.message, /did not drain within 1000ms/);
+    assert.match((result as { err: Error }).err.message, /made no progress for 1000ms/);
     assert.match((result as { err: Error }).err.message, /run-lock is released/);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('waitForLaneEmpty does NOT time out while the lane keeps draining (no-progress semantics)', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    // A controllable subscription so we can drip the lane down over a total
+    // span well past maxWaitMs, one task at a time, each within a window.
+    let push: ((tasks: Task[]) => void) | null = null;
+    const lane = (n: number): Task[] =>
+      Array.from({ length: n }, (_, i) => ({ ...stuckTask(), id: `t${i}` }));
+    const deps: LaneWaitDeps = {
+      listTasks: async () => lane(3),
+      subscribeTasks: (cb) => {
+        push = (tasks) => cb(PROJECT, tasks);
+        return () => {
+          push = null;
+        };
+      },
+      subscribeRun: () => () => undefined,
+    };
+
+    const p = waitForLaneEmpty(PROJECT, makeRun(), 'in_progress', () => {}, 1000, deps);
+    const settled = p.then(
+      () => ({ ok: true as const }),
+      (err: Error) => ({ ok: false as const, err }),
+    );
+
+    // Initial read: count 3 → arms the no-progress timer (deadline t=1000).
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Each drain lands BEFORE the current deadline and re-arms it. Total elapsed
+    // reaches 2400ms — 2.4× maxWaitMs — yet it must not reject.
+    mock.timers.tick(800); // t=800  (deadline was 1000)
+    push!(lane(2)); //          drain → re-arm, deadline t=1800
+    mock.timers.tick(800); // t=1600 (< 1800)
+    push!(lane(1)); //          drain → re-arm, deadline t=2600
+    mock.timers.tick(800); // t=2400 (< 2600)
+    push!(lane(0)); //          lane empty → resolve
+
+    const result = await settled;
+    assert.equal(
+      result.ok,
+      true,
+      'a steadily-draining lane must resolve, never trip the no-progress timeout',
+    );
   } finally {
     mock.timers.reset();
   }
@@ -111,7 +167,7 @@ test("a control-step worker releases the project run-lock when the lane-wait tim
       runStart: async () => undefined,
       runMerge: async () => {
         throw new Error(
-          'waitForLaneEmpty: lane "in_progress" did not drain within 1000ms — ' +
+          'waitForLaneEmpty: lane "in_progress" made no progress for 1000ms — ' +
             'aborting so the project run-lock is released',
         );
       },

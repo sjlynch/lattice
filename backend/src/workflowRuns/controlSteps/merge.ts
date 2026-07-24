@@ -22,11 +22,17 @@ import {
   waitForPostMergeHookIdle,
 } from './shared.js';
 
-// Backstop for Phase A (Fix 2). An in_progress task whose agent died without
-// committing is never auto-completed (the in-progress sweep skips no-commit
-// tasks), so the lane never drains on its own. Bound the wait so a stuck agent
-// can't hang the worker forever holding the cross-process project run-lock. 30
-// min is generous for real coding work; a dev restart during the wait clears it.
+// Backstop for Phase A. An in_progress task whose agent died without committing
+// is never auto-completed (the in-progress sweep skips no-commit tasks), so the
+// lane never drains on its own. Bound the wait so a stuck agent can't hang the
+// worker forever holding the cross-process project run-lock. This is a
+// NO-PROGRESS window (see waitForLaneEmpty): it trips only after 30 min with NOT
+// A SINGLE task leaving the lane — every drain re-arms it. That distinction is
+// load-bearing: the Start step spawns N task agents that then run for tens of
+// minutes each, and a *total* 30-min cap raced them — it fired ~5s before the
+// last of 29 codex tasks finished, erroring the run so Phase B never merged and
+// all 29 completed tasks were stranded at ready_to_merge. As long as tasks keep
+// finishing, the wait now continues however long the whole batch takes.
 const PHASE_A_DRAIN_TIMEOUT_MS = 30 * 60 * 1000;
 
 // Backstop for Phase C. Same reasoning as Phase A: the hook agent can die

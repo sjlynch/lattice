@@ -39,13 +39,20 @@ the lane-drain used by both merge Phase A and push:
   (cancellation). Subscribes to the task store **before** the initial
   `listTasks` read so a transition in the gap isn't missed; also subscribes to
   workflow-run events so a cancel resolves it promptly.
-- **Bounded wait (`maxWaitMs`)**: on expiry it **rejects** with a clear error.
-  A lane can legitimately never drain — a task in it whose agent died without
-  committing is refused auto-completion by the in-progress sweep
-  (`recovery/inProgressSweep/eligibility.ts`, `no-commits` → skip) — so an
-  unbounded wait would hang the worker and leak the run-lock (see above). Merge
-  Phase A passes `PHASE_A_DRAIN_TIMEOUT_MS` (30 min); push passes
-  `PUSH_DRAIN_TIMEOUT_MS` (15 min). `deps` is injectable only for the tests.
+- **Bounded wait (`maxWaitMs`) — a NO-PROGRESS timeout, not a total one.** The
+  deadline is re-armed every time a task leaves the lane, so it trips only after
+  `maxWaitMs` with **no drain at all**. A lane can legitimately never empty — a
+  task whose agent died without committing is refused auto-completion by the
+  in-progress sweep (`recovery/inProgressSweep/eligibility.ts`, `no-commits` →
+  skip) — and that genuinely-stalled case still **rejects** so the worker's catch
+  errors the run and releases the run-lock (an unbounded wait would leak it). But
+  a lane that keeps draining, however slowly and however long in total, must
+  never trip: a *total* cap here fired ~5s before the last of 29 codex tasks
+  finished and stranded the whole batch at ready_to_merge (Phase B never ran).
+  Merge Phase A passes `PHASE_A_DRAIN_TIMEOUT_MS` (30 min); push passes
+  `PUSH_DRAIN_TIMEOUT_MS` (15 min) — now both mean "30/15 min with zero
+  progress". Covered by `__tests__/workflowLaneWaitTimeout.test.ts`. `deps` is
+  injectable only for the tests.
 
 `waitForPostMergeHookIdle(project, run, onActive, maxWaitMs?, deps?)` — the
 merge step's **Phase C** gate. Resolves when no post-merge hook is `running` for

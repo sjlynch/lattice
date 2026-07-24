@@ -22,10 +22,12 @@ import { emitControlProgress, waitForLaneEmpty } from './shared.js';
 // restarts during the wait clear it anyway.
 const PUSH_STEP_TIMEOUT_MS = 15 * 60 * 1000;
 
-// Backstop for the Ready-to-Merge drain (Fix 2). Push runs after the Merge
-// step, so the lane is usually already empty — but a task stuck ready_to_merge
-// (its merge never lands, agent died, …) would otherwise hang this step forever
-// holding the cross-process project run-lock. Bound it like the session wait.
+// Backstop for the Ready-to-Merge drain. Push runs after the Merge step, so the
+// lane is usually already empty — but a task stuck ready_to_merge (its merge
+// never lands, agent died, …) would otherwise hang this step forever holding the
+// cross-process project run-lock. This is a NO-PROGRESS bound (see
+// waitForLaneEmpty): it only trips after the lane goes this long WITHOUT a task
+// leaving it, so a slowly-draining lane is never killed mid-drain.
 const PUSH_DRAIN_TIMEOUT_MS = 15 * 60 * 1000;
 
 // Injectable seam (production default below). The cancel/timeout race around
