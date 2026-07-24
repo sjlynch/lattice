@@ -17,6 +17,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { installClaudeHooks } from '../claudeStopHook.js';
 import { installPiCompletionExtension } from '../piExtension.js';
+import { installCodexStopHook } from '../codexStopHook.js';
 import { installPiSubagentsShim } from '../piSubagents.js';
 import { buildAgentActivityUrl } from '../agentActivityTokens.js';
 import type { Workflow, WorkflowStepHarness } from '../workflows.js';
@@ -152,12 +153,22 @@ async function installStepCallbacks(args: {
     site: 'workflow-step-complete',
     respectQuitGate: false,
   });
+  // Codex Stop hook (the Codex analogue). Fires once at turn completion and
+  // advances the step even if the model forgets to curl — this is what stops a
+  // Codex workflow step from lingering/overlapping the next one. The step cwd is
+  // fresh scratch under <project>/.lattice/ (gitignored), so 'always' is safe
+  // and no extra exclude is needed.
+  await installCodexStopHook(
+    stepDir,
+    `${completionUrl}?source=codex-stop-hook-workflow-step-complete`,
+    'always',
+  );
   // pi-subagents loader shim alongside the completion extension (no-op until
   // the shared install resolves). Step dir is under <project>/.lattice/, which
   // is gitignored, so no extra exclude is needed.
   await installPiSubagentsShim({ dir: stepDir });
   console.log(
-    `[workflow-step] installed Claude+Pi backstops for run ${run.id} step ${stepIndex} ` +
+    `[workflow-step] installed Claude+Pi+Codex backstops for run ${run.id} step ${stepIndex} ` +
       `(active harness=${harness}, dir=${stepDir})`,
   );
 }

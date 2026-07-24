@@ -9,6 +9,7 @@ import { resolveInstructionTemplate } from '../instructionTemplates.js';
 import { LATTICE_EXCLUDE_PATTERNS } from './managedFiles.js';
 import { installPiSubagentsShim } from '../piSubagents.js';
 import {
+  installCodexCompletionHook,
   installPiCompletionExtension,
   installStopHook,
   writeWorktreeExclude,
@@ -46,12 +47,27 @@ export async function writePostAddWorktreeFiles(
   // Pi auto-loads `.pi/extensions/*.ts`; nothing else sees the file. The
   // file is excluded from `git status` via writeWorktreeExclude below.
   await installPiCompletionExtension(worktreePath, task.id, backendOrigin);
+  // Codex Stop hook (the Codex analogue). `if-absent`: never clobber a
+  // `.codex/hooks.json` the repo itself tracks — a Codex run then falls back to
+  // the model's explicit `/complete` curl (as it did before this backstop
+  // existed). Written file is excluded from `git status` below.
+  const codexHookInstalled = await installCodexCompletionHook(
+    worktreePath,
+    task.id,
+    backendOrigin,
+  );
+  if (!codexHookInstalled) {
+    console.warn(
+      `[task-worktree] task ${task.id}: an existing .codex/hooks.json was left ` +
+        `intact — relying on the model's explicit /complete curl for a Codex run`,
+    );
+  }
   // Drop the pi-subagents loader shim next to the completion extension so a Pi
   // task in this worktree gets sub-agents. No-op until the shared install has
   // resolved (graceful), and excluded from `git status` via LATTICE_EXCLUDE_PATTERNS.
   await installPiSubagentsShim({ dir: worktreePath });
   console.log(
-    `[task-worktree] installed Claude+Pi backstops for task ${task.id} ` +
+    `[task-worktree] installed Claude+Pi+Codex backstops for task ${task.id} ` +
       `(active harness=${harness}, worktree=${worktreePath})`,
   );
   // Keep Lattice-managed files out of `git status` so Claude's `git add .`

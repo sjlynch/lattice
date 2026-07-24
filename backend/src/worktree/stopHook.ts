@@ -7,6 +7,7 @@ import {
 import {
   installPiCompletionExtension as installPiCompletionExtensionShared,
 } from '../piExtension.js';
+import { installCodexStopHook } from '../codexStopHook.js';
 
 // Write patterns to the worktree-local git exclude file so these files
 // are invisible to `git status` inside the worktree. The exclude file
@@ -107,4 +108,28 @@ export async function installPiCompletionExtension(
     site: 'task-complete',
     respectQuitGate: true,
   });
+}
+
+// Codex Stop hook — the Codex analogue of installStopHook (Claude) /
+// installPiCompletionExtension (Pi). Codex's `Stop` event fires once when the
+// agent's turn completes and POSTs `/complete`, so a Codex task advances
+// reliably even if the model forgets to curl it (previously Codex tasks had NO
+// completion backstop — only the model's explicit curl).
+//
+// Installed as `<worktree>/.codex/hooks.json` under the **`if-absent`** policy:
+// the worktree is a repo checkout, so if the repo itself tracks
+// `.codex/hooks.json`, Lattice must NOT clobber it — it falls back to the
+// model's explicit curl (the caller logs the skip). Our written file is hidden
+// from `git status` via LATTICE_EXCLUDE_PATTERNS (worktree-local exclude), so a
+// Codex `git add -A` never stages it. Returns false when skipped.
+export async function installCodexCompletionHook(
+  worktreePath: string,
+  taskId: string,
+  backendOrigin: string,
+): Promise<boolean> {
+  return installCodexStopHook(
+    worktreePath,
+    `${backendOrigin}/api/tasks/${taskId}/complete?source=codex-stop-hook-task-complete`,
+    'if-absent',
+  );
 }

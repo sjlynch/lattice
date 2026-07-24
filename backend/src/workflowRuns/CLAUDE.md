@@ -22,8 +22,12 @@ explicit-curl callbacks — never by polling task state.
   named setup phases (`prepareStepScratch`, `writeStepAssets`,
   `installStepCallbacks`, `spawnStepSession`). Creates
   `<project>/.lattice/workflow-steps/<runId>/step-<N>/`, writes
-  `WORKFLOW_STEP.md` + `create-task.cjs`, installs the Claude Stop hook
-  and Pi `session_shutdown` extension (both always, defence-in-depth), then
+  `WORKFLOW_STEP.md` + `create-task.cjs`, installs the Claude Stop hook,
+  the Pi `session_shutdown` extension, AND the Codex `.codex/hooks.json` Stop
+  hook (`../codexStopHook.ts`, `always` — the step cwd is fresh scratch under
+  `.lattice/`) — all three always, defence-in-depth. The Codex Stop hook is what
+  makes a Codex step advance on turn completion instead of relying on the model's
+  curl (so it can't linger/overlap the next step). It then
   delegates command assembly and queued pty spawn to the modules below. It
   re-exports `writeScratchReadme` / `pruneOldWorkflowRuns` /
   `workflowStepAgentId` so existing importers keep resolving them here.
@@ -111,7 +115,11 @@ explicit-curl callbacks — never by polling task state.
    is reusable outside workflow steps.
 3. If the harness can't reliably curl the completion URL itself, install
    a callback shim alongside the Stop hook in `spawnWorkflowStep` (mirror
-   `installPiWorkflowCompletionExtension`).
+   `installPiCompletionExtension` for Pi's `session_shutdown` extension, or
+   `installCodexStopHook` for Codex's `.codex/hooks.json` `Stop` hook — Codex
+   has a Claude-style hooks framework whose `Stop` event fires once at turn
+   completion; the injected hook curls `/complete?source=codex-stop-hook-*`,
+   which the route advances immediately, same as the model's own curl).
 4. Update `renderStepMarkdown` so the in-prompt completion instructions
    match (silent vs. explicit-curl).
 

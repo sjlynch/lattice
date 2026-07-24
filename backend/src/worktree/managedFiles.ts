@@ -50,6 +50,14 @@ export const LATTICE_OWNED_FILE_PATHS = [
 // `.pi/extensions/lattice-last-shutdown.json` is the sentinel audit log
 // written by the hardened Pi completion extension (see piExtension.ts) —
 // regenerated on each Pi session_shutdown, never tracked.
+//
+// `.codex/hooks.json` is the Codex Stop-hook backstop (Codex's analogue of the
+// Claude Stop hook / Pi completion extension — see codexStopHook.ts). It is
+// installed into a task worktree only when the repo doesn't already track one
+// (the `if-absent` policy), and it is NOT in the owned/auto-resolve set on
+// purpose: since it might be the repo's own file, resolving a merge conflict on
+// it to "ours" could silently drop the user's changes. Excluding it here just
+// hides Lattice's untracked copy from `git status` (a no-op for a tracked file).
 export const LATTICE_EXCLUDE_PATTERNS = [
   'LATTICE_TASK.md',
   'MERGE_INSTRUCTIONS.md',
@@ -62,6 +70,7 @@ export const LATTICE_EXCLUDE_PATTERNS = [
   '.pi/extensions/lattice-system-prompt.ts',
   '.pi/extensions/lattice-system-prompt.json',
   '.pi/mcp.json',
+  '.codex/hooks.json',
 ] as const;
 
 // .gitignore entries appended to the project's repo-root .gitignore.

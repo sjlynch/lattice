@@ -66,5 +66,11 @@ export function buildAgentCommand(args: {
     return `pi --approve${buildPiModelFlag(args.piModel)} ${quotedPrompt}`;
   }
   const yolo = args.codexYolo === false ? '' : ' --yolo';
-  return `codex${yolo} ${quotedPrompt}`;
+  // `--dangerously-bypass-hook-trust` runs the Lattice-injected
+  // `<cwd>/.codex/hooks.json` Stop hook (the completion backstop — see
+  // codexStopHook.ts) without Codex's per-hook trust prompt. It's a SEPARATE
+  // flag from `--yolo` (which bypasses approvals/sandbox), and is applied to
+  // every Lattice-spawned Codex session — consistent with Lattice's existing
+  // full-auto posture for its own agents.
+  return `codex${yolo} --dangerously-bypass-hook-trust ${quotedPrompt}`;
 }

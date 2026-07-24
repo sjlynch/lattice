@@ -51,26 +51,30 @@ test('pi branch with a VALID piModel: --approve then quoted --model precede the 
   );
 });
 
-test('codex branch: --yolo by default + quoted prompt', () => {
+test('codex branch: --yolo by default + --dangerously-bypass-hook-trust + quoted prompt', () => {
   // --yolo (Codex's permission bypass) is ON by default, matching the
-  // default-on UserSettings.codexYolo. An un-threaded call still gets it.
+  // default-on UserSettings.codexYolo. --dangerously-bypass-hook-trust is
+  // ALWAYS present so the Lattice-injected .codex/hooks.json Stop hook (the
+  // completion backstop) runs without Codex's per-hook trust prompt.
   assert.equal(
     buildAgentCommand({ harness: 'codex', prompt: 'do the thing' }),
-    'codex --yolo "do the thing"',
+    'codex --yolo --dangerously-bypass-hook-trust "do the thing"',
   );
 });
 
-test('codex branch with codexYolo:true: explicit --yolo', () => {
+test('codex branch with codexYolo:true: explicit --yolo + bypass-hook-trust', () => {
   assert.equal(
     buildAgentCommand({ harness: 'codex', prompt: 'do the thing', codexYolo: true }),
-    'codex --yolo "do the thing"',
+    'codex --yolo --dangerously-bypass-hook-trust "do the thing"',
   );
 });
 
-test('codex branch with codexYolo:false: plain `codex` (no --yolo)', () => {
+test('codex branch with codexYolo:false: no --yolo but STILL --dangerously-bypass-hook-trust', () => {
+  // Dropping --yolo (permissions) must not drop the hook-trust bypass — the
+  // Stop-hook backstop still needs to run without a trust prompt.
   assert.equal(
     buildAgentCommand({ harness: 'codex', prompt: 'do the thing', codexYolo: false }),
-    'codex "do the thing"',
+    'codex --dangerously-bypass-hook-trust "do the thing"',
   );
 });
 

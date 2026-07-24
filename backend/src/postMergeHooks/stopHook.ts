@@ -1,6 +1,7 @@
 import { installClaudeHooks } from '../claudeStopHook.js';
 import type { AgentHarness } from '../harnesses.js';
 import { installPiCompletionExtension } from '../piExtension.js';
+import { installCodexStopHook } from '../codexStopHook.js';
 import { installPiSubagentsShim } from '../piSubagents.js';
 import { buildAgentActivityUrl } from '../agentActivityTokens.js';
 
@@ -30,11 +31,12 @@ export function postMergeHookAgentId(id: string): string {
 // paths in POST_MERGE_HOOK.md.
 //
 // Defence-in-depth (the "always install both" rule, see piExtension.ts):
-// we always install the Claude Stop hook AND the Pi extension regardless
-// of harness, so a mid-run harness switch (e.g. the user respawns under a
-// different harness) doesn't lose the backstop. The unused hook is inert
-// — only the harness that actually runs reads it. Codex still has no
-// backstop and must explicitly curl per POST_MERGE_HOOK.md.
+// we always install the Claude Stop hook, the Pi extension, AND the Codex
+// Stop hook regardless of harness, so a mid-run harness switch (e.g. the user
+// respawns under a different harness) doesn't lose the backstop. The unused
+// hooks are inert — only the harness that actually runs reads its own. (Codex
+// gained a Stop-hook backstop too — see codexStopHook.ts — so POST_MERGE_HOOK.md
+// no longer relies solely on the model's explicit curl.)
 //
 // Pi gate: this site has no PTY-kill side effect, so we disable the
 // `reason === 'quit'` gate — abnormal exits should still produce a
@@ -68,11 +70,19 @@ export async function installPostMergeHookStopHook(args: {
     site: 'post-merge-hook-complete',
     respectQuitGate: false,
   });
+  // Codex Stop hook (the Codex analogue). Home-scoped scratch is fresh, so
+  // 'always'. Advances the merge gate on turn completion even if the model
+  // forgets the explicit curl.
+  await installCodexStopHook(
+    scratchDir,
+    `${callbackUrl}?source=codex-stop-hook-post-merge-hook-complete`,
+    'always',
+  );
   // pi-subagents loader shim alongside the completion extension (no-op until
   // the shared install resolves). Scratch is home-scoped (outside the repo).
   await installPiSubagentsShim({ dir: scratchDir });
   console.log(
-    `[post-merge-hook] installed Claude+Pi backstops for ${id} ` +
+    `[post-merge-hook] installed Claude+Pi+Codex backstops for ${id} ` +
       `(active harness=${harness}, scratch=${scratchDir})`,
   );
 }

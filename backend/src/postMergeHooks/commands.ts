@@ -25,12 +25,14 @@ export function buildPostMergeHookCommand(args: {
   const fileName = path.basename(instructionsFile);
 
   if (harness === 'codex') {
-    // Codex has no Stop-hook / shutdown-extension backstop, so emphasise the
-    // explicit callback in the prompt.
+    // Codex now has a Stop-hook backstop (a `.codex/hooks.json` Stop hook that
+    // POSTs /complete on turn completion — see codexStopHook.ts), but still
+    // emphasise the explicit callback so the merge gate advances promptly and
+    // survives a hook that doesn't fire (belt-and-suspenders, like Pi).
     return buildAgentCommand({
       harness,
       codexYolo,
-      prompt: `Please read ${fileName} in this directory and complete the post-merge hook task it describes. You MUST curl the completion URL from the brief before exiting — Lattice has no Codex Stop-hook backstop and the merge run will hang otherwise.`,
+      prompt: `Please read ${fileName} in this directory and complete the post-merge hook task it describes. You MUST curl the completion URL from the brief before exiting — the merge run is blocked waiting for your callback.`,
     });
   }
 

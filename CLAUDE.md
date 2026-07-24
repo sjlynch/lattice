@@ -62,10 +62,15 @@ Open ──▶── In Progress ──▶── Ready to Merge ──▶── 
   writes a `.pi/extensions/lattice-complete.ts` extension that POSTs
   `/complete` on `session_shutdown` — Pi's analogue of the Stop hook — and
   `LATTICE_TASK.md` is reworded so the model curls `/complete` itself as its
-  final step (the extension is the backstop if it forgets).
+  final step (the extension is the backstop if it forgets). For a Codex task
+  it also writes `.codex/hooks.json` with a `Stop` hook that curls `/complete`
+  on turn completion — Codex's analogue of the Stop hook (`backend/src/codexStopHook.ts`;
+  the Lattice codex command carries `--dangerously-bypass-hook-trust` so it runs
+  without a per-hook trust prompt). Written under an `if-absent` policy so a repo
+  that tracks its own `.codex/hooks.json` is never clobbered.
 - `In Progress → Ready to Merge`: the in-worktree agent finishes; the Stop
-  hook (Claude) / completion extension (Pi) / explicit curl in
-  `LATTICE_TASK.md` hits `POST /api/tasks/:id/complete` (idempotent — only
+  hook (Claude) / completion extension (Pi) / Codex `Stop` hook / explicit curl
+  in `LATTICE_TASK.md` hits `POST /api/tasks/:id/complete` (idempotent — only
   flips on first call, and only when the branch has a commit).
 - `Ready to Merge → QA`: ▶ button calls `POST /api/tasks/:id/merge`.
   Backend merges main INTO the branch *inside the worktree* (so main's
