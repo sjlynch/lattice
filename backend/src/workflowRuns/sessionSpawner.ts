@@ -75,8 +75,36 @@ async function killWorkflowStepServer(
   if (killed) notifySessionsFreed();
 }
 
-export function forgetWorkflowStepSession(runId: string, stepIndex: number): void {
-  stepSpawnRecords.delete(recordKey(runId, stepIndex));
+// Tear down a step's tracked pty on genuine advance (the completion callback in
+// routes/workflows/runs.ts fires this the moment a step reports done). This
+// deletes the spawn record AND kills the pty if one was allocated — the leak
+// fix. An interactive Codex step (`codex --yolo` never self-exits after its
+// turn) would otherwise sit alive forever after curling /complete, piling up
+// zombie sessions and, because it stays live while the next step spawns, letting
+// step N overlap step N+1. Killing here reclaims it and closes that window.
+// Harness-agnostic and safe: a Claude/Pi session that already exited kills
+// nothing (proxyKillSession no-ops on an unknown id), and one still idle-alive
+// (e.g. an interactive Claude waiting after its Stop) is done with its work and
+// safe to reclaim. Assumes the advance is genuine — the model curled /complete
+// as its last action (its contract) or, for Claude, the quiescence gate already
+// confirmed the session settled before advance() ran.
+export async function killWorkflowStepSession(
+  runId: string,
+  stepIndex: number,
+  deps: Pick<WorkflowStepSessionDeps, 'proxyKillSession'> = productionDeps,
+): Promise<void> {
+  const key = recordKey(runId, stepIndex);
+  const record = stepSpawnRecords.get(key);
+  stepSpawnRecords.delete(key);
+  if (!record?.serverId) return;
+  try {
+    await killWorkflowStepServer(record.serverId, deps);
+  } catch (err) {
+    console.warn(
+      `[workflow-run] ${runId} step ${stepIndex}: kill session ${record.serverId} on advance failed:`,
+      err,
+    );
+  }
 }
 
 export function cancelWorkflowStepSessions(

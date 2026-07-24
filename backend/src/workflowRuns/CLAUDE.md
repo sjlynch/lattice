@@ -57,7 +57,14 @@ explicit-curl callbacks — never by polling task state.
   each step's dedupe key / spawned `serverId` for cancellation, registers the
   orange agent-session presence node for a Claude step, and fans out
   `step-spawned`. Pre-spawning the pty is what lets the frontend lazy-mount
-  terminals so a multi-step run doesn't burn a WebGL context per pane.
+  terminals so a multi-step run doesn't burn a WebGL context per pane. Also
+  `killWorkflowStepSession(runId, stepIndex)` — kills + forgets a step's tracked
+  pty on genuine advance (called from the `/complete` route's `advance()` before
+  the next step spawns). Interactive `codex --yolo` never self-exits after its
+  turn, so without this the finished step's session leaks *and* stays live
+  alongside the next step; killing on advance reclaims it and closes that overlap
+  window. Harness-agnostic no-op for an already-exited session; `cancelWorkflow-
+  StepSessions` (run cancel) shares the same `killWorkflowStepServer` teardown.
 - `projectDirtyState.ts` — `getProjectDirtyState` (probe `git status
   --porcelain` of the project repo) + `renderDirtyStateWarning` (render a
   markdown banner listing the diverged paths). `stepSpawner` calls the
@@ -113,6 +120,15 @@ explicit-curl callbacks — never by polling task state.
 - Step advancement is sequential and **idempotent**: `completeWorkflowStep`
   claims `currentStepIndex` synchronously before any await so a duplicate
   Stop-hook fire is a no-op.
+- **Advancing a step kills its session.** The `/complete` route's `advance()`
+  calls `killWorkflowStepSession` (await) *before* `completeWorkflowStep`
+  dispatches the next step. An interactive Codex step (`codex --yolo`) never
+  self-exits after curling `/complete`, so an eager advance would both leak the
+  session and let step N run alongside step N+1. Killing on advance is the fix;
+  it's a harmless no-op for a Claude/Pi session that already exited. Keep it
+  before the dispatch so the teardown wins the race with the next spawn. Covered
+  by `__tests__/workflowStepSpawnFailure.test.ts` ("advancing a spawned workflow
+  step kills its terminal session").
 - **Claude Stop-hook completions are quiescence-gated, not immediate** (see
   `stopHookGate.ts`). This is the fix for "workflow steps sometimes run in
   parallel": Claude's `Stop` hook fires early/repeatedly when the step agent

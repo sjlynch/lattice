@@ -12,7 +12,7 @@ import {
   cancelWorkflowRun,
   WorkflowRunConflictError,
 } from '../../workflowRuns.js';
-import { forgetWorkflowStepSession, workflowStepAgentId } from '../../workflowRuns/stepSpawner.js';
+import { killWorkflowStepSession, workflowStepAgentId } from '../../workflowRuns/stepSpawner.js';
 import { requestStopHookStepComplete } from '../../workflowRuns/stopHookGate.js';
 import { unregisterAgentSession } from '../../agentSessions.js';
 import { forgetAgentQuiescence } from '../../agentQuiescence.js';
@@ -62,13 +62,17 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
     );
 
     const agentId = workflowStepAgentId(runId, stepIndex);
-    // The actual advance: drop this step's graph node + quiescence state (the
-    // next step registers its own), then advance the run. Runs when the
-    // completion is genuine — immediately for a model/extension-sourced curl,
-    // or once the session goes quiescent for a Stop-hook-sourced one.
-    const advance = (): Promise<void> => {
+    // The actual advance: drop this step's graph node + quiescence state, KILL
+    // its pty, then advance the run. Runs when the completion is genuine —
+    // immediately for a model/extension-sourced curl, or once the session goes
+    // quiescent for a Stop-hook-sourced one. Killing the finishing step's pty
+    // BEFORE dispatching the next step is what reclaims an otherwise-immortal
+    // interactive Codex session and prevents step N running alongside step N+1
+    // (see killWorkflowStepSession). It's awaited so the teardown completes
+    // before the next step spawns; harmless no-op for an already-exited session.
+    const advance = async (): Promise<void> => {
       unregisterAgentSession(agentId);
-      forgetWorkflowStepSession(runId, stepIndex);
+      await killWorkflowStepSession(runId, stepIndex);
       forgetAgentQuiescence(agentId);
       return completeWorkflowStep(runId, stepIndex, backendOrigin);
     };

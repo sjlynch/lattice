@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   cancelWorkflowStepSessions,
   enqueueWorkflowStepSession,
+  killWorkflowStepSession,
 } from '../workflowRuns/sessionSpawner.js';
 import { subscribe, type WorkflowRunEvent, type WorkflowRun } from '../workflowRuns/state.js';
 import { queueState } from '../spawnQueue/state.js';
@@ -152,4 +153,59 @@ test('cancelling a spawned workflow step kills its terminal session', async () =
   }
 
   assert.deepEqual(killedIds, ['wf-step-session-1']);
+});
+
+test('advancing a spawned workflow step kills its terminal session (leak fix)', async () => {
+  // The normal-advance analogue of the cancel test above: when a step reports
+  // done, routes/workflows/runs.ts advance() calls killWorkflowStepSession
+  // BEFORE dispatching the next step, so an interactive Codex session (which
+  // never self-exits after curling /complete) is reclaimed instead of leaking,
+  // and can't run alongside the next step. Assert the tracked serverId is killed
+  // exactly once on the first advance and the second call is an idempotent
+  // no-op (the record is already gone).
+  queueState.accounting.setSoftCap(1);
+  queueState.accounting.reconcile(0, Date.now());
+
+  const run = makeRun();
+  const killedIds: string[] = [];
+
+  try {
+    await enqueueWorkflowStepSession({
+      run,
+      stepIndex: 0,
+      projectPath: run.projectPath,
+      stepDir: '/tmp/workflow-step-advance',
+      command: 'codex --yolo',
+      harness: 'codex',
+      deps: {
+        proxyCreateSession: async () => ({ id: 'wf-step-session-advance' }),
+      },
+    });
+
+    // Genuine advance (still 'running', next step about to spawn).
+    await killWorkflowStepSession(run.id, 0, {
+      proxyKillSession: async (id: string) => {
+        killedIds.push(id);
+        return true;
+      },
+    });
+
+    // Idempotent: the record was deleted, so a duplicate/late advance kills
+    // nothing (no double-kill of a serverId the terminal-server may have reused).
+    await killWorkflowStepSession(run.id, 0, {
+      proxyKillSession: async (id: string) => {
+        killedIds.push(id);
+        return true;
+      },
+    });
+  } finally {
+    queueState.accounting.setSoftCap(SPAWN_QUEUE_CONFIG.softCap);
+    queueState.accounting.reconcile(0, Date.now() + 1);
+  }
+
+  assert.deepEqual(
+    killedIds,
+    ['wf-step-session-advance'],
+    'the finishing step session is killed exactly once on advance',
+  );
 });

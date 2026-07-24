@@ -37,7 +37,7 @@ import { enqueueWorkflowStepSession, workflowStepAgentId } from './sessionSpawne
 // Re-export the public surface so existing importers (routes/workflows/runs.ts,
 // the workflowScratchPrune test) keep resolving these from stepSpawner.
 export { pruneOldWorkflowRuns, writeScratchReadme } from './scratchDirectory.js';
-export { forgetWorkflowStepSession, workflowStepAgentId } from './sessionSpawner.js';
+export { killWorkflowStepSession, workflowStepAgentId } from './sessionSpawner.js';
 
 type PreparedStepScratch = {
   workflowStepsRoot: string;
