@@ -4,23 +4,41 @@ import { type TerminalSpec } from '../../../TerminalsContext';
 import { shortLabel } from '../lanes';
 
 type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
+type CloseTerminalsForTask = (taskId: string) => void;
 
 // Builds the `/ws/tasks` `task-spawned` handler. A queued task's run has no pty
 // at request time; when the spawn queue admits it the backend emits
 // `task-spawned`, and this mounts the task's terminal (lazy — the pane renders
 // on activation). Every tab watching the project mounts it.
 //
+// Before mounting, it closes any terminal already tagged with this taskId so a
+// single task never owns two tabs. This is the Resume case: resuming an
+// in_progress task re-spawns the harness in the SAME worktree with a fresh
+// serverId (backend `resumeTask.ts`), emitting a second `task-spawned`. The
+// prior tab is stale (the earlier session ended without committing — exactly
+// why Resume exists) and `useTaskTerminalCleanup` only closes terminals for
+// ready_to_merge/qa/done/deleted, never in_progress, so it lingers. Closing it
+// first (the batched `closeTerminalsForTask` DELETEs the dead pty and drops the
+// tab) makes the newly-delivered serverId authoritative — one terminal per task
+// per tab, the invariant the rest of the terminal code preserves.
+//
 // The handler also pings the "Resume all" bulk strip, which has no task-state
 // signal of its own. That notifier is produced by `useBulkRunStrips`, which runs
 // *after* the task list (it needs `tasks`, which needs this handler) — so it's
 // bridged in through a ref via `setBulkSpawnNotifier`, breaking the declaration
 // cycle that would otherwise force this wiring to live inline in the launcher.
-export function useTaskSpawnHandler(addTerminal: AddTerminal) {
+export function useTaskSpawnHandler(
+  addTerminal: AddTerminal,
+  closeTerminalsForTask: CloseTerminalsForTask,
+) {
   const noteBulkSpawnedRef = useRef<((taskId: string) => void) | null>(null);
 
   const handleTaskSpawned = useCallback(
     (event: TaskSpawnedEvent) => {
       noteBulkSpawnedRef.current?.(event.taskId);
+      // Replace, don't duplicate: drop any stale tab for this task (e.g. the
+      // ended pre-resume session) before mounting the fresh pty.
+      closeTerminalsForTask(event.taskId);
       addTerminal(
         {
           label: shortLabel(event.title),
@@ -33,7 +51,7 @@ export function useTaskSpawnHandler(addTerminal: AddTerminal) {
         false,
       );
     },
-    [addTerminal],
+    [addTerminal, closeTerminalsForTask],
   );
 
   // Stable setter so the launcher (or a downstream hook) can wire in the bulk
