@@ -17,7 +17,8 @@ explicit-curl callbacks — never by polling task state.
 - `stepMarkdown.ts` — `renderStepMarkdown` (the WORKFLOW_STEP.md prompt)
   and `effectiveStepHarness` (run override → step harness → `'claude'`).
   Completion instructions branch on harness: Claude relies on its silent
-  Stop hook; Pi/codex get an explicit curl line as a backstop.
+  Stop hook; Pi/codex are told to curl `/complete` explicitly (their
+  `session_shutdown` extension / Codex Stop hook is the backstop).
 - `stepSpawner.ts` — `spawnWorkflowStep`: the coordinator, split into
   named setup phases (`prepareStepScratch`, `writeStepAssets`,
   `installStepCallbacks`, `spawnStepSession`). Creates
@@ -34,8 +35,11 @@ explicit-curl callbacks — never by polling task state.
 - `scratchDirectory.ts` — scratch-dir lifecycle: `writeScratchReadme`
   (tags the run dir as not-the-source-of-truth, idempotent) and
   `pruneOldWorkflowRuns` (keeps the newest `WORKFLOW_RUN_RETENTION` runs,
-  always preserves the active run; the recursive delete is path- and
-  reparse-point-bounded so it can't walk a junction loop into `.git`).
+  and always preserves EVERY still-`running` run — the caller passes
+  `getRunningRunIds(project)` in, mirroring the homeScratch sweep's live-PTY
+  guard, so a concurrent run parked on a long step can't be pruned out from
+  under the backend; the recursive delete is path- and reparse-point-bounded
+  so it can't walk a junction loop into `.git`).
 - `commandBuilder.ts` — `buildWorkflowStepCommand`: workflow-step prompt
   wording plus harness dispatch through the shared `agentCommandBuilder.ts`
   utility (Claude permission flag, Pi model flag, Codex prompt quoting).
@@ -93,7 +97,8 @@ explicit-curl callbacks — never by polling task state.
   `CompleteStepCallback`). The per-kind workers live under `controlSteps/`:
   - `controlSteps/start.ts` — `runStartStep`: move every Open task to In
     Progress and run it (one `workflow-task-spawned` terminal tab each);
-    throws if it started none so a no-op run doesn't silently "succeed".
+    throws if every task failed to start (nothing started or cap-deferred)
+    so a no-op run doesn't silently "succeed".
   - `controlSteps/merge.ts` — `runMergeStep`: Phase A drains In Progress,
     Phase B loops merge runs (`lockMode: 'inherit'`) until Ready-to-Merge
     is empty, with the unchanged-lane error-loop guard, and Phase C waits

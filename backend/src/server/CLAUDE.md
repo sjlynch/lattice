@@ -7,8 +7,9 @@ Named backend bootstrap helpers used by `index.ts` after process guards are inst
 - `http.ts` — creates the HTTP server and attaches the WS dispatcher.
 - `startup.ts` — boot ordering / invariants:
   1. fire-and-forget harness detection plus best-effort Pi setup
-     (`ensurePiSubagentsInstalled()` and `reconcilePiModelsJson()`); these must
-     never block listen or throw out of startup;
+     (`ensurePiSubagentsInstalled()`, `ensurePiMcpInstalled()`, and
+     `reconcilePiModelsJson()`); these must never block listen or throw out of
+     startup;
   2. `ensureTerminalServer()` before any recovery can spawn/resume terminals;
   3. `startSpawnQueue()` to prime terminal-session accounting;
   4. `recoverOrphanedTasks()` while the API is still closed;

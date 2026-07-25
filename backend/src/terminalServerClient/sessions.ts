@@ -15,6 +15,7 @@ export async function proxyListSessions(): Promise<unknown[]> {
   try {
     const res = await fetch(`${BASE}/sessions`, {
       headers: terminalServerAuthHeaders(),
+      signal: AbortSignal.timeout(SESSIONS_PROBE_TIMEOUT_MS),
     });
     return res.ok ? ((await res.json()) as unknown[]) : [];
   } catch {
@@ -103,10 +104,17 @@ export async function proxyKillSession(id: string): Promise<boolean> {
   try {
     const res = await fetch(
       `${BASE}/sessions/${encodeURIComponent(id)}`,
-      { method: 'DELETE', headers: terminalServerAuthHeaders() },
+      {
+        method: 'DELETE',
+        headers: terminalServerAuthHeaders(),
+        signal: AbortSignal.timeout(SESSIONS_PROBE_TIMEOUT_MS),
+      },
     );
     return res.ok;
   } catch {
+    // Terminal server down, wedged, or timed out — treat as kill-unconfirmed
+    // (false) so awaiting callers (workflow advance, post-merge abort,
+    // DELETE /api/terminals/:id) proceed instead of hanging.
     return false;
   }
 }

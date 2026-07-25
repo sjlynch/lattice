@@ -35,40 +35,30 @@ Per-invocation `-c "mcp_servers.<lattice_id>={…}"` inline-TOML overrides (valu
 parsed as TOML, dotted key MERGES so the user's own servers survive), mirroring
 `terminal/codexTrust.ts`'s trust override — never writes `~/.codex/config.toml`.
 Secrets ride the pty env by NAME: stdio → `env_vars=['VAR']`, HTTP header →
-`env_http_headers={Header='VAR'}` / `bearer_token_env_var` (value in pty env,
-never argv). The backend resolves the strings; the terminal-server turns each
-into a `--config` flag referencing an env var (`configureCodexProjectMcp` in
-`terminal/codexTrust.ts`), so braces/quotes never enter shell source.
+`env_http_headers={Header='VAR'}` (value in pty env, never argv). The backend
+resolves the strings; the terminal-server turns each into a `--config` flag
+referencing an env var (`configureCodexProjectMcp` in `terminal/codexTrust.ts`),
+so braces/quotes never enter shell source.
 
 ### Pi mechanism (`piServerConfig.ts` + `../piMcp/`)
 Pi has no native MCP, so Lattice loads the third-party **`pi-mcp-adapter`**
-(for official Pi `@earendil-works/pi-*` ≥0.74; private, Lattice-owned install
-under `~/.lattice/pi-mcp-adapter/` — never the user's global Pi config, same
-pattern as `piSubagents/`) and drops two cwd-local files into each
-Lattice-spawned Pi session: `<cwd>/.pi/mcp.json` (the enabled server set,
-reconciled with a `__latticeManagedMcp` marker so the user's own servers
-survive) + `<cwd>/.pi/extensions/lattice-mcp.ts` (the loader shim Pi
-auto-discovers cwd-exactly). Written by the **backend** at the spawn chokepoint
-(`piMcp.ts` `applyPiMcpForSpawn`) — Pi's mechanism is cwd files, not wire data,
-and the files must exist before Pi starts. Each server carries `lifecycle:
-'eager'` (connect at session start) + `directTools: true` (individual tools when
-the adapter's metadata cache is warm; on a cold worktree it registers the
-always-present `mcp()` proxy tool instead — either way the tools are reachable).
-
-**Project-trust gate (official Pi ≥0.74):** Pi no longer auto-loads cwd-local
-`.pi/extensions/` (the adapter shim) or reads them unless the project is
-*trusted* — a non-interactive/never-trusted spawn silently skips them. Lattice
-therefore spawns Pi with **`--approve`** (`agentCommandBuilder.ts`, the Pi
-analogue of Claude's `--dangerously-skip-permissions` / Codex's `--yolo`), which
-trusts the session cwd's project-local files **for that run only** (never
-persisted to the user's global Pi config). This one flag is what makes the MCP
-shim — *and* the pre-existing pi-subagents + completion shims — load at all under
-official Pi; without it the whole cwd-extension mechanism is inert. stdio secrets ride the pty env — the adapter's
-`resolveEnv` merges each server's `env` with the child `process.env`, so the
-value is omitted from the JSON file. HTTP header secrets are now **supported**:
-the adapter interpolates `${VAR}` in `headers`, so a secret header is a `${VAR}`
-reference with the value in the pty env (shared `secretHeaderEnvVar` naming with
-Codex) — superseding the old `pi-mcp-extension` "headers dropped" limitation.
+(official Pi `@earendil-works/pi-*` ≥0.74; private, Lattice-owned install under
+`~/.lattice/pi-mcp-adapter/` — never the user's global Pi config, same pattern as
+`piSubagents/`) and drops two cwd-local files into each Lattice-spawned Pi
+session: `<cwd>/.pi/mcp.json` (the enabled server set, reconciled with a
+`__latticeManagedMcp` marker so the user's own servers survive) +
+`<cwd>/.pi/extensions/lattice-mcp.ts` (the loader shim Pi auto-discovers
+cwd-exactly). The **backend** writes both at the spawn chokepoint (`piMcp.ts`
+`applyPiMcpForSpawn`) — Pi's mechanism is cwd files, not wire data, so they must
+exist before Pi starts. Each server carries `lifecycle: 'eager'` + `directTools:
+true` (individual tools when the adapter's metadata cache is warm; a cold
+worktree falls back to the always-present `mcp()` proxy tool — either way tools
+are reachable). Pi ≥0.74 only reads cwd-local `.pi/extensions/` in a *trusted*
+project, so Lattice spawns Pi with **`--approve`** (`agentCommandBuilder.ts`, the
+Pi analogue of `--dangerously-skip-permissions` / `--yolo`) to trust the session
+cwd for that run only (never persisted) — without it every cwd-extension shim
+(MCP, pi-subagents, completion) is inert. Secret transport (stdio in pty env,
+HTTP-header secrets as `${VAR}` refs) is in `piServerConfig.ts`. See `../piMcp/`.
 
 ### v1 coverage
 Lattice-created launches only (task/resume, workflow step, prompt customization,
@@ -105,6 +95,16 @@ serverless for now — see `frontend/src/components/sidebar/CLAUDE.md`.)
   from two focused pure helpers (below). Returns `{}` for non-claude harnesses
   (v1). The `McpResolveContext` type (only field: `ctx.isQaRun`, set by the QA-run
   spawn alone) lives here as part of the public surface.
+- `settingsValidation.ts` / `overrideSecurity.ts` — defensive parsers for the
+  UNTRUSTED `mcpCustomServers` / `mcpBuiltinOverrides` off `PATCH
+  /api/global-settings`. `sanitizeCustomServers` / `sanitizeBuiltinOverrides` keep
+  only resolver-read fields; `applyBuiltinOverride` (used by `mergedCatalog`)
+  re-pins a built-in's id/command/url from the catalog and enforces
+  **additive-only args** (an override can append a Playwright `--browser` flag but
+  can't swap the package spec). `overrideSecurity.ts` is the env denylist
+  (`sanitizeOverrideEnv`): an override's `env` can never set a code-exec /
+  launcher-hijack var (`NODE_OPTIONS`, `LD_PRELOAD`, `PATH`, `npm_config_*`, …).
+  **A built-in override may TUNE a server but never re-point what it runs.**
 - `resolverPolicy.ts` — **MCP resolver policy** (pure, no I/O): `resolvePlaywright`.
   **Playwright has two scopes** — `mcpOverrides.playwright` is the GLOBAL toggle
   (any Lattice session + the project-root reconcile, headless unless
@@ -181,8 +181,8 @@ The PRIMARY (per-spawn) path: the main backend's `proxyCreateSession`
 (`terminalServerClient.ts`) calls `resolveManagedClaudeServers(projectPath, {isQaRun})`
 + `isClaudeMemoryDisabled(projectPath)` and folds the result into the `POST
 /sessions` body (`SessionWireBody.managedMcpServers` / `disableClaudeMemory`).
-The terminal-server's handler (`terminalServer/routes.ts`) then calls
-`applyClaudeProjectConfig(cwd, { managed })` microseconds before `pty.spawn` —
+The terminal-server's handler (`terminalServer/createSessionHandler.ts`) then
+calls `applyClaudeProjectConfig(cwd, { managed })` microseconds before `pty.spawn` —
 after any `~/.claude.json` clobber by an exiting Claude — writing the
 backend-resolved set verbatim. Every backend-spawned Claude session funnels
 through `proxyCreateSession`, so one wiring point covers all eight spawn sites.

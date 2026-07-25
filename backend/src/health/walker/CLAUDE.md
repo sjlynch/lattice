@@ -3,9 +3,16 @@
 Split implementation behind the `../walker.ts` shim. Keep the traversal a
 single recursive AST pass unless a metric truly needs a second pass.
 
-- `index.ts` — `analyzeTree` dispatch: walks the tree, collects file-level
-  imports/classes/string literals/smell counters, and pushes per-function
-  records onto a stack.
+- `index.ts` — `analyzeTree` entry + the single recursive `walk`; each node's
+  work is delegated to the `visitors.ts` helpers, threading a `context.ts`
+  `WalkerContext`.
+- `context.ts` — the `WalkerContext` (shared walk state: result, grammar, node
+  kinds, function stack, export tracking) + `currentFunction`.
+- `visitors.ts` — the per-node visitor helpers `walk` invokes (`handleComment`,
+  `handleFunctionEntry`/`Exit`, `handleFileStructure`, `handleImportsAndStrings`,
+  `handleAstSmells`, `handleExportTracking`, `updateComplexity`,
+  `handleAwaitExpression`, `handleCallExpression`); each delegates to the focused
+  modules below.
 - `functionRecord.ts` — builds `FnRecord` (lines, async/docstring, initial
   complexity, call set) and parameter-derived smells; re-exports the stable
   helper API for callers that imported from this file before the split.

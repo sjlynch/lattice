@@ -51,8 +51,15 @@ losing tasks.
   paths (`projectTasksFile`, `projectTasksBackupFile`, `homeProjectDir`,
   `LEGACY_GLOBAL_TASKS`).
 - `projectsIndex.ts` — `ProjectsIndex`: in-memory `Set<projectPath>` backed
-  by `~/.lattice/projects.json`. Canonicalises on load (collapses
-  case-different duplicates on Windows).
+  by `~/.lattice/projects.json`. On load it canonicalises + de-dups (collapses
+  case-different duplicates on Windows) and prunes junk entries via
+  `pruneIndex.ts`, re-persisting so a restart self-cleans.
+- `pruneIndex.ts` — the conservative index-pruning predicate
+  (`isStructurallyJunkPath` / `projectHasTasksOnDisk` / `shouldPruneProjectEntry`):
+  drops temp-dir scratch, shell-mangled, and phantom (gone-from-disk AND
+  task-less) entries; a path that still exists on disk OR has task data is
+  always kept. Run at boot by `projectsIndex.ts` and to reap an emptied scratch
+  project in `manager.ts`'s `deleteTask`.
 - `migrations.ts` — `TaskMigrations` class (holds the once-per-process
   legacy-migration flag) plus the two pure migration functions:
   - `migrateLegacy(projectsIndex)`: one-time `~/.lattice/tasks.json` →

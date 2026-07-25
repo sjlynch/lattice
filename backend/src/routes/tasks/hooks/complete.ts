@@ -6,7 +6,7 @@
 //                                 (delegated to finalizeResolvedTask).
 
 import type { Request, Response } from 'express';
-import { getTask, updateTask } from '../../../tasks.js';
+import { getTask, updateTaskCrashSafe } from '../../../tasks.js';
 import { branchCommitCount } from '../../../worktree.js';
 import { proxyKillSessionsByCwd } from '../../../terminalProxy.js';
 import { notifySessionsFreed } from '../../../spawnQueue.js';
@@ -112,7 +112,15 @@ export function handleTaskComplete(backendOrigin: string) {
         return res.json({ ok: true, awaitingCommit: true });
       }
     }
-    await updateTask(task.id, {
+    // Crash-safe (disk-before-cache), NOT the debounced updateTask. The Stop
+    // hook fires exactly once, so if the backend hot-restarts inside the 100 ms
+    // debounce window (routine in dev — tsc -w + scripts/dev.mjs restart the
+    // backend on any backend/src change) the flip would be lost on disk: the
+    // next boot reads in_progress, the pty is already gone, and the hook never
+    // re-fires — stranding a finished task at in_progress. This one-way flip
+    // therefore matches the sibling finalizers (merged.ts / stashResolved.ts,
+    // which use updateTaskCrashSafe for ready_to_merge → qa).
+    await updateTaskCrashSafe(task.id, {
       status: 'ready_to_merge',
       completedAt: Date.now(),
     });

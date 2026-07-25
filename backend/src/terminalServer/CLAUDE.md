@@ -60,7 +60,9 @@ version constant.
   `503 {code:'CAP'}` at the hard cap.
 - `websocket.ts` — the `/ws/terminal` upgrade handler: parse the query
   (`id`/`cwd`/`cols`/`rows`/`initialCommand`/`projectPath`) and hand the socket to
-  `attachTerminal`. Non-matching upgrade paths are destroyed.
+  `attachTerminal`. Disallowed browser `Origin`s (CSWSH defence — this handler
+  runs `initialCommand` on a fresh pty) and non-matching upgrade paths are
+  destroyed before the upgrade.
 - `shutdown.ts` — `createTerminalShutdown()` (idempotent: kill every session, wait
   ~500 ms for `taskkill /T` to walk the tree, then `process.exit(0)`) +
   `wireTerminalShutdownSignals` (SIGTERM/SIGINT).

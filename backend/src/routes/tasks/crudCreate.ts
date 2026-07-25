@@ -8,18 +8,25 @@ import { resolveProject, respondJson } from './requestUtils.js';
 import { validateProjectForCreate } from './projectValidation.js';
 
 type TaskDraft = { title: string; description?: string };
-type JsonBatchTask = { title?: string; description?: string };
+// Request bodies are untrusted JSON — fields are `unknown` until validated, so
+// a non-string title/description is caught here (a clean 400) instead of
+// blowing up on `.trim()` deep in an async handler (a cryptic 500).
+type JsonBatchTask = { title?: unknown; description?: unknown };
 
 export async function handleTaskCreate(
   req: Request,
   res: Response,
 ): Promise<void> {
   const project = resolveProject(req);
-  const body = (req.body || {}) as { title?: string; description?: string };
+  const body = (req.body || {}) as { title?: unknown; description?: unknown };
   const title = body.title;
   const description = body.description;
-  if (!title?.trim()) {
-    res.status(400).json({ error: 'title required' });
+  if (typeof title !== 'string' || !title.trim()) {
+    res.status(400).json({ error: 'title required (must be a non-empty string)' });
+    return;
+  }
+  if (description !== undefined && typeof description !== 'string') {
+    res.status(400).json({ error: 'description must be a string' });
     return;
   }
   const check = await validateProjectForCreate(project);
@@ -57,15 +64,29 @@ export async function handleTaskBatchCreate(
       res.status(400).json({ error: 'tasks must be a non-empty array' });
       return;
     }
-    const invalid = arr.findIndex((t: JsonBatchTask) => !t.title?.trim());
-    if (invalid !== -1) {
-      res.status(400).json({ error: `tasks[${invalid}].title is required` });
-      return;
+    // Validate EVERY element up front (title is a non-empty string, description
+    // — when present — is a string, and the element itself isn't null). This
+    // both returns a clean 400 instead of a `.trim()`-on-a-number TypeError and
+    // keeps the batch atomic: no task is created until the whole array is known
+    // good, so a bad element can't leave a half-applied 500.
+    const drafts: TaskDraft[] = [];
+    for (let i = 0; i < arr.length; i++) {
+      const t = arr[i] as JsonBatchTask | null | undefined;
+      if (!t || typeof t !== 'object') {
+        res.status(400).json({ error: `tasks[${i}] must be an object with a title` });
+        return;
+      }
+      if (typeof t.title !== 'string' || !t.title.trim()) {
+        res.status(400).json({ error: `tasks[${i}].title is required` });
+        return;
+      }
+      if (t.description !== undefined && typeof t.description !== 'string') {
+        res.status(400).json({ error: `tasks[${i}].description must be a string` });
+        return;
+      }
+      drafts.push({ title: t.title.trim(), description: t.description });
     }
-    parsed = arr.map((t: JsonBatchTask) => ({
-      title: t.title!.trim(),
-      description: t.description,
-    }));
+    parsed = drafts;
   }
   await respondJson(res, () =>
     Promise.all(parsed.map((t) => createTask(check.canonical, t.title, t.description))),

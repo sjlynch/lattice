@@ -13,11 +13,14 @@ Both are read-only against the disposable worktree (plain `exec`, never
 - `activity.ts` — `POST /api/tasks/:id/activity` (the Claude PreToolUse/
   PostToolUse hook → `notifyTaskActivity` → `task-activity` WS, for the focus
   beam). Owns the worktree→project path mapping and the exported `isManaged`
-  filter, which `routes/agentActivity.ts` and `worktreeModified.ts` both import.
+  filter, which `routes/agentActivity.ts` and `worktreeModifiedParsers.ts` both
+  import.
 - `worktreeModified.ts` — `GET /api/tasks/worktree-modified` (every file changed
-  by an in_progress / ready_to_merge task, for the `W` highlight). Owns the git
-  diff/status polling, the per-project base-branch cache, and the short-TTL
-  result cache. Preserves the response shape, TTL, and git timeout behavior.
+  by an in_progress / ready_to_merge task, for the `W` highlight). Only wires the
+  route; the git diff/status polling, per-project base-branch cache, and
+  short-TTL result cache live in focused sibling modules (`worktreeModifiedService.ts`,
+  `…Git.ts`, `…Cache.ts`, `…Constants.ts`, `…Parsers.ts`). Preserves the response
+  shape, TTL, and git timeout behavior.
 
 ## CRUD (`crud.ts` builds the router; handlers split by concern)
 
