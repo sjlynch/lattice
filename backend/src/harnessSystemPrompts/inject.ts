@@ -20,6 +20,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import { homeProjectScratchDir } from '../projectPath.js';
+import { tomlString } from '../mcp/codexServerConfig.js';
 import { resolveHarnessSystemPrompt } from './resolve.js';
 import { applyPiSystemPromptForSpawn } from './piShim.js';
 
@@ -67,9 +68,37 @@ export async function prepareClaudeSystemPrompt(
   return out;
 }
 
-// Codex: build the `-c` override strings (inline TOML `key=value`). A JSON
-// string is a valid TOML basic string — the same trick codexTrust uses for the
-// cwd path — so Windows backslashes in the file path are escaped correctly.
+// Render prose (the `append` developer instructions) as a TOML *multi-line
+// literal* ('''…'''). Like tomlString this emits NO raw double-quote, which is
+// the whole point: each `-c key=value` rides in a child-env var the Codex
+// command references as `"%VAR%"`, and Windows cmd.exe STRIPS inner double-quotes
+// out of that expansion — re-tokenizing the value on its own spaces (verified:
+// `developer_instructions="Be terse."` → argv `developer_instructions=Be`,
+// `terse.`), which rejects the override and leaks stray positional args. The
+// outer `"…"` from the command template groups the whole (double-quote-free)
+// value into one argument, so spaces survive; single-quotes are literal to cmd
+// and are exactly the TOML literal delimiters Codex needs. See
+// codexServerConfig.tomlString for the same constraint on the MCP side.
+//
+// A multi-line literal (vs the single-line one tomlString emits) is used because
+// prose routinely contains apostrophes ("don't", "you're"), which a single-line
+// literal can't hold — and tomlString's `'`-fallback would emit a cmd-breaking
+// double-quoted string. Newlines ride verbatim in a multi-line literal, so a
+// multi-paragraph prompt stays intact on POSIX/PowerShell. Residual inherent
+// limits of an inline `-c` value on cmd (shared with the MCP overrides, not
+// fixable here since Codex has no `developer_instructions_file` key): an embedded
+// double-quote or newline can't transit `"%VAR%"` on cmd, and a literal '''
+// sequence can't appear inside a multi-line literal — all exotic in a
+// system-prompt append.
+function tomlMultilineLiteral(text: string): string {
+  return `'''${text}'''`;
+}
+
+// Codex: build the `-c` override strings (inline TOML `key=value`), rendered so
+// the value survives cmd.exe's `"%VAR%"` expansion (no raw double-quote — see
+// tomlMultilineLiteral / codexServerConfig.tomlString). Mirrors the proven MCP
+// TOML-quoting approach rather than JSON.stringify, whose double quotes cmd
+// strips and splits on.
 export async function prepareCodexSystemPrompt(
   projectPath: string,
 ): Promise<{ configArgs: string[] }> {
@@ -83,12 +112,17 @@ export async function prepareCodexSystemPrompt(
       override.replace,
     );
     // Newer Codex key that replaces the built-in base instructions. Value is an
-    // absolute path; JSON.stringify escapes it into a valid TOML basic string.
-    configArgs.push(`model_instructions_file=${JSON.stringify(file)}`);
+    // absolute path; a single-quoted TOML literal survives cmd (a spaced home
+    // dir like `C:\Users\John Doe\…` would be split by JSON.stringify's double
+    // quotes) and keeps Windows backslashes literal (no escaping, unlike a basic
+    // string). A path essentially never contains a `'`, so tomlString's fallback
+    // never fires here.
+    configArgs.push(`model_instructions_file=${tomlString(file)}`);
   }
   if (override.append) {
     // Additive developer-role message layered on top of the base instructions.
-    configArgs.push(`developer_instructions=${JSON.stringify(override.append)}`);
+    // Inline-only (Codex has no file variant), so render it double-quote-free.
+    configArgs.push(`developer_instructions=${tomlMultilineLiteral(override.append)}`);
   }
   return { configArgs };
 }
