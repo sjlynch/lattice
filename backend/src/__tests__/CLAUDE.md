@@ -1,8 +1,12 @@
 # backend/src/__tests__
 
 Backend tests use Node's built-in `node:test` runner with `tsx` for TypeScript
-execution (`npm test` from `backend/`). Keep tests as plain `.test.ts` files in
-this directory unless a helper belongs under `helpers/`.
+execution (`npm test` from `backend/`). The `test` script `--import`s
+`helpers/isolateHome.mjs` first, redirecting `HOME`/`USERPROFILE` to a throwaway
+temp dir so the suite never writes into the real `~/.lattice` (task DBs,
+`projects.json`, snapshots) — it must load before any test imports the task
+cache, whose home path binds once at module load. Keep tests as plain
+`.test.ts` files in this directory unless a helper belongs under `helpers/`.
 
 ## Conventions
 

@@ -49,7 +49,7 @@ tests) keeps working.
 
 ## Tests
 
-- `__tests__/mcp.test.ts` → `sanitizeCustomServers`, `sanitizeBuiltinOverrides`.
+- `__tests__/mcp.settingsValidation.test.ts` → `sanitizeCustomServers`, `sanitizeBuiltinOverrides`.
 - `__tests__/piModels.test.ts` → `sanitizePiProviders`.
 
 Both still import from `../globalSettings.js` (the re-export surface), so the

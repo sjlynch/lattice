@@ -24,7 +24,8 @@ Halstead token counts and a Maintainability Index, and folded into a composite
 - `universal.ts` + `universal/` — shim plus focused universal text helpers:
   `commentSyntax.ts` (per-language line/block comment markers),
   `lineCounts.ts` (line-kind counter), `strip.ts`
-  (`stripStringsAndComments` lexer), and `smells.ts` (regex/heuristic
+  (`stripStringsAndComments` lexer) + `stripRegex.ts` (its JS/TS
+  regex-vs-division disambiguation), and `smells.ts` (regex/heuristic
   fallback-language smells)
 - `analyze.ts` + `analyze/` — top-level `analyzeFile` entry point +
   `computeFromTree` orchestrator. Delegates to:
@@ -40,10 +41,12 @@ Halstead token counts and a Maintainability Index, and folded into a composite
     final `HealthSmell[]`)
 - `crossFile.ts` + `crossFile/` — shim plus focused cross-file modules:
   `resolveImport.ts` (extension/index/alias/Python-relative resolution),
-  `graph.ts` (edge construction, duplicate de-duping, Tarjan SCCs, and
-  reachability/dead-code classification when given a root set), `roots.ts`
-  (entry-point detection + `RESOLVABLE_IMPORT_EXTS`), and `apply.ts` (patch
-  fanIn/fanOut/inCycle smells + the `deadCode` status back into `HealthMetrics`).
+  `graph.ts` (thin orchestrator — edge construction, Tarjan SCCs,
+  reachability, and dead-code classification, delegating to sibling
+  `importGraph`/`cycles`/`reachability`/`deadCode` modules; see
+  `crossFile/CLAUDE.md`), `roots.ts` (entry-point detection +
+  `RESOLVABLE_IMPORT_EXTS`), and `apply.ts` (patch fanIn/fanOut/inCycle
+  smells + the `deadCode` status back into `HealthMetrics`).
   The dead-code pass is reachability-from-roots, not raw `fanIn===0`, so dead
   islands/cycles and entry points classify correctly; it is deliberately kept
   out of `computeScore` (orphan status is a signal, not a penalty). Roots come
@@ -78,7 +81,7 @@ Halstead token counts and a Maintainability Index, and folded into a composite
     resolver blind spot can never paint a whole project red.
   - **Cache coupling:** import extraction feeds the `(mtime,size)`-keyed health
     cache, which does NOT invalidate on analyzer-logic changes. Any change to
-    edge capture / resolution MUST bump `CACHE_VERSION` in `cache.ts` or
+    edge capture / resolution MUST bump `CACHE_VERSION` in `cachePaths.ts` or
     existing projects keep serving stale `imports` (this was why the first cut
     showed most files dead).
 - `crossFileAnalyzer.ts` — watcher-facing diff/broadcast wrapper around the
@@ -89,6 +92,8 @@ Halstead token counts and a Maintainability Index, and folded into a composite
 - `scoreModel.ts` — backend-only adapter that adds metric extractor functions to
   `scoreMetadata.ts` components for scoring
 - `score.ts` + `constants.ts` — final score calculation over the score model; shared thresholds
+- `scoreMath.ts` — the shared `clamp01`/`norm` primitives both `score.ts` and
+  `scoreModel.ts` use; single source so the two scorers can't silently diverge
 - `watcher.ts` + `watcher/` — `watcher.ts` is a thin facade owning the
   singleton `watchers` map (`ensureWatcher` promise memoization) plus the
   shutdown-flush lifecycle hooks (`flushWatcherCaches`, the once-only
@@ -122,6 +127,12 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   `cacheFile.ts` owns the crash-safe I/O: raw read plus the same-dir temp
   write → atomic rename (transient-Windows-rename retry + temp cleanup).
   `tsconfig.ts` — tsconfig alias resolution
+- `walkTree.ts` — `walkSourceTree`, the one bounded, skip-dir-aware directory
+  walker shared by tsconfig discovery + `crossFile/packageRoots.ts`
+- `configReloader.ts` — `ConfigReloader`: loads the project `.gitignore` matcher
+  + tsconfig aliases and refreshes them when the ROOT `.gitignore`/`tsconfig*`
+  changes (nested edits fall through to normal analysis)
+- `index.ts` / `utils.ts` — public re-export barrel; `smellsToArray` helper
 - `types.ts` — `HealthMetrics` / `HealthSmellId` definitions
 
 Adding a smell: update `types.ts` (id + label), emit it from `walker/` or

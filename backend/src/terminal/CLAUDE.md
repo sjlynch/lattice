@@ -13,13 +13,14 @@ owns the node-pty processes.
   logic.
 - `sessionStore.ts` — **the single source of truth**: the module-singleton
   `Map<id, Session>`. `getSession` / `addSession` / `deleteSession` (disposes
-  the session's scrollback at the one deletion point) / `allSessions` /
-  `listSessions` (debug snapshot).
+  the session's scrollback at the one deletion point) / `sessionCount` /
+  `allSessions` / `listSessions` (debug snapshot).
 - `launchContext.ts` — `buildSessionLaunchContext`: resolves shell, cwd
   (validated to exist — refusing a doomed spawn that would feed a reconnect
   loop), size, projectPath, and the env (Lattice breadcrumb vars +
   `$LATTICE_DOCS`); calls `windowsPath` + `envSetup` to shape PATH/overhead env,
-  then routes the initial command through `codexTrust`.
+  then routes the initial command through the per-harness command rewriters
+  (`claudeSystemPrompt` + `codexTrust`).
   Shell resolution is `resolveDefaultShell(env, platform)` (exported, injectable
   for tests): per-spawn `opts.shell` → `LATTICE_DEFAULT_SHELL` env override (the
   detached terminal-server can't read settings files, so the escape hatch is

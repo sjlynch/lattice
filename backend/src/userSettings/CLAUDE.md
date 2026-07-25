@@ -15,10 +15,12 @@ keeps importing from `'../userSettings.js'` and the public surface is unchanged.
   patches don't clobber each other — see `serializeWrites.ts` and
   `__tests__/settingsPersistence.test.ts`). All paths are canonicalized via
   `canonicalProjectPath`.
-- `features.ts` — feature-specific accessors layered on `getUserSettings`:
-  `isClaudeMemoryDisabled` (default ON/memory-off — absent counts as `true`)
-  and `isQaTerminalAutoCloseEnabled` (default OFF/stay-open — only explicit
-  `true` opts in). New "what does setting X mean for feature Y" helpers go here.
+- `features.ts` — feature-specific accessors layered on `getUserSettings`, each
+  encoding a field's default semantics: `isClaudeMemoryDisabled`,
+  `isPostMergeHookEnabled`, `isCodexYoloEnabled` (all default ON — an absent
+  field counts as `true`) and `isQaTerminalAutoCloseEnabled` (default
+  OFF/stay-open — only explicit `true` opts in). New "what does setting X mean
+  for feature Y" helpers go here.
 - `index.ts` — internal barrel re-exporting the public surface.
 
 ## Invariants
