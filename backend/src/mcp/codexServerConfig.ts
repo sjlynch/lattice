@@ -57,7 +57,12 @@ export function safeCodexServerId(id: string): string {
 // basic string (correct on PowerShell/POSIX, degraded only on cmd for that one
 // value — still strictly better than no Codex MCP).
 
-function tomlString(s: string): string {
+// Exported so the Codex system-prompt injector (harnessSystemPrompts/inject.ts)
+// renders its file-path value with the identical cmd-safe quoting. Prefer this
+// for controlled strings (commands/args/urls/paths) that essentially never
+// contain a `'`; for free prose that commonly does, use a multi-line literal
+// instead so the `'`-fallback to a double-quoted string never fires.
+export function tomlString(s: string): string {
   return s.includes("'") ? JSON.stringify(s) : `'${s}'`;
 }
 
