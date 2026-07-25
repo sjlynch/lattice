@@ -39,9 +39,19 @@ export function validateUpsertBlocks(blocks: ParsedTaskBlock[]): string | null {
     return 'no tasks parsed — markdown body needs `# Heading` lines, or JSON body needs {tasks:[...]}';
   }
   for (let i = 0; i < blocks.length; i++) {
-    const b = blocks[i];
-    if (!b.title || !b.title.trim()) {
+    // JSON upsert bodies (`{tasks:[...]}`) reach here cast as ParsedTaskBlock
+    // without prior shape-checking, so an element may be null or carry a
+    // non-string title/description. Guard those before `.trim()` so a bad
+    // payload is a clean 400, not a `.trim()`-on-a-number / read-of-null 500.
+    const b = blocks[i] as ParsedTaskBlock | null | undefined;
+    if (!b || typeof b !== 'object') {
+      return `tasks[${i}] must be an object with a title`;
+    }
+    if (typeof b.title !== 'string' || !b.title.trim()) {
       return `tasks[${i}].title is required`;
+    }
+    if (b.description !== undefined && typeof b.description !== 'string') {
+      return `tasks[${i}].description must be a string`;
     }
     if (b.status !== undefined && !isValidTaskStatus(b.status)) {
       return `tasks[${i}].${statusValidationError('status')}`;

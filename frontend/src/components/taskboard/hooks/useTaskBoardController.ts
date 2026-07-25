@@ -25,10 +25,14 @@ export function useTaskBoardController(activeFolder: string) {
   } = useTerminals();
 
   // `task-spawned` → mount the (queued) task's terminal + ping the resume strip.
+  // It closes any stale tab for the task first (the Resume case re-spawns with a
+  // fresh serverId), so a task never ends up with two tabs.
   // `setBulkSpawnNotifier` bridges in the strip's notifier later (it's produced
   // after the task list, which needs `handleTaskSpawned`).
-  const { handleTaskSpawned, setBulkSpawnNotifier } =
-    useTaskSpawnHandler(addTerminal);
+  const { handleTaskSpawned, setBulkSpawnNotifier } = useTaskSpawnHandler(
+    addTerminal,
+    closeTerminalsForTask,
+  );
 
   const data = useTaskBoardDataView(activeFolder, handleTaskSpawned);
   const {
@@ -62,6 +66,7 @@ export function useTaskBoardController(activeFolder: string) {
     activeFolder,
     addTerminal,
     closeTerminal,
+    closeTerminalsForTask,
     showError,
   );
   const {

@@ -35,8 +35,11 @@ explicit-curl callbacks — never by polling task state.
 - `scratchDirectory.ts` — scratch-dir lifecycle: `writeScratchReadme`
   (tags the run dir as not-the-source-of-truth, idempotent) and
   `pruneOldWorkflowRuns` (keeps the newest `WORKFLOW_RUN_RETENTION` runs,
-  always preserves the active run; the recursive delete is path- and
-  reparse-point-bounded so it can't walk a junction loop into `.git`).
+  and always preserves EVERY still-`running` run — the caller passes
+  `getRunningRunIds(project)` in, mirroring the homeScratch sweep's live-PTY
+  guard, so a concurrent run parked on a long step can't be pruned out from
+  under the backend; the recursive delete is path- and reparse-point-bounded
+  so it can't walk a junction loop into `.git`).
 - `commandBuilder.ts` — `buildWorkflowStepCommand`: workflow-step prompt
   wording plus harness dispatch through the shared `agentCommandBuilder.ts`
   utility (Claude permission flag, Pi model flag, Codex prompt quoting).

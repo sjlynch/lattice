@@ -123,3 +123,21 @@ export function getActiveRunsForProject(projectPath: string): WorkflowRun[] {
   }
   return out;
 }
+
+// Ids of every run currently `running`, optionally scoped to one project.
+// The workflow-step scratch prune passes this in so it never deletes a live
+// run's scratch dir (its Stop-hook completion config / task-creation helper)
+// just because a burst of newer runs pushed it past the retention window —
+// concurrent runs are allowed, and a run parked on a long agent step keeps a
+// stale run-dir mtime. Run ids are globally unique, so the project filter is a
+// precision nicety rather than a correctness requirement.
+export function getRunningRunIds(projectPath?: string): Set<string> {
+  const key = projectPath ? canonicalProjectPath(projectPath) : null;
+  const out = new Set<string>();
+  for (const r of runs.values()) {
+    if (r.status !== 'running') continue;
+    if (key && r.projectPath !== key) continue;
+    out.add(r.id);
+  }
+  return out;
+}
