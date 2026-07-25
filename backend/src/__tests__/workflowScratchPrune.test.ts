@@ -7,6 +7,8 @@ import {
   pruneOldWorkflowRuns,
   writeScratchReadme,
 } from '../workflowRuns/stepSpawner.js';
+import { getRunningRunIds, runs, type WorkflowRun } from '../workflowRuns/state.js';
+import { canonicalProjectPath } from '../projectPath.js';
 
 async function mkScratchTmpDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), 'lattice-workflow-prune-'));
@@ -133,6 +135,75 @@ test('pruneOldWorkflowRuns: keeps newest 5 + always keeps the active run', async
       .catch(() => false);
     assert.ok(activeExists, 'active run dir must be preserved even with oldest mtime');
   } finally {
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+function registerRunningRun(id: string, projectPath: string): WorkflowRun {
+  const run: WorkflowRun = {
+    id,
+    workflowId: 'wf_test',
+    workflowName: 'test',
+    projectPath: canonicalProjectPath(projectPath),
+    status: 'running',
+    startedAt: 0,
+    totalSteps: 3,
+    currentStepIndex: 1,
+  };
+  runs.set(id, run);
+  return run;
+}
+
+// Regression for the concurrent-run prune bug: pruneOldWorkflowRuns keeps the
+// newest N by mtime and deletes the rest. Concurrent workflow runs are allowed,
+// and a run parked on a long agent step keeps a stale run-dir mtime — so a burst
+// of newer runs could push a still-active run past the retention window and
+// delete its step scratch (Stop-hook completion config + create-task helper) out
+// from under the backend, hanging it. The prune must exclude EVERY `running` run
+// (from the state map), not just the one it is spawning into.
+test('pruneOldWorkflowRuns: never deletes a still-running run, even the oldest', async () => {
+  const tmp = await mkScratchTmpDir();
+  const project = path.join(tmp, 'project');
+  const registeredIds: string[] = [];
+  try {
+    const baseTime = Date.now() - 1_000_000;
+    // 8 wfrun dirs, oldest → newest. Retention is 5, so the 3 OLDEST
+    // (wfrun_0/1/2) are the deletion window.
+    const dirs: string[] = [];
+    for (let i = 0; i < 8; i++) {
+      dirs.push(await touchDir(tmp, `wfrun_${i}_xxxx`, baseTime + i * 1_000));
+    }
+
+    // Register two of the three deletion-window dirs as `running`: the OLDEST
+    // (wfrun_0 — would sort first for deletion) and a sibling (wfrun_2). Only
+    // wfrun_1 in that window is not running.
+    registeredIds.push('wfrun_0_xxxx', 'wfrun_2_xxxx');
+    registerRunningRun('wfrun_0_xxxx', project);
+    registerRunningRun('wfrun_2_xxxx', project);
+
+    // Spawn context is a THIRD, newest run — so keepRunId does NOT cover the two
+    // parked runs; only the active-set guard can save them.
+    await pruneOldWorkflowRuns(
+      tmp,
+      'wfrun_7_xxxx',
+      getRunningRunIds(project),
+    );
+
+    const survives = async (dir: string) =>
+      fs.access(dir).then(() => true).catch(() => false);
+
+    // Both running dirs survive despite being in the mtime deletion window.
+    assert.ok(await survives(dirs[0]), 'running wfrun_0 (oldest) must survive');
+    assert.ok(await survives(dirs[2]), 'running wfrun_2 must survive');
+    // The one non-running dir in the deletion window is actually pruned, so the
+    // guard didn't just disable pruning wholesale.
+    assert.ok(!(await survives(dirs[1])), 'non-running wfrun_1 must be pruned');
+    // Everything in the newest-5 window is untouched.
+    for (let i = 3; i < 8; i++) {
+      assert.ok(await survives(dirs[i]), `newest-window wfrun_${i} must survive`);
+    }
+  } finally {
+    for (const id of registeredIds) runs.delete(id);
     await fs.rm(tmp, { recursive: true, force: true });
   }
 });
