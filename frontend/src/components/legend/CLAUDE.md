@@ -18,8 +18,9 @@ renders is driven by the App-level `healthMode` prop.
 - `HealthInfoIcon.tsx` — info icon and portal-rendered popover for each health row
 - `LegendRow.tsx` — render-only extension row button used by the default legend
 - `useLegendRows.ts` — extension tallying plus visible/all-known row derivation
-- `ShapePreview.tsx` — small canvas preview of an extension's sprite shape, also
-  reused inside the regular Legend's per-extension rows
+- `ShapePreview.tsx` — small inline-SVG preview of an extension's sprite shape
+  (matching the canvas-drawn graph sprites), reused by `LegendRow` and the
+  regular Legend's toggle button
 
 Per-extension shapes and colors come from `frontend/src/extensionStyles.ts` —
 the single source of truth shared by the 3D graph and this legend. Health score

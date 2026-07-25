@@ -5,11 +5,11 @@ Backend bindings, grouped by domain. `import { ... } from '../api'` resolves to 
 ## Modules
 
 - `types/` — domain-split shared API types (scan/health, settings, tasks, workflows, runs, git history). `types.ts` is a compatibility re-export shim.
-- `http.ts` — `asJson<T>(r)` extracts `{error}` from non-2xx responses so toasts get real messages; `postJson`/`patchJson`/`deleteJson` centralize JSON request formation.
-- `ws.ts` — `subscribeWs<T>(pathWithQuery, onMessage)`. Auto-reconnects with exponential backoff (cap 5 s). Every WS subscriber here uses it.
+- `http.ts` — `asJson<T>(r)` extracts `{error}` from non-2xx responses so toasts get real messages, throwing a status-bearing `HttpError` (callers branch on `.status`, e.g. the workflow queue treating 409 as retry-able); `postJson`/`patchJson`/`deleteJson` centralize JSON request formation.
+- `ws.ts` — `subscribeWs<T>(pathWithQuery, onMessage)`: auto-reconnecting WS (exponential backoff cap 5 s; backoff resets only after the socket survives `WS_STABLE_MS`). `subscribeWsShared` ref-counts one socket per path, parses each frame once and fans it out to every handler, with optional latest-snapshot replay for late joiners (used by `subscribeTasks`). Every WS subscriber builds on one of these.
 - `scan.ts` — folder browsing + recursive source scan; git history/branch helpers, incl. `subscribeGitBranch(project, cb)` (the `/ws/git-branch` live navbar-chip stream — pushes the branch on connect + on every checkout) and `subscribeGitStatus(project, cb)` (the `/ws/git-status` stream — pushes a compact status signature on connect + whenever a commit/edit changes it, so the timeline scrubber can live-refresh `fetchGitHistory`, deduping on `GitHistoryResult.signature`).
 - `health.ts` — `subscribeHealth(project, cb)`: the `/ws/health` `HealthUpdate` stream (one per file save / tree change).
-- `settings.ts` — per-project `UserSettings`.
+- `settings.ts` — per-project `UserSettings` (`fetchUserSettings`/`patchUserSettings`) plus adjacent per-project/harness fetches: `subscribeHarnesses` (the `/ws/harnesses` availability stream), `getPiModels`/`probePiEndpoint`, `ensureProjectInstrumentation`, `fetchProjectEnv`, `fetchInstructionTemplates`, `fetchHarnessSystemPrompts`.
 - `globalSettings.ts` — machine-global settings (`maxConcurrentAgents`, MCP custom/override defs, `piModelMenu`, `piProviders`): `fetchGlobalSettings`, `patchGlobalSettings`.
 - `mcp.ts` — MCP control-plane: `fetchMcpCatalog`, redacted-secret get/set (`fetchMcpSecrets`/`setMcpSecret`), `fetchMcpEnvPresence`, `validateMcpServer`, and other-tool import `scanMcpImport`/`applyMcpImport`. Raw secret values never cross this boundary.
 - `tasks.ts` — task CRUD + `runTask`, `resumeTask`, `mergeTask`, `subscribeTasks`.
@@ -23,5 +23,5 @@ Backend bindings, grouped by domain. `import { ... } from '../api'` resolves to 
 
 1. Type goes in the matching `types/<domain>.ts` file, and is re-exported by `types/index.ts`.
 2. Function goes in the matching domain file. Use `asJson` for simple GETs and `postJson`/`patchJson`/`deleteJson` for JSON writes.
-3. WS endpoints: call `subscribeWs(path, cb)` directly — don't reinvent reconnect/backoff.
+3. WS endpoints: call `subscribeWs(path, cb)` (or `subscribeWsShared` when several features watch the same path) — don't reinvent reconnect/backoff.
 4. New domains: add a file + add `export *` to `index.ts`.

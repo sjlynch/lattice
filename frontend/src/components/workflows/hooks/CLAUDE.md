@@ -9,6 +9,13 @@ there.
   actions for the panels. The derived run views and the queue/actions object
   assembly are split out (`useWorkflowRunViews` + the local `buildQueueView` /
   `buildActions` helpers) so the body reads as plain wiring.
+- `useWorkflowHarnessOverrides.ts` — harness availability (`useHarnessAvailability`)
+  + the curated Pi menu (`usePiModelMenu`, threaded to each step's harness select,
+  so both refetch when Settings → Pi saves) plus the per-workflow run-override map.
+  Each override is stored as one `{harness, piModel}` object;
+  `getWorkflowHarnessOverride`/`getWorkflowPiModelOverride` read it and
+  `setWorkflowHarnessOverride(id, harness, piModel?)` writes it (the model kept
+  only when the harness is `pi`).
 - `useWorkflowList.ts` — hydrate/sort saved workflows and stay synced via
   `/ws/workflows`.
 - `useWorkflowEditor.ts` — mutable editor draft plus save/discard/delete and
@@ -28,6 +35,13 @@ there.
   active-run list, the recently-failed list (navbar chip + runs aside), and the
   active/recent/control-progress run that belongs to the currently-edited
   workflow.
+- `useWorkflowRunActions.ts` — the run-side callbacks:
+  `startWorkflowDefinition`/`runWorkflow`/`runEditorWorkflow`/`stopRun`. Saves a
+  dirty editor before running and threads `harnessOverride`/`piModelOverride`/
+  `requireNoActiveRun` to `startWorkflow`. Returns a discriminated `StartOutcome`
+  (`started` / `finished` (completion WS beat the `/run` response) / `busy` (backend
+  409) / `failed`) and guards every await against a mid-flight project switch so a
+  result never lands on the wrong project's state.
 - `useWorkflowQueue.ts` — React adapter around the pure `queueScheduler`; starts
   queued runs and advances from active-run diffs. Feeds the scheduler a
   `StepContext` each tick — the count of active runs the queue didn't dispatch
@@ -56,9 +70,36 @@ there.
   the previous project's running/queued status and the diff would
   dispatchFail-drop the prior project's pending entry. Regression-covered in
   `src/__tests__/useWorkflowQueueProjectScope.test.ts`.
-- `useWorkflowRuns.ts` — `/ws/workflow-runs` state, recent-run linger, and
-  per-step terminal spawning through `TerminalsContext`. Thin wiring over the
-  three helpers below.
+- `useWorkflowQueueActions.ts` — enqueue/remove/clear/start/stop/setMode callbacks
+  dispatched into `useWorkflowQueue`. Each enqueue captures the workflow's current
+  harness/Pi-model override; `enqueueEditorWorkflow` saves a dirty editor first so
+  the queued entry reflects the latest steps.
+- `useWorkflowQueueSelectors.ts` — the queue panel's derived view of scheduler
+  state: `queuedItems` (entries joined to their `Workflow`), `busy` (an in-flight
+  `/run`, NOT "processing a long-running workflow" — so Clear/Remove stay live once
+  the start is acknowledged), `startedActive`, `disabled`, and the human status
+  string.
+- `useWorkflowRuns.ts` — composition layer for live workflow-run state: owns the
+  `activeRuns` / `controlProgress` maps and exposes `addActiveRun` /
+  `getRecentRun` / `dismissRecent`. The recent-run linger lives in
+  `useWorkflowRecentRuns`, additive mount/visibility recovery fetches in
+  `useWorkflowRunRecoveryFetch`, and `/ws/workflow-runs` event routing + per-step
+  terminal spawning in `useWorkflowRunSubscription`; the pure state transitions +
+  linger constants are in `workflowRunSync.ts`. Recovery: the WS `hello` is the
+  authoritative snapshot and the only removal path; fetches are additive-only and
+  never remove a run.
+- `useWorkflowRecentRuns.ts` — the project-scoped recent-run map and its linger
+  timers (`createRecentDismissalScheduler`); clears on folder change, keeps a ref
+  for additive fetch reconciliation, and cancels pending dismissals on teardown.
+- `useWorkflowRunRecoveryFetch.ts` — additive `/api/workflow-runs/active` fetches
+  on mount + tab-visibility return; rehydrates a run a missed socket event dropped
+  but never resurrects a finalized recent run (throttled by
+  `VISIBILITY_REFETCH_MIN_INTERVAL_MS`).
+- `useWorkflowRunSubscription.ts` — subscribes to `/ws/workflow-runs` and routes
+  each event (`hello` / `started` / `progress` / terminal / `step-spawned` /
+  `workflow-task-spawned` / `step-control-progress`) through the `workflowRunSync`
+  reducers + `workflowTerminalSpawns` mappers; clears project-scoped run state on
+  every folder change so one project's runs never leak into another's.
 - `workflowRunSync.ts` — pure, side-effect-free state transitions + linger
   constants for the active/recent/control-progress maps (`activeRunsFromHello`,
   `upsertRun`, `removeKey`, `clearStaleControlProgress`, `setControlProgress`,
