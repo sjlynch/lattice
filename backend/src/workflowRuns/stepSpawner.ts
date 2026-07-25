@@ -30,7 +30,7 @@ import {
   renderStepMarkdown,
 } from './stepMarkdown.js';
 import { getProjectDirtyState, type DirtyStateSummary } from './projectDirtyState.js';
-import { notify, snapshot, type WorkflowRun } from './state.js';
+import { getRunningRunIds, notify, snapshot, type WorkflowRun } from './state.js';
 import { pruneOldWorkflowRuns, writeScratchReadme } from './scratchDirectory.js';
 import { buildWorkflowStepCommand } from './commandBuilder.js';
 import { enqueueWorkflowStepSession, workflowStepAgentId } from './sessionSpawner.js';
@@ -68,7 +68,11 @@ async function prepareStepScratch(
   // scratch grew without bound.
   const freshRunDir = await writeScratchReadme(runDir);
   if (freshRunDir) {
-    await pruneOldWorkflowRuns(workflowStepsRoot, run.id);
+    // Exclude every run still `running` for this project, not just the one we
+    // are spawning into: concurrent runs are allowed, and a run parked on a
+    // long agent step would otherwise be prunable (stale run-dir mtime) even
+    // though the backend still intends to advance it.
+    await pruneOldWorkflowRuns(workflowStepsRoot, run.id, getRunningRunIds(wf.projectPath));
   }
   return {
     workflowStepsRoot,

@@ -64,12 +64,27 @@ export async function writeScratchReadme(runDir: string): Promise<boolean> {
 // Prune older wfrun_* directories so they stop accumulating misleading
 // `tasks*.json` snapshots that later agents grep and trust.
 //
+// `keepRunId` is the run currently spawning; `activeRunIds` is the set of ALL
+// runs still `running` for the project (from state.ts `runs`). Both are
+// excluded from deletion. Guarding the whole active set — not just the current
+// run — is load-bearing: concurrent workflow runs are allowed, and a run parked
+// on a long agent step keeps a stale run-dir mtime (only advancing a step bumps
+// it). Without this, a burst of newer runs could push a still-active run past
+// the retention window and prune its step-N/WORKFLOW_STEP.md, create-task.cjs,
+// and .claude Stop-hook config out from under it, leaving it hung (no /complete
+// fires). This mirrors the homeScratch boot sweep's `hasLiveSessionAtOrUnder`
+// guard.
+//
 // Recursive delete inside the project tree needs the same defence-in-depth
 // the push-run cleanup uses: bound the target to `<workflowStepsRoot>/wfrun_*`
 // strictly, refuse if the path is a symlink/junction whose realpath escapes,
 // and strip any reparse points inside before recursing so we cannot walk a
 // junction loop into `.git` or anywhere else.
-export async function pruneOldWorkflowRuns(workflowStepsRoot: string, keepRunId: string): Promise<void> {
+export async function pruneOldWorkflowRuns(
+  workflowStepsRoot: string,
+  keepRunId: string,
+  activeRunIds: ReadonlySet<string> = new Set(),
+): Promise<void> {
   let entries: { name: string; mtimeMs: number }[];
   try {
     const names = await fs.readdir(workflowStepsRoot);
@@ -89,11 +104,13 @@ export async function pruneOldWorkflowRuns(workflowStepsRoot: string, keepRunId:
     return;
   }
   if (entries.length <= WORKFLOW_RUN_RETENTION) return;
-  // Always keep the run we are currently spawning into, even if mtime-sorted.
+  // Keep the newest WORKFLOW_RUN_RETENTION by mtime, and NEVER delete a run
+  // that is still spawning (keepRunId) or otherwise `running` (activeRunIds),
+  // regardless of mtime — a live run's scratch is not disposable.
   const sorted = entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
   const toDelete = sorted
     .slice(WORKFLOW_RUN_RETENTION)
-    .filter((e) => e.name !== keepRunId);
+    .filter((e) => e.name !== keepRunId && !activeRunIds.has(e.name));
   for (const entry of toDelete) {
     const target = path.join(workflowStepsRoot, entry.name);
     try {
