@@ -22,7 +22,9 @@ import {
   PI_SYSTEM_PROMPT_CONFIG_FILENAME,
 } from '../harnessSystemPrompts/piShim.js';
 import { resolveHarnessSystemPrompt } from '../harnessSystemPrompts/resolve.js';
+import { prepareCodexSystemPrompt } from '../harnessSystemPrompts/inject.js';
 import { buildHarnessSystemPromptEditorData } from '../harnessSystemPrompts/editorData.js';
+import { homeProjectScratchDir } from '../projectPath.js';
 import { patchUserSettings } from '../userSettings.js';
 
 const SHELL = 'bash'; // shellEnvRef → "$VAR" on POSIX, deterministic to assert.
@@ -125,6 +127,56 @@ test('configureCodexSystemPrompt is a no-op for empty args and non-Codex command
     'claude "x"',
   );
   assert.deepEqual(env, {});
+});
+
+// --- Codex system-prompt config-arg RENDERING (cmd-safe TOML) ----------------
+
+// Regression: prepareCodexSystemPrompt must emit no raw double-quote. Each
+// `-c key=value` rides in a child-env var the command references as `"%VAR%"`,
+// and Windows cmd.exe strips inner double-quotes out of that expansion and
+// re-tokenizes the value on its own spaces — so a JSON.stringify'd value like
+// `developer_instructions="Be terse."` reaches Codex split across argv. Values
+// must therefore be double-quote-free TOML literals (single-quoted path, `'''`
+// multi-line literal for prose), matching the proven MCP quoting.
+test('prepareCodexSystemPrompt renders cmd-safe TOML (no double-quote) for spaces + apostrophes', async () => {
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-hsp-codex-'));
+  try {
+    await patchUserSettings(project, {
+      harnessSystemPrompts: {
+        codex: {
+          // Spaces + an apostrophe: the exact shape that broke under
+          // JSON.stringify on cmd.exe.
+          append: "Always write tests. Don't be terse.",
+          replace: 'You are a custom Codex. Be precise.',
+        },
+      },
+    });
+
+    const { configArgs } = await prepareCodexSystemPrompt(project);
+    const dev = configArgs.find((a) => a.startsWith('developer_instructions='));
+    const model = configArgs.find((a) => a.startsWith('model_instructions_file='));
+    assert.ok(dev, 'append → developer_instructions arg present');
+    assert.ok(model, 'replace → model_instructions_file arg present');
+
+    // THE invariant: no raw double-quote survives to the rendered value, or
+    // cmd.exe's `"%VAR%"` expansion would split it on its spaces.
+    for (const arg of configArgs) {
+      assert.ok(!arg.includes('"'), `config arg must contain no double-quote: ${arg}`);
+    }
+
+    // Prose rides in a TOML multi-line literal with the apostrophe intact.
+    assert.equal(dev, "developer_instructions='''Always write tests. Don't be terse.'''");
+    // The replace path is a single-quoted TOML literal (absolute scratch path).
+    assert.match(model!, /^model_instructions_file='.*codex-instructions\.md'$/);
+  } finally {
+    // The replace side writes a scratch file under the home-scoped, per-project
+    // system-prompts dir — clean it (keyed by the temp project's hash).
+    await fs.rm(homeProjectScratchDir(project, 'system-prompts'), {
+      recursive: true,
+      force: true,
+    });
+    await fs.rm(project, { recursive: true, force: true });
+  }
 });
 
 // --- Pi extension shim -------------------------------------------------------
