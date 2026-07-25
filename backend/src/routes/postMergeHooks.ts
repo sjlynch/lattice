@@ -20,7 +20,12 @@ import {
 import { canonicalProjectPath } from '../projectPath.js';
 import { proxyKillSession } from '../terminalProxy.js';
 import { postMergeHookAgentId } from '../postMergeHooks/stopHook.js';
+import {
+  cancelPostMergeHookStopGate,
+  requestPostMergeHookStopComplete,
+} from '../postMergeHooks/stopHookGate.js';
 import { unregisterAgentSession } from '../agentSessions.js';
+import { forgetAgentQuiescence } from '../agentQuiescence.js';
 import { cleanupPostMergeHookSession } from '../postMergeHooks/cleanup.js';
 import { finishHomeScratchDoneResponse } from '../homeScratch/routes.js';
 
@@ -40,6 +45,7 @@ export function buildPostMergeHooksRouter(): Router {
 
   r.post('/api/post-merge-hooks/:id/complete', async (req, res) => {
     const id = req.params.id;
+    const agentId = postMergeHookAgentId(id);
     const source =
       typeof req.query.source === 'string' ? req.query.source : 'unknown';
     const errParam =
@@ -47,27 +53,59 @@ export function buildPostMergeHooksRouter(): Router {
         ? req.query.error.trim().slice(0, 500)
         : undefined;
     const existing = getPostMergeHook(id);
-    // Drop the graph node regardless of tracking state.
-    unregisterAgentSession(postMergeHookAgentId(id));
     console.log(
       `[post-merge-hook-complete] id=${id} source=${source}` +
         (errParam ? ` error=${JSON.stringify(errParam)}` : '') +
         (existing ? '' : ' (idempotent: already finished/forgotten)'),
     );
+
+    // The actual finish: drop the graph node + quiescence state, finalize the
+    // hook (resolving the merge-run / Phase C waiters), then clean up scratch
+    // off the response path — the Stop hook fires while the pty is still
+    // winding down, and Windows may need retries after it exits.
+    const finish = (tracked: { projectPath: string; id: string }): void => {
+      unregisterAgentSession(agentId);
+      forgetAgentQuiescence(agentId);
+      finishPostMergeHook(id, errParam ? 'errored' : 'completed', errParam);
+      void cleanupPostMergeHookSession(tracked.projectPath, tracked.id);
+    };
+
+    // Claude's `Stop` hook fires early/repeatedly while a Task subagent is still
+    // running, so a Stop-sourced completion must wait for the session to go
+    // quiescent before finishing — otherwise the merge run reports `completed`
+    // (and a queued workflow's next step dispatches, past Phase C) on top of a
+    // still-working post-merge agent. The model's own explicit curl, Pi's
+    // `session_shutdown` extension, and Codex's `Stop` hook are deliberate
+    // end-of-work signals and finish immediately; an error-tagged completion
+    // also finishes immediately (don't gate a reported failure). Mirrors the
+    // workflow-step gate (workflowRuns/stopHookGate.ts).
+    if (
+      existing &&
+      existing.status === 'running' &&
+      !errParam &&
+      source.startsWith('claude-stop-hook')
+    ) {
+      requestPostMergeHookStopComplete(id, () =>
+        finish({ projectPath: existing.projectPath, id: existing.id }),
+      );
+      return res.json({ ok: true, gated: true });
+    }
+
+    // Immediate finish (model curl / Pi / Codex / error / idempotent no-op).
+    // Drop the graph node + any stale gate regardless of tracking state.
+    cancelPostMergeHookStopGate(id);
+    unregisterAgentSession(agentId);
     await finishHomeScratchDoneResponse({
       res,
       run: existing,
-      onRun: (tracked) => {
-        finishPostMergeHook(id, errParam ? 'errored' : 'completed', errParam);
-        // Cleanup off the response path: the Stop hook fires while the pty is
-        // still winding down, and Windows may need retries after it exits.
-        void cleanupPostMergeHookSession(tracked.projectPath, tracked.id);
-      },
+      onRun: (tracked) => finish(tracked),
     });
   });
 
   r.post('/api/post-merge-hooks/:id/abort', async (req, res) => {
     const id = req.params.id;
+    cancelPostMergeHookStopGate(id);
+    forgetAgentQuiescence(postMergeHookAgentId(id));
     unregisterAgentSession(postMergeHookAgentId(id));
     const existing = getPostMergeHook(id);
     if (!existing) return res.json({ ok: true });

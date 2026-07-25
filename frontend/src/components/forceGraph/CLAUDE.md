@@ -48,13 +48,13 @@ label physics in `labelPhysics/CLAUDE.md`.
   nearest existing *ancestor directory* node — walking `a/b/c` → `a/b` → `a` —
   and falls back to the scan-root node id when none exist, so deleted/renamed
   files always attach somewhere real rather than dangling. See
-  `__tests__/timelineDiff.test.ts`. `hooks/useGitTimeline` keeps history **live**:
+  `src/__tests__/timelineDiff.test.ts`. `hooks/useGitTimeline` keeps history **live**:
   besides the once-per-project fetch it subscribes to `subscribeGitStatus`
   (`/ws/git-status`) and re-fetches on a new signature (deduped vs the last one),
   so a commit / working-tree edit updates the commit list + dirty rings without a
   page refresh. `timelineRange.reconcileTimelineRange` remaps the scrubber range
   onto the new tick space so a live update never yanks the handles (tested in
-  `__tests__/timelineRange.test.ts`).
+  `src/__tests__/timelineRange.test.ts`).
 
 **Node sprites & recolor overlays**
 - `nodeObjectFactory.ts` — `buildNodeObject`: builds a node's THREE root by
@@ -121,7 +121,9 @@ label physics in `labelPhysics/CLAUDE.md`.
 
 **Batched (instanced) renderers**
 - `instancedLinks.ts` / `instancedNodes.ts` (+ `instancedBatching.ts` shared
-  lifecycle helpers) — collapse the library's per-link `Line`s / per-node
+  lifecycle helpers, `matrixBuffer.ts` shared Float32Array writers for the
+  interleaved GPU buffers — named column-major matrix/vertex offsets, THREE-free) —
+  collapse the library's per-link `Line`s / per-node
   `Group`s into one `LineSegments` / a few `InstancedMesh`es to cut orbit-time
   draw calls. Default-on; re-upload positions only on node-motion frames;
   re-capture object arrays on every `graphData()` swap (`dataGeneration`
@@ -167,6 +169,8 @@ label physics in `labelPhysics/CLAUDE.md`.
   `hooks/useCameraPersistence`).
   `depthMap` + `useNodeDepthCache` — Alt-label depth bands; `menu.ts` /
   `renderOrders.ts` — right-click items / z-layer constants.
+  `searchMatcher.ts` — `buildSearchRegExp` for the search bar's filename pass
+  (wildcard/regex, kept in sync with the backend `search.ts` rules).
 
 ## Hooks
 

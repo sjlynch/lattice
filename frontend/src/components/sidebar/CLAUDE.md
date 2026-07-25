@@ -29,14 +29,26 @@ Implementation pieces for `../Sidebar.tsx`.
   `--dangerously-skip-permissions`); `createTerminalSpec` drops the flag to plain
   `codex` when the `codexYolo` setting (Settings → Terminals) is off — the flag
   is passed down from `terminalLaunchSettings.codexYolo`.
-- `SidebarPanelTabs.tsx` — Terminals / Merging / Startup panel switcher.
-- `SidebarTabsBar.tsx` — scrollable terminal tabs, close buttons, the
-  right-click entry point, double-click-to-rename (inline `<input>`;
-  Enter/blur commits, Escape cancels; the label doubles as the searchable
-  session name — see `useTerminalSearch`), and HTML5 drag-and-drop reordering
-  (drop a tab on another to reorder; calls `reorderTerminal` from
-  `TerminalsContext`, which reorders the full persisted list by id so it's
-  correct under panel/search filtering).
+- `SidebarPanelTabs.tsx` — Terminals / Merging / Startup panel switcher (Merging
+  tab carries a count badge; each shown only when non-empty).
+- `SidebarTabsBar.tsx` — the scrollable tab strip: scroll arrows, HTML5
+  drag-and-drop reordering state, and which tab is mid-rename (`editingId`); maps
+  `visibleTerminals` to `SidebarTab` rows. Dropping a tab on another calls
+  `reorderTerminal` from `TerminalsContext`, which reorders the full persisted
+  list by id so it stays correct under panel/search filtering.
+- `SidebarTab.tsx` — one memoized tab row: kind icon (terminal/merge/startup),
+  label or the inline rename input, a status dot for the attention states
+  (reconnecting/exited/dead), and a close button. Double-click starts a rename,
+  right-click opens the context menu; the label doubles as the searchable session
+  name (see `useTerminalSearch`). Memoized so only the tabs whose flags change
+  re-render on a `TerminalsContext` update or drag.
+- `RenameInput.tsx` — the rename `<input>` leaf: seeds its draft from the current
+  label and owns per-keystroke state (so churn never reaches sibling tabs). A
+  `doneRef` guard keeps the exact semantics — Enter or blur commits once, Escape
+  cancels — even though unmounting the focused input also fires blur.
+- `TabContextMenu.tsx` — the right-click popover (Close Tabs to the Left / Right /
+  All Others), fixed-positioned at the click point; each item disables when
+  there's nothing on that side. State/handlers come from `hooks/useTabContextMenu`.
 - `SidebarEmptyState.tsx` — per-panel empty messaging.
 - `hooks/useTerminalGroups.ts` — project-scoped regular/merge/startup grouping.
   Scoping goes through `terminal/terminalScope.ts`'s `terminalBelongsToProject`:
@@ -45,13 +57,18 @@ Implementation pieces for `../Sidebar.tsx`.
   from it. Never fall back to showing `!projectPath` terminals in every project
   — that surfaced a wrong-repo shell after a sessionStorage-shape upgrade.
 - `hooks/usePanelState.ts` — active panel + `activeId` reconciliation and
-  auto-switching when merge/startup tabs appear.
+  auto-switching (matches the panel to the active terminal; falls back to
+  Terminals when a Merging/Startup panel empties). Deliberately does NOT steal
+  focus to a spawned merge resolver (a "Merge All" burst would mount many panes
+  and blow past Chrome's WebGL context cap). Pure logic (`panelForKind`,
+  `shouldFallBackToTerminals`) lives in `hooks/panelState.ts`.
 - `hooks/useTerminalSearch.ts` / `useTabScrolling.ts` — filter state and tab
   scroll affordances. The search field is always visible inline with the panel
   tabs (no longer a toggle) and filters the active panel's tabs by label + cwd;
   Escape clears it. `switchPanel` resets the filter when changing panels.
-- `hooks/useTabContextMenu.ts` — close-left/right/others state/actions; the
-  popover markup is still inline in `Sidebar.tsx`.
+- `hooks/useTabContextMenu.ts` — close-left/right/others state + actions (each
+  confirms the bulk close first, since the ptys are killed); the popover markup is
+  rendered by `TabContextMenu.tsx`.
 - `hooks/useStartupTerminals.ts` — validates/reseeds startup ptys and exposes
   restart-all.
 - `hooks/useMountedTerminalIds.ts` — owns `mountedIds`: lazy-mounts

@@ -16,8 +16,9 @@ caller does the `resolveInstructionTemplate(project, id)`. See
 ## Modules
 
 - `taskPrompt.ts` — `renderTaskMarkdown(task, backendOrigin, harness, envNotes,
-  deadCode)`: builds the `LATTICE_TASK.md` body. **Returns the string** — the
-  caller (`worktree/setup/setupFiles.ts`) writes it into the worktree root.
+  deadCode, template)`: builds the `LATTICE_TASK.md` body. **Returns the
+  string** — the caller (`worktree/setupFiles.ts`) writes it into the worktree
+  root.
   Prepends the env-notes blockquote, then an optional dead-code block.
 - `mergePrompt.ts` — `writeMergeInstructions(...)`: **writes**
   `MERGE_INSTRUCTIONS.md` *inside the worktree* (the resolver Claude runs with

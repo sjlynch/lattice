@@ -1,6 +1,7 @@
 import {
   BASE,
   ensureTerminalServer,
+  probeServer,
   respawn,
 } from '../terminalServerLifecycle.js';
 import {
@@ -171,7 +172,12 @@ export type CreateSessionResult =
 
 type CreateOnce =
   | { id: string }
-  | { error: string; recoverable: boolean; code?: 'CAP' };
+  // `recoverable` ⇒ the failure MIGHT warrant restoring the terminal-server.
+  // `connectionError` narrows that: the fetch threw at the socket level (not a
+  // bad HTTP body), which is usually a transient reset rather than a dead
+  // server — proxyCreateSession re-probes /health before deciding, so it never
+  // respawns (killing every live PTY) on a stale keep-alive reset.
+  | { error: string; recoverable: boolean; connectionError?: boolean; code?: 'CAP' };
 
 // Pre-create a pty session in the terminal-server subprocess. Returns the
 // session id so route handlers can include it in their response and the
@@ -192,9 +198,37 @@ export async function proxyCreateSession(
   const body = await resolveHarnessSpawnBody(opts);
   const first = await tryCreateSessionOnce(body);
   if ('id' in first) return first;
+  // A socket-level connection error is NOT proof the server is dead: it answered
+  // /health milliseconds ago in ensureTerminalServer(), and under bursty "Run
+  // All" traffic the usual cause is undici reusing a pooled keep-alive socket
+  // the terminal-server already half-closed after its idle keepAliveTimeout (a
+  // textbook intermittent ECONNRESET). Respawning here would shut the shared
+  // server down and kill EVERY other live agent's PTY mid-run. So re-probe
+  // /health and only respawn if it's genuinely dead/stale; if it still answers
+  // ok, retry just this one spawn (a fresh socket), and if that also fails, fail
+  // only this spawn (non-recoverable) rather than tearing everything down.
+  if (first.connectionError) {
+    const status = await probeServer();
+    if (status === 'ok') {
+      console.warn(
+        `[terminal-proxy] connection error on POST /sessions but /health is ok — retrying this spawn only (no respawn). Error: ${first.error}`,
+      );
+      const retry = await tryCreateSessionOnce(body);
+      if ('id' in retry) return retry;
+      return { error: retry.error, code: retry.code };
+    }
+    console.warn(
+      `[terminal-proxy] connection error on POST /sessions and /health reports "${status}" — respawning terminal-server and retrying once. Error: ${first.error}`,
+    );
+    await respawn();
+    const second = await tryCreateSessionOnce(body);
+    if ('id' in second) return second;
+    return { error: second.error, code: second.code };
+  }
   // Retry once if the failure was non-JSON (stale server / unrelated listener
   // on 5185). respawn() forces a clean restart even if the stale server's
-  // /health currently still answers OK — the symptom proves it isn't really.
+  // /health currently still answers OK — the garbage body proves it isn't
+  // really current (unlike a connection error, where /health is authoritative).
   if (first.recoverable) {
     console.warn(
       `[terminal-proxy] non-JSON response from terminal-server — forcing respawn and retrying once. First error: ${first.error}`,
@@ -235,9 +269,18 @@ export async function tryCreateSessionOnce(
         recoverable: false,
       };
     }
-    // Connection errors (server died between probe and request) are
-    // recoverable — a respawn will restore service.
-    return { error: (err as Error).message, recoverable: true };
+    // A socket-level connection error (undici `TypeError: fetch failed` with an
+    // ECONNRESET/EPIPE/ECONNREFUSED cause). Might mean the server died between
+    // the probe and this request — but far more often it's a transient reset of
+    // a stale keep-alive socket. Flag it as a connection error (not a plain
+    // recoverable failure) so proxyCreateSession re-probes /health and only
+    // respawns if the server is actually gone — never nuking live PTYs on a
+    // transient reset.
+    return {
+      error: (err as Error).message,
+      recoverable: true,
+      connectionError: true,
+    };
   }
   const text = await res.text().catch(() => '');
   type SessionBody = { id?: string; error?: string; code?: 'CAP' };

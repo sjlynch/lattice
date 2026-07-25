@@ -45,6 +45,16 @@ here instead of bloating the parent file.
 - `processTarget.ts` — per-task state machine: re-read task state, honor the
   merge lock, retry flagged conflicts, re-sync/finalize, spawn resolver PTYs,
   update run progress, and run the repo-integrity check.
+- `flaggedConflict.ts` — `handleFlaggedConflictTask`: a retried `conflict:true`
+  task. Still mid-merge (worktree has markers) → `tryRespawnMidMergeResolver`
+  re-spawns a resolver and parks the run on its waiter; worktree already clean →
+  `tryFinalizeAfterResolverFinished` re-syncs + finalizes directly when main is
+  already an ancestor, else falls through to the normal merge path.
+- `repoIntegrity.ts` — the run **circuit breaker** (`checkRepoIntegrity` /
+  `finishTaskAndCheckIntegrity`): between tasks verify `.git` still exists and
+  HEAD only moved *forward* (FF). On a violation it records a `(run)` error,
+  sets `cancelRequested`, and halts so the remaining `ready_to_merge` tasks stay
+  put rather than piling onto a damaged repo.
 - `resolverSpawn.ts` + `resolverSpawn/` — conflict-resolver spawn subsystem
   (`resolverSpawn.ts` is the re-export facade; existing `./resolverSpawn.js`
   imports keep working). Split by concern so the spawn *mechanics* stay

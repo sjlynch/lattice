@@ -49,10 +49,15 @@ done.
 ## Task pipeline
 
 ```
-Open ──▶── In Progress ──▶── Ready to Merge ──▶── QA ──▶── Done
-                                                          (Deleted bin)
+Backlog ──▶── Open ──▶── In Progress ──▶── Ready to Merge ──▶── QA ──▶── Done
+                                                                       (Deleted bin)
 ```
 
+- `Backlog → Open`: **Backlog** holds captured-but-not-yet-actionable
+  tasks (the first board lane, no ▶ run button); **Open** is the
+  ready-to-run lane. Promote with the card's "Move to Open" action or a
+  drag — lanes/transitions live in
+  `frontend/src/components/taskboard/{lanes,moveTargets}.ts`.
 - `Open → In Progress`: ▶ button calls `POST /api/tasks/:id/run`. Backend
   creates `~/.lattice/worktrees/<projectHash>/<slug>-<id>` on branch
   `lattice/<slug>-<id>`, writes `LATTICE_TASK.md`, and installs a Claude

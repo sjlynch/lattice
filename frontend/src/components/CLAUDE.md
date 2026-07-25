@@ -4,10 +4,11 @@
 
 - `TopAppBar.tsx` — folder picker + workflow/taskboard launchers.
 - `Sidebar.tsx` + `sidebar/` — terminal tabs/panels + new-shell tray; `Sidebar.tsx` composes the split components/hooks and reads `useTerminals()`.
-- `TerminalPane.tsx` — xterm.js + WS to `/ws/terminal` (proxied to `:5185`). The WebglAddon is attached only while `active=true` and disposed on deactivate so each tab doesn't permanently hold a WebGL context.
+- `TerminalPane.tsx` + `terminal/` — xterm.js + WS to `/ws/terminal` (backend `:5184`, bridged to the detached terminal-server on `:5185`); the pane is just `useRef`s wired into the three `terminal/` hooks (lifecycle / connection / active-WebGL). The WebglAddon is attached only while `active=true` and disposed on deactivate so each tab doesn't permanently hold a WebGL context (Chrome's ~16-per-page cap).
 - `Legend.tsx` — composition layer for per-extension toggles. Row derivation lives in `legend/useLegendRows.ts`, rendering in `legend/LegendRow.tsx`, and shapes/colors still source from `extensionStyles.ts`.
 - `FloatingPanel.tsx` + `floatingPanel/` — portal markup plus extracted geometry/state/drag/resize helpers; persists size/pos under `lattice.<thing>.window`. Titlebar double-click / top-right maximize icon toggle an OS-style full-window maximize (restore returns to the prior pos/size).
-- `Modal.tsx` — generic backdrop overlay used by ForceGraph's "create task" flow.
+- `Modal.tsx` — generic portal backdrop overlay (focus-trap + mousedown-guard dismiss). Used by ForceGraph's create-task modal (`forceGraph/GraphTaskModal.tsx`), `FolderPicker`, and `shared/ConfirmDialog`.
+- `ErrorBoundary.tsx` — class-based React error boundary (lucide fallback UI). Wraps `<App>` in `main.tsx` and, in a `compact` variant, the force-graph subtree in `App.tsx`, so a render fault shows a recoverable "Reload" card instead of blanking the whole app. Styles in `error-boundary.css`.
 - `FolderPicker.tsx` + `folderPicker/` — backend-paged folder browser, with state in `useFolderPickerState` and focused row/list components.
 - `SettingsDialog.tsx` + `settings/` — settings tabs (Terminals / Agent prompts / Metrics / Agents / Pi / MCP) hosted in a **`FloatingPanel`** (draggable/resizable/maximizable, no backdrop — the app behind it stays interactive; titlebar carries the `×` close + maximize; geometry persists under `lattice.settings.window`), not a modal `Modal`; keep the ref handles as thin save adapters and put per-tab draft state in focused `use*Draft` hooks. The "Pi" tab (`settings/PiTab.tsx`) manages Pi endpoints + the model-menu curation (machine-global).
 
@@ -19,9 +20,10 @@
 
 The top-level `*.tsx` files are one-line re-export shims; implementation is in each subdir's `*Launcher.tsx` (taskboard/workflows) or `ForceGraphView.tsx` (forceGraph).
 
-## Shared
+## Shared (`shared/`, own CLAUDE.md)
 
 - `shared/ErrorToast.tsx` — copy-button error toast used by both TaskBoard and Workflows.
+- `shared/ConfirmDialog.tsx` — `ConfirmProvider` + `useConfirm()` (returns `{confirm, confirmUnsaved}`): promise-returning destructive / unsaved-changes confirmation modal (built on `Modal`).
 
 ## Styles
 
@@ -40,6 +42,7 @@ modules after.
 | `appbar.css` | `.appbar*`, `.fab` (taskboard launcher), `.wf-run-chip*` (workflow status chip) |
 | `sidebar.css` | `.sidebar-*` — panel tabs, terminal tab strip, empty state, search, new-menu |
 | `modal.css` | `.modal-backdrop`, `.modal`, `.modal-header/body/footer` (+ `@keyframes modal-fade`) |
+| `confirm-dialog.css` | `.confirm-dialog-message`, `.btn-danger` (`shared/ConfirmDialog`) |
 | `settings.css` | Settings aggregator. Ordered partials under `styles/settings/`: `shell` (chrome/sections/controls/startup/`.settings-info-*`), `pi`, `env-notes`, `prompts`, `mcp` |
 | `folder-picker.css` | `.path-row`, `.drive-*`, `.create-folder-*`, `.dir-list/row` |
 | `graph.css` | Graph aggregator. Ordered partials under `styles/graph/`: `hud-search` (`.graph-overlay`/`.graph-bottom-left`/`.graph-search*`/`.graph-counts`/`.loc-view-chip`), `overlay-key`, `context-menu` (`.graph-select-rect`/`.graph-selection-chip`/`.graph-context-menu`), `settings-panel` (`.graph-settings-fab/panel`), `toast` |
@@ -51,6 +54,7 @@ modules after.
 | `workflows.css` | Workflows aggregator. Ordered partials live under `styles/workflows/`: `shell`, `list`, `templates`, `editor-shell`, `runs-shell`, `queue`, `runs`, `editor-empty`, `editor`, `steps`, `actions`, `chips` |
 | `timeline.css` | Timeline scrubber: `.timeline-bar`, `.has-timeline` overrides, `.timeline-scrubber*`, `.ts-*` (+ `--timeline-h` token) |
 | `health-overlay.css` | `.health-legend*` (incl. info popover), `.health-tooltip*` (+ health `@keyframes`) |
+| `error-boundary.css` | `.error-boundary*` (ErrorBoundary fallback card) |
 
 Cascade-sensitive moves to be aware of when editing:
 - `.icon-btn`, `.btn-primary`, `.btn-ghost`, `.text-input`, `.error-msg`,

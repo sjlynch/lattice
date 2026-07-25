@@ -5,7 +5,8 @@ Vite + React + TypeScript frontend package. `src/` is the source of truth;
 
 ## Notes
 
-- `README.md` is still mostly the stock Vite template, not architecture docs.
+- `README.md` is a brief package note; `src/CLAUDE.md` is the authoritative
+  UI navigation doc.
 - Runtime UI is under `src/`; feature subdirectories often carry their own
   `CLAUDE.md` files with local conventions.
 - Styling is hand-written CSS under `src/styles/` and aggregated from

@@ -37,9 +37,10 @@ the next:
      respawns, and continues. The worker is side-effect-free (reads + posts
      only), so terminating it is safe. Injectable worker factory + `moduleUrls`
      for testing (`__tests__/scannerHealthWorkerRunner.test.ts`).
-4. **`coupling.ts`** — `computeCoupling(metrics, aliases)` feeds the
+4. **`coupling.ts`** — `computeCoupling(metrics, aliases, roots)` feeds the
    per-file `imports` lists into `computeCrossFile` to produce the
-   cross-file `CouplingMap` (fan-in/fan-out etc.).
+   cross-file `CouplingMap` (fan-in/fan-out plus dead-code reachability from
+   the entry-point `roots` `scan.ts` computes via `detectRoots`).
 5. **`graphAggregate.ts`** — `aggregate(metrics, coupling, {root,
    directories})` applies cross-file numbers back onto each file's
    `HealthMetrics` and emits the final `{root, nodes, links}` graph.

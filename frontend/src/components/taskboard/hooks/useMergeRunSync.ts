@@ -9,6 +9,7 @@ import {
 import type { TerminalSpec } from '../../../TerminalsContext';
 
 type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
+type CloseTerminalsForTask = (taskId: string) => void;
 type ShowError = (msg: string) => void;
 
 // Build a user-facing label for a per-task merge-run error. Resolves the
@@ -43,6 +44,7 @@ async function buildErrorMessage(
 export function useMergeRunSync(
   activeFolder: string,
   addTerminal: AddTerminal,
+  closeTerminalsForTask: CloseTerminalsForTask,
   showError?: ShowError,
 ) {
   const [mergeRun, setMergeRun] = useState<MergeRun | null>(null);
@@ -125,6 +127,11 @@ export function useMergeRunSync(
         // merge button uses; the run worker doesn't have UI access so the
         // frontend handles the terminal half. Backend pre-spawns the pty
         // and ships the serverId in the event so the pane can lazy-mount.
+        // Drop any stale tab for this task first (a resolver abort → re-merge
+        // re-emits `conflict` with a fresh serverId) so one task never owns two
+        // merge-kind tabs — the same replace-don't-duplicate rule the
+        // `task-spawned` handler applies.
+        closeTerminalsForTask(ev.taskId);
         addTerminal({
           label: `merge:${ev.taskId.slice(-6)}`,
           cwd: ev.cwd,
@@ -144,7 +151,7 @@ export function useMergeRunSync(
         summaryTimerRef.current = null;
       }
     };
-  }, [activeFolder, addTerminal, showError]);
+  }, [activeFolder, addTerminal, closeTerminalsForTask, showError]);
 
   const dismissRecent = useCallback(() => setRecentRunSummary(null), []);
 

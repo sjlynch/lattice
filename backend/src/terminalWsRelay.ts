@@ -22,6 +22,22 @@ export function proxyTerminalWs(
   clientWs: WebSocket,
   reqUrl: string | undefined,
 ) {
+  // The client socket may already be gone by the time we're wired up. The
+  // caller (`buildTerminalWss`) awaits `ensureTerminalServer()` first — up to
+  // ~5s if the terminal-server must actually be spawned — and a user closing
+  // the tab during that window fires the browser socket's 'close' *before* our
+  // `clientWs.on('close')` below exists to hear it, so that close is dropped
+  // and the handler we register now would never fire. Opening the upstream
+  // regardless would leak the socket plus a dead terminal-server subscriber
+  // (attach-by-id) or spawn a brand-new PTY for a client that is already gone
+  // (no-id). Bail before opening anything upstream if the client isn't live.
+  if (
+    clientWs.readyState !== WebSocket.OPEN &&
+    clientWs.readyState !== WebSocket.CONNECTING
+  ) {
+    return;
+  }
+
   const params = new URL(reqUrl ?? '', 'http://localhost').searchParams;
   const targetWs = new WebSocket(
     `ws://127.0.0.1:${TERMINAL_PORT}/ws/terminal?${params.toString()}`,
@@ -58,6 +74,15 @@ export function proxyTerminalWs(
 
   targetWs.on('open', () => {
     clearTimeout(openTimer);
+    // The client can still vanish between the guard above and the upstream
+    // opening (its 'close' may even have fired before `clientWs.on('close')`
+    // was registered). Don't keep a freshly-attached subscriber / spawned PTY
+    // alive for a dead client — close the upstream and drop everything.
+    if (clientWs.readyState !== WebSocket.OPEN) {
+      const s = targetWs.readyState;
+      if (s !== WebSocket.CLOSED && s !== WebSocket.CLOSING) targetWs.close();
+      return;
+    }
     for (const { data, isBinary } of pending) {
       try {
         targetWs.send(data, { binary: isBinary });

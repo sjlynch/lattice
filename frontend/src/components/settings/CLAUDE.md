@@ -73,7 +73,8 @@ clobber-guard logic.
 **Per-project** — `userSettings.json`, via `PATCH /api/settings`:
 `InstructionTemplatesTab` + `HarnessSystemPromptsTab` + `EnvNotesTab` (all three
 on the Agent-prompts tab), `MetricsIgnoredExtsTab`, `StartupTerminalsTab`, the
-MCP per-project enables (`mcpOverrides`), plus the parent's terminal-default /
+MCP per-project enables (`mcpOverrides` for Claude, `mcpHarnessOverrides` for
+Codex/Pi, plus `mcpPlaywrightHeaded`), plus the parent's terminal-default /
 instrument / memory drafts.
 
 `HarnessSystemPromptsTab` edits `UserSettings.harnessSystemPrompts` (per-harness
@@ -87,9 +88,9 @@ returns the full desired map. Read-only harness *defaults* come from
 
 **Machine-global** — `globalSettings.json`, via `PATCH /api/global-settings`:
 `AgentsTab` (`maxConcurrentAgents`), `PiTab` (`piProviders` + `piModelMenu`),
-and the MCP catalog (custom-server defs / built-in overrides). (These tabs
-read/write the global file directly, not `userSettings` — don't assume "a tab
-⇒ per-project".) `PiTab` manages OpenAI-compatible Pi endpoints (id / baseUrl /
+and the MCP tab's custom-server defs (`mcpCustomServers`, written immediately on
+add/remove — not via the footer). (These tabs read/write the global file
+directly, not `userSettings` — don't assume "a tab ⇒ per-project".) `PiTab` manages OpenAI-compatible Pi endpoints (id / baseUrl /
 apiKey / models, with a "Detect models" probe via `POST /api/pi-endpoints/probe`),
 plus a per-endpoint **Advanced** section (compat `thinkingFormat` +
 `supportsDeveloperRole`, and custom request headers). The backend reconciles all
@@ -104,7 +105,7 @@ primitive the editors reuse for their compat/header/model/detect edits;
 (per-endpoint `probing`/`detected`/`probeError` + the `/api/pi-endpoints/probe`
 flow, reporting ids back via an `onDetected` callback, plus `dropEndpoint(id)`
 to forget a removed endpoint's state), and `usePiEndpointEditors(endpoints,
-probe, providers)` (the ~dozen per-endpoint field editors — `updateCompat`,
+probe, providers)` (the per-endpoint field editors — `updateCompat`,
 the header mutators sharing one `mutateHeaderEntries` body, `toggleEndpointModel`,
 `detectModels` — extracted out of `PiTab.tsx`). **All per-endpoint transient
 state — `useProbeDetection`'s three maps and `PiTab`'s `advancedOpen` — is keyed
@@ -140,11 +141,13 @@ immediately on entry — never through the Save button.
 ## `mcp/` subdir
 
 MCP-tab-only UI, composed by `McpTab.tsx`:
-- `McpServerRow` — one catalog row (enable toggle, badges, key field).
-- `McpKeyField` — masked-but-confirmable secret entry (autosaves on blur).
+- `McpServerRow` — one catalog row (three per-harness enable toggles + Playwright's
+  cross-harness headed switch, badges, key field).
+- `McpKeyField` — masked-but-confirmable secret entry (autosaves on blur; state
+  machine in `useSecretField`).
 - `McpAddCustom` — add a custom stdio/http server (definition only, no key).
 - `McpImportSection` — import servers from other tools' MCP configs.
 
 Within the MCP tab, secrets, custom-server defs, and imports each persist
 **immediately** via their own API calls; only the per-project enables
-(`mcpOverrides`) wait for Save.
+(`mcpOverrides` / `mcpHarnessOverrides` / `mcpPlaywrightHeaded`) wait for Save.

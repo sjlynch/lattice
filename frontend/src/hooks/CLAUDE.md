@@ -79,11 +79,13 @@ shared `userSettings.json` fetch:
 
 - `useUserSettings(activeFolder)` — the **single** per-folder
   `userSettings.json` fetch; the slice hooks below read from its result instead
-  of each fetching. `useHiddenExtensions` (per-ext graph visibility, in
-  `localStorage`) · `useMetricsIgnoredExts` (exts skipped by the LOC/health
-  overlays) · `usePersistedToggle` (generic boolean ↔ `localStorage`) ·
-  `useActiveFolder` (canonical project path, seeded from `sessionStorage`, falls
-  back to the backend default) · `useSidebarWidth` (drag-resize + persist) ·
+  of each fetching. `useHiddenExtensions` (per-ext graph visibility in
+  `localStorage`; folder-switch persist guard extracted to `hiddenExtsPersist.ts`)
+  · `useMetricsIgnoredExts` (exts skipped by the LOC/health overlays) ·
+  `usePersistedToggle` (generic boolean ↔ `localStorage`) · `useActiveFolder`
+  (canonical project path, seeded from `sessionStorage`, falls back to the
+  backend default — boot retry in `resolveDefaultRoot.ts`) · `useSidebarWidth`
+  (drag-resize + persist) ·
   `useSyncedRef` (a ref kept in sync with a value, for stable event handlers) ·
   `useStartupTerminalSync` (per-project startup-terminal list).
 
