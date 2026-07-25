@@ -24,6 +24,62 @@ function managedProvidersSidecar(): string {
   return path.join(latticeHomeDir(), 'piManagedProviders.json');
 }
 
+// Result of reading the existing models.json before reconciling into it.
+//   - ok:true  → safe to proceed. `doc` is the parsed object to merge into, or
+//     `{}` when the file is genuinely ABSENT (ENOENT) so it's fine to create.
+//   - ok:false → the file EXISTS but couldn't be read or parsed (a transient
+//     EBUSY/EPERM lock during boot, or lenient JSON — comments / trailing
+//     commas / BOM — that Node's JSON.parse rejects even though Pi tolerates
+//     it). The caller MUST abort without writing so hand-written providers are
+//     never clobbered by a transient failure.
+export type ReadModelsJsonResult =
+  | { ok: true; doc: Record<string, unknown> }
+  | { ok: false };
+
+// Read (and parse) the existing ~/.pi/agent/models.json. The key distinction
+// that prevents silent data loss: ONLY a genuinely-absent file (ENOENT) starts
+// fresh; any other read error or a parse failure on existing content aborts the
+// reconcile so we never overwrite a file we couldn't fully read.
+export async function readExistingModelsJson(
+  file: string,
+): Promise<ReadModelsJsonResult> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(file, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      // Genuinely absent → safe to create a fresh file.
+      return { ok: true, doc: {} };
+    }
+    // Any other read error (EBUSY/EPERM transient lock, EACCES, …): the file
+    // likely exists and may hold hand-written providers. Abort — don't clobber.
+    console.warn(`[pi-models] reconcile aborted — could not read ${file}:`, err);
+    return { ok: false };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    // File exists but isn't strict JSON. Abort rather than replace from scratch.
+    console.warn(
+      `[pi-models] reconcile aborted — ${file} exists but is not valid JSON ` +
+        `(refusing to overwrite it):`,
+      err,
+    );
+    return { ok: false };
+  }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return { ok: true, doc: parsed as Record<string, unknown> };
+  }
+  // Parsed, but to something that isn't a JSON object (array / null / scalar).
+  // It's not a usable models.json, but it IS existing content — don't destroy it.
+  console.warn(
+    `[pi-models] reconcile aborted — ${file} is not a JSON object ` +
+      `(refusing to overwrite it)`,
+  );
+  return { ok: false };
+}
+
 // Shape one Lattice provider into the models.json provider object. Mirrors the
 // known-good hand-written entry (input:['text'] + zero-cost block for a local
 // endpoint) so Pi accepts it.
@@ -90,13 +146,13 @@ export async function reconcilePiModelsJson(): Promise<void> {
   if (providers.length === 0 && prevManaged.length === 0) return;
 
   const file = path.join(piAgentDir(), 'models.json');
-  let doc: Record<string, unknown> = {};
-  try {
-    const parsed = JSON.parse(await fs.readFile(file, 'utf8'));
-    if (parsed && typeof parsed === 'object') doc = parsed as Record<string, unknown>;
-  } catch {
-    /* absent / corrupt → start fresh, preserving nothing we can't read */
-  }
+  // Read the existing file. A non-ENOENT read error or a parse failure on
+  // EXISTING content aborts here (returns ok:false) rather than starting fresh,
+  // so a transient lock or a lenient-JSON models.json never causes us to
+  // overwrite the file and silently drop the user's hand-written providers.
+  const read = await readExistingModelsJson(file);
+  if (!read.ok) return;
+  const doc = read.doc;
   const existing =
     doc.providers && typeof doc.providers === 'object'
       ? (doc.providers as Record<string, unknown>)

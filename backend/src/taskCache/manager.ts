@@ -145,11 +145,15 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
     // (or a create racing an updateTaskCrashSafe disk write) both land.
     return this.runProjectWrite(key, () => {
       const tasks = this.getCached(key) ?? [];
+      // Defence-in-depth: the HTTP routes validate title/description are
+      // strings, but coerce here too so a stray non-string caller can never
+      // throw a `.trim()` TypeError (which surfaced as a cryptic 500).
       const t: Task = {
         id: generateTaskId(),
         projectPath: key,
-        title: title.trim(),
-        description: description?.trim() || undefined,
+        title: typeof title === 'string' ? title.trim() : '',
+        description:
+          typeof description === 'string' ? description.trim() || undefined : undefined,
         status: 'open',
         createdAt: Date.now(),
       };

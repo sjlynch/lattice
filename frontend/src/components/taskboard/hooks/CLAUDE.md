@@ -36,7 +36,7 @@ consumed via composers (`useTaskBoardController`, `useTaskBoardState`,
 ## Run orchestration
 
 - `useTaskBoardRunControllers.ts` — run-controller slice that composes merge-all, push, harness/model, QA Playwright, QA runs, and post-merge hook state for the top-level controller.
-- `useMergeRunSync.ts` — hydrates + live-syncs the backend "merge all" run; spawns the resolver Claude on conflict events and toasts each new per-task error once.
+- `useMergeRunSync.ts` — hydrates + live-syncs the backend "merge all" run; spawns the resolver Claude on conflict events (closing any stale tab for that task first via `closeTerminalsForTask`, so a resolver abort → re-merge doesn't stack a second merge-kind tab) and toasts each new per-task error once.
 - `useVisibilityPolling.ts` — shared lifecycle shell for visibility-aware interval polling with cancellation guards; callers keep domain-specific status/error handling and terminal cleanup decisions.
 - `usePushRun.ts` — QA-lane Push button: probes for `.git`, starts a push run, polls it, and tears down the local terminal when the Stop hook flips it to `done`.
 - `useQaRuns.ts` — QA-lane "run e2e test" buttons; spawns a Playwright Claude per run (tracked by terminal id — deliberately no `taskId`) and polls to auto-close on `done`.
@@ -45,7 +45,7 @@ consumed via composers (`useTaskBoardController`, `useTaskBoardState`,
 
 ## Terminal lifecycle
 
-- `useTaskSpawnHandler.ts` — builds the `/ws/tasks` `task-spawned` handler (mount the queued task's terminal + ping the resume strip). Runs *before* the task list (which needs the handler), so the resume-strip notifier is bridged in later through a ref via the stable `setBulkSpawnNotifier`. Consumed by `useLaneBulkActions`.
+- `useTaskSpawnHandler.ts` — builds the `/ws/tasks` `task-spawned` handler (close any stale tab for the task via `closeTerminalsForTask`, then mount the queued task's terminal + ping the resume strip). The close-first step keeps **one terminal per task per browser tab**: a Resume re-spawns the harness in the same worktree with a fresh serverId and emits a second `task-spawned`, and `useTaskTerminalCleanup` never closes an in_progress task's tab, so without this the ended pre-resume tab would linger beside the live one. Runs *before* the task list (which needs the handler), so the resume-strip notifier is bridged in later through a ref via the stable `setBulkSpawnNotifier`. Consumed by `useLaneBulkActions`.
 - `useTaskTerminals.ts` — composer over the three lifecycle hooks below (focus + cleanup + reattach); the launcher wires all of taskboard's post-task-list terminal lifecycle in one call and gets back just the focus helpers (`getFocusTerminal` / `focusTerminalByServerId`).
 - `useTaskTerminalCleanup.ts` — closes task terminals on lifecycle transitions: qa/done/deleted close all, ready-to-merge closes only the worktree-agent pty (resolvers left alone).
 - `useTaskTerminalFocus.ts` — task→pty focus map (`getFocusTerminal`) plus a serverId-based focuser for the post-merge hook row (which has no task).
