@@ -108,11 +108,16 @@ export function buildAgentActivityRouter(): Router {
     });
     if (event) {
       notifyAgentActivity(event);
-      // Feed the workflow-step quiescence tracker (only workflow-step sessions
-      // consume it — see workflowRuns/stopHookGate.ts). Every hook is a "still
-      // alive" signal; SubagentStart/Stop additionally move the live-subagent
-      // count the gate uses to reject a Stop that fires while a subagent runs.
-      if (meta.agentId.startsWith('wf:')) {
+      // Feed the Stop-hook quiescence tracker. Two consumers key on it: workflow
+      // steps (`wf:` — workflowRuns/stopHookGate.ts) and post-merge hooks
+      // (`pmh:` — postMergeHooks/stopHookGate.ts); both gate a Claude Stop-hook
+      // completion on the session going quiescent. Every hook is a "still alive"
+      // signal; SubagentStart/Stop additionally move the live-subagent count the
+      // gate uses to reject a Stop that fires while a subagent runs.
+      if (
+        meta.agentId.startsWith('wf:') ||
+        meta.agentId.startsWith('pmh:')
+      ) {
         if (event.lifecycle === 'spawn') noteSubagentStart(meta.agentId);
         else if (event.lifecycle === 'stop') noteSubagentStop(meta.agentId);
         else noteAgentSignal(meta.agentId);
