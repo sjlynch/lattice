@@ -1,5 +1,9 @@
 import { release, type MergeLockToken } from '../../mergeLocks.js';
-import { registerConflictWaiter, type RunState } from '../state.js';
+import { type RunState } from '../state.js';
+import {
+  awaitResolverWaiter,
+  type WaiterReleaseReason,
+} from '../waiterLiveness.js';
 
 // Park the merge-run worker on the conflict waiter for `taskId` until the
 // resolver's Stop hook signals it — WITHOUT holding the per-task merge lock.
@@ -13,15 +17,27 @@ import { registerConflictWaiter, type RunState } from '../state.js';
 // finalize lose the tryAcquire race, return 'already-finalizing' WITHOUT
 // signalling, and this promise never resolves — deadlocking the run (and
 // stranding the resolver pty, which only the finalize's worktree cleanup tears
-// down). registerConflictWaiter records the waiter entry synchronously, so
+// down). awaitResolverWaiter registers the waiter entry synchronously, so
 // releasing the lock immediately after it can never miss a signal that races
 // in. (The mid-merge re-spawn path parks lock-free for the same reason.)
-export async function parkOnConflictResolver(
+//
+// awaitResolverWaiter also gives the otherwise-untimed wait a liveness backstop:
+// it returns 'resolver-dead' / 'timeout' (instead of blocking forever) if the
+// resolver pty dies with no callback, so the caller can recover and the run
+// still releases the project lock. `worktreePath` is the resolver's cwd, used
+// for that pty-liveness probe.
+export function parkOnConflictResolver(
   state: RunState,
   runId: string,
   lock: MergeLockToken,
-): Promise<void> {
-  const waitForResolver = registerConflictWaiter(state, runId, lock.taskId);
+  worktreePath: string | undefined,
+): Promise<WaiterReleaseReason> {
+  const waitForResolver = awaitResolverWaiter(
+    state,
+    runId,
+    lock.taskId,
+    worktreePath,
+  );
   release(lock);
-  await waitForResolver;
+  return waitForResolver;
 }

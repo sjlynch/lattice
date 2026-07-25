@@ -25,3 +25,16 @@ this directory unless a helper belongs under `helpers/`.
   safety invariant that a THROWN commit-count surfaces as `error` (never a
   silent empty/already-merged), stubbing the `../state.js` git reads via the
   module's injectable deps seam.
+- `waiterLiveness.test.ts` — `awaitResolverWaiter` bounded-lifetime backstop for
+  a parked merge-run conflict waiter: signal wins, a vanished resolver pty
+  releases as `resolver-dead` after consecutive strikes, an interleaved "can't
+  tell" resets the strike count, the wall-clock cap yields `timeout`, and the
+  synchronous-registration ordering the park sites depend on holds. Uses a
+  virtual-clock + fake `listSessions` deps seam (no real timers/terminal-server).
+- `mergeRunConflictPark.test.ts` — `parkOnConflictResolver` drops the per-task
+  merge lock before waiting and still resumes on a signal that races the await
+  (guards the resolver-finalize deadlock).
+- `mergeAbortedAuthoritative.test.ts` — `/merge-aborted` is authoritative: a late
+  `/merged` from an abandoned resolver no-ops (conflict-flag gate), AND a
+  merge-run worker parked on the conflict waiter is released so the project
+  run-lock is freed (Part A of the parked-waiter wedge fix).

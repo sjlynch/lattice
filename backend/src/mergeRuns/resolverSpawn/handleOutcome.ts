@@ -8,6 +8,7 @@ import type {
 } from '../processTarget.js';
 import { recordAndSpawn } from './spawn.js';
 import { parkOnConflictResolver } from './park.js';
+import { recoverAbandonedResolverTask } from '../abandonedResolver.js';
 
 function recordSpawnError(
   run: MergeRun,
@@ -96,8 +97,30 @@ export async function handleResyncOutcome(
         `merge-conflict wait for ${task.id} requires the caller's merge lock token`,
       );
     }
-    await parkOnConflictResolver(runCtx.state, run.id, lock);
-    console.log(`[merge-run] conflict resolver done for task ${task.id} — resuming run`);
+    const reason = await parkOnConflictResolver(
+      runCtx.state,
+      run.id,
+      lock,
+      task.worktreePath,
+    );
+    if (reason === 'signalled') {
+      console.log(`[merge-run] conflict resolver done for task ${task.id} — resuming run`);
+    } else {
+      // The resolver pty died (or the wait hit its cap) with no completion
+      // callback. Recover the abandoned resolution and continue so the run
+      // still releases the project lock instead of hanging forever.
+      console.warn(
+        `[merge-run] conflict resolver for task ${task.id} ${reason === 'timeout' ? 'wait timed out' : 'pty died'} — recovering and continuing`,
+      );
+      run.errored.push({
+        taskId: task.id,
+        error: `conflict resolver ${reason} (no completion callback); left at ready_to_merge`,
+      });
+      await recoverAbandonedResolverTask(task);
+    }
+    // The lock was already released inside parkOnConflictResolver, so this
+    // outcome must stay 'awaiting-resolver' (tells withMergeLock not to
+    // double-release) regardless of how the wait ended.
     return { kind: 'awaiting-resolver' };
   }
 

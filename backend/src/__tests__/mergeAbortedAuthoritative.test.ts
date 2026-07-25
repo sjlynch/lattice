@@ -14,6 +14,12 @@ import {
 import { homeProjectDir } from '../projectPath.js';
 import { handleTaskMerged } from '../routes/tasks/hooks/merged.js';
 import { handleTaskMergeAborted } from '../routes/tasks/hooks/mergeAborted.js';
+import { recoverAbandonedResolverTask } from '../mergeRuns/abandonedResolver.js';
+import {
+  createRunState,
+  registerConflictWaiter,
+  signalConflictWaiterInState,
+} from '../mergeRuns/state.js';
 
 const ORIGIN = 'http://127.0.0.1:5184';
 
@@ -122,6 +128,78 @@ test('a cancelled conflict makes a late /merged a harmless no-op (task stays rea
       'task stays ready_to_merge — the cancelled conflict was never finalized',
     );
     assert.equal(afterMerged?.conflict, undefined, 'still no conflict flag');
+  } finally {
+    await deleteTask(task.id);
+    await flushPersist(projectPath).catch(() => {});
+    await fs
+      .rm(homeProjectDir(projectPath), { recursive: true, force: true })
+      .catch(() => {});
+    await fs.rm(base, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+// Part A regression: during a backend merge run a conflicting task parks the
+// run worker on an untimed conflict waiter (registerConflictWaiter). A give-up
+// resolver aborts the merge and curls /merge-aborted; its later Stop-hook
+// /complete is a no-op (gated on the now-cleared task.conflict), so if
+// /merge-aborted doesn't itself release the waiter the run worker awaits
+// FOREVER — finalizeMergeRun's releaseLock never runs, the project run-lock
+// stays held, and every later /merge, merge-run, and workflow Merge step 409s
+// for the project until a backend restart. /merge-aborted must signal the
+// waiter (as /complete and /merged do) so the run advances. The existing test
+// above covers only the late-/merged no-op, never a parked run.
+test('/merge-aborted releases a merge-run worker parked on this task\'s conflict waiter', async () => {
+  const stamp = `${Date.now()}_${process.pid}`;
+  const base = await fs.mkdtemp(
+    path.join(os.tmpdir(), `lattice-merge-aborted-park-${stamp}-`),
+  );
+  const projectPath = path.join(base, 'repo');
+  const worktreePath = path.join(base, 'wt');
+  await fs.mkdir(projectPath, { recursive: true });
+  await fs.mkdir(worktreePath, { recursive: true });
+
+  const task = await createTask(projectPath, 'parked conflict fixture');
+  await updateTask(task.id, {
+    status: 'ready_to_merge',
+    conflict: true,
+    conflictStartedAt: Date.now(),
+    branch: `lattice/${task.id}`,
+    worktreePath,
+  });
+
+  // Seed the parked run: register a real waiter on a throwaway run state, the
+  // same way the merge-run worker does. Inject that state's signal into the
+  // handler (mirrors finalizeResolved.ts's deps seam) so the test drives the
+  // real ConflictWaiterRegistry without standing up the merge-run singleton.
+  const state = createRunState();
+  let parkedResolved = false;
+  const parked = registerConflictWaiter(state, 'run-park', task.id).then(() => {
+    parkedResolved = true;
+  });
+
+  try {
+    assert.equal(parkedResolved, false, 'the run worker starts parked');
+
+    const abortRes = mockRes();
+    await handleTaskMergeAborted(ORIGIN, {
+      recover: recoverAbandonedResolverTask,
+      signalConflictWaiter: (taskId: string) =>
+        signalConflictWaiterInState(state, taskId),
+    })(mockReq(task.id), abortRes as unknown as Response);
+    assert.deepEqual(abortRes.body, { ok: true });
+
+    // The parked worker is released. Before the fix this promise never resolved
+    // (the run hung forever, holding the project run-lock — the wedge this
+    // whole task fixes). Its resolution is exactly what lets finalizeMergeRun's
+    // `finally` reach releaseLock and free the cross-process project lock.
+    await parked;
+    assert.equal(parkedResolved, true, 'the merge-run worker was unblocked');
+
+    // The task is left at plain ready_to_merge with the conflict cleared,
+    // to be retried on the next merge-all.
+    const after = await getTask(task.id);
+    assert.equal(after?.conflict, undefined, 'conflict flag cleared');
+    assert.equal(after?.status, 'ready_to_merge', 'left at ready_to_merge');
   } finally {
     await deleteTask(task.id);
     await flushPersist(projectPath).catch(() => {});

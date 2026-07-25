@@ -103,6 +103,10 @@ export class MergeRunStateManager extends ProjectStateManager<
   public signalConflictWaiter(taskId: string): boolean {
     return this.conflictWaiters.signal(taskId);
   }
+
+  public abandonConflictWaiter(taskId: string, runId: string): boolean {
+    return this.conflictWaiters.abandon(taskId, runId);
+  }
 }
 
 export type RunState = MergeRunStateManager;
@@ -132,6 +136,18 @@ export function signalConflictWaiterInState(
   taskId: string,
 ): boolean {
   return state.signalConflictWaiter(taskId);
+}
+
+// Release a parked waiter WITHOUT recording a real completion — the liveness
+// backstop (mergeRuns/waiterLiveness.ts) uses this when it wakes a run worker
+// parked on a resolver whose pty died / whose wait timed out with no callback.
+// Guarded on runId (see ConflictWaiterRegistry.abandon).
+export function abandonConflictWaiter(
+  state: RunState,
+  taskId: string,
+  runId: string,
+): boolean {
+  return state.abandonConflictWaiter(taskId, runId);
 }
 
 export function snapshot(run: MergeRun): MergeRun {

@@ -31,4 +31,19 @@ export class ConflictWaiterRegistry {
     }
     return false;
   }
+
+  // Drop a waiter that the liveness backstop is releasing because the resolver
+  // pty died (or the wait timed out) without any completion callback. Unlike
+  // `signal`, this is NOT a real completion — but it still resolves the pending
+  // promise so the parked run worker wakes, and removes the entry so a stray
+  // late callback can't find a phantom waiter (and it doesn't leak). Guarded on
+  // `runId` so a stale abandon can't drop a *different* run's waiter that has
+  // re-registered under the same taskId (a re-queued task in a fresh run).
+  public abandon(taskId: string, runId: string): boolean {
+    const entry = this.waiters.get(taskId);
+    if (!entry || entry.runId !== runId) return false;
+    this.waiters.delete(taskId);
+    entry.resolve();
+    return true;
+  }
 }

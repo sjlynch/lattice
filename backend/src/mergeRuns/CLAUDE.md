@@ -13,7 +13,29 @@ here instead of bloating the parent file.
   owning worker died with the previous backend process.
 - `conflictWaiters.ts` — the in-process resolver waiter registry. It remains
   keyed by **taskId** (not runId): a resolver Stop hook is for one conflict
-  task, and task-id signalling prevents task A from unblocking task B.
+  task, and task-id signalling prevents task A from unblocking task B. Three
+  releases: `signal(taskId)` (a real completion — /complete/merged/merge-aborted),
+  `unblockRun(runId)` (cancelRun), and `abandon(taskId, runId)` (the liveness
+  backstop — NOT a real completion; runId-guarded so a re-queued task's fresh
+  waiter isn't dropped).
+- `waiterLiveness.ts` — `awaitResolverWaiter`: the bounded-lifetime wrapper the
+  park sites await instead of the raw untimed `registerConflictWaiter`. It
+  registers the waiter **synchronously** (preserving the register-then-release-
+  lock ordering the park sites depend on), then races the waiter promise against
+  a periodic **pty-liveness probe** (terminal-server session list, matched to the
+  resolver's worktree cwd) plus an absolute wall-clock cap. Returns
+  `'signalled'` (real completion) | `'resolver-dead'` (probe saw no live pty for
+  N consecutive polls) | `'timeout'` (cap hit while liveness stayed "can't
+  tell"). On a non-signalled release it `abandon`s the registry entry. Config +
+  `listSessions`/timer deps are injectable for tests; production defaults ~75s to
+  detect a dead pty, 30-min hard cap. This is why a dead resolver can no longer
+  wedge the run + hold the project lock forever.
+- `abandonedResolver.ts` — `recoverAbandonedResolverTask(task)`: the shared
+  "resolution is being abandoned" cleanup — abort a lingering in-worktree merge,
+  clear the conflict flags (makes a late /merged a no-op), kill the resolver pty
+  by cwd. Called by both `routes/tasks/hooks/mergeAborted.ts` (give-up resolver /
+  Cancel) and the `waiterLiveness.ts` dead/timeout path. Leaves the task at plain
+  ready_to_merge to retry on the next merge-all.
 - `state.ts` — stable public facade and `RunState` / `MergeRunStateManager`:
   persistent run maps, notify/subscribe fan-out, active-run lookup/cancel, and
   delegation to snapshot/normalization/waiter helpers.
@@ -27,10 +49,12 @@ here instead of bloating the parent file.
   (`resolverSpawn.ts` is the re-export facade; existing `./resolverSpawn.js`
   imports keep working). Split by concern so the spawn *mechanics* stay
   separate from the *policy* that drives them:
-  - `resolverSpawn/park.ts` — `parkOnConflictResolver`: registers the conflict
-    waiter then **drops the per-task merge lock before waiting** (the
+  - `resolverSpawn/park.ts` — `parkOnConflictResolver`: awaits the conflict
+    waiter (via `waiterLiveness.ts` `awaitResolverWaiter`, so the wait is
+    bounded) then **drops the per-task merge lock before waiting** (the
     resolver's `/complete` finalize needs that same lock — see its deadlock
-    note). The lock-release semantics live here.
+    note). The lock-release semantics live here; returns the `WaiterReleaseReason`
+    so `handleOutcome.ts` can recover-and-continue on a dead/timed-out resolver.
   - `resolverSpawn/spawn.ts` — terminal-session spawn/notify/record mechanics:
     `queuedCreateSession` on the `priority` band (headroom above softCap),
     conflict notification, `spawnAndRecord`/`recordAndSpawn` (which own the
@@ -73,11 +97,13 @@ here instead of bloating the parent file.
   A worker crash suppresses the restart.
 
 Conflict-waiter contract: after spawning a merge-conflict resolver,
-`processTarget` registers a task-id keyed waiter. Routes `/complete` and
-`/merged` call `signalConflictWaiter` only after finalize/re-sync has advanced
-or requeued that same task; `cancelRun` unblocks the waiter whose entry belongs
-to the cancelled run. A missing waiter means the backend restarted, so the
-caller should start a fresh merge run.
+`processTarget` registers a task-id keyed waiter. Routes `/complete`, `/merged`,
+**and `/merge-aborted`** call `signalConflictWaiter` — the first two only after
+finalize/re-sync has advanced or requeued that same task, `/merge-aborted` after
+clearing the conflict (a give-up resolver / Cancel — the task stays at plain
+ready_to_merge and is NOT auto-restarted). `cancelRun` unblocks the waiter whose
+entry belongs to the cancelled run. A missing waiter means the backend
+restarted, so the caller should start a fresh merge run.
 
 The worker parks on that waiter via `resolverSpawn.ts` `parkOnConflictResolver`,
 which **drops the per-task `mergeLocks` lock before waiting** (registering the
@@ -89,3 +115,16 @@ return `already-finalizing` without signalling, and the run hangs forever (with
 the resolver pty stranded — only the finalize's worktree cleanup kills it). The
 mid-merge re-spawn waiter (`flaggedConflict.ts` `tryRespawnMidMergeResolver`)
 parks before any lock is acquired, so it is already lock-free.
+
+Bounded lifetime (why the run can't wedge on a silently-dead resolver): both
+park sites await `waiterLiveness.ts` `awaitResolverWaiter` rather than the raw
+`registerConflictWaiter`. `/merge-aborted` covers only the *graceful* give-up
+(the resolver aborts + curls a callback); a resolver that dies with NO callback
+— crash, OOM, user kills the pty, missed Stop hook — is caught by the liveness
+probe. On `'resolver-dead'`/`'timeout'` the park caller logs, records a
+`run.errored` entry, `recoverAbandonedResolverTask`s the task (conflict cleared,
+left at ready_to_merge), and continues — so `finalizeMergeRun`'s `finally`
+always reaches `releaseLock` and the project run-lock is freed. The lock was
+already released inside `parkOnConflictResolver` before the wait, so the
+merge-conflict outcome stays `'awaiting-resolver'` (don't double-release)
+regardless of how the wait ended.

@@ -82,10 +82,17 @@ Idempotent Stop-hook / resolver callbacks. `hooks/index.ts`'s
   resolver branch uses). A late `/merged` from a resolver abandoned by
   `/merge-aborted` (the Cancel button cleared the flag) is a harmless no-op
   rather than a silent finalize + main fast-forward.
-- `hooks/mergeAborted.ts` — `/merge-aborted`. Aborts a lingering mid-merge,
-  clears the conflict flags (which is what makes a Cancel authoritative —
-  see `/merged`'s guard above), and kills the orphaned resolver pty by
-  worktree cwd so it stops working on the abandoned resolution.
+- `hooks/mergeAborted.ts` — `/merge-aborted`. Delegates the abort-mid-merge +
+  clear-conflict-flags (what makes a Cancel authoritative — see `/merged`'s guard
+  above) + kill-orphaned-resolver-pty to the shared
+  `mergeRuns/abandonedResolver.ts` `recoverAbandonedResolverTask`, **then**
+  `signalConflictWaiter(task.id)` to release any merge-run worker parked on this
+  task's untimed conflict waiter (else the run awaits forever, holding the
+  project run-lock → later merges 409). The aborted task is left at plain
+  ready_to_merge to retry on the next merge-all (no auto-restart, unlike
+  /complete + /merged). Has an injectable deps seam (`recover` +
+  `signalConflictWaiter`) mirroring `finalizeResolved.ts` for the parked-run
+  regression test.
 - `hooks/stashResolved.ts` — `/stash-resolved`. Cleanup → qa, then
   auto-restart the merge run for remaining work.
 - `hooks/postMergeHookHelper.ts` — `awaitPostMergeHookOutsideRun`, shared by

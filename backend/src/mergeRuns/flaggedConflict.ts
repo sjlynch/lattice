@@ -10,7 +10,9 @@ import {
   handleResyncOutcome,
   respawnResolverForFlaggedConflict,
 } from './resolverSpawn.js';
-import { registerConflictWaiter, type MergeRun } from './state.js';
+import { type MergeRun } from './state.js';
+import { awaitResolverWaiter } from './waiterLiveness.js';
+import { recoverAbandonedResolverTask } from './abandonedResolver.js';
 import { withMergeLock } from './withMergeLock.js';
 import type {
   ProcessOutcome,
@@ -76,9 +78,31 @@ export async function tryRespawnMidMergeResolver(
     // for the same task. The signal comes from /complete (via
     // signalConflictWaiter) once the resolver finishes finalizing, or from
     // cancelRun on explicit cancellation.
+    //
+    // awaitResolverWaiter also backstops a resolver that dies with no callback
+    // (crash / killed pty / missed Stop hook): it returns 'resolver-dead' /
+    // 'timeout' instead of hanging the run forever and wedging the project lock.
+    // This path parks lock-free (no merge lock held), so there's nothing extra
+    // to release. task.worktreePath is the resolver's cwd for the liveness probe.
     console.log(`[merge-run] waiting for re-spawned conflict resolver on task ${task.id}...`);
-    await registerConflictWaiter(runCtx.state, run.id, task.id);
-    console.log(`[merge-run] re-spawned conflict resolver done for task ${task.id} — resuming run`);
+    const reason = await awaitResolverWaiter(
+      runCtx.state,
+      run.id,
+      task.id,
+      task.worktreePath,
+    );
+    if (reason === 'signalled') {
+      console.log(`[merge-run] re-spawned conflict resolver done for task ${task.id} — resuming run`);
+    } else {
+      console.warn(
+        `[merge-run] re-spawned conflict resolver for task ${task.id} ${reason === 'timeout' ? 'wait timed out' : 'pty died'} — recovering and continuing`,
+      );
+      run.errored.push({
+        taskId: task.id,
+        error: `re-spawned conflict resolver ${reason} (no completion callback); left at ready_to_merge`,
+      });
+      await recoverAbandonedResolverTask(task);
+    }
   }
   return outcome;
 }

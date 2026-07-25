@@ -31,7 +31,10 @@ test('parkOnConflictResolver releases the per-task merge lock before waiting', a
   assert.notEqual(workerLock, null);
 
   let resumed = false;
-  const parked = parkOnConflictResolver(state, 'run-park', workerLock!).then(() => {
+  // worktreePath undefined ⇒ the liveness probe is a no-op ("can't tell"); this
+  // test signals well before any timeout, so it exercises only lock-release +
+  // signal. The dead-resolver liveness path is covered in waiterLiveness.test.ts.
+  const parked = parkOnConflictResolver(state, 'run-park', workerLock!, undefined).then(() => {
     resumed = true;
   });
   // registerConflictWaiter + release run synchronously before the await, so the
@@ -75,7 +78,7 @@ test('parkOnConflictResolver still resumes when /complete signals before the awa
 
   const workerLock = tryAcquire(taskId);
   assert.notEqual(workerLock, null);
-  const parked = parkOnConflictResolver(state, 'run-race', workerLock!);
+  const parked = parkOnConflictResolver(state, 'run-race', workerLock!, undefined);
   // Signal immediately — before yielding back to the parked await.
   assert.equal(isLocked(taskId), false);
   assert.equal(signalConflictWaiterInState(state, taskId), true);
