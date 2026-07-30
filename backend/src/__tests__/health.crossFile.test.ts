@@ -5,7 +5,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { computeCrossFile, detectRoots } from '../health/index.js';
-import { isConventionalRoot } from '../health/crossFile/roots.js';
+import {
+  compileEntryGlobs,
+  globToRegExp,
+  isConventionalRoot,
+  matchesEntryGlob,
+} from '../health/crossFile/roots.js';
+import { classifyDeadCode } from '../health/crossFile/deadCode.js';
 import type { ParsedAlias } from '../health/tsconfig.js';
 
 // Case-insensitive filesystems (Windows, default macOS) resolve a specifier
@@ -219,4 +225,234 @@ test('dead code under src/tools/ is reported dead (root heuristic is src-aware)'
   );
 
   assert.equal(cross.deadCode.get(dead), 'dead', 'unused src/tools file → dead');
+});
+
+// --- classifyDeadCode confidence guard -------------------------------------
+// The "never paint a whole project red on a resolver blind spot" valve: >70%
+// of >=20 resolvable non-root files coming back dead is the fingerprint of a
+// dropped-edge bug, not a genuinely dead codebase, so every `dead` is demoted
+// to `uncertain`. It gates what agents are told to delete (`/api/health/dead-
+// code` + the LATTICE_TASK.md "investigate before deleting" note), so a
+// regression here silently green-lights mass deletion.
+
+const GUARD_ROOT = path.resolve('health-dead-guard-fixture');
+
+// Craft a `classifyDeadCode` input triple directly (the functions are pure):
+// one conventional root, `liveCount` reachable `.ts` files, `deadCount`
+// unreachable ones, plus optional extra files that must not count toward the
+// resolvable population.
+function guardScenario(deadCount: number, liveCount: number, extras: string[] = []) {
+  const entry = path.join(GUARD_ROOT, 'src', 'index.ts');
+  const dead = Array.from({ length: deadCount }, (_, i) =>
+    path.join(GUARD_ROOT, 'src', `dead${i}.ts`));
+  const live = Array.from({ length: liveCount }, (_, i) =>
+    path.join(GUARD_ROOT, 'src', `live${i}.ts`));
+  const roots = new Set([entry]);
+  // computeReachability always seeds the reachable set with the roots.
+  const reachable = new Set([entry, ...live]);
+  const present = new Set([entry, ...live, ...dead, ...extras]);
+  const { deadCode, deadCodeStats } = classifyDeadCode(present, roots, reachable);
+  return { entry, dead, live, deadCode, deadCodeStats };
+}
+
+test('dead-code guard downgrades every dead file when the dead fraction is implausible', () => {
+  const asset = path.join(GUARD_ROOT, 'src', 'styles.css'); // not resolvable
+  const { entry, dead, live, deadCode, deadCodeStats } = guardScenario(20, 5, [asset]);
+
+  // 20 unreachable + 5 reachable non-root = 25 resolvable; 20/25 = 0.8 > 0.7.
+  assert.equal(deadCodeStats.resolvable, 25, 'reachable non-roots count toward the population');
+  assert.equal(deadCodeStats.dead, 20, 'stats keep the PRE-downgrade dead count');
+  assert.equal(deadCodeStats.downgraded, true, 'guard trips above 70%');
+
+  for (const f of dead) {
+    assert.equal(deadCode.get(f), 'uncertain', `${path.basename(f)} demoted red → grey`);
+  }
+  assert.equal([...deadCode.values()].includes('dead'), false, 'no file is left confidently dead');
+  // The downgrade only rewrites `dead`; every other classification survives.
+  assert.equal(deadCode.get(entry), 'entry', 'root stays an entry point');
+  for (const f of live) {
+    assert.equal(deadCode.get(f), 'live', `${path.basename(f)} stays live`);
+  }
+  assert.equal(deadCode.get(asset), 'uncertain', 'non-resolvable asset unaffected');
+});
+
+test('dead-code guard boundaries: the 20-file floor and the 0.7 fraction are exact', () => {
+  // Just under the floor: 19/19 is 100% dead, but too small a sample to tell a
+  // resolver gap from a genuinely dead corner of a repo → no downgrade.
+  const under = guardScenario(19, 0);
+  assert.equal(under.deadCodeStats.resolvable, 19);
+  assert.equal(under.deadCodeStats.downgraded, false, 'fewer than 20 files never trips');
+  for (const f of under.dead) {
+    assert.equal(under.deadCode.get(f), 'dead', 'small sample stays confidently dead');
+  }
+
+  // Exactly at the floor, same 100% fraction: the count check is `>=`, so it trips.
+  const atFloor = guardScenario(20, 0);
+  assert.equal(atFloor.deadCodeStats.resolvable, 20);
+  assert.equal(atFloor.deadCodeStats.downgraded, true, '20 files is inclusive');
+  for (const f of atFloor.dead) {
+    assert.equal(atFloor.deadCode.get(f), 'uncertain', 'downgraded at the floor');
+  }
+
+  // Exactly on the fraction: 14 dead of 20 resolvable is 0.7, and the
+  // comparison is a strict `>`, so the threshold itself is still "plausible".
+  const atFraction = guardScenario(14, 6);
+  assert.equal(atFraction.deadCodeStats.resolvable, 20);
+  assert.equal(
+    atFraction.deadCodeStats.dead / atFraction.deadCodeStats.resolvable,
+    0.7,
+    'fixture sits exactly on the threshold',
+  );
+  assert.equal(atFraction.deadCodeStats.downgraded, false, 'exactly 0.7 does not trip');
+  for (const f of atFraction.dead) {
+    assert.equal(atFraction.deadCode.get(f), 'dead', 'stays confidently dead at 0.7');
+  }
+
+  // One file past the line: 15/20 = 0.75.
+  const over = guardScenario(15, 5);
+  assert.equal(over.deadCodeStats.resolvable, 20);
+  assert.equal(over.deadCodeStats.downgraded, true, 'just above 0.7 trips');
+  for (const f of over.dead) {
+    assert.equal(over.deadCode.get(f), 'uncertain', 'downgraded just above 0.7');
+  }
+});
+
+test('dead-code guard population excludes roots and non-resolvable files', () => {
+  // A pile of assets must not dilute the fraction into "plausible" — the guard
+  // only ever reasons about files it could confidently call dead.
+  const assets = Array.from({ length: 40 }, (_, i) =>
+    path.join(GUARD_ROOT, 'assets', `a${i}.css`));
+  const { dead, deadCode, deadCodeStats } = guardScenario(20, 0, assets);
+
+  assert.equal(deadCodeStats.resolvable, 20, 'assets are outside the population');
+  assert.equal(deadCodeStats.dead, 20);
+  assert.equal(deadCodeStats.downgraded, true, 'assets cannot mask a resolver gap');
+  for (const f of dead) assert.equal(deadCode.get(f), 'uncertain');
+  for (const f of assets) assert.equal(deadCode.get(f), 'uncertain', 'assets stay uncertain');
+});
+
+// --- deadCodeEntryGlobs matcher --------------------------------------------
+// The user-configurable whitelist for framework magic (file-based routing, DI
+// registries). A bug means a declared entry point never roots reachability, so
+// its live files read as `dead` and an agent deletes framework-wired code.
+
+test('globToRegExp: ** crosses directories (including zero), * and ? do not', () => {
+  const routes = globToRegExp('src/**/routes/*.ts');
+  assert.equal(routes.test('src/routes/a.ts'), true, '** matches zero directories');
+  assert.equal(routes.test('src/a/routes/b.ts'), true, '** matches one directory');
+  assert.equal(routes.test('src/a/b/c/routes/d.ts'), true, '** matches many directories');
+  assert.equal(routes.test('src/a/routes/nested/b.ts'), false, 'the trailing * stays in one segment');
+
+  const leading = globToRegExp('**/*.tsx');
+  assert.equal(leading.test('Button.tsx'), true, 'a leading **/ matches a top-level file');
+  assert.equal(leading.test('src/ui/Button.tsx'), true, 'and a file at any depth');
+
+  const star = globToRegExp('src/*.ts');
+  assert.equal(star.test('src/a.ts'), true);
+  assert.equal(star.test('src/sub/a.ts'), false, '* does not cross /');
+  assert.equal(star.test('a.ts'), false, 'the pattern is anchored at the start');
+  assert.equal(star.test('vendor/src/a.ts'), false, 'no unanchored substring match');
+  assert.equal(star.test('src/a.tsx'), false, 'the pattern is anchored at the end');
+
+  const q = globToRegExp('src/page?.ts');
+  assert.equal(q.test('src/page1.ts'), true, '? matches exactly one character');
+  assert.equal(q.test('src/page.ts'), false, '? is not optional');
+  assert.equal(q.test('src/page12.ts'), false, '? is not repeated');
+  assert.equal(q.test('src/page/.ts'), false, '? does not cross /');
+});
+
+test('globToRegExp: regex metacharacters are literal, not operators', () => {
+  const dot = globToRegExp('src/app.config.ts');
+  assert.equal(dot.test('src/app.config.ts'), true);
+  assert.equal(dot.test('src/appxconfigxts'), false, '. is a literal dot, not "any char"');
+
+  const meta = globToRegExp('src/(a|b)+[x]{2}^$.ts');
+  assert.equal(meta.test('src/(a|b)+[x]{2}^$.ts'), true, 'metachars match themselves');
+  assert.equal(meta.test('src/a.ts'), false, 'no alternation group');
+  assert.equal(meta.test('src/(a|b)[x]{2}^$.ts'), false, '+ is literal, not a repeat');
+  assert.equal(meta.test('src/(a|b)+x{2}^$.ts'), false, '[] is literal, not a char class');
+
+  // The backslash branch: globs are matched against a forward-slashed relative
+  // path, so a Windows-style glob is a literal-backslash pattern that matches
+  // nothing real (rather than `\a` silently degrading into a bare `a`).
+  const backslash = globToRegExp('src\\a.ts');
+  assert.equal(backslash.test('src\\a.ts'), true, 'a backslash is escaped to a literal');
+  assert.equal(backslash.test('src/a.ts'), false, 'globs must be written with /');
+  assert.equal(backslash.test('srca.ts'), false, 'the backslash is not dropped');
+});
+
+test('matchesEntryGlob matches project-relative paths and refuses root escapes', () => {
+  const root = path.resolve('health-entry-glob-fixture');
+  const regexps = compileEntryGlobs(['src/pages/**/*.tsx', 'app/routes.ts']);
+
+  assert.equal(
+    matchesEntryGlob(path.join(root, 'src', 'pages', 'Home.tsx'), root, regexps),
+    true,
+    'the OS-separator path is normalized to / before matching',
+  );
+  assert.equal(
+    matchesEntryGlob(path.join(root, 'src', 'pages', 'admin', 'Users.tsx'), root, regexps),
+    true,
+    '** spans nested route directories',
+  );
+  assert.equal(
+    matchesEntryGlob(path.join(root, 'app', 'routes.ts'), root, regexps),
+    true,
+    'any glob in the list may match',
+  );
+  assert.equal(
+    matchesEntryGlob(path.join(root, 'src', 'pages', 'Home.ts'), root, regexps),
+    false,
+    'a non-matching file is not rooted',
+  );
+  assert.equal(
+    matchesEntryGlob(path.join(root, 'src', 'pages', 'Home.tsx'), root, []),
+    false,
+    'no configured globs → nothing is rooted',
+  );
+  assert.equal(
+    matchesEntryGlob(
+      path.join(root, 'src', 'pages', 'Home.tsx'),
+      root,
+      compileEntryGlobs(['pages/*.tsx']),
+    ),
+    false,
+    'globs anchor at the project root, not at any path suffix',
+  );
+
+  // Outside the project root: the relative path escapes with `..`, so the
+  // globs must not be consulted at all — a sibling checkout's file is not this
+  // project's entry point.
+  assert.equal(
+    matchesEntryGlob(
+      path.resolve(root, '..', 'other-project', 'src', 'pages', 'Home.tsx'),
+      root,
+      regexps,
+    ),
+    false,
+    'a sibling directory is rejected',
+  );
+  assert.equal(
+    matchesEntryGlob(
+      path.resolve(root, 'src', '..', '..', 'evil', 'src', 'pages', 'X.tsx'),
+      root,
+      regexps,
+    ),
+    false,
+    'traversing back out of the root is rejected',
+  );
+  assert.equal(
+    matchesEntryGlob(
+      path.join(`${root}-backup`, 'src', 'pages', 'Home.tsx'),
+      root,
+      regexps,
+    ),
+    false,
+    'a sibling that merely shares the root prefix is rejected',
+  );
+  assert.equal(
+    matchesEntryGlob(root, root, compileEntryGlobs(['**'])),
+    false,
+    'the project root itself has an empty relative path and never matches',
+  );
 });

@@ -49,3 +49,10 @@ cache, whose home path binds once at module load. Keep tests as plain
   unreadable at run start), an unchanged HEAD, or a fast-forward. The first two
   cases are pure fs (a bogus empty `.git` dir proves no git spawns); the
   HEAD-movement cases drive a real temp repo via `execFile` git.
+- `cleanupSafety.test.ts` — the two `.git`-deletion throw-guards in
+  `worktree/cleanupSafety.ts`: `assertSafeWorktreePath` (empty/whitespace path,
+  the repo root, out-of-bounds and wrong-project paths, the managed base dir
+  itself; accepts home + legacy worktree paths) and `assertNotReparsePoint`
+  (no-op on real files/dirs, silent on ENOENT, throws on a junction and on a
+  path reached *through* one — the branch lstat alone can't catch). Temp-dir
+  fixtures use `fs.symlink(…, 'junction')` like `pruneReparsePoints.test.ts`.

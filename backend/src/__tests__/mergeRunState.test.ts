@@ -9,6 +9,11 @@ import type { MergeRun } from '../mergeRuns/types.js';
 
 const fallbackProject = path.join(process.cwd(), 'merge-run-state-test-project');
 
+// Let any already-resolved promise's `.then` callbacks run. A pending waiter
+// stays pending across this, so a `false` resolved-flag afterwards is proof the
+// waiter was NOT released (rather than just not-yet-observed).
+const flushMicrotasks = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 test('normalizeLoadedRuns marks interrupted running runs errored', () => {
   const before = Date.now();
   const [run] = normalizeLoadedRuns(
@@ -172,4 +177,57 @@ test('ConflictWaiterRegistry signals by task id and cancellation unblocks by run
   assert.equal(waiters.unblockRun('run-b'), true);
   await cancelPromise;
   assert.equal(cancelled, true);
+});
+
+test('ConflictWaiterRegistry.abandon ignores a runId mismatch and leaves the waiter parked', async () => {
+  const waiters = new ConflictWaiterRegistry();
+  let released = false;
+  const waiter = waiters.register('run-a', 'task-a').then(() => {
+    released = true;
+  });
+
+  // A liveness backstop from some other run must not drop this run's waiter.
+  assert.equal(waiters.abandon('task-a', 'run-other'), false);
+  await flushMicrotasks();
+  assert.equal(released, false);
+
+  // Unknown taskId is also a no-op, and neither miss consumed the entry: the
+  // owning run's abandon still finds it.
+  assert.equal(waiters.abandon('task-missing', 'run-a'), false);
+  assert.equal(waiters.abandon('task-a', 'run-a'), true);
+  await waiter;
+  assert.equal(released, true);
+
+  // The entry is gone, so a second abandon (a stray late backstop) finds nothing.
+  assert.equal(waiters.abandon('task-a', 'run-a'), false);
+});
+
+test('ConflictWaiterRegistry.abandon from a prior run does not release a re-queued task\'s fresh waiter', async () => {
+  const waiters = new ConflictWaiterRegistry();
+
+  // Run A parks on task-a, its resolver really completes, waiter is consumed.
+  let releasedA = false;
+  const waiterA = waiters.register('run-a', 'task-a').then(() => {
+    releasedA = true;
+  });
+  assert.equal(waiters.signal('task-a'), true);
+  await waiterA;
+  assert.equal(releasedA, true);
+
+  // The task gets re-queued and run B parks on it under the SAME taskId.
+  let releasedB = false;
+  const waiterB = waiters.register('run-b', 'task-a').then(() => {
+    releasedB = true;
+  });
+
+  // Run A's stale liveness backstop fires late. It must not advance run B past
+  // its still-working resolver.
+  assert.equal(waiters.abandon('task-a', 'run-a'), false);
+  await flushMicrotasks();
+  assert.equal(releasedB, false);
+
+  // Run B's own release still works.
+  assert.equal(waiters.abandon('task-a', 'run-b'), true);
+  await waiterB;
+  assert.equal(releasedB, true);
 });
