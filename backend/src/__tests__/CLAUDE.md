@@ -42,3 +42,10 @@ cache, whose home path binds once at module load. Keep tests as plain
   `/merged` from an abandoned resolver no-ops (conflict-flag gate), AND a
   merge-run worker parked on the conflict waiter is released so the project
   run-lock is freed (Part A of the parked-waiter wedge fix).
+- `cleanupSafety.test.ts` — the two `.git`-deletion throw-guards in
+  `worktree/cleanupSafety.ts`: `assertSafeWorktreePath` (empty/whitespace path,
+  the repo root, out-of-bounds and wrong-project paths, the managed base dir
+  itself; accepts home + legacy worktree paths) and `assertNotReparsePoint`
+  (no-op on real files/dirs, silent on ENOENT, throws on a junction and on a
+  path reached *through* one — the branch lstat alone can't catch). Temp-dir
+  fixtures use `fs.symlink(…, 'junction')` like `pruneReparsePoints.test.ts`.
