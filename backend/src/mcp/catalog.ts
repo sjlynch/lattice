@@ -145,6 +145,30 @@ export const BUILTIN_MCP_SERVERS: McpServerEntry[] = [
     // three harness shapers `cmd /c`-wrap this correctly on Windows.
     command: 'uvx',
     args: ['blender-mcp'],
+    // Telemetry is ON by default upstream (`TelemetryConfig.enabled = True`),
+    // posting per-tool-call events to the author's Supabase. Lattice spawns
+    // agents unattended and in parallel, so that would phone home on every
+    // worktree/workflow spawn without anyone watching — off by default here.
+    //
+    // This is NOT redundant with the addon's "Allow Telemetry" checkbox: that
+    // consent only gates the PRIVATE payload (prompt text — which is what the
+    // required `user_prompt` tool argument feeds — plus code snippets, scene
+    // info, and viewport screenshots uploaded to their storage bucket);
+    // anonymous per-call events ship regardless. Worse, the addon's consent
+    // getter FAILS OPEN — `get_telemetry_consent` returns `True` whenever the
+    // preferences lookup misses (`addons.get(__name__)` → None, or
+    // AttributeError/KeyError) — so a rename/reinstall that breaks that lookup
+    // silently starts uploading prompts and screenshots. The env var is checked
+    // in the server's own constructor and clears `config.enabled`, which gates
+    // both `record_event` AND `upload_screenshot`, so it holds either way.
+    //
+    // All three names are set because the server accepts any of them; keeping
+    // the full set means an upstream rename can't quietly re-enable sending.
+    env: {
+      DISABLE_TELEMETRY: 'true',
+      BLENDER_MCP_DISABLE_TELEMETRY: 'true',
+      MCP_DISABLE_TELEMETRY: 'true',
+    },
     runtime: 'uv',
     // The server is only half the install: it's a thin bridge that talks to an
     // addon socket on localhost:9876, so a Blender with the addon enabled must

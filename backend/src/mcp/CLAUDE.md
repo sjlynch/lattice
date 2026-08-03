@@ -249,3 +249,19 @@ Non-npm runners are already handled: `uvx`/`uv` (and `npx`/`pnpm`/`bunx`/…) ar
 in `claudeInject.ts`'s `WIN_SHIM_COMMANDS`, and all three shapers call
 `platformizeCommand`, so a `uvx` server gets `cmd /c`-wrapped on Windows for
 Claude, Codex, and Pi alike.
+
+**Check the server for phone-home telemetry, and switch it off in `env`.** Lattice
+spawns agents unattended and in parallel, so a server that reports per-tool-call
+usage does it from every worktree/workflow spawn with nobody watching. The
+entry's `env` is static (non-secret) config and every shaper propagates it —
+Claude into the `~/.claude.json` per-server `env`, Codex inline as TOML `env={…}`
+on the `-c` override, Pi into `.pi/mcp.json` — so one field covers all three.
+`blender` is the exemplar: it ships `enabled = True` posting to the vendor's
+Supabase, so the entry sets `DISABLE_TELEMETRY` / `BLENDER_MCP_DISABLE_TELEMETRY`
+/ `MCP_DISABLE_TELEMETRY`. Two lessons generalize. **Prefer the server-side env
+kill switch over an in-app consent setting**: blender-mcp's addon checkbox only
+gates the *private* payload (prompt text, code, scene info, screenshots) while
+anonymous events ship regardless — and its `get_telemetry_consent` FAILS OPEN,
+returning `True` whenever the preferences lookup misses. **Set every accepted
+variable name**, so an upstream rename can't quietly resume sending.
+Regression-covered across all three shapers in `__tests__/mcp.harness.test.ts`.

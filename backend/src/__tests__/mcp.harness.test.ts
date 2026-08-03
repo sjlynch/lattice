@@ -13,6 +13,8 @@ import {
   toCodexServerConfig,
   safeCodexServerId,
 } from '../mcp/codexServerConfig.js';
+import { toClaudeConfig } from '../mcp/claudeServerConfig.js';
+import { toPiServerConfig } from '../mcp/piServerConfig.js';
 import {
   BUILTIN_MCP_SERVERS,
   builtinMcpServerById,
@@ -223,4 +225,61 @@ test('resolveCodexServers: does not read Claude mcpOverrides', () => {
   });
   // And Claude still sees them (independence both ways).
   assert.ok('context7' in resolveClaudeServers(BUILTIN_MCP_SERVERS, settings, {}));
+});
+
+// ---- blender: telemetry stays off on every harness ----
+//
+// blender-mcp ships `TelemetryConfig.enabled = True` and posts per-tool-call
+// events to the vendor's Supabase. The addon's "Allow Telemetry" checkbox only
+// gates the private payload (prompt text / code / scene info / screenshots) and
+// FAILS OPEN when its preferences lookup misses, so the kill switch that
+// actually holds is the env var the server reads in its own constructor. Lattice
+// spawns agents unattended, so no harness may launch this server without it.
+
+const TELEMETRY_OFF_VARS = [
+  'DISABLE_TELEMETRY',
+  'BLENDER_MCP_DISABLE_TELEMETRY',
+  'MCP_DISABLE_TELEMETRY',
+] as const;
+
+test('blender: the catalog entry declares every telemetry kill switch', () => {
+  const blender = builtinMcpServerById('blender')!;
+  for (const name of TELEMETRY_OFF_VARS) {
+    assert.equal(blender.env?.[name], 'true', `${name} must be set on the catalog entry`);
+  }
+});
+
+test('blender: all three shapers carry the telemetry-off env to the spawned server', () => {
+  const blender = builtinMcpServerById('blender')!;
+
+  // Claude → `~/.claude.json` per-server `env`.
+  const claude = toClaudeConfig(blender, undefined, false);
+  assert.equal(claude.type, 'stdio');
+  for (const name of TELEMETRY_OFF_VARS) {
+    assert.equal(
+      claude.type === 'stdio' ? claude.env?.[name] : undefined,
+      'true',
+      `claude config must set ${name}`,
+    );
+  }
+
+  // Codex → inline-TOML `env={…}` on the `-c` override. Static (non-secret) env
+  // is rendered inline, so assert on the rendered pairs rather than `env_vars`
+  // (which carries secret NAMES only).
+  const codex = toCodexServerConfig(blender, undefined, false);
+  for (const name of TELEMETRY_OFF_VARS) {
+    assert.ok(
+      codex.configArg.includes(`${name}='true'`),
+      `codex override must render ${name}='true' — got ${codex.configArg}`,
+    );
+  }
+  // Nothing secret here, so no value should ride the pty env.
+  assert.deepEqual(codex.env, {});
+
+  // Pi → `.pi/mcp.json` per-server `env`.
+  const pi = toPiServerConfig(blender, undefined, false);
+  for (const name of TELEMETRY_OFF_VARS) {
+    assert.equal(pi.config.env?.[name], 'true', `pi config must set ${name}`);
+  }
+  assert.deepEqual(pi.env, {});
 });
