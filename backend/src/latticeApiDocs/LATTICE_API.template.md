@@ -310,21 +310,35 @@ curl -s -X POST "$LATTICE_API_URL/api/tasks/transition" \
 | POST   | /api/tasks/upsert                  | Markdown round-trip: `{id=...}` headings update, no-id headings create. Additive (never deletes) |
 | POST   | /api/tasks/bulk-update             | JSON `{updates:[{id, title?, description?, status?}]}` — N patches, one round trip |
 | POST   | /api/tasks/transition              | Bulk status move `{ids?, fromStatus?, status}` |
+| POST   | /api/tasks/reorder                 | Persist one lane's card order `{project, status, ids}` |
 | PATCH  | /api/tasks/:id                     | Update title / description / status. Accepts JSON OR `text/markdown` body (replaces description; `# Heading` replaces title too) |
 | POST   | /api/tasks/:id/append-summary      | Append a summary section. JSON `{summary}` OR `text/markdown` body |
 | DELETE | /api/tasks/:id                     | Remove a task |
-| POST   | /api/tasks/:id/run                 | Spawn worktree + Claude on an open task |
-| POST   | /api/tasks/:id/resume              | Re-spawn Claude in an existing worktree |
+| POST   | /api/tasks/:id/run                 | Run an Open task. Optional `{harness, piModel}`. Returns `{accepted, queued}` — see the async note below |
+| POST   | /api/tasks/:id/resume              | Re-spawn the agent in an existing in-progress worktree. Same body and `{accepted, queued}` shape as `/run` |
+| POST   | /api/tasks/:id/cancel-queued-run   | Drop a still-queued run, reverting the task to plain Open. Idempotent (no-op if it already started) |
 | POST   | /api/tasks/:id/merge               | Attempt git merge of a Ready-to-Merge task |
 | POST   | /api/merge-runs                    | Body `{project}` — merge every Ready-to-Merge task |
 | GET    | /api/merge-runs/active?project=    | Active merge run, or `null` |
+| GET    | /api/merge-runs/:id                | Snapshot one merge run by id (404 once it's been forgotten) |
 | POST   | /api/merge-runs/:id/cancel         | Cancel a merge run |
-| GET    | /api/workflow-runs/active?project= | Active workflow runs |
+| GET    | /api/workflows?project=            | List workflow definitions — this is how you get the `:id` for the run call below |
 | POST   | /api/workflows/:id/run             | Start a workflow run; optional `{harnessOverride}` |
+| GET    | /api/workflow-runs/active?project= | Active workflow runs |
+| POST   | /api/workflow-runs/:runId/cancel   | Cancel an active workflow run |
 | GET    | /api/settings?project=             | Per-project user settings (read) |
 | PATCH  | /api/settings?project=             | Per-project user settings (update) |
 | GET    | /api/project-env?project=          | Auto-detected package-manager envs + injected worktree notes |
 | GET    | /api/health/dead-code?project=     | Files the analyzer flags as unreachable: `{files:[{path,ext}], total, scannedAt}` (empty if the confidence guard tripped) |
+
+> ⚠️ **`/run` and `/resume` are asynchronous.** They put the task on Lattice's
+> spawn queue and return `{"accepted":true,"queued":<bool>}` immediately — that
+> response means *admitted*, not *started*. When headroom exists the worktree and
+> agent terminal come up right away; otherwise the run waits its turn and is never
+> dropped. Don't treat `accepted` as "the work is done", and don't re-POST because
+> nothing seems to have happened. Poll
+> `/api/tasks/:id` (or `/api/tasks/summary`) to watch the status move
+> `open → in_progress → ready_to_merge`.
 
 Statuses: `backlog | open | in_progress | ready_to_merge | qa | done | deleted`.
 Pipeline: `open → in_progress → ready_to_merge → qa → done` (drag-and-drop

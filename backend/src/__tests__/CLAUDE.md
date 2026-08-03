@@ -82,6 +82,21 @@ cache, whose home path binds once at module load. Keep tests as plain
   `LATTICE_API.md` + the PATCH/DELETE calls the helper script lacks. Also pins
   `current` against the frontend `prompts/*.md` bytes so the backend and frontend
   copies of each built-in prompt cannot drift.
+- `latticeApiDocsDrift.test.ts` — pins the two hand-maintained API docs against
+  the real router. `latticeApiDocs.ts` only guarantees a project's
+  `.lattice/LATTICE_API.md` matches the *template* that shipped with the build
+  (content-hash in line 1), so a renamed endpoint left the template — and every
+  regenerated copy on every machine — confidently documenting a dead path.
+  Builds the Express app in-process via `mountRouteFactories` and walks the
+  router stack (asserting the prefix-less-mount assumption the collector rests
+  on), then checks both directions: every endpoint-table row and every
+  copy-pasteable `$LATTICE_API_URL/...` recipe must resolve to a live route, and
+  every live route must either be documented or carry an entry in the test's
+  `UNDOCUMENTED_ROUTES` map explaining why agents shouldn't see it (hook
+  callbacks, Settings-UI surfaces, MCP secrets, graph reads). **That opt-out map
+  is the drift guard** — a new route fails the suite until someone decides which
+  side it belongs on. A final case holds the root `CLAUDE.md` HTTP table to
+  total coverage in both directions (it caught `POST /api/terminals` missing).
 - `cleanupSafety.test.ts` — the two `.git`-deletion throw-guards in
   `worktree/cleanupSafety.ts`: `assertSafeWorktreePath` (empty/whitespace path,
   the repo root, out-of-bounds and wrong-project paths, the managed base dir

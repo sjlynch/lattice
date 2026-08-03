@@ -205,6 +205,7 @@ therefore stay safely re-runnable.
 | POST | `/api/post-merge-hooks/:id/complete` | Post-merge hook Stop-hook completion/error callback |
 | POST | `/api/post-merge-hooks/:id/abort` | Abort an active post-merge hook |
 | GET | `/api/terminals` | Debug: list active pty sessions |
+| POST | `/api/terminals` | Pre-spawn a pty for a sidebar-launched harness terminal; returns its `serverId`. Routes the launch through the same spawn chokepoint (`resolveHarnessSpawnBody`) as tasks, so Codex/Pi MCP config is applied (a bare `/ws/terminal` connect would bypass it) |
 | DELETE | `/api/terminals/:id` | Kill a pty session |
 | GET | `/api/spawn-queue` | Debug: spawn-queue snapshot (pending/in-flight/reserved, softCap) |
 | WS | `/ws/terminal?id=&cwd=&cols=&rows=&initialCommand=` | xterm proxy via node-pty (with replay) |
