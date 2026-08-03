@@ -76,9 +76,9 @@ serverless for now — see `frontend/src/components/sidebar/CLAUDE.md`.)
 
 ## Modules
 
-- `catalog.ts` — the built-in server catalog **in code** (4 servers: playwright,
-  chrome-devtools, context7, brave-search) + the `McpServerEntry` type. Package
-  names live here so churn is a code change, not a data migration. **Invariant:
+- `catalog.ts` — the built-in server catalog **in code** (5 servers: playwright,
+  chrome-devtools, context7, brave-search, blender) + the `McpServerEntry` type.
+  Package names live here so churn is a code change, not a data migration. **Invariant:
   there is no `enabledByDefault` flag** — everything is off until the resolver is
   told otherwise, so a new project loads nothing. **Playwright ships `--isolated`
   in its catalog args** (not optional): `@playwright/mcp` otherwise shares ONE
@@ -229,3 +229,23 @@ terminal-server entirely.
 Add an entry to `BUILTIN_MCP_SERVERS` in `catalog.ts`. If it needs a key, set
 `requiresSecret` (renders the masked field + status chip + get-a-key link) and,
 if testable, add a `case` in `validators.ts`. Off by default automatically.
+
+Two things the entry alone can't do, so put them in `runtimeNote` (the only
+catalog field the MCP tab actually renders as a caveat — `runtime` is metadata,
+nothing displays it):
+- **Out-of-band prerequisites.** A server that bridges to a separate running app
+  can't be made to work by toggling it on. `blender` is the exemplar: `uvx
+  blender-mcp` is only the bridge; it talks to an addon socket on
+  `localhost:9876`, so Blender must be OPEN with the "Blender MCP" addon enabled
+  or every tool call fails. It has no headless mode — the addon refuses to serve
+  under `blender -b` because commands run on Blender's main thread via
+  `bpy.app.timers`, which background mode never pumps.
+- **Optional keys.** `requiresSecret` renders a *required*-key field and a
+  "needs key" chip, so don't set it for keys that are optional or configured
+  elsewhere (Blender's Sketchfab/Hyper3D keys live in its own addon
+  preferences); say so in `runtimeNote` instead.
+
+Non-npm runners are already handled: `uvx`/`uv` (and `npx`/`pnpm`/`bunx`/…) are
+in `claudeInject.ts`'s `WIN_SHIM_COMMANDS`, and all three shapers call
+`platformizeCommand`, so a `uvx` server gets `cmd /c`-wrapped on Windows for
+Claude, Codex, and Pi alike.

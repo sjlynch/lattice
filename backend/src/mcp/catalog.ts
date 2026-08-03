@@ -63,7 +63,7 @@ export type McpServerEntry = {
   builtin?: boolean;
 };
 
-// v1 catalog: 4 servers, all disabled until enabled per-project.
+// v1 catalog: 5 servers, all disabled until enabled per-project.
 export const BUILTIN_MCP_SERVERS: McpServerEntry[] = [
   {
     id: 'playwright',
@@ -129,6 +129,34 @@ export const BUILTIN_MCP_SERVERS: McpServerEntry[] = [
       label: 'Brave Search API key',
       getKeyUrl: 'https://api-dashboard.search.brave.com/app/keys',
     },
+    harnessSupport: { claude: true, codex: true, pi: true },
+    builtin: true,
+  },
+  {
+    id: 'blender',
+    label: 'Blender',
+    description:
+      'Drive a running Blender from the agent: inspect the scene, create and ' +
+      'modify objects/materials, run Python inside Blender, and pull in assets ' +
+      'from Poly Haven / Sketchfab / Hyper3D.',
+    transport: 'stdio',
+    // PyPI, not npm — `uvx` (like the official fetch/git/time servers). Both
+    // `uvx` and `uv` are already in claudeInject's WIN_SHIM_COMMANDS, so all
+    // three harness shapers `cmd /c`-wrap this correctly on Windows.
+    command: 'uvx',
+    args: ['blender-mcp'],
+    runtime: 'uv',
+    // The server is only half the install: it's a thin bridge that talks to an
+    // addon socket on localhost:9876, so a Blender with the addon enabled must
+    // already be OPEN or every tool call fails "Could not connect to Blender".
+    // The addon refuses to serve under `blender -b` (commands execute on
+    // Blender's main thread via bpy.app.timers, which background mode never
+    // pumps), so there is deliberately no headless story.
+    runtimeNote:
+      'Needs the uv package manager on PATH, plus Blender 3.0+ open (not ' +
+      'headless) with the "Blender MCP" addon installed and enabled — it ' +
+      'auto-starts on localhost:9876. Optional Sketchfab/Hyper3D keys are ' +
+      "entered in Blender's own addon preferences, not here.",
     harnessSupport: { claude: true, codex: true, pi: true },
     builtin: true,
   },
