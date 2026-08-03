@@ -119,6 +119,41 @@ test('inferPromptTemplateId and promptTemplateTitle use the ordered template met
       'combine-tasks',
       'Combine Tasks',
     ],
+    // The prompt bodies were reworded to be planner-only (file tasks, never
+    // implement/commit). Both the old and the new opener must still resolve, or
+    // a workflow saved before the rewording loses its template identity.
+    [
+      {
+        title: 'Step 1',
+        prompt: 'Analyze the codebase for opportunities to refactor the code so that it is easier for LLMs to navigate.',
+      },
+      'refactor',
+      'Refactor',
+    ],
+    [
+      {
+        title: 'Step 1',
+        prompt: 'Analyze the codebase and look for opportunities to refactor the code so that it is easier for LLMs to navigate.',
+      },
+      'refactor',
+      'Refactor',
+    ],
+    [
+      {
+        title: 'Step 1',
+        prompt: "Survey this project's documentation and file every gap you find as a task.",
+      },
+      'documentation',
+      'Documentation',
+    ],
+    [
+      {
+        title: 'Step 1',
+        prompt: 'Survey this project and bring its documentation up to a high standard.',
+      },
+      'documentation',
+      'Documentation',
+    ],
   ] as const;
 
   for (const [step, id, title] of cases) {

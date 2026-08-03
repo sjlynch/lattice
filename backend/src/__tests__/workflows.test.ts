@@ -14,6 +14,7 @@ import {
   USER_INSTRUCTIONS_VAR,
 } from '../workflows/normalization.js';
 import { interpolateWorkflowVariables } from '../workflows/interpolate.js';
+import { DEFAULT_PROMPT_MIGRATIONS } from '../workflows/defaultPromptMigrations.js';
 import {
   WORKFLOWS_FILENAME,
   WorkflowStore,
@@ -217,6 +218,93 @@ test('WorkflowStore persists workflows under .lattice/workflows.json and reloads
     assert.equal(await reloaded.deleteWorkflow(created.id), true);
     await reloaded.flushPersist(dir);
     assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')), []);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('loading a project upgrades stale built-in step prompts and persists the result', async () => {
+  // A workflow stores a plain copy of the quick-add prompt text, so rewording a
+  // shipped built-in never reaches an already-saved workflow on its own. The
+  // rewording this migrates for is a correctness fix (the old Documentation
+  // prompt ended in "commit your work", contradicting WORKFLOW_STEP.md's
+  // planner-only contract), so it has to reach saved workflows too.
+  const docs = DEFAULT_PROMPT_MIGRATIONS.find((m) => m.id === 'quick-add:documentation');
+  assert.ok(docs);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-workflows-migrate-'));
+  try {
+    const project = canonicalProjectPath(dir);
+    const file = workflowsFile(project);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const stale: Workflow[] = [
+      {
+        id: 'wf_stale',
+        projectPath: project,
+        name: 'Docs',
+        steps: [
+          {
+            id: 'step_docs',
+            title: 'Documentation',
+            // Exactly what the editor persisted: the built-in body plus the
+            // appended variable token.
+            prompt: `${docs.legacy[0]}\n\n{{user_instructions}}`,
+            mode: 'sequential',
+            harness: 'claude',
+            kind: 'agent',
+          },
+          {
+            id: 'step_custom',
+            title: 'Mine',
+            prompt: 'Something I wrote myself.',
+            mode: 'sequential',
+            harness: 'claude',
+            kind: 'agent',
+          },
+        ],
+        variables: [],
+        createdAt: 1,
+      },
+    ];
+    await fs.writeFile(file, JSON.stringify(stale), 'utf8');
+
+    const store = new WorkflowStore();
+    const loaded = await store.listWorkflows(dir);
+    assert.equal(loaded[0].steps[0].prompt, `${docs.current}\n\n{{user_instructions}}`);
+    assert.equal(loaded[0].steps[1].prompt, 'Something I wrote myself.');
+
+    // ...and the upgrade is written back, not just held in memory.
+    await store.flushPersist(dir);
+    const onDisk = JSON.parse(await fs.readFile(file, 'utf8')) as Workflow[];
+    assert.equal(onDisk[0].steps[0].prompt, `${docs.current}\n\n{{user_instructions}}`);
+    assert.doesNotMatch(onDisk[0].steps[0].prompt, /commit your work/i);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a stale built-in prompt from an older frontend bundle is migrated on create', async () => {
+  const docs = DEFAULT_PROMPT_MIGRATIONS.find((m) => m.id === 'quick-add:documentation');
+  assert.ok(docs);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-workflows-migrate-create-'));
+  try {
+    const store = new WorkflowStore();
+    const created = await store.createWorkflow(dir, 'Docs', [
+      {
+        id: 'step_docs',
+        title: 'Documentation',
+        prompt: docs.legacy[0],
+        mode: 'sequential',
+        harness: 'claude',
+        kind: 'agent',
+      },
+    ]);
+    assert.equal(created.steps[0].prompt, docs.current);
+
+    const patched = await store.updateWorkflow(created.id, {
+      steps: [{ ...created.steps[0], prompt: docs.legacy[0] }],
+    });
+    assert.ok(patched);
+    assert.equal(patched.steps[0].prompt, docs.current);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

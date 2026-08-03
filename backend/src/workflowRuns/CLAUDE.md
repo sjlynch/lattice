@@ -34,6 +34,16 @@ explicit-curl callbacks — never by polling task state.
   Completion instructions branch on harness: Claude relies on its silent
   Stop hook; Pi/codex are told to curl `/complete` explicitly (their
   `session_shutdown` extension / Codex Stop hook is the backstop).
+  **Planner-only contract:** the brief's "you are planning, not implementing"
+  section sits *above* `{{step_prompt}}` and explicitly outranks it. It used to
+  be three lines buried mid-document, and Claude's completion line read "After
+  creating all the tasks described above, simply stop" — which a step whose
+  prompt named no tasks read as an unfilled template, dismissed, and then
+  implemented + committed the work itself (2026-08). Keep the rule above the
+  prompt, keep it unconditional, and don't reintroduce completion wording that
+  presupposes the step prompt enumerated tasks. The shipped step prompts
+  themselves are kept planner-only by
+  `../workflows/defaultPromptMigrations.ts`.
 - `stepSpawner.ts` — `spawnWorkflowStep`: the coordinator, split into
   named setup phases (`prepareStepScratch`, `writeStepAssets`,
   `installStepCallbacks`, `spawnStepSession`). Creates

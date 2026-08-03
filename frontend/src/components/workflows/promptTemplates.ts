@@ -40,6 +40,9 @@ const PROMPT_TEMPLATE_METADATA: readonly PromptTemplateMetadata[] = [
     projectAware: true,
     matches: ({ title, prompt }) =>
       title.includes('refactor') ||
+      // Both the current opener and the pre-2026-08 one, so a workflow saved
+      // before the prompt was reworded still resolves to this template.
+      prompt.startsWith('analyze the codebase for opportunities to refactor') ||
       prompt.startsWith('analyze the codebase and look for opportunities to refactor'),
   },
   {
@@ -82,6 +85,7 @@ const PROMPT_TEMPLATE_METADATA: readonly PromptTemplateMetadata[] = [
     title: 'Documentation',
     matches: ({ title, prompt }) =>
       title.includes('documentation') ||
+      prompt.startsWith("survey this project's documentation") ||
       prompt.startsWith('survey this project and bring its documentation'),
   },
 ];

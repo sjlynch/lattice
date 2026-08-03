@@ -3,6 +3,10 @@ import { generateWorkflowId } from '../ids.js';
 import { ProjectStateManager } from '../projectStateManager.js';
 import { listKnownProjects as listKnownTaskProjects } from '../tasks.js';
 import {
+  migrateWorkflowDefaultPrompts,
+  migrateWorkflowStepPrompts,
+} from './defaultPromptMigrations.js';
+import {
   normalizeSteps,
   normalizeWorkflows,
   normalizeWorkflowVariables,
@@ -34,6 +38,10 @@ export type WorkflowStoreOptions = {
 
 export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubscriber> {
   private readonly listKnownProjects: () => Promise<string[]>;
+  // Projects whose saved workflows have already been checked against the
+  // built-in prompt migrations this process. One pass per project is enough:
+  // every later mutation goes through create/update, which migrate too.
+  private readonly promptsMigrated = new Set<string>();
 
   constructor(opts: WorkflowStoreOptions = {}) {
     super({
@@ -44,6 +52,31 @@ export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubsc
       snapshot: (workflows) => [...workflows],
     });
     this.listKnownProjects = opts.listKnownProjects ?? listKnownTaskProjects;
+  }
+
+  // Upgrade stale copies of Lattice's own built-in step prompts the first time
+  // a project's workflows are loaded. A workflow stores a plain copy of whatever
+  // the quick-add chip / template picker produced, so a reworded built-in never
+  // reaches an already-saved workflow otherwise — and the specific rewording
+  // this exists for (planner-only wording, no "commit your work") is a
+  // correctness fix, not cosmetics. Hand-edited prompts never match and are left
+  // alone; see defaultPromptMigrations.ts.
+  protected override async loadIfNeeded(projectPath: string): Promise<string> {
+    const key = await super.loadIfNeeded(projectPath);
+    if (this.promptsMigrated.has(key)) return key;
+    this.promptsMigrated.add(key);
+    const cached = this.getCached(key);
+    if (!cached?.length) return key;
+    const { workflows, changed } = migrateWorkflowDefaultPrompts(cached);
+    if (!changed) return key;
+    this.setCached(key, workflows);
+    this.schedulePersist(key);
+    this.notifyProject(key);
+    console.log(
+      `[workflows] upgraded stale built-in step prompts in ${key} ` +
+        '(planner-only wording; see workflows/defaultPromptMigrations.ts)',
+    );
+    return key;
   }
 
   public async listWorkflows(projectPath: string): Promise<Workflow[]> {
@@ -100,7 +133,9 @@ export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubsc
         id: generateWorkflowId(),
         projectPath: key,
         name: name.trim() || 'Untitled workflow',
-        steps: normalizeSteps(steps),
+        // Migrate on the way in too: a browser tab still running the previous
+        // frontend bundle inserts the OLD quick-add/template text.
+        steps: migrateWorkflowStepPrompts(normalizeSteps(steps)).steps,
         variables: normalizeWorkflowVariables(variables),
         createdAt: Date.now(),
       };
@@ -128,7 +163,9 @@ export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubsc
             typeof updates.name === 'string' && updates.name.trim()
               ? updates.name.trim()
               : prev.name,
-          steps: updates.steps ? normalizeSteps(updates.steps) : prev.steps,
+          steps: updates.steps
+            ? migrateWorkflowStepPrompts(normalizeSteps(updates.steps)).steps
+            : prev.steps,
           variables: updates.variables
             ? normalizeWorkflowVariables(updates.variables)
             : normalizeWorkflowVariables(prev.variables),

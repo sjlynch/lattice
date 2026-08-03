@@ -59,7 +59,10 @@ default = the built-in) argument. The **spawn callers** (`setupFiles.ts`,
 
 ## Invariants
 
-- **Default output is unchanged** when no override is set — the defaults are a
-  1:1 tokenization of the previous hardcoded strings (workflow-step has at most
-  a cosmetic extra blank line when an optional block is absent).
 - A blank/whitespace-only override is ignored (falls back to the default).
+- **A project override freezes that template.** Migrations only reach the
+  built-in defaults, so a user who overrode `workflow-step` keeps their own
+  wording — including any contradiction they wrote into it. Worth knowing when
+  debugging "the agent ignored the brief".
+- `workflow-step`'s planner-only section must stay **above** `{{step_prompt}}`
+  and keep claiming precedence over it; see `../workflowRuns/CLAUDE.md`.

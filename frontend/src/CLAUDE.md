@@ -21,6 +21,15 @@ styled-components.
 - `storage/latticeLocalStorage.ts` — safe localStorage get/set/remove + the `lattice.graph*.<project>` key builders.
 - `utils/terminalMap.ts` — `buildTerminalMap` (taskId → terminalId lookup for task-board focus buttons).
 - `workflowTemplates.ts` — built-in templates surfaced in the Workflows picker.
+  Two rules: (1) every agent step **files tasks** — never write a template step
+  that implements or commits, since `WORKFLOW_STEP.md` forbids it and that
+  contradiction is what let a step commit code directly (see
+  `backend/src/workflows/defaultPromptMigrations.ts`); (2) a template is a pure
+  chain of agent steps, i.e. what a user gets from clicking quick-add chips in a
+  row — **don't bundle `start`/`merge`/`push` control steps into one.** Landing
+  work stays an explicit action the user adds. `plan-build-ship` is the single
+  deliberate exception: driving the board to a push is its entire purpose and
+  its name says so.
 - `harnesses.ts` — shared frontend vocabulary/helpers for agent harness strings, labels, and availability-filtered option lists. Also the Pi-model dropdown encoding: `buildHarnessOptions` (flattens harness + curated Pi models into "Pi — X" rows) and `encodeHarnessValue`/`decodeHarnessValue` (the `pi:<provider/model>` `<select>` value ⇄ `{harness, piModel}`).
 - `piMenuStoreCore.ts` / `piModelMenuStore.ts` — shared cache + refresh signal for the curated "Pi — X" model menu. `piMenuStoreCore` is the pure `createPiMenuStore(fetcher)` factory (unit-tested); `piModelMenuStore` builds the `getPiModels`-backed singleton + `notifyPiModelsChanged()`. Consumed via `hooks/usePiModelMenu`; alongside `hooks/useHarnessAvailability`, this is the one source of harness/Pi-menu data shared by the task board, workflow steps/overrides, post-merge hook, and sidebar new-terminal dropdowns.
 

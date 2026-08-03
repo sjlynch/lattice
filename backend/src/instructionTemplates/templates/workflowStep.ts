@@ -2,11 +2,41 @@
 // module: array-joined (the body is dense with backticks/fences) plain markdown
 // with `{{token}}` placeholders. See ../defs.ts for the catalog entry (token
 // docs) and ../CLAUDE.md for the subsystem overview.
+//
+// The "How this step works" section sits ABOVE `{{step_prompt}}` and explicitly
+// claims precedence over it. Reason (2026-08): the planner-only rule used to be
+// three lines buried mid-document, and the Claude completion line read "After
+// creating all the tasks described above, simply stop" — which an agent running
+// a step whose prompt didn't literally enumerate tasks reasonably read as
+// unfilled boilerplate, dismissed, and then implemented + committed the work
+// itself. The rule is now unmissable, unconditional, and states what to do when
+// the step prompt sounds like an instruction to implement.
 
 export const DEFAULT_WORKFLOW_STEP_TEMPLATE = [
   '# Workflow Step {{step_number}} of {{total_steps}}: {{step_title}}',
   '',
   '{{dirty_state_warning}}',
+  '## How this step works — you are planning, not implementing',
+  '',
+  'This is a **workflow planning step**. Its only output is **tasks on the',
+  'Lattice task board**. Lattice runs each task afterwards in its own git',
+  'worktree with its own agent — that is where code gets written.',
+  '',
+  '- **Do not create, edit, or delete any file in the project.**',
+  '- **Do not run `git commit`, `git add`, `git checkout`, or any other git',
+  '  command that writes.** Reading history (`git log`, `git diff`) is fine.',
+  '- The only writes you may perform are to the Lattice task board — creating',
+  '  tasks, and updating or deleting them when this step explicitly asks for',
+  '  that.',
+  '- **This section overrides the step prompt below.** If the step prompt reads',
+  '  like an instruction to *do* the work — `refactor X`, `bring the docs up to',
+  '  a high standard`, `add tests`, `commit your work` — it means: plan that',
+  '  work and file it as tasks. Nothing in the step prompt is permission to edit',
+  '  files or commit, and a step prompt that never mentions tasks is not a',
+  '  half-filled template — it still means "file tasks".',
+  '- Filing zero tasks is a valid outcome. If there is genuinely nothing to do,',
+  '  say so and stop — never substitute code changes for tasks.',
+  '',
   '## Your Task',
   '',
   '{{autonomy_preamble}}{{step_prompt}}',
@@ -30,9 +60,8 @@ export const DEFAULT_WORKFLOW_STEP_TEMPLATE = [
   "example: they often miss whole lanes like 'qa' or 'ready_to_merge'). Always",
   "use `node create-task.cjs --list` or the API; that's the source of truth.",
   '',
-  '{{harness_override_note}}You can inspect the project files at that path if helpful.',
-  'Your primary role here is to create tasks on the Lattice board so that',
-  'code agents can do the implementation work. Do not write or commit code directly.',
+  '{{harness_override_note}}Read anything you need under the project path — the',
+  'whole tree is yours to inspect. Just do not write to it.',
   '',
   '## Creating tasks — use the helper script',
   '',
@@ -81,6 +110,31 @@ export const DEFAULT_WORKFLOW_STEP_TEMPLATE = [
   'curl -s "{{backend_origin}}/api/tasks?project={{project_path_encoded}}"',
   '# → { project, canonicalProject, hash, count, mismatched, tasks: [...] }',
   '```',
+  '',
+  '## Reorganizing the board (update / delete)',
+  '',
+  'The helper script only creates and reads. When this step asks you to combine,',
+  're-scope, retitle, or remove existing tasks, call the API directly:',
+  '',
+  '```bash',
+  '# update a task — JSON, or a text/markdown body to replace the description',
+  'curl -s -X PATCH "{{backend_origin}}/api/tasks/<id>" \\',
+  '  -H "Content-Type: application/json" \\',
+  '  -d \'{"title":"New title","description":"New description"}\'',
+  '',
+  '# delete a task',
+  'curl -s -X DELETE "{{backend_origin}}/api/tasks/<id>"',
+  '```',
+  '',
+  'The **full API reference** — every endpoint, plus bash and PowerShell recipes',
+  'for batch create / markdown round-trip / bulk update / status transitions —',
+  'is on disk at:',
+  '',
+  '`{{lattice_api_doc_path}}`',
+  '',
+  'Read that file before hand-rolling anything more involved than the calls',
+  'above. (The same values are also in this session as `$LATTICE_API_URL`,',
+  '`$LATTICE_PROJECT`, and `$LATTICE_DOCS`.)',
   '',
   '## When you are done',
   '',

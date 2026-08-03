@@ -5,7 +5,9 @@
 // relies on its session_shutdown extension *plus* an explicit curl as a
 // backstop, codex always curls itself.
 
+import path from 'node:path';
 import { canonicalProjectPath } from '../projectPath.js';
+import { LATTICE_API_DOC_FILENAME } from '../latticeApiDocs.js';
 import { applyTemplate } from '../instructionTemplates/apply.js';
 import { DEFAULT_WORKFLOW_STEP_TEMPLATE } from '../instructionTemplates/defs.js';
 import {
@@ -59,12 +61,18 @@ export function renderStepMarkdown(
   // a session_shutdown extension is installed as a backstop — useful so the
   // model knows abnormal exits won't strand the run, but it's not framed as a
   // permission to skip the explicit curl (the backstop is best-effort).
+  //
+  // Claude's line is deliberately NOT phrased as "after creating all the tasks
+  // described above" any more: a step prompt that doesn't literally enumerate
+  // tasks made that read as unfilled boilerplate, which is what let a planner
+  // talk itself into implementing + committing the step instead (2026-08).
   const completionInstructions = (
     harness === 'claude'
       ? [
-          'After creating all the tasks described above, simply stop. Your session',
-          'will be finalized automatically and the next workflow step (if any) will',
-          'be queued.',
+          "When this step's work is done — the tasks are filed, or you have",
+          'concluded that none are needed — simply stop. Your session will be',
+          'finalized automatically and the next workflow step (if any) will be',
+          'queued.',
         ]
       : [
           '**Final step — tell Lattice this step is done (do not skip this).**',
@@ -95,7 +103,7 @@ export function renderStepMarkdown(
           '> watching to confirm with, and the run will not be picked up again',
           "> if you stop early.** Work through the whole step to completion in",
           '> this same session, without pausing to ask for permission or approval.',
-          '> That includes the wrap-up: create the tasks described below and POST',
+          '> That includes the wrap-up: file the tasks this step calls for and POST',
           "> the `/complete` callback at the very end. Stopping after \"I created",
           "> the tasks\" — without calling `/complete` — leaves the workflow run",
           "> stuck on this step and the next step never spawns. Don't end your",
@@ -123,6 +131,11 @@ export function renderStepMarkdown(
     step_prompt: renderedPrompt,
     project_path: canonicalProject,
     project_path_encoded: encodedProject,
+    // The auto-managed full API cheatsheet. `ensureLatticeApiDoc` writes it at
+    // pty spawn (which happens after this render) whenever `<project>/.lattice/`
+    // exists — and it always does here, since the step's own scratch dir lives
+    // under it. Path only; the file itself is owned by latticeApiDocs.ts.
+    lattice_api_doc_path: path.join(canonicalProject, '.lattice', LATTICE_API_DOC_FILENAME),
     backend_origin: backendOrigin,
     harness_override_note: harnessOverrideNote,
     completion_instructions: completionInstructions,

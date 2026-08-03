@@ -70,6 +70,18 @@ cache, whose home path binds once at module load. Keep tests as plain
   deletes the file, `notify` keeps it current), and the headline pair: a
   `/complete` callback for an unknown run is a silent no-op, but after
   `restoreWorkflowRun` the very same callback advances the workflow.
+- `defaultPromptMigrations.test.ts` — the planner-only contract for workflow
+  steps, both halves. (1) `workflows/defaultPromptMigrations.ts`: prefix matching
+  keeps the editor's appended `{{user_instructions}}` / project-tailoring suffix,
+  migration is idempotent + CRLF-tolerant, a hand-edited prompt is never touched,
+  every legacy generation lands on the newest wording, and no shipped `current`
+  body still tells the agent to commit. (2) the rendered `WORKFLOW_STEP.md`: the
+  "you are planning, not implementing" rule appears **above** the step prompt and
+  claims precedence over it, Claude's completion line no longer reads as
+  boilerplate that a task-less step prompt can dismiss, and the brief points at
+  `LATTICE_API.md` + the PATCH/DELETE calls the helper script lacks. Also pins
+  `current` against the frontend `prompts/*.md` bytes so the backend and frontend
+  copies of each built-in prompt cannot drift.
 - `cleanupSafety.test.ts` — the two `.git`-deletion throw-guards in
   `worktree/cleanupSafety.ts`: `assertSafeWorktreePath` (empty/whitespace path,
   the repo root, out-of-bounds and wrong-project paths, the managed base dir

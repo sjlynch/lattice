@@ -20,6 +20,24 @@ imports from `'../workflows.js'`; this directory holds the implementation.
   every workflow always carries the built-in `user_instructions` variable
   (`USER_INSTRUCTIONS_VAR`, leading the list). Variable names are coerced to the
   `[A-Za-z0-9_]` token grammar.
+- `defaultPromptMigrations.ts` — upgrades stale copies of **Lattice's own**
+  built-in step prompts (the quick-add chips in
+  `frontend/src/components/workflows/prompts/*.md` and the built-in workflow
+  templates). A saved workflow holds a plain *copy* of whatever prompt text the
+  editor produced, so rewording a shipped prompt never reaches an
+  already-saved workflow on its own. Entries carry the previously-shipped bodies
+  (`legacy`, newest first, lifted byte-exact from git) and the `current` one;
+  matching is a **prefix** test so the editor's appended
+  `{{user_instructions}}` / "## Active project tailoring" suffix survives, and a
+  hand-edited prompt matches nothing and is left alone. Applied by `store.ts` —
+  once per project on first load (persisted + fanned out to subscribers) and
+  again on create/update (a browser tab on an older bundle still inserts the old
+  text). Exists because several built-ins used to end in "commit your work",
+  contradicting `WORKFLOW_STEP.md`'s planner-only contract; an agent resolved the
+  contradiction by committing code straight from a workflow step. **Reword a
+  built-in → append the old body to that entry's `legacy` and update `current`**;
+  `__tests__/defaultPromptMigrations.test.ts` pins `current` against the frontend
+  markdown so the two copies can't drift.
 - `interpolate.ts` — `interpolateWorkflowVariables`: substitutes `{{name}}`
   refs in a step prompt with the workflow's variable values, called from
   `workflowRuns/stepMarkdown.ts` before the prompt reaches the agent. Unknown
@@ -37,7 +55,10 @@ imports from `'../workflows.js'`; this directory holds the implementation.
   (create via `runProjectWrite`, update/delete via `withLockedItemAcrossProjects`)
   so two concurrent edits can't clobber via a read-before-write race. The base
   also gives this store atomic temp→rename writes + the corrupt-load guard for
-  free (see `taskCache/CLAUDE.md` "Crash-safety contract").
+  free (see `taskCache/CLAUDE.md` "Crash-safety contract"). It overrides
+  `loadIfNeeded` to run `defaultPromptMigrations` once per project after the
+  disk read; keep that override cheap and idempotent (it runs inside every
+  cache-miss path, including `loadAllKnown`).
 
 ## Served by
 

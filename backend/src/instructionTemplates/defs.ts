@@ -198,6 +198,11 @@ export const INSTRUCTION_TEMPLATE_CATALOG: InstructionTemplateDef[] = [
         name: 'project_path_encoded',
         description: 'URL-encoded project path for the raw-curl example.',
       },
+      {
+        name: 'lattice_api_doc_path',
+        description:
+          'Absolute path to the auto-managed full API cheatsheet (<project>/.lattice/LATTICE_API.md).',
+      },
       COMMON.backend_origin,
       {
         name: 'harness_override_note',
