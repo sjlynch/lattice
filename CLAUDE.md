@@ -58,8 +58,13 @@ Backlog ──▶── Open ──▶── In Progress ──▶── Ready t
   ready-to-run lane. Promote with the card's "Move to Open" action or a
   drag — lanes/transitions live in
   `frontend/src/components/taskboard/{lanes,moveTargets}.ts`.
-- `Open → In Progress`: ▶ button calls `POST /api/tasks/:id/run`. Backend
-  creates `~/.lattice/worktrees/<projectHash>/<slug>-<id>` on branch
+- `Open → In Progress`: ▶ button calls `POST /api/tasks/:id/run`, which
+  **enqueues** the run on the spawn queue and returns `{accepted, queued}`
+  right away — `accepted` means *admitted*, not *started*. The pty arrives
+  later via the `task-spawned` WS event, so don't read the response as "the
+  worktree exists now", and don't re-POST because nothing seems to have
+  happened (`/resume` behaves identically). Once the queue admits the run the
+  backend creates `~/.lattice/worktrees/<projectHash>/<slug>-<id>` on branch
   `lattice/<slug>-<id>`, writes `LATTICE_TASK.md`, and installs a Claude
   Stop hook in `.claude/settings.local.json` that POSTs back to `/complete`.
   The Stop hook is always installed (a Pi/Codex task that later conflicts is
