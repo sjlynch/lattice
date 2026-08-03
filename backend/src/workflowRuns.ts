@@ -29,6 +29,7 @@ import { generateWorkflowRunId } from './ids.js';
 import {
   getActiveRunsForProject,
   notify,
+  persistRunsForProject,
   runs,
   snapshot,
   type WorkflowRun,
@@ -172,6 +173,63 @@ export function cancelWorkflowRun(runId: string): boolean {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Restart recovery surface (see workflowRuns/persistence.ts + the boot resume
+// in recovery/workflowRunResume.ts). A run lives in this process's memory, so
+// a restart during a long agent step used to drop it silently: the navbar chip
+// vanished and the step's still-running agent POSTed /complete into a backend
+// that no longer knew the run, so every remaining step never ran.
+// ---------------------------------------------------------------------------
+
+// Re-insert a run persisted by a previous backend process. Returns false if the
+// id is already live (nothing to restore). Emits `progress` so any connected
+// client re-renders it immediately rather than waiting for the next WS `hello`.
+export function restoreWorkflowRun(persisted: WorkflowRun): boolean {
+  if (runs.has(persisted.id)) return false;
+  const run: WorkflowRun = { ...persisted, status: 'running' };
+  runs.set(run.id, run);
+  notify({ type: 'progress', run: snapshot(run) });
+  return true;
+}
+
+// Re-run the run's CURRENT step. Only for control steps (start/merge/push),
+// which execute in-process and are therefore killed outright by a restart —
+// unlike an agent step, whose pty survives in the detached terminal-server.
+export async function redispatchCurrentWorkflowStep(
+  runId: string,
+  backendOrigin: string,
+): Promise<void> {
+  const run = runs.get(runId);
+  if (!run || run.status !== 'running') return;
+  try {
+    const wf = await getWorkflow(run.workflowId);
+    if (!wf) throw new Error('workflow definition not found');
+    if (run.currentStepIndex >= wf.steps.length) {
+      throw new Error(
+        `current step ${run.currentStepIndex} is outside the workflow's ${wf.steps.length} step(s)`,
+      );
+    }
+    await dispatchStep(wf, run, run.currentStepIndex, backendOrigin);
+  } catch (err) {
+    failWorkflowRun(runId, (err as Error).message ?? 'resume failed');
+  }
+}
+
+// Mark a live run errored (used by boot recovery when a run can't be resumed).
+// Idempotent: a run that already finished stays as it is.
+export function failWorkflowRun(runId: string, error: string): boolean {
+  const run = runs.get(runId);
+  if (!run || run.status !== 'running') return false;
+  run.status = 'errored';
+  run.finishedAt = Date.now();
+  run.error = error;
+  cancelWorkflowStepSessions(run.id);
+  cancelStopHookGate(run.id);
+  notify({ type: 'errored', run: snapshot(run) });
+  console.error(`[workflow-run] ${run.id} errored: ${error}`);
+  return true;
+}
+
 // Called by the Stop-hook callback. Idempotent: stale hooks (same stepIndex
 // re-firing) are silently ignored via the currentStepIndex check.
 export async function completeWorkflowStep(
@@ -187,6 +245,10 @@ export async function completeWorkflowStep(
   // Claim ownership synchronously before any await so a duplicate Stop-hook
   // fire is ignored by the check above.
   run.currentStepIndex = nextIndex;
+  // Mirror the claim immediately: if the process dies between here and the
+  // next step's `progress` notify, boot recovery must resume from the NEW
+  // index, not re-run the step that just finished.
+  persistRunsForProject(run.projectPath);
 
   try {
     const wf = await getWorkflow(run.workflowId);

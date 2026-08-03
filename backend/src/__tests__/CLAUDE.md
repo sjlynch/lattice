@@ -49,6 +49,27 @@ cache, whose home path binds once at module load. Keep tests as plain
   unreadable at run start), an unchanged HEAD, or a fast-forward. The first two
   cases are pure fs (a bogus empty `.git` dir proves no git spawns); the
   HEAD-movement cases drive a real temp repo via `execFile` git.
+- `distRestartVerify.test.ts` — the dev runner's verify-before-restart guard
+  (`scripts/dev/distSignature.mjs`). On Windows `fs.watch('dist')` also fires
+  for metadata-only touches (NTFS last-access flush, AV scan, ACL refresh), and
+  the runner used to restart the backend for each one — killing in-flight runs
+  on days when nothing was compiled. Covers `shouldRestartForDist` (newer →
+  restart, same/older → ignore, unknown → fail OPEN), `newestDistMtimeMs`
+  (nested write / create / **delete**, the last only detected because directory
+  mtimes are folded in; `null` rather than `0` when unreadable, since `0` would
+  suppress every restart), `describeDistEvent`, and the policy wiring: a
+  metadata-only event neither restarts nor arms a deferral the poll could later
+  apply, while a real write restarts once and names the event that fired.
+- `workflowRunResume.test.ts` — workflow-run durability across a backend
+  restart (the "run vanished from the navbar mid-step" incident). Covers
+  `classifyWorkflowRunResume`'s full decision table (live agent pty → readopt;
+  an unprobeable terminal-server → readopt, never error; a dead agent pty →
+  error; control steps → redispatch; finished/deleted-definition/out-of-range
+  edges), `findStepSessionId` cwd matching, the on-disk mirror (round-trip,
+  non-`running` records dropped, corrupt file degrades to `[]`, empty state
+  deletes the file, `notify` keeps it current), and the headline pair: a
+  `/complete` callback for an unknown run is a silent no-op, but after
+  `restoreWorkflowRun` the very same callback advances the workflow.
 - `cleanupSafety.test.ts` — the two `.git`-deletion throw-guards in
   `worktree/cleanupSafety.ts`: `assertSafeWorktreePath` (empty/whitespace path,
   the repo root, out-of-bounds and wrong-project paths, the managed base dir

@@ -39,6 +39,25 @@ that agent — query the API.
 This dir is automatically pruned after ${WORKFLOW_RUN_RETENTION} runs.
 `;
 
+// Canonical scratch paths for a run/step. Single source of truth: the step
+// spawner materializes these, and boot recovery derives the same path to find
+// the step's still-live pty by cwd (see recovery/workflowRunResume.ts).
+export function workflowStepsRootDir(projectPath: string): string {
+  return path.join(projectPath, '.lattice', 'workflow-steps');
+}
+
+export function workflowRunDir(projectPath: string, runId: string): string {
+  return path.join(workflowStepsRootDir(projectPath), runId);
+}
+
+export function workflowStepDir(
+  projectPath: string,
+  runId: string,
+  stepIndex: number,
+): string {
+  return path.join(workflowRunDir(projectPath, runId), `step-${stepIndex}`);
+}
+
 // Tag the run dir as scratch. Returns true if this call freshly materialized
 // the run dir's README (i.e. it is the FIRST step to spawn for this run),
 // false if the README already existed (a later step). Callers use the `true`

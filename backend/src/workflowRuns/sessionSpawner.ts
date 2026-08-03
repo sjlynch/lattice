@@ -107,6 +107,24 @@ export async function killWorkflowStepSession(
   }
 }
 
+// Re-attach a step's already-running pty to this process's bookkeeping after a
+// backend restart (boot recovery discovers it by cwd — see
+// recovery/workflowRunResume.ts). Without this the resumed run would advance
+// without killing the finished step's session, re-opening the leak/overlap
+// window `killWorkflowStepSession` exists to close.
+export function adoptWorkflowStepSession(
+  runId: string,
+  stepIndex: number,
+  serverId: string,
+): void {
+  stepSpawnRecords.set(recordKey(runId, stepIndex), {
+    runId,
+    stepIndex,
+    dedupeKey: workflowStepDedupeKey(runId, stepIndex),
+    serverId,
+  });
+}
+
 export function cancelWorkflowStepSessions(
   runId: string,
   deps: Pick<WorkflowStepSessionDeps, 'proxyKillSession'> = productionDeps,

@@ -4,7 +4,12 @@ export async function watchDist(onChange) {
   // fs.watch({recursive}) covers Windows + macOS. On Linux it throws
   // ERR_FEATURE_UNAVAILABLE_ON_PLATFORM — fall back to chokidar there.
   try {
-    const w = fs.watch('dist', { recursive: true }, () => onChange());
+    // Forward eventType/filename: the restart log used to say only "dist/
+    // changed", which made an unexplained restart impossible to attribute
+    // after the fact.
+    const w = fs.watch('dist', { recursive: true }, (eventType, filename) =>
+      onChange(eventType, filename),
+    );
     console.log('[lattice-backend] watching dist/ (fs.watch)');
     return () => {
       try {
@@ -20,7 +25,7 @@ export async function watchDist(onChange) {
     const mod = await import('chokidar');
     const watch = mod.watch ?? mod.default?.watch ?? mod.default;
     const w = watch('dist', { ignoreInitial: true });
-    w.on('all', () => onChange());
+    w.on('all', (eventType, filePath) => onChange(eventType, filePath));
     console.log('[lattice-backend] watching dist/ (chokidar)');
     return () => {
       void w.close();

@@ -149,6 +149,11 @@ await tscWatch.tscSettledPromise;
 // start a watcher that might fire a restart against an already-shutting-
 // down backend lifecycle.
 if (!shuttingDown) {
+  // Baseline dist/'s newest mtime as of right now, so the watcher can tell a
+  // real rebuild from the metadata-only events Windows also delivers (NTFS
+  // last-access flush, an AV/indexer scan, an ACL refresh). Those used to
+  // restart the backend for nothing — see dev/distSignature.mjs.
+  restartPolicy.resetDistBaseline();
   closeDistWatch = await watchDist(restartPolicy.scheduleDistChanged);
   restartPolicy.startDeferredPoll();
 }

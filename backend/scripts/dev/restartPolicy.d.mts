@@ -7,6 +7,7 @@ export const RESTART_DEBOUNCE_MS: number;
 export const DEFERRED_RESTART_POLL_MS: number;
 export const MAX_DEFER_MS: number;
 export const WORKFLOW_DEFER_RELOG_MS: number;
+export const IGNORED_EVENT_LOG_THROTTLE_MS: number;
 
 export interface RunLockScanOptions {
   perProjectDir?: string;
@@ -32,9 +33,14 @@ export function createRestartPolicy(args?: {
   restartBackend: (reason: string) => boolean;
   operationInFlight?: () => boolean;
   workflowInFlight?: () => boolean;
+  // Newest mtime under dist/, or null when it can't be read (→ fail open).
+  readNewestDistMtime?: () => number | null;
+  now?: () => number;
 }): {
   onDistChanged(): void;
-  scheduleDistChanged(): void;
+  scheduleDistChanged(eventType?: string | null, filename?: string | null): void;
+  // Snapshot dist/'s current mtime as the "nothing new since here" mark.
+  resetDistBaseline(): void;
   startDeferredPoll(): void;
   stopDeferredPoll(): void;
 };

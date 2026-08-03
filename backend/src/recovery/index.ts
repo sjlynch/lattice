@@ -22,6 +22,7 @@ import {
 } from './claudeConfigSweep.js';
 
 export { resumeInterruptedMergeRuns } from './mergeRunResume.js';
+export { resumeInterruptedWorkflowRuns } from './workflowRunResume.js';
 export { resumeQueuedTaskRuns } from './queuedRunResume.js';
 export { sweepOrphanedWorktrees } from './worktreeSweep.js';
 export { sweepOrphanedPushSessions } from './pushSessionSweep.js';

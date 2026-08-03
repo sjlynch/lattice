@@ -6,6 +6,7 @@ import { reconcilePiModelsJson } from '../piModels.js';
 import {
   recoverOrphanedTasks,
   resumeInterruptedMergeRuns,
+  resumeInterruptedWorkflowRuns,
   resumeQueuedTaskRuns,
   startInProgressSweepLoop,
 } from '../recovery.js';
@@ -97,12 +98,23 @@ export function listenForRequests(
 }
 
 export function resumeRunsAfterListen(backendOrigin: string): void {
-  // Now that the API is up, resume any merge run a previous process was
-  // running when it got restarted (resolver Claudes it may spawn need
-  // the API listening to call back).
-  resumeInterruptedMergeRuns(backendOrigin).catch((err) =>
-    console.error('[startup] resumeInterruptedMergeRuns failed:', err),
-  );
+  // Workflow runs first, and awaited before the merge-run resume: a workflow
+  // parked on a long AGENT step holds no run.lock, so nothing defers a restart
+  // during it and the run would otherwise be lost outright (its still-running
+  // agent then POSTs /complete into a backend that has never heard of the run).
+  // Ordering matters — a resumed workflow owns its project's merge pipeline via
+  // its own Merge control step, and resumeInterruptedMergeRuns skips a project
+  // that has an active workflow run rather than racing it.
+  resumeInterruptedWorkflowRuns(backendOrigin)
+    .catch((err) => console.error('[startup] resumeInterruptedWorkflowRuns failed:', err))
+    .then(() =>
+      // Now that the API is up, resume any merge run a previous process was
+      // running when it got restarted (resolver Claudes it may spawn need
+      // the API listening to call back).
+      resumeInterruptedMergeRuns(backendOrigin).catch((err) =>
+        console.error('[startup] resumeInterruptedMergeRuns failed:', err),
+      ),
+    );
   // Re-enqueue task runs that were waiting in the spawn queue when the
   // backend stopped (their `runQueued` flag is persisted on the task).
   // Runs post-listen and after the pre-listen orphan-worktree sweep so a

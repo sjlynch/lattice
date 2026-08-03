@@ -14,6 +14,21 @@ explicit-curl callbacks — never by polling task state.
   `WorkflowRunEvent` discriminants and field shapes (especially
   `step-spawned`) since the WS dispatcher and frontend consume them
   directly.
+- `persistence.ts` — the on-disk mirror of every **running** run, at
+  `~/.lattice/per-project/<hash>/workflow-runs.json` (home-scoped, atomic
+  temp→rename, debounced, never throws). Written from `state.ts`'s `notify` for
+  every run-carrying event plus an explicit call the moment
+  `completeWorkflowStep` claims the next step index. Finished runs are dropped,
+  so the file disappears when nothing is running. Exists because a run used to
+  live only in memory — see the invariant below.
+- `resumeDecision.ts` — the pure policy for re-adopting a persisted run:
+  `classifyWorkflowRunResume` → `readopt` (agent step whose pty survived in the
+  detached terminal-server) / `redispatch` (control step — those die with the
+  process and are re-runnable) / `error` (agent step whose pty is gone; its
+  callback can never arrive, so surface it instead of hanging) / `skip`. A
+  `stepSessionAlive: null` ("couldn't probe the terminal-server") re-adopts —
+  "can't tell" is never treated as "gone". `findStepSessionId` matches a live
+  pty to a step by cwd. The IO wrapper is `../recovery/workflowRunResume.ts`.
 - `stepMarkdown.ts` — `renderStepMarkdown` (the WORKFLOW_STEP.md prompt)
   and `effectiveStepHarness` (run override → step harness → `'claude'`).
   Completion instructions branch on harness: Claude relies on its silent
@@ -130,6 +145,18 @@ explicit-curl callbacks — never by polling task state.
 
 ## Invariants
 
+- **A run must survive the backend process.** The registry in `state.ts` is
+  in-memory, and the backend restarts routinely (`tsc -w` + the dev runner on
+  any `backend/src` change, a crash, a processGuards fail-fast). `dev.mjs`
+  defers a restart only while a per-project `run.lock` is held — i.e. during
+  **control** steps only — so the whole of every agent step is exposed. Losing
+  the run there is silent and total: `/api/workflow-runs/active` goes empty (the
+  navbar chip vanishes), and the step's agent — whose pty lives in the detached
+  terminal-server and *does* survive — later POSTs `/complete` into a backend
+  with no such run, where `completeWorkflowStep` returns silently. Every
+  remaining step never runs. `persistence.ts` + `../recovery/workflowRunResume.ts`
+  close that hole; keep the mirror current whenever run state changes, and keep
+  `restoreWorkflowRun` idempotent (a restore must never clobber a live run).
 - Step advancement is sequential and **idempotent**: `completeWorkflowStep`
   claims `currentStepIndex` synchronously before any await so a duplicate
   Stop-hook fire is a no-op.

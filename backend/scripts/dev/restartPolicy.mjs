@@ -2,9 +2,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import {
+  describeDistEvent,
+  newestDistMtimeMs,
+  shouldRestartForDist,
+} from './distSignature.mjs';
+
 export const PER_PROJECT_DIR = path.join(os.homedir(), '.lattice', 'per-project');
 export const RESTART_DEBOUNCE_MS = 250;
 export const DEFERRED_RESTART_POLL_MS = 3000;
+// A metadata-only dist/ watch event (see distSignature.mjs) is normal
+// background noise on Windows, so log it — but rarely, and with a count, so it
+// stays a diagnostic rather than console spam.
+export const IGNORED_EVENT_LOG_THROTTLE_MS = 60 * 1000;
 // Don't defer a restart forever if a SHORT, re-runnable operation (a merge run
 // or a manual /merge) somehow wedges with the lock held — after this long,
 // restart anyway (the run is interrupted, then auto-resumed on the next boot).
@@ -107,36 +117,88 @@ export function createRestartPolicy({
   restartBackend,
   operationInFlight = () => repoOperationInFlight(),
   workflowInFlight = () => workflowRunInFlight(),
+  readNewestDistMtime = () => newestDistMtimeMs(),
+  now = () => Date.now(),
 } = {}) {
   let deferredSince = 0; // ms ts of the first deferred restart, or 0
   let distDebounceTimer = null;
   let deferPollTimer = null;
   let workflowDeferLoggedAt = 0; // last time we logged an ongoing workflow hold
+  // Newest dist/ mtime as of the last APPLIED restart. A watch event whose
+  // tree is no newer than this wrote nothing, so it must not restart.
+  let distBaseline = null;
+  // Newest mtime that justified a currently-deferred restart, so applying it
+  // later advances the baseline to the change we actually acted on.
+  let deferredDistMtime = null;
+  let ignoredSince = 0;
+  let ignoredCount = 0;
+  let lastEvent = describeDistEvent(null, null);
 
-  function applyRestart(reason) {
+  // Snapshot dist/'s current state as the "nothing new since here" mark. Called
+  // by dev.mjs right before the watcher is armed (after the initial compile) so
+  // the first real emit is still seen, and after every applied restart.
+  function resetDistBaseline() {
+    distBaseline = readNewestDistMtime();
+  }
+
+  function applyRestart(reason, newestSeen) {
     const accepted = restartBackend(reason);
     if (accepted) {
       deferredSince = 0;
       workflowDeferLoggedAt = 0;
+      distBaseline =
+        typeof newestSeen === 'number' ? newestSeen : readNewestDistMtime();
+      deferredDistMtime = null;
     }
   }
 
+  // A dist/ watch event that corresponds to no actual write. Historically these
+  // silently restarted the backend (killing in-flight runs) with a log line
+  // that named neither the file nor the event.
+  function noteIgnoredEvent() {
+    ignoredCount += 1;
+    const t = now();
+    if (t - ignoredSince < IGNORED_EVENT_LOG_THROTTLE_MS) return;
+    ignoredSince = t;
+    console.log(
+      `[lattice-backend] ignored ${ignoredCount} dist/ watch event(s) with no file write ` +
+        `(latest: ${lastEvent}) — metadata-only (last-access/attribute/AV scan), not a rebuild. No restart.`,
+    );
+    ignoredCount = 0;
+  }
+
   function onDistChanged() {
+    // Verify a real write BEFORE anything else, so a metadata-only event can
+    // neither restart the backend nor arm a deferral that the poll later applies.
+    const newest = readNewestDistMtime();
+    if (!shouldRestartForDist({ newest, baseline: distBaseline })) {
+      noteIgnoredEvent();
+      return;
+    }
+    if (typeof newest === 'number') {
+      deferredDistMtime =
+        deferredDistMtime === null ? newest : Math.max(deferredDistMtime, newest);
+    }
+
     if (operationInFlight()) {
       if (!deferredSince) {
-        deferredSince = Date.now();
+        deferredSince = now();
         console.log(
-          '[lattice-backend] dist/ changed during a merge/merge-all or workflow run — deferring restart until it ' +
-            'finishes (the deferred-restart poll applies it once the run.lock clears).',
+          `[lattice-backend] dist/ changed (${lastEvent}) during a merge/merge-all or workflow run — deferring ` +
+            'restart until it finishes (the deferred-restart poll applies it once the run.lock clears).',
         );
       }
       return; // the poll below handles "run finished" and the long-defer backstop
     }
-    applyRestart(deferredSince ? 'run finished — applying deferred restart' : 'dist/ changed');
+    applyRestart(
+      deferredSince ? 'run finished — applying deferred restart' : `dist/ changed (${lastEvent})`,
+      newest,
+    );
   }
 
   // Debounce dist/ change bursts — one tsc compile emits many files.
-  function scheduleDistChanged() {
+  function scheduleDistChanged(eventType, filename) {
+    lastEvent = describeDistEvent(eventType, filename);
     if (distDebounceTimer) clearTimeout(distDebounceTimer);
     distDebounceTimer = setTimeout(() => {
       distDebounceTimer = null;
@@ -154,30 +216,30 @@ export function createRestartPolicy({
     deferPollTimer = setInterval(() => {
       const action = classifyDeferAction({
         deferredSince,
-        now: Date.now(),
+        now: now(),
         operationInFlight: operationInFlight(),
         workflowInFlight: workflowInFlight(),
       });
       if (action === 'apply') {
-        applyRestart('run finished — applying deferred restart');
+        applyRestart('run finished — applying deferred restart', deferredDistMtime);
       } else if (action === 'force') {
         console.warn(
-          `[lattice-backend] restart deferred for ${Math.round((Date.now() - deferredSince) / 60000)} min — ` +
+          `[lattice-backend] restart deferred for ${Math.round((now() - deferredSince) / 60000)} min — ` +
             `forcing it (an in-flight run will be interrupted and auto-resumed on the next boot).`,
         );
-        applyRestart('forced after a long defer');
+        applyRestart('forced after a long defer', deferredDistMtime);
       } else if (action === 'hold-workflow') {
-        const now = Date.now();
+        const at = now();
         // Only surface this once the wait is long enough to be surprising, then
         // throttle — a short workflow that finishes inside the window just
         // 'apply's above and never logs.
         if (
-          now - deferredSince > MAX_DEFER_MS &&
-          now - workflowDeferLoggedAt > WORKFLOW_DEFER_RELOG_MS
+          at - deferredSince > MAX_DEFER_MS &&
+          at - workflowDeferLoggedAt > WORKFLOW_DEFER_RELOG_MS
         ) {
-          workflowDeferLoggedAt = now;
+          workflowDeferLoggedAt = at;
           console.log(
-            `[lattice-backend] restart held ${Math.round((now - deferredSince) / 60000)} min — a workflow control ` +
+            `[lattice-backend] restart held ${Math.round((at - deferredSince) / 60000)} min — a workflow control ` +
               `step (start/merge/push) is running and holds the run.lock. Not force-restarting (that would ` +
               `interrupt the workflow and strand its tasks). The restart applies when the workflow finishes; ` +
               `cancel the workflow run to restart sooner.`,
@@ -198,6 +260,7 @@ export function createRestartPolicy({
   return {
     onDistChanged,
     scheduleDistChanged,
+    resetDistBaseline,
     startDeferredPoll,
     stopDeferredPoll,
   };

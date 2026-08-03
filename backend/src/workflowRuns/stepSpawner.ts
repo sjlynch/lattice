@@ -31,7 +31,13 @@ import {
 } from './stepMarkdown.js';
 import { getProjectDirtyState, type DirtyStateSummary } from './projectDirtyState.js';
 import { getRunningRunIds, notify, snapshot, type WorkflowRun } from './state.js';
-import { pruneOldWorkflowRuns, writeScratchReadme } from './scratchDirectory.js';
+import {
+  pruneOldWorkflowRuns,
+  workflowRunDir,
+  workflowStepDir,
+  workflowStepsRootDir,
+  writeScratchReadme,
+} from './scratchDirectory.js';
 import { buildWorkflowStepCommand } from './commandBuilder.js';
 import { enqueueWorkflowStepSession, workflowStepAgentId } from './sessionSpawner.js';
 
@@ -52,9 +58,9 @@ async function prepareStepScratch(
   run: WorkflowRun,
   stepIndex: number,
 ): Promise<PreparedStepScratch> {
-  const workflowStepsRoot = path.join(wf.projectPath, '.lattice', 'workflow-steps');
-  const runDir = path.join(workflowStepsRoot, run.id);
-  const stepDir = path.join(runDir, `step-${stepIndex}`);
+  const workflowStepsRoot = workflowStepsRootDir(wf.projectPath);
+  const runDir = workflowRunDir(wf.projectPath, run.id);
+  const stepDir = workflowStepDir(wf.projectPath, run.id, stepIndex);
   await fs.mkdir(stepDir, { recursive: true });
   // Mark the run dir as scratch (and prune older runs) the first time this run
   // materializes its scratch dir. Done after mkdir so the run dir definitely

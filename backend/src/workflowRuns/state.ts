@@ -7,6 +7,7 @@
 
 import { canonicalProjectPath } from '../projectPath.js';
 import type { WorkflowStepHarness, WorkflowStepKind } from '../workflows.js';
+import { scheduleWorkflowRunPersist } from './persistence.js';
 
 export type WorkflowRunStatus = 'running' | 'completed' | 'errored' | 'cancelled';
 
@@ -82,7 +83,17 @@ export function snapshot(run: WorkflowRun): WorkflowRun {
   return { ...run };
 }
 
+// Mirror this project's still-running runs to disk (debounced, best-effort).
+// Called from `notify` for every run-carrying event and explicitly from
+// `completeWorkflowStep` the moment it claims the next step index, so the
+// on-disk record can never lag the in-memory one by more than one advance.
+// See persistence.ts for why a run must survive the backend process.
+export function persistRunsForProject(projectPath: string): void {
+  scheduleWorkflowRunPersist(projectPath, () => getActiveRunsForProject(projectPath));
+}
+
 export function notify(ev: WorkflowRunEvent): void {
+  if ('run' in ev) persistRunsForProject(ev.run.projectPath);
   // Per-listener isolation. notify() is called inline from `dispatchStep`
   // (and other advance points) — if a single subscriber throws, the
   // exception used to bubble up to `completeWorkflowStep`'s try/catch and

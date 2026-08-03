@@ -1,6 +1,7 @@
 import { startMergeRun, getActiveRunForProject } from '../mergeRuns.js';
 import { inspectProjectRunLock } from '../projectRunLock.js';
 import { listTasks, type Task } from '../tasks.js';
+import { getActiveRunsForProject as getActiveWorkflowRunsForProject } from '../workflowRuns.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';
 
 // Run-lock labels whose stale (dead-PID) presence means orphaned merge work
@@ -64,6 +65,18 @@ export function isResumableInterruptedRunLock(label: string): boolean {
 export async function resumeInterruptedMergeRuns(backendOrigin: string): Promise<void> {
   await forEachKnownProjectSafely('resumeInterruptedMergeRuns', async (repoRoot) => {
     if (getActiveRunForProject(repoRoot)) return; // already running here
+    // A workflow run resumed moments ago (resumeInterruptedWorkflowRuns runs
+    // first) owns this project's merge pipeline: its own Merge control step
+    // drains Ready-to-Merge under the same run lock. Starting a second,
+    // independent merge run here would race it for the lock and double-process
+    // the same tasks. Pre-persistence there were never active workflow runs at
+    // boot, so this guard is inert for every other path.
+    if (getActiveWorkflowRunsForProject(repoRoot).length > 0) {
+      console.log(
+        `[startup] skipping merge-run resume for ${repoRoot} — a resumed workflow run owns its merge pipeline.`,
+      );
+      return;
+    }
 
     const lock = await inspectProjectRunLock(repoRoot);
     if (!lock) return; // no run lock → nothing was interrupted
