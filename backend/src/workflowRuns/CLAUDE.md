@@ -21,6 +21,14 @@ explicit-curl callbacks — never by polling task state.
   `completeWorkflowStep` claims the next step index. Finished runs are dropped,
   so the file disappears when nothing is running. Exists because a run used to
   live only in memory — see the invariant below.
+- `frozenSteps.ts` — the pure frozen-step policy: `isStepFrozen` +
+  `nextRunnableStepIndex(steps, from)` (the first non-frozen step at or after
+  `from`, or `null` when nothing runnable remains). The editor's snowflake
+  toggle sets `WorkflowStep.frozen`; the step keeps its place and prompt but no
+  run executes it. Consumed by the facade in exactly two places — the start
+  index in `startWorkflowRun` and the advance in `completeWorkflowStep` — so
+  keep the policy here rather than inlining it a third time. Covered by
+  `__tests__/workflowFrozenSteps.test.ts`.
 - `resumeDecision.ts` — the pure policy for re-adopting a persisted run:
   `classifyWorkflowRunResume` → `readopt` (agent step whose pty survived in the
   detached terminal-server) / `redispatch` (control step — those die with the
@@ -169,7 +177,16 @@ explicit-curl callbacks — never by polling task state.
   `restoreWorkflowRun` idempotent (a restore must never clobber a live run).
 - Step advancement is sequential and **idempotent**: `completeWorkflowStep`
   claims `currentStepIndex` synchronously before any await so a duplicate
-  Stop-hook fire is a no-op.
+  Stop-hook fire is a no-op. The frozen-step skip happens *after* that claim
+  (it needs the loaded definition): the claim moves to `stepIndex + 1` first,
+  then re-claims + re-mirrors at the step actually dispatched. Keep that order
+  — claiming the skipped-to index synchronously would need the definition
+  before the dedupe guard.
+- **Frozen steps are skipped, not removed.** `currentStepIndex` therefore jumps
+  over them, `totalSteps` still counts them, and a run whose remaining steps are
+  all frozen **completes** (index parked at `steps.length`) rather than hanging.
+  A workflow whose steps are *all* frozen is refused at `startWorkflowRun`
+  before any run record exists, so the rejection is side-effect-free.
 - **Advancing a step kills its session.** The `/complete` route's `advance()`
   calls `killWorkflowStepSession` (await) *before* `completeWorkflowStep`
   dispatches the next step. An interactive Codex step (`codex --yolo`) never

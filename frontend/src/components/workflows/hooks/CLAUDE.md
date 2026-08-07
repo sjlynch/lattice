@@ -23,14 +23,20 @@ there.
   `useEditorDraftLifecycle` (the reconcile/restore/persist effects + their
   cross-project draft guards) and `useEditorMutationActions` (the pure
   step/variable `setEditor` updaters — patch/add/remove/reorder, control-step
-  and default-prompt additions).
+  and default-prompt additions). Every path that creates agent steps
+  (`newBlank`, `newFromTemplate`, and the add actions) reports their ids through
+  the `onStepsAdded` arg — the manager points it at
+  `useCollapsedSteps.collapseSteps`, which is what makes a new step land
+  collapsed.
 - `useEditorDraftLifecycle.ts` — the editor's draft side effects: keep a loaded
   workflow reconciled against the live list, restore/persist the per-project
   never-saved draft, and guard one project's draft from leaking onto another's
   storage key on a project switch. Returns nothing.
 - `useEditorMutationActions.ts` — the editor's step/variable mutation actions,
-  every one a pure `setEditor` updater depending only on the stable setter (no
-  API/draft concerns).
+  every one a pure `setEditor` updater (no API/draft concerns). The step-adding
+  ones mint the new step's id *before* calling `setEditor` (an updater can run
+  more than once, so an id created inside it isn't necessarily the committed
+  one) and hand it to `onStepsAdded` so the new step starts collapsed.
 - `useWorkflowRunViews.ts` — derived run views for the manager: the sorted
   active-run list, the recently-failed list (navbar chip + runs aside), and the
   active/recent/control-progress run that belongs to the currently-edited
@@ -115,7 +121,11 @@ there.
   focused terminal tab (`pickActiveAfterAdd` still focuses the spawn when
   nothing is focused yet).
 - `useCollapsedSteps.ts` — persisted per-step collapse state in
-  `userSettings.workflowStepsCollapsed`.
+  `userSettings.workflowStepsCollapsed`. Only `true` entries are stored, so a
+  missing key means expanded; newly added steps get an explicit `true` via
+  `collapseSteps(ids)` (wired to the editor's `onStepsAdded`) rather than the map
+  default being flipped — flipping it would retroactively collapse every step of
+  every existing workflow.
 - `useWorkflowErrorHandler.ts` — shared auto-dismissing error toast state.
 - `useWorkflowPromptCustomization.ts` — owns per-step customization state,
   custom-step instruction prompting, terminal creation, polling, editor patching,

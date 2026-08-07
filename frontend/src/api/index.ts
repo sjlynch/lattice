@@ -28,3 +28,4 @@ export {
 } from './postMergeHooks';
 export * from './workflows';
 export * from './health';
+export * from './terminals';

@@ -13,6 +13,7 @@ import { SidebarEmptyState } from './sidebar/SidebarEmptyState';
 import { SidebarPanelTabs } from './sidebar/SidebarPanelTabs';
 import { SidebarTabsBar } from './sidebar/SidebarTabsBar';
 import { TabContextMenu } from './sidebar/TabContextMenu';
+import { useBusyAgentTerminals } from './sidebar/hooks/useBusyAgentTerminals';
 import { useMountedTerminalIds } from './sidebar/hooks/useMountedTerminalIds';
 import { usePanelState } from './sidebar/hooks/usePanelState';
 import { useStartupTerminals } from './sidebar/hooks/useStartupTerminals';
@@ -69,6 +70,9 @@ export const Sidebar = memo(function Sidebar({
     startupTerminalsList,
   } = useTerminalGroups(terminals, activeFolder);
   const mountedIds = useMountedTerminalIds(activeId, startupTerminalsList, projectTerminals);
+  // Which tabs are running an agent that's still working, for the tab spinner.
+  // Keyed by backend session id, so it covers tabs whose pane was never mounted.
+  const busyServerIds = useBusyAgentTerminals(activeFolder);
 
   // When the active folder changes, the currently-active terminal may
   // belong to a different project. Pick a terminal from the new project
@@ -256,6 +260,7 @@ export const Sidebar = memo(function Sidebar({
         <SidebarTabsBar
           visibleTerminals={visibleTerminals}
           filter={filter}
+          busyServerIds={busyServerIds}
           activeId={activeId}
           setActiveId={setActiveId}
           closeTerminal={closeTerminal}

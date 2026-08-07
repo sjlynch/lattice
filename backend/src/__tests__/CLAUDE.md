@@ -24,6 +24,14 @@ cache, whose home path binds once at module load. Keep tests as plain
   (claude/pi/codex) + its private `shellDoubleQuoted()` prompt-quoting guard
   (double-quote/backslash/dollar/backtick each escaped once; injection prompts
   neutralised). Pure unit test, no spawning.
+- `terminalActivity.test.ts` — the two pure halves of the sidebar tab spinner's
+  signal: `agentHarnessForCommand()` (every Lattice-built agent command incl.
+  rewriter-mangled ones; quoted/absolute paths and `.cmd` shims; and the
+  rejections that matter — a plain shell, `npm run dev`, and substring
+  near-misses like `claudette`, any of which would pin a spinner on forever) and
+  `computeBusyTerminalIds()` (agent-only, the idle-threshold boundary, the
+  sorted output the poll loop diffs as a string, and malformed entries from the
+  cross-process JSON). No timers or terminal-server.
 - `worktree.merge.branchState.test.ts` — `checkBranchState()` merge state
   machine across all four outcomes (error/already-merged/empty/ahead); pins the
   safety invariant that a THROWN commit-count surfaces as `error` (never a
@@ -70,6 +78,14 @@ cache, whose home path binds once at module load. Keep tests as plain
   deletes the file, `notify` keeps it current), and the headline pair: a
   `/complete` callback for an unknown run is a silent no-op, but after
   `restoreWorkflowRun` the very same callback advances the workflow.
+- `workflowFrozenSteps.test.ts` — the editor's freeze toggle end to end: the
+  pure `nextRunnableStepIndex`/`isStepFrozen` policy (leading/middle/trailing
+  frozen, all-frozen and empty → `null`, clamped negative `from`), the
+  `normalizeSteps` coercion (only a literal `true` freezes; not-frozen stays
+  *absent* from the JSON, never `false`), and the two run-engine consumers — an
+  all-frozen workflow is refused by `startWorkflowRun` with no run record left
+  behind, and advancing onto trailing frozen steps completes the run (index
+  parked past the last step) instead of spawning them or hanging.
 - `defaultPromptMigrations.test.ts` — the planner-only contract for workflow
   steps, both halves. (1) `workflows/defaultPromptMigrations.ts`: prefix matching
   keeps the editor's appended `{{user_instructions}}` / project-tailoring suffix,

@@ -43,15 +43,22 @@ export function localStepId(): string {
 // control variant) — callers pass only what differs (title + prompt); the
 // default mode/harness/kind live here. Output is byte-identical to the old
 // inline literals.
+//
+// `id` is injectable so a caller that must know the id *before* the step lands
+// in state (the add actions, which mark the new step collapsed) can mint it
+// outside the `setEditor` updater — an updater may run more than once, so an id
+// generated inside it isn't stable.
 export function makeAgentStep({
+  id = localStepId(),
   title,
   prompt,
 }: {
+  id?: string;
   title: string;
   prompt: string;
 }): WorkflowStep {
   return {
-    id: localStepId(),
+    id,
     title,
     prompt,
     mode: 'sequential',
@@ -73,6 +80,14 @@ export function makeControlStep(
     harness: 'claude',
     kind,
   };
+}
+
+// The ids of the steps that have a collapse toggle — agent steps only. Control
+// rows (start/merge/push) render no prompt body, so marking them collapsed
+// would just add dead ids to the persisted collapse map. Used by the editor to
+// start every newly added step collapsed.
+export function collapsibleStepIds(steps: WorkflowStep[]): string[] {
+  return steps.filter((s) => (s.kind ?? 'agent') === 'agent').map((s) => s.id);
 }
 
 export function fromTemplate(t: WorkflowTemplate): EditorState {

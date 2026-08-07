@@ -7,6 +7,10 @@ import { broadcastToSubscribers } from './broadcast.js';
 
 export function wireSessionPtyEvents(session: Session): void {
   session.pty.onData((data) => {
+    // Cheapest possible activity stamp. `listSessions` reports it and the main
+    // backend turns output-recency into the sidebar's per-tab agent spinner
+    // (see terminalActivity.ts) — nothing here interprets it.
+    session.lastOutputAt = Date.now();
     session.scrollback.append(data);
     broadcastToSubscribers(session.subscribers, JSON.stringify({ type: 'data', data }));
   });

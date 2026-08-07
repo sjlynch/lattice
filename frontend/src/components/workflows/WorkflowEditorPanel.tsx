@@ -125,7 +125,7 @@ export function WorkflowEditorPanel({ manager }: Props) {
                   harnessAvail={harnessAvail}
                   piMenu={piMenu}
                   definedNames={definedNames}
-                  runStatus={stepRunStatus(index, statusRun)}
+                  runStatus={stepRunStatus(index, statusRun, step.frozen === true)}
                   onChange={actions.patchStep}
                   onRemove={handleRemoveStep}
                   onReorder={actions.reorderSteps}
@@ -148,6 +148,7 @@ export function WorkflowEditorPanel({ manager }: Props) {
             workflowId={editor.workflowId}
             dirty={editor.dirty}
             hasSteps={editor.steps.length > 0}
+            hasRunnableSteps={editor.steps.some((s) => s.frozen !== true)}
             hasActiveFolder={Boolean(activeFolder)}
             runId={runForEditor?.id ?? null}
             deleting={deletingWorkflow}

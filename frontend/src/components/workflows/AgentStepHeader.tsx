@@ -15,7 +15,11 @@ import {
   selectedOptionTitle,
   type AgentHarness,
 } from '../../harnesses';
-import { StepIndexBadge, type StepRowCallbacks } from './StepRowShared';
+import {
+  StepFreezeButton,
+  StepIndexBadge,
+  type StepRowCallbacks,
+} from './StepRowShared';
 import type { StepRunStatus } from './stepRunStatus';
 
 function StepHarnessSelect({
@@ -73,6 +77,7 @@ export const AgentStepHeader = memo(function AgentStepHeader({
   mode,
   harness,
   piModel,
+  frozen,
   harnessAvail,
   piMenu,
   runStatus,
@@ -89,6 +94,7 @@ export const AgentStepHeader = memo(function AgentStepHeader({
   mode: WorkflowStepMode;
   harness: WorkflowStep['harness'];
   piModel?: string;
+  frozen: boolean;
   harnessAvail: HarnessAvailability;
   piMenu: PiMenuEntry[];
   runStatus?: StepRunStatus;
@@ -132,6 +138,10 @@ export const AgentStepHeader = memo(function AgentStepHeader({
         selectedHarness={selectedHarness}
         selectedPiModel={piModel}
         onChange={(h, pm) => onChange(index, { harness: h, piModel: pm })}
+      />
+      <StepFreezeButton
+        frozen={frozen}
+        onToggle={() => onChange(index, { frozen: !frozen })}
       />
       <button
         className="icon-btn sm"
