@@ -13,7 +13,7 @@ export type ExtStyle = {
 
 // Saturated, language-canonical palette. Shapes follow these rules:
 //   circle    — general source (default)
-//   square    — Python + structured data formats
+//   square    — Python + structured data formats + Markdown
 //   diamond   — Ruby family (red gem) + Scala (rotated diamond glyph)
 //   hexagon   — systems / native (Rust gear, C/C++/Zig)
 //   triangle  — UI components (Vue/Svelte/Astro/JSX/TSX) + Kotlin (logo wedge)
@@ -31,7 +31,7 @@ export const EXT_STYLES: Record<string, ExtStyle> = {
   '.pyi':    { ext: '.pyi',    label: 'Python stub',       shape: 'square',   color1: '#306998', color2: '#FFD43B' },
 
   // ---- Markdown / docs ----
-  '.md':     { ext: '.md',     label: 'Markdown',          shape: 'circle',   color1: '#4ade80' },
+  '.md':     { ext: '.md',     label: 'Markdown',          shape: 'square',   color1: '#4ade80' },
   '.mdx':    { ext: '.mdx',    label: 'MDX',               shape: 'circle',   color1: '#4ade80', color2: '#3178c6' },
 
   // ---- Ruby family (red diamond — gem) ----
