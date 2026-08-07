@@ -98,6 +98,15 @@ label physics in `labelPhysics/CLAUDE.md`.
   `changeRingSync` + `changeRing{Materials,Textures}` (timeline git rings, two-part
   `W`-suppression). Each toggles a ring as a sibling child of the node root for
   only the changed ids — never `graph.refresh()`.
+  `changeRingSync` also carries **ghost visibility**, and because it skips the
+  digest it has to move the ghost's *link* by hand as well: the library's
+  per-link object (`__lineObj`) plus a `getInstancedLinks(graph).rebuild()` for
+  the batched buffer. Skipping either leaves the deleted-file line drawn into
+  empty space after the disc vanishes. Its one escape hatch: a ghost that should
+  show but has no `__threeObj` (an earlier `refresh()` ran while it was outside
+  the scrubber window, and the digest drops filtered-out nodes from the scene
+  entirely) falls back to `clearLabelsAndRefresh`, since there's nothing left to
+  toggle. Pinned by `src/__tests__/ghostLinkSync.test.ts`.
 - `mountedNodes.ts` — cache-free shared helpers every delta walker reuses
   (`mountedNodes`/`mountedRoot`/`mountedNodesById`/`baseSizeFor`).
 
@@ -128,6 +137,10 @@ label physics in `labelPhysics/CLAUDE.md`.
   draw calls. Default-on; re-upload positions only on node-motion frames;
   re-capture object arrays on every `graphData()` swap (`dataGeneration`
   invariant). Driven by `hooks/useBatchedLinks` / `hooks/useInstancedNodes`.
+  `instancedLinks` also stamps its controller onto the graph instance (mirrors
+  `attachIdleController`) — `getInstancedLinks(graph)?.rebuild()` is how a
+  non-React caller forces the visible-link re-read; `changeRingSync` needs it
+  after toggling a ghost.
 
 **Settings, physics, misc**
 - `graphSettings.ts` — `GraphSettings`/`DEFAULT_SETTINGS`/`loadSettings`; perf
@@ -210,7 +223,12 @@ render-vs-physics splits, the Escape chord). See `hooks/CLAUDE.md`.
 - **Sprites use `colorSpace = SRGBColorSpace`** (sprite/ring/halo/label textures)
   so canvas colors match the Legend exactly.
 - **Filtering goes through `nodeVisibility`/`linkVisibility`** (`hooks/
-  useGraphFilter`), never structural add/remove, to keep the d3 sim stable.
+  useGraphFilter`), never structural add/remove, to keep the d3 sim stable. Those
+  accessors are only ever consulted by the library's digest (a `refresh()` or a
+  `graphData()` swap), and a filtered-out node is *removed from the scene* with
+  its bind attr deleted — not merely hidden. So anything that flips visibility
+  BETWEEN digests (the timeline's ghost delta) must do all three itself: the node
+  object, the per-link `__lineObj`, and a batched-links re-capture.
 - **Structure-only consumers key off `useStructuralScan(data)`, not `data`**
   (fresh ref per metric-only HealthUpdate). Only feed the structural ref to
   consumers that never read metric fields — it carries stale metrics by design.

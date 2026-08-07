@@ -33,6 +33,14 @@ Pure-helper suites pinning a single source of truth (not exhaustive):
   visibility gating (a selected-but-unavailable harness and a saved-but-
   uncurated Pi model must never silently vanish), and the 28-char label
   truncation that keeps the full `provider/model` in `title`.
+- `ghostLinkSync.test.ts` — `applyChangeRingDelta`'s ghost handling
+  (`components/forceGraph/changeRingSync.ts`). The delta deliberately skips the
+  library digest, so it owns ghost visibility across BOTH link renderers: pins
+  that scrubbing a deleted file out of the window hides the per-link `__lineObj`
+  and drops the segment from the batched `LineSegments` buffer (the "grey node
+  vanished but its line didn't" bug), that scrubbing back restores both, and that
+  a ghost with no mounted object falls back to a refresh only when it should be
+  showing.
 - `taskColors.test.ts` — `colorForIndex` / `taskColorIndex` / `taskColor`
   (`taskColors.ts`): golden-angle hue walk, mod-3 saturation/lightness band
   cycling, abs+trunc index normalisation, and the deterministic id-hash fallback

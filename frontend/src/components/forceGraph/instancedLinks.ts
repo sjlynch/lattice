@@ -74,6 +74,26 @@ export type InstancedLinks = {
   dispose(): void;
 };
 
+// The controller is stamped onto the graph instance (mirrors
+// `attachIdleController`) so a caller that already holds the graph can ask it to
+// re-capture its visible-link set without threading another ref through the
+// React tree. `changeRingSync` needs exactly that: it toggles ghost-node
+// visibility in place — deliberately skipping the library digest that would
+// otherwise re-evaluate `linkVisibility` — so the batched buffer is the only
+// thing left still drawing the vanished ghost's link.
+const CTRL_KEY = '__latticeInstancedLinks' as const;
+
+type WithInstancedLinks = {
+  [CTRL_KEY]?: InstancedLinks;
+};
+
+export function getInstancedLinks(
+  graph: ForceGraph3DInstance | null,
+): InstancedLinks | null {
+  if (!graph) return null;
+  return (graph as unknown as WithInstancedLinks)[CTRL_KEY] ?? null;
+}
+
 // A unique empty object per link: no geometry (no draw call), and `tickFrame`'s
 // position update no-ops for it (it's neither a Line nor a Mesh).
 const emptyLinkObject = () => new THREE.Object3D();
@@ -261,7 +281,13 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
     material = null;
     positions = new Float32Array(0);
     links = [];
+    // Only clear the stamp if it's still ours — a StrictMode remount creates the
+    // replacement controller before this teardown runs.
+    const holder = graph as unknown as WithInstancedLinks;
+    if (holder[CTRL_KEY] === api) delete holder[CTRL_KEY];
   }
 
-  return { setEnabled, rebuild, onFrame, dispose };
+  const api: InstancedLinks = { setEnabled, rebuild, onFrame, dispose };
+  (graph as unknown as WithInstancedLinks)[CTRL_KEY] = api;
+  return api;
 }
