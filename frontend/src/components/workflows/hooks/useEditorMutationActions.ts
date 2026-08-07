@@ -6,6 +6,7 @@ import type {
   WorkflowVariable,
 } from '../../../api';
 import {
+  localStepId,
   makeAgentStep,
   makeControlStep,
   type EditorState,
@@ -30,11 +31,18 @@ export type EditorMutationActions = {
 };
 
 // The editor's step/variable mutation actions, split out of useWorkflowEditor.
-// Every action is a pure `setEditor` updater (and so depends only on the stable
-// setter) — they carry no API/draft-lifecycle concerns, which keeps the parent
-// hook focused on draft restore/persist and the save/delete/template flows.
+// Every action is a pure `setEditor` updater — they carry no API/draft-lifecycle
+// concerns, which keeps the parent hook focused on draft restore/persist and the
+// save/delete/template flows.
+//
+// The one thing they report outward is `onStepsAdded`: the ids of the agent
+// steps an action just appended, so the collapse map can start them collapsed
+// (see `useCollapsedSteps`). Ids are minted before the `setEditor` call rather
+// than inside the updater — an updater may run more than once, so an id created
+// in there isn't the one that necessarily lands in state.
 export function useEditorMutationActions(
   setEditor: Dispatch<SetStateAction<EditorState>>,
+  onStepsAdded: (stepIds: string[]) => void,
 ): EditorMutationActions {
   const patchStep = useCallback((idx: number, patch: Partial<WorkflowStep>) => {
     setEditor((cur) => ({
@@ -53,6 +61,7 @@ export function useEditorMutationActions(
   }, [setEditor]);
 
   const addStep = useCallback(() => {
+    const id = localStepId();
     setEditor((cur) => ({
       ...cur,
       steps: [
@@ -60,13 +69,15 @@ export function useEditorMutationActions(
         // Seed the built-in injection point so new steps follow the same
         // convention as the built-in templates/quick-add prompts.
         makeAgentStep({
+          id,
           title: `Step ${cur.steps.length + 1}`,
           prompt: '\n\n{{user_instructions}}',
         }),
       ],
       dirty: true,
     }));
-  }, [setEditor]);
+    onStepsAdded([id]);
+  }, [setEditor, onStepsAdded]);
 
   // Append a headless control-flow step (Start/Merge/Push). These have no
   // prompt or harness — they drive Lattice's own task pipeline server-side
@@ -89,6 +100,7 @@ export function useEditorMutationActions(
   // (no workflow loaded, no steps), bootstrap a draft so clicking a chip from
   // the empty state immediately produces something runnable.
   const addDefaultPromptStep = useCallback((p: DefaultPrompt) => {
+    const id = localStepId();
     setEditor((cur) => {
       const base: EditorState =
         cur.workflowId === null && cur.steps.length === 0 && cur.name === ''
@@ -99,12 +111,13 @@ export function useEditorMutationActions(
         steps: [
           ...base.steps,
           // Built-in quick-add prompts end with {{user_instructions}}.
-          makeAgentStep({ title: p.title, prompt: withUserInstructions(p.prompt) }),
+          makeAgentStep({ id, title: p.title, prompt: withUserInstructions(p.prompt) }),
         ],
         dirty: true,
       };
     });
-  }, [setEditor]);
+    onStepsAdded([id]);
+  }, [setEditor, onStepsAdded]);
 
   const reorderSteps = useCallback((fromIdx: number, toIdx: number) => {
     setEditor((cur) => {
