@@ -33,7 +33,8 @@ Implementation pieces for `../Sidebar.tsx`.
   tab carries a count badge; each shown only when non-empty).
 - `SidebarTabsBar.tsx` — the scrollable tab strip: scroll arrows, HTML5
   drag-and-drop reordering state, and which tab is mid-rename (`editingId`); maps
-  `visibleTerminals` to `SidebarTab` rows. Dropping a tab on another calls
+  `visibleTerminals` to `SidebarTab` rows, marking each `busy` by intersecting its
+  `serverId` with `busyServerIds` (from `hooks/useBusyAgentTerminals`). Dropping a tab on another calls
   `reorderTerminal` from `TerminalsContext`, which reorders the full persisted
   list by id so it stays correct under panel/search filtering.
 - `SidebarTab.tsx` — one memoized tab row: kind icon (terminal/merge/startup),
@@ -41,7 +42,10 @@ Implementation pieces for `../Sidebar.tsx`.
   (reconnecting/exited/dead), and a close button. Double-click starts a rename,
   right-click opens the context menu; the label doubles as the searchable session
   name (see `useTerminalSearch`). Memoized so only the tabs whose flags change
-  re-render on a `TerminalsContext` update or drag.
+  re-render on a `TerminalsContext` update or drag. When `busy` is set the kind
+  icon is **replaced** by a spinner (`.sidebar-tab-spinner`) — it takes the
+  icon's slot rather than adding a glyph so the strip's tab widths don't jitter
+  as agents start and stop.
 - `RenameInput.tsx` — the rename `<input>` leaf: seeds its draft from the current
   label and owns per-keystroke state (so churn never reaches sibling tabs). A
   `doneRef` guard keeps the exact semantics — Enter or blur commits once, Escape
@@ -74,3 +78,10 @@ Implementation pieces for `../Sidebar.tsx`.
 - `hooks/useMountedTerminalIds.ts` — owns `mountedIds`: lazy-mounts
   `TerminalPane` only after first activation (startup panes excepted), which
   prevents WebGL context exhaustion across many pre-spawned panes.
+- `hooks/useBusyAgentTerminals.ts` — the `serverId` set behind the per-tab
+  spinner, from `/ws/terminal-activity` (see `backend/src/terminalActivity.ts`).
+  Deliberately **not** derived from the panes: `useMountedTerminalIds` above
+  means an un-clicked tab has no terminal WS at all, and after a "Run All" those
+  are precisely the tabs you want a spinner on. Returns the SAME `Set` reference
+  for an unchanged frame (a reconnect re-sends the current set) so the memoized
+  `SidebarTab` rows don't re-render on it.

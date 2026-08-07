@@ -18,6 +18,7 @@ Backend bindings, grouped by domain. `import { ... } from '../api'` resolves to 
 - `pushRuns.ts` — push-run lifecycle (commit + push the project via a Claude session): `checkGit`, `startPushRun`, `fetchPushRunStatus`, `forgetPushRun`.
 - `qaRuns.ts` — QA e2e-run lifecycle (Playwright Claude over one merged task; mirrors `pushRuns`): `startQaRun`, `fetchQaRunStatus`, `forgetQaRun`.
 - `postMergeHooks.ts` — post-merge hook run state: `getActivePostMergeHook`, `abortPostMergeHook`, `subscribePostMergeHooks`.
+- `terminals.ts` — `subscribeTerminalActivity(project, cb)`: the `/ws/terminal-activity` stream of backend session ids whose harness is still working, behind the sidebar's per-tab spinner. Payload is machine-wide (`busy: serverId[]`), so the consumer intersects it with its own project-scoped tab list. Not to be confused with `../terminal/terminalApi.ts`, which holds the pty create/DELETE side effects.
 
 ## Adding an endpoint
 

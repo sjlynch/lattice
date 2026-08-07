@@ -24,6 +24,13 @@
 
   --danger: #f57878;
 
+  /* Frozen workflow steps (the step row's snowflake toggle). An icy blue kept
+     distinct from --accent so a frozen row never reads as the running one. */
+  --freeze: #5cc4f5;
+  --freeze-border: rgba(92, 196, 245, 0.35);
+  --freeze-bg: rgba(92, 196, 245, 0.14);
+  --freeze-bg-strong: rgba(92, 196, 245, 0.22);
+
   --node-dir: #9aa0a6;
   --node-file: #5b9bff;
 

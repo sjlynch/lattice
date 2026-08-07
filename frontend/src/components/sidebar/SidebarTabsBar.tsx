@@ -6,6 +6,9 @@ import { SidebarTab } from './SidebarTab';
 type Props = {
   visibleTerminals: TerminalSpec[];
   filter: string;
+  // Backend session ids whose harness is still working (see
+  // `hooks/useBusyAgentTerminals`) — those tabs render a spinner for an icon.
+  busyServerIds: ReadonlySet<string>;
   activeId: string | null;
   setActiveId: (id: string) => void;
   closeTerminal: (id: string) => void;
@@ -22,6 +25,7 @@ type Props = {
 export function SidebarTabsBar({
   visibleTerminals,
   filter,
+  busyServerIds,
   activeId,
   setActiveId,
   closeTerminal,
@@ -118,6 +122,7 @@ export function SidebarTabsBar({
               kind={t.kind}
               status={t.status}
               exitCode={t.exitCode}
+              busy={t.serverId !== undefined && busyServerIds.has(t.serverId)}
               isActive={t.id === activeId}
               isDragging={t.id === draggingId}
               isDragOver={t.id === dragOverId}

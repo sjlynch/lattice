@@ -24,9 +24,9 @@ Components behind the Workflows button. `Workflows.tsx` (parent dir) is a re-exp
 - `AgentStepHeader.tsx` — the agent step's top row (collapse toggle, status badge, title input, mode + harness selects, customize/remove actions) plus the `StepHarnessSelect` (per-step harness select that expands to "Pi — X" rows via `buildHarnessOptions` over `piMenu`, setting both `step.harness` and `step.piModel`). Memoized on the specific header fields (not the whole `step`) so prompt edits don't re-render it.
 - `PromptHighlightTextarea.tsx` — the agent step's prompt editor: the transparent textarea over the `{{variable}}`-highlighting overlay (`splitPromptSegments`). Owns its textarea ref + autosize; memoized on the prompt-only props so title/mode/harness edits don't re-tokenize the prompt (the per-row hot path). Stays mounted across collapse, rendering nothing while collapsed.
 - `ControlStepRow.tsx` — the compact control-step row (start/merge/push): title + info tooltip via `CONTROL_STEP_META`; no prompt or harness, but still reorders/removes. Memoized.
-- `StepRowShared.tsx` — bits shared across the row family: the `StepIndexBadge` (the `#N` badge / run-status glyph) and the `StepRowCallbacks` type (the id/index-parameterized handlers the parent hands down once each).
+- `StepRowShared.tsx` — bits shared across the row family: the `StepIndexBadge` (the `#N` badge / run-status glyph), the `StepFreezeButton` (the snowflake toggle, latching blue when `step.frozen`), and the `StepRowCallbacks` type (the id/index-parameterized handlers the parent hands down once each).
 - `StepRowHooks.ts` — colocated StepRow internals for drag/drop state, prompt textarea autosizing (`PROMPT_MIN_HEIGHT_PX`), and `useScrollRunningIntoView` (scrolls a row into view the moment it becomes the running step).
-- `stepRunStatus.ts` — pure `stepRunStatus(index, run)` mapping a row index onto the active/recent run's `currentStepIndex` → the `StepRunStatus` enum StepRow renders. `WorkflowEditorPanel` computes it per row from `runForEditor ?? recentForEditor`. Unit-tested in `src/__tests__/stepRunStatus.test.ts`.
+- `stepRunStatus.ts` — pure `stepRunStatus(index, run, frozen?)` mapping a row index onto the active/recent run's `currentStepIndex` → the `StepRunStatus` enum StepRow renders. `WorkflowEditorPanel` computes it per row from `runForEditor ?? recentForEditor`. A `frozen` row is always `skipped`: the backend jumps `currentStepIndex` over frozen steps, so the plain index comparison would otherwise report one as `done`. Unit-tested in `src/__tests__/stepRunStatus.test.ts`.
 - `WorkflowRunStrip.tsx` — progress / summary strip above the editor name input.
 - `editorState.ts` — `EditorState` type + the `emptyEditor`/`fromTemplate`/`fromWorkflow` converters, `makeAgentStep`/`makeControlStep`/`localStepId` step factories (`makeAgentStep` takes an optional `id` so an add action can mint it outside the `setEditor` updater), `collapsibleStepIds` (the agent-step ids of a step list — control rows have no collapse toggle), and `nextEditorAfterSave` (reseeds from the server echo only when no edit landed mid-save, so an in-flight edit isn't silently overwritten). Editor keeps a `dirty` flag so unsaved changes show "Discard"/"Save".
 - `queueScheduler.ts` — the pure, React-free workflow-queue state machine (`reduceQueue`/`step`/`pendingStarts`): sequential-vs-parallel dispatch, the 409-requeue (`dispatchRejected`), and pre-finished-run bookkeeping (a completion WS beating the `/run` response). Unit-tested (`src/__tests__/`); the React adapter is `hooks/useWorkflowQueue`.
@@ -48,3 +48,21 @@ Workflow CSS is split under `frontend/src/styles/workflows/`; `styles/workflows.
 2. Backend creates the run, materializes the first step's directory, and returns `{run}`. `useWorkflowRuns` stashes the run in `activeRuns`.
 3. Per step, the backend emits a `step-spawned` event on `/ws/workflow-runs` with `{stepIndex, cwd, command, serverId}`. `useWorkflowRuns` turns each one into an `addTerminal({...})` call so the step opens as a terminal tab in that step's working directory.
 4. The next step's `step-spawned` arrives when the prior step finishes — workflow steps are sibling terminal sessions in step directories, not task-board worktrees.
+
+## Freezing steps
+
+Every step row (agent and control alike) carries a snowflake toggle that sets
+`WorkflowStep.frozen`. A frozen step keeps its place, title and prompt but is
+**skipped when the workflow runs** — the backend's `nextRunnableStepIndex`
+(`backend/src/workflowRuns/frozenSteps.ts`) walks past it at both run start and
+step advance, so `currentStepIndex` jumps over frozen rows while `totalSteps`
+still counts them. It's the one-click alternative to deleting a step and
+retyping its prompt later.
+
+UI consequences to keep in sync: the row dims with an icy left rail
+(`.workflows-step.frozen`, `--freeze*` tokens in `styles/tokens.css`), its badge
+becomes a snowflake during a run (`stepRunStatus` → `skipped`), the saved-list
+row shows an "N frozen" meta chip, and Run/Queue are disabled with an
+"Every step is frozen" reason when nothing runnable is left — the backend
+refuses an all-frozen run anyway, so the disable is just the earlier, nicer
+half of the same rule.

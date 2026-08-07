@@ -64,8 +64,9 @@ Cascade-sensitive moves to be aware of when editing:
   put it in the feature file (which imports later) rather than editing
   `controls.css`.
 - `@keyframes spin` is defined in `controls.css` and reused by
-  `.wf-run-chip-spinner` (appbar.css) and `.merge-run-strip-spinner`
-  (merge-run.css). `@keyframes modal-fade` is defined in `modal.css` and
+  `.wf-run-chip-spinner` (appbar.css), `.merge-run-strip-spinner`
+  (merge-run.css) and `.sidebar-tab-spinner` (sidebar.css).
+  `@keyframes modal-fade` is defined in `modal.css` and
   reused by `.taskboard-overlay`. Keep the defining file imported before
   any file that references the animation.
 - `timeline.css` adds a second `:root { --timeline-h: 64px }` block —
