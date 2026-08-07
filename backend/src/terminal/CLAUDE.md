@@ -9,12 +9,17 @@ owns the node-pty processes.
 ## Files
 
 - `sessionTypes.ts` — `Session` (id, pty, scrollback, size, cwd, shell,
-  projectPath, subscribers, `killing` guard) + `CreateOpts` / `AttachOpts`. No
-  logic.
+  projectPath, subscribers, `lastOutputAt`, `initialCommand`, `killing` guard) +
+  `CreateOpts` / `AttachOpts`. No logic. `lastOutputAt` + `initialCommand` exist
+  purely so the MAIN backend can derive the sidebar's per-tab agent spinner
+  (`../terminalActivity.ts`) — record raw facts here and keep the
+  interpretation (idle threshold, is-this-an-agent) over there, or tuning the
+  spinner changes the terminal-server fingerprint and respawns every pty.
 - `sessionStore.ts` — **the single source of truth**: the module-singleton
   `Map<id, Session>`. `getSession` / `addSession` / `deleteSession` (disposes
   the session's scrollback at the one deletion point) / `sessionCount` /
-  `allSessions` / `listSessions` (debug snapshot).
+  `allSessions` / `listSessions` (debug snapshot — also the wire format the
+  main backend reads `lastOutputAt`/`initialCommand` from).
 - `launchContext.ts` — `buildSessionLaunchContext`: resolves shell, cwd
   (validated to exist — refusing a doomed spawn that would feed a reconnect
   loop), size, projectPath, and the env (Lattice breadcrumb vars +
@@ -61,9 +66,9 @@ owns the node-pty processes.
   `addSession` → `wireSessionPtyEvents` + banner + initialCommand).
   `precreateSession` is the no-subscriber variant route handlers use to return a
   `serverId` before any WS attaches.
-- `sessionLifecycle.ts` — `wireSessionPtyEvents` (pty `onData` →
-  scrollback.append + broadcast; pty `onExit` → broadcast `exit`, close
-  subscribers, `deleteSession`), plus `addLatticeBanner` and
+- `sessionLifecycle.ts` — `wireSessionPtyEvents` (pty `onData` → stamp
+  `lastOutputAt` + scrollback.append + broadcast; pty `onExit` → broadcast
+  `exit`, close subscribers, `deleteSession`), plus `addLatticeBanner` and
   `scheduleInitialCommand`.
 - `broadcast.ts` — `broadcastToSubscribers`: fan a message out to every OPEN
   subscriber WS, best-effort.

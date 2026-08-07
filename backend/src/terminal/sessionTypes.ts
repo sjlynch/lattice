@@ -17,6 +17,20 @@ export type Session = {
   projectPath: string;
   subscribers: Set<WebSocket>;
   createdAt: number;
+  // Wall-clock of the last byte this pty emitted, bumped on every `onData`
+  // (sessionLifecycle.ts) and reported by `listSessions`. The MAIN backend
+  // derives the sidebar's per-tab "agent is still working" spinner from it
+  // (`terminalActivity.ts`). Deliberately a raw fact: the idle threshold and
+  // the is-this-an-agent test are POLICY and live over there, so tuning them
+  // stays a backend-only edit that doesn't change the terminal-server
+  // fingerprint (which would respawn every running pty).
+  lastOutputAt: number;
+  // The initial command this session was spawned with, verbatim. Recorded so
+  // the main backend can tell an agent pty from a plain shell or a
+  // `npm run dev` startup terminal without the frontend having to remember it
+  // — a task tab re-adopted after a page refresh (useTaskTerminalReattach)
+  // carries no initialCommand of its own.
+  initialCommand?: string;
   // Set the moment killSession runs the first time. Guards against
   // duplicate DELETE arrivals (StrictMode double-fire, double-click,
   // run-during-cleanup race) calling pty.kill() twice — node-pty's

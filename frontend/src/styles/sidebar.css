@@ -237,6 +237,22 @@
   height: 2px;
   background: var(--accent);
 }
+/* Per-tab "agent still working" spinner: takes over the kind icon's slot while
+   the harness in that pty keeps emitting output. Accent-colored so a working
+   tab reads at a glance down a long strip. `spin` is defined in controls.css,
+   which imports before this file. */
+.sidebar-tab-spinner {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+/* Respect a reduced-motion preference: keep the accent-colored distinction,
+   drop the rotation. */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-tab-spinner { animation: none; }
+}
+
 /* Per-tab connection-health dot. Quiet by design: only reconnecting / exited /
    dead render one (live & still-connecting tabs show nothing). Colors reuse the
    existing state palette — amber for in-flight attention, danger for dead. */

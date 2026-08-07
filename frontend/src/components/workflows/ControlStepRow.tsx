@@ -5,7 +5,11 @@ import {
   useScrollRunningIntoView,
   useWorkflowStepDragDrop,
 } from './StepRowHooks';
-import { StepIndexBadge, type StepRowCallbacks } from './StepRowShared';
+import {
+  StepFreezeButton,
+  StepIndexBadge,
+  type StepRowCallbacks,
+} from './StepRowShared';
 import type { StepRunStatus } from './stepRunStatus';
 
 // Per-kind copy for the compact control-step row. Title is what shows in the
@@ -57,10 +61,11 @@ export const ControlStepRow = memo(function ControlStepRow({
   useScrollRunningIntoView(rootRef, runStatus === 'running');
   const meta = CONTROL_STEP_META[kind];
   const Icon = meta.icon;
+  const frozen = step.frozen === true;
   return (
     <div
       ref={rootRef}
-      className={`workflows-step workflows-step-control workflows-step-control-${kind} ${dragOver ? `drop-${dragOver}` : ''} collapsed${runStatus ? ` run-${runStatus}` : ''}`}
+      className={`workflows-step workflows-step-control workflows-step-control-${kind} ${dragOver ? `drop-${dragOver}` : ''} collapsed${runStatus ? ` run-${runStatus}` : ''}${frozen ? ' frozen' : ''}`}
       draggable
       onDragStart={onDragStart}
       onDragOver={onDragOver}
@@ -90,6 +95,10 @@ export const ControlStepRow = memo(function ControlStepRow({
           <span className="workflows-step-control-tag" title={meta.hint}>
             {kind}
           </span>
+          <StepFreezeButton
+            frozen={frozen}
+            onToggle={() => onChange(index, { frozen: !frozen })}
+          />
           <button
             className="icon-btn sm"
             onClick={() => onRemove(index)}

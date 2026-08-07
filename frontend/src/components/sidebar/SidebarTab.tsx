@@ -1,4 +1,4 @@
-import { GitMerge, Rocket, TerminalSquare, X } from 'lucide-react';
+import { GitMerge, LoaderCircle, Rocket, TerminalSquare, X } from 'lucide-react';
 import { memo, type DragEvent, type MouseEvent, type RefObject } from 'react';
 import type { TerminalStatus } from '../../terminal/terminalTypes';
 import { RenameInput } from './RenameInput';
@@ -14,6 +14,8 @@ const STATUS_TOOLTIPS: Record<TerminalStatus, string> = {
   dead: 'Disconnected — close and reopen',
 };
 
+const BUSY_TOOLTIP = 'Agent is working…';
+
 function statusTooltip(status: TerminalStatus, exitCode?: number): string {
   if (status === 'exited') {
     return exitCode === undefined ? 'Exited' : `Exited (code ${exitCode})`;
@@ -28,6 +30,7 @@ type SidebarTabProps = {
   kind?: 'merge' | 'startup';
   status?: TerminalStatus;
   exitCode?: number;
+  busy?: boolean;
   isActive: boolean;
   isDragging: boolean;
   isDragOver: boolean;
@@ -56,6 +59,7 @@ export const SidebarTab = memo(function SidebarTab({
   kind,
   status,
   exitCode,
+  busy,
   isActive,
   isDragging,
   isDragOver,
@@ -88,7 +92,22 @@ export const SidebarTab = memo(function SidebarTab({
       onDragEnd={onDragEnd}
       title={isEditing ? undefined : `${cwd}\nDouble-click to rename`}
     >
-      {kind === 'merge' ? (
+      {/* While the harness in this pty is still working, its icon becomes a
+          spinner. Takes the icon's slot rather than adding a glyph so the tab
+          strip's width doesn't jitter every time an agent starts or stops. */}
+      {busy ? (
+        // Wrapped so the tooltip/label sit on an element that takes them —
+        // lucide's props omit `title` — and so the rotation animates the
+        // wrapper, leaving the glyph itself untouched.
+        <span
+          className="sidebar-tab-spinner"
+          title={BUSY_TOOLTIP}
+          aria-label={BUSY_TOOLTIP}
+          role="img"
+        >
+          <LoaderCircle size={12} />
+        </span>
+      ) : kind === 'merge' ? (
         <GitMerge size={12} />
       ) : kind === 'startup' ? (
         <Rocket size={12} />

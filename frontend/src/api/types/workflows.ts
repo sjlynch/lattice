@@ -22,6 +22,9 @@ export type WorkflowStep = {
   // Pi model ("provider/model") for this step; used only when harness is `pi`.
   piModel?: string;
   kind?: WorkflowStepKind;
+  // Frozen (the step row's snowflake toggle): the step is kept in the workflow
+  // but skipped when the workflow runs. Applies to every step kind.
+  frozen?: boolean;
 };
 
 // A user-defined variable injected into step prompts via `{{name}}`. Every

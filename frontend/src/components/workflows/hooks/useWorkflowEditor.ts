@@ -7,6 +7,7 @@ import {
 } from '../../../api';
 import type { WorkflowTemplate } from '../../../workflowTemplates';
 import {
+  collapsibleStepIds,
   emptyEditor,
   fromTemplate,
   fromWorkflow,
@@ -24,6 +25,9 @@ type Args = {
   workflows: Workflow[];
   activeFolder: string;
   onError: (msg: string) => void;
+  // Ids of the agent steps an action just created, so the caller can start them
+  // collapsed (see `useCollapsedSteps`).
+  onStepsAdded: (stepIds: string[]) => void;
 };
 
 // Owns the workflow-editor mutable state and all save/discard/delete/template
@@ -35,7 +39,12 @@ type Args = {
 // `useEditorMutationActions` provides the pure step/variable `setEditor`
 // updaters. What stays here is the draft state itself plus the flows that touch
 // the API or per-project draft storage.
-export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
+export function useWorkflowEditor({
+  workflows,
+  activeFolder,
+  onError,
+  onStepsAdded,
+}: Args) {
   const [editor, setEditor] = useState<EditorState>(emptyEditor);
   const [pickingTemplate, setPickingTemplate] = useState(false);
 
@@ -52,21 +61,25 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
   useEditorDraftLifecycle({ editor, setEditor, workflows, activeFolder });
 
   const newBlank = useCallback(() => {
+    const seed = makeAgentStep({ title: 'Step 1', prompt: '\n\n{{user_instructions}}' });
     setEditor({
       workflowId: null,
       name: '',
-      steps: [makeAgentStep({ title: 'Step 1', prompt: '\n\n{{user_instructions}}' })],
+      steps: [seed],
       variables: defaultVariables(),
       dirty: true,
     });
+    onStepsAdded([seed.id]);
     setPickingTemplate(false);
-  }, []);
+  }, [onStepsAdded]);
 
   const newFromTemplate = useCallback(async (t: WorkflowTemplate) => {
     setPickingTemplate(false);
     if (!activeFolder) {
       // No project to attach to — fall back to a draft in the editor.
-      setEditor(fromTemplate(t));
+      const draft = fromTemplate(t);
+      setEditor(draft);
+      onStepsAdded(collapsibleStepIds(draft.steps));
       return;
     }
     try {
@@ -85,12 +98,16 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
         }),
         defaultVariables(),
       );
-      setEditor(fromWorkflow(created));
+      const next = fromWorkflow(created);
+      setEditor(next);
+      onStepsAdded(collapsibleStepIds(next.steps));
     } catch (err) {
       onError(`Could not create from template: ${(err as Error).message}`);
-      setEditor(fromTemplate(t));
+      const draft = fromTemplate(t);
+      setEditor(draft);
+      onStepsAdded(collapsibleStepIds(draft.steps));
     }
-  }, [activeFolder, onError]);
+  }, [activeFolder, onError, onStepsAdded]);
 
   const save = useCallback(async (): Promise<Workflow | null> => {
     if (!activeFolder) return null;
@@ -158,7 +175,7 @@ export function useWorkflowEditor({ workflows, activeFolder, onError }: Args) {
     }
   }, [editor.workflowId, onError]);
 
-  const mutations = useEditorMutationActions(setEditor);
+  const mutations = useEditorMutationActions(setEditor, onStepsAdded);
 
   return {
     editor,

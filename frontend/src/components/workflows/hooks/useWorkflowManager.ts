@@ -157,6 +157,9 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     workflows,
     activeFolder,
     onError: showError,
+    // New steps land collapsed, so adding several quick-add chips leaves a
+    // readable list of headers instead of a wall of prompt textareas.
+    onStepsAdded: collapsedSteps.collapseSteps,
   });
 
   const { editor, setEditor } = editorState;

@@ -12,6 +12,12 @@ attaches them to HTTP upgrades.
 - Initial snapshots should be small and safe to send once per connection;
   broadcast payloads are serialized once per event by the shared helper.
 - Keep event filtering by canonical project path on the server side so tabs for
-  other projects never receive unrelated state.
+  other projects never receive unrelated state. `/ws/terminal-activity` (the
+  sidebar tab spinner) is the one deliberate exception: it takes `?project=` to
+  scope the CONNECTION like everything else, but its payload is machine-wide.
+  Session ids are opaque, the sidebar already scopes its own tab list, and a
+  session's `projectPath` can legitimately be a worktree rather than the project
+  root — filtering on it would silently drop the task tabs the spinner exists
+  for. Don't "fix" it by adding a project filter.
 - Add a new endpoint by adding a builder here and a route tuple in
   `wsServer.ts`.

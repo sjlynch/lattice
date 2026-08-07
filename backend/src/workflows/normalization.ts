@@ -60,6 +60,10 @@ export function normalizeSteps(steps: unknown): WorkflowStep[] {
       harness: normalizeWorkflowStepHarness(step.harness),
       piModel: normalizePiModel(step.piModel),
       kind: normalizeStepKind(step.kind),
+      // Only a literal `true` freezes a step, and `undefined` (not `false`)
+      // keeps the flag out of the JSON for the overwhelmingly common
+      // not-frozen case — same shape convention as `piModel`.
+      frozen: step.frozen === true ? true : undefined,
     };
   });
 }
