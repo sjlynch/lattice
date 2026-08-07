@@ -7,6 +7,7 @@ export function WorkflowEditorActions({
   workflowId,
   dirty,
   hasSteps,
+  hasRunnableSteps,
   hasActiveFolder,
   runId,
   deleting,
@@ -20,6 +21,9 @@ export function WorkflowEditorActions({
   workflowId: string | null;
   dirty: boolean;
   hasSteps: boolean;
+  // At least one step is not frozen. An all-frozen workflow saves fine but has
+  // nothing for the run engine to execute.
+  hasRunnableSteps: boolean;
   hasActiveFolder: boolean;
   runId: string | null;
   deleting: boolean;
@@ -32,14 +36,17 @@ export function WorkflowEditorActions({
 }) {
   // When the save/queue/run buttons are disabled, name the unblock condition
   // so a greyed button never reads as broken. Save needs a step; queue/run
-  // additionally need an open project folder.
+  // additionally need a step that isn't frozen and an open project folder.
   const noSteps = !hasSteps;
   const saveBlockedReason = noSteps ? 'Add a step first' : undefined;
   const runBlockedReason = noSteps
     ? 'Add a step first'
-    : !hasActiveFolder
-      ? 'Open a project folder first'
-      : undefined;
+    : !hasRunnableSteps
+      ? 'Every step is frozen — unfreeze one first'
+      : !hasActiveFolder
+        ? 'Open a project folder first'
+        : undefined;
+  const runBlocked = Boolean(runBlockedReason);
 
   return (
     <div className="workflows-editor-actions">
@@ -71,7 +78,7 @@ export function WorkflowEditorActions({
       <button
         className="btn-ghost"
         onClick={() => void onQueue()}
-        disabled={noSteps || !hasActiveFolder}
+        disabled={runBlocked}
         title={runBlockedReason}
         aria-label={runBlockedReason}
       >
@@ -89,7 +96,7 @@ export function WorkflowEditorActions({
         <button
           className="btn-primary"
           onClick={() => void onRun()}
-          disabled={noSteps || !hasActiveFolder}
+          disabled={runBlocked}
           title={runBlockedReason}
           aria-label={runBlockedReason}
         >

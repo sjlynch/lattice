@@ -75,6 +75,10 @@
   color: #facc15;
   font-weight: 500;
 }
+.workflows-item-frozen {
+  color: var(--freeze);
+  font-weight: 500;
+}
 .workflows-item-actions {
   position: absolute;
   top: 50%;

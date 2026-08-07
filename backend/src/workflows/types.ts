@@ -31,6 +31,10 @@ export type WorkflowStep = {
   piModel?: string;
   // Defaults to 'agent' (legacy steps that have no `kind` field on disk).
   kind?: WorkflowStepKind;
+  // "Frozen" (the editor's snowflake toggle): the step stays in the workflow —
+  // prompt and position intact — but the run engine walks straight past it, for
+  // every kind. Absent/false = runs normally. See workflowRuns/frozenSteps.ts.
+  frozen?: boolean;
 };
 
 // A user-defined variable whose `value` is substituted into any step prompt

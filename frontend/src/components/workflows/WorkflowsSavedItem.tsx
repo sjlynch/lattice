@@ -43,6 +43,18 @@ export const WorkflowsSavedItem = memo(function WorkflowsSavedItem({
   onRun,
   onStopRun,
 }: Props) {
+  // Frozen steps stay in the definition but are skipped by the run engine, so
+  // an all-frozen workflow has nothing to execute — block run/queue with a
+  // reason rather than letting the backend 400 into an error toast.
+  const frozenCount = workflow.steps.filter((s) => s.frozen === true).length;
+  const runnableCount = workflow.steps.length - frozenCount;
+  const blockedReason =
+    workflow.steps.length === 0
+      ? 'Add steps first'
+      : runnableCount === 0
+        ? 'Every step is frozen — unfreeze one first'
+        : undefined;
+
   return (
     <div
       className={`workflows-item ${isSelected ? 'active' : ''}`}
@@ -51,6 +63,17 @@ export const WorkflowsSavedItem = memo(function WorkflowsSavedItem({
       <div className="workflows-item-name">{workflow.name}</div>
       <div className="workflows-item-meta">
         {workflow.steps.length} step{workflow.steps.length === 1 ? '' : 's'}
+        {frozenCount > 0 && (
+          <>
+            {' · '}
+            <span
+              className="workflows-item-frozen"
+              title="Frozen steps are skipped when this workflow runs"
+            >
+              {frozenCount} frozen
+            </span>
+          </>
+        )}
         {queuedCount > 0 && (
           <>
             {' · '}
@@ -103,12 +126,8 @@ export const WorkflowsSavedItem = memo(function WorkflowsSavedItem({
             event.stopPropagation();
             onEnqueue(workflow.id);
           }}
-          disabled={workflow.steps.length === 0}
-          title={
-            workflow.steps.length === 0
-              ? 'Add steps before queueing'
-              : 'Add to queue'
-          }
+          disabled={Boolean(blockedReason)}
+          title={blockedReason ?? 'Add to queue'}
           aria-label="Add workflow to queue"
         >
           <Plus size={12} />
@@ -132,12 +151,8 @@ export const WorkflowsSavedItem = memo(function WorkflowsSavedItem({
               event.stopPropagation();
               void onRun(workflow.id);
             }}
-            disabled={workflow.steps.length === 0}
-            title={
-              workflow.steps.length === 0
-                ? 'Add steps before running'
-                : 'Run workflow now'
-            }
+            disabled={Boolean(blockedReason)}
+            title={blockedReason ?? 'Run workflow now'}
             aria-label="Run workflow now"
           >
             <Play size={11} fill="currentColor" />
