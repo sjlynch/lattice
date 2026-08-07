@@ -78,6 +78,14 @@ cache, whose home path binds once at module load. Keep tests as plain
   deletes the file, `notify` keeps it current), and the headline pair: a
   `/complete` callback for an unknown run is a silent no-op, but after
   `restoreWorkflowRun` the very same callback advances the workflow.
+- `workflowFrozenSteps.test.ts` — the editor's freeze toggle end to end: the
+  pure `nextRunnableStepIndex`/`isStepFrozen` policy (leading/middle/trailing
+  frozen, all-frozen and empty → `null`, clamped negative `from`), the
+  `normalizeSteps` coercion (only a literal `true` freezes; not-frozen stays
+  *absent* from the JSON, never `false`), and the two run-engine consumers — an
+  all-frozen workflow is refused by `startWorkflowRun` with no run record left
+  behind, and advancing onto trailing frozen steps completes the run (index
+  parked past the last step) instead of spawning them or hanging.
 - `defaultPromptMigrations.test.ts` — the planner-only contract for workflow
   steps, both halves. (1) `workflows/defaultPromptMigrations.ts`: prefix matching
   keeps the editor's appended `{{user_instructions}}` / project-tailoring suffix,

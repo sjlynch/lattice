@@ -35,6 +35,7 @@ import {
   type WorkflowRun,
 } from './workflowRuns/state.js';
 import { spawnWorkflowStep } from './workflowRuns/stepSpawner.js';
+import { nextRunnableStepIndex } from './workflowRuns/frozenSteps.js';
 import { executeControlStep } from './workflowRuns/controlStep.js';
 import { cancelWorkflowStepSessions } from './workflowRuns/sessionSpawner.js';
 import { cancelStopHookGate } from './workflowRuns/stopHookGate.js';
@@ -121,6 +122,14 @@ export async function startWorkflowRun(
   if (!wf) throw new Error('workflow not found');
   if (wf.steps.length === 0) throw new Error('workflow has no steps');
 
+  // Frozen steps are skipped, so a run starts at the first thawed step rather
+  // than always at 0. All-frozen is refused outright — starting a run that
+  // instantly completes reads as a silent no-op to the user.
+  const firstIndex = nextRunnableStepIndex(wf.steps, 0);
+  if (firstIndex === null) {
+    throw new Error('every step in this workflow is frozen');
+  }
+
   // Authoritative sequential guard: when the caller demands an empty slot
   // (sequential-queue dispatch), reject if a run is already active. Runs before
   // any run record / notify / spawn so a rejected start is atomic.
@@ -138,7 +147,7 @@ export async function startWorkflowRun(
     status: 'running',
     startedAt: Date.now(),
     totalSteps: wf.steps.length,
-    currentStepIndex: 0,
+    currentStepIndex: firstIndex,
     ...(harnessOverride ? { harnessOverride } : {}),
     ...(piModelOverride ? { piModelOverride } : {}),
   };
@@ -149,14 +158,14 @@ export async function startWorkflowRun(
   );
 
   try {
-    await dispatchStep(wf, run, 0, backendOrigin);
+    await dispatchStep(wf, run, firstIndex, backendOrigin);
     return snapshot(run);
   } catch (err) {
     run.status = 'errored';
     run.finishedAt = Date.now();
     run.error = (err as Error).message ?? 'spawn failed';
     notify({ type: 'errored', run: snapshot(run) });
-    console.error(`[workflow-run] ${run.id} failed to start step 0:`, err);
+    console.error(`[workflow-run] ${run.id} failed to start step ${firstIndex}:`, err);
     throw err;
   }
 }
@@ -241,10 +250,11 @@ export async function completeWorkflowStep(
   if (!run || run.status !== 'running') return;
   if (stepIndex !== run.currentStepIndex) return;
 
-  const nextIndex = stepIndex + 1;
+  const claimedIndex = stepIndex + 1;
   // Claim ownership synchronously before any await so a duplicate Stop-hook
-  // fire is ignored by the check above.
-  run.currentStepIndex = nextIndex;
+  // fire is ignored by the check above. Frozen steps are skipped past below,
+  // once the definition is loaded — the claim itself must stay synchronous.
+  run.currentStepIndex = claimedIndex;
   // Mirror the claim immediately: if the process dies between here and the
   // next step's `progress` notify, boot recovery must resume from the NEW
   // index, not re-run the step that just finished.
@@ -259,12 +269,27 @@ export async function completeWorkflowStep(
       notify({ type: 'errored', run: snapshot(run) });
       return;
     }
-    if (nextIndex >= wf.steps.length) {
+    // Walk past any frozen steps between here and the next runnable one; `null`
+    // means nothing runnable is left (end of workflow, or only frozen steps).
+    const nextIndex = nextRunnableStepIndex(wf.steps, claimedIndex);
+    if (nextIndex === null) {
+      // Park the index past the last step so every editor row reads as done.
+      // `max` keeps a claim that already overshot (workflow shortened mid-run).
+      run.currentStepIndex = Math.max(run.currentStepIndex, wf.steps.length);
       run.status = 'completed';
       run.finishedAt = Date.now();
       console.log(`[workflow-run] ${run.id} completed all ${wf.steps.length} step(s)`);
       notify({ type: 'completed', run: snapshot(run) });
       return;
+    }
+    if (nextIndex !== claimedIndex) {
+      // Re-claim at the step actually being dispatched and mirror it, so a
+      // restart in this window resumes there rather than on a frozen step.
+      run.currentStepIndex = nextIndex;
+      persistRunsForProject(run.projectPath);
+      console.log(
+        `[workflow-run] ${run.id} skipping frozen step(s) ${claimedIndex}..${nextIndex - 1}`,
+      );
     }
     console.log(`[workflow-run] ${run.id} advancing step ${stepIndex} → ${nextIndex}`);
     await dispatchStep(wf, run, nextIndex, backendOrigin);

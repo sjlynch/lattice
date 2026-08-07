@@ -7,13 +7,23 @@ import type { WorkflowRun } from '../../api';
 //
 // Pure + side-effect-free so it can be unit-tested in isolation
 // (`src/__tests__/stepRunStatus.test.ts`) without pulling in React/StepRow.
-export type StepRunStatus = 'running' | 'done' | 'pending' | 'error';
+export type StepRunStatus =
+  | 'running'
+  | 'done'
+  | 'pending'
+  | 'error'
+  | 'skipped';
 
 // Map a row index onto the run's progress. Rows before the current step have
 // run (done); the current step is running (or, if the run failed/finished on
 // it, error/done); rows after are pending. Rows beyond the run's step count
 // (the workflow was edited since it started) get no status so they aren't
 // mislabeled as part of this run.
+//
+// A `frozen` row is `skipped` regardless of where the run's index sits: the
+// backend walks straight past frozen steps, so `currentStepIndex` jumps over
+// them and the plain index comparison below would otherwise report a skipped
+// step as `done`.
 //
 // Backend semantics this relies on (backend/src/workflowRuns.ts): while running,
 // `currentStepIndex` is the executing step; at completion it advances to
@@ -22,9 +32,11 @@ export type StepRunStatus = 'running' | 'done' | 'pending' | 'error';
 export function stepRunStatus(
   index: number,
   run: WorkflowRun | null | undefined,
+  frozen = false,
 ): StepRunStatus | undefined {
   if (!run) return undefined;
   if (index >= run.totalSteps) return undefined;
+  if (frozen) return 'skipped';
   if (index < run.currentStepIndex) return 'done';
   if (index > run.currentStepIndex) return 'pending';
   switch (run.status) {

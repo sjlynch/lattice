@@ -83,6 +83,9 @@
 .workflows-step-index.run-pending {
   color: var(--text-tertiary);
 }
+.workflows-step-index.run-skipped {
+  color: var(--freeze);
+}
 /* Inline determinate-less spinner for the running step's badge. Reuses the
    global `spin` keyframes from controls.css (imported before workflows.css). */
 .workflows-step-spinner {
@@ -250,6 +253,38 @@
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+/* Frozen steps (the snowflake toggle): kept in the workflow, skipped by every
+   run. Dimmed with an icy left rail so the row reads as "parked" at a glance —
+   deliberately a different color from the accent rail the RUNNING step gets.
+   Declared after the control-step rules so a frozen start/merge/push row wins
+   the border color too (same specificity, later file position). */
+.workflows-step.frozen {
+  opacity: 0.55;
+  border-color: var(--freeze-border);
+  box-shadow: inset 2px 0 0 var(--freeze);
+}
+/* Editing a frozen step must still be comfortable — undim on interaction. */
+.workflows-step.frozen:hover,
+.workflows-step.frozen:focus-within {
+  opacity: 0.85;
+}
+/* The rail above would otherwise replace the drag drop-target indicator (same
+   property, later rule) — keep both while a step is dragged over this one. */
+.workflows-step.frozen.drop-top {
+  box-shadow: inset 2px 0 0 var(--freeze), inset 0 2px 0 var(--accent);
+}
+.workflows-step.frozen.drop-bottom {
+  box-shadow: inset 2px 0 0 var(--freeze), inset 0 -2px 0 var(--accent);
+}
+.workflows-step-freeze.frozen {
+  color: var(--freeze);
+  background: var(--freeze-bg);
+}
+.workflows-step-freeze.frozen:hover {
+  color: var(--freeze);
+  background: var(--freeze-bg-strong);
 }
 
 .workflows-add-step {

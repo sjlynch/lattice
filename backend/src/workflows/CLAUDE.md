@@ -13,10 +13,15 @@ imports from `'../workflows.js'`; this directory holds the implementation.
   `merge` | `push`) / `mode` / harness enums. The control-flow kinds
   (`start`/`merge`/`push`) ignore `prompt`/`harness` at run time and are
   executed directly against the task pipeline; only `agent` steps spawn a
-  harness. The fields are retained on disk for schema uniformity.
+  harness. The fields are retained on disk for schema uniformity. `frozen`
+  (the editor's snowflake toggle) is kind-agnostic: the step stays in the
+  definition but the run engine skips it — see
+  `../workflowRuns/frozenSteps.ts`.
 - `normalization.ts` — defensive coercion of untrusted disk/HTTP input into the
   types above (`normalizeWorkflows` / `normalizeSteps` / `normalizeVariables`
-  + name/harness helpers). **Invariant:** `ensureUserInstructions` guarantees
+  + name/harness helpers). `frozen` is coerced to `true` or `undefined` (never
+  `false`), so the flag stays out of the JSON for the common case — same shape
+  convention as `piModel`. **Invariant:** `ensureUserInstructions` guarantees
   every workflow always carries the built-in `user_instructions` variable
   (`USER_INSTRUCTIONS_VAR`, leading the list). Variable names are coerced to the
   `[A-Za-z0-9_]` token grammar.

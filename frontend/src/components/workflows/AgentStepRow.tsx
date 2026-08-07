@@ -43,11 +43,12 @@ export const AgentStepRow = memo(function AgentStepRow({
   const { dragOver, onDragStart, onDragOver, onDragLeave, onDrop } =
     useWorkflowStepDragDrop(index, onReorder);
   useScrollRunningIntoView(rootRef, runStatus === 'running');
+  const frozen = step.frozen === true;
 
   return (
     <div
       ref={rootRef}
-      className={`workflows-step ${dragOver ? `drop-${dragOver}` : ''} ${collapsed ? 'collapsed' : ''}${runStatus ? ` run-${runStatus}` : ''}`}
+      className={`workflows-step ${dragOver ? `drop-${dragOver}` : ''} ${collapsed ? 'collapsed' : ''}${runStatus ? ` run-${runStatus}` : ''}${frozen ? ' frozen' : ''}`}
       draggable
       onDragStart={onDragStart}
       onDragOver={onDragOver}
@@ -66,6 +67,7 @@ export const AgentStepRow = memo(function AgentStepRow({
           mode={step.mode}
           harness={step.harness}
           piModel={step.piModel}
+          frozen={frozen}
           harnessAvail={harnessAvail}
           piMenu={piMenu}
           runStatus={runStatus}
