@@ -214,6 +214,7 @@ therefore stay safely re-runnable.
 | DELETE | `/api/terminals/:id` | Kill a pty session |
 | GET | `/api/spawn-queue` | Debug: spawn-queue snapshot (pending/in-flight/reserved, softCap) |
 | WS | `/ws/terminal?id=&cwd=&cols=&rows=&initialCommand=` | xterm proxy via node-pty (with replay) |
+| WS | `/ws/terminal-activity?project=` | Which pty sessions are running a harness that's *still working* (output seen in the last couple of seconds). Pushed on connect + on every change; backs the sidebar's per-tab spinner. Payload is machine-wide (`{busy: serverId[]}`), not project-filtered |
 | WS | `/ws/tasks?project=` | Live task list updates + `task-spawned` events (a queued run's pty spawned) + `task-spawn-failed` (a deferred run/resume failed for a non-CAP reason; the UI toasts it) + `task-activity` (worktree Claude agent's current file) + `agent-activity` (non-worktree Claude session's current file) for the graph focus beams |
 | WS | `/ws/agent-sessions?project=` | Presence snapshots of Claude sessions running outside a worktree (push / workflow step / post-merge hook); one orange graph node each |
 | WS | `/ws/merge-runs?project=` | Run progress + per-conflict resolver spawn events |
@@ -402,6 +403,21 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   `backend/src/userSettings.ts`; frontend helpers are in `frontend/src/api.ts`.
 - Prefer editing existing files; don't introduce new abstractions for
   one-off tweaks.
+- **Per-tab agent spinner.** A sidebar tab swaps its icon for a small spinner
+  while the harness in that pty is still working. The signal is
+  *output recency*, derived in the backend (`backend/src/terminalActivity.ts`)
+  and pushed over `/ws/terminal-activity`: the detached terminal-server stamps
+  `lastOutputAt` on every pty `onData` and reports it (plus the session's
+  `initialCommand`) from `listSessions`, and the main backend polls that, keeping
+  the idle threshold + the is-this-an-agent test on its own side so tuning them
+  never changes the terminal-server fingerprint (which would respawn every pty).
+  It must come from the backend because the sidebar lazy-mounts a `TerminalPane`
+  only after a tab's first activation — an un-clicked tab has no WS of its own,
+  and those are exactly the tabs the spinner is for. Harness sessions only: a
+  plain shell or a `npm run dev` startup terminal streams output for its whole
+  life and would pin the spinner on. Harness-agnostic by design (Claude, Codex
+  and Pi all animate a status line while working and fall silent at their
+  prompt), so unlike the graph's focus beams it isn't Claude-only.
 - **Terminal pty pre-spawn.** When a task/workflow/conflict spawn would
   produce a UI terminal, the backend pre-creates the pty via the
   terminal-server's `POST /sessions` and ships back a `serverId`. The

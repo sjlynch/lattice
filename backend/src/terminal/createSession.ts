@@ -79,6 +79,13 @@ export function createSession(
     projectPath: context.projectPath,
     subscribers: new Set(),
     createdAt: Date.now(),
+    // Seeded at spawn so a session that has not produced a byte yet still has a
+    // usable clock (a never-written `lastOutputAt` would read as infinitely
+    // idle). Record the RAW command, not `context.initialCommand` — the
+    // per-harness rewriters bolt flags/`-c` overrides onto it, and all the
+    // activity classifier wants is which binary this pty launched.
+    lastOutputAt: Date.now(),
+    initialCommand: opts.initialCommand,
     killing: false,
   };
   addSession(session);

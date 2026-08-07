@@ -24,6 +24,14 @@ cache, whose home path binds once at module load. Keep tests as plain
   (claude/pi/codex) + its private `shellDoubleQuoted()` prompt-quoting guard
   (double-quote/backslash/dollar/backtick each escaped once; injection prompts
   neutralised). Pure unit test, no spawning.
+- `terminalActivity.test.ts` — the two pure halves of the sidebar tab spinner's
+  signal: `agentHarnessForCommand()` (every Lattice-built agent command incl.
+  rewriter-mangled ones; quoted/absolute paths and `.cmd` shims; and the
+  rejections that matter — a plain shell, `npm run dev`, and substring
+  near-misses like `claudette`, any of which would pin a spinner on forever) and
+  `computeBusyTerminalIds()` (agent-only, the idle-threshold boundary, the
+  sorted output the poll loop diffs as a string, and malformed entries from the
+  cross-process JSON). No timers or terminal-server.
 - `worktree.merge.branchState.test.ts` — `checkBranchState()` merge state
   machine across all four outcomes (error/already-merged/empty/ahead); pins the
   safety invariant that a THROWN commit-count surfaces as `error` (never a
