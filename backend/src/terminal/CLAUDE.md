@@ -22,19 +22,25 @@ owns the node-pty processes.
   main backend reads `lastOutputAt`/`initialCommand` from).
 - `launchContext.ts` — `buildSessionLaunchContext`: resolves shell, cwd
   (validated to exist — refusing a doomed spawn that would feed a reconnect
-  loop), size, projectPath, and the env (Lattice breadcrumb vars +
-  `$LATTICE_DOCS`); calls `windowsPath` + `envSetup` to shape PATH/overhead env,
-  then routes the initial command through the per-harness command rewriters
-  (`claudeSystemPrompt` + `codexTrust`).
+  loop), size, projectPath, and the env; calls `windowsPath` + `envSetup` to
+  shape PATH/overhead env, then routes the initial command through the
+  per-harness command rewriters (`claudeSystemPrompt` + `codexTrust`). It also
+  regenerates `<project>/.lattice/LATTICE_API.md` and hands the path to the
+  banner. **It plants no `LATTICE_*` breadcrumb env vars** — it used to export
+  `LATTICE_API_URL`/`LATTICE_PROJECT`/`LATTICE_PROJECT_HASH`/`LATTICE_DOCS`
+  "so agents could discover the API", but no harness reads the environment
+  into its context, so nothing ever saw them. Agent-facing discovery is the
+  system-prompt preamble the backend injects at the spawn chokepoint
+  (`harnessSystemPrompts/latticePreamble.ts`).
   Shell resolution is `resolveDefaultShell(env, platform)` (exported, injectable
   for tests): per-spawn `opts.shell` → `LATTICE_DEFAULT_SHELL` env override (the
   detached terminal-server can't read settings files, so the escape hatch is
   env-based like `LATTICE_API_PORT`) → platform default (`COMSPEC`/cmd.exe on
-  Windows, `$SHELL`/bash on POSIX). **The Windows default is cmd.exe**, where
-  `$LATTICE_*` breadcrumbs don't expand — so the discovery banner names the doc
-  by its literal absolute path (`terminalBanner.ts`) and the generated
-  `LATTICE_API.md` bakes in literal values + per-shell (`$VAR` / `%VAR%` /
-  `$env:VAR`) syntax rather than relying on shell expansion.
+  Windows, `$SHELL`/bash on POSIX). **The Windows default is cmd.exe**, where a
+  `$VAR` reference does not expand at all — which is why the generated
+  `LATTICE_API.md` bakes in literal values (API URL, project path, its
+  forward-slash form, project hash) and why the human-facing banner
+  (`terminalBanner.ts`) names the doc by its literal absolute path.
 - `windowsPath.ts` — `applyFreshWindowsPath`: replace the inherited Windows PATH
   with a registry-read one (HKLM+HKCU) so tools installed after the long-lived
   terminal-server booted are visible. Read off the spawn path (cached, 30 s TTL,
@@ -69,7 +75,10 @@ owns the node-pty processes.
 - `sessionLifecycle.ts` — `wireSessionPtyEvents` (pty `onData` → stamp
   `lastOutputAt` + scrollback.append + broadcast; pty `onExit` → broadcast
   `exit`, close subscribers, `deleteSession`), plus `addLatticeBanner` and
-  `scheduleInitialCommand`.
+  `scheduleInitialCommand`. **The banner is human-only**: it is appended to the
+  session SCROLLBACK (the browser's replay buffer), never written to the pty,
+  so no harness can read it. Don't "fix" agent discovery here — that lives in
+  the system-prompt preamble.
 - `broadcast.ts` — `broadcastToSubscribers`: fan a message out to every OPEN
   subscriber WS, best-effort.
 - `attach.ts` — `attachTerminal`: resolve an existing session by id (or create a

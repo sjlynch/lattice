@@ -42,10 +42,10 @@ function logForeignTasks(canonicalProject: string, foreign: Task[]): void {
 }
 
 // Response is an envelope ({ project, canonicalProject, hash, count,
-// mismatched, tasks }) rather than a bare Task[] so agents can assert the
-// canonicalProject matches their LATTICE_PROJECT / hash matches their
-// LATTICE_PROJECT_HASH before acting on the data — defends against the
-// "filter returned the wrong project's tasks" failure mode.
+// mismatched, tasks }) rather than a bare Task[] so agents can assert that
+// canonicalProject/hash match the project + hash their LATTICE_API.md names
+// before acting on the data — defends against the "filter returned the wrong
+// project's tasks" failure mode.
 export async function handleTaskList(
   req: Request,
   res: Response,

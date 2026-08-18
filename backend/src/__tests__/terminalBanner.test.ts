@@ -2,35 +2,35 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildLatticeBanner } from '../terminalBanner.js';
 
-// Regression guard for the cmd.exe discovery bug: the pty's default shell on
-// Windows is cmd.exe, where `$LATTICE_DOCS` is a non-expanding literal. The
-// banner must therefore name the doc by its absolute path so the discovery
-// hint survives in *any* shell (cmd.exe / PowerShell / POSIX) and for any
-// harness — not just a bash-backed one.
+// The banner is HUMAN-facing chrome: it lands in the session scrollback, which
+// only the browser replays, so no harness ever reads it (agents are pointed at
+// the doc by harnessSystemPrompts/latticePreamble.ts instead). What it still has
+// to do is tell the *user* where this project's reference lives, in a form they
+// can paste into any shell — the pty default on Windows is cmd.exe, where a
+// `$VAR` reference is a non-expanding literal.
 
-test('banner names the doc by its literal path, never $LATTICE_DOCS', () => {
+test('banner names the doc by its literal absolute path', () => {
   const docPath = 'C:\\dev\\foo\\.lattice\\LATTICE_API.md';
   const banner = buildLatticeBanner(docPath);
 
   assert.ok(banner.includes(docPath), 'literal doc path present');
-  assert.ok(
-    !banner.includes('$LATTICE_DOCS'),
-    'must not depend on $LATTICE_DOCS — cmd.exe would not expand it',
-  );
+  assert.match(banner, /\[Lattice\]/, 'tagged so it reads as Lattice chrome');
 });
 
-test('banner keeps the discovery keywords + reference hint', () => {
+test('banner says what the doc is about', () => {
   const banner = buildLatticeBanner('/home/u/proj/.lattice/LATTICE_API.md');
 
-  for (const kw of ['Lattice', 'tasks', 'taskboard', 'merging', 'worktrees']) {
-    assert.ok(banner.includes(kw), `discovery keyword "${kw}" present`);
+  for (const kw of ['Task board', 'merging', 'worktree']) {
+    assert.ok(banner.includes(kw), `subject "${kw}" named`);
   }
-  assert.match(banner, /API reference at .+LATTICE_API\.md/);
+  assert.match(banner, /.+LATTICE_API\.md/);
 });
 
-test('banner contains no other unexpanded $VAR breadcrumbs', () => {
+test('banner contains no shell-variable references', () => {
   const banner = buildLatticeBanner('/tmp/p/.lattice/LATTICE_API.md');
-  // A `$LATTICE_…` token anywhere is a cmd.exe footgun. The literal path is
-  // the only thing the banner should hand the agent.
-  assert.ok(!/\$LATTICE_\w+/.test(banner), 'no $LATTICE_* tokens in the banner');
+  // Lattice no longer exports LATTICE_* breadcrumbs into the pty at all (no
+  // harness read them), and a `$VAR` token would be a cmd.exe footgun for the
+  // user besides. The literal path is the only thing the banner hands over.
+  assert.ok(!/\$(?:env:)?LATTICE_\w+/.test(banner), 'no $LATTICE_* tokens');
+  assert.ok(!/%LATTICE_\w+%/.test(banner), 'no %LATTICE_*% tokens');
 });

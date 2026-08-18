@@ -34,6 +34,43 @@ differently. All follow Lattice's "resolve in the backend, apply at spawn" split
   into the session cwd by the backend at spawn (never rides the wire); stripped
   when there's no override so a reused cwd (the project root) stays clean.
 
+## The always-on Lattice preamble
+
+Separate from the per-project overrides above, Lattice folds its OWN one-
+paragraph preamble into the **append** side of every harness system prompt, in
+every project that has a `.lattice/` dir. It names Lattice's trigger words
+(task board, lanes, worktrees, merging, workflows, startup terminals) and the
+absolute path of that project's generated `.lattice/LATTICE_API.md`, so an
+agent working in an unrelated repo can answer "what is the Lattice board?" and
+drive the API instead of guessing. Lives in `latticePreamble.ts`.
+
+Why the system prompt and not something cheaper — both alternatives were tried
+and neither reaches a model:
+
+- **Env vars can't work.** The old `LATTICE_DOCS`/`LATTICE_PROJECT`/… pty
+  breadcrumbs were invisible: no harness loads the environment into its
+  context. They are gone (`terminal/launchContext.ts`).
+- **The terminal banner can't work.** `terminalBanner.ts` appends to the
+  session SCROLLBACK — the browser's replay buffer. The pty child never
+  receives those bytes. It stays, as chrome for the *user*.
+- **Writing into the pty would work but is unacceptable**: the text arrives as
+  the session's first user turn, which Claude Code then uses to NAME the
+  session, and the user sees it in their terminal.
+
+Composition rules (`composeSystemPromptAppend`): the preamble comes first, the
+project's own Append second (the user's text reads as the more specific
+instruction when it comes last). Claude and Pi join with a blank line; **Codex
+joins with a single space** because its inline `-c developer_instructions`
+value transits cmd.exe as `"%VAR%"`, which cannot carry a newline — folding the
+preamble in must not turn a working single-line Append into a broken two-line
+one. For the same reason the preamble text itself is one line with no double
+quotes, and `resolveLatticePreamble` drops it entirely if the project path
+somehow contains a `"` or a TOML `'''`.
+
+A project with no `.lattice/` dir gets no preamble at all — Lattice never seeds
+that dir into a project it doesn't manage, so an unmanaged cwd spawns with a
+stock system prompt.
+
 ## Modules
 
 - `defs.ts` — **leaf catalog** (`HARNESS_SYSTEM_PROMPT_CATALOG`): per-harness
@@ -51,10 +88,17 @@ differently. All follow Lattice's "resolve in the backend, apply at spawn" split
   its JSON sidecar (`applyPiSystemPromptForSpawn`). Byte-significant like
   `piExtension/template.ts`; skips a write when unchanged, removes the pair when
   there's no override.
-- `inject.ts` — turns a resolved override into per-harness injection at the spawn
-  chokepoint: `prepareClaudeSystemPrompt` (write files → paths),
-  `prepareCodexSystemPrompt` (build `-c` arg strings), `preparePiSystemPrompt`
-  (reconcile the extension). Scratch files live under
+- `latticePreamble.ts` — the always-on Lattice preamble described above:
+  `buildLatticePreamble(docPath)` (pure text), `resolveLatticePreamble(project)`
+  (generates/refreshes the reference via `ensureLatticeApiDoc`, returns `null`
+  for an unmanaged project), and `composeSystemPromptAppend` (preamble-then-user
+  join with a configurable separator).
+- `inject.ts` — turns the resolved override **plus the Lattice preamble** into
+  per-harness injection at the spawn chokepoint: `prepareClaudeSystemPrompt`
+  (write files → paths), `prepareCodexSystemPrompt` (build `-c` arg strings),
+  `preparePiSystemPrompt` (reconcile the extension). Each now produces output
+  even when the project configured nothing, because the preamble alone is
+  enough. Scratch files live under
   `~/.lattice/per-project/<hash>/system-prompts/` (home-scoped, atomic writes).
 
 ## Where it's wired
@@ -72,6 +116,10 @@ differently. All follow Lattice's "resolve in the backend, apply at spawn" split
 
 - **A blank/whitespace-only field is ignored** (falls back to the built-in
   prompt on that side) — the safety net against an accidentally-cleared box.
+- **The Lattice preamble is not user-suppressible and always leads.** It is
+  Lattice telling the agent what harness it is running under; a project Replace
+  swaps the harness's own prompt but leaves the append channel (and so the
+  preamble) intact on all three harnesses.
 - **Best-effort at spawn** — a resolve/write failure degrades to a plain spawn
   and never blocks it (`resolveHarnessSpawnBody` wraps each call in `.catch`).
 - Injection is resolved in the main backend and applied by the terminal-server

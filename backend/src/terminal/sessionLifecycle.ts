@@ -31,14 +31,14 @@ export function wireSessionPtyEvents(session: Session): void {
 }
 
 export function addLatticeBanner(session: Session, docPath: string | null): void {
-  // Skill-style hint: a single dim line that names the trigger keywords and
-  // points at the on-disk docs. Keeps the always-on context cost to one
-  // sentence; the body of the API reference is loaded on demand if (and
-  // only if) the AI agent follows the hint and reads $LATTICE_DOCS.
-  // Only emitted for Lattice-managed projects (those that already have a
-  // .lattice/ directory, hence a docPath). The banner points at the doc by
-  // its literal path so the hint survives cmd.exe (where `$LATTICE_DOCS`
-  // wouldn't expand).
+  // A single dim line telling the USER where this project's API reference is.
+  // It goes into the scrollback, which only the browser ever replays — the pty
+  // child (and therefore any harness running in it) never sees these bytes, so
+  // this is not how agents discover the doc. That job belongs to the
+  // system-prompt preamble the backend injects at spawn
+  // (harnessSystemPrompts/latticePreamble.ts). Only emitted for
+  // Lattice-managed projects (those that already have a .lattice/ directory,
+  // hence a docPath).
   if (!docPath) return;
   session.scrollback.append(buildLatticeBanner(docPath));
 }

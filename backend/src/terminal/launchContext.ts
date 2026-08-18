@@ -1,7 +1,6 @@
 import os from 'node:os';
 import fs from 'node:fs';
 import { ensureLatticeApiDoc } from '../latticeApiDocs.js';
-import { canonicalProjectPath, projectHash } from '../projectPath.js';
 import type { CreateOpts } from './sessionTypes.js';
 import { applyFreshWindowsPath } from './windowsPath.js';
 import { applyClaudeOverheadEnv } from './envSetup.js';
@@ -25,10 +24,11 @@ import { configureClaudeSystemPrompt } from './claudeSystemPrompt.js';
 // NOTE: on Windows `COMSPEC` is effectively always set (→ cmd.exe), so the
 // previous `process.env.COMSPEC || 'powershell.exe'` could never reach the
 // powershell fallback — it was dead code, and every Windows pty silently got
-// cmd.exe (where the bash/PowerShell-shaped `$LATTICE_*` breadcrumbs don't
-// expand). The literal `'cmd.exe'` backstop here only matters in the
-// pathological case where `COMSPEC` is unset. `platform`/`env` are injectable
-// so the resolution is unit-testable across platforms.
+// cmd.exe (where a bash/PowerShell-shaped `$VAR` recipe does not expand at
+// all — which is why the generated LATTICE_API.md bakes in literal values
+// rather than shell references). The literal `'cmd.exe'` backstop here only
+// matters in the pathological case where `COMSPEC` is unset. `platform`/`env`
+// are injectable so the resolution is unit-testable across platforms.
 export function resolveDefaultShell(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = os.platform(),
@@ -63,24 +63,25 @@ export function buildSessionLaunchContext(
   const cwdError = validateRequestedCwd(requestedCwd);
   if (cwdError) return cwdError;
 
-  // Plant breadcrumbs so AI agents running inside this pty can discover the
-  // Lattice API without any user-side config. The vars only exist in this
-  // child process; the user's shell env is untouched.
+  // Generate/refresh this project's `.lattice/LATTICE_API.md` so the banner
+  // below has something to point at. NOTE: agents do NOT discover the API from
+  // the environment. Lattice used to export `LATTICE_API_URL` / `LATTICE_PROJECT`
+  // / `LATTICE_PROJECT_HASH` / `LATTICE_DOCS` here as "breadcrumbs", but no
+  // harness reads env vars into its context, so nothing ever saw them — and on
+  // the Windows default shell (cmd.exe) a `$VAR`-shaped recipe wouldn't have
+  // expanded anyway. Discovery is the always-on system-prompt preamble the
+  // backend injects at the spawn chokepoint instead (see
+  // harnessSystemPrompts/latticePreamble.ts); the generated doc bakes in literal
+  // values so no recipe in it depends on shell expansion.
   const apiPort = Number(process.env.LATTICE_API_PORT) || 5184;
-  const canonicalProject = canonicalProjectPath(projectPath);
-  const latticeEnv: Record<string, string> = {
-    LATTICE_API_URL: `http://127.0.0.1:${apiPort}`,
-    LATTICE_PROJECT: canonicalProject,
-    LATTICE_PROJECT_HASH: projectHash(canonicalProject),
-  };
   const docPath = ensureLatticeApiDoc(projectPath, apiPort);
-  if (docPath) latticeEnv.LATTICE_DOCS = docPath;
 
   // Opt this project's Lattice-spawned Claude session out of auto-memory when
   // the per-project setting says so (resolved at the POST /sessions chokepoint).
   // Scoped to this child process only — never the user's global Claude config.
+  const overrideEnv: Record<string, string> = {};
   if (opts.disableClaudeMemory) {
-    latticeEnv.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1';
+    overrideEnv.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1';
   }
 
   const baseEnv: { [key: string]: string } = {
@@ -92,10 +93,10 @@ export function buildSessionLaunchContext(
   // Secret env for managed MCP servers (Codex `env_vars`/`env_http_headers`
   // reference these by name). Merged into THIS child pty's env only — the
   // backend resolved the values and shipped them as data; they never touch the
-  // terminal-server's own process env. Layered under latticeEnv (breadcrumbs win
-  // on any name clash, though these are collision-resistant LATTICE_MCP_* / real
-  // secret var names).
-  const env = { ...baseEnv, ...(opts.managedMcpEnv ?? {}), ...latticeEnv };
+  // terminal-server's own process env. Layered under overrideEnv, which wins on
+  // any name clash (these are collision-resistant LATTICE_MCP_* / real secret
+  // var names, so a clash is theoretical).
+  const env = { ...baseEnv, ...(opts.managedMcpEnv ?? {}), ...overrideEnv };
   // Per-harness command rewriting. Each rewriter matches only its own harness's
   // leading command and no-ops otherwise, so chaining them is safe (a command
   // launches exactly one harness). Dynamic values (paths / TOML) ride in child

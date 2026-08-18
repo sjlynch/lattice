@@ -456,6 +456,20 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   "unviewable" note (the override still works); Codex/Pi show their open-source
   defaults. Replacing is discouraged everywhere (warned in the UI). See
   `backend/src/harnessSystemPrompts/CLAUDE.md`.
+- **Lattice self-discovery is a system-prompt preamble**, injected on that same
+  append channel at every spawn in every project with a `.lattice/` dir
+  (`harnessSystemPrompts/latticePreamble.ts`). One paragraph: what Lattice is,
+  its trigger words (task board, lanes, worktrees, merging, workflows, startup
+  terminals), and the absolute path of that project's auto-generated
+  `.lattice/LATTICE_API.md` — which documents those UI concepts as well as the
+  HTTP API, so an agent in an unrelated repo can answer "what is the Lattice
+  board?" instead of grepping for it. It is invisible to the user and takes no
+  part in Claude Code's session naming, which is why it is a system prompt and
+  not a typed first turn. **Two earlier channels could never work and must not
+  be reintroduced**: `LATTICE_*` pty env vars (removed — no harness reads the
+  environment into its context) and the dim terminal banner (kept, but it lands
+  in the scrollback the browser replays, so the pty child never receives it —
+  it informs the *user*, not the agent).
 
 ## Ports
 

@@ -8,24 +8,51 @@ HTTP API below directly — don't ask how to reach it.
 
 - **API base URL:** `{{API_URL}}`
 - **Project (`project=` field):** `{{PROJECT}}`
+- **Same path, forward-slash form** (prefer this in JSON bodies + shell):
+  `{{PROJECT_FWD}}`
+- **Project hash:** `{{PROJECT_HASH}}`
 
-Paste those literal values straight into your commands — they don't depend on
-any shell variable expanding. The same values are *also* exported as env vars
-**in this terminal only** (not your global env). Reference them with the
-syntax your shell uses:
+Every recipe below already has these baked in — copy one and run it. Nothing
+here depends on a shell variable expanding, deliberately: the default pty shell
+on Windows is `cmd.exe`, where a `$VAR` reference is just a literal string.
 
-| Value | bash / sh | PowerShell | cmd.exe |
-|-------|-----------|------------|---------|
-| API base URL | `$LATTICE_API_URL` | `$env:LATTICE_API_URL` | `%LATTICE_API_URL%` |
-| Project path | `$LATTICE_PROJECT` | `$env:LATTICE_PROJECT` | `%LATTICE_PROJECT%` |
-| Project hash | `$LATTICE_PROJECT_HASH` | `$env:LATTICE_PROJECT_HASH` | `%LATTICE_PROJECT_HASH%` |
-| This file | `$LATTICE_DOCS` | `$env:LATTICE_DOCS` | `%LATTICE_DOCS%` |
+## What Lattice is (concepts the user may ask about)
 
-> ⚠️ **The default pty shell on Windows is `cmd.exe`**, where `$LATTICE_API_URL`
-> does **not** expand (it's a literal). If a `$VAR`-style recipe below yields an
-> empty or malformed URL, either paste the literal values above, or switch to
-> the `%VAR%` (cmd.exe) / `$env:VAR` (PowerShell) form. The recipes are grouped
-> by shell — pick the block that matches yours.
+- **Task board** — a kanban whose lanes are
+  `Backlog → Open → In Progress → Ready to Merge → QA → Done` (plus a deleted
+  bin). *Backlog* holds captured-but-not-yet-actionable work; *Open* is the
+  ready-to-run lane. Running an Open task creates a git worktree on branch
+  `lattice/<slug>-<id>`, writes the brief to `LATTICE_TASK.md` inside it, and
+  spawns a coding agent there. The agent commits and the task lands in
+  *Ready to Merge*; a QA pass moves it to *Done*.
+- **Merging** — Lattice merges the project's main branch INTO the task branch
+  *inside the worktree* first, so main's working tree never carries conflict
+  markers. Clean merge → main fast-forwards and the worktree is removed.
+  Conflict → a resolver agent is spawned in that worktree, and finalizing
+  happens when it finishes. "Merge all" walks every Ready-to-Merge task in
+  creation order and continues past conflicts.
+- **Worktrees** — one checkout per running task, kept OUTSIDE the project tree
+  at `~/.lattice/worktrees/<projectHash>/<slug>-<id>`. The `.lattice/` folder
+  inside the project holds only managed state (this file, workflow scratch,
+  settings) — never source, and never a place to write helper scripts.
+- **Workflows** — saved chains of steps run in order. *Agent* steps spawn a
+  harness with a prompt; *control* steps (`start` / `merge` / `push`) drive the
+  board itself server-side. Agent steps file tasks, they don't implement.
+- **Harnesses** — the coding CLIs Lattice can spawn for a task, workflow step,
+  or terminal: `claude`, `codex`, and `pi` (with a per-spawn Pi model).
+- **Terminals** — the left sidebar hosts every agent session as a tab, grouped
+  into Terminals / Merging / Startup panels. **Startup terminals** are
+  per-project commands configured in Settings → Terminals that Lattice launches
+  automatically into their own tabs when the project is opened (a dev server, a
+  log tail); they can be restarted as a group, and are respawned if their pty
+  died while the page was closed.
+- **The 3D graph** — the project's source tree as a force-directed DAG, with
+  hold-key overlays for code health (`H`), lines of code (`Z`), dead code
+  (`D`), files modified by an unmerged task (`W`), and name labels (`Alt`).
+  Running agents appear as colored nodes with beams to the files they touch.
+
+Anything in that list the user wants *changed* is a Lattice UI or settings
+action on their side — not something to implement in the current repo.
 
 ## Hard rules
 
@@ -38,11 +65,11 @@ syntax your shell uses:
    `F:/rust_etl` and `F:\\rust_etl` to the same project, so the
    forward-slash form sidesteps every JSON / shell escape headache.
    For URL query strings, let the HTTP client URL-encode the raw value.
-3. **The `project` you pass must be `$LATTICE_PROJECT`.** Don't
-   hardcode a path, don't infer from the cwd, don't reuse one from an
-   earlier session. `/api/tasks` and `/api/tasks/summary` return an
+3. **The `project` you pass must be the project path above.** Don't
+   hardcode a different path, don't infer it from the cwd, don't reuse one
+   from an earlier session. `/api/tasks` and `/api/tasks/summary` return an
    envelope with a `canonicalProject` field — if it doesn't match
-   `$LATTICE_PROJECT` (or the `hash` doesn't match `$LATTICE_PROJECT_HASH`),
+   `{{PROJECT}}` (or the `hash` doesn't match `{{PROJECT_HASH}}`),
    stop and tell the user, don't act on the data.
 
 ## Recipes
@@ -53,7 +80,7 @@ If you find files like `.lattice/workflow-steps/*/tasks.json`,
 `tasks-current.json`, `combined-tasks.json`, `lattice_tasks.json`, etc.,
 **those are stale scratch from previous agents — not the source of
 truth.** The live task DB is the API. Always query
-`$LATTICE_API_URL/api/tasks?project=$LATTICE_PROJECT`. Don't grep the
+`{{API_URL}}/api/tasks?project=` with the project above. Don't grep the
 filesystem to "find" tasks.
 
 ### Seeding many tasks at once — markdown body (any shell, zero escaping)
@@ -64,7 +91,7 @@ no `jq`, no python. Each `# Heading` is a task title; lines below it
 become the description until the next heading.
 
 ```bash
-curl -s -X POST "$LATTICE_API_URL/api/tasks/batch?project=$LATTICE_PROJECT" \
+curl -s -X POST "{{API_URL}}/api/tasks/batch?project={{PROJECT_FWD}}" \
   -H "Content-Type: text/markdown" --data-binary @- <<'EOF'
 # Resolve readme.md merge-conflict markers
 Lines 418 and 471-598 still have <<<<<<</>>>>>>> markers from a prior merge.
@@ -81,7 +108,7 @@ EOF
 ### Creating a single task — form-encoded (no JSON at all)
 
 ```bash
-curl -X POST "$LATTICE_API_URL/api/tasks?project=$LATTICE_PROJECT" \
+curl -X POST "{{API_URL}}/api/tasks?project={{PROJECT_FWD}}" \
   --data-urlencode "title=<short title>" \
   --data-urlencode "description=<details, multi-line OK>"
 ```
@@ -89,37 +116,38 @@ curl -X POST "$LATTICE_API_URL/api/tasks?project=$LATTICE_PROJECT" \
 ### List & count (no script needed)
 
 Both endpoints return an envelope, not a bare array. Always read
-`.canonicalProject` first and confirm it matches `$LATTICE_PROJECT`
+`.canonicalProject` first and confirm it matches `{{PROJECT}}`
 before iterating `.tasks` (or trusting `.byStatus`).
 
 PowerShell — `Invoke-RestMethod` (alias `irm`) handles JSON automatically:
 ```pwsh
-$proj = $env:LATTICE_PROJECT.Replace('\','/')
+$proj = '{{PROJECT_FWD}}'
+$want = '{{PROJECT}}'
 
 # all open tasks
-$resp = irm "$env:LATTICE_API_URL/api/tasks?project=$([uri]::EscapeDataString($proj))&status=open"
-if ($resp.canonicalProject -ne $env:LATTICE_PROJECT) { throw "wrong project: $($resp.canonicalProject)" }
+$resp = irm "{{API_URL}}/api/tasks?project=$([uri]::EscapeDataString($proj))&status=open"
+if ($resp.canonicalProject -ne $want) { throw "wrong project: $($resp.canonicalProject)" }
 $resp.tasks   # ← the actual task list
 
 # counts by status (one round trip, no client-side tally)
-$sum = irm "$env:LATTICE_API_URL/api/tasks/summary?project=$([uri]::EscapeDataString($proj))"
-if ($sum.canonicalProject -ne $env:LATTICE_PROJECT) { throw "wrong project: $($sum.canonicalProject)" }
+$sum = irm "{{API_URL}}/api/tasks/summary?project=$([uri]::EscapeDataString($proj))"
+if ($sum.canonicalProject -ne $want) { throw "wrong project: $($sum.canonicalProject)" }
 $sum.byStatus  # → @{ open = 8; done = 28; ... }
 ```
 
 bash — `curl --data-urlencode` does the encoding for you. Pipe the body
 through `jq` to assert the project and extract `.tasks`:
 ```bash
-curl -sG "$LATTICE_API_URL/api/tasks" \
-  --data-urlencode "project=$LATTICE_PROJECT" \
+curl -sG "{{API_URL}}/api/tasks" \
+  --data-urlencode "project={{PROJECT_FWD}}" \
   --data-urlencode "status=open" \
-  | jq --arg p "$LATTICE_PROJECT" '
+  | jq --arg p '{{PROJECT}}' '
       if .canonicalProject == $p then .tasks
       else error("wrong project: " + .canonicalProject) end'
 
-curl -sG "$LATTICE_API_URL/api/tasks/summary" \
-  --data-urlencode "project=$LATTICE_PROJECT" \
-  | jq --arg p "$LATTICE_PROJECT" '
+curl -sG "{{API_URL}}/api/tasks/summary" \
+  --data-urlencode "project={{PROJECT_FWD}}" \
+  | jq --arg p '{{PROJECT}}' '
       if .canonicalProject == $p then {total, byStatus}
       else error("wrong project: " + .canonicalProject) end'
 ```
@@ -130,8 +158,8 @@ Response envelope shape:
 ```jsonc
 {
   "project":          "C:\\dev\\my-app",   // exactly what you passed
-  "canonicalProject": "C:\\dev\\my-app",   // ← MUST match $LATTICE_PROJECT
-  "hash":             "3f9a2b1c8e7d",       // ← MUST match $LATTICE_PROJECT_HASH
+  "canonicalProject": "C:\\dev\\my-app",   // ← MUST match the project above
+  "hash":             "3f9a2b1c8e7d",       // ← MUST match the hash above
   "count":            36,
   "mismatched":       0,                    // foreign tasks server-filtered; > 0 = corruption signal
   "tasks":            [ /* ... */ ]
@@ -144,25 +172,25 @@ PowerShell — hashtable + `ConvertTo-Json`. No quote escaping, no
 backslash gymnastics, multi-line descriptions just work:
 ```pwsh
 $body = @{
-  project = $env:LATTICE_PROJECT.Replace('\','/')
+  project = '{{PROJECT_FWD}}'
   title = '<short title>'
   description = @'
 Multi-line is fine. "Quotes" and \backslashes\ pass through untouched.
 For paths inside the description, use forward slashes: F:/rust_etl/src/foo.rs
 '@
 } | ConvertTo-Json -Depth 5
-irm -Method Post -Uri "$env:LATTICE_API_URL/api/tasks" -ContentType 'application/json' -Body $body
+irm -Method Post -Uri "{{API_URL}}/api/tasks" -ContentType 'application/json' -Body $body
 ```
 
 bash — if `jq` is available, pipe its output as the body; otherwise
 write JSON to `$TMPDIR/lattice_*.json`, POST it, then delete:
 ```bash
 jq -nc \
-  --arg project   "$LATTICE_PROJECT" \
+  --arg project   '{{PROJECT_FWD}}' \
   --arg title     "<short title>" \
   --arg description "<details>" \
   '{project:$project, title:$title, description:$description}' |
-curl -s -X POST "$LATTICE_API_URL/api/tasks" \
+curl -s -X POST "{{API_URL}}/api/tasks" \
   -H "Content-Type: application/json" --data-binary @-
 ```
 
@@ -171,25 +199,25 @@ curl -s -X POST "$LATTICE_API_URL/api/tasks" \
 PowerShell scales naturally — same hashtable pattern, with a list:
 ```pwsh
 $body = @{
-  project = $env:LATTICE_PROJECT.Replace('\','/')
+  project = '{{PROJECT_FWD}}'
   tasks = @(
     @{ title = 'first';  description = 'details 1' },
     @{ title = 'second'; description = 'details 2' }
   )
 } | ConvertTo-Json -Depth 5
-irm -Method Post -Uri "$env:LATTICE_API_URL/api/tasks/batch" -ContentType 'application/json' -Body $body
+irm -Method Post -Uri "{{API_URL}}/api/tasks/batch" -ContentType 'application/json' -Body $body
 ```
 
 ### Update a task
 
 For a single field (like flipping status), JSON is fine:
 ```bash
-curl -s -X PATCH "$LATTICE_API_URL/api/tasks/$id" \
+curl -s -X PATCH "{{API_URL}}/api/tasks/$id" \
   -H "Content-Type: application/json" -d '{"status":"qa"}'
 ```
 
 ```pwsh
-irm -Method Patch -Uri "$env:LATTICE_API_URL/api/tasks/$id" `
+irm -Method Patch -Uri "{{API_URL}}/api/tasks/$id" `
     -ContentType 'application/json' -Body (@{ status = 'qa' } | ConvertTo-Json)
 ```
 
@@ -201,7 +229,7 @@ new title and the lines below it become the new description. No heading?
 The whole body just replaces the description.
 
 ```bash
-curl -s -X PATCH "$LATTICE_API_URL/api/tasks/$id" \
+curl -s -X PATCH "{{API_URL}}/api/tasks/$id" \
   -H "Content-Type: text/markdown" --data-binary @- <<'EOF'
 # Refined task title
 
@@ -222,7 +250,7 @@ $body = @'
 Use react-flow (MIT-licensed) for the node/canvas mode.
 Multi-line is fine. "Quotes" and \backslashes\ pass through untouched.
 '@
-irm -Method Patch -Uri "$env:LATTICE_API_URL/api/tasks/$id" `
+irm -Method Patch -Uri "{{API_URL}}/api/tasks/$id" `
     -ContentType 'text/markdown' -Body $body
 ```
 
@@ -232,7 +260,7 @@ Two paths, pick whichever fits your flow.
 
 **JSON bulk-update** — one round trip, N patches, no shell loop:
 ```bash
-curl -s -X POST "$LATTICE_API_URL/api/tasks/bulk-update" \
+curl -s -X POST "{{API_URL}}/api/tasks/bulk-update" \
   -H "Content-Type: application/json" -d '{
     "updates": [
       { "id": "t_abc", "description": "new description here" },
@@ -246,8 +274,8 @@ and/or mix in brand-new tasks. The natural flow is:
 
 ```bash
 # 1. Fetch the lane as a markdown document
-curl -sG "$LATTICE_API_URL/api/tasks" \
-  --data-urlencode "project=$LATTICE_PROJECT" \
+curl -sG "{{API_URL}}/api/tasks" \
+  --data-urlencode "project={{PROJECT_FWD}}" \
   --data-urlencode "status=backlog" \
   --data-urlencode "format=markdown" > /tmp/backlog.md
 
@@ -258,7 +286,7 @@ curl -sG "$LATTICE_API_URL/api/tasks" \
 #    - Leave tasks you don't want to touch out of the doc entirely.
 
 # 3. POST it back
-curl -s -X POST "$LATTICE_API_URL/api/tasks/upsert?project=$LATTICE_PROJECT" \
+curl -s -X POST "{{API_URL}}/api/tasks/upsert?project={{PROJECT_FWD}}" \
   -H "Content-Type: text/markdown" --data-binary @/tmp/backlog.md
 ```
 
@@ -287,12 +315,12 @@ no-op):
 
 ```bash
 # Mark every "qa" task as done in one round trip
-curl -s -X POST "$LATTICE_API_URL/api/tasks/transition?project=$LATTICE_PROJECT" \
+curl -s -X POST "{{API_URL}}/api/tasks/transition?project={{PROJECT_FWD}}" \
   -H "Content-Type: application/json" \
   -d '{"fromStatus":"qa","status":"done"}'
 
 # Or by explicit ids
-curl -s -X POST "$LATTICE_API_URL/api/tasks/transition" \
+curl -s -X POST "{{API_URL}}/api/tasks/transition" \
   -H "Content-Type: application/json" \
   -d '{"ids":["t_abc","t_def"],"status":"done"}'
 ```
@@ -354,8 +382,8 @@ dynamic `import()`, string-path/`fs` loads, or framework magic — so **verify
 before deleting**.
 
 ```bash
-curl -sG "$LATTICE_API_URL/api/health/dead-code" \
-  --data-urlencode "project=$LATTICE_PROJECT"
+curl -sG "{{API_URL}}/api/health/dead-code" \
+  --data-urlencode "project={{PROJECT_FWD}}"
 # → { "files": [ { "path": "src/old/util.ts", "ext": ".ts" }, ... ],
 #     "total": 3, "scannedAt": 1718323200000 }
 ```
@@ -368,7 +396,7 @@ curl -sG "$LATTICE_API_URL/api/health/dead-code" \
 - Put concrete file paths and acceptance criteria in `description`.
   Each task spawns a fresh Claude with no memory of the user's prior
   conversation.
-- Pass `$LATTICE_PROJECT` (or its forward-slash form) verbatim as the
+- Pass the project path above (or its forward-slash form) verbatim as the
   `project` field. Lattice canonicalizes drive-letter casing.
 
 This file is auto-managed by Lattice. It's regenerated whenever its

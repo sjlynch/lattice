@@ -63,8 +63,9 @@ export const FINGERPRINT_FILES = [
   // (MAX_TERMINAL_SESSIONS, the SCROLLBACK_* sizes,
   // INITIAL_COMMAND_WRITE_DELAY_MS — consumed by createSession /
   // scrollbackStore / sessionLifecycle), ids (the session-id scheme used by
-  // createSession), and projectPath (canonicalProjectPath / projectHash used
-  // for the env breadcrumbs launchContext stamps). Omitting them let an edit
+  // createSession), and projectPath (canonicalProjectPath / projectHash, used
+  // by latticeApiDocs to render the per-project reference). Omitting them let
+  // an edit
   // to a terminal tunable compute the SAME fingerprint as a still-running
   // orphan, so probeServer reused the orphan and the change silently never
   // took effect until a manual kill.
@@ -72,10 +73,12 @@ export const FINGERPRINT_FILES = [
   'ids.js',
   'projectPath.js',
   'processTree.js',
-  // Discovery breadcrumbs the terminal-server stamps into every pty: the
-  // banner (imported by sessionLifecycle) and the generated API doc. Their
+  // What the terminal-server emits per pty: the human-facing banner (imported
+  // by sessionLifecycle) and the generated `.lattice/LATTICE_API.md`. Their
   // bytes affect runtime behavior, so a banner/doc-only edit must still
-  // invalidate a stale orphan.
+  // invalidate a stale orphan. (The agent-facing system-prompt preamble is
+  // NOT here — it is resolved in the always-fresh main backend and shipped as
+  // wire data, so editing it never respawns a pty.)
   'terminalBanner.js',
   'latticeApiDocs.js',
   'latticeApiDocs/LATTICE_API.template.md',

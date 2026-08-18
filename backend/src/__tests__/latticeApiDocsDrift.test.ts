@@ -117,11 +117,13 @@ function endpointTableRows(markdown: string): Array<{ method: string; path: stri
   return rows;
 }
 
-// Every URL a copy-pasteable recipe builds, in any shell flavour:
-//   "$LATTICE_API_URL/api/tasks/$id"   "$env:LATTICE_API_URL/api/tasks/batch"
+// Every URL a copy-pasteable recipe builds. The template carries the literal
+// API base as the {{API_URL}} placeholder (interpolated per project when the
+// doc is generated), so that is what prefixes a recipe URL here:
+//   "{{API_URL}}/api/tasks/$id"   "{{API_URL}}/api/tasks/batch"
 function recipeUrlPaths(markdown: string): string[] {
   const paths = new Set<string>();
-  for (const m of markdown.matchAll(/\$(?:env:)?LATTICE_API_URL(\/[^\s"'`\\]*)/g)) {
+  for (const m of markdown.matchAll(/\{\{API_URL\}\}(\/[^\s"'`\\]*)/g)) {
     const p = m[1].split('?')[0].replace(/\/$/, '');
     if (p.startsWith('/api/')) paths.add(p);
   }

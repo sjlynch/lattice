@@ -22,7 +22,11 @@ import {
   PI_SYSTEM_PROMPT_CONFIG_FILENAME,
 } from '../harnessSystemPrompts/piShim.js';
 import { resolveHarnessSystemPrompt } from '../harnessSystemPrompts/resolve.js';
-import { prepareCodexSystemPrompt } from '../harnessSystemPrompts/inject.js';
+import {
+  prepareClaudeSystemPrompt,
+  prepareCodexSystemPrompt,
+  preparePiSystemPrompt,
+} from '../harnessSystemPrompts/inject.js';
 import { buildHarnessSystemPromptEditorData } from '../harnessSystemPrompts/editorData.js';
 import { homeProjectScratchDir } from '../projectPath.js';
 import { patchUserSettings } from '../userSettings.js';
@@ -164,8 +168,17 @@ test('prepareCodexSystemPrompt renders cmd-safe TOML (no double-quote) for space
       assert.ok(!arg.includes('"'), `config arg must contain no double-quote: ${arg}`);
     }
 
-    // Prose rides in a TOML multi-line literal with the apostrophe intact.
-    assert.equal(dev, "developer_instructions='''Always write tests. Don't be terse.'''");
+    // Prose rides in a TOML multi-line literal with the apostrophe intact,
+    // and the always-on Lattice preamble is prepended to the user text.
+    assert.match(dev!, /^developer_instructions='''This session runs inside Lattice/);
+    assert.ok(
+      dev!.endsWith("Always write tests. Don't be terse.'''"),
+      `project append must come last: ${dev}`,
+    );
+    // Joined with a SPACE, never a blank line: an inline `-c` value transits
+    // cmd.exe as `"%VAR%"`, which cannot carry a newline. Folding the preamble
+    // in must not turn a working single-line append into a broken two-line one.
+    assert.ok(!dev!.includes("\n"), `no newline in the -c value: ${dev}`);
     // The replace path is a single-quoted TOML literal (absolute scratch path).
     assert.match(model!, /^model_instructions_file='.*codex-instructions\.md'$/);
   } finally {
@@ -176,6 +189,44 @@ test('prepareCodexSystemPrompt renders cmd-safe TOML (no double-quote) for space
       force: true,
     });
     await fs.rm(project, { recursive: true, force: true });
+  }
+});
+
+// The whole point of the Lattice preamble: discovery must not depend on the
+// user having configured anything. A project with NO harness system-prompt
+// override of its own still spawns with the pointer to its API reference.
+test('a project with no override still gets the Lattice preamble', async () => {
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-hsp-pre-'));
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-hsp-cwd-'));
+  try {
+    // `.lattice/` is what marks a project as Lattice-managed, and is where the
+    // generated reference the preamble points at lands.
+    await fs.mkdir(path.join(project, '.lattice'), { recursive: true });
+    assert.equal(await resolveHarnessSystemPrompt(project, 'claude'), null);
+
+    const { appendFile, replaceFile } = await prepareClaudeSystemPrompt(project);
+    assert.ok(appendFile, 'append file written even with no user override');
+    assert.equal(replaceFile, undefined, 'replace side left alone');
+    const appended = await fs.readFile(appendFile as string, 'utf8');
+    assert.match(appended, /^This session runs inside Lattice/);
+    assert.match(appended, /LATTICE_API.md/);
+
+    await preparePiSystemPrompt(cwd, project);
+    const cfg = JSON.parse(
+      await fs.readFile(
+        path.join(cwd, '.pi', 'extensions', PI_SYSTEM_PROMPT_CONFIG_FILENAME),
+        'utf8',
+      ),
+    );
+    assert.match(cfg.append, /^This session runs inside Lattice/);
+    assert.equal(cfg.replace, '');
+  } finally {
+    await fs.rm(homeProjectScratchDir(project, 'system-prompts'), {
+      recursive: true,
+      force: true,
+    });
+    await fs.rm(project, { recursive: true, force: true });
+    await fs.rm(cwd, { recursive: true, force: true });
   }
 });
 

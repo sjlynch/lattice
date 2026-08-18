@@ -14,6 +14,7 @@ import { DEFAULT_TASK_TEMPLATE } from '../../instructionTemplates/defs.js';
 function renderDeadCodeBlock(
   deadCode: DeadCodeSummary | null,
   backendOrigin: string,
+  projectPath: string,
 ): string {
   if (!deadCode || deadCode.total === 0) return '';
   const sample = deadCode.files.slice(0, 5).map((f) => `\`${f.path}\``);
@@ -33,7 +34,7 @@ ${sampleLine}> This is a heuristic: it can't see dynamic \`import()\`, string-pa
 > loads) before removing it:
 >
 > \`\`\`
-> curl -sG "${backendOrigin}/api/health/dead-code" --data-urlencode "project=$LATTICE_PROJECT"
+> curl -sG "${backendOrigin}/api/health/dead-code" --data-urlencode "project=${projectPath}"
 > \`\`\`
 
 `;
@@ -62,7 +63,15 @@ export function renderTaskMarkdown(
   const created = new Date(task.createdAt).toISOString();
   const desc = task.description?.trim() || '_(no description provided)_';
   const envBlock = renderEnvNotesBlock(envNotes);
-  const deadCodeBlock = renderDeadCodeBlock(deadCode, backendOrigin);
+  const projectPath = canonicalProjectPath(task.projectPath);
+  // The dead-code recipe gets the literal path in forward-slash form: it goes
+  // straight into a shell command (no env var to expand any more), and Lattice
+  // canonicalizes either separator to the same project.
+  const deadCodeBlock = renderDeadCodeBlock(
+    deadCode,
+    backendOrigin,
+    projectPath.replace(/\\/g, '/'),
+  );
   const autonomyPreamble =
     harness === 'claude'
       ? ''
@@ -94,7 +103,6 @@ export function renderTaskMarkdown(
    you skip it is if there is genuinely nothing committed on this branch (in
    which case Lattice leaves the task In Progress so it can be resumed);
    even then, say so explicitly rather than just stopping.`;
-  const projectPath = canonicalProjectPath(task.projectPath);
   return applyTemplate(template, {
     task_title: task.title,
     task_description: desc,

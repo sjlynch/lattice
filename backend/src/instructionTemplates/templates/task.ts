@@ -15,8 +15,8 @@ export const DEFAULT_TASK_TEMPLATE = `# {{task_title}}
 
 > You are working on this single task. You should not need to query the
 > Lattice task board to complete it — but if you do, pass exactly the
-> project path above as \`project=\`, and see \`$LATTICE_DOCS\`
-> (\`.lattice/LATTICE_API.md\`) for the API.
+> project path above as \`project=\`, and see
+> \`{{project_path}}/.lattice/LATTICE_API.md\` for the API.
 
 ## Instructions (please complete autonomously, no need to confirm with the user)
 

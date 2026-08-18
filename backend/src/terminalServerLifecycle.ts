@@ -90,7 +90,7 @@ export async function spawnAndWait(): Promise<void> {
   const script = path.join(__dirname, 'terminal-server.js');
   // LATTICE_API_PORT is forwarded so the detached terminal-server (which
   // doesn't otherwise know the main backend's port) can stamp the right URL
-  // into the LATTICE_API_URL env var it injects on every pty spawn.
+  // into the `.lattice/LATTICE_API.md` it regenerates on every pty spawn.
   const apiPort = Number(process.env.PORT) || 5184;
   // BACKEND_PARENT_PID lets the detached terminal-server self-terminate
   // when the backend that spawned it is gone (orchestrator shell closed,

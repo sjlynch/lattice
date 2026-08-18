@@ -1,9 +1,10 @@
 // Drops a single markdown cheatsheet into <project>/.lattice/LATTICE_API.md
 // so AI agents running inside Lattice-spawned terminals can discover the
 // HTTP API without any per-machine setup, harness-specific config, or
-// pollution of the user's repo or shell. The terminal-server points
-// $LATTICE_DOCS at this file so the agent can `cat $LATTICE_DOCS` whenever
-// the user mentions Lattice / tasks / merging.
+// pollution of the user's repo or shell. Agents are pointed at it by the
+// always-on system-prompt preamble the backend injects at every spawn
+// (harnessSystemPrompts/latticePreamble.ts), which names this file by its
+// absolute path.
 //
 // Conservative creation: only writes if `<project>/.lattice/` already
 // exists, so non-Lattice projects (and the user's $HOME) aren't seeded
@@ -18,7 +19,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { canonicalProjectPath } from './projectPath.js';
+import { canonicalProjectPath, projectHash } from './projectPath.js';
 
 export const LATTICE_API_DOC_FILENAME = 'LATTICE_API.md';
 const LATTICE_DIR = '.lattice';
@@ -28,11 +29,16 @@ const VERSION_SUFFIX = ' -->';
 // LATTICE_API.template.md is a runtime asset copied next to the compiled JS.
 // It uses these documented placeholders, interpolated with the LITERAL values
 // for this project/port so an agent can copy them straight into a command
-// without relying on any shell expanding `$LATTICE_*` (which it won't in the
+// without relying on any shell expansion (there is none to rely on in the
 // default Windows shell, cmd.exe). `{{API_URL}}` is the required sanity probe.
 const API_PORT_PLACEHOLDER = '{{API_PORT}}';
 const API_URL_PLACEHOLDER = '{{API_URL}}';
 const PROJECT_PLACEHOLDER = '{{PROJECT}}';
+// The same project path in forward-slash form (what the doc tells agents to put
+// in JSON bodies + shell), and its Lattice hash — both baked in literally so no
+// recipe has to derive them at runtime.
+const PROJECT_FWD_PLACEHOLDER = '{{PROJECT_FWD}}';
+const PROJECT_HASH_PLACEHOLDER = '{{PROJECT_HASH}}';
 
 // We try the dist-adjacent path first, then fall back to the src tree. The
 // fallback exists because a merge that introduces a new runtime asset can
@@ -82,12 +88,23 @@ function loadTemplate(): string | null {
   return null;
 }
 
-type DocValues = { apiPort: number; apiUrl: string; project: string };
+type DocValues = {
+  apiPort: number;
+  apiUrl: string;
+  project: string;
+  projectFwd: string;
+  projectHash: string;
+};
 
 function renderBody(template: string, vals: DocValues): string {
+  // PROJECT_FWD / PROJECT_HASH first: both contain `{{PROJECT` as a prefix, so
+  // substituting the shorter PROJECT placeholder ahead of them would leave a
+  // mangled `<path>_FWD}}` behind.
   return template
     .replaceAll(API_PORT_PLACEHOLDER, String(vals.apiPort))
     .replaceAll(API_URL_PLACEHOLDER, vals.apiUrl)
+    .replaceAll(PROJECT_FWD_PLACEHOLDER, vals.projectFwd)
+    .replaceAll(PROJECT_HASH_PLACEHOLDER, vals.projectHash)
     .replaceAll(PROJECT_PLACEHOLDER, vals.project);
 }
 
@@ -131,12 +148,16 @@ export function ensureLatticeApiDoc(
     return null;
   }
   const docPath = path.join(latticeDir, LATTICE_API_DOC_FILENAME);
-  // Canonical project path so the literal in the doc matches `$LATTICE_PROJECT`
-  // (the dir above stays on the raw path to preserve existing write behavior).
+  // Canonical project path so the literal in the doc matches what the API's
+  // `canonicalProject` envelope field returns (the dir above stays on the raw
+  // path to preserve existing write behavior).
+  const canonical = canonicalProjectPath(projectPath);
   const vals: DocValues = {
     apiPort,
     apiUrl: `http://127.0.0.1:${apiPort}`,
-    project: canonicalProjectPath(projectPath),
+    project: canonical,
+    projectFwd: canonical.replace(/\\/g, '/'),
+    projectHash: projectHash(canonical),
   };
   const { content, hash } = renderLatticeApiDoc(vals, template);
   try {

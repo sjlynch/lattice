@@ -138,6 +138,17 @@ cache, whose home path binds once at module load. Keep tests as plain
   `LATTICE_API.md` + the PATCH/DELETE calls the helper script lacks. Also pins
   `current` against the frontend `prompts/*.md` bytes so the backend and frontend
   copies of each built-in prompt cannot drift.
+- `latticePreamble.test.ts` — the always-on Lattice discovery preamble folded
+  into every harness system prompt. Pins the properties that make it safe to
+  ship on EVERY spawn: it names Lattice + its trigger words + the literal doc
+  path; it is one line with no double quote and no `'''` (both would break the
+  Codex `-c developer_instructions` value transiting cmd.exe as `"%VAR%"`); it
+  stays under 600 chars; it resolves to `null` for a project with no
+  `.lattice/` dir (so an unmanaged cwd spawns stock) and generates the
+  reference for one that has it; and `composeSystemPromptAppend` orders the
+  preamble before the project's own Append while tolerating a blank/absent
+  side. Its integration half lives in `harnessSystemPrompts.test.ts` ("a
+  project with no override still gets the Lattice preamble").
 - `latticeApiDocsDrift.test.ts` — pins the two hand-maintained API docs against
   the real router. `latticeApiDocs.ts` only guarantees a project's
   `.lattice/LATTICE_API.md` matches the *template* that shipped with the build
@@ -146,7 +157,7 @@ cache, whose home path binds once at module load. Keep tests as plain
   Builds the Express app in-process via `mountRouteFactories` and walks the
   router stack (asserting the prefix-less-mount assumption the collector rests
   on), then checks both directions: every endpoint-table row and every
-  copy-pasteable `$LATTICE_API_URL/...` recipe must resolve to a live route, and
+  copy-pasteable `{{API_URL}}/...` recipe must resolve to a live route, and
   every live route must either be documented or carry an entry in the test's
   `UNDOCUMENTED_ROUTES` map explaining why agents shouldn't see it (hook
   callbacks, Settings-UI surfaces, MCP secrets, graph reads). **That opt-out map

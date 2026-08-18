@@ -23,6 +23,10 @@ import { homeProjectScratchDir } from '../projectPath.js';
 import { tomlString } from '../mcp/codexServerConfig.js';
 import { resolveHarnessSystemPrompt } from './resolve.js';
 import { applyPiSystemPromptForSpawn } from './piShim.js';
+import {
+  composeSystemPromptAppend,
+  resolveLatticePreamble,
+} from './latticePreamble.js';
 
 function systemPromptDir(projectPath: string): string {
   return homeProjectScratchDir(projectPath, 'system-prompts');
@@ -51,19 +55,25 @@ export type ClaudeSystemPromptFiles = {
   appendFile?: string;
 };
 
-// Claude: write the override side(s) to scratch files, return their paths.
+// Claude: write the override side(s) to scratch files, return their paths. The
+// append side also carries the always-on Lattice preamble, so a project with no
+// override of its own still gets an `--append-system-prompt-file`.
 export async function prepareClaudeSystemPrompt(
   projectPath: string,
 ): Promise<ClaudeSystemPromptFiles> {
   const override = await resolveHarnessSystemPrompt(projectPath, 'claude');
-  if (!override) return {};
+  const append = composeSystemPromptAppend(
+    resolveLatticePreamble(projectPath),
+    override?.append,
+  );
+  if (!override?.replace && !append) return {};
   const dir = systemPromptDir(projectPath);
   const out: ClaudeSystemPromptFiles = {};
-  if (override.replace) {
+  if (override?.replace) {
     out.replaceFile = await writePromptFile(dir, 'claude-system.md', override.replace);
   }
-  if (override.append) {
-    out.appendFile = await writePromptFile(dir, 'claude-append.md', override.append);
+  if (append) {
+    out.appendFile = await writePromptFile(dir, 'claude-append.md', append);
   }
   return out;
 }
@@ -103,9 +113,19 @@ export async function prepareCodexSystemPrompt(
   projectPath: string,
 ): Promise<{ configArgs: string[] }> {
   const override = await resolveHarnessSystemPrompt(projectPath, 'codex');
-  if (!override) return { configArgs: [] };
+  // Joined with a SPACE, not a blank line, unlike Claude/Pi. An inline `-c`
+  // value transits cmd.exe as `"%VAR%"`, which can't carry a newline (see
+  // tomlMultilineLiteral) — so a project whose Append is a single line must
+  // stay single-line after the preamble is folded in. A multi-line Append was
+  // already subject to that limit and is unaffected either way.
+  const append = composeSystemPromptAppend(
+    resolveLatticePreamble(projectPath),
+    override?.append,
+    ' ',
+  );
+  if (!override?.replace && !append) return { configArgs: [] };
   const configArgs: string[] = [];
-  if (override.replace) {
+  if (override?.replace) {
     const file = await writePromptFile(
       systemPromptDir(projectPath),
       'codex-instructions.md',
@@ -119,20 +139,28 @@ export async function prepareCodexSystemPrompt(
     // never fires here.
     configArgs.push(`model_instructions_file=${tomlString(file)}`);
   }
-  if (override.append) {
+  if (append) {
     // Additive developer-role message layered on top of the base instructions.
     // Inline-only (Codex has no file variant), so render it double-quote-free.
-    configArgs.push(`developer_instructions=${tomlMultilineLiteral(override.append)}`);
+    configArgs.push(`developer_instructions=${tomlMultilineLiteral(append)}`);
   }
   return { configArgs };
 }
 
-// Pi: reconcile the cwd-local extension (install when there's an override,
-// strip a stale one otherwise). Runs regardless of MCP state, like piMcp.
+// Pi: reconcile the cwd-local extension (install when there's something to
+// apply, strip a stale one otherwise). Runs regardless of MCP state, like
+// piMcp. The Lattice preamble rides the append side, so a Pi session in a
+// managed project always installs the extension.
 export async function preparePiSystemPrompt(
   cwd: string,
   projectPath: string,
 ): Promise<void> {
   const override = await resolveHarnessSystemPrompt(projectPath, 'pi');
-  await applyPiSystemPromptForSpawn(cwd, override);
+  const append = composeSystemPromptAppend(
+    resolveLatticePreamble(projectPath),
+    override?.append,
+  );
+  const resolved =
+    append || override?.replace ? { append, replace: override?.replace } : null;
+  await applyPiSystemPromptForSpawn(cwd, resolved);
 }

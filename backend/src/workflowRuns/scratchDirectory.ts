@@ -29,8 +29,8 @@ This directory holds per-step working files for a Lattice workflow run:
 **Any \`tasks.json\`, \`tasks-current.json\`, \`combined-tasks.json\`, or
 similar file written here by an agent is a stale scratch snapshot. Do not
 treat it as the live task DB.** The live task board lives behind the
-Lattice HTTP API at \`$LATTICE_API_URL/api/tasks\` (see
-\`.lattice/LATTICE_API.md\` at the project root).
+Lattice HTTP API — see \`.lattice/LATTICE_API.md\` at the project
+root, which carries this project's literal API URL and project path.
 
 A previous agent missed an entire 'qa' lane because it grep'd \`.lattice/\`
 and trusted a sibling-step \`tasks.json\` snapshot over the API. Don't be
