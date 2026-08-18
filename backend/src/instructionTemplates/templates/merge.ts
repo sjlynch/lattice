@@ -33,6 +33,18 @@ up automatically.
    \`\`\`
    Example summaries: "kept incoming auth refactor over local stub",
    "merged both sides of config split", "accepted ours on pipeline.rs".
+
+   **If the commit fails with an identity error** ("Author identity unknown" /
+   "Please tell me who you are"), resolve it and continue — do not abort the
+   merge over it, and **never fix it with \`git config\`**: \`--global\`
+   rewrites the user's machine, and \`--local\` rewrites the project repo this
+   worktree shares. Read the identity the repo already uses and pass it to the
+   one command, which persists nothing:
+
+   \`\`\`
+   git log -1 --format="%an <%ae>"
+   git -c user.name="<name>" -c user.email="<email>" commit -m "<message>"
+   \`\`\`
 4. End the session normally. The Stop hook in
    \`.claude/settings.local.json\` will notify Lattice automatically.
 

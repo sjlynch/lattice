@@ -47,6 +47,21 @@ export const DEFAULT_TASK_TEMPLATE = `# {{task_title}}
    git commit -m "<concise summary of the change>"
    \`\`\`
 
+   **If the commit fails with an identity error** ("Author identity unknown" /
+   "Please tell me who you are"), you can still finish — but
+   **never fix it with \`git config\`**: \`--global\` rewrites the user's
+   machine, and \`--local\` rewrites the project repo this worktree shares.
+   Read the identity the repo already uses and pass it to the one command,
+   which persists nothing:
+
+   \`\`\`
+   git log -1 --format="%an <%ae>"
+   git -c user.name="<name>" -c user.email="<email>" commit -m "<message>"
+   \`\`\`
+
+   If the repo has no commits to read an identity from, commit as
+   \`Lattice Agent <lattice@localhost>\` and say so in your summary.
+
 4. **Append a short summary of your changes to the task** so the task
    board reflects what was actually done once it lands in "Ready to
    Merge":

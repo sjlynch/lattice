@@ -27,6 +27,17 @@ Run all subsequent commands (\`git status\`, tests, edits, etc.) from inside
 the project. **Do not** modify anything in this scratch directory — it is
 recreated for every hook run and any state here is lost.
 
+This session runs against the user's real repo. **If a git command fails with
+an identity error** ("Author identity unknown" / "Please tell me who you are"),
+carry on — but **never fix it with \`git config\`**: \`--global\` rewrites the
+user's machine, and \`--local\` rewrites this repo. Read the identity the repo
+already uses and pass it to the one command, which persists nothing:
+
+\`\`\`
+git log -1 --format="%an <%ae>"
+git -c user.name="<name>" -c user.email="<email>" commit -m "<message>"
+\`\`\`
+
 ## Step 2 — your task
 
 {{hook_prompt}}

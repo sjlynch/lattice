@@ -16,6 +16,20 @@ Project: \`{{project_path}}\`
    git commit -m "<concise summary of the changes>"
    \`\`\`
    If the working tree is already clean, skip the commit step.
+
+   **If the commit fails with an identity error** ("Author identity unknown" /
+   "Please tell me who you are"), keep going — but
+   **never fix it with \`git config\`**: \`--global\` rewrites the user's
+   machine, \`--local\` rewrites this repo. Read the identity the repo already
+   uses and pass it to the one command, which persists nothing:
+
+   \`\`\`
+   git log -1 --format="%an <%ae>"
+   git -c user.name="<name>" -c user.email="<email>" commit -m "<message>"
+   \`\`\`
+
+   Mention in your report that you did this, so the user can set their
+   identity properly if they want to.
 3. Push to the remote: \`git push\`. If push fails because the upstream isn't
    set, run \`git push -u origin HEAD\` instead.
 4. Report a one-line summary of what you committed (if anything) and the push

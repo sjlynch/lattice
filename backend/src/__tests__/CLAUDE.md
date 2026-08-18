@@ -160,3 +160,25 @@ cache, whose home path binds once at module load. Keep tests as plain
   (no-op on real files/dirs, silent on ENOENT, throws on a junction and on a
   path reached *through* one — the branch lstat alone can't catch). Temp-dir
   fixtures use `fs.symlink(…, 'junction')` like `pruneReparsePoints.test.ts`.
+- `gitIdentityUntouched.test.ts` — Lattice must never write the HOST's git
+  identity/config. Every spawned agent runs permission-bypassed (`--yolo` /
+  `--dangerously-skip-permissions` / `--approve`) and several briefs tell it to
+  `git commit`; when git can't resolve an identity its own error text instructs
+  the reader to run `git config --global user.name "Your Name"`, and a full-auto
+  agent complies — stamping a placeholder onto `~/.gitconfig` that the user's
+  own later commits then carry. Pins all three layers: `projectGit` denies
+  `config` in every form (incl. the `-c user.name=…` override), no shipped
+  source outside `__tests__/` names a git-identity write marker
+  (`--global`/`--system`/`GIT_{AUTHOR,COMMITTER}_*`/`user.name`/`user.email` —
+  the scope flags matched with a trailing boundary so Claude's
+  `--system-prompt-file` isn't a false positive), and each commit-instructing
+  brief (task / merge / push / post-merge-hook) still routes the identity error
+  to the **per-commit recovery** rather than a dead end. That last case is the
+  load-bearing one: a prohibition that leaves the agent stuck just trades a
+  polluted `~/.gitconfig` for an abandoned task, so it asserts all four of the
+  parts that make the recovery work — the verbatim `Author identity unknown`
+  git prints, the `never fix it with git config` rule, the `--local` clause
+  (the trap an agent falls into the moment it's told not to use `--global`,
+  since a worktree shares the project repo's config file), the
+  `git log -1 --format="%an <%ae>"` that tells it where to FIND an identity,
+  and the `git -c user.name=…` form that persists nothing.
