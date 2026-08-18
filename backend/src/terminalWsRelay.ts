@@ -1,6 +1,7 @@
 import { WebSocket } from 'ws';
 import type { RawData } from 'ws';
 import { TERMINAL_PORT } from './terminalServerLifecycle.js';
+import { noteTerminalClientInput } from './terminalActivity.js';
 
 // If the detached terminal-server doesn't accept the upstream connection within
 // this window, stop waiting. Leaving the browser holding an open-but-silent
@@ -15,6 +16,23 @@ const UPSTREAM_OPEN_TIMEOUT_MS = 10_000;
 // next to an unbounded buffer — and the open timeout above tears the connection
 // down well before this matters in practice.
 const MAX_PENDING_FRAMES = 1_000;
+
+// The session id out of an `attached` frame, or null for any other frame.
+// Kept cheap and total: a malformed/oversized frame just yields null rather
+// than throwing inside the relay's message handler.
+function attachedSessionId(data: RawData): string | null {
+  const text = data.toString();
+  // Every other frame on this socket is `data` (pty output) — bail before
+  // parsing unless this one can actually be the attach handshake.
+  if (!text.startsWith('{') || !text.includes('"attached"')) return null;
+  try {
+    const msg = JSON.parse(text) as { type?: unknown; id?: unknown };
+    if (msg.type !== 'attached' || typeof msg.id !== 'string') return null;
+    return msg.id || null;
+  } catch {
+    return null;
+  }
+}
 
 // Proxies a terminal WebSocket from the UI through to the terminal server.
 // Bidirectional relay; either side closing tears down both ends.
@@ -43,6 +61,11 @@ export function proxyTerminalWs(
     `ws://127.0.0.1:${TERMINAL_PORT}/ws/terminal?${params.toString()}`,
   );
 
+  // Which pty this socket drives. Usually right there in the query; a
+  // SERVERLESS connect (no id — a startup terminal, or a pre-spawn that failed)
+  // learns it from the `attached` frame the terminal-server sends first.
+  let sessionId = params.get('id');
+
   // Buffer messages that arrive before the upstream connection is open.
   const pending: Array<{ data: RawData; isBinary: boolean }> = [];
 
@@ -65,6 +88,13 @@ export function proxyTerminalWs(
   openTimer.unref();
 
   clientWs.on('message', (data: RawData, isBinary: boolean) => {
+    // Every frame from the browser is something the user or the UI did —
+    // a keystroke, a scroll's wheel escape, a focus report, a resize — and any
+    // of them can make a full-screen harness repaint. Stamp it so the sidebar's
+    // spinner doesn't read the pty answering the user as the agent working.
+    // See terminalActivity.ts; this relay is the only place the main backend
+    // sees the input side of a pty.
+    if (sessionId) noteTerminalClientInput(sessionId);
     if (targetWs.readyState === WebSocket.OPEN) {
       targetWs.send(data, { binary: isBinary });
     } else if (pending.length < MAX_PENDING_FRAMES) {
@@ -94,6 +124,10 @@ export function proxyTerminalWs(
   });
 
   targetWs.on('message', (data: RawData, isBinary: boolean) => {
+    // Only for a serverless connect, and only until the id is known: `attached`
+    // is the first frame, so this parses once and then never again. Everything
+    // after it is pty output, which must not be parsed on the hot path.
+    if (sessionId === null && !isBinary) sessionId = attachedSessionId(data);
     if (clientWs.readyState === WebSocket.OPEN) {
       clientWs.send(data, { binary: isBinary });
     }

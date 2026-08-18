@@ -412,7 +412,12 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   one-off tweaks.
 - **Per-tab agent spinner.** A sidebar tab swaps its icon for a small spinner
   while the harness in that pty is still working. The signal is
-  *output recency*, derived in the backend (`backend/src/terminalActivity.ts`)
+  *sustained output that the user isn't driving* — recency alone counted the
+  redraw a harness emits when the sidebar blurs its xterm (a tab switch sends
+  the pty a focus escape), so opening a new tab span up the tab you just left,
+  and a scroll (a wheel escape per notch) span the tab you were scrolling.
+  Derived in the backend (`backend/src/terminalActivity.ts`, fed the input side
+  by the `/ws/terminal` relay)
   and pushed over `/ws/terminal-activity`: the detached terminal-server stamps
   `lastOutputAt` on every pty `onData` and reports it (plus the session's
   `initialCommand`) from `listSessions`, and the main backend polls that, keeping

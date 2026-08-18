@@ -50,9 +50,28 @@ cache, whose home path binds once at module load. Keep tests as plain
   rewriter-mangled ones; quoted/absolute paths and `.cmd` shims; and the
   rejections that matter — a plain shell, `npm run dev`, and substring
   near-misses like `claudette`, any of which would pin a spinner on forever) and
-  `computeBusyTerminalIds()` (agent-only, the idle-threshold boundary, the
-  sorted output the poll loop diffs as a string, and malformed entries from the
-  cross-process JSON). No timers or terminal-server.
+  `stepTerminalActivity()`, driven as a sequence of polls over a virtual clock.
+  The headline case is the **self-inflicted-redraw** regression: opening a
+  sidebar tab blurs the pane you were on, xterm reports it to the pty as a focus
+  escape, and the idle harness redraws — which recency alone read as "working",
+  spinning the tab you just left for the whole idle window. Pinned from both
+  sides: the redraw stays out of the busy set at every tick (and when its burst
+  straddles two polls), *and* the same sequence with the run floor removed
+  (`minRunMs: 0`) still lights it, so the assertion can't pass for the wrong
+  reason. Its sibling is the **user-driven** redraw the floor can't catch:
+  scrolling repaints for as long as the gesture lasts, so the `inputAt` stamps
+  the relay records are what disqualify it — pinned as a five-second scroll that
+  never spins (during OR after), against the case that must not regress (input
+  stops at the Enter key, the agent's output runs away from it, spinner on), and
+  against a redraw landing inside a just-finished turn's still-open run, which
+  the floor alone lets through and the paired no-stamp assertion shows it does.
+  Around that: a genuinely streaming harness turns the spinner on and off, a run
+  doesn't survive a gap wider than the idle window, a shorter pause doesn't
+  break it, both thresholds' boundaries, a spawn-seeded `lastOutputAt` is not
+  work, agent-only filtering (a chatty plain shell satisfies the run floor and
+  must still be excluded), sorted output the poll loop diffs as a string,
+  malformed entries from the cross-process JSON, and the carried state dropping
+  closed ptys. No timers or terminal-server.
 - `worktree.merge.branchState.test.ts` — `checkBranchState()` merge state
   machine across all four outcomes (error/already-merged/empty/ahead); pins the
   safety invariant that a THROWN commit-count surfaces as `error` (never a
