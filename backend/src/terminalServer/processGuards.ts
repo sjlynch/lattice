@@ -7,6 +7,12 @@
 // disables Node's default fail-fast crash, so we log and then exit non-zero
 // rather than leave this detached terminal-server running in an undefined
 // state. The main backend respawns it on demand.
+//
+// This process is spawned with `stdio: 'ignore'`, so its console output goes
+// nowhere at all — the crash file under ~/.lattice/logs/ is the ONLY record a
+// terminal-server crash leaves behind.
+
+import { installCrashLogging, writeCrashLog } from '../crashLog.js';
 
 const FATAL_EXIT_DELAY_MS = 10;
 
@@ -26,6 +32,8 @@ function crashAfterStderrFlush(): void {
 }
 
 export function installTerminalProcessGuards(): void {
+  installCrashLogging('terminal-server');
+
   process.on('uncaughtException', (err) => {
     if (isNodePtyCleanupFailure(err)) {
       console.warn(
@@ -35,6 +43,7 @@ export function installTerminalProcessGuards(): void {
       return;
     }
     console.error('[lattice-terminal] uncaughtException', err);
+    writeCrashLog('uncaughtException', err);
     crashAfterStderrFlush();
   });
 
@@ -47,6 +56,7 @@ export function installTerminalProcessGuards(): void {
       return;
     }
     console.error('[lattice-terminal] unhandledRejection', reason);
+    writeCrashLog('unhandledRejection', reason);
     crashAfterStderrFlush();
   });
 }

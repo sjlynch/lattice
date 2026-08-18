@@ -20,6 +20,27 @@ cache, whose home path binds once at module load. Keep tests as plain
 
 ## Suite index
 
+- `watchTree.test.ts` — the recursive tree watcher behind the health and
+  git-status watchers. The headline case is the Windows directory lock it exists
+  to fix: chokidar's per-directory/per-file `fs.watch` handles made any project
+  directory containing a subdirectory impossible to rename or delete while
+  Lattice had the project open, which broke the `mv` / `rm -rf` an agent does
+  when scaffolding — so a win32-gated case renames and deletes a watched
+  `parent/child/` tree and asserts it succeeds. The rest pins the event
+  derivation, which the recursive backend has to synthesize by diffing a
+  snapshot rather than getting natively: add/change/unlink for files, addDir +
+  nested add, a recursive delete reported only at the top still emitting each
+  child's `unlink` (else the graph keeps stale nodes forever), and the ignore
+  predicate never leaking `node_modules`.
+- `crashLog.test.ts` — the crash file is the only record a backend or
+  terminal-server death leaves, so this pins the properties that make it worth
+  having: the error *and* the preceding log context land on disk, a non-Error
+  rejection reason is still captured, retention caps a crash loop at 20 files,
+  same-millisecond crashes get distinct filenames (they used to overwrite each
+  other), and the logs live home-scoped under `~/.lattice/logs/` rather than in
+  a project. `installCrashLogging()` itself is not exercised — it patches the
+  global console and registers process handlers, which would leak into every
+  other test in the runner.
 - `agentCommandBuilder.test.ts` — `buildAgentCommand()` harness framing
   (claude/pi/codex) + its private `shellDoubleQuoted()` prompt-quoting guard
   (double-quote/backslash/dollar/backtick each escaped once; injection prompts

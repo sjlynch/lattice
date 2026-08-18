@@ -16,6 +16,13 @@ force-directed DAG.
 - `~/.lattice/worktrees/<projectHash>/<slug>-<id>/` — per-task git worktree checkout. **Outside the project tree on purpose** (2026-05-10): nesting them inside `<repo>/.lattice/` was the root of three `.git`-deletion incidents (a bad recursive-delete path, or `git status` enumerating the nested checkouts). The only thing left inside `<repo>/.git` is the small `worktrees/<name>/gitdir` pointer.
 - `~/.lattice/snapshots/<projectHash>/<ts>-<label>/` — copy-based working-tree snapshot (replaces `git stash --include-untracked`, which had a silent-data-loss failure mode). Orphan snapshots from a crashed run are restored on next boot via `recoverPendingSnapshots`.
 - `~/.lattice/git-backups/<projectHash>/<ts>.bundle` — `git bundle --all` snapshot taken before each merge run; last 5 kept. Last-resort full-history recovery if `.git` is ever damaged: `git fetch <bundle>`.
+- `~/.lattice/logs/` — crash forensics. `crash-<ts>-<n>-<label>.log` (stack +
+  the last 300 console lines) from the backend / terminal-server,
+  `report.*.json` (Node diagnostic report) for a JS-heap OOM or native crash,
+  and `dev-runner.log` (each child's exit code + last output) from the dev
+  orchestrator. Newest 20 of each kept. **Check here first when something
+  died** — the backend's console output belongs to the user's terminal and the
+  terminal-server is spawned `stdio: 'ignore'`, so nothing else survives.
 - `~/.lattice/globalSettings.json` — machine-global settings (`maxConcurrentAgents`, MCP defs/overrides, `piModelMenu`, `piProviders`).
 - `~/.lattice/piManagedProviders.json` — sidecar listing the Pi provider ids Lattice manages in `~/.pi/agent/models.json`, so a UI removal deletes precisely those (hand-written providers are never touched). See `backend/src/piModels.ts` `reconcilePiModelsJson`.
 

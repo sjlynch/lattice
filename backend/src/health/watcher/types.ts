@@ -1,4 +1,4 @@
-import type { FSWatcher } from 'chokidar';
+import type { TreeWatcher } from '../../watchTree.js';
 import type { HealthCache } from '../cache.js';
 import type { ConfigReloader } from '../configReloader.js';
 import type { CrossFileAnalyzer } from '../crossFileAnalyzer.js';
@@ -23,7 +23,7 @@ export type Subscriber = (update: HealthUpdate) => void;
 
 export type ProjectWatcher = {
   root: string;
-  watcher: FSWatcher;
+  watcher: TreeWatcher;
   cache: HealthCache;
   // Per-project import map kept in memory for cross-file recompute on every
   // change. Hydrated from the on-disk cache when the watcher boots so the FIRST

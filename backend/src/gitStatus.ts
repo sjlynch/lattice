@@ -15,14 +15,17 @@
 //   2. The working tree (gitignore-aware, `.git` excluded) — so an unstaged
 //      edit that dirties the tree, or reverting it clean, is caught too.
 //
-// Like gitBranch.ts this is a READ-ONLY chokidar watcher: it never writes or
-// deletes, so it is irrelevant to the `.git`-deletion defences. It is
+// Like gitBranch.ts these are READ-ONLY watchers: they never write or delete,
+// so they are irrelevant to the `.git`-deletion defences. Both go through
+// watchTree so that on Windows a single recursive handle covers each tree —
+// chokidar's per-directory handles would otherwise pin `.git/worktrees/<name>/`
+// and every project subdirectory against rename/delete (see watchTree.ts). It is
 // event-driven — no polling / continuous scanning; a single fast `git status`
 // runs only when a watched path actually changes, and only after a debounce.
 
 import { promises as fs, type Stats } from 'node:fs';
 import path from 'node:path';
-import chokidar, { type FSWatcher } from 'chokidar';
+import { watchTree, type TreeWatcher } from './watchTree.js';
 import { canonicalProjectPath } from './projectPath.js';
 import { computeStatusSignature } from './gitHistory/signature.js';
 import { loadGitignore } from './scanner/ignore.js';
@@ -37,7 +40,7 @@ export type GitStatusListener = (signature: string) => void;
 
 type GitStatusWatcher = {
   root: string;
-  watchers: FSWatcher[];
+  watchers: TreeWatcher[];
   subscribers: Set<GitStatusListener>;
   current: string;
 };
@@ -136,26 +139,20 @@ async function createGitStatusWatcher(root: string): Promise<GitStatusWatcher> {
   const lfsDir = path.join(gitDir, 'lfs');
   const underDir = (p: string, dir: string) =>
     p === dir || p.startsWith(dir + path.sep);
-  const metaWatcher = chokidar.watch(gitDir, {
+  const metaWatcher = watchTree(gitDir, {
     ignored: (p: string) => underDir(p, objectsDir) || underDir(p, lfsDir),
-    persistent: true,
-    ignoreInitial: true,
-    awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
   });
 
   // 2. Working tree: gitignore-aware so build outputs / vendored dirs don't fire
   //    (they never affect `git status`). `.git` is pruned by IGNORE_DIR_NAMES
   //    inside matchIgnoredSourcePath, so this watcher never double-covers (1).
-  const treeWatcher = chokidar.watch(root, {
+  const treeWatcher = watchTree(root, {
     ignored: (p: string, stats?: Stats) =>
       matchIgnoredSourcePath(p, root, gitignore, stats?.isDirectory() ?? false),
-    persistent: true,
-    ignoreInitial: true,
-    awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
   });
 
   for (const w of [metaWatcher, treeWatcher]) {
-    // Without an 'error' listener chokidar re-emits into the void, which Node
+    // Without an 'error' listener the watcher re-emits into the void, which Node
     // treats as an unhandled exception and crashes the process. Log and swallow.
     w.on('error', (err) => console.error('[git-status watcher]', err));
     w.on('add', recompute);

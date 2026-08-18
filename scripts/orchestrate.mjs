@@ -15,6 +15,7 @@
 
 import { killTree, startChild } from './orchestrate/children.mjs';
 import { COLORS, HEALTH_TIMEOUT_MS, HEALTH_URL, note } from './orchestrate/config.mjs';
+import { recordExit } from './orchestrate/devLog.mjs';
 import { waitForHealth } from './orchestrate/health.mjs';
 
 note('starting backend...');
@@ -40,8 +41,14 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 }
 
 backend.on('exit', (code) => {
+  const log = recordExit('backend', code ?? 0, { expected: shuttingDown });
   if (!shuttingDown) {
     note(`backend exited (code ${code ?? 0}) — stopping frontend.`);
+    note(
+      log
+        ? `last backend output appended to ${log}; crash details in ~/.lattice/logs/crash-*.log`
+        : 'crash details (if any) in ~/.lattice/logs/',
+    );
   }
   shutdown('SIGTERM');
   process.exit(code ?? 0);
@@ -64,8 +71,10 @@ frontend = startChild(
 );
 
 frontend.on('exit', (code) => {
+  const log = recordExit('frontend', code ?? 0, { expected: shuttingDown });
   if (!shuttingDown) {
     note(`frontend exited (code ${code ?? 0}) — stopping backend.`);
+    if (log) note(`last frontend output appended to ${log}`);
   }
   shutdown('SIGTERM');
   process.exit(code ?? 0);

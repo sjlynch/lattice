@@ -1,4 +1,5 @@
 import { COLORS } from './config.mjs';
+import { recordOutput } from './devLog.mjs';
 
 // vite's proxy middleware logs each proxy error as a multi-line block:
 //
@@ -65,10 +66,16 @@ export function prefixLines(stream, sink, { label, color, filterViteProxy = fals
           // fall through and emit this line
         }
       }
+      // Keep the tail of what each child printed so the dev runner can explain
+      // an abnormal exit even when the child died too abruptly to log itself.
+      recordOutput(label, line);
       sink.write(`${color}[${label}]${COLORS.reset} ${line}\n`);
     }
   });
   stream.on('end', () => {
-    if (buffer) sink.write(`${color}[${label}]${COLORS.reset} ${buffer}\n`);
+    if (buffer) {
+      recordOutput(label, buffer);
+      sink.write(`${color}[${label}]${COLORS.reset} ${buffer}\n`);
+    }
   });
 }

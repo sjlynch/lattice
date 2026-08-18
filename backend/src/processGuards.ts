@@ -18,6 +18,8 @@
 // this comment promises still surface. Instead we log and then fail fast
 // (exit 1) so the dev runner / user restarts a clean process.
 
+import { installCrashLogging, writeCrashLog } from './crashLog.js';
+
 const FATAL_EXIT_DELAY_MS = 10;
 
 // True only for the known-cosmetic node-pty Windows cleanup throw described
@@ -32,13 +34,23 @@ function isNodePtyCleanupFailure(errOrReason: unknown): boolean {
 
 // Preserve Node's fail-fast contract for a genuine programming error: set the
 // exit code immediately (so even a natural exit is non-zero) and force-exit on
-// a later tick, giving the just-written stderr a moment to flush first.
+// a later tick, giving the just-written stderr a moment to flush first. The
+// crash file is written first, synchronously — the user's console scrollback is
+// the only other record and it goes away with their terminal.
+// Persist the crash (and tell the user where it went) before we exit.
+function reportFatal(kind: string, errOrReason: unknown): void {
+  const file = writeCrashLog(kind, errOrReason);
+  if (file) console.error(`[lattice] crash log written to ${file}`);
+}
+
 function crashAfterStderrFlush(): void {
   process.exitCode = 1;
   setTimeout(() => process.exit(1), FATAL_EXIT_DELAY_MS);
 }
 
 export function installProcessGuards(): void {
+  installCrashLogging('backend');
+
   process.on('uncaughtException', (err) => {
     if (isNodePtyCleanupFailure(err)) {
       console.warn(
@@ -48,6 +60,7 @@ export function installProcessGuards(): void {
       return;
     }
     console.error('[lattice] uncaughtException', err);
+    reportFatal('uncaughtException', err);
     crashAfterStderrFlush();
   });
 
@@ -60,6 +73,7 @@ export function installProcessGuards(): void {
       return;
     }
     console.error('[lattice] unhandledRejection', reason);
+    reportFatal('unhandledRejection', reason);
     crashAfterStderrFlush();
   });
 }

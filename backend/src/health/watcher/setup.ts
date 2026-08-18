@@ -4,11 +4,10 @@
 // handlers. The singleton memoization and shutdown-flush lifecycle live in the
 // watcher.ts facade; this module is only the per-root construction/wiring.
 //
-// chokidar handles cross-platform fs.watch quirks (recursive watching on Linux,
-// lack of native recursive on some Windows versions, atomic-save tempfiles, etc.)
-// so we don't have to.
+// The chokidar/recursive-fs.watch split lives in watchTree.ts; this module just
+// consumes its chokidar-shaped add/change/unlink/addDir/unlinkDir events.
 
-import chokidar, { type FSWatcher } from 'chokidar';
+import { watchTree, type TreeWatcher } from '../../watchTree.js';
 import { HealthCache } from '../cache.js';
 import { readPackageJsonRoots } from '../crossFile.js';
 import { ConfigReloader } from '../configReloader.js';
@@ -47,7 +46,7 @@ export async function createWatcher(
   // callback can close over the shared project state.
   const proj: ProjectWatcher = {
     root: projectRoot,
-    watcher: undefined as unknown as FSWatcher,
+    watcher: undefined as unknown as TreeWatcher,
     cache,
     imports: hydrated.imports,
     metrics: hydrated.metrics,
@@ -68,7 +67,7 @@ export async function createWatcher(
     packageRoots,
   });
 
-  const watcher = createChokidarWatcher(projectRoot, proj);
+  const watcher = createProjectTreeWatcher(projectRoot, proj);
   proj.watcher = watcher;
   wireWatcherEvents(proj, watcher);
 
@@ -76,22 +75,23 @@ export async function createWatcher(
   return proj;
 }
 
-function createChokidarWatcher(
+function createProjectTreeWatcher(
   projectRoot: string,
   proj: ProjectWatcher,
-): FSWatcher {
-  return chokidar.watch(projectRoot, {
+): TreeWatcher {
+  // watchTree, not chokidar directly: on Windows chokidar's per-directory
+  // handles make every project directory that has a subdirectory impossible to
+  // rename or delete, which breaks the agents working in the project. See
+  // watchTree.ts.
+  return watchTree(projectRoot, {
     ignored: (filePath, stats) => proj.config.isIgnored(
       filePath,
       stats?.isDirectory() ?? false,
     ),
-    persistent: true,
-    ignoreInitial: true,
-    awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
   });
 }
 
-function wireWatcherEvents(proj: ProjectWatcher, watcher: FSWatcher): void {
+function wireWatcherEvents(proj: ProjectWatcher, watcher: TreeWatcher): void {
   // Without an error listener chokidar will emit 'error' events into the void,
   // which Node treats as an unhandled exception on EventEmitter and crashes the
   // whole backend process. Logging and swallowing keeps the dev server alive even
