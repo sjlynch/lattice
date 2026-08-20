@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { stdoutSink } from './consoleSink.mjs';
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 export const ROOT = path.dirname(path.dirname(HERE));
@@ -18,5 +20,5 @@ export const COLORS = {
 };
 
 export function note(msg) {
-  process.stdout.write(`${COLORS.lattice}[lattice]${COLORS.reset} ${msg}\n`);
+  stdoutSink.write(`${COLORS.lattice}[lattice]${COLORS.reset} ${msg}\n`);
 }

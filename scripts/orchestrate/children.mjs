@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 
 import { npmCmd, ROOT } from './config.mjs';
+import { stderrSink, stdoutSink } from './consoleSink.mjs';
 import { prefixLines } from './logFilter.mjs';
 
 export function startChild(label, color, args, { filterViteProxy = false } = {}) {
@@ -11,8 +12,11 @@ export function startChild(label, color, args, { filterViteProxy = false } = {})
     env: process.env,
   });
 
-  prefixLines(child.stdout, process.stdout, { label, color, filterViteProxy });
-  prefixLines(child.stderr, process.stderr, { label, color, filterViteProxy });
+  // Sinks, not process.stdout/stderr: a blocking console write here would stop
+  // this process draining the pipes below, which freezes the children. See
+  // consoleSink.mjs.
+  prefixLines(child.stdout, stdoutSink, { label, color, filterViteProxy });
+  prefixLines(child.stderr, stderrSink, { label, color, filterViteProxy });
 
   return child;
 }

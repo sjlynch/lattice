@@ -41,6 +41,21 @@ cache, whose home path binds once at module load. Keep tests as plain
   a project. `installCrashLogging()` itself is not exercised — it patches the
   global console and registers process handlers, which would leak into every
   other test in the runner.
+- `consoleSink.test.ts` — the freeze that took every project to a permanent
+  "Scanning…" on 2026-08-20: a text selection in the `npm run dev` console
+  window pauses console output, blocking TTY writes park the orchestrator's
+  event loop, and once the `[backend]` pipe filled the backend's next
+  `console.log` parked *its* loop — no HTTP, no WS, no Stop-hook callbacks, a
+  merge run's `run.lock` held indefinitely, all at 0% CPU. The headline case
+  spawns a child whose stdout nobody reads and asserts its timers keep firing
+  through the stall and that it recovers when the reader resumes (the parent's
+  `resume()` is the user pressing Esc). Around it: the queue stays bounded and
+  drops oldest-first while reporting the loss, paced output is never dropped and
+  keeps its order, a fatal error while stalled still exits non-zero (plain
+  `process.exit` can't — libuv joins its thread pool at exit, so the process
+  would hold port 5184 forever), the last line before a deliberate exit still
+  reaches the console, and the dev orchestrator's parallel `.mjs` sink honours
+  the same contract.
 - `agentCommandBuilder.test.ts` — `buildAgentCommand()` harness framing
   (claude/pi/codex) + its private `shellDoubleQuoted()` prompt-quoting guard
   (double-quote/backslash/dollar/backtick each escaped once; injection prompts

@@ -21,9 +21,12 @@
 // Everything here is best-effort: logging must never itself take the process
 // down, so every filesystem call is wrapped.
 
+import { Console } from 'node:console';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+import { createSinkStream } from './consoleSink.js';
 
 const RING_CAPACITY = 300;
 const MAX_LINE_CHARS = 2000;
@@ -63,17 +66,28 @@ function formatArg(arg: unknown): string {
 
 // Mirror console output into the ring buffer while still writing it through to
 // the real console — the user's terminal output is unchanged.
+//
+// The write itself goes through consoleSink rather than `process.stdout`: a
+// paused console (a text selection in the dev terminal is enough) blocks that
+// write *on the event loop* and takes the whole backend down with it. See
+// consoleSink.ts. Formatting is still Node's own — the sink is handed to a
+// `Console` instance, so `%s`, object inspection and friends behave exactly as
+// before.
 function teeConsole(): void {
+  const sinkConsole = new Console({
+    stdout: createSinkStream(1),
+    stderr: createSinkStream(2),
+    colorMode: process.stdout.isTTY === true,
+  });
   const levels = ['log', 'info', 'warn', 'error'] as const;
   for (const level of levels) {
-    const original = console[level].bind(console);
     console[level] = (...args: unknown[]) => {
       try {
         noteCrashContext(`[${level}] ${args.map(formatArg).join(' ')}`);
       } catch {
         /* never let logging break logging */
       }
-      original(...args);
+      sinkConsole[level](...args);
     };
   }
 }

@@ -18,6 +18,7 @@
 // this comment promises still surface. Instead we log and then fail fast
 // (exit 1) so the dev runner / user restarts a clean process.
 
+import { flushSinksSyncIfIdle, hasWriteInFlight } from './consoleSink.js';
 import { installCrashLogging, writeCrashLog } from './crashLog.js';
 
 const FATAL_EXIT_DELAY_MS = 10;
@@ -45,7 +46,20 @@ function reportFatal(kind: string, errOrReason: unknown): void {
 
 function crashAfterStderrFlush(): void {
   process.exitCode = 1;
-  setTimeout(() => process.exit(1), FATAL_EXIT_DELAY_MS);
+  setTimeout(() => {
+    // Console output is queued on the thread pool now (consoleSink.ts), and
+    // `process.exit` drops whatever hasn't been written yet. Push it out
+    // synchronously first — skipped if the console is stalled, since blocking
+    // here would hang a process that is trying to die.
+    flushSinksSyncIfIdle();
+    // And if a write IS stalled, `process.exit` itself never returns: libuv
+    // joins its thread pool from an atexit handler, and that thread is parked
+    // inside the write until the console resumes. A backend that can't die
+    // holds port 5184 and never gets respawned, so take the hard exit. The
+    // crash file is already on disk; there is nothing left to flush.
+    if (hasWriteInFlight()) process.kill(process.pid, 'SIGKILL');
+    else process.exit(1);
+  }, FATAL_EXIT_DELAY_MS);
 }
 
 export function installProcessGuards(): void {
