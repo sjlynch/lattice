@@ -114,7 +114,14 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   spawn storm on a checkout/format-all. `analyzeContentIsolated` throws
   `WorkerUnavailableError` when the worker can't be used (e.g. `src` under tsx);
   `fileAnalysis.ts` then falls back to in-thread `analyzeFile` (a `null` result,
-  by contrast, is a watchdog/analysis skip and is NOT retried in-thread). The
+  by contrast, is a watchdog/analysis skip and is NOT retried in-thread). That
+  fallback is the one path with the isolation switched off — it runs the same
+  tree-sitter WASM analyzer on the backend's MAIN thread, where a hang freezes
+  the event loop and a fault in the WASM runtime kills the process outright
+  (with no chance to log it — see `crashLog.ts`). So giving up is deliberately
+  **temporary**: three worker deaths write it off for `UNAVAILABLE_COOLDOWN_MS`
+  (60s), not for the life of the process as it once did. An *init* failure
+  (no compiled `analyze.js`) stays permanent, since retrying can never help. The
   worker is `unref()`'d and disposed on graceful shutdown (`watcher.ts`
   `flushThenExit`).
 - `cache.ts` + `cachePaths.ts` + `cacheFile.ts` — persistent per-file health

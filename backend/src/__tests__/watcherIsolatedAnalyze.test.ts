@@ -151,3 +151,57 @@ test('IsolatedAnalyzer (real worker): a hung file is skipped while normal files 
     clearInterval(ticker);
   }
 });
+
+test('IsolatedAnalyzer: giving up after repeated worker deaths is temporary, not permanent', async () => {
+  // The in-thread fallback runs the same tree-sitter WASM analyzer on the
+  // BACKEND'S MAIN THREAD — the exact arrangement this module exists to escape.
+  // Writing the worker off for the life of the process therefore turned three
+  // transient deaths into a permanent downgrade, with a hang freezing the event
+  // loop and a WASM fault killing the backend outright. The give-up must expire.
+  const { created, createWorker } = capturing();
+  const a = new IsolatedAnalyzer({ ...opts(createWorker), cooldownMs: 30 });
+
+  // Kill three workers in a row to trip the failure ceiling.
+  for (let i = 0; i < 3; i += 1) {
+    const p = a.analyze(`file${i}`, '.ts', 1);
+    created[created.length - 1].emit('exit', 1);
+    await assert.rejects(p, WorkerUnavailableError);
+  }
+  const spawnedBeforeCooldown = created.length;
+
+  // Written off: no new worker, straight to the in-thread fallback.
+  await assert.rejects(a.analyze('during', '.ts', 1), WorkerUnavailableError);
+  assert.equal(created.length, spawnedBeforeCooldown, 'no worker is spawned during the cooldown');
+
+  await sleep(50);
+
+  // ...and afterwards it tries again rather than staying degraded forever.
+  const revived = a.analyze('after', '.ts', 1);
+  assert.equal(created.length, spawnedBeforeCooldown + 1, 'the worker is retried after the cooldown');
+  created[created.length - 1].emit('message', {
+    type: 'result',
+    ok: true,
+    metrics: { score: 91 },
+    imports: [],
+  });
+  assert.deepEqual(await revived, { metrics: { score: 91 }, imports: [] });
+
+  a.dispose();
+});
+
+test('IsolatedAnalyzer: an init failure stays permanent — retrying it can never help', async () => {
+  // The counterpart to the cooldown: init failure means the compiled analyze.js
+  // isn't loadable at all, so respawning on a timer would just burn threads.
+  const { created, createWorker } = capturing();
+  const a = new IsolatedAnalyzer({ ...opts(createWorker), cooldownMs: 10 });
+  const p = a.analyze('code', '.ts', 1);
+  created[0].emit('message', { type: 'init-failed', error: 'no compiled analyze.js' });
+  await assert.rejects(p, WorkerUnavailableError);
+
+  await sleep(40);
+
+  await assert.rejects(a.analyze('later', '.ts', 1), WorkerUnavailableError);
+  assert.equal(created.length, 1, 'no respawn, however long we wait');
+
+  a.dispose();
+});

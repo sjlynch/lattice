@@ -13,7 +13,13 @@
 // continues on a fresh worker. If the worker subsystem is unusable (e.g. running
 // from `src` under tsx, where the compiled analyze.js sibling doesn't exist),
 // `analyze()` rejects with WorkerUnavailableError so the caller falls back to
-// in-thread analysis — never worse than before.
+// in-thread analysis.
+//
+// That fallback is the one path where this module's protection is off: it runs
+// the same tree-sitter WASM analyzer on the backend's MAIN thread, where a hang
+// freezes the event loop and a fault in the WASM runtime takes the process down
+// with no chance to log it. So falling back is deliberately temporary — see
+// UNAVAILABLE_COOLDOWN_MS.
 
 import { Worker } from 'node:worker_threads';
 import type { HealthMetrics } from '../types.js';
@@ -44,6 +50,20 @@ export type WorkerFactory = (data: WorkerData) => WorkerHandle;
 
 const DEFAULT_STALL_MS = 10_000;
 const MAX_SPAWN_FAILURES = 3;
+// How long the worker stays written off after the failure ceiling is hit.
+//
+// This used to be forever. That mattered more than it looks: the in-thread
+// fallback runs the SAME tree-sitter WASM analyzer on the backend's main
+// thread, which is the exact arrangement this module exists to escape — so
+// three transient worker deaths (a spawn losing a race during a "Run All", a
+// worker killed while the machine was thrashing) permanently moved every
+// subsequent file's WASM parse onto the event loop, for the life of the
+// process, with no way back short of a restart. On the main thread a hang
+// freezes the backend and a fault in the WASM runtime takes it down outright.
+// A cooldown keeps the give-up (which is still the right immediate move) from
+// being irreversible. Init failure is separate and stays permanent — see
+// `permanentlyUnavailable`.
+const UNAVAILABLE_COOLDOWN_MS = 60_000;
 
 // Content-based worker: the parent sends {content, ext, loc}; the worker runs
 // analyzeFile and posts one result. Serial (one job in flight), so no job id is
@@ -95,24 +115,46 @@ export type IsolatedAnalyzerOptions = {
   stallMs?: number;
   createWorker?: WorkerFactory;
   analyzeUrl?: string;
+  // Test seam: how long the worker stays written off after the failure ceiling.
+  cooldownMs?: number;
 };
 
 export class IsolatedAnalyzer {
   private readonly stallMs: number;
   private readonly createWorker: WorkerFactory;
   private readonly analyzeUrl: string;
+  private readonly cooldownMs: number;
 
   private worker: WorkerHandle | null = null;
   private inFlight: Pending | null = null;
   private readonly queue: Pending[] = [];
   private stallTimer: ReturnType<typeof setTimeout> | null = null;
   private spawnFailures = 0;
-  private unavailable = false;
+  // Init failure means the compiled analyze.js isn't loadable at all (src under
+  // tsx, a broken build) — retrying can never help, so this one is for good.
+  private permanentlyUnavailable = false;
+  // Spawn failures / unexpected deaths are transient by nature, so they only
+  // write the worker off until this timestamp.
+  private unavailableUntil = 0;
 
   constructor(opts: IsolatedAnalyzerOptions = {}) {
     this.stallMs = opts.stallMs ?? DEFAULT_STALL_MS;
     this.createWorker = opts.createWorker ?? defaultCreateWorker;
     this.analyzeUrl = opts.analyzeUrl ?? defaultAnalyzeUrl();
+    this.cooldownMs = opts.cooldownMs ?? UNAVAILABLE_COOLDOWN_MS;
+  }
+
+  // True while the worker is written off: permanently after an init failure,
+  // or until the cooldown expires after the spawn/death ceiling.
+  private isUnavailable(): boolean {
+    return this.permanentlyUnavailable || Date.now() < this.unavailableUntil;
+  }
+
+  // Hit the failure ceiling: stop trying for a while, and reset the counter so
+  // the next window gets its own full budget rather than failing on contact.
+  private giveUpForNow(): void {
+    this.unavailableUntil = Date.now() + this.cooldownMs;
+    this.spawnFailures = 0;
   }
 
   // Resolves to the analysis, or null if the worker ran the file and it was
@@ -120,7 +162,7 @@ export class IsolatedAnalyzer {
   // Rejects with WorkerUnavailableError if the worker can't be used at all
   // (caller should fall back to in-thread analysis).
   analyze(content: string, ext: string, loc: number): Promise<IsolatedAnalysis | null> {
-    if (this.unavailable) return Promise.reject(new WorkerUnavailableError());
+    if (this.isUnavailable()) return Promise.reject(new WorkerUnavailableError());
     return new Promise<IsolatedAnalysis | null>((resolve, reject) => {
       this.queue.push({ content, ext, loc, resolve, reject });
       this.pump();
@@ -141,7 +183,7 @@ export class IsolatedAnalyzer {
   private pump(): void {
     if (this.inFlight) return;
     if (this.queue.length === 0) return;
-    if (this.unavailable) {
+    if (this.isUnavailable()) {
       for (const item of this.queue.splice(0)) item.reject(new WorkerUnavailableError());
       return;
     }
@@ -168,7 +210,7 @@ export class IsolatedAnalyzer {
   // Returns false only when spawning failed AND the failure ceiling was hit.
   private ensureWorker(): boolean {
     if (this.worker) return true;
-    if (this.unavailable) return false;
+    if (this.isUnavailable()) return false;
     try {
       const w = this.createWorker({ analyzeUrl: this.analyzeUrl });
       this.worker = w;
@@ -187,7 +229,7 @@ export class IsolatedAnalyzer {
       return true;
     } catch {
       this.spawnFailures += 1;
-      if (this.spawnFailures >= MAX_SPAWN_FAILURES) this.unavailable = true;
+      if (this.spawnFailures >= MAX_SPAWN_FAILURES) this.giveUpForNow();
       return false;
     }
   }
@@ -200,7 +242,7 @@ export class IsolatedAnalyzer {
       if (process.env.LATTICE_HEALTH_DEBUG) {
         console.error('[health] isolated analyzer init failed:', msg.error);
       }
-      this.unavailable = true;
+      this.permanentlyUnavailable = true;
       this.clearStall();
       this.killWorker();
       const inFlight = this.inFlight;
@@ -246,7 +288,7 @@ export class IsolatedAnalyzer {
     this.clearStall();
     this.killWorker();
     this.spawnFailures += 1;
-    if (this.spawnFailures >= MAX_SPAWN_FAILURES) this.unavailable = true;
+    if (this.spawnFailures >= MAX_SPAWN_FAILURES) this.giveUpForNow();
     const item = interrupted ?? this.inFlight;
     this.inFlight = null;
     if (item) item.reject(new WorkerUnavailableError());

@@ -32,10 +32,15 @@ export function recordOutput(label, line) {
 }
 
 // Append one record. `expected` marks a shutdown we asked for, which is logged
-// as a one-liner without the output tail.
-export function recordExit(label, code, { expected = false } = {}) {
+// as a one-liner without the output tail. `detail` carries a decoded cause of
+// death (see backend/scripts/dev/exitStatus.mjs) — without it a Windows fault
+// lands here as a bare `code=3221225477`, which reads like an ordinary non-zero
+// exit rather than "the OS killed it for a bad pointer".
+export function recordExit(label, code, { expected = false, detail = '' } = {}) {
   const when = new Date().toISOString();
-  const header = `${when} [${label}] exited code=${code}${expected ? ' (shutdown requested)' : ''}`;
+  const header =
+    `${when} [${label}] exited code=${code}` +
+    `${detail ? ` — ${detail}` : ''}${expected ? ' (shutdown requested)' : ''}`;
   const tail = expected ? [] : (tails.get(label) ?? []);
   const body = tail.length
     ? `${header}\n--- last ${tail.length} lines ---\n${tail.join('\n')}\n\n`

@@ -16,13 +16,27 @@ force-directed DAG.
 - `~/.lattice/worktrees/<projectHash>/<slug>-<id>/` — per-task git worktree checkout. **Outside the project tree on purpose** (2026-05-10): nesting them inside `<repo>/.lattice/` was the root of three `.git`-deletion incidents (a bad recursive-delete path, or `git status` enumerating the nested checkouts). The only thing left inside `<repo>/.git` is the small `worktrees/<name>/gitdir` pointer.
 - `~/.lattice/snapshots/<projectHash>/<ts>-<label>/` — copy-based working-tree snapshot (replaces `git stash --include-untracked`, which had a silent-data-loss failure mode). Orphan snapshots from a crashed run are restored on next boot via `recoverPendingSnapshots`.
 - `~/.lattice/git-backups/<projectHash>/<ts>.bundle` — `git bundle --all` snapshot taken before each merge run; last 5 kept. Last-resort full-history recovery if `.git` is ever damaged: `git fetch <bundle>`.
-- `~/.lattice/logs/` — crash forensics. `crash-<ts>-<n>-<label>.log` (stack +
-  the last 300 console lines) from the backend / terminal-server,
-  `report.*.json` (Node diagnostic report) for a JS-heap OOM or native crash,
-  and `dev-runner.log` (each child's exit code + last output) from the dev
-  orchestrator. Newest 20 of each kept. **Check here first when something
-  died** — the backend's console output belongs to the user's terminal and the
+- `~/.lattice/logs/` — crash forensics. **Check here first when something
+  died**: the backend's console output belongs to the user's terminal and the
   terminal-server is spawned `stdio: 'ignore'`, so nothing else survives.
+  Newest 20 of each kept.
+  - `crash-<ts>-<n>-<label>.log` — stack + the last 300 console lines, written
+    synchronously by `backend/src/crashLog.ts` from the fatal handler.
+  - `report.*.json` — Node's diagnostic report, for a **JS-heap OOM or a V8
+    fatal error**. It is a V8 callback, so it does NOT fire for an OS-level
+    fault; don't read its absence as "not a crash".
+  - `live-<label>-<pid>.log` — a rolling mirror of the console ring for a
+    process that is *currently running*, refreshed every couple of seconds.
+    Deleted on any exit the process is alive to observe.
+  - `crash-<ts>-000-<label>-nojs.log` — a `live-*.log` whose process vanished,
+    promoted on the next boot. This is the **only** record of a death that runs
+    no JavaScript (a hard native fault, an OS OOM-kill, a `taskkill /F`), where
+    every handler-based mechanism above produces nothing at all.
+  - `dev-runner.log` — each child's exit code + last output, from the dev
+    orchestrator **and** from `backend/scripts/dev/` (which supervises
+    `dist/index.js`, a grandchild the orchestrator never sees). Windows fault
+    codes are decoded here, so `3221225477` reads as
+    `0xC0000005 STATUS_ACCESS_VIOLATION`.
 - `~/.lattice/globalSettings.json` — machine-global settings (`maxConcurrentAgents`, MCP defs/overrides, `piModelMenu`, `piProviders`).
 - `~/.lattice/piManagedProviders.json` — sidecar listing the Pi provider ids Lattice manages in `~/.pi/agent/models.json`, so a UI removal deletes precisely those (hand-written providers are never touched). See `backend/src/piModels.ts` `reconcilePiModelsJson`.
 
