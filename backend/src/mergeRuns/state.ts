@@ -28,6 +28,10 @@ export class MergeRunStateManager extends ProjectStateManager<
 > {
   public readonly runs = new Map<string, MergeRun>();
   private readonly conflictWaiters = new ConflictWaiterRegistry();
+  // Run ids with a worker actually executing in THIS process. A `running`
+  // record without an entry here is a zombie (see reapOrphanedRuns) — nothing
+  // will ever advance or finish it, so it must never gate a new run.
+  private readonly liveRunIds = new Set<string>();
 
   constructor() {
     super({
@@ -45,10 +49,23 @@ export class MergeRunStateManager extends ProjectStateManager<
     return key;
   }
 
+  // Adopt persisted runs this process doesn't already know about.
+  //
+  // NEVER overwrite an id already in `this.runs`: the cached array holds
+  // SNAPSHOTS (syncProjectFromRunMap clones on the way out), so re-seeding an
+  // existing id swapped the LIVE run object the worker mutates for a frozen
+  // clone. Every later mutation (processed++, merged.push, finishRun's status
+  // flip) then landed on an object nobody could see, while the map — and the
+  // 409 gate and `cancel` that read it — kept the clone's `status: 'running'`
+  // forever. That is exactly how a project got wedged at "a merge run is
+  // already in progress" with a dead cancel button: a second startMergeRun
+  // (a resolver /complete restart, a workflow Merge step, a UI click) called
+  // loadProject while a run was in flight and clobbered it mid-run.
   private syncRunMapFromProject(projectPath: string): void {
     const key = canonicalProjectPath(projectPath);
     const projectRuns = this.getCached(key) ?? [];
     for (const run of projectRuns) {
+      if (this.runs.has(run.id)) continue;
       this.runs.set(run.id, run);
     }
   }
@@ -77,8 +94,49 @@ export class MergeRunStateManager extends ProjectStateManager<
     return run ? snapshotRun(run) : null;
   }
 
+  // Worker liveness. startMergeRun marks a run live the moment it registers it
+  // and settled when its worker's finalize resolves (crash included).
+  public markRunLive(id: string): void {
+    this.liveRunIds.add(id);
+  }
+
+  public markRunSettled(id: string): void {
+    this.liveRunIds.delete(id);
+  }
+
+  public isRunLive(id: string): boolean {
+    return this.liveRunIds.has(id);
+  }
+
+  // Backstop for the whole class of "stuck at running" bugs: flip any run this
+  // process still records as `running` but has no worker for. Without this, one
+  // zombie record blocks every future merge run for the project until a
+  // restart. Emits so the UI drops the phantom active run.
+  public reapOrphanedRuns(projectPath: string): MergeRun[] {
+    const key = canonicalProjectPath(projectPath);
+    const reaped: MergeRun[] = [];
+    for (const run of this.runs.values()) {
+      if (run.projectPath !== key) continue;
+      if (run.status !== 'running' || this.liveRunIds.has(run.id)) continue;
+      run.status = 'errored';
+      run.finishedAt = Date.now();
+      run.current = undefined;
+      run.errored.push({
+        taskId: '(run)',
+        error: 'merge run record was orphaned (no worker running) — reaped',
+      });
+      reaped.push(run);
+    }
+    for (const run of reaped) {
+      console.warn(`[merge-run] reaped orphaned run record ${run.id}`);
+      this.emit({ type: 'completed', run: snapshotRun(run) });
+    }
+    return reaped;
+  }
+
   public getActiveRunForProject(projectPath: string): MergeRun | null {
     const key = canonicalProjectPath(projectPath);
+    this.reapOrphanedRuns(key);
     for (const run of this.runs.values()) {
       if (run.projectPath === key && run.status === 'running') {
         return snapshotRun(run);
@@ -91,8 +149,17 @@ export class MergeRunStateManager extends ProjectStateManager<
     const run = this.runs.get(id);
     if (!run || run.status !== 'running') return false;
     run.cancelRequested = true;
-    this.syncProjectFromRunMap(run.projectPath);
     this.conflictWaiters.unblockRun(id);
+    // No worker to observe `cancelRequested` — settle the record here so the
+    // button is never a silent no-op (and the run stops gating new ones).
+    if (!this.liveRunIds.has(id)) {
+      run.status = 'cancelled';
+      run.finishedAt = Date.now();
+      run.current = undefined;
+      this.emit({ type: 'cancelled', run: snapshotRun(run) });
+      return true;
+    }
+    this.syncProjectFromRunMap(run.projectPath);
     return true;
   }
 
@@ -178,4 +245,19 @@ export function getActiveRunForProjectFromState(
 
 export function cancelRunInState(state: RunState, id: string): boolean {
   return state.cancelRun(id);
+}
+
+export function markRunLiveInState(state: RunState, id: string): void {
+  state.markRunLive(id);
+}
+
+export function markRunSettledInState(state: RunState, id: string): void {
+  state.markRunSettled(id);
+}
+
+export function reapOrphanedRunsInState(
+  state: RunState,
+  projectPath: string,
+): MergeRun[] {
+  return state.reapOrphanedRuns(projectPath);
 }

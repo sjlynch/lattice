@@ -38,7 +38,27 @@ here instead of bloating the parent file.
   ready_to_merge to retry on the next merge-all.
 - `state.ts` — stable public facade and `RunState` / `MergeRunStateManager`:
   persistent run maps, notify/subscribe fan-out, active-run lookup/cancel, and
-  delegation to snapshot/normalization/waiter helpers.
+  delegation to snapshot/normalization/waiter helpers. Two rules keep the
+  "one active run per project" gate from turning into a permanent wedge:
+  - **The in-memory run object is authoritative; `loadProject` may only ADD
+    ids it doesn't already have.** The persisted cache holds *snapshots*
+    (`syncProjectFromRunMap` clones on the way out), so re-seeding an existing
+    id swapped the LIVE object the worker mutates for a frozen clone. A second
+    `startMergeRun` landing mid-run — a resolver `/complete` restart
+    (`routes/tasks/finalizeResolved.ts`), a workflow Merge control step, a UI
+    click, all of which call `loadProject` *before* the 409 gate rejects them —
+    then left the map holding a `status: 'running', processed: 0` clone forever
+    while the real worker finished invisibly. Symptom (interview_eci,
+    2026-08-24): every later merge-all 409s with "A merge run is already in
+    progress" and the cancel button does nothing, until the backend restarts.
+  - **A `running` record with no worker behind it is reaped, never obeyed.**
+    `markRunLive`/`markRunSettled` (called by `startMergeRun` and its finalize)
+    record which runs this process is actually executing; `reapOrphanedRuns`
+    (run from `initializeRunState` and `getActiveRunForProject`) errors out any
+    other `running` record for the project, and `cancelRun` settles one outright
+    instead of setting a flag nothing will ever read. This is the backstop for
+    the whole class — whatever leaves a zombie record behind, it costs one
+    reaped run, not every future merge for that project.
 - `preflight.ts` — per-run setup: task JSON backup, git bundle backup,
   Lattice-owned exclude/untrack repair, copy snapshot, and baseline HEAD for
   the circuit breaker.

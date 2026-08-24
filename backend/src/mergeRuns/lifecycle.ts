@@ -37,6 +37,12 @@ export async function initializeRunState(
   projectPath = canonicalProjectPath(projectPath);
   await state.loadProject(projectPath);
 
+  // Drop any `running` record with no worker behind it before the gate reads
+  // the map. A zombie record used to block every subsequent run for the
+  // project until the backend restarted (and its cancel button did nothing,
+  // because there was no worker to observe `cancelRequested`).
+  state.reapOrphanedRuns(projectPath);
+
   // In-process gate: one active run per project. A second start returns 409.
   for (const r of state.runs.values()) {
     if (r.projectPath === projectPath && r.status === 'running') {

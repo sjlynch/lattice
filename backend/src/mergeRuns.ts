@@ -113,6 +113,10 @@ export async function startMergeRun(
 
   const run = createRunRecord(targets, canonicalPath);
   runState.runs.set(run.id, run);
+  // Mark live BEFORE the first emit: from here until the worker's finalize
+  // resolves, this record is backed by a worker, and the orphan reaper must
+  // leave it alone.
+  runState.markRunLive(run.id);
   notify(runState, { type: 'started', run: snapshot(run) });
 
   // Run the worker async. Fire-and-forget; consumers track via WS / GET.
@@ -160,6 +164,10 @@ export async function startMergeRun(
       await projectLock?.release().catch(() => undefined);
     },
     restart: () => restartMergeRun(canonicalPath, backendOrigin),
+  }).finally(() => {
+    // Worker is gone (completed, cancelled, or crashed). Any `running` record
+    // left behind is now reapable rather than a permanent block.
+    runState.markRunSettled(run.id);
   });
 
   return snapshot(run);
