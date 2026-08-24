@@ -5,6 +5,7 @@ import {
   updateTask as apiUpdateTask,
   type TaskStatus,
 } from '../../../api';
+import { useGitSetup } from '../../gitSetup/GitSetupProvider';
 
 type UseTaskCrudActionsArgs = {
   activeFolder: string;
@@ -15,9 +16,17 @@ type UseTaskCrudActionsArgs = {
 // out of useTaskActions so reorder/lifecycle/merge concerns can compose
 // over a minimal CRUD surface.
 export function useTaskCrudActions({ activeFolder, showError }: UseTaskCrudActionsArgs) {
+  const { ensureGitRepo } = useGitSetup();
+
   const addTask = useCallback(
     async (status: TaskStatus, title: string, description?: string): Promise<boolean> => {
       if (!activeFolder || !title.trim()) return false;
+      // The backend rejects task *creation* in a non-git project (a 400 from
+      // routes/tasks/projectValidation.ts), so offer setup before firing the
+      // doomed POST. On success we fall straight through to the create the user
+      // already typed — returning false here only on a genuine decline, which
+      // keeps the new-task overlay open with their text intact.
+      if (!(await ensureGitRepo(activeFolder))) return false;
       try {
         const created = await apiCreateTask(activeFolder, title, description);
         // If we're adding to a non-open lane, immediately update its status.
@@ -30,7 +39,7 @@ export function useTaskCrudActions({ activeFolder, showError }: UseTaskCrudActio
         return false;
       }
     },
-    [activeFolder, showError],
+    [activeFolder, ensureGitRepo, showError],
   );
 
   const moveTask = useCallback(

@@ -25,9 +25,12 @@ export function FolderPicker({ open, initialPath, onClose, onSelect }: Props) {
     setSelectedPath,
     newFolderName,
     setNewFolderName,
+    initGit,
+    setInitGit,
     loading,
     creating,
     error,
+    notice,
     load,
     createFolder,
   } = useFolderPickerState({ open, initialPath });
@@ -80,9 +83,12 @@ export function FolderPicker({ open, initialPath, onClose, onSelect }: Props) {
           onNewFolderNameChange={setNewFolderName}
           creating={creating}
           canCreate={Boolean(listing)}
+          initGit={initGit}
+          onInitGitChange={setInitGit}
           onCreateFolder={createFolder}
         />
 
+        {notice && <div className="git-setup-inline-note">{notice}</div>}
         {error && <div className="error-msg">{error}</div>}
 
         <DirectoryList

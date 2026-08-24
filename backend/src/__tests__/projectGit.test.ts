@@ -112,6 +112,13 @@ test('projectGit policy refuses everything that could damage the repo', () => {
   // rm without --cached deletes from disk.
   denied(['rm', '-rf', 'src']);
   denied(['rm', 'src/api.ts']);
+  // `git init` stays off the whitelist even though Lattice now runs one:
+  // `projectInit/` calls it through plain `exec`, because projectGit asserts
+  // `<repo>/.git` exists — the very thing init creates. Whitelisting it here
+  // would only make that assertion look satisfiable and hand a capability to
+  // every other project-repo caller.
+  denied(['init']);
+  denied(['init', '-b', 'main']);
   // Subcommands not on the list at all.
   denied(['push', 'origin', 'main', '--force']);
   denied(['gc', '--prune=now']);

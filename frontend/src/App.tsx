@@ -5,6 +5,7 @@ import { ForceGraphView } from './components/ForceGraphView';
 import { Legend } from './components/Legend';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConfirmProvider } from './components/shared/ConfirmDialog';
+import { GitSetupProvider } from './components/gitSetup/GitSetupProvider';
 import { TerminalsProvider } from './TerminalsContext';
 import { useActiveFolder } from './hooks/useActiveFolder';
 import { useHiddenExtensions } from './hooks/useHiddenExtensions';
@@ -74,6 +75,7 @@ function App() {
 
   return (
     <ConfirmProvider>
+      <GitSetupProvider>
       <TerminalsProvider>
       <div className="app-shell">
         <TopAppBar
@@ -134,6 +136,7 @@ function App() {
         </div>
       </div>
       </TerminalsProvider>
+      </GitSetupProvider>
     </ConfirmProvider>
   );
 }

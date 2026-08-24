@@ -47,6 +47,7 @@ export function useTaskActions({
     showError,
   });
   const lifecycle = useTaskLifecycleActions({
+    activeFolder,
     tasks,
     pickRunHarness,
     showError,

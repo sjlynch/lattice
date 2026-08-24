@@ -169,6 +169,12 @@ const UNDOCUMENTED_ROUTES: Record<string, string> = {
   'POST /api/workflow-prompt-customizations': 'spawns a harness to tailor a step prompt (UI)',
   'GET /api/workflow-prompt-customizations/:id': 'prompt-customization poll (UI)',
 
+  // Git Setup. Creating a repo (and choosing what its first commit captures)
+  // is a decision the human makes in the dialog — an agent silently running it
+  // would commit whatever happened to be lying in the folder.
+  'POST /api/project-init/preview': 'first-commit preview for the Git Setup dialog (UI)',
+  'POST /api/project-init': 'git init + first commit — user-confirmed from the Git Setup dialog',
+
   // Workflow authoring. Editing a user's saved workflows is a UI action, not
   // something an agent should do while working a task.
   'POST /api/workflows': 'workflow-definition create (editor UI)',

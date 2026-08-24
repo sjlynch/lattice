@@ -80,7 +80,11 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
   via `rebuildSelectionHalos`, O(selected), not a full refresh). `useBoxSelect` +
   `boxSelectGeometry` + `orbitControlLock` — shift-drag rectangle select.
 - `useNodeContextMenu` — right-click popover. `useGraphTaskCreation` — create-task
-  modal state. `useGraphViewKeyboard` — the Escape chord (menu → search → select).
+  modal state; `submitTask` runs `ensureGitRepo` (`components/gitSetup/`) before
+  `createTask`, since a non-repo project 400s the create — this is the graph's
+  copy of the task board's Git Setup interception, and it resumes the create
+  afterwards rather than making the user retype the prompt.
+  `useGraphViewKeyboard` — the Escape chord (menu → search → select).
 - `useCanvasDragTracking` — drives `pointerDraggingRef` + suspends pointer
   interaction during a drag. `useHoverNodeDebounce` — hover tooltip state + the
   null-transition debounce + the `flushSync` hover-in; ignores hover mid-drag.

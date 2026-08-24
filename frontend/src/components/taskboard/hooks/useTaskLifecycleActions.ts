@@ -5,9 +5,11 @@ import {
   runTask as apiRunTask,
   type Task,
 } from '../../../api';
+import { useGitSetup } from '../../gitSetup/GitSetupProvider';
 import type { RunHarnessSelection } from './useHarnessSelector';
 
 type UseTaskLifecycleActionsArgs = {
+  activeFolder: string;
   tasks: Task[];
   pickRunHarness: () => RunHarnessSelection;
   showError: (message: string) => void;
@@ -19,12 +21,20 @@ type UseTaskLifecycleActionsArgs = {
 // when the queue admits the spawn, via the `task-spawned` WS event (see
 // useTaskList). So these actions no longer mount a terminal themselves.
 export function useTaskLifecycleActions({
+  activeFolder,
   tasks,
   pickRunHarness,
   showError,
 }: UseTaskLifecycleActionsArgs) {
+  const { ensureGitRepo } = useGitSetup();
+
   const runTask = useCallback(
     async (task: Task) => {
+      // Backstop for a task the create-time guard never saw: one filed through
+      // the HTTP API, or a project whose `.git` disappeared afterwards. The
+      // provider coalesces concurrent calls per project, so a "run all" over N
+      // tasks still asks once rather than opening N dialogs.
+      if (!(await ensureGitRepo(activeFolder))) return;
       try {
         const sel = pickRunHarness();
         await apiRunTask(task.id, sel.harness, sel.piModel);
@@ -32,7 +42,7 @@ export function useTaskLifecycleActions({
         showError(`Run failed: ${(err as Error).message}`);
       }
     },
-    [pickRunHarness, showError],
+    [activeFolder, ensureGitRepo, pickRunHarness, showError],
   );
 
   // Returns the ids enqueued so the caller can drive a progress strip.

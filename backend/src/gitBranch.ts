@@ -105,9 +105,18 @@ async function createBranchWatcher(root: string): Promise<BranchWatcher> {
     subscribers: new Set(),
     current: await getCurrentBranch(root),
   };
+  await armBranchWatcher(proj);
+  return proj;
+}
 
+// Attach the chokidar watch to the repo's HEAD file. Split out of
+// `createBranchWatcher` so `rearmGitBranchWatcher` can run it a second time on
+// a watcher that was built before the folder had a `.git` at all.
+async function armBranchWatcher(proj: BranchWatcher): Promise<void> {
+  if (proj.watcher) return;
+  const root = proj.root;
   const headFile = await resolveHeadFile(root);
-  if (!headFile) return proj; // not a git repo — nothing to watch
+  if (!headFile) return; // not a git repo — nothing to watch
 
   let timer: NodeJS.Timeout | null = null;
   const recompute = () => {
@@ -135,7 +144,29 @@ async function createBranchWatcher(root: string): Promise<BranchWatcher> {
   watcher.on('change', recompute);
   watcher.on('unlink', recompute);
   proj.watcher = watcher;
-  return proj;
+}
+
+// A folder that wasn't a repo when the first client subscribed got no watcher
+// and a permanently null branch — so after `git init` the navbar chip would
+// stay blank until a page reload. `initProjectGit` calls this on success.
+// Best-effort by design: no subscribers means no watcher to fix (the first
+// subscriber will build one against the new repo), and a failed build is left
+// for the next subscriber to retry.
+export async function rearmGitBranchWatcher(projectRoot: string): Promise<void> {
+  const root = canonicalProjectPath(projectRoot);
+  const pending = watchers.get(root);
+  if (!pending) return;
+  let proj: BranchWatcher;
+  try {
+    proj = await pending;
+  } catch {
+    return;
+  }
+  await armBranchWatcher(proj);
+  const branch = await getCurrentBranch(root);
+  if (branch === proj.current) return;
+  proj.current = branch;
+  for (const cb of [...proj.subscribers]) cb(branch);
 }
 
 // Subscribe to the active project's current git branch. The current value is

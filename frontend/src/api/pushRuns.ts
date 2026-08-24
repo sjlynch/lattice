@@ -3,11 +3,18 @@
 // terminal once Claude's Stop hook has fired on the backend.
 
 import { asJson, postJson } from './http';
-import type { PushRunStatus, StartPushRunResult } from './types';
+import type { ProjectGitProbe, PushRunStatus, StartPushRunResult } from './types';
 export type { PushRunStatus, StartPushRunResult } from './types';
 
-export async function checkGit(projectPath: string): Promise<{ hasGit: boolean }> {
-  return asJson<{ hasGit: boolean }>(
+// `hasGit` keeps its exact original semantics — a plain stat of
+// `<path>/.git`, which the QA-lane Push button reads. `git` is the additive
+// Git-setup probe: it walks UP, so it also reports the `nested` case that
+// `hasGit` deliberately can't see. Consumers of `git` must tolerate it being
+// absent at runtime (an older backend still answers this route).
+export async function checkGit(
+  projectPath: string,
+): Promise<{ hasGit: boolean; git: ProjectGitProbe }> {
+  return asJson<{ hasGit: boolean; git: ProjectGitProbe }>(
     await fetch(`/api/git-check?path=${encodeURIComponent(projectPath)}`),
   );
 }

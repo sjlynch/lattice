@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createTask, type GraphNode, type ScanResult } from '../../../api';
+import { useGitSetup } from '../../gitSetup/GitSetupProvider';
 import { relPath, type MenuItemDef } from '../menu';
 
 type Args = {
@@ -26,6 +27,7 @@ export function useGraphTaskCreation({
   const [promptText, setPromptText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const { ensureGitRepo } = useGitSetup();
 
   // Auto-dismiss toast after a few seconds.
   useEffect(() => {
@@ -66,6 +68,12 @@ export function useGraphTaskCreation({
       .map((n) => `- ${relPath(n.path, root)}`)
       .join('\n');
     const description = `${trimmed}\n\n## Files\n${fileLines}`;
+    // A task only ever runs in a git worktree, so createTask 400s in a non-repo
+    // project. Offer setup first, then carry on with the create the user was
+    // already making — this modal holds typed prose and a file selection that
+    // would be tedious to rebuild. Guarding before `setSubmitting` keeps the
+    // modal interactive if they cancel the dialog.
+    if (!(await ensureGitRepo(activeFolder))) return;
     setSubmitting(true);
     try {
       await createTask(activeFolder, title, description);
@@ -79,7 +87,15 @@ export function useGraphTaskCreation({
     } finally {
       setSubmitting(false);
     }
-  }, [modalAction, promptText, activeFolder, data, selectedFiles, setSelected]);
+  }, [
+    modalAction,
+    promptText,
+    activeFolder,
+    data,
+    selectedFiles,
+    setSelected,
+    ensureGitRepo,
+  ]);
 
   const closeModal = useCallback(() => {
     if (submitting) return;

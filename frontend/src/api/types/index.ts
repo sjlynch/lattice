@@ -4,6 +4,7 @@
 export * from './health';
 export * from './scan';
 export * from './gitHistory';
+export * from './git';
 export * from './settings';
 export * from './projectEnv';
 export * from './instructionTemplates';

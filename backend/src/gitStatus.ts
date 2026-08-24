@@ -91,9 +91,19 @@ async function createGitStatusWatcher(root: string): Promise<GitStatusWatcher> {
     subscribers: new Set(),
     current: await computeStatusSignature(root),
   };
+  await armGitStatusWatchers(proj);
+  return proj;
+}
+
+// Attach both trees. Split out of `createGitStatusWatcher` so
+// `rearmGitStatusWatcher` can run it a second time on a watcher that was built
+// before the folder had a `.git` at all.
+async function armGitStatusWatchers(proj: GitStatusWatcher): Promise<void> {
+  if (proj.watchers.length > 0) return;
+  const root = proj.root;
 
   const gitDir = await resolveGitDir(root);
-  if (!gitDir) return proj; // not a git repo — nothing to watch
+  if (!gitDir) return; // not a git repo — nothing to watch
 
   let timer: NodeJS.Timeout | null = null;
   let running = false;
@@ -162,7 +172,27 @@ async function createGitStatusWatcher(root: string): Promise<GitStatusWatcher> {
     w.on('unlinkDir', recompute);
   }
   proj.watchers = [metaWatcher, treeWatcher];
-  return proj;
+}
+
+// A folder that wasn't a repo when the first client subscribed got no watchers
+// at all — so after `git init` the timeline scrubber would never hear about a
+// commit until a page reload. `initProjectGit` calls this on success.
+// Best-effort, exactly like `rearmGitBranchWatcher`.
+export async function rearmGitStatusWatcher(projectRoot: string): Promise<void> {
+  const root = canonicalProjectPath(projectRoot);
+  const pending = watchers.get(root);
+  if (!pending) return;
+  let proj: GitStatusWatcher;
+  try {
+    proj = await pending;
+  } catch {
+    return;
+  }
+  await armGitStatusWatchers(proj);
+  const sig = await computeStatusSignature(root);
+  if (sig === proj.current) return;
+  proj.current = sig;
+  for (const cb of [...proj.subscribers]) cb(sig);
 }
 
 // Subscribe to the active project's git-status signature. The current value is

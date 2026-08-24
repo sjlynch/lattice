@@ -14,6 +14,7 @@
 @import './styles/confirm-dialog.css';
 @import './styles/settings.css';
 @import './styles/folder-picker.css';
+@import './styles/git-setup.css';
 
 @import './styles/graph.css';
 @import './styles/terminal.css';

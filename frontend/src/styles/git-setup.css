@@ -1,0 +1,196 @@
+/* Git Setup — the "turn this folder into a repo" dialog (components/gitSetup/)
+   plus the folder-picker's create-a-repo affordances. The navbar chip's own
+   rules live with the rest of `.appbar-branch` in appbar.css.
+
+   Imported after modal.css so `.modal-header.git-setup-header` wins on order. */
+
+.git-setup-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.git-setup-header svg {
+  color: var(--text-tertiary);
+  flex: 0 0 auto;
+}
+
+.git-setup-line {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.git-setup-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+.git-setup-hint code,
+.git-setup-line code {
+  font-family: var(--mono);
+  color: var(--text-secondary);
+}
+
+.git-setup-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* "First commit: N files, X MB" — the number the .gitignore edits move. */
+.git-setup-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: #15181d;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.git-setup-stat strong {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.git-setup-stat-spinner {
+  flex: 0 0 auto;
+}
+
+.git-setup-note {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.git-setup-largest-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+.git-setup-largest-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.git-setup-largest-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.git-setup-largest-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-setup-largest-bytes {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.git-setup-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.git-setup-field-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.git-setup-field-label code {
+  font-family: var(--mono);
+  color: var(--text-primary);
+}
+.git-setup-field-hint {
+  color: var(--text-tertiary);
+}
+.git-setup-textarea {
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: #15181d;
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  outline: none;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.git-setup-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+/* Git's own stderr, forwarded verbatim — it already names the commands. */
+.git-setup-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(245, 120, 120, 0.28);
+  background: rgba(245, 120, 120, 0.08);
+}
+.git-setup-identity-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger);
+}
+.git-setup-detail {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: #15181d;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  user-select: text;
+}
+
+/* Folder picker: the create-a-repo checkbox + the post-create confirmation. */
+.create-folder-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.create-folder-git {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  user-select: none;
+  cursor: pointer;
+}
+.create-folder-git input {
+  accent-color: var(--accent);
+}
+.git-setup-inline-note {
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-bg);
+}

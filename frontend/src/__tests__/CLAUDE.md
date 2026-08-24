@@ -33,6 +33,15 @@ Pure-helper suites pinning a single source of truth (not exhaustive):
   visibility gating (a selected-but-unavailable harness and a saved-but-
   uncurated Pi model must never silently vanish), and the 28-char label
   truncation that keeps the full `provider/model` in `title`.
+- `gitSetupDerive.test.ts` — the pure core of Git Setup
+  (`components/gitSetup/gitSetupDerive.ts`). `deriveGitChipState` IS the
+  contract's navbar-chip table, so the assertions mirror it row for row: a
+  missing probe degrades to the pre-feature branch chip (never guesses "No
+  Git"), `none` + `initable` is the only clickable state and is labelled with a
+  verb, and `nested` renders an inert warning chip naming the ancestor repo —
+  init must never be offered there. Also pins `formatBytes` / `formatFileCount`
+  (a `truncated` walk renders `20,000+`, a floor rather than a count) and
+  `describeProbeBlocker`'s refusal copy.
 - `ghostLinkSync.test.ts` — `applyChangeRingDelta`'s ghost handling
   (`components/forceGraph/changeRingSync.ts`). The delta deliberately skips the
   library digest, so it owns ghost visibility across BOTH link renderers: pins

@@ -8,23 +8,44 @@
 // `.message` keeps working since it extends Error.
 export class HttpError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  // The rest of Lattice's error envelope, when the endpoint sends it. `code` is
+  // the machine-readable discriminator for a status that has several causes;
+  // `detail` is verbatim tool output the backend forwarded (e.g. git's stderr),
+  // which is often the only place the actual fix is spelled out — so it must
+  // survive the trip to the UI rather than being flattened into `.message`.
+  readonly code?: string;
+  readonly detail?: string;
+  constructor(
+    status: number,
+    message: string,
+    extra?: { code?: string; detail?: string },
+  ) {
     super(message);
     this.name = 'HttpError';
     this.status = status;
+    this.code = extra?.code;
+    this.detail = extra?.detail;
   }
 }
 
 export async function asJson<T>(r: Response): Promise<T> {
   if (!r.ok) {
     let msg = `${r.status}`;
+    let extra: { code?: string; detail?: string } | undefined;
     try {
-      const j = (await r.json()) as { error?: string };
+      const j = (await r.json()) as {
+        error?: string;
+        code?: string;
+        detail?: string;
+      };
       if (j.error) msg = j.error;
+      if (typeof j.code === 'string' || typeof j.detail === 'string') {
+        extra = { code: j.code, detail: j.detail };
+      }
     } catch {
       /* ignore */
     }
-    throw new HttpError(r.status, msg);
+    throw new HttpError(r.status, msg, extra);
   }
   return (await r.json()) as T;
 }

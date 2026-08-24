@@ -7,6 +7,7 @@ import { Router } from 'express';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { canonicalProjectPath } from '../projectPath.js';
+import { probeProjectGit } from '../projectInit/index.js';
 import {
   cleanupPushSession,
   forgetPushRun,
@@ -27,16 +28,24 @@ export function buildPushRunsRouter(backendOrigin: string): Router {
   // Quick filesystem probe — used by the task board to decide whether to
   // surface the push button. A `.git` entry can be either a directory (regular
   // repo) or a file (worktree pointer); both count.
+  //
+  // `hasGit` keeps EXACTLY those semantics: it is the "this folder is a repo
+  // root" test the Push button reads, and must never start walking up (a
+  // subdirectory of a repo has no branch of its own to push). The richer
+  // `git` probe is additive — it's what the Git Setup chip keys off, and it
+  // is the one that distinguishes 'none' from 'nested'.
   r.get('/api/git-check', async (req, res) => {
     const raw = typeof req.query.path === 'string' ? req.query.path : '';
     if (!raw) return res.status(400).json({ error: 'path required' });
     const project = canonicalProjectPath(raw);
+    let hasGit = false;
     try {
       const st = await fs.stat(path.join(project, '.git'));
-      res.json({ hasGit: st.isDirectory() || st.isFile() });
+      hasGit = st.isDirectory() || st.isFile();
     } catch {
-      res.json({ hasGit: false });
+      hasGit = false;
     }
+    res.json({ hasGit, git: await probeProjectGit(project) });
   });
 
   r.post('/api/push-runs', async (req, res) => {

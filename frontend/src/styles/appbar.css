@@ -57,6 +57,34 @@
   white-space: nowrap;
 }
 
+/* The same slot, when the folder isn't a repo yet: a button that opens the
+   Git Setup dialog. Accent-tinted so it reads as an invitation rather than a
+   status readout (see components/gitSetup/). */
+.appbar-branch-action {
+  cursor: pointer;
+  color: var(--text-primary);
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.appbar-branch-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+.appbar-branch-action:hover .appbar-branch-icon {
+  color: var(--accent);
+}
+
+/* `nested` — this folder is inside someone else's repo, and Lattice will use
+   that one. Not an error, but worth noticing before you file a task. */
+.appbar-branch-warning {
+  border-color: rgba(224, 175, 104, 0.4);
+  color: #e0af68;
+  background: linear-gradient(135deg, #2a2419 0%, #221e17 100%);
+}
+.appbar-branch-warning .appbar-branch-icon {
+  color: #e0af68;
+}
+
 /* Task board launcher (in the appbar) */
 .fab {
   display: inline-flex;

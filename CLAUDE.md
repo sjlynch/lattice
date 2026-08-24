@@ -176,6 +176,8 @@ therefore stay safely re-runnable.
 | POST | `/api/mcp-import` | Apply selected imports `{ids, project?}` → add custom-server defs + store literal keys |
 | GET | `/api/project-env?project=` | Auto-detected package-manager envs + the "fresh worktree, don't reinstall" notes (default + effective) |
 | GET | `/api/projects` | Known project roots + hashes, for agent sanity checks |
+| POST | `/api/project-init/preview` | `{project, gitignore?}` → what a first commit would capture (`{probe, isEmpty, gitignore, generated, fileCount, byteCount, truncated, largest}`). Backs the Git Setup dialog; re-POSTed (debounced) on every `.gitignore` edit |
+| POST | `/api/project-init` | `{project, gitignore?}` — `git init -b main` + starter `.gitignore` + first commit, so a non-repo folder becomes a usable Lattice project. `409 not-initable` (state ≠ `none`, or a path guard refused), `422 git-identity-missing` (git's raw stderr as `detail`), `500 git-failed`, `503 git-unavailable`. See `backend/src/projectInit/` |
 | GET | `/api/tasks?project=&status=&format=markdown` | List tasks for a project; `format=markdown` returns a round-trippable markdown document for agent editing |
 | GET | `/api/tasks/summary?project=` | Counts by task status for a project |
 | GET | `/api/tasks/worktree-modified?project=` | Files changed by each not-yet-merged task (in_progress + ready_to_merge); drives the graph's `W` worktree-highlight |
@@ -217,7 +219,7 @@ therefore stay safely re-runnable.
 | POST | `/api/workflow-runs/:runId/steps/:n/complete` | Stop-hook callback — advances to next step |
 | POST | `/api/workflow-runs/:runId/cancel` | Cancel an active workflow run |
 | GET | `/api/workflow-runs/active?project=` | Active workflow runs for a project |
-| GET | `/api/git-check?path=` | Repo probe for the QA-lane Push button |
+| GET | `/api/git-check?path=` | Repo probe for the QA-lane Push button (`hasGit` = `fs.stat` of `<path>/.git`, unchanged), plus an additive `git: ProjectGitProbe` (walk-up state: `repo`/`nested`/`bare`/`none`/`unavailable`/`error`) that backs the navbar's Git Setup chip |
 | POST | `/api/push-runs` | Start a one-off Claude push session |
 | GET | `/api/push-runs/:id` | Push-run status poll |
 | POST | `/api/push-runs/:id/done` | Push-run Stop-hook callback |

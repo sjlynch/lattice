@@ -2,7 +2,7 @@
 
 One Express `Router` per domain. Every module exports a `buildXRouter(...)`
 factory and `server/app.ts` mounts them in this order: health, search,
-settings, globalSettings, mcp, terminals, tasks, agentActivity,
+settings, globalSettings, mcp, projectInit, terminals, tasks, agentActivity,
 projectClaude, mergeRuns, postMergeHooks, pushRuns, qaRuns, workflows.
 
 ## Route map
@@ -16,6 +16,11 @@ projectClaude, mergeRuns, postMergeHooks, pushRuns, qaRuns, workflows.
 - `globalSettings.ts` — `/api/global-settings` machine-global PATCH/GET;
   applies spawn softCap live and reconciles Pi providers when changed.
 - `mcp.ts` — MCP catalog, secrets, env presence, validation, and config import.
+- `projectInit.ts` — `POST /api/project-init/preview` (what a first commit
+  would capture, re-POSTed as the user edits the `.gitignore`) and
+  `POST /api/project-init` (`git init` + first commit). Thin: validation plus
+  the `ProjectInitError.code` → 409/422/500/503 mapping; the work lives in
+  `projectInit/`. Both paths are static, so mount order is unconstrained.
 - `terminals.ts` — terminal list (debug) + `DELETE /api/terminals/:id`, plus
   **`POST /api/terminals`**: pre-create a pty via `proxyCreateSession` and return
   its `serverId`, so a sidebar-launched harness terminal joins the same spawn
@@ -33,7 +38,10 @@ projectClaude, mergeRuns, postMergeHooks, pushRuns, qaRuns, workflows.
   `/api/project-activity/:token` for user-started Claude sessions.
 - `mergeRuns.ts` — merge-all start/active/get/cancel/stash-resolved.
 - `postMergeHooks.ts` — active/recent hook read, completion callback, abort.
-- `pushRuns.ts` — git-check plus push-run start/status/done/forget.
+- `pushRuns.ts` — git-check plus push-run start/status/done/forget. `/api/git-check`
+  also returns the additive `git: ProjectGitProbe` for the Git Setup chip;
+  `hasGit` keeps its exact `fs.stat(<path>/.git)` semantics, since the Push
+  button reads it and must not start appearing for subdirectories of repos.
 - `qaRuns.ts` — QA e2e run start/status/verdict/done/forget.
 - `workflows.ts` — workflow definition CRUD, workflow-run start/cancel/
   step-complete/active, and prompt-customization start/status/complete.

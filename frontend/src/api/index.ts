@@ -16,6 +16,7 @@ export {
   forgetPushRun,
   startPushRun,
 } from './pushRuns';
+export { initProjectGit, previewProjectInit } from './projectInit';
 export {
   fetchQaRunStatus,
   forgetQaRun,
