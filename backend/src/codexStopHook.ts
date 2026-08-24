@@ -64,6 +64,27 @@ export function codexHooksJsonPath(dir: string): string {
 
 export type CodexHookOverwritePolicy = 'always' | 'if-absent';
 
+// Does this `.codex/hooks.json` look like one LATTICE wrote (for some other
+// task/run), rather than one the repo owns?
+//
+// This matters because `if-absent` protects the repo's file, and a
+// Lattice-generated hooks.json can END UP tracked on main: an agent commits it
+// (`git add -A` in a worktree older than the exclude pattern, a codex session
+// committing its own `.codex/`), the merge carries it to main, and from then on
+// every fresh worktree checks it out. `if-absent` would then leave a Stop hook
+// pointing at a COMPLETED task's `/complete` URL — worse than no backstop,
+// since it reports the wrong task finished. A file we can positively identify
+// as ours is stale by definition (the URL is per-task/per-run), so rewrite it.
+//
+// Deliberately narrow: it must contain a command targeting one of Lattice's own
+// completion endpoints. A repo's genuine hooks file won't.
+const LATTICE_CALLBACK_RE =
+  /\/api\/(?:tasks\/[^\s"']+\/complete|workflow-runs\/[^\s"']+\/complete|post-merge-hooks\/[^\s"']+\/complete)/;
+
+export function isLatticeGeneratedCodexHooks(contents: string): boolean {
+  return LATTICE_CALLBACK_RE.test(contents);
+}
+
 // Install the Stop hook into `<dir>/.codex/hooks.json`.
 //
 // `policy`:
@@ -89,7 +110,15 @@ export async function installCodexStopHook(
   try {
     const existing = await fs.readFile(file, 'utf8');
     if (existing === expected) return true; // already ours — no-op
-    if (policy === 'if-absent') return false; // a different (likely repo-owned) file — don't clobber
+    if (policy === 'if-absent' && !isLatticeGeneratedCodexHooks(existing)) {
+      return false; // a repo-owned file — don't clobber
+    }
+    if (policy === 'if-absent') {
+      console.warn(
+        `[codex-hook] replacing a stale Lattice-generated ${file} (it targets ` +
+          `another task's completion URL)`,
+      );
+    }
   } catch {
     /* absent — fall through to write */
   }

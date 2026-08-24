@@ -50,7 +50,11 @@ export async function writePostAddWorktreeFiles(
   // Codex Stop hook (the Codex analogue). `if-absent`: never clobber a
   // `.codex/hooks.json` the repo itself tracks — a Codex run then falls back to
   // the model's explicit `/complete` curl (as it did before this backstop
-  // existed). Written file is excluded from `git status` below.
+  // existed). The one exception is a file we can positively identify as
+  // LATTICE-generated (see isLatticeGeneratedCodexHooks): once one of those gets
+  // committed on main it is checked out into every fresh worktree carrying
+  // ANOTHER task's completion URL, so preserving it would report the wrong task
+  // finished. Written file is excluded from `git status` below.
   const codexHookInstalled = await installCodexCompletionHook(
     worktreePath,
     task.id,

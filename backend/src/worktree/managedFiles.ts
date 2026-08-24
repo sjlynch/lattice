@@ -92,6 +92,36 @@ export const LATTICE_GITIGNORE_ENTRIES = [
   '.pi/mcp.json',
 ] as const;
 
+// Paths shelved (moved aside) for the duration of a worktree `git merge`.
+//
+// Every one of these is a file Lattice writes into a worktree WITHOUT tracking
+// it. The moment any of them gets committed on `main` — a resolver Claude that
+// ran `git add -A`, a codex agent committing its own `.codex/`, a worktree
+// created before the exclude patterns covered the path — `git merge main` into
+// every OTHER worktree aborts with:
+//
+//   error: The following untracked working tree files would be overwritten by
+//   merge: <path> ... Aborting
+//
+// which errors that task out of the merge run with nothing a resolver agent can
+// fix (the merge never starts, so there is no conflict to resolve). Observed on
+// 2026-08-24: `.codex/hooks.json` became tracked on main and errored two tasks
+// of a ten-task run. The shelve list used to be a hardcoded two-entry array in
+// mergeOwnedFiles.ts, so every Lattice-managed file added since (the `.pi/*`
+// shims, `.codex/hooks.json`) was unprotected — hence deriving it here, next to
+// the lists it must stay in sync with.
+//
+// Shelving is UNTRACKED-ONLY (see mergeOwnedFiles.ts): a path the worktree
+// tracks is left alone so the ordinary conflict / auto-resolve path handles it.
+export const LATTICE_SHELVE_PATHS = [
+  ...LATTICE_OWNED_FILE_PATHS,
+  // Not Lattice-owned (it may be the repo's own file — see the note above on
+  // the `if-absent` install policy), but Lattice's untracked copy blocks a
+  // merge exactly the same way, so it is shelved and then restored only if the
+  // merge didn't make it tracked.
+  '.codex/hooks.json',
+] as const;
+
 // Conflict paths that always resolve to "ours" (the worktree's version).
 // Includes the STASH_CONFLICT_*.md glob — those are run/task-scoped and
 // the live one always supersedes whatever was on disk before.

@@ -7,6 +7,7 @@ import {
   renderCodexStopHookJson,
   installCodexStopHook,
   codexHooksJsonPath,
+  isLatticeGeneratedCodexHooks,
 } from '../codexStopHook.js';
 
 // The Codex Stop hook is the Codex analogue of the Claude Stop hook / Pi
@@ -94,4 +95,48 @@ test("installCodexStopHook('if-absent') no-ops (true) when our identical file is
   await installCodexStopHook(dir, URL, 'always'); // ours
   const wrote = await installCodexStopHook(dir, URL, 'if-absent'); // re-setup
   assert.equal(wrote, true, 'a matching Lattice file is recognized as ours, not a foreign file');
+});
+
+
+// Regression: a Lattice-generated `.codex/hooks.json` can end up TRACKED on
+// main (an agent commits it; the merge carries it over — this is what errored
+// two tasks of an interview_eci merge run with "untracked working tree files
+// would be overwritten by merge"). Every fresh worktree then checks it out, and
+// a strict `if-absent` would leave a Stop hook pointing at a COMPLETED task's
+// `/complete` URL — reporting the wrong task finished. A file we can positively
+// identify as Lattice's is stale by definition, so it gets rewritten; anything
+// else is still protected.
+
+test('isLatticeGeneratedCodexHooks recognizes our completion URLs and nothing else', () => {
+  assert.equal(isLatticeGeneratedCodexHooks(renderCodexStopHookJson(URL)), true);
+  assert.equal(
+    isLatticeGeneratedCodexHooks(
+      renderCodexStopHookJson('http://127.0.0.1:5184/api/workflow-runs/wfrun_1/steps/0/complete'),
+    ),
+    true,
+  );
+  assert.equal(
+    isLatticeGeneratedCodexHooks('{"hooks":{"Stop":[{"hooks":[{"command":"npm run lint"}]}]}}'),
+    false,
+    "a repo's own hooks file must not be mistaken for ours",
+  );
+  assert.equal(isLatticeGeneratedCodexHooks('{"hooks":{"Stop":[]}}'), false);
+});
+
+test("installCodexStopHook('if-absent') replaces a STALE Lattice-generated file", async (t) => {
+  const dir = await tmpDir();
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  // A hooks.json Lattice wrote for a DIFFERENT task, now tracked on main and
+  // checked out into this fresh worktree.
+  const stale = renderCodexStopHookJson(
+    'http://127.0.0.1:5184/api/tasks/t_old/complete?source=codex-stop-hook-task-complete',
+  );
+  const file = codexHooksJsonPath(dir);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, stale, 'utf8');
+
+  const wrote = await installCodexStopHook(dir, URL, 'if-absent');
+  assert.equal(wrote, true, 'a stale Lattice file must be rewritten, not preserved');
+  assert.equal(await fs.readFile(file, 'utf8'), renderCodexStopHookJson(URL));
 });

@@ -11,12 +11,15 @@ export async function runWorktreeMerge(
   mainHeadSha: string,
   mergeMessage: string,
 ): Promise<ExecResult> {
-  // Lattice-managed files (LATTICE_TASK.md, MERGE_INSTRUCTIONS.md) are
-  // written into each worktree root and must stay untracked. If a prior
-  // resolver Claude accidentally committed one via `git add .`, every
-  // subsequent worktree merge fails with "untracked file would be
-  // overwritten". Move them aside for the duration of the merge so git
-  // doesn't see them, then restore whatever state they were in.
+  // Lattice-managed files (LATTICE_SHELVE_PATHS — LATTICE_TASK.md,
+  // MERGE_INSTRUCTIONS.md, the `.claude`/`.pi`/`.codex` hook + shim files) are
+  // written into each worktree and must stay untracked. If any of them got
+  // committed on main — a resolver Claude's `git add .`, an agent committing
+  // its own `.codex/`, a worktree older than the exclude pattern — every
+  // subsequent worktree merge ABORTS with "untracked working tree files would
+  // be overwritten by merge" before producing a single conflict, so no resolver
+  // agent can recover it. Move Lattice's untracked copies aside for the
+  // duration of the merge, then restore them.
   const shelved = await shelveLatticeManagedFiles(worktreePath);
   // Reset local changes on tracked owned files so git doesn't abort with
   // "Your local changes to <file> would be overwritten by merge". The

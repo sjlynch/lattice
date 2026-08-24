@@ -8,22 +8,41 @@ import {
   installPiCompletionExtension as installPiCompletionExtensionShared,
 } from '../piExtension.js';
 import { installCodexStopHook } from '../codexStopHook.js';
+import { exec } from './exec.js';
+import { appendMissingExcludeEntries } from './projectGuards/repoExclude.js';
 
-// Write patterns to the worktree-local git exclude file so these files
-// are invisible to `git status` inside the worktree. The exclude file
-// lives in the worktree's gitdir (resolved from the .git pointer file)
-// and is never committed — unlike .gitignore which is part of the tree.
+// Make Lattice's own files invisible to `git status` inside a worktree, so an
+// agent's `git add -A` can never stage (and then commit) them.
+//
+// THE TARGET IS THE COMMON GITDIR, NOT THE WORKTREE'S OWN.
+// This used to resolve the `.git` pointer file to
+// `<repo>/.git/worktrees/<name>/` and append there — a file git NEVER READS.
+// `info/exclude` is one of git's "common" files: it is only ever read from
+// `git rev-parse --git-common-dir` (verified — `git check-ignore` in a linked
+// worktree honours the common file and ignores the per-worktree one). So every
+// pattern Lattice wrote was inert, and `git status` in a worktree kept showing
+// `?? LATTICE_TASK.md`, `?? .codex/hooks.json`. That is how a Lattice-generated
+// `.codex/hooks.json` got committed onto main in the first place, which then
+// aborted `git merge` in every other worktree with "untracked working tree
+// files would be overwritten by merge" — the failure this whole chain of
+// defences exists to prevent. `.claude/settings.local.json` looked fine only
+// because `ensureLatticeGitignore` lists it in the tracked `.gitignore` too.
+//
+// The common exclude is shared by every worktree AND the main checkout, so the
+// append must be idempotent (it is — appendMissingExcludeEntries skips entries
+// already present) rather than the blind append this used to do.
+//
+// Read-only git on a worktree path ⇒ plain `exec`, not `projectGit`.
 export async function writeWorktreeExclude(worktreePath: string, patterns: string[]): Promise<void> {
   try {
-    const gitPointer = await fs.readFile(path.join(worktreePath, '.git'), 'utf8');
-    const gitDirRelative = gitPointer.trim().replace(/^gitdir:\s*/i, '');
-    const gitDir = path.resolve(worktreePath, gitDirRelative);
-    const infoDir = path.join(gitDir, 'info');
-    await fs.mkdir(infoDir, { recursive: true });
-    await fs.appendFile(
-      path.join(infoDir, 'exclude'),
-      `\n# Lattice-managed — do not commit\n${patterns.join('\n')}\n`,
-      'utf8',
+    const r = await exec('git', ['rev-parse', '--git-common-dir'], worktreePath);
+    if (r.code !== 0 || !r.stdout.trim()) {
+      console.warn('[worktree] could not resolve the common gitdir for excludes');
+      return;
+    }
+    await appendMissingExcludeEntries(
+      path.resolve(worktreePath, r.stdout.trim()),
+      patterns,
     );
   } catch (err) {
     // Non-fatal: the merge path already handles the shelve-and-restore
