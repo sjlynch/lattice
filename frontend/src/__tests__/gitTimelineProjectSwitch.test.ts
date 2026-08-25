@@ -112,6 +112,7 @@ test('a project switch (history null) injects no ghosts into the new project', (
     isRepo: true as const,
     commits: [],
     uncommitted: { changes: [{ path: 'a-only-deleted.ts', status: 'D' as const }] },
+    deletedPaths: ['a-only-deleted.ts'],
   } as unknown as Parameters<typeof prepareGhostMerge>[1];
   const leaked = prepareGhostMerge(bData, aHistory);
   assert.ok(

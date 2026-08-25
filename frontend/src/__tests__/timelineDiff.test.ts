@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { GraphNode, ScanResult } from '../api/types/scan.ts';
-import type { GitCommit, GitUncommitted } from '../api/types/gitHistory.ts';
 import {
   GHOST_PREFIX,
   relForward,
@@ -14,19 +13,6 @@ function dir(path: string, id = path): GraphNode {
 function file(path: string, ext?: string): GraphNode {
   return { id: path, name: path.split(/[\\/]/).pop() || path, path, kind: 'file', ext };
 }
-function commit(changes: GitCommit['changes']): GitCommit {
-  return {
-    sha: 'deadbeefcafe',
-    shortSha: 'deadbee',
-    subject: 'change',
-    authorName: 'me',
-    date: 0,
-    changes,
-  };
-}
-function noUncommitted(): GitUncommitted {
-  return { changes: [] };
-}
 
 test('relForward normalizes a Windows absolute path under the root to a forward-relative path', () => {
   assert.equal(relForward('C:\\repo\\src\\components\\a.ts', 'C:\\repo'), 'src/components/a.ts');
@@ -37,13 +23,13 @@ test('relForward normalizes a Windows absolute path under the root to a forward-
 });
 
 test('relForward passes through paths not under the root, only swapping backslashes', () => {
-  // No root → just normalize separators.
+  // No root -> just normalize separators.
   assert.equal(relForward('C:\\repo\\a.ts', ''), 'C:/repo/a.ts');
-  // Under a different drive/prefix → not made relative, just normalized.
+  // Under a different drive/prefix -> not made relative, just normalized.
   assert.equal(relForward('D:\\other\\x.ts', 'C:\\repo'), 'D:/other/x.ts');
 });
 
-test('buildGhostGraphData ghosts only history paths missing from the scan (Windows scan)', () => {
+test('buildGhostGraphData mints one ghost per backend-reported deleted path (Windows scan)', () => {
   const scan: ScanResult = {
     root: 'C:\\repo',
     nodes: [
@@ -54,18 +40,8 @@ test('buildGhostGraphData ghosts only history paths missing from the scan (Windo
     ],
     links: [],
   };
-  const commits: GitCommit[] = [
-    commit([
-      { path: 'src/keep.ts', status: 'M' }, // present in scan → not ghosted
-      { path: 'src/old/deleted.TS', status: 'D' },
-    ]),
-    // Same historical path in a second commit must not mint a second ghost.
-    commit([{ path: 'src/old/deleted.TS', status: 'A' }]),
-  ];
-  // ...and again in the uncommitted set → still a single ghost.
-  const uncommitted: GitUncommitted = { changes: [{ path: 'src/old/deleted.TS', status: 'M' }] };
 
-  const { ghostNodes, ghostLinks } = buildGhostGraphData(scan, commits, uncommitted);
+  const { ghostNodes, ghostLinks } = buildGhostGraphData(scan, ['src/old/deleted.TS']);
 
   assert.equal(ghostNodes.length, 1);
   const ghost = ghostNodes[0];
@@ -85,17 +61,47 @@ test('buildGhostGraphData ghosts only history paths missing from the scan (Windo
   });
 });
 
+test('buildGhostGraphData never ghosts a path that is still in the scan', () => {
+  // Scan and history are fetched independently, so a path can briefly appear in
+  // both. The scan wins: a node that exists must not also get a ghost twin.
+  const scan: ScanResult = {
+    root: 'C:\\repo',
+    nodes: [dir('C:\\repo'), dir('C:\\repo\\src'), file('C:\\repo\\src\\a.ts', '.ts')],
+    links: [],
+  };
+  const { ghostNodes, ghostLinks } = buildGhostGraphData(scan, ['src/a.ts']);
+  assert.deepEqual(ghostNodes, []);
+  assert.deepEqual(ghostLinks, []);
+});
+
+test('buildGhostGraphData dedupes a repeated deleted path', () => {
+  const scan: ScanResult = { root: 'C:\\repo', nodes: [dir('C:\\repo')], links: [] };
+  const { ghostNodes } = buildGhostGraphData(scan, ['gone.ts', 'gone.ts']);
+  assert.equal(ghostNodes.length, 1);
+});
+
+test('buildGhostGraphData produces nothing for an empty deleted set', () => {
+  // The common case for a healthy repo - and the regression that motivated the
+  // backend-computed set: tracked images/fonts/.ico/.gitignore are absent from
+  // the extension-filtered scan but were never deleted, and used to be drawn as
+  // deletions on the commit that added them.
+  const scan: ScanResult = {
+    root: 'C:\\repo',
+    nodes: [dir('C:\\repo'), file('C:\\repo\\app\\page.tsx', '.tsx')],
+    links: [],
+  };
+  const { ghostNodes, ghostLinks } = buildGhostGraphData(scan, []);
+  assert.deepEqual(ghostNodes, []);
+  assert.deepEqual(ghostLinks, []);
+});
+
 test('buildGhostGraphData walks up to the nearest existing ancestor directory', () => {
   const scan: ScanResult = {
     root: 'C:\\repo',
     nodes: [dir('C:\\repo'), dir('C:\\repo\\src')], // no src/old dir
     links: [],
   };
-  const { ghostLinks } = buildGhostGraphData(
-    scan,
-    [commit([{ path: 'src/old/deleted.ts', status: 'D' }])],
-    noUncommitted(),
-  );
+  const { ghostLinks } = buildGhostGraphData(scan, ['src/old/deleted.ts']);
   assert.deepEqual(ghostLinks, [
     { source: 'C:\\repo\\src', target: `${GHOST_PREFIX}src/old/deleted.ts` },
   ]);
@@ -107,16 +113,10 @@ test('buildGhostGraphData falls back to the scan root when no ancestor dir exist
     nodes: [dir('C:\\repo')], // only the root dir
     links: [],
   };
-  const { ghostNodes, ghostLinks } = buildGhostGraphData(
-    scan,
-    [
-      commit([
-        { path: 'src/old/deleted.ts', status: 'D' }, // nested, no ancestor → root
-        { path: 'Makefile', status: 'D' }, // no slash at all → root
-      ]),
-    ],
-    noUncommitted(),
-  );
+  const { ghostNodes, ghostLinks } = buildGhostGraphData(scan, [
+    'src/old/deleted.ts', // nested, no ancestor -> root
+    'Makefile', // no slash at all -> root
+  ]);
   assert.equal(ghostNodes.length, 2);
   const bySource = new Map(ghostLinks.map((l) => [l.target, l.source]));
   assert.equal(bySource.get(`${GHOST_PREFIX}src/old/deleted.ts`), 'C:\\repo');
@@ -124,19 +124,4 @@ test('buildGhostGraphData falls back to the scan root when no ancestor dir exist
   // A file with no extension yields an empty ext.
   const topLevel = ghostNodes.find((n) => n.path === 'Makefile')!;
   assert.equal(topLevel.ext, '');
-});
-
-test('buildGhostGraphData produces no ghosts when every history path is still in the scan', () => {
-  const scan: ScanResult = {
-    root: 'C:\\repo',
-    nodes: [dir('C:\\repo'), dir('C:\\repo\\src'), file('C:\\repo\\src\\a.ts', '.ts')],
-    links: [],
-  };
-  const { ghostNodes, ghostLinks } = buildGhostGraphData(
-    scan,
-    [commit([{ path: 'src/a.ts', status: 'M' }])],
-    { changes: [{ path: 'src/a.ts', status: 'M' }] },
-  );
-  assert.deepEqual(ghostNodes, []);
-  assert.deepEqual(ghostLinks, []);
 });

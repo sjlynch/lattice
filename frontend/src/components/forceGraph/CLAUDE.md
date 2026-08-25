@@ -41,10 +41,17 @@ label physics in `labelPhysics/CLAUDE.md`.
   tooltip; writes its own `transform` so cursor moves don't re-render React.
 - `TimelineScrubber.tsx` (+ `timelineRange`/`useTimelineScrubberDrag`/`timelineDiff`/
   `timelineReset`) — git timeline scrubber UI + range math. `timelineDiff`'s
-  `buildGhostGraphData` mints one **ghost node per historical path missing from
-  the current scan** (dedup'd across commits + uncommitted changes; paths still
-  present in the scan are never ghosted), all in forward-slash relative-to-root
-  space via `relForward`. **Parent-linking invariant:** a ghost links to the
+  `buildGhostGraphData` mints one **ghost node per path in
+  `GitHistoryResult.deletedPaths`** — the backend's `git ls-files`-derived set of
+  history paths that no longer exist (`backend/src/gitHistory/deletedPaths.ts`) —
+  all in forward-slash relative-to-root space via `relForward`. **Deriving that
+  set here is not possible and must not be reattempted:** the scan is filtered to
+  `SOURCE_EXTS` while `git log` is not, so "missing from the scan" ghosted every
+  tracked image/font/`.ico`/`.gitignore` and drew it as deleted on the commit
+  that added it; and "newest status in log order is `D`" is no better, since
+  `git log` sorts by date across branches and Lattice branches constantly.
+  Paths still present in the scan are skipped as a consistency guard (scan and
+  history are fetched independently). **Parent-linking invariant:** a ghost links to the
   nearest existing *ancestor directory* node — walking `a/b/c` → `a/b` → `a` —
   and falls back to the scan-root node id when none exist, so deleted/renamed
   files always attach somewhere real rather than dangling. See

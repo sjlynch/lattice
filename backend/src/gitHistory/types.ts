@@ -27,6 +27,13 @@ export type GitHistoryResult = {
   // the scrubber.
   commits: GitCommit[];
   uncommitted: GitUncommitted;
+  // The subset of the paths mentioned above that no longer exist in the tree
+  // (see gitHistory/deletedPaths.ts). This is the authoritative ghost-node set
+  // for the timeline: the frontend cannot derive it, because the scan is
+  // extension-filtered and `git log` order isn't a reliable stand-in for
+  // "current state" once branches are involved. Sorted; empty when the folder
+  // isn't a git repo or the tracked-file probe failed.
+  deletedPaths: string[];
   // Compact fingerprint of the current repo state (HEAD + dirty set); see
   // gitHistory/signature.ts. The frontend uses it to dedupe the /ws/git-status
   // live-refresh (skip a re-fetch when the pushed signature matches the last

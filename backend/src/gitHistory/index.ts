@@ -6,7 +6,9 @@
 
 import path from 'node:path';
 import { exec } from '../worktree/exec.js';
+import { computeDeletedPaths } from './deletedPaths.js';
 import { gitLogFormat, parseGitLogNameStatus } from './parseLog.js';
+import { normalizeGitPath } from './parserShared.js';
 import { parseGitStatusPorcelain } from './parseStatus.js';
 import { computeStatusSignature } from './signature.js';
 import type { GitCommit, GitHistoryResult, GitUncommitted } from './types.js';
@@ -24,6 +26,7 @@ export type {
 const GIT_REVPARSE_TIMEOUT_MS = 4000;
 const GIT_LOG_TIMEOUT_MS = 6000;
 const GIT_STATUS_TIMEOUT_MS = 4000;
+const GIT_LS_FILES_TIMEOUT_MS = 4000;
 
 function clampLogLimit(limit: number): number {
   return Math.max(1, Math.min(50, Math.floor(limit)));
@@ -75,6 +78,24 @@ async function readCommits(repoRoot: string, limit: number): Promise<GitCommit[]
   return parseGitLogNameStatus(r.stdout);
 }
 
+// Every path git currently tracks, i.e. the index — so staged adds are in and
+// staged deletes are out. Returns null (not an empty Set) when git fails, so
+// the caller can tell "nothing is tracked" from "we don't know"; see
+// computeDeletedPaths for why that distinction matters.
+async function readTrackedPaths(repoRoot: string): Promise<Set<string> | null> {
+  // `-z` is NUL-separated AND turns off path quoting, so non-ASCII names arrive
+  // literally — matching what the log and status paths already produce.
+  const r = await exec('git', ['ls-files', '-z'], repoRoot, {
+    timeoutMs: GIT_LS_FILES_TIMEOUT_MS,
+  });
+  if (r.code !== 0) return null;
+  const out = new Set<string>();
+  for (const p of r.stdout.split('\0')) {
+    if (p) out.add(normalizeGitPath(p));
+  }
+  return out;
+}
+
 async function readUncommitted(repoRoot: string): Promise<GitUncommitted> {
   const r = await exec('git', ['status', '--porcelain=v1', '-z'], repoRoot, {
     timeoutMs: GIT_STATUS_TIMEOUT_MS,
@@ -90,15 +111,28 @@ export async function getGitHistory(
 ): Promise<GitHistoryResult> {
   const abs = path.resolve(repoRoot);
   if (!(await isGitRepo(abs))) {
-    return { isRepo: false, commits: [], uncommitted: { changes: [] }, signature: '' };
+    return {
+      isRepo: false,
+      commits: [],
+      uncommitted: { changes: [] },
+      deletedPaths: [],
+      signature: '',
+    };
   }
   // Fetch in parallel — they're independent git invocations. The signature is
   // computed the same way the /ws/git-status watcher computes it, so the
   // frontend can dedupe a live refresh against the value it last fetched here.
-  const [commits, uncommitted, signature] = await Promise.all([
+  const [commits, uncommitted, tracked, signature] = await Promise.all([
     readCommits(abs, limit),
     readUncommitted(abs),
+    readTrackedPaths(abs),
     computeStatusSignature(abs),
   ]);
-  return { isRepo: true, commits, uncommitted, signature };
+  return {
+    isRepo: true,
+    commits,
+    uncommitted,
+    deletedPaths: computeDeletedPaths(commits, uncommitted, tracked),
+    signature,
+  };
 }

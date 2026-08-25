@@ -202,7 +202,9 @@ export function prepareGhostMerge(
   let ghostNodes: GraphNode[] = [];
   let ghostLinks: GraphLink[] = [];
   if (history && history.isRepo) {
-    const built = buildGhostGraphData(data, history.commits, history.uncommitted);
+    // `?? []` covers the dev-only window where a hot-reloaded frontend talks to
+    // a backend that hasn't restarted yet and so omits the field.
+    const built = buildGhostGraphData(data, history.deletedPaths ?? []);
     ghostNodes = built.ghostNodes;
     ghostLinks = built.ghostLinks;
     for (const g of built.ghostNodes) ghostIds.add(g.id);

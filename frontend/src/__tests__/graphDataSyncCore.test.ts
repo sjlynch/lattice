@@ -21,7 +21,13 @@ function fileNode(id: string, overrides: Partial<GraphNode> = {}): GraphNode {
 }
 
 function noHistory(): GitHistoryResult {
-  return { isRepo: false, commits: [], uncommitted: { changes: [] }, signature: '' };
+  return {
+    isRepo: false,
+    commits: [],
+    uncommitted: { changes: [] },
+    deletedPaths: [],
+    signature: '',
+  };
 }
 
 test('linkEndpointId reads strings, object ids, and falls back to path', () => {
@@ -163,7 +169,7 @@ test('prepareGhostMerge is a no-op merge without repo history', () => {
   assert.deepEqual(mergedLinks, data.links);
 });
 
-test('prepareGhostMerge adds ghosts for history paths missing from the scan', () => {
+test('prepareGhostMerge adds ghosts for the backend-reported deleted paths', () => {
   const data: ScanResult = {
     root: '/repo',
     nodes: [{ id: '/repo', name: 'repo', path: '/repo', kind: 'dir' }],
@@ -182,6 +188,7 @@ test('prepareGhostMerge adds ghosts for history paths missing from the scan', ()
       },
     ],
     uncommitted: { changes: [] },
+    deletedPaths: ['gone.ts'],
     signature: 'sig',
   };
   const { ghostIds, mergedNodes, mergedLinks } = prepareGhostMerge(data, history);

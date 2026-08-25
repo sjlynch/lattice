@@ -1,8 +1,8 @@
 // Pure helpers for the timeline scrubber. Given the loaded git history
 // and a [leftIdx, rightIdx] tick range (rightmost tick = working tree),
 // derive the per-file "change kind" map that drives the rings, plus a
-// stable list of ghost nodes for files that no longer exist in the
-// current scan but appeared in the loaded history.
+// stable list of ghost nodes for the files the backend reports as deleted
+// (`GitHistoryResult.deletedPaths`).
 //
 // All matching is done in forward-slash relative-to-root path space so
 // it works the same on Windows and POSIX.
@@ -81,14 +81,26 @@ export function computeChangeMap(
   return out;
 }
 
-// Build ghost nodes for paths that appear anywhere in the loaded
-// history but aren't in the current scan. We do this once per (scan,
-// history) pair so that scrubbing doesn't allocate or perturb the
-// physics — visibility is later toggled via nodeVisibility.
+// Build ghost nodes for the files git says were deleted. `deletedPaths` comes
+// from the backend (`gitHistory/deletedPaths.ts`), which derives it from
+// `git ls-files` — the tree's actual contents. We do this once per (scan,
+// history) pair so that scrubbing doesn't allocate or perturb the physics —
+// visibility is later toggled via nodeVisibility.
+//
+// This used to ghost every history path missing from the current scan, which
+// was wrong: the scan collects only `SOURCE_EXTS` files while
+// `git log --name-status` is unfiltered, so every tracked image, font, `.ico`,
+// and extension-less name (`.gitignore` — `path.extname` returns '' for a
+// leading-dot basename) got minted as a ghost. `decideSpriteState`
+// short-circuits ghosts to the deleted rendering (grey disc + red ring)
+// regardless of change kind, so scrubbing to the commit that ADDED those assets
+// drew every one of them as a deletion.
+//
+// The scan check stays as a cheap consistency guard — scan and history are
+// fetched independently, so a file can briefly be in both.
 export function buildGhostGraphData(
   scan: ScanResult,
-  commits: GitCommit[],
-  uncommitted: GitUncommitted,
+  deletedPaths: string[],
 ): { ghostNodes: (GraphNode & { __ghost: true })[]; ghostLinks: GraphLink[] } {
   const existingFileRel = new Set<string>();
   const existingDirRel = new Map<string, string>(); // rel -> id
@@ -98,12 +110,10 @@ export function buildGhostGraphData(
     else existingFileRel.add(rel);
   }
   const seen = new Set<string>();
-  function add(rel: string) {
-    if (existingFileRel.has(rel)) return;
+  for (const rel of deletedPaths) {
+    if (existingFileRel.has(rel)) continue;
     seen.add(rel);
   }
-  for (const c of commits) for (const ch of c.changes) add(ch.path);
-  for (const ch of uncommitted.changes) add(ch.path);
 
   const ghostNodes: (GraphNode & { __ghost: true })[] = [];
   const ghostLinks: GraphLink[] = [];

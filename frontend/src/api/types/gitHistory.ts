@@ -23,6 +23,11 @@ export type GitHistoryResult = {
   isRepo: boolean;
   commits: GitCommit[];
   uncommitted: GitUncommitted;
+  // History paths that no longer exist in the tree — computed by the backend
+  // from `git ls-files` (see backend/src/gitHistory/deletedPaths.ts), because
+  // neither the scan (extension-filtered) nor `git log` order (date-sorted
+  // across branches) can answer it here. This IS the timeline's ghost-node set.
+  deletedPaths: string[];
   // Compact fingerprint of the current repo state (HEAD + dirty set). Used to
   // dedupe the /ws/git-status live-refresh against the value last fetched here.
   // Empty string when the folder isn't a git repo.

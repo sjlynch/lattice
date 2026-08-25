@@ -24,6 +24,7 @@ const EMPTY_HISTORY: GitHistoryResult = {
   isRepo: false,
   commits: [],
   uncommitted: { changes: [] },
+  deletedPaths: [],
   signature: '',
 };
 
