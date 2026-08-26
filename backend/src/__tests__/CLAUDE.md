@@ -208,3 +208,17 @@ cache, whose home path binds once at module load. Keep tests as plain
   since a worktree shares the project repo's config file), the
   `git log -1 --format="%an <%ae>"` that tells it where to FIND an identity,
   and the `git -c user.name=…` form that persists nothing.
+- `startupTerminalsShape.test.ts` — the shape boundary in
+  `userSettings/storage.ts`. `PATCH /api/settings` types its body as
+  `Partial<UserSettings>` and agents write it directly, so the type guarantees
+  nothing at runtime: an agent-guessed `{name, command}` row (no `id`, no
+  `label`) was stored verbatim and the Settings dialog then threw on
+  `label.trim()`, taking that project's settings permanently out of reach of the
+  only UI that could repair the row. Covers healing on read (the interview_eci
+  row verbatim, with `name` honoured as a label alias rather than the row being
+  discarded), coercion on write, junk/commandless/non-array inputs, an explicit
+  `id` surviving untouched, and a patch that omits the field leaving the saved
+  list alone. The load-bearing case is **id stability across reads** — the
+  frontend matches a live startup pty to its config by `id`, so a minted id that
+  changed per read would spawn a duplicate terminal on every reload; its sibling
+  pins that two identical id-less rows still get distinct ids.

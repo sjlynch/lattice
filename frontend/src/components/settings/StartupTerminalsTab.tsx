@@ -16,12 +16,20 @@ function makeId(): string {
   return `st_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// Field access is defensive because this ran on data the UI didn't author: a
+// row hand-written through `PATCH /api/settings` (agents do this) that guessed
+// `{name, command}` had no `label`, and `t.label.trim()` threw during the
+// dirty-check the dialog runs on open — so the Settings dialog for that project
+// wouldn't render at all, and the one UI that could have repaired the row was
+// the one the row had broken. The backend now coerces the shape at its I/O
+// boundary (userSettings/storage.ts), which is the real fix; this is the guard
+// that keeps a future bad row a bad row instead of an unopenable dialog.
 export function cleanStartupTerminals(terminals: StartupTerminal[]): StartupTerminal[] {
   return terminals
     .map((t) => ({
-      id: t.id,
-      label: t.label.trim() || 'startup',
-      command: t.command.trim(),
+      id: t?.id || makeId(),
+      label: t?.label?.trim() || 'startup',
+      command: t?.command?.trim() ?? '',
     }))
     .filter((t) => t.command.length > 0);
 }
