@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { ensureLatticeApiDoc } from '../latticeApiDocs.js';
 import type { CreateOpts } from './sessionTypes.js';
 import { applyFreshWindowsPath } from './windowsPath.js';
-import { applyClaudeOverheadEnv } from './envSetup.js';
+import { applyClaudeOverheadEnv, scrubInheritedNpmEnv } from './envSetup.js';
 import {
   configureCodexProjectMcp,
   configureCodexProjectTrust,
@@ -87,6 +87,12 @@ export function buildSessionLaunchContext(
   const baseEnv: { [key: string]: string } = {
     ...(process.env as { [key: string]: string }),
   };
+  // Drop the npm run-script context Lattice's own boot leaked in: `npm_config_prefix`
+  // (which would send `npm install -g` in this terminal into Lattice's backend)
+  // and the `node_modules/.bin` PATH entries that lent every terminal Lattice's
+  // own `tsc`/`playwright`. Runs BEFORE applyFreshWindowsPath so that on
+  // Windows the registry PATH is still merged over whatever is left.
+  scrubInheritedNpmEnv(baseEnv);
   applyFreshWindowsPath(baseEnv);
   applyClaudeOverheadEnv(baseEnv);
 

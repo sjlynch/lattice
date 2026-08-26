@@ -14,17 +14,21 @@
 // handled by the existing client-side retry/reconnect logic.
 
 import { killTree, startChild } from './orchestrate/children.mjs';
-import { COLORS, HEALTH_TIMEOUT_MS, HEALTH_URL, note } from './orchestrate/config.mjs';
+import {
+  BACKEND_DIR,
+  COLORS,
+  FRONTEND_DIR,
+  HEALTH_TIMEOUT_MS,
+  HEALTH_URL,
+  note,
+} from './orchestrate/config.mjs';
 import { recordExit } from './orchestrate/devLog.mjs';
 import { waitForHealth } from './orchestrate/health.mjs';
 
 note('starting backend...');
-const backend = startChild('backend', COLORS.backend, [
-  '--prefix',
-  'backend',
-  'run',
-  'dev',
-]);
+const backend = startChild('backend', COLORS.backend, ['run', 'dev'], {
+  cwd: BACKEND_DIR,
+});
 
 let shuttingDown = false;
 let frontend = null;
@@ -63,12 +67,10 @@ if (!ready) {
   note('backend healthy. starting frontend...');
 }
 
-frontend = startChild(
-  'frontend',
-  COLORS.frontend,
-  ['--prefix', 'frontend', 'run', 'dev'],
-  { filterViteProxy: true },
-);
+frontend = startChild('frontend', COLORS.frontend, ['run', 'dev'], {
+  cwd: FRONTEND_DIR,
+  filterViteProxy: true,
+});
 
 frontend.on('exit', (code) => {
   const log = recordExit('frontend', code ?? 0, { expected: shuttingDown });

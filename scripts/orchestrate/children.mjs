@@ -4,9 +4,14 @@ import { npmCmd, ROOT } from './config.mjs';
 import { stderrSink, stdoutSink } from './consoleSink.mjs';
 import { prefixLines } from './logFilter.mjs';
 
-export function startChild(label, color, args, { filterViteProxy = false } = {}) {
+export function startChild(
+  label,
+  color,
+  args,
+  { filterViteProxy = false, cwd = ROOT } = {},
+) {
   const child = spawn(npmCmd, args, {
-    cwd: ROOT,
+    cwd,
     stdio: ['inherit', 'pipe', 'pipe'],
     shell: process.platform === 'win32',
     env: process.env,

@@ -48,7 +48,34 @@ owns the node-pty processes.
 - `envSetup.ts` — `applyClaudeOverheadEnv`: default-in the
   `DISABLE_AUTOUPDATER`/`DISABLE_TELEMETRY`/… vars so each spawned Claude skips
   per-launch overhead (multiplied under fan-out). Defaults only — never
-  overrides a value the user set.
+  overrides a value the user set. Also `scrubInheritedNpmEnv`: strip the npm
+  run-script context Lattice's own boot leaks in. **Lattice's backend is itself
+  an npm run-script and every pty inherits the backend's environment wholesale**,
+  so `npm_config_prefix` — npm's "where global items get installed" — reached
+  every terminal in every project and silently redirected `npm install -g` into
+  `<latticeRoot>/backend`: shims landed beside the repo's own files (untracked,
+  outside the `node_modules/` ignore rule), the package was NOT on PATH so it
+  looked like it hadn't installed, and the next `npm install` there pruned it as
+  extraneous. `scripts/orchestrate/config.mjs` removes the cause (cwd, not
+  `npm --prefix`); this is the boundary defence. It is deliberately **not** a
+  blanket `npm_config_*` scrub — `registry`/`cache`/`_authToken` may be the
+  user's own ambient config, and dropping those would break private-registry
+  installs inside Lattice terminals only. It also reverses npm's PATH injection
+  (npm prepends `node_modules/.bin` for the package it runs and every ancestor),
+  which had lent every terminal Lattice's own `tsc`/`tsx`/`esbuild`/`playwright`
+  — not overriding a correct tool but inventing one, so an agent in a project
+  that hasn't installed TypeScript got a meaningless clean type-check instead of
+  "command not found". Rather than guess which entries look like Lattice's (a
+  hardcoded layout that can drift), it derives npm's exact injected set from
+  `npm_config_local_prefix` and removes only those — no knowledge of where
+  Lattice is installed, and a correct no-op when Lattice was started without npm.
+  All of it runs before `applyFreshWindowsPath` so the registry PATH is still
+  merged over what's left. npm re-injects the `.bin` entries for any script IT
+  runs, so `npm run` is unaffected; only commands typed at the prompt change.
+  `__tests__/inheritedNpmEnv.test.ts` covers both halves and ends with an
+  end-to-end guard that drives the real `buildSessionLaunchContext` against a
+  poisoned `process.env` — it fails if the call is removed, reordered after
+  `applyFreshWindowsPath`, or if a new leak of the same shape appears.
 - `codexTrust.ts` — recognizes Lattice-started `codex` initial commands and
   injects Codex's one-shot `--config projects.<cwd>.trust_level='trusted'`
   override. The dynamic TOML value rides in the child PTY environment with
