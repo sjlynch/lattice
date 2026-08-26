@@ -89,6 +89,28 @@ shared `userSettings.json` fetch:
   `useSyncedRef` (a ref kept in sync with a value, for stable event handlers) ·
   `useStartupTerminalSync` (per-project startup-terminal list).
 
+### Folder-stamped state (read before adding a slice hook)
+
+`useUserSettings` state is a fetch result **stamped with the folder it came
+from**, and `loaded` is derived from that stamp *during render* — never set by
+an effect. An effect runs after the render that changed `activeFolder`, so the
+flag-based version reported `loaded: true` alongside the PREVIOUS project's
+settings for one commit.
+
+`useStartupTerminalSync` stamps its list the same way, and a mismatched stamp
+reads as an EMPTY list rather than the last project's. Holding the old value is
+harmless for a width but not here: Sidebar's spawn effect keys on
+`activeFolder`, so that single commit paired the new project's cwd with the old
+project's commands and launched project A's dev server inside project B
+(2026-08-26 — apply_digital's Next server turning up in interview_eci). It
+looked intermittent only because whether the pty appeared came down to which
+fetch resolved first.
+
+So: a new slice hook must treat a folder mismatch as "not loaded yet", never as
+"keep the previous value" — and anything that *acts* on a slice (spawns, writes,
+posts) has to be keyed so it can't fire on a mismatched pair. Pinned by
+`__tests__/startupTerminalProjectSwitch.test.ts`.
+
 ## Other shared hooks
 
 - `useHarnessAvailability()` — live `{claude, pi, codex}` map (via

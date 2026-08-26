@@ -1,5 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { fetchUserSettings, type UserSettings } from '../api';
+
+// Stable identity for the no-project case so a consumer that keys an effect on
+// `settings` doesn't re-run on every render.
+const NO_PROJECT_SETTINGS: UserSettings = {};
 
 export type UserSettingsResult = {
   // The fetched settings for the current `activeFolder`, or `null` until the
@@ -24,35 +28,35 @@ export type UserSettingsResult = {
 // while a different folder was active (same freshness as the old per-hook
 // fetches).
 export function useUserSettings(activeFolder: string): UserSettingsResult {
-  const [result, setResult] = useState<UserSettingsResult>(() =>
-    activeFolder
-      ? { settings: null, loaded: false }
-      : { settings: {}, loaded: true },
-  );
+  // What's in state is a fetch RESULT stamped with the folder it came from —
+  // never bare settings. "Loading" is then derived during render by comparing
+  // that stamp with the live `activeFolder`, instead of being a flag an effect
+  // has to set. That distinction is the whole point: an effect runs AFTER the
+  // render that changed `activeFolder`, so for one commit every consumer saw
+  // `loaded: true` paired with the PREVIOUS project's settings. Sidebar width
+  // and terminal-launch defaults only flickered, but App's startup-terminal
+  // list is read by an effect keyed on `activeFolder` — which fired in exactly
+  // that commit and spawned project A's `npm run dev` inside project B
+  // (2026-08-26, apply_digital's Next server appearing in interview_eci).
+  // Deriving it makes the mismatched pairing unrepresentable.
+  const [fetched, setFetched] = useState<{
+    folder: string;
+    settings: UserSettings;
+  } | null>(null);
 
   useEffect(() => {
+    if (!activeFolder) return;
     let cancelled = false;
-
-    if (!activeFolder) {
-      setResult({ settings: {}, loaded: true });
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    // New folder: mark as loading so consumers hold their current values until
-    // this folder's settings arrive.
-    setResult({ settings: null, loaded: false });
 
     fetchUserSettings(activeFolder)
       .then((settings) => {
         if (cancelled) return;
-        setResult({ settings, loaded: true });
+        setFetched({ folder: activeFolder, settings });
       })
       .catch(() => {
         // `fetchUserSettings` already swallows failures into `{}`; defensive only.
         if (cancelled) return;
-        setResult({ settings: {}, loaded: true });
+        setFetched({ folder: activeFolder, settings: {} });
       });
 
     return () => {
@@ -60,5 +64,11 @@ export function useUserSettings(activeFolder: string): UserSettingsResult {
     };
   }, [activeFolder]);
 
-  return result;
+  return useMemo<UserSettingsResult>(() => {
+    if (!activeFolder) return { settings: NO_PROJECT_SETTINGS, loaded: true };
+    if (!fetched || fetched.folder !== activeFolder) {
+      return { settings: null, loaded: false };
+    }
+    return { settings: fetched.settings, loaded: true };
+  }, [activeFolder, fetched]);
 }

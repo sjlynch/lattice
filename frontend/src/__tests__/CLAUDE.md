@@ -65,3 +65,17 @@ Pure-helper suites pinning a single source of truth (not exhaustive):
   `withUserInstructions` trims + appends `{{user_instructions}}` exactly once
   (just the token for a blank prompt); `ensureUserInstructions` prepends the
   built-in without duplicating or reordering an existing one.
+- `startupTerminalProjectSwitch.test.ts` — the one React-rendering suite here
+  that exists for a *spawn* rather than a value. Drives the real
+  `useUserSettings` + `useStartupTerminalSync` through a project switch with the
+  new project's settings fetch held open, alongside a stand-in for Sidebar's
+  spawn effect (keyed on `activeFolder`, launching each command with cwd = the
+  currently-active folder). Pins that no commit ever pairs one project's folder
+  with another's commands: before the fix, `useUserSettings` flipped to
+  "loading" from an effect — which runs *after* the render that changed
+  `activeFolder` — so for one commit consumers saw `loaded: true` beside the
+  previous project's settings, and the spawn effect fired with the new cwd and
+  the old commands (apply_digital's `npx next dev` running in interview_eci).
+  Asserts the leak is gone, that the new project still ends up running exactly
+  its own startup terminal once its settings land, and that clearing the project
+  empties the list.
