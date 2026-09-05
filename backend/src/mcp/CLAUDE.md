@@ -90,7 +90,18 @@ session. It is also *the point of the feature* — a board server nobody switche
 on is a board server nobody uses, and the agents that most need it (worktree
 agents, workflow planners) are exactly the ones nobody is present to configure.
 
-Two properties keep that safe:
+**The Pi caveat.** That justification is fully true for Claude and Codex, which
+speak MCP natively. Pi does not: any MCP server on Pi loads through the
+third-party `pi-mcp-adapter` (see "Pi mechanism" above), so "lattice ON by
+default" means every Lattice-spawned Pi session now loads that adapter — where
+before this change it loaded only when the user had enabled some server. The
+adapter is already installed at boot regardless, and `.pi/mcp.json` + the shim
+are gitignored / worktree-excluded, so nothing new lands on disk or in the repo —
+but it IS third-party code running in every Pi session. If that is not
+acceptable, `mcpHarnessOverrides.pi.lattice = false` turns the Pi side off while
+Claude and Codex keep the tools.
+
+Two properties keep the default safe:
 
 - **Project-pinned.** `resolveMcpEntries` DROPS the entry when `ctx.projectPath`
   is absent. The server pins itself to one board and every tool call needs
@@ -104,10 +115,16 @@ Two properties keep that safe:
 
 **Never set `defaultEnabled` on a third-party entry.** It would run someone
 else's package under every agent Lattice spawns, on every project, without the
-user ever choosing it. `settingsValidation.ts` also refuses to let a
-`mcpBuiltinOverrides.lattice` re-point the entry's `command`/`args` or clear
-`defaultEnabled` (it is the highest-value override target on the catalog,
-precisely because it is the one that ships on).
+user ever choosing it. The override path can't do it either: `settingsValidation.ts`'s
+generic sanitizers simply never copy `defaultEnabled` (or `command`/`args`) off
+an untrusted `mcpBuiltinOverrides` / `mcpCustomServers` entry — there is no
+lattice-specific code, the field is just not on the tunable list — so a
+`mcpBuiltinOverrides.lattice` can't re-point what runs or switch the default,
+and a custom server can never acquire the flag. (That matters most for
+`lattice`: it is the highest-value override target on the catalog, precisely
+because it is the one that ships on.) An override's `env` IS tunable, so
+`shapeLatticeEntry` strips every `LATTICE_*` key from it before merging the
+spawn context — see "Per-spawn env injection".
 
 ### Per-spawn env injection
 
@@ -162,11 +179,12 @@ a space in it.
   merge + the per-entry loop (the `harnessSupport` filter and the per-server
   toggle gate `harnessToggleOn`: explicit override, else `entry.defaultEnabled`);
   the per-decision logic is composed in from two focused pure helpers (below).
-  Returns `{}` for non-claude harnesses (v1). It also shapes the first-party
-  `lattice` entry's per-spawn env (`shapeLatticeEntry`, and `withSpawnContext`
-  on the async side). The `McpResolveContext` type lives here as part of the
-  public surface: `ctx.isQaRun` (set by the QA-run spawn alone) plus
-  `ctx.projectPath` / `ctx.apiUrl` (what the `lattice` server needs baked in).
+  It also shapes the first-party `lattice` entry's per-spawn env
+  (`shapeLatticeEntry`, and `withSpawnContext` on the async side). The
+  `McpResolveContext` type lives here as part of the public surface:
+  `ctx.isQaRun` (set by the QA-run spawn alone), `ctx.projectPath` /
+  `ctx.apiUrl` (what the `lattice` server needs baked in), and `ctx.taskId`
+  (task run/resume spawns only).
 - `settingsValidation.ts` / `overrideSecurity.ts` — defensive parsers for the
   UNTRUSTED `mcpCustomServers` / `mcpBuiltinOverrides` off `PATCH
   /api/global-settings`. `sanitizeCustomServers` / `sanitizeBuiltinOverrides` keep
@@ -279,6 +297,18 @@ sessions started AT the project root, not from a subdirectory. `reconcileMcpServ
 only manages Lattice's own servers (the `__latticeManagedMcp` marker), so the
 user's hand-added MCP entries are never touched and turning a global toggle off
 strips it back out.
+
+Since the `lattice` entry ships on, this persistent root entry now carries two
+machine-specific absolute paths: `process.execPath` (the node running the
+backend) and the compiled `dist/latticeMcp/server.js`. They are a **snapshot**:
+a node upgrade (nvm/fnm/volta switch the path per version on POSIX) or a moved
+checkout leaves a hand-started `claude` at the project root with a dead
+`lattice` server until the project is next opened in Lattice or its settings
+are saved, when the reconcile rewrites it. That window is accepted — the
+alternative, reconciling every indexed project's root entry at backend boot,
+would write `~/.claude.json` for hundreds of stale projects on a long-lived
+machine — and the per-spawn ephemeral entries (worktrees / scratch) never have
+the problem because they are re-resolved on every spawn.
 
 Setup-time `seedClaudeTrust(dir)` calls (worktree/scratch creation) are
 trust-only (`managed: null`), so they never strip MCP a later call added.

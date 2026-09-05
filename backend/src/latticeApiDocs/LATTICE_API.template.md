@@ -46,8 +46,9 @@ Defaults are narrow because a board can reach a **megabyte**: active lanes only
 (`done`/`deleted` counted in `omitted`), `fields=compact`, newest `limit=100`,
 text clipped at 500 chars; over **256 KB** it 413s with a summary +
 `suggestions` (`confirm_large=1` forces it). Every envelope carries `bytes`,
-`approxTokens` and often a `hint` — **read the hint**: it names the knob to
-widen (`status=all`, `limit=`, `since=30d`, `clip=0`, `fields=full`).
+`approxTokens` (`boardBytes` on the summary — the whole board's cost) and often
+a `hint` — **read the hint**: it names the knob to widen (`status=all`,
+`limit=`, `since=30d`, `clip=0`, `fields=full`). Unknown lanes are a 400.
 
 ## Core recipes
 

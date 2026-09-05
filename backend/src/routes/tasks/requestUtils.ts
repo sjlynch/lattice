@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { Response } from 'express';
-import type { TaskStatus } from '../../tasks.js';
+import type { Task, TaskStatus } from '../../tasks.js';
+import { canonicalProjectPath } from '../../projectPath.js';
 import { parseMarkdownDoc, type ParsedMarkdownDoc } from './markdownBatch.js';
 
 // Shared happy-path wrapper for the tasks CRUD handlers. `fn` runs the
@@ -69,6 +70,35 @@ export function requireAbsoluteProject(project: string, res: Response): boolean 
       `A relative or drive-relative path almost always means backslashes were ` +
       `stripped by shell escaping (e.g. C:\\development\\proj arriving as ` +
       `"C:developmentproj"). Pass the full absolute path.`,
+  });
+  return false;
+}
+
+// Optional project pinning for the by-id routes (`GET/PATCH/DELETE /api/tasks/
+// :id`, `/append-summary`, `/run`, `/resume`, `/merge`, `/cancel-queued-run`).
+// `getTask(id)` is a GLOBAL lookup across every indexed project, so an id alone
+// reaches any board on the machine. When the caller sends `?project=` — the
+// `lattice` MCP server does on every call, and the generated docs' recipes do
+// too — the task must belong to it, else a 404: an id copied from another
+// board's doc, or hallucinated, can neither read nor mutate a foreign task. The
+// 404 carries a hint (this is a single-user local tool; "wrong board" is more
+// useful to the agent than a poker face). Callers that send no project — the
+// worktree Stop-hook callbacks, the board UI — are exactly as before.
+// Returns true when the request may proceed; false once it has sent the 404.
+export function requireTaskInRequestedProject(
+  task: Pick<Task, 'id' | 'projectPath'>,
+  req: { query: unknown },
+  res: Response,
+): boolean {
+  const q = req.query as Record<string, unknown> | undefined;
+  const project = typeof q?.project === 'string' ? q.project.trim() : '';
+  if (!project) return true;
+  if (canonicalProjectPath(task.projectPath) === canonicalProjectPath(project)) return true;
+  res.status(404).json({
+    error: 'not found',
+    hint:
+      `task ${task.id} is not in project ${canonicalProjectPath(project)} — it belongs ` +
+      'to a different board. Check the project this session is pinned to before retrying.',
   });
   return false;
 }

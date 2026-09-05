@@ -12,6 +12,7 @@ import {
   approxTokens,
   jsonBytes,
   lastActivityAt,
+  parseStatusParam,
   type ListEnvelopeMeta,
   type ParseResult,
 } from './listQuery.js';
@@ -76,23 +77,27 @@ export function parseSearchQuery(raw: RawSearchQuery): ParseResult<SearchQuery> 
   const q = typeof raw.q === 'string' ? raw.q.trim() : '';
   if (!q) return { ok: false, error: 'q required' };
 
-  const statusParam = (raw.status ?? '').trim();
-  let statuses: ReadonlySet<TaskStatus> | null = null;
-  if (statusParam && statusParam !== 'all') {
-    const lanes = statusParam.split(',').map((s) => s.trim()).filter(Boolean);
-    if (lanes.length > 0) statuses = new Set(lanes as TaskStatus[]);
-  }
+  // Same lane validation as the list (a typo must 400, not read as "no hits");
+  // absent or `all` means every lane, which is search's default.
+  const status = parseStatusParam(raw.status ?? '');
+  if (!status.ok) return status;
+  const statuses: ReadonlySet<TaskStatus> | null =
+    status.value === null || status.value.all ? null : status.value.statuses;
 
+  // Unlike the list, `0` is not "unlimited" here — a search result is bounded
+  // by design (that is what makes it the cheap tier), so the only meanings are
+  // 1..MAX. Rejecting 0 keeps it from silently meaning something different from
+  // the same knob on `/api/tasks`.
   let limit = DEFAULT_SEARCH_LIMIT;
   if (typeof raw.limit === 'string' && raw.limit.trim()) {
-    if (!/^\d+$/.test(raw.limit.trim())) {
+    const parsed = /^\d+$/.test(raw.limit.trim()) ? Number(raw.limit.trim()) : NaN;
+    if (!Number.isInteger(parsed) || parsed < 1) {
       return {
         ok: false,
-        error: `limit must be a non-negative integer, got ${JSON.stringify(raw.limit)}`,
+        error: `limit must be a positive integer (max ${MAX_SEARCH_LIMIT}), got ${JSON.stringify(raw.limit)}`,
       };
     }
-    const parsed = Number(raw.limit.trim());
-    limit = parsed === 0 ? MAX_SEARCH_LIMIT : Math.min(parsed, MAX_SEARCH_LIMIT);
+    limit = Math.min(parsed, MAX_SEARCH_LIMIT);
   }
 
   return {
@@ -116,11 +121,19 @@ function countOccurrences(text: string, term: string): number {
   }
 }
 
-/** Earliest index at which ANY term occurs, or -1. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Earliest index in the ORIGINAL text at which any term occurs, or -1. Found
+// with a case-insensitive regex rather than by lowercasing the text first: a
+// few case folds change string length (`İ` → `i̇`), so an index computed on the
+// lowercased copy would drift against the original we slice for the snippet.
 function firstHitIndex(text: string, terms: string[]): number {
   let best = -1;
   for (const term of terms) {
-    const at = text.indexOf(term);
+    if (!term) continue;
+    const at = text.search(new RegExp(escapeRegExp(term), 'i'));
     if (at !== -1 && (best === -1 || at < best)) best = at;
   }
   return best;
@@ -131,7 +144,7 @@ function firstHitIndex(text: string, terms: string[]): number {
 // whitespace is collapsed: descriptions are multi-line markdown, and a snippet
 // that spans a blank line reads as garbage in a one-line result list.
 export function buildSnippet(text: string, terms: string[]): string {
-  const hit = firstHitIndex(text.toLowerCase(), terms);
+  const hit = firstHitIndex(text, terms);
   if (hit === -1) return '';
   let start = Math.max(0, hit - SNIPPET_LEAD_CHARS);
   let end = Math.min(text.length, start + SNIPPET_CHARS);

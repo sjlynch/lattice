@@ -167,11 +167,16 @@ function parseJson(raw: string): unknown {
   }
 }
 
-// Envelope-level project assertion. The Lattice list/summary/search envelopes
-// echo a `canonicalProject`; when one is present it MUST match the project this
-// server is pinned to. This replaces the manual "check the canonicalProject
-// field" ritual the HTTP docs make every agent perform by hand — get it wrong
-// and you are reading (or worse, mutating) another repo's board.
+// Response-level project assertion — the second of two guards. The FIRST is
+// server-side: `buildUrl` sends `project=` on every call, and the by-id routes
+// 404 when the task belongs to another board (`requireTaskInRequestedProject`),
+// so a foreign id is refused before anything is read or written. This check is
+// the belt to that suspender: the list/summary/search envelopes echo a
+// `canonicalProject`, a bare `Task` (every by-id route) carries `projectPath`,
+// and whichever is present MUST match the pinned project. Together they replace
+// the manual "check the canonicalProject field" ritual the HTTP docs make every
+// agent perform by hand — get it wrong and you are reading (or worse, mutating)
+// another repo's board.
 //
 // Comparison: canonicalize both sides, then normalize `\` to `/`, drop trailing
 // slashes, and case-fold. Windows paths are case-insensitive but only
@@ -180,14 +185,20 @@ function parseJson(raw: string): unknown {
 // theoretical POSIX `/a` vs `/A` pair this tolerates.
 //
 // Returns an explanatory message on mismatch, or `null` when it matches (or the
-// envelope carries no `canonicalProject` — many endpoints return a bare Task).
+// payload names no project at all — `{accepted, queued}`, `{ok}`, arrays).
 export function assertCanonicalProject(
   pinnedProject: string,
   payload: unknown,
 ): string | null {
   if (!payload || typeof payload !== 'object') return null;
-  const claimed = (payload as { canonicalProject?: unknown }).canonicalProject;
-  if (typeof claimed !== 'string' || !claimed) return null;
+  const p = payload as { canonicalProject?: unknown; projectPath?: unknown };
+  const claimed =
+    typeof p.canonicalProject === 'string' && p.canonicalProject
+      ? p.canonicalProject
+      : typeof p.projectPath === 'string' && p.projectPath
+        ? p.projectPath
+        : null;
+  if (claimed === null) return null;
   if (normalizeForCompare(claimed) === normalizeForCompare(pinnedProject)) return null;
   return (
     `Project mismatch: this Lattice MCP server is pinned to ${pinnedProject}, ` +

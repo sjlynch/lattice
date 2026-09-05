@@ -134,12 +134,29 @@ test('tools/list exposes exactly the 11 board tools, and none takes a project', 
 
 // ---- the task-worktree session (LATTICE_TASK_ID) -----------------------------
 
-test('a task-worktree session adds exactly one tool, my_task, which GETs its own task', async () => {
+// The tool set a task worktree's agent gets: the reads, its own task, filing
+// follow-ups, and reporting on itself. Board management (update / transition /
+// delete / run) is deliberately absent — see createServer.ts.
+const WORKTREE_TOOLS = [
+  'append_summary',
+  'board_summary',
+  'create_task',
+  'create_tasks',
+  'get_task',
+  'list_tasks',
+  'my_task',
+  'search_tasks',
+];
+
+test('a task-worktree session gets my_task and the read/file/report set — no board-management tools', async () => {
   const calls: Recorded[] = [];
   const { client, close } = await connect(calls, undefined, { taskId: 't_mine' });
   try {
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((t) => t.name).sort(), [...EXPECTED_TOOLS, 'my_task'].sort());
+    assert.deepEqual(tools.map((t) => t.name).sort(), WORKTREE_TOOLS);
+    for (const absent of ['update_task', 'transition_tasks', 'delete_task', 'run_task']) {
+      assert.ok(!tools.some((t) => t.name === absent), `${absent} must not reach a worktree agent`);
+    }
     // …and `append_summary` drops `id` from its required list in this mode only
     // (the no-task variant is pinned in the tool-surface test above).
     const append = tools.find((t) => t.name === 'append_summary')!;
@@ -437,7 +454,7 @@ test('a 413 comes back as a NORMAL result carrying the summary + suggestions', a
     ceilingBytes: 262144,
     summary: { total: 479, byStatus: { done: 469 } },
     suggestions: [
-      'GET /api/tasks/summary?project=… — counts + per-lane cost (~200 bytes)',
+      'GET /api/tasks/summary?project=… — counts + per-lane cost (under 1 KB)',
       'add limit=50 (newest first) or since=30d',
     ],
     hint: 'This response would be ~319025 tokens. Narrow it, or confirm_large=1.',
@@ -468,6 +485,28 @@ test('a canonicalProject mismatch is an error naming both projects', async () =>
     assert.match(text, /mismatch/i);
     assert.ok(text.includes(PROJECT), 'names the pinned project');
     assert.ok(text.includes('D:\\other\\repo'), 'names the project the backend answered for');
+  } finally {
+    await close();
+  }
+});
+
+test('a bare Task from another project is a mismatch too (by-id routes echo projectPath, not canonicalProject)', async () => {
+  // Every by-id route returns a bare Task with no `canonicalProject`. If the
+  // client only checked that field, get_task / update_task / delete_task /
+  // run_task / append_summary would be entirely unpinned — an id copied from
+  // another board's doc would read or mutate that board silently. (The server
+  // also 404s these by `?project=`; this is the response-side backstop.)
+  const calls: Recorded[] = [];
+  const { client, close } = await connect(calls, {
+    body: { id: 't_x', projectPath: 'C:\\other\\repo', title: 'x', status: 'open', createdAt: 1 },
+  });
+  try {
+    const result = await client.callTool({ name: 'get_task', arguments: { id: 't_x' } });
+    assert.equal(isError(result), true);
+    assert.match(textOf(result), /Project mismatch/);
+    assert.match(textOf(result), /C:\\other\\repo/);
+    // …and the request itself carried the pin the server enforces.
+    assert.equal(new URL(calls[0].url).searchParams.get('project'), PROJECT);
   } finally {
     await close();
   }

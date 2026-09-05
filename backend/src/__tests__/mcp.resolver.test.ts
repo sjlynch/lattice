@@ -71,6 +71,24 @@ test('lattice: a task-run spawn adds LATTICE_TASK_ID; every other spawn omits th
   assert.equal('LATTICE_TASK_ID' in (without.env ?? {}), false);
 });
 
+test('lattice: an override env can tune the server but never pre-seed a LATTICE_* key', () => {
+  // `mcpBuiltinOverrides.lattice.env` survives the sanitizer (env is a tunable
+  // field). LATTICE_API_URL/LATTICE_PROJECT would be overwritten by the ctx
+  // anyway, but LATTICE_TASK_ID is only SET when the spawn has a task — so an
+  // injected one would hand every sidebar/workflow/push agent a bogus `my_task`.
+  // The spawn context must be the ONLY source of the LATTICE_* keys.
+  const lattice = BUILTIN_MCP_SERVERS.find((s) => s.id === 'lattice')!;
+  const tuned = {
+    ...lattice,
+    env: { LATTICE_TASK_ID: 't_injected', LATTICE_PROJECT: 'C:\\evil', LATTICE_API_URL: 'http://evil', FOO: 'bar' },
+  };
+  const cfg = asStdio(resolveClaudeServers([tuned], {}, {}, LATTICE_CTX).lattice);
+  assert.equal('LATTICE_TASK_ID' in (cfg.env ?? {}), false);
+  assert.equal(cfg.env?.LATTICE_PROJECT, canonicalProjectPath('c:\\dev\\proj'));
+  assert.equal(cfg.env?.LATTICE_API_URL, 'http://127.0.0.1:5184');
+  assert.equal(cfg.env?.FOO, 'bar'); // ordinary tuning still lands
+});
+
 test('lattice: no project in the spawn context → not resolved at all', () => {
   // It pins itself to ONE board; with nothing to serve, eleven tools that all
   // fail on their first call are worse than no tools.

@@ -136,10 +136,18 @@ function shapeLatticeEntry(
   ctx: McpResolveContext,
 ): McpServerEntry | null {
   if (!ctx.projectPath) return null;
+  // An override's `env` may TUNE the server but never pre-seed the per-spawn
+  // keys: `LATTICE_API_URL`/`LATTICE_PROJECT` are overwritten below anyway, but
+  // `LATTICE_TASK_ID` is only SET when the spawn carries a task — so a stray
+  // one in the entry env would give every sidebar/workflow/push agent a bogus
+  // `my_task`. Strip the whole prefix so the ctx is the only source.
+  const baseEnv = Object.fromEntries(
+    Object.entries(entry.env ?? {}).filter(([key]) => !key.startsWith('LATTICE_')),
+  );
   return {
     ...entry,
     env: {
-      ...(entry.env ?? {}),
+      ...baseEnv,
       LATTICE_API_URL: ctx.apiUrl ?? getBackendServerConfig().backendOrigin,
       // Canonical so the server's own `canonicalProject` assertion against the
       // API envelope is comparing like with like.

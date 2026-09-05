@@ -15,7 +15,7 @@
 
 import type { Task, TaskStatus } from '../../tasks.js';
 import { serializeTasksAsMarkdown } from './markdownBatch.js';
-import { VALID_STATUSES } from './requestUtils.js';
+import { VALID_STATUSES, isValidTaskStatus, statusValidationError } from './requestUtils.js';
 
 // The lanes a board is actively working. `done` and `deleted` are history, and
 // on any project older than a few weeks they are >90% of the bytes — so an
@@ -52,9 +52,9 @@ export interface ListQuery {
   statusLabel?: string;
   ids: string[] | null;
   fields: 'compact' | 'full';
-  /** Max chars of description/summary in `full` mode; 0 = unlimited. */
+  /** Max chars of description/summary in `full` mode; 0 = unlimited. Defaults to 0 in `ids=` mode. */
   clip: number;
-  /** Epoch-ms floor on `lastActivityAt`, or null. */
+  /** Epoch-ms floor on `lastActivityAt`, or null. Ignored in `ids=` mode. */
   since: number | null;
   /** Max tasks returned; 0 = unlimited. */
   limit: number;
@@ -99,6 +99,12 @@ const DURATION_MS = { d: 86_400_000, h: 3_600_000, m: 60_000 } as const;
 // reaches for `30d` far sooner than an ISO timestamp, and a script already
 // holding `Date.now() - x` shouldn't have to format one. Returns null for
 // anything it can't read, which the caller turns into a 400.
+//
+// A bare run of digits is an epoch ONLY at epoch lengths — 13 digits (ms) or 10
+// (seconds, scaled). Anything shorter (`2026`, `20260901`) is far more likely a
+// year or a date typed without separators, and reading it as milliseconds makes
+// it "since 1970": the filter silently matches everything. Better a 400 that
+// names the accepted forms than a no-op the caller can't see.
 export function parseSince(raw: string, now: number): number | null {
   const value = raw.trim();
   if (!value) return null;
@@ -107,30 +113,58 @@ export function parseSince(raw: string, now: number): number | null {
     const unit = duration[2].toLowerCase() as keyof typeof DURATION_MS;
     return now - Number(duration[1]) * DURATION_MS[unit];
   }
-  if (/^\d+$/.test(value)) return Number(value);
+  if (/^\d+$/.test(value)) {
+    if (value.length === 13) return Number(value);
+    if (value.length === 10) return Number(value) * 1000;
+    return null;
+  }
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+// Lane list validation shared by list + search. `all` is accepted in any case;
+// anything else must be a real lane, else the caller gets a 400 naming them. A
+// typo used to match nothing and return 200 with an empty board — which reads
+// as "the lane is empty", the one conclusion a mistyped `in-progress` must not
+// lead to now that the list is an agent's primary interface.
+export function parseStatusParam(
+  raw: string,
+): ParseResult<{ all: true } | { all: false; statuses: Set<TaskStatus> } | null> {
+  const value = raw.trim();
+  if (!value) return { ok: true, value: null };
+  if (value.toLowerCase() === 'all') return { ok: true, value: { all: true } };
+  const lanes = csv(value) ?? [];
+  const bad = lanes.filter((lane) => !isValidTaskStatus(lane));
+  if (bad.length > 0) {
+    return {
+      ok: false,
+      error: `${statusValidationError('status')}, or "all" — got ${bad.map((b) => JSON.stringify(b)).join(', ')}`,
+    };
+  }
+  return { ok: true, value: { all: false, statuses: new Set(lanes as TaskStatus[]) } };
 }
 
 export function parseListQuery(raw: RawListQuery, now = Date.now()): ParseResult<ListQuery> {
   const ids = csv(raw.ids);
 
   // `ids=` is the expand tier: it addresses specific tasks, so a lane filter
-  // could only ever surprise the caller with an empty result.
+  // (or a `since` window, applied in selectTasks) could only ever surprise the
+  // caller with an empty result.
   let statuses: ReadonlySet<TaskStatus> | null = null;
   let statusDefaulted = false;
   let statusLabel: string | undefined;
-  const statusParam = (raw.status ?? '').trim();
   if (!ids) {
-    if (statusParam === 'all') {
-      statusLabel = 'all';
-    } else if (statusParam) {
-      statuses = new Set(csv(statusParam) as TaskStatus[]);
-      statusLabel = statusParam;
-    } else {
+    const status = parseStatusParam(raw.status ?? '');
+    if (!status.ok) return status;
+    if (status.value === null) {
       statuses = new Set<TaskStatus>(ACTIVE_STATUSES);
       statusDefaulted = true;
       statusLabel = ACTIVE_STATUSES.join(',');
+    } else if (status.value.all) {
+      statusLabel = 'all';
+    } else {
+      statuses = status.value.statuses;
+      statusLabel = [...status.value.statuses].join(',');
     }
   }
 
@@ -147,7 +181,11 @@ export function parseListQuery(raw: RawListQuery, now = Date.now()): ParseResult
       ? 'full'
       : 'compact';
 
-  const clip = parseNonNegativeInt(raw.clip, DEFAULT_CLIP_CHARS, 'clip');
+  // `ids=` is the EXPAND tier — the caller named these tasks because it wants
+  // their text — so the clip default is off there, like `fields` defaults to
+  // `full`. (Otherwise the clipped-text hint would point at `?ids=` for the
+  // full text, and `?ids=` would clip again: a loop.)
+  const clip = parseNonNegativeInt(raw.clip, ids ? 0 : DEFAULT_CLIP_CHARS, 'clip');
   if (!clip.ok) return clip;
   const limit = parseNonNegativeInt(raw.limit, DEFAULT_LIST_LIMIT, 'limit');
   if (!limit.ok) return limit;
@@ -159,8 +197,8 @@ export function parseListQuery(raw: RawListQuery, now = Date.now()): ParseResult
       return {
         ok: false,
         error:
-          'since must be an ISO-8601 timestamp, epoch milliseconds, or a duration ' +
-          `like 30d / 12h / 45m, got ${JSON.stringify(raw.since)}`,
+          'since must be an ISO-8601 timestamp, epoch milliseconds (13 digits) or ' +
+          `seconds (10 digits), or a duration like 30d / 12h / 45m, got ${JSON.stringify(raw.since)}`,
       };
     }
   }
@@ -234,8 +272,11 @@ export function selectTasks(safe: Task[], q: ListQuery): ListSelection {
     matched = safe.slice();
   }
 
-  if (q.since !== null) {
-    const floor = q.since;
+  // `since` never applies in ids mode: the caller named the tasks it wants, and
+  // silently dropping one of them (with no `missing` entry, since it exists)
+  // is the worst of both worlds.
+  const floor = q.ids ? null : q.since;
+  if (floor !== null) {
     matched = matched.filter((t) => lastActivityAt(t) >= floor);
   }
 
@@ -249,9 +290,13 @@ export function selectTasks(safe: Task[], q: ListQuery): ListSelection {
     truncated: page.length < matched.length,
   };
   if (q.statusDefaulted) {
+    // Counted over the same `since` window as the result, so the number
+    // answers "how many would status=done add to THIS query" — not "how many
+    // done tasks exist", which the summary already reports.
+    const pool = floor !== null ? safe.filter((t) => lastActivityAt(t) >= floor) : safe;
     const omitted: Record<string, number> = {};
     for (const status of HISTORY_STATUSES) {
-      omitted[status] = safe.reduce((n, t) => (t.status === status ? n + 1 : n), 0);
+      omitted[status] = pool.reduce((n, t) => (t.status === status ? n + 1 : n), 0);
     }
     selection.omitted = omitted;
   }
@@ -468,8 +513,12 @@ export interface TaskSummary extends ListEnvelopeMeta {
   total: number;
   byStatus: Record<string, number>;
   lanes: Record<string, LaneCost>;
-  bytes: number;
-  approxTokens: number;
+  // The cost of the WHOLE board's full records — deliberately not named
+  // `bytes`, which on every other envelope means "this response". A model that
+  // read `bytes: 1275734` on a 700-byte summary would believe the summary cost
+  // 1.2 MB.
+  boardBytes: number;
+  boardApproxTokens: number;
   hint: string;
 }
 
@@ -481,11 +530,16 @@ function formatTokens(tokens: number): string {
   return tokens >= 1000 ? `${Math.floor(tokens / 1000)}k tokens` : `${tokens} tokens`;
 }
 
-// The orient tier: ~200 bytes that say what the board holds AND what each lane
-// would cost to fetch, so the expensive call becomes a decision instead of a
-// discovery. `bytes` here prices the FULL board (every record, unclipped) — it
-// is deliberately NOT the size of this response, which is the one place the
-// two readings of the field diverge.
+// The orient tier: under a kilobyte that says what the board holds AND what
+// each lane would cost to fetch, so the expensive call becomes a decision
+// instead of a discovery. `boardBytes` prices the FULL board (every record,
+// unclipped); the per-lane `bytes` price each lane the same way.
+//
+// Cost note: this stringifies every record twice (once per lane, once whole) —
+// ~1.3 MB on a mature board, a few ms. Fine for a call made once per session
+// (the UI never polls it); a lane-sum shortcut would save one pass at the price
+// of a brittle bracket/comma arithmetic that would only ever be approximately
+// right anyway.
 export function buildTaskSummary(meta: ListEnvelopeMeta, safe: Task[]): TaskSummary {
   const byStatus: Record<string, number> = {};
   const lanes: Record<string, LaneCost> = {};
@@ -519,7 +573,7 @@ export function buildTaskSummary(meta: ListEnvelopeMeta, safe: Task[]): TaskSumm
     );
   }
 
-  const bytes = jsonBytes(safe);
+  const boardBytes = jsonBytes(safe);
   return {
     project: meta.project,
     canonicalProject: meta.canonicalProject,
@@ -528,8 +582,8 @@ export function buildTaskSummary(meta: ListEnvelopeMeta, safe: Task[]): TaskSumm
     mismatched: meta.mismatched,
     byStatus,
     lanes,
-    bytes,
-    approxTokens: approxTokens(bytes),
+    boardBytes,
+    boardApproxTokens: approxTokens(boardBytes),
     hint: sentences.join(' '),
   };
 }

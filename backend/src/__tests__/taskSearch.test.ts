@@ -63,14 +63,25 @@ test('q is required', () => {
   }
 });
 
-test('limit defaults to 20 and caps at 200', () => {
+test('limit defaults to 20, caps at 200, and rejects 0 (search is bounded by design)', () => {
   assert.equal(parse({ q: 'x' }).limit, DEFAULT_SEARCH_LIMIT);
   assert.equal(parse({ q: 'x', limit: '5' }).limit, 5);
   assert.equal(parse({ q: 'x', limit: '9999' }).limit, MAX_SEARCH_LIMIT);
-  assert.equal(parse({ q: 'x', limit: '0' }).limit, MAX_SEARCH_LIMIT);
-  const bad = parseSearchQuery({ q: 'x', limit: 'lots' });
+  // `0` means "unlimited" on the list; letting it quietly mean "max 200" here
+  // would give the same knob two meanings, so it is a 400 instead.
+  for (const raw of ['0', 'lots']) {
+    const bad = parseSearchQuery({ q: 'x', limit: raw });
+    assert.equal(bad.ok, false, `${raw} must be rejected`);
+    assert.match(bad.ok ? '' : bad.error, /limit must be a positive integer \(max 200\)/);
+  }
+});
+
+test('an unknown lane is a parse error, the same as on the list', () => {
+  const bad = parseSearchQuery({ q: 'x', status: 'done,finished' });
   assert.equal(bad.ok, false);
-  assert.match(bad.ok ? '' : bad.error, /limit must be a non-negative integer/);
+  assert.match(bad.ok ? '' : bad.error, /status must be one of/);
+  assert.match(bad.ok ? '' : bad.error, /"finished"/);
+  assert.equal(parse({ q: 'x', status: 'ALL' }).statuses, null);
 });
 
 test('q is split into lowercased terms', () => {

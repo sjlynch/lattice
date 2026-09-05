@@ -46,12 +46,18 @@ that is already running.
 
 ## Modules
 
-- `createServer.ts` — `createLatticeMcpServer({apiUrl, project, fetchImpl?})` →
-  an `McpServer` with the eleven tools registered via `registerTool` + zod input
-  schemas. Also owns `toToolResult`, the outcome → MCP-result mapping.
-- `client.ts` — the HTTP layer. Builds URLs with `project` pinned, sends/parses
-  JSON, asserts `canonicalProject`, and classifies each round trip into the
-  five-way `LatticeCallOutcome`. Imports no MCP types, so it is testable (and
+- `createServer.ts` — `createLatticeMcpServer({apiUrl, project, taskId?, fetchImpl?})`
+  → an `McpServer`. Two tool sets: the full eleven for a planner / sidebar /
+  user session, or — when `taskId` is set (a task worktree's agent) — the
+  eight-tool read / `my_task` / file / report set with the board-management
+  tools (`update_task`, `transition_tasks`, `delete_task`, `run_task`) left
+  out. Registered via `registerTool` + zod input schemas. Also owns
+  `toToolResult`, the outcome → MCP-result mapping.
+- `client.ts` — the HTTP layer. Builds URLs with `project` pinned (sent on
+  EVERY call, so the by-id routes can 404 a foreign task), sends/parses JSON,
+  asserts the response's `canonicalProject` (envelopes) or `projectPath` (a
+  bare `Task`), and classifies each round trip into the five-way
+  `LatticeCallOutcome`. Imports no MCP types, so it is testable (and
   reasonable) without a transport.
 - `server.ts` — the stdio entry point. Reads `LATTICE_API_URL` +
   `LATTICE_PROJECT` (exit 1 on either missing), builds the server, connects a
@@ -69,14 +75,21 @@ that is already running.
 | 2 expand | `get_task` | one full record |
 | 2 expand | `my_task` | **task worktree sessions only** — the live record of the task this agent is running. Registered iff `LATTICE_TASK_ID` is set (run/resume spawns); the same variable makes `append_summary`'s `id` optional |
 | find | `search_tasks` | ranked, all lanes, snippets |
-| write | `create_task`, `create_tasks`, `update_task`, `transition_tasks`, `append_summary`, `delete_task` | |
-| run | `run_task` | returns `{accepted, queued}` — admitted, **not started** |
+| write | `create_task`, `create_tasks`, `append_summary` | in every session |
+| manage | `update_task`, `transition_tasks`, `delete_task` | **not in a task-worktree session** — a worktree agent's brief is untrusted input; it reads, files follow-ups and reports, it does not re-lane or delete |
+| run | `run_task` | returns `{accepted, queued}` — admitted, **not started**. Also **not in a task-worktree session** |
 
 ## Invariants
 
 - **No tool takes a `project` argument.** It is pinned from `LATTICE_PROJECT`
-  and asserted against the response envelope's `canonicalProject`. That
-  assertion is the whole reason the server can be trusted with writes.
+  and enforced twice: the client sends `project=` on EVERY request and the by-id
+  routes 404 a task that belongs to another board
+  (`routes/tasks/requestUtils.ts` `requireTaskInRequestedProject`) — so a foreign
+  id is refused before anything is read or written; then the response's
+  `canonicalProject` (envelopes) or `projectPath` (a bare `Task`) is asserted
+  as a backstop. That pair is what lets the server be trusted with writes; the
+  response check alone would not be, because the by-id routes echo no
+  `canonicalProject`.
 - **No tool invents a default the API already has.** `list_tasks` forwards only
   the arguments it was given, so "compact fields, active lanes, newest 100"
   lives in one place (`routes/tasks/`). Duplicating a default here would drift

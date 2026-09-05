@@ -19,6 +19,7 @@ import {
   type ListQuery,
   type TooLargeBody,
 } from '../routes/tasks/listQuery.js';
+import { stringParams } from '../routes/tasks/crudList.js';
 import type { Task, TaskStatus } from '../tasks.js';
 
 // The pure half of GET /api/tasks. The endpoint used to return every task,
@@ -124,9 +125,10 @@ test('status accepts a CSV lane subset', () => {
 
 // ------------------------------------------------------------- ids mode --
 
-test('ids bypasses the lane filter, defaults to full fields, and reports missing', () => {
+test('ids bypasses the lane filter, defaults to full UNCLIPPED fields, and reports missing', () => {
+  const long = 'the done one '.repeat(60); // ~780 chars, over the 500 default clip
   const tasks = [
-    task('a', { status: 'done', description: 'the done one' }),
+    task('a', { status: 'done', description: long }),
     task('b', { status: 'open' }),
   ];
   const body = listJson(tasks, { ids: 'a,nope' });
@@ -134,9 +136,24 @@ test('ids bypasses the lane filter, defaults to full fields, and reports missing
   // by id must never be second-guessed by a lane default.
   assert.deepEqual(body.tasks.map((t) => t.id), ['a']);
   assert.equal(body.fields, 'full');
-  assert.equal((body.tasks[0] as Task).description, 'the done one');
+  // ids= is the EXPAND tier: the text comes back whole. (The clipped-text hint
+  // sends callers to `?ids=` for full text — if this clipped too, that hint
+  // would loop.)
+  assert.equal((body.tasks[0] as Task).description, long);
+  assert.equal(body.clipped, 0);
   assert.deepEqual(body.missing, ['nope']);
   assert.equal(body.omitted, undefined);
+  // An explicit clip is still honoured in ids mode.
+  const clipped = listJson(tasks, { ids: 'a', clip: '10' });
+  assert.equal(clipped.clipped, 1);
+});
+
+test('ids mode ignores since — a named task is never silently dropped', () => {
+  const now = 1_700_000_000_000;
+  const stale = task('a', { createdAt: now - 400 * 86_400_000 });
+  const body = listJson([stale], { ids: 'a', since: '30d' });
+  assert.deepEqual(body.tasks.map((t) => t.id), ['a']);
+  assert.equal(body.missing, undefined);
 });
 
 test('ids mode omits `missing` when every id resolved', () => {
@@ -257,15 +274,39 @@ test('since accepts day / hour / minute durations relative to now', () => {
   assert.equal(parse({ since: '45m' }, now).since, now - 45 * 60_000);
 });
 
-test('since accepts an ISO-8601 timestamp and raw epoch milliseconds', () => {
+test('since accepts an ISO-8601 timestamp, epoch milliseconds (13 digits) and epoch seconds (10)', () => {
   assert.equal(parse({ since: '2026-01-01T00:00:00Z' }).since, Date.parse('2026-01-01T00:00:00Z'));
   assert.equal(parse({ since: '1700000000000' }).since, 1_700_000_000_000);
+  assert.equal(parse({ since: '1700000000' }).since, 1_700_000_000_000);
+});
+
+test('a short run of digits is NOT an epoch — since=2026 must not mean "since 1970"', () => {
+  // Read as milliseconds, `2026` is two seconds after the epoch and the filter
+  // silently matches every task; `20260901` (a date typed without separators)
+  // is the same trap. Both are far more plausible as a year / a date than as a
+  // timestamp, so they 400 with the accepted forms instead.
+  for (const raw of ['2026', '20260901', '17000000000']) {
+    const parsed = parseListQuery({ since: raw });
+    assert.equal(parsed.ok, false, `${raw} must be rejected`);
+    assert.match(parsed.ok ? '' : parsed.error, /13 digits/);
+  }
 });
 
 test('an unreadable since is a parse error naming the accepted forms', () => {
   const parsed = parseListQuery({ since: 'last tuesday' });
   assert.equal(parsed.ok, false);
-  assert.match(parsed.ok ? '' : parsed.error, /ISO-8601 timestamp, epoch milliseconds, or a duration/);
+  assert.match(parsed.ok ? '' : parsed.error, /ISO-8601 timestamp, epoch milliseconds.*or a duration/);
+});
+
+test('omitted is counted inside the since window, so it answers "what would status=done add HERE"', () => {
+  const now = 1_700_000_000_000;
+  const tasks = [
+    task('a', { status: 'open', createdAt: now }),
+    task('recent', { status: 'done', createdAt: now - 86_400_000 }),
+    task('ancient', { status: 'done', createdAt: now - 400 * 86_400_000 }),
+  ];
+  assert.deepEqual(listJson(tasks, { since: '30d' }).omitted, { done: 1, deleted: 0 });
+  assert.deepEqual(listJson(tasks).omitted, { done: 2, deleted: 0 });
 });
 
 test('since filters on lastActivityAt, not createdAt', () => {
@@ -467,8 +508,11 @@ test('summary keeps byStatus counts and adds per-lane cost + a board total', () 
   // Lane bytes price the FULL records of that lane.
   assert.equal(summary.lanes.open.bytes, jsonBytes(tasks.filter((t) => t.status === 'open')));
   assert.equal(summary.lanes.open.approxTokens, approxTokens(summary.lanes.open.bytes));
-  assert.equal(summary.bytes, jsonBytes(tasks));
-  assert.equal(summary.approxTokens, Math.ceil(summary.bytes / 4));
+  // The whole-board cost is named for what it is, not `bytes` — which on every
+  // other envelope means "this response".
+  assert.equal(summary.boardBytes, jsonBytes(tasks));
+  assert.equal(summary.boardApproxTokens, Math.ceil(summary.boardBytes / 4));
+  assert.ok(!('bytes' in summary));
   // Empty lanes stay out of both maps, exactly as byStatus always behaved.
   assert.equal('qa' in summary.lanes, false);
   assert.equal('qa' in summary.byStatus, false);
@@ -500,10 +544,39 @@ test('fields only accepts compact or full', () => {
   assert.match(parsed.ok ? '' : parsed.error, /fields must be "compact" or "full"/);
 });
 
-test('an unknown lane simply matches nothing rather than 400ing', () => {
-  // Lenient on purpose: the pre-existing endpoint behaved this way, and a lane
-  // rename should degrade to an empty list, not a hard failure mid-script.
-  const body = listJson([task('a', { status: 'open' })], { status: 'nonesuch' as TaskStatus });
-  assert.equal(body.count, 0);
-  assert.equal(body.matched, 0);
+test('an unknown lane is a parse error naming the real ones — not a silently empty board', () => {
+  // The list is now an agent's primary interface with a free-string `status`.
+  // A typo (`in-progress`, `ready`) used to return 200 with count 0, which
+  // reads as "that lane is empty" — the one conclusion it must not lead to.
+  const parsed = parseListQuery({ status: 'open,in-progress' });
+  assert.equal(parsed.ok, false);
+  assert.match(parsed.ok ? '' : parsed.error, /status must be one of: backlog, open, in_progress/);
+  assert.match(parsed.ok ? '' : parsed.error, /"in-progress"/);
+  // `all` is accepted in any case, like `fields`.
+  assert.equal(parse({ status: 'ALL' }).statuses, null);
+  assert.equal(parse({ status: 'All' }).statusLabel, 'all');
+});
+
+test('a repeated query param (?status=open&status=qa) flattens to the CSV the parser reads', () => {
+  // Express delivers a repeated param as an array. Dropping it (the old
+  // string-only flatten) fell back to the DEFAULT lanes — silently hiding
+  // exactly the lanes the caller had named twice over.
+  const flat = stringParams({ project: 'C:/p', status: ['open', 'qa'], limit: '5' } as never);
+  assert.deepEqual(flat, { project: 'C:/p', status: 'open,qa', limit: '5' });
+  assert.deepEqual([...(parse(flat).statuses ?? [])], ['open', 'qa']);
+  // A nested object is not a string list; it is left for the parser to default.
+  assert.deepEqual(stringParams({ status: { nested: 'x' } } as never), {});
+});
+
+test('a markdown response over the ceiling is a 413 too', () => {
+  // `format=markdown` never clips, so a big lane is exactly where the ceiling
+  // earns its keep — a 413 body must not be what lands in the agent's .md file
+  // (the recipe uses curl --fail for that reason).
+  const tasks = Array.from({ length: 300 }, (_, i) =>
+    task(`t${i}`, { status: 'open', description: 'x'.repeat(1000) }),
+  );
+  const outcome = buildListOutcome(META, tasks, parse({ format: 'markdown', limit: '0' }));
+  assert.equal(outcome.kind, 'too-large');
+  const ok = buildListOutcome(META, tasks, parse({ format: 'markdown', limit: '0', confirm_large: '1' }));
+  assert.equal(ok.kind, 'markdown');
 });

@@ -6,6 +6,7 @@ import { requireTaskStatus } from './_shared.js';
 import { isProjectManualMergeActive } from './manualMergeGuards.js';
 import { withManualMergeLock } from './manualMergeLocks.js';
 import { runManualMerge } from './manualMergeService.js';
+import { requireTaskInRequestedProject } from './requestUtils.js';
 import type { MergeReadyTask } from './manualMergeTypes.js';
 
 export function buildTaskMergeRoute(backendOrigin: string): Router {
@@ -18,6 +19,7 @@ export function buildTaskMergeRoute(backendOrigin: string): Router {
   r.post('/api/tasks/:id/merge', async (req, res) => {
     const task = await getTask(req.params.id);
     if (!task) return res.status(404).json({ error: 'not found' });
+    if (!requireTaskInRequestedProject(task, req, res)) return;
     if (!requireTaskStatus(task, 'ready_to_merge', res)) return;
     if (!task.branch || !task.worktreePath) {
       return res

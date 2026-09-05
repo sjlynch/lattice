@@ -4,7 +4,11 @@
 
 import type { Request, Response } from 'express';
 import { getTask, updateTask, type Task } from '../../tasks.js';
-import { resolveProject, respondJson } from './requestUtils.js';
+import {
+  requireTaskInRequestedProject,
+  resolveProject,
+  respondJson,
+} from './requestUtils.js';
 import { validateProjectForCreate } from './projectValidation.js';
 import type { TaskIdRequest } from './crudTypes.js';
 import {
@@ -40,6 +44,14 @@ export async function handleTaskUpdate(
   }
 
   await respondJson(res, async () => {
+    // Look the task up before writing so the optional `?project=` pin can
+    // refuse a foreign id BEFORE the patch lands (see requestUtils).
+    const existing = await getTask(req.params.id);
+    if (!existing) {
+      res.status(404).json({ error: 'not found' });
+      return;
+    }
+    if (!requireTaskInRequestedProject(existing, req, res)) return;
     const updated = await updateTask(req.params.id, parsed.value);
     if (!updated) {
       res.status(404).json({ error: 'not found' });
@@ -83,6 +95,7 @@ export async function handleTaskAppendSummary(
       res.status(404).json({ error: 'not found' });
       return;
     }
+    if (!requireTaskInRequestedProject(task, req, res)) return;
     const appended = appendSummaryText(task.summary, summary);
     const updated = await updateTask(req.params.id, { summary: appended });
     if (!updated) {

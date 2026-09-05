@@ -167,19 +167,26 @@ test('the index teaches the cheap-first read path', async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-test('the index stays small enough to read on every question', async () => {
+test('the index stays small enough to read on every question — even for a long project path', async () => {
   // This file is named by the system-prompt preamble, so an agent reads it
   // WHOLE every time it is asked anything about Lattice. It was 19 KB (~5k
   // tokens) before the split; the budget is what stops it silently regrowing.
   // Anything that needs more room belongs in LATTICE_API_RECIPES.md.
+  //
+  // The project path is interpolated ~8 times, so the rendered size grows with
+  // it: measure against a deliberately LONG path (a short temp dir would pass a
+  // template that a real nested checkout blows through).
   const dir = await mkProject('lat-size-');
-  const body = await fs.readFile(ensureLatticeApiDoc(dir, 5184) as string, 'utf8');
+  const long = path.join(dir, 'a-deliberately-long-nested-project-directory-name-for-the-budget-test');
+  await fs.mkdir(path.join(long, '.lattice'), { recursive: true });
+  assert.ok(long.length >= 80, `test path is ${long.length} chars; needs to be long to be meaningful`);
+  const body = await fs.readFile(ensureLatticeApiDoc(long, 5184) as string, 'utf8');
 
   assert.ok(
-    Buffer.byteLength(body, 'utf8') < 4096,
-    `LATTICE_API.md is ${Buffer.byteLength(body, 'utf8')} bytes — over the 4096 ` +
-      'budget. Move the new material into LATTICE_API_RECIPES.template.md ' +
-      'instead of growing the index every agent reads in full.',
+    Buffer.byteLength(body, 'utf8') < 5120,
+    `LATTICE_API.md is ${Buffer.byteLength(body, 'utf8')} bytes for an ${long.length}-char ` +
+      'project path — over the 5 KB budget. Move the new material into ' +
+      'LATTICE_API_RECIPES.template.md instead of growing the index every agent reads in full.',
   );
 
   await fs.rm(dir, { recursive: true, force: true });

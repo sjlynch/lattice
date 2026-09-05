@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getTask } from '../../tasks.js';
 import { isFreshlyRunnable } from './startTask.js';
 import { enqueueTaskRun } from './queuedSpawn.js';
+import { requireTaskInRequestedProject } from './requestUtils.js';
 
 export function buildTaskRunRoute(backendOrigin: string): Router {
   const r = Router();
@@ -9,6 +10,9 @@ export function buildTaskRunRoute(backendOrigin: string): Router {
   r.post('/api/tasks/:id/run', async (req, res) => {
     const task = await getTask(req.params.id);
     if (!task) return res.status(404).json({ error: 'not found' });
+    // Spawning an agent on another project's task is the worst-case wrong-board
+    // outcome, so honour the caller's `?project=` pin when it sends one.
+    if (!requireTaskInRequestedProject(task, req, res)) return;
     // Runnable from scratch when the task is Open, or In Progress with no
     // worktree yet (dragged into the lane manually, never actually started).
     // Either way startTaskById sets up a fresh worktree and spawns the agent.

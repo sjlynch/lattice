@@ -5,6 +5,7 @@ import type { Response } from 'express';
 import { deleteTask, getTask } from '../../tasks.js';
 import { cleanupWorktreeForTask } from '../../worktree.js';
 import { cancelQueuedTaskSpawns, dequeueTaskRun } from './queuedSpawn.js';
+import { requireTaskInRequestedProject } from './requestUtils.js';
 import type { TaskIdRequest } from './crudTypes.js';
 
 // Cancel a queued task run: drop it from the spawn queue and clear the
@@ -19,6 +20,7 @@ export async function handleTaskCancelQueuedRun(
     res.status(404).json({ error: 'not found' });
     return;
   }
+  if (!requireTaskInRequestedProject(task, req, res)) return;
   await dequeueTaskRun(req.params.id);
   const updated = await getTask(req.params.id);
   res.json(updated ?? { ok: true });
@@ -29,6 +31,10 @@ export async function handleTaskDelete(
   res: Response,
 ): Promise<void> {
   const task = await getTask(req.params.id);
+  // A delete is the one call where reaching the wrong board is unrecoverable,
+  // so the project pin is checked before ANY side effect (the queue cancel
+  // below included).
+  if (task && !requireTaskInRequestedProject(task, req, res)) return;
   // Drop any still-pending queued run/resume so the spawn queue does not
   // later try to spawn a worktree for a task that no longer exists.
   cancelQueuedTaskSpawns(req.params.id);

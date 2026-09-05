@@ -338,9 +338,14 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   own `node`, a thin typed client over the task-board HTTP API
   (`board_summary`, `list_tasks`, `get_task`, `search_tasks`, `create_task(s)`,
   `update_task`, `transition_tasks`, `append_summary`, `delete_task`,
-  `run_task` — plus `my_task` in a task worktree's session, where the
-  run/resume spawn also injects `LATTICE_TASK_ID` so `append_summary` with no
-  id reports on the agent's own task). It is ON for all three harnesses unless
+  `run_task`). A **task worktree's session** gets a reduced set instead: the
+  run/resume spawn injects `LATTICE_TASK_ID`, which adds `my_task`, makes
+  `append_summary` default to the agent's own task, and drops the
+  board-management tools (`update_task`, `transition_tasks`, `delete_task`,
+  `run_task`) — a worktree agent's brief is untrusted input, and it reads,
+  files follow-ups and reports rather than re-laning or deleting. Every by-id
+  call is project-pinned server-side: the routes 404 a task from another board
+  when `?project=` is sent (`requireTaskInRequestedProject`). It is ON for all three harnesses unless
   the per-harness toggle is set to `false`, and the resolver injects
   `LATTICE_API_URL` + `LATTICE_PROJECT` per spawn so tools never take a `project` argument and
   the server does the `canonicalProject` check agents used to do by hand.

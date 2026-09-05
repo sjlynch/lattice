@@ -3,6 +3,7 @@ import { getTask } from '../../tasks.js';
 import { worktreeExists } from '../../worktree.js';
 import { requireTaskStatus } from './_shared.js';
 import { enqueueTaskResume } from './queuedSpawn.js';
+import { requireTaskInRequestedProject } from './requestUtils.js';
 
 export function buildTaskResumeRoute(): Router {
   const r = Router();
@@ -17,6 +18,7 @@ export function buildTaskResumeRoute(): Router {
   r.post('/api/tasks/:id/resume', async (req, res) => {
     const task = await getTask(req.params.id);
     if (!task) return res.status(404).json({ error: 'not found' });
+    if (!requireTaskInRequestedProject(task, req, res)) return;
     if (!requireTaskStatus(task, 'in_progress', res)) return;
     if (!task.worktreePath) {
       return res

@@ -27,7 +27,11 @@ import {
   parseSearchQuery,
   searchTasks,
 } from './taskSearch.js';
-import { requireAbsoluteProject, respondJson } from './requestUtils.js';
+import {
+  requireAbsoluteProject,
+  requireTaskInRequestedProject,
+  respondJson,
+} from './requestUtils.js';
 import type { TaskIdRequest } from './crudTypes.js';
 
 // Partition a flat task list into those whose canonical projectPath matches
@@ -58,12 +62,18 @@ function logForeignTasks(route: string, canonicalProject: string, foreign: Task[
 }
 
 // Express hands back `string | string[] | ParsedQs` per key (a repeated param
-// arrives as an array). The pure parsers want plain strings, so flatten to the
-// string-valued entries and let them apply defaults for everything else.
-function stringParams(query: Request['query']): Record<string, string | undefined> {
+// arrives as an array). The pure parsers want plain strings, so flatten: a
+// string passes through, and a repeated param (`?status=open&status=qa`) joins
+// to the CSV the parsers already read — dropping it would silently fall back to
+// the default lanes and hide exactly the lanes the caller asked for. Anything
+// else (a nested object) is left for the parsers to default.
+export function stringParams(query: Request['query']): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(query)) {
     if (typeof value === 'string') out[key] = value;
+    else if (Array.isArray(value) && value.every((v) => typeof v === 'string')) {
+      out[key] = value.join(',');
+    }
   }
   return out;
 }
@@ -192,5 +202,6 @@ export async function handleTaskGet(
     res.status(404).json({ error: 'not found' });
     return;
   }
+  if (!requireTaskInRequestedProject(task, req, res)) return;
   res.json(task);
 }
