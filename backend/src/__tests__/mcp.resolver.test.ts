@@ -59,6 +59,18 @@ test('lattice: enabled with empty settings, and carries the per-spawn env', () =
   assert.equal(cfg.env?.LATTICE_PROJECT, canonicalProjectPath('c:\\dev\\proj'));
 });
 
+test('lattice: a task-run spawn adds LATTICE_TASK_ID; every other spawn omits the key', () => {
+  // Present → the server registers `my_task` and defaults `append_summary`.
+  const withTask = asStdio(
+    resolveClaudeServers(BUILTIN_MCP_SERVERS, {}, {}, { ...LATTICE_CTX, taskId: 't_abc' }).lattice,
+  );
+  assert.equal(withTask.env?.LATTICE_TASK_ID, 't_abc');
+  // Absent → the key is OMITTED, not set to '' — the server keys the extra tool
+  // on the variable's presence, and an empty value would be a confusing third state.
+  const without = asStdio(resolveClaudeServers(BUILTIN_MCP_SERVERS, {}, {}, LATTICE_CTX).lattice);
+  assert.equal('LATTICE_TASK_ID' in (without.env ?? {}), false);
+});
+
 test('lattice: no project in the spawn context → not resolved at all', () => {
   // It pins itself to ONE board; with nothing to serve, eleven tools that all
   // fail on their first call are worse than no tools.

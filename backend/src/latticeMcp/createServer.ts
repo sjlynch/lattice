@@ -33,6 +33,11 @@ export type CreateLatticeMcpServerOptions = {
   apiUrl: string;
   // Canonical project path this server is pinned to.
   project: string;
+  // The task this session is running, when it is a task worktree's agent
+  // (`LATTICE_TASK_ID`, set by the resolver for run/resume spawns only). Adds
+  // the `my_task` tool and lets `append_summary` omit its `id`. Undefined for
+  // every other kind of session — sidebar, workflow step, push, QA, hooks.
+  taskId?: string;
   // Injectable for tests; defaults to the global `fetch`.
   fetchImpl?: FetchLike;
 };
@@ -76,7 +81,11 @@ export function createLatticeMcpServer(
         'only — none of them take a project argument. Orient with board_summary ' +
         'before listing: an unfiltered board can be hundreds of thousands of ' +
         'tokens. Then list_tasks to scan, get_task to expand one, search_tasks to ' +
-        'find without listing.',
+        'find without listing.' +
+        (opts.taskId
+          ? ` This session is running task ${opts.taskId}: my_task returns it, and ` +
+            'append_summary with no id reports on it.'
+          : ''),
     },
   );
 
@@ -177,6 +186,25 @@ export function createLatticeMcpServer(
     },
     async ({ id }) => toToolResult(await client.call(`/api/tasks/${encodeURIComponent(id)}`)),
   );
+
+  // Registered ONLY when the session is a task worktree's agent. A worktree
+  // agent's most common board question is "what am I doing, exactly?" — its
+  // brief is in LATTICE_TASK.md, but the live record (status, appended
+  // summaries from a previous attempt, conflict flag) is here, and it should
+  // not have to read its own id back out of a file to ask.
+  if (opts.taskId) {
+    const taskId = opts.taskId;
+    server.registerTool(
+      'my_task',
+      {
+        description:
+          `The full, live record of the task THIS session is running (${taskId}) — ` +
+          'status, description, any summaries appended so far. No arguments.',
+        inputSchema: {},
+      },
+      async () => toToolResult(await client.call(`/api/tasks/${encodeURIComponent(taskId)}`)),
+    );
+  }
 
   // ---- Find -----------------------------------------------------------------
 
@@ -309,19 +337,47 @@ export function createLatticeMcpServer(
     {
       description:
         "Append a markdown summary beneath a task's description — how an agent " +
-        'reports what it did. Never overwrites anything (unlike update_task).',
+        'reports what it did. Never overwrites anything (unlike update_task).' +
+        (opts.taskId
+          ? ` Omit id to report on the task this session is running (${opts.taskId}).`
+          : ''),
       inputSchema: {
-        id: z.string().describe('Task id.'),
+        // Optional ONLY when there is a session task to default to. In every
+        // other session the schema keeps `id` required, so the model is told up
+        // front rather than discovering it from the error below.
+        id: opts.taskId
+          ? z
+              .string()
+              .optional()
+              .describe(`Task id. Defaults to this session's own task (${opts.taskId}).`)
+          : z.string().describe('Task id.'),
         summary: z.string().describe('Markdown or plain text to append.'),
       },
     },
-    async ({ id, summary }) =>
-      toToolResult(
-        await client.call(`/api/tasks/${encodeURIComponent(id)}/append-summary`, {
+    async ({ id, summary }) => {
+      // The default only exists in a worktree session; elsewhere the schema
+      // already requires `id`, and this is the belt to that suspender.
+      const target = id ?? opts.taskId;
+      if (!target) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                'append_summary needs an id: this session is not running a task, so ' +
+                'there is no default. Find the task with list_tasks or search_tasks first.',
+            },
+          ],
+          isError: true,
+        };
+      }
+      return toToolResult(
+        await client.call(`/api/tasks/${encodeURIComponent(target)}/append-summary`, {
           method: 'POST',
           body: { summary },
         }),
-      ),
+      );
+    },
   );
 
   server.registerTool(

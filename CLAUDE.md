@@ -338,9 +338,11 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   own `node`, a thin typed client over the task-board HTTP API
   (`board_summary`, `list_tasks`, `get_task`, `search_tasks`, `create_task(s)`,
   `update_task`, `transition_tasks`, `append_summary`, `delete_task`,
-  `run_task`). It is ON for all three harnesses unless the per-harness toggle
-  is set to `false`, and the resolver injects `LATTICE_API_URL` +
-  `LATTICE_PROJECT` per spawn so tools never take a `project` argument and
+  `run_task` — plus `my_task` in a task worktree's session, where the
+  run/resume spawn also injects `LATTICE_TASK_ID` so `append_summary` with no
+  id reports on the agent's own task). It is ON for all three harnesses unless
+  the per-harness toggle is set to `false`, and the resolver injects
+  `LATTICE_API_URL` + `LATTICE_PROJECT` per spawn so tools never take a `project` argument and
   the server does the `canonicalProject` check agents used to do by hand.
   Its tool descriptions carry the progressive-disclosure guidance (start with
   `board_summary`; `list_tasks` is compact/active/newest-100; `get_task` for

@@ -85,6 +85,10 @@ export function selectHarnessCommand(
         cwd,
         initialCommand: command,
         projectPath: task.projectPath,
+        // The one spawn site that knows its task. Lets the resolver bake
+        // LATTICE_TASK_ID into the `lattice` MCP server's env (see
+        // terminalServerClient/createSession.ts) for both run and resume.
+        taskId: task.id,
       });
       if ('error' in sess) {
         console.warn(

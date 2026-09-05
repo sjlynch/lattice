@@ -35,7 +35,7 @@ resolver injects per spawn.
 
 ```
 harness (claude/codex/pi)
-  └─ node dist/latticeMcp/server.js        LATTICE_API_URL, LATTICE_PROJECT
+  └─ node dist/latticeMcp/server.js        LATTICE_API_URL, LATTICE_PROJECT [, LATTICE_TASK_ID]
        └─ HTTP ──▶ the running Lattice backend on :5184
 ```
 
@@ -67,6 +67,7 @@ that is already running.
 | 0 orient | `board_summary` | counts + per-lane cost. Under 1 KB. |
 | 1 scan | `list_tasks` | compact / active lanes / newest 100 — **the API's defaults, not ours**; `confirm_large` is the only way past the 256 KB ceiling |
 | 2 expand | `get_task` | one full record |
+| 2 expand | `my_task` | **task worktree sessions only** — the live record of the task this agent is running. Registered iff `LATTICE_TASK_ID` is set (run/resume spawns); the same variable makes `append_summary`'s `id` optional |
 | find | `search_tasks` | ranked, all lanes, snippets |
 | write | `create_task`, `create_tasks`, `update_task`, `transition_tasks`, `append_summary`, `delete_task` | |
 | run | `run_task` | returns `{accepted, queued}` — admitted, **not started** |

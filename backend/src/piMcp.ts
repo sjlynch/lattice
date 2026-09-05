@@ -8,7 +8,7 @@
 // the spawn chokepoint (it has fs access and knows the cwd); only the secret env
 // rides the wire to the pty. No command rewriting. See mcp/CLAUDE.md.
 
-import { resolveManagedPiServers } from './mcp/registry.js';
+import { resolveManagedPiServers, type McpResolveContext } from './mcp/registry.js';
 import { installPiMcpShim } from './piMcp/shim.js';
 import { writePiMcpConfig } from './piMcp/config.js';
 
@@ -29,8 +29,12 @@ export { renderPiMcpShim, PI_MCP_SHIM_FILENAME } from './piMcp/render.js';
 export async function applyPiMcpForSpawn(
   cwd: string,
   projectPath: string,
+  // Spawn context for the resolver — today only `taskId`, which a task-run
+  // spawn passes so the `lattice` server's `.pi/mcp.json` env carries
+  // `LATTICE_TASK_ID` (see mcp/registry.ts `shapeLatticeEntry`).
+  ctx: McpResolveContext = {},
 ): Promise<Record<string, string>> {
-  const resolved = await resolveManagedPiServers(projectPath);
+  const resolved = await resolveManagedPiServers(projectPath, ctx);
   if (!resolved) return {};
   const { mcpServers, env } = resolved;
   // Reconcile the config even when empty — this is how disabling a previously

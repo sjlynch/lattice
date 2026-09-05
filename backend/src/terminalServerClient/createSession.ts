@@ -30,6 +30,13 @@ export type CreateSessionOptions = {
   // Playwright only via the global `mcpOverrides.playwright` toggle. Not consumed
   // by the terminal-server itself. See mcp/registry.ts.
   isQaRun?: boolean;
+  // Set only by the task run/resume spawns (`routes/tasks/harnessFactory.ts`):
+  // the task whose worktree this session is. Used HERE to bake `LATTICE_TASK_ID`
+  // into the first-party `lattice` MCP server's env, so the worktree agent gets
+  // a `my_task` tool and an `append_summary` that defaults to its own task —
+  // without having to read its id back out of LATTICE_TASK.md. Like `isQaRun`,
+  // it rides the wire body but the terminal-server never reads it.
+  taskId?: string;
 };
 
 // The POST /sessions wire body: the caller's options plus the spawn-time Claude
@@ -99,7 +106,10 @@ async function resolveHarnessSpawnBody(
   if (isClaudeCommand(opts.initialCommand)) {
     // No projectPath → trust-only seed (managed: null) + Claude's default memory.
     const managedMcpServers = opts.projectPath
-      ? await resolveManagedClaudeServers(opts.projectPath, { isQaRun: opts.isQaRun })
+      ? await resolveManagedClaudeServers(opts.projectPath, {
+          isQaRun: opts.isQaRun,
+          taskId: opts.taskId,
+        })
       : null;
     const disableClaudeMemory = opts.projectPath
       ? await isClaudeMemoryDisabled(opts.projectPath).catch(() => false)
@@ -120,7 +130,7 @@ async function resolveHarnessSpawnBody(
     };
   }
   if (isCodexCommand(opts.initialCommand) && opts.projectPath) {
-    const codex = await resolveManagedCodexServers(opts.projectPath);
+    const codex = await resolveManagedCodexServers(opts.projectPath, { taskId: opts.taskId });
     const sysPrompt = await prepareCodexSystemPrompt(opts.projectPath).catch(
       () => ({ configArgs: [] as string[] }),
     );
@@ -138,7 +148,7 @@ async function resolveHarnessSpawnBody(
     };
   }
   if (isPiCommand(opts.initialCommand) && opts.projectPath) {
-    const env = await applyPiMcpForSpawn(opts.cwd, opts.projectPath);
+    const env = await applyPiMcpForSpawn(opts.cwd, opts.projectPath, { taskId: opts.taskId });
     // Reconcile the Pi system-prompt extension in the cwd (installs it when
     // there's an override, strips a stale one otherwise). Cwd-local files, so
     // nothing rides the wire — like the MCP shim.

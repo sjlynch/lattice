@@ -119,8 +119,13 @@ array) with `env` merged from the spawn context:
 - `LATTICE_API_URL` — `ctx.apiUrl`, this backend's own origin.
 - `LATTICE_PROJECT` — `canonicalProjectPath(ctx.projectPath)`, canonical so the
   server's own `canonicalProject` assertion compares like with like.
+- `LATTICE_TASK_ID` — `ctx.taskId`, present ONLY for a task run/resume spawn
+  (`routes/tasks/harnessFactory.ts` is the one site that passes it, via
+  `CreateSessionOptions.taskId`). The key is omitted otherwise, never set empty:
+  the server registers its `my_task` tool and defaults `append_summary`'s `id`
+  exactly when the variable exists.
 
-`McpResolveContext` gained `projectPath` + `apiUrl` for this; the four async
+`McpResolveContext` gained `projectPath` + `apiUrl` (+ the optional `taskId`) for this; the four async
 resolvers (`effectiveMcpServers`, `resolveManagedClaudeServers`,
 `resolveManagedCodexServers`, `resolveManagedPiServers`) fill both in via
 `withSpawnContext`, so the env is identical across harnesses. The three shapers

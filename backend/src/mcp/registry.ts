@@ -77,6 +77,11 @@ export type McpResolveContext = {
   // Passed in by the async resolvers so the pure core does no config lookup of
   // its own; a hand-built ctx that omits it falls back to the same value.
   apiUrl?: string;
+  // The task whose worktree this session is — set ONLY by the task run/resume
+  // spawns. Baked into the `lattice` server's env as `LATTICE_TASK_ID` so the
+  // worktree agent gets a `my_task` tool and an id-less `append_summary`.
+  // Absent for every other spawn (sidebar, workflow step, push, QA, hooks).
+  taskId?: string;
 };
 
 // The per-project settings the resolver reads. `mcpOverrides` is CLAUDE's map
@@ -139,6 +144,9 @@ function shapeLatticeEntry(
       // Canonical so the server's own `canonicalProject` assertion against the
       // API envelope is comparing like with like.
       LATTICE_PROJECT: canonicalProjectPath(ctx.projectPath),
+      // Only a task-run spawn carries one; the key is omitted (not set empty)
+      // otherwise, so the server registers `my_task` exactly when it applies.
+      ...(ctx.taskId ? { LATTICE_TASK_ID: ctx.taskId } : {}),
     },
   };
 }
@@ -352,6 +360,7 @@ export async function resolveManagedClaudeServers(
 // `--config` args + pty env (no policy resolution there). See mcp/CLAUDE.md.
 export async function resolveManagedCodexServers(
   projectPath: string,
+  ctx: McpResolveContext = {},
 ): Promise<CodexMcpResolution | null> {
   try {
     const [catalog, settings, secrets] = await Promise.all([
@@ -359,7 +368,7 @@ export async function resolveManagedCodexServers(
       getUserSettings(projectPath),
       readMcpSecrets(),
     ]);
-    return resolveCodexServers(catalog, settings, secrets, withSpawnContext(projectPath));
+    return resolveCodexServers(catalog, settings, secrets, withSpawnContext(projectPath, ctx));
   } catch (err) {
     console.warn(
       `[mcp] codex resolve failed for ${projectPath}: ${(err as Error).message}`,
@@ -375,6 +384,7 @@ export async function resolveManagedCodexServers(
 // env to the pty. See mcp/CLAUDE.md.
 export async function resolveManagedPiServers(
   projectPath: string,
+  ctx: McpResolveContext = {},
 ): Promise<PiMcpResolution | null> {
   try {
     const [catalog, settings, secrets] = await Promise.all([
@@ -382,7 +392,7 @@ export async function resolveManagedPiServers(
       getUserSettings(projectPath),
       readMcpSecrets(),
     ]);
-    return resolvePiServers(catalog, settings, secrets, withSpawnContext(projectPath));
+    return resolvePiServers(catalog, settings, secrets, withSpawnContext(projectPath, ctx));
   } catch (err) {
     console.warn(
       `[mcp] pi resolve failed for ${projectPath}: ${(err as Error).message}`,

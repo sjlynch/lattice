@@ -75,6 +75,8 @@ export const DEFAULT_TASK_TEMPLATE = `# {{task_title}}
 
    Keep it concise (1-3 bullet points). This appends the summary beneath
    the original description — both remain visible on the task board.
+   With the \`lattice\` MCP tools, \`append_summary\` with no \`id\` is the same
+   call — this session already knows which task it is running (\`my_task\`).
 
 {{final_step}}
 

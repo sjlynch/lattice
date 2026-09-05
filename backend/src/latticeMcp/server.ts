@@ -34,8 +34,11 @@ async function main(): Promise<void> {
   // serving tools that would every one of them fail.
   if (!apiUrl) fail('LATTICE_API_URL is not set — cannot reach the Lattice backend.');
   if (!project) fail('LATTICE_PROJECT is not set — this server must be pinned to one project.');
+  // Optional: present only for a task worktree's session (run/resume). Unlocks
+  // `my_task` and the id-less `append_summary`; every other session omits it.
+  const taskId = process.env.LATTICE_TASK_ID?.trim() || undefined;
 
-  const server = createLatticeMcpServer({ apiUrl, project });
+  const server = createLatticeMcpServer({ apiUrl, project, taskId });
   await server.connect(new StdioServerTransport());
 }
 
