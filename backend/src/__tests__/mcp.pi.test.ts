@@ -12,6 +12,7 @@ import {
   builtinMcpServerById,
   type McpServerEntry,
 } from '../mcp/catalog.js';
+import { canonicalProjectPath } from '../projectPath.js';
 
 // ---- toPiServerConfig ----
 
@@ -112,6 +113,33 @@ test('resolvePiServers: reads mcpHarnessOverrides.pi only, keyed by server id', 
       { mcpHarnessOverrides: { codex: { context7: true } } },
       {},
     ),
+    { mcpServers: {}, env: {} },
+  );
+});
+
+test('resolvePiServers: the first-party lattice server resolves with a project, not without', () => {
+  // The one `defaultEnabled` entry. Pi reads it out of the same neutral core, so
+  // the shape it lands in `.pi/mcp.json` is what matters here: an absolute node
+  // binary (never `cmd`-wrapped), the entry path, and the per-spawn env.
+  const ctx = { projectPath: 'c:\\dev\\proj', apiUrl: 'http://127.0.0.1:5184' };
+  assert.deepEqual(resolvePiServers(BUILTIN_MCP_SERVERS, {}, {}), { mcpServers: {}, env: {} });
+
+  const { mcpServers, env } = resolvePiServers(BUILTIN_MCP_SERVERS, {}, {}, ctx);
+  assert.deepEqual(Object.keys(mcpServers), ['lattice']);
+  const cfg = mcpServers.lattice;
+  assert.equal(cfg.command, process.execPath);
+  assert.ok(cfg.args?.[0]?.endsWith('server.js'));
+  assert.equal(cfg.env?.LATTICE_API_URL, 'http://127.0.0.1:5184');
+  assert.equal(cfg.env?.LATTICE_PROJECT, canonicalProjectPath('c:\\dev\\proj'));
+  // Non-secret config, so nothing rides the pty env.
+  assert.deepEqual(env, {});
+  // Tools registered individually (parity with the other servers).
+  assert.equal(cfg.directTools, true);
+  assert.equal(cfg.lifecycle, 'eager');
+
+  // And the per-harness opt-out reaches Pi.
+  assert.deepEqual(
+    resolvePiServers(BUILTIN_MCP_SERVERS, { mcpHarnessOverrides: { pi: { lattice: false } } }, {}, ctx),
     { mcpServers: {}, env: {} },
   );
 });

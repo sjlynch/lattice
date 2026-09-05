@@ -119,8 +119,16 @@ explicit-curl callbacks — never by polling task state.
   no banner is rendered.
 - `renderHelperScript.ts` + `create-task-template.cjs` — interpolated
   Node CJS helper script copied into each step dir so the agent can
-  create tasks without shell-quoting headaches. The `.cjs` template is a
-  runtime asset; `scripts/copy-assets.mjs` mirrors it into `dist/`.
+  create tasks without shell-quoting headaches. It also fronts the
+  progressive-disclosure read path so a planner never has to hand-build a
+  URL: `--summary` (counts + per-lane token cost), `--list` (the API's own
+  default — active lanes, compact, newest 100; `all` / a lane CSV /
+  `--since` / `--limit` widen it), `--find` (search instead of listing),
+  `--get <id>` (one task's full text). Every read prints the envelope's
+  `hint` verbatim — that string is how the agent learns the next knob — and
+  a 413 is rendered as its hint + `suggestions` rather than a stack trace.
+  The `.cjs` template is a runtime asset; `scripts/copy-assets.mjs` mirrors
+  it into `dist/`.
 - `controlStep.ts` + `controlSteps/` — headless control-flow steps
   (`start` / `merge` / `push`) that run server-side against Lattice's own
   task pipeline instead of spawning an agent. `controlStep.ts` is the thin

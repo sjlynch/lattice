@@ -178,8 +178,9 @@ therefore stay safely re-runnable.
 | GET | `/api/projects` | Known project roots + hashes, for agent sanity checks |
 | POST | `/api/project-init/preview` | `{project, gitignore?}` → what a first commit would capture (`{probe, isEmpty, gitignore, generated, fileCount, byteCount, truncated, largest}`). Backs the Git Setup dialog; re-POSTed (debounced) on every `.gitignore` edit |
 | POST | `/api/project-init` | `{project, gitignore?}` — `git init -b main` + starter `.gitignore` + first commit, so a non-repo folder becomes a usable Lattice project. `409 not-initable` (state ≠ `none`, or a path guard refused), `422 git-identity-missing` (git's raw stderr as `detail`), `500 git-failed`, `503 git-unavailable`. See `backend/src/projectInit/` |
-| GET | `/api/tasks?project=&status=&format=markdown` | List tasks for a project; `format=markdown` returns a round-trippable markdown document for agent editing |
-| GET | `/api/tasks/summary?project=` | Counts by task status for a project |
+| GET | `/api/tasks?project=&status=&ids=&fields=&clip=&since=&limit=&format=&confirm_large=` | List tasks — **progressive-disclosure defaults**: without `status` only the ACTIVE lanes come back (`done`/`deleted` omitted and counted in `omitted`), `fields=compact` (id/title/status/timestamps/text byte-counts) unless `fields=full`, full text clipped at `clip=500` chars (`clip=0` = unlimited; never clipped for `format=markdown`, which is round-tripped through `/upsert`), newest `limit=100` first (`0` = unlimited). `ids=` fetches specific tasks (full). `since=30d`/ISO/epoch bounds by last activity. Every envelope carries `bytes`/`approxTokens`/`hint`. A response over 256 KB is refused with **413** (`summary` + `suggestions`) unless `confirm_large=1`. The board UI passes `status=all&fields=full&clip=0&limit=0&confirm_large=1`. See `backend/src/routes/tasks/listQuery.ts` |
+| GET | `/api/tasks/summary?project=` | Counts by task status (`byStatus`) plus per-lane cost (`lanes[status] = {count, bytes, approxTokens, newestActivityAt}`), whole-board `bytes`/`approxTokens`, and a `hint` naming the cheapest next call. Under 1 KB — the intended FIRST call for an agent |
+| GET | `/api/tasks/search?project=&q=&status=&limit=` | Find tasks without listing the board: AND-of-terms substring match over title/description/summary (default `status=all` — history is what search is for), scored title×3, snippet ~160 chars, `limit=20` (max 200). Backs the `search_tasks` MCP tool and `create-task.cjs --find`. See `backend/src/routes/tasks/taskSearch.ts` |
 | GET | `/api/tasks/worktree-modified?project=` | Files changed by each not-yet-merged task (in_progress + ready_to_merge); drives the graph's `W` worktree-highlight |
 | GET | `/api/tasks/:id` | Fetch a single task |
 | POST | `/api/tasks` | Create `{project, title, description?}` |
@@ -329,9 +330,22 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   (`backend/src/mcp/catalog.ts`); definitions/overrides live in
   `globalSettings.json`, per-project on/off in `userSettings.json` — `mcpOverrides`
   (Claude) + `mcpHarnessOverrides` (Codex/Pi) + `qaPlaywright` — secrets in their
-  own `0600` `~/.lattice/mcpSecrets.json`. **Everything is off by default**, with
-  three independent per-harness switches per server (enabling for one harness
-  never loads it into another). Injection is resolved in the backend at the spawn
+  own `0600` `~/.lattice/mcpSecrets.json`. **Every third-party server is off by
+  default**, with three independent per-harness switches per server (enabling
+  for one harness never loads it into another). **The one exception is
+  Lattice's own first-party `lattice` server** (`backend/src/latticeMcp/`,
+  catalog `defaultEnabled: true`): a stdio server spawned with the backend's
+  own `node`, a thin typed client over the task-board HTTP API
+  (`board_summary`, `list_tasks`, `get_task`, `search_tasks`, `create_task(s)`,
+  `update_task`, `transition_tasks`, `append_summary`, `delete_task`,
+  `run_task`). It is ON for all three harnesses unless the per-harness toggle
+  is set to `false`, and the resolver injects `LATTICE_API_URL` +
+  `LATTICE_PROJECT` per spawn so tools never take a `project` argument and
+  the server does the `canonicalProject` check agents used to do by hand.
+  Its tool descriptions carry the progressive-disclosure guidance (start with
+  `board_summary`; `list_tasks` is compact/active/newest-100; `get_task` for
+  full text; `search_tasks` instead of listing) so an agent can't fall into
+  the 1 MB unfiltered dump the raw curl allowed. Injection is resolved in the backend at the spawn
   chokepoint (`resolveHarnessSpawnBody`) and applied per harness: **Claude** →
   reconcile into `projects[<cwd>].mcpServers` in `~/.claude.json` (terminal-server
   `applyClaudeProjectConfig`; a *global* enable also lands persistently in the
@@ -476,10 +490,16 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   append channel at every spawn in every project with a `.lattice/` dir
   (`harnessSystemPrompts/latticePreamble.ts`). One paragraph: what Lattice is,
   its trigger words (task board, lanes, worktrees, merging, workflows, startup
-  terminals), and the absolute path of that project's auto-generated
-  `.lattice/LATTICE_API.md` — which documents those UI concepts as well as the
-  HTTP API, so an agent in an unrelated repo can answer "what is the Lattice
-  board?" instead of grepping for it. It is invisible to the user and takes no
+  terminals), the absolute path of that project's auto-generated
+  `.lattice/LATTICE_API.md`, and a nudge to prefer the `lattice` MCP tools
+  when the session has them. The doc is deliberately a SHORT index (≤ ~3.5 KB:
+  literal values, concepts, the cheapest-first tier table, five core recipes)
+  that points at a sibling `.lattice/LATTICE_API_RECIPES.md` for the full
+  endpoint table and the batch / markdown round-trip / bulk recipes — agents
+  read the pointer target whole, so the index is what every Lattice question
+  costs and the recipes are read only when needed. Both are regenerated from
+  `backend/src/latticeApiDocs/*.template.md` (content-hash stamped) and
+  drift-tested against the live route table. It is invisible to the user and takes no
   part in Claude Code's session naming, which is why it is a system prompt and
   not a typed first turn. **Two earlier channels could never work and must not
   be reintroduced**: `LATTICE_*` pty env vars (removed — no harness reads the

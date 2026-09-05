@@ -29,9 +29,27 @@ is a **compatibility barrel** — it keeps the original import path stable
 (`crud.ts` and `__tests__/projectScoping.test.ts` both import from it) while
 the implementations live in focused modules:
 
-- `crudList.ts` — `partitionByProject` + list / summary / projects / get.
-  `partitionByProject` is the foreign-task integrity filter every
-  project-scoped read runs.
+- `crudList.ts` — `partitionByProject` + thin handlers for list / summary /
+  search / projects / get. `partitionByProject` is the foreign-task integrity
+  filter every project-scoped read runs; everything else here is an HTTP
+  adapter over the two pure modules below.
+- `listQuery.ts` — the pure progressive-disclosure pipeline behind
+  `GET /api/tasks` and `/summary`: query parsing (`status` CSV/`all` with the
+  ACTIVE-lanes default, `ids`, `fields`, `clip`, `since` incl. `30d`/`12h`/`45m`
+  durations, `limit`, `confirm_large`), `lastActivityAt`, filter + newest-first
+  sort, the compact projection, text clipping, the teaching `hint`,
+  `bytes`/`approxTokens` self-pricing, the per-lane summary costing, and the
+  `LIST_RESPONSE_CEILING_BYTES` (256 KB) check that turns an oversized list into
+  a 413 carrying the summary. **The defaults are the point** — the endpoint used
+  to return every task, full text, uncapped (~320k tokens on a mature board),
+  which is what every agent hit. `format=markdown` shares the whole pipeline
+  except clipping: that doc round-trips through `/upsert`, which REPLACES
+  descriptions, so a clipped round-trip would destroy task text.
+- `taskSearch.ts` — the pure search behind `GET /api/tasks/search`: AND-of-terms
+  substring match, title×3 scoring, the `…`-ellipsed snippet window, and its
+  envelope. Defaults to EVERY lane (unlike the list) because history is where
+  the interesting matches are. Registered before `/api/tasks/:id`, or `search`
+  is captured as an id.
 - `crudCreate.ts` — create / batch-create (JSON array, `{tasks}`, or markdown).
 - `crudUpdate.ts` — thin patch / bulk-update / upsert / append-summary route
   handlers. The markdown-or-JSON body ergonomics (heredoc-friendly) are split

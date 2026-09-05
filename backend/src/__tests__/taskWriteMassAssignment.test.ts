@@ -70,8 +70,10 @@ test('JSON PATCH + bulk-update honor only title/description/status (no mass assi
     const base = `http://127.0.0.1:${port}`;
     const projectParam = encodeURIComponent(project);
 
+    // `fields=full` because the list's compact default projects the record down
+    // to the scan fields — this test reads description / startedAt back off it.
     const fetchTask = async (id: string): Promise<TaskShape> => {
-      const res = await fetch(`${base}/api/tasks?project=${projectParam}`);
+      const res = await fetch(`${base}/api/tasks?project=${projectParam}&fields=full`);
       assert.equal(res.status, 200);
       const body = (await res.json()) as { tasks: TaskShape[] };
       const found = body.tasks.find((t) => t.id === id);

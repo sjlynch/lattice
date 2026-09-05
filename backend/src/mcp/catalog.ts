@@ -2,15 +2,28 @@
 // JSON) so a package-name change is a code update, not a data migration — see
 // the MCP plan, decision #5.
 //
-// INVARIANT: every server ships DISABLED. There is deliberately no
-// `enabledByDefault` flag — the registry resolver computes `enabled` purely
-// from per-project overrides (`mcpOverrides[id] ?? false`, and `qaPlaywright`
-// for Playwright), so a new project loads nothing until the user opts in.
+// INVARIANT: every THIRD-PARTY server ships DISABLED. The registry resolver
+// computes `enabled` from per-project overrides (`mcpOverrides[id]` for Claude,
+// `mcpHarnessOverrides[harness][id]` for Codex/Pi, plus `qaPlaywright` for
+// Playwright), and with no override the answer is `false` — so a new project
+// loads no third-party code, no keys, and no telemetry until the user opts in.
+//
+// THE SINGLE EXCEPTION is Lattice's OWN first-party server (`lattice`, below),
+// which sets `defaultEnabled: true`. It runs Lattice's own code out of this
+// repo, needs no secret, talks only to the local backend that spawned the
+// session, and IS the feature — a board server nobody switches on is a board
+// server nobody uses. An explicit `false` override still turns it off, per
+// harness. `defaultEnabled` is reserved for that class of entry and must NEVER
+// be set on a third-party server: doing so would silently run somebody else's
+// package in every worktree agent on the machine.
+
 //
 // Package names verified June 2026. Gotchas baked in: the official
 // `fetch`/`git`/`time` servers are PyPI/`uvx` (not npm); Brave moved to the
 // `@brave/` scope (the old `@modelcontextprotocol/server-brave-search` is
 // archived); GitHub has no npm package. None of those ship here.
+
+import { latticeMcpServerEntryPath } from '../latticeMcp/entryPath.js';
 
 export type McpRuntime = 'node' | 'uv' | 'docker' | 'remote';
 
@@ -61,10 +74,54 @@ export type McpServerEntry = {
   // True for code-defined catalog entries; user-added customs are false. Built-ins
   // are editable via `mcpBuiltinOverrides` but never deletable.
   builtin?: boolean;
+  // Resolve to ON when the project has no explicit per-harness override.
+  // RESERVED FOR FIRST-PARTY SERVERS — currently only `lattice`. Never set this
+  // on a third-party entry: it would run someone else's package in every agent
+  // Lattice spawns, on every project, without the user ever choosing it. See
+  // the INVARIANT at the top of this file, and `registry.harnessToggleOn`.
+  defaultEnabled?: boolean;
 };
 
-// v1 catalog: 5 servers, all disabled until enabled per-project.
+// The id of Lattice's own first-party board server. Referenced by the resolver
+// (which injects its per-spawn env) and by the settings UI, so it lives here
+// rather than as a string literal in three places.
+export const LATTICE_MCP_SERVER_ID = 'lattice';
+
+// The catalog: Lattice's own board server (on by default) followed by the
+// third-party servers, all of which stay disabled until enabled per-project.
 export const BUILTIN_MCP_SERVERS: McpServerEntry[] = [
+  {
+    id: LATTICE_MCP_SERVER_ID,
+    label: 'Lattice task board',
+    description:
+      "Typed tools for this project's Lattice task board: board_summary, " +
+      'list_tasks, get_task, search_tasks, create/update/delete, transition ' +
+      'lanes, append a summary, and run a task in a worktree. First-party (it ' +
+      "is Lattice's own code, needs no API key, and talks only to your local " +
+      'backend), so unlike every other server here it is ON by default — turn ' +
+      'it off per harness with the switches on this row if you would rather ' +
+      'agents drive the HTTP API by hand.',
+    transport: 'stdio',
+    // `process.execPath` — the exact Node binary running this backend — not a
+    // bare `node`. The MCP client spawns without a shell, and the harness's
+    // PATH is not ours: a `nvm`/`fnm` shim, a Codex session started from a
+    // different shell, or a PATH-less service context can all resolve `node` to
+    // nothing (or to a version too old for the SDK). The backend is already
+    // running on a Node that works, so use that one. It is an absolute path to
+    // a real `.exe`, so `platformizeCommand` correctly leaves it unwrapped.
+    command: process.execPath,
+    // Absolute path to the compiled stdio entry, resolved next to its own
+    // module so it is right from `dist/` regardless of the caller's depth.
+    args: [latticeMcpServerEntryPath()],
+    // `env` is filled in PER SPAWN by the resolver (LATTICE_API_URL +
+    // LATTICE_PROJECT) — a static entry can't know which project it serves.
+    runtime: 'node',
+    harnessSupport: { claude: true, codex: true, pi: true },
+    builtin: true,
+    // The one first-party exception to the all-off invariant. See the top of
+    // this file.
+    defaultEnabled: true,
+  },
   {
     id: 'playwright',
     label: 'Playwright',

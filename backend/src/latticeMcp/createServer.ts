@@ -1,0 +1,374 @@
+// The Lattice task-board MCP server: 11 typed tools over the HTTP API in
+// `routes/tasks/`, pinned to ONE project.
+//
+// Why a server and not just the HTTP docs: an agent reading LATTICE_API.md has
+// to remember to pass `project=`, to check the echoed `canonicalProject`, and —
+// the expensive one — that `GET /api/tasks` unfiltered is a megabyte of done
+// tasks. Typed tools remove all three: `project` is pinned by the client, the
+// canonical-project check is automatic, and the TOOL DESCRIPTIONS carry the
+// progressive-disclosure ladder (orient with `board_summary` → scan with
+// `list_tasks` → expand with `get_task` → find with `search_tasks`) where the
+// model actually reads it, at every call site, for free.
+//
+// Design rules, all load-bearing:
+//   - NO tool takes a `project` argument. See `client.ts`.
+//   - NO tool invents a default the API already has. `list_tasks` forwards only
+//     the args it was given, so the API stays the single source of truth for
+//     "compact fields, active lanes, newest 100" — if that default changes
+//     server-side, the tool follows without a code change here.
+//   - Results are one text block of compact JSON. Agents parse it; a pretty
+//     print would cost tokens for nothing.
+//   - HTTP 413 comes back as a NORMAL result (see `client.ts`).
+//
+// Nothing in this file imports the rest of the backend beyond `client.ts` — the
+// server runs as its own short-lived process (`server.ts`), spawned by the
+// harness, and must not drag in the task cache, Express, or node-pty.
+
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+import { LatticeClient, type FetchLike, type LatticeCallOutcome } from './client.js';
+
+export type CreateLatticeMcpServerOptions = {
+  // Backend origin, e.g. `http://127.0.0.1:5184`.
+  apiUrl: string;
+  // Canonical project path this server is pinned to.
+  project: string;
+  // Injectable for tests; defaults to the global `fetch`.
+  fetchImpl?: FetchLike;
+};
+
+// The shape `registerTool` handlers return. Declared locally so this module
+// doesn't depend on the SDK's internal type exports.
+type ToolResult = {
+  content: { type: 'text'; text: string }[];
+  isError?: boolean;
+};
+
+// The MCP-facing rendering of a client outcome. Only two of the five kinds are
+// NOT errors: a normal 2xx, and the 413 teaching response the agent must read
+// (flagging that one `isError` would make the model retry the same oversized
+// call instead of narrowing it).
+function toToolResult(outcome: LatticeCallOutcome): ToolResult {
+  const isError =
+    outcome.kind === 'unreachable' ||
+    outcome.kind === 'httpError' ||
+    outcome.kind === 'projectMismatch';
+  return {
+    content: [{ type: 'text', text: outcome.text }],
+    ...(isError ? { isError: true } : {}),
+  };
+}
+
+// Shared arg descriptions, so the same phrasing reaches the model from
+// `list_tasks` and `search_tasks` alike.
+const STATUS_DESC =
+  'Comma-separated lanes (backlog,open,in_progress,ready_to_merge,qa,done,deleted) or "all".';
+
+export function createLatticeMcpServer(
+  opts: CreateLatticeMcpServerOptions,
+): McpServer {
+  const client = new LatticeClient(opts);
+  const server = new McpServer(
+    { name: 'lattice', version: '1.0.0' },
+    {
+      instructions:
+        `Lattice task board for ${opts.project}. Every tool acts on THAT project ` +
+        'only — none of them take a project argument. Orient with board_summary ' +
+        'before listing: an unfiltered board can be hundreds of thousands of ' +
+        'tokens. Then list_tasks to scan, get_task to expand one, search_tasks to ' +
+        'find without listing.',
+    },
+  );
+
+  // ---- Tier 0: orient -------------------------------------------------------
+
+  server.registerTool(
+    'board_summary',
+    {
+      description:
+        'START HERE. Task counts per lane for this project, plus what each lane ' +
+        'would COST to read in full (bytes + approximate tokens). Under 1 KB. ' +
+        'Read this before list_tasks so a listing never surprises you.',
+      inputSchema: {},
+    },
+    async () => toToolResult(await client.call('/api/tasks/summary')),
+  );
+
+  // ---- Tier 1: scan ---------------------------------------------------------
+
+  server.registerTool(
+    'list_tasks',
+    {
+      description:
+        'Scan the board. By DEFAULT the API returns compact fields, the active ' +
+        'lanes only (backlog, open, in_progress, ready_to_merge, qa — done and ' +
+        'deleted are omitted) and the 100 most recently active, newest first. ' +
+        'Pass status to reach history, ids to fetch specific tasks, ' +
+        'fields:"full" for description/summary text. Use get_task for one ' +
+        "task's full text, search_tasks to FIND tasks instead of listing them, " +
+        "and board_summary first if you don't know how big the board is.",
+      inputSchema: {
+        status: z.string().optional().describe(STATUS_DESC + ' Default: the active lanes.'),
+        ids: z
+          .array(z.string())
+          .optional()
+          .describe('Specific task ids. Bypasses lane filtering and returns full records.'),
+        since: z
+          .string()
+          .optional()
+          .describe('Only tasks active since then: an ISO timestamp, epoch ms, or "30d"/"12h"/"90m".'),
+        limit: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Max tasks (default 100, max 1000, 0 = unlimited).'),
+        fields: z
+          .enum(['compact', 'full'])
+          .optional()
+          .describe('"compact" (default) omits description/summary text; "full" includes it, clipped.'),
+        clip: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('With fields:"full", max chars per description/summary (default 500, 0 = unlimited).'),
+        // The escape hatch past the 256 KB ceiling. Without it the 413 teaching
+        // response would be a dead end for an MCP-only agent that genuinely
+        // needs the whole board (a bulk re-triage, say) — every other knob only
+        // narrows. Described as a last resort so the model reaches for the
+        // narrowing knobs first.
+        confirm_large: z
+          .boolean()
+          .optional()
+          .describe(
+            'Accept a response over the 256 KB ceiling instead of a 413. Last resort — ' +
+              'check board_summary for the cost first, and prefer status/since/limit/fields.',
+          ),
+      },
+    },
+    async (args) =>
+      toToolResult(
+        await client.call('/api/tasks', {
+          // Only what the caller actually passed — the API owns the defaults.
+          query: {
+            status: args.status,
+            ids: args.ids?.length ? args.ids.join(',') : undefined,
+            since: args.since,
+            limit: args.limit,
+            fields: args.fields,
+            clip: args.clip,
+            confirm_large: args.confirm_large ? 1 : undefined,
+          },
+        }),
+      ),
+  );
+
+  // ---- Tier 2: expand -------------------------------------------------------
+
+  server.registerTool(
+    'get_task',
+    {
+      description:
+        'The full, unclipped record for one task. Use it after list_tasks or ' +
+        'search_tasks; for several tasks at once pass their ids to list_tasks ' +
+        'instead of calling this in a loop.',
+      inputSchema: { id: z.string().describe('Task id.') },
+    },
+    async ({ id }) => toToolResult(await client.call(`/api/tasks/${encodeURIComponent(id)}`)),
+  );
+
+  // ---- Find -----------------------------------------------------------------
+
+  server.registerTool(
+    'search_tasks',
+    {
+      description:
+        'Find tasks by text WITHOUT listing the board — the cheap way to reach ' +
+        'history. Matches every whitespace-separated term against title + ' +
+        'description + summary across ALL lanes (done included) and returns ' +
+        'ranked {id, title, status, score, snippet}. Follow up with get_task ' +
+        'for full text.',
+      inputSchema: {
+        q: z.string().describe('Search terms; a task must contain all of them (case-insensitive).'),
+        status: z.string().optional().describe(STATUS_DESC + ' Default: all lanes.'),
+        limit: z.number().int().min(1).optional().describe('Max results (default 20, max 200).'),
+      },
+    },
+    async ({ q, status, limit }) =>
+      toToolResult(await client.call('/api/tasks/search', { query: { q, status, limit } })),
+  );
+
+  // ---- Write ----------------------------------------------------------------
+
+  server.registerTool(
+    'create_task',
+    {
+      description:
+        'Create one task in the Open lane. Creating several? Use create_tasks — ' +
+        'one round trip instead of N.',
+      inputSchema: {
+        title: z.string().describe('Short task title.'),
+        description: z
+          .string()
+          .optional()
+          .describe('Markdown brief the worktree agent will be given.'),
+      },
+    },
+    async ({ title, description }) =>
+      toToolResult(
+        await client.call('/api/tasks', { method: 'POST', body: { title, description } }),
+      ),
+    );
+
+  server.registerTool(
+    'create_tasks',
+    {
+      description:
+        'Create several tasks in one round trip. Returns the created tasks with ' +
+        'their ids, in order. Prefer this over repeated create_task calls.',
+      inputSchema: {
+        tasks: z
+          .array(
+            z.object({
+              title: z.string().describe('Short task title.'),
+              description: z.string().optional().describe('Markdown brief.'),
+            }),
+          )
+          .min(1)
+          .describe('The tasks to create.'),
+      },
+    },
+    async ({ tasks }) =>
+      toToolResult(await client.call('/api/tasks/batch', { method: 'POST', body: { tasks } })),
+  );
+
+  server.registerTool(
+    'update_task',
+    {
+      description:
+        "Update one task's title, description, or lane. description REPLACES " +
+        'the existing text — to add findings without losing the brief, use ' +
+        'append_summary. Moving many tasks at once? Use transition_tasks.',
+      inputSchema: {
+        id: z.string().describe('Task id.'),
+        title: z.string().optional(),
+        description: z.string().optional().describe('Replaces the existing description.'),
+        status: z
+          .enum(['backlog', 'open', 'in_progress', 'ready_to_merge', 'qa', 'done', 'deleted'])
+          .optional()
+          .describe('Target lane.'),
+      },
+    },
+    async ({ id, title, description, status }) =>
+      toToolResult(
+        await client.call(`/api/tasks/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: {
+            ...(title !== undefined ? { title } : {}),
+            ...(description !== undefined ? { description } : {}),
+            ...(status !== undefined ? { status } : {}),
+          },
+        }),
+      ),
+  );
+
+  server.registerTool(
+    'transition_tasks',
+    {
+      description:
+        'Move many tasks to one lane in a single call — either the explicit ids ' +
+        'you pass, or every task currently in fromStatus. Use this instead of a ' +
+        'loop of update_task calls.',
+      inputSchema: {
+        status: z
+          .enum(['backlog', 'open', 'in_progress', 'ready_to_merge', 'qa', 'done', 'deleted'])
+          .describe('Target lane.'),
+        ids: z.array(z.string()).optional().describe('Explicit task ids to move.'),
+        fromStatus: z
+          .enum(['backlog', 'open', 'in_progress', 'ready_to_merge', 'qa', 'done', 'deleted'])
+          .optional()
+          .describe('Move every task in this lane instead (ignored when ids is given).'),
+      },
+    },
+    async ({ status, ids, fromStatus }) =>
+      toToolResult(
+        await client.call('/api/tasks/transition', {
+          method: 'POST',
+          body: {
+            status,
+            ...(ids !== undefined ? { ids } : {}),
+            ...(fromStatus !== undefined ? { fromStatus } : {}),
+          },
+        }),
+      ),
+  );
+
+  server.registerTool(
+    'append_summary',
+    {
+      description:
+        "Append a markdown summary beneath a task's description — how an agent " +
+        'reports what it did. Never overwrites anything (unlike update_task).',
+      inputSchema: {
+        id: z.string().describe('Task id.'),
+        summary: z.string().describe('Markdown or plain text to append.'),
+      },
+    },
+    async ({ id, summary }) =>
+      toToolResult(
+        await client.call(`/api/tasks/${encodeURIComponent(id)}/append-summary`, {
+          method: 'POST',
+          body: { summary },
+        }),
+      ),
+  );
+
+  server.registerTool(
+    'delete_task',
+    {
+      description:
+        'Move a task to the deleted bin. To retire finished work instead, move ' +
+        'it to done with update_task or transition_tasks.',
+      inputSchema: { id: z.string().describe('Task id.') },
+    },
+    async ({ id }) =>
+      toToolResult(
+        await client.call(`/api/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+      ),
+  );
+
+  server.registerTool(
+    'run_task',
+    {
+      description:
+        'Start an agent on an Open task in its own git worktree. Returns ' +
+        '{accepted, queued}: the run is ADMITTED, not started — the worktree and ' +
+        'terminal arrive later, so do NOT call this again because nothing seems ' +
+        'to have happened. Poll get_task to watch it reach in_progress.',
+      inputSchema: {
+        id: z.string().describe('Task id (must be in the Open lane).'),
+        harness: z
+          .enum(['claude', 'codex', 'pi'])
+          .optional()
+          .describe("Agent CLI to run; defaults to the project's setting."),
+        piModel: z
+          .string()
+          .optional()
+          .describe('With harness "pi": a "provider/model" id from the Pi model menu.'),
+      },
+    },
+    async ({ id, harness, piModel }) =>
+      toToolResult(
+        await client.call(`/api/tasks/${encodeURIComponent(id)}/run`, {
+          method: 'POST',
+          body: {
+            ...(harness !== undefined ? { harness } : {}),
+            ...(piModel !== undefined ? { piModel } : {}),
+          },
+        }),
+      ),
+  );
+
+  return server;
+}

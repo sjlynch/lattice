@@ -33,7 +33,13 @@ export function buildLatticePreamble(docPath: string): string {
     'asks about Lattice itself — the task board or its lanes, tasks, worktrees, ' +
     'merging, workflows, startup terminals, or the Lattice HTTP API — read the ' +
     `reference at ${docPath} before answering or acting, and drive the API from ` +
-    'it instead of guessing or searching the filesystem for task files.'
+    'it instead of guessing or searching the filesystem for task files. ' +
+    // The `lattice` MCP server (first-party, on by default — see mcp/catalog.ts)
+    // gives typed board tools that pin the project and price every response;
+    // without this clause an agent that HAS them still reaches for the curl
+    // recipes in the reference, because that is what the reference shows.
+    'If this session has Lattice MCP tools (board_summary, list_tasks, …), use ' +
+    'them instead of curl.'
   );
 }
 

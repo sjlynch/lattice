@@ -63,3 +63,19 @@ test('platformizeCommand wraps npx in cmd /c on win32, passes node through', () 
     assert.deepEqual(wrapped, { command: 'npx', args: ['-y', 'pkg'] });
   }
 });
+
+test('platformizeCommand leaves an absolute node.exe path alone', () => {
+  // The `lattice` catalog entry runs `process.execPath` — a real `.exe`, not a
+  // package-runner shim — so it must NOT be `cmd /c`-wrapped. Wrapping would
+  // route the spawn through cmd's own quoting rules, and the path has a space
+  // in it on a default Windows install (`C:\Program Files\nodejs\node.exe`).
+  const args = ['C:\\dev\\lattice\\backend\\dist\\latticeMcp\\server.js'];
+  assert.deepEqual(platformizeCommand(process.execPath, args), {
+    command: process.execPath,
+    args,
+  });
+  assert.deepEqual(platformizeCommand('C:\\Program Files\\nodejs\\node.exe', args), {
+    command: 'C:\\Program Files\\nodejs\\node.exe',
+    args,
+  });
+});

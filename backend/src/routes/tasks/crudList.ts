@@ -1,6 +1,12 @@
-// Listing / project-envelope read handlers: list, summary, projects index,
-// and single-task fetch. Also home to the foreign-task partitioning that
+// Listing / project-envelope read handlers: list, summary, search, projects
+// index, and single-task fetch. Also home to the foreign-task partitioning that
 // every project-scoped read relies on as an integrity check.
+//
+// These handlers are deliberately thin. The filter/sort/project/clip/measure
+// pipeline behind the list and summary lives in `listQuery.ts`, and the search
+// scoring in `taskSearch.ts` — both pure, so the progressive-disclosure
+// behaviour is unit-testable without an Express app. What stays here is the
+// HTTP adapter: read the query, run the pure pipeline, render its outcome.
 
 import type { Request, Response } from 'express';
 import {
@@ -10,7 +16,17 @@ import {
   type Task,
 } from '../../tasks.js';
 import { canonicalProjectPath, projectHash } from '../../projectPath.js';
-import { serializeTasksAsMarkdown } from './markdownBatch.js';
+import {
+  buildListOutcome,
+  buildTaskSummary,
+  parseListQuery,
+  type ListEnvelopeMeta,
+} from './listQuery.js';
+import {
+  buildSearchEnvelope,
+  parseSearchQuery,
+  searchTasks,
+} from './taskSearch.js';
 import { requireAbsoluteProject, respondJson } from './requestUtils.js';
 import type { TaskIdRequest } from './crudTypes.js';
 
@@ -32,70 +48,80 @@ export function partitionByProject(
   return { safe, foreign };
 }
 
-function logForeignTasks(canonicalProject: string, foreign: Task[]): void {
+function logForeignTasks(route: string, canonicalProject: string, foreign: Task[]): void {
   if (foreign.length === 0) return;
   const sample = Array.from(new Set(foreign.map((t) => t.projectPath))).slice(0, 3);
   console.warn(
-    `[tasks] /api/tasks?project=${canonicalProject} filtered ${foreign.length} foreign task(s); sample projectPaths:`,
+    `[tasks] ${route}?project=${canonicalProject} filtered ${foreign.length} foreign task(s); sample projectPaths:`,
     sample,
   );
 }
 
+// Express hands back `string | string[] | ParsedQs` per key (a repeated param
+// arrives as an array). The pure parsers want plain strings, so flatten to the
+// string-valued entries and let them apply defaults for everything else.
+function stringParams(query: Request['query']): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(query)) {
+    if (typeof value === 'string') out[key] = value;
+  }
+  return out;
+}
+
+// Shared project resolution for the read endpoints. Returns the envelope meta
+// (minus `mismatched`, which needs the task list) or null once it has sent the
+// 400 itself.
+function resolveMeta(req: Request, res: Response): { project: string; canonicalProject: string; hash: string } | null {
+  const project = typeof req.query.project === 'string' ? req.query.project : '';
+  if (!project) {
+    res.status(400).json({ error: 'project required' });
+    return null;
+  }
+  if (!requireAbsoluteProject(project, res)) return null;
+  const canonicalProject = canonicalProjectPath(project);
+  return { project, canonicalProject, hash: projectHash(canonicalProject) };
+}
+
 // Response is an envelope ({ project, canonicalProject, hash, count,
-// mismatched, tasks }) rather than a bare Task[] so agents can assert that
+// mismatched, tasks, … }) rather than a bare Task[] so agents can assert that
 // canonicalProject/hash match the project + hash their LATTICE_API.md names
 // before acting on the data — defends against the "filter returned the wrong
 // project's tasks" failure mode.
+//
+// Defaults are the progressive-disclosure ones (active lanes, compact fields,
+// newest 100, text clipped at 500 chars) and the response prices itself, so an
+// unparameterized GET is cheap orientation rather than the whole board. See
+// `listQuery.ts` for the full parameter set.
 export async function handleTaskList(
   req: Request,
   res: Response,
 ): Promise<void> {
-  const project = typeof req.query.project === 'string' ? req.query.project : '';
-  if (!project) {
-    res.status(400).json({ error: 'project required' });
+  const meta = resolveMeta(req, res);
+  if (!meta) return;
+  const parsed = parseListQuery(stringParams(req.query));
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
     return;
   }
-  if (!requireAbsoluteProject(project, res)) return;
-  const canonicalProject = canonicalProjectPath(project);
-  const hash = projectHash(canonicalProject);
-  // Optional `?status=` filter so callers (esp. AI agents driving the API
-  // from a shell) don't have to fetch the whole list and re-filter
-  // client-side. Comma-separated for "open,in_progress" style queries.
-  const statusParam = typeof req.query.status === 'string' ? req.query.status : '';
-  const filter = statusParam
-    ? new Set(statusParam.split(',').map((s) => s.trim()).filter(Boolean))
-    : null;
-  // format=markdown emits a round-trippable document instead of JSON.
-  // Pair with POST /api/tasks/upsert to do "GET → edit → POST back" loops
-  // without any JSON / shell-quoting in between.
-  const format = typeof req.query.format === 'string' ? req.query.format : 'json';
   await respondJson(res, async () => {
-    const all = await listTasks(canonicalProject);
-    const { safe, foreign } = partitionByProject(all, canonicalProject);
-    logForeignTasks(canonicalProject, foreign);
-    const tasks = filter ? safe.filter((t) => filter.has(t.status)) : safe;
-    if (format === 'markdown') {
-      const md = serializeTasksAsMarkdown(
-        tasks.map((t) => ({
-          id: t.id,
-          title: t.title,
-          description: t.description,
-          status: t.status,
-        })),
-        { canonicalProject, hash, statusFilter: statusParam || undefined },
-      );
+    const all = await listTasks(meta.canonicalProject);
+    const { safe, foreign } = partitionByProject(all, meta.canonicalProject);
+    logForeignTasks('/api/tasks', meta.canonicalProject, foreign);
+    const envelopeMeta: ListEnvelopeMeta = { ...meta, mismatched: foreign.length };
+    const outcome = buildListOutcome(envelopeMeta, safe, parsed.value);
+    if (outcome.kind === 'markdown') {
+      // format=markdown emits a round-trippable document instead of JSON.
+      // Pair with POST /api/tasks/upsert to do "GET → edit → POST back" loops
+      // without any JSON / shell-quoting in between.
       res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-      res.send(md);
+      res.send(outcome.markdown);
       return;
     }
-    return {
-      project,
-      canonicalProject,
-      hash,
-      count: tasks.length,
-      mismatched: foreign.length,
-      tasks,
-    };
+    if (outcome.kind === 'too-large') {
+      res.status(413).json(outcome.body);
+      return;
+    }
+    return outcome.body;
   });
 }
 
@@ -103,28 +129,40 @@ export async function handleTaskSummary(
   req: Request,
   res: Response,
 ): Promise<void> {
-  const project = typeof req.query.project === 'string' ? req.query.project : '';
-  if (!project) {
-    res.status(400).json({ error: 'project required' });
+  const meta = resolveMeta(req, res);
+  if (!meta) return;
+  await respondJson(res, async () => {
+    const all = await listTasks(meta.canonicalProject);
+    const { safe, foreign } = partitionByProject(all, meta.canonicalProject);
+    logForeignTasks('/api/tasks/summary', meta.canonicalProject, foreign);
+    return buildTaskSummary({ ...meta, mismatched: foreign.length }, safe);
+  });
+}
+
+// Find without listing. Substring AND-match over title/description/summary
+// across EVERY lane by default — history is where most of the interesting
+// matches are, and the ~1 KB result is what makes reaching for it cheaper than
+// pulling the board.
+export async function handleTaskSearch(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const meta = resolveMeta(req, res);
+  if (!meta) return;
+  const parsed = parseSearchQuery(stringParams(req.query));
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
     return;
   }
-  if (!requireAbsoluteProject(project, res)) return;
-  const canonicalProject = canonicalProjectPath(project);
-  const hash = projectHash(canonicalProject);
   await respondJson(res, async () => {
-    const all = await listTasks(canonicalProject);
-    const { safe, foreign } = partitionByProject(all, canonicalProject);
-    logForeignTasks(canonicalProject, foreign);
-    const byStatus: Record<string, number> = {};
-    for (const t of safe) byStatus[t.status] = (byStatus[t.status] ?? 0) + 1;
-    return {
-      project,
-      canonicalProject,
-      hash,
-      total: safe.length,
-      mismatched: foreign.length,
-      byStatus,
-    };
+    const all = await listTasks(meta.canonicalProject);
+    const { safe, foreign } = partitionByProject(all, meta.canonicalProject);
+    logForeignTasks('/api/tasks/search', meta.canonicalProject, foreign);
+    return buildSearchEnvelope(
+      { ...meta, mismatched: foreign.length },
+      parsed.value,
+      searchTasks(safe, parsed.value),
+    );
   });
 }
 

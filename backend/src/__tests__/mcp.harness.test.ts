@@ -20,15 +20,105 @@ import {
   builtinMcpServerById,
   type McpServerEntry,
 } from '../mcp/catalog.js';
+import { canonicalProjectPath } from '../projectPath.js';
 
 const ids = (entries: { entry: McpServerEntry }[]) => entries.map((e) => e.entry.id).sort();
 
+// Spawn context for the one `defaultEnabled` entry (Lattice's own board server).
+const LATTICE_CTX = {
+  projectPath: 'c:\\dev\\proj',
+  apiUrl: 'http://127.0.0.1:5184',
+};
+
 // ---- resolveMcpEntries: harness-neutral enable + support filter ----
 
-test('resolveMcpEntries: nothing enabled by default for any harness', () => {
+test('resolveMcpEntries: no third-party server is enabled by default for any harness', () => {
   for (const h of ['claude', 'codex', 'pi'] as const) {
+    // Without a project the first-party `lattice` entry drops out too, so the
+    // ctx-less set is empty for every harness...
     assert.deepEqual(resolveMcpEntries(BUILTIN_MCP_SERVERS, {}, {}, h), []);
+    // ...and WITH a project it is the only thing that resolves. Pinned together
+    // so this can never degrade into "nothing ever resolves".
+    assert.deepEqual(ids(resolveMcpEntries(BUILTIN_MCP_SERVERS, {}, {}, h, LATTICE_CTX)), [
+      'lattice',
+    ]);
   }
+});
+
+// ---- the first-party `lattice` server, across all three harnesses ----
+//
+// The single exception to the all-off invariant: it runs Lattice's own code out
+// of this repo, needs no key, and only talks to the local backend that spawned
+// the session. What keeps that safe is that it is project-pinned (no project →
+// not resolved) and independently opt-out-able per harness.
+
+test('lattice: an explicit false override opts out, per harness, independently', () => {
+  // Claude's opt-out lives in the legacy map; codex/pi in the nested one. Each
+  // must switch off ONLY its own harness.
+  const claudeOff = { mcpOverrides: { lattice: false } };
+  assert.deepEqual(resolveMcpEntries(BUILTIN_MCP_SERVERS, claudeOff, {}, 'claude', LATTICE_CTX), []);
+  assert.deepEqual(
+    ids(resolveMcpEntries(BUILTIN_MCP_SERVERS, claudeOff, {}, 'codex', LATTICE_CTX)),
+    ['lattice'],
+  );
+
+  const codexOff = { mcpHarnessOverrides: { codex: { lattice: false } } };
+  assert.deepEqual(resolveMcpEntries(BUILTIN_MCP_SERVERS, codexOff, {}, 'codex', LATTICE_CTX), []);
+  assert.deepEqual(ids(resolveMcpEntries(BUILTIN_MCP_SERVERS, codexOff, {}, 'pi', LATTICE_CTX)), [
+    'lattice',
+  ]);
+  assert.deepEqual(
+    ids(resolveMcpEntries(BUILTIN_MCP_SERVERS, codexOff, {}, 'claude', LATTICE_CTX)),
+    ['lattice'],
+  );
+});
+
+test('lattice: an explicit true override is a no-op (it is already on)', () => {
+  const on = {
+    mcpOverrides: { lattice: true },
+    mcpHarnessOverrides: { codex: { lattice: true }, pi: { lattice: true } },
+  };
+  for (const h of ['claude', 'codex', 'pi'] as const) {
+    assert.deepEqual(ids(resolveMcpEntries(BUILTIN_MCP_SERVERS, on, {}, h, LATTICE_CTX)), [
+      'lattice',
+    ]);
+  }
+});
+
+test('lattice: the Codex override renders an absolute Windows path as valid TOML', () => {
+  // The whole `-c` string transits a `"%VAR%"` cmd.exe expansion, so the shaper
+  // renders single-quoted TOML *literal* strings — which have no escapes, so a
+  // `C:\Program Files\nodejs\node.exe` command and a `C:\dev\proj` env value
+  // both pass through verbatim rather than being mangled into `\P` / `\d`.
+  const { configArgs } = resolveCodexServers(BUILTIN_MCP_SERVERS, {}, {}, LATTICE_CTX);
+  assert.equal(configArgs.length, 1);
+  const arg = configArgs[0];
+  assert.ok(arg.startsWith('mcp_servers.lattice_lattice={'));
+  assert.ok(arg.includes(`command='${process.execPath}'`), `got ${arg}`);
+  assert.ok(arg.includes("args=['"));
+  assert.ok(arg.includes("LATTICE_API_URL='http://127.0.0.1:5184'"));
+  assert.ok(arg.includes(`LATTICE_PROJECT='${canonicalProjectPath('c:\\dev\\proj')}'`));
+  // Backslashes are NOT doubled — a TOML literal string is verbatim, and
+  // doubling them here would hand Node a path with `\\` separators.
+  assert.ok(!arg.includes('\\\\'), 'no JSON-style escaping inside the literal');
+  // Nothing secret rides the pty env for this server.
+  assert.deepEqual(resolveCodexServers(BUILTIN_MCP_SERVERS, {}, {}, LATTICE_CTX).env, {});
+});
+
+test('lattice: a path containing an apostrophe falls back to a JSON-escaped TOML basic string', () => {
+  // The `'`-fallback in `tomlString` is the only branch that escapes, and it is
+  // the one an odd project path (`C:\Users\O'Brien\proj`) would take. JSON's
+  // escaping is TOML basic-string escaping, so backslashes MUST double there.
+  const apostrophePath = "C:\\Users\\O'Brien\\proj";
+  const { configArgs } = resolveCodexServers(BUILTIN_MCP_SERVERS, {}, {}, {
+    projectPath: apostrophePath,
+    apiUrl: 'http://127.0.0.1:5184',
+  });
+  const arg = configArgs[0];
+  assert.ok(
+    arg.includes(`LATTICE_PROJECT=${JSON.stringify(canonicalProjectPath(apostrophePath))}`),
+    `got ${arg}`,
+  );
 });
 
 test('resolveMcpEntries: codex reads mcpHarnessOverrides.codex, not mcpOverrides', () => {
@@ -213,7 +303,9 @@ test('resolveCodexServers: aggregates config args + secret env for enabled codex
   assert.deepEqual(env, { BRAVE_API_KEY: 'sk-z' });
 });
 
-test('resolveCodexServers: nothing enabled → empty payload', () => {
+test('resolveCodexServers: nothing enabled and no project → empty payload', () => {
+  // No spawn context ⇒ not even the default-on `lattice` server (it has no
+  // board to serve). With one, it is the sole entry — covered above.
   assert.deepEqual(resolveCodexServers(BUILTIN_MCP_SERVERS, {}, {}), { configArgs: [], env: {} });
 });
 

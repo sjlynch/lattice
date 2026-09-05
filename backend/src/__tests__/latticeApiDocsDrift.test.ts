@@ -12,7 +12,7 @@ import { mountRouteFactories } from '../server/app.js';
 // machine would keep confidently documenting the dead path.
 //
 // These tests close that loop by building the real Express app in-process and
-// diffing its route table against the two hand-maintained docs:
+// diffing its route table against the hand-maintained docs:
 //
 //   1. no-broken-links — every path the docs mention must be a live route
 //   2. coverage        — every live route must be documented OR explicitly
@@ -24,9 +24,14 @@ import { mountRouteFactories } from '../server/app.js';
 // broke the build, add a row to the endpoint table or an entry to
 // UNDOCUMENTED_ROUTES with a reason.
 
-const TEMPLATE_PATH = fileURLToPath(
-  new URL('../latticeApiDocs/LATTICE_API.template.md', import.meta.url),
-);
+// The agent doc is TWO templates since the progressive-disclosure split — a
+// short index and the recipes file it points at, with the endpoint table living
+// in the latter. Both are read here and their rows / recipe URLs unioned, so
+// moving material between them can never quietly drop it out of drift cover.
+const TEMPLATE_PATHS = [
+  'LATTICE_API.template.md',
+  'LATTICE_API_RECIPES.template.md',
+].map((name) => fileURLToPath(new URL(`../latticeApiDocs/${name}`, import.meta.url)));
 const ROOT_CLAUDE_MD = fileURLToPath(new URL('../../../CLAUDE.md', import.meta.url));
 
 // ---------------------------------------------------------------- route table
@@ -100,8 +105,12 @@ const NORMALIZED_ROUTE_PATHS = new Set([...ROUTE_PATHS].map(normalizePath));
 
 // ------------------------------------------------------------- doc extraction
 
+// Both templates, concatenated. The extractors below are line/row oriented, so
+// a plain join is enough to union what the two files document.
 function readTemplate(): string {
-  return fs.readFileSync(TEMPLATE_PATH, 'utf8').replace(/\r\n?/g, '\n');
+  return TEMPLATE_PATHS.map((p) =>
+    fs.readFileSync(p, 'utf8').replace(/\r\n?/g, '\n'),
+  ).join('\n');
 }
 
 // Rows of the template's "Endpoint reference" table:
@@ -220,7 +229,7 @@ const UNDOCUMENTED_ROUTES: Record<string, string> = {
 
 // ---------------------------------------------------------------------- tests
 
-test('every endpoint documented in LATTICE_API.template.md is a real route', () => {
+test('every endpoint documented in the agent docs is a real route', () => {
   const rows = endpointTableRows(readTemplate());
   assert.ok(rows.length > 20, `endpoint table failed to parse (${rows.length} rows)`);
 
@@ -237,14 +246,14 @@ test('every endpoint documented in LATTICE_API.template.md is a real route', () 
   assert.deepEqual(
     dead,
     [],
-    'LATTICE_API.template.md documents endpoints that no longer exist. Every ' +
-      'project on every machine regenerates its .lattice/LATTICE_API.md from ' +
-      'this template, so a dead row here is a lie shipped everywhere. Fix the ' +
-      'row (or delete it) to match the router.',
+    'The agent doc templates document endpoints that no longer exist. Every ' +
+      'project on every machine regenerates its .lattice/LATTICE_API*.md from ' +
+      'them, so a dead row here is a lie shipped everywhere. Fix the row (or ' +
+      'delete it) to match the router.',
   );
 });
 
-test('every curl/irm recipe in LATTICE_API.template.md hits a real route', () => {
+test('every curl/irm recipe in the agent docs hits a real route', () => {
   const paths = recipeUrlPaths(readTemplate());
   assert.ok(paths.length >= 6, `recipe URLs failed to parse (${paths.length} found)`);
 
@@ -255,8 +264,8 @@ test('every curl/irm recipe in LATTICE_API.template.md hits a real route', () =>
   assert.deepEqual(
     dead,
     [],
-    'A copy-pasteable recipe in LATTICE_API.template.md targets a path the ' +
-      'router does not serve — an agent following it verbatim gets a 404.',
+    'A copy-pasteable recipe in one of the agent doc templates targets a path ' +
+      'the router does not serve — an agent following it verbatim gets a 404.',
   );
 });
 
@@ -279,9 +288,9 @@ test('every route is either documented for agents or explicitly opted out', () =
     unaccounted,
     [],
     'New route(s) with no decision recorded. Either add a row to the ' +
-      '"Endpoint reference" table in LATTICE_API.template.md (if an agent ' +
-      'driving the board should use it) or add an entry to UNDOCUMENTED_ROUTES ' +
-      'in this test with the reason it stays hidden.',
+      '"Endpoint reference" table in LATTICE_API_RECIPES.template.md (if an ' +
+      'agent driving the board should use it) or add an entry to ' +
+      'UNDOCUMENTED_ROUTES in this test with the reason it stays hidden.',
   );
 });
 

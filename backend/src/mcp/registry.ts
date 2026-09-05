@@ -13,9 +13,12 @@ import type { AgentHarness } from '../harnesses.js';
 import type { UserSettings } from '../userSettings.js';
 import { getGlobalSettings } from '../globalSettings.js';
 import { getUserSettings } from '../userSettings.js';
+import { canonicalProjectPath } from '../projectPath.js';
+import { getBackendServerConfig } from '../server/config.js';
 import { readMcpSecrets, type McpSecrets } from './secrets.js';
 import {
   BUILTIN_MCP_SERVERS,
+  LATTICE_MCP_SERVER_ID,
   type McpHarnessSupport,
   type McpServerEntry,
 } from './catalog.js';
@@ -57,14 +60,23 @@ function harnessSupports(support: McpHarnessSupport, harness: AgentHarness): boo
 }
 
 // Context for a single resolve, distinguishing the kind of session being
-// spawned. Today it carries only `isQaRun` — see `resolvePlaywright`
-// (`resolverPolicy.ts`).
+// spawned. `isQaRun` gates the QA-scoped Playwright (see `resolvePlaywright` in
+// `resolverPolicy.ts`); `projectPath`/`apiUrl` are what the first-party
+// `lattice` server needs baked into its per-spawn env.
 export type McpResolveContext = {
   // True ONLY for the QA-lane "run an e2e test" sessions. Gates the QA-scoped
   // Playwright enablement (`qaPlaywright`), which must NOT leak into ordinary
   // task / sidebar / push / workflow sessions — those get Playwright only via
   // the global `mcpOverrides.playwright` toggle.
   isQaRun?: boolean;
+  // The project this session belongs to. The `lattice` server is pinned to ONE
+  // board, so without this there is nothing for it to serve and it is dropped
+  // from the resolved set entirely.
+  projectPath?: string;
+  // Backend origin the `lattice` server should call (`http://127.0.0.1:<port>`).
+  // Passed in by the async resolvers so the pure core does no config lookup of
+  // its own; a hand-built ctx that omits it falls back to the same value.
+  apiUrl?: string;
 };
 
 // The per-project settings the resolver reads. `mcpOverrides` is CLAUDE's map
@@ -86,15 +98,49 @@ export type ResolvedMcpEntry = {
 };
 
 // Is this server toggled on for `harness`? Claude reads the legacy `mcpOverrides`
-// map; codex/pi read the nested `mcpHarnessOverrides[harness]` map. Default OFF
-// everywhere (the all-off invariant).
+// map; codex/pi read the nested `mcpHarnessOverrides[harness]` map.
+//
+// An EXPLICIT boolean always wins — that is what makes `mcpOverrides.lattice =
+// false` (or `mcpHarnessOverrides.codex.lattice = false`) a real per-harness
+// opt-out rather than a value the default overwrites. With no override the
+// answer is the entry's `defaultEnabled`, which is `undefined` on every
+// third-party server (so: off, the all-off invariant) and `true` only on
+// Lattice's own first-party board server. See catalog.ts.
 function harnessToggleOn(
   settings: ResolveSettings,
   harness: AgentHarness,
-  id: string,
+  entry: McpServerEntry,
 ): boolean {
-  if (harness === 'claude') return settings.mcpOverrides?.[id] === true;
-  return settings.mcpHarnessOverrides?.[harness]?.[id] === true;
+  const explicit =
+    harness === 'claude'
+      ? settings.mcpOverrides?.[entry.id]
+      : settings.mcpHarnessOverrides?.[harness]?.[entry.id];
+  if (typeof explicit === 'boolean') return explicit;
+  return entry.defaultEnabled === true;
+}
+
+// Bake the per-spawn env the `lattice` server needs into a CLONE of its catalog
+// entry (the catalog itself is shared + long-lived, so it must never be
+// mutated). Returns `null` when there is no project to serve: the server pins
+// itself to one board and every tool call needs `LATTICE_PROJECT`, so a
+// project-less spawn — a sidebar terminal opened before a project is chosen, a
+// scratch cwd — is better off with no board tools at all than with eleven that
+// all fail on the first call.
+function shapeLatticeEntry(
+  entry: McpServerEntry,
+  ctx: McpResolveContext,
+): McpServerEntry | null {
+  if (!ctx.projectPath) return null;
+  return {
+    ...entry,
+    env: {
+      ...(entry.env ?? {}),
+      LATTICE_API_URL: ctx.apiUrl ?? getBackendServerConfig().backendOrigin,
+      // Canonical so the server's own `canonicalProject` assertion against the
+      // API envelope is comparing like with like.
+      LATTICE_PROJECT: canonicalProjectPath(ctx.projectPath),
+    },
+  };
 }
 
 // The PURE, harness-neutral resolver core: given the loaded catalog, project
@@ -129,14 +175,26 @@ export function resolveMcpEntries(
         // stays Claude-only; see the plan D7). Headless unless the MCP-tab
         // "headed" toggle is on — the same `mcpPlaywrightHeaded` opt-in Claude's
         // global toggle honors, so "watch the browser" works across all harnesses.
-        enabled = harnessToggleOn(settings, harness, entry.id);
+        enabled = harnessToggleOn(settings, harness, entry);
         headless = settings.mcpPlaywrightHeaded !== true;
       }
     } else {
-      enabled = harnessToggleOn(settings, harness, entry.id);
+      enabled = harnessToggleOn(settings, harness, entry);
     }
     if (!enabled) continue;
-    out.push({ entry, serverSecrets: secrets[entry.id], headless });
+
+    // Lattice's own server is the one entry whose config is not fully static:
+    // it carries the project + backend URL for THIS spawn. Shaped into a clone
+    // (never a mutation of the shared catalog), and dropped when there is no
+    // project to serve.
+    let resolvedEntry = entry;
+    if (entry.id === LATTICE_MCP_SERVER_ID) {
+      const shaped = shapeLatticeEntry(entry, ctx);
+      if (!shaped) continue;
+      resolvedEntry = shaped;
+    }
+
+    out.push({ entry: resolvedEntry, serverSecrets: secrets[entry.id], headless });
   }
   return out;
 }
@@ -176,6 +234,7 @@ export function resolveCodexServers(
   catalog: McpServerEntry[],
   settings: ResolveSettings,
   secrets: McpSecrets,
+  ctx: McpResolveContext = {},
 ): CodexMcpResolution {
   const configArgs: string[] = [];
   const env: Record<string, string> = {};
@@ -184,7 +243,7 @@ export function resolveCodexServers(
     settings,
     secrets,
     'codex',
-    {},
+    ctx,
   )) {
     const shaped = toCodexServerConfig(entry, serverSecrets, headless);
     configArgs.push(shaped.configArg);
@@ -207,6 +266,7 @@ export function resolvePiServers(
   catalog: McpServerEntry[],
   settings: ResolveSettings,
   secrets: McpSecrets,
+  ctx: McpResolveContext = {},
 ): PiMcpResolution {
   const mcpServers: Record<string, PiMcpServerConfig> = {};
   const env: Record<string, string> = {};
@@ -215,7 +275,7 @@ export function resolvePiServers(
     settings,
     secrets,
     'pi',
-    {},
+    ctx,
   )) {
     const shaped = toPiServerConfig(entry, serverSecrets, headless);
     mcpServers[entry.id] = shaped.config;
@@ -244,7 +304,21 @@ export async function effectiveMcpServers(
     getUserSettings(projectPath),
     readMcpSecrets(),
   ]);
-  return resolveClaudeServers(catalog, settings, secrets, ctx);
+  return resolveClaudeServers(catalog, settings, secrets, withSpawnContext(projectPath, ctx));
+}
+
+// Fill in the spawn-context fields the pure core can't discover for itself: the
+// project being spawned for and this backend's own origin. Every async resolver
+// goes through this so the `lattice` server's env is identical across harnesses.
+function withSpawnContext(
+  projectPath: string,
+  ctx: McpResolveContext = {},
+): McpResolveContext {
+  return {
+    ...ctx,
+    projectPath: ctx.projectPath ?? projectPath,
+    apiUrl: ctx.apiUrl ?? getBackendServerConfig().backendOrigin,
+  };
 }
 
 // Best-effort variant for the spawn chokepoint: resolve the managed Claude
@@ -285,7 +359,7 @@ export async function resolveManagedCodexServers(
       getUserSettings(projectPath),
       readMcpSecrets(),
     ]);
-    return resolveCodexServers(catalog, settings, secrets);
+    return resolveCodexServers(catalog, settings, secrets, withSpawnContext(projectPath));
   } catch (err) {
     console.warn(
       `[mcp] codex resolve failed for ${projectPath}: ${(err as Error).message}`,
@@ -308,7 +382,7 @@ export async function resolveManagedPiServers(
       getUserSettings(projectPath),
       readMcpSecrets(),
     ]);
-    return resolvePiServers(catalog, settings, secrets);
+    return resolvePiServers(catalog, settings, secrets, withSpawnContext(projectPath));
   } catch (err) {
     console.warn(
       `[mcp] pi resolve failed for ${projectPath}: ${(err as Error).message}`,

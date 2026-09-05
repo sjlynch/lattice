@@ -138,10 +138,15 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
 
   // Per-harness enable state: Claude reads the legacy `mcpOverrides` map;
   // Codex/Pi read the nested `mcpHarnessOverrides` map. Default OFF everywhere.
+  // An explicit override wins; with none, the entry's own default applies.
+  // That is off for every third-party server and ON for Lattice's own
+  // first-party board server (`defaultEnabled`) — so its switches must read
+  // as on until the user actually turns them off. Mirrors the backend's
+  // `harnessToggleOn` (mcp/registry.ts).
   const isEnabledFor = (s: McpServerEntry, harness: AgentHarness): boolean =>
     harness === 'claude'
-      ? !!overrides[s.id]
-      : !!harnessOverrides[harness]?.[s.id];
+      ? (overrides[s.id] ?? !!s.defaultEnabled)
+      : (harnessOverrides[harness]?.[s.id] ?? !!s.defaultEnabled);
 
   const toggle = (s: McpServerEntry, harness: AgentHarness, next: boolean) => {
     if (harness === 'claude') {

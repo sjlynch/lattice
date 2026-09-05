@@ -13,6 +13,7 @@ import {
   handleTaskGet,
   handleTaskList,
   handleTaskReorder,
+  handleTaskSearch,
   handleTaskSummary,
   handleTaskTransition,
   handleTaskUpdate,
@@ -41,6 +42,12 @@ export function buildTaskCrudRouter(): Router {
   // MUST be registered before `/api/tasks/:id`, which would otherwise
   // capture `summary` as an :id and 404.
   r.get('/api/tasks/summary', handleTaskSummary);
+
+  // Find a task without listing the board — substring search across every
+  // lane, returning id/title/status/score/snippet only.
+  // MUST be registered before `/api/tasks/:id` for the same reason `summary`
+  // is: otherwise `search` is captured as an :id and 404s.
+  r.get('/api/tasks/search', handleTaskSearch);
 
   // Single task. Accepts JSON, form-encoded, or query-string `project`
   // — whichever is easiest to build from the agent's current shell.

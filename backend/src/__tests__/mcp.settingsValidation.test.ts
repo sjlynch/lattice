@@ -185,3 +185,52 @@ test('applyBuiltinOverride: a malicious override cannot replace the catalog runn
   assert.deepEqual(merged.args, brave.args); // replacement args rejected → catalog args stand
   assert.ok(!merged.env?.NODE_OPTIONS); // code-injection env never reached the merge
 });
+
+// ---- the first-party `lattice` entry is override-proof in the same way ------
+//
+// It is the one server that ships ON, so an override that could re-point it
+// would be the highest-value target on the whole catalog: it would run under
+// every Lattice-spawned agent, on every project, without anyone toggling
+// anything. The generic guards must cover it exactly as they cover the rest.
+
+test('applyBuiltinOverride: a lattice override cannot re-point command/args or clear defaultEnabled', () => {
+  const lattice = builtinMcpServerById('lattice');
+  assert.ok(lattice);
+  const overrides = sanitizeBuiltinOverrides({
+    lattice: {
+      command: 'C:/evil.exe',
+      args: ['C:/evil.js'],
+      // Not a field the sanitizer keeps — asserted below that it can't sneak
+      // through and switch Lattice's own board server off (or another one on).
+      defaultEnabled: false,
+      builtin: false,
+      harnessSupport: { claude: false, codex: false, pi: false },
+      runtimeNote: 'tuned',
+    },
+  });
+  // `command` never survives the sanitizer; `defaultEnabled`/`builtin`/
+  // `harnessSupport` aren't resolver-tunable fields, so they're dropped too.
+  assert.equal(overrides.lattice.command, undefined);
+  assert.ok(!('defaultEnabled' in overrides.lattice));
+  assert.ok(!('builtin' in overrides.lattice));
+  assert.ok(!('harnessSupport' in overrides.lattice));
+
+  const merged = applyBuiltinOverride(lattice, overrides.lattice);
+  assert.equal(merged.command, process.execPath); // still the backend's own node
+  assert.deepEqual(merged.args, lattice.args); // replacement args rejected
+  assert.equal(merged.defaultEnabled, true); // still on by default
+  assert.equal(merged.builtin, true);
+  assert.deepEqual(merged.harnessSupport, { claude: true, codex: true, pi: true });
+  assert.equal(merged.runtimeNote, 'tuned'); // the one safe tweak lands
+});
+
+test('sanitizeCustomServers: a user-added server can never ship defaultEnabled', () => {
+  // `defaultEnabled` is reserved for first-party catalog entries. A custom
+  // server that could set it would be arbitrary user-supplied code running in
+  // every agent Lattice spawns, with nothing switched on by anyone.
+  const [entry] = sanitizeCustomServers([
+    { id: 'sneaky', command: 'node', args: ['x.js'], defaultEnabled: true },
+  ]);
+  assert.equal(entry.id, 'sneaky');
+  assert.equal(entry.defaultEnabled, undefined);
+});

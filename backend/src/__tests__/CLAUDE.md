@@ -164,16 +164,30 @@ cache, whose home path binds once at module load. Keep tests as plain
   preamble before the project's own Append while tolerating a blank/absent
   side. Its integration half lives in `harnessSystemPrompts.test.ts` ("a
   project with no override still gets the Lattice preamble").
-- `latticeApiDocsDrift.test.ts` — pins the two hand-maintained API docs against
+- `latticeApiDocs.test.ts` — the generated agent docs. `ensureLatticeApiDoc`
+  writes TWO files into `<project>/.lattice/`: the SHORT index the system-prompt
+  preamble names (`LATTICE_API.md`) and the recipes file it points at
+  (`LATTICE_API_RECIPES.md`). Pins what makes that split work — every literal is
+  interpolated in both (no `{{…}}` remnant, no `_FWD}}` clipped by the shorter
+  `{{PROJECT}}`), the index names the recipes file by ABSOLUTE path, neither
+  references a shell variable (cmd.exe can't expand one), each file carries its
+  own content-hash stamp so regeneration is byte-stable and editing one template
+  rewrites only that file, and nothing is written when `.lattice/` is absent.
+  The load-bearing one is the **size budget**: the index is read WHOLE on every
+  Lattice question, so it must stay under 4096 bytes rendered — it was 19 KB
+  (~5k tokens) before the split, and without the budget it silently regrows.
+- `latticeApiDocsDrift.test.ts` — pins the hand-maintained API docs against
   the real router. `latticeApiDocs.ts` only guarantees a project's
-  `.lattice/LATTICE_API.md` matches the *template* that shipped with the build
-  (content-hash in line 1), so a renamed endpoint left the template — and every
+  `.lattice/LATTICE_API*.md` match the *templates* that shipped with the build
+  (content-hash in line 1), so a renamed endpoint left them — and every
   regenerated copy on every machine — confidently documenting a dead path.
   Builds the Express app in-process via `mountRouteFactories` and walks the
   router stack (asserting the prefix-less-mount assumption the collector rests
-  on), then checks both directions: every endpoint-table row and every
-  copy-pasteable `{{API_URL}}/...` recipe must resolve to a live route, and
-  every live route must either be documented or carry an entry in the test's
+  on), then checks both directions over the UNION of both templates (the
+  endpoint table lives in the recipes file since the progressive-disclosure
+  split, so reading only one would drop half the cover): every endpoint-table
+  row and every copy-pasteable `{{API_URL}}/...` recipe must resolve to a live
+  route, and every live route must either be documented or carry an entry in the test's
   `UNDOCUMENTED_ROUTES` map explaining why agents shouldn't see it (hook
   callbacks, Settings-UI surfaces, MCP secrets, graph reads). **That opt-out map
   is the drift guard** — a new route fails the suite until someone decides which

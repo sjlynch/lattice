@@ -77,7 +77,7 @@ export const FINGERPRINT_FILES = [
   'projectPath.js',
   'processTree.js',
   // What the terminal-server emits per pty: the human-facing banner (imported
-  // by sessionLifecycle) and the generated `.lattice/LATTICE_API.md`. Their
+  // by sessionLifecycle) and the generated `.lattice/LATTICE_API*.md` pair. Their
   // bytes affect runtime behavior, so a banner/doc-only edit must still
   // invalidate a stale orphan. (The agent-facing system-prompt preamble is
   // NOT here — it is resolved in the always-fresh main backend and shipped as
@@ -85,6 +85,7 @@ export const FINGERPRINT_FILES = [
   'terminalBanner.js',
   'latticeApiDocs.js',
   'latticeApiDocs/LATTICE_API.template.md',
+  'latticeApiDocs/LATTICE_API_RECIPES.template.md',
   'claudeConfigGuard.js',
   // The Claude-config WRITE mechanism the terminal-server runs at every spawn
   // (apply trust + reconcile the backend-resolved MCP set into ~/.claude.json).

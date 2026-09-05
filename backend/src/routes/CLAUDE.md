@@ -27,11 +27,15 @@ projectClaude, mergeRuns, postMergeHooks, pushRuns, qaRuns, workflows.
   chokepoint (`resolveHarnessSpawnBody`) as tasks and gets its Codex/Pi MCP config
   applied (a serverless `/ws/terminal` connect would bypass it). Debug
   spawn-queue snapshot too.
-- `tasks.ts` — task CRUD/list/summary/projects, markdown batch/upsert,
+- `tasks.ts` — task CRUD/list/summary/search/projects, markdown batch/upsert,
   bulk-update, transition, reorder, append-summary, run/resume/merge, worktree
   hook callbacks (`complete`/`merged`/`merge-aborted`/`stash-resolved`), task
   activity hooks, and worktree-modified reads. Submodules under `tasks/` own the
-  details; keep path-specific routes before `/api/tasks/:id`.
+  details; keep path-specific routes (`/summary`, `/search`, `/transition`, …)
+  before `/api/tasks/:id`. The list/summary/search reads are the agent-facing
+  progressive-disclosure surface (active-lane + compact + newest-100 defaults,
+  self-pricing envelopes, 256 KB ceiling → 413) — see `tasks/listQuery.ts` and
+  `tasks/taskSearch.ts`.
 - `agentActivity.ts` — `/api/agent-activity/:token` for Lattice-spawned
   non-worktree Claude sessions (push/workflow/post-merge) and graph beams.
 - `projectClaude.ts` — project-root instrumentation install/remove plus

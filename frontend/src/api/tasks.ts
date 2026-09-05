@@ -17,21 +17,40 @@ import type {
 import type { AgentHarness } from '../harnesses';
 
 // `/api/tasks` returns an envelope ({project, canonicalProject, hash, count,
-// mismatched, tasks}) so agents can detect "these aren't my tasks." The UI
-// just unwraps `.tasks`; the envelope's filter is server-side defence in
-// depth that we don't need to surface here.
+// mismatched, tasks} plus the progressive-disclosure cost/filter fields) so
+// agents can detect "these aren't my tasks." The UI just unwraps `.tasks`; the
+// envelope's filter is server-side defence in depth that we don't need to
+// surface here.
 type TasksEnvelope = {
   project: string;
   canonicalProject: string;
   hash: string;
   count: number;
   mismatched: number;
+  total?: number;
+  matched?: number;
+  omitted?: Record<string, number>;
+  truncated?: boolean;
+  clipped?: number;
+  fields?: 'compact' | 'full';
+  bytes?: number;
+  approxTokens?: number;
+  hint?: string;
+  missing?: string[];
   tasks: Task[];
 };
 
+// The endpoint defaults are tuned for AI agents (active lanes only, compact
+// fields, newest 100, descriptions clipped) — this caller is the board itself,
+// which renders every lane and needs whole records, so it opts out of all four
+// and pre-confirms the size ceiling.
+const WHOLE_BOARD_QUERY = 'status=all&fields=full&clip=0&limit=0&confirm_large=1';
+
 export async function fetchTasks(projectPath: string): Promise<Task[]> {
   const env = await asJson<TasksEnvelope>(
-    await fetch(`/api/tasks?project=${encodeURIComponent(projectPath)}`),
+    await fetch(
+      `/api/tasks?project=${encodeURIComponent(projectPath)}&${WHOLE_BOARD_QUERY}`,
+    ),
   );
   return env.tasks;
 }

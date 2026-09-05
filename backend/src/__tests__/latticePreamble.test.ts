@@ -43,6 +43,16 @@ test('preamble is one line with no double quotes (Codex -c transit)', () => {
   assert.ok(!text.includes("'''"), 'no TOML multi-line-literal delimiter');
 });
 
+test('preamble points an MCP-equipped session at the board tools, not curl', () => {
+  // The `lattice` MCP server is first-party and ON by default, but the doc the
+  // preamble points at is written in curl recipes — so without this clause an
+  // agent that HAS typed board tools still shells out to curl.
+  const text = buildLatticePreamble(DOC);
+  assert.match(text, /MCP tools/);
+  assert.ok(text.includes('board_summary'), 'names a tool the agent can recognise');
+  assert.match(text, /instead of curl/);
+});
+
 test('preamble stays short — it rides every spawn in every project', () => {
   const text = buildLatticePreamble(DOC);
   assert.ok(text.length < 600, `preamble is ${text.length} chars, expected < 600`);

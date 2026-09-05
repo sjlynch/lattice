@@ -14,11 +14,20 @@
  *   node create-task.cjs --batch tasks.json
  *   # tasks.json: [{ "title": "...", "description": "..." }, ...]
  *
- * Read the board (defaults to this project; never queries another):
- *   node create-task.cjs --list                    # every task
- *   node create-task.cjs --list open               # one lane
- *   node create-task.cjs --list open,in_progress   # multiple lanes
- *   node create-task.cjs --summary                 # counts by status
+ * Read the board, cheapest first (always this project, never another):
+ *   node create-task.cjs --summary                 # counts + per-lane cost
+ *   node create-task.cjs --list                    # active lanes, newest 100
+ *   node create-task.cjs --list all                # include done + deleted
+ *   node create-task.cjs --list open,in_progress   # specific lanes
+ *   node create-task.cjs --list --since 30d --limit 20
+ *   node create-task.cjs --find "graph legend"     # search instead of listing
+ *   node create-task.cjs --find "legend" open,qa   # search within lanes
+ *   node create-task.cjs --find "legend" --limit 5 # cap the hits (default 20)
+ *   node create-task.cjs --get t_abc123            # one task, full text
+ *
+ * The API pages/clips by default (a real board is a megabyte of mostly-done
+ * history), and every response carries a `hint` naming the next knob to turn.
+ * This script prints that hint verbatim — follow it rather than guessing.
  */
 
 const http = require('http');
@@ -81,6 +90,32 @@ function assertEnvelopeMatchesProject(envelope) {
   }
 }
 
+// A 413 is the API refusing to hand back a megabyte, not a failure: it carries
+// the summary + the exact narrowing options. Print those instead of throwing a
+// wall of JSON (or a stack trace) at the agent reading this output.
+function reportTooLarge(body) {
+  console.error('Response too large — Lattice refused to send it.');
+  if (body && body.hint) console.error(body.hint);
+  const suggestions = (body && Array.isArray(body.suggestions)) ? body.suggestions : [];
+  for (const s of suggestions) console.error('  - ' + s);
+  if (body && body.summary && body.summary.byStatus) {
+    console.error('  counts: ' + JSON.stringify(body.summary.byStatus));
+  }
+}
+
+// Every read goes through here so a 413 never reaches the caller as an error.
+async function getEnvelope(urlStr) {
+  const result = await get(urlStr);
+  if (result.status === 413) {
+    reportTooLarge(result.body);
+    process.exit(1);
+  }
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error('API ' + result.status + ': ' + JSON.stringify(result.body));
+  }
+  return result.body;
+}
+
 function readStdin() {
   return new Promise((resolve) => {
     if (process.stdin.isTTY) { resolve(''); return; }
@@ -102,40 +137,126 @@ async function createOne(title, description) {
   throw new Error('API ' + result.status + ': ' + msg);
 }
 
-async function listTasks(statusCsv) {
-  const q = projectQuery() + (statusCsv ? '&status=' + encodeURIComponent(statusCsv) : '');
-  const result = await get(API_BASE + '/api/tasks?' + q);
-  if (result.status < 200 || result.status >= 300) {
-    throw new Error('API ' + result.status + ': ' + JSON.stringify(result.body));
-  }
-  assertEnvelopeMatchesProject(result.body);
-  const { tasks, count, mismatched } = result.body;
-  if (!Array.isArray(tasks)) throw new Error('unexpected tasks shape: ' + JSON.stringify(result.body));
+// `--list` with no lane sends NO status, so the API's own default applies:
+// the ACTIVE lanes only, compact fields, newest 100. Done history (which is
+// most of a mature board) stays out unless it is asked for by name.
+async function listTasks(statusCsv, opts) {
+  let q = projectQuery();
+  if (statusCsv) q += '&status=' + encodeURIComponent(statusCsv);
+  if (opts.since) q += '&since=' + encodeURIComponent(opts.since);
+  if (opts.limit) q += '&limit=' + encodeURIComponent(opts.limit);
+  const body = await getEnvelope(API_BASE + '/api/tasks?' + q);
+  assertEnvelopeMatchesProject(body);
+  const { tasks, count, mismatched } = body;
+  if (!Array.isArray(tasks)) throw new Error('unexpected tasks shape: ' + JSON.stringify(body));
   if (mismatched > 0) {
     console.error('[warn] ' + mismatched + ' foreign task(s) filtered server-side (see backend log)');
   }
-  console.log('Project: ' + PROJECT + '  (' + count + ' task' + (count === 1 ? '' : 's') + (statusCsv ? ', filter=' + statusCsv : '') + ')');
+  const scope = statusCsv ? 'filter=' + statusCsv : 'active';
+  console.log(
+    'Project: ' + PROJECT + '  (' + count + ' ' + scope + ' task' + (count === 1 ? '' : 's') + ')',
+  );
   for (const t of tasks) console.log(t.id + '  ' + t.status.padEnd(15) + '  ' + t.title);
+  if (body.hint) console.log('\n' + body.hint);
 }
 
-async function summary() {
-  const result = await get(API_BASE + '/api/tasks/summary?' + projectQuery());
+async function findTasks(q, statusCsv, opts) {
+  let url = API_BASE + '/api/tasks/search?' + projectQuery() + '&q=' + encodeURIComponent(q);
+  if (statusCsv) url += '&status=' + encodeURIComponent(statusCsv);
+  if (opts && opts.limit) url += '&limit=' + encodeURIComponent(opts.limit);
+  const body = await getEnvelope(url);
+  assertEnvelopeMatchesProject(body);
+  const results = Array.isArray(body.results) ? body.results : [];
+  console.log(
+    'Project: ' + PROJECT + '  (' + results.length + ' match' +
+      (results.length === 1 ? '' : 'es') + ' for "' + q + '")',
+  );
+  for (const r of results) {
+    console.log(r.id + '  ' + String(r.status).padEnd(15) + '  ' + r.score + '  ' + r.title);
+    if (r.snippet) console.log('      ' + String(r.snippet).replace(/\s+/g, ' '));
+  }
+  if (body.hint) console.log('\n' + body.hint);
+}
+
+// GET /api/tasks/:id returns a bare Task (not an envelope), so the project
+// check is against the task's own projectPath.
+async function getTask(id) {
+  const result = await get(API_BASE + '/api/tasks/' + encodeURIComponent(id));
+  if (result.status === 404) throw new Error('no task with id ' + id + ' on this board');
   if (result.status < 200 || result.status >= 300) {
     throw new Error('API ' + result.status + ': ' + JSON.stringify(result.body));
   }
-  assertEnvelopeMatchesProject(result.body);
-  console.log(JSON.stringify({
-    project: result.body.canonicalProject,
-    total:   result.body.total,
-    byStatus: result.body.byStatus,
-  }, null, 2));
+  const t = result.body;
+  if (!t || typeof t !== 'object') throw new Error('unexpected response shape from Lattice API');
+  const owner = String(t.projectPath || '');
+  if (owner && owner.toLowerCase() !== PROJECT.toLowerCase()) {
+    throw new Error(
+      'Task ' + id + ' belongs to "' + owner + '", not "' + PROJECT + '". Refusing to act on it.',
+    );
+  }
+  console.log('# ' + t.title);
+  console.log('id: ' + t.id + '   status: ' + t.status);
+  if (t.description) console.log('\n' + t.description);
+  if (t.summary) console.log('\n## Summary\n' + t.summary);
+}
+
+async function summary() {
+  const body = await getEnvelope(API_BASE + '/api/tasks/summary?' + projectQuery());
+  assertEnvelopeMatchesProject(body);
+  console.log('Project: ' + body.canonicalProject + '  (' + body.total + ' tasks)');
+  const lanes = body.lanes && typeof body.lanes === 'object' ? body.lanes : null;
+  const byStatus = body.byStatus || {};
+  for (const status of Object.keys(byStatus)) {
+    const lane = lanes ? lanes[status] : null;
+    const cost = lane && lane.approxTokens != null ? '  (~' + lane.approxTokens + ' tok full)' : '';
+    console.log('  ' + status.padEnd(16) + String(byStatus[status]).padStart(4) + cost);
+  }
+  if (body.hint) console.log('\n' + body.hint);
+}
+
+// Pull `--since <v>` / `--limit <n>` out of the argv tail so `--list` / `--find`
+// and their positional arguments keep their existing positions. (`--find` only
+// honours `--limit`; search has no `since`.)
+function parseReadOpts(args) {
+  const opts = { since: '', limit: '' };
+  const rest = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === '--since' && args[i + 1] !== undefined) { opts.since = args[++i]; continue; }
+    if (args[i] === '--limit' && args[i + 1] !== undefined) { opts.limit = args[++i]; continue; }
+    rest.push(args[i]);
+  }
+  return { opts, rest };
+}
+
+function usage() {
+  console.error('Usage: node create-task.cjs "Title" ["Description"]');
+  console.error('       node create-task.cjs "Title" < description.md');
+  console.error('       node create-task.cjs --batch tasks.json');
+  console.error('       node create-task.cjs --summary');
+  console.error('       node create-task.cjs --list [all|statuses] [--since 30d] [--limit N]');
+  console.error('       node create-task.cjs --find "text" [statuses] [--limit N]');
+  console.error('       node create-task.cjs --get <id>');
 }
 
 async function main() {
   const args = process.argv.slice(2);
 
   if (args[0] === '--list') {
-    await listTasks(args[1] || '');
+    const { opts, rest } = parseReadOpts(args.slice(1));
+    await listTasks(rest[0] || '', opts);
+    return;
+  }
+  if (args[0] === '--find') {
+    // Strip the flags FIRST — otherwise `--find "x" --limit 2` reads `--limit`
+    // as the lanes positional and searches a lane that doesn't exist.
+    const { opts, rest } = parseReadOpts(args.slice(1));
+    if (!rest[0]) { usage(); process.exit(1); }
+    await findTasks(rest[0], rest[1] || '', opts);
+    return;
+  }
+  if (args[0] === '--get') {
+    if (!args[1]) { usage(); process.exit(1); }
+    await getTask(args[1]);
     return;
   }
   if (args[0] === '--summary') {
@@ -164,14 +285,7 @@ async function main() {
   }
 
   const title = args[0];
-  if (!title) {
-    console.error('Usage: node create-task.cjs "Title" ["Description"]');
-    console.error('       node create-task.cjs "Title" < description.md');
-    console.error('       node create-task.cjs --batch tasks.json');
-    console.error('       node create-task.cjs --list [statuses]');
-    console.error('       node create-task.cjs --summary');
-    process.exit(1);
-  }
+  if (!title) { usage(); process.exit(1); }
   const description = args[1] !== undefined ? args[1] : await readStdin();
   await createOne(title, description);
 }

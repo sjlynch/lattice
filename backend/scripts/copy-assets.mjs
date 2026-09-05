@@ -14,6 +14,10 @@ const assets = [
     from: path.join(backendRoot, 'src', 'latticeApiDocs', 'LATTICE_API.template.md'),
     to: path.join(backendRoot, 'dist', 'latticeApiDocs', 'LATTICE_API.template.md'),
   },
+  {
+    from: path.join(backendRoot, 'src', 'latticeApiDocs', 'LATTICE_API_RECIPES.template.md'),
+    to: path.join(backendRoot, 'dist', 'latticeApiDocs', 'LATTICE_API_RECIPES.template.md'),
+  },
 ];
 
 // Idempotent: skip the copy when the destination already matches the

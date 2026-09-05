@@ -37,6 +37,11 @@ export type McpServerEntry = {
   harnessSupport: McpHarnessSupport;
   runtimeNote?: string;
   builtin?: boolean;
+  // Resolves ON when the project has no explicit per-harness override. Backend
+  // sets it on FIRST-PARTY servers only (today: `lattice`), so the MCP tab's
+  // switches must read `overrides[id] ?? !!defaultEnabled` rather than treating
+  // an absent override as off. Mirror of the backend field.
+  defaultEnabled?: boolean;
 };
 
 // { [serverId]: { [envVar]: present } } — presence/hints only, never the value.

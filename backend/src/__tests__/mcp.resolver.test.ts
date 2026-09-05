@@ -12,15 +12,79 @@ import {
   builtinMcpServerById,
   type McpServerEntry,
 } from '../mcp/catalog.js';
+import { canonicalProjectPath } from '../projectPath.js';
 
 // Narrow a resolved config to its stdio shape for assertions.
 type Stdio = { type: 'stdio'; command: string; args?: string[]; env?: Record<string, string> };
 const asStdio = (c: unknown) => c as Stdio;
 
+// Spawn context for the first-party `lattice` server, which resolves only when
+// the spawn carries a project (see its own block further down).
+const LATTICE_CTX = {
+  projectPath: 'c:\\dev\\proj',
+  apiUrl: 'http://127.0.0.1:5184',
+};
+
 // ---- resolveClaudeServers: the pure resolver core ----
 
-test('resolve: nothing enabled by default (the all-off invariant)', () => {
+test('resolve: no third-party server is enabled by default (the all-off invariant)', () => {
+  // With no ctx there is no project, so Lattice's own first-party server (the
+  // single `defaultEnabled` entry) drops out too and the set is empty. The
+  // WITH-a-project shape is pinned separately below, so this case can't quietly
+  // become "nothing resolves, ever".
   assert.deepEqual(resolveClaudeServers(BUILTIN_MCP_SERVERS, {}, {}), {});
+  const withProject = resolveClaudeServers(BUILTIN_MCP_SERVERS, {}, {}, LATTICE_CTX);
+  assert.deepEqual(Object.keys(withProject), ['lattice']);
+});
+
+// ---- the first-party `lattice` server: on by default, project-pinned ----
+//
+// It is the ONE exception to the all-off invariant (Lattice's own code, no
+// secret, talks only to the local backend). Two properties make that safe: it
+// resolves ONLY when the spawn has a project, and an explicit `false` override
+// still turns it off.
+
+test('lattice: enabled with empty settings, and carries the per-spawn env', () => {
+  const out = resolveClaudeServers(BUILTIN_MCP_SERVERS, {}, {}, LATTICE_CTX);
+  const cfg = asStdio(out.lattice);
+  assert.equal(cfg.type, 'stdio');
+  // `process.execPath` — an absolute node binary, NOT a bare `node` off a PATH
+  // we don't control — and so never `cmd /c`-wrapped.
+  assert.equal(cfg.command, process.execPath);
+  assert.notEqual(cfg.command, 'cmd');
+  assert.ok(cfg.args?.[0]?.endsWith('server.js'), 'points at the stdio entry');
+  assert.equal(cfg.env?.LATTICE_API_URL, 'http://127.0.0.1:5184');
+  // Canonicalized (drive letter uppercased on win32) so the server's own
+  // canonicalProject assertion compares like with like.
+  assert.equal(cfg.env?.LATTICE_PROJECT, canonicalProjectPath('c:\\dev\\proj'));
+});
+
+test('lattice: no project in the spawn context → not resolved at all', () => {
+  // It pins itself to ONE board; with nothing to serve, eleven tools that all
+  // fail on their first call are worse than no tools.
+  assert.deepEqual(
+    resolveClaudeServers(BUILTIN_MCP_SERVERS, {}, {}, { apiUrl: 'http://127.0.0.1:5184' }),
+    {},
+  );
+});
+
+test('lattice: an explicit false override opts out', () => {
+  const out = resolveClaudeServers(
+    BUILTIN_MCP_SERVERS,
+    { mcpOverrides: { lattice: false } },
+    {},
+    LATTICE_CTX,
+  );
+  assert.ok(!('lattice' in out));
+});
+
+test('lattice: resolving does not mutate the shared catalog entry', () => {
+  // The catalog is a long-lived module-level array; baking a project's env into
+  // it would leak that project into the next spawn's resolve.
+  const entry = builtinMcpServerById('lattice');
+  assert.ok(entry);
+  resolveClaudeServers(BUILTIN_MCP_SERVERS, {}, {}, LATTICE_CTX);
+  assert.equal(entry.env, undefined);
 });
 
 test('resolve: global Playwright (mcpOverrides) is on for any session, headless', () => {

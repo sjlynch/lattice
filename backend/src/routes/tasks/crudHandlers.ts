@@ -3,7 +3,9 @@
 // `crud.ts` (the router) and the project-scoping test keep importing from
 // `./crudHandlers.js` unchanged.
 //
-//   - crudList.ts       : partitionByProject + list / summary / projects / get
+//   - crudList.ts       : partitionByProject + list / summary / search /
+//                         projects / get (thin adapters over the pure
+//                         listQuery.ts + taskSearch.ts modules)
 //   - crudCreate.ts     : create / batch-create (JSON + markdown parsing)
 //   - crudUpdate.ts     : patch / bulk-update / upsert / append-summary
 //                         (thin handlers; helpers in crudUpdateBody /
@@ -15,6 +17,7 @@ export {
   partitionByProject,
   handleTaskList,
   handleTaskSummary,
+  handleTaskSearch,
   handleProjectsList,
   handleTaskGet,
 } from './crudList.js';

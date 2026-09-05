@@ -13,10 +13,14 @@ gitignored) for the full design + decisions.
 Every catalog server can be enabled **independently per harness**. Claude keeps
 the legacy `UserSettings.mcpOverrides` map (plus its QA-scoped Playwright);
 Codex and Pi use the nested `UserSettings.mcpHarnessOverrides` (`{ codex?: {
-[id]: boolean }, pi?: { [id]: boolean } }`). Everything is off by default;
-enabling a server for one harness never loads it into another. The
+[id]: boolean }, pi?: { [id]: boolean } }`). Every third-party server is off by
+default; enabling one for a harness never loads it into another. The
 `McpHarnessSupport {claude,codex,pi}` per-server capability flags gate which
 harnesses can even offer a server.
+
+`harnessToggleOn` reads an **explicit boolean first**, and falls back to the
+entry's `defaultEnabled` — `undefined` on every third-party server (so: off),
+`true` only on the first-party `lattice` entry below.
 
 The resolver core is harness-neutral: **`resolveMcpEntries(catalog, settings,
 secrets, harness, ctx)`** applies the support filter + the per-harness toggle
@@ -74,13 +78,73 @@ does not write a tracked `.codex/config.toml` / a proactive project-root
 `.pi/mcp.json` just to cover it. (Startup-configured harness terminals also stay
 serverless for now — see `frontend/src/components/sidebar/CLAUDE.md`.)
 
+## The first-party exception: `lattice` is ON by default
+
+`catalog.ts`'s all-off invariant has exactly **one** exception, and
+`defaultEnabled?: boolean` exists for it alone. Lattice's own task-board server
+(`../latticeMcp/`, id `lattice`) ships **enabled**, because none of the reasons
+the invariant exists apply to it: it is Lattice's own code out of this repo (no
+third-party package to audit), it needs no API key (no secret to leak), it
+carries no telemetry, and it talks only to the local backend that spawned the
+session. It is also *the point of the feature* — a board server nobody switches
+on is a board server nobody uses, and the agents that most need it (worktree
+agents, workflow planners) are exactly the ones nobody is present to configure.
+
+Two properties keep that safe:
+
+- **Project-pinned.** `resolveMcpEntries` DROPS the entry when `ctx.projectPath`
+  is absent. The server pins itself to one board and every tool call needs
+  `LATTICE_PROJECT`; a project-less spawn is better off with no board tools than
+  with eleven that fail on their first call.
+- **Opt-out is a real per-harness switch.** `mcpOverrides.lattice = false`
+  (Claude) or `mcpHarnessOverrides.<codex|pi>.lattice = false` turns it off for
+  that harness only — the explicit-wins rule in `harnessToggleOn`. The MCP tab's
+  switches render it on out of the box (`overrides[id] ?? !!defaultEnabled` in
+  `frontend/src/components/settings/McpTab.tsx`).
+
+**Never set `defaultEnabled` on a third-party entry.** It would run someone
+else's package under every agent Lattice spawns, on every project, without the
+user ever choosing it. `settingsValidation.ts` also refuses to let a
+`mcpBuiltinOverrides.lattice` re-point the entry's `command`/`args` or clear
+`defaultEnabled` (it is the highest-value override target on the catalog,
+precisely because it is the one that ships on).
+
+### Per-spawn env injection
+
+`lattice` is the only catalog entry whose config is not fully static: it needs
+to know *which* board and *which* backend. `resolveMcpEntries` therefore emits a
+**clone** of the entry (never a mutation of the shared, long-lived catalog
+array) with `env` merged from the spawn context:
+
+- `LATTICE_API_URL` — `ctx.apiUrl`, this backend's own origin.
+- `LATTICE_PROJECT` — `canonicalProjectPath(ctx.projectPath)`, canonical so the
+  server's own `canonicalProject` assertion compares like with like.
+
+`McpResolveContext` gained `projectPath` + `apiUrl` for this; the four async
+resolvers (`effectiveMcpServers`, `resolveManagedClaudeServers`,
+`resolveManagedCodexServers`, `resolveManagedPiServers`) fill both in via
+`withSpawnContext`, so the env is identical across harnesses. The three shapers
+then propagate `env` as they already do for any static entry env — Claude into
+`~/.claude.json`, Codex as inline TOML on the `-c` override, Pi into
+`.pi/mcp.json`.
+
+The entry's `command` is **`process.execPath`**, the exact Node binary running
+the backend, not a bare `node`: the MCP client spawns without a shell and the
+harness's PATH is not ours (an `nvm`/`fnm` shim, a differently-launched Codex,
+a PATH-less service context). It is an absolute `.exe`, so `platformizeCommand`
+correctly leaves it unwrapped — `cmd /c` would be actively wrong for a path with
+a space in it.
+
 ## Modules
 
-- `catalog.ts` — the built-in server catalog **in code** (5 servers: playwright,
-  chrome-devtools, context7, brave-search, blender) + the `McpServerEntry` type.
-  Package names live here so churn is a code change, not a data migration. **Invariant:
-  there is no `enabledByDefault` flag** — everything is off until the resolver is
-  told otherwise, so a new project loads nothing. **Playwright ships `--isolated`
+- `catalog.ts` — the built-in server catalog **in code** (6 servers: the
+  first-party `lattice` board server plus playwright, chrome-devtools, context7,
+  brave-search, blender) + the `McpServerEntry` type. Package names live here so
+  churn is a code change, not a data migration. **Invariant: every THIRD-PARTY
+  server is off** until the resolver is told otherwise, so a new project loads
+  no foreign code. The one `defaultEnabled: true` entry is `lattice` — see "The
+  first-party exception" above; never set that flag on anything else.
+  **Playwright ships `--isolated`
   in its catalog args** (not optional): `@playwright/mcp` otherwise shares ONE
   persistent profile dir, so a second concurrent instance dies with "Browser is
   already in use" — and Lattice injects Playwright into many concurrent sessions.
@@ -91,10 +155,13 @@ serverless for now — see `frontend/src/components/sidebar/CLAUDE.md`.)
   harness, ctx?)`** — the spawn-path resolver — plus the pure orchestration core
   `resolveClaudeServers(catalog, settings, secrets, ctx)`. It owns the catalog
   merge + the per-entry loop (the `harnessSupport` filter and the per-server
-  `mcpOverrides[id] ?? false` toggle gate); the per-decision logic is composed in
-  from two focused pure helpers (below). Returns `{}` for non-claude harnesses
-  (v1). The `McpResolveContext` type (only field: `ctx.isQaRun`, set by the QA-run
-  spawn alone) lives here as part of the public surface.
+  toggle gate `harnessToggleOn`: explicit override, else `entry.defaultEnabled`);
+  the per-decision logic is composed in from two focused pure helpers (below).
+  Returns `{}` for non-claude harnesses (v1). It also shapes the first-party
+  `lattice` entry's per-spawn env (`shapeLatticeEntry`, and `withSpawnContext`
+  on the async side). The `McpResolveContext` type lives here as part of the
+  public surface: `ctx.isQaRun` (set by the QA-run spawn alone) plus
+  `ctx.projectPath` / `ctx.apiUrl` (what the `lattice` server needs baked in).
 - `settingsValidation.ts` / `overrideSecurity.ts` — defensive parsers for the
   UNTRUSTED `mcpCustomServers` / `mcpBuiltinOverrides` off `PATCH
   /api/global-settings`. `sanitizeCustomServers` / `sanitizeBuiltinOverrides` keep
@@ -140,6 +207,10 @@ serverless for now — see `frontend/src/components/sidebar/CLAUDE.md`.)
   sibling marker, leave the user's own entries alone) + `platformizeCommand`
   (wrap `npx`/`uvx`/… in `cmd /c` on win32, since the MCP SDK spawns without a
   shell and a bare `npx` ENOENTs on Windows).
+- `../latticeMcp/` — not part of this folder, but the other half of the
+  first-party server: the stdio MCP process itself (11 board tools over the task
+  HTTP API), plus `entryPath.ts`, which `catalog.ts` calls to bake the compiled
+  entry point into the `lattice` entry's `args`. See its own `CLAUDE.md`.
 - `validators.ts` — per-server "is my key working?" probes behind
   `POST /api/mcp/validate` (v1: Brave one-search request only).
 - `importConfigs.ts` — read-only scan of other tools' MCP configs (Claude Code,
@@ -228,7 +299,9 @@ terminal-server entirely.
 
 Add an entry to `BUILTIN_MCP_SERVERS` in `catalog.ts`. If it needs a key, set
 `requiresSecret` (renders the masked field + status chip + get-a-key link) and,
-if testable, add a `case` in `validators.ts`. Off by default automatically.
+if testable, add a `case` in `validators.ts`. Off by default automatically —
+**do not set `defaultEnabled`**, which is reserved for first-party servers (see
+"The first-party exception" above).
 
 Two things the entry alone can't do, so put them in `runtimeNote` (the only
 catalog field the MCP tab actually renders as a caveat — `runtime` is metadata,
