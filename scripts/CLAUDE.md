@@ -1,5 +1,19 @@
 # Root scripts
 
+- `preflight.mjs` runs before the orchestrator and self-heals `node_modules`
+  across root / backend / frontend. It compares what each workspace's
+  `package.json` **declares** (`dependencies` + `devDependencies`) and the
+  version its `package-lock.json` pins against what is installed, via the
+  shared `depsCheck.mjs` (`backend/scripts/dev/deps.mjs` uses the same module
+  for its own second-layer check; typed in `depsCheck.d.mts`, unit-tested in
+  `backend/src/__tests__/depsCheck.test.ts`). **Do not reintroduce a
+  hand-picked package sample** — the old "is express there? is vite there?"
+  probe let a pulled `@modelcontextprotocol/sdk` + `zod` addition pass
+  preflight and die in the backend's initial `tsc` with "Cannot find module"
+  (2026-09-06). Presence is judged by `node_modules/<name>/package.json`, not
+  `require.resolve`: a package whose `exports` map has no `"."` entry (the
+  MCP SDK) and a types-only `@types/*` package both throw from resolve even
+  when correctly installed. `optionalDependencies` are skipped on purpose.
 - `orchestrate.mjs` is the `npm run dev` entrypoint. Keep it as the boot sequence only: backend first, wait for `/api/health` or timeout, then frontend.
 - **Children are spawned with their own `cwd`, never `npm --prefix <dir> run`.**
   Both forms run the script with cwd = the package dir, but `--prefix` also sets
