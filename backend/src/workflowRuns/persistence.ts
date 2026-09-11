@@ -30,6 +30,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWriteFile } from '../claudeTrust/configFile.js';
 import { canonicalProjectPath, homeProjectScratchDir } from '../projectPath.js';
+import { matchesStoredProjectIdentity } from '../projectIdentity.js';
 import { normalizePiModel } from '../agentCommandBuilder.js';
 import { normalizeWorkflowRunHarnessOverride } from '../workflows/normalization.js';
 import type { WorkflowRun } from './state.js';
@@ -71,7 +72,7 @@ function num(v: unknown): number | undefined {
 // Reconstruct one run record, or null if it is too damaged to resume. We only
 // ever persist `running` runs, but a hand-edited/old file could hold anything;
 // anything that isn't `running` is dropped here rather than at the call site.
-export function deserializeWorkflowRun(raw: unknown): WorkflowRun | null {
+export function deserializeWorkflowRun(raw: unknown, owningProject?: string): WorkflowRun | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   const id = str(r.id);
@@ -80,6 +81,7 @@ export function deserializeWorkflowRun(raw: unknown): WorkflowRun | null {
   const currentStepIndex = num(r.currentStepIndex);
   const totalSteps = num(r.totalSteps);
   if (!id || !workflowId || !projectPath) return null;
+  if (owningProject && !matchesStoredProjectIdentity(projectPath, owningProject)) return null;
   if (currentStepIndex === undefined || currentStepIndex < 0) return null;
   if (r.status !== 'running') return null;
 
@@ -87,7 +89,7 @@ export function deserializeWorkflowRun(raw: unknown): WorkflowRun | null {
     id,
     workflowId,
     workflowName: str(r.workflowName) ?? workflowId,
-    projectPath: canonicalProjectPath(projectPath),
+    projectPath: canonicalProjectPath(owningProject ?? projectPath),
     status: 'running',
     startedAt: num(r.startedAt) ?? 0,
     totalSteps: totalSteps !== undefined && totalSteps > 0 ? totalSteps : 0,
@@ -117,7 +119,7 @@ export function deserializeWorkflowRun(raw: unknown): WorkflowRun | null {
   return run;
 }
 
-export function deserializeWorkflowRuns(raw: unknown): WorkflowRun[] {
+export function deserializeWorkflowRuns(raw: unknown, owningProject?: string): WorkflowRun[] {
   const list = Array.isArray(raw)
     ? raw
     : raw && typeof raw === 'object' && Array.isArray((raw as WorkflowRunsFile).runs)
@@ -126,7 +128,7 @@ export function deserializeWorkflowRuns(raw: unknown): WorkflowRun[] {
   if (!list) return [];
   const out: WorkflowRun[] = [];
   for (const entry of list) {
-    const run = deserializeWorkflowRun(entry);
+    const run = deserializeWorkflowRun(entry, owningProject);
     if (run) out.push(run);
   }
   return out;
@@ -149,7 +151,7 @@ export async function loadPersistedWorkflowRuns(projectPath: string): Promise<Wo
     return [];
   }
   try {
-    return deserializeWorkflowRuns(JSON.parse(raw));
+    return deserializeWorkflowRuns(JSON.parse(raw), projectPath);
   } catch (err) {
     // A truncated/corrupt mirror is not worth preserving (unlike tasks.json,
     // it is derived state that a live run rewrites within milliseconds) — but

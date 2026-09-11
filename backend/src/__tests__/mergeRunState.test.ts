@@ -97,7 +97,7 @@ test('normalizeLoadedRuns preserves cancelRequested when present and defaults it
   assert.equal(byId.get('unknown_status')?.cancelRequested, true);
 });
 
-test('normalizeLoadedRuns canonicalizes candidate and fallback project paths', () => {
+test('normalizeLoadedRuns rejects foreign project records and canonicalizes the owning project', () => {
   const candidateProject = path.join(process.cwd(), 'merge-run-state-candidate');
   const fallback = path.join(process.cwd(), 'merge-run-state-fallback');
   const runs = normalizeLoadedRuns(
@@ -113,8 +113,9 @@ test('normalizeLoadedRuns canonicalizes candidate and fallback project paths', (
     fallback,
   );
 
-  assert.equal(runs[0].projectPath, canonicalProjectPath(candidateProject));
-  assert.equal(runs[1].projectPath, canonicalProjectPath(fallback));
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].id, 'fallback_path');
+  assert.equal(runs[0].projectPath, canonicalProjectPath(fallback));
 });
 
 test('snapshotRun clones mutable arrays and error entries', () => {

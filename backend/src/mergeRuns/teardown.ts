@@ -33,15 +33,9 @@ export async function runTeardown(
   // the snapshot), and if they re-do or edit those files before the backend
   // restarts (routine in dev under tsc -w) the deferred boot restore silently
   // clobbers the redo. Restoring here, in-session, closes that window — the
-  // tree is still exactly as the run left it (the user hasn't had a chance to
-  // touch it), so snapshot-wins is safe, and on success the snapshot dir is
-  // removed so there is nothing for boot recovery to re-apply.
-  //
-  // Unlike the prior stash-based path, restore here can never produce a
-  // "conflict" outcome — copy-based restore is last-writer-wins on
-  // overlap. Conservative: the user's snapshotted files always win
-  // over whatever the FF brought in. Worst case is a dirty working
-  // tree the user can review with `git status` / `git diff`.
+  // current tree may include newer edits. Restore checks the current version,
+  // preserves divergent dirty work, and retains captured conflict copies.
+  // Partial restores and failures become visible run errors.
   if (runSnapshot.dir) {
     const kind = run.cancelRequested ? 'cancelled run ' : 'run ';
     console.log(`[merge-run] restoring ${kind}snapshot → ${runSnapshot.dir}`);

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { generateTaskId } from '../ids.js';
 import { canonicalProjectPath } from '../projectPath.js';
+import { ProjectIdentityConflictError, matchesStoredProjectIdentity } from '../projectIdentity.js';
 import { ProjectStateManager } from '../projectStateManager.js';
 import { applyCrashSafeTaskUpdate } from './crashSafeUpdate.js';
 import { TaskMigrations } from './migrations.js';
@@ -52,6 +53,11 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
     // the new home-dir location. No-op if already migrated or no legacy.
     await this.migrations.runFirstTouch(key);
     await this.loadIfNeeded(key);
+    const tasks = this.getCached(key);
+    if (tasks) this.setCached(key, tasks.map((task) =>
+      typeof task.projectPath === 'string' && task.projectPath !== key && matchesStoredProjectIdentity(task.projectPath, key)
+        ? { ...task, projectPath: key } : task,
+    ));
     return key;
   }
 
@@ -61,7 +67,11 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
     for (const p of this.projectsIndex.values()) {
       if (!this.isLoaded(p)) {
         // eslint-disable-next-line no-await-in-loop
-        await this.ensureProjectLoaded(p);
+        try { await this.ensureProjectLoaded(p); }
+        catch (err) {
+          if (!(err instanceof ProjectIdentityConflictError)) throw err;
+          console.warn(`[tasks] cannot load ambiguous project ${p}: ${err.message}`);
+        }
       }
     }
   }

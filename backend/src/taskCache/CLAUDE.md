@@ -99,6 +99,12 @@ losing tasks.
 
 ## Ordering invariant
 
+Physical identity and legacy storage bindings are documented in
+`../PROJECT_IDENTITY.md`. Loading a store normalizes only task paths that match
+the physical project or its verified legacy storage hash. Multiple legacy
+stores for one physical root are refused and preserved; global load/backup
+sweeps continue past that project's identity conflict.
+
 Load/canonicalize the projects index and run legacy global migration before
 the first project cache read; then copy legacy
 `<project>/.lattice/tasks.json` to the home location before `loadIfNeeded`.

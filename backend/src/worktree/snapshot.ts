@@ -16,13 +16,11 @@
 //     snapshots and restores them, so a server crash mid-run doesn't lose
 //     work.
 //
-// Trade-off vs `git stash`: no 3-way merge on restore. If the FF brought
-// a new version of a file the user had modified, the user's snapshotted
-// version wins on restore (overwrites the FF'd version). This is
-// conservative — the user's work is never silently lost — at the cost of
-// potentially needing manual reconciliation. In practice this is fine
-// because the merge happens *inside the worktree*, not in main, so main's
-// working tree usually doesn't have user edits during a run.
+// Restore preserves newer dirty edits as the working copy and places captured
+// versions beside them for reconciliation. An in-session restore may overlay
+// clean committed HEAD content; boot recovery preserves all differing paths.
+// Capture, finalization and restore share project ownership, and partial restore
+// outcomes retain the snapshot and surface to the caller.
 //
 // Stable facade: implementation lives in ./snapshot/{manifest,capture,
 // restore,recovery}.js so existing `./snapshot.js` imports keep working.

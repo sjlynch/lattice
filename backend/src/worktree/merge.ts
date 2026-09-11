@@ -161,14 +161,9 @@ async function performFastForward(
   return { ok: true };
 }
 
-// Phase 3 — restore the snapshot after a successful FF. HEAD has moved;
-// restore copies the user's snapshotted versions back over whatever the FF
-// brought in for those paths. This is last-writer-wins (snapshot wins on
-// overlap) — see snapshot.ts header for the rationale. No "conflict"
-// outcome here, unlike the old stash-pop path; if the user really had
-// overlapping changes they'll see them as a dirty working tree post-restore
-// and can reconcile with `git diff`. A restore failure is logged, not
-// fatal — the FF already landed.
+// Phase 3 — restore after a successful FF. Newer dirty edits survive; captured
+// versions overlay only verified clean HEAD content. A partial restore returns
+// a warning that finalize surfaces without retrying the already-landed FF.
 async function restoreAfterFastForward(
   repoRoot: string,
   snapshot: SnapshotHandle | undefined,

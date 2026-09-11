@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { ProjectIdentityConflictError } from '../projectIdentity.js';
 import path from 'node:path';
 import { canonicalProjectPath } from '../projectPath.js';
 import type { TaskMigrations } from './migrations.js';
@@ -81,7 +82,11 @@ export async function restoreAllProjectsFromBackup(
   await projectsIndex.loadKnownProjects();
   for (const proj of projectsIndex.values()) {
     // eslint-disable-next-line no-await-in-loop
-    await restoreTasksFromBackupIfMissing(proj, migrations);
+    try { await restoreTasksFromBackupIfMissing(proj, migrations); }
+    catch (err) {
+      if (!(err instanceof ProjectIdentityConflictError)) throw err;
+      console.warn(`[tasks] recovery deferred for ambiguous project ${proj}: ${err.message}`);
+    }
   }
 }
 

@@ -262,8 +262,8 @@ test('restoreSnapshot (guardStaleOverwrite) restores absent/unchanged paths with
 });
 
 test('restoreSnapshot defaults to preserving newer on-disk content', async () => {
-  // The immediate in-session restore (teardown / fastForwardMain) intentionally
-  // overwrites — snapshot content wins over whatever the FF brought in.
+  // A differing destination with no trustworthy Git baseline is preserved by
+  // default; the captured version remains available beside it for recovery.
   const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-nowin-repo-'));
   const snapshotDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-nowin-'));
   try {

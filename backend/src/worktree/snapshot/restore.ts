@@ -201,9 +201,8 @@ async function restoreSnapshotPath(
   }
 }
 
-// Restore everything in the snapshot back into the working tree. Files
-// the FF brought in for paths we'd snapshotted will be overwritten by the
-// user's snapshotted version — this is intentional (see module header).
+// Restore captured work, preserving divergent dirty destinations. Immediate
+// restoration can overlay clean committed HEAD; boot recovery is stricter.
 //
 // On success the snapshot dir is removed. On any copy failure — or, under the
 // stale-overwrite guard, any path that diverged on disk and was backed up to a

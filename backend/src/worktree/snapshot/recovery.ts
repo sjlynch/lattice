@@ -9,6 +9,7 @@ import {
 } from './manifest.js';
 import { restoreSnapshot } from './restore.js';
 import { withProjectRunLock } from '../../projectRunLock.js';
+import { storedProjectRoot } from '../../projectIdentity.js';
 
 // Boot-time recovery: scan ~/.lattice/snapshots/ for any leftover
 // snapshots (a previous backend crashed mid-run) and restore them into
@@ -52,7 +53,16 @@ export async function recoverPendingSnapshots(): Promise<void> {
       // so we recompute it from manifest.repoRoot and refuse to restore
       // if it doesn't match the directory the manifest lives in. A real
       // Lattice-written snapshot always satisfies this.
-      const expectedHash = projectHash(manifest.repoRoot);
+      let expectedHash: string;
+      let repoRoot: string;
+      try {
+        repoRoot = storedProjectRoot(manifest.repoRoot, dirHash);
+        expectedHash = projectHash(repoRoot);
+      }
+      catch (err) {
+        console.warn(`[snapshot] identity check deferred for ${snapDir}: ${(err as Error).message}`);
+        continue;
+      }
       if (expectedHash !== dirHash) {
         console.error(
           `[snapshot] refusing to restore ${snapDir} — manifest.repoRoot ` +
@@ -69,7 +79,7 @@ export async function recoverPendingSnapshots(): Promise<void> {
         ...(manifest.untracked ?? []),
       ];
       const safeFiles = allFiles.filter((f) =>
-        isPathInsideRepo(manifest.repoRoot, f),
+        isPathInsideRepo(repoRoot, f),
       );
       if (safeFiles.length !== allFiles.length) {
         console.error(
@@ -81,7 +91,7 @@ export async function recoverPendingSnapshots(): Promise<void> {
       // Only auto-restore if the target repo still exists. If the user
       // moved/deleted the project, leave the snapshot in place.
       try {
-        await fs.access(manifest.repoRoot);
+        await fs.access(repoRoot);
       } catch {
         console.warn(
           `[snapshot] orphan snapshot ${snapDir} → repoRoot ${manifest.repoRoot} ` +
@@ -104,7 +114,7 @@ export async function recoverPendingSnapshots(): Promise<void> {
       try {
         // Do NOT borrow an in-process owner here: this snapshot might belong
         // to its live merge. A fresh exclusive acquire refuses all live runs.
-        await withProjectRunLock(manifest.repoRoot, 'snapshot-recovery', async () => {
+        await withProjectRunLock(repoRoot, 'snapshot-recovery', async () => {
           const current = await readSnapshotManifest(manifestPath);
           if (!current || JSON.stringify(current) !== JSON.stringify(manifest)) return;
           console.warn(`[snapshot] acquired recovery ownership for ${snapDir}`);
@@ -114,7 +124,7 @@ export async function recoverPendingSnapshots(): Promise<void> {
               modifiedTracked: current.modifiedTracked,
               untracked: current.untracked,
             },
-            current.repoRoot,
+            repoRoot,
             { guardStaleOverwrite: true },
           );
         });

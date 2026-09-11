@@ -1,4 +1,5 @@
 import { canonicalProjectPath } from '../projectPath.js';
+import { matchesStoredProjectIdentity } from '../projectIdentity.js';
 import type {
   MergeRun,
   MergeRunErrorEntry,
@@ -20,10 +21,12 @@ export function normalizeLoadedRuns(raw: unknown, projectPath: string): MergeRun
     const candidate = item as Partial<MergeRun>;
     if (typeof candidate.id !== 'string' || !candidate.id) continue;
     if (typeof candidate.startedAt !== 'number') continue;
+    if (candidate.projectPath !== undefined &&
+        (typeof candidate.projectPath !== 'string' || !matchesStoredProjectIdentity(candidate.projectPath, projectPath))) continue;
     const status = normalizeStatus(candidate.status);
     const run: MergeRun = {
       id: candidate.id,
-      projectPath: canonicalProjectPath(candidate.projectPath ?? projectPath),
+      projectPath: canonicalProjectPath(projectPath),
       status,
       startedAt: candidate.startedAt,
       finishedAt:
