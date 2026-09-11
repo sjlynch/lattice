@@ -18,6 +18,7 @@ import {
   type BackendServerConfig,
 } from './config.js';
 import { createHttpServerWithWebSockets } from './http.js';
+import { beginWorkflowRecovery } from '../workflowRuns/recoveryReadiness.js';
 
 export async function startBackend(
   config: BackendServerConfig = getBackendServerConfig(),
@@ -25,8 +26,14 @@ export async function startBackend(
   const server = createBackendHttpServer(config);
   startHarnessDetection();
   await runPreListenStartupRecovery();
-  await listenForRequests(server, config);
-  resumeRunsAfterListen(config.backendOrigin);
+  const finishWorkflowRecovery = beginWorkflowRecovery();
+  try {
+    await listenForRequests(server, config);
+    resumeRunsAfterListen(config.backendOrigin, finishWorkflowRecovery);
+  } catch (err) {
+    finishWorkflowRecovery();
+    throw err;
+  }
   return server;
 }
 
@@ -97,7 +104,7 @@ export function listenForRequests(
   });
 }
 
-export function resumeRunsAfterListen(backendOrigin: string): void {
+export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecovery = () => {}): void {
   // Workflow runs first, and awaited before the merge-run resume: a workflow
   // parked on a long AGENT step holds no run.lock, so nothing defers a restart
   // during it and the run would otherwise be lost outright (its still-running
@@ -105,8 +112,9 @@ export function resumeRunsAfterListen(backendOrigin: string): void {
   // Ordering matters — a resumed workflow owns its project's merge pipeline via
   // its own Merge control step, and resumeInterruptedMergeRuns skips a project
   // that has an active workflow run rather than racing it.
-  resumeInterruptedWorkflowRuns(backendOrigin)
+  resumeInterruptedWorkflowRuns(backendOrigin, finishWorkflowRecovery)
     .catch((err) => console.error('[startup] resumeInterruptedWorkflowRuns failed:', err))
+    .finally(finishWorkflowRecovery)
     .then(() =>
       // Now that the API is up, resume any merge run a previous process was
       // running when it got restarted (resolver Claudes it may spawn need

@@ -171,6 +171,22 @@ explicit-curl callbacks — never by polling task state.
 
 ## Invariants
 
+- New runs freeze their workflow definition (including variables) into the
+  version-2 mirror; editor changes never change an executing or recovered run.
+  Version-1 records without a definition use the legacy lookup for compatibility.
+- Execution checkpoints distinguish `pending`, `spawning`, `running`, and
+  `completing`. Required writes precede launch/teardown; a persistence failure
+  prevents an unrecorded launch. Only a `pending` step with confirmed absent PTY
+  is safe to re-enqueue. `spawning` without a terminal is ambiguous and errors.
+  `completing` records are advanced without replaying the finished prompt.
+- Completion is claimed by an in-flight promise per run and a persisted
+  `completing` phase before ending the old terminal. Advancing awaits any
+  outstanding terminal-create response, then checkpoints the next pending step.
+  The index changes only after the old terminal has been reclaimed.
+- `recoveryReadiness.ts` gates HTTP workflow lifecycle requests while boot loads
+  the registry; timed-out requests receive 503 + Retry-After, unknown callbacks
+  receive 404. Do not acknowledge an unknown run during recovery.
+
 - **A run must survive the backend process.** The registry in `state.ts` is
   in-memory, and the backend restarts routinely (`tsc -w` + the dev runner on
   any `backend/src` change, a crash, a processGuards fail-fast). `dev.mjs`

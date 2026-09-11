@@ -28,6 +28,7 @@ import {
   getRun,
   redispatchCurrentWorkflowStep,
   restoreWorkflowRun,
+  completeWorkflowStep,
 } from '../workflowRuns.js';
 import { loadPersistedWorkflowRuns } from '../workflowRuns/persistence.js';
 import {
@@ -46,31 +47,60 @@ import { proxyListSessionsOrNull } from '../terminalServerClient.js';
 import type { WorkflowRun } from '../workflowRuns/state.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';
 
-export async function resumeInterruptedWorkflowRuns(backendOrigin: string): Promise<void> {
+export async function resumeInterruptedWorkflowRuns(
+  backendOrigin: string,
+  onRegistryReady: () => void = () => {},
+): Promise<void> {
   // One terminal-server probe for the whole sweep. `null` means "couldn't
   // ask" — NOT "no sessions" — and the classifier treats it as such so a
   // wedged terminal-server can't mass-error every healthy run.
   const sessions = (await proxyListSessionsOrNull()) as ProbedSession[] | null;
 
+  const recovered: WorkflowRun[] = [];
   await forEachKnownProjectSafely('resumeInterruptedWorkflowRuns', async (repoRoot) => {
     const persisted = await loadPersistedWorkflowRuns(repoRoot);
-    for (const run of persisted) {
-      await resumePersistedRun(run, sessions, backendOrigin);
-    }
+    // Install every sibling before the first redispatch can checkpoint this
+    // project's file. Otherwise the first run's write loses its unloaded peers.
+    recovered.push(...registerPersistedWorkflowRuns(persisted, sessions));
   });
+  // Completion hooks can proceed once all records and surviving terminals are
+  // registered; do not hold them behind scratch setup or redispatched workers.
+  onRegistryReady();
+  for (const run of recovered) {
+    await resumePersistedRun(run, sessions, backendOrigin, true).catch((err) =>
+      console.error(`[startup] workflow run ${run.id}: resume failed:`, err));
+  }
 }
 
-async function resumePersistedRun(
+export function registerPersistedWorkflowRuns(persisted: WorkflowRun[], sessions: ProbedSession[] | null): WorkflowRun[] {
+  const registered: WorkflowRun[] = [];
+  for (const run of persisted) {
+    if (!restoreWorkflowRun(run)) continue;
+    registered.push(run);
+    const stepDir = workflowStepDir(run.projectPath, run.id, run.currentStepIndex);
+    const id = sessions ? findStepSessionId(sessions, stepDir, run.stepSessionId) : null;
+    if (id) adoptWorkflowStepSession(run.id, run.currentStepIndex, id);
+  }
+  return registered;
+}
+
+export async function resumePersistedRun(
   run: WorkflowRun,
   sessions: ProbedSession[] | null,
   backendOrigin: string,
+  alreadyRestored = false,
 ): Promise<void> {
-  if (getRun(run.id)) return; // already live in this process — nothing to resume
+  const current = getRun(run.id);
+  if (current && !alreadyRestored) return;
+  if (alreadyRestored) {
+    if (!current || current.status !== 'running' || current.currentStepIndex !== run.currentStepIndex) return;
+    run = current;
+  }
 
-  const wf = await getWorkflow(run.workflowId).catch(() => null);
+  const wf = run.definitionError ? null : run.definition ?? await getWorkflow(run.workflowId).catch(() => null);
   const step = wf?.steps[run.currentStepIndex] ?? null;
   const stepDir = workflowStepDir(run.projectPath, run.id, run.currentStepIndex);
-  const serverId = sessions ? findStepSessionId(sessions, stepDir) : null;
+  const serverId = sessions ? findStepSessionId(sessions, stepDir, run.stepSessionId) : null;
 
   const decision = classifyWorkflowRunResume({
     status: run.status,
@@ -78,6 +108,7 @@ async function resumePersistedRun(
     definitionStepCount: wf ? wf.steps.length : null,
     stepKind: step ? (step.kind ?? 'agent') : null,
     stepSessionAlive: sessions === null ? null : serverId !== null,
+    stepPhase: run.stepPhase,
   });
 
   const label = `${run.id} "${run.workflowName}" step ${run.currentStepIndex + 1}/${run.totalSteps}`;
@@ -89,11 +120,17 @@ async function resumePersistedRun(
     // it silently gone again).
     restoreWorkflowRun(run);
     console.warn(`[startup] workflow run ${label} cannot be resumed: ${decision.reason}`);
-    failWorkflowRun(run.id, `interrupted by a backend restart — ${decision.reason}`);
+    failWorkflowRun(run.id, `interrupted by a backend restart — ${run.definitionError ?? decision.reason}`);
     return;
   }
 
   restoreWorkflowRun(run);
+  if (serverId) adoptWorkflowStepSession(run.id, run.currentStepIndex, serverId);
+
+  if (decision.action === 'complete') {
+    await completeWorkflowStep(run.id, run.currentStepIndex, backendOrigin);
+    return;
+  }
 
   if (decision.action === 'redispatch') {
     console.warn(`[startup] workflow run ${label} interrupted — ${decision.reason}; re-running it.`);

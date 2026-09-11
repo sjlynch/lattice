@@ -6,8 +6,9 @@
 // `/ws/workflow-runs` is constructed from a `WorkflowRunEvent` here.
 
 import { canonicalProjectPath } from '../projectPath.js';
-import type { WorkflowStepHarness, WorkflowStepKind } from '../workflows.js';
-import { scheduleWorkflowRunPersist } from './persistence.js';
+import type { Workflow, WorkflowStepHarness, WorkflowStepKind } from '../workflows.js';
+import { scheduleWorkflowRunPersist, writeWorkflowRunsNow } from './persistence.js';
+import { cloneWorkflowDefinition } from './definition.js';
 
 export type WorkflowRunStatus = 'running' | 'completed' | 'errored' | 'cancelled';
 
@@ -26,6 +27,10 @@ export type WorkflowRun = {
   // is `pi`. Sibling to harnessOverride (two-field model, see piModels.ts).
   piModelOverride?: string;
   error?: string;
+  definition?: Workflow;
+  definitionError?: string;
+  stepPhase?: 'pending' | 'spawning' | 'running' | 'completing';
+  stepSessionId?: string;
 };
 
 export type WorkflowRunEvent =
@@ -80,7 +85,15 @@ export const runs = new Map<string, WorkflowRun>();
 const listeners = new Set<(ev: WorkflowRunEvent) => void>();
 
 export function snapshot(run: WorkflowRun): WorkflowRun {
-  return { ...run };
+  return { ...run, ...(run.definition ? { definition: cloneWorkflowDefinition(run.definition) } : {}) };
+}
+
+// A transition checkpoint is required before external work starts. Unlike the
+// UI's best-effort debounce, failure must prevent an unrecorded side effect.
+export async function checkpointWorkflowRun(run: WorkflowRun): Promise<void> {
+  const records = getActiveRunsForProject(run.projectPath);
+  if (run.status === 'running' && !records.some((r) => r.id === run.id)) records.push(snapshot(run));
+  await writeWorkflowRunsNow(run.projectPath, records, true);
 }
 
 // Mirror this project's still-running runs to disk (debounced, best-effort).

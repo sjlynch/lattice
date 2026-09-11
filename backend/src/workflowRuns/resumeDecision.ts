@@ -35,9 +35,9 @@
 
 import path from 'node:path';
 import type { WorkflowStepKind } from '../workflows.js';
-import type { WorkflowRunStatus } from './state.js';
+import type { WorkflowRun, WorkflowRunStatus } from './state.js';
 
-export type WorkflowResumeAction = 'readopt' | 'redispatch' | 'error' | 'skip';
+export type WorkflowResumeAction = 'readopt' | 'redispatch' | 'complete' | 'error' | 'skip';
 
 export type WorkflowResumeDecision = {
   action: WorkflowResumeAction;
@@ -54,6 +54,7 @@ export type WorkflowResumeInput = {
   stepKind: WorkflowStepKind | null;
   // true = pty found, false = definitively gone, null = couldn't probe.
   stepSessionAlive: boolean | null;
+  stepPhase?: WorkflowRun['stepPhase'];
 };
 
 export function classifyWorkflowRunResume(
@@ -78,6 +79,9 @@ export function classifyWorkflowRunResume(
     };
   }
   const kind = input.stepKind ?? 'agent';
+  if (input.stepPhase === 'completing') {
+    return { action: 'complete', reason: 'completion was durably recorded before the restart' };
+  }
   if (kind !== 'agent') {
     return {
       action: 'redispatch',
@@ -85,9 +89,13 @@ export function classifyWorkflowRunResume(
     };
   }
   if (input.stepSessionAlive === false) {
+    if (input.stepPhase === 'pending') {
+      return { action: 'redispatch', reason: 'agent step was queued and never admitted' };
+    }
     return {
       action: 'error',
       reason:
+        (input.stepPhase === 'spawning' ? 'terminal creation was interrupted with an unknown outcome; ' : '') +
         'the agent step\'s terminal session did not survive the backend restart, ' +
         'so its completion callback can never arrive',
     };
@@ -121,11 +129,13 @@ function comparablePath(p: string): string {
 export function findStepSessionId(
   sessions: readonly ProbedSession[],
   stepDir: string,
+  expectedId?: string,
 ): string | null {
   const want = comparablePath(stepDir);
   for (const s of sessions) {
     if (!s || typeof s !== 'object') continue;
     if (typeof s.cwd !== 'string' || typeof s.id !== 'string' || !s.id) continue;
+    if (expectedId && s.id !== expectedId) continue;
     if (comparablePath(s.cwd) === want) return s.id;
   }
   return null;

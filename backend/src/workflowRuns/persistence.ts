@@ -33,9 +33,10 @@ import { canonicalProjectPath, homeProjectScratchDir } from '../projectPath.js';
 import { normalizePiModel } from '../agentCommandBuilder.js';
 import { normalizeWorkflowRunHarnessOverride } from '../workflows/normalization.js';
 import type { WorkflowRun } from './state.js';
+import { cloneWorkflowDefinition, readWorkflowDefinition } from './definition.js';
 
 export const WORKFLOW_RUNS_FILENAME = 'workflow-runs.json';
-export const WORKFLOW_RUNS_FILE_VERSION = 1;
+export const WORKFLOW_RUNS_FILE_VERSION = 2;
 // Matches the task cache's debounce: coalesce the burst of mutations a single
 // step advance produces into one write.
 export const WORKFLOW_RUNS_PERSIST_DEBOUNCE_MS = 100;
@@ -101,6 +102,18 @@ export function deserializeWorkflowRun(raw: unknown): WorkflowRun | null {
   if (harnessOverride) run.harnessOverride = harnessOverride;
   const piModelOverride = normalizePiModel(r.piModelOverride);
   if (piModelOverride) run.piModelOverride = piModelOverride;
+  if (r.definition !== undefined) {
+    run.definition = readWorkflowDefinition(r.definition, workflowId, run.projectPath);
+    // Preserve an invalid snapshot as an explicit failed definition. Never
+    // replace it with an edited workflow on the next recovery.
+    if (!run.definition) run.definitionError = 'persisted workflow definition is invalid; inspect workflow-runs.json before retrying';
+  }
+  if (str(r.definitionError)) run.definitionError = str(r.definitionError);
+  if (['pending', 'spawning', 'running', 'completing'].includes(String(r.stepPhase))) {
+    run.stepPhase = r.stepPhase as WorkflowRun['stepPhase'];
+  }
+  const sessionId = str(r.stepSessionId);
+  if (sessionId) run.stepSessionId = sessionId;
   return run;
 }
 
@@ -151,25 +164,28 @@ const writesInFlight = new Map<string, Promise<void>>();
 export async function writeWorkflowRunsNow(
   projectPath: string,
   runs: WorkflowRun[],
+  required = false,
 ): Promise<void> {
   const key = canonicalProjectPath(projectPath);
   // Atomic rename protects a single write, not its ordering against another
   // write or deletion. Serialize per project so a slow running-state write
   // cannot resurrect a completed workflow after its newer removal finishes.
   const previous = writesInFlight.get(key) ?? Promise.resolve();
-  const records = runs.map((run) => ({ ...run }));
-  const write = previous.then(() => writeWorkflowRunsFile(key, records));
-  writesInFlight.set(key, write);
+  const records = runs.map((run) => ({ ...run, ...(run.definition ? { definition: cloneWorkflowDefinition(run.definition) } : {}) }));
+  const write = previous.catch(() => {}).then(() => writeWorkflowRunsFile(key, records, required));
+  const settled = write.catch(() => {});
+  writesInFlight.set(key, settled);
   try {
     await write;
   } finally {
-    if (writesInFlight.get(key) === write) writesInFlight.delete(key);
+    if (writesInFlight.get(key) === settled) writesInFlight.delete(key);
   }
 }
 
 async function writeWorkflowRunsFile(
   projectPath: string,
   runs: WorkflowRun[],
+  required: boolean,
 ): Promise<void> {
   const file = workflowRunsFile(projectPath);
   try {
@@ -183,6 +199,7 @@ async function writeWorkflowRunsFile(
     await atomicWriteFile(file, serializeWorkflowRuns(runs));
   } catch (err) {
     console.error(`[workflow-run] failed to persist ${file}:`, err);
+    if (required) throw err;
   }
 }
 

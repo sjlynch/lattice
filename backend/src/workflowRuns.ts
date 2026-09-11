@@ -29,16 +29,17 @@ import { generateWorkflowRunId } from './ids.js';
 import {
   getActiveRunsForProject,
   notify,
-  persistRunsForProject,
   runs,
   snapshot,
   type WorkflowRun,
+  checkpointWorkflowRun,
 } from './workflowRuns/state.js';
 import { spawnWorkflowStep } from './workflowRuns/stepSpawner.js';
 import { nextRunnableStepIndex } from './workflowRuns/frozenSteps.js';
 import { executeControlStep } from './workflowRuns/controlStep.js';
-import { cancelWorkflowStepSessions } from './workflowRuns/sessionSpawner.js';
+import { cancelWorkflowStepSessions, killWorkflowStepSession } from './workflowRuns/sessionSpawner.js';
 import { cancelStopHookGate } from './workflowRuns/stopHookGate.js';
+import { cloneWorkflowDefinition } from './workflowRuns/definition.js';
 
 export type {
   WorkflowRun,
@@ -97,6 +98,8 @@ async function dispatchStep(
   stepIndex: number,
   backendOrigin: string,
 ): Promise<void> {
+  if (run.definitionError) throw new Error(run.definitionError);
+  if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return;
   const kind = wf.steps[stepIndex].kind ?? 'agent';
   if (kind === 'agent') {
     await spawnWorkflowStep(wf, run, stepIndex, backendOrigin);
@@ -107,6 +110,9 @@ async function dispatchStep(
   // never see the new `currentStepIndex` until the control step finishes.
   // Emit progress here so the UI advances as soon as the control step
   // begins.
+  run.stepPhase = 'running';
+  await checkpointWorkflowRun(run);
+  if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return;
   notify({ type: 'progress', run: snapshot(run) });
   // Fire-and-forget. The control step's worker calls completeWorkflowStep
   // when its async work finishes (or marks the run errored on failure).
@@ -148,6 +154,8 @@ export async function startWorkflowRun(
     startedAt: Date.now(),
     totalSteps: wf.steps.length,
     currentStepIndex: firstIndex,
+    definition: cloneWorkflowDefinition(wf),
+    stepPhase: 'pending',
     ...(harnessOverride ? { harnessOverride } : {}),
     ...(piModelOverride ? { piModelOverride } : {}),
   };
@@ -158,7 +166,8 @@ export async function startWorkflowRun(
   );
 
   try {
-    await dispatchStep(wf, run, firstIndex, backendOrigin);
+    await checkpointWorkflowRun(run);
+    await dispatchStep(run.definition!, run, firstIndex, backendOrigin);
     return snapshot(run);
   } catch (err) {
     run.status = 'errored';
@@ -195,7 +204,7 @@ export function cancelWorkflowRun(runId: string): boolean {
 // client re-renders it immediately rather than waiting for the next WS `hello`.
 export function restoreWorkflowRun(persisted: WorkflowRun): boolean {
   if (runs.has(persisted.id)) return false;
-  const run: WorkflowRun = { ...persisted, status: 'running' };
+  const run: WorkflowRun = { ...snapshot(persisted), status: 'running' };
   runs.set(run.id, run);
   notify({ type: 'progress', run: snapshot(run) });
   return true;
@@ -211,7 +220,8 @@ export async function redispatchCurrentWorkflowStep(
   const run = runs.get(runId);
   if (!run || run.status !== 'running') return;
   try {
-    const wf = await getWorkflow(run.workflowId);
+    if (run.definitionError) throw new Error(run.definitionError);
+    const wf = run.definition ?? await getWorkflow(run.workflowId);
     if (!wf) throw new Error('workflow definition not found');
     if (run.currentStepIndex >= wf.steps.length) {
       throw new Error(
@@ -245,23 +255,43 @@ export async function completeWorkflowStep(
   runId: string,
   stepIndex: number,
   backendOrigin: string,
+  deps: { killStepSession?: typeof killWorkflowStepSession; dispatchStep?: typeof dispatchStep } = {},
 ): Promise<void> {
   const run = runs.get(runId);
   if (!run || run.status !== 'running') return;
+  if (run.definitionError) throw new Error(run.definitionError);
   if (stepIndex !== run.currentStepIndex) return;
 
-  const claimedIndex = stepIndex + 1;
-  // Claim ownership synchronously before any await so a duplicate Stop-hook
-  // fire is ignored by the check above. Frozen steps are skipped past below,
-  // once the definition is loaded — the claim itself must stay synchronous.
-  run.currentStepIndex = claimedIndex;
-  // Mirror the claim immediately: if the process dies between here and the
-  // next step's `progress` notify, boot recovery must resume from the NEW
-  // index, not re-run the step that just finished.
-  persistRunsForProject(run.projectPath);
+  const key = `${runId}:${stepIndex}`;
+  if (completions.has(key)) return completions.get(key);
+  const completing = advanceCompletedStep(run, stepIndex, backendOrigin, deps);
+  completions.set(key, completing);
+  try { await completing; } finally { if (completions.get(key) === completing) completions.delete(key); }
+}
 
+const completions = new Map<string, Promise<void>>();
+
+async function advanceCompletedStep(run: WorkflowRun, stepIndex: number, backendOrigin: string,
+  deps: { killStepSession?: typeof killWorkflowStepSession; dispatchStep?: typeof dispatchStep }): Promise<void> {
+  const claimedIndex = stepIndex + 1;
+  // Keep the index on the finishing step until its completion and terminal
+  // teardown are durable. The per-step promise deduplicates concurrent hooks
+  // while allowing the next step to finish during its predecessor's dispatch.
+  const previousPhase = run.stepPhase;
+  run.stepPhase = 'completing';
+  // A failed completion write is retriable: do not kill the agent or return a
+  // successful HTTP acknowledgement for work that only exists in memory.
   try {
-    const wf = await getWorkflow(run.workflowId);
+    await checkpointWorkflowRun(run);
+  } catch (err) {
+    if (run.status === 'running' && run.currentStepIndex === stepIndex) run.stepPhase = previousPhase;
+    throw err;
+  }
+  try {
+    await (deps.killStepSession ?? killWorkflowStepSession)(run.id, stepIndex);
+    if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return;
+    const wf = run.definition ?? await getWorkflow(run.workflowId);
+    if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return;
     if (!wf) {
       run.status = 'errored';
       run.finishedAt = Date.now();
@@ -280,20 +310,22 @@ export async function completeWorkflowStep(
       run.finishedAt = Date.now();
       console.log(`[workflow-run] ${run.id} completed all ${wf.steps.length} step(s)`);
       notify({ type: 'completed', run: snapshot(run) });
+      await checkpointWorkflowRun(run);
       return;
     }
+    run.currentStepIndex = nextIndex;
+    run.stepPhase = 'pending';
+    delete run.stepSessionId;
+    await checkpointWorkflowRun(run);
     if (nextIndex !== claimedIndex) {
-      // Re-claim at the step actually being dispatched and mirror it, so a
-      // restart in this window resumes there rather than on a frozen step.
-      run.currentStepIndex = nextIndex;
-      persistRunsForProject(run.projectPath);
       console.log(
         `[workflow-run] ${run.id} skipping frozen step(s) ${claimedIndex}..${nextIndex - 1}`,
       );
     }
     console.log(`[workflow-run] ${run.id} advancing step ${stepIndex} → ${nextIndex}`);
-    await dispatchStep(wf, run, nextIndex, backendOrigin);
+    await (deps.dispatchStep ?? dispatchStep)(wf, run, nextIndex, backendOrigin);
   } catch (err) {
+    if (run.status !== 'running') return;
     run.status = 'errored';
     run.finishedAt = Date.now();
     run.error = (err as Error).message ?? 'advance failed';

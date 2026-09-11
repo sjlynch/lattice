@@ -11,14 +11,24 @@ import {
   completeWorkflowStep,
   cancelWorkflowRun,
   WorkflowRunConflictError,
+  getRun,
 } from '../../workflowRuns.js';
-import { killWorkflowStepSession, workflowStepAgentId } from '../../workflowRuns/stepSpawner.js';
+import { workflowStepAgentId } from '../../workflowRuns/stepSpawner.js';
+import { waitForWorkflowRecovery } from '../../workflowRuns/recoveryReadiness.js';
 import { requestStopHookStepComplete } from '../../workflowRuns/stopHookGate.js';
 import { unregisterAgentSession } from '../../agentSessions.js';
 import { forgetAgentQuiescence } from '../../agentQuiescence.js';
 
 export function buildWorkflowRunsRouter(backendOrigin: string): Router {
   const r = Router();
+  r.use(['/api/workflows/:id/run', '/api/workflow-runs'], async (_req, res, next) => {
+    if (!await waitForWorkflowRecovery()) {
+      res.setHeader('Retry-After', '2');
+      res.status(503).json({ error: 'workflow recovery is still loading; retry this request', code: 'workflow-recovering' });
+      return;
+    }
+    next();
+  });
 
   r.post('/api/workflows/:id/run', async (req, res) => {
     try {
@@ -56,7 +66,8 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
     const source = typeof req.query.source === 'string' ? req.query.source : 'unknown';
     const runId = req.params.runId;
     const stepIndex = parseInt(req.params.stepIndex, 10);
-    if (isNaN(stepIndex)) return res.status(400).json({ error: 'invalid stepIndex' });
+    if (!/^\d+$/.test(req.params.stepIndex) || !Number.isSafeInteger(stepIndex)) return res.status(400).json({ error: 'invalid stepIndex' });
+    if (!getRun(runId)) return res.status(404).json({ error: 'workflow run not found; completion was not applied' });
     console.log(
       `[workflow-step-complete] run=${runId} step=${stepIndex} source=${source}`,
     );
@@ -71,10 +82,9 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
     // (see killWorkflowStepSession). It's awaited so the teardown completes
     // before the next step spawns; harmless no-op for an already-exited session.
     const advance = async (): Promise<void> => {
+      await completeWorkflowStep(runId, stepIndex, backendOrigin);
       unregisterAgentSession(agentId);
-      await killWorkflowStepSession(runId, stepIndex);
       forgetAgentQuiescence(agentId);
-      return completeWorkflowStep(runId, stepIndex, backendOrigin);
     };
 
     // Claude's `Stop` hook fires early and repeatedly when the step agent uses
@@ -85,7 +95,9 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
     // deliberate end-of-work signals and advance immediately; control steps
     // never reach this route.
     if (source.startsWith('claude-stop-hook')) {
-      requestStopHookStepComplete(runId, stepIndex, () => void advance());
+      requestStopHookStepComplete(runId, stepIndex, () => {
+        void advance().catch((err) => console.error('[workflow-step-complete] gated completion failed:', err));
+      });
       return res.json({ ok: true, gated: true });
     }
     await advance();

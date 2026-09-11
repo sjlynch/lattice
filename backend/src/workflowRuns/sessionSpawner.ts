@@ -8,7 +8,7 @@ import type { CreateSessionResult } from '../terminalServerClient.js';
 import { cancelSpawn, enqueueSpawn, notifySessionsFreed, SpawnCapacityError } from '../spawnQueue.js';
 import { registerAgentSession, unregisterAgentSession } from '../agentSessions.js';
 import type { Workflow } from '../workflows.js';
-import { notify, snapshot, type WorkflowRun } from './state.js';
+import { checkpointWorkflowRun, notify, snapshot, type WorkflowRun } from './state.js';
 
 // Stable graph-node id for a workflow-step session. A new id per step, so
 // advancing the run swaps one node for the next.
@@ -25,6 +25,7 @@ type WorkflowStepSpawnRecord = {
   stepIndex: number;
   dedupeKey: string;
   serverId?: string;
+  spawning?: Promise<CreateSessionResult>;
 };
 
 const stepSpawnRecords = new Map<string, WorkflowStepSpawnRecord>();
@@ -95,6 +96,12 @@ export async function killWorkflowStepSession(
 ): Promise<void> {
   const key = recordKey(runId, stepIndex);
   const record = stepSpawnRecords.get(key);
+  // The hook can beat the create-session HTTP response. Await that in-flight
+  // allocation before declaring the old terminal gone and dispatching step N+1.
+  if (record?.spawning) {
+    const session = await record.spawning.catch(() => null);
+    if (session && 'id' in session) record.serverId = session.id;
+  }
   stepSpawnRecords.delete(key);
   if (!record?.serverId) return;
   try {
@@ -175,11 +182,15 @@ export function enqueueWorkflowStepSession(opts: {
         throw new Error(`workflow step ${run.id}/${stepIndex}: spawn cancelled`);
       }
 
-      const sess: CreateSessionResult = await deps.proxyCreateSession({
+      run.stepPhase = 'spawning';
+      await checkpointWorkflowRun(run);
+      if (!isCurrentRunningStep(run, stepIndex)) throw new Error('workflow step spawn cancelled');
+      spawnRecord.spawning = deps.proxyCreateSession({
         cwd: stepDir,
         initialCommand: command,
         projectPath,
       });
+      const sess: CreateSessionResult = await spawnRecord.spawning;
 
       if (!isCurrentRunningStep(run, stepIndex)) {
         unregisterAgentSession(workflowStepAgentId(run.id, stepIndex));
@@ -193,6 +204,8 @@ export function enqueueWorkflowStepSession(opts: {
 
       if ('error' in sess) {
         if (sess.code === 'CAP') {
+          run.stepPhase = 'pending';
+          await checkpointWorkflowRun(run);
           throw new SpawnCapacityError(
             `workflow step ${run.id}/${stepIndex}: terminal-server hard cap`,
           );
@@ -206,6 +219,20 @@ export function enqueueWorkflowStepSession(opts: {
       }
 
       spawnRecord.serverId = sess.id;
+      run.stepSessionId = sess.id;
+      if ((run as WorkflowRun).stepPhase !== 'completing') run.stepPhase = 'running';
+      try {
+        await checkpointWorkflowRun(run);
+      } catch (err) {
+        // A returned session ID is owned by this spawn even if writing it
+        // fails. Reclaim it before the queue reports a failed allocation.
+        await killWorkflowStepServer(sess.id, deps);
+        throw err;
+      }
+      if (!isCurrentRunningStep(run, stepIndex)) {
+        await killWorkflowStepServer(sess.id, deps);
+        return;
+      }
       if (harness === 'claude') {
         // Presence: orange Claude node for this non-worktree session. Claude
         // only — a Pi/codex step isn't a "Claude session" and never fires the
