@@ -76,7 +76,22 @@ done-lane history into your context. The 413 payload carries `bytes`,
 `limit=`, `fields=compact`, or switch to `GET /api/tasks/search`. Pass
 `confirm_large=1` only when you genuinely need every byte (you rarely do).
 
-## Seeding many tasks at once — markdown body (any shell, zero escaping)
+## Sending text and JSON safely
+
+Prefer the `lattice` MCP tools when available; they serialize text safely.
+For HTTP summaries and descriptions, write a UTF-8 markdown file with your
+file-writing tool, then send it as `text/markdown` with `--data-binary @file`.
+Do not put free-form text into hand-written JSON: Windows paths, regex
+backslashes, quotes, and newlines can make it invalid or silently change it.
+For endpoints requiring JSON, use `JSON.stringify` or `ConvertTo-Json`, write
+that output to a UTF-8 file, and send the file with `application/json`.
+
+Use `curl.exe` on Windows to avoid PowerShell's `curl` alias. The single-line
+file-upload examples work in cmd.exe, PowerShell, and bash; bash heredocs below
+require bash. Check that writes succeed (`--fail-with-body --silent --show-error`
+keeps an HTTP error visible and returns a failing exit code).
+
+## Seeding many tasks at once — markdown body (bash heredoc)
 
 The simplest way to batch-create tasks. A heredoc with single-quoted
 `'EOF'` passes the body through *literally* — no JSON, no escaping,
@@ -171,8 +186,18 @@ irm -Method Patch -Uri "{{API_URL}}/api/tasks/$id" `
 
 ### Append a summary rather than overwrite the description
 
+Write only the summary markdown to a temporary UTF-8 file outside the checkout.
+Replace `:id` and the file path below with their actual values:
+
+```text
+curl --fail-with-body --silent --show-error -X POST "{{API_URL}}/api/tasks/:id/append-summary" -H "Content-Type: text/markdown; charset=utf-8" --data-binary "@<absolute-path-to-summary.md>"
+```
+
+On Windows, run the command with `curl.exe`. No JSON wrapper or escaping is
+needed inside the markdown file. With bash, a literal heredoc also works:
+
 ```bash
-curl -s -X POST "{{API_URL}}/api/tasks/$id/append-summary" \
+curl --fail-with-body --silent --show-error -X POST "{{API_URL}}/api/tasks/$id/append-summary" \
   -H "Content-Type: text/markdown" --data-binary @- <<'EOF'
 ## Result
 What happened, in a few lines.

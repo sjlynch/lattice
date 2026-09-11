@@ -66,3 +66,11 @@ default = the built-in) argument. The **spawn callers** (`setupFiles.ts`,
   debugging "the agent ignored the brief".
 - `workflow-step`'s planner-only section must stay **above** `{{step_prompt}}`
   and keep claiming precedence over it; see `../workflowRuns/CLAUDE.md`.
+- Task summaries prefer the typed `append_summary` MCP tool. The HTTP fallback
+  (and QA reporting) sends a temporary UTF-8 file with `--data-binary @file`;
+  free-form summaries use `text/markdown`, never hand-written inline JSON.
+  Windows paths, regex escapes, quotes, and newlines otherwise break JSON or
+  silently change its text. Single-line curl commands avoid shell-specific
+  continuations/heredocs; Windows agents use `curl.exe` to bypass PowerShell's
+  alias. Existing project overrides and already-written briefs are not rewritten
+  by a default-template update.

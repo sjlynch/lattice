@@ -139,12 +139,41 @@ export function mountJsonErrorMiddleware(app: Express): void {
 // Always responds with `{error: "..."}` so the frontend's asJson() helper
 // can extract a useful message into the toast instead of falling back to
 // a bare "500".
+const requestBodyErrors = new Map<string, { status: number; message: string }>([
+  ['entity.parse.failed', {
+    status: 400,
+    message: 'Invalid JSON request body. Use a JSON serializer to escape backslashes, quotes, and newlines. Task summaries also accept text/markdown with --data-binary @file.',
+  }],
+  ['entity.too.large', { status: 413, message: 'Request body exceeds the allowed size.' }],
+  ['parameters.too.many', { status: 413, message: 'Request body contains too many form parameters.' }],
+  ['charset.unsupported', { status: 415, message: 'Unsupported request body charset. Use UTF-8.' }],
+  ['encoding.unsupported', { status: 415, message: 'Unsupported request body content encoding.' }],
+  ['entity.verify.failed', { status: 403, message: 'Request body verification failed.' }],
+  ['request.aborted', { status: 400, message: 'Request body was interrupted before it finished.' }],
+  ['request.size.invalid', { status: 400, message: 'Request body length does not match Content-Length.' }],
+]);
+
 export const jsonErrorMiddleware: ErrorRequestHandler = (
   err,
-  _req,
+  req,
   res,
   next,
 ) => {
+  // Body-parser attaches the original body to parse errors; logging the whole
+  // error dumps potentially large/private summaries into crash mirrors. These
+  // are rejected requests, not server failures. Keep their documented 4xx
+  // status and log only bounded routing metadata, never the body or an error
+  // message that may itself quote submitted content.
+  const type = err && typeof err.type === 'string' ? err.type : undefined;
+  const bodyError = type ? requestBodyErrors.get(type) : undefined;
+  if (bodyError) {
+    console.warn('[lattice] rejected request body', {
+      method: req.method, path: req.path.slice(0, 256), status: bodyError.status, type,
+    });
+    if (res.headersSent) return next(err);
+    res.status(bodyError.status).json({ error: bodyError.message, code: type });
+    return;
+  }
   console.error('[lattice] route error', err);
   if (res.headersSent) return next(err);
   const message =

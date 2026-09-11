@@ -4,6 +4,11 @@ Named backend bootstrap helpers used by `index.ts` after process guards are inst
 
 - `config.ts` — computes `PORT`, default project root, and `BACKEND_ORIGIN`.
 - `app.ts` — builds the Express app, mounts middleware/routes, and installs the global JSON error middleware last.
+  Known request-body parser errors retain their 4xx status and return actionable
+  JSON. Their log includes bounded route metadata only: the parser error's body
+  and message may contain private or very large submitted summaries. Unexpected
+  route failures still log the error and return 500; sent headers delegate to
+  Express's final handler.
 - `http.ts` — creates the HTTP server and attaches the WS dispatcher.
 - `startup.ts` — boot ordering / invariants:
   1. fire-and-forget harness detection plus best-effort Pi setup

@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { renderTaskMarkdown } from '../worktree/instructions/taskPrompt.js';
+import { renderQaInstructions } from '../qaRuns/instructions.js';
 import {
   applyTemplate,
   TEMPLATE_TOKEN_RE,
@@ -93,4 +95,53 @@ test('applyTemplate: repeated calls are independent (shared /g regex lastIndex)'
   assert.equal(first, 'A B');
   assert.equal(second, first);
   assert.equal(TEMPLATE_TOKEN_RE.lastIndex, 0);
+});
+
+// Summary instructions are an HTTP producer: asking an agent to paste arbitrary
+// paths/prose inside inline JSON caused entity.parse.failed before the callback
+// route ran. Exercise the actual task/QA renderers, including every harness.
+test('default task and QA summaries use file transport without shell heredocs or inline JSON', () => {
+  const task = {
+    id: 't_summary',
+    projectPath: process.cwd(),
+    title: 'Summarize changes',
+    status: 'in_progress' as const,
+    createdAt: 0,
+  };
+  const origin = 'http://127.0.0.1:5199';
+  const tasks = (['claude', 'pi', 'codex'] as const).map((harness) =>
+    renderTaskMarkdown(task, origin, harness),
+  );
+  const qa = renderQaInstructions({
+    projectPath: task.projectPath,
+    qaRunId: 'qa_summary',
+    taskId: task.id,
+    taskTitle: task.title,
+    backendOrigin: origin,
+  });
+  for (const brief of [...tasks, qa]) {
+    const line = brief.split('\n').find((entry) => entry.includes('/append-summary'));
+    assert.ok(line, 'rendered summary callback has a command');
+    assert.ok(line.includes(`${origin}/api/tasks/${task.id}/append-summary`));
+    assert.match(line, /Content-Type: text\/markdown/);
+    assert.match(line, /--data-binary "@[^"]+"/);
+    assert.match(line, /--fail-with-body/);
+    assert.doesNotMatch(line, /(?:-d|--data)\s|<<|\\$/);
+    assert.match(brief, /curl\.exe/);
+    assert.doesNotMatch(brief, /\{\{\s*\w+\s*\}\}/);
+  }
+  for (const brief of tasks) {
+    assert.ok(brief.indexOf('append_summary') < brief.indexOf('/append-summary'),
+      'typed MCP reporting is offered before the HTTP fallback');
+  }
+});
+
+test('safer default reporting does not rewrite a custom task instruction template', () => {
+  const task = {
+    id: 't_custom', projectPath: process.cwd(), title: 'Custom',
+    status: 'open' as const, createdAt: 0,
+  };
+  const custom = '# {{task_title}}\nMy reporting command for {{task_id}}';
+  assert.equal(renderTaskMarkdown(task, 'http://127.0.0.1:5199', 'claude', [], null, custom),
+    '# Custom\nMy reporting command for t_custom');
 });

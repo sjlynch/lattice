@@ -400,6 +400,25 @@ test('append_summary POSTs /api/tasks/:id/append-summary', async () => {
   }
 });
 
+test('append_summary serializes Windows paths, literal escapes, quotes, and control characters', async () => {
+  const summary = [
+    String.raw`- Fixed C:\development\lattice\backend and C:\new\test.txt`,
+    String.raw`- Regex: \d+\s+ and markdown \[brackets\]`,
+    '- Says "done"; keeps \\n as text beside an actual tab:\tand Unicode: ✓',
+  ].join('\r\n');
+  const calls: Recorded[] = [];
+  const { client, close } = await connect(calls, undefined, { taskId: 't_mine' });
+  try {
+    const result = await client.callTool({ name: 'append_summary', arguments: { summary } });
+    assert.equal(isError(result), false);
+    assert.equal(calls.length, 1);
+    assert.equal(new URL(calls[0].url).pathname, '/api/tasks/t_mine/append-summary');
+    assert.deepEqual(JSON.parse(calls[0].body ?? ''), { summary });
+  } finally {
+    await close();
+  }
+});
+
 test('delete_task DELETEs /api/tasks/:id', async () => {
   const calls: Recorded[] = [];
   const { client, close } = await connect(calls);

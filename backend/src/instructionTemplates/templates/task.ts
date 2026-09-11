@@ -67,16 +67,23 @@ export const DEFAULT_TASK_TEMPLATE = `# {{task_title}}
    board reflects what was actually done once it lands in "Ready to
    Merge":
 
+   Prefer the \`lattice\` MCP tool \`append_summary\` with no \`id\`: this
+   session already knows which task it is running (\`my_task\`), and the tool
+   serializes your summary safely.
+
+   Without that tool, use your file-writing tool to put the summary in a
+   temporary UTF-8 markdown file outside the checkout, then send that file
+   verbatim. Replace the file path below with its actual absolute path; on
+   Windows use \`curl.exe\` to avoid PowerShell's \`curl\` alias:
+
    \`\`\`
-   curl -s -X POST {{backend_origin}}/api/tasks/{{task_id}}/append-summary \\
-     -H "Content-Type: application/json" \\
-     -d '{"summary":"<1-3 bullet summary of what changed>"}'
+   curl --fail-with-body --silent --show-error -X POST "{{backend_origin}}/api/tasks/{{task_id}}/append-summary" -H "Content-Type: text/markdown; charset=utf-8" --data-binary "@<absolute-path-to-summary.md>"
    \`\`\`
 
-   Keep it concise (1-3 bullet points). This appends the summary beneath
-   the original description — both remain visible on the task board.
-   With the \`lattice\` MCP tools, \`append_summary\` with no \`id\` is the same
-   call — this session already knows which task it is running (\`my_task\`).
+   Keep it concise (1-3 bullet points). The file contains only your summary,
+   with ordinary quotes, backslashes, and newlines — no JSON wrapper or manual
+   escaping. Check that the request succeeds before finishing. This appends
+   beneath the original description; both remain visible on the task board.
 
 {{final_step}}
 

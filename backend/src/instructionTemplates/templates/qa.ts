@@ -38,33 +38,46 @@ Project: \`{{project_path}}\`
 6. **Append your verdict to the Lattice task** so it stays on the task board
    after this terminal closes:
 
-   \`\`\`bash
-   curl -s -X POST {{summary_url}} \\
-     -H "Content-Type: text/markdown" \\
-     --data-binary @- <<'EOF'
+   Use your file-writing tool to save a temporary UTF-8 markdown file outside
+   the checkout, containing your real findings in this format:
+
+   \`\`\`markdown
    **QA e2e (Playwright):** PASS — <one-line verdict>
    - <what you tested>
    - <anything notable, or "no issues">
-   EOF
    \`\`\`
 
-   Replace the body with your real findings. On FAIL, lead with \`FAIL\` and the
-   reproduction steps.
+   On FAIL, lead with \`FAIL\` and the reproduction steps. Send the file
+   verbatim, replacing the path below with its actual absolute path. On Windows
+   use \`curl.exe\` to avoid PowerShell's \`curl\` alias:
+
+   \`\`\`
+   curl --fail-with-body --silent --show-error -X POST "{{summary_url}}" -H "Content-Type: text/markdown; charset=utf-8" --data-binary "@<absolute-path-to-summary.md>"
+   \`\`\`
+
+   The file contains only the verdict markdown, with ordinary quotes,
+   backslashes, and newlines — no JSON wrapper or manual escaping. Check the
+   response before reporting the structured verdict.
 
 7. **Then report the structured verdict** so Lattice can advance the task.
    A **confident PASS auto-moves the task to Done**; a FAIL — or a PASS you are
    not confident in — leaves it in the QA lane for a human to review. Only send
    \`"confidence":"high"\` when you are genuinely sure the feature works:
 
-   \`\`\`bash
-   curl -s -X POST {{verdict_url}} \\
-     -H "Content-Type: application/json" \\
-     -d '{"verdict":"pass","confidence":"high"}'
+   Save the following JSON in a separate temporary UTF-8 file, then send it
+   with the command below (\`curl.exe\` on Windows):
+
+   \`\`\`json
+   {"verdict":"pass","confidence":"high"}
+   \`\`\`
+
+   \`\`\`
+   curl --fail-with-body --silent --show-error -X POST "{{verdict_url}}" -H "Content-Type: application/json" --data-binary "@<absolute-path-to-verdict.json>"
    \`\`\`
 
    Use \`"verdict":"fail"\` if it didn't work, or \`"confidence":"low"\` if you
    couldn't fully verify it.
 
 8. Then stop — Lattice's Stop hook closes this terminal automatically once you
-   stop, so make sure both curls above have already run.
+   stop, so make sure both requests above succeeded first.
 `;
