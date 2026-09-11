@@ -19,6 +19,7 @@ import { computeChangeMap } from '../timelineDiff';
 import { reconcileTimelineRange } from '../timelineRange';
 import type { ChangeKind } from '../changeRing';
 import { resetChangeRingsForProjectSwitch } from '../timelineReset';
+import { createGitHistoryRefresh } from './gitHistoryRefresh';
 
 const EMPTY_HISTORY: GitHistoryResult = {
   isRepo: false,
@@ -58,15 +59,9 @@ export function useGitTimeline(
     right: 0,
   });
   const changeMapRef = useRef<Map<string, ChangeKind>>(new Map());
-  // Mirrors of the latest loaded history + its signature, read live by the
-  // status-watcher callback (registered once per project) so it can dedupe the
-  // pushed signal and reconcile the range without depending on `history`.
+  // Latest loaded history for range reconciliation and preserving the last
+  // good timeline if a background refresh fails.
   const historyRef = useRef<GitHistoryResult | null>(null);
-  const lastSigRef = useRef('');
-  // Monotonic load id: a newer fetch supersedes an older one so out-of-order
-  // resolutions (e.g. a slow initial load landing after a fast live refresh)
-  // can't clobber the newer state.
-  const seqRef = useRef(0);
   // Scan root is read live by the delta walker to resolve real file nodes'
   // absolute paths to the rel-paths the change map is keyed by — matching
   // `nodeObjectFactory` (`dataRef.current?.root`). Mirrored each render so
@@ -81,30 +76,10 @@ export function useGitTimeline(
   const applyHistory = useCallback((h: GitHistoryResult) => {
     const oldWt = historyRef.current?.commits.length ?? 0;
     const newWt = h.commits.length;
-    lastSigRef.current = h.signature;
     historyRef.current = h;
     setHistory(h);
     setRange((prev) => reconcileTimelineRange(prev, oldWt, newWt));
   }, []);
-
-  const loadHistory = useCallback(
-    (folder: string) => {
-      const my = ++seqRef.current;
-      fetchGitHistory(folder, 10)
-        .then((h) => {
-          if (my !== seqRef.current) return; // superseded by a newer load
-          applyHistory(h);
-        })
-        .catch(() => {
-          if (my !== seqRef.current) return;
-          // Only blank the timeline on the INITIAL load (nothing loaded yet); a
-          // transient failure during a live refresh keeps the last good history
-          // rather than flashing "no git history".
-          if (!historyRef.current) applyHistory(EMPTY_HISTORY);
-        });
-    },
-    [applyHistory],
-  );
 
   // Reset + first fetch whenever the active project changes. A project switch
   // A→B otherwise leaves `history` — and the derived change map / ghosts — at
@@ -124,26 +99,26 @@ export function useGitTimeline(
     );
     if (touched) getIdleController(graph)?.wakeForRefresh();
     historyRef.current = null;
-    lastSigRef.current = '';
-    seqRef.current++; // invalidate any in-flight load from the previous folder
     setHistory(null);
     setRange({ left: 0, right: 0 });
 
     if (!activeFolder) return;
-    loadHistory(activeFolder);
-  }, [activeFolder, graphRef, settingsRef, loadHistory]);
-
-  // Keep the loaded history live. The backend pushes the current signature on
-  // connect and on every change; we re-fetch only when it differs from the one
-  // we last loaded (so the on-connect / reconnect snapshot is a no-op unless
-  // something actually changed while we weren't looking).
-  useEffect(() => {
-    if (!activeFolder) return;
-    return subscribeGitStatus(activeFolder, (signature) => {
-      if (signature === lastSigRef.current) return;
-      loadHistory(activeFolder);
+    const refresh = createGitHistoryRefresh({
+      load: (signal) => fetchGitHistory(activeFolder, 10, signal),
+      onHistory: applyHistory,
+      onError: () => {
+        // A failed background refresh keeps the last good timeline. Initial
+        // failures still resolve the empty state instead of staying loading.
+        if (!historyRef.current) applyHistory(EMPTY_HISTORY);
+      },
     });
-  }, [activeFolder, loadHistory]);
+    refresh.start();
+    const unsubscribe = subscribeGitStatus(activeFolder, refresh.notifySignature);
+    return () => {
+      refresh.dispose();
+      unsubscribe();
+    };
+  }, [activeFolder, graphRef, settingsRef, applyHistory]);
 
   // Recompute the change map when the slider range moves (or history updates),
   // then apply the prev→next diff in place: only the nodes whose ChangeKind

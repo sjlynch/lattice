@@ -42,6 +42,12 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
 
 ## Overlays
 
+- `useGitTimeline` owns one `gitHistoryRefresh` coordinator per project: one
+  HTTP request may run at a time, status bursts retain only the newest follow-up
+  signature, and a response already matching it skips that follow-up. An initial
+  websocket snapshot shares the initial HTTP fetch. Obsolete results do not
+  flash old ghost/ring sets; cleanup aborts HTTP and fences late publication.
+  Background failures retain the last good history and scrubber range.
 - `useGraphOverlays` — composes `useGraphSettings` + `useGitTimeline` +
   `useLocOverlay` + `useHealthOverlay` + `useDeadCodeOverlay` + `useLabelsOverlay`
   + `useGraphFilter` into one setup point.

@@ -50,9 +50,11 @@ export async function searchProjectContents(
 export async function fetchGitHistory(
   folderPath: string,
   limit = 10,
+  signal?: AbortSignal,
 ): Promise<GitHistoryResult> {
   const r = await fetch(
     `/api/git-history?path=${encodeURIComponent(folderPath)}&limit=${limit}`,
+    { signal },
   );
   if (!r.ok) throw new Error(`git-history failed: ${r.status}`);
   return r.json();
