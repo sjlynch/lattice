@@ -41,6 +41,18 @@ Split by concern so the eligibility decision is auditable in isolation:
 
 ## Safety invariants
 
+- `retryBudget.ts` durably charges each automatic workflow redispatch and boot
+  merge replay before side effects; three interrupted attempts at unchanged
+  checkpoints pause replay with a persisted reason and a run error event.
+  Session adoption and durable completion advancement are not replay attempts.
+  Workflow step/task-lane progress and remaining merge-task IDs reset budgets.
+  Only an explicit user POST `/api/merge-runs` resets the merge allowance;
+  internal callbacks and worker auto-restarts must not replenish it.
+- A paused workflow's stale control lock must not bypass its budget through the
+  independent merge-resume fallback. The journal remains home-scoped; invalid
+  journals are preserved and prevent automatic replay. GET
+  `/api/merge-runs/recovery?project=...` exposes the retained diagnostic.
+
 - Keep recovery best-effort: log a failed phase/project and continue booting.
 - Project iteration must go through `forEachKnownProjectSafely` so one broken project cannot block others.
 - Do not add raw recursive deletes here; worktree removal goes through `cleanupWorktreeForTask` / `git worktree remove`.

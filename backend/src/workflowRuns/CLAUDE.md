@@ -93,6 +93,9 @@ explicit-curl callbacks — never by polling task state.
   the agent-activity route (`routes/agentActivity.ts`) updates from the very
   hooks that already drive the graph's satellites. `cancelStopHookGate` clears a
   pending gate on run cancel.
+  Failed asynchronous completion checkpoints rearm the quiescence gate up to
+  three attempts. Each retry checks live subagents and renewed quiet time;
+  exhaustion keeps the run and terminal intact with a visible error message.
 - `sessionSpawner.ts` — `workflowStepAgentId` + `enqueueWorkflowStepSession`:
   routes the pty allocation through the spawn queue (fire-and-forget), tracks
   each step's dedupe key / spawned `serverId` for cancellation, registers the

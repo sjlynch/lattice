@@ -24,6 +24,7 @@ import {
   runTeardown,
 } from './mergeRuns/teardown.js';
 import { finalizeMergeRun } from './mergeRuns/finalize.js';
+import { claimRecoveryAttempt, resetRecoveryAttempt } from './recovery/retryBudget.js';
 import {
   cancelRunInState,
   createRunState,
@@ -48,6 +49,9 @@ export type MergeRunLockMode = 'acquire' | 'inherit';
 
 export type StartMergeRunOptions = {
   lockMode?: MergeRunLockMode;
+  automaticRecovery?: boolean;
+  // Set only by an explicit user retry, never by resolver callbacks/auto-restart.
+  resetRecoveryBudget?: boolean;
 };
 
 export type {
@@ -110,6 +114,29 @@ export async function startMergeRun(
   );
 
   const targets = await loadRunTargets(canonicalPath, projectLock, deps.listTasks);
+
+  // Charge only after winning project ownership. A second backend losing the
+  // lock is contention, not a failed recovery attempt. Explicit retries remain
+  // available and grant the next interruption a fresh recovery allowance.
+  try {
+    if (options.automaticRecovery) {
+      const budget = await claimRecoveryAttempt(canonicalPath, 'merge', targets.map((t) => t.id).sort().join('|'));
+      if (budget.paused) throw new Error(budget.paused);
+    } else if (options.resetRecoveryBudget) {
+      await resetRecoveryAttempt(canonicalPath, 'merge');
+    }
+  } catch (err) {
+    if (options.automaticRecovery) {
+      const stopped = createRunRecord(targets, canonicalPath);
+      stopped.status = 'errored';
+      stopped.finishedAt = Date.now();
+      stopped.errored.push({ taskId: '(recovery)', error: err instanceof Error ? err.message : String(err) });
+      runState.runs.set(stopped.id, stopped);
+      notify(runState, { type: 'completed', run: snapshot(stopped) });
+    }
+    await projectLock?.release();
+    throw err;
+  }
 
   const run = createRunRecord(targets, canonicalPath);
   runState.runs.set(run.id, run);

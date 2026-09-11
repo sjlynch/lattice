@@ -46,6 +46,8 @@ import { registerAgentSession } from '../agentSessions.js';
 import { proxyListSessionsOrNull } from '../terminalServerClient.js';
 import type { WorkflowRun } from '../workflowRuns/state.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';
+import { claimRecoveryAttempt } from './retryBudget.js';
+import { listTasks } from '../tasks.js';
 
 export async function resumeInterruptedWorkflowRuns(
   backendOrigin: string,
@@ -133,6 +135,34 @@ export async function resumePersistedRun(
   }
 
   if (decision.action === 'redispatch') {
+    const recoveryStepIndex = run.currentStepIndex;
+    const stillNeedsRedispatch = () => {
+      const latest = getRun(run.id);
+      return latest?.status === 'running' && latest.currentStepIndex === recoveryStepIndex
+        && latest.stepPhase !== 'completing';
+    };
+    // Charge all automatic redispatch, including scratch preparation before
+    // agent admission: a deterministic setup crash otherwise repeats forever.
+    try {
+      const tasks = await listTasks(run.projectPath);
+      const checkpoint = JSON.stringify([run.currentStepIndex, step?.id, tasks
+        .filter((t) => ['open', 'in_progress', 'ready_to_merge'].includes(t.status))
+        .map((t) => [t.id, t.status, !!t.runQueued]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))]);
+      const budget = await claimRecoveryAttempt(run.projectPath, `workflow:${run.id}`, checkpoint);
+      if (!stillNeedsRedispatch()) return;
+      if (budget.paused) {
+        failWorkflowRun(run.id, budget.paused);
+        return;
+      }
+    } catch (err) {
+      if (!stillNeedsRedispatch()) return;
+      failWorkflowRun(run.id, `Automatic recovery could not record its attempt; work was preserved: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    // Readiness has been released, so a surviving hook may have completed this
+    // step while the journal was being written. Never redispatch its successor
+    // (or a completing step) using this stale recovery observation.
+    if (!stillNeedsRedispatch()) return;
     console.warn(`[startup] workflow run ${label} interrupted — ${decision.reason}; re-running it.`);
     await redispatchCurrentWorkflowStep(run.id, backendOrigin).catch((err) =>
       console.error(`[startup] workflow run ${run.id}: redispatch failed:`, err),

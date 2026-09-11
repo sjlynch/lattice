@@ -68,7 +68,9 @@ export function startHarnessDetection(): void {
 }
 
 export async function runPreListenStartupRecovery(): Promise<void> {
-  await ensureTerminalServer();
+  await ensureTerminalServer().catch((err) =>
+    console.error('[startup] terminal server unavailable; continuing with conservative session probes:', err),
+  );
   // Prime the spawn queue's session accounting (one /sessions poll) before
   // any recovery phase enqueues work, so the first spawn admits immediately.
   await startSpawnQueue().catch((err) =>

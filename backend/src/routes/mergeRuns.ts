@@ -11,6 +11,7 @@ import {
 } from '../mergeRuns.js';
 import { getActiveHookForProject } from '../postMergeHooks.js';
 import { canonicalProjectPath } from '../projectPath.js';
+import { readRecoveryAttempts } from '../recovery/retryBudget.js';
 
 export function buildMergeRunsRouter(backendOrigin: string): Router {
   const r = Router();
@@ -27,7 +28,7 @@ export function buildMergeRunsRouter(backendOrigin: string): Router {
       });
     }
     try {
-      const run = await startMergeRun(project, backendOrigin);
+      const run = await startMergeRun(project, backendOrigin, { resetRecoveryBudget: true });
       res.json(run);
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
@@ -39,6 +40,12 @@ export function buildMergeRunsRouter(backendOrigin: string): Router {
       typeof req.query.project === 'string' ? req.query.project : '';
     if (!project) return res.status(400).json({ error: 'project required' });
     res.json(getActiveRunForProject(project));
+  });
+
+  r.get('/api/merge-runs/recovery', async (req, res) => {
+    const project = typeof req.query.project === 'string' ? req.query.project : '';
+    if (!project) return res.status(400).json({ error: 'project required' });
+    res.json({ attempts: await readRecoveryAttempts(project) });
   });
 
   r.get('/api/merge-runs/:id', (req, res) => {

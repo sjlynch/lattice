@@ -3,6 +3,7 @@ import { inspectProjectRunLock } from '../projectRunLock.js';
 import { listTasks, type Task } from '../tasks.js';
 import { getActiveRunsForProject as getActiveWorkflowRunsForProject } from '../workflowRuns.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';
+import { readRecoveryAttempts } from './retryBudget.js';
 
 // Run-lock labels whose stale (dead-PID) presence means orphaned merge work
 // that boot recovery should drain by starting a fresh merge run:
@@ -84,6 +85,14 @@ export async function resumeInterruptedMergeRuns(backendOrigin: string): Promise
     // /merge lock (or a workflow Start lock) is not resumed here.
     if (!isResumableInterruptedRunLock(lock.holder.label)) return;
     if (lock.alive) return; // owner still alive elsewhere — don't double-run
+    if (lock.holder.label.startsWith('workflow-')) {
+      const workflowId = lock.holder.label.slice(lock.holder.label.indexOf(':') + 1);
+      const paused = (await readRecoveryAttempts(repoRoot)).find((r) => r.operation === `workflow:${workflowId}` && r.paused);
+      if (paused) {
+        console.error(`[startup] ${repoRoot}: ${paused.paused}`);
+        return;
+      }
+    }
 
     const tasks = await listTasksOrEmpty(repoRoot);
     const pending = tasks.filter((t) => t.status === 'ready_to_merge');
@@ -101,7 +110,7 @@ export async function resumeInterruptedMergeRuns(backendOrigin: string): Promise
         `started ${startedIso}); ${pending.length} ready_to_merge task(s) remain — resuming a merge automatically.`,
     );
     // Fire-and-forget; startMergeRun steals the dead lock itself.
-    startMergeRun(repoRoot, backendOrigin).catch((err) => {
+    startMergeRun(repoRoot, backendOrigin, { automaticRecovery: true }).catch((err) => {
       console.error(`[startup] resume of merge run for ${repoRoot} failed to start:`, err);
     });
   });

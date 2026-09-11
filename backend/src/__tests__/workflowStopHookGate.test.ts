@@ -61,6 +61,37 @@ test('agentQuiescence tracks live subagents and clamps at zero', () => {
   }
 });
 
+test('a failed gated completion retries only after renewed quiescence', async () => {
+  const runId = 'gate-retry';
+  const agentId = workflowStepAgentId(runId, 0);
+  let attempts = 0;
+  try {
+    seedRun(runId, 0);
+    requestStopHookStepComplete(runId, 0, async () => {
+      attempts++;
+      if (attempts === 1) { noteSubagentStart(agentId); throw new Error('temporary write failure'); }
+    }, { settleMs: 10, pollMs: 5 });
+    await sleep(70);
+    assert.equal(attempts, 1, 'retry must wait while a subagent is live');
+    noteSubagentStop(agentId);
+    await sleep(70);
+    assert.equal(attempts, 2);
+  } finally { cancelStopHookGate(runId); forgetAgentQuiescence(agentId); runs.delete(runId); }
+});
+
+test('persistent gated completion failure is bounded and visible without killing the run', async () => {
+  const runId = 'gate-retry-exhausted';
+  let attempts = 0;
+  const run = seedRun(runId, 0);
+  try {
+    requestStopHookStepComplete(runId, 0, async () => { attempts++; throw new Error('disk full'); }, { settleMs: 2, pollMs: 2 });
+    await sleep(100);
+    assert.equal(attempts, 3);
+    assert.equal(run.status, 'running');
+    assert.match(run.error!, /3 attempts/);
+  } finally { cancelStopHookGate(runId); forgetAgentQuiescence(workflowStepAgentId(runId, 0)); runs.delete(runId); }
+});
+
 test('a premature Stop while a subagent is live does not advance until quiescent', async () => {
   const runId = 'gate-premature';
   const agentId = workflowStepAgentId(runId, 0);

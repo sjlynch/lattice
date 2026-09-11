@@ -21,7 +21,7 @@
 // per-session liveSubagents / lastSignalAt this reads; the activity route feeds
 // it from the very hooks that already drive the graph.
 
-import { getRun } from './state.js';
+import { getRun, notify, runs, snapshot } from './state.js';
 import { workflowStepAgentId } from './sessionSpawner.js';
 import { agentQuiescence, noteAgentSignal } from '../agentQuiescence.js';
 
@@ -60,7 +60,7 @@ function clearGate(runId: string): void {
 export function requestStopHookStepComplete(
   runId: string,
   stepIndex: number,
-  advance: () => void,
+  advance: () => void | Promise<void>,
   timing: GateTiming = { settleMs: STOP_HOOK_SETTLE_MS, pollMs: STOP_HOOK_POLL_MS },
 ): void {
   const run = getRun(runId);
@@ -78,6 +78,7 @@ export function requestStopHookStepComplete(
   const existing = pending.get(runId);
   if (existing && existing.stepIndex === stepIndex) return; // poll already running
 
+  let failures = 0;
   const tick = (): void => {
     const r = getRun(runId);
     if (!r || r.status !== 'running' || r.currentStepIndex !== stepIndex) {
@@ -86,8 +87,29 @@ export function requestStopHookStepComplete(
     }
     const q = agentQuiescence(agentId);
     if (q.liveSubagents === 0 && q.quietForMs >= timing.settleMs) {
-      clearGate(runId);
-      advance();
+      const active = pending.get(runId);
+      void Promise.resolve().then(advance).then(() => {
+        if (pending.get(runId) === active) clearGate(runId);
+      }, (err) => {
+        if (pending.get(runId) !== active) return;
+        const current = runs.get(runId);
+        if (!current || current.status !== 'running' || current.currentStepIndex !== stepIndex) {
+          clearGate(runId);
+          return;
+        }
+        failures += 1;
+        console.error(`[workflow-run] ${runId} gated completion attempt ${failures} failed:`, err);
+        if (failures >= 3) {
+          current.error = 'Workflow completion could not be saved after 3 attempts; work was preserved. Retry the completion after fixing the persistence error.';
+          notify({ type: 'progress', run: snapshot(current) });
+          clearGate(runId);
+          return;
+        }
+        // Re-evaluate quiescence on every retry. A subagent may have resumed
+        // during the failed write; elapsed time alone never authorizes advance.
+        noteAgentSignal(agentId);
+        schedule();
+      });
       return;
     }
     schedule(); // still working (subagent live or recent signal) — keep waiting

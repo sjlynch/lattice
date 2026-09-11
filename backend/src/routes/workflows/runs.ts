@@ -95,9 +95,7 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
     // deliberate end-of-work signals and advance immediately; control steps
     // never reach this route.
     if (source.startsWith('claude-stop-hook')) {
-      requestStopHookStepComplete(runId, stepIndex, () => {
-        void advance().catch((err) => console.error('[workflow-step-complete] gated completion failed:', err));
-      });
+      requestStopHookStepComplete(runId, stepIndex, advance);
       return res.json({ ok: true, gated: true });
     }
     await advance();
