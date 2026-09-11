@@ -10,6 +10,9 @@ projectClaude, mergeRuns, postMergeHooks, pushRuns, qaRuns, workflows.
 - `health.ts` — composes `routes/health/`: liveness/default-root/harnesses,
   scan + agent-facing dead-code summary, git history/branch, and folder-picker
   browse/create-dir endpoints.
+  `health/scan.ts` shares scans across HTTP subscribers and observes unfinished
+  response `close` for disconnects. Incoming request `close` is not a reliable
+  disconnect signal: a fully consumed GET can emit it while its response waits.
 - `search.ts` — `/api/search` file-content grep (rg fast path, JS fallback).
 - `settings.ts` — per-project settings, project env notes, instruction
   templates, Pi model menu, and Pi endpoint probing.

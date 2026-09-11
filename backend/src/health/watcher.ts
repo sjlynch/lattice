@@ -4,10 +4,11 @@
 // lives in ./watcher/setup.ts. One watcher per project root; multiple WS
 // subscribers can share the same watcher.
 
-import type { HealthMetrics } from './types.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { createWatcher } from './watcher/setup.js';
 import { disposeIsolatedAnalyzer } from './watcher/isolatedAnalyze.js';
+import { WatcherRevision } from './watcher/revision.js';
+import { ScanPublication, type WatcherSlot } from './watcher/scanPublication.js';
 import type {
   HealthUpdate,
   ProjectWatcher,
@@ -16,27 +17,27 @@ import type {
 
 export type { HealthUpdate };
 
-// Keyed by the in-flight (or settled) CREATION PROMISE, not the resolved
-// ProjectWatcher. ensureWatcher memoizes the promise synchronously — before any
-// await — so concurrent first-subscriptions for one root all await the SAME
-// build instead of each constructing a full ProjectWatcher (two chokidar
-// watchers + two HealthCache writers, the second silently orphaning the first).
-// Same in-flight-promise memo as deadCode.ts.
-const watchers = new Map<string, Promise<ProjectWatcher>>();
+// Each slot stores its creation promise and synchronously-available revision.
+// Concurrent first subscriptions share one build; scans can capture its event
+// revision even before construction has completed.
+const watchers = new Map<string, WatcherSlot>();
+const scanPublication = new ScanPublication((root) => watchers.get(root));
 
 function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
   const existing = watchers.get(projectRoot);
-  if (existing) return existing;
+  if (existing) return existing.creation;
 
   // Insert the promise BEFORE the first await in createWatcher so a second
   // caller in the same tick (two WS connects at boot, a reconnect storm, HMR)
   // sees it and shares this build.
-  const creation = createWatcher(projectRoot, ensureShutdownFlushHook);
-  watchers.set(projectRoot, creation);
+  const revision = new WatcherRevision();
+  const creation = createWatcher(projectRoot, ensureShutdownFlushHook, revision);
+  const slot = { creation, revision };
+  watchers.set(projectRoot, slot);
   // A failed build must not poison the slot forever — drop it so the next
   // subscriber retries from scratch (mirrors deadCode.ts's memo eviction).
   creation.catch(() => {
-    if (watchers.get(projectRoot) === creation) watchers.delete(projectRoot);
+    if (watchers.get(projectRoot) === slot) watchers.delete(projectRoot);
   });
   return creation;
 }
@@ -45,10 +46,9 @@ function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {
 // so a coalesced write that hasn't fired yet isn't lost. Never rejects
 // (HealthCache.flush swallows write errors).
 export async function flushWatcherCaches(): Promise<void> {
-  // Values are creation promises now; resolve each (swallowing a failed build)
-  // before flushing its cache.
+  // Resolve each creation promise before flushing its cache.
   const projs = await Promise.all(
-    [...watchers.values()].map((p) => p.catch(() => null)),
+    [...watchers.values()].map((slot) => slot.creation.catch(() => null)),
   );
   await Promise.all(projs.map((proj) => proj?.cache.flush()));
 }
@@ -93,31 +93,15 @@ export async function subscribeHealth(
   return () => proj.subscribers.delete(cb);
 }
 
-// Allow the scanner to seed the watcher's in-memory mirror after a full scan.
-// Saves the watcher from running redundant cross-file passes when WebSocket
-// subscribers connect.
-export function seedWatcherState(
-  projectRoot: string,
-  importsByFile: Map<string, string[]>,
-  metricsByFile: Map<string, HealthMetrics>,
-): void {
-  const abs = canonicalProjectPath(projectRoot);
-  const pending = watchers.get(abs);
-  if (!pending) return;
-  // The map holds the creation promise; seed once it resolves (the caller's
-  // maps aren't mutated after this call, so deferring is safe). A watcher still
-  // building gets seeded as soon as it's ready instead of being missed.
-  void pending
-    .then((proj) => {
-      proj.imports.clear();
-      proj.metrics.clear();
-      for (const [k, v] of importsByFile) proj.imports.set(k, v);
-      for (const [k, v] of metricsByFile) proj.metrics.set(k, v);
-      // The seeded membership can differ from what the memoized root set was
-      // built on (a rescan, file-tree change, or cache-version bump), so drop it.
-      proj.crossFile.invalidateRoots();
-    })
-    .catch(() => { /* watcher build failed; nothing to seed */ });
+// Capture before the scan's first await, including the no-watcher case. A
+// watcher created while analysis runs must not receive an older snapshot.
+export function beginWatcherScan(projectRoot: string, isCancelled?: () => boolean) {
+  return scanPublication.begin(canonicalProjectPath(projectRoot), isCancelled);
+}
+
+// Both receipt and publication of a file event invalidate older shared scans.
+export function watcherScanRevision(projectRoot: string): number | undefined {
+  return watchers.get(canonicalProjectPath(projectRoot))?.revision.current;
 }
 
 // Test-only: number of project watchers currently tracked (incl. in-flight
@@ -134,9 +118,9 @@ export async function _resetWatchersForTest(): Promise<void> {
   const pending = [...watchers.values()];
   watchers.clear();
   await Promise.all(
-    pending.map(async (p) => {
+    pending.map(async (slot) => {
       try {
-        const proj = await p;
+        const proj = await slot.creation;
         await proj.watcher.close();
       } catch { /* build failed or already closed */ }
     }),

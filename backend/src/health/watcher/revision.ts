@@ -11,13 +11,20 @@ export class WatcherRevision {
     return {
       isCurrent: () => this.pending.get(filePath) === token,
       finish: () => {
-        if (this.pending.get(filePath) === token) this.pending.delete(filePath);
+        if (this.pending.get(filePath) === token) {
+          this.pending.delete(filePath);
+          this.invalidate();
+        }
       },
     };
   }
 
   invalidate(): void {
     this.version++;
+  }
+
+  get current(): number {
+    return this.version;
   }
 
   // A scan cannot safely replace state while an earlier event is still being

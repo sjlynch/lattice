@@ -47,7 +47,7 @@ export class HealthCache {
   // race on the same JSON file. Each link snapshots `data` and clears
   // `dirty` before doing the write — concurrent set()s after the snapshot
   // re-mark dirty and a subsequent write picks them up.
-  private saveChain: Promise<void> = Promise.resolve();
+  private saveChain: Promise<void> | null = null;
   // Pending debounced-write timer. While set, save() calls are coalesced
   // into the one write it will fire; flush() clears it and writes now. null
   // when no write is scheduled.
@@ -152,8 +152,14 @@ export class HealthCache {
   // — _doSave swallows write errors so a transient EBUSY doesn't poison every
   // subsequent write.
   private runSave(): Promise<void> {
-    this.saveChain = this.saveChain.then(() => this._doSave());
-    return this.saveChain;
+    // Start the first save synchronously so its disk operation is queued
+    // before a newly-created watcher starts loading this project's cache.
+    const write = this.saveChain ? this.saveChain.then(() => this._doSave()) : this._doSave();
+    this.saveChain = write;
+    void write.then(() => {
+      if (this.saveChain === write) this.saveChain = null;
+    });
+    return write;
   }
 
   private async _doSave(): Promise<void> {

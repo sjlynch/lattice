@@ -19,18 +19,21 @@ export type CollectedSourceTree = {
 export async function collectSourceTree(
   root: string,
   ignoreFilter: Pick<Ignore, 'ignores'>,
+  checkCancelled: () => void = () => {},
 ): Promise<CollectedSourceTree> {
   const absRoot = canonicalProjectPath(root);
   const files: string[] = [];
   const directories: DirectoryEntry[] = [];
 
   async function walk(dir: string, parentId: string): Promise<void> {
+    checkCancelled();
     let entries: import('node:fs').Dirent[];
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
+    checkCancelled();
 
     // Overlap sibling subtrees: collect each subdir walk and await them
     // together rather than serializing readdir round-trips. Mirrors the

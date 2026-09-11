@@ -3,11 +3,14 @@
 // burn CPU on a response no one will read.
 
 import { Router } from 'express';
-import { scan } from '../../scanner.js';
+import { scanCoordinator } from '../../scanner/coordinator.js';
 import { ScanCancelledError } from '../../scanner/fileMetrics.js';
 import { getDeadCodeSummary } from '../../deadCode.js';
 
-export function buildScanRouter(defaultRoot: string): Router {
+export function buildScanRouter(
+  defaultRoot: string,
+  requestScan = scanCoordinator.request.bind(scanCoordinator),
+): Router {
   const r = Router();
 
   r.get('/api/scan', async (req, res) => {
@@ -22,16 +25,21 @@ export function buildScanRouter(defaultRoot: string): Router {
     // CPU on a response no one will read — critical when the user
     // refreshes mid-scan on a multi-thousand-file project.
     let clientGone = false;
-    req.on('close', () => {
+    const controller = new AbortController();
+    const onClose = () => {
       if (!res.writableEnded) {
         clientGone = true;
+        controller.abort();
         console.warn(
           `[scan] client disconnected after ${Date.now() - startedAt}ms (${target})`,
         );
       }
-    });
+    };
+    // IncomingMessage.close also fires for a fully received request. Only the
+    // unfinished response closing means the GET's consumer actually went away.
+    res.on('close', onClose);
     try {
-      const result = await scan(target, { isCancelled: () => clientGone });
+      const result = await requestScan(target, controller.signal);
       if (clientGone) return;
       const elapsed = Date.now() - startedAt;
       console.log(
@@ -51,6 +59,8 @@ export function buildScanRouter(defaultRoot: string): Router {
       );
       if (clientGone) return;
       res.status(400).json({ error: (err as Error).message });
+    } finally {
+      res.off('close', onClose);
     }
   });
 

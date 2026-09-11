@@ -98,7 +98,7 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   singleton `watchers` map (`ensureWatcher` promise memoization) plus the
   shutdown-flush lifecycle hooks (`flushWatcherCaches`, the once-only
   process-exit handlers) and the public surface (`subscribeHealth`,
-  `seedWatcherState`, test helpers, `HealthUpdate` type). `watcher/` holds the
+  `beginWatcherScan`, `watcherScanRevision`, test helpers, `HealthUpdate` type). `watcher/` holds the
   extracted helpers: `setup.ts` (`createWatcher` — per-root construction plus
   the chokidar-creation + event-wiring; takes the facade's shutdown-flush
   registrar as a callback), `cacheHydration.ts` (cache → in-memory graph
@@ -109,6 +109,11 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   newest event for a path may publish maps or cache entries, so an older
   analysis cannot resurrect an unlinked file or overwrite a newer edit.
   Config reloads separately fence ignore/alias assignment across async reads.
+  `scanPublication.ts` captures the watcher identity/revision before a scan's
+  first await, clones the live cache (including pending debounced saves), and
+  seeds maps/cache only if no event, newer scan, or watcher creation intervened.
+  Scans never share mutable metrics with the watcher during analysis. Cache I/O
+  is ordered across cache instances, including reads during a pending flush.
   `isolatedAnalyze.ts` runs each changed file's analysis in a **warm persistent
   worker thread** (`IsolatedAnalyzer` singleton, serial single-in-flight queue,
   per-file stall watchdog) so a pathological changed file can only pin the worker

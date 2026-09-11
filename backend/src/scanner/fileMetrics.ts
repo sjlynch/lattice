@@ -58,9 +58,11 @@ export async function computeFileMetrics(
   // when each file's analysis lands (cache hit inline, worker result later).
   const out: FileMetric[] = new Array(files.length);
   const misses: MissJob[] = [];
+  if (options.isCancelled?.()) throw new ScanCancelledError();
 
   // ── Phase 1 (main thread): stat + cache lookup. Cheap and non-hanging. ──
   for (let i = 0; i < files.length; i += 1) {
+    if (options.isCancelled?.()) throw new ScanCancelledError();
     if (i > 0 && i % YIELD_EVERY_N_FILES === 0) {
       await new Promise<void>((r) => setImmediate(r));
       if (options.isCancelled?.()) throw new ScanCancelledError();
@@ -136,6 +138,7 @@ export async function computeFileMetrics(
   // jobs the worker didn't handle. Note the watchdog already emitted+skipped any
   // culprit before handing back its tail, so we never re-run a hanging file. ──
   for (let k = 0; k < unhandled.length; k += 1) {
+    if (options.isCancelled?.()) throw new ScanCancelledError();
     if (k > 0 && k % YIELD_EVERY_N_FILES === 0) {
       await new Promise<void>((r) => setImmediate(r));
       if (options.isCancelled?.()) throw new ScanCancelledError();

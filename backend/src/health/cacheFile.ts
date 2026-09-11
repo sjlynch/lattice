@@ -5,6 +5,22 @@
 
 import fs from 'node:fs/promises';
 import { cacheDir, cachePath } from './cachePaths.js';
+import { canonicalProjectPath } from '../projectPath.js';
+
+// Serialize across independent scanner/watcher cache instances too. Reads join
+// the same queue so a watcher created during a scan's flush hydrates its result.
+const operations = new Map<string, Promise<void>>();
+
+function ordered<T>(root: string, operation: () => Promise<T>): Promise<T> {
+  const key = canonicalProjectPath(root);
+  const result = (operations.get(key) ?? Promise.resolve()).then(operation);
+  const settled = result.then(() => {}, () => {});
+  operations.set(key, settled);
+  void settled.then(() => {
+    if (operations.get(key) === settled) operations.delete(key);
+  });
+  return result;
+}
 
 // Monotonic suffix so two writers in the same process+millisecond still get
 // distinct temp names (the cross-instance race this whole writer guards
@@ -49,12 +65,14 @@ async function atomicWriteCache(target: string, content: string): Promise<void> 
 // Read the raw cache JSON. Rejects when the file is missing or unreadable; the
 // caller starts fresh in that case.
 export function readCacheFile(projectRoot: string): Promise<string> {
-  return fs.readFile(cachePath(projectRoot), 'utf8');
+  return ordered(projectRoot, () => fs.readFile(cachePath(projectRoot), 'utf8'));
 }
 
 // Ensure the cache dir exists, then atomically replace the cache file with
 // `content`.
-export async function writeCacheFile(projectRoot: string, content: string): Promise<void> {
-  await fs.mkdir(cacheDir(projectRoot), { recursive: true });
-  await atomicWriteCache(cachePath(projectRoot), content);
+export function writeCacheFile(projectRoot: string, content: string): Promise<void> {
+  return ordered(projectRoot, async () => {
+    await fs.mkdir(cacheDir(projectRoot), { recursive: true });
+    await atomicWriteCache(cachePath(projectRoot), content);
+  });
 }

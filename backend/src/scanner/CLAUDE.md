@@ -47,13 +47,17 @@ the next:
    `commonRoot` is the fallback when no explicit root is passed;
    `ensureDirectoryNode` lazily seeds intermediate directory nodes for
    any file whose parent wasn't in the walked directory list.
-6. **`scan.ts`** — `scan(root)` is the top-level orchestrator: wires the
-   phases above, then `cache.prune(seenFiles)`, fire-and-forget
-   `cache.flush()` (forces the single end-of-scan write immediately — the
-   watcher's `cache.save()` coalesces bursts, but this one-shot cache has
-   nothing to coalesce with), and `seedWatcherState(...)` so the health
-   watcher's in-memory mirror reflects the freshly-scanned state (otherwise
-   it keeps broadcasting cross-file numbers from before the rescan).
+6. **`scan.ts`** — `scan(root)` captures a watcher publication ticket before
+   its first await. It clones the live watcher cache when available (including
+   edits whose disk save is still debounced), runs the phases above, prunes,
+   and commits only if no event, newer scan, or watcher creation intervened.
+   Accepted scans seed the existing watcher/cache owner; persistence remains
+   fire-and-forget. Cancellation is checked during tree collection, per-file
+   work, and before publication.
+7. **`coordinator.ts`** — HTTP callers share one in-flight scan per canonical
+   project and watcher revision. Cancellation releases only that subscriber;
+   the last disconnect cancels and evicts the underlying scan immediately.
+   New callers never join cancelled work, and settled results are not cached.
 
 ## Conventions
 
