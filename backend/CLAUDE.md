@@ -23,3 +23,11 @@ Node/Express backend package. Runtime code lives in `src/`; compiled output in
 - Type-check: `npx tsc --noEmit` from `backend/`.
 - Tests: `npm test` from `backend/` (target a single test with Node's
   `--test-name-pattern` when useful).
+
+## Dependencies
+
+The `express` dependency override keeps its `qs` dependency at `>=6.16.0`
+within major version 6. Express 4 currently pins older vulnerable minor
+versions; remove the override once its declared range permits the patched
+release. Keep Express 4 while `express-async-errors` provides async route
+handling, and verify dependency updates with `npm audit` and the HTTP tests.

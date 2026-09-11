@@ -8,7 +8,7 @@ force-directed DAG.
 
 - `backend/` — TypeScript Node.js Express server (`:5184`)
 - `frontend/` — Vite + React + TS + xterm + 3d-force-graph (`:5183`)
-- `package.json` (root) — `concurrently` runs both via `npm run dev`
+- `package.json` (root) — `scripts/orchestrate.mjs` supervises both via `npm run dev`
 - `<project>/.lattice/` — per-project scratch (gitignored): `workflow-steps/`, `workflows.json`, `userSettings.json`, `health-cache.json`. **No longer holds `worktrees/` or push-run scratch** — those moved to home-scoped locations (see below). Tasks live in `~/.lattice/per-project/<hash>/tasks.json`.
 - `~/.lattice/projects.json` — global index of projects with Lattice tasks
 - `~/.lattice/per-project/<sha1(path)[:12]>/tasks.json` — task DB per project. Moved out of `<project>/.lattice/tasks.json` after the 2026-05-09 catastrophic-deletion incident; legacy in-project files auto-migrate on first read. `run.lock` here is the cross-process per-project merge lock.
