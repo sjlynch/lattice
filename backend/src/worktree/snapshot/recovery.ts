@@ -8,6 +8,7 @@ import {
   snapshotManifestPath,
 } from './manifest.js';
 import { restoreSnapshot } from './restore.js';
+import { withProjectRunLock } from '../../projectRunLock.js';
 
 // Boot-time recovery: scan ~/.lattice/snapshots/ for any leftover
 // snapshots (a previous backend crashed mid-run) and restore them into
@@ -100,15 +101,26 @@ export async function recoverPendingSnapshots(): Promise<void> {
       // silently overwriting them here is data loss, so any path whose on-disk
       // content diverged from the capture is preserved and the snapshot's
       // version is dropped beside it for manual review.
-      await restoreSnapshot(
-        {
-          dir: snapDir,
-          modifiedTracked: manifest.modifiedTracked ?? [],
-          untracked: manifest.untracked ?? [],
-        },
-        manifest.repoRoot,
-        { guardStaleOverwrite: true },
-      );
+      try {
+        // Do NOT borrow an in-process owner here: this snapshot might belong
+        // to its live merge. A fresh exclusive acquire refuses all live runs.
+        await withProjectRunLock(manifest.repoRoot, 'snapshot-recovery', async () => {
+          const current = await readSnapshotManifest(manifestPath);
+          if (!current || JSON.stringify(current) !== JSON.stringify(manifest)) return;
+          console.warn(`[snapshot] acquired recovery ownership for ${snapDir}`);
+          await restoreSnapshot(
+            {
+              dir: snapDir,
+              modifiedTracked: current.modifiedTracked,
+              untracked: current.untracked,
+            },
+            current.repoRoot,
+            { guardStaleOverwrite: true },
+          );
+        });
+      } catch (err) {
+        console.warn(`[snapshot] recovery deferred for ${snapDir}: ${(err as Error).message}`);
+      }
     }
   }
 }

@@ -39,5 +39,5 @@ export {
   type SnapshotManifest,
 } from './snapshot/manifest.js';
 export { parseStatus, snapshotWorkingTree } from './snapshot/capture.js';
-export { discardSnapshot, restoreSnapshot } from './snapshot/restore.js';
+export { discardSnapshot, restoreSnapshot, type SnapshotRestoreResult } from './snapshot/restore.js';
 export { recoverPendingSnapshots } from './snapshot/recovery.js';

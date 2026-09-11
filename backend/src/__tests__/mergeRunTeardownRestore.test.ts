@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { runTeardown } from '../mergeRuns/teardown.js';
 import type { SnapshotHandle } from '../worktree.js';
 import type { MergeRun } from '../mergeRuns/state.js';
@@ -34,6 +35,10 @@ test('runTeardown restores the snapshot on a cancelled run without a reboot', as
     await fs.writeFile(path.join(snapshotDir, 'src', 'work.ts'), 'user work', 'utf8');
     await fs.mkdir(path.join(projectPath, 'src'), { recursive: true });
     await fs.writeFile(path.join(projectPath, 'src', 'work.ts'), 'HEAD version', 'utf8');
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: projectPath, windowsHide: true, stdio: 'pipe' });
+    git('init', '-b', 'main');
+    git('add', '--', 'src/work.ts');
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'base');
 
     const handle: SnapshotHandle = {
       dir: snapshotDir,

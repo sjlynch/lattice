@@ -46,9 +46,15 @@ export async function runTeardown(
     const kind = run.cancelRequested ? 'cancelled run ' : 'run ';
     console.log(`[merge-run] restoring ${kind}snapshot → ${runSnapshot.dir}`);
     try {
-      await restoreSnapshot(runSnapshot, projectPath);
-      console.log(`[merge-run] snapshot restored`);
+      const restored = await restoreSnapshot(runSnapshot, projectPath);
+      if (restored.status === 'partial') {
+        run.errored.push({ taskId: '(snapshot)', error: `Snapshot only partly restored; newer edits preserved and captured copies retained at ${runSnapshot.dir}` });
+        console.warn(`[merge-run] snapshot partly restored; retained at ${runSnapshot.dir}`);
+      } else {
+        console.log(`[merge-run] snapshot restored`);
+      }
     } catch (err) {
+      run.errored.push({ taskId: '(snapshot)', error: `Snapshot restore failed; captured work retained at ${runSnapshot.dir}: ${(err as Error).message}` });
       console.warn('[merge-run] post-run snapshot restore failed (continuing):', err);
     }
   }

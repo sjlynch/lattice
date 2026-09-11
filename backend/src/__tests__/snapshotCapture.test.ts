@@ -129,6 +129,7 @@ test('restoreSnapshot restores safe files and removes snapshot only after full s
     await restoreSnapshot(
       { dir: snapshotDir, modifiedTracked: ['src/tracked.ts'], untracked: ['new.txt'] },
       repoRoot,
+      { guardStaleOverwrite: false },
     );
 
     assert.equal(await fs.readFile(path.join(repoRoot, 'src', 'tracked.ts'), 'utf8'), 'user edit');
@@ -260,7 +261,7 @@ test('restoreSnapshot (guardStaleOverwrite) restores absent/unchanged paths with
   }
 });
 
-test('restoreSnapshot without the guard still lets snapshot win over newer on-disk content', async () => {
+test('restoreSnapshot defaults to preserving newer on-disk content', async () => {
   // The immediate in-session restore (teardown / fastForwardMain) intentionally
   // overwrites — snapshot content wins over whatever the FF brought in.
   const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-snapshot-nowin-repo-'));
@@ -276,12 +277,9 @@ test('restoreSnapshot without the guard still lets snapshot win over newer on-di
       repoRoot,
     );
 
-    assert.equal(await fs.readFile(path.join(repoRoot, 'src', 'x.ts'), 'utf8'), 'snapshot');
-    await assert.rejects(
-      fs.access(path.join(repoRoot, 'src', 'x.ts' + SNAPSHOT_CONFLICT_SUFFIX)),
-      { code: 'ENOENT' },
-    );
-    await assert.rejects(fs.access(snapshotDir), { code: 'ENOENT' });
+    assert.equal(await fs.readFile(path.join(repoRoot, 'src', 'x.ts'), 'utf8'), 'fast-forwarded');
+    assert.equal(await fs.readFile(path.join(repoRoot, 'src', 'x.ts' + SNAPSHOT_CONFLICT_SUFFIX), 'utf8'), 'snapshot');
+    await fs.access(snapshotDir);
   } finally {
     await fs.rm(repoRoot, { recursive: true, force: true });
     await fs.rm(snapshotDir, { recursive: true, force: true });
@@ -340,7 +338,7 @@ test('snapshot capture and restore preserve symlinks without copying outside con
     assert.equal(await fs.readlink(path.join(snapshotDir, 'untracked-link.txt')), outsideUntracked);
     assert.equal(await fs.readlink(path.join(snapshotDir, 'tracked-link.txt')), outsideTracked);
 
-    await cleanupCapturedUntrackedPaths(repoRoot, ['untracked-link.txt']);
+    await cleanupCapturedUntrackedPaths(repoRoot, ['untracked-link.txt'], snapshotDir);
     await fs.rm(trackedLink, { force: true });
     await fs.writeFile(trackedLink, 'fast-forward regular file', 'utf8');
 
@@ -351,6 +349,7 @@ test('snapshot capture and restore preserve symlinks without copying outside con
         untracked: ['untracked-link.txt'],
       },
       repoRoot,
+      { guardStaleOverwrite: false },
     );
 
     assert.equal((await fs.lstat(untrackedLink)).isSymbolicLink(), true);

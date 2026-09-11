@@ -29,7 +29,7 @@ test('snapshot metadata cannot overwrite a captured root file with the same name
     modified: [], untracked: [SNAPSHOT_MANIFEST_FILENAME],
   });
   await writeCapturedSnapshotManifest(repo, 'test', snapshot, copied);
-  await cleanupCapturedUntrackedPaths(repo, copied.copiedUntracked);
+  await cleanupCapturedUntrackedPaths(repo, copied.copiedUntracked, snapshot);
   await restoreSnapshot({ dir: snapshot, modifiedTracked: copied.copiedModified, untracked: copied.copiedUntracked }, repo);
   assert.equal(await fs.readFile(path.join(repo, SNAPSHOT_MANIFEST_FILENAME), 'utf8'), 'irreplaceable local notes');
 });
@@ -56,7 +56,7 @@ test('snapshot cleanup never recursively removes a file replaced by a directory 
   await fs.unlink(path.join(repo, 'notes'));
   await fs.mkdir(path.join(repo, 'notes'));
   await fs.writeFile(path.join(repo, 'notes', 'new.txt'), 'new work not captured');
-  await cleanupCapturedUntrackedPaths(repo, copied.copiedUntracked);
+  await cleanupCapturedUntrackedPaths(repo, copied.copiedUntracked, snapshot);
   assert.equal(await fs.readFile(path.join(repo, 'notes', 'new.txt'), 'utf8'), 'new work not captured');
 });
 

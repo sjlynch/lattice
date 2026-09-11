@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import { projectGit } from '../projectGit.js';
 import { projectHash } from '../../projectPath.js';
 import { withProjectMutation } from '../../projectRunLock.js';
+import { currentProjectMutationOwner } from '../../projectRunLock/mutation.js';
 import {
   EMPTY_HANDLE,
   SNAPSHOTS_BASE,
@@ -82,6 +83,7 @@ export async function writeCapturedSnapshotManifest(
     createdAt: Date.now(),
     modifiedTracked: copies.copiedModified,
     untracked: copies.copiedUntracked,
+    owner: currentProjectMutationOwner(repoRoot),
   });
 }
 
@@ -135,8 +137,8 @@ async function captureWorkingTree(repoRoot: string, label: string): Promise<Snap
   await writeCapturedSnapshotManifest(repoRoot, label, dir, copies);
 
   const cleanupPlan = buildSnapshotCleanupPlan(copies);
-  await resetTrackedSnapshotPaths(repoRoot, cleanupPlan.resetTracked);
-  await cleanupCapturedUntrackedPaths(repoRoot, cleanupPlan.deleteUntracked);
+  await resetTrackedSnapshotPaths(repoRoot, cleanupPlan.resetTracked, dir);
+  await cleanupCapturedUntrackedPaths(repoRoot, cleanupPlan.deleteUntracked, dir);
 
   return {
     dir,

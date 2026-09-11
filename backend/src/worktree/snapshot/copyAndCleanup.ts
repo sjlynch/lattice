@@ -4,6 +4,7 @@ import { projectGit } from '../projectGit.js';
 import type { DirtyPaths, SnapshotCopyResult } from './capture.js';
 import { isPathInsideRepo } from '../paths.js';
 import { isSnapshotMetadataPath } from './manifest.js';
+import { pathVersion } from './versions.js';
 
 async function assertNoSymlinkParents(root: string, file: string): Promise<void> {
   const parts = file.split(/[\\/]+/).filter(Boolean);
@@ -100,6 +101,7 @@ export function logCopyFailures(copyFailures: string[]): void {
 export async function resetTrackedSnapshotPaths(
   repoRoot: string,
   resetTracked: string[],
+  snapshotDir?: string,
 ): Promise<void> {
   // Reset modified tracked files — but only the ones whose snapshot copy
   // succeeded. Resetting a file we failed to copy would replace the user's
@@ -107,8 +109,9 @@ export async function resetTrackedSnapshotPaths(
   // A file we failed to copy stays dirty in the working tree; the FF that
   // follows will fail with a clear error, the caller restores any partial
   // snapshot, and the user's data is intact.
+  resetTracked = await unchangedSinceCopy(repoRoot, resetTracked, snapshotDir);
   if (resetTracked.length === 0) return;
-  const co = await projectGit(repoRoot, ['checkout', 'HEAD', '--', ...resetTracked]);
+  const co = await projectGit(repoRoot, ['checkout', 'HEAD', '--', ...resetTracked.map((file) => `:(literal)${file}`)]);
   if (co.code !== 0) {
     console.warn(
       `[snapshot] git checkout HEAD -- (${resetTracked.length} files) ` +
@@ -120,6 +123,7 @@ export async function resetTrackedSnapshotPaths(
 export async function cleanupCapturedUntrackedPaths(
   repoRoot: string,
   deleteUntracked: string[],
+  snapshotDir?: string,
 ): Promise<void> {
   // Delete only untracked files we successfully captured. Same rationale:
   // if the copy failed we leave the file alone rather than risk losing it.
@@ -127,6 +131,7 @@ export async function cleanupCapturedUntrackedPaths(
     try {
       if (!isPathInsideRepo(repoRoot, file)) continue;
       await assertNoSymlinkParents(repoRoot, file);
+      if (!(await unchangedSinceCopy(repoRoot, [file], snapshotDir)).length) continue;
       // Capture accepts files and links only. A directory here appeared AFTER
       // capture and contains unsnapshotted work; never recursively remove it.
       await fs.rm(path.join(repoRoot, file), { force: true, recursive: false });
@@ -134,4 +139,25 @@ export async function cleanupCapturedUntrackedPaths(
       /* ignore */
     }
   }
+}
+
+async function unchangedSinceCopy(repoRoot: string, files: string[], snapshotDir?: string): Promise<string[]> {
+  if (!snapshotDir) return []; // No captured version to compare: refuse cleanup.
+  const unchanged: string[] = [];
+  for (const file of files) {
+    if (!isPathInsideRepo(repoRoot, file) || isSnapshotMetadataPath(file)) continue;
+    try {
+      await assertNoSymlinkParents(repoRoot, file);
+      await assertNoSymlinkParents(snapshotDir, file);
+      const [current, copied] = await Promise.all([
+        pathVersion(path.join(repoRoot, file)),
+        pathVersion(path.join(snapshotDir, file)),
+      ]);
+      if (copied !== null && current === copied) { unchanged.push(file); continue; }
+      console.warn(`[snapshot] ${file} changed after capture; leaving the newer working-tree version in place`);
+    } catch (err) {
+      console.warn(`[snapshot] cannot verify ${file} before cleanup; leaving it in place: ${(err as Error).message}`);
+    }
+  }
+  return unchanged;
 }

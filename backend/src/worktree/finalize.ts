@@ -246,6 +246,11 @@ async function resolveFinalizeOutcome(
   if (ff.status === 'conflict') {
     return writeStashConflictFinalizeOutcome(ctx, ff);
   }
+  if (ff.snapshotWarning) {
+    // HEAD moved successfully; avoid the FF retry path, but keep the task and
+    // worktree available and surface the retained snapshot in the route/run.
+    return { ok: false, error: `Branch fast-forwarded, but ${ff.snapshotWarning}` };
+  }
   return handleFastForwardSuccess(ctx);
 }
 

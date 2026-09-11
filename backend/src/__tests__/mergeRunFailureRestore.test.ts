@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { startMergeRun, subscribe, type MergeRun } from '../mergeRuns.js';
 import type { Task } from '../tasks.js';
 
@@ -13,6 +14,10 @@ test('an unexpected target failure restores the run snapshot before reporting th
   await fs.mkdir(repo);
   await fs.mkdir(snapshot);
   await fs.writeFile(path.join(repo, 'work.ts'), 'clean HEAD');
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, windowsHide: true, stdio: 'pipe' });
+  git('init', '-b', 'main');
+  git('add', '--', 'work.ts');
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'base');
   await fs.writeFile(path.join(snapshot, 'work.ts'), 'uncommitted user work');
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   let completed!: (run: MergeRun) => void;

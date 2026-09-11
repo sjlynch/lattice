@@ -3,7 +3,10 @@ import fs from 'node:fs/promises';
 import { withProjectMutation } from '../../projectRunLock.js';
 import { constants, type Stats } from 'node:fs';
 import { isPathInsideRepo } from '../paths.js';
-import { isSnapshotMetadataPath, type SnapshotHandle } from './manifest.js';
+import { isSnapshotMetadataPath, SNAPSHOTS_BASE, type SnapshotHandle } from './manifest.js';
+import { assertNotReparsePoint } from '../cleanupSafety.js';
+import { projectGit } from '../projectGit.js';
+import { pathVersion } from './versions.js';
 
 // Suffix for the copy we leave beside a path whose on-disk content diverged
 // from the snapshot when the stale-overwrite guard is engaged (boot recovery).
@@ -28,18 +31,34 @@ export class StaleSnapshotConflict extends Error {
 
 // Options controlling how the snapshot is written back into the working tree.
 export type RestoreSnapshotOptions = {
-  // When true, refuse to overwrite a path whose current on-disk content
-  // diverges from what the snapshot captured; instead drop the captured
-  // version beside it as `<path>.lattice-conflict` and retain the snapshot for
-  // review. Used ONLY by boot recovery (recoverPendingSnapshots): a retained
-  // snapshot (from a cancelled run, or a partial-failure retain) is re-applied
-  // at the NEXT restart, by which point the user may have re-done or edited
-  // those files — overwriting them with the stale snapshot is silent data
-  // loss. Off (default) for immediate, in-session restores (teardown,
-  // fastForwardMain), where snapshot content is intended to win over whatever
-  // the FF just brought in and the user hasn't had a chance to touch the tree.
+  // Default: preserve differing dirty/untracked destinations; overlay only a
+  // tracked destination verified clean against HEAD. True (boot recovery):
+  // preserve ANY differing destination. False explicitly opts into overwrite
+  // for callers that independently own and verified the destination.
   guardStaleOverwrite?: boolean;
 };
+
+export type SnapshotRestoreResult = {
+  status: 'restored' | 'partial';
+  restored: string[];
+  conflicts: { file: string; backupPath: string }[];
+  failed: { file: string; message: string }[];
+  retained: boolean;
+};
+
+// Only committed, clean tracked content may be replaced in-session. A dirty
+// destination represents work performed after capture and must be retained.
+async function cleanTrackedVersion(repoRoot: string, file: string, dst: string): Promise<boolean> {
+  try {
+    const before = await pathVersion(dst);
+    const literal = `:(literal)${file}`;
+    const tracked = await projectGit(repoRoot, ['ls-files', '-v', '-z', '--error-unmatch', '--', literal]);
+    // Skip-worktree/assume-unchanged entries can hide edits from git diff.
+    if (tracked.code !== 0 || !tracked.stdout.startsWith('H ')) return false;
+    const diff = await projectGit(repoRoot, ['diff', '--quiet', 'HEAD', '--', literal]);
+    return diff.code === 0 && before === await pathVersion(dst);
+  } catch { return false; }
+}
 
 async function assertNoSymlinkParents(root: string, file: string): Promise<void> {
   const parts = file.split(/[\\/]+/).filter(Boolean);
@@ -115,8 +134,8 @@ async function onDiskDivergesFromCapture(
     return a !== b;
   }
   if (!dstStat.isFile()) return true;
-  const [a, b] = await Promise.all([fs.readFile(src), fs.readFile(dst)]);
-  return !a.equals(b);
+  const [a, b] = await Promise.all([pathVersion(src), pathVersion(dst)]);
+  return a !== b;
 }
 
 // Copy the snapshot's captured version to `<dst>.lattice-conflict` instead of
@@ -161,19 +180,24 @@ async function restoreSnapshotPath(
     throw new Error('snapshot source is not a regular file or symlink');
   }
   await ensureSafeParentDirectory(repoRoot, file);
-  if (opts.guardStaleOverwrite && (await onDiskDivergesFromCapture(src, dst, stat))) {
+  const [sourceVersion, destinationVersion] = await Promise.all([pathVersion(src), pathVersion(dst)]);
+  const destinationExists = destinationVersion !== null;
+  const diverged = destinationExists && sourceVersion !== destinationVersion;
+  if (!diverged && destinationExists) return; // Already restored; avoid watcher churn.
+  if (opts.guardStaleOverwrite !== false && diverged &&
+      (opts.guardStaleOverwrite === true || !(await cleanTrackedVersion(repoRoot, file, dst)))) {
     // The working tree changed since capture. We cannot tell an intended FF
     // from the user re-doing their edits after a cancelled run, so preserve
     // what's on disk and drop the snapshot's version alongside it for review.
     const backup = await backupCapturedVersionBesideDst(src, dst, stat);
     throw new StaleSnapshotConflict(file, backup);
   }
-  await removeExistingPathNoFollow(dst);
+  if (destinationExists) await removeExistingPathNoFollow(dst);
   if (stat.isSymbolicLink()) {
     const target = await fs.readlink(src);
     await fs.symlink(target, dst);
   } else {
-    await fs.copyFile(src, dst);
+    await fs.copyFile(src, dst, constants.COPYFILE_EXCL);
   }
 }
 
@@ -188,12 +212,13 @@ export async function restoreSnapshot(
   handle: SnapshotHandle,
   repoRoot: string,
   opts: RestoreSnapshotOptions = {},
-): Promise<void> {
-  if (!handle.dir) return;
+): Promise<SnapshotRestoreResult> {
+  if (!handle.dir) return { status: 'restored', restored: [], conflicts: [], failed: [], retained: false };
   return withProjectMutation(repoRoot, () => restoreOwnedSnapshot(handle, repoRoot, opts));
 }
 
-async function restoreOwnedSnapshot(handle: SnapshotHandle, repoRoot: string, opts: RestoreSnapshotOptions): Promise<void> {
+async function restoreOwnedSnapshot(handle: SnapshotHandle, repoRoot: string, opts: RestoreSnapshotOptions): Promise<SnapshotRestoreResult> {
+  const result: SnapshotRestoreResult = { status: 'restored', restored: [], conflicts: [], failed: [], retained: false };
   const all = [...handle.modifiedTracked, ...handle.untracked];
   // Path safety gate: the manifest is JSON on disk that may have been
   // written by an older Lattice build (without path validation), corrupted,
@@ -217,16 +242,20 @@ async function restoreOwnedSnapshot(handle: SnapshotHandle, repoRoot: string, op
     );
   }
   let failed = unsafe.length;
+  result.failed.push(...unsafe.map((file) => ({ file, message: 'unsafe snapshot path' })));
   let staleConflicts = 0;
   for (const file of safe) {
     try {
       await restoreSnapshotPath(handle.dir, repoRoot, file, opts);
+      result.restored.push(file);
     } catch (err) {
       failed += 1;
       if (err instanceof StaleSnapshotConflict) {
         staleConflicts += 1;
+        result.conflicts.push({ file, backupPath: err.backupPath });
         console.warn(`[snapshot] ${err.message}`);
       } else {
+        result.failed.push({ file, message: (err as Error).message });
         console.warn(
           `[snapshot] restore ${file} failed: ${(err as Error).message}`,
         );
@@ -235,11 +264,14 @@ async function restoreOwnedSnapshot(handle: SnapshotHandle, repoRoot: string, op
   }
   if (failed === 0) {
     try {
+      await assertSnapshotRemovalSafe(handle.dir, repoRoot);
       await fs.rm(handle.dir, { recursive: true, force: true });
     } catch {
-      /* dir cleanup failure isn't fatal */
+      result.retained = true;
     }
   } else {
+    result.status = 'partial';
+    result.retained = true;
     console.warn(
       `[snapshot] ${failed} of ${all.length} file(s) not restored` +
         (staleConflicts > 0
@@ -249,6 +281,7 @@ async function restoreOwnedSnapshot(handle: SnapshotHandle, repoRoot: string, op
         `; snapshot kept at ${handle.dir} for manual recovery`,
     );
   }
+  return result;
 }
 
 // Drop a snapshot without restoring (caller decided the snapshot is
@@ -257,8 +290,24 @@ async function restoreOwnedSnapshot(handle: SnapshotHandle, repoRoot: string, op
 export async function discardSnapshot(handle: SnapshotHandle): Promise<void> {
   if (!handle.dir) return;
   try {
+    const relative = path.relative(path.resolve(SNAPSHOTS_BASE), path.resolve(handle.dir));
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('snapshot outside the managed snapshot root');
+    await assertNotReparsePoint(handle.dir);
     await fs.rm(handle.dir, { recursive: true, force: true });
   } catch {
     /* ignore */
   }
+}
+
+async function assertSnapshotRemovalSafe(snapshotDir: string, repoRoot: string): Promise<void> {
+  const snapshot = path.resolve(snapshotDir);
+  const repo = path.resolve(repoRoot);
+  const relative = path.relative(snapshot, repo);
+  if (!relative || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
+    throw new Error('refusing to remove a snapshot directory containing the project');
+  }
+  const insideRepo = path.relative(repo, snapshot);
+  if (!insideRepo.startsWith('..') && !path.isAbsolute(insideRepo)) throw new Error('refusing to remove a snapshot directory inside the project');
+  if (snapshot === path.parse(snapshot).root) throw new Error('refusing to remove a filesystem root');
+  await assertNotReparsePoint(snapshot);
 }

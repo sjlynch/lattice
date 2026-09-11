@@ -36,3 +36,25 @@ Additional recovery invariants (2026-09 stability review):
   supported record. A version number alone does not make a record safe to use.
 - Stale conflict copies use exclusive creation with numbered suffixes; existing
   recovery work is never overwritten. Identical copies are reused across boots.
+
+Ownership and edit preservation (2026-09 follow-up):
+
+- Capture manifests carry the owning project lock generation. Boot recovery
+  acquires its own project lock and re-reads the manifest before restoring;
+  it never borrows a live merge's local ownership. Live-owned snapshots defer.
+- Cleanup requires the snapshot directory and compares captured/current content
+  hashes or symlink targets before resetting/deleting. Missing version evidence
+  refuses cleanup. Literal Git pathspecs prevent wildcard names resetting other
+  files. Hashing streams file contents to keep large artifacts off the JS heap.
+- Default restoration preserves newer dirty edits and overlays only tracked
+  destinations verified clean against HEAD. Assume-unchanged/skip-worktree paths
+  are treated as uncertain. Boot restoration stays stricter: all differing
+  destinations keep their current content and receive captured conflict copies.
+- Restoration returns a structured restored/partial result with restored paths,
+  conflicts, failures and snapshot retention. Partial teardown becomes a run
+  error; a post-FF partial is surfaced to the finalize caller without retrying
+  an already-successful HEAD move. Recursive cleanup refuses reparse points,
+  filesystem roots, and any snapshot/project containment overlap.
+- External editors do not participate in Lattice's lock. Version checks detect
+  changes before cleanup, but a write racing the final comparison and Git/file
+  replacement is not an OS-level compare-and-swap; that residual window remains.

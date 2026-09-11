@@ -1,6 +1,8 @@
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
+import type { LockBody } from '../../projectRunLock/types.js';
+import { atomicWriteFile } from '../../claudeTrust/configFile.js';
 
 export const SNAPSHOTS_BASE = path.join(os.homedir(), '.lattice', 'snapshots');
 export const SNAPSHOT_MANIFEST_FILENAME = '_lattice-snapshot.json';
@@ -21,6 +23,7 @@ export type SnapshotManifest = {
   createdAt: number;
   modifiedTracked: string[];
   untracked: string[];
+  owner?: LockBody;
 };
 
 export const EMPTY_HANDLE: SnapshotHandle = { dir: '', modifiedTracked: [], untracked: [] };
@@ -59,9 +62,8 @@ export async function writeSnapshotManifest(
   snapshotDir: string,
   manifest: SnapshotManifest,
 ): Promise<void> {
-  await fs.writeFile(
+  await atomicWriteFile(
     snapshotManifestPath(snapshotDir),
     JSON.stringify(manifest, null, 2),
-    'utf8',
   );
 }

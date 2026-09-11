@@ -24,7 +24,7 @@ import { runWorktreeMerge } from './merge/runWorktreeMerge.js';
 export type MergeConflictKind = 'merge' | 'stash-pop';
 
 export type MergeOutcome =
-  | { status: 'clean' }
+  | { status: 'clean'; snapshotWarning?: string }
   | {
       status: 'conflict';
       conflictKind: MergeConflictKind;
@@ -52,8 +52,8 @@ export async function fastForwardMain(
   const ff = await performFastForward(repoRoot, branchName, prepared.snapshot);
   if (!ff.ok) return ff.outcome;
 
-  await restoreAfterFastForward(repoRoot, prepared.snapshot);
-  return { status: 'clean' };
+  const snapshotWarning = await restoreAfterFastForward(repoRoot, prepared.snapshot);
+  return { status: 'clean', ...(snapshotWarning ? { snapshotWarning } : {}) };
 }
 
 type FastForwardPreparation =
@@ -172,13 +172,19 @@ async function performFastForward(
 async function restoreAfterFastForward(
   repoRoot: string,
   snapshot: SnapshotHandle | undefined,
-): Promise<void> {
+): Promise<string | undefined> {
   if (snapshot && snapshot.dir) {
-    await restoreSnapshot(snapshot, repoRoot).catch((err) => {
-      console.warn(
-        `[fastForwardMain] snapshot restore failed (continuing): ${(err as Error).message}`,
-      );
-    });
+    try {
+      const restored = await restoreSnapshot(snapshot, repoRoot);
+      if (restored.status === 'restored') return;
+      const warning = `Snapshot partly restored; newer edits preserved, captured versions retained at ${snapshot.dir}`;
+      console.warn(`[fastForwardMain] ${warning}`);
+      return warning;
+    } catch (err) {
+      const warning = `Snapshot restore failed; captured versions retained at ${snapshot.dir}: ${(err as Error).message}`;
+      console.warn(`[fastForwardMain] ${warning}`);
+      return warning;
+    }
   }
 }
 
