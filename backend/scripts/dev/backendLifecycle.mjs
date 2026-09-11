@@ -22,18 +22,22 @@ export function createBackendLifecycle({
   onExitDuringShutdown,
   stdio = inheritStdio,
   spawnProcess = spawn,
+  canSpawnBackend = () => true,
+  onBackendSpawned = () => {},
+  captureBackendVersion = () => undefined,
 }) {
   let backendChild = null;
   let restartingBackend = false; // true between a restart kill and the respawn
 
   function spawnBackend() {
-    if (isShuttingDown()) return null;
+    if (isShuttingDown() || !canSpawnBackend()) return null;
     copyAssetsBeforeRespawn();
+    const version = captureBackendVersion();
     restartingBackend = false;
     const c = spawnProcess(process.execPath, ['dist/index.js'], { stdio });
     let finished = false;
     let spawned = false;
-    c.once('spawn', () => { spawned = true; });
+    c.once('spawn', () => { spawned = true; onBackendSpawned(version); });
     function onChildExit(code, signal, spawnError) {
       if (finished) return;
       finished = true;
@@ -97,7 +101,7 @@ export function createBackendLifecycle({
   }
 
   function restartBackend(reason) {
-    if (isShuttingDown()) return false;
+    if (isShuttingDown() || !canSpawnBackend()) return false;
     if (restartingBackend) return false; // a restart is already in flight
     if (!backendChild) {
       console.log(`[lattice-backend] starting dist/index.js — ${reason}`);
@@ -129,6 +133,7 @@ export function createBackendLifecycle({
     start,
     restartBackend,
     kill,
+    needsStart: () => !backendChild,
   };
 }
 

@@ -35,6 +35,10 @@ export function createRestartPolicy(args?: {
   workflowInFlight?: () => boolean;
   // Newest mtime under dist/, or null when it can't be read (→ fail open).
   readNewestDistMtime?: () => number | null;
+  readDistContentSignature?: () => string | null;
+  canRestart?: () => boolean;
+  needsBackendStart?: () => boolean;
+  deferBaselineUntilSpawn?: boolean;
   now?: () => number;
 }): {
   onDistChanged(): void;
@@ -43,4 +47,7 @@ export function createRestartPolicy(args?: {
   resetDistBaseline(): void;
   startDeferredPoll(): void;
   stopDeferredPoll(): void;
+  onCompileSucceeded(): void;
+  onBackendSpawned(candidate?: { mtime: number | null; content: string | null; compileSequence: number }): void;
+  captureDistBaseline(): { mtime: number | null; content: string | null; compileSequence: number };
 };

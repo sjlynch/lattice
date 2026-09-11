@@ -31,13 +31,12 @@ import {
   resolveTscBin,
   runInitialCompile,
   runInitialCopyAssets,
-  startTscWatch,
 } from './dev/compileAssets.mjs';
 import { selfHealDeps } from './dev/deps.mjs';
 import { watchDist } from './dev/distWatcher.mjs';
 import { createRestartPolicy } from './dev/restartPolicy.mjs';
-import { describeExitCode } from './dev/exitStatus.mjs';
-import { recordExit } from '../../scripts/orchestrate/devLog.mjs';
+import { createCompilerLifecycle } from './dev/compilerLifecycle.mjs';
+import { distContentSignature } from './dev/distSignature.mjs';
 
 // ---- Step 1: self-heal deps if needed ----
 
@@ -77,13 +76,12 @@ await runInitialCopyAssets(copyAssetsScript);
 // (not a deliberate restart) we behave like `node --watch`: stay up and
 // wait for the next dist/ change to retry.
 
-const tscWatch = startTscWatch(tscBin);
-
 let shuttingDown = false;
 let closeDistWatch = () => {};
 
 let backendLifecycle;
 let restartPolicy;
+let compilerLifecycle;
 
 async function shutdown(signal) {
   if (shuttingDown) return;
@@ -94,15 +92,8 @@ async function shutdown(signal) {
     /* ignore */
   }
   restartPolicy.stopDeferredPoll();
+  compilerLifecycle?.stop(signal);
   await shutdownTerminalServer();
-  for (const c of [tscWatch]) {
-    if (!c) continue;
-    try {
-      c.kill(signal);
-    } catch {
-      /* ignore */
-    }
-  }
   backendLifecycle.kill(signal);
 }
 
@@ -115,10 +106,17 @@ backendLifecycle = createBackendLifecycle({
   copyAssetsBeforeRespawn: () => copyAssetsBeforeRespawn(copyAssetsScript),
   isShuttingDown: () => shuttingDown,
   onExitDuringShutdown: onExit,
+  canSpawnBackend: () => !compilerLifecycle || compilerLifecycle.canRestartBackend(),
+  captureBackendVersion: () => restartPolicy.captureDistBaseline(),
+  onBackendSpawned: (candidate) => restartPolicy.onBackendSpawned(candidate),
 });
 
 restartPolicy = createRestartPolicy({
   restartBackend: backendLifecycle.restartBackend,
+  canRestart: () => !shuttingDown && Boolean(compilerLifecycle?.canRestartBackend()),
+  needsBackendStart: backendLifecycle.needsStart,
+  readDistContentSignature: distContentSignature,
+  deferBaselineUntilSpawn: true,
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
@@ -127,45 +125,22 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   });
 }
 
-// If tsc -w dies, that's fatal (no more incremental compiles) — bail.
-tscWatch.on('exit', (code, signal) => {
-  const cause = describeExitCode(code, signal);
-  recordExit('tsc-watch', code ?? 1, { expected: shuttingDown, detail: cause });
-  if (!shuttingDown) console.error(`[lattice-backend] TypeScript watcher exited (${cause}) — stopping dev runner.`);
-  void onExit(code ?? 1);
-});
-tscWatch.on('error', (err) => {
-  recordExit('tsc-watch', 1, { expected: shuttingDown, detail: `spawn failed: ${err.message}` });
-  if (!shuttingDown) console.error('[lattice-backend] TypeScript watcher failed:', err);
-  void onExit(1);
-});
-
+// The one-shot compile already produced a complete backend. Start it before
+// the watch compiler so a compiler-only failure never removes a working app.
+restartPolicy.resetDistBaseline();
 backendLifecycle.start();
+compilerLifecycle = createCompilerLifecycle({
+  tscBin,
+  onCompileSucceeded: restartPolicy.onCompileSucceeded,
+});
 
-// Don't arm the dist/ watcher until tsc -w has finished its initial
-// compile. Without this, every cold boot looks like:
-//   1. runInitialCompile populates dist/
-//   2. backend spawns (serves from current dist/)
-//   3. tsc -w finishes its FIRST watch-mode compile and re-emits dist/
-//      (bumps mtimes even when the bytes are identical)
-//   4. dist/ watcher fires → backend forced-restart
-//   5. The user's browser, opened in step 2-4, races into the restart
-//      gap and gets a stream of ECONNREFUSED / 502 from the proxy —
-//      surfacing as "stuck on scanning" because /api/scan keeps failing.
-// startTscWatch attaches a `tscSettledPromise` that resolves on the
-// "Watching for file changes." line tsc -w prints after every compile.
-await tscWatch.tscSettledPromise;
-
-// If shutdown signalled while we were waiting, the tsc-exit handler
-// resolved the promise — bail before arming the watcher, otherwise we'd
-// start a watcher that might fire a restart against an already-shutting-
-// down backend lifecycle.
-if (!shuttingDown) {
-  // Baseline dist/'s newest mtime as of right now, so the watcher can tell a
-  // real rebuild from the metadata-only events Windows also delivers (NTFS
-  // last-access flush, an AV/indexer scan, an ACL refresh). Those used to
-  // restart the backend for nothing — see dev/distSignature.mjs.
-  restartPolicy.resetDistBaseline();
-  closeDistWatch = await watchDist(restartPolicy.scheduleDistChanged);
+// Dist events are fenced while the compiler starts, compiles, reports errors,
+// or repairs. Its zero-error completion is also an explicit catch-up signal,
+// so a missed native event cannot hide edits made during compiler downtime.
+const close = await watchDist(restartPolicy.scheduleDistChanged);
+if (shuttingDown) close();
+else {
+  closeDistWatch = close;
   restartPolicy.startDeferredPoll();
+  compilerLifecycle.start();
 }

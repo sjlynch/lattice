@@ -1,5 +1,25 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+
+// Used only after complete compiles / accepted restarts, never per fs event.
+// A restarted tsc re-emits unchanged bytes with fresh mtimes; comparing the
+// completed output avoids restarting a healthy backend for compiler repair.
+export function distContentSignature(dir = 'dist') {
+  const hash = createHash('sha256');
+  const walk = (current) => {
+    const entries = fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      const rel = path.relative(dir, full).split(path.sep).join('/');
+      if (entry.isSymbolicLink()) throw new Error('symlink in compiler output');
+      hash.update(`${entry.isDirectory() ? 'dir' : 'file'}:${rel.length}:${rel}\0`);
+      if (entry.isDirectory()) walk(full);
+      else hash.update(createHash('sha256').update(fs.readFileSync(full)).digest());
+    }
+  };
+  try { walk(dir); return hash.digest('hex'); } catch { return null; }
+}
 
 // Why this exists: `fs.watch('dist', {recursive:true})` is NOT a "a file's
 // bytes changed" signal on Windows. libuv arms ReadDirectoryChangesW with a

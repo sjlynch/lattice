@@ -6,6 +6,7 @@
 // delete counts. `null` means the tree could not be read — callers must treat
 // that as "unknown" and fail OPEN, never as 0.
 export function newestDistMtimeMs(dir?: string): number | null;
+export function distContentSignature(dir?: string): string | null;
 
 export function shouldRestartForDist(args: {
   newest: number | null | undefined;

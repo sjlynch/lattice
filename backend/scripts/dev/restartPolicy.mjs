@@ -118,6 +118,10 @@ export function createRestartPolicy({
   operationInFlight = () => repoOperationInFlight(),
   workflowInFlight = () => workflowRunInFlight(),
   readNewestDistMtime = () => newestDistMtimeMs(),
+  readDistContentSignature = () => null,
+  canRestart = () => true,
+  needsBackendStart = () => false,
+  deferBaselineUntilSpawn = false,
   now = () => Date.now(),
 } = {}) {
   let deferredSince = 0; // ms ts of the first deferred restart, or 0
@@ -133,23 +137,54 @@ export function createRestartPolicy({
   let ignoredSince = 0;
   let ignoredCount = 0;
   let lastEvent = describeDistEvent(null, null);
+  let contentBaseline = null;
+  let stopped = false;
+  let completedCompileSequence = 0;
+  let lastCompletedContent = null;
+
+  function captureDistBaseline() {
+    return { mtime: readNewestDistMtime(), content: readDistContentSignature(), compileSequence: completedCompileSequence };
+  }
 
   // Snapshot dist/'s current state as the "nothing new since here" mark. Called
   // by dev.mjs right before the watcher is armed (after the initial compile) so
   // the first real emit is still seen, and after every applied restart.
   function resetDistBaseline() {
     distBaseline = readNewestDistMtime();
+    contentBaseline = readDistContentSignature();
   }
 
   function applyRestart(reason, newestSeen) {
+    if (stopped || !canRestart()) return;
     const accepted = restartBackend(reason);
-    if (accepted) {
+    if (accepted && !deferBaselineUntilSpawn) {
       deferredSince = 0;
       workflowDeferLoggedAt = 0;
       distBaseline =
         typeof newestSeen === 'number' ? newestSeen : readNewestDistMtime();
       deferredDistMtime = null;
+      contentBaseline = readDistContentSignature();
     }
+  }
+
+  function onBackendSpawned(candidate) {
+    // A successful kill request does not prove a new backend ran: kill can
+    // later fail with EPERM. Commit the output baseline only on actual spawn.
+    // The candidate was captured after asset copying, BEFORE spawnProcess.
+    // A newer compile can start before the async 'spawn' event; its partial
+    // output must not become the version we claim this backend is running.
+    if (stopped) return;
+    if (!candidate && !canRestart()) return;
+    const applied = candidate ?? captureDistBaseline();
+    distBaseline = applied.mtime;
+    contentBaseline = applied.content;
+    deferredSince = 0;
+    deferredDistMtime = null;
+    workflowDeferLoggedAt = 0;
+    if (
+      canRestart() && applied.compileSequence < completedCompileSequence &&
+      !(lastCompletedContent !== null && lastCompletedContent === contentBaseline)
+    ) onDistChanged(true);
   }
 
   // A dist/ watch event that corresponds to no actual write. Historically these
@@ -167,11 +202,14 @@ export function createRestartPolicy({
     ignoredCount = 0;
   }
 
-  function onDistChanged() {
+  function onDistChanged(force = false) {
+    // No emitted file is safe to restart against until the whole compile has
+    // completed successfully. This also covers compiler downtime and repairs.
+    if (stopped || !canRestart()) return;
     // Verify a real write BEFORE anything else, so a metadata-only event can
     // neither restart the backend nor arm a deferral that the poll later applies.
     const newest = readNewestDistMtime();
-    if (!shouldRestartForDist({ newest, baseline: distBaseline })) {
+    if (!force && !needsBackendStart() && !shouldRestartForDist({ newest, baseline: distBaseline })) {
       noteIgnoredEvent();
       return;
     }
@@ -198,6 +236,7 @@ export function createRestartPolicy({
 
   // Debounce dist/ change bursts — one tsc compile emits many files.
   function scheduleDistChanged(eventType, filename) {
+    if (stopped) return;
     lastEvent = describeDistEvent(eventType, filename);
     if (distDebounceTimer) clearTimeout(distDebounceTimer);
     distDebounceTimer = setTimeout(() => {
@@ -212,8 +251,9 @@ export function createRestartPolicy({
   // wedged with the lock held; and keep deferring indefinitely while a
   // workflow control step legitimately holds it.
   function startDeferredPoll() {
-    if (deferPollTimer) return;
+    if (stopped || deferPollTimer) return;
     deferPollTimer = setInterval(() => {
+      if (stopped || !canRestart()) return;
       const action = classifyDeferAction({
         deferredSince,
         now: now(),
@@ -252,9 +292,32 @@ export function createRestartPolicy({
   }
 
   function stopDeferredPoll() {
-    if (!deferPollTimer) return;
-    clearInterval(deferPollTimer);
+    stopped = true;
+    if (distDebounceTimer) clearTimeout(distDebounceTimer);
+    distDebounceTimer = null;
+    if (deferPollTimer) clearInterval(deferPollTimer);
     deferPollTimer = null;
+  }
+
+  function onCompileSucceeded() {
+    if (stopped || !canRestart()) return;
+    const current = readDistContentSignature();
+    completedCompileSequence++;
+    lastCompletedContent = current;
+    if (!needsBackendStart() && current !== null && current === contentBaseline) {
+      // Includes the cold watch-mode re-emit, recovery with unchanged output,
+      // and a deferred edit reverted to the currently-running backend's bytes.
+      distBaseline = readNewestDistMtime();
+      deferredSince = 0;
+      deferredDistMtime = null;
+      workflowDeferLoggedAt = 0;
+      return;
+    }
+    lastEvent = 'successful TypeScript compilation';
+    // Catch up even if the compiler was down, metadata timestamps collided,
+    // or the native dist watcher missed the event. Existing run locks still
+    // control whether the verified rebuild may restart the backend now.
+    onDistChanged(true);
   }
 
   return {
@@ -263,5 +326,8 @@ export function createRestartPolicy({
     resetDistBaseline,
     startDeferredPoll,
     stopDeferredPoll,
+    onCompileSucceeded,
+    onBackendSpawned,
+    captureDistBaseline,
   };
 }
