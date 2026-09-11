@@ -31,13 +31,20 @@ const mode = process.env.MODE;
   if (typeof install !== 'function') throw new Error('no install export');
   install();
   const isSwallow = mode === 'swallow-throw' || mode === 'swallow-reject';
-  // Substring 'node-pty' in the stack is the only thing the guard keys on.
-  const ptyStack = 'Error: pty cleanup at node-pty/lib/windowsPtyAgent.js:141';
+  const cleanupError = () => {
+    const error = new TypeError("Cannot read properties of undefined (reading 'forEach')");
+    error.stack = error.toString() + '\\n    at C:/app/node_modules/node-pty/lib/windowsPtyAgent.js:141:32';
+    return error;
+  };
   setTimeout(() => {
     if (mode === 'swallow-throw') {
-      const e = new Error('pty cleanup'); e.stack = ptyStack; throw e;
+      throw cleanupError();
     } else if (mode === 'swallow-reject') {
-      const e = new Error('pty cleanup'); e.stack = ptyStack; Promise.reject(e);
+      Promise.reject(cleanupError());
+    } else if (mode === 'crash-pty-throw') {
+      const e = cleanupError(); e.message = 'native allocation failed'; throw e;
+    } else if (mode === 'crash-pty-reject') {
+      Promise.reject('node-pty cleanup failure');
     } else if (mode === 'crash-reject') {
       Promise.reject(new Error('generic backend failure'));
     } else {
@@ -125,4 +132,12 @@ for (const guard of [
     );
     assert.notEqual(r.code, 0, 'a real unhandledRejection must exit non-zero');
   });
+
+  for (const mode of ['crash-pty-throw', 'crash-pty-reject']) {
+    test(`${guard.label} guard does not swallow an unrelated node-pty ${mode}`, async () => {
+      const r = await runGuardChild(guard.url, mode);
+      assert.doesNotMatch(r.stdout, /STILL-ALIVE/);
+      assert.notEqual(r.code, 0, 'mentioning node-pty must not bypass fail-fast');
+    });
+  }
 }

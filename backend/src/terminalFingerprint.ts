@@ -29,6 +29,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const FINGERPRINT_FILES = [
   'terminal-server.js',
   'terminalServer/processGuards.js',
+  'nodePtyCleanupFailure.js',
   // Crash logging installed by processGuards — where a terminal-server crash
   // gets recorded. This process is spawned with stdio:'ignore', so a change to
   // how (or whether) it writes that file changes the only forensic trail it has.

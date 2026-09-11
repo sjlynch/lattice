@@ -20,18 +20,9 @@
 
 import { flushSinksSyncIfIdle, hasWriteInFlight } from './consoleSink.js';
 import { installCrashLogging, writeCrashLog } from './crashLog.js';
+import { isNodePtyCleanupFailure } from './nodePtyCleanupFailure.js';
 
 const FATAL_EXIT_DELAY_MS = 10;
-
-// True only for the known-cosmetic node-pty Windows cleanup throw described
-// above; matched by its module name appearing in the stack.
-function isNodePtyCleanupFailure(errOrReason: unknown): boolean {
-  const stack =
-    errOrReason instanceof Error && errOrReason.stack
-      ? errOrReason.stack
-      : String(errOrReason);
-  return stack.includes('node-pty');
-}
 
 // Preserve Node's fail-fast contract for a genuine programming error: set the
 // exit code immediately (so even a natural exit is non-zero) and force-exit on

@@ -13,16 +13,9 @@
 // terminal-server crash leaves behind.
 
 import { installCrashLogging, writeCrashLog } from '../crashLog.js';
+import { isNodePtyCleanupFailure } from '../nodePtyCleanupFailure.js';
 
 const FATAL_EXIT_DELAY_MS = 10;
-
-function isNodePtyCleanupFailure(errOrReason: unknown): boolean {
-  const stack =
-    errOrReason instanceof Error && errOrReason.stack
-      ? errOrReason.stack
-      : String(errOrReason);
-  return stack.includes('node-pty');
-}
 
 // Set the exit code immediately, then force-exit on a later tick so the
 // just-written stderr has a moment to flush before we go down.
