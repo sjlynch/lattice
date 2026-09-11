@@ -1,11 +1,23 @@
 import { computeScore } from '../score.js';
-import type { HealthMetrics } from '../types.js';
-import { bump, type SmellCounter } from '../universal.js';
+import type { HealthMetrics, HealthSmellId } from '../types.js';
+import type { SmellCounter } from '../universal.js';
 import { smellsToArray } from '../utils.js';
 import type { CrossFileResult } from './graph.js';
 
-// Merge cross-file results into per-file HealthMetrics in place. Adds the
-// relevant smells and recomputes the composite score.
+const CROSS_FILE_SMELLS = new Set<HealthSmellId>([
+  'circular_dependency',
+  'high_fan_out',
+  'high_fan_in',
+]);
+
+// Cached metrics already contain fan fields and may contain inflated or stale
+// smells from an older backend. Normalize every metrics object once before it
+// can take the unchanged fast path. The weak keys do not retain removed files,
+// and hydration/reanalysis creates new objects that must be normalized again.
+const appliedMetrics = new WeakSet<HealthMetrics>();
+
+// Replace the derived cross-file smells in per-file HealthMetrics in place,
+// preserving per-file findings and recomputing the composite score.
 export function applyCrossFile(
   metrics: Map<string, HealthMetrics>,
   cross: CrossFileResult,
@@ -19,15 +31,10 @@ export function applyCrossFile(
     // separate signal, not a maintainability penalty.
     const dc = cross.deadCode.get(filePath);
 
-    // Skip the smell-rebuild + computeScore when none of the cross-file inputs
-    // changed. A single-file edit leaves the vast majority of files with
-    // identical fanIn/fanOut/inCycle, and those three (plus deadCode) are the
-    // ONLY cross-file signals — the circular_dependency / high_fan_out /
-    // high_fan_in smells and the score (which reads fanIn/fanOut/inCycle
-    // directly, never the smell counts) are then bit-for-bit unchanged.
-    // Gate on the previous values being DEFINED so the first pass after a fresh
-    // (cache-hydrated, fan* still undefined) boot — and the just-reanalyzed
-    // originator (its metrics carry no cross-file fields yet) — still rebuild.
+    // A single-file edit leaves most files' inputs unchanged. After their first
+    // normalization, preserve the smells array and skip sorting/scoring for
+    // those files. Derived smell counts also feed the score's smell density,
+    // so unchanged fan fields alone cannot justify trusting a hydrated cache.
     const unchanged =
       m.fanIn !== undefined && m.fanIn === newFanIn &&
       m.fanOut !== undefined && m.fanOut === newFanOut &&
@@ -39,16 +46,19 @@ export function applyCrossFile(
     m.inCycle = newInCycle;
     if (dc) m.deadCode = dc;
 
-    if (unchanged) continue;
+    if (unchanged && appliedMetrics.has(m)) continue;
 
-    // Patch the smells list to reflect cross-file findings.
+    // These three smells are boolean findings of the current graph, not event
+    // counters. Remove their previous values before applying this result so
+    // resolved warnings disappear and repeated recomputations cannot inflate
+    // counts. Other smells still belong to the per-file analyzer.
     const smellMap: SmellCounter = new Map();
     for (const s of m.smells) {
-      smellMap.set(s.id, s.count);
+      if (!CROSS_FILE_SMELLS.has(s.id)) smellMap.set(s.id, s.count);
     }
-    if (m.inCycle) bump(smellMap, 'circular_dependency');
-    if (m.fanOut > 25) bump(smellMap, 'high_fan_out');
-    if (m.fanIn > 30) bump(smellMap, 'high_fan_in');
+    if (m.inCycle) smellMap.set('circular_dependency', 1);
+    if (m.fanOut > 25) smellMap.set('high_fan_out', 1);
+    if (m.fanIn > 30) smellMap.set('high_fan_in', 1);
 
     // Rebuild smells array in the same shape `analyze.ts` produced.
     const out = smellsToArray(smellMap);
@@ -59,5 +69,6 @@ export function applyCrossFile(
 
     // Recompute the score with the cross-file fields in play.
     m.score = computeScore(m);
+    appliedMetrics.add(m);
   }
 }

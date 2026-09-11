@@ -50,7 +50,14 @@ the watcher and the full scan both drive `computeCrossFile`.
   `IGNORE_DIR_NAMES` skip set). Re-exported from `./index.js` alongside the
   `roots.js` heuristics, so importers are unaffected by the split.
 - `apply.ts` — patch fanIn/fanOut/inCycle smells + the `deadCode` status back
-  into `HealthMetrics` and recompute the score.
+  into `HealthMetrics` and recompute the score. The three cross-file smells are
+  replaced from current graph facts (count 1 when present), never accumulated;
+  per-file smells are preserved. A weak set records normalized metrics objects
+  so the unchanged fast path stays cheap while the first pass repairs legacy
+  cached warnings/counts even when cached fan fields already match. No AST or
+  import-cache invalidation is needed. `../crossFileAnalyzer.ts` diffs the
+  smells array identity too, so a repaired warning is broadcast even when the
+  rounded score does not change. Unchanged normalized files retain that array.
 
 **Dead-code guard invariant** (`deadCode.ts`): if ≥20 resolvable non-root files
 are in play and more than 70% of them come back `dead`, that's the fingerprint

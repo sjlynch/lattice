@@ -24,6 +24,7 @@ type CrossFileSnapshot = Map<
     fanOut: number;
     inCycle: boolean;
     deadCode: DeadCodeStatus | undefined;
+    smells: HealthMetrics['smells'];
   }
 >;
 
@@ -36,6 +37,7 @@ export function snapshotCrossFile(metrics: Map<string, HealthMetrics>): CrossFil
       fanOut: m.fanOut ?? 0,
       inCycle: m.inCycle ?? false,
       deadCode: m.deadCode,
+      smells: m.smells,
     });
   }
   return out;
@@ -115,7 +117,7 @@ export class CrossFileAnalyzer {
   }
 
   // Re-run the full project cross-file pass and broadcast every file whose
-  // score / fanIn / fanOut / inCycle / deadCode changed. `originators` are the
+  // score / smells / fanIn / fanOut / inCycle / deadCode changed. `originators` are the
   // coalesced add/change files, always broadcast even when their cross-file
   // fields didn't move (their own smells / score may have changed); null skips
   // that step (removes / config reloads rely purely on the diff below). Used
@@ -156,7 +158,11 @@ export class CrossFileAnalyzer {
         prev.fanIn !== (m.fanIn ?? 0) ||
         prev.fanOut !== (m.fanOut ?? 0) ||
         prev.inCycle !== (m.inCycle ?? false) ||
-        prev.deadCode !== m.deadCode
+        prev.deadCode !== m.deadCode ||
+        // applyCrossFile keeps this array on an unchanged normalized file.
+        // A cached-smell repair must still reach the UI when the rounded score
+        // is unchanged (including tiny files, whose score is always 100).
+        prev.smells !== m.smells
       ) {
         broadcastUpdated(fp, m);
       }
