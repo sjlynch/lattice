@@ -42,6 +42,7 @@ Before acting on any response, confirm its `canonicalProject` matches
 | POST   | /api/tasks/:id/merge               | Attempt git merge of a Ready-to-Merge task |
 | POST   | /api/merge-runs                    | Body `{project}` — merge every Ready-to-Merge task |
 | GET    | /api/merge-runs/active?project=    | Active merge run, or `null` |
+| GET    | /api/merge-runs/recovery?project=  | `{attempts}` — persisted workflow/merge recovery counts and pause reasons; explicit merge start resets its allowance |
 | GET    | /api/merge-runs/:id                | Snapshot one merge run by id (404 once it's been forgotten) |
 | POST   | /api/merge-runs/:id/cancel         | Cancel a merge run |
 | GET    | /api/workflows?project=            | List workflow definitions — this is how you get the `:id` for the run call below |

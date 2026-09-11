@@ -206,6 +206,7 @@ therefore stay safely re-runnable.
 | POST | `/api/tasks/:id/stash-resolved` | Callback after a stash/snapshot conflict resolver finishes |
 | POST | `/api/merge-runs` | Body `{project}` — start a merge-all run |
 | GET | `/api/merge-runs/active?project=` | Active run for a project, or `null` |
+| GET | `/api/merge-runs/recovery?project=` | Persisted workflow/merge recovery attempts and pause reasons |
 | GET | `/api/merge-runs/:id` | Run snapshot |
 | POST | `/api/merge-runs/:id/cancel` | Request cancellation (run finishes current task and stops) |
 | POST | `/api/merge-runs/:id/stash-resolved` | Callback after a post-run stash/snapshot conflict resolver finishes |
