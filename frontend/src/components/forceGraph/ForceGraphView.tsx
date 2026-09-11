@@ -196,12 +196,11 @@ export function ForceGraphView({
 
   // Batched link rendering: collapse the library's per-link Line objects into a
   // single LineSegments so orbiting a settled graph isn't E extra draw calls per
-  // frame. Keyed off `structuralData` (the visible link set only changes on a
-  // structural swap or a hidden-ext change, not on metric-only HealthUpdates).
+  // frame. Keyed off graphData swaps, so identical structural rescans neither
+  // rebuild GPU buffers nor wake an otherwise settled scene.
   useBatchedLinks(
     graphRef,
     settings.batchedLinks,
-    structuralData,
     hiddenExts,
     dataGeneration,
     metricOverlayActive,
@@ -211,12 +210,11 @@ export function ForceGraphView({
   // (one per file type) instead of N Sprite-bearing Groups, so orbiting a
   // settled graph isn't ~N node draw calls per frame. The per-node sprite stays
   // mounted-but-invisible as the pick proxy (see nodeObjectFactory); recolor
-  // overlays (health/loc/dead) fall back to the per-node path. Keyed off
-  // `structuralData` for the same reason as batched links.
+  // overlays (health/loc/dead) fall back to the per-node path. Like links, the
+  // buffers rebuild only when graphData or the visible rendering settings change.
   useInstancedNodes(
     graphRef,
     settings.batchedNodes,
-    structuralData,
     hiddenExts,
     settings,
     { settingsRef, healthModeRef, locModeRef, deadModeRef },

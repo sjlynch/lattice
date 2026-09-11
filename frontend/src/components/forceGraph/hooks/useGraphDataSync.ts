@@ -104,6 +104,7 @@ export function useGraphDataSync({
     if (!data) {
       clearAllLabelRegistries();
       graph.graphData({ nodes: [], links: [] });
+      if (lastShapeRef.current !== null) setDataGeneration((g) => g + 1);
       nodeIndexRef.current = null;
       ghostsRef.current = new Set();
       lastShapeRef.current = null;

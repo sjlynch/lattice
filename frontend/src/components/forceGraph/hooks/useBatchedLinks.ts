@@ -1,6 +1,5 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
-import type { ScanResult } from '../../../api';
 import { createInstancedLinks, type InstancedLinks } from '../instancedLinks';
 import { onFrame } from '../sceneFrameDriver';
 
@@ -11,10 +10,6 @@ import { onFrame } from '../sceneFrameDriver';
 export function useBatchedLinks(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   enabled: boolean,
-  // A structure-only scan reference (changes only when files are added/removed/
-  // renamed) — the visible link set can only change on a structural swap or a
-  // hidden-extension change, never on a metric-only HealthUpdate.
-  structuralData: ScanResult | null,
   hiddenExts: Set<string>,
   // Bumped by useGraphDataSync on every full graphData() swap (which replaces
   // the link object array). Some swaps — notably the git-history ghost merge —
@@ -59,5 +54,5 @@ export function useBatchedLinks(
   useEffect(() => {
     if (!enabled) return;
     ctrlRef.current?.rebuild();
-  }, [enabled, structuralData, hiddenExts, dataGeneration, metricOverlayActive]);
+  }, [enabled, hiddenExts, dataGeneration, metricOverlayActive]);
 }

@@ -1,6 +1,5 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
-import type { ScanResult } from '../../../api';
 import type { GraphSettings } from '../graphSettings';
 import { createInstancedNodes, type InstancedNodes } from '../instancedNodes';
 import { onFrame } from '../sceneFrameDriver';
@@ -14,9 +13,6 @@ import { clearLabelsAndRefresh } from './refresh';
 export function useInstancedNodes(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   enabled: boolean,
-  // Structure-only scan ref (changes only on add/remove/rename) — the visible
-  // node set only changes on a structural swap or a hidden-ext change.
-  structuralData: ScanResult | null,
   hiddenExts: Set<string>,
   settings: GraphSettings,
   // Read live so the controller's per-frame `isBaseView()` reflects the current
@@ -84,7 +80,6 @@ export function useInstancedNodes(
     ctrlRef.current?.rebuild();
   }, [
     enabled,
-    structuralData,
     hiddenExts,
     settings.fileNodeSize,
     settings.dirNodeSize,

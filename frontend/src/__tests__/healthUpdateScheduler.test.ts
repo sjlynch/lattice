@@ -41,7 +41,7 @@ function harness() {
   });
   return {
     scheduler, timers, pending, scanResultRef, snapshots,
-    start: () => { scheduler.handleEvent({ type: 'rescan', reason: 'config' }); timers.fireAll(); },
+    start: () => { scheduler.handleEvent({ type: 'rescan', reason: 'config', path: ROOT }); timers.fireAll(); },
     cleanup: () => { scheduler.dispose(); restoreFetch(); timers.restore(); },
   };
 }
@@ -80,7 +80,7 @@ test('repeated structural updates while scanning run at most one scan and one fo
   try {
     h.start();
     for (let i = 0; i < 20; i++) {
-      h.scheduler.handleEvent({ type: 'rescan', reason: 'config' });
+      h.scheduler.handleEvent({ type: 'rescan', reason: 'config', path: ROOT });
       h.timers.fireAll();
     }
     assert.equal(h.pending.length, 1, 'slow repository walks cannot overlap');

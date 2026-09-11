@@ -96,9 +96,12 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
 
 - `useBatchedLinks` / `useInstancedNodes` — own the `instancedLinks`/
   `instancedNodes` controllers: create once, subscribe the per-frame sync to the
-  scene frame driver, toggle on the setting, and **rebuild on a structural swap /
+  scene frame driver, toggle on the setting, and **rebuild on a graphData swap /
   hidden-ext change / node-size change / `dataGeneration` bump** (every full
   `graphData()` swap, so they re-capture the fresh arrays after a ghost merge).
+  Do not depend on `structuralData`: a same-shape backend rescan replaces that
+  reference even when `useGraphDataSync` correctly skips a graph swap. Rebuilding
+  in that case needlessly uploads all buffers and wakes the paused render loop.
 - `useGraphCounts` — file/dir/hidden HUD counts memo, keyed off `useStructuralScan`
   so metric saves skip the recount. `useMetricsIgnoreRefresh` — refresh when the
   LOC/health ignore-ext set changes. `useRefMirror` / `refresh.ts` — small helpers.
