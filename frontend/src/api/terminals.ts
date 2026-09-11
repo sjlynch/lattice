@@ -3,7 +3,7 @@ import { subscribeWsShared } from './ws';
 export type TerminalActivityMessage = {
   type: 'terminal-activity';
   // Backend session ids (`TerminalSpec.serverId`) whose harness is still
-  // emitting output. Machine-wide, not project-filtered — the sidebar
+  // working. Machine-wide, not project-filtered — the sidebar
   // intersects it with its own project-scoped tab list.
   busy: string[];
 };
@@ -15,7 +15,8 @@ export type TerminalActivityMessage = {
  * its icon for a spinner even when its `TerminalPane` was never mounted — which
  * is the whole point, since an un-clicked tab has no terminal WebSocket of its
  * own to watch. See `backend/src/terminalActivity.ts` for how the signal is
- * derived.
+ * derived. A disconnected feed clears this ephemeral indicator and its replay
+ * cache; the next connection must supply a fresh snapshot.
  */
 export function subscribeTerminalActivity(
   project: string,
@@ -25,8 +26,11 @@ export function subscribeTerminalActivity(
     `/ws/terminal-activity?project=${encodeURIComponent(project)}`,
     (msg) => {
       if (msg?.type !== 'terminal-activity' || !Array.isArray(msg.busy)) return;
-      onBusy(msg.busy);
+      // Normalize the wire set so duplicate/invalid ids cannot preserve stale
+      // members in the hook's equality check.
+      onBusy([...new Set(msg.busy.filter((id) => typeof id === 'string' && id.length > 0))]);
     },
-    (msg) => msg?.type === 'terminal-activity',
+    (msg) => msg?.type === 'terminal-activity' && Array.isArray(msg.busy),
+    { onDisconnect: () => onBusy([]), resetReplayOnDisconnect: true },
   );
 }

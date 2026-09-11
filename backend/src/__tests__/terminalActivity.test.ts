@@ -79,6 +79,22 @@ test('agentHarnessForCommand recognises every Lattice-built agent command', () =
   );
 });
 
+test('new printable-output facts take precedence over legacy raw traffic', () => {
+  const state = new Map([['s1', midRun(NOW - TICK)]]);
+  for (const lastTextOutputAt of [0, NOW - 5_000, NaN, Infinity, null, 'bad', NOW + 1]) {
+    const result = stepTerminalActivity([session({ lastTextOutputAt })], state, NOW);
+    assert.deepEqual(result.busy, []);
+  }
+  assert.deepEqual(stepTerminalActivity([session({ lastTextOutputAt: NOW })], state, NOW).busy, ['s1']);
+  assert.deepEqual(stepTerminalActivity([session({})], state, NOW).busy, ['s1'], 'legacy executors retain compatibility');
+});
+
+test('nonfinite and future raw timestamps cannot pin a legacy spinner on', () => {
+  for (const lastOutputAt of [NaN, Infinity, -Infinity, NOW + 10_000]) {
+    assert.deepEqual(stepTerminalActivity([session({ lastOutputAt })], EMPTY_TERMINAL_ACTIVITY, NOW).busy, []);
+  }
+});
+
 test('agentHarnessForCommand tolerates paths, quotes, and Windows shims', () => {
   assert.equal(agentHarnessForCommand('"C:\\Program Files\\bin\\claude.cmd" --x'), 'claude');
   assert.equal(agentHarnessForCommand('/usr/local/bin/codex'), 'codex');

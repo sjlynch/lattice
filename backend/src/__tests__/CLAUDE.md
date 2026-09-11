@@ -87,6 +87,13 @@ cache, whose home path binds once at module load. Keep tests as plain
   must still be excluded), sorted output the poll loop diffs as a string,
   malformed entries from the cross-process JSON, and the carried state dropping
   closed ptys. No timers or terminal-server.
+- `terminalOutputFacts.test.ts` — the Codex control-only idle regression,
+  working-to-idle transition, escape sequences at every chunk split, Unicode
+  and hyperlink text, large control payloads, and actual session-event/list
+  wiring preserving raw bytes while reporting printable-output timestamps.
+- `terminalActivityPoller.test.ts` — subscription generations, late responses,
+  unknown/hung probes, bounded stale display state, change-only fanout and
+  subscriber failures with a deterministic clock and no real terminal server.
 - `worktree.merge.branchState.test.ts` — `checkBranchState()` merge state
   machine across all four outcomes (error/already-merged/empty/ahead); pins the
   safety invariant that a THROWN commit-count surfaces as `error` (never a

@@ -31,6 +31,7 @@ export type WsSubscription<T> = (event: T) => void;
 export function subscribeWs<T>(
   pathWithQuery: string,
   onMessage: WsSubscription<T>,
+  onDisconnect?: () => void,
 ): () => void {
   let ws: WebSocket | null = null;
   let cancelled = false;
@@ -51,9 +52,12 @@ export function subscribeWs<T>(
 
   function connect() {
     if (cancelled) return;
+    timer = null;
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(`${proto}://${window.location.host}${pathWithQuery}`);
-    ws.onopen = () => {
+    const socket = new WebSocket(`${proto}://${window.location.host}${pathWithQuery}`);
+    ws = socket;
+    socket.onopen = () => {
+      if (cancelled || ws !== socket) return;
       // Don't reset the backoff yet — wait for the connection to prove stable.
       clearStableTimer();
       stableTimer = setTimeout(() => {
@@ -61,7 +65,8 @@ export function subscribeWs<T>(
         stableTimer = null;
       }, WS_STABLE_MS);
     };
-    ws.onmessage = (ev) => {
+    socket.onmessage = (ev) => {
+      if (cancelled || ws !== socket) return;
       try {
         const msg = JSON.parse(ev.data) as T;
         onMessage(msg);
@@ -69,11 +74,18 @@ export function subscribeWs<T>(
         /* ignore malformed frames */
       }
     };
-    ws.onerror = () => {
+    socket.onerror = () => {
       /* onclose will reschedule */
     };
-    ws.onclose = () => {
+    socket.onclose = () => {
+      if (cancelled || ws !== socket) return;
+      ws = null;
       clearStableTimer();
+      try {
+        onDisconnect?.();
+      } catch {
+        /* a subscriber must not prevent reconnecting */
+      }
       if (cancelled) return;
       const delay = wsReconnectDelay(attempt);
       attempt += 1;
@@ -104,12 +116,26 @@ export function subscribeWs<T>(
 // and replayed synchronously to a handler that joins an ALREADY-OPEN socket —
 // so a late subscriber still receives the latest snapshot, preserving the
 // per-connection initial re-sync each independent socket used to get on its
-// own connect. Pass the SAME predicate from every caller of a given path.
+// own connect. Pass the SAME predicate and resetReplayOnDisconnect policy
+// from every caller of a given path; disconnect callbacks remain per subscriber.
+type SharedSubscriber<T> = {
+  onMessage: WsSubscription<T>;
+  onDisconnect?: () => void;
+};
+
 type SharedChannel<T> = {
-  handlers: Set<WsSubscription<T>>;
+  subscribers: Set<SharedSubscriber<T>>;
   teardown: () => void;
   shouldReplay?: (msg: T) => boolean;
   lastReplay: T | undefined;
+  resetReplayOnDisconnect: boolean;
+};
+
+// Ephemeral signals such as "agent is working" must become unknown on a lost
+// connection. Other feeds keep their existing snapshot replay behavior.
+export type SharedWsLifecycle = {
+  onDisconnect?: () => void;
+  resetReplayOnDisconnect?: boolean;
 };
 
 const sharedChannels = new Map<string, SharedChannel<unknown>>();
@@ -118,45 +144,58 @@ export function subscribeWsShared<T>(
   pathWithQuery: string,
   onMessage: WsSubscription<T>,
   shouldReplay?: (msg: T) => boolean,
+  lifecycle: SharedWsLifecycle = {},
 ): () => void {
   let channel = sharedChannels.get(pathWithQuery) as
     | SharedChannel<T>
     | undefined;
   if (!channel) {
     const created: SharedChannel<T> = {
-      handlers: new Set(),
+      subscribers: new Set(),
       teardown: () => {},
       shouldReplay,
       lastReplay: undefined,
+      resetReplayOnDisconnect: lifecycle.resetReplayOnDisconnect ?? false,
     };
     created.teardown = subscribeWs<T>(pathWithQuery, (msg) => {
       if (created.shouldReplay?.(msg)) created.lastReplay = msg;
       // Snapshot the handler set so a handler that unsubscribes mid-dispatch
       // doesn't perturb the live iteration.
-      for (const h of [...created.handlers]) h(msg);
+      for (const subscriber of [...created.subscribers]) {
+        try { subscriber.onMessage(msg); } catch { /* isolate subscribers */ }
+      }
+    }, () => {
+      if (created.resetReplayOnDisconnect) created.lastReplay = undefined;
+      for (const subscriber of [...created.subscribers]) {
+        try { subscriber.onDisconnect?.(); } catch { /* isolate subscribers */ }
+      }
     });
     channel = created;
     sharedChannels.set(pathWithQuery, created as SharedChannel<unknown>);
   }
 
-  channel.handlers.add(onMessage);
+  // Each call owns a registration even if two callers pass the same callback.
+  // Capture its channel so an old cleanup can never affect a replacement one.
+  const subscribedChannel = channel;
+  const subscriber: SharedSubscriber<T> = { onMessage, onDisconnect: lifecycle.onDisconnect };
+  subscribedChannel.subscribers.add(subscriber);
   // Replay the latest cached snapshot to this (possibly late) joiner. No-op for
   // the first subscriber, which hasn't seen a snapshot yet and instead receives
   // it via the normal fan-out when the socket connects.
-  if (channel.lastReplay !== undefined) onMessage(channel.lastReplay);
+  if (subscribedChannel.lastReplay !== undefined) {
+    try { onMessage(subscribedChannel.lastReplay); } catch { /* still return the cleanup */ }
+  }
 
   let unsubscribed = false;
   return () => {
     if (unsubscribed) return;
     unsubscribed = true;
-    const ch = sharedChannels.get(pathWithQuery) as
-      | SharedChannel<T>
-      | undefined;
-    if (!ch) return;
-    ch.handlers.delete(onMessage);
-    if (ch.handlers.size === 0) {
-      ch.teardown();
-      sharedChannels.delete(pathWithQuery);
+    subscribedChannel.subscribers.delete(subscriber);
+    if (subscribedChannel.subscribers.size === 0) {
+      subscribedChannel.teardown();
+      if (sharedChannels.get(pathWithQuery) === subscribedChannel) {
+        sharedChannels.delete(pathWithQuery);
+      }
     }
   };
 }

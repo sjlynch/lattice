@@ -16,24 +16,31 @@ function sameIds(current: ReadonlySet<string>, next: string[]): boolean {
 /**
  * Backend session ids (`TerminalSpec.serverId`) whose harness is still working,
  * for the per-tab spinner. Empty until the first frame arrives, and while no
- * project is open.
+ * project is open or the activity feed is disconnected.
  *
  * Sourced from `/ws/terminal-activity` rather than the panes themselves because
  * a tab is only mounted after its first activation — the tabs you most want a
  * spinner on are the ones you have not opened yet.
  */
 export function useBusyAgentTerminals(activeFolder: string): ReadonlySet<string> {
-  const [busy, setBusy] = useState<ReadonlySet<string>>(EMPTY);
+  const [snapshot, setSnapshot] = useState({ project: activeFolder, busy: EMPTY });
 
   useEffect(() => {
-    if (!activeFolder) {
-      setBusy((prev) => (prev.size === 0 ? prev : EMPTY));
-      return;
-    }
-    return subscribeTerminalActivity(activeFolder, (ids) => {
-      setBusy((prev) => (sameIds(prev, ids) ? prev : new Set(ids)));
+    setSnapshot((prev) => prev.project === activeFolder && prev.busy.size === 0
+      ? prev : { project: activeFolder, busy: EMPTY });
+    if (!activeFolder) return;
+    let active = true;
+    const unsubscribe = subscribeTerminalActivity(activeFolder, (ids) => {
+      setSnapshot((prev) => {
+        if (!active) return prev;
+        return prev.project === activeFolder && sameIds(prev.busy, ids)
+          ? prev : { project: activeFolder, busy: new Set(ids) };
+      });
     });
+    return () => { active = false; unsubscribe(); };
   }, [activeFolder]);
 
-  return busy;
+  // Project changes render before effect cleanup/reset runs. Never expose the
+  // previous subscription's snapshot during that first commit.
+  return snapshot.project === activeFolder ? snapshot.busy : EMPTY;
 }

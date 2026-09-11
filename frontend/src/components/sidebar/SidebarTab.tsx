@@ -95,7 +95,7 @@ export const SidebarTab = memo(function SidebarTab({
       {/* While the harness in this pty is still working, its icon becomes a
           spinner. Takes the icon's slot rather than adding a glyph so the tab
           strip's width doesn't jitter every time an agent starts or stops. */}
-      {busy ? (
+      {busy && status !== 'exited' && status !== 'dead' ? (
         // Wrapped so the tooltip/label sit on an element that takes them —
         // lucide's props omit `title` — and so the rotation animates the
         // wrapper, leaving the glyph itself untouched.

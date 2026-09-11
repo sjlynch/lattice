@@ -85,3 +85,8 @@ Implementation pieces for `../Sidebar.tsx`.
   are precisely the tabs you want a spinner on. Returns the SAME `Set` reference
   for an unchanged frame (a reconnect re-sends the current set) so the memoized
   `SidebarTab` rows don't re-render on it.
+  Project switches hide the previous snapshot before the first new-project
+  commit. Disconnect clears this transient set and its shared WS replay cache;
+  stale socket callbacks cannot restore it. `SidebarTab` suppresses the spinner
+  for `exited`/`dead` terminals even if an activity snapshot still names them,
+  while unopened tabs (no pane status yet) remain eligible.

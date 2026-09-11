@@ -63,6 +63,7 @@ export const FINGERPRINT_FILES = [
   'terminal/envSetup.js',
   'terminal/broadcast.js',
   'terminal/sessionLifecycle.js',
+  'terminal/outputFacts.js',
   'terminal/attach.js',
   'terminal/kill.js',
   // Shared tunables/helpers the terminal/* runtime modules import. These

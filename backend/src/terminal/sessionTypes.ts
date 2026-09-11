@@ -1,6 +1,7 @@
 import type * as pty from 'node-pty';
 import type { WebSocket } from 'ws';
 import type { ScrollbackStore } from './scrollbackStore.js';
+import type { TerminalOutputFacts } from './outputFacts.js';
 
 export type Session = {
   id: string;
@@ -17,14 +18,12 @@ export type Session = {
   projectPath: string;
   subscribers: Set<WebSocket>;
   createdAt: number;
-  // Wall-clock of the last byte this pty emitted, bumped on every `onData`
-  // (sessionLifecycle.ts) and reported by `listSessions`. The MAIN backend
-  // derives the sidebar's per-tab "agent is still working" spinner from it
-  // (`terminalActivity.ts`). Deliberately a raw fact: the idle threshold and
-  // the is-this-an-agent test are POLICY and live over there, so tuning them
-  // stays a backend-only edit that doesn't change the terminal-server
-  // fingerprint (which would respawn every running pty).
+  // Wall-clock of the last byte this pty emitted. Retained for existing
+  // liveness consumers; raw control bytes alone do not mean the agent is busy.
   lastOutputAt: number;
+  // Printable output facts, independent of raw PTY control traffic. Activity
+  // thresholds and harness classification remain in the main backend.
+  outputFacts: TerminalOutputFacts;
   // The initial command this session was spawned with, verbatim. Recorded so
   // the main backend can tell an agent pty from a plain shell or a
   // `npm run dev` startup terminal without the frontend having to remember it

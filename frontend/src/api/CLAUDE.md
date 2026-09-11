@@ -23,6 +23,14 @@ Backend bindings, grouped by domain. `import { ... } from '../api'` resolves to 
 
 ## Adding an endpoint
 
+`subscribeWsShared` accepts optional per-subscriber `onDisconnect` callbacks
+and a `resetReplayOnDisconnect` channel policy. Terminal activity opts in so a
+lost connection cannot replay stale busy ids; ordinary snapshot feeds keep their
+existing replay behavior. Callers sharing a path must use the same replay policy.
+Each subscription owns a separate registration even when callbacks are reused;
+cleanup is bound to that channel instance. Message, disconnect, and immediate
+replay callback failures are isolated from other subscribers and cleanup.
+
 1. Type goes in the matching `types/<domain>.ts` file, and is re-exported by `types/index.ts`.
 2. Function goes in the matching domain file. Use `asJson` for simple GETs and `postJson`/`patchJson`/`deleteJson` for JSON writes.
 3. WS endpoints: call `subscribeWs(path, cb)` (or `subscribeWsShared` when several features watch the same path) — don't reinvent reconnect/backoff.

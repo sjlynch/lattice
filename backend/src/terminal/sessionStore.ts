@@ -43,6 +43,7 @@ export function listSessions(): Array<{
   subscribers: number;
   bufferSize: number;
   lastOutputAt: number;
+  lastTextOutputAt: number;
   initialCommand?: string;
 }> {
   return Array.from(sessions.values()).map((s) => ({
@@ -58,6 +59,7 @@ export function listSessions(): Array<{
     // Raw inputs for the main backend's terminal-activity signal (the sidebar
     // tab spinner). See sessionTypes.ts — this side records, it never judges.
     lastOutputAt: s.lastOutputAt,
+    lastTextOutputAt: s.outputFacts.lastTextOutputAt,
     initialCommand: s.initialCommand,
   }));
 }

@@ -12,12 +12,12 @@
 // no event channel back into this one. One poll here serves every browser tab
 // and every project, and it only runs while at least one client is subscribed.
 //
-// THE SIGNAL IS A HEURISTIC, on purpose. All three harnesses repaint a status
-// line continuously while they work (an animated spinner plus an elapsed-time
-// counter) and fall silent at their prompt, so output recency tracks "actively
-// working" closely enough for a 12px glyph — with no per-harness hooks, and
-// covering Codex and Pi, which have no activity hooks at all. Notably it reads
-// "waiting for you to approve a tool" as not-working, which is the right answer.
+// The display signal is a heuristic based on sustained PRINTABLE output.
+// Codex also emits synchronized-redraw controls (~12 times/sec) while idle;
+// raw byte recency would therefore keep it busy forever. The terminal-server
+// records a separate printable-output timestamp while preserving lastOutputAt
+// for existing liveness consumers. Old compatible executors lack that fact,
+// so they retain the legacy heuristic until their next normal replacement.
 //
 // It is SUSTAINED output, not merely recent output. A full-screen TUI also
 // redraws for reasons that have nothing to do with the agent working, and the
@@ -35,8 +35,9 @@
 
 import { agentHarnessForCommand } from './harnesses.js';
 import { proxyListSessionsOrNull } from './terminalServerClient.js';
+import { createTerminalActivityPoller } from './terminalActivityPoller.js';
 
-// How long a session may go without emitting a byte before it counts as idle.
+// How long a session may go without printable output before it counts as idle.
 // Comfortably longer than any within-frame gap in a harness's spinner animation
 // (so a working agent never flickers off) while still noticing a finished agent
 // within a few seconds. Policy — see the fingerprint note in
@@ -97,13 +98,10 @@ function pruneClientInput(now: number): void {
   }
 }
 
-// Poll cadence against the terminal-server's `/sessions`. Cheap (a loopback GET
-// returning a short JSON array) and only ticks while someone is watching.
-const POLL_INTERVAL_MS = 1_000;
-
 export type TerminalSessionSnapshot = {
   id?: unknown;
   lastOutputAt?: unknown;
+  lastTextOutputAt?: unknown;
   initialCommand?: unknown;
 };
 
@@ -154,11 +152,14 @@ export function stepTerminalActivity(
     if (!raw || typeof raw !== 'object') continue;
     const s = raw as TerminalSessionSnapshot;
     if (typeof s.id !== 'string' || !s.id) continue;
-    if (typeof s.lastOutputAt !== 'number') continue;
+    // A supported zero timestamp means no printable output yet. Only absent
+    // fields fall back to raw bytes from older compatible executors.
+    const stamp = s.lastTextOutputAt === undefined ? s.lastOutputAt : s.lastTextOutputAt;
+    if (typeof stamp !== 'number' || !Number.isFinite(stamp) || stamp <= 0 || stamp > now) continue;
     const command = typeof s.initialCommand === 'string' ? s.initialCommand : undefined;
     if (!agentHarnessForCommand(command)) continue;
 
-    const lastOutputAt = s.lastOutputAt;
+    const lastOutputAt = stamp;
     const before = previous.get(s.id);
     // A gap wider than the idle window means the pty went quiet and started
     // talking again — that's a NEW run, so a redraw arriving after a finished
@@ -166,7 +167,8 @@ export function stepTerminalActivity(
     // seeing for the first time counts as a new run too: with no history, the
     // conservative read is "this one just began".
     const continues =
-      before !== undefined && lastOutputAt - before.lastOutputAt < idleMs;
+      before !== undefined && lastOutputAt >= before.lastOutputAt &&
+      lastOutputAt - before.lastOutputAt < idleMs;
     const runStartedAt = continues ? before.runStartedAt : lastOutputAt;
     state.set(s.id, { lastOutputAt, runStartedAt });
 
@@ -185,90 +187,26 @@ export function stepTerminalActivity(
   return { busy: busy.sort(), state };
 }
 
-type Listener = (busyIds: string[]) => void;
-
-const listeners = new Set<Listener>();
-let timer: ReturnType<typeof setInterval> | null = null;
-// Last set we broadcast, as a comparison key. Listeners are only woken when the
-// set actually changes — with N agents all working the poll result is identical
-// tick after tick, and every frame would otherwise re-render every sidebar tab.
-let lastBusyKey = '';
-let lastBusy: string[] = [];
-let polling = false;
-// Carried between ticks so `stepTerminalActivity` can tell a sustained stream
-// from a one-shot redraw. Advanced only on a successful poll.
+// One shared loop with bounded stale display state and subscription fencing.
+// This display-only signal never controls terminal or workflow lifecycle.
 let activity: TerminalActivityState = EMPTY_TERMINAL_ACTIVITY;
-
-async function poll(): Promise<void> {
-  // Skip a tick rather than stack requests if the terminal-server is slow.
-  if (polling) return;
-  polling = true;
-  try {
+const poller = createTerminalActivityPoller({
+  reset: () => { activity = EMPTY_TERMINAL_ACTIVITY; },
+  fetchBusy: async (isCurrent) => {
     const sessions = await proxyListSessionsOrNull();
-    // `null` is "can't tell" (terminal-server unreachable/wedged), NOT "nothing
-    // is running". Hold the last known set instead of blinking every spinner
-    // off during a restart — the same distinction proxyCountSessions draws for
-    // the spawn queue.
-    if (sessions === null) return;
+    // Fence fold state too: a finished old probe must not revive the previous
+    // subscriber generation after the last browser has disconnected.
+    if (!isCurrent() || sessions === null) return null;
     const now = Date.now();
     pruneClientInput(now);
-    const stepped = stepTerminalActivity(sessions, activity, now, {
-      inputAt: clientInputAt,
-    });
+    const stepped = stepTerminalActivity(sessions, activity, now, { inputAt: clientInputAt });
     activity = stepped.state;
-    const busy = stepped.busy;
-    const key = busy.join(',');
-    if (key === lastBusyKey) return;
-    lastBusyKey = key;
-    lastBusy = busy;
-    for (const listener of [...listeners]) {
-      try {
-        listener(busy);
-      } catch {
-        /* a wedged subscriber must not stop the fan-out */
-      }
-    }
-  } finally {
-    polling = false;
-  }
-}
+    return stepped.busy;
+  },
+});
 
-/**
- * Watch the busy set. The listener fires immediately with the last known set
- * (so a fresh WS connection is in sync without waiting a full tick), then again
- * on every change. The poll loop starts with the first subscriber and stops
- * with the last.
- *
- * The payload is NOT project-scoped: session ids are opaque, and the sidebar
- * already scopes its tab list to the active project, so intersecting on
- * `serverId` there is both simpler and immune to the `projectPath` drift a
- * legacy/serverless session can carry (it falls back to its cwd, which for a
- * task is the worktree, not the project root).
- */
-export function subscribeTerminalActivity(listener: Listener): () => void {
-  listeners.add(listener);
-  listener(lastBusy);
-  if (!timer) {
-    timer = setInterval(() => {
-      void poll();
-    }, POLL_INTERVAL_MS);
-    // Don't hold the process open just to animate a spinner.
-    timer.unref?.();
-    void poll();
-  }
-  return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0 && timer) {
-      clearInterval(timer);
-      timer = null;
-      // Drop the cached set with the last watcher: it goes stale the moment we
-      // stop polling, and replaying it to the next subscriber would show a
-      // spinner for an agent that finished while nobody was looking. The
-      // carried run state goes with it — its whole value is being one tick old,
-      // and the next subscriber re-derives it within a tick or two.
-      lastBusyKey = '';
-      lastBusy = [];
-      activity = EMPTY_TERMINAL_ACTIVITY;
-    }
-  };
+// Machine-wide ids are intersected with project-scoped tabs in the sidebar.
+// Subscribe emits the current set immediately and thereafter only on changes.
+export function subscribeTerminalActivity(listener: (busyIds: string[]) => void): () => void {
+  return poller.subscribe(listener);
 }

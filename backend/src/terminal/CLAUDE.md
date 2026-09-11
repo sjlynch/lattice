@@ -9,17 +9,23 @@ owns the node-pty processes.
 ## Files
 
 - `sessionTypes.ts` — `Session` (id, pty, scrollback, size, cwd, shell,
-  projectPath, subscribers, `lastOutputAt`, `initialCommand`, `killing` guard) +
-  `CreateOpts` / `AttachOpts`. No logic. `lastOutputAt` + `initialCommand` exist
-  purely so the MAIN backend can derive the sidebar's per-tab agent spinner
-  (`../terminalActivity.ts`) — record raw facts here and keep the
-  interpretation (idle threshold, is-this-an-agent) over there, or tuning the
-  spinner changes the terminal-server fingerprint and respawns every pty.
+  projectPath, subscribers, `lastOutputAt`, `outputFacts`, `initialCommand`,
+  `killing` guard) + `CreateOpts` / `AttachOpts`. Record facts here; activity
+  thresholds and harness classification stay in `../terminalActivity.ts`.
+- `outputFacts.ts` — constant-memory incremental escape parser recording
+  `lastTextOutputAt`. CSI synchronization/cursor/query frames, OSC titles and
+  DCS/APC/PM payloads do not count as text, even across PTY chunks. Codex emits
+  synchronized-redraw controls repeatedly while waiting for input. Raw output
+  still reaches scrollback/subscribers unchanged, and `lastOutputAt` retains
+  its raw-byte meaning for existing liveness consumers. Zero text timestamp
+  means no printable output yet. Compatible older executors lack this field
+  and keep the old heuristic until normal safe replacement; never kill live
+  sessions just to activate an activity-display update.
 - `sessionStore.ts` — **the single source of truth**: the module-singleton
   `Map<id, Session>`. `getSession` / `addSession` / `deleteSession` (disposes
   the session's scrollback at the one deletion point) / `sessionCount` /
   `allSessions` / `listSessions` (debug snapshot — also the wire format the
-  main backend reads `lastOutputAt`/`initialCommand` from).
+  main backend reads `lastOutputAt`/`lastTextOutputAt`/`initialCommand` from).
 - `launchContext.ts` — `buildSessionLaunchContext`: resolves shell, cwd
   (validated to exist — refusing a doomed spawn that would feed a reconnect
   loop), size, projectPath, and the env; calls `windowsPath` + `envSetup` to

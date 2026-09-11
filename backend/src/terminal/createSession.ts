@@ -1,6 +1,7 @@
 import * as pty from 'node-pty';
 import { createTerminalSessionId } from '../ids.js';
 import { ScrollbackStore } from './scrollbackStore.js';
+import { TerminalOutputFacts } from './outputFacts.js';
 import { TERMINAL_CONFIG } from '../terminalConfig.js';
 import type { CreateOpts, Session } from './sessionTypes.js';
 import { addSession, sessionCount } from './sessionStore.js';
@@ -85,6 +86,7 @@ export function createSession(
     // per-harness rewriters bolt flags/`-c` overrides onto it, and all the
     // activity classifier wants is which binary this pty launched.
     lastOutputAt: Date.now(),
+    outputFacts: new TerminalOutputFacts(),
     initialCommand: opts.initialCommand,
     killing: false,
   };

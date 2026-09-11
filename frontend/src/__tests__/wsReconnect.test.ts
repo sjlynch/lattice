@@ -153,3 +153,24 @@ test('teardown after a drop cancels the pending reconnect', () => {
   teardown();
   assert.equal(timers.scheduled.length, 0); // ...and cancelled
 });
+
+test('teardown ignores queued socket callbacks without restoring timers or delivering messages', () => {
+  const received: unknown[] = [];
+  let disconnects = 0;
+  const teardown = subscribeWs('/cancelled', (msg) => received.push(msg), () => { disconnects += 1; });
+  const ws = latestSocket();
+  teardown();
+  ws.serverAccept();
+  ws.onmessage?.({ data: '{"stale":true}' });
+  ws.serverDrop();
+  assert.deepEqual(received, []);
+  assert.equal(disconnects, 0);
+  assert.equal(timers.scheduled.length, 0);
+});
+
+test('a throwing disconnect callback cannot stop reconnecting', () => {
+  const teardown = subscribeWs('/disconnect-error', () => {}, () => { throw new Error('subscriber failed'); });
+  latestSocket().serverDrop();
+  assert.equal(pendingReconnect().delay, WS_RECONNECT_BASE_MS);
+  teardown();
+});
