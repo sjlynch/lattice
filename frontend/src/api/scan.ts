@@ -23,8 +23,8 @@ export async function fetchDefaultRoot(): Promise<string> {
   return j.path as string;
 }
 
-export async function scanFolder(folderPath: string): Promise<ScanResult> {
-  const r = await fetch(`/api/scan?path=${encodeURIComponent(folderPath)}`);
+export async function scanFolder(folderPath: string, signal?: AbortSignal): Promise<ScanResult> {
+  const r = await fetch(`/api/scan?path=${encodeURIComponent(folderPath)}`, { signal });
   if (!r.ok) throw new Error(`scan failed: ${r.status}`);
   return r.json();
 }

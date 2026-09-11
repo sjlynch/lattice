@@ -50,6 +50,7 @@ export function useProjectScanScheduler({
     }
 
     let cancelled = false;
+    const controller = new AbortController();
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
     scanResultRef.current = null;
@@ -59,7 +60,7 @@ export function useProjectScanScheduler({
     function tryScan() {
       if (cancelled) return;
       const id = requestId.next();
-      scanFolder(activeFolder)
+      scanFolder(activeFolder, controller.signal)
         .then((result) => {
           if (cancelled || !requestId.isCurrent(id)) return;
           scanResultRef.current = result;
@@ -82,6 +83,7 @@ export function useProjectScanScheduler({
     tryScan();
     return () => {
       cancelled = true;
+      controller.abort();
       if (timer) clearTimeout(timer);
     };
   }, [activeFolder, initialScanCompleteRef, requestId, scanResultRef, setSnapshot]);

@@ -34,6 +34,7 @@ export function createLoopScheduler(
   // means a deferred pause microtask is already queued (coalesces repeats).
   let throttleTimer: ReturnType<typeof setTimeout> | null = null;
   let pausePending = false;
+  let destroyed = false;
   // Guards against re-entrant resumes. `graph.resumeAnimation()` synchronously
   // runs a render tick (`_animationCycle` → `tickFrame` → `scene.onBeforeRender`)
   // BEFORE the library re-arms its RAF id, so the id is transiently null mid-tick
@@ -69,10 +70,11 @@ export function createLoopScheduler(
   //   - still slow-only → pause now and schedule the next throttled paint;
   //   - nothing wants the loop → pause and stay paused.
   function schedulePauseCheck() {
-    if (pausePending) return;
+    if (destroyed || pausePending) return;
     pausePending = true;
     queueMicrotask(() => {
       pausePending = false;
+      if (destroyed) return;
       if (shouldRun() && !slowOnly()) return; // full-speed reason → keep running
       if (throttleTimer) return; // a throttled resume is already scheduled
       graph.pauseAnimation();
@@ -99,6 +101,7 @@ export function createLoopScheduler(
   }
 
   function sync() {
+    if (destroyed) return;
     if (!shouldRun()) {
       clearThrottleTimer();
       schedulePauseCheck();
@@ -116,12 +119,14 @@ export function createLoopScheduler(
   }
 
   function notifyFrameRendered() {
+    if (destroyed) return;
     if (throttleTimer || pausePending) return;
     if (!shouldRun() || !slowOnly()) return;
     schedulePauseCheck();
   }
 
   function destroy() {
+    destroyed = true;
     clearThrottleTimer();
   }
 

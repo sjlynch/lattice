@@ -62,6 +62,12 @@ export function createHealthUpdateScheduler({
   let cancelled = false;
   let rescanAttempt = 0;
   let rescanTimer: ReturnType<typeof setTimeout> | null = null;
+  let scanController: AbortController | null = null;
+  let rescanPending = false;
+  let structuralVersion = 0;
+  // Preserve live metrics received after a scan starts, even if their batch
+  // already painted before the slower scan response arrives.
+  const inFlightMetrics = new Map<string, HealthMetrics>();
 
   // Metric-only update queue (keyed by path so repeated saves of one file
   // collapse to the latest metrics) + its short coalescing timer.
@@ -69,21 +75,44 @@ export function createHealthUpdateScheduler({
   let metricTimer: ReturnType<typeof setTimeout> | null = null;
 
   const runRescan = () => {
+    rescanTimer = null;
     if (cancelled) return;
+    if (scanController) {
+      rescanPending = true;
+      return;
+    }
+    rescanPending = false;
+    scanController = new AbortController();
+    inFlightMetrics.clear();
+    for (const [filePath, metrics] of metricQueue) inFlightMetrics.set(filePath, metrics);
+    const version = structuralVersion;
     const id = requestId.next();
-    scanFolder(activeFolder)
+    scanFolder(activeFolder, scanController.signal)
       .then((result) => {
-        if (cancelled || !requestId.isCurrent(id)) return;
+        // A removal/config change invalidates the result immediately, while
+        // its replacement scan is still debouncing. Publishing it would
+        // resurrect removed nodes and restart the graph twice unnecessarily.
+        if (cancelled || !requestId.isCurrent(id) || version !== structuralVersion) return;
         rescanAttempt = 0;
-        scanResultRef.current = result;
-        setSnapshot(snapshotForScanResult(activeFolder, result));
+        const patched = patchUpdatedFiles(result, Array.from(inFlightMetrics,
+          ([filePath, metrics]) => ({ filePath, metrics })));
+        scanResultRef.current = patched.result;
+        setSnapshot(snapshotForScanResult(activeFolder, patched.result));
+        if (patched.missing) requestRescan();
       })
       .catch((err) => {
-        if (cancelled || !requestId.isCurrent(id)) return;
+        if (cancelled || !requestId.isCurrent(id) || version !== structuralVersion) return;
         console.warn('scan refresh failed (retrying)', err);
         const delay = retryDelay(rescanAttempt);
         rescanAttempt += 1;
         scheduleRescan(delay);
+      })
+      .finally(() => {
+        scanController = null;
+        inFlightMetrics.clear();
+        // The debounce elapsed during a slow scan. Run just one follow-up;
+        // bursts never launch concurrent full repository walks.
+        if (!cancelled && rescanPending && !rescanTimer) scheduleRescan(0);
       });
   };
 
@@ -93,6 +122,7 @@ export function createHealthUpdateScheduler({
   }
 
   const requestRescan = (delay: number = STRUCTURAL_RESCAN_DEBOUNCE_MS) => {
+    structuralVersion += 1;
     rescanAttempt = 0;
     scheduleRescan(delay);
   };
@@ -124,9 +154,11 @@ export function createHealthUpdateScheduler({
   };
 
   const handleEvent = (event: HealthUpdate) => {
+    if (cancelled) return;
     if (event.type === 'updated') {
       // Metric-only patch — coalesce into the batch queue.
       metricQueue.set(event.filePath, event.metrics);
+      if (scanController) inFlightMetrics.set(event.filePath, event.metrics);
       if (!metricTimer) metricTimer = setTimeout(flushMetricQueue, METRIC_BATCH_MS);
       return;
     }
@@ -158,9 +190,11 @@ export function createHealthUpdateScheduler({
 
   const dispose = () => {
     cancelled = true;
+    scanController?.abort();
     if (rescanTimer) clearTimeout(rescanTimer);
     if (metricTimer) clearTimeout(metricTimer);
     metricQueue.clear();
+    inFlightMetrics.clear();
   };
 
   return { handleEvent, dispose };
