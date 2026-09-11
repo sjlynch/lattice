@@ -41,7 +41,7 @@ implementation here.
   between. That race is shrunk by re-applying microseconds before `pty.spawn`
   (the terminal-server's `POST /sessions`), not by this lock.
 - **Atomic writes, no orphans.** `atomicWriteFile` writes a
-  `<file>.lattice-<pid>-<ts>.tmp` then renames; it unlinks the temp on any
+  `<file>.lattice-<pid>-<ts>-<uuid>.tmp` then renames; it unlinks the temp on any
   failure and retries the rename through transient Windows file-locks
   (EPERM/EBUSY/EACCES). The shared `TEMP_SUFFIX` / `tempPrefix` let
   `sweepOrphanedClaudeConfigTemps` recognize leftovers.

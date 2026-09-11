@@ -47,3 +47,11 @@ test('a signal wins over the code, and an unknown fault still renders usefully',
   assert.equal(isHardFault(0xc0000029), true);
   assert.match(describeExitCode(0xc0000029), /0xC0000029/);
 });
+
+test('unsigned exit -1 is not diagnosed as a native crash', () => {
+  for (const code of [-1, 4294967295]) {
+    assert.equal(isHardFault(code), false);
+    assert.match(describeExitCode(code), /0xFFFFFFFF.*exit -1/);
+    assert.match(describeExitCode(code), /does not identify the cause/);
+  }
+});

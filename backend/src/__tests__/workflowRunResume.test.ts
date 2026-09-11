@@ -272,6 +272,74 @@ test('a run-carrying WS event mirrors the project\'s running runs to disk', asyn
   }
 });
 
+test('a slow workflow mirror write cannot resurrect a finished run', async (t) => {
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-wfwrite-order-'));
+  const file = workflowRunsFile(project);
+  const rename = fs.rename;
+  let reachedRename!: () => void;
+  const atRename = new Promise<void>((resolve) => { reachedRename = resolve; });
+  let releaseRename!: () => void;
+  const blockedRename = new Promise<void>((resolve) => { releaseRename = resolve; });
+  const renameMock = t.mock.method(fs, 'rename', async (...args: Parameters<typeof fs.rename>) => {
+    if (String(args[1]) === file) {
+      reachedRename();
+      await blockedRename;
+    }
+    return rename(...args);
+  });
+  let first: Promise<void> | undefined;
+  let second: Promise<void> | undefined;
+  try {
+    first = writeWorkflowRunsNow(project, [fakeRun({ projectPath: canonicalProjectPath(project) })]);
+    await atRename;
+    second = writeWorkflowRunsNow(project, []);
+    // Give the completion-state operation time to overtake the older rename.
+    // The fixed implementation queues it behind the first write instead.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    releaseRename();
+    await Promise.all([first, second]);
+    assert.deepEqual(await loadPersistedWorkflowRuns(project), []);
+  } finally {
+    releaseRename();
+    await Promise.all([first, second]);
+    renameMock.mock.restore();
+    await fs.rm(project, { recursive: true, force: true });
+  }
+});
+
+test('flushing workflow persistence waits for a write already handed to the filesystem', async (t) => {
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-wfflush-order-'));
+  const file = workflowRunsFile(project);
+  const rename = fs.rename;
+  let reachedRename!: () => void;
+  const atRename = new Promise<void>((resolve) => { reachedRename = resolve; });
+  let releaseRename!: () => void;
+  const blockedRename = new Promise<void>((resolve) => { releaseRename = resolve; });
+  const renameMock = t.mock.method(fs, 'rename', async (...args: Parameters<typeof fs.rename>) => {
+    if (String(args[1]) === file) {
+      reachedRename();
+      await blockedRename;
+    }
+    return rename(...args);
+  });
+  const writing = writeWorkflowRunsNow(project, [fakeRun({ projectPath: canonicalProjectPath(project) })]);
+  try {
+    await atRename;
+    let flushed = false;
+    const flushing = flushWorkflowRunPersist(project).then(() => { flushed = true; });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(flushed, false, 'flush must not finish while the mirror is uncommitted');
+    releaseRename();
+    await flushing;
+  } finally {
+    releaseRename();
+    await writing;
+    renameMock.mock.restore();
+    await writeWorkflowRunsNow(project, []);
+    await fs.rm(project, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // The headline behavior: a restored run advances again
 // ---------------------------------------------------------------------------

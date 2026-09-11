@@ -140,6 +140,7 @@ export async function runMergeStep(
     // the error count.
     while (run.status === 'running') {
       const cur = await deps.listTasks(wf.projectPath);
+      if (run.status !== 'running') return;
       const ready = cur.filter((t) => t.status === 'ready_to_merge');
       if (ready.length === 0) break;
       const readyIdsBefore = ready.map((t) => t.id);
@@ -157,6 +158,11 @@ export async function runMergeStep(
         lockMode: 'inherit',
       });
       activeMergeRunId = mergeRun.id;
+      // Cancellation may arrive while startup awaits lock/task I/O, before
+      // the subscription above has an ID to cancel. Still await the worker's
+      // completion after cancelling: it uses this step's project lock and may
+      // be restoring a snapshot before it is safe to release that lock.
+      if (run.status !== 'running') deps.cancelMergeRun(mergeRun.id);
       await waitForMergeRunFinished(mergeRun.id, deps);
       activeMergeRunId = null;
       if (run.status !== 'running') return;

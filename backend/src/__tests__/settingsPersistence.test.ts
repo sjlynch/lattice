@@ -4,6 +4,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { patchUserSettings, getUserSettings } from '../userSettings.js';
+import { getGlobalSettings, updateGlobalSettings } from '../globalSettings.js';
+import { latticeHomeDir } from '../projectPath.js';
 import { runExclusive } from '../serializeWrites.js';
 
 // Regression: non-atomic read-modify-write in settings persistence used to lose
@@ -119,3 +121,69 @@ test('runExclusive: returns each op result and a rejection does not wedge the ke
   // A prior failure must not stall later ops on the same key.
   assert.equal(await runExclusive('z', async () => 'after'), 'after');
 });
+
+for (const scope of ['project', 'global'] as const) {
+  async function fixture() {
+    const project = await mkProject();
+    const file = scope === 'project'
+      ? path.join(project, '.lattice', 'userSettings.json')
+      : path.join(latticeHomeDir(), 'globalSettings.json');
+    const patch = () => scope === 'project'
+      ? patchUserSettings(project, { sidebarWidth: 321 })
+      : updateGlobalSettings({ maxConcurrentAgents: 2 });
+    const read = () => scope === 'project' ? getUserSettings(project) : getGlobalSettings();
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    return { project, file, patch, read };
+  }
+
+  test(`${scope} settings: failed reads cannot turn a partial patch into a settings reset`, async (t) => {
+    const f = await fixture();
+    t.after(() => fs.rm(f.project, { recursive: true, force: true }));
+    const previous = JSON.stringify({ piModelMenu: ['provider/keep'], postMergeHookPrompt: 'keep this' });
+    await fs.writeFile(f.file, previous, 'utf8');
+    const readFile = fs.readFile;
+    let unavailable = true;
+    t.mock.method(fs, 'readFile', async (...args: Parameters<typeof fs.readFile>) => {
+      if (args[0] === f.file && unavailable) {
+        throw Object.assign(new Error('locked'), { code: 'EACCES' });
+      }
+      return readFile(...args);
+    });
+    // Display-only reads retain the historical defaults fallback.
+    await f.read();
+    await assert.rejects(f.patch(), { code: 'EACCES' });
+    unavailable = false;
+    assert.equal(await readFile(f.file, 'utf8'), previous);
+    await f.patch();
+    const saved = JSON.parse(await readFile(f.file, 'utf8'));
+    assert.equal(scope === 'project' ? saved.postMergeHookPrompt : saved.piModelMenu[0],
+      scope === 'project' ? 'keep this' : 'provider/keep');
+  });
+
+  test(`${scope} settings: a corrupt file remains recoverable after a rejected patch`, async (t) => {
+    const f = await fixture();
+    t.after(() => fs.rm(f.project, { recursive: true, force: true }));
+    const previous = '{"postMergeHookPrompt":"unfinished';
+    await fs.writeFile(f.file, previous, 'utf8');
+    await f.read();
+    await assert.rejects(f.patch(), SyntaxError);
+    assert.equal(await fs.readFile(f.file, 'utf8'), previous);
+  });
+
+  test(`${scope} settings: a partial write failure preserves the complete previous file`, async (t) => {
+    const f = await fixture();
+    t.after(() => fs.rm(f.project, { recursive: true, force: true }));
+    const previous = '{"maxConcurrentAgents":3,"postMergeHookPrompt":"keep"}';
+    await fs.writeFile(f.file, previous, 'utf8');
+    const writeFile = fs.writeFile;
+    t.mock.method(fs, 'writeFile', async (...args: Parameters<typeof fs.writeFile>) => {
+      if (String(args[0]).startsWith(f.file)) {
+        await writeFile(args[0], '{"truncated', 'utf8');
+        throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+      }
+      return writeFile(...args);
+    });
+    await assert.rejects(f.patch(), { code: 'ENOSPC' });
+    assert.equal(await fs.readFile(f.file, 'utf8'), previous);
+  });
+}

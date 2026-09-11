@@ -94,11 +94,11 @@ export function waitForLaneEmpty(
       cleanup();
       resolve();
     };
-    const fail = (err: Error) => {
+    const fail = (err: unknown) => {
       if (settled) return;
       settled = true;
       cleanup();
-      reject(err);
+      reject(err instanceof Error ? err : new Error(String(err)));
     };
 
     // (Re)arm the no-progress backstop. Called on the first observation and then
@@ -140,8 +140,12 @@ export function waitForLaneEmpty(
     // Subscribe FIRST so a change between the initial listTasks and our
     // subscribe doesn't slip past us.
     unsubTasks = deps.subscribeTasks((proj, tasks) => {
-      if (proj !== projectPath) return;
-      if (evaluate(tasks)) finish();
+      if (settled || proj !== projectPath) return;
+      try {
+        if (evaluate(tasks)) finish();
+      } catch (err) {
+        fail(err);
+      }
     });
     // Workflow-run cancellation: resolve the wait so the worker can exit
     // the control step (and release the project run-lock) promptly.
@@ -150,10 +154,18 @@ export function waitForLaneEmpty(
       if (ev.type === 'cancelled' || ev.type === 'errored') finish();
     });
 
-    void deps.listTasks(projectPath).then((initial) => {
-      if (settled) return;
-      if (evaluate(initial)) finish();
-    });
+    // Bound the initial read too. In particular, a rejected task-store read
+    // must reject THIS waiter so its worker releases run.lock; an unobserved
+    // .then rejection instead reaches processGuards and kills the backend.
+    armTimer();
+    try {
+      void deps.listTasks(projectPath).then((initial) => {
+        if (settled) return;
+        if (evaluate(initial)) finish();
+      }).catch(fail);
+    } catch (err) {
+      fail(err);
+    }
   });
 }
 

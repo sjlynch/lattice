@@ -85,9 +85,10 @@ export function useTaskList(
       return;
     }
     let cancelled = false;
+    let receivedLiveState = false;
     fetchTasks(activeFolder)
       .then((ts) => {
-        if (!cancelled) {
+        if (!cancelled && !receivedLiveState) {
           setTaskState((prev) => ({
             project: activeFolder,
             tasks: structurallyShareTasks(
@@ -102,6 +103,9 @@ export function useTaskList(
       activeFolder,
       (ts) => {
         if (!cancelled) {
+          // A newer board snapshot wins over the initial HTTP request even
+          // when that request finishes last during backend recovery.
+          receivedLiveState = true;
           setTaskState((prev) => ({
             project: activeFolder,
             tasks: structurallyShareTasks(

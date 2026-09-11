@@ -64,7 +64,8 @@ function ntstatusFor(code) {
  * Callers use this to decide whether "it crashed" or "it exited".
  */
 export function isHardFault(code) {
-  return typeof code === 'number' && Number.isInteger(code) && code >= 0x80000000;
+  return typeof code === 'number' && Number.isInteger(code) &&
+    code >= 0x80000000 && code < 0xffffffff;
 }
 
 /**
@@ -75,6 +76,9 @@ export function isHardFault(code) {
 export function describeExitCode(code, signal = null) {
   if (signal) return `signal ${signal}`;
   if (typeof code !== 'number') return 'code unknown';
+  if (code === -1 || code === 0xffffffff) {
+    return `code ${code} = 0xFFFFFFFF (exit -1; this code alone does not identify the cause)`;
+  }
   if (!isHardFault(code)) return `code ${code}`;
   const hex = `0x${(code >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
   const status = ntstatusFor(code);

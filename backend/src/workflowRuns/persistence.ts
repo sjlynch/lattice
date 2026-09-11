@@ -146,7 +146,28 @@ export async function loadPersistedWorkflowRuns(projectPath: string): Promise<Wo
   }
 }
 
+const writesInFlight = new Map<string, Promise<void>>();
+
 export async function writeWorkflowRunsNow(
+  projectPath: string,
+  runs: WorkflowRun[],
+): Promise<void> {
+  const key = canonicalProjectPath(projectPath);
+  // Atomic rename protects a single write, not its ordering against another
+  // write or deletion. Serialize per project so a slow running-state write
+  // cannot resurrect a completed workflow after its newer removal finishes.
+  const previous = writesInFlight.get(key) ?? Promise.resolve();
+  const records = runs.map((run) => ({ ...run }));
+  const write = previous.then(() => writeWorkflowRunsFile(key, records));
+  writesInFlight.set(key, write);
+  try {
+    await write;
+  } finally {
+    if (writesInFlight.get(key) === write) writesInFlight.delete(key);
+  }
+}
+
+async function writeWorkflowRunsFile(
   projectPath: string,
   runs: WorkflowRun[],
 ): Promise<void> {
@@ -202,12 +223,19 @@ export function scheduleWorkflowRunPersist(
 // Flush any pending debounced write immediately. Used by tests; also safe to
 // call from a shutdown path.
 export async function flushWorkflowRunPersist(projectPath?: string): Promise<void> {
-  const keys = projectPath ? [canonicalProjectPath(projectPath)] : [...pendingWrites.keys()];
+  const keys = projectPath
+    ? [canonicalProjectPath(projectPath)]
+    : [...new Set([...pendingWrites.keys(), ...writesInFlight.keys()])];
   for (const key of keys) {
     const entry = pendingWrites.get(key);
-    if (!entry) continue;
-    clearTimeout(entry.timer);
-    pendingWrites.delete(key);
-    await writeWorkflowRunsNow(key, entry.collect());
+    if (entry) {
+      clearTimeout(entry.timer);
+      pendingWrites.delete(key);
+      await writeWorkflowRunsNow(key, entry.collect());
+    } else {
+      // A timer may already have handed its write to the filesystem. A flush
+      // still has to wait for that write, even though there is no timer left.
+      await writesInFlight.get(key);
+    }
   }
 }

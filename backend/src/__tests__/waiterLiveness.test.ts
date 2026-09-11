@@ -68,6 +68,17 @@ const FAST_CONFIG: WaiterLivenessConfig = {
   maxWaitMs: 10_000,
 };
 
+test('a completion during resolver readoption is preserved by an already registered waiter', async () => {
+  const state = createRunState();
+  const clock = fakeClock();
+  const registered = registerConflictWaiter(state, 'recovered-run', 'recovered-task');
+  assert.equal(signalConflictWaiterInState(state, 'recovered-task'), true);
+  const result = await awaitResolverWaiter(state, 'recovered-run', 'recovered-task', '/wt', FAST_CONFIG, {
+    ...clock.deps, listSessions: async () => [],
+  }, registered);
+  assert.equal(result, 'signalled');
+});
+
 test('a signalled waiter resolves as "signalled" and cancels the liveness timer', async () => {
   const state = createRunState();
   const clock = fakeClock();

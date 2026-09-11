@@ -237,3 +237,42 @@ test('release leaves a lockfile that was stolen and recreated', async () => {
     await fixture.cleanup();
   }
 });
+
+test('a contender cannot steal a lock while its owner is still writing the body', async (t) => {
+  const fixture = await createFixture();
+  const originalWrite = fs.writeFile;
+  let firstOpened!: () => void;
+  const opened = new Promise<void>((resolve) => { firstOpened = resolve; });
+  let continueWrite!: () => void;
+  const proceed = new Promise<void>((resolve) => { continueWrite = resolve; });
+  let intercepted = false;
+  t.mock.method(fs, 'writeFile', async (...args: Parameters<typeof fs.writeFile>) => {
+    if (!intercepted && String(args[0]).startsWith(fixture.lockFile)) {
+      intercepted = true;
+      const handle = await fs.open(args[0] as string, 'wx');
+      firstOpened();
+      await proceed;
+      assert.equal(typeof args[1], 'string');
+      try { await handle.writeFile(args[1] as string, 'utf8'); } finally { await handle.close(); }
+      return;
+    }
+    return originalWrite(...args);
+  });
+  try {
+    const first = acquireProjectRunLock(fixture.projectPath, 'first').then(
+      (handle) => ({ handle }), (error: unknown) => ({ error }),
+    );
+    await opened;
+    const second = await acquireProjectRunLock(fixture.projectPath, 'second').then(
+      (handle) => ({ handle }), (error: unknown) => ({ error }),
+    );
+    continueWrite();
+    const results = [await first, second];
+    const successes = results.filter((result) => 'handle' in result);
+    for (const result of successes) if ('handle' in result) await result.handle.release();
+    assert.equal(successes.length, 1, 'exactly one caller may enter the protected merge pipeline');
+  } finally {
+    continueWrite();
+    await fixture.cleanup();
+  }
+});

@@ -4,6 +4,19 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { atomicWriteFile } from '../claudeTrust.js';
+import { withTempDir } from './helpers/tempDir.js';
+
+test('concurrent atomic writes in the same millisecond use independent temporary files', async (t) => {
+  await withTempDir('lattice-atomic-concurrent-', async (dir) => {
+    t.mock.method(Date, 'now', () => 123456789);
+    const file = path.join(dir, 'target.json');
+    const bodies = Array.from({ length: 12 }, (_, i) => JSON.stringify({ i, text: 'x'.repeat(1000 + i) }));
+    const results = await Promise.allSettled(bodies.map((body) => atomicWriteFile(file, body)));
+    assert.deepEqual(results.filter((result) => result.status === 'rejected'), []);
+    assert.ok(bodies.includes(await fs.readFile(file, 'utf8')), 'the final file must contain one complete write');
+    assert.deepEqual(await tempFiles(dir), []);
+  });
+});
 
 // `atomicWriteFile` is the shared temp→rename writer behind every
 // ~/.claude.json / mcpSecrets.json write. The bug it fixes: a failed rename

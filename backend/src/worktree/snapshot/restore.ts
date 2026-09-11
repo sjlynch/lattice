@@ -1,8 +1,8 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import type { Stats } from 'node:fs';
+import { constants, type Stats } from 'node:fs';
 import { isPathInsideRepo } from '../paths.js';
-import type { SnapshotHandle } from './manifest.js';
+import { isSnapshotMetadataPath, type SnapshotHandle } from './manifest.js';
 
 // Suffix for the copy we leave beside a path whose on-disk content diverged
 // from the snapshot when the stale-overwrite guard is engaged (boot recovery).
@@ -125,15 +125,25 @@ async function backupCapturedVersionBesideDst(
   dst: string,
   srcStat: Stats,
 ): Promise<string> {
-  const backup = dst + SNAPSHOT_CONFLICT_SUFFIX;
-  await removeExistingPathNoFollow(backup);
-  if (srcStat.isSymbolicLink()) {
-    const target = await fs.readlink(src);
-    await fs.symlink(target, backup);
-  } else {
-    await fs.copyFile(src, backup);
+  for (let suffix = 0; suffix < 1000; suffix += 1) {
+    const backup = dst + SNAPSHOT_CONFLICT_SUFFIX + (suffix ? `.${suffix}` : '');
+    try {
+      // Exclusive creation preserves an earlier snapshot or a user's edits
+      // to its recovery copy, including a racing writer at the same path.
+      if (srcStat.isSymbolicLink()) {
+        await fs.symlink(await fs.readlink(src), backup);
+      } else {
+        await fs.copyFile(src, backup, constants.COPYFILE_EXCL);
+      }
+      return backup;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      // A retained snapshot is visited on every boot. Reuse a byte-identical
+      // copy so recovery doesn't create a new sibling on every restart.
+      if (!(await onDiskDivergesFromCapture(src, backup, srcStat))) return backup;
+    }
   }
-  return backup;
+  throw new Error('too many existing snapshot conflict copies');
 }
 
 async function restoreSnapshotPath(
@@ -189,7 +199,7 @@ export async function restoreSnapshot(
   // unsafe entries and refuse to write them.
   const unsafe: string[] = [];
   const safe = all.filter((f) => {
-    if (isPathInsideRepo(repoRoot, f)) return true;
+    if (isPathInsideRepo(repoRoot, f) && !isSnapshotMetadataPath(f)) return true;
     unsafe.push(f);
     return false;
   });

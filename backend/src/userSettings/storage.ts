@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { atomicWriteFile } from '../claudeTrust/configFile.js';
 // Import the constant from the leaf paths module, NOT from `../tasks.js` (which
 // re-exports the whole task cache). This keeps userSettings — and therefore the
 // MCP registry / detached terminal-server that now read it at spawn time — free
@@ -83,14 +84,24 @@ function normalizeUserSettings<T extends Partial<UserSettings>>(settings: T): T 
   return settings;
 }
 
-export async function getUserSettings(projectPath: string): Promise<UserSettings> {
+async function readUserSettings(
+  projectPath: string,
+  fallbackOnError: boolean,
+): Promise<UserSettings> {
   const key = canonicalProjectPath(projectPath);
   try {
     const raw = await fs.readFile(settingsFile(key), 'utf8');
     return normalizeUserSettings(JSON.parse(raw) as UserSettings);
-  } catch {
+  } catch (err) {
+    // Display-only reads may use defaults; a PATCH must never merge them
+    // over an existing file whose bytes could not be read or parsed.
+    if (!fallbackOnError && (err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     return {};
   }
+}
+
+export async function getUserSettings(projectPath: string): Promise<UserSettings> {
+  return readUserSettings(projectPath, true);
 }
 
 export async function patchUserSettings(
@@ -103,11 +114,11 @@ export async function patchUserSettings(
   // serializeWrites.ts). The read happens INSIDE the critical section so each
   // patch sees the prior write's result.
   return runExclusive(`userSettings:${key}`, async () => {
-    const current = await getUserSettings(key);
+    const current = await readUserSettings(key, false);
     const updated = { ...current, ...normalizeUserSettings({ ...partial }) };
     const dir = path.join(key, PROJECT_DIR_NAME);
     await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(settingsFile(key), JSON.stringify(updated, null, 2), 'utf8');
+    await atomicWriteFile(settingsFile(key), JSON.stringify(updated, null, 2));
     return updated;
   });
 }

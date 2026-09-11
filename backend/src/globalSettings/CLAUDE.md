@@ -27,6 +27,9 @@ validators living next to the shape each produces. There is no
   raw/partial object field-by-field, delegating each field to its focused
   validator. Only *present* fields are touched, so a partial PATCH (e.g. just
   the agent cap) never wipes the MCP / Pi fields.
+  Writes are atomic. Display reads retain the defaults fallback, while PATCH
+  reads reject unreadable/corrupt existing files so a partial edit cannot reset
+  the remaining settings; only a missing file starts from defaults.
 - `../mcp/settingsValidation.ts` — the two MCP defensive parsers (next to the
   `McpServerEntry` shape they validate).
 - `../piProviderValidation.ts` — the Pi-provider parser + its types (next to

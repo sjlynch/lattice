@@ -124,8 +124,9 @@ export function awaitResolverWaiter(
   worktreePath: string | undefined,
   config: WaiterLivenessConfig = DEFAULT_WAITER_LIVENESS_CONFIG,
   deps: WaiterLivenessDeps = productionDeps,
+  registeredWaiter?: Promise<void>,
 ): Promise<WaiterReleaseReason> {
-  const waiter = registerConflictWaiter(state, runId, taskId);
+  const waiter = registeredWaiter ?? registerConflictWaiter(state, runId, taskId);
   return raceWaiterAgainstLiveness(
     state,
     runId,

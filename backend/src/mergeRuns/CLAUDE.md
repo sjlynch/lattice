@@ -158,3 +158,16 @@ always reaches `releaseLock` and the project run-lock is freed. The lock was
 already released inside `parkOnConflictResolver` before the wait, so the
 merge-conflict outcome stays `'awaiting-resolver'` (don't double-release)
 regardless of how the wait ended.
+
+2026-09 recovery/teardown corrections:
+
+- A flagged mid-merge task first probes the detached terminal server. An agent
+  command containing `MERGE_INSTRUCTIONS.md` in the exact normalized worktree
+  cwd is reattached; unknown liveness fails the attempt safely, and only a
+  confirmed absence spawns another resolver. A normal task agent or shell must
+  not be adopted as a resolver.
+- The task waiter is registered before probing/repairing the recovered session,
+  then passed into the liveness wrapper; a callback during those awaits is kept.
+- `loadRunTargets` releases an acquired project lock if startup task loading
+  throws before the worker exists. The worker runs snapshot teardown in a
+  `finally` around its task loop, including unexpected task/read failures.

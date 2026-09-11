@@ -155,6 +155,26 @@ test('ENOENT loads the default state without creating a .corrupt-* sidecar', asy
   await fs.rm(dir, { recursive: true, force: true });
 });
 
+test('a transient state-file read error is retried instead of cached as an empty board', async (t) => {
+  const file = await tmpFile(JSON.stringify([10, 20]));
+  t.after(() => fs.rm(path.dirname(file), { recursive: true, force: true }));
+  const store = new TestStore(file);
+  const readFile = fs.readFile;
+  let unavailable = true;
+  t.mock.method(fs, 'readFile', async (...args: Parameters<typeof fs.readFile>) => {
+    if (args[0] === file && unavailable) {
+      throw Object.assign(new Error('file temporarily locked'), { code: 'EACCES' });
+    }
+    return readFile(...args);
+  });
+
+  await assert.rejects(store.read('C:/locked-project'), { code: 'EACCES' });
+  assert.equal(store.loadedNow('C:/locked-project'), false);
+  unavailable = false;
+  assert.deepEqual(await store.read('C:/locked-project'), [10, 20]);
+  assert.equal(await readFile(file, 'utf8'), '[10,20]');
+});
+
 test('a truncated/corrupt file is preserved and never silently replaced by the default', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-psm-'));
   const file = path.join(dir, 'state.json');

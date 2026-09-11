@@ -231,9 +231,15 @@ export class ProjectStateManager<
       key,
       setTimeout(async () => {
         this.persistTimers.delete(key);
-        const state = this.cache.get(key) ?? this.defaultState(key);
         try {
-          await this.writeStateNow(key, state);
+          // A fired timer is no longer cancellable by updateTaskCrashSafe.
+          // Serialize the actual write with mutations, and take the snapshot
+          // only after acquiring the lock so an older debounce cannot land
+          // over a completed disk-before-cache merge transition.
+          await this.runProjectWrite(key, async () => {
+            const state = this.cache.get(key) ?? this.defaultState(key);
+            await this.writeStateNow(key, state);
+          });
         } catch (e) {
           console.error(`[${this.name}] persist failed for`, key, e);
         }
@@ -244,9 +250,11 @@ export class ProjectStateManager<
   public async flushPersist(projectPath: string): Promise<void> {
     const key = this.canonicalize(projectPath);
     this.cancelPendingPersist(key);
-    const state = this.cache.get(key) ?? this.defaultState(key);
     try {
-      await this.writeStateNow(key, state);
+      await this.runProjectWrite(key, async () => {
+        const state = this.cache.get(key) ?? this.defaultState(key);
+        await this.writeStateNow(key, state);
+      });
     } catch (e) {
       console.error(`[${this.name}] flushPersist failed for`, key, e);
     }

@@ -1,5 +1,7 @@
 import fs from 'node:fs/promises';
+import { atomicWriteFile } from '../claudeTrust/configFile.js';
 import { canonicalProjectPath } from '../projectPath.js';
+import { runExclusive } from '../serializeWrites.js';
 import { LATTICE_HOME, PROJECTS_INDEX } from './paths.js';
 import { shouldPruneProjectEntry } from './pruneIndex.js';
 
@@ -7,6 +9,7 @@ export class ProjectsIndex {
   private readonly knownProjects = new Set<string>();
   private knownLoaded = false;
   private knownLoadPromise: Promise<void> | null = null;
+  private unreadableIndex = false;
 
   public get projects(): Set<string> {
     return this.knownProjects;
@@ -36,10 +39,19 @@ export class ProjectsIndex {
     if (this.knownLoaded) return;
     // Single-flight: a concurrent caller awaits the same in-flight load
     // rather than flipping `knownLoaded` true and falling through while the
-    // index is still being read. `knownLoaded` flips only once the read has
-    // actually populated `knownProjects` (in the `finally` of performLoad).
+    // index is still being read. A failed read leaves it unloaded so a later
+    // request can retry rather than persisting an empty replacement index.
     if (!this.knownLoadPromise) {
-      this.knownLoadPromise = this.performLoadKnownProjects();
+      this.knownLoadPromise = this.performLoadKnownProjects().then(
+        () => {
+          this.knownLoaded = true;
+          this.knownLoadPromise = null;
+        },
+        (err) => {
+          this.knownLoadPromise = null;
+          throw err;
+        },
+      );
     }
     return this.knownLoadPromise;
   }
@@ -49,16 +61,26 @@ export class ProjectsIndex {
       let raw: string;
       try {
         raw = await fs.readFile(PROJECTS_INDEX, 'utf8');
-      } catch {
-        return; // no index yet
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          this.unreadableIndex = false;
+          return; // no index yet
+        }
+        this.unreadableIndex = true;
+        throw err;
       }
       let list: unknown;
       try {
         list = JSON.parse(raw);
-      } catch {
-        return; // corrupt — leave the file alone, start fresh in memory
+      } catch (err) {
+        this.unreadableIndex = true;
+        throw err;
       }
-      if (!Array.isArray(list)) return;
+      if (!Array.isArray(list)) {
+        this.unreadableIndex = true;
+        throw new Error(`Invalid project index ${PROJECTS_INDEX}: expected an array`);
+      }
+      this.unreadableIndex = false;
 
       // Canonicalize + de-dup every entry. If two entries collapse to the same
       // canonical form (e.g. `f:\rust_etl` and `F:\rust_etl` on Windows), the
@@ -109,20 +131,27 @@ export class ProjectsIndex {
             `entr${pruned === 1 ? 'y' : 'ies'} from ~/.lattice/projects.json`,
         );
       }
-    } finally {
-      this.knownLoaded = true;
-      this.knownLoadPromise = null;
+    } catch (err) {
+      console.error('[tasks] failed to load project index:', err);
+      throw err;
     }
   }
 
   public async persistKnownProjects(): Promise<void> {
     try {
-      await fs.mkdir(LATTICE_HOME, { recursive: true });
-      await fs.writeFile(
-        PROJECTS_INDEX,
-        JSON.stringify(Array.from(this.knownProjects), null, 2),
-        'utf8',
-      );
+      // Recovery discovers every project's task/workflow data through this
+      // index. A partial write must not erase that discovery path, and two
+      // simultaneous project opens must not leave the older snapshot last.
+      await runExclusive(`projectsIndex:${PROJECTS_INDEX}`, async () => {
+        if (this.unreadableIndex) {
+          throw new Error(`Refusing to overwrite unreadable project index ${PROJECTS_INDEX}`);
+        }
+        await fs.mkdir(LATTICE_HOME, { recursive: true });
+        await atomicWriteFile(
+          PROJECTS_INDEX,
+          JSON.stringify(Array.from(this.knownProjects), null, 2),
+        );
+      });
     } catch (e) {
       console.error('[tasks] persistKnownProjects', e);
     }

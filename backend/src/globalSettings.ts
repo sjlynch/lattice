@@ -15,6 +15,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { atomicWriteFile } from './claudeTrust/configFile.js';
 import { latticeHomeDir } from './projectPath.js';
 import { runExclusive } from './serializeWrites.js';
 import type { McpServerEntry } from './mcp/catalog.js';
@@ -117,15 +118,22 @@ function sanitize(raw: Partial<GlobalSettings>): Partial<GlobalSettings> {
   return out;
 }
 
-// Read global settings, falling back to defaults for a missing/corrupt file.
-export async function getGlobalSettings(): Promise<GlobalSettings> {
+async function readGlobalSettings(fallbackOnError: boolean): Promise<GlobalSettings> {
   try {
     const raw = await fs.readFile(globalSettingsFile(), 'utf8');
     const parsed = JSON.parse(raw) as Partial<GlobalSettings>;
     return { ...GLOBAL_SETTINGS_DEFAULTS, ...sanitize(parsed) };
-  } catch {
+  } catch (err) {
+    // Reads may display defaults, but writes must not replace unread or
+    // corrupt settings with a partial PATCH plus those defaults.
+    if (!fallbackOnError && (err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     return { ...GLOBAL_SETTINGS_DEFAULTS };
   }
+}
+
+// Read global settings, falling back to defaults for a missing/corrupt file.
+export async function getGlobalSettings(): Promise<GlobalSettings> {
+  return readGlobalSettings(true);
 }
 
 // Merge-update and persist global settings; returns the full updated record.
@@ -136,13 +144,12 @@ export async function updateGlobalSettings(
   patch: Partial<GlobalSettings>,
 ): Promise<GlobalSettings> {
   return runExclusive(`globalSettings:${globalSettingsFile()}`, async () => {
-    const current = await getGlobalSettings();
+    const current = await readGlobalSettings(false);
     const updated: GlobalSettings = { ...current, ...sanitize(patch) };
     await fs.mkdir(latticeHomeDir(), { recursive: true });
-    await fs.writeFile(
+    await atomicWriteFile(
       globalSettingsFile(),
       JSON.stringify(updated, null, 2),
-      'utf8',
     );
     return updated;
   });

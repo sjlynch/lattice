@@ -44,6 +44,7 @@ test-results/
 
 # local design/planning docs (not checked in)
 plans/
+/tmp/
 
 # Lattice per-project state (tasks.json + future user settings)
 .lattice/

@@ -183,6 +183,12 @@ explicit-curl callbacks — never by polling task state.
   remaining step never runs. `persistence.ts` + `../recovery/workflowRunResume.ts`
   close that hole; keep the mirror current whenever run state changes, and keep
   `restoreWorkflowRun` idempotent (a restore must never clobber a live run).
+- Mirror writes and deletions are serialized per project; atomic rename alone
+  does not prevent a delayed running-state write from resurrecting a finished
+  run after a newer deletion. Flushing must await writes already in flight.
+- Every rejected queued step spawn must error its still-current run, including
+  thrown setup/transport exceptions. CAP retries remain pending, and a late
+  spawn rejection must preserve cancellation or a newer step.
 - Step advancement is sequential and **idempotent**: `completeWorkflowStep`
   claims `currentStepIndex` synchronously before any await so a duplicate
   Stop-hook fire is a no-op. The frozen-step skip happens *after* that claim

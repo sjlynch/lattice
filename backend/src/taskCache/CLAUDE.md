@@ -53,7 +53,12 @@ losing tasks.
 - `projectsIndex.ts` — `ProjectsIndex`: in-memory `Set<projectPath>` backed
   by `~/.lattice/projects.json`. On load it canonicalises + de-dups (collapses
   case-different duplicates on Windows) and prunes junk entries via
-  `pruneIndex.ts`, re-persisting so a restart self-cleans.
+  `pruneIndex.ts`, re-persisting so a restart self-cleans. Writes are serialized
+  and atomic so overlapping project opens or a failed write cannot lose the
+  index boot recovery uses to discover task/workflow state.
+  Failed reads remain unloaded and write-protect the existing index until a
+  successful retry, so an unreadable/corrupt index cannot be replaced by an
+  empty list plus the next project registration.
 - `pruneIndex.ts` — the conservative index-pruning predicate
   (`isStructurallyJunkPath` / `projectHasTasksOnDisk` / `shouldPruneProjectEntry`):
   drops temp-dir scratch, shell-mangled, and phantom (gone-from-disk AND
@@ -123,6 +128,11 @@ read so the cache sees restored disk state.
   helpers (`getTask` via `withTaskAcrossProjects` →
   `withItemAcrossProjects`) stay **unlocked**.
 - **Atomic writes + corrupt-load guard (base `writeStateNow` / `performLoad`).**
+  Debounced writes and explicit flushes take the same per-project lock as
+  mutations; snapshots are read after acquiring it. An already-fired timer
+  cannot overwrite a later crash-safe transition. Non-ENOENT read failures
+  propagate and leave the project unloaded so a later request retries instead
+  of caching an empty board over unread data.
   `writeStateNow` routes through the shared `atomicWriteFile` (temp→rename, with
   the Windows file-lock retry) so a crash/kill mid-write can't truncate the live
   file. `performLoad` distinguishes ENOENT (legit empty → default) from a

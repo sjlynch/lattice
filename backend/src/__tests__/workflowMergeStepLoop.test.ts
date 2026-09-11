@@ -187,3 +187,38 @@ test('waitForMergeRunFinished re-checks after subscribing so fast completion is 
   assert.equal(subscribed, true);
   assert.equal(unsubscribed, true);
 });
+
+test('workflow cancellation during inner merge startup cancels the returned worker and waits for its teardown', async () => {
+  const workflow = makeWorkflow();
+  const run = makeRun();
+  const inner = makeMergeRun('mr_cancel_start', []);
+  inner.status = 'running';
+  const { deps } = makeDeps([makeTask({ id: 'A' })], () => []);
+  const cancelled: string[] = [];
+  let completeWorker!: () => void;
+  deps.startMergeRun = async () => {
+    // A cancel arrives while acquisition / task loading is in flight, before
+    // runMergeStep knows the returned worker ID.
+    run.status = 'cancelled';
+    return inner;
+  };
+  deps.getMergeRun = () => inner;
+  deps.cancelMergeRun = (id) => { cancelled.push(id); return true; };
+  deps.subscribeMergeRuns = (listener) => {
+    completeWorker = () => {
+      inner.status = 'cancelled';
+      listener({ type: 'cancelled', run: inner });
+    };
+    return () => undefined;
+  };
+  let settled = false;
+  const pending = runMergeStep(workflow, run, 0, 'http://unused', deps).then(() => { settled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  try {
+    assert.deepEqual(cancelled, [inner.id]);
+    assert.equal(settled, false, 'inherited project lock must remain held until the worker has stopped');
+  } finally {
+    completeWorker();
+    await pending;
+  }
+});

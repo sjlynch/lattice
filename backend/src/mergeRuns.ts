@@ -16,7 +16,7 @@ import { processTarget } from './mergeRuns/processTarget.js';
 import { runPreflight } from './mergeRuns/preflight.js';
 import {
   createRunRecord,
-  filterAndSortTargets,
+  loadRunTargets,
   initializeRunState,
 } from './mergeRuns/lifecycle.js';
 import {
@@ -97,6 +97,7 @@ export async function startMergeRun(
   projectPath: string,
   backendOrigin: string,
   options: StartMergeRunOptions = {},
+  deps = { listTasks, runPreflight, processTarget },
 ): Promise<MergeRun> {
   const lockMode = options.lockMode ?? 'acquire';
 
@@ -108,8 +109,7 @@ export async function startMergeRun(
     lockMode,
   );
 
-  const tasks = await listTasks(canonicalPath);
-  const targets = filterAndSortTargets(tasks);
+  const targets = await loadRunTargets(canonicalPath, projectLock, deps.listTasks);
 
   const run = createRunRecord(targets, canonicalPath);
   runState.runs.set(run.id, run);
@@ -130,7 +130,7 @@ export async function startMergeRun(
     body: async () => {
       console.log(`[merge-run] ${run.id} started — ${targets.length} task(s) to merge`);
 
-      const { runSnapshot, baselineHead } = await runPreflight(canonicalPath, run);
+      const { runSnapshot, baselineHead } = await deps.runPreflight(canonicalPath, run);
       const runCtx = {
         projectPath: canonicalPath,
         backendOrigin,
@@ -138,18 +138,19 @@ export async function startMergeRun(
         state: runState,
       };
 
-      for (const seed of targets) {
-        const action = await processTarget(seed, run, runCtx);
-        if (action === 'halt') break;
+      let shouldRestart = false;
+      try {
+        for (const seed of targets) {
+          const action = await deps.processTarget(seed, run, runCtx);
+          if (action === 'halt') break;
+        }
+      } finally {
+        // Unexpected task/read errors must restore the user's captured edits
+        // in this session too, before the outer worker releases run.lock.
+        shouldRestart = await runTeardown(
+          canonicalPath, run, runSnapshot, targets, lockMode,
+        );
       }
-
-      const shouldRestart = await runTeardown(
-        canonicalPath,
-        run,
-        runSnapshot,
-        targets,
-        lockMode,
-      );
       await runPostMergeHook(run, canonicalPath, backendOrigin);
       finishRun(run);
       return shouldRestart;
@@ -157,6 +158,7 @@ export async function startMergeRun(
     onError: (err) => {
       console.error('[mergeRuns] run worker crashed', err);
       run.status = 'errored';
+      run.errored.push({ taskId: '(run)', error: err instanceof Error ? err.message : String(err) });
       run.finishedAt = Date.now();
       notify(runState, { type: 'completed', run: snapshot(run) });
     },

@@ -23,13 +23,14 @@ export async function loadProjectStateFromDisk<TState>({
   try {
     raw = await fs.readFile(file, 'utf8');
   } catch (e) {
-    // ENOENT is the normal "new/empty project" case → default state. Any
-    // other read error (EACCES/EIO/…) is rare; we can't read the bytes to
-    // preserve them, so log and fall back to default rather than break the
-    // read path. Crucially, we ONLY reach the default for a genuinely-missing
-    // (or unreadable) file — never for a file that exists but won't parse.
+    // Only ENOENT proves this is a new/empty project. A transient Windows
+    // file lock or I/O error must leave the project unloaded: caching [] here
+    // lets the next mutation overwrite the unread task/workflow database.
+    // Propagate the error so the normal request boundary reports it and a
+    // later read retries once the file is available again.
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
       console.error(`[${name}] failed to read ${file}:`, e);
+      throw e;
     }
     return defaultState(key);
   }

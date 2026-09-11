@@ -18,6 +18,14 @@ only so a human inspecting the file knows what's holding it. Created with the
 `wx` flag (atomic fail-if-exists) — that's the actual mutual-exclusion
 primitive; everything else is staleness handling.
 
+**2026-09 stability correction:** publication now writes a unique sibling with
+`wx`, then uses `fs.link(pending, run.lock)` to atomically publish the complete
+body without overwriting an existing lock. A direct asynchronous `wx` write to
+`run.lock` exposes an empty file before its body is written; a competing acquire
+could classify that as corrupt and steal it, admitting both callers. Keep the
+exclusive publication step. Unsupported hard-link filesystems fail acquisition
+rather than falling back to the unsafe partial-body publication.
+
 ## Lifecycle
 
 `acquire → (steal if stale) → release`, almost always via the

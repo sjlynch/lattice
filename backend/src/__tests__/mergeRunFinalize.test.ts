@@ -4,6 +4,7 @@ import { finalizeMergeRun } from '../mergeRuns/finalize.js';
 import { autoRestartIfNeeded } from '../mergeRuns/teardown.js';
 import type { Task } from '../tasks.js';
 import type { MergeRun } from '../mergeRuns/state.js';
+import { loadRunTargets } from '../mergeRuns/lifecycle.js';
 
 function makeRun(over: Partial<MergeRun> = {}): MergeRun {
   return {
@@ -20,6 +21,14 @@ function makeRun(over: Partial<MergeRun> = {}): MergeRun {
     ...over,
   };
 }
+
+test('merge startup releases its lock when tasks cannot be read before the worker exists', async () => {
+  let released = false;
+  await assert.rejects(loadRunTargets('/project', {
+    release: async () => { released = true; },
+  }, async () => { throw new Error('task storage unavailable'); }), /task storage unavailable/);
+  assert.equal(released, true);
+});
 
 // Only id/status/conflict are read by the filter; cast a partial as Task.
 function makeTask(over: Partial<Task>): Task {

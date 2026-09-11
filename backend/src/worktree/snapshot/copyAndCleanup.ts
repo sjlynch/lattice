@@ -2,6 +2,8 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { projectGit } from '../projectGit.js';
 import type { DirtyPaths, SnapshotCopyResult } from './capture.js';
+import { isPathInsideRepo } from '../paths.js';
+import { isSnapshotMetadataPath } from './manifest.js';
 
 async function assertNoSymlinkParents(root: string, file: string): Promise<void> {
   const parts = file.split(/[\\/]+/).filter(Boolean);
@@ -31,6 +33,9 @@ async function copySnapshotPath(
   const src = path.join(repoRoot, file);
   const dst = path.join(snapshotDir, file);
   try {
+    // Payloads share the snapshot root with its manifest. Leave a colliding
+    // repository path untouched rather than replace its backup with metadata.
+    if (isSnapshotMetadataPath(file)) throw new Error('path reserved for snapshot metadata');
     await assertNoSymlinkParents(repoRoot, file);
     const stat = await fs.lstat(src);
     if (!stat.isFile() && !stat.isSymbolicLink()) {
@@ -120,7 +125,11 @@ export async function cleanupCapturedUntrackedPaths(
   // if the copy failed we leave the file alone rather than risk losing it.
   for (const file of deleteUntracked) {
     try {
-      await fs.rm(path.join(repoRoot, file), { force: true, recursive: true });
+      if (!isPathInsideRepo(repoRoot, file)) continue;
+      await assertNoSymlinkParents(repoRoot, file);
+      // Capture accepts files and links only. A directory here appeared AFTER
+      // capture and contains unsnapshotted work; never recursively remove it.
+      await fs.rm(path.join(repoRoot, file), { force: true, recursive: false });
     } catch {
       /* ignore */
     }

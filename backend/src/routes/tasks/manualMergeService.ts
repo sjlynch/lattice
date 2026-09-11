@@ -80,6 +80,7 @@ export async function runManualMerge(
   task: MergeReadyTask,
   backendOrigin: string,
   res: Response,
+  deps = { handleAlreadyConflictedMerge, runFreshMerge },
 ): Promise<Response> {
   // Cross-process lock: another Lattice process (e.g. the user opened
   // this project in two Lattice instances, or has Lattice running on
@@ -124,10 +125,12 @@ export async function runManualMerge(
     // this by checking isMidMerge: if the worktree is NOT mid-merge, the
     // resolver already committed — re-sync with current main and finalize.
     if (task.conflict) {
-      return handleAlreadyConflictedMerge(task, backendOrigin, res);
+      return await deps.handleAlreadyConflictedMerge(task, backendOrigin, res);
     }
 
-    return runFreshMerge(task, backendOrigin, res);
+    // Keep the lock until the merge promise settles. Returning it without
+    // awaiting runs finally immediately and releases main to another merger.
+    return await deps.runFreshMerge(task, backendOrigin, res);
   } catch (err) {
     logTaskRouteError(task, 'merge', err);
     return res.status(500).json({ error: (err as Error).message });

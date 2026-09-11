@@ -14,6 +14,7 @@
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { withClaudeConfigLock } from './configLock.js';
 import { sleep, unlinkQuietly } from './util.js';
 
@@ -103,7 +104,7 @@ export async function writeClaudeConfigAtomic(cfg: ClaudeGlobalConfig): Promise<
 // Windows file-locks. Shared by the config write above and the guard's backup
 // refresh so both get the same durability.
 export async function atomicWriteFile(file: string, content: string): Promise<void> {
-  const tmp = `${file}.lattice-${process.pid}-${Date.now()}${TEMP_SUFFIX}`;
+  const tmp = `${file}.lattice-${process.pid}-${Date.now()}-${randomUUID()}${TEMP_SUFFIX}`;
   try {
     await fs.writeFile(tmp, content, 'utf8');
     await renameWithRetry(tmp, file);

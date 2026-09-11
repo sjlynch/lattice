@@ -45,3 +45,8 @@ Split by concern so the eligibility decision is auditable in isolation:
 - Project iteration must go through `forEachKnownProjectSafely` so one broken project cannot block others.
 - Do not add raw recursive deletes here; worktree removal goes through `cleanupWorktreeForTask` / `git worktree remove`.
 - Do not run stale merge-run resume before the server is listening.
+- Worktree reclamation requires a readable, nonempty task inventory and an
+  authoritative terminal-session inventory. A corrupt task DB may load as an
+  empty default, so zero task records must preserve every checkout. Preserve
+  queued task checkouts and live PTY cwds (including descendants), and compare
+  ownership paths case-insensitively on Windows.

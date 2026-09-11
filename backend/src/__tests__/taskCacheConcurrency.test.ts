@@ -28,8 +28,10 @@ import type { Task } from '../taskCache/types.js';
 class TestTaskCache extends TaskCacheManager {
   public writeDelayMs = 0;
   public diskWrites: Task[][] = [];
+  public beforeWrite?: (state: Task[]) => Promise<void>;
 
   protected async writeStateNow(_projectPath: string, state: Task[]): Promise<void> {
+    await this.beforeWrite?.(state);
     if (this.writeDelayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, this.writeDelayMs));
     }
@@ -200,4 +202,63 @@ test('deleting the final task removes a disposable temp project from the live in
   assert.equal(persistCount, 1);
 
   store.cancelPersist(project);
+});
+
+test('an in-flight debounce cannot overwrite a later crash-safe merge transition', async () => {
+  const store = newStore();
+  const project = 'C:/debounce-vs-merge';
+  store.seed(project, [mkTask('merge', project, { status: 'ready_to_merge' })]);
+  let enter!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve) => { enter = resolve; });
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let first = true;
+  store.beforeWrite = async () => {
+    if (!first) return;
+    first = false;
+    enter();
+    await held;
+  };
+
+  await store.updateTask('merge', { title: 'Debounce pending' });
+  await entered; // The timer fired and its old ready_to_merge snapshot is writing.
+  const merged = store.updateTaskCrashSafe('merge', { status: 'qa' });
+  // Let an incorrectly unlocked crash-safe writer finish before releasing the
+  // old debounce; this deterministically reproduces the stale final disk write.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  release();
+  await merged;
+  await store.flushPersist(project);
+
+  assert.deepEqual(
+    store.diskWrites.map((tasks) => tasks[0].status),
+    ['ready_to_merge', 'qa', 'qa'],
+    'old debounce must finish before the crash-safe transition can commit',
+  );
+});
+
+test('flushPersist waits for a crash-safe write and reads the cache after its lock', async () => {
+  const store = newStore();
+  const project = 'C:/flush-vs-merge';
+  store.seed(project, [mkTask('merge', project, { status: 'ready_to_merge' })]);
+  let enter!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve) => { enter = resolve; });
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let first = true;
+  store.beforeWrite = async () => {
+    if (!first) return;
+    first = false;
+    enter();
+    await held;
+  };
+
+  const merged = store.updateTaskCrashSafe('merge', { status: 'qa' });
+  await entered;
+  const flushed = store.flushPersist(project);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  release();
+  await Promise.all([merged, flushed]);
+
+  assert.deepEqual(store.diskWrites.map((tasks) => tasks[0].status), ['qa', 'qa']);
 });

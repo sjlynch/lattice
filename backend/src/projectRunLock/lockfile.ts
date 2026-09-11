@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import type { LockBody } from './types.js';
 
 export function parseLockBody(raw: string): LockBody | null {
@@ -37,10 +38,20 @@ export async function writeNewLockBody(
   file: string,
   body: LockBody,
 ): Promise<void> {
-  await fs.writeFile(file, JSON.stringify(body, null, 2), {
-    encoding: 'utf8',
-    flag: 'wx',
-  });
+  // A wx write publishes an EMPTY file before the async body write finishes.
+  // A contender can mistake that partial body for a corrupt stale lock and
+  // unlink it, letting both owners enter. Publish a fully written inode with
+  // an atomic exclusive hard link; unlike rename this never replaces a lock.
+  const pending = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(pending, JSON.stringify(body, null, 2), {
+      encoding: 'utf8',
+      flag: 'wx',
+    });
+    await fs.link(pending, file);
+  } finally {
+    await fs.unlink(pending).catch(() => undefined);
+  }
 }
 
 export async function deleteLockFile(file: string): Promise<void> {

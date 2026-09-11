@@ -82,10 +82,11 @@ export function usePostMergeHook(
     spawnedTerminalsRef.current = new Set();
     if (!activeFolder) return;
     let cancelled = false;
+    let receivedLiveState = false;
 
     getActivePostMergeHook(activeFolder)
       .then((snap) => {
-        if (cancelled) return;
+        if (cancelled || receivedLiveState) return;
         setActive(snap.active);
         setRecent(snap.recent);
       })
@@ -95,6 +96,7 @@ export function usePostMergeHook(
 
     const unsub = subscribePostMergeHooks(activeFolder, (ev) => {
       if (cancelled) return;
+      receivedLiveState = true;
       if (ev.type === 'idle') {
         setActive(null);
         return;

@@ -200,7 +200,6 @@ export function enqueueWorkflowStepSession(opts: {
         console.warn(
           `[workflow-run] ${run.id} step ${stepIndex}: pre-spawn failed: ${sess.error}`,
         );
-        markWorkflowStepSpawnErrored(run, stepIndex, sess.error);
         throw new Error(
           `workflow step ${run.id}/${stepIndex}: terminal session failed: ${sess.error}`,
         );
@@ -230,8 +229,12 @@ export function enqueueWorkflowStepSession(opts: {
     },
   });
   // Fire-and-forget for production callers: CAP is retried inside the queue;
-  // a genuine terminal-server/session failure marks the workflow errored above
-  // and rejects `done` so the queue releases its concurrency reservation.
-  done.catch(() => {});
+  // A rejected spawn can be a thrown setup/transport error as well as an
+  // {error} response. Settle the workflow in both cases: swallowing a thrown
+  // rejection here used to leave it permanently running without any PTY.
+  // CAP never rejects `done`; the queue keeps it pending across retries.
+  done.catch((err: unknown) => {
+    markWorkflowStepSpawnErrored(run, stepIndex, err instanceof Error ? err.message : String(err));
+  });
   return done;
 }

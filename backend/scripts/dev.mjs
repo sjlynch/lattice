@@ -36,6 +36,8 @@ import {
 import { selfHealDeps } from './dev/deps.mjs';
 import { watchDist } from './dev/distWatcher.mjs';
 import { createRestartPolicy } from './dev/restartPolicy.mjs';
+import { describeExitCode } from './dev/exitStatus.mjs';
+import { recordExit } from '../../scripts/orchestrate/devLog.mjs';
 
 // ---- Step 1: self-heal deps if needed ----
 
@@ -126,7 +128,17 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 }
 
 // If tsc -w dies, that's fatal (no more incremental compiles) — bail.
-tscWatch.on('exit', onExit);
+tscWatch.on('exit', (code, signal) => {
+  const cause = describeExitCode(code, signal);
+  recordExit('tsc-watch', code ?? 1, { expected: shuttingDown, detail: cause });
+  if (!shuttingDown) console.error(`[lattice-backend] TypeScript watcher exited (${cause}) — stopping dev runner.`);
+  void onExit(code ?? 1);
+});
+tscWatch.on('error', (err) => {
+  recordExit('tsc-watch', 1, { expected: shuttingDown, detail: `spawn failed: ${err.message}` });
+  if (!shuttingDown) console.error('[lattice-backend] TypeScript watcher failed:', err);
+  void onExit(1);
+});
 
 backendLifecycle.start();
 

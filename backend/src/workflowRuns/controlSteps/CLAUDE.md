@@ -53,6 +53,10 @@ the lane-drain used by both merge Phase A and push:
   `PUSH_DRAIN_TIMEOUT_MS` (15 min) — now both mean "30/15 min with zero
   progress". Covered by `__tests__/workflowLaneWaitTimeout.test.ts`. `deps` is
   injectable only for the tests.
+- Task-read and progress-callback failures reject the lane waiter and release
+  its subscriptions; they must never become detached promise rejections that
+  kill the backend through `processGuards`. The no-progress timeout also covers
+  an initial task read that never settles.
 
 `waitForPostMergeHookIdle(project, run, onActive, maxWaitMs?, deps?)` — the
 merge step's **Phase C** gate. Resolves when no post-merge hook is `running` for

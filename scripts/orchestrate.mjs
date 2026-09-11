@@ -24,6 +24,7 @@ import {
 } from './orchestrate/config.mjs';
 import { recordExit } from './orchestrate/devLog.mjs';
 import { waitForHealth } from './orchestrate/health.mjs';
+import { describeExitCode } from '../backend/scripts/dev/exitStatus.mjs';
 
 note('starting backend...');
 const backend = startChild('backend', COLORS.backend, ['run', 'dev'], {
@@ -44,10 +45,11 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => shutdown(sig));
 }
 
-backend.on('exit', (code) => {
-  const log = recordExit('backend', code ?? 0, { expected: shuttingDown });
+backend.on('exit', (code, signal) => {
+  const cause = describeExitCode(code, signal);
+  const log = recordExit('backend', code ?? 0, { expected: shuttingDown, detail: cause });
   if (!shuttingDown) {
-    note(`backend exited (code ${code ?? 0}) — stopping frontend.`);
+    note(`backend exited (${cause}) — stopping frontend.`);
     note(
       log
         ? `last backend output appended to ${log}; crash details in ~/.lattice/logs/crash-*.log`
@@ -72,10 +74,11 @@ frontend = startChild('frontend', COLORS.frontend, ['run', 'dev'], {
   filterViteProxy: true,
 });
 
-frontend.on('exit', (code) => {
-  const log = recordExit('frontend', code ?? 0, { expected: shuttingDown });
+frontend.on('exit', (code, signal) => {
+  const cause = describeExitCode(code, signal);
+  const log = recordExit('frontend', code ?? 0, { expected: shuttingDown, detail: cause });
   if (!shuttingDown) {
-    note(`frontend exited (code ${code ?? 0}) — stopping backend.`);
+    note(`frontend exited (${cause}) — stopping backend.`);
     if (log) note(`last frontend output appended to ${log}`);
   }
   shutdown('SIGTERM');

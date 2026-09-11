@@ -2,6 +2,9 @@ import { prepareMergeConflictOutcome } from '../../worktree.js';
 import { listConflictedFiles } from '../../worktree/state.js';
 import { type Task } from '../../tasks.js';
 import { queuedCreateSession } from '../../queuedCreateSession.js';
+import { proxyListSessionsOrNull } from '../../terminalServerClient.js';
+import { agentHarnessForCommand } from '../../harnesses.js';
+import path from 'node:path';
 import { notify, type MergeRun } from '../state.js';
 import type { ProcessTargetContext } from '../processTarget.js';
 
@@ -93,11 +96,28 @@ export async function respawnResolverForFlaggedConflict(
   task: Task,
   run: MergeRun,
   runCtx: ProcessTargetContext,
+  deps = { listSessions: proxyListSessionsOrNull, listConflictedFiles, prepareMergeConflictOutcome, spawnAndRecord },
 ): Promise<ResolverSpawnResult> {
-  const conflictedFiles = await listConflictedFiles(task.worktreePath!);
+  // The backend may have restarted while its detached resolver PTY survived.
+  // Adopt that agent instead of starting two writers in the same worktree.
+  // An unavailable probe is not proof that it died: fail this attempt safely.
+  const sessions = await deps.listSessions();
+  if (!sessions) return { kind: 'spawn-error', error: 'Cannot verify whether the previous resolver is still running' };
+  const normalizeCwd = (cwd: string) => {
+    const normalized = path.resolve(cwd);
+    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  };
+  const existing = sessions.find((candidate) => {
+    const session = candidate as { id?: unknown; cwd?: unknown; initialCommand?: unknown } | null;
+    return session && typeof session.id === 'string' && typeof session.cwd === 'string'
+      && typeof session.initialCommand === 'string' && agentHarnessForCommand(session.initialCommand)
+      && /\bMERGE_INSTRUCTIONS\.md\b/i.test(session.initialCommand)
+      && normalizeCwd(session.cwd) === normalizeCwd(task.worktreePath!);
+  }) as { id: string } | undefined;
+  const conflictedFiles = await deps.listConflictedFiles(task.worktreePath!);
   // markConflict:false — this task is already conflict-flagged (that's why we
   // re-spawn), so re-flagging would needlessly reset conflictStartedAt.
-  const { command } = await prepareMergeConflictOutcome({
+  const { command } = await deps.prepareMergeConflictOutcome({
     task,
     branch: task.branch!,
     conflictedFiles,
@@ -105,7 +125,16 @@ export async function respawnResolverForFlaggedConflict(
     worktreePath: task.worktreePath!,
     markConflict: false,
   });
-  return spawnAndRecord({
+  if (existing) {
+    run.conflicted.push(task.id);
+    notify(runCtx.state, {
+      type: 'conflict', runId: run.id, projectPath: runCtx.projectPath,
+      taskId: task.id, command, cwd: task.worktreePath!, conflictedFiles, serverId: existing.id,
+    });
+    console.log(`[merge-run] task ${task.id}: reattached existing resolver ${existing.id}`);
+    return { kind: 'spawned', serverId: existing.id };
+  }
+  return deps.spawnAndRecord({
     task,
     run,
     runCtx,

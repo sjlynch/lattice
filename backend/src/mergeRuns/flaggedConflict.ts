@@ -10,7 +10,7 @@ import {
   handleResyncOutcome,
   respawnResolverForFlaggedConflict,
 } from './resolverSpawn.js';
-import { type MergeRun } from './state.js';
+import { abandonConflictWaiter, registerConflictWaiter, type MergeRun } from './state.js';
 import { awaitResolverWaiter } from './waiterLiveness.js';
 import { recoverAbandonedResolverTask } from './abandonedResolver.js';
 import { withMergeLock } from './withMergeLock.js';
@@ -41,7 +41,10 @@ export async function tryRespawnMidMergeResolver(
   run: MergeRun,
   runCtx: ProcessTargetContext,
 ): Promise<ProcessOutcome> {
-  console.log(`[merge-run] task ${task.id} mid-merge — re-spawning resolver`);
+  console.log(`[merge-run] task ${task.id} mid-merge — recovering resolver`);
+  // A surviving resolver may complete during session probing / instruction
+  // repair. Register first so its callback cannot disappear before we park.
+  const waiter = registerConflictWaiter(runCtx.state, run.id, task.id);
   let outcome: ProcessOutcome = { kind: 'awaiting-resolver' };
   let spawned = false;
   try {
@@ -90,6 +93,9 @@ export async function tryRespawnMidMergeResolver(
       run.id,
       task.id,
       task.worktreePath,
+      undefined,
+      undefined,
+      waiter,
     );
     if (reason === 'signalled') {
       console.log(`[merge-run] re-spawned conflict resolver done for task ${task.id} — resuming run`);
@@ -103,6 +109,8 @@ export async function tryRespawnMidMergeResolver(
       });
       await recoverAbandonedResolverTask(task);
     }
+  } else {
+    abandonConflictWaiter(runCtx.state, task.id, run.id);
   }
   return outcome;
 }

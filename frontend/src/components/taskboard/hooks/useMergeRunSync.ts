@@ -70,6 +70,7 @@ export function useMergeRunSync(
     toastedRef.current = new Set();
     if (!activeFolder) return;
     let cancelled = false;
+    let receivedLiveState = false;
 
     function maybeToastErrors(run: MergeRun): void {
       if (!showError) return;
@@ -91,7 +92,9 @@ export function useMergeRunSync(
 
     getActiveMergeRun(activeFolder)
       .then((r) => {
-        if (cancelled) return;
+        // The initial HTTP response can arrive after a newer WS event,
+        // especially while reconnecting to a busy/recovering backend.
+        if (cancelled || receivedLiveState) return;
         setMergeRun(r);
         if (r) maybeToastErrors(r);
       })
@@ -100,6 +103,7 @@ export function useMergeRunSync(
       });
     const unsub = subscribeMergeRuns(activeFolder, (ev) => {
       if (cancelled) return;
+      if (ev.type !== 'conflict') receivedLiveState = true;
       if (ev.type === 'idle') {
         // Server confirmed no active run — clear any stale state left over
         // from a run that completed while the WS was disconnected.

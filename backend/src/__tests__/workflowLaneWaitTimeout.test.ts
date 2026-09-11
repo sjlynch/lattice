@@ -143,6 +143,81 @@ test('waitForLaneEmpty resolves (and clears the timer) when the lane is already 
   await waitForLaneEmpty(PROJECT, makeRun(), 'in_progress', () => {}, 1000, deps);
 });
 
+test('a rejected initial lane read rejects the waiter and releases its subscriptions', async () => {
+  let unsubscribed = 0;
+  const deps: LaneWaitDeps = {
+    listTasks: async () => { throw new Error('task store read failed'); },
+    subscribeTasks: () => () => { unsubscribed += 1; },
+    subscribeRun: () => () => { unsubscribed += 1; },
+  };
+  await assert.rejects(waitForLaneEmpty(PROJECT, makeRun(), 'in_progress', () => {}, 1000, deps),
+    /task store read failed/);
+  assert.equal(unsubscribed, 2);
+});
+
+test('lane progress exceptions reject the waiter instead of escaping a store subscriber', async () => {
+  let push!: (tasks: Task[]) => void;
+  let unsubscribed = 0;
+  const deps: LaneWaitDeps = {
+    listTasks: async () => [stuckTask()],
+    subscribeTasks: (cb) => {
+      push = (tasks) => cb(PROJECT, tasks);
+      return () => { unsubscribed += 1; };
+    },
+    subscribeRun: () => () => { unsubscribed += 1; },
+  };
+  let progressCalls = 0;
+  const waiting = waitForLaneEmpty(PROJECT, makeRun(), 'in_progress', () => {
+    if (++progressCalls > 1) throw new Error('progress subscriber failed');
+  }, 1000, deps);
+  const rejected = assert.rejects(waiting, /progress subscriber failed/);
+  await Promise.resolve();
+  push([stuckTask()]);
+  await rejected;
+  assert.equal(unsubscribed, 2);
+});
+
+test('the lane wait timeout also bounds an initial task read that never settles', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const deps: LaneWaitDeps = {
+      listTasks: () => new Promise(() => {}),
+      subscribeTasks: () => () => undefined,
+      subscribeRun: () => () => undefined,
+    };
+    const rejected = assert.rejects(
+      waitForLaneEmpty(PROJECT, makeRun(), 'in_progress', () => {}, 1000, deps),
+      /made no progress for 1000ms/,
+    );
+    mock.timers.tick(1000);
+    await rejected;
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('a failed initial lane read errors only its workflow and releases the project lock', async () => {
+  const release = mock.fn(async () => undefined);
+  const run = makeRun();
+  const wf = { projectPath: PROJECT, steps: [{ kind: 'merge' }] } as Workflow;
+  const deps: LaneWaitDeps = {
+    listTasks: async () => { throw new Error('task read failed during recovery'); },
+    subscribeTasks: () => () => undefined,
+    subscribeRun: () => () => undefined,
+  };
+  let completed = false;
+  await runControlStepWorker(wf, run, 0, 'http://localhost', async () => { completed = true; }, {
+    acquireLock: async () => ({ release }),
+    runStart: async () => undefined,
+    runMerge: () => waitForLaneEmpty(PROJECT, run, 'in_progress', () => {}, 1000, deps),
+    runPush: async () => undefined,
+  });
+  assert.equal(release.mock.callCount(), 1);
+  assert.equal(run.status, 'errored');
+  assert.match(run.error ?? '', /task read failed during recovery/);
+  assert.equal(completed, false);
+});
+
 test("a control-step worker releases the project run-lock when the lane-wait times out", async () => {
   // Simulate the whole worker: a merge step whose Phase A drain rejects the way
   // the timeout does. The lock must still be released (its run.lock freed) and

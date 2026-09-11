@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 // The dev-runner log lives with the rest of the crash bookkeeping, in the root
 // orchestrator's helpers. This runner is a SECOND supervisor — the orchestrator
@@ -18,29 +21,38 @@ export function createBackendLifecycle({
   isShuttingDown,
   onExitDuringShutdown,
   stdio = inheritStdio,
+  spawnProcess = spawn,
 }) {
   let backendChild = null;
   let restartingBackend = false; // true between a restart kill and the respawn
 
   function spawnBackend() {
+    if (isShuttingDown()) return null;
     copyAssetsBeforeRespawn();
     restartingBackend = false;
-    const c = spawn(process.execPath, ['dist/index.js'], { stdio });
-    c.on('exit', (code, signal) => {
+    const c = spawnProcess(process.execPath, ['dist/index.js'], { stdio });
+    let finished = false;
+    let spawned = false;
+    c.once('spawn', () => { spawned = true; });
+    function onChildExit(code, signal, spawnError) {
+      if (finished) return;
+      finished = true;
       // A death we asked for runs no JS in the child on Windows (`kill()` is
       // TerminateProcess), so the child cannot retract its own live console
       // mirror — we do it for it, or the next boot reports this as a crash.
-      // A hard fault is the one case we deliberately leave behind: that mirror
-      // is the only surviving record of what it was doing. See liveLog.mjs.
-      if (!isHardFault(code)) clearLiveLog(c.pid);
+      // Preserve unexpected non-zero/signal exits too: an external kill does
+      // not have to use a native fault code. See liveLog.mjs.
+      if (restartingBackend || isShuttingDown() || (code === 0 && !signal)) clearLiveLog(c.pid);
+      if (isShuttingDown()) {
+        restartingBackend = false;
+        backendChild = null;
+        recordExit('lattice-backend', code ?? 0, { expected: true });
+        void onExitDuringShutdown(code ?? 0);
+        return;
+      }
       if (restartingBackend) {
         restartingBackend = false;
         backendChild = spawnBackend();
-        return;
-      }
-      if (isShuttingDown()) {
-        recordExit('lattice-backend', code ?? 0, { expected: true });
-        void onExitDuringShutdown(code ?? 0);
         return;
       }
       // Exited on its own (a crash, or a fatal startup error) — mirror
@@ -51,7 +63,7 @@ export function createBackendLifecycle({
       // fault, an OS OOM-kill or an external `taskkill` runs no JS in that
       // process at all — this handler, in a different process, is the only
       // thing that still gets to write the death down.
-      const cause = describeExitCode(code, signal);
+      const cause = spawnError ? `spawn failed: ${spawnError.message}` : describeExitCode(code, signal);
       const log = recordExit('lattice-backend', code ?? 0, { detail: cause });
       console.error(
         `[lattice-backend] dist/index.js exited (${cause}) — ` +
@@ -66,6 +78,16 @@ export function createBackendLifecycle({
       }
       if (log) console.error(`[lattice-backend] exit recorded to ${log}`);
       backendChild = null;
+    }
+    c.on('exit', (code, signal) => onChildExit(code, signal));
+    c.on('error', (err) => {
+      if (!spawned) onChildExit(1, null, err);
+      else {
+        // kill() can fail asynchronously too. The old process may still be
+        // serving; do not forget it and admit a duplicate backend.
+        restartingBackend = false;
+        console.error('[lattice-backend] backend child operation failed:', err);
+      }
     });
     return c;
   }
@@ -75,6 +97,7 @@ export function createBackendLifecycle({
   }
 
   function restartBackend(reason) {
+    if (isShuttingDown()) return false;
     if (restartingBackend) return false; // a restart is already in flight
     if (!backendChild) {
       console.log(`[lattice-backend] starting dist/index.js — ${reason}`);
@@ -85,9 +108,10 @@ export function createBackendLifecycle({
     restartingBackend = true;
     try {
       backendChild.kill();
-    } catch {
+    } catch (err) {
       restartingBackend = false;
-      backendChild = spawnBackend();
+      console.error('[lattice-backend] could not stop backend for restart:', err);
+      return false;
     }
     return true;
   }
@@ -117,10 +141,17 @@ export function createBackendLifecycle({
 // processes inside them) running forever.
 export async function shutdownTerminalServer(terminalPort = TERMINAL_PORT) {
   try {
-    await fetch(`http://127.0.0.1:${terminalPort}/shutdown`, {
+    // Read the backend's persisted token; the dev runner must not create or
+    // rotate it while shutting down an existing detached server.
+    const token = fs.readFileSync(
+      path.join(os.homedir(), '.lattice', 'terminalServerToken'), 'utf8',
+    ).trim();
+    const res = await fetch(`http://127.0.0.1:${terminalPort}/shutdown`, {
       method: 'POST',
+      headers: { 'x-lattice-terminal-token': token },
       signal: AbortSignal.timeout(2500),
     });
+    if (!res.ok) console.warn(`[lattice-backend] terminal-server shutdown failed: HTTP ${res.status}`);
   } catch {
     /* terminal server already down */
   }

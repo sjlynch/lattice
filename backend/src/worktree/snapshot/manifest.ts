@@ -29,8 +29,20 @@ export function snapshotManifestPath(snapshotDir: string): string {
   return path.join(snapshotDir, SNAPSHOT_MANIFEST_FILENAME);
 }
 
+export function isSnapshotMetadataPath(file: string): boolean {
+  return path.normalize(file).split(/[\\/]+/)[0].toLowerCase() === SNAPSHOT_MANIFEST_FILENAME;
+}
+
 export function isSupportedSnapshotManifest(manifest: unknown): manifest is SnapshotManifest {
-  return !!manifest && (manifest as { version?: unknown }).version === 1;
+  if (!manifest || typeof manifest !== 'object') return false;
+  const value = manifest as Partial<SnapshotManifest>;
+  return value.version === 1
+    && typeof value.repoRoot === 'string' && path.isAbsolute(value.repoRoot)
+    && !value.repoRoot.includes('\0')
+    && typeof value.label === 'string'
+    && typeof value.createdAt === 'number' && Number.isFinite(value.createdAt)
+    && Array.isArray(value.modifiedTracked) && value.modifiedTracked.every((file) => typeof file === 'string')
+    && Array.isArray(value.untracked) && value.untracked.every((file) => typeof file === 'string');
 }
 
 export async function readSnapshotManifest(manifestPath: string): Promise<SnapshotManifest | null> {

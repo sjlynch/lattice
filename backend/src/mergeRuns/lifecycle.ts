@@ -13,7 +13,7 @@ import {
   type ProjectRunLockHandle,
 } from '../projectRunLock.js';
 import { generateMergeRunId } from '../ids.js';
-import type { Task } from '../tasks.js';
+import { listTasks, type Task } from '../tasks.js';
 import type { MergeRunLockMode } from '../mergeRuns.js';
 import type { MergeRun, RunState } from './state.js';
 
@@ -86,6 +86,21 @@ export function filterAndSortTargets(tasks: Task[]): Task[] {
   return tasks
     .filter((t) => t.status === 'ready_to_merge')
     .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+export async function loadRunTargets(
+  projectPath: string,
+  projectLock: ProjectRunLockHandle | null,
+  listTasksFn: typeof listTasks = listTasks,
+): Promise<Task[]> {
+  try {
+    return filterAndSortTargets(await listTasksFn(projectPath));
+  } catch (err) {
+    // No worker exists yet to run its finally. A rejected task read must not
+    // leave a live process holding run.lock indefinitely.
+    await projectLock?.release();
+    throw err;
+  }
 }
 
 // Build the in-memory run record. The caller is responsible for registering it

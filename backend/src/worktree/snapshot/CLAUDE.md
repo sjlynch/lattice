@@ -22,3 +22,17 @@ Safety-critical copy-based working-tree snapshots. Keep the capture order in
    git operations fail safely instead of losing data.
 
 Do not replace this with `git stash --include-untracked`.
+
+Additional recovery invariants (2026-09 stability review):
+
+- Snapshot directories use `mkdtemp`, so same-label captures in one millisecond
+  cannot share payloads or overwrite each other's manifest.
+- `_lattice-snapshot.json` at the snapshot root is metadata. A repository path
+  with that name (case-insensitive) is left dirty rather than captured/reset;
+  older manifests listing the metadata path are refused on restore.
+- Untracked cleanup is nonrecursive and rechecks parent symlinks. A file that
+  became a directory after capture contains uncaptured work and must survive.
+- The manifest reader validates recovery fields and arrays before returning a
+  supported record. A version number alone does not make a record safe to use.
+- Stale conflict copies use exclusive creation with numbered suffixes; existing
+  recovery work is never overwritten. Identical copies are reused across boots.

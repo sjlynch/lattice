@@ -114,6 +114,18 @@ test('cancelling a queued workflow step prevents later step-spawned delivery', a
   );
 });
 
+test('a thrown workflow PTY spawn error settles the run instead of hanging without a session', async () => {
+  queueState.accounting.reconcile(0, Date.now() + 1);
+  const run = makeRun();
+  await assert.rejects(enqueueWorkflowStepSession({
+    run, stepIndex: 0, projectPath: run.projectPath, stepDir: '/tmp/workflow-step-thrown',
+    command: 'claude --dangerously-skip-permissions', harness: 'claude',
+    deps: { proxyCreateSession: async () => { throw new Error('spawn transport failed'); } },
+  }), /spawn transport failed/);
+  assert.equal(run.status, 'errored');
+  assert.match(run.error ?? '', /spawn transport failed/);
+});
+
 test('cancelling a spawned workflow step kills its terminal session', async () => {
   queueState.accounting.setSoftCap(1);
   queueState.accounting.reconcile(0, Date.now());

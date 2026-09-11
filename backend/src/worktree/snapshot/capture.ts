@@ -60,9 +60,9 @@ export async function createSnapshotDirectory(
 ): Promise<string> {
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   const safeLabel = label.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
-  const dir = path.join(SNAPSHOTS_BASE, projectHash(repoRoot), `${ts}-${safeLabel}`);
-  await fs.mkdir(dir, { recursive: true });
-  return dir;
+  const parent = path.join(SNAPSHOTS_BASE, projectHash(repoRoot));
+  await fs.mkdir(parent, { recursive: true });
+  return fs.mkdtemp(path.join(parent, `${ts}-${safeLabel}-`));
 }
 
 export async function writeCapturedSnapshotManifest(
