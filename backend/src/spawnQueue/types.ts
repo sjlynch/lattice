@@ -19,6 +19,7 @@ export type EnqueueSpawnArgs<T = unknown> = {
   // returns the existing request's handle.
   dedupeKey: string;
   thunk: SpawnThunk<T>;
+  signal?: AbortSignal;
 };
 
 export type EnqueueSpawnResult<T = unknown> = {

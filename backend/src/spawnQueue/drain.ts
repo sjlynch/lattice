@@ -61,7 +61,7 @@ async function runThunk(
     // No slot freed (the reservation becomes a real session, reconciled by
     // a later poll), so no re-drain is needed here.
   } catch (err) {
-    if (isSpawnCapacityError(err)) {
+    if (isSpawnCapacityError(err) && !request.signal?.aborted) {
       // The hard cap rejected the spawn — the queue over-admitted. No
       // session was created: free the reservation, freeze admissions until
       // the next poll corrects liveCount, and re-queue the request. Its

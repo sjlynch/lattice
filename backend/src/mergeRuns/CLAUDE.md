@@ -23,9 +23,9 @@ here instead of bloating the parent file.
   registers the waiter **synchronously** (preserving the register-then-release-
   lock ordering the park sites depend on), then races the waiter promise against
   a periodic **pty-liveness probe** (terminal-server session list, matched to the
-  resolver's worktree cwd) plus an absolute wall-clock cap. Returns
+  resolver's exact session ID and normalized worktree cwd) plus idle/unknown-liveness caps. Returns
   `'signalled'` (real completion) | `'resolver-dead'` (probe saw no live pty for
-  N consecutive polls) | `'timeout'` (cap hit while liveness stayed "can't
+  N consecutive polls) | `'resolver-idle'` (30 minutes without owning-session output) | `'timeout'` (cap hit while liveness stayed "can't
   tell"). On a non-signalled release it `abandon`s the registry entry. Config +
   `listSessions`/timer deps are injectable for tests; production defaults ~75s to
   detect a dead pty, 30-min hard cap. This is why a dead resolver can no longer
@@ -33,8 +33,9 @@ here instead of bloating the parent file.
 - `abandonedResolver.ts` — `recoverAbandonedResolverTask(task)`: the shared
   "resolution is being abandoned" cleanup — abort a lingering in-worktree merge,
   clear the conflict flags (makes a late /merged a no-op), kill the resolver pty
-  by cwd. Called by both `routes/tasks/hooks/mergeAborted.ts` (give-up resolver /
-  Cancel) and the `waiterLiveness.ts` dead/timeout path. Leaves the task at plain
+  by cwd. Called by `routes/tasks/hooks/mergeAborted.ts` (explicit give-up resolver /
+  Cancel). Automatic liveness failures use `resolverWaitFailure.ts` to stop the
+  run and preserve conflict state, terminals, and unfinished edits. Leaves the task at plain
   ready_to_merge to retry on the next merge-all.
 - `state.ts` — stable public facade and `RunState` / `MergeRunStateManager`:
   persistent run maps, notify/subscribe fan-out, active-run lookup/cancel, and
@@ -151,13 +152,20 @@ park sites await `waiterLiveness.ts` `awaitResolverWaiter` rather than the raw
 `registerConflictWaiter`. `/merge-aborted` covers only the *graceful* give-up
 (the resolver aborts + curls a callback); a resolver that dies with NO callback
 — crash, OOM, user kills the pty, missed Stop hook — is caught by the liveness
-probe. On `'resolver-dead'`/`'timeout'` the park caller logs, records a
-`run.errored` entry, `recoverAbandonedResolverTask`s the task (conflict cleared,
-left at ready_to_merge), and continues — so `finalizeMergeRun`'s `finally`
+probe. On `'resolver-dead'`/`'resolver-idle'`/`'timeout'` the park caller logs,
+records a `run.errored` entry, preserves all worktree/conflict/session state,
+and stops the run — so `finalizeMergeRun`'s `finally`
 always reaches `releaseLock` and the project run-lock is freed. The lock was
 already released inside `parkOnConflictResolver` before the wait, so the
 merge-conflict outcome stays `'awaiting-resolver'` (don't double-release)
 regardless of how the wait ended.
+
+Resolver admission accepts the merge run's AbortSignal and a 10-minute capacity
+timeout. Cancellation removes queued spawns; an allocation already in flight
+is awaited and its returned terminal reclaimed before the caller proceeds.
+An unconfirmed stop retains the exact session ID and underlying error in the
+diagnostic. Resolver identities and last observed output are mirrored on the
+merge record, so restart adoption retains the progress timeout.
 
 2026-09 recovery/teardown corrections:
 

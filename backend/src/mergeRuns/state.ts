@@ -5,6 +5,7 @@ import { ConflictWaiterRegistry } from './conflictWaiters.js';
 import { normalizeLoadedRuns } from './normalization.js';
 import { snapshotRun } from './snapshot.js';
 import type { MergeRun, MergeRunEvent } from './types.js';
+import { cancelMergeRunSpawns } from './cancellation.js';
 
 export type {
   ConflictWaiterEntry,
@@ -149,6 +150,7 @@ export class MergeRunStateManager extends ProjectStateManager<
     const run = this.runs.get(id);
     if (!run || run.status !== 'running') return false;
     run.cancelRequested = true;
+    cancelMergeRunSpawns(run);
     this.conflictWaiters.unblockRun(id);
     // No worker to observe `cancelRequested` — settle the record here so the
     // button is never a silent no-op (and the run stops gating new ones).

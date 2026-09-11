@@ -7,6 +7,7 @@ import { agentHarnessForCommand } from '../../harnesses.js';
 import path from 'node:path';
 import { notify, type MergeRun } from '../state.js';
 import type { ProcessTargetContext } from '../processTarget.js';
+import { mergeRunCancellation } from '../cancellation.js';
 
 type ResolverSpawnInput = {
   task: Task;
@@ -38,9 +39,11 @@ async function spawnResolverAndNotifyConflict({
   const sess = await queuedCreateSession({
     kind: 'merge-run-resolver',
     priority: 'priority',
-    dedupeKey: `mr-resolver:${task.id}`,
+    dedupeKey: `mr-resolver:${run.id}:${task.id}`,
+    signal: mergeRunCancellation(run),
+    timeoutMs: 10 * 60_000,
     opts: { cwd, initialCommand: command, projectPath: task.projectPath },
-  });
+  }).catch((err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }));
   // queuedCreateSession returns { error } when the terminal-server can't
   // start (we hit this when a missing dist asset killed terminal-server's
   // boot mid-merge-run). Without surfacing this, the caller would still
@@ -55,6 +58,7 @@ async function spawnResolverAndNotifyConflict({
     return { kind: 'spawn-error', error: sess.error };
   }
   onBeforeNotify?.();
+  (run.resolvers ??= {})[task.id] = { sessionId: sess.id, lastProgressAt: Date.now() };
   notify(runCtx.state, {
     type: 'conflict',
     runId: run.id,
@@ -126,6 +130,9 @@ export async function respawnResolverForFlaggedConflict(
     markConflict: false,
   });
   if (existing) {
+    const prior = [...runCtx.state.runs.values()].sort((a, b) => b.startedAt - a.startedAt)
+      .map((r) => r.resolvers?.[task.id]).find((r) => r?.sessionId === existing.id);
+    (run.resolvers ??= {})[task.id] = prior ? { ...prior } : { sessionId: existing.id, lastProgressAt: Date.now() };
     run.conflicted.push(task.id);
     notify(runCtx.state, {
       type: 'conflict', runId: run.id, projectPath: runCtx.projectPath,

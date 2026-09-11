@@ -12,7 +12,7 @@ import {
 } from './resolverSpawn.js';
 import { abandonConflictWaiter, registerConflictWaiter, type MergeRun } from './state.js';
 import { awaitResolverWaiter } from './waiterLiveness.js';
-import { recoverAbandonedResolverTask } from './abandonedResolver.js';
+import { preserveResolverAfterWaitFailure } from './resolverWaitFailure.js';
 import { withMergeLock } from './withMergeLock.js';
 import type {
   ProcessOutcome,
@@ -47,6 +47,7 @@ export async function tryRespawnMidMergeResolver(
   const waiter = registerConflictWaiter(runCtx.state, run.id, task.id);
   let outcome: ProcessOutcome = { kind: 'awaiting-resolver' };
   let spawned = false;
+  let serverId: string | undefined;
   try {
     const result = await respawnResolverForFlaggedConflict(task, run, runCtx);
     if (result.kind === 'spawn-error') {
@@ -61,6 +62,7 @@ export async function tryRespawnMidMergeResolver(
       outcome = { kind: 'errored' };
     } else {
       spawned = true;
+      serverId = result.serverId;
     }
   } catch (err) {
     console.error(`[merge-run] re-spawn for ${task.id} failed:`, err);
@@ -96,18 +98,15 @@ export async function tryRespawnMidMergeResolver(
       undefined,
       undefined,
       waiter,
+      serverId,
     );
     if (reason === 'signalled') {
       console.log(`[merge-run] re-spawned conflict resolver done for task ${task.id} — resuming run`);
     } else {
       console.warn(
-        `[merge-run] re-spawned conflict resolver for task ${task.id} ${reason === 'timeout' ? 'wait timed out' : 'pty died'} — recovering and continuing`,
+        `[merge-run] re-spawned conflict resolver for task ${task.id}: ${reason} — preserving work and stopping the run`,
       );
-      run.errored.push({
-        taskId: task.id,
-        error: `re-spawned conflict resolver ${reason} (no completion callback); left at ready_to_merge`,
-      });
-      await recoverAbandonedResolverTask(task);
+      preserveResolverAfterWaitFailure(run, task.id, reason);
     }
   } else {
     abandonConflictWaiter(runCtx.state, task.id, run.id);

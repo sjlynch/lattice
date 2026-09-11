@@ -274,3 +274,42 @@ test('raw registerConflictWaiter + signal round-trips (unchanged registry contra
   await p;
   assert.equal(resolved, true);
 });
+
+test('an unrelated terminal in the same worktree cannot keep the owning resolver alive', async () => {
+  const state = createRunState();
+  const clock = fakeClock();
+  const waited = awaitResolverWaiter(state, 'owner-run', 'owner-task', '/wt', FAST_CONFIG,
+    { ...clock.deps, listSessions: async () => [{ id: 'shell', cwd: '/wt', lastOutputAt: clock.deps.now() }] },
+    undefined, 'actual-resolver');
+  await clock.advance(1_000);
+  assert.equal(await waited, 'resolver-dead');
+});
+
+test('a live resolver with no progress releases its waiter as idle, distinct from dead', async () => {
+  const state = createRunState();
+  const clock = fakeClock();
+  const waited = awaitResolverWaiter(state, 'idle-run', 'idle-task', '/wt', { ...FAST_CONFIG, idleMs: 500 },
+    { ...clock.deps, listSessions: async () => [{ id: 'owner', cwd: '/wt', lastOutputAt: 0 }] }, undefined, 'owner');
+  await clock.advance(1_000);
+  assert.equal(await waited, 'resolver-idle');
+  assert.equal(state.signalConflictWaiter('idle-task'), false);
+});
+
+test('new owning-resolver output keeps legitimate long work alive past the idle threshold', async () => {
+  const state = createRunState();
+  const clock = fakeClock();
+  const waited = awaitResolverWaiter(state, 'busy-run', 'busy-task', '/wt', { ...FAST_CONFIG, idleMs: 500 },
+    { ...clock.deps, listSessions: async () => [{ id: 'owner', cwd: '/wt', lastOutputAt: clock.deps.now() }] }, undefined, 'owner');
+  await clock.advance(5_000);
+  assert.equal(state.signalConflictWaiter('busy-task'), true);
+  assert.equal(await waited, 'signalled');
+});
+
+test('a rejected liveness probe is contained and reaches the unknown-liveness timeout', async () => {
+  const state = createRunState();
+  const clock = fakeClock();
+  const waited = awaitResolverWaiter(state, 'throw-run', 'throw-task', '/wt', FAST_CONFIG,
+    { ...clock.deps, listSessions: async () => { throw new Error('terminal transport'); } }, undefined, 'owner');
+  await clock.advance(FAST_CONFIG.maxWaitMs + FAST_CONFIG.pollMs);
+  assert.equal(await waited, 'timeout');
+});

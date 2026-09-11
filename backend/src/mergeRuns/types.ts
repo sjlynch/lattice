@@ -15,6 +15,7 @@ export type MergeRun = {
   conflicted: string[];
   errored: MergeRunErrorEntry[];
   cancelRequested: boolean;
+  resolvers?: Record<string, { sessionId: string; lastProgressAt: number }>;
 };
 
 export type MergeRunEvent =

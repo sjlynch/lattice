@@ -61,6 +61,10 @@ export function normalizeLoadedRuns(raw: unknown, projectPath: string): MergeRun
         error: 'merge run was interrupted by backend restart',
       });
     }
+    if (candidate.resolvers && typeof candidate.resolvers === 'object') {
+      run.resolvers = Object.fromEntries(Object.entries(candidate.resolvers).filter(([, r]) =>
+        r && typeof r.sessionId === 'string' && Number.isFinite(r.lastProgressAt)).map(([id, r]) => [id, { ...r }]));
+    }
     runs.push(run);
   }
   return runs;

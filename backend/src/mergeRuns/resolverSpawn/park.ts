@@ -31,12 +31,17 @@ export function parkOnConflictResolver(
   runId: string,
   lock: MergeLockToken,
   worktreePath: string | undefined,
+  sessionId?: string,
 ): Promise<WaiterReleaseReason> {
   const waitForResolver = awaitResolverWaiter(
     state,
     runId,
     lock.taskId,
     worktreePath,
+    undefined,
+    undefined,
+    undefined,
+    sessionId,
   );
   release(lock);
   return waitForResolver;

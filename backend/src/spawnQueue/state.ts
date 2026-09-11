@@ -17,6 +17,7 @@ export type QueueRequest = {
   priority: SpawnPriority;
   dedupeKey: string;
   thunk: SpawnThunk;
+  signal?: AbortSignal;
   // Original enqueue time; preserved across CAP re-queues so a retried
   // request naturally re-sorts to the front of its band.
   enqueuedAt: number;
@@ -62,6 +63,7 @@ export class SpawnQueueState {
       priority: args.priority,
       dedupeKey: args.dedupeKey,
       thunk: args.thunk,
+      signal: args.signal,
       enqueuedAt: Date.now(),
       state: 'pending',
       resolve,

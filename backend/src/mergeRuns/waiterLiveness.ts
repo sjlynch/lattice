@@ -21,7 +21,7 @@ import {
 // the terminal-server session registry) plus an absolute wall-clock backstop.
 // If the pty is gone (or the cap elapses) we release the run so it can move on.
 
-export type WaiterReleaseReason = 'signalled' | 'resolver-dead' | 'timeout';
+export type WaiterReleaseReason = 'signalled' | 'resolver-dead' | 'resolver-idle' | 'timeout';
 
 export type WaiterLivenessConfig = {
   // Delay before the FIRST liveness probe. The resolver pty is spawned (and
@@ -44,6 +44,9 @@ export type WaiterLivenessConfig = {
   // keeps resetting it and is never wall-clock-killed (liveness is preferred
   // over a pure wall-clock cap). Generous: resolvers can run many minutes.
   maxWaitMs: number;
+  // A known resolver with no new terminal output for this long pauses the run
+  // without killing it or aborting its merge. Long-running work is preserved.
+  idleMs?: number;
 };
 
 // Production defaults. A dead resolver is detected in roughly
@@ -56,6 +59,7 @@ export const DEFAULT_WAITER_LIVENESS_CONFIG: WaiterLivenessConfig = {
   pollMs: 15_000,
   deadStrikes: 3,
   maxWaitMs: 30 * 60_000,
+  idleMs: 30 * 60_000,
 };
 
 export type WaiterLivenessDeps = {
@@ -83,7 +87,8 @@ const productionDeps: WaiterLivenessDeps = {
 // "is there a live session under this worktree" agrees with "which sessions get
 // killed for this worktree".
 function normCwd(p: string): string {
-  return p.replace(/[\\/]+$/, '').toLowerCase();
+  const normalized = p.replace(/\\/g, '/').replace(/\/+$/, '');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 function cwdWithin(sessionNorm: string, baseNorm: string): boolean {
@@ -100,16 +105,22 @@ function cwdWithin(sessionNorm: string, baseNorm: string): boolean {
 async function isResolverPtyAlive(
   worktreePath: string | undefined,
   deps: WaiterLivenessDeps,
-): Promise<boolean | null> {
-  if (!worktreePath) return null;
-  const sessions = await deps.listSessions();
-  if (sessions === null) return null;
+  sessionId?: string,
+): Promise<{ alive: boolean | null; lastOutputAt?: number }> {
+  if (!worktreePath) return { alive: null };
+  let sessions: unknown[] | null;
+  try { sessions = await deps.listSessions(); } catch { sessions = null; }
+  if (sessions === null) return { alive: null };
   const base = normCwd(worktreePath);
   for (const s of sessions) {
-    const cwd = (s as { cwd?: unknown })?.cwd;
-    if (typeof cwd === 'string' && cwdWithin(normCwd(cwd), base)) return true;
+    const session = s as { cwd?: unknown; id?: unknown; lastOutputAt?: unknown } | null;
+    const cwd = session?.cwd;
+    if (sessionId && session?.id !== sessionId) continue;
+    if (typeof cwd === 'string' && cwdWithin(normCwd(cwd), base)) return {
+      alive: true, lastOutputAt: typeof session?.lastOutputAt === 'number' && Number.isFinite(session.lastOutputAt) ? session.lastOutputAt : undefined,
+    };
   }
-  return false;
+  return { alive: false };
 }
 
 // Register a conflict waiter for `taskId` and await it, but release early if the
@@ -125,6 +136,7 @@ export function awaitResolverWaiter(
   config: WaiterLivenessConfig = DEFAULT_WAITER_LIVENESS_CONFIG,
   deps: WaiterLivenessDeps = productionDeps,
   registeredWaiter?: Promise<void>,
+  sessionId?: string,
 ): Promise<WaiterReleaseReason> {
   const waiter = registeredWaiter ?? registerConflictWaiter(state, runId, taskId);
   return raceWaiterAgainstLiveness(
@@ -135,6 +147,7 @@ export function awaitResolverWaiter(
     waiter,
     config,
     deps,
+    sessionId ?? state.runs.get(runId)?.resolvers?.[taskId]?.sessionId,
   );
 }
 
@@ -146,6 +159,7 @@ async function raceWaiterAgainstLiveness(
   waiter: Promise<void>,
   config: WaiterLivenessConfig,
   deps: WaiterLivenessDeps,
+  sessionId?: string,
 ): Promise<WaiterReleaseReason> {
   let done = false;
   let reason: WaiterReleaseReason = 'signalled';
@@ -170,16 +184,30 @@ async function raceWaiterAgainstLiveness(
   // cap is measured from here (see maxWaitMs), so a confirmed-alive resolver is
   // never killed on a pure timer.
   let lastAliveAt = startedAt;
+  let lastProgressAt = state.runs.get(runId)?.resolvers?.[taskId]?.lastProgressAt ?? startedAt;
   let strikes = 0;
   let timer: unknown;
   const tick = async (): Promise<void> => {
     if (done) return;
     if (deps.now() - startedAt >= config.graceMs) {
-      const alive = await isResolverPtyAlive(worktreePath, deps);
+      const { alive, lastOutputAt } = await isResolverPtyAlive(worktreePath, deps, sessionId);
       if (done) return;
       if (alive === true) {
         strikes = 0;
         lastAliveAt = deps.now();
+        if (lastOutputAt !== undefined && lastOutputAt > lastProgressAt) {
+          lastProgressAt = Math.min(lastOutputAt, deps.now());
+          const run = state.runs.get(runId);
+          const resolver = run?.resolvers?.[taskId];
+          if (resolver) {
+            resolver.lastProgressAt = lastProgressAt;
+            state.emit({ type: 'progress', run: state.getRun(runId)! });
+          }
+        }
+        if (sessionId && config.idleMs !== undefined && deps.now() - lastProgressAt >= config.idleMs) {
+          finish('resolver-idle');
+          return;
+        }
       } else if (alive === false) {
         strikes += 1;
         if (strikes >= config.deadStrikes) {

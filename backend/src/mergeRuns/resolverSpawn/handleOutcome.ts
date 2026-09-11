@@ -8,7 +8,7 @@ import type {
 } from '../processTarget.js';
 import { recordAndSpawn } from './spawn.js';
 import { parkOnConflictResolver } from './park.js';
-import { recoverAbandonedResolverTask } from '../abandonedResolver.js';
+import { preserveResolverAfterWaitFailure } from '../resolverWaitFailure.js';
 
 function recordSpawnError(
   run: MergeRun,
@@ -28,6 +28,7 @@ export async function handleResyncOutcome(
   runCtx: ProcessTargetContext,
   outcome: ResyncOutcome,
   lock?: MergeLockToken,
+  deps = { recordAndSpawn, parkOnConflictResolver },
 ): Promise<ProcessOutcome> {
   if (outcome.kind === 'finalized') {
     run.merged.push(task.id);
@@ -35,7 +36,7 @@ export async function handleResyncOutcome(
   }
 
   if (outcome.kind === 'stash-conflict') {
-    const spawn = await recordAndSpawn({
+    const spawn = await deps.recordAndSpawn({
       task,
       run,
       runCtx,
@@ -57,7 +58,7 @@ export async function handleResyncOutcome(
   }
 
   if (outcome.kind === 'merge-conflict') {
-    const spawn = await recordAndSpawn({
+    const spawn = await deps.recordAndSpawn({
       task,
       run,
       runCtx,
@@ -97,26 +98,22 @@ export async function handleResyncOutcome(
         `merge-conflict wait for ${task.id} requires the caller's merge lock token`,
       );
     }
-    const reason = await parkOnConflictResolver(
+    const reason = await deps.parkOnConflictResolver(
       runCtx.state,
       run.id,
       lock,
       task.worktreePath,
+      spawn.serverId,
     );
     if (reason === 'signalled') {
       console.log(`[merge-run] conflict resolver done for task ${task.id} — resuming run`);
     } else {
-      // The resolver pty died (or the wait hit its cap) with no completion
-      // callback. Recover the abandoned resolution and continue so the run
-      // still releases the project lock instead of hanging forever.
+      // The waiter no longer owns the task lock; preserve the interrupted
+      // resolution and stop instead of racing a late finalize or new resolver.
       console.warn(
-        `[merge-run] conflict resolver for task ${task.id} ${reason === 'timeout' ? 'wait timed out' : 'pty died'} — recovering and continuing`,
+        `[merge-run] conflict resolver for task ${task.id}: ${reason} — preserving work and stopping the run`,
       );
-      run.errored.push({
-        taskId: task.id,
-        error: `conflict resolver ${reason} (no completion callback); left at ready_to_merge`,
-      });
-      await recoverAbandonedResolverTask(task);
+      preserveResolverAfterWaitFailure(run, task.id, reason);
     }
     // The lock was already released inside parkOnConflictResolver, so this
     // outcome must stay 'awaiting-resolver' (tells withMergeLock not to
