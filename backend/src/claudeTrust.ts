@@ -18,7 +18,8 @@
 //   - configFile.ts   — `~/.claude.json` primitives: parse-on-read with
 //                       heal-from-backup, the atomic temp→rename writer, the
 //                       restore-from-backup path, and `atomicWriteFile`.
-//   - configLock.ts   — the mkdir-based config mutex with bounded retry + steal.
+//   - configLock.ts   — the exclusive owner-file mutex with bounded retry and
+//                       verified dead-owner recovery at the legacy lock path.
 //   - maintenance.ts  — boot/timer sweeps: prune dead ephemeral `projects[<cwd>]`
 //                       entries + reclaim orphaned `.lattice-*.tmp` temps.
 //   - util.ts         — `sleep` + best-effort remove helpers.

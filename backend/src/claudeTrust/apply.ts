@@ -9,7 +9,7 @@
 // chain — so a policy change is a backend-only edit and never forces a
 // terminal-server respawn. See ../mcp/CLAUDE.md "Injection sites".
 //
-// The mkdir mutex only orders writes that overlap in time; it cannot stop the
+// The config mutex only orders writes that overlap in time; it cannot stop the
 // slower lost-update where Claude reverts a trust entry it never saw (it reads
 // `~/.claude.json` at startup and writes the whole object back at shutdown). So
 // a single setup-time seed is not enough — the terminal-server's `POST
@@ -17,6 +17,8 @@
 // `pty.spawn` to shrink that clobber window to near zero. The setup-time calls
 // stay as an early first layer; the spawn-time call is the one that closes the
 // race. See ../claudeTrust.ts and configLock.ts.
+import fs from 'node:fs/promises';
+import { isDeepStrictEqual } from 'node:util';
 import {
   MANAGED_MCP_MARKER,
   reconcileMcpServers,
@@ -24,11 +26,30 @@ import {
 } from '../mcp/claudeInject.js';
 import { withClaudeConfigLock } from './configLock.js';
 import {
+  CLAUDE_GLOBAL_CONFIG,
   readClaudeConfig,
   writeClaudeConfigAtomic,
   toClaudeProjectKey,
+  type ClaudeGlobalConfig,
   type ClaudeProjectEntry,
 } from './configFile.js';
+
+function alreadyApplied(
+  cfg: ClaudeGlobalConfig,
+  key: string,
+  managed: Record<string, ClaudeMcpServerConfig> | null,
+): boolean {
+  const existing = cfg?.projects?.[key];
+  if (existing?.hasTrustDialogAccepted !== true) return false;
+  if (managed === null) return true;
+  const prevManaged = existing[MANAGED_MCP_MARKER];
+  if (Object.keys(managed).length === 0 && !(Array.isArray(prevManaged) && prevManaged.length)) return true;
+  // Reconciliation replaces the shallow clone's MCP map and marker; it does
+  // not mutate the existing entry or its server configurations.
+  const candidate = { ...existing };
+  reconcileMcpServers(candidate, managed);
+  return isDeepStrictEqual(candidate, existing);
+}
 
 // Apply a pre-resolved Claude project config to `~/.claude.json`'s
 // `projects[<dirPath>]`: pre-accept workspace trust and reconcile the given
@@ -50,24 +71,22 @@ export async function applyClaudeProjectConfig(
 ): Promise<void> {
   const key = toClaudeProjectKey(dirPath);
   try {
+    // A read-only no-op does not need a mutex or a writable lock location.
+    // In particular, opening an already-configured project should not fail
+    // just because Windows briefly denies creating Lattice's lock. Never heal
+    // here, and never use this optimistic snapshot for a subsequent write.
+    try {
+      const current = JSON.parse(await fs.readFile(CLAUDE_GLOBAL_CONFIG, 'utf8')) as ClaudeGlobalConfig;
+      if (alreadyApplied(current, key, managed)) return;
+    } catch {
+      // Missing, unreadable or corrupt config goes through the normal locked
+      // path below, including its existing backup recovery and diagnostics.
+    }
     await withClaudeConfigLock(async () => {
       const cfg = await readClaudeConfig();
+      if (alreadyApplied(cfg, key, managed)) return;
       const projects = (cfg.projects ??= {});
       const existing = projects[key];
-      const alreadyTrusted = existing?.hasTrustDialogAccepted === true;
-      // Fast-exit when there's nothing to do: already trusted AND the reconcile
-      // wouldn't change anything. "No-op reconcile" = a trust-only call
-      // (`managed === null`) OR a reconcile that resolves to zero servers AND
-      // none were previously managed here (so there's nothing to strip either).
-      // This keeps the project-root re-seed a no-op for the common case of a
-      // project with no GLOBAL MCP servers, instead of rewriting ~/.claude.json
-      // on every project open. When `managed` has entries (or we still need to
-      // strip a now-disabled one) we proceed even if already trusted.
-      const prevManaged = existing?.[MANAGED_MCP_MARKER];
-      const hadManaged = Array.isArray(prevManaged) && prevManaged.length > 0;
-      const reconcileIsNoop =
-        managed === null || (Object.keys(managed).length === 0 && !hadManaged);
-      if (alreadyTrusted && reconcileIsNoop) return;
       // Mirror the structural empty-collection fields Claude writes on first
       // accept so any later code that introspects the entry doesn't trip on
       // missing fields. Spread `existing` last so we never clobber data Claude
@@ -86,9 +105,12 @@ export async function applyClaudeProjectConfig(
       await writeClaudeConfigAtomic(cfg);
     });
   } catch (err) {
+    const detail = err instanceof SyntaxError
+      ? 'Claude config contains invalid JSON and could not be restored from a usable backup'
+      : (err as Error).message;
     console.warn(
-      `[claudeTrust] could not apply Claude config for ${dirPath}: ${(err as Error).message}. ` +
-        `Claude may show the trust dialog on first launch.`,
+      `[claudeTrust] could not apply Claude config for ${dirPath}: ${detail}. ` +
+        'Claude may show the trust dialog on first launch; Lattice-managed MCP settings may also be out of date.',
     );
   }
 }

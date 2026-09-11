@@ -5,12 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { withClaudeConfigLock } from '../claudeTrust/configLock.js';
 
-// `withClaudeConfigLock` is the mkdir mutex serializing read-modify-write of
-// ~/.claude.json. After the normal backoff is exhausted it STEALS a presumed-
-// crashed holder's dir. The bug these tests pin: the old steal swallowed the
-// EEXIST you get when ANOTHER caller actually holds the lock, then ran fn()
-// against that live holder anyway and deleted the holder's dir in its finally —
-// collapsing the mutex and reintroducing the lost-update it exists to prevent.
+// Compatibility with legacy directory owners at the one unchanged mutex path.
+// An empty legacy directory has no PID metadata: elapsed time cannot prove its
+// writer died, so a new writer must preserve it and wait for its real release.
 
 // Shrunk delays so the normal backoff + steal windows exhaust in milliseconds.
 const FAST = { retryDelays: [1, 1], stealRetryDelays: [1, 1] } as const;
@@ -19,24 +16,23 @@ async function fixtureDir(label: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), `lattice-configlock-${label}-`));
 }
 
-test('steal acquires and runs fn when the lock dir is genuinely abandoned', async () => {
+test('an empty legacy lock directory is preserved because its owner cannot be verified', async () => {
   const dir = await fixtureDir('stale');
   const lockDir = path.join(dir, 'lock');
   try {
-    // An empty, removable dir with no live holder = a crashed writer's leftover.
+    // This might be an orphan OR a slow live legacy writer. There is no safe
+    // way to distinguish those cases from the empty directory alone.
     await fs.mkdir(lockDir);
     let ran = false;
-    const result = await withClaudeConfigLock(
+    await assert.rejects(() => withClaudeConfigLock(
       async () => {
         ran = true;
         return 'did-work';
       },
       { lockDir, ...FAST },
-    );
-    assert.equal(ran, true);
-    assert.equal(result, 'did-work');
-    // The lock the steal created is released afterwards.
-    await assert.rejects(() => fs.stat(lockDir), { code: 'ENOENT' });
+    ), /legacy directory has no verifiable owner/);
+    assert.equal(ran, false);
+    assert.equal((await fs.stat(lockDir)).isDirectory(), true);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

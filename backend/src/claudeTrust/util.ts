@@ -9,12 +9,7 @@ export function sleep(ms: number): Promise<void> {
 
 // Best-effort removal on cleanup paths where a failure is non-fatal — the path
 // may already be gone, or be briefly held open by another process. Dedupes the
-// `fs.unlink(...).catch(() => {})` / `fs.rmdir(...).catch(() => {})` idiom that
-// the atomic writer and the mkdir mutex would otherwise each spell out.
+// `fs.unlink(...).catch(() => {})` idiom used by the atomic writer.
 export function unlinkQuietly(p: string): Promise<void> {
   return fs.unlink(p).catch(() => {});
-}
-
-export function rmdirQuietly(p: string): Promise<void> {
-  return fs.rmdir(p).catch(() => {});
 }

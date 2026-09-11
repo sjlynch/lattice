@@ -13,7 +13,7 @@
 //
 // This module is the POLICY layer (when to back up, when to restore, the
 // read-twice debounce). The actual file primitives — the backup path, the
-// mkdir-mutex-serialized atomic write, and the restore — live in
+// config-mutex-serialized atomic write, and the restore — live in
 // `claudeTrust.ts` alongside the per-spawn writer, so the guard here and the
 // per-spawn heal-on-read path share one lock and one atomic-write
 // implementation. The per-spawn path (`applyClaudeProjectConfig` →

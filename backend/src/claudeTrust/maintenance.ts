@@ -4,7 +4,7 @@
 //     worktree/scratch cwd that no longer exists on disk, and
 //   - orphaned `<file>.lattice-<pid>-<ts>.tmp` temps left by a writer that was
 //     hard-killed between its temp write and the rename.
-// Both read-modify-write through the same mkdir mutex as the apply path, so they
+// Both read-modify-write through the same config mutex as the apply path, so they
 // can't race a concurrent spawn-time write.
 import path from 'node:path';
 import os from 'node:os';
@@ -74,7 +74,7 @@ export async function selectStaleEphemeralProjectKeys(
 // push / QA scratch sweeps), run at boot.
 //
 // Gate: key is a Lattice ephemeral path AND its directory is gone. The
-// read-modify-write goes through the same mkdir mutex as
+// read-modify-write goes through the same config mutex as
 // `applyClaudeProjectConfig`, so it can't race a concurrent spawn-time write.
 // Best-effort: returns the count removed; logs and returns 0 on error.
 export async function pruneStaleClaudeProjectEntries(): Promise<number> {
