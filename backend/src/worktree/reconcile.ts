@@ -1,118 +1,178 @@
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { projectGit } from './projectGit.js';
-import { worktreeExists, parseWorktreesPorcelain } from './state.js';
+import { parseWorktreesPorcelain, type ParsedWorktree } from './state.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
 import { pruneReparsePointsUnder } from './reparsePoints.js';
 import { fsRmWithRetries } from './rmRetry.js';
 import { isPathStrictlyInside } from './paths.js';
 import { homeWorktreesDir } from '../projectPath.js';
+import { assertNotReparsePoint, assertSafeWorktreePath } from './cleanupSafety.js';
 
-// How many alternate worktree paths to try when the canonical path can't be
-// freed (Windows lock that survives PTY kills + retries — usually an Explorer
-// window or the user's editor). 4 retries gives us "-r2" through "-r5",
-// after which the user almost certainly has a runaway process and should be
-// told to look rather than us silently spawning more orphans.
+// A busy candidate is preserved while setup tries "-r2" through "-r5".
 export const MAX_PATH_RETRY_SUFFIXES = 4;
 export const RM_RETRY_DELAYS_MS = [150, 400, 900];
+const GIT_TIMEOUT_MS = 30_000;
 
-// Branch names are deterministic from (slug, shortId), so a leftover
-// branch/worktree from before will collide with `git worktree add -b`.
-// Run = fresh start; the explicit Resume path is the one that
-// preserves prior progress.
-//
-// Returns true if the (path, branch) pair is now free for `git worktree add`,
-// false if something on disk couldn't be removed (Windows lock that survived
-// PTY kills + retries). Caller falls back to an alternate suffix.
+type ReconcileDeps = {
+  projectGit: typeof projectGit;
+  killSessions: (cwd: string) => Promise<unknown>;
+  pruneReparsePoints: typeof pruneReparsePointsUnder;
+  removeStray: typeof fsRmWithRetries;
+  waitForHandles: () => Promise<void>;
+};
+
+function pathKey(value: string): string {
+  const resolved = path.resolve(value);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+// Unlike access(), a permission failure must not mean "the path is absent".
+async function entryExists(target: string): Promise<boolean> {
+  try {
+    await fs.lstat(target);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
+// Run explicitly starts fresh; Resume preserves prior progress. Only this
+// exact managed candidate belongs to the fresh start. Sharing a branch name
+// is insufficient: a user may have moved its worktree, or checked it out in
+// main. Return false on a collision so setup can choose a different suffix.
 export async function reconcileStaleState(
   repoRoot: string,
   branchName: string,
   worktreePath: string,
+  overrides: Partial<ReconcileDeps> = {},
 ): Promise<boolean> {
-  const branchExists =
-    (
-      await projectGit(
-        repoRoot,
-        ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}`],
-      )
-    ).code === 0;
-  const targetDirExists = await worktreeExists(worktreePath);
-
-  if (!branchExists && !targetDirExists) return true;
-
-  const wtList = await projectGit(repoRoot, ['worktree', 'list', '--porcelain']);
-  const tracked = parseWorktreesPorcelain(wtList.stdout);
-  const onBranch = tracked.find(
-    (w) => w.branch === `refs/heads/${branchName}`,
-  );
-  if (onBranch) {
-    // Tracked worktree on this branch — remove it cleanly first.
-    // Kill any PTYs whose cwd is inside the dir before git tries to remove it,
-    // otherwise on Windows the cwd lock makes `git worktree remove` fail.
-    await proxyKillSessionsByCwd(onBranch.path);
-    await new Promise<void>((r) => setTimeout(r, 200));
-    // Strip any junction/symlink loop inside it first (an in-worktree
-    // `npm install` of a `file:..` self-dep) so `git worktree remove`
-    // doesn't choke on Windows. Non-fatal on failure.
-    await pruneReparsePointsUnder(onBranch.path).catch((err) =>
-      console.warn(`[worktree] reconcile: pruneReparsePointsUnder(${onBranch.path}) failed (continuing):`, err),
-    );
-    const rm = await projectGit(
-      repoRoot,
-      ['worktree', 'remove', '--force', onBranch.path],
-    );
-    if (rm.code !== 0) {
-      console.warn(
-        `[worktree] reconcile: 'git worktree remove --force ${onBranch.path}' ` +
-          `exit ${rm.code}: ${rm.stderr.trim() || rm.stdout.trim()}`,
-      );
+  const deps: ReconcileDeps = {
+    projectGit,
+    killSessions: proxyKillSessionsByCwd,
+    pruneReparsePoints: pruneReparsePointsUnder,
+    removeStray: fsRmWithRetries,
+    waitForHandles: () => new Promise((resolve) => setTimeout(resolve, 200)),
+    ...overrides,
+  };
+  const refuse = (reason: string): false => {
+    console.warn(`[worktree] reconcile: preserving ${worktreePath}: ${reason}`);
+    return false;
+  };
+  try {
+    assertSafeWorktreePath(repoRoot, worktreePath);
+    if (!path.isAbsolute(worktreePath) || !branchName.startsWith('lattice/')) {
+      return refuse('candidate must have an absolute managed path and lattice/ branch');
     }
+    await assertNotReparsePoint(worktreePath);
+  } catch (err) {
+    return refuse((err as Error).message);
   }
-  if (await worktreeExists(worktreePath)) {
-    // Untracked stray directory at our target path — wipe it. This is the
-    // path most likely to hit EBUSY: the qa-cleanup background job already
-    // tried (and may have failed) once, leaving the dir orphaned. Kill any
-    // PTYs whose cwd is inside, give the OS a beat, then retry the rm a
-    // few times before giving up.
-    //
-    // worktreePath is always a fresh candidate under homeWorktreesDir(repoRoot)
-    // — i.e. ~/.lattice/worktrees/<hash>/… — so this fs.rm is structurally
-    // incapable of touching any project's `.git`. The startsWith guard plus
-    // fsRmWithRetries's guardReparse check are belt-and-suspenders.
-    const resolvedWt = path.resolve(worktreePath);
-    const resolvedBase = path.resolve(homeWorktreesDir(repoRoot));
-    if (!isPathStrictlyInside(resolvedBase, resolvedWt)) {
-      console.error(
-        `[worktree] reconcile: refusing rm on "${resolvedWt}" — ` +
-          `not under "${resolvedBase}". Skipping cleanup.`,
-      );
-      return false;
+
+  const candidateKey = pathKey(worktreePath);
+  const branchRef = `refs/heads/${branchName}`;
+  const git = (args: string[]) => deps.projectGit(repoRoot, args, { timeoutMs: GIT_TIMEOUT_MS });
+  const readTracked = async (): Promise<ParsedWorktree[]> => {
+    const listed = await git(['worktree', 'list', '--porcelain', '-z']);
+    if (listed.code !== 0) {
+      throw new Error(`git worktree list failed (exit ${listed.code}): ${listed.stderr.trim() || listed.stdout.trim()}`);
     }
-    await proxyKillSessionsByCwd(worktreePath);
-    await new Promise<void>((r) => setTimeout(r, 200));
-    if (
-      !(await fsRmWithRetries(worktreePath, {
-        delays: RM_RETRY_DELAYS_MS,
-        logPrefix: '[worktree]',
-        guardReparse: true,
-      }))
-    ) {
-      // Caller will move on to a fresh suffix; leave the orphan dir in
-      // place so the user can investigate the lock holder.
-      return false;
+    const tracked = parseWorktreesPorcelain(listed.stdout);
+    if (tracked.length === 0) throw new Error('git worktree list returned no registrations');
+    return tracked;
+  };
+  const validateRegistrations = (tracked: ParsedWorktree[]): boolean => {
+    for (const entry of tracked) {
+      const key = pathKey(entry.path);
+      if (entry.branch === branchRef && key !== candidateKey) {
+        return refuse(`branch is registered at another path: ${entry.path}`);
+      }
+      if (key === candidateKey && (entry.locked || entry.branch !== branchRef)) {
+        return refuse(entry.locked ? 'Git worktree is locked' : 'path belongs to another branch or detached worktree');
+      }
+      if (isPathStrictlyInside(candidateKey, key)) {
+        return refuse(`another registered worktree is nested inside the candidate: ${entry.path}`);
+      }
+      if (key !== pathKey(repoRoot) && isPathStrictlyInside(key, candidateKey)) {
+        return refuse(`candidate is nested inside another registered worktree: ${entry.path}`);
+      }
     }
+    return true;
+  };
+
+  let tracked = await readTracked();
+  if (!validateRegistrations(tracked)) return false;
+  const registration = tracked.find((entry) => pathKey(entry.path) === candidateKey);
+  const branch = await git(['rev-parse', '--verify', '--quiet', branchRef]);
+  if (branch.code !== 0 && branch.code !== 1) {
+    throw new Error(`git branch lookup failed (exit ${branch.code}): ${branch.stderr.trim() || branch.stdout.trim()}`);
   }
-  await projectGit(repoRoot, ['worktree', 'prune']);
-  if (branchExists) {
-    // -D in case it has unmerged commits from a prior abandoned run.
-    // (branchName is always `lattice/<slug>-<id>` — projectGit's branch-delete
-    // guard requires the `lattice/` prefix.)
-    const del = await projectGit(repoRoot, ['branch', '-D', branchName]);
-    if (del.code !== 0) {
-      console.warn(
-        `[worktree] reconcile: 'git branch -D ${branchName}' ` +
-          `exit ${del.code}: ${del.stderr.trim() || del.stdout.trim()}`,
+
+  if (registration) {
+    if (await entryExists(worktreePath)) {
+      await deps.killSessions(worktreePath);
+      await deps.waitForHandles();
+      // Killing a PTY waits on another process. Recheck a move/lock/branch
+      // change before the first filesystem mutation, including link pruning.
+      tracked = await readTracked();
+      if (!validateRegistrations(tracked)) return false;
+      if (!tracked.some((entry) => pathKey(entry.path) === candidateKey)) {
+        return refuse('registration changed during reconciliation');
+      }
+      await assertNotReparsePoint(worktreePath);
+      await deps.pruneReparsePoints(worktreePath).catch((err) =>
+        console.warn(`[worktree] reconcile: link pruning failed for ${worktreePath}:`, err),
       );
-      return false;
+    }
+    // Git also removes this exact registration when its directory is already
+    // missing. No global prune is needed, and unrelated offline entries stay.
+    const removed = await git(['worktree', 'remove', '--force', worktreePath]);
+    if (removed.code !== 0) {
+      return refuse(`git worktree remove failed (exit ${removed.code}): ${removed.stderr.trim() || removed.stdout.trim()}`);
+    }
+    // Never run raw fs.rm after a registered removal, even if Git reported
+    // success but a directory remains (or another writer replaced it).
+    if (await entryExists(worktreePath)) return refuse('path remains after Git removal');
+  } else if (await entryExists(worktreePath)) {
+    // Only an unregistered home-scoped stray is eligible for filesystem
+    // cleanup. A .git marker may belong to another repo or a moved worktree
+    // whose registration needs repair; neither is ours to recursively erase.
+    if (!isPathStrictlyInside(pathKey(homeWorktreesDir(repoRoot)), candidateKey)) {
+      return refuse('unregistered path is outside the home worktrees directory');
+    }
+    if (await entryExists(path.join(worktreePath, '.git'))) {
+      return refuse('unregistered path contains a .git marker');
+    }
+    await deps.killSessions(worktreePath);
+    await deps.waitForHandles();
+    tracked = await readTracked();
+    if (!validateRegistrations(tracked)) return false;
+    if (tracked.some((entry) => pathKey(entry.path) === candidateKey)) {
+      return refuse('path became registered during reconciliation');
+    }
+    await assertNotReparsePoint(worktreePath);
+    if (await entryExists(path.join(worktreePath, '.git'))) {
+      return refuse('a .git marker appeared during reconciliation');
+    }
+    if (!(await deps.removeStray(worktreePath, {
+      delays: RM_RETRY_DELAYS_MS,
+      logPrefix: '[worktree]',
+      guardReparse: true,
+    }))) return false;
+  }
+
+  if (branch.code === 0) {
+    // A move/new checkout after removal must still preserve the branch. Git
+    // supplies the final checked-out-branch guard for a concurrent checkout.
+    tracked = await readTracked();
+    if (!validateRegistrations(tracked)) return false;
+    if (tracked.some((entry) => entry.branch === branchRef)) {
+      return refuse('branch remains checked out');
+    }
+    const deleted = await git(['branch', '-D', branchName]);
+    if (deleted.code !== 0) {
+      return refuse(`git branch delete failed (exit ${deleted.code}): ${deleted.stderr.trim() || deleted.stdout.trim()}`);
     }
   }
   return true;

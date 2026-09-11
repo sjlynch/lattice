@@ -11,9 +11,12 @@ export type ParsedWorktree = {
   path: string;
   branch?: string;
   detached?: boolean;
+  locked?: boolean;
 };
 
-// Parse `git worktree list --porcelain` into an array of {path, branch?}.
+// Prefer `git worktree list --porcelain -z`: NUL fields preserve whitespace,
+// newlines and quotes in paths without Git's C-style path quoting. Legacy
+// newline porcelain remains supported for existing callers.
 // Each block is separated by a blank line and looks like:
 //
 //   worktree /abs/path
@@ -24,20 +27,26 @@ export type ParsedWorktree = {
 // half-failed run.
 export function parseWorktreesPorcelain(out: string): ParsedWorktree[] {
   const result: ParsedWorktree[] = [];
-  for (const block of out.split(/\r?\n\r?\n/)) {
-    if (!block.trim()) continue;
-    const entry: ParsedWorktree = { path: '' };
-    for (const line of block.split(/\r?\n/)) {
-      if (line.startsWith('worktree ')) {
-        entry.path = line.slice('worktree '.length).trim();
-      } else if (line.startsWith('branch ')) {
-        entry.branch = line.slice('branch '.length).trim();
-      } else if (line === 'detached') {
+  let entry: ParsedWorktree | undefined;
+  const fields = out.includes('\0') ? out.split('\0') : out.split(/\r?\n/);
+  for (const field of fields) {
+    if (field.startsWith('worktree ')) {
+      if (entry?.path) result.push(entry);
+      entry = { path: field.slice('worktree '.length) };
+    } else if (field === '') {
+      if (entry?.path) result.push(entry);
+      entry = undefined;
+    } else if (entry) {
+      if (field.startsWith('branch ')) {
+        entry.branch = field.slice('branch '.length);
+      } else if (field === 'detached') {
         entry.detached = true;
+      } else if (field === 'locked' || field.startsWith('locked ')) {
+        entry.locked = true;
       }
     }
-    if (entry.path) result.push(entry);
   }
+  if (entry?.path) result.push(entry);
   return result;
 }
 

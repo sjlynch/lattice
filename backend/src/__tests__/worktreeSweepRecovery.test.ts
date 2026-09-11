@@ -24,7 +24,7 @@ function fixture(overrides: Partial<WorktreeSweepDeps> = {}) {
       code: 0, stderr: '',
       stdout: `worktree ${project}\nbranch refs/heads/main\n\nworktree ${worktree}\nbranch refs/heads/lattice/task-abc\n`,
     }),
-    cleanupWorktreeForTask: async (_project, dir) => { removed.push(dir); },
+    cleanupWorktreeForTask: async (_project, dir) => { removed.push(dir); return true; },
     collectLiveSessionCwds: async () => new Set(),
     ...overrides,
   };
@@ -95,4 +95,32 @@ test('orphan worktree sweep still reclaims a checkout with no task or live PTY',
   const { deps, removed } = fixture();
   await sweepOrphanedWorktrees(deps);
   assert.deepEqual(removed, [worktree]);
+});
+
+test('orphan worktree sweep honors an explicit Git worktree lock', async () => {
+  const { deps, removed } = fixture({
+    projectGit: async () => ({ code: 0, stderr: '', stdout:
+      `worktree ${project}\0branch refs/heads/main\0\0` +
+      `worktree ${worktree}\0branch refs/heads/lattice/task-abc\0locked keep for recovery\0\0`,
+    }),
+  });
+  await sweepOrphanedWorktrees(deps);
+  assert.deepEqual(removed, []);
+});
+
+test('orphan worktree sweep does not report deferred cleanup as reclaimed', async (t) => {
+  const messages: string[] = [];
+  t.mock.method(console, 'log', (...args: unknown[]) => messages.push(args.join(' ')));
+  const { deps } = fixture({ cleanupWorktreeForTask: async () => false });
+  await sweepOrphanedWorktrees(deps);
+  assert.ok(!messages.some((message) => message.includes('reclaimed')));
+});
+
+test('orphan worktree sweep does not globally prune skipped registrations', async () => {
+  const calls: string[][] = [];
+  const { deps } = fixture();
+  const real = deps.projectGit;
+  deps.projectGit = async (...args) => { calls.push(args[1]); return real(...args); };
+  await sweepOrphanedWorktrees(deps);
+  assert.ok(!calls.some((args) => args[1] === 'prune'));
 });

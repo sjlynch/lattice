@@ -48,6 +48,29 @@ test('parseWorktreesPorcelain handles CRLF line endings', () => {
   assert.equal(parsed[0].branch, 'refs/heads/main');
 });
 
+test('parseWorktreesPorcelain preserves NUL-delimited unusual paths and lock reasons', () => {
+  const unusualPath = '/tmp/ snowman-\u2603 "quoted"\tline\nend ';
+  const sample = [
+    'worktree /tmp/main', 'HEAD abc', 'branch refs/heads/main', '',
+    `worktree ${unusualPath}`, 'HEAD def', 'branch refs/heads/lattice/task',
+    'locked waiting for external drive\nwith a newline', '',
+    'worktree /tmp/detached', 'HEAD ghi', 'detached', 'locked', '',
+  ].join('\0');
+  assert.deepEqual(parseWorktreesPorcelain(sample), [
+    { path: '/tmp/main', branch: 'refs/heads/main' },
+    { path: unusualPath, branch: 'refs/heads/lattice/task', locked: true },
+    { path: '/tmp/detached', detached: true, locked: true },
+  ]);
+});
+
+test('parseWorktreesPorcelain handles legacy locks and a final record without a separator', () => {
+  assert.deepEqual(parseWorktreesPorcelain('worktree /tmp/a\r\nlocked reason\r\n\r\nworktree /tmp/b\r\nlocked'), [
+    { path: '/tmp/a', locked: true },
+    { path: '/tmp/b', locked: true },
+  ]);
+  assert.deepEqual(parseWorktreesPorcelain('\0\0'), []);
+});
+
 test('reconcileStaleState refuses to remove a stale target outside managed worktrees', async () => {
   await withTempDir('lattice-reconcile-guard-', async (root) => {
     const repoRoot = path.join(root, 'repo');

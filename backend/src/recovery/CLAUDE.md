@@ -62,3 +62,8 @@ Split by concern so the eligibility decision is auditable in isolation:
   empty default, so zero task records must preserve every checkout. Preserve
   queued task checkouts and live PTY cwds (including descendants), and compare
   ownership paths case-insensitively on Windows.
+- Honor explicit Git worktree locks and count only successful cleanup as
+  reclaimed. Use `worktree list --porcelain -z` to preserve exact paths. Never
+  globally prune missing registrations during the sweep: skipped active or
+  user-managed checkouts may be temporarily offline. Exact orphan removal
+  handles its own registration, including a manually deleted directory.

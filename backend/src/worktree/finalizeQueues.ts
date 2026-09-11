@@ -41,8 +41,8 @@ export function scheduleWorktreeCleanup(
   const next = prev.then(async () => {
     console.log(`[finalize] cleaning up worktree ${worktreePath}...`);
     try {
-      await cleanupWorktreeForTask(projectPath, worktreePath, branchName);
-      console.log(`[finalize] worktree cleanup done for ${taskId}`);
+      const cleaned = await cleanupWorktreeForTask(projectPath, worktreePath, branchName);
+      console.log(`[finalize] worktree cleanup ${cleaned ? 'done' : 'deferred'} for ${taskId}`);
     } catch (err) {
       console.error(
         `[finalize] background cleanup failed for ${taskId} (task already qa, leaves orphaned worktree dir):`,

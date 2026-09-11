@@ -21,7 +21,7 @@ const ACTIVE_STATUSES = new Set(['in_progress', 'ready_to_merge']);
 // orphan — left behind by a finalize whose background cleanup failed, a
 // crashed run, or a pre-2026-05-10 in-project worktree. We tear it down
 // via `cleanupWorktreeForTask` (which delegates the recursive delete to
-// `git worktree remove --force` — no raw fs.rm) and prune stale
+// `git worktree remove --force` — no raw fs.rm) and remove only their exact
 // registrations. This is what makes "leave the dir, retry at boot"
 // (cleanup.ts) actually converge.
 export type WorktreeSweepDeps = {
@@ -61,7 +61,7 @@ export async function sweepOrphanedWorktrees(deps: WorktreeSweepDeps = defaultDe
       return;
     }
     const activeWorktreePaths = getActiveWorktreePaths(tasks);
-    const wtList = await deps.projectGit(repoRoot, ['worktree', 'list', '--porcelain']);
+    const wtList = await deps.projectGit(repoRoot, ['worktree', 'list', '--porcelain', '-z']);
     if (wtList.code !== 0) {
       console.warn(
         `[startup] sweep: 'git worktree list' in ${repoRoot} exit ${wtList.code}: ${wtList.stderr.trim()}`,
@@ -77,6 +77,7 @@ export async function sweepOrphanedWorktrees(deps: WorktreeSweepDeps = defaultDe
       const resolved = path.resolve(wt.path);
       if (normalizeCwd(resolved) === repoResolved) continue; // the main worktree
       if (!isUnderManagedWorktreesDir(resolved, repoRoot)) continue; // not ours
+      if (wt.locked) continue; // explicit Git lock preserves even an absent checkout
       if (activeWorktreePaths.has(normalizeCwd(resolved))) continue; // a live task owns it
       if (hasLiveSessionAtOrUnder(liveCwds, resolved)) continue;
 
@@ -88,16 +89,14 @@ export async function sweepOrphanedWorktrees(deps: WorktreeSweepDeps = defaultDe
       try {
         // cleanupWorktreeForTask skips the branch delete for non-`lattice/`
         // names, so passing '' (detached) or a stray branch is safe.
-        await deps.cleanupWorktreeForTask(repoRoot, resolved, branch);
-        removed += 1;
+        if (await deps.cleanupWorktreeForTask(repoRoot, resolved, branch)) removed += 1;
       } catch (err) {
         console.error(`[startup] sweep: cleanup of ${resolved} failed:`, err);
       }
     }
 
-    // Prune registrations whose dirs no longer exist (including any we
-    // just removed, and any deleted out-of-band).
-    await deps.projectGit(repoRoot, ['worktree', 'prune']).catch(() => undefined);
+    // Exact cleanup handles missing orphan directories too. Do not globally
+    // prune: active or user-managed checkouts may just be temporarily offline.
     if (removed > 0) {
       console.log(`[startup] sweep: reclaimed ${removed} orphaned worktree(s) in ${repoRoot}`);
     }
