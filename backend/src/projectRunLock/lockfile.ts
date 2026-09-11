@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { LockBody } from './types.js';
 
 export function parseLockBody(raw: string): LockBody | null {
@@ -17,12 +17,14 @@ export function parseLockBody(raw: string): LockBody | null {
     hostname?: unknown;
     startedAt?: unknown;
     label?: unknown;
+    ownerId?: unknown;
   };
   return {
     pid: candidate.pid,
     hostname: typeof candidate.hostname === 'string' ? candidate.hostname : '?',
     startedAt: typeof candidate.startedAt === 'number' ? candidate.startedAt : 0,
     label: typeof candidate.label === 'string' ? candidate.label : '?',
+    ...(typeof candidate.ownerId === 'string' ? { ownerId: candidate.ownerId } : {}),
   };
 }
 
@@ -32,6 +34,20 @@ export async function readLockBody(file: string): Promise<LockBody | null> {
   } catch {
     return null;
   }
+}
+
+export type LockObservation = { raw: string; body: LockBody | null };
+
+export async function readLockObservation(file: string): Promise<LockObservation | null> {
+  let raw: string;
+  try { raw = await fs.readFile(file, 'utf8'); }
+  catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err; // Unreadable is not proof of abandonment.
+  }
+  let body: LockBody | null;
+  try { body = parseLockBody(raw); } catch { body = null; }
+  return { raw, body };
 }
 
 export async function writeNewLockBody(
@@ -54,8 +70,28 @@ export async function writeNewLockBody(
   }
 }
 
-export async function deleteLockFile(file: string): Promise<void> {
-  await fs.unlink(file).catch(() => undefined);
+// Exactly ONE process may unlink each observed generation. This permanent
+// tombstone is a filesystem CAS substitute: another observer of the old body
+// cannot remove the next owner's file, even after its PID check was suspended.
+// Never delete tombstones while contenders could retain old observations.
+export async function retireLockFile(file: string, observed: LockObservation): Promise<boolean> {
+  const retirementDir = `${file}.retired`;
+  await fs.mkdir(retirementDir, { recursive: true });
+  const generation = createHash('sha256').update(observed.raw).digest('hex');
+  const retirement = `${retirementDir}/${generation}`;
+  try {
+    await fs.writeFile(retirement, JSON.stringify({ pid: process.pid, at: Date.now() }), { flag: 'wx' });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw err;
+  }
+  const current = await readLockObservation(file);
+  if (!current || current.raw !== observed.raw) return false;
+  // There is no await between a later ownership observation and another actor
+  // replacing this generation: replacement requires OUR unlink first. A crash
+  // before unlink leaves a blocked retirement, which is refused on next boot.
+  await fs.unlink(file);
+  return true;
 }
 
 export function sameLockBody(a: LockBody, b: LockBody): boolean {
@@ -63,6 +99,7 @@ export function sameLockBody(a: LockBody, b: LockBody): boolean {
     a.pid === b.pid &&
     a.hostname === b.hostname &&
     a.startedAt === b.startedAt &&
-    a.label === b.label
+    a.label === b.label &&
+    a.ownerId === b.ownerId
   );
 }

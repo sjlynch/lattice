@@ -28,6 +28,22 @@ rather than falling back to the unsafe partial-body publication.
 
 ## Lifecycle
 
+**2026-09 ownership correction:** every newly issued body includes a UUID
+`ownerId`. Release and stale recovery share `retireLockFile`, which must win an
+exclusive permanent tombstone at `run.lock.retired/<sha256(exact raw body)>`
+before unlinking. Only one observer can ever remove that generation, so a
+suspended stale observer cannot remove its successor. A body comparison alone
+does not provide this guarantee. Read errors other than ENOENT refuse recovery.
+Tombstones also distinguish legacy generations by their entire original bytes.
+
+Keep the tombstones: deleting them while any process can retain an observation
+reintroduces the race. They contain tiny retirement audit records. A crash after
+claiming retirement but before unlink leaves the old lock blocked deliberately;
+the diagnostic requires stopping all backends before inspecting/removing only
+`run.lock`, preserving the tombstones. This is a fail-closed availability limit,
+not automatic crash recovery. Running an older backend that ignores tombstones
+concurrently with this protocol is unsupported; upgrade all backends together.
+
 `acquire → (steal if stale) → release`, almost always via the
 `withProjectRunLock(projectPath, label, fn)` wrapper (acquire, run `fn`,
 release in `finally`). `acquireProjectRunLock` tries the atomic `wx` write;

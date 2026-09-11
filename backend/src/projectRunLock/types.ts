@@ -3,6 +3,8 @@ export type LockBody = {
   hostname: string;
   startedAt: number;
   label: string;
+  // Unique generation identity; older locks did not include this field.
+  ownerId?: string;
 };
 
 export type ProjectRunLockInspection = {

@@ -1,13 +1,20 @@
 import { ProjectRunLockedError } from './errors.js';
 import { isCurrentProcessHolder, isLockHolderAlive } from './liveness.js';
-import { deleteLockFile, readLockBody } from './lockfile.js';
+import { retireLockFile, readLockObservation } from './lockfile.js';
+
+async function retireOrThrow(file: string, observed: NonNullable<Awaited<ReturnType<typeof readLockObservation>>>): Promise<void> {
+  if (await retireLockFile(file, observed)) return;
+  throw new Error(`[projectRunLock] ownership changed or lock retirement was interrupted at ${file}; retry after the current operation finishes. If retirement remains blocked, stop all Lattice backends before inspecting/removing only run.lock. Preserve run.lock.retired.`);
+}
 
 export async function clearStaleLockOrThrow(file: string): Promise<void> {
-  const holder = await readLockBody(file);
+  const observed = await readLockObservation(file);
+  if (!observed) return;
+  const holder = observed.body;
   if (!holder) {
     // Lockfile exists but we can't parse it. Treat as stale and steal.
     console.warn(`[projectRunLock] unparseable lockfile at ${file} — stealing`);
-    await deleteLockFile(file);
+    await retireOrThrow(file, observed);
     return;
   }
 
@@ -25,7 +32,7 @@ export async function clearStaleLockOrThrow(file: string): Promise<void> {
       `[projectRunLock] stealing dead lock held by pid=${holder.pid} ` +
         `(label=${holder.label}, started ${new Date(holder.startedAt).toISOString()})`,
     );
-    await deleteLockFile(file);
+    await retireOrThrow(file, observed);
     return;
   }
 

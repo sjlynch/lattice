@@ -1,4 +1,5 @@
 import os from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { LockBody } from './types.js';
@@ -37,6 +38,7 @@ export function currentLockBody(label: string): LockBody {
     hostname: os.hostname(),
     startedAt: Date.now(),
     label,
+    ownerId: randomUUID(),
   };
 }
 

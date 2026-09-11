@@ -9,7 +9,9 @@ import {
   inspectProjectRunLock,
   ProjectRunLockedError,
 } from '../projectRunLock.js';
-import { readLockBody } from '../projectRunLock/lockfile.js';
+import { readLockBody, readLockObservation, retireLockFile } from '../projectRunLock/lockfile.js';
+import { clearStaleLockOrThrow } from '../projectRunLock/steal.js';
+import { releaseLockFile } from '../projectRunLock/release.js';
 import { projectRunLockFilePath } from '../projectRunLock/paths.js';
 import type { LockBody } from '../projectRunLock/types.js';
 
@@ -273,6 +275,116 @@ test('a contender cannot steal a lock while its owner is still writing the body'
     assert.equal(successes.length, 1, 'exactly one caller may enter the protected merge pipeline');
   } finally {
     continueWrite();
+    await fixture.cleanup();
+  }
+});
+
+test('two stale observers cannot retire each other\'s replacement generation', async (t) => {
+  const fixture = await createFixture();
+  const originalRead = fs.readFile;
+  let observed!: () => void;
+  const paused = new Promise<void>((r) => { observed = r; });
+  let resume!: () => void;
+  const proceed = new Promise<void>((r) => { resume = r; });
+  let intercepted = false;
+  try {
+    await writeLock(fixture.lockFile, holder());
+    t.mock.method(fs, 'readFile', async (...args: Parameters<typeof fs.readFile>) => {
+      const result = await originalRead(...args);
+      if (!intercepted && String(args[0]) === fixture.lockFile) {
+        intercepted = true;
+        observed();
+        await proceed;
+      }
+      return result;
+    });
+    const delayed = clearStaleLockOrThrow(fixture.lockFile).then(() => null, (err: unknown) => err);
+    await paused;
+    const winner = await acquireProjectRunLock(fixture.projectPath, 'winner');
+    const replacement = await readLockBody(fixture.lockFile);
+    resume();
+    assert.ok(await delayed instanceof Error);
+    assert.deepEqual(await readLockBody(fixture.lockFile), replacement);
+    await winner.release();
+  } finally {
+    resume();
+    t.mock.restoreAll();
+    await fixture.cleanup();
+  }
+});
+
+test('a delayed release cannot unlink the next owner after another release retires it', async (t) => {
+  const fixture = await createFixture();
+  const originalRead = fs.readFile;
+  let observed!: () => void;
+  const paused = new Promise<void>((r) => { observed = r; });
+  let resume!: () => void;
+  const proceed = new Promise<void>((r) => { resume = r; });
+  let intercepted = false;
+  try {
+    const first = await acquireProjectRunLock(fixture.projectPath, 'first');
+    const owner = (await readLockBody(fixture.lockFile))!;
+    t.mock.method(fs, 'readFile', async (...args: Parameters<typeof fs.readFile>) => {
+      const result = await originalRead(...args);
+      if (!intercepted && String(args[0]) === fixture.lockFile) {
+        intercepted = true;
+        observed();
+        await proceed;
+      }
+      return result;
+    });
+    const delayed = releaseLockFile(fixture.lockFile, owner);
+    await paused;
+    await first.release();
+    const second = await acquireProjectRunLock(fixture.projectPath, 'second');
+    const replacement = await readLockBody(fixture.lockFile);
+    resume();
+    await delayed;
+    assert.deepEqual(await readLockBody(fixture.lockFile), replacement);
+    await second.release();
+  } finally {
+    resume();
+    t.mock.restoreAll();
+    await fixture.cleanup();
+  }
+});
+
+test('an interrupted retirement is refused without removing the uncertain generation', async (t) => {
+  const fixture = await createFixture();
+  try {
+    await writeLock(fixture.lockFile, holder());
+    const before = (await readLockObservation(fixture.lockFile))!;
+    const originalUnlink = fs.unlink;
+    t.mock.method(fs, 'unlink', async (file: Parameters<typeof fs.unlink>[0]) => {
+      if (String(file) === fixture.lockFile) throw Object.assign(new Error('injected crash window'), { code: 'EIO' });
+      return originalUnlink(file);
+    });
+    await assert.rejects(retireLockFile(fixture.lockFile, before), /injected crash/);
+    t.mock.restoreAll();
+    await assert.rejects(acquireProjectRunLock(fixture.projectPath, 'contender'), /retirement was interrupted/);
+    assert.deepEqual(await readLockObservation(fixture.lockFile), before);
+  } finally {
+    t.mock.restoreAll();
+    await fixture.cleanup();
+  }
+});
+
+test('generations acquired in the same millisecond have distinct identities', async (t) => {
+  const fixture = await createFixture();
+  try {
+    t.mock.method(Date, 'now', () => 12345678900000);
+    const first = await acquireProjectRunLock(fixture.projectPath, 'same');
+    const a = await readLockBody(fixture.lockFile);
+    await first.release();
+    const second = await acquireProjectRunLock(fixture.projectPath, 'same');
+    const b = await readLockBody(fixture.lockFile);
+    assert.ok(a?.ownerId);
+    assert.notEqual(a?.ownerId, b?.ownerId);
+    await first.release();
+    assert.deepEqual(await readLockBody(fixture.lockFile), b);
+    await second.release();
+  } finally {
+    t.mock.restoreAll();
     await fixture.cleanup();
   }
 });
