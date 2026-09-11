@@ -6,6 +6,7 @@ import { projectRunLockFilePath } from './paths.js';
 import { releaseLockFile } from './release.js';
 import { clearStaleLockOrThrow } from './steal.js';
 import type { ProjectRunLockHandle } from './types.js';
+import { registerProjectRunLock } from './mutation.js';
 
 // Acquire the per-project run lock or throw. `label` is logged into the
 // lockfile so a developer inspecting `~/.lattice/per-project/<hash>/run.lock`
@@ -25,9 +26,7 @@ export async function acquireProjectRunLock(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       await writeNewLockBody(file, body);
-      return {
-        release: () => releaseLockFile(file, body),
-      };
+      return registerProjectRunLock(projectPath, body, () => releaseLockFile(file, body));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
       await clearStaleLockOrThrow(file);

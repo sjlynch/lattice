@@ -6,12 +6,12 @@
 //   - scheduleWorktreeCleanup: decouples background worktree teardown.
 
 import { cleanupWorktreeForTask } from './cleanup.js';
+import { withProjectMutation } from '../projectRunLock.js';
 
 // Per-project promise queue. fastForwardMain modifies main's HEAD and must not
 // run concurrently with another finalize for the same project — the second
 // caller's branch would have been merged against a stale HEAD and would no
 // longer be a fast-forward ancestor of main.
-const finalizeQueues = new Map<string, Promise<void>>();
 
 // Run `fn` exclusively for `projectPath`: it won't start until the previous
 // finalize for the same project has settled, and the next caller waits on it.
@@ -21,17 +21,7 @@ export async function runSerializedFinalize<T>(
   projectPath: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const prev = finalizeQueues.get(projectPath) ?? Promise.resolve();
-  let release!: () => void;
-  const slot = new Promise<void>((r) => { release = r; });
-  finalizeQueues.set(projectPath, slot);
-  // Swallow errors from previous finalizes so one failure doesn't jam the queue.
-  await prev.catch(() => {});
-  try {
-    return await fn();
-  } finally {
-    release();
-  }
+  return withProjectMutation(projectPath, fn);
 }
 
 // Per-project queue for background worktree cleanup. Cleanup runs sequentially

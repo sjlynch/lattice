@@ -8,6 +8,7 @@ import { isMidMerge, resyncWithMainAndFinalize } from '../../worktree.js';
 import { signalConflictWaiter, startMergeRun } from '../../mergeRuns.js';
 import { release, tryAcquire } from '../../mergeLocks.js';
 import type { Task } from '../../tasks.js';
+import { withProjectMutation } from '../../projectRunLock.js';
 
 export type ResolverHookSource = 'complete' | 'merged';
 
@@ -76,10 +77,18 @@ export async function finalizeResolvedTask(
     }
     return { kind: 'already-finalizing' };
   }
+  let signalAfterMutation = false;
   try {
-    return await runFinalize(task, task.worktreePath, backendOrigin, source, deps);
+    const worktreePath = task.worktreePath;
+    return await withProjectMutation(task.projectPath, () => runFinalize(task, worktreePath, backendOrigin, source, {
+      ...deps,
+      signalOrRestartMergeRun: () => { signalAfterMutation = true; },
+    }));
   } finally {
     release(lock);
+    // A standalone callback has released its short project owner now. Starting
+    // a new merge run inside that owner would race its release and be refused.
+    if (signalAfterMutation) deps.signalOrRestartMergeRun(task, backendOrigin);
   }
 }
 

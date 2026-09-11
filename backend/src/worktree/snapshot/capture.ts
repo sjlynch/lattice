@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { projectGit } from '../projectGit.js';
 import { projectHash } from '../../projectPath.js';
+import { withProjectMutation } from '../../projectRunLock.js';
 import {
   EMPTY_HANDLE,
   SNAPSHOTS_BASE,
@@ -107,6 +108,10 @@ export async function snapshotWorkingTree(
   repoRoot: string,
   label: string,
 ): Promise<SnapshotHandle> {
+  return withProjectMutation(repoRoot, () => captureWorkingTree(repoRoot, label));
+}
+
+async function captureWorkingTree(repoRoot: string, label: string): Promise<SnapshotHandle> {
   const status = await projectGit(repoRoot, [
     'status',
     '--porcelain=v1',

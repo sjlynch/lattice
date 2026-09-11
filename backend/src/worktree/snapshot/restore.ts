@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { withProjectMutation } from '../../projectRunLock.js';
 import { constants, type Stats } from 'node:fs';
 import { isPathInsideRepo } from '../paths.js';
 import { isSnapshotMetadataPath, type SnapshotHandle } from './manifest.js';
@@ -189,6 +190,10 @@ export async function restoreSnapshot(
   opts: RestoreSnapshotOptions = {},
 ): Promise<void> {
   if (!handle.dir) return;
+  return withProjectMutation(repoRoot, () => restoreOwnedSnapshot(handle, repoRoot, opts));
+}
+
+async function restoreOwnedSnapshot(handle: SnapshotHandle, repoRoot: string, opts: RestoreSnapshotOptions): Promise<void> {
   const all = [...handle.modifiedTracked, ...handle.untracked];
   // Path safety gate: the manifest is JSON on disk that may have been
   // written by an older Lattice build (without path validation), corrupted,

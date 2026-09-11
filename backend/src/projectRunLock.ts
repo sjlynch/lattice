@@ -18,4 +18,5 @@ export { ProjectRunLockedError } from './projectRunLock/errors.js';
 export { inspectProjectRunLock } from './projectRunLock/inspect.js';
 export { acquireProjectRunLock } from './projectRunLock/acquire.js';
 export { withProjectRunLock } from './projectRunLock/withLock.js';
+export { withProjectMutation } from './projectRunLock/mutation.js';
 export type { ProjectRunLockHandle } from './projectRunLock/types.js';

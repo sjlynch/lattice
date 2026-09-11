@@ -388,3 +388,24 @@ test('generations acquired in the same millisecond have distinct identities', as
     await fixture.cleanup();
   }
 });
+
+for (const code of ['EACCES', 'EIO']) {
+  test(`acquisition preserves an unreadable lock (${code})`, async (t) => {
+    const fixture = await createFixture();
+    const originalRead = fs.readFile;
+    try {
+      await writeLock(fixture.lockFile, holder());
+      const before = await originalRead(fixture.lockFile, 'utf8');
+      t.mock.method(fs, 'readFile', async (...args: Parameters<typeof fs.readFile>) => {
+        if (String(args[0]) === fixture.lockFile) throw Object.assign(new Error('cannot read lock'), { code });
+        return originalRead(...args);
+      });
+      await assert.rejects(acquireProjectRunLock(fixture.projectPath, 'reader'), { code });
+      assert.equal(await originalRead(fixture.lockFile, 'utf8'), before);
+      await assert.rejects(fs.access(`${fixture.lockFile}.retired`), { code: 'ENOENT' });
+    } finally {
+      t.mock.restoreAll();
+      await fixture.cleanup();
+    }
+  });
+}

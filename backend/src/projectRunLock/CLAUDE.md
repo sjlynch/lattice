@@ -107,3 +107,17 @@ and silently aborts every later run on that project.
 - **Never auto-steal a remote-host or same-process lock.**
 
 Behaviour is covered by `../__tests__/projectRunLock.test.ts`.
+
+## Resolver and snapshot mutations
+
+`withProjectMutation(project, fn)` in `mutation.ts` explicitly borrows this
+process's acquired ownership through a per-project queue, or acquires a short
+owner if no run owns the project locally. An ownership record from another
+backend is never borrowable. Resolver re-sync/finalization, snapshot capture,
+and restoration all enter this queue; nested calls inherit the active slot via
+AsyncLocalStorage. Only bounded repository operations belong in it, never a
+wait for an agent callback. This lets a merge worker retain `run.lock` while its
+callback safely finalizes. Release closes admissions, drains accepted mutations,
+then retires the lock. Simultaneous standalone callbacks share their acquisition.
+
+The ownership tests are in `../__tests__/projectMutation.test.ts`.
