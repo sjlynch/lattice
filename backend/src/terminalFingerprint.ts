@@ -38,6 +38,9 @@ export const FINGERPRINT_FILES = [
   // this process's stdio must not be able to freeze its event loop.
   'consoleSink.js',
   'terminalServer/createSessionHandler.js',
+  'terminalServer/sessionRequests.js',
+  'terminalServer/admission.js',
+  'terminalProtocol.js',
   'terminalServer/routes.js',
   'terminalServer/shutdown.js',
   'terminalServer/websocket.js',
@@ -76,6 +79,7 @@ export const FINGERPRINT_FILES = [
   'terminalConfig.js',
   'ids.js',
   'projectPath.js',
+  'projectIdentity.js',
   'processTree.js',
   // What the terminal-server emits per pty: the human-facing banner (imported
   // by sessionLifecycle) and the generated `.lattice/LATTICE_API*.md` pair. Their

@@ -2,8 +2,9 @@ import type { Server } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { attachTerminal } from '../terminal.js';
 import { isAllowedOrigin } from '../wsOriginAllowlist.js';
+import { createTerminalAdmission, type TerminalAdmission } from './admission.js';
 
-export function createTerminalWebSocketServer(): WebSocketServer {
+export function createTerminalWebSocketServer(admission: TerminalAdmission = createTerminalAdmission()): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
   wss.on('connection', (ws, req) => {
     const url = new URL(req.url || '', 'http://localhost');
@@ -13,7 +14,14 @@ export function createTerminalWebSocketServer(): WebSocketServer {
     const rows = Number(url.searchParams.get('rows')) || 24;
     const initialCommand = url.searchParams.get('initialCommand') || undefined;
     const projectPath = url.searchParams.get('projectPath') || undefined;
-    attachTerminal(ws, { id, cwd, cols, rows, initialCommand, projectPath });
+    const release = id ? () => {} : admission.begin();
+    if (!release) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Terminal server is upgrading; reopen this terminal shortly.' }));
+      ws.close();
+      return;
+    }
+    try { attachTerminal(ws, { id, cwd, cols, rows, initialCommand, projectPath }); }
+    finally { release(); }
   });
   return wss;
 }

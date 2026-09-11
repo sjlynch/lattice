@@ -15,7 +15,7 @@ process on `:5185`; see `terminalServer/CLAUDE.md` for that boundary).
   `KillSessionsByCwd`) carry a shared **3s** `AbortSignal.timeout` — awaited on
   spawn-queue accounting, recovery sweeps, and worktree teardown, where a wedged
   terminal-server must surface as "can't tell" fast; `proxyListSessions` /
-  `proxyKillSession` are untimed (return `[]` / `false` on any error). The
+  `proxyKillSession` use the same timeout (return `[]` / `false` on any error). The
   `…OrNull` / `Count` variants return `null` (not `[]` / `0`) when unreachable so
   callers that act on "no live sessions" can distinguish it from a real empty.
 - `createSession.ts` — `POST /sessions` (`proxyCreateSession` /
@@ -24,8 +24,12 @@ process on `:5185`; see `terminalServer/CLAUDE.md` for that boundary).
   `mcp/registry.ts` + memory opt-out + system-prompt overrides; Pi writes its
   cwd-local files) in the BACKEND and ships it as DATA in the `SessionWireBody`,
   so the terminal-server stays a dumb executor that never imports the resolver
-  (see `mcp/CLAUDE.md` "Injection sites"). Handles a non-JSON reply by respawning
-  + retrying once.
+  (see `mcp/CLAUDE.md` "Injection sites"). A socket error, timeout or malformed
+  response retries once only if the same executor advertises deduplicated
+  session creation; it reuses the exact request ID/body, pinned to that instance.
+  Each attempt has a 30s cap (at most two attempts). Legacy/changed/unavailable
+  executors receive no ambiguous replay, and failures never restart peer PTYs.
+  The error reports when allocation remains uncertain.
 - `shutdown.ts` — `POST /shutdown` (`proxyShutdown`), **2s**, fired by the dev
   orchestrator on Ctrl+C (the detached server gets no signal of its own).
 

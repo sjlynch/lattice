@@ -1,120 +1,99 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { proxyCreateSession } from '../terminalServerClient/createSession.js';
-import {
-  BASE,
-  EXPECTED_TERMINAL_FINGERPRINT,
-} from '../terminalServerLifecycle.js';
+import { EXPECTED_TERMINAL_FINGERPRINT } from '../terminalServerLifecycle.js';
+import { createSessionRequestRegistry } from '../terminalServer/sessionRequests.js';
+import type { TerminalSessionRequestBody } from '../terminalServer/createSessionHandler.js';
 
-// A single transient POST /sessions connection error must fail (or retry) just
-// that one spawn — it must NEVER respawn the shared terminal-server, which
-// shuts it down and kills every OTHER live agent's PTY mid-run. respawn() is
-// only appropriate for a genuinely dead/stale server. See createSession.ts.
-
-type FetchStub = {
-  fetch: typeof fetch;
-  counts: { health: number; sessions: number; shutdown: number };
-};
-
-// Build a stubbed global fetch that routes by URL + method. `healthSequence`
-// gives the ProbeResult-shaping outcome for each /health call in order
-// ('ok' → 200+matching fingerprint, 'dead' → thrown connection error); beyond
-// the array it stays 'ok'. `sessionsThrowFirst` throws a socket-level error on
-// the first POST /sessions, then returns a fresh session id.
-function makeFetchStub(healthSequence: Array<'ok' | 'dead'>): FetchStub {
-  const counts = { health: 0, sessions: 0, shutdown: 0 };
-  const fetchStub = (async (input: string | URL | Request, init?: RequestInit) => {
+// A fake transport runs the real dedupe registry, allocates, and then loses the
+// reply. Retrying must retrieve that allocation, never start a second agent.
+async function withTransport(
+  opts: { legacy?: boolean; alwaysFail?: boolean; failure?: 'socket' | 'html' | 'empty' | 'timeout' | 'cap'; afterFailure?: 'changed' | 'unknown' | 'absent' } = {},
+) {
+  const original = globalThis.fetch;
+  const counts = { health: 0, posts: 0, allocations: 0, shutdown: 0 };
+  const bodies: TerminalSessionRequestBody[] = [];
+  const registry = createSessionRequestRegistry();
+  globalThis.fetch = (async (input, init) => {
     const url = String(input);
-    const method = (init?.method ?? 'GET').toUpperCase();
-
     if (url.endsWith('/health')) {
-      const outcome = healthSequence[counts.health] ?? 'ok';
-      counts.health += 1;
-      if (outcome === 'dead') {
-        // undici surfaces a socket reset as `TypeError: fetch failed`.
-        throw new TypeError('fetch failed');
-      }
-      return new Response(
-        JSON.stringify({ ok: true, fingerprint: EXPECTED_TERMINAL_FINGERPRINT }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      );
+      counts.health++;
+      if (counts.posts && opts.afterFailure === 'unknown') throw new TypeError('fetch failed');
+      if (counts.posts && opts.afterFailure === 'absent') throw Object.assign(new Error('refused'), { code: 'ECONNREFUSED' });
+      return Response.json({ ok: true, fingerprint: EXPECTED_TERMINAL_FINGERPRINT,
+        ...(opts.legacy ? {} : { protocolVersion: 1, instanceId: counts.posts && opts.afterFailure === 'changed' ? 'replacement' : 'executor-1',
+          capabilities: { idempotentCreate: true, shutdownIfIdle: true } }) });
     }
-
-    if (url.endsWith('/shutdown') && method === 'POST') {
-      counts.shutdown += 1;
-      return new Response('', { status: 200 });
+    if (url.includes('/shutdown')) { counts.shutdown++; throw new Error('must never shut down peers'); }
+    assert.ok(url.endsWith('/sessions'));
+    counts.posts++;
+    if (opts.failure === 'cap') return Response.json({ error: 'at capacity', code: 'CAP' }, { status: 503 });
+    const body = JSON.parse(String(init?.body)) as TerminalSessionRequestBody;
+    bodies.push(body);
+    const allocation = await registry(body, async () => ({ id: `allocated-${++counts.allocations}` }));
+    if (counts.posts === 1 || opts.alwaysFail) {
+      if (opts.failure === 'html') return new Response('<html>broken reply</html>');
+      if (opts.failure === 'empty') return new Response('');
+      if (opts.failure === 'timeout') throw new DOMException('timeout', 'TimeoutError');
+      throw new TypeError('fetch failed after allocation');
     }
-
-    if (url.endsWith('/sessions') && method === 'POST') {
-      counts.sessions += 1;
-      if (counts.sessions === 1) {
-        // The bug's trigger: one POST /sessions throws a connection-level error
-        // (stale keep-alive socket reset) even though the server is alive.
-        throw new TypeError('fetch failed');
-      }
-      return new Response(JSON.stringify({ id: 'sess_retry' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    throw new Error(`unexpected fetch: ${method} ${url}`);
+    return Response.json(allocation);
   }) as typeof fetch;
-
-  return { fetch: fetchStub, counts };
+  try {
+    const result = await proxyCreateSession({ initialCommand: 'bash' });
+    return { result, counts, bodies };
+  } finally { globalThis.fetch = original; }
 }
 
-test('a transient POST /sessions connection error retries the single spawn and never respawns while /health is ok', async () => {
-  const original = globalThis.fetch;
-  // /health is ok throughout: the initial liveness probe and the post-reset
-  // re-probe both answer ok, so no respawn should ever be attempted.
-  const stub = makeFetchStub(['ok', 'ok']);
-  globalThis.fetch = stub.fetch;
-  try {
-    // No cwd → resolveHarnessSpawnBody short-circuits (no filesystem work).
-    const result = await proxyCreateSession({ initialCommand: 'bash' });
-    assert.deepEqual(result, { id: 'sess_retry' });
-    assert.equal(
-      stub.counts.shutdown,
-      0,
-      'must NOT POST /shutdown — respawning would kill every live PTY',
-    );
-    assert.equal(
-      stub.counts.sessions,
-      2,
-      'should retry the single spawn once after the transient reset',
-    );
-    assert.ok(
-      stub.counts.health >= 2,
-      'should re-probe /health after the connection error before deciding',
-    );
-  } finally {
-    globalThis.fetch = original;
-  }
-  // Sanity: the stub targeted the real terminal-server base URL.
-  assert.ok(BASE.startsWith('http://127.0.0.1:'));
+for (const failure of ['socket', 'html', 'empty', 'timeout'] as const) {
+  test(`lost ${failure} reply reuses the same allocation without killing peers`, async () => {
+    const { result, counts, bodies } = await withTransport({ failure });
+    assert.deepEqual(result, { id: 'allocated-1' });
+    assert.equal(counts.allocations, 1);
+    assert.equal(counts.posts, 2);
+    assert.equal(counts.shutdown, 0);
+    assert.deepEqual(bodies[0], bodies[1]);
+    assert.ok(bodies[0].requestId);
+    assert.equal(bodies[0].serverInstanceId, 'executor-1');
+  });
+}
+
+test('legacy executor receives no ambiguous retry', async () => {
+  const { result, counts } = await withTransport({ legacy: true });
+  assert.ok('error' in result && /outcome is unknown/.test(result.error));
+  assert.equal(counts.posts, 1);
+  assert.equal(counts.allocations, 1);
+  assert.equal(counts.shutdown, 0);
 });
 
-test('a connection error DOES respawn when /health reports the server dead', async () => {
-  const original = globalThis.fetch;
-  // Health-probe outcomes, in call order, for the dead-server path:
-  //   1. ensureTerminalServer() liveness probe            -> ok   (was alive)
-  //   2. proxyCreateSession re-probe after the reset      -> dead (⇒ respawn)
-  //   3. shutdownStale() death-confirmation poll          -> dead (old one gone)
-  //   4. respawn -> ensureTerminalServer() liveness probe -> ok   (fresh one up)
-  // The #4 'ok' lets ensureTerminalServer skip the real subprocess spawn.
-  const stub = makeFetchStub(['ok', 'dead', 'dead', 'ok']);
-  globalThis.fetch = stub.fetch;
-  try {
-    const result = await proxyCreateSession({ initialCommand: 'bash' });
-    assert.deepEqual(result, { id: 'sess_retry' });
-    assert.equal(
-      stub.counts.shutdown,
-      1,
-      'a genuinely dead server SHOULD be shut down and respawned',
-    );
-    assert.equal(stub.counts.sessions, 2, 'should retry the spawn after respawn');
-  } finally {
-    globalThis.fetch = original;
-  }
+for (const afterFailure of ['changed', 'unknown', 'absent'] as const) {
+  test(`ambiguous allocation is not replayed when executor is ${afterFailure}`, async () => {
+    const { result, counts } = await withTransport({ afterFailure });
+    assert.ok('error' in result);
+    assert.equal(counts.posts, 1);
+    assert.equal(counts.allocations, 1);
+    assert.equal(counts.shutdown, 0);
+  });
+}
+
+test('a slow legacy request reports uncertain outcome without replay or peer shutdown', async () => {
+  const { result, counts } = await withTransport({ failure: 'timeout', legacy: true });
+  assert.ok('error' in result && /within 30000ms/.test(result.error) && /outcome is unknown/.test(result.error));
+  assert.equal(counts.posts, 1);
+  assert.equal(counts.shutdown, 0);
+});
+
+test('two lost replies stop at one retry and report uncertain allocation', async () => {
+  const { result, counts } = await withTransport({ failure: 'timeout', alwaysFail: true });
+  assert.ok('error' in result && /outcome remains unknown/.test(result.error));
+  assert.equal(counts.posts, 2);
+  assert.equal(counts.allocations, 1);
+  assert.equal(counts.shutdown, 0);
+});
+
+test('capacity errors retain CAP without retrying or restarting', async () => {
+  const { result, counts } = await withTransport({ failure: 'cap' });
+  assert.deepEqual(result, { error: 'at capacity', code: 'CAP' });
+  assert.equal(counts.posts, 1);
+  assert.equal(counts.shutdown, 0);
 });

@@ -31,9 +31,14 @@ The two sides of the wire:
 - **Server side (this folder):** the routes that serve those calls.
 
 Anything new this process loads at runtime must be added to
-`../terminalFingerprint.ts`'s `FINGERPRINT_FILES`, so a byte change makes a stale
-orphan look different from a freshly-spawned server and get respawned. No manual
-version constant.
+`../terminalFingerprint.ts`'s `FINGERPRINT_FILES`, so a byte change makes an older
+executor distinguishable. `../terminalProtocol.ts` defines wire compatibility;
+only incompatible wire changes bump its protocol version. A compatible older
+executor is reused while it has live or starting sessions. Upgrade uses the
+authenticated, instance-pinned `POST /shutdown-if-idle` and only replaces an
+empty executor. Fingerprint-only legacy servers are retained until the user's
+next normal shutdown/restart because they cannot atomically prove idle and
+close admission. Unknown/unhealthy listeners are never force-killed.
 
 ## Layout
 
@@ -44,10 +49,12 @@ version constant.
   before any PTY can throw asynchronously. Fail-fast contract regression-covered
   by `../__tests__/processGuards.test.ts`.
 - `routes.ts` — `registerTerminalRoutes(app, { fingerprint, shutdown, authToken })`:
-  the JSON HTTP surface — `GET /health` (returns the fingerprint), protected
+  the JSON HTTP surface — `GET /health` (fingerprint, protocol, instance ID and
+  capabilities), protected
   `GET /sessions`, `POST /sessions`, `DELETE /sessions/by-cwd` (**must** precede
   `/:id` — Express matches in registration order), `DELETE /sessions/:id`, and
-  `POST /shutdown`. Protected routes reject disallowed browser `Origin`s and
+  `POST /shutdown` (explicit user shutdown), `POST /shutdown-if-idle` (upgrade).
+  Protected routes reject disallowed browser `Origin`s and
   require the shared terminal-server token header. The token must ride in a
   **custom** header (`x-lattice-terminal-token`), constant-time-compared via
   `tokenMatches` — a custom header is the invariant that keeps a browser
@@ -58,6 +65,15 @@ version constant.
 - `createSessionHandler.ts` — `POST /sessions` implementation: pre-create a pty;
   applies the backend-resolved Claude config, returns `{ id }`, or
   `503 {code:'CAP'}` at the hard cap.
+- `sessionRequests.ts` — shares pending/results by request ID so a lost response
+  cannot execute the agent twice. IDs are bound to identical request bytes and
+  this executor instance. The registry stores hashes and results, caps at 4096,
+  retains completed requests for ten minutes, and refuses request identities
+  older than five minutes (so eviction never enables replay). Pending requests
+  are never evicted; a full registry refuses new admission.
+- `admission.ts` — one synchronous gate shared by HTTP and WS session creation
+  and idle shutdown. Async config writes hold admission even after an HTTP
+  client disconnects. A successful idle shutdown fences all later new sessions.
 - `websocket.ts` — the `/ws/terminal` upgrade handler: parse the query
   (`id`/`cwd`/`cols`/`rows`/`initialCommand`/`projectPath`) and hand the socket to
   `attachTerminal`. Disallowed browser `Origin`s (CSWSH defence — this handler

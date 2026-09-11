@@ -5,6 +5,9 @@ import { tokenMatches, TERMINAL_SERVER_AUTH_HEADER } from '../terminalServerAuth
 import { isAllowedOrigin } from '../wsOriginAllowlist.js';
 import { createSessionHandler } from './createSessionHandler.js';
 import type { TerminalShutdown } from './shutdown.js';
+import { randomUUID } from 'node:crypto';
+import { TERMINAL_PROTOCOL_VERSION } from '../terminalProtocol.js';
+import { createTerminalAdmission, type TerminalAdmission } from './admission.js';
 
 export type RegisterTerminalRoutesOptions = {
   fingerprint: string;
@@ -14,6 +17,9 @@ export type RegisterTerminalRoutesOptions = {
   // real pty. Production uses createSessionHandler(), which preserves the CAP
   // response shaping and Claude config injection behavior.
   sessionHandler?: RequestHandler;
+  admission?: TerminalAdmission;
+  instanceId?: string;
+  sessionCount?: () => number;
 };
 
 function requireTerminalAuth(authToken: string): RequestHandler {
@@ -38,12 +44,15 @@ function requireTerminalAuth(authToken: string): RequestHandler {
 
 export function registerTerminalRoutes(
   app: Express,
-  { fingerprint, shutdown, authToken, sessionHandler }: RegisterTerminalRoutesOptions,
+  { fingerprint, shutdown, authToken, sessionHandler,
+    admission = createTerminalAdmission(), instanceId = randomUUID(),
+    sessionCount = () => listSessions().length }: RegisterTerminalRoutesOptions,
 ): void {
   app.use(express.json());
 
   app.get('/health', (_req, res) => {
-    res.json({ ok: true, fingerprint });
+    res.json({ ok: true, fingerprint, instanceId, protocolVersion: TERMINAL_PROTOCOL_VERSION,
+      capabilities: { idempotentCreate: true, shutdownIfIdle: true } });
   });
 
   const requireAuth = requireTerminalAuth(authToken);
@@ -52,7 +61,22 @@ export function registerTerminalRoutes(
     res.json(listSessions());
   });
 
-  app.post('/sessions', requireAuth, sessionHandler ?? createSessionHandler());
+  const create = sessionHandler ?? createSessionHandler();
+  app.post('/sessions', requireAuth, (req, res, next) => {
+    if (req.body?.serverInstanceId !== undefined && req.body.serverInstanceId !== instanceId) {
+      res.status(409).json({ error: 'terminal-server changed during session creation; request was not replayed' });
+      return;
+    }
+    const release = admission.begin();
+    if (!release) {
+      res.status(503).json({ error: 'terminal-server is shutting down; session was not created' });
+      return;
+    }
+    // Hold admission through async config writes even if the HTTP peer drops.
+    // res.close alone is insufficient: that would permit idle shutdown while a
+    // disconnected request is still about to allocate a PTY.
+    Promise.resolve().then(() => create(req, res, next)).catch(next).finally(release);
+  });
 
   // Kill all sessions whose cwd is inside the given directory.
   // Used before worktree deletion so Windows releases file locks.
@@ -77,7 +101,21 @@ export function registerTerminalRoutes(
   // when the user Ctrl+C's `npm run dev`. Detached PTYs don't naturally see
   // the orchestrator's signals — without this the terminal server (and every
   // PTY inside it) leaks across dev sessions.
+  app.post('/shutdown-if-idle', requireAuth, (req, res) => {
+    if (req.body?.instanceId !== instanceId) {
+      res.status(409).json({ error: 'terminal-server instance changed' });
+      return;
+    }
+    if (!admission.closeIfIdle(sessionCount())) {
+      res.status(409).json({ busy: true, error: 'terminal-server has live or starting sessions; upgrade deferred' });
+      return;
+    }
+    res.status(202).json({ ok: true, instanceId });
+    setImmediate(() => { void shutdown(); });
+  });
+
   app.post('/shutdown', requireAuth, (_req, res) => {
+    admission.close();
     res.json({ ok: true });
     // Run after the response so the caller doesn't hang on a dropped socket.
     setImmediate(() => { void shutdown(); });

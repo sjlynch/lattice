@@ -23,6 +23,7 @@ import {
   createTerminalWebSocketServer,
 } from './terminalServer/websocket.js';
 import { watchParentProcess } from './terminalServer/parentWatch.js';
+import { createTerminalAdmission } from './terminalServer/admission.js';
 
 installTerminalProcessGuards();
 
@@ -48,14 +49,16 @@ const TERMINAL_FINGERPRINT = computeTerminalFingerprint();
 
 const app = express();
 const shutdown = createTerminalShutdown();
+const admission = createTerminalAdmission();
 registerTerminalRoutes(app, {
   fingerprint: TERMINAL_FINGERPRINT,
   shutdown,
   authToken: TERMINAL_AUTH_TOKEN,
+  admission,
 });
 
 const server = http.createServer(app);
-const wss = createTerminalWebSocketServer();
+const wss = createTerminalWebSocketServer(admission);
 attachTerminalWebSocketUpgrade(server, wss);
 
 server.on('error', (err: NodeJS.ErrnoException) => {

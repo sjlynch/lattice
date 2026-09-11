@@ -1,8 +1,7 @@
 import {
   BASE,
   ensureTerminalServer,
-  probeServer,
-  respawn,
+  probeTerminalServer,
 } from '../terminalServerLifecycle.js';
 import {
   resolveManagedClaudeServers,
@@ -18,6 +17,8 @@ import {
 import { isClaudeMemoryDisabled } from '../userSettings.js';
 import type { ClaudeMcpServerConfig } from '../mcp/claudeInject.js';
 import { terminalServerAuthHeaders } from '../terminalServerAuth.js';
+import { randomUUID } from 'node:crypto';
+import type { SessionRequestIdentity, TerminalServerInfo } from '../terminalProtocol.js';
 
 export type CreateSessionOptions = {
   cwd?: string;
@@ -46,7 +47,7 @@ export type CreateSessionOptions = {
 // terminal-server import the resolver — is what keeps a spawn-policy change a
 // backend-only edit that never forces a terminal-server respawn. See
 // claudeTrust.ts / mcp/CLAUDE.md "Injection sites".
-export type SessionWireBody = CreateSessionOptions & {
+export type SessionWireBody = CreateSessionOptions & SessionRequestIdentity & {
   // The managed MCP server set to reconcile into `projects[<cwd>]`, or `null`
   // for a trust-only seed. Absent for non-Claude spawns.
   managedMcpServers?: Record<string, ClaudeMcpServerConfig> | null;
@@ -182,73 +183,40 @@ export type CreateSessionResult =
 
 type CreateOnce =
   | { id: string }
-  // `recoverable` ⇒ the failure MIGHT warrant restoring the terminal-server.
-  // `connectionError` narrows that: the fetch threw at the socket level (not a
-  // bad HTTP body), which is usually a transient reset rather than a dead
-  // server — proxyCreateSession re-probes /health before deciding, so it never
-  // respawns (killing every live PTY) on a stale keep-alive reset.
-  | { error: string; recoverable: boolean; connectionError?: boolean; code?: 'CAP' };
+  | { error: string; recoverable: boolean; code?: 'CAP' };
 
 // Pre-create a pty session in the terminal-server subprocess. Returns the
 // session id so route handlers can include it in their response and the
 // frontend can attach via that id later (instead of triggering creation by
 // opening a WS).
 //
-// Reads the response body as text first, then parses JSON. A non-JSON body
-// (HTML 404 from a stale terminal-server, or some other process bound to
-// the port) returns a clear error AND triggers a one-shot respawn so the
-// next call goes through. Without this, the user sees the unhelpful "JSON
-// parse: Unexpected token '<'" error and tasks silently fail to spawn.
+// Retry only when the same executor advertises request deduplication. A lost
+// response can mean the PTY already exists; replaying into a legacy/replacement
+// server could start the agent twice. A broken request never tears down peers.
 export async function proxyCreateSession(
   opts: CreateSessionOptions,
 ): Promise<CreateSessionResult> {
-  await ensureTerminalServer();
-  // Resolve the per-harness spawn config ONCE (so a retry reuses the same body)
-  // and in the always-fresh backend — the terminal-server only applies it.
-  const body = await resolveHarnessSpawnBody(opts);
+  let server: TerminalServerInfo;
+  try { server = await ensureTerminalServer(); }
+  catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
+  const canRetry = server.capabilities?.idempotentCreate === true && !!server.instanceId;
+  const body: SessionWireBody = {
+    ...await resolveHarnessSpawnBody(opts),
+    ...(canRetry ? { requestId: randomUUID(), requestTimestamp: Date.now(), serverInstanceId: server.instanceId } : {}),
+  };
   const first = await tryCreateSessionOnce(body);
   if ('id' in first) return first;
-  // A socket-level connection error is NOT proof the server is dead: it answered
-  // /health milliseconds ago in ensureTerminalServer(), and under bursty "Run
-  // All" traffic the usual cause is undici reusing a pooled keep-alive socket
-  // the terminal-server already half-closed after its idle keepAliveTimeout (a
-  // textbook intermittent ECONNRESET). Respawning here would shut the shared
-  // server down and kill EVERY other live agent's PTY mid-run. So re-probe
-  // /health and only respawn if it's genuinely dead/stale; if it still answers
-  // ok, retry just this one spawn (a fresh socket), and if that also fails, fail
-  // only this spawn (non-recoverable) rather than tearing everything down.
-  if (first.connectionError) {
-    const status = await probeServer();
-    if (status === 'ok') {
-      console.warn(
-        `[terminal-proxy] connection error on POST /sessions but /health is ok — retrying this spawn only (no respawn). Error: ${first.error}`,
-      );
-      const retry = await tryCreateSessionOnce(body);
-      if ('id' in retry) return retry;
-      return { error: retry.error, code: retry.code };
-    }
-    console.warn(
-      `[terminal-proxy] connection error on POST /sessions and /health reports "${status}" — respawning terminal-server and retrying once. Error: ${first.error}`,
-    );
-    await respawn();
-    const second = await tryCreateSessionOnce(body);
-    if ('id' in second) return second;
-    return { error: second.error, code: second.code };
-  }
-  // Retry once if the failure was non-JSON (stale server / unrelated listener
-  // on 5185). respawn() forces a clean restart even if the stale server's
-  // /health currently still answers OK — the garbage body proves it isn't
-  // really current (unlike a connection error, where /health is authoritative).
-  if (first.recoverable) {
-    console.warn(
-      `[terminal-proxy] non-JSON response from terminal-server — forcing respawn and retrying once. First error: ${first.error}`,
-    );
-    await respawn();
-    const second = await tryCreateSessionOnce(body);
-    if ('id' in second) return second;
-    return { error: second.error, code: second.code };
-  }
-  return { error: first.error, code: first.code };
+  if (!first.recoverable) return { error: first.error, code: first.code };
+  const uncertain = `${first.error}. Session creation outcome is unknown; it was not replayed to avoid starting a duplicate agent.`;
+  if (!canRetry) return { error: uncertain };
+  const current = await probeTerminalServer();
+  if (current.kind !== 'ready' || current.info.instanceId !== server.instanceId
+      || !current.info.capabilities?.idempotentCreate) return { error: uncertain };
+  const retry = await tryCreateSessionOnce(body);
+  if ('id' in retry) return retry;
+  return { error: retry.recoverable
+    ? `${retry.error}. Session creation outcome remains unknown after the bounded retry.`
+    : retry.error, code: retry.code };
 }
 
 export async function tryCreateSessionOnce(
@@ -264,32 +232,13 @@ export async function tryCreateSessionOnce(
     });
   } catch (err) {
     const name = (err as { name?: string })?.name;
-    if (name === 'TimeoutError' || name === 'AbortError') {
-      // The terminal-server is alive (it answered the /health probe in
-      // ensureTerminalServer) but this one spawn wedged. Fail JUST this spawn
-      // as NON-recoverable: a recoverable failure would trigger respawn(),
-      // which shuts the whole terminal-server down and kills every live PTY —
-      // catastrophic mid-run. Returning non-recoverable settles the thunk so
-      // the spawn queue reclaims the reservation; the task simply re-queues.
-      console.warn(
-        `[terminal-proxy] POST /sessions timed out (>${CREATE_SESSION_TIMEOUT_MS}ms) — failing this spawn (queue slot reclaimed, will retry)`,
-      );
-      return {
-        error: `terminal-server did not respond within ${CREATE_SESSION_TIMEOUT_MS}ms`,
-        recoverable: false,
-      };
-    }
-    // A socket-level connection error (undici `TypeError: fetch failed` with an
-    // ECONNRESET/EPIPE/ECONNREFUSED cause). Might mean the server died between
-    // the probe and this request — but far more often it's a transient reset of
-    // a stale keep-alive socket. Flag it as a connection error (not a plain
-    // recoverable failure) so proxyCreateSession re-probes /health and only
-    // respawns if the server is actually gone — never nuking live PTYs on a
-    // transient reset.
     return {
-      error: (err as Error).message,
+      error: name === 'TimeoutError' || name === 'AbortError'
+        ? `terminal-server did not respond within ${CREATE_SESSION_TIMEOUT_MS}ms`
+        : err instanceof Error ? err.message : String(err),
+      // Even a timeout can follow successful allocation. The caller retries
+      // only against this same executor with the same deduplicated request ID.
       recoverable: true,
-      connectionError: true,
     };
   }
   const text = await res.text().catch(() => '');
@@ -306,12 +255,15 @@ export async function tryCreateSessionOnce(
       recoverable: true,
     };
   }
-  if (!res.ok || !parsed?.id) {
+  if (res.ok && (!parsed || typeof parsed.id !== 'string' || !parsed.id)) {
+    return { error: `terminal-server returned an invalid session response (status ${res.status})`, recoverable: true };
+  }
+  if (!res.ok) {
     return {
-      error: parsed?.error ?? `terminal-server ${res.status}`,
+      error: typeof parsed?.error === 'string' ? parsed.error : `terminal-server ${res.status}`,
       recoverable: false,
-      code: parsed?.code,
+      code: parsed?.code === 'CAP' ? 'CAP' : undefined,
     };
   }
-  return { id: parsed.id };
+  return { id: parsed!.id! };
 }
