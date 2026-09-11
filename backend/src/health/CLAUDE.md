@@ -105,6 +105,10 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   mirror), `fileAnalysis.ts` (read/LOC count/cache-or-analyze), `handlers.ts`
   (add/change/remove event handlers), `subscribers.ts` (broadcast-safe
   subscriber fan-out), `isolatedAnalyze.ts`, and `types.ts`.
+  `revision.ts` stamps events before config/read/analysis awaits. Only the
+  newest event for a path may publish maps or cache entries, so an older
+  analysis cannot resurrect an unlinked file or overwrite a newer edit.
+  Config reloads separately fence ignore/alias assignment across async reads.
   `isolatedAnalyze.ts` runs each changed file's analysis in a **warm persistent
   worker thread** (`IsolatedAnalyzer` singleton, serial single-in-flight queue,
   per-file stall watchdog) so a pathological changed file can only pin the worker

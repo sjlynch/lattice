@@ -56,6 +56,8 @@ export type LoadOrAnalyzeOptions = {
   // never be re-analyzed. The cache stays an optimization for 'add'/initial
   // hydration, where no write is implied.
   forceReanalyze?: boolean;
+  // Checked after every asynchronous boundary and before mutating the cache.
+  isCurrent?: () => boolean;
 };
 
 export async function loadOrAnalyzeFile(
@@ -63,13 +65,17 @@ export async function loadOrAnalyzeFile(
   filePath: string,
   ext: string,
   opts: LoadOrAnalyzeOptions = {},
+  analyzeContent = analyzeContentIsolated,
 ): Promise<AnalyzedFile | null> {
+  const isCurrent = opts.isCurrent ?? (() => true);
+  if (!isCurrent()) return null;
   let stat;
   try {
     stat = await fs.stat(filePath);
   } catch {
     return null;
   }
+  if (!isCurrent()) return null;
 
   if (!opts.forceReanalyze) {
     const cached = proj.cache.get(filePath, stat.mtimeMs, stat.size);
@@ -77,7 +83,7 @@ export async function loadOrAnalyzeFile(
   }
 
   const read = await readFileForAnalysis(filePath);
-  if (!read || read.content === undefined) return null;
+  if (!isCurrent() || !read || read.content === undefined) return null;
 
   // Analyze in the WATCHER's warm isolated worker so a pathological changed file
   // can only pin the worker thread, never freeze the backend's event loop. Three
@@ -91,13 +97,14 @@ export async function loadOrAnalyzeFile(
   //                 keeps its own exception guard.
   let analyzed: AnalyzedFile | null;
   try {
-    const isolated = await analyzeContentIsolated(read.content, ext, read.loc);
+    const isolated = await analyzeContent(read.content, ext, read.loc);
     analyzed = isolated ? { metrics: isolated.metrics, imports: isolated.imports } : null;
   } catch (err) {
     if (!(err instanceof WorkerUnavailableError)) throw err;
+    if (!isCurrent()) return null;
     analyzed = await analyzeInThread(filePath, read.content, ext, read.loc);
   }
-  if (!analyzed) return null;
+  if (!isCurrent() || !analyzed) return null;
 
   proj.cache.set(filePath, stat.mtimeMs, stat.size, analyzed.metrics, analyzed.imports);
   saveCacheBestEffort(proj);

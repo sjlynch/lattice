@@ -17,6 +17,7 @@ import { hydrateWatcherState } from './cacheHydration.js';
 import { createWatcherHandlers } from './handlers.js';
 import { broadcast } from './subscribers.js';
 import type { ProjectWatcher } from './types.js';
+import { WatcherRevision } from './revision.js';
 
 // Construct and wire a ProjectWatcher. `registerShutdownFlush` is the facade's
 // once-only process-exit flush hook, invoked when the build completes so the
@@ -25,6 +26,7 @@ import type { ProjectWatcher } from './types.js';
 export async function createWatcher(
   projectRoot: string,
   registerShutdownFlush: () => void,
+  revision = new WatcherRevision(),
 ): Promise<ProjectWatcher> {
   const cache = new HealthCache(projectRoot);
   await cache.load();
@@ -53,6 +55,7 @@ export async function createWatcher(
     config,
     crossFile: undefined as unknown as CrossFileAnalyzer,
     subscribers: new Set(),
+    revision,
   };
 
   proj.crossFile = new CrossFileAnalyzer({
@@ -105,9 +108,11 @@ function wireWatcherEvents(proj: ProjectWatcher, watcher: TreeWatcher): void {
   watcher.on('change', (p) => { onAddOrChange(p, 'change').catch(() => { /* ignore */ }); });
   watcher.on('unlink', (p) => { onRemove(p).catch(() => { /* ignore */ }); });
   watcher.on('addDir', (p) => {
+    proj.revision.invalidate();
     if (p !== proj.root) broadcast(proj, { type: 'rescan', reason: 'directory', path: p });
   });
   watcher.on('unlinkDir', (p) => {
+    proj.revision.invalidate();
     if (p !== proj.root) broadcast(proj, { type: 'rescan', reason: 'directory', path: p });
   });
 }

@@ -3,6 +3,7 @@ import type { HealthCache } from '../cache.js';
 import type { ConfigReloader } from '../configReloader.js';
 import type { CrossFileAnalyzer } from '../crossFileAnalyzer.js';
 import type { HealthMetrics } from '../types.js';
+import type { WatcherRevision } from './revision.js';
 
 export type HealthUpdate = {
   type: 'updated';
@@ -34,4 +35,5 @@ export type ProjectWatcher = {
   config: ConfigReloader;
   crossFile: CrossFileAnalyzer;
   subscribers: Set<Subscriber>;
+  revision: WatcherRevision;
 };

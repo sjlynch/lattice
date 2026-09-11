@@ -13,6 +13,8 @@ const TSCONFIG_BASENAME_RE = TSCONFIG_RE;
 export class ConfigReloader {
   private gitignoreMatcher: Ignore = ignore();
   private projectAliases: ParsedAlias[] = [];
+  private ignoreRevision = 0;
+  private aliasRevision = 0;
 
   constructor(private readonly projectRoot: string) {}
 
@@ -36,12 +38,14 @@ export class ConfigReloader {
   }
 
   async reload(): Promise<void> {
+    const ignoreRevision = ++this.ignoreRevision;
+    const aliasRevision = ++this.aliasRevision;
     const [gitignoreMatcher, aliases] = await Promise.all([
       this.loadGitignore(),
       loadProjectAliases(this.projectRoot),
     ]);
-    this.gitignoreMatcher = gitignoreMatcher;
-    this.projectAliases = aliases;
+    if (this.ignoreRevision === ignoreRevision) this.gitignoreMatcher = gitignoreMatcher;
+    if (this.aliasRevision === aliasRevision) this.projectAliases = aliases;
   }
 
   async reloadForPath(filePath: string): Promise<boolean> {
@@ -49,7 +53,9 @@ export class ConfigReloader {
     if (base === '.gitignore') {
       // Only react to the project-root .gitignore, not nested ones.
       if (path.resolve(filePath) === path.resolve(this.projectRoot, '.gitignore')) {
-        this.gitignoreMatcher = await this.loadGitignore();
+        const revision = ++this.ignoreRevision;
+        const matcher = await this.loadGitignore();
+        if (this.ignoreRevision === revision) this.gitignoreMatcher = matcher;
         return true;
       }
     }
@@ -66,7 +72,9 @@ export class ConfigReloader {
       // changed. Nested edits fall through to normal analysis (return false);
       // their aliases refresh on the next root-tsconfig change or full scan.
       if (path.dirname(path.resolve(filePath)) === path.resolve(this.projectRoot)) {
-        this.projectAliases = await loadProjectAliases(this.projectRoot);
+        const revision = ++this.aliasRevision;
+        const aliases = await loadProjectAliases(this.projectRoot);
+        if (this.aliasRevision === revision) this.projectAliases = aliases;
         return true;
       }
     }
