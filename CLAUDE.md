@@ -468,8 +468,10 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   only after a tab's first activation — an un-clicked tab has no WS of its own,
   and those are exactly the tabs the spinner is for. Harness sessions only: a
   plain shell or a `npm run dev` startup terminal streams output for its whole
-  life and would pin the spinner on. Compatible older terminal executors keep
-  the legacy heuristic until normal safe replacement; live sessions are retained.
+  life and would pin the spinner on. Compatible older terminal executors without
+  printable-output telemetry show no Codex spinner; Claude/Pi retain the legacy
+  heuristic until safe replacement. Backend restarts retain executors with any
+  live PTY, including agents waiting at a prompt; no PTYs are killed for telemetry.
 - **Terminal pty pre-spawn.** When a task/workflow/conflict spawn would
   produce a UI terminal, the backend pre-creates the pty via the
   terminal-server's `POST /sessions` and ships back a `serverId`. The

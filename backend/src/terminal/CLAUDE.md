@@ -18,9 +18,11 @@ owns the node-pty processes.
   synchronized-redraw controls repeatedly while waiting for input. Raw output
   still reaches scrollback/subscribers unchanged, and `lastOutputAt` retains
   its raw-byte meaning for existing liveness consumers. Zero text timestamp
-  means no printable output yet. Compatible older executors lack this field
-  and keep the old heuristic until normal safe replacement; never kill live
-  sessions just to activate an activity-display update.
+  means no printable output yet. Compatible older executors lack this field;
+  their Codex activity stays unknown (no spinner), while Claude/Pi retain the
+  legacy heuristic until safe replacement. A backend restart can retain the old
+  executor whenever any PTY remains, even an agent waiting at its prompt. Never
+  kill live sessions just to activate an activity-display update.
 - `sessionStore.ts` — **the single source of truth**: the module-singleton
   `Map<id, Session>`. `getSession` / `addSession` / `deleteSession` (disposes
   the session's scrollback at the one deletion point) / `sessionCount` /

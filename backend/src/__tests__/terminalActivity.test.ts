@@ -95,6 +95,45 @@ test('nonfinite and future raw timestamps cannot pin a legacy spinner on', () =>
   }
 });
 
+test('retained old Codex executors stay quiet through repeated raw heartbeats', () => {
+  for (const initialCommand of ['codex --yolo', '"C:\\Tools\\codex.cmd" --yolo']) {
+    let state: TerminalActivityState = new Map([['s1', midRun(NOW - TICK)]]);
+    for (let tick = 0; tick < 8; tick++) {
+      const at = NOW + tick * TICK;
+      const result = stepTerminalActivity([session({ initialCommand, lastOutputAt: at })], state, at);
+      assert.deepEqual(result.busy, [], 'raw control traffic cannot establish Codex activity');
+      assert.equal(result.state.size, 0, 'drop any earlier raw-output run history');
+      state = result.state;
+    }
+  }
+});
+
+test('Claude and Pi retain legacy activity, but supported zero and invalid text facts never fall back', () => {
+  const previous = new Map([['s1', midRun(NOW - TICK)]]);
+  for (const initialCommand of ['claude', 'pi --approve']) {
+    assert.deepEqual(stepTerminalActivity([session({ initialCommand })], previous, NOW).busy, ['s1']);
+  }
+  for (const initialCommand of ['claude', 'pi --approve', 'codex --yolo']) {
+    for (const lastTextOutputAt of [0, null, NaN, Infinity, -1, 'bad', NOW + 1]) {
+      const result = stepTerminalActivity([session({ initialCommand, lastTextOutputAt })], previous, NOW);
+      assert.deepEqual(result.busy, [], `${initialCommand} with ${String(lastTextOutputAt)}`);
+    }
+  }
+});
+
+test('Codex starts a fresh activity run once printable telemetry becomes available', () => {
+  const initialCommand = 'codex';
+  const old = stepTerminalActivity([session({ initialCommand })], new Map([['s1', midRun(NOW - TICK)]]), NOW);
+  const firstText = stepTerminalActivity([
+    session({ initialCommand, lastOutputAt: NOW + TICK, lastTextOutputAt: NOW + TICK }),
+  ], old.state, NOW + TICK);
+  assert.deepEqual(firstText.busy, [], 'new telemetry must not inherit an old raw-output run');
+  const working = stepTerminalActivity([
+    session({ initialCommand, lastOutputAt: NOW + 2 * TICK, lastTextOutputAt: NOW + 2 * TICK }),
+  ], firstText.state, NOW + 2 * TICK);
+  assert.deepEqual(working.busy, ['s1']);
+});
+
 test('agentHarnessForCommand tolerates paths, quotes, and Windows shims', () => {
   assert.equal(agentHarnessForCommand('"C:\\Program Files\\bin\\claude.cmd" --x'), 'claude');
   assert.equal(agentHarnessForCommand('/usr/local/bin/codex'), 'codex');

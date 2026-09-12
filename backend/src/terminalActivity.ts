@@ -16,8 +16,9 @@
 // Codex also emits synchronized-redraw controls (~12 times/sec) while idle;
 // raw byte recency would therefore keep it busy forever. The terminal-server
 // records a separate printable-output timestamp while preserving lastOutputAt
-// for existing liveness consumers. Old compatible executors lack that fact,
-// so they retain the legacy heuristic until their next normal replacement.
+// for existing liveness consumers. Old compatible executors lack that fact;
+// their Codex activity is unknown and stays quiet until safe replacement.
+// Claude and Pi retain the legacy heuristic on those executors.
 //
 // It is SUSTAINED output, not merely recent output. A full-screen TUI also
 // redraws for reasons that have nothing to do with the agent working, and the
@@ -152,12 +153,17 @@ export function stepTerminalActivity(
     if (!raw || typeof raw !== 'object') continue;
     const s = raw as TerminalSessionSnapshot;
     if (typeof s.id !== 'string' || !s.id) continue;
+    const command = typeof s.initialCommand === 'string' ? s.initialCommand : undefined;
+    const harness = agentHarnessForCommand(command);
+    if (!harness) continue;
+    // Retained executors survive backend restarts with live PTYs. Their raw
+    // Codex heartbeat cannot distinguish work from idle redraws: missing text
+    // telemetry is unknown activity, never evidence to keep a spinner alive.
+    if (harness === 'codex' && s.lastTextOutputAt === undefined) continue;
     // A supported zero timestamp means no printable output yet. Only absent
-    // fields fall back to raw bytes from older compatible executors.
+    // fields on Claude/Pi fall back to raw bytes from compatible old executors.
     const stamp = s.lastTextOutputAt === undefined ? s.lastOutputAt : s.lastTextOutputAt;
     if (typeof stamp !== 'number' || !Number.isFinite(stamp) || stamp <= 0 || stamp > now) continue;
-    const command = typeof s.initialCommand === 'string' ? s.initialCommand : undefined;
-    if (!agentHarnessForCommand(command)) continue;
 
     const lastOutputAt = stamp;
     const before = previous.get(s.id);
