@@ -20,6 +20,15 @@ cache, whose home path binds once at module load. Keep tests as plain
 
 ## Suite index
 
+- `codexTerminalActivity.test.ts`, `codexActivityReplay.test.ts` — per-launch
+  status-title defaults, actual Codex Ready/Working lifecycle traces, animated
+  idle output, and a real animations-disabled turn silent for over 20 seconds.
+  Codex activity must never fall back to output recency.
+- `terminalActivityRelay.test.ts`, `terminalWsRelayActivity.test.ts` — existing
+  stream compatibility for old executors: split titles, complete replay,
+  independent viewer ownership, byte/binary forwarding, disconnect cleanup,
+  serverless command defaults, and no extra connections/input/resizes.
+
 - `watchTree.test.ts` — the recursive tree watcher behind the health and
   git-status watchers. The headline case is the Windows directory lock it exists
   to fix: chokidar's per-directory/per-file `fs.watch` handles made any project

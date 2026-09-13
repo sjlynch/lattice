@@ -19,6 +19,7 @@ import type { ClaudeMcpServerConfig } from '../mcp/claudeInject.js';
 import { terminalServerAuthHeaders } from '../terminalServerAuth.js';
 import { randomUUID } from 'node:crypto';
 import type { SessionRequestIdentity, TerminalServerInfo } from '../terminalProtocol.js';
+import { withCodexActivityTitle } from '../codexTerminalActivity.js';
 
 export type CreateSessionOptions = {
   cwd?: string;
@@ -103,6 +104,7 @@ function isPiCommand(initialCommand: string | undefined): boolean {
 async function resolveHarnessSpawnBody(
   opts: CreateSessionOptions,
 ): Promise<SessionWireBody> {
+  opts = { ...opts, initialCommand: withCodexActivityTitle(opts.initialCommand) };
   if (!opts.cwd) return opts;
   if (isClaudeCommand(opts.initialCommand)) {
     // No projectPath → trust-only seed (managed: null) + Claude's default memory.

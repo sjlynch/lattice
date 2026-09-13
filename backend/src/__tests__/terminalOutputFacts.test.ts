@@ -27,7 +27,7 @@ test('Codex control-only idle frames never create a printable-output run', () =>
   assert.equal(facts.lastTextOutputAt, 0);
 });
 
-test('Codex work becomes busy and stops despite continuing idle redraw traffic', () => {
+test('Codex title reports work and completion despite continuing redraw traffic', () => {
   const facts = new TerminalOutputFacts();
   let state = EMPTY_TERMINAL_ACTIVITY;
   const busy: string[][] = [];
@@ -35,17 +35,19 @@ test('Codex work becomes busy and stops despite continuing idle redraw traffic',
     const at = NOW + tick * 1_000;
     // A startup screen is one burst; later a turn renders its progress and
     // final answer. Control traffic keeps arriving after the turn finishes.
-    if (tick === 0) facts.write('Codex ready > ', at);
+    if (tick === 0) facts.write('\x1b]2;Ready\x07Codex ready > ', at);
+    if (tick === 2) facts.write('\x1b]2;Working\x07', at);
     if (tick >= 2 && tick <= 4) facts.write(`\x1b[1GWorking ${tick}s\x1b[K`, at);
+    if (tick === 4) facts.write('\x1b]2;Ready\x07', at);
     facts.write(IDLE_CODEX_FRAME, at);
     const next = stepTerminalActivity([
       { id: 'codex', initialCommand: 'codex', lastOutputAt: at,
-        lastTextOutputAt: facts.lastTextOutputAt },
+        lastTextOutputAt: facts.lastTextOutputAt, terminalTitle: facts.terminalTitle },
     ], state, at);
     busy.push(next.busy);
     state = next.state;
   }
-  assert.deepEqual(busy, [[], [], [], ['codex'], ['codex'], ['codex'], [], []]);
+  assert.deepEqual(busy, [[], [], ['codex'], ['codex'], [], [], [], []]);
 });
 
 test('ANSI control sequences remain non-printing at every possible chunk split', () => {
@@ -89,6 +91,41 @@ test('large or canceled escape payloads never turn into printable output', () =>
   assert.equal(facts.lastTextOutputAt, NOW + 2);
 });
 
+test('window titles are recorded across every chunk boundary without counting as text', () => {
+  for (const frame of ['\x1b]0;Working\x07', '\x1b]2;Idle\x1b\\', '\x9d2;Waiting\x9c']) {
+    const expected = frame.includes('Working') ? 'Working' : frame.includes('Idle') ? 'Idle' : 'Waiting';
+    for (let split = 0; split <= frame.length; split++) {
+      const facts = new TerminalOutputFacts();
+      facts.write(frame.slice(0, split), NOW);
+      facts.write(frame.slice(split), NOW + 1);
+      assert.equal(facts.terminalTitle, expected, `split ${split}`);
+      assert.equal(facts.lastTextOutputAt, 0);
+    }
+  }
+});
+
+test('only complete bounded window titles replace the last title', () => {
+  const facts = new TerminalOutputFacts();
+  facts.write('\x1b]2;Working\x07', NOW);
+  for (const ignored of ['\x1b]1;icon\x07', '\x1b]52;c;clipboard\x07',
+    '\x1b]8;;https://example.invalid\x1b\\', '\x1bP2;Idle\x1b\\',
+    '\x1b]2;Idle\x18']) {
+    facts.write(ignored, NOW + 1);
+    assert.equal(facts.terminalTitle, 'Working');
+  }
+  facts.write('\x1b]2;' + 'x'.repeat(300_000), NOW + 2);
+  assert.equal(facts.terminalTitle, 'Working', 'incomplete OSC cannot replace a title');
+  facts.write('\x07', NOW + 3);
+  assert.equal(facts.terminalTitle, null, 'oversize titles are unknown');
+  facts.write('\x1b]2;Idle\x07', NOW + 4);
+  assert.equal(facts.terminalTitle, 'Idle');
+  facts.write('\x1b]2\x1b;Working\x07', NOW + 4);
+  assert.equal(facts.terminalTitle, null, 'malformed OSC cannot become a working title');
+  facts.write('\x1b]2;\x07', NOW + 5);
+  assert.equal(facts.terminalTitle, '', 'shell title reset clears old status');
+  assert.equal(facts.lastTextOutputAt, 0);
+});
+
 test('session output records printable facts without dropping raw traffic or changing lastOutputAt', (t) => {
   let at = NOW;
   t.mock.method(Date, 'now', () => at);
@@ -108,6 +145,7 @@ test('session output records printable facts without dropping raw traffic or cha
   wireSessionPtyEvents(session);
   onData(IDLE_CODEX_FRAME);
   assert.equal(listSessions().find(s => s.id === session.id)?.lastTextOutputAt, 0);
+  assert.equal(listSessions().find(s => s.id === session.id)?.terminalTitle, null);
   at++;
   onData('working');
   at++;
@@ -117,4 +155,8 @@ test('session output records printable facts without dropping raw traffic or cha
   assert.equal(snapshot.lastTextOutputAt, NOW + 1);
   assert.deepEqual(scrollback, [IDLE_CODEX_FRAME, 'working', IDLE_CODEX_FRAME]);
   assert.deepEqual(broadcast.map(message => JSON.parse(message).data), scrollback);
+  onData('\x1b]2;Idle\x07');
+  assert.equal(listSessions().find(s => s.id === session.id)?.terminalTitle, 'Idle');
+  assert.equal(listSessions().find(s => s.id === session.id)?.lastTextOutputAt, NOW + 1);
+  assert.equal(JSON.parse(broadcast.at(-1)!).data, '\x1b]2;Idle\x07');
 });

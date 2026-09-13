@@ -121,17 +121,55 @@ test('Claude and Pi retain legacy activity, but supported zero and invalid text 
   }
 });
 
-test('Codex starts a fresh activity run once printable telemetry becomes available', () => {
+test('Codex starts working only once an explicit Working title becomes available', () => {
   const initialCommand = 'codex';
   const old = stepTerminalActivity([session({ initialCommand })], new Map([['s1', midRun(NOW - TICK)]]), NOW);
   const firstText = stepTerminalActivity([
-    session({ initialCommand, lastOutputAt: NOW + TICK, lastTextOutputAt: NOW + TICK }),
+    session({ initialCommand, lastOutputAt: NOW + TICK, lastTextOutputAt: NOW + TICK, terminalTitle: 'Ready' }),
   ], old.state, NOW + TICK);
-  assert.deepEqual(firstText.busy, [], 'new telemetry must not inherit an old raw-output run');
+  assert.deepEqual(firstText.busy, [], 'printable output does not mean a Codex turn started');
   const working = stepTerminalActivity([
-    session({ initialCommand, lastOutputAt: NOW + 2 * TICK, lastTextOutputAt: NOW + 2 * TICK }),
+    session({ initialCommand, lastOutputAt: NOW + 2 * TICK, lastTextOutputAt: NOW + 2 * TICK, terminalTitle: 'Working' }),
   ], firstText.state, NOW + 2 * TICK);
   assert.deepEqual(working.busy, ['s1']);
+});
+
+test('Codex Ready stays idle through printable welcome animation and /resume redraws', () => {
+  let state: TerminalActivityState = new Map([['s1', midRun(NOW - TICK)]]);
+  for (let tick = 0; tick < 20; tick++) {
+    const at = NOW + tick * TICK;
+    const result = stepTerminalActivity([session({ initialCommand: 'codex --yolo',
+      lastOutputAt: at, lastTextOutputAt: at, terminalTitle: 'Ready' })], state, at);
+    assert.deepEqual(result.busy, []);
+    assert.equal(result.state.size, 0, 'welcome animation cannot accumulate a run');
+    state = result.state;
+  }
+});
+
+test('Codex Working persists through quiet work and user input, Ready clears immediately', () => {
+  const s = session({ initialCommand: 'codex', lastOutputAt: NOW - 60_000,
+    lastTextOutputAt: NOW - 60_000, terminalTitle: 'Working' });
+  const result = stepTerminalActivity([s], EMPTY_TERMINAL_ACTIVITY, NOW,
+    { inputAt: new Map([['s1', NOW]]) });
+  assert.deepEqual(result.busy, ['s1'], 'quiet tools and steering do not fake a completed turn');
+  for (const terminalTitle of ['Ready', 'Action Required', '', null, undefined, 'Unknown', 123]) {
+    assert.deepEqual(stepTerminalActivity([{ ...s, terminalTitle, lastTextOutputAt: NOW }],
+      result.state, NOW).busy, []);
+  }
+});
+
+test('native Codex title wins over relay telemetry, including explicit unknown values', () => {
+  const s = session({ initialCommand: 'codex', lastTextOutputAt: NOW });
+  let reads = 0;
+  const options = { titleForSession: (id: string) => { assert.equal(id, 's1'); reads++; return 'Working'; } };
+  assert.deepEqual(stepTerminalActivity([s], EMPTY_TERMINAL_ACTIVITY, NOW, options).busy, ['s1']);
+  assert.equal(reads, 1);
+  for (const terminalTitle of ['Ready', null, '', {}, 'Working later']) {
+    assert.deepEqual(stepTerminalActivity([{ ...s, terminalTitle }], EMPTY_TERMINAL_ACTIVITY, NOW, options).busy, []);
+  }
+  assert.equal(reads, 1, 'fallback only fills missing native field');
+  assert.deepEqual(stepTerminalActivity([{ ...s, terminalTitle: 'Working' }], EMPTY_TERMINAL_ACTIVITY, NOW,
+    { titleForSession: () => 'Ready' }).busy, ['s1']);
 });
 
 test('agentHarnessForCommand tolerates paths, quotes, and Windows shims', () => {

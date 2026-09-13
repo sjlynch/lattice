@@ -13,21 +13,24 @@ owns the node-pty processes.
   `killing` guard) + `CreateOpts` / `AttachOpts`. Record facts here; activity
   thresholds and harness classification stay in `../terminalActivity.ts`.
 - `outputFacts.ts` — constant-memory incremental escape parser recording
-  `lastTextOutputAt`. CSI synchronization/cursor/query frames, OSC titles and
+  `lastTextOutputAt` and the latest `terminalTitle` (OSC 0/2, at most 128 code
+  units; oversized/malformed titles become unknown). CSI synchronization/cursor/query frames, OSC titles and
   DCS/APC/PM payloads do not count as text, even across PTY chunks. Codex emits
   synchronized-redraw controls repeatedly while waiting for input. Raw output
   still reaches scrollback/subscribers unchanged, and `lastOutputAt` retains
   its raw-byte meaning for existing liveness consumers. Zero text timestamp
-  means no printable output yet. Compatible older executors lack this field;
-  their Codex activity stays unknown (no spinner), while Claude/Pi retain the
-  legacy heuristic until safe replacement. A backend restart can retain the old
-  executor whenever any PTY remains, even an agent waiting at its prompt. Never
+  means no printable output yet. Codex's welcome screen also emits real text:
+  the main backend uses its explicit status title, never printable recency, to
+  classify Codex. `isGround` lets the backend relay skip title parsing for plain
+  output while preserving pending split escape sequences. The main backend
+  adds the status-title CLI default at creation and can derive titles from
+  existing browser streams if an old executor lacks the native field. Never
   kill live sessions just to activate an activity-display update.
 - `sessionStore.ts` — **the single source of truth**: the module-singleton
   `Map<id, Session>`. `getSession` / `addSession` / `deleteSession` (disposes
   the session's scrollback at the one deletion point) / `sessionCount` /
   `allSessions` / `listSessions` (debug snapshot — also the wire format the
-  main backend reads `lastOutputAt`/`lastTextOutputAt`/`initialCommand` from).
+  main backend reads output timestamps, `terminalTitle` and `initialCommand` from).
 - `launchContext.ts` — `buildSessionLaunchContext`: resolves shell, cwd
   (validated to exist — refusing a doomed spawn that would feed a reconnect
   loop), size, projectPath, and the env; calls `windowsPath` + `envSetup` to

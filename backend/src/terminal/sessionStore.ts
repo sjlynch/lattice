@@ -44,6 +44,7 @@ export function listSessions(): Array<{
   bufferSize: number;
   lastOutputAt: number;
   lastTextOutputAt: number;
+  terminalTitle: string | null;
   initialCommand?: string;
 }> {
   return Array.from(sessions.values()).map((s) => ({
@@ -60,6 +61,7 @@ export function listSessions(): Array<{
     // tab spinner). See sessionTypes.ts — this side records, it never judges.
     lastOutputAt: s.lastOutputAt,
     lastTextOutputAt: s.outputFacts.lastTextOutputAt,
+    terminalTitle: s.outputFacts.terminalTitle,
     initialCommand: s.initialCommand,
   }));
 }

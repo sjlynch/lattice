@@ -449,29 +449,31 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
 - Prefer editing existing files; don't introduce new abstractions for
   one-off tweaks.
 - **Per-tab agent spinner.** A sidebar tab swaps its icon for a small spinner
-  while the harness in that pty is still working. The signal is
-  *sustained printable output that the user isn't driving* — recency alone counted the
-  redraw a harness emits when the sidebar blurs its xterm (a tab switch sends
-  the pty a focus escape), so opening a new tab span up the tab you just left,
-  and a scroll (a wheel escape per notch) span the tab you were scrolling.
-  Derived in the backend (`backend/src/terminalActivity.ts`, fed the input side
-  by the `/ws/terminal` relay)
-  and pushed over `/ws/terminal-activity`: the detached terminal-server stamps
-  `lastOutputAt` on every pty `onData` and separately records `lastTextOutputAt`
-  through an incremental escape parser. Codex emits synchronized-redraw controls
-  while idle, so raw byte activity must not drive this spinner. `listSessions`
-  reports both facts plus `initialCommand`; thresholds and harness classification
-  stay in the main backend. `terminalActivityPoller.ts` fences old subscription
-  responses and expires uncertain display state after five seconds. The frontend
-  clears stale busy ids on disconnect/project switch and suppresses exited tabs.
+  while the harness in that pty is working. **Codex uses its explicit terminal
+  title status**, configured per invocation with `tui.terminal_title=['status']`
+  by the main backend before HTTP or serverless WS creation. `Working` spins;
+  `Ready`, action-required, custom/disabled/unknown titles do not. Printable
+  welcome-screen animation at an empty prompt must never count as Codex work.
+  Quiet active turns remain busy, including when Codex animations are disabled.
+  No global Codex config is written; later explicit command-line overrides win.
+  **Claude/Pi use sustained printable output that the user isn't driving**;
+  focus, scrolling and resizing must not accumulate false busy runs.
+  `backend/src/terminalActivity.ts` derives the signal and pushes it over
+  `/ws/terminal-activity`. The detached executor reports raw `lastOutputAt`,
+  `lastTextOutputAt`, the latest bounded `terminalTitle`, and `initialCommand`.
+  `terminalActivityRelay.ts` can obtain the same title from existing browser
+  streams for retained old executors. It creates no extra connections or PTYs.
+  Native telemetry wins, including an explicit unknown title. The shared poller
+  expires unavailable display state after five seconds; the frontend clears
+  activity on disconnect/project switch and suppresses exited/dead tabs.
   It must come from the backend because the sidebar lazy-mounts a `TerminalPane`
   only after a tab's first activation — an un-clicked tab has no WS of its own,
   and those are exactly the tabs the spinner is for. Harness sessions only: a
   plain shell or a `npm run dev` startup terminal streams output for its whole
-  life and would pin the spinner on. Compatible older terminal executors without
-  printable-output telemetry show no Codex spinner; Claude/Pi retain the legacy
-  heuristic until safe replacement. Backend restarts retain executors with any
-  live PTY, including agents waiting at a prompt; no PTYs are killed for telemetry.
+  life and would pin the spinner on. Old Codex launches without the status-title
+  default, or unopened tabs on an old executor without native titles, remain
+  unknown until a new launch or telemetry becomes available. Live PTYs are
+  preserved across backend restarts; never kill them to upgrade this indicator.
 - **Terminal pty pre-spawn.** When a task/workflow/conflict spawn would
   produce a UI terminal, the backend pre-creates the pty via the
   terminal-server's `POST /sessions` and ships back a `serverId`. The

@@ -12,13 +12,10 @@
 // no event channel back into this one. One poll here serves every browser tab
 // and every project, and it only runs while at least one client is subscribed.
 //
-// The display signal is a heuristic based on sustained PRINTABLE output.
-// Codex also emits synchronized-redraw controls (~12 times/sec) while idle;
-// raw byte recency would therefore keep it busy forever. The terminal-server
-// records a separate printable-output timestamp while preserving lastOutputAt
-// for existing liveness consumers. Old compatible executors lack that fact;
-// their Codex activity is unknown and stays quiet until safe replacement.
-// Claude and Pi retain the legacy heuristic on those executors.
+// Codex reports its explicit turn status in the terminal title. Printable
+// output cannot classify it: its welcome screen animates at an empty prompt.
+// Claude and Pi use the sustained printable-output heuristic below. The
+// terminal-server preserves lastOutputAt for existing liveness consumers.
 //
 // It is SUSTAINED output, not merely recent output. A full-screen TUI also
 // redraws for reasons that have nothing to do with the agent working, and the
@@ -37,6 +34,8 @@
 import { agentHarnessForCommand } from './harnesses.js';
 import { proxyListSessionsOrNull } from './terminalServerClient.js';
 import { createTerminalActivityPoller } from './terminalActivityPoller.js';
+import { codexTitleIsWorking } from './codexTerminalActivity.js';
+import { getObservedTerminalTitle } from './terminalActivityRelay.js';
 
 // How long a session may go without printable output before it counts as idle.
 // Comfortably longer than any within-frame gap in a harness's spinner animation
@@ -103,6 +102,7 @@ export type TerminalSessionSnapshot = {
   id?: unknown;
   lastOutputAt?: unknown;
   lastTextOutputAt?: unknown;
+  terminalTitle?: unknown;
   initialCommand?: unknown;
 };
 
@@ -123,7 +123,8 @@ export const EMPTY_TERMINAL_ACTIVITY: TerminalActivityState = new Map();
  * Pure: fold one `/sessions` snapshot into the carried per-session state and
  * report which agent ptys are working.
  *
- * A session is busy when it emitted within `idleMs` AND has been emitting for
+ * Codex uses its explicit Working title, independently of output recency.
+ * Claude/Pi are busy when they emitted within `idleMs` AND have been emitting for
  * at least `minRunMs` — measured from the later of the run's start and the last
  * frame the browser sent that pty (`inputAt`), so output the user is driving
  * never accumulates a run no matter how long they drive it. The run itself is
@@ -142,6 +143,7 @@ export function stepTerminalActivity(
     idleMs?: number;
     minRunMs?: number;
     inputAt?: ReadonlyMap<string, number>;
+    titleForSession?: (id: string) => string | null | undefined;
   } = {},
 ): { busy: string[]; state: TerminalActivityState } {
   const idleMs = options.idleMs ?? TERMINAL_BUSY_IDLE_MS;
@@ -156,10 +158,14 @@ export function stepTerminalActivity(
     const command = typeof s.initialCommand === 'string' ? s.initialCommand : undefined;
     const harness = agentHarnessForCommand(command);
     if (!harness) continue;
-    // Retained executors survive backend restarts with live PTYs. Their raw
-    // Codex heartbeat cannot distinguish work from idle redraws: missing text
-    // telemetry is unknown activity, never evidence to keep a spinner alive.
-    if (harness === 'codex' && s.lastTextOutputAt === undefined) continue;
+    if (harness === 'codex') {
+      // Native facts survive backend restarts. Existing browser relays supply
+      // the same fact for retained executors without the new field. Explicit
+      // null/invalid native titles remain unknown and never use old telemetry.
+      const title = s.terminalTitle === undefined ? options.titleForSession?.(s.id) : s.terminalTitle;
+      if (codexTitleIsWorking(title)) busy.push(s.id);
+      continue;
+    }
     // A supported zero timestamp means no printable output yet. Only absent
     // fields on Claude/Pi fall back to raw bytes from compatible old executors.
     const stamp = s.lastTextOutputAt === undefined ? s.lastOutputAt : s.lastTextOutputAt;
@@ -205,7 +211,9 @@ const poller = createTerminalActivityPoller({
     if (!isCurrent() || sessions === null) return null;
     const now = Date.now();
     pruneClientInput(now);
-    const stepped = stepTerminalActivity(sessions, activity, now, { inputAt: clientInputAt });
+    const stepped = stepTerminalActivity(sessions, activity, now, {
+      inputAt: clientInputAt, titleForSession: getObservedTerminalTitle,
+    });
     activity = stepped.state;
     return stepped.busy;
   },

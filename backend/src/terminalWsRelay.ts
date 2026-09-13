@@ -2,6 +2,8 @@ import { WebSocket } from 'ws';
 import type { RawData } from 'ws';
 import { TERMINAL_PORT } from './terminalServerLifecycle.js';
 import { noteTerminalClientInput } from './terminalActivity.js';
+import { createTerminalActivityRelayObserver } from './terminalActivityRelay.js';
+import { withCodexActivityTitle } from './codexTerminalActivity.js';
 
 // If the detached terminal-server doesn't accept the upstream connection within
 // this window, stop waiting. Leaving the browser holding an open-but-silent
@@ -16,23 +18,6 @@ const UPSTREAM_OPEN_TIMEOUT_MS = 10_000;
 // next to an unbounded buffer — and the open timeout above tears the connection
 // down well before this matters in practice.
 const MAX_PENDING_FRAMES = 1_000;
-
-// The session id out of an `attached` frame, or null for any other frame.
-// Kept cheap and total: a malformed/oversized frame just yields null rather
-// than throwing inside the relay's message handler.
-function attachedSessionId(data: RawData): string | null {
-  const text = data.toString();
-  // Every other frame on this socket is `data` (pty output) — bail before
-  // parsing unless this one can actually be the attach handshake.
-  if (!text.startsWith('{') || !text.includes('"attached"')) return null;
-  try {
-    const msg = JSON.parse(text) as { type?: unknown; id?: unknown };
-    if (msg.type !== 'attached' || typeof msg.id !== 'string') return null;
-    return msg.id || null;
-  } catch {
-    return null;
-  }
-}
 
 // Proxies a terminal WebSocket from the UI through to the terminal server.
 // Bidirectional relay; either side closing tears down both ends.
@@ -57,6 +42,9 @@ export function proxyTerminalWs(
   }
 
   const params = new URL(reqUrl ?? '', 'http://localhost').searchParams;
+  if (!params.get('id') && params.has('initialCommand')) {
+    params.set('initialCommand', withCodexActivityTitle(params.get('initialCommand')!)!);
+  }
   const targetWs = new WebSocket(
     `ws://127.0.0.1:${TERMINAL_PORT}/ws/terminal?${params.toString()}`,
   );
@@ -65,6 +53,7 @@ export function proxyTerminalWs(
   // SERVERLESS connect (no id — a startup terminal, or a pre-spawn that failed)
   // learns it from the `attached` frame the terminal-server sends first.
   let sessionId = params.get('id');
+  const activityObserver = createTerminalActivityRelayObserver();
 
   // Buffer messages that arrive before the upstream connection is open.
   const pending: Array<{ data: RawData; isBinary: boolean }> = [];
@@ -74,6 +63,7 @@ export function proxyTerminalWs(
   // call it unconditionally without tracking whether it already ran.
   const openTimer = setTimeout(() => {
     if (targetWs.readyState === WebSocket.OPEN) return;
+    activityObserver.dispose();
     console.warn(
       `[terminal-proxy] upstream did not open within ${UPSTREAM_OPEN_TIMEOUT_MS}ms — dropping client so it reconnects`,
     );
@@ -109,6 +99,7 @@ export function proxyTerminalWs(
     // was registered). Don't keep a freshly-attached subscriber / spawned PTY
     // alive for a dead client — close the upstream and drop everything.
     if (clientWs.readyState !== WebSocket.OPEN) {
+      activityObserver.dispose();
       const s = targetWs.readyState;
       if (s !== WebSocket.CLOSED && s !== WebSocket.CLOSING) targetWs.close();
       return;
@@ -124,33 +115,40 @@ export function proxyTerminalWs(
   });
 
   targetWs.on('message', (data: RawData, isBinary: boolean) => {
-    // Only for a serverless connect, and only until the id is known: `attached`
-    // is the first frame, so this parses once and then never again. Everything
-    // after it is pty output, which must not be parsed on the hot path.
-    if (sessionId === null && !isBinary) sessionId = attachedSessionId(data);
+    // Observe the existing stream without another attach (which can resize the
+    // PTY). Retained executors lack native title facts; replay restores the
+    // latest title after a backend restart without restarting their sessions.
+    if (!isBinary) {
+      activityObserver.observe(data.toString());
+      if (activityObserver.sessionId !== null) sessionId = activityObserver.sessionId;
+    }
     if (clientWs.readyState === WebSocket.OPEN) {
       clientWs.send(data, { binary: isBinary });
     }
   });
 
   targetWs.on('error', (err) => {
+    activityObserver.dispose();
     clearTimeout(openTimer);
     console.error('[terminal-proxy] upstream error:', err.message);
     if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
   });
 
   targetWs.on('close', () => {
+    activityObserver.dispose();
     clearTimeout(openTimer);
     if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
   });
 
   clientWs.on('close', () => {
+    activityObserver.dispose();
     clearTimeout(openTimer);
     const s = targetWs.readyState;
     if (s !== WebSocket.CLOSED && s !== WebSocket.CLOSING) targetWs.close();
   });
 
   clientWs.on('error', () => {
+    activityObserver.dispose();
     clearTimeout(openTimer);
     const s = targetWs.readyState;
     if (s !== WebSocket.CLOSED && s !== WebSocket.CLOSING) targetWs.close();

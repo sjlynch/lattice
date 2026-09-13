@@ -29,7 +29,10 @@ process on `:5185`; see `terminalServer/CLAUDE.md` for that boundary).
   session creation; it reuses the exact request ID/body, pinned to that instance.
   Each attempt has a 30s cap (at most two attempts). Legacy/changed/unavailable
   executors receive no ambiguous replay, and failures never restart peer PTYs.
-  The error reports when allocation remains uncertain.
+  The error reports when allocation remains uncertain. Codex commands also get
+  the per-launch status-title default (`../codexTerminalActivity.ts`) here,
+  before allocation, so new launches on retained executors receive it too.
+  Serverless WS creation applies the same helper in `../terminalWsRelay.ts`.
 - `shutdown.ts` — `POST /shutdown` (`proxyShutdown`), **2s**, fired by the dev
   orchestrator on Ctrl+C (the detached server gets no signal of its own).
 
