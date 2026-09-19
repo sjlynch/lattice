@@ -166,7 +166,7 @@ therefore stay safely re-runnable.
 | GET | `/api/global-settings` | Read machine-global settings (`maxConcurrentAgents`, `mcpCustomServers`, `mcpBuiltinOverrides`, `piModelMenu`, `piProviders`) |
 | PATCH | `/api/global-settings` | Update machine-global settings (applies the spawn-queue softCap live; carries MCP custom-server defs / built-in overrides; `piModelMenu` curates the Pi-model dropdown; `piProviders` reconciles into `~/.pi/agent/models.json`) |
 | GET | `/api/pi-models` | Pi models for the harness dropdowns: full `pi --list-models` list, the curated "Pi — X" `menu` (`globalSettings.piModelMenu` or the default), and Pi's current `defaultPattern`. Machine-global; empty when `pi` isn't installed. See `backend/src/piModels.ts` |
-| POST | `/api/pi-endpoints/probe` | `{baseUrl, apiKey?}` → `{models}`: GET `<baseUrl>/models` on an OpenAI-compatible server (vLLM, …) and list its model ids. Backs the Settings → Pi "Detect models" button |
+| POST | `/api/pi-endpoints/probe` | `{baseUrl, apiKey?}` → `{models: [{id, contextWindow?}]}`: GET `<baseUrl>/models` on an OpenAI-compatible server (vLLM, NInfer, llama.cpp, …) and list what it serves, with the context window the server advertises. Backs the Settings → Pi "Detect models" button |
 | GET | `/api/mcp-catalog` | Merged MCP catalog (built-ins ⊕ overrides ⊕ custom). Definitions only — no secret values. Backs the Settings → MCP tab |
 | GET | `/api/mcp-secrets` | Redacted MCP secret presence (`{redacted, hints}` — booleans + last-4 hints, never the value) |
 | PATCH | `/api/mcp-secrets` | Set/clear one secret `{serverId, envVar, value}` (`value:null` clears); returns redacted. Stored in `~/.lattice/mcpSecrets.json` (`0600`), never settings files |
@@ -421,17 +421,65 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   `buildPiModelFlag(piModel)` in `worktree/commands.ts` validates it against a
   safe `provider/model[:thinking]` pattern (shell-injection guard) and appends
   `--model "<piModel>"` at the four Pi spawn sites (task run/resume, workflow
-  step, prompt customization, post-merge hook). Model SELECTION is per-spawn
-  via the flag, never `~/.pi/agent/settings.json`.
+  step, prompt customization, post-merge hook). The model half may contain
+  further slashes — an OpenAI-compatible server usually reports the HuggingFace
+  repo id it was launched with, giving `my-vllm/meta-llama/Llama-3.1-8B-Instruct`
+  — and the frontend mirror (`frontend/src/harnesses.ts` `PI_MODEL_RE`) must stay
+  in lockstep: a pattern either side rejects has its `--model` flag *silently
+  dropped*, so the session runs Pi's default model instead of the chosen one.
+  Model SELECTION is per-spawn via the flag, never `~/.pi/agent/settings.json`.
   **Endpoint management (Settings → Pi):** OpenAI-compatible providers (vLLM,
   …) are declared in `globalSettings.piProviders` and *reconciled into*
   `~/.pi/agent/models.json` by `reconcilePiModelsJson()` (boot + after a
   global-settings PATCH that carries `piProviders`). Lattice owns exactly the
   provider ids it manages — tracked in the `~/.lattice/piManagedProviders.json`
   sidecar so a UI removal is a precise delete — and *preserves every
-  hand-written provider* (and any `compat`/`headers` on a re-managed id). The
-  "Detect models" button hits `POST /api/pi-endpoints/probe`. `settings.json`
-  defaults are still never touched.
+  hand-written provider* (and any `compat`/`headers` on a re-managed id).
+  **Auto-discovery** (`piModels/autoDiscover.ts`, `PiProvider.autoDiscover`,
+  default ON) re-probes each managed endpoint on boot, on a settings save, and
+  whenever a harness dropdown opens (`GET /api/pi-models`, TTL-throttled +
+  single-flighted), folds the live `/v1/models` listing into the stored provider
+  and reconciles — so pasting a base URL is the whole setup, and restarting a
+  local server on different weights just changes the row. Failure is
+  non-destructive: an unreachable endpoint, or one that lists nothing, keeps its
+  last known-good models, because an empty provider is what makes Pi report *no
+  models at all* (a custom endpoint is often the only provider configured).
+  Reconcile runs on every sweep, not only when the probe moved something —
+  models.json drifts from `globalSettings` independently, and that drift is
+  exactly the broken state — and it skips the write when the file already
+  matches. Only the CURRENTLY-SERVED models are discoverable: `/v1/models` is
+  the whole OpenAI-compatible contract, with no way to enumerate unloaded
+  weights or ask a server to load different ones (Pi's llama.cpp `/llama`
+  integration is the one exception, and it is llama.cpp-specific). An
+  auto-discovering endpoint's models bypass `piModelMenu` curation — otherwise a
+  model you just loaded would stay hidden until you re-ticked a checkbox — so
+  Settings renders those rows fixed with an "auto" tag rather than offering a
+  checkbox that does nothing. That bypass stops at
+  `PI_MODELS_CONFIG.aggregatorModelCount` (5): past it an endpoint is an
+  **aggregator** (OpenRouter lists ~450) whose models are curated through the Pi
+  model menu instead of surfacing wholesale. Capability probing has its OWN,
+  looser limit (`thinkingProbeModelLimit`, 25) — one probe per model once ever,
+  so a box serving eight models still gets its thinking levels detected even
+  though its dropdown rows are curated. **Thinking levels** are detected per
+  model and written as Pi's `thinkingLevelMap`; without it Pi silently clamps
+  `xhigh`/`max` to `high`. Pick a level with `/thinking` in a session (Ctrl+S
+  saves it to Pi's own `settings.json`, which Lattice still never writes),
+  `pi --thinking <level>`, or the `provider/model:<level>` pattern the harness
+  selectors already validate. One consequence worth knowing: an endpoint whose
+  `apiKey` uses Pi's `$VAR` interpolation or `!command` form will fail its probe,
+  since probes resolve neither (no ambient secrets to a user-supplied URL, no
+  command execution on a timer) — it keeps its last known models and logs why,
+  and has to be configured by hand in `globalSettings.json`. The
+  "Detect models" button hits `POST /api/pi-endpoints/probe`, which also reads
+  each model's advertised context window (`max_model_len` on vLLM/NInfer/SGLang,
+  `context_length` on llama.cpp/LM Studio, …) and saves it as the model's
+  `contextWindow` — without it Pi sizes its budget from a conservative default,
+  which silently wastes most of a 262K-context local server. Per-endpoint
+  **Advanced** also exposes the provider `api` protocol (blank =
+  `openai-completions`), `compat`, and custom headers. When two endpoints serve
+  the same model id, the menu qualifies *only* the colliding labels with their
+  provider id (`qwen3.6-35b-a3b (box-b)`). `settings.json` defaults are still
+  never touched.
 - **Tasks store** is in-memory keyed by project path with debounced JSON
   persistence; the global `~/.lattice/projects.json` index is consulted
   lazily so Stop-hook callbacks resolve task IDs across sessions.

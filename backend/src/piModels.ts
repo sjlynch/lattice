@@ -10,6 +10,8 @@
 //   - menu.ts       — default/curated harness menu construction.
 //   - reconcile.ts  — write side: reconcilePiModelsJson (models.json sync).
 //   - probe.ts      — write side: probeEndpointModels ("Detect models").
+//   - autoDiscover.ts — write side: refreshEndpointDiscovery (keep each managed
+//                     endpoint's model list matching what it actually serves).
 //   - config.ts     — shared timeout/TTL config object + the ~/.pi/agent path.
 //
 // This barrel keeps the historical `./piModels.js` import path working for
@@ -19,3 +21,4 @@
 export * from './piModels/discovery.js';
 export * from './piModels/reconcile.js';
 export * from './piModels/probe.js';
+export * from './piModels/autoDiscover.js';

@@ -99,7 +99,14 @@ test('isValidPiModel rejects malformed provider/model shapes', () => {
   assert.equal(isValidPiModel('qwen'), false, 'no provider segment');
   assert.equal(isValidPiModel('/qwen'), false, 'empty provider');
   assert.equal(isValidPiModel('vllm/'), false, 'empty model');
-  assert.equal(isValidPiModel('a/b/c'), false, 'only one slash is allowed');
+  assert.equal(isValidPiModel('a/b/'), false, 'empty trailing segment');
+  // Extra slashes ARE allowed: an OpenAI-compatible endpoint usually reports
+  // the HuggingFace repo id it was launched with, so a managed provider yields
+  // `<provider>/<org>/<model>`. Only the first segment is the provider. The
+  // shell-injection guard is the CHARACTER SET (pinned by the payload list
+  // above), not the slash count — rejecting these merely dropped the `--model`
+  // flag and silently ran Pi's default model.
+  assert.equal(isValidPiModel('a/b/c'), true, 'HuggingFace-style repo id');
   assert.equal(isValidPiModel('a/b:'), false, 'empty thinking suffix');
   assert.equal(isValidPiModel('a/b:x:y'), false, 'only one thinking suffix');
   assert.equal(isValidPiModel(''), false);

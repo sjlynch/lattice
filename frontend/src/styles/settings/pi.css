@@ -47,3 +47,15 @@
   flex-direction: column;
   gap: 6px;
 }
+/* Detected-capability badges on a model row ("xhigh · max", "262K ctx"). The
+   first one pushes the group right; later siblings sit next to it. */
+.settings-pi-model-ctx {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.settings-pi-model-ctx ~ .settings-pi-model-ctx {
+  margin-left: 0;
+}

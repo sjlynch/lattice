@@ -4,12 +4,15 @@ type Props = {
   // All selectable model patterns (saved ∪ draft-endpoint), pre-sorted.
   patterns: string[];
   selected: Set<string>;
+  // Patterns the backend always surfaces because their endpoint auto-discovers
+  // its models — rendered fixed rather than as a checkbox that does nothing.
+  alwaysShown: Set<string>;
   onToggle: (pattern: string) => void;
 };
 
 // The "Pi model menu" curation section: a checklist deciding which Pi models
 // surface as "Pi — X" rows in the harness dropdowns.
-export function PiModelMenu({ patterns, selected, onToggle }: Props) {
+export function PiModelMenu({ patterns, selected, alwaysShown, onToggle }: Props) {
   return (
     <div className="settings-section">
       <div className="settings-section-header">
@@ -27,6 +30,12 @@ export function PiModelMenu({ patterns, selected, onToggle }: Props) {
                 default menu (your custom-provider models + Pi’s current
                 default).
               </p>
+              <p>
+                Models from an endpoint with <b>Auto-discover models</b> on are
+                always shown, so a model you load on that server appears without
+                coming back here. Turn auto-discover off on the endpoint to
+                curate it by hand.
+              </p>
             </SettingsInfo>
           </div>
           <div className="settings-section-sub">
@@ -41,16 +50,31 @@ export function PiModelMenu({ patterns, selected, onToggle }: Props) {
         </div>
       ) : (
         <div className="settings-checkbox-list">
-          {patterns.map((pattern) => (
-            <label key={pattern} className="settings-checkbox-row">
-              <input
-                type="checkbox"
-                checked={selected.has(pattern)}
-                onChange={() => onToggle(pattern)}
-              />
-              <span>{pattern}</span>
-            </label>
-          ))}
+          {patterns.map((pattern) => {
+            const fixed = alwaysShown.has(pattern);
+            return (
+              <label
+                key={pattern}
+                className="settings-checkbox-row"
+                title={
+                  fixed
+                    ? 'Always shown — this endpoint auto-discovers its models.'
+                    : undefined
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={fixed || selected.has(pattern)}
+                  disabled={fixed}
+                  onChange={() => onToggle(pattern)}
+                />
+                <span>{pattern}</span>
+                {fixed && (
+                  <span className="settings-pi-model-ctx">auto</span>
+                )}
+              </label>
+            );
+          })}
         </div>
       )}
     </div>

@@ -10,21 +10,36 @@
 // from globalSettings.ts for back-compat. Split out of globalSettings.ts (the
 // read/write facade); exercised directly by __tests__/piModels.test.ts.
 
+import { sanitizeThinkingLevels } from './piModels/thinkingLevels.js';
+
 export type PiProviderModel = {
   id: string;
   name?: string;
   reasoning?: boolean;
   contextWindow?: number;
   maxTokens?: number;
+  // The `reasoning_effort` tokens this endpoint said it accepts, detected once
+  // per model (piModels/probe.ts `probeThinkingLevels`). Reconcile turns this
+  // into Pi's `thinkingLevelMap`, which is the ONLY way `xhigh` / `max` become
+  // reachable — without it Pi silently clamps them to `high`.
+  thinkingLevels?: string[];
 };
 
 export type PiProvider = {
   id: string; // models.json provider key
   baseUrl: string;
   api?: string; // default 'openai-completions'
-  apiKey?: string; // literal | env-var name | "!command" (Pi resolves)
+  // Literal, `$VAR` / `${VAR}` env interpolation, or `!command` — Pi resolves
+  // all three at request time. NOTE a bare `MY_API_KEY` is a LITERAL to Pi, not
+  // an env lookup. Lattice's probe resolves none of them (see piModels/probe.ts).
+  apiKey?: string;
   headers?: Record<string, string>;
   compat?: Record<string, unknown>;
+  // Keep `models` in sync with whatever `<baseUrl>/models` currently reports.
+  // Absent means ON: an endpoint saved before auto-discovery existed, or added
+  // by someone who never opened Advanced, should still end up working rather
+  // than sitting there with an empty model list. See piModels/autoDiscover.ts.
+  autoDiscover?: boolean;
   models: PiProviderModel[];
 };
 
@@ -59,6 +74,8 @@ export function sanitizePiProviders(raw: unknown): PiProvider[] {
         if (typeof mm.maxTokens === 'number' && mm.maxTokens > 0) {
           model.maxTokens = Math.floor(mm.maxTokens);
         }
+        const levels = sanitizeThinkingLevels(mm.thinkingLevels);
+        if (levels) model.thinkingLevels = levels;
         models.push(model);
       }
     }
@@ -67,6 +84,7 @@ export function sanitizePiProviders(raw: unknown): PiProvider[] {
       baseUrl: e.baseUrl.trim(),
       models,
     };
+    if (typeof e.autoDiscover === 'boolean') provider.autoDiscover = e.autoDiscover;
     if (typeof e.api === 'string' && e.api) provider.api = e.api;
     if (typeof e.apiKey === 'string' && e.apiKey) provider.apiKey = e.apiKey;
     if (e.headers && typeof e.headers === 'object') {
@@ -88,4 +106,13 @@ function stringRecord(obj: object): Record<string, string> {
     if (typeof v === 'string') out[k] = v;
   }
   return out;
+}
+
+// Auto-discovery is ON unless the endpoint explicitly opts out, so an endpoint
+// saved before this existed (and one added by someone who never opened
+// Advanced) starts working on its own. Lives here rather than in
+// piModels/autoDiscover.ts so the read-only discovery path can ask the question
+// without importing the write path. See piModels/autoDiscover.ts.
+export function isAutoDiscoverEnabled(provider: PiProvider): boolean {
+  return provider.autoDiscover !== false;
 }

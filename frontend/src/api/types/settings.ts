@@ -197,3 +197,10 @@ export type PiModelsResult = {
   menu: PiMenuEntry[];
   defaultPattern: string | null;
 };
+
+// One model reported by an endpoint probe (POST /api/pi-endpoints/probe).
+// `contextWindow` is present only when the server advertised one (vLLM's
+// `max_model_len`, llama.cpp's `context_length`, …); it is carried onto the
+// saved provider model so models.json gets the server's real window rather
+// than Pi's conservative default. See backend piModels/probe.ts.
+export type PiProbeModel = { id: string; contextWindow?: number };

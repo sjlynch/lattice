@@ -10,7 +10,8 @@ import {
   type GlobalSettings,
 } from '../globalSettings.js';
 import { setSpawnQueueSoftCap } from '../spawnQueue.js';
-import { reconcilePiModelsJson } from '../piModels.js';
+import { reconcilePiModelsJson, refreshEndpointDiscovery } from '../piModels.js';
+import { PI_MODELS_CONFIG } from '../piModels/config.js';
 
 export function buildGlobalSettingsRouter(): Router {
   const r = Router();
@@ -47,9 +48,19 @@ export function buildGlobalSettingsRouter(): Router {
     // restart (raising it drains deferred spawns into the new headroom).
     setSpawnQueueSoftCap(updated.maxConcurrentAgents);
     // When Pi providers changed, reconcile them into ~/.pi/agent/models.json
-    // so the new endpoint's models are immediately discoverable.
+    // so the new endpoint's models are immediately discoverable, then probe the
+    // auto-discover endpoints right away (bypassing the TTL) — that is what
+    // makes "paste a base URL, save" enough to get a working "Pi — X" row
+    // without a manual "Detect models" round trip.
     if (body.piProviders !== undefined) {
       await reconcilePiModelsJson();
+      // `force` so this never adopts a sweep that started before the save it is
+      // reacting to; bounded so saving with an endpoint offline still returns
+      // promptly.
+      await refreshEndpointDiscovery({
+        force: true,
+        maxWaitMs: PI_MODELS_CONFIG.discoveryAwaitMs,
+      });
     }
     res.json(updated);
   });

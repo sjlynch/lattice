@@ -2,7 +2,7 @@ import type http from 'node:http';
 import { detectHarnesses } from '../harnessDetect.js';
 import { ensurePiSubagentsInstalled } from '../piSubagents.js';
 import { ensurePiMcpInstalled } from '../piMcp.js';
-import { reconcilePiModelsJson } from '../piModels.js';
+import { reconcilePiModelsJson, refreshEndpointDiscovery } from '../piModels.js';
 import {
   recoverOrphanedTasks,
   resumeInterruptedMergeRuns,
@@ -64,7 +64,13 @@ export function startHarnessDetection(): void {
   // Reconcile any Lattice-managed Pi providers into ~/.pi/agent/models.json so
   // the endpoints configured in Settings → Pi survive an out-of-band edit and
   // are present before the first spawn. Fire-and-forget; never throws.
-  reconcilePiModelsJson().catch(() => {});
+  // Reconcile the managed providers into models.json, then ask each
+  // auto-discover endpoint what it is serving right now — so a server that was
+  // restarted on a different model while Lattice was down is already correct by
+  // the time the first harness dropdown opens.
+  reconcilePiModelsJson()
+    .then(() => refreshEndpointDiscovery({ force: true }))
+    .catch(() => {});
 }
 
 export async function runPreListenStartupRecovery(): Promise<void> {

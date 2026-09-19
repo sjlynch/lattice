@@ -91,9 +91,27 @@ returns the full desired map. Read-only harness *defaults* come from
 and the MCP tab's custom-server defs (`mcpCustomServers`, written immediately on
 add/remove — not via the footer). (These tabs read/write the global file
 directly, not `userSettings` — don't assume "a tab ⇒ per-project".) `PiTab` manages OpenAI-compatible Pi endpoints (id / baseUrl /
-apiKey / models, with a "Detect models" probe via `POST /api/pi-endpoints/probe`),
-plus a per-endpoint **Advanced** section (compat `thinkingFormat` +
-`supportsDeveloperRole`, and custom request headers). The backend reconciles all
+apiKey / models, with a "Detect models" probe via `POST /api/pi-endpoints/probe`
+that also captures each model's advertised context window and shows it as a
+"262K ctx" badge), plus a per-endpoint **Advanced** section (the provider `api`
+protocol as a select over Pi's four supported values — blank means
+`openai-completions` — compat `thinkingFormat` / `supportsDeveloperRole` /
+`supportsReasoningEffort`, and custom request headers). An **Auto-discover
+models** checkbox (on by default) hands the model list to the backend's
+`refreshEndpointDiscovery`; while it is on, the checklist is a read-only view of
+what the endpoint serves, since a hand un-tick would be undone by the next
+refresh. Each row also badges what was detected: extended thinking levels
+(`xhigh · max`) and the context window. The **Pi model menu** section below marks
+those same patterns fixed (`alwaysShownPatterns`) because the backend surfaces
+them regardless of curation — a checkbox that silently does nothing is worse than
+no checkbox. Both the fixed rendering and the backend bypass stop at
+`AGGREGATOR_MODEL_COUNT` (5, mirroring the backend constant): past it the card
+says so and the models go back to being curated by hand.
+`useProbeDetection.seed(providers)` primes each endpoint's `detected` map from
+its SAVED models on load: the checklist shows `detected ∪ selected`, so without
+it, un-ticking a model in manual mode removed the only row that could put it
+back (its models came from auto-discovery, not a probe click, so `detected` was
+empty). The backend reconciles all
 of this into `~/.pi/agent/models.json`, plus the curated "Pi — X" model-menu
 checklist. (A keyless endpoint is written with `apiKey: "local"` so Pi doesn't
 reject the whole file — see `backend/src/piModels.ts`.) `PiTab`'s draft state
@@ -103,8 +121,10 @@ primitive the editors reuse for their compat/header/model/detect edits;
 `add` derives the next `endpoint-N` id from the current list via
 `nextEndpointId` so a fresh row never re-mints a saved id), `useProbeDetection`
 (per-endpoint `probing`/`detected`/`probeError` + the `/api/pi-endpoints/probe`
-flow, reporting ids back via an `onDetected` callback, plus `dropEndpoint(id)`
-to forget a removed endpoint's state), and `usePiEndpointEditors(endpoints,
+flow, reporting `{id, contextWindow?}` entries back via an `onDetected`
+callback — a reachable endpoint that lists nothing reports that as an error
+rather than blinking silently — plus `dropEndpoint(id)` to forget a removed
+endpoint's state), and `usePiEndpointEditors(endpoints,
 probe, providers)` (the per-endpoint field editors — `updateCompat`,
 the header mutators sharing one `mutateHeaderEntries` body, `toggleEndpointModel`,
 `detectModels` — extracted out of `PiTab.tsx`). **All per-endpoint transient

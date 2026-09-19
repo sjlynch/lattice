@@ -6,6 +6,7 @@ import type {
   HarnessSystemPromptEntry,
   InstructionTemplate,
   PiModelsResult,
+  PiProbeModel,
   ProjectEnvResponse,
   UserSettings,
 } from './types';
@@ -24,19 +25,20 @@ export async function getPiModels(): Promise<PiModelsResult> {
   }
 }
 
-// "Detect models" for the Settings → Pi endpoint form: ask the backend to
-// GET <baseUrl>/models on an OpenAI-compatible server and return the model ids.
+// "Detect models" for the Settings → Pi endpoint form: ask the backend to GET
+// <baseUrl>/models on an OpenAI-compatible server and return what it offers —
+// each model id plus the context length the server advertised, when it does.
 // Throws (via asJson) with the backend's message on a bad URL / unreachable
 // endpoint so the form can surface it.
 export async function probePiEndpoint(
   baseUrl: string,
   apiKey?: string,
-): Promise<string[]> {
-  const data = await postJson<{ models: string[] }>('/api/pi-endpoints/probe', {
-    baseUrl,
-    apiKey,
-  });
-  return data.models;
+): Promise<PiProbeModel[]> {
+  const data = await postJson<{ models: PiProbeModel[] }>(
+    '/api/pi-endpoints/probe',
+    { baseUrl, apiKey },
+  );
+  return data.models ?? [];
 }
 
 // Live harness-availability subscription. The backend pushes the

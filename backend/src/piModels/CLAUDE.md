@@ -40,10 +40,48 @@ is **read vs. write of Pi config**.
   removed-managed ones via the `~/.lattice/piManagedProviders.json` sidecar.
   Every managed provider always gets an `apiKey` (defaults `"local"`) — one
   keyless provider makes Pi reject the *whole* file. Reconcile invalidates
-  discovery's cache.
+  discovery's cache, skips the write entirely when the file already matches, and
+  is **serialized** (`runExclusive`) using the shared `atomicWriteFile` — it now
+  runs on every discovery sweep, so two calls can overlap, and Pi re-reads
+  models.json every time `/model` opens (a plain rename over a file another
+  process holds throws EPERM on Windows).
 - `probe.ts` — `probeEndpointModels()` GETs `<baseUrl>/models` (OpenAI-compatible)
-  behind the "Detect models" button; only a literal `apiKey` becomes the bearer
-  token (never ambient env / `!command` secrets).
+  behind the "Detect models" button, returning `{id, contextWindow?}` per model;
+  only a literal `apiKey` becomes the bearer token (never ambient env /
+  `!command` secrets). The context window is read from whichever key the server
+  uses (`max_model_len` on vLLM/NInfer/SGLang, `context_length` on
+  llama.cpp/LM Studio, …) and carried onto the saved provider model, so
+  models.json gets the endpoint's real window instead of Pi's conservative
+  default — the difference between a 262K-context local server being usable and
+  being quietly capped.
+- `autoDiscover.ts` — `refreshEndpointDiscovery()` keeps each `autoDiscover`
+  endpoint's model list matching what it actually serves: probe → merge into
+  `globalSettings.piProviders` → reconcile. Called at boot, after a settings
+  save, and from `GET /api/pi-models` (every harness dropdown open). A failed or
+  empty probe KEEPS the stored models — blanking them is what leaves Pi with no
+  model to run — and reconcile runs on every sweep, so a models.json that
+  drifted out of sync is repaired even when the probe changed nothing. The
+  provider list is **re-read immediately before writing** and each result is
+  applied only where it still belongs (same id, still auto, same `baseUrl`), so
+  a Settings save landing mid-probe isn't silently undone.
+- `thinkingLevels.ts` — Pi gives a model `xhigh` / `max` ONLY if it declares a
+  `thinkingLevelMap`; with the map absent Pi **silently clamps** them to `high`
+  (verified: asking for `max` sends `reasoning_effort: "high"`, no error). The
+  levels are detected, never hardcoded: `probeThinkingLevels` posts one request
+  with a deliberately invalid `reasoning_effort`, and a server that validates the
+  field rejects it with a message enumerating the valid ones — the whole answer,
+  for zero generated tokens. `parseAcceptedEffortTokens` needs ≥2 recognizable
+  tokens before it trusts a message, so prose can't produce a map that hides
+  levels which actually work; on anything unparseable the model is left alone.
+  Detection runs once per newly-seen model (`[]` records "asked, nothing
+  extended") and never against an aggregator.
+- `sweepScheduler.ts` — the scheduling policy behind it, isolated so it is
+  testable without a server: join an in-flight sweep (even inside the TTL, or
+  the caller reads state that sweep is about to replace), throttle by TTL only
+  when idle, `force` never adopts a sweep that started before the change that
+  forced it, and `maxWaitMs` bounds the WAIT without bounding the work (an HTTP
+  handler must not sit behind a probe timing out against a dead host).
+  Pinned by `__tests__/sweepScheduler.test.ts`.
 - `config.ts` — tunables (`PI_MODELS_CONFIG`: list/probe timeouts, cache TTL)
   + `piAgentDir()` (`~/.pi/agent`), shared by both sides.
 
@@ -56,5 +94,6 @@ never touched.
 `routes/settings/piModels.ts` (`GET /api/pi-models`) +
 `routes/settings/piEndpoints.ts` (`POST /api/pi-endpoints/probe`).
 `__tests__/piModels.test.ts` pins `parsePiListModels`, `reconcileModelsCache`,
-and `sanitizePiProviders` (via the `'../globalSettings.js'` /
-`'../piModels.js'` surfaces).
+`sanitizePiProviders` (via the `'../globalSettings.js'` / `'../piModels.js'`
+surfaces), `parseProbedModels` (the `/models` context-window spellings), and
+`buildMenu`'s collision handling.

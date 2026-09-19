@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { probePiEndpoint, type PiProvider } from '../../api';
+import { probePiEndpoint, type PiProbeModel, type PiProvider } from '../../api';
 import { dropEndpointKey, entriesToHeaders, nextEndpointId } from './piTabUtils';
 
-// A blank provider row with a stable, non-colliding generated id.
+// A blank provider row with a stable, non-colliding generated id. New endpoints
+// auto-discover: pasting a base URL and saving is meant to be the whole job.
 function blankProvider(id: string): PiProvider {
-  return { id, baseUrl: '', models: [] };
+  return { id, baseUrl: '', autoDiscover: true, models: [] };
 }
 
 // Owns the draft endpoint list, its touched flag (the save clobber-guard), and
@@ -43,13 +44,33 @@ export function useEndpointState() {
 // entries when that endpoint is removed.
 export function useProbeDetection() {
   const [probing, setProbing] = useState<Record<string, boolean>>({});
-  const [detected, setDetected] = useState<Record<string, string[]>>({});
+  const [detected, setDetected] = useState<Record<string, PiProbeModel[]>>({});
   const [probeError, setProbeError] = useState<Record<string, string>>({});
 
   const reset = () => {
     setProbing({});
     setDetected({});
     setProbeError({});
+  };
+
+  // Seed each endpoint's visible model universe from what is already saved.
+  // The checklist shows `detected ∪ selected`, so without this, un-ticking a
+  // model in manual mode removes the only row that could put it back — the
+  // endpoint's models came from auto-discovery, not from a probe click, so
+  // `detected` is empty and the model simply vanishes until you press Detect.
+  const seed = (providers: PiProvider[]) => {
+    setDetected(
+      Object.fromEntries(
+        providers.map((p) => [
+          p.id,
+          p.models.map((m) =>
+            m.contextWindow === undefined
+              ? { id: m.id }
+              : { id: m.id, contextWindow: m.contextWindow },
+          ),
+        ]),
+      ),
+    );
   };
 
   const dropEndpoint = (id: string) => {
@@ -61,7 +82,7 @@ export function useProbeDetection() {
   const detect = async (
     id: string,
     ep: PiProvider | undefined,
-    onDetected: (ids: string[]) => void,
+    onDetected: (models: PiProbeModel[]) => void,
   ) => {
     if (!ep?.baseUrl.trim()) {
       setProbeError((e) => ({ ...e, [id]: 'Enter a base URL first.' }));
@@ -70,13 +91,21 @@ export function useProbeDetection() {
     setProbing((p) => ({ ...p, [id]: true }));
     setProbeError((e) => ({ ...e, [id]: '' }));
     try {
-      const ids = await probePiEndpoint(
+      const models = await probePiEndpoint(
         ep.baseUrl.trim(),
         ep.apiKey?.trim() || undefined,
       );
-      setDetected((d) => ({ ...d, [id]: ids }));
+      setDetected((d) => ({ ...d, [id]: models }));
+      // A reachable endpoint that lists nothing is worth saying out loud —
+      // otherwise the button just blinks and the checklist stays empty.
+      if (models.length === 0) {
+        setProbeError((e) => ({
+          ...e,
+          [id]: 'Endpoint reachable, but it lists no models.',
+        }));
+      }
       // Pre-select all detected models (the common case); the user can uncheck.
-      onDetected(ids);
+      onDetected(models);
     } catch (err) {
       setProbeError((e) => ({
         ...e,
@@ -87,7 +116,7 @@ export function useProbeDetection() {
     }
   };
 
-  return { probing, detected, probeError, reset, detect, dropEndpoint };
+  return { probing, detected, probeError, reset, seed, detect, dropEndpoint };
 }
 
 // The per-endpoint field editors — compat / headers / model checklist / detect —
@@ -181,15 +210,24 @@ export function usePiEndpointEditors(
   const detectModels = (idx: number) => {
     const ep = providers[idx];
     if (!ep) return;
-    return probe.detect(ep.id, ep, (ids) =>
+    // Replace the model list with what the server actually offers, keeping any
+    // per-model fields already saved for a model that survived. A context
+    // window the server advertised WINS over a stored one: a re-detect is the
+    // user asking what this endpoint serves now, and a stale window (from a
+    // server restarted with a different `--max-model-len`) is exactly what
+    // makes Pi mis-size its budget.
+    return probe.detect(ep.id, ep, (probed) =>
       endpoints.mutate((cur) =>
         cur.map((p, i) =>
           i === idx
             ? {
                 ...p,
-                models: ids.map(
-                  (id) => p.models.find((m) => m.id === id) ?? { id },
-                ),
+                models: probed.map((pm) => ({
+                  ...(p.models.find((m) => m.id === pm.id) ?? { id: pm.id }),
+                  ...(pm.contextWindow === undefined
+                    ? {}
+                    : { contextWindow: pm.contextWindow }),
+                })),
               }
             : p,
         ),

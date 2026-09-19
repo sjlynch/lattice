@@ -1,10 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  AGGREGATOR_MODEL_COUNT,
+  alwaysShownPatterns,
   dropEndpointKey,
+  extendedThinkingLevels,
+  formatContextWindow,
+  isAggregatorEndpoint,
   nextEndpointId,
   sanitizeProvidersForSave,
+  shownEndpointModels,
 } from '../components/settings/piTabUtils.ts';
+import { isValidPiModel } from '../harnesses.ts';
 import type { PiProvider } from '../api';
 
 const ep = (id: string, over: Partial<PiProvider> = {}): PiProvider => ({
@@ -68,4 +75,118 @@ test('id-keyed endpoint state stays attached after an earlier endpoint is remove
 test('dropEndpointKey returns the same reference when the id is absent', () => {
   const map = { a: true };
   assert.equal(dropEndpointKey(map, 'missing'), map);
+});
+
+// A saved endpoint must list its models before you press "Detect", and a fresh
+// probe is the authority on the context window the server currently serves.
+test('shownEndpointModels merges saved and probed models, newest window wins', () => {
+  const endpoint = ep('box', {
+    models: [
+      { id: 'kept', contextWindow: 8192 },
+      { id: 'gone-from-server', contextWindow: 4096 },
+    ],
+  });
+  const shown = shownEndpointModels(endpoint, [
+    { id: 'kept', contextWindow: 262144 },
+    { id: 'new', contextWindow: 32768 },
+  ]);
+  assert.deepEqual(shown, [
+    // Re-probed: the server's current window replaces the stored one.
+    { id: 'kept', contextWindow: 262144 },
+    { id: 'new', contextWindow: 32768 },
+    // Still listed (so it can be unchecked) with its saved window.
+    { id: 'gone-from-server', contextWindow: 4096 },
+  ]);
+});
+
+test('shownEndpointModels omits a context window nobody reported', () => {
+  assert.deepEqual(shownEndpointModels(ep('box', { models: [{ id: 'a' }] }), []), [
+    { id: 'a' },
+  ]);
+});
+
+test('formatContextWindow renders a compact badge', () => {
+  assert.equal(formatContextWindow(262144), '262K ctx');
+  assert.equal(formatContextWindow(8192), '8K ctx');
+  assert.equal(formatContextWindow(1_048_576), '1M ctx');
+  assert.equal(formatContextWindow(512), '512 ctx');
+});
+
+// Must stay in lockstep with the backend's PI_MODEL_PATTERN_RE: a pattern this
+// rejects has its `--model` flag silently dropped, so the terminal quietly runs
+// Pi's default model instead of the one that was picked from the menu.
+test('isValidPiModel accepts HuggingFace-style ids an endpoint reports', () => {
+  assert.equal(isValidPiModel('qwen-local/qwen'), true);
+  assert.equal(isValidPiModel('my-vllm/meta-llama/Llama-3.1-8B-Instruct'), true);
+  assert.equal(isValidPiModel('my-vllm/Qwen/Qwen3-Coder-30B:thinking'), true);
+  assert.equal(isValidPiModel('qwen'), false);
+  assert.equal(isValidPiModel('a/b && curl evil'), false);
+  assert.equal(isValidPiModel(undefined), false);
+});
+
+// The curation checklist must not offer a checkbox that does nothing: the
+// backend surfaces an auto-discovering endpoint's models regardless of
+// curation, so those rows render fixed.
+test('alwaysShownPatterns covers auto-discovering endpoints only', () => {
+  const providers = [
+    ep('auto'), // autoDiscover absent → ON
+    ep('explicit', { autoDiscover: true }),
+    ep('manual', { autoDiscover: false }),
+  ];
+  const patterns = [
+    'auto/qwen',
+    'explicit/llama',
+    'manual/mistral',
+    'gone/orphan',
+    // A HuggingFace-style id: only the FIRST segment is the provider.
+    'auto/meta-llama/Llama-3.1-8B-Instruct',
+  ];
+  assert.deepEqual(
+    [...alwaysShownPatterns(providers, patterns)].sort(),
+    ['auto/meta-llama/Llama-3.1-8B-Instruct', 'auto/qwen', 'explicit/llama'],
+  );
+});
+
+test('extendedThinkingLevels shows only what Pi could not already reach', () => {
+  assert.deepEqual(
+    extendedThinkingLevels(['none', 'low', 'high', 'xhigh', 'max']),
+    ['xhigh', 'max'],
+  );
+  // Nothing beyond `high` → no badge; that is Pi's default behaviour anyway.
+  assert.deepEqual(extendedThinkingLevels(['none', 'low', 'high']), []);
+  assert.deepEqual(extendedThinkingLevels([]), []);
+  assert.deepEqual(extendedThinkingLevels(undefined), []);
+});
+
+test('shownEndpointModels carries detected thinking levels onto the row', () => {
+  const endpoint = ep('box', {
+    models: [
+      { id: 'thinker', contextWindow: 262144, thinkingLevels: ['high', 'xhigh', 'max'] },
+      { id: 'plain', thinkingLevels: [] },
+    ],
+  });
+  assert.deepEqual(shownEndpointModels(endpoint, []), [
+    { id: 'thinker', contextWindow: 262144, thinkingLevels: ['high', 'xhigh', 'max'] },
+    // An empty list is "probed, nothing extended" — no badge data on the row.
+    { id: 'plain' },
+  ]);
+});
+
+// An aggregator's models must not render as fixed in the curation checklist,
+// because the backend does not bypass curation for them either.
+test('an aggregator endpoint does not force its models into the menu', () => {
+  const models = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `m${i}` }));
+  const aggregator = ep('openrouter', { models: models(AGGREGATOR_MODEL_COUNT + 1) });
+  const local = ep('swarm', { models: [{ id: 'qwen' }] });
+  assert.equal(isAggregatorEndpoint(aggregator), true);
+  assert.equal(isAggregatorEndpoint(local), false);
+  // Exactly at the limit is still a local endpoint — the rule is "more than".
+  assert.equal(
+    isAggregatorEndpoint(ep('edge', { models: models(AGGREGATOR_MODEL_COUNT) })),
+    false,
+  );
+  assert.deepEqual(
+    [...alwaysShownPatterns([aggregator, local], ['openrouter/m0', 'swarm/qwen'])],
+    ['swarm/qwen'],
+  );
 });

@@ -25,11 +25,15 @@
 // implementation modules keep parsing/cache/file-reading/menu curation separate
 // while preserving historical exports from ./discovery.js and ../piModels.js.
 
+import { getGlobalSettings } from '../globalSettings.js';
+import { PI_MODELS_CONFIG } from './config.js';
+import { isAutoDiscoverEnabled } from '../piProviderValidation.js';
 import { getUserSettings } from '../userSettings.js';
 import { normalizePiModel } from '../worktree/commands.js';
 import { readDefaultPattern, readModelsJson } from './files.js';
 import { loadModels } from './listModels.js';
 import { buildMenu } from './menu.js';
+import type { PiProvider } from '../piProviderValidation.js';
 import type { PiModelsResult } from './types.js';
 
 export { normalizePiModel } from '../worktree/commands.js';
@@ -40,14 +44,27 @@ export type { PiMenuEntry, PiModelInfo, PiModelsResult } from './types.js';
 // The full picture for the harness dropdowns. `curated` comes from
 // globalSettings.piModelMenu (empty/undefined → the default menu above).
 export async function getPiModels(curated?: string[]): Promise<PiModelsResult> {
-  const [models, modelsJson, defaultPattern] = await Promise.all([
+  const [models, modelsJson, defaultPattern, global] = await Promise.all([
     loadModels(),
     readModelsJson(),
     readDefaultPattern(),
+    getGlobalSettings().catch(() => ({ piProviders: [] as PiProvider[] })),
   ]);
+  // Endpoints whose model list tracks the live server AND that serve few enough
+  // models to surface wholesale — their models stay menu-eligible regardless of
+  // curation (see buildMenu). An aggregator is excluded: you pick from those.
+  const autoProviders = new Set(
+    (global.piProviders ?? [])
+      .filter(
+        (p) =>
+          isAutoDiscoverEnabled(p) &&
+          p.models.length <= PI_MODELS_CONFIG.aggregatorModelCount,
+      )
+      .map((p) => p.id),
+  );
   return {
     models,
-    menu: buildMenu(models, modelsJson, defaultPattern, curated),
+    menu: buildMenu(models, modelsJson, defaultPattern, curated, autoProviders),
     defaultPattern,
   };
 }

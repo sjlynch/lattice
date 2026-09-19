@@ -9,7 +9,11 @@ import {
   useProbeDetection,
   usePiEndpointEditors,
 } from './usePiEndpoints';
-import { dropEndpointKey, sanitizeProvidersForSave } from './piTabUtils';
+import {
+  alwaysShownPatterns,
+  dropEndpointKey,
+  sanitizeProvidersForSave,
+} from './piTabUtils';
 import { PiEndpointCard } from './PiEndpointCard';
 import { PiModelMenu } from './PiModelMenu';
 import { SettingsInfo } from './SettingsInfo';
@@ -63,7 +67,12 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
     probe.reset();
     fetchGlobalSettings()
       .then((s) => {
-        if (!cancelled) endpoints.setProviders(s.piProviders ?? []);
+        if (cancelled) return;
+        const loaded = s.piProviders ?? [];
+        endpoints.setProviders(loaded);
+        // Saved models are part of the checklist's universe, not just its
+        // selection — see useProbeDetection.seed.
+        probe.seed(loaded);
       })
       .catch(() => { /* leave empty */ });
     return () => {
@@ -112,8 +121,13 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
                   <code>settings.json</code> are never touched.
                 </p>
                 <p>
-                  The API key may be a literal, an environment variable name, or
-                  a <code>!command</code> — Pi resolves it.
+                  The API key may be a literal, <code>$VAR</code> /{' '}
+                  <code>{'${VAR}'}</code> environment interpolation, or a{' '}
+                  <code>!command</code> — Pi resolves all three (a bare{' '}
+                  <code>MY_API_KEY</code> is a literal). “Detect models” and
+                  auto-discovery resolve none of them, so an endpoint using the{' '}
+                  <code>$VAR</code> or <code>!command</code> form can’t be probed
+                  from here.
                 </p>
               </SettingsInfo>
             </div>
@@ -136,7 +150,7 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
             key={ep.id}
             endpoint={ep}
             probing={!!probing[ep.id]}
-            detectedIds={detected[ep.id] ?? []}
+            detectedModels={detected[ep.id] ?? []}
             probeError={probeError[ep.id]}
             advancedOpen={!!advancedOpen[ep.id]}
             onPatch={(partial) => patchProvider(idx, partial)}
@@ -167,6 +181,7 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
       <PiModelMenu
         patterns={modelMenu.patterns}
         selected={modelMenu.selected}
+        alwaysShown={alwaysShownPatterns(providers, modelMenu.patterns)}
         onToggle={modelMenu.toggle}
       />
     </>

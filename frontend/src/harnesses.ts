@@ -79,10 +79,14 @@ export type HarnessSelection = { harness: HarnessChoice; piModel?: string };
 
 const PI_MODEL_VALUE_PREFIX = 'pi:';
 
-// Mirrors the backend's PI_MODEL_PATTERN_RE (worktree/commands.ts): a
+// Mirrors the backend's PI_MODEL_PATTERN_RE (agentCommandBuilder.ts): a
 // `provider/model[:thinking]` token of safe chars only. Used as a
 // shell-injection guard before a Pi model ever lands in a command string.
-const PI_MODEL_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(:[A-Za-z0-9_.-]+)?$/;
+// The model half may contain further slashes — an OpenAI-compatible endpoint
+// commonly reports a HuggingFace repo id (`meta-llama/Llama-3.1-8B-Instruct`),
+// giving `my-vllm/meta-llama/Llama-3.1-8B-Instruct`. Keep in lockstep with the
+// backend: a pattern either rejects has its `--model` flag silently dropped.
+const PI_MODEL_RE = /^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)+(:[A-Za-z0-9_.-]+)?$/;
 
 export function isValidPiModel(piModel: string | undefined): piModel is string {
   return !!piModel && PI_MODEL_RE.test(piModel);

@@ -16,6 +16,6 @@ is not significant within this folder.
 - `piModels.ts` — `GET /api/pi-models`; reads detected Pi models plus curated
   menu from global settings.
 - `piEndpoints.ts` — `POST /api/pi-endpoints/probe`; OpenAI-compatible
-  `/models` probe for Settings → Pi.
+  `/models` probe for Settings → Pi, answering `{models: [{id, contextWindow?}]}`.
 - Keep per-project settings separate from machine-global settings; the latter
   live in `routes/globalSettings.ts`.

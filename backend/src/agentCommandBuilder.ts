@@ -14,8 +14,16 @@ import type { AgentHarness } from './harnesses.js';
 // from settings / request bodies can be interpolated into a shell command line
 // without opening an injection surface. Anything else is rejected (→ Pi's own
 // default model is used).
+//
+// The MODEL half may itself contain slashes: an OpenAI-compatible server very
+// often reports the HuggingFace repo id it was launched with
+// (`meta-llama/Llama-3.1-8B-Instruct`), so a managed endpoint yields patterns
+// like `my-vllm/meta-llama/Llama-3.1-8B-Instruct`. Only the FIRST segment is
+// the provider; the rest is the model id, handed to Pi verbatim. A
+// single-slash-only rule silently dropped `--model` for those servers, so the
+// session quietly ran Pi's default model instead of the one that was picked.
 const PI_MODEL_PATTERN_RE =
-  /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(:[A-Za-z0-9_.-]+)?$/;
+  /^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)+(:[A-Za-z0-9_.-]+)?$/;
 
 // Coerce an untrusted value to a safe Pi model pattern, or `undefined`.
 export function normalizePiModel(value: unknown): string | undefined {

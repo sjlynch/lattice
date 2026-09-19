@@ -4,6 +4,10 @@ import { asJson, patchJson } from './http';
 import type { McpServerEntry } from './mcp';
 
 export type PiProviderModel = {
+  // `reasoning_effort` tokens the endpoint accepts, detected once per model.
+  // Becomes Pi's `thinkingLevelMap` — the only route to xhigh / max, which Pi
+  // otherwise clamps to high without saying so. `[]` = probed, nothing extended.
+  thinkingLevels?: string[];
   id: string;
   name?: string;
   reasoning?: boolean;
@@ -20,6 +24,9 @@ export type PiProvider = {
   apiKey?: string; // literal | env-var name | "!command" (Pi resolves)
   headers?: Record<string, string>;
   compat?: Record<string, unknown>;
+  // Keep `models` in sync with what `<baseUrl>/models` currently reports.
+  // Absent means ON. See backend piModels/autoDiscover.ts.
+  autoDiscover?: boolean;
   models: PiProviderModel[];
 };
 
