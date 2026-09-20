@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 
 // Low-level file-tail mechanics for the disk-backed scrollback log. Pure,
 // stateless helpers over a log file path; the pending-buffer/degraded-mode
@@ -31,5 +32,22 @@ export function readTail(filePath: string, maxBytes: number): Buffer {
     return start > 0 ? trimToLineStart(buf) : buf;
   } finally {
     fs.closeSync(fd);
+  }
+}
+
+// Async twin of readTail for the paths that must not block the terminal-server
+// event loop (compaction rewrites megabytes; every pty shares that loop).
+export async function readTailAsync(filePath: string, maxBytes: number): Promise<Buffer> {
+  const handle = await fsp.open(filePath, 'r');
+  try {
+    const size = (await handle.stat()).size;
+    const start = size > maxBytes ? size - maxBytes : 0;
+    const len = size - start;
+    if (len <= 0) return Buffer.alloc(0);
+    const buf = Buffer.allocUnsafe(len);
+    await handle.read(buf, 0, len, start);
+    return start > 0 ? trimToLineStart(buf) : buf;
+  } finally {
+    await handle.close();
   }
 }

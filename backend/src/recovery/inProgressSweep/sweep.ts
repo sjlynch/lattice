@@ -9,6 +9,7 @@ import {
   type Task,
 } from '../../tasks.js';
 import { collectLiveSessionCwds } from '../liveSessions.js';
+import { forEachWithConcurrency } from '../concurrency.js';
 import { autoCompleteStuckTask } from './complete.js';
 import { decideAutoComplete, type SkipReason } from './eligibility.js';
 
@@ -36,6 +37,7 @@ export async function sweepStuckInProgressTasks(): Promise<SweepResult> {
   }
 
   const now = Date.now();
+  const candidates: Task[] = [];
   for (const project of projects) {
     let tasks: Task[];
     try {
@@ -50,9 +52,21 @@ export async function sweepStuckInProgressTasks(): Promise<SweepResult> {
     for (const task of tasks) {
       if (task.status !== 'in_progress') continue;
       result.scanned += 1;
-      await considerOneTask({ task, liveCwds, now, result });
+      candidates.push(task);
     }
   }
+  // Each candidate costs one git spawn; tasks are independent, so probe them
+  // with bounded fan-out rather than one at a time. Errors are isolated per
+  // task so one wedged probe can't stall the pass.
+  await forEachWithConcurrency(candidates, SWEEP_CONCURRENCY, async (task) => {
+    try {
+      await considerOneTask({ task, liveCwds, now, result });
+    } catch (err) {
+      console.warn(`[in-progress-sweep] task ${task.id} threw:`, err);
+      result.skipped.push({ reason: 'consider threw', taskId: task.id });
+    }
+  });
+  pruneNoCommitsCache(candidates);
 
   if (result.flipped > 0 || result.skipped.length > 0) {
     console.log(
@@ -69,12 +83,31 @@ async function considerOneTask(args: {
   result: SweepResult;
 }): Promise<void> {
   const { task, liveCwds, now, result } = args;
+
+  // A task whose pty is dead and whose branch has NO commits never changes
+  // state on its own — re-probing it costs a git spawn + a warning line every
+  // pass, forever (7,200/day per stuck task). Back off: re-probe at most once
+  // per NO_COMMITS_BACKOFF_MS, and skip silently in between.
+  if (isNoCommitsBackedOff(task, now)) {
+    result.skipped.push({ reason: 'pty dead, no commits', taskId: task.id });
+    return;
+  }
+
   const verdict = await decideAutoComplete({ task, liveCwds, now });
 
   if (verdict.decision === 'skip') {
+    if (verdict.reason.code === 'no-commits') {
+      // Warn once per (task, branch) — the state cannot change until the
+      // user resumes the task, at which point the key is pruned/reset.
+      const warnedBefore = noteNoCommitsVerdict(task, now);
+      recordSkip(task, verdict.reason, result, { quiet: warnedBefore });
+      return;
+    }
+    clearNoCommitsVerdict(task);
     recordSkip(task, verdict.reason, result);
     return;
   }
+  clearNoCommitsVerdict(task);
 
   const outcome = await autoCompleteStuckTask(task, verdict.commits, verdict.ageMs);
   if (outcome.ok) {
@@ -88,7 +121,12 @@ async function considerOneTask(args: {
 // "expected-healthy" reasons (too-young / session-live) are intentionally
 // silent and uncounted — they are normal in-flight tasks and logging them
 // every pass would spam.
-function recordSkip(task: Task, reason: SkipReason, result: SweepResult): void {
+function recordSkip(
+  task: Task,
+  reason: SkipReason,
+  result: SweepResult,
+  opts: { quiet?: boolean } = {},
+): void {
   switch (reason.code) {
     case 'too-young':
     case 'session-live':
@@ -105,14 +143,62 @@ function recordSkip(task: Task, reason: SkipReason, result: SweepResult): void {
       return;
     case 'no-commits':
       // We could re-enqueue a resume here, but that's a separate concern;
-      // for now just log so the operator sees it.
-      console.warn(
-        `[in-progress-sweep] task ${task.id} ("${task.title.slice(0, 40)}") ` +
-          `PTY dead, no commits on ${task.branch} — leaving at in_progress`,
-      );
+      // for now just log so the operator sees it (once per task — see the
+      // back-off in considerOneTask).
+      if (!opts.quiet) {
+        console.warn(
+          `[in-progress-sweep] task ${task.id} ("${task.title.slice(0, 40)}") ` +
+            `PTY dead, no commits on ${task.branch} — leaving at in_progress`,
+        );
+      }
       result.skipped.push({ reason: 'pty dead, no commits', taskId: task.id });
       return;
   }
+}
+
+// ---- no-commits back-off ---------------------------------------------------
+
+export const NO_COMMITS_BACKOFF_MS = 10 * 60 * 1000;
+const SWEEP_CONCURRENCY = 8;
+
+// (taskId, branch) → the last pass at which the probe said "no commits".
+const noCommitsSeenAt = new Map<string, number>();
+
+function noCommitsKey(task: Task): string {
+  return `${task.id}\0${task.branch ?? ''}`;
+}
+
+// Still inside the back-off window after a `no-commits` verdict?
+export function isNoCommitsBackedOff(task: Task, now: number): boolean {
+  const seenAt = noCommitsSeenAt.get(noCommitsKey(task));
+  return seenAt !== undefined && now - seenAt < NO_COMMITS_BACKOFF_MS;
+}
+
+// Record a `no-commits` verdict. Returns whether one was already on record
+// (i.e. the warning has been logged before) so the caller can stay quiet.
+export function noteNoCommitsVerdict(task: Task, now: number): boolean {
+  const key = noCommitsKey(task);
+  const seenBefore = noCommitsSeenAt.has(key);
+  noCommitsSeenAt.set(key, now);
+  return seenBefore;
+}
+
+export function clearNoCommitsVerdict(task: Task): void {
+  noCommitsSeenAt.delete(noCommitsKey(task));
+}
+
+// Forget entries for tasks that are no longer in_progress candidates so the
+// map can't grow with the board's history.
+function pruneNoCommitsCache(candidates: readonly Task[]): void {
+  const live = new Set(candidates.map(noCommitsKey));
+  for (const key of noCommitsSeenAt.keys()) {
+    if (!live.has(key)) noCommitsSeenAt.delete(key);
+  }
+}
+
+// Test seam.
+export function resetNoCommitsBackoffForTests(): void {
+  noCommitsSeenAt.clear();
 }
 
 async function safeListKnownProjects(): Promise<string[]> {

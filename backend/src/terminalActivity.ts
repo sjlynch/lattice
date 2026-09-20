@@ -32,7 +32,7 @@
 // forever.
 
 import { agentHarnessForCommand } from './harnesses.js';
-import { proxyListSessionsOrNull } from './terminalServerClient.js';
+import { proxyListSessionsShared } from './terminalServerClient.js';
 import { createTerminalActivityPoller } from './terminalActivityPoller.js';
 import { codexTitleIsWorking } from './codexTerminalActivity.js';
 import { getObservedTerminalTitle } from './terminalActivityRelay.js';
@@ -205,7 +205,9 @@ let activity: TerminalActivityState = EMPTY_TERMINAL_ACTIVITY;
 const poller = createTerminalActivityPoller({
   reset: () => { activity = EMPTY_TERMINAL_ACTIVITY; },
   fetchBusy: async (isCurrent) => {
-    const sessions = await proxyListSessionsOrNull();
+    // The shared ≤750 ms snapshot (also read by the terminal-registry watch);
+    // one `/sessions` GET per poll tick serves both consumers.
+    const sessions = await proxyListSessionsShared();
     // Fence fold state too: a finished old probe must not revive the previous
     // subscriber generation after the last browser has disconnected.
     if (!isCurrent() || sessions === null) return null;

@@ -45,7 +45,14 @@ from.
   keys on the file's mtime ≥ `restoredAt ?? createdAt` instead (the resumed
   file is being written now), and a relaunched record picks the NEWEST such
   file by mtime — `--last` reopened the most recently written thread, so the
-  earliest-created candidate would be the wrong conversation.
+  earliest-created candidate would be the wrong conversation. The day-directory
+  window MUST still follow `createdAt` (a rollout lives in the day-dir of the
+  day its thread started; resume appends to that old file). What keeps the
+  polling cheap instead: the readdir + stat listing is taken once per
+  `(root, days)` per 1.5 s and shared by every in-flight discovery
+  (`listRolloutFilesShared`), and a parsed `session_meta` is cached for the
+  process lifetime (line 1 never changes), so later ticks stat but never
+  re-read. Ten restored Codex tabs used to cost ~600k stats over two minutes.
 - `harnessPaths.ts` — where each harness keeps transcripts (verified on
   Windows): Claude `~/.claude/projects/<cwd, non-alnum → '-'>/<id>.jsonl`, Pi
   `~/.pi/agent/sessions/--<cwd, [/\:] → '-'>--/<ts>_<id>.jsonl`, Codex rollouts.
@@ -103,7 +110,12 @@ from.
 - `watch.ts` — `startTerminalRegistryWatch` (boot): every 3 s diff loaded
   records against `/sessions` + `/health.instanceId` (pty missing, same
   instance ⇒ `exit`) and stamp `lastBusy` transitions from the
-  terminal-activity signal (kept always-on for this).
+  terminal-activity signal (kept always-on for this). The session list is read
+  LIVE (`proxyListSessionsOrNull`), deliberately NOT the activity poller's
+  shared ≤750 ms snapshot (`proxyListSessionsShared`): a snapshot taken before
+  a pty was spawned reports it missing, and this read's verdict is "ended —
+  exit", which deletes the record. A tab created inside that window lost its
+  record within a tick when the watch briefly used the snapshot.
 
 ## Surfaces
 

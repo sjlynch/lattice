@@ -76,7 +76,15 @@ export function executeControlStep(
   backendOrigin: string,
   completeStep: CompleteStepCallback,
 ): void {
-  void runControlStepWorker(wf, run, stepIndex, backendOrigin, completeStep);
+  // Backstop: the worker guards every await it owns, but an unobserved
+  // rejection here would reach processGuards' unhandledRejection handler and
+  // take the whole backend down.
+  runControlStepWorker(wf, run, stepIndex, backendOrigin, completeStep).catch((err) => {
+    console.error(
+      `[workflow-run] ${run.id} control step ${stepIndex} worker rejected:`,
+      err,
+    );
+  });
 }
 
 export async function runControlStepWorker(
@@ -165,5 +173,22 @@ export async function runControlStepWorker(
   console.log(
     `[workflow-run] ${run.id} control step ${stepIndex} (${kind}) finished, advancing`,
   );
-  await completeStep(run.id, stepIndex, backendOrigin);
+  // completeStep (completeWorkflowStep) can reject — a definition error, or
+  // the run checkpoint's atomic write failing (EPERM under an AV scanner,
+  // ENOSPC). This is a detached worker: without the catch that rejection is
+  // unhandled and processGuards exits the process, killing every other run.
+  // Error the run the same way a failed worker does instead.
+  try {
+    await completeStep(run.id, stepIndex, backendOrigin);
+  } catch (err) {
+    const error = err as Error | undefined;
+    run.status = 'errored';
+    run.finishedAt = Date.now();
+    run.error = error?.message ?? 'advancing past control step failed';
+    notify({ type: 'errored', run: snapshot(run) });
+    console.error(
+      `[workflow-run] ${run.id} control step ${stepIndex} (${kind}) could not advance:`,
+      err,
+    );
+  }
 }

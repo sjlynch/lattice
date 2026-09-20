@@ -7,7 +7,7 @@
 import { isMidMerge, resyncWithMainAndFinalize } from '../../worktree.js';
 import { signalConflictWaiter, startMergeRun } from '../../mergeRuns.js';
 import { release, tryAcquire } from '../../mergeLocks.js';
-import type { Task } from '../../tasks.js';
+import { getTask, type Task } from '../../tasks.js';
 import { withProjectMutation } from '../../projectRunLock.js';
 
 export type ResolverHookSource = 'complete' | 'merged';
@@ -37,11 +37,15 @@ function signalOrRestartMergeRun(task: Task, backendOrigin: string): void {
 export type FinalizeResolvedDeps = {
   resync: typeof resyncWithMainAndFinalize;
   signalOrRestartMergeRun: (task: Task, backendOrigin: string) => void;
+  // Re-read the task once the lock is held (see below). `null` = not in the
+  // store (tests pass synthetic tasks); the caller's snapshot is used then.
+  readTask?: (taskId: string) => Promise<Task | null>;
 };
 
 const productionDeps: FinalizeResolvedDeps = {
   resync: resyncWithMainAndFinalize,
   signalOrRestartMergeRun,
+  readTask: getTask,
 };
 
 export async function finalizeResolvedTask(
@@ -79,6 +83,18 @@ export async function finalizeResolvedTask(
   }
   let signalAfterMutation = false;
   try {
+    // The caller checked `task.conflict` BEFORE taking the lock. A Cancel
+    // (/merge-aborted, which clears the flag under this same lock) landing in
+    // that window used to be silently overridden — the FF into main went
+    // ahead behind the user's back, the exact thing the conflict gate exists
+    // to prevent. Re-read now that the lock is ours and honour the cancel.
+    const fresh = deps.readTask ? await deps.readTask(task.id) : null;
+    if (fresh && (!fresh.conflict || fresh.status !== 'ready_to_merge')) {
+      console.log(
+        `[${source}] task ${task.id}: conflict cleared while waiting for the merge lock — not finalizing`,
+      );
+      return { kind: 'already-finalizing' };
+    }
     const worktreePath = task.worktreePath;
     return await withProjectMutation(task.projectPath, () => runFinalize(task, worktreePath, backendOrigin, source, {
       ...deps,

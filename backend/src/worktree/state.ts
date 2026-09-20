@@ -130,11 +130,23 @@ export async function abortWorktreeMerge(
 }
 
 // Returns true if a local branch with this exact name exists.
+//
+// THROWS on a non-zero git exit (same rule as `countBetween` below): a
+// transient failure — locked/corrupt refs, a momentarily unreadable `.git`,
+// git exiting 128 — produces empty stdout, and reading that as "the branch is
+// gone" is exactly what let boot recovery flip a `ready_to_merge` task with
+// real unmerged commits to `qa` and drop its branch/worktree fields (after
+// which the next boot's orphan sweep deleted the branch for good). Only a
+// clean exit 0 with no match is a confirmed absence.
 export async function checkBranchExists(
   repoRoot: string,
   branchName: string,
 ): Promise<boolean> {
   const r = await exec('git', ['branch', '--list', branchName], repoRoot);
+  if (r.code !== 0) {
+    const detail = (r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`).slice(0, 500);
+    throw new Error(`git branch --list ${branchName} failed in ${repoRoot}: ${detail}`);
+  }
   return r.stdout.trim().length > 0;
 }
 

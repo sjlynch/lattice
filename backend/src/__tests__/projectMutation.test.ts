@@ -40,25 +40,40 @@ test('resolver mutations borrow a waiting run owner and serialize against snapsh
   assert.equal(await inspectProjectRunLock(project), null);
 });
 
-test('release drains accepted callbacks and refuses new admissions until finished', async (t) => {
+test('release drains accepted callbacks; a mutation arriving meanwhile waits and then runs on its own lock', async (t) => {
   const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-mutation-drain-'));
   t.after(() => fs.rm(project, { recursive: true, force: true }));
   const handle = await acquireProjectRunLock(project, 'merge-run');
   const entered = deferred();
   const finish = deferred();
+  const order: string[] = [];
   const callback = withProjectMutation(project, async () => {
     entered.resolve();
     await finish.promise;
-    await withProjectMutation(project, async () => {});
+    await withProjectMutation(project, async () => { order.push('nested'); });
+    order.push('callback-done');
   });
   await entered.promise;
   let released = false;
   const releasing = handle.release().then(() => { released = true; });
-  await assert.rejects(withProjectMutation(project, async () => assert.fail('must not start')), /ownership is closing/);
+  // A one-shot Stop-hook `/complete` landing in the closing window used to
+  // get an immediate "ownership is closing" throw (→ HTTP 500, waiter never
+  // signalled, merge run parked for 30 min). It must now wait the drain out
+  // and run afterwards on a freshly acquired owner — never inside the closing
+  // one, and never before the accepted borrower finished.
+  const late = withProjectMutation(project, async () => {
+    order.push('late');
+    assert.equal(currentProjectMutationOwner(project)?.label, 'project-mutation');
+    return 'ran';
+  });
+  await new Promise((r) => setTimeout(r, 60));
+  assert.deepEqual(order, [], 'the late mutation does not start while the owner is closing');
   assert.equal(released, false);
   assert.ok(await inspectProjectRunLock(project));
   finish.resolve();
   await Promise.all([callback, releasing]);
+  assert.equal(await late, 'ran');
+  assert.deepEqual(order, ['nested', 'callback-done', 'late']);
   assert.equal(await inspectProjectRunLock(project), null);
 });
 

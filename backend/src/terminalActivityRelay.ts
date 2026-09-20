@@ -1,3 +1,4 @@
+import type { RawData } from 'ws';
 import { TerminalOutputFacts } from './terminal/outputFacts.js';
 
 type Observation = { facts: TerminalOutputFacts };
@@ -11,9 +12,43 @@ export function getObservedTerminalTitle(id: string): string | null | undefined 
   return observations.get(id)?.values().next().value?.facts.terminalTitle;
 }
 
+// Cheap pre-test on the RAW frame bytes, before any string copy or JSON.parse:
+// can this frame move the title parser? Only a `data` frame in the ground
+// state is skippable; every other frame type (attached / exit / session_lost)
+// is tiny and must be parsed. A data frame can carry a title only if its
+// payload holds ESC (0x1b — which JSON.stringify always emits as the literal
+// six characters `\u001b`) or a C1 control (U+0080–U+009F — UTF-8 `C2 80`…
+// `C2 9F`). A payload containing the literal text `\u001b` is a false
+// positive, which merely costs the full parse.
+const DATA_FRAME_PREFIX = Buffer.from('{"type":"data","data":"');
+const ESC_ESCAPE = Buffer.from('\\u001b');
+
+export function rawDataFrameMayCarryTitle(frame: Buffer): boolean {
+  if (frame.length < DATA_FRAME_PREFIX.length) return true;
+  if (frame.compare(DATA_FRAME_PREFIX, 0, DATA_FRAME_PREFIX.length, 0, DATA_FRAME_PREFIX.length) !== 0) return true;
+  if (frame.indexOf(ESC_ESCAPE) !== -1) return true;
+  let i = frame.indexOf(0xc2);
+  while (i !== -1 && i + 1 < frame.length) {
+    const next = frame[i + 1]!;
+    if (next >= 0x80 && next <= 0x9f) return true;
+    i = frame.indexOf(0xc2, i + 1);
+  }
+  return false;
+}
+
+function toBuffer(data: RawData): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  if (Array.isArray(data)) return Buffer.concat(data);
+  return Buffer.from(data);
+}
+
 export function createTerminalActivityRelayObserver(): {
   readonly sessionId: string | null;
   observe: (frame: string) => void;
+  // `observe` over the raw WS frame: skips the string copy + JSON.parse for a
+  // plain-output data frame that cannot change the title (see
+  // rawDataFrameMayCarryTitle).
+  observeRaw: (frame: RawData) => void;
   dispose: () => void;
 } {
   let sessionId: string | null = null;
@@ -61,5 +96,14 @@ export function createTerminalActivityRelayObserver(): {
     }
   }
 
-  return { get sessionId() { return sessionId; }, observe, dispose };
+  function observeRaw(frame: RawData): void {
+    if (disposed) return;
+    const buf = toBuffer(frame);
+    // Once attached and in the ground state, plain output cannot change the
+    // title — decided on the bytes, before the copy the string form costs.
+    if (sessionId !== null && observation!.facts.isGround && !rawDataFrameMayCarryTitle(buf)) return;
+    observe(buf.toString());
+  }
+
+  return { get sessionId() { return sessionId; }, observe, observeRaw, dispose };
 }

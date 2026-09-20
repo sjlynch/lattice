@@ -44,6 +44,8 @@ export class ProjectStateManager<
   protected readonly loadPromises = new Map<string, Promise<string>>();
   protected readonly persistTimers = new Map<string, NodeJS.Timeout>();
   protected readonly listeners = new Set<TSubscriber>();
+  // Project keys with a coalesced notifyProject fan-out scheduled (see there).
+  private readonly pendingNotifies = new Set<string>();
   // Project keys whose on-disk file was found corrupt at load AND could not be
   // preserved to a `.corrupt-*` sidecar. While a key is in here, writeStateNow
   // refuses to overwrite it — losing the still-recoverable bytes is the exact
@@ -267,8 +269,27 @@ export class ProjectStateManager<
     };
   }
 
+  // Coalesced per project key: N mutations landing in one event-loop turn (a
+  // bulk transition / bulk update / a merge run flipping tasks, each of which
+  // calls notifyProject once PER task) produce ONE snapshot fan-out, taken
+  // from the cache at flush time so it is always the latest state. Before this
+  // every call serialized and pushed the whole board to every WS client —
+  // 200 tasks moved meant 200 full-board frames per client. Subscribers are
+  // therefore invoked asynchronously (setImmediate: after the current turn's
+  // I/O callbacks + microtasks, which is where a `Promise.all` of updates
+  // resolves); a test that inspects a subscriber right after an `await`ed
+  // mutation must let a turn pass (`await flushProjectNotifications()`).
   protected notifyProject(projectPath: string): void {
     const key = this.canonicalize(projectPath);
+    if (this.pendingNotifies.has(key)) return;
+    this.pendingNotifies.add(key);
+    setImmediate(() => {
+      this.pendingNotifies.delete(key);
+      this.notifyProjectNow(key);
+    });
+  }
+
+  private notifyProjectNow(key: string): void {
     const state = this.snapshot(this.cache.get(key) ?? this.defaultState(key));
     for (const fn of this.listeners) {
       try {
@@ -295,4 +316,10 @@ export class ProjectStateManager<
       }
     }
   }
+}
+
+// Await this after a mutation to observe its (coalesced, asynchronous)
+// subscriber fan-out - mainly for tests.
+export function flushProjectNotifications(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }

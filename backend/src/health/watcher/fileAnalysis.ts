@@ -4,6 +4,14 @@ import { LOC_MAX_BYTES, isMinifiedForAnalysis } from '../constants.js';
 import type { HealthMetrics } from '../types.js';
 import type { ProjectWatcher } from './types.js';
 import { analyzeContentIsolated, WorkerUnavailableError } from './isolatedAnalyze.js';
+import { createConcurrencyLimiter } from '../../concurrencyLimit.js';
+
+// How many watcher-driven file reads (+ their analyzer hand-off) may be in
+// flight at once, across every open project. The isolated analyzer is a single
+// serial worker anyway, so more slots only buffer more whole-file contents
+// ahead of it; 8 keeps libuv's thread pool available to everything else.
+export const WATCHER_ANALYSIS_CONCURRENCY = 8;
+const analysisSlots = createConcurrencyLimiter(WATCHER_ANALYSIS_CONCURRENCY);
 
 export type FileContentForAnalysis = {
   loc: number;
@@ -82,28 +90,35 @@ export async function loadOrAnalyzeFile(
     if (cached) return cached;
   }
 
-  const read = await readFileForAnalysis(filePath);
-  if (!isCurrent() || !read || read.content === undefined) return null;
-
-  // Analyze in the WATCHER's warm isolated worker so a pathological changed file
-  // can only pin the worker thread, never freeze the backend's event loop. Three
-  // outcomes:
-  //   - analysis → use it.
-  //   - null      → the worker RAN the file and it was unanalyzable (threw or was
-  //                 watchdog-killed for hanging) → skip. Must NOT retry in-thread,
-  //                 which would re-hang the main thread on a pathological file.
-  //   - throw (WorkerUnavailableError) → the worker subsystem is unusable
-  //                 (e.g. src under tsx) → fall back to in-thread analysis, which
-  //                 keeps its own exception guard.
-  let analyzed: AnalyzedFile | null;
-  try {
-    const isolated = await analyzeContent(read.content, ext, read.loc);
-    analyzed = isolated ? { metrics: isolated.metrics, imports: isolated.imports } : null;
-  } catch (err) {
-    if (!(err instanceof WorkerUnavailableError)) throw err;
+  // The read + analyze of one file runs under a machine-wide concurrency gate
+  // (see `analysisSlots`): the watcher's event handlers are fire-and-forget, so
+  // without it a checkout / format-all / codegen run touching thousands of
+  // files started that many overlapping reads at once. The (mtime,size) cache
+  // check above stays outside the gate — a cache hit costs one stat.
+  const analyzed = await analysisSlots.run(async (): Promise<AnalyzedFile | null> => {
     if (!isCurrent()) return null;
-    analyzed = await analyzeInThread(filePath, read.content, ext, read.loc);
-  }
+    const read = await readFileForAnalysis(filePath);
+    if (!isCurrent() || !read || read.content === undefined) return null;
+
+    // Analyze in the WATCHER's warm isolated worker so a pathological changed file
+    // can only pin the worker thread, never freeze the backend's event loop. Three
+    // outcomes:
+    //   - analysis → use it.
+    //   - null      → the worker RAN the file and it was unanalyzable (threw or was
+    //                 watchdog-killed for hanging) → skip. Must NOT retry in-thread,
+    //                 which would re-hang the main thread on a pathological file.
+    //   - throw (WorkerUnavailableError) → the worker subsystem is unusable
+    //                 (e.g. src under tsx) → fall back to in-thread analysis, which
+    //                 keeps its own exception guard.
+    try {
+      const isolated = await analyzeContent(read.content, ext, read.loc);
+      return isolated ? { metrics: isolated.metrics, imports: isolated.imports } : null;
+    } catch (err) {
+      if (!(err instanceof WorkerUnavailableError)) throw err;
+      if (!isCurrent()) return null;
+      return analyzeInThread(filePath, read.content, ext, read.loc);
+    }
+  });
   if (!isCurrent() || !analyzed) return null;
 
   proj.cache.set(filePath, stat.mtimeMs, stat.size, analyzed.metrics, analyzed.imports);

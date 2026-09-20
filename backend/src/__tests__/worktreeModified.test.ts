@@ -160,3 +160,27 @@ function makeTask(overrides: Partial<Task>): Task {
     ...overrides,
   };
 }
+
+test('worktree-modified service single-flights concurrent loads of one project', async () => {
+  let listCalls = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const project = path.join('tmp', 'lattice-worktree-modified-sf');
+  const service = createWorktreeModifiedService({
+    ttlMs: 50,
+    now: () => 0,
+    listTasks: async () => {
+      listCalls += 1;
+      await gate;
+      return [makeTask({ id: 'a', projectPath: project, status: 'in_progress', worktreePath: '/wt/a' })];
+    },
+    resolveBaseBranch: async () => 'trunk',
+    modifiedFilesForTask: async () => ['f.ts'],
+  });
+  const first = service.load(project);
+  const second = service.load(project);
+  assert.equal(listCalls, 1, 'the second caller joins the in-flight load');
+  release();
+  assert.deepEqual(await first, await second);
+  assert.equal(listCalls, 1);
+});

@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { terminalScrollbackDir } from '../projectPath.js';
 import { TERMINAL_CONFIG } from '../terminalConfig.js';
-import { readTail } from './scrollbackLogFile.js';
+import { readTail, readTailAsync } from './scrollbackLogFile.js';
+import fsp from 'node:fs/promises';
 
 // Per-session terminal scrollback, persisted to a small on-disk append log so
 // the replay window can be large without holding all history in memory.
@@ -49,6 +50,9 @@ export class ScrollbackStore {
   // terminal keeps replaying recent output instead of breaking.
   private degraded = false;
   private disposed = false;
+  // The in-flight async compaction (see compact()). While it runs, flushes
+  // are held in `pending` so no append lands between its read and its rename.
+  private compaction: Promise<void> | null = null;
 
   constructor(id: string, opts: ScrollbackStoreOptions = {}) {
     const dir = opts.dir ?? terminalScrollbackDir();
@@ -79,13 +83,23 @@ export class ScrollbackStore {
     if (this.disposed) return '';
     this.flush();
     if (this.degraded) return this.pending.join('');
+    let tail: string;
     try {
-      return readTail(this.filePath, this.replayWindowBytes).toString('utf8');
+      tail = readTail(this.filePath, this.replayWindowBytes).toString('utf8');
     } catch {
       // File missing (nothing was ever flushed) or a read error — nothing to
       // replay.
-      return '';
+      tail = '';
     }
+    // Output held back during a compaction is not on disk yet; it is the
+    // newest output, so it follows the tail.
+    return this.pending.length > 0 ? tail + this.pending.join('') : tail;
+  }
+
+  // Resolves once no compaction is in flight (and its post-compaction flush has
+  // landed). Tests; nothing in the data path waits on it.
+  async settle(): Promise<void> {
+    while (this.compaction) await this.compaction;
   }
 
   // Approximate bytes retained (disk + not-yet-flushed). Debug only
@@ -112,6 +126,14 @@ export class ScrollbackStore {
       this.trimDegraded();
       return;
     }
+    // A compaction is rewriting the log: hold output in memory (bounded to the
+    // replay window, which is all a replay ever shows) and flush it once the
+    // rewrite has landed — an append between its read and its rename would be
+    // lost.
+    if (this.compaction) {
+      this.trimDegraded();
+      return;
+    }
     const chunk = this.pending.join('');
     try {
       this.ensureDir();
@@ -119,7 +141,7 @@ export class ScrollbackStore {
       this.diskBytes += Buffer.byteLength(chunk);
       this.pending = [];
       this.pendingBytes = 0;
-      if (this.diskBytes > this.maxDiskBytes) this.compact();
+      if (this.diskBytes > this.maxDiskBytes) this.compaction = this.compact();
     } catch {
       // Disk unavailable — degrade to a bounded in-memory tail (keep pending
       // so recent output still replays). Never throw out of the pty data path.
@@ -129,15 +151,33 @@ export class ScrollbackStore {
   }
 
   // Rewrite the log keeping only its most recent tail, so a long-lived noisy
-  // terminal can't grow the file without bound. Runs inline on a flush that
-  // crosses maxDiskBytes — i.e. roughly once per (maxDisk - keep) of output.
-  private compact(): void {
+  // terminal can't grow the file without bound. Kicked off by the flush that
+  // crosses maxDiskBytes — i.e. roughly once per (maxDisk - keep) of output —
+  // and runs ASYNCHRONOUSLY: the read-4-MB + write-4-MB it does used to run
+  // synchronously on the terminal-server's event loop, which hosts every pty,
+  // so thirty agents each crossing the cap froze all of them in turn. The
+  // rewrite goes through a temp file + rename so a concurrent replay() sees
+  // either the old log or the new one, never a half-written file.
+  private async compact(): Promise<void> {
+    const tmp = `${this.filePath}.compact`;
     try {
-      const kept = readTail(this.filePath, this.compactKeepBytes);
-      fs.writeFileSync(this.filePath, kept);
+      const kept = await readTailAsync(this.filePath, this.compactKeepBytes);
+      if (this.disposed) return;
+      await fsp.writeFile(tmp, kept);
+      if (this.disposed) return;
+      await fsp.rename(tmp, this.filePath);
       this.diskBytes = kept.length;
     } catch {
-      this.degraded = true;
+      if (!this.disposed) this.degraded = true;
+    } finally {
+      this.compaction = null;
+      await fsp.rm(tmp, { force: true }).catch(() => {});
+      if (this.disposed) {
+        // dispose() may have raced the rename above; make sure the log is gone.
+        await fsp.rm(this.filePath, { force: true }).catch(() => {});
+      } else {
+        this.flush();
+      }
     }
   }
 

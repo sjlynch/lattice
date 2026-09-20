@@ -9,7 +9,15 @@ export type TerminalServerInfo = {
   fingerprint: string;
   instanceId?: string;
   protocolVersion?: number;
-  capabilities?: { idempotentCreate: boolean; shutdownIfIdle: boolean };
+  capabilities?: {
+    idempotentCreate: boolean;
+    shutdownIfIdle: boolean;
+    // The executor records each session's OSC title itself (`terminalTitle`
+    // in `/sessions`), so the main backend need not parse pty output for it.
+    // Absent on retained older executors, for which the WS relay keeps its
+    // per-frame title observer.
+    nativeTerminalTitle?: boolean;
+  };
 };
 
 export type SessionRequestIdentity = {

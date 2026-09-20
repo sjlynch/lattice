@@ -29,11 +29,16 @@ export class ScanPublication {
           return;
         }
         // A completed edit may still be waiting for its debounced disk save.
-        // Prefer the live cache, with independent objects: aggregate mutates
-        // cross-file health metrics in place while building the scan result.
+        // Prefer the live cache, with independent objects: applyCrossFile
+        // mutates the HealthMetrics object in place (fan fields, deadCode,
+        // score; it REPLACES `smells` rather than pushing) while building the
+        // scan result, and the scan may append to `imports`. A targeted copy
+        // of exactly those — not structuredClone per entry, which cost tens of
+        // ms of uninterruptible main-thread time at the front of every scan of
+        // a large project.
         for (const [file, entry] of proj.cache.entries()) {
-          const copy = structuredClone(entry);
-          cache.set(file, copy.mtimeMs, copy.size, copy.metrics, copy.imports);
+          const metrics = { ...entry.metrics, smells: entry.metrics.smells.slice() };
+          cache.set(file, entry.mtimeMs, entry.size, metrics, entry.imports.slice());
         }
       },
       commit: async (

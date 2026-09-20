@@ -26,7 +26,17 @@ export type LiveSessionsView = {
   serverIds: Set<string>;
 };
 
-export async function readLiveSessions(deps = { probe: probeTerminalServer, list: proxyListSessionsOrNull }): Promise<LiveSessionsView | null> {
+// The session list is read LIVE, never from the activity poller's shared
+// ≤750 ms snapshot: this read decides "the pty is gone, end the record", and a
+// snapshot taken before a pty was spawned reports that pty missing. With the
+// watch on the snapshot, a tab created inside that window lost its registry
+// record within a tick (seen by the restore e2e: a fresh "+" shell whose
+// record vanished while its pty lived on). One extra GET per 3 s is cheap;
+// a wrong exit verdict is a tab that can never be restored.
+export async function readLiveSessions(
+  deps: { probe: typeof probeTerminalServer; list: () => Promise<unknown[] | null> } =
+    { probe: probeTerminalServer, list: proxyListSessionsOrNull },
+): Promise<LiveSessionsView | null> {
   const probe = await deps.probe();
   if (probe.kind !== 'ready') return null;
   const sessions = await deps.list();

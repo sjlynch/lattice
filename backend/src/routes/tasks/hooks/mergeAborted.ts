@@ -30,6 +30,7 @@ import type { Request, Response } from 'express';
 import { getTask, type Task } from '../../../tasks.js';
 import { signalConflictWaiter } from '../../../mergeRuns.js';
 import { recoverAbandonedResolverTask } from '../../../mergeRuns/abandonedResolver.js';
+import { release, tryAcquire } from '../../../mergeLocks.js';
 
 // Injectable seam (production default below), mirroring finalizeResolved.ts: the
 // regression test overrides these to register a real waiter on a throwaway run
@@ -52,7 +53,27 @@ export function handleTaskMergeAborted(
     const task = await getTask(req.params.id);
     if (!task) return res.status(404).json({ error: 'not found' });
 
-    await deps.recover(task);
+    // `git merge --abort` mutates the worktree's index. Every other
+    // in-worktree git mutation (the run worker's processTarget /
+    // tryFinalizeAfterResolverFinished, the /complete + /merged finalize)
+    // runs under this same per-task lock; an abort racing a live `git merge`
+    // there means index.lock contention at best and a half-aborted merge
+    // state at worst. A held lock → 409 and the UI retries the cancel.
+    const lock = tryAcquire(task.id);
+    if (!lock) {
+      console.log(
+        `[merge-aborted] task ${task.id}: merge lock held (a merge/finalize is in flight) — refusing`,
+      );
+      return res.status(409).json({
+        error: 'a merge or finalize for this task is in progress — retry in a moment',
+        finalizing: true,
+      });
+    }
+    try {
+      await deps.recover(task);
+    } finally {
+      release(lock);
+    }
 
     // Release a parked merge-run worker so the run advances to the next task
     // (see the header note). No-op when no run is parked on this task.

@@ -455,6 +455,15 @@ export function buildListEnvelope(
   selection: ListSelection,
   q: ListQuery,
 ): ListEnvelope {
+  return buildListEnvelopeJson(meta, selection, q).envelope;
+}
+
+// Project + measure, returning the envelope and its serialized form.
+export function buildListEnvelopeJson(
+  meta: ListEnvelopeMeta,
+  selection: ListSelection,
+  q: ListQuery,
+): { envelope: ListEnvelope; json: string } {
   let clipped = 0;
   const tasks: Array<CompactTask | ClippedTask> = selection.tasks.map((t) => {
     if (q.fields === 'compact') return compactTask(t);
@@ -475,7 +484,24 @@ export function buildListEnvelope(
   // Key insertion order is the wire order, so `bytes`/`approxTokens` are seeded
   // in position and back-filled after measuring the envelope WITHOUT them (per
   // the contract: measure once; don't iterate to a fixed point for a few digits).
-  const envelope: ListEnvelope = {
+  return buildListEnvelopeWithJson(meta, selection, q, tasks, clipped, hint);
+}
+
+// The envelope AND its wire form, serialized exactly once. `tasks` is the
+// whole cost of a list response (a mature board is >1 MB), and measuring the
+// envelope for `bytes` then handing the object to `res.json` stringified it
+// twice. The head (every field before `tasks`, a few hundred bytes) is
+// stringified twice instead — once without the two self-measurement fields to
+// measure, once with them to send — and the task array once.
+function buildListEnvelopeWithJson(
+  meta: ListEnvelopeMeta,
+  selection: ListSelection,
+  q: ListQuery,
+  tasks: Array<CompactTask | ClippedTask>,
+  clipped: number,
+  hint: string | undefined,
+): { envelope: ListEnvelope; json: string } {
+  const head = {
     project: meta.project,
     canonicalProject: meta.canonicalProject,
     hash: meta.hash,
@@ -487,18 +513,28 @@ export function buildListEnvelope(
     truncated: selection.truncated,
     clipped,
     fields: q.fields,
-    bytes: 0,
-    approxTokens: 0,
+  };
+  const tail = {
     ...(hint ? { hint } : {}),
     ...(selection.missing ? { missing: selection.missing } : {}),
-    tasks,
   };
-
-  const { bytes: _bytes, approxTokens: _tokens, ...measurable } = envelope;
-  envelope.bytes = jsonBytes(measurable);
-  envelope.approxTokens = approxTokens(envelope.bytes);
-  return envelope;
+  const tasksJson = JSON.stringify(tasks);
+  // `{...head, ...tail, "tasks": [...]}` == the measurable envelope (bytes /
+  // approxTokens excluded, per the contract: measure once, no fixed point).
+  // Splice the pieces by byte count rather than re-stringifying the tasks.
+  const measurableHead = JSON.stringify({ ...head, ...tail });
+  const bytes = utf8Bytes(measurableHead) + TASKS_JOINT_BYTES + utf8Bytes(tasksJson);
+  const tokens = approxTokens(bytes);
+  const fullHead = { ...head, bytes, approxTokens: tokens, ...tail };
+  const envelope: ListEnvelope = { ...fullHead, tasks };
+  const headJson = JSON.stringify(fullHead);
+  const json = `${headJson.slice(0, -1)},"tasks":${tasksJson}}`;
+  return { envelope, json };
 }
+
+// Byte cost of turning `{...head}` + `[...tasks]` into `{...head,"tasks":[...]}`:
+// the `,"tasks":` joint (the head's closing brace is reused as the envelope's).
+const TASKS_JOINT_BYTES = Buffer.byteLength(',"tasks":');
 
 // ---------------------------------------------------------------- summary --
 
@@ -624,7 +660,8 @@ export function buildTooLargeBody(bytes: number, summary: TaskSummary): TooLarge
 }
 
 export type ListOutcome =
-  | { kind: 'json'; body: ListEnvelope }
+  // `json` is `body` already serialized (once); send it verbatim.
+  | { kind: 'json'; body: ListEnvelope; json: string }
   | { kind: 'markdown'; markdown: string }
   | { kind: 'too-large'; body: TooLargeBody };
 
@@ -662,12 +699,12 @@ export function buildListOutcome(
     return { kind: 'markdown', markdown };
   }
 
-  const body = buildListEnvelope(meta, selection, q);
+  const { envelope: body, json } = buildListEnvelopeJson(meta, selection, q);
   if (body.bytes > LIST_RESPONSE_CEILING_BYTES && !q.confirmLarge) {
     return {
       kind: 'too-large',
       body: buildTooLargeBody(body.bytes, buildTaskSummary(meta, safe)),
     };
   }
-  return { kind: 'json', body };
+  return { kind: 'json', body, json };
 }

@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
 import { getObservedTerminalTitle } from '../terminalActivityRelay.js';
+import { CODEX_TUI_DEFAULTS } from '../codexTerminalActivity.js';
 
 async function until(check: () => boolean): Promise<void> {
   const deadline = Date.now() + 3_000;
@@ -102,7 +103,7 @@ test('real relay observes existing output without extra connections, writes, or 
 
   const params = new URLSearchParams({ initialCommand: 'codex --resume', cwd: 'C:/fixture' });
   const serverless = await connect(params.toString());
-  assert.equal(new URL(serverless.upstream.url, base).searchParams.get('initialCommand'), 'codex --config "tui.terminal_title=[\'status\']" --resume');
+  assert.equal(new URL(serverless.upstream.url, base).searchParams.get('initialCommand'), `codex${CODEX_TUI_DEFAULTS} --resume`);
   serverless.upstream.ws.send(JSON.stringify({ type: 'attached', id: 'relay-serverless', replayed: false }));
   serverless.upstream.ws.send(JSON.stringify({ type: 'data', data: '\x1b]2;Ready\x1b\\' }));
   await until(() => getObservedTerminalTitle('relay-serverless') === 'Ready');

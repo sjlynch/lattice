@@ -18,6 +18,7 @@ export {
   proxyKillSessionsByCwd,
   proxyListSessions,
   proxyListSessionsOrNull,
+  proxyListSessionsShared,
 } from './terminalServerClient/sessions.js';
 export {
   proxyCreateSession,

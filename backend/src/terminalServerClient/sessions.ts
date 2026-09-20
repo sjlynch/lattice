@@ -43,6 +43,43 @@ export async function proxyListSessionsOrNull(): Promise<unknown[] | null> {
   }
 }
 
+// A short-lived, single-flighted snapshot of proxyListSessionsOrNull for the
+// periodic readers that only need a recent view — the terminal-activity poller
+// (1 Hz) and the terminal-registry watch (every 3 s) used to each GET
+// `/sessions` on their own schedule, so the executor serialized its whole
+// session list ~1.3×/s at idle for two consumers of identical data. Not for
+// paths that act on exact liveness right now (the spawn queue's admission
+// count, recovery sweeps, restore) — those keep calling the uncached form.
+const SESSIONS_SNAPSHOT_TTL_MS = 750;
+let sessionsSnapshot: { at: number; value: unknown[] | null } | null = null;
+let sessionsSnapshotInFlight: Promise<unknown[] | null> | null = null;
+
+export function proxyListSessionsShared(
+  opts: { ttlMs?: number; now?: () => number; list?: () => Promise<unknown[] | null> } = {},
+): Promise<unknown[] | null> {
+  const now = opts.now ?? Date.now;
+  if (sessionsSnapshot && now() - sessionsSnapshot.at < (opts.ttlMs ?? SESSIONS_SNAPSHOT_TTL_MS)) {
+    return Promise.resolve(sessionsSnapshot.value);
+  }
+  if (sessionsSnapshotInFlight) return sessionsSnapshotInFlight;
+  const promise = (opts.list ?? proxyListSessionsOrNull)()
+    .then((value) => {
+      sessionsSnapshot = { at: now(), value };
+      return value;
+    })
+    .finally(() => {
+      if (sessionsSnapshotInFlight === promise) sessionsSnapshotInFlight = null;
+    });
+  sessionsSnapshotInFlight = promise;
+  return promise;
+}
+
+// Test seam.
+export function resetSessionsSnapshot(): void {
+  sessionsSnapshot = null;
+  sessionsSnapshotInFlight = null;
+}
+
 // Authoritative live-session count for the spawn queue's accounting.
 // Returns `null` (NOT 0) when the terminal-server is unreachable or answers
 // unparseably — the queue must distinguish "can't tell" from a real empty

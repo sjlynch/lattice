@@ -122,6 +122,21 @@ export const LATTICE_SHELVE_PATHS = [
   '.codex/hooks.json',
 ] as const;
 
+// Parse the stdout of ONE `git ls-files -z -- <...LATTICE_OWNED_FILE_PATHS>`
+// into the owned paths git reports as tracked, in canonical list order. The
+// three untrack/reset sites used to spawn one `ls-files` per owned path
+// (~9 git processes each, ~20 ms apiece on Windows, on every task run and
+// every merge); one batched call plus set-membership replaces that.
+export function trackedOwnedPaths(lsFilesZStdout: string): string[] {
+  const tracked = new Set(
+    lsFilesZStdout
+      .split('\0')
+      .map((p) => p.replace(/\\/g, '/').trim())
+      .filter(Boolean),
+  );
+  return LATTICE_OWNED_FILE_PATHS.filter((f) => tracked.has(f));
+}
+
 // Conflict paths that always resolve to "ours" (the worktree's version).
 // Includes the STASH_CONFLICT_*.md glob — those are run/task-scoped and
 // the live one always supersedes whatever was on disk before.

@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { canonicalProjectPath } from '../projectPath.js';
+import { flushProjectNotifications } from '../projectStateManager.js';
 import {
   ensureUserInstructions,
   normalizeSteps,
@@ -159,6 +160,8 @@ test('WorkflowStore persists workflows under .lattice/workflows.json and reloads
         harness: 'pi',
       },
     ]);
+    // Subscriber fan-out is coalesced per project and delivered a turn later.
+    await flushProjectNotifications();
     unsubscribe();
 
     const project = canonicalProjectPath(dir);

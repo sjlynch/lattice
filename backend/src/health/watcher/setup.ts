@@ -107,12 +107,41 @@ function wireWatcherEvents(proj: ProjectWatcher, watcher: TreeWatcher): void {
   watcher.on('add', (p) => { onAddOrChange(p, 'add').catch(() => { /* ignore */ }); });
   watcher.on('change', (p) => { onAddOrChange(p, 'change').catch(() => { /* ignore */ }); });
   watcher.on('unlink', (p) => { onRemove(p).catch(() => { /* ignore */ }); });
+  // Directory events invalidate the scan revision synchronously (a scan that
+  // straddles them must not publish) but broadcast ONE coalesced `rescan`: a
+  // checkout / `npm run build` creating forty directories used to push forty
+  // rescan frames, and every client re-issued `/api/scan` per frame. File
+  // add/change events are already coalesced by the cross-file debounce.
+  const rescan = createDirectoryRescanCoalescer(proj);
   watcher.on('addDir', (p) => {
     proj.revision.invalidate();
-    if (p !== proj.root) broadcast(proj, { type: 'rescan', reason: 'directory', path: p });
+    if (p !== proj.root) rescan(p);
   });
   watcher.on('unlinkDir', (p) => {
     proj.revision.invalidate();
-    if (p !== proj.root) broadcast(proj, { type: 'rescan', reason: 'directory', path: p });
+    if (p !== proj.root) rescan(p);
   });
+}
+
+// Trailing-edge window for coalescing a burst of directory add/remove events
+// into a single `rescan` broadcast.
+export const DIRECTORY_RESCAN_DEBOUNCE_MS = 100;
+
+export function createDirectoryRescanCoalescer(
+  proj: ProjectWatcher,
+  emit: (p: ProjectWatcher, path: string) => void = (p, path) =>
+    broadcast(p, { type: 'rescan', reason: 'directory', path }),
+  debounceMs = DIRECTORY_RESCAN_DEBOUNCE_MS,
+): (dirPath: string) => void {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let last = '';
+  return (dirPath) => {
+    last = dirPath;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      emit(proj, last);
+    }, debounceMs);
+    timer.unref?.();
+  };
 }

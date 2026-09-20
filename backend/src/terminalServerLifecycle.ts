@@ -74,7 +74,10 @@ export function createTerminalLifecycle(overrides: Partial<LifecycleDeps> = {}) 
       return { kind: 'ready', info: {
         fingerprint: body.fingerprint, instanceId: body.instanceId,
         protocolVersion: TERMINAL_PROTOCOL_VERSION,
-        capabilities: { idempotentCreate: true, shutdownIfIdle: true },
+        capabilities: {
+          idempotentCreate: true, shutdownIfIdle: true,
+          ...(caps.nativeTerminalTitle === true ? { nativeTerminalTitle: true } : {}),
+        },
       } };
     } catch (error) {
       return connectionRefused(error) ? { kind: 'absent' }

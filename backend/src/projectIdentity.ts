@@ -40,14 +40,36 @@ export function physicalProjectPath(input: string): string {
   const resolved = legacyPath(input);
   const cached = physicalPaths.get(resolved);
   if (cached) return cached;
+  if (missingThisTurn.has(resolved)) return resolved;
   try {
     const physical = legacyPath(fs.realpathSync.native(resolved));
     return remember(physicalPaths, resolved, physical);
   } catch (err) {
     if (!['ENOENT', 'ENOTDIR'].includes((err as NodeJS.ErrnoException).code ?? '')) throw err;
-    // No negative cache: a project created later must resolve physically.
+    rememberMissingThisTurn(resolved);
     return resolved;
   }
+}
+
+// A failed resolution is memoized only for the REST OF THE CURRENT EVENT-LOOP
+// TURN — not for a TTL. A project created a moment later must still resolve
+// physically (the folder picker creates a dir and opens it at once), yet the
+// synchronous per-task loops in `/api/tasks` (partitionByProject canonicalizes
+// every task's projectPath) must not turn a deleted/moved project's 500-task
+// board into 500 blocking failed realpath syscalls + thrown Errors per request.
+// One turn is exactly the window such a loop runs in, and nothing shorter than
+// "the directory appeared while we were mid-loop" can be missed.
+const missingThisTurn = new Set<string>();
+let missingFlushScheduled = false;
+
+function rememberMissingThisTurn(resolved: string): void {
+  missingThisTurn.add(resolved);
+  if (missingFlushScheduled) return;
+  missingFlushScheduled = true;
+  setImmediate(() => {
+    missingFlushScheduled = false;
+    missingThisTurn.clear();
+  });
 }
 
 function exists(file: string): boolean {
@@ -240,6 +262,7 @@ export function storedProjectRoot(storedPath: string, storageHash: string): stri
 // project: stable physical paths are part of their ownership identity.
 export function clearProjectIdentityCaches(): void {
   physicalPaths.clear();
+  missingThisTurn.clear();
   storageHashes.clear();
   inventories.clear();
   boundStorage.clear();

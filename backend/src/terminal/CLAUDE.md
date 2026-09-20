@@ -133,11 +133,17 @@ owns the node-pty processes.
   the heap, degrading to a bounded in-memory tail if disk is unavailable. Owns
   the pending-buffer/degraded-mode state machine (append/flush/compact/replay);
   the low-level file mechanics and the boot-time wipe live in the two helpers
-  below.
+  below. **Compaction is asynchronous** (temp file + rename via `fs.promises`):
+  its read-4-MB + write-4-MB used to run synchronously on this event loop —
+  which hosts every pty — so thirty agents each crossing the disk cap froze
+  all of them in turn. While a compaction is in flight, flushes hold output in
+  `pending` (bounded to the replay window) and land after the rename; `replay`
+  appends that held tail. `settle()` awaits it (tests).
 - `scrollbackLogFile.ts` — pure, stateless file-tail helpers `trimToLineStart`
   (drop a partial leading line so a windowed replay never begins mid-escape-
   sequence) and `readTail` (byte-level last-`maxBytes` read, trimmed to a line
-  boundary). Used by `ScrollbackStore` for both replay and inline compaction.
+  boundary) plus its async twin `readTailAsync`. `ScrollbackStore` uses the
+  sync form for replay and the async one for compaction.
 - `scrollbackCleanup.ts` — `clearTerminalScrollback`: wipes the scrollback dir
   at boot (every in-memory session is gone after a restart, so its logs are
   orphans). Path-guarded to the home-scoped `~/.lattice/terminal-scrollback` so

@@ -14,8 +14,12 @@ export function buildTerminalWss(): WebSocketServer {
     // 'error' handler once it runs; a second listener is harmless.
     ws.on('error', () => { /* routine client disconnect — ignore */ });
     // Self-heal: restart the terminal server if it crashed while main was running.
-    await ensureTerminalServer().catch(() => {});
-    proxyTerminalWs(ws, req.url ?? undefined);
+    const info = await ensureTerminalServer().catch(() => null);
+    proxyTerminalWs(ws, req.url ?? undefined, {
+      // An executor that records titles natively spares the relay its
+      // per-frame title parse (see terminalActivityRelay.ts).
+      nativeTerminalTitle: info?.capabilities?.nativeTerminalTitle === true,
+    });
   });
   return wss;
 }

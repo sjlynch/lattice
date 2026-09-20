@@ -87,6 +87,9 @@ test('compaction keeps the on-disk log bounded while preserving recent output', 
     store.append(lastLine);
   }
   store.replay(); // forces a final flush
+  // Compaction is asynchronous (it must never block the terminal-server's
+  // event loop); wait for the rewrite + its post-compaction flush to land.
+  await store.settle();
 
   const size = fs.statSync(logPath(dir, id)).size;
   assert.ok(

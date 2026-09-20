@@ -39,7 +39,14 @@ losing tasks.
   first touch). Exposes `loadedTasks()` for recovery's read-only scans.
   `updateTaskCrashSafe` keeps the per-project lock + subscriber notify here
   and delegates the invariant-heavy disk-write / live-cache re-sync to
-  `crashSafeUpdate.ts`.
+  `crashSafeUpdate.ts`. **Subscriber fan-out is coalesced** (base class
+  `ProjectStateManager.notifyProject`): every mutation calls it once per task,
+  but N calls for one project in one event-loop turn deliver ONE snapshot,
+  a `setImmediate` later, taken from the cache at delivery — so a bulk
+  transition / bulk update / merge run pushes the board to `/ws/tasks`
+  clients once instead of N whole-board frames each. A test that inspects a
+  subscriber right after an awaited mutation must
+  `await flushProjectNotifications()` first.
 - `crashSafeUpdate.ts` — `applyCrashSafeTaskUpdate(ops, project, list, idx,
   id, updates)`: the disk-before-cache core (write disk first, cancel pending
   debounce, re-read the LIVE cache and re-apply only this task's delta — never

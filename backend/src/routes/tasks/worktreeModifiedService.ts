@@ -37,11 +37,25 @@ export function createWorktreeModifiedService(
     deps.now,
   );
 
-  const load = async (projectPath: string): Promise<WorktreeModifiedPayload> => {
+  // Single-flight per project: the TTL cache only fills once a load completes,
+  // so concurrent requests (several graph clients, or one client's refresh
+  // racing a slow git) each spawned two git processes per active task.
+  const inFlight = new Map<string, Promise<WorktreeModifiedPayload>>();
+
+  const load = (projectPath: string): Promise<WorktreeModifiedPayload> => {
     const cacheKey = canonicalProjectPath(projectPath);
     const cached = cache.get(cacheKey);
-    if (cached) return cached;
+    if (cached) return Promise.resolve(cached);
+    const running = inFlight.get(cacheKey);
+    if (running) return running;
+    const promise = loadUncached(projectPath, cacheKey).finally(() => {
+      if (inFlight.get(cacheKey) === promise) inFlight.delete(cacheKey);
+    });
+    inFlight.set(cacheKey, promise);
+    return promise;
+  };
 
+  const loadUncached = async (projectPath: string, cacheKey: string): Promise<WorktreeModifiedPayload> => {
     const tasks = await loadTasks(projectPath);
     const active = tasks.filter(isActiveWorktreeTask);
 

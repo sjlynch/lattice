@@ -6,9 +6,18 @@ export function isPathStrictlyInside(basePath: string, targetPath: string): bool
   if (typeof basePath !== 'string' || typeof targetPath !== 'string') return false;
   if (!basePath || !targetPath) return false;
   if (basePath.includes('\0') || targetPath.includes('\0')) return false;
-  const baseResolved = path.resolve(basePath);
-  const targetResolved = path.resolve(targetPath);
+  // Case-folded on Windows: `C:\Users\x` and `c:\users\X` are the same
+  // directory there, and the sweep/cleanup callers feed this a mix of
+  // `os.homedir()`-derived and git-reported spellings. A case mismatch used to
+  // make `assertSafeWorktreePath` refuse every cleanup of that worktree (and
+  // the boot sweep silently skip it), so orphans accumulated forever.
+  const baseResolved = foldCase(path.resolve(basePath));
+  const targetResolved = foldCase(path.resolve(targetPath));
   return targetResolved.startsWith(baseResolved + path.sep);
+}
+
+function foldCase(p: string): string {
+  return process.platform === 'win32' ? p.toLowerCase() : p;
 }
 
 // Top-level repo directories a snapshot must never read from or write into,

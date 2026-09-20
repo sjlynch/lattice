@@ -60,26 +60,88 @@ export async function scanRecentCodexRollouts(
   writtenSince = createdSince,
 ): Promise<CodexRolloutMeta[]> {
   const out: CodexRolloutMeta[] = [];
-  // Bounded so an ancient tab cannot turn each poll into a walk of years of
-  // rollouts; the stat pre-filter keeps the per-file cost to one stat.
+  // The day window follows the thread's CREATION (≥ the tab's createdAt), not
+  // the relaunch time: a rollout lives in the day-directory of the day its
+  // thread started, and `codex resume` appends to that same old file. Bounded
+  // so an ancient tab cannot turn each poll into a walk of years of rollouts.
   const days = Math.min(120, Math.max(2, Math.ceil((Date.now() - createdSince) / 86_400_000) + 2));
+  for (const { file, mtimeMs } of await listRolloutFilesShared(root, days)) {
+    if (mtimeMs < writtenSince - 60_000) continue;
+    const meta = await rolloutMeta(file);
+    if (meta && meta.timestamp >= createdSince - 5_000) out.push({ ...meta, mtimeMs });
+  }
+  return out.sort((a, b) => a.timestamp - b.timestamp);
+}
+
+// ---- shared scan state ------------------------------------------------------
+//
+// Restore relaunches N Codex tabs in parallel and each polls discovery every
+// 2 s for up to 2 min; every poll used to readdir + stat the whole window on
+// its own (10 tabs × ~1,000 rollouts × 60 ticks ≈ 600k stats competing with the
+// health watcher for the thread pool). Two caches collapse that:
+//   - the directory listing + stats are taken ONCE per `(root, days)` per
+//     short TTL and shared by every in-flight discovery (single-flighted);
+//   - a rollout's `session_meta` line never changes once written, so a parsed
+//     meta is kept for the process lifetime and the file is never re-read.
+
+const LISTING_TTL_MS = 1_500;
+type RolloutListing = Array<{ file: string; mtimeMs: number }>;
+const listings = new Map<string, { at: number; value: Promise<RolloutListing> }>();
+
+async function listRolloutFiles(root: string, days: number): Promise<RolloutListing> {
+  const out: RolloutListing = [];
   for (const dir of await listCodexDayDirs(root, days)) {
     let names: string[];
     try { names = await fs.readdir(dir); } catch { continue; }
     for (const name of names) {
       if (!name.startsWith('rollout-') || !name.endsWith('.jsonl')) continue;
       const file = path.join(dir, name);
-      let mtimeMs: number;
       try {
-        mtimeMs = (await fs.stat(file)).mtimeMs;
-        if (mtimeMs < writtenSince - 60_000) continue;
-      } catch { continue; }
-      const line = await readFirstLine(file);
-      const meta = line ? parseCodexSessionMeta(line, file) : null;
-      if (meta && meta.timestamp >= createdSince - 5_000) out.push({ ...meta, mtimeMs });
+        out.push({ file, mtimeMs: (await fs.stat(file)).mtimeMs });
+      } catch { /* vanished between readdir and stat */ }
     }
   }
-  return out.sort((a, b) => a.timestamp - b.timestamp);
+  return out;
+}
+
+export function listRolloutFilesShared(
+  root: string,
+  days: number,
+  opts: { ttlMs?: number; now?: () => number; list?: typeof listRolloutFiles } = {},
+): Promise<RolloutListing> {
+  const now = opts.now ?? Date.now;
+  const key = `${root}\0${days}`;
+  const cached = listings.get(key);
+  if (cached && now() - cached.at < (opts.ttlMs ?? LISTING_TTL_MS)) return cached.value;
+  const value = (opts.list ?? listRolloutFiles)(root, days);
+  listings.set(key, { at: now(), value });
+  // A failed listing must not be served for the TTL; drop it so the next
+  // caller re-lists.
+  value.catch(() => { if (listings.get(key)?.value === value) listings.delete(key); });
+  return value;
+}
+
+const META_CACHE_MAX = 4_096;
+const metaCache = new Map<string, CodexRolloutMeta>();
+
+async function rolloutMeta(file: string): Promise<CodexRolloutMeta | null> {
+  const cached = metaCache.get(file);
+  if (cached) return cached;
+  const line = await readFirstLine(file);
+  const meta = line ? parseCodexSessionMeta(line, file) : null;
+  // Only a parsed meta is cached: an empty / half-written first line (the TUI
+  // is still creating the file) must be re-read on the next tick.
+  if (meta) {
+    if (metaCache.size >= META_CACHE_MAX) metaCache.delete(metaCache.keys().next().value!);
+    metaCache.set(file, meta);
+  }
+  return meta;
+}
+
+// Test seam.
+export function resetCodexDiscoveryCaches(): void {
+  listings.clear();
+  metaCache.clear();
 }
 
 export type CodexDiscoveryResult = { id: string; ambiguous: boolean };

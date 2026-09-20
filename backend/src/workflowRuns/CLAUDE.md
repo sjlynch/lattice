@@ -138,7 +138,14 @@ explicit-curl callbacks — never by polling task state.
   dispatcher: it owns the per-project run-lock lifecycle (acquire →
   kind→worker dispatch → **release BEFORE `completeStep`**), cancellation /
   not-running guards, and the public surface (`executeControlStep`,
-  `CompleteStepCallback`). The per-kind workers live under `controlSteps/`:
+  `CompleteStepCallback`). The worker is detached (`executeControlStep` is
+  fire-and-forget), so **every await it owns is guarded**: the `completeStep`
+  call is wrapped too — `completeWorkflowStep` can reject (a definition error,
+  or the run checkpoint's atomic write failing under an AV scanner / ENOSPC),
+  and an unobserved rejection there reached `processGuards`' fail-fast and
+  took the whole backend down. It errors the run like a failed worker instead,
+  and `executeControlStep` carries a `.catch` backstop. The per-kind workers
+  live under `controlSteps/`:
   - `controlSteps/start.ts` — `runStartStep`: move every Open task to In
     Progress and run it (one `workflow-task-spawned` terminal tab each);
     throws if every task failed to start (nothing started or cap-deferred)

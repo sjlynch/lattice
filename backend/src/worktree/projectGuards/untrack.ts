@@ -1,6 +1,6 @@
 import { projectGit } from '../projectGit.js';
 import { assertGitDirIntact } from '../state.js';
-import { LATTICE_OWNED_FILE_PATHS } from '../managedFiles.js';
+import { LATTICE_OWNED_FILE_PATHS, trackedOwnedPaths } from '../managedFiles.js';
 
 // `git rm --cached` any Lattice-owned file that's still tracked in `repoRoot`,
 // then commit the cleanup so it propagates when branches merge. Files stay
@@ -21,11 +21,14 @@ export async function untrackOwnedFilesInRepo(repoRoot: string): Promise<void> {
   // also called directly from /merge and the run pre-flight, so we guard
   // here too.
   await assertGitDirIntact(repoRoot);
-  const tracked: string[] = [];
-  for (const f of LATTICE_OWNED_FILE_PATHS) {
-    const ls = await projectGit(repoRoot, ['ls-files', '--error-unmatch', f]);
-    if (ls.code === 0 && ls.stdout.trim()) tracked.push(f);
+  // One `ls-files` for the whole owned set (it was one git spawn per path —
+  // ~20 ms each on Windows, on every task run and every merge preflight).
+  const ls = await projectGit(repoRoot, ['ls-files', '-z', '--', ...LATTICE_OWNED_FILE_PATHS]);
+  if (ls.code !== 0) {
+    console.warn(`[worktree] untrack: git ls-files failed in ${repoRoot}: ${ls.stderr.trim()}`);
+    return;
   }
+  const tracked = trackedOwnedPaths(ls.stdout);
   if (tracked.length === 0) return;
 
   const status = await projectGit(repoRoot, ['status', '--porcelain']);

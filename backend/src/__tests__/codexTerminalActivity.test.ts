@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { withCodexActivityTitle, codexTitleIsWorking } from '../codexTerminalActivity.js';
+import {
+  CODEX_RESIZE_REFLOW_MAX_ROWS,
+  CODEX_TUI_DEFAULTS,
+  withCodexActivityTitle,
+  codexTitleIsWorking,
+} from '../codexTerminalActivity.js';
 import { proxyCreateSession } from '../terminalServerClient/createSession.js';
 
 test('status title default preserves Codex prompts, paths, and later user overrides', () => {
@@ -9,12 +14,26 @@ test('status title default preserves Codex prompts, paths, and later user overri
     const tail = ' --yolo --config "tui.terminal_title=[]" "Read TASK.md and implement it"';
     const command = `  ${executable}${tail}`;
     const rewritten = withCodexActivityTitle(command)!;
-    assert.equal(rewritten, `  ${executable} --config "tui.terminal_title=['status']"${tail}`);
+    assert.equal(rewritten, `  ${executable}${CODEX_TUI_DEFAULTS}${tail}`);
     assert.equal(withCodexActivityTitle(rewritten), rewritten, 'rewriting is idempotent');
   }
   for (const command of [undefined, '', 'claude --foo', 'pi --approve', 'echo codex', 'codex-other']) {
     assert.equal(withCodexActivityTitle(command), command);
   }
+});
+
+test('the resize-reflow row cap rides with the title default and is added to an older title-only launch', () => {
+  assert.equal(
+    CODEX_TUI_DEFAULTS,
+    ` --config "tui.terminal_title=['status']" --config "tui.terminal_resize_reflow_max_rows=${CODEX_RESIZE_REFLOW_MAX_ROWS}"`,
+  );
+  // Small enough that a resize can never replay minutes of transcript, large
+  // enough to keep a few screens of context in xterm's scrollback.
+  assert.ok(CODEX_RESIZE_REFLOW_MAX_ROWS >= 100 && CODEX_RESIZE_REFLOW_MAX_ROWS <= 1000);
+  // A registry record launched before the cap existed carries only the title
+  // config; relaunching it must not stack a second title config.
+  const legacy = 'codex --config "tui.terminal_title=[\'status\']" --yolo "p"';
+  assert.equal(withCodexActivityTitle(legacy), `codex${CODEX_TUI_DEFAULTS} --yolo "p"`);
 });
 
 test('only the exact explicit Working title counts as active work', () => {

@@ -21,9 +21,17 @@ const MAX_PENDING_FRAMES = 1_000;
 
 // Proxies a terminal WebSocket from the UI through to the terminal server.
 // Bidirectional relay; either side closing tears down both ends.
+export type ProxyTerminalWsOptions = {
+  // The executor publishes `terminalTitle` in `/sessions` itself, so the relay
+  // need not parse every output frame for OSC titles. Default false (parse):
+  // a retained older executor lacks the field and the relay is its only source.
+  nativeTerminalTitle?: boolean;
+};
+
 export function proxyTerminalWs(
   clientWs: WebSocket,
   reqUrl: string | undefined,
+  options: ProxyTerminalWsOptions = {},
 ) {
   // The client socket may already be gone by the time we're wired up. The
   // caller (`buildTerminalWss`) awaits `ensureTerminalServer()` first — up to
@@ -53,7 +61,15 @@ export function proxyTerminalWs(
   // SERVERLESS connect (no id — a startup terminal, or a pre-spawn that failed)
   // learns it from the `attached` frame the terminal-server sends first.
   let sessionId = params.get('id');
-  const activityObserver = createTerminalActivityRelayObserver();
+  // The title observer copies, JSON-parses and walks EVERY non-binary frame
+  // character by character — ~1 MB/s of TUI redraws across ten working panes,
+  // on the main backend's event loop — and its fact is only ever consulted
+  // when the executor did not report a native title. Skip it entirely when the
+  // executor does; only the `attached` handshake is still read (once) so a
+  // serverless connect learns which pty it drives.
+  const activityObserver = options.nativeTerminalTitle
+    ? null
+    : createTerminalActivityRelayObserver();
 
   // Buffer messages that arrive before the upstream connection is open.
   const pending: Array<{ data: RawData; isBinary: boolean }> = [];
@@ -63,7 +79,7 @@ export function proxyTerminalWs(
   // call it unconditionally without tracking whether it already ran.
   const openTimer = setTimeout(() => {
     if (targetWs.readyState === WebSocket.OPEN) return;
-    activityObserver.dispose();
+    activityObserver?.dispose();
     console.warn(
       `[terminal-proxy] upstream did not open within ${UPSTREAM_OPEN_TIMEOUT_MS}ms — dropping client so it reconnects`,
     );
@@ -99,7 +115,7 @@ export function proxyTerminalWs(
     // was registered). Don't keep a freshly-attached subscriber / spawned PTY
     // alive for a dead client — close the upstream and drop everything.
     if (clientWs.readyState !== WebSocket.OPEN) {
-      activityObserver.dispose();
+      activityObserver?.dispose();
       const s = targetWs.readyState;
       if (s !== WebSocket.CLOSED && s !== WebSocket.CLOSING) targetWs.close();
       return;
@@ -119,8 +135,12 @@ export function proxyTerminalWs(
     // PTY). Retained executors lack native title facts; replay restores the
     // latest title after a backend restart without restarting their sessions.
     if (!isBinary) {
-      activityObserver.observe(data.toString());
-      if (activityObserver.sessionId !== null) sessionId = activityObserver.sessionId;
+      if (activityObserver) {
+        activityObserver.observeRaw(data);
+        if (activityObserver.sessionId !== null) sessionId = activityObserver.sessionId;
+      } else if (sessionId === null) {
+        sessionId = attachedSessionId(data);
+      }
     }
     if (clientWs.readyState === WebSocket.OPEN) {
       clientWs.send(data, { binary: isBinary });
@@ -128,29 +148,44 @@ export function proxyTerminalWs(
   });
 
   targetWs.on('error', (err) => {
-    activityObserver.dispose();
+    activityObserver?.dispose();
     clearTimeout(openTimer);
     console.error('[terminal-proxy] upstream error:', err.message);
     if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
   });
 
   targetWs.on('close', () => {
-    activityObserver.dispose();
+    activityObserver?.dispose();
     clearTimeout(openTimer);
     if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
   });
 
   clientWs.on('close', () => {
-    activityObserver.dispose();
+    activityObserver?.dispose();
     clearTimeout(openTimer);
     const s = targetWs.readyState;
     if (s !== WebSocket.CLOSED && s !== WebSocket.CLOSING) targetWs.close();
   });
 
   clientWs.on('error', () => {
-    activityObserver.dispose();
+    activityObserver?.dispose();
     clearTimeout(openTimer);
     const s = targetWs.readyState;
     if (s !== WebSocket.CLOSED && s !== WebSocket.CLOSING) targetWs.close();
   });
+}
+
+// The pty id from an executor `attached` handshake frame, or null for any
+// other frame. Used when the title observer is off: a serverless connect
+// (no `id` in the query) still has to learn which pty it drives so client
+// input can be stamped for the activity signal.
+function attachedSessionId(data: RawData): string | null {
+  const buf = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
+  if (buf.indexOf('"attached"') === -1) return null;
+  try {
+    const msg = JSON.parse(buf.toString()) as { type?: unknown; id?: unknown };
+    return msg && msg.type === 'attached' && typeof msg.id === 'string' && msg.id ? msg.id : null;
+  } catch {
+    return null;
+  }
 }

@@ -1,4 +1,5 @@
 import { listKnownProjects } from '../tasks.js';
+import { forEachWithConcurrency } from './concurrency.js';
 
 /**
  * Iterate every project known to Lattice, logging list/handler failures
@@ -16,11 +17,17 @@ export async function forEachKnownProjectSafely(
     return;
   }
 
-  for (const repoRoot of projects) {
+  // Projects are independent (their only shared state is the console), so
+  // walk them with bounded fan-out instead of strictly one at a time: each
+  // handler is typically a task-list read plus a git spawn, and 20 known
+  // projects serialized added seconds to boot before the port opened.
+  await forEachWithConcurrency(projects, PROJECT_CONCURRENCY, async (repoRoot) => {
     try {
       await handleProject(repoRoot);
     } catch (err) {
       console.error(`[startup] ${label}: ${repoRoot} failed:`, err);
     }
-  }
+  });
 }
+
+const PROJECT_CONCURRENCY = 8;

@@ -131,7 +131,10 @@ export async function handleTaskList(
       res.status(413).json(outcome.body);
       return;
     }
-    return outcome.body;
+    // Already serialized once (measuring `bytes` did it); don't stringify the
+    // whole board a second time through res.json.
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.send(outcome.json);
   });
 }
 

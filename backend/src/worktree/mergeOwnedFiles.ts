@@ -9,6 +9,7 @@ import { exec } from './exec.js';
 import {
   LATTICE_OWNED_FILE_PATHS,
   LATTICE_SHELVE_PATHS,
+  trackedOwnedPaths,
 } from './managedFiles.js';
 
 // Is `file` tracked in this worktree's index?
@@ -89,11 +90,9 @@ export async function restoreLatticeManagedFiles(worktreePath: string, files: st
 // worktree all along, so shelving skipped it), and it should still be untracked
 // here if main carried it through the merge.
 export async function untrackOwnedFilesPostMerge(worktreePath: string): Promise<void> {
-  const toRemove: string[] = [];
-  for (const f of LATTICE_OWNED_FILE_PATHS) {
-    const check = await exec('git', ['ls-files', f], worktreePath);
-    if (check.stdout.trim()) toRemove.push(f);
-  }
+  // One `ls-files` for the whole owned set (was one git spawn per path).
+  const check = await exec('git', ['ls-files', '-z', '--', ...LATTICE_OWNED_FILE_PATHS], worktreePath);
+  const toRemove = check.code === 0 ? trackedOwnedPaths(check.stdout) : [];
   if (toRemove.length === 0) return;
   await exec('git', ['rm', '--cached', ...toRemove], worktreePath);
   await exec(

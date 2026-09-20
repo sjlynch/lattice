@@ -298,6 +298,10 @@ export class IsolatedAnalyzer {
   private armStall(): void {
     this.clearStall();
     this.stallTimer = setTimeout(() => this.onStall(), this.stallMs);
+    // A pending watchdog must not hold the event loop open at shutdown (every
+    // other timer in the codebase is unref'd; this one kept the process alive
+    // for up to stallMs after the last handle closed).
+    this.stallTimer.unref?.();
   }
 
   private clearStall(): void {

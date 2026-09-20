@@ -11,7 +11,8 @@ import {
   updateTaskCrashSafe,
   type Task,
 } from '../tasks.js';
-import { checkBranchExists, recoverPendingSnapshots } from '../worktree.js';
+import { checkBranchExists, gitDirExists, recoverPendingSnapshots } from '../worktree.js';
+import { forEachWithConcurrency } from './concurrency.js';
 import { sweepOrphanedWorktrees } from './worktreeSweep.js';
 import { sweepOrphanedPushSessions } from './pushSessionSweep.js';
 import { sweepOrphanedQaSessions } from './qaSessionSweep.js';
@@ -98,15 +99,31 @@ async function runStartupRecoveryStep(
   }
 }
 
+// Bounded fan-out (each probe is one git spawn, and this phase runs before
+// `listen`, so a serial walk delayed the port by one spawn per task), with
+// per-task isolation: one task's failure never skips the rest.
 async function recoverReadyTasksWithDeletedBranches(): Promise<void> {
   const stuckTasks = await listReadyToMergeTasks();
-  for (const task of stuckTasks) {
-    await recoverTaskIfBranchWasDeleted(task);
-  }
+  await forEachWithConcurrency(stuckTasks, RECOVERY_CONCURRENCY, async (task) => {
+    try {
+      await recoverTaskIfBranchWasDeleted(task);
+    } catch (err) {
+      console.warn(
+        `[startup] task ${task.id}: branch probe failed — leaving at ready_to_merge:`,
+        err,
+      );
+    }
+  });
 }
 
+const RECOVERY_CONCURRENCY = 8;
+
+// Only a CONFIRMED absence (git exit 0, no match) moves the task. A missing
+// `.git` (project moved/deleted) or a git failure (checkBranchExists throws)
+// is "can't tell" — the task is left alone rather than stripped of its branch.
 async function recoverTaskIfBranchWasDeleted(task: Task): Promise<void> {
   if (!task.branch) return;
+  if (!(await gitDirExists(task.projectPath))) return;
 
   const exists = await checkBranchExists(task.projectPath, task.branch);
   if (exists) return;

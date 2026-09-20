@@ -85,7 +85,15 @@ Halstead token counts and a Maintainability Index, and folded into a composite
     existing projects keep serving stale `imports` (this was why the first cut
     showed most files dead).
 - `crossFileAnalyzer.ts` — watcher-facing diff/broadcast wrapper around the
-  cross-file pass
+  cross-file pass. Coalesces a burst of file events into one trailing-edge
+  pass (150 ms — each pass is a synchronous full-project O(V+E) walk on the
+  main thread, so the window is what stops an agent writing files continuously
+  from stalling HTTP/WS/pty relaying every few dozen ms). Memoizes the
+  present-file `Set` alongside the root set (both invalidated by
+  `invalidateRoots`, called on every add/remove/re-seed): reusing ONE Set
+  identity across content-only passes is what lets the case-fold import index
+  in `crossFile/resolveImport/caseFold.ts` (a WeakMap keyed by that Set) hit
+  instead of being rebuilt per keystroke on Windows/macOS.
 - `scoreMetadata.ts` — serializable source of truth for score component ids,
   ordering, weights, thresholds, and direction. The frontend health legend imports
   this file directly; do not duplicate score metadata in UI code.
@@ -102,15 +110,28 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   extracted helpers: `setup.ts` (`createWatcher` — per-root construction plus
   the chokidar-creation + event-wiring; takes the facade's shutdown-flush
   registrar as a callback), `cacheHydration.ts` (cache → in-memory graph
-  mirror), `fileAnalysis.ts` (read/LOC count/cache-or-analyze), `handlers.ts`
-  (add/change/remove event handlers), `subscribers.ts` (broadcast-safe
-  subscriber fan-out), `isolatedAnalyze.ts`, and `types.ts`.
+  mirror), `fileAnalysis.ts` (read/LOC count/cache-or-analyze — the read +
+  analyzer hand-off of one file runs under a machine-wide 8-slot gate,
+  `../../concurrencyLimit.ts`, because the watcher's handlers are
+  fire-and-forget and a 5,000-file checkout otherwise started 5,000
+  overlapping `fs.readFile`s with every body buffered ahead of the single
+  serial analyzer; the (mtime,size) cache check stays outside the gate),
+  `handlers.ts` (add/change/remove event handlers), `subscribers.ts`
+  (broadcast-safe subscriber fan-out), `isolatedAnalyze.ts`, and `types.ts`.
+  Directory add/remove events invalidate the scan revision synchronously but
+  broadcast ONE coalesced `rescan` per 100 ms burst (`setup.ts`
+  `createDirectoryRescanCoalescer`) — a checkout creating forty directories
+  used to push forty frames, each of which made every client re-issue
+  `/api/scan`.
   `revision.ts` stamps events before config/read/analysis awaits. Only the
   newest event for a path may publish maps or cache entries, so an older
   analysis cannot resurrect an unlinked file or overwrite a newer edit.
   Config reloads separately fence ignore/alias assignment across async reads.
   `scanPublication.ts` captures the watcher identity/revision before a scan's
-  first await, clones the live cache (including pending debounced saves), and
+  first await, copies the live cache (including pending debounced saves — a
+  targeted copy of the one mutated object, `metrics` + its `smells`, and the
+  `imports` array, not a `structuredClone` per entry, which cost tens of ms of
+  uninterruptible main-thread time at the front of every scan), and
   seeds maps/cache only if no event, newer scan, or watcher creation intervened.
   Scans never share mutable metrics with the watcher during analysis. Cache I/O
   is ordered across cache instances, including reads during a pending flush.

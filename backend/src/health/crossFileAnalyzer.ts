@@ -11,8 +11,11 @@ import {
 // Trailing-edge debounce window for coalescing a burst of file events into a
 // single cross-file pass. Long enough to swallow a git checkout / format-all /
 // codegen run (which fire many add/change events back-to-back), short enough to
-// stay imperceptible for a single save.
-const RECOMPUTE_DEBOUNCE_MS = 40;
+// stay imperceptible for a single save. Each pass is a synchronous full-project
+// O(V+E) walk on the main thread (~100–250 ms on a 20k-file tree), so the
+// window is sized so an agent writing files continuously can't schedule one
+// every few dozen ms and stall HTTP/WS/pty relaying in lockstep with it.
+const RECOMPUTE_DEBOUNCE_MS = 150;
 
 // Snapshot of cross-file fields per file; used to detect which files were
 // affected by a change so the watcher can broadcast updates for them too.
@@ -55,6 +58,14 @@ export class CrossFileAnalyzer {
   // cached set instead of re-scanning every present file's root-ness.
   private cachedRoots: Set<string> | null = null;
 
+  // Memoized file-membership Set, invalidated together with the roots (every
+  // add/remove/re-seed calls invalidateRoots). Reusing ONE Set identity across
+  // content-only passes is what lets the case-fold import index in
+  // crossFile/resolveImport/caseFold.ts (a WeakMap keyed by Set identity) hit —
+  // a fresh `new Set(metrics.keys())` per pass rebuilt that index (one
+  // toLowerCase + Map.set per file) on every keystroke on Windows/macOS.
+  private cachedPresentFiles: Set<string> | null = null;
+
   // PART 1 debounce state. chokidar's awaitWriteFinish only debounces a single
   // file's write, not a burst of N distinct files, so a checkout / format-all /
   // codegen run would fire N back-to-back full O(V+E) passes that re-derive the
@@ -87,6 +98,24 @@ export class CrossFileAnalyzer {
   // next recompute lazily rebuilds the set from the current file membership.
   invalidateRoots(): void {
     this.cachedRoots = null;
+    this.cachedPresentFiles = null;
+  }
+
+  // The present-file Set for a pass. Rebuilt on invalidation, or — belt and
+  // braces against a membership change that skipped invalidateRoots — when its
+  // size no longer matches the metrics map. Public only so a test can pin the
+  // identity reuse the case-fold memo depends on.
+  presentFilesForPass(): Set<string> {
+    return this.getPresentFiles();
+  }
+
+  private getPresentFiles(): Set<string> {
+    const metrics = this.options.metrics;
+    if (this.cachedPresentFiles && this.cachedPresentFiles.size === metrics.size) {
+      return this.cachedPresentFiles;
+    }
+    this.cachedPresentFiles = new Set(metrics.keys());
+    return this.cachedPresentFiles;
   }
 
   // Coalesce per-event recomputes into one trailing-edge pass. Every event in
@@ -130,7 +159,7 @@ export class CrossFileAnalyzer {
       fileImports.push({ filePath: fp, imports: ims });
     }
 
-    const presentFiles = new Set(metrics.keys());
+    const presentFiles = this.getPresentFiles();
     const roots = this.getRoots(presentFiles);
     const cross = computeCrossFile(fileImports, presentFiles, getAliases(), { roots });
     applyCrossFile(metrics, cross);

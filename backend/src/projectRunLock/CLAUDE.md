@@ -118,6 +118,14 @@ and restoration all enter this queue; nested calls inherit the active slot via
 AsyncLocalStorage. Only bounded repository operations belong in it, never a
 wait for an agent callback. This lets a merge worker retain `run.lock` while its
 callback safely finalizes. Release closes admissions, drains accepted mutations,
-then retires the lock. Simultaneous standalone callbacks share their acquisition.
+then retires the lock. A mutation that arrives while an owner is *closing* does
+not fail immediately: it polls the local registry (25 ms steps, 2 s cap) until
+the owner has drained and retired, then acquires afresh. No caller retries the
+old "ownership is closing" throw, and for a resolver's one-shot Stop-hook
+`/complete` it meant a 500 → the parked merge-run waiter was never signalled →
+the run (and `run.lock`) sat idle for the waiter's 30-minute cap. The owner
+stays registered until its lockfile is gone on purpose — an acquire attempted
+earlier finds our own pid's lock on disk and is refused. Simultaneous standalone
+callbacks share their acquisition.
 
 The ownership tests are in `../__tests__/projectMutation.test.ts`.

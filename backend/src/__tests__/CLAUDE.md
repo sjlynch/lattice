@@ -275,3 +275,23 @@ cache, whose home path binds once at module load. Keep tests as plain
   frontend matches a live startup pty to its config by `id`, so a minted id that
   changed per read would spawn a duplicate terminal on every reload; its sibling
   pins that two identical id-less rows still get distinct ids.
+- `projectStateNotifyCoalesce.test.ts`, `concurrencyLimit.test.ts`,
+  `healthWatcherCoalescing.test.ts`, `sharedSessionSnapshots.test.ts`,
+  `terminalRelayFramePretest.test.ts`, `projectIdentityMissingMemo.test.ts` —
+  the hot-path guards from the 2026-09 performance audit, each pinned at its
+  injectable seam: `ProjectStateManager.notifyProject` delivers ONE snapshot
+  per project per turn (a 200-task bulk transition used to push 200 whole-board
+  WS frames per client) and a throwing subscriber is isolated; the bounded
+  limiter behind the watcher's file reads caps in-flight bodies, drains FIFO
+  and releases on throw; directory `rescan` bursts coalesce and the cross-file
+  present-file `Set` keeps its identity across content-only passes (the
+  case-fold memo's key); the `/sessions` and Codex-rollout listings are
+  single-flighted and TTL-shared, with "can't tell" (`null`) passed through
+  rather than coerced to `[]`; the relay's raw-frame title pretest skips plain
+  output yet still feeds a mid-escape parser and always parses non-data
+  frames; and a failed project realpath is probed once per event-loop turn
+  (500 tasks of a deleted project → one syscall) but again on the next turn
+  (the "not negatively cached before directory creation" contract). Related
+  in-suite additions: `taskListQuery` pins that the list envelope's wire form
+  equals `JSON.stringify(envelope)` while being serialized once, and
+  `worktreeModified` that concurrent loads of one project single-flight.

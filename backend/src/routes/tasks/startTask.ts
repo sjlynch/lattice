@@ -12,7 +12,7 @@ import { normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
 import { normalizePiModel, resolvePiModel } from '../../piModels.js';
 import { isCodexYoloEnabled } from '../../userSettings.js';
 import { selectHarnessCommand } from './harnessFactory.js';
-import { assignColorSlot } from './colorSlot.js';
+import { reserveColorSlot } from './colorSlot.js';
 
 // A task can be started from scratch (fresh worktree + agent) when it is
 // Open, or In Progress with no worktree on record — the latter happens when a
@@ -104,13 +104,35 @@ export async function startTaskById(
   }
   // Assign a stable palette slot once. Keep any existing index (a re-run of
   // a task that already has one — e.g. a CAP-rejected first pass — must not
-  // jump colors). Computed against the live task list so concurrent spawns
-  // land on distinct slots.
-  const colorIndex =
+  // jump colors). Computed against the live task list PLUS the in-memory
+  // reservations of sibling starts whose status flip hasn't landed yet: the
+  // spawn queue admits up to `softCap` starts concurrently, and this task is
+  // still `open` until the updateTask below, so without the reservation two
+  // overlapping starts computed the same lowest free slot.
+  const reservation =
     typeof task.colorIndex === 'number'
-      ? task.colorIndex
-      : assignColorSlot(await listTasks(task.projectPath), task.id);
-  const updated = await updateTask(task.id, {
+      ? null
+      : reserveColorSlot(task.projectPath, await listTasks(task.projectPath), task.id);
+  const colorIndex = reservation ? reservation.slot : task.colorIndex;
+  let updated: Task | null;
+  try {
+    updated = await updateTaskWithSlot(task, colorIndex);
+  } finally {
+    reservation?.release();
+  }
+
+  return {
+    task: updated ?? task,
+    worktreePath: result.worktreePath,
+    branch: result.branch,
+    taskFile: result.taskFile,
+    command: spawn.command,
+    serverId: spawn.serverId,
+    terminalId: spawn.terminalId,
+  };
+
+  async function updateTaskWithSlot(target: Task, slot: number | undefined): Promise<Task | null> {
+  return updateTask(target.id, {
     status: 'in_progress',
     worktreePath: result.worktreePath,
     branch: result.branch,
@@ -118,7 +140,7 @@ export async function startTaskById(
     harness: selectedHarness.harness,
     // Persist the model used so a resume re-spawns with the same one.
     piModel: selectedHarness.harness === 'pi' ? piModel : undefined,
-    colorIndex,
+    colorIndex: slot,
     // The pinned harness conversation (Claude / Pi); a Codex id lands later
     // via the registry's rollout discovery (resumeTask reads the registry).
     agentSession: spawn.agentSession
@@ -133,16 +155,7 @@ export async function startTaskById(
     runQueuedPiModel: undefined,
     runFailureCount: undefined,
   });
-
-  return {
-    task: updated ?? task,
-    worktreePath: result.worktreePath,
-    branch: result.branch,
-    taskFile: result.taskFile,
-    command: spawn.command,
-    serverId: spawn.serverId,
-    terminalId: spawn.terminalId,
-  };
+  }
 }
 
 // Convenience for callers that already have a harness string (e.g. workflow

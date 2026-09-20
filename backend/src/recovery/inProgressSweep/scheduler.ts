@@ -6,6 +6,30 @@ import { IN_PROGRESS_SWEEP_INTERVAL_MS, MIN_AGE_MS } from './config.js';
 import { sweepStuckInProgressTasks } from './sweep.js';
 
 let sweepTimer: NodeJS.Timeout | null = null;
+// A pass spawns one git per eligible task (plus a terminal-server probe); a
+// wedged git or a big board can push it past the interval, and without this
+// guard a second pass would start on top of the first (same guard shape as
+// spawnQueue/poll.ts's `pollInProgress`).
+let sweepInProgress = false;
+
+export function isInProgressSweepRunning(): boolean {
+  return sweepInProgress;
+}
+
+// `sweep` is an injectable seam for the overlap test; production always uses
+// the real sweep. Returns false when a tick was skipped because one is live.
+export async function runInProgressSweepTick(
+  sweep: () => Promise<unknown> = sweepStuckInProgressTasks,
+): Promise<boolean> {
+  if (sweepInProgress) return false;
+  sweepInProgress = true;
+  try {
+    await sweep();
+  } finally {
+    sweepInProgress = false;
+  }
+  return true;
+}
 
 export function startInProgressSweepLoop(
   intervalMs: number = IN_PROGRESS_SWEEP_INTERVAL_MS,
@@ -13,7 +37,7 @@ export function startInProgressSweepLoop(
   if (sweepTimer) return;
   // First pass after a short delay so it doesn't pile onto boot recovery.
   sweepTimer = setInterval(() => {
-    sweepStuckInProgressTasks().catch((err) => {
+    runInProgressSweepTick().catch((err) => {
       console.error('[in-progress-sweep] tick threw:', err);
     });
   }, intervalMs);

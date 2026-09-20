@@ -111,9 +111,12 @@ Idempotent Stop-hook / resolver callbacks. `hooks/index.ts`'s
   task's untimed conflict waiter (else the run awaits forever, holding the
   project run-lock → later merges 409). The aborted task is left at plain
   ready_to_merge to retry on the next merge-all (no auto-restart, unlike
-  /complete + /merged). Has an injectable deps seam (`recover` +
-  `signalConflictWaiter`) mirroring `finalizeResolved.ts` for the parked-run
-  regression test.
+  /complete + /merged). Runs the recovery **under the per-task `mergeLocks`
+  lock** (`git merge --abort` mutates the worktree index, like every other
+  in-worktree git mutation that takes it) and answers **409** while a merge /
+  finalize holds it, so a Cancel can't race a live `git merge` on the same
+  index. Has an injectable deps seam (`recover` + `signalConflictWaiter`)
+  mirroring `finalizeResolved.ts` for the parked-run regression test.
 - `hooks/stashResolved.ts` — `/stash-resolved`. Cleanup → qa, then
   auto-restart the merge run for remaining work.
 - `hooks/postMergeHookHelper.ts` — `awaitPostMergeHookOutsideRun`, shared by
@@ -131,7 +134,10 @@ simultaneous `/complete` curls, or `/complete` racing `/merged`) — otherwise
 two `mergeWorktreeInRepo` runs race on `.git/index.lock` + `MERGE_HEAD` in the
 one worktree. A caller that loses the race gets the `already-finalizing` result
 (rendered as `{ok:true, finalizing:true}`); the callbacks are idempotent, so the
-lock holder finishes the work. (The `finalizeQueues` promise queue only
+lock holder finishes the work. Once it HAS the lock it re-reads the task
+(`deps.readTask`, default `getTask`) and returns the same no-op if `conflict`
+was cleared meanwhile — the route checked the flag before the lock, and a
+Cancel landing in that window used to be overridden by a FF into main. (The `finalizeQueues` promise queue only
 serializes the FF step, not this earlier in-worktree merge.)
 
 This back-off is correct ONLY because the lock holder is actively *doing* the

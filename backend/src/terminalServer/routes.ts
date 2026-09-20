@@ -1,6 +1,7 @@
 import express from 'express';
 import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
 import { killSession, killSessionsByCwd, listSessions } from '../terminal.js';
+import { sessionCount as liveSessionCount } from '../terminal/sessionStore.js';
 import { tokenMatches, TERMINAL_SERVER_AUTH_HEADER } from '../terminalServerAuth.js';
 import { isAllowedOrigin } from '../wsOriginAllowlist.js';
 import { createSessionHandler } from './createSessionHandler.js';
@@ -46,13 +47,13 @@ export function registerTerminalRoutes(
   app: Express,
   { fingerprint, shutdown, authToken, sessionHandler,
     admission = createTerminalAdmission(), instanceId = randomUUID(),
-    sessionCount = () => listSessions().length }: RegisterTerminalRoutesOptions,
+    sessionCount = liveSessionCount }: RegisterTerminalRoutesOptions,
 ): void {
   app.use(express.json());
 
   app.get('/health', (_req, res) => {
     res.json({ ok: true, fingerprint, instanceId, protocolVersion: TERMINAL_PROTOCOL_VERSION,
-      capabilities: { idempotentCreate: true, shutdownIfIdle: true } });
+      capabilities: { idempotentCreate: true, shutdownIfIdle: true, nativeTerminalTitle: true } });
   });
 
   const requireAuth = requireTerminalAuth(authToken);

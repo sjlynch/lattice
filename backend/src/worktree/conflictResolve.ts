@@ -17,11 +17,14 @@
 // Lives in its own module to break a cycle (merge.ts ↔ stash.ts both
 // need it).
 
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { exec } from './exec.js';
 import { listConflictedFiles } from './state.js';
 import {
   isLatticeOwnedConflictPath,
   LATTICE_OWNED_FILE_PATHS,
+  trackedOwnedPaths,
 } from './managedFiles.js';
 
 // `git merge` runs a pre-flight check BEFORE attempting the merge: if a
@@ -50,16 +53,28 @@ export async function resetOwnedFileLocalChanges(
   worktreePath: string,
 ): Promise<string[]> {
   const reset: string[] = [];
+  // Only act on files that exist on disk AND are tracked. Untracked owned
+  // files are either covered by .git/info/exclude (so git won't touch them)
+  // or shelved separately by mergeWorktreeInRepo. The fs probe is free; the
+  // tracked set comes from ONE `ls-files` for the whole owned list.
+  const present: string[] = [];
   for (const file of LATTICE_OWNED_FILE_PATHS) {
-    // Only act when the file is tracked. Untracked owned files are
-    // either covered by .git/info/exclude (so git won't touch them) or
-    // shelved separately by mergeWorktreeInRepo.
-    const ls = await exec(
-      'git',
-      ['ls-files', '--error-unmatch', file],
-      worktreePath,
+    try {
+      await fs.access(path.join(worktreePath, file));
+      present.push(file);
+    } catch {
+      /* absent — nothing to reset */
+    }
+  }
+  if (present.length === 0) return reset;
+  const ls = await exec('git', ['ls-files', '-z', '--', ...present], worktreePath);
+  if (ls.code !== 0) {
+    console.warn(
+      `[pre-merge] git ls-files failed in ${worktreePath}: ${ls.stderr.trim() || ls.stdout.trim()}`,
     );
-    if (ls.code !== 0) continue;
+    return reset;
+  }
+  for (const file of trackedOwnedPaths(ls.stdout)) {
     // Skip if the working-tree copy already matches HEAD — `git checkout`
     // would still succeed but the work is wasted.
     const diff = await exec(

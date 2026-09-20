@@ -7,6 +7,7 @@ import {
   LIST_RESPONSE_CEILING_BYTES,
   MAX_LIST_LIMIT,
   approxTokens,
+  buildListEnvelopeJson,
   buildListOutcome,
   buildTaskSummary,
   compactTask,
@@ -579,4 +580,15 @@ test('a markdown response over the ceiling is a 413 too', () => {
   assert.equal(outcome.kind, 'too-large');
   const ok = buildListOutcome(META, tasks, parse({ format: 'markdown', limit: '0', confirm_large: '1' }));
   assert.equal(ok.kind, 'markdown');
+});
+
+test('the list envelope is serialized once: the wire form equals JSON.stringify of the envelope', () => {
+  const tasks = Array.from({ length: 7 }, (_, i) => task(`t${i}`, { description: `d${i} é ${'x'.repeat(50)}` }));
+  for (const raw of [{}, { fields: 'full' }, { fields: 'full', clip: '20' }, { ids: 't1,t9' }]) {
+    const { envelope, json } = buildListEnvelopeJson(META, selectTasks(tasks, parse(raw)), parse(raw));
+    assert.equal(json, JSON.stringify(envelope), `wire form for ${JSON.stringify(raw)}`);
+    const { bytes: _b, approxTokens: _t, ...measurable } = envelope;
+    assert.equal(envelope.bytes, jsonBytes(measurable), 'bytes still measure the envelope without its own price');
+    assert.equal(envelope.approxTokens, approxTokens(envelope.bytes));
+  }
 });

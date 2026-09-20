@@ -32,6 +32,10 @@ export function registerProjectRunLock(
         await owner.tail;
         try { await release(); }
         finally {
+          // The owner stays registered (closing) until the lockfile is
+          // retired: an acquire attempted before that would find our own
+          // pid's lock on disk and be refused outright (steal.ts), so a
+          // waiting mutation must keep polling this registry instead.
           if (localOwners.get(projectPath) === owner) localOwners.delete(projectPath);
         }
       })();
@@ -39,6 +43,11 @@ export function registerProjectRunLock(
     },
   };
 }
+
+// How long a mutation will wait for a closing owner to drain its borrowers
+// and retire its lockfile (a handful of fs round-trips) before giving up.
+const CLOSING_RETRY_TOTAL_MS = 2_000;
+const CLOSING_RETRY_STEP_MS = 25;
 
 export function currentProjectMutationOwner(projectPath: string): LockBody | undefined {
   const context = mutationContext.getStore();
@@ -55,6 +64,21 @@ export async function withProjectMutation<T>(projectPath: string, fn: () => Prom
 
   let acquired: ProjectRunLockHandle | undefined;
   let owner = localOwners.get(projectPath);
+  // A closing owner (release() called, borrowers still draining) cannot admit
+  // new work. Nothing that calls this retries — a resolver's one-shot Stop-hook
+  // `/complete` that hit the old immediate throw got a 500, never signalled
+  // the parked merge-run waiter, and left the run parked (and the project
+  // lock held) for the waiter's 30-minute idle cap. So wait it out, briefly:
+  // the owner leaves `localOwners` once its borrowers drain and its lockfile
+  // is retired, after which a fresh acquisition proceeds below.
+  const deadline = Date.now() + CLOSING_RETRY_TOTAL_MS;
+  while (owner?.closing) {
+    if (Date.now() >= deadline) {
+      throw new Error('[projectRunLock] project ownership is closing; retry the operation');
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, CLOSING_RETRY_STEP_MS));
+    owner = localOwners.get(projectPath);
+  }
   if (!owner) {
     let pending = pendingAcquisitions.get(projectPath);
     if (!pending) {
