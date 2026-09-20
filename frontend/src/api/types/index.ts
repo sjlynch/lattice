@@ -13,3 +13,4 @@ export * from './tasks';
 export * from './runs';
 export * from './postMergeHooks';
 export * from './workflows';
+export * from './terminalTabs';

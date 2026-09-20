@@ -30,6 +30,8 @@ export type MergeRunEvent =
       cwd: string;
       conflictedFiles: string[];
       serverId?: string;
+      // Durable registry tab id for the resolver's pty (terminalRegistry/).
+      terminalId?: string;
     }
   | { type: 'completed'; run: MergeRun }
   | { type: 'cancelled'; run: MergeRun };

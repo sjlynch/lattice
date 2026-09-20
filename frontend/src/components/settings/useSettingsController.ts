@@ -101,6 +101,9 @@ export function useSettingsController({
           instrumentClaude: drafts.instrumentClaude,
           disableMemory: drafts.disableMemory,
           qaTerminalAutoClose: drafts.qaTerminalAutoClose,
+          restoreTerminalsOnOpen: drafts.restoreTerminalsOnOpen,
+          restoreNudgeAgents: drafts.restoreNudgeAgents,
+          restoreNudgeUserTabs: drafts.restoreNudgeUserTabs,
         },
         handles: {
           startupTerminals: startupTerminalsRef.current,

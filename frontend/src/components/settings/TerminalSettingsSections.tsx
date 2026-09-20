@@ -1,4 +1,4 @@
-import { type TerminalDefaultHarness } from '../../api';
+import { type RestoreTerminalsMode, type TerminalDefaultHarness } from '../../api';
 import { CheckboxSettingsSection, SettingsSection } from './SettingsSection';
 import type { SettingsDrafts } from './useSettingsDrafts';
 
@@ -199,7 +199,92 @@ function QaTerminalSection({ autoClose, onChange }: QaTerminalSectionProps) {
   );
 }
 
-// The Terminals tab's project-settings block: the four sections above, wired to
+const RESTORE_MODE_OPTIONS: { value: RestoreTerminalsMode; label: string }[] = [
+  { value: 'always', label: 'Always restore silently' },
+  { value: 'ask', label: 'Ask first' },
+  { value: 'never', label: 'Never (manual button only)' },
+];
+
+type RestoreSectionProps = {
+  mode: RestoreTerminalsMode;
+  nudgeAgents: boolean;
+  nudgeUserTabs: boolean;
+  onModeChange: (value: RestoreTerminalsMode) => void;
+  onNudgeAgentsChange: (value: boolean) => void;
+  onNudgeUserTabsChange: (value: boolean) => void;
+};
+
+function RestoreTerminalsSection({
+  mode,
+  nudgeAgents,
+  nudgeUserTabs,
+  onModeChange,
+  onNudgeAgentsChange,
+  onNudgeUserTabsChange,
+}: RestoreSectionProps) {
+  return (
+    <SettingsSection
+      title="Restore terminal tabs"
+      infoLabel="About restoring terminal tabs"
+      info={(
+        <>
+          <p>
+            Lattice keeps a durable record of every terminal tab. When you open
+            this project after a backend restart, a closed browser, a Ctrl+C of
+            the dev server, or a reboot, the tabs come back: live sessions are
+            re-attached and dead ones are relaunched into their previous
+            conversation (Claude <code>--resume</code>, Pi and Codex resume by
+            session id).
+          </p>
+          <p>
+            The nudge is a first message telling a relaunched agent to check
+            <code>git status</code> and continue. Task and merge-resolver agents
+            get it so work picks up unattended. Your own sidebar sessions only
+            get it when the option below is on <em>and</em> Lattice finds
+            positive evidence the agent was mid-turn when it died — never for a
+            session that was waiting on you.
+          </p>
+        </>
+      )}
+    >
+      <div className="settings-control-row">
+        <label className="settings-control-label" htmlFor="restore-terminals-mode">
+          On project open
+        </label>
+        <select
+          id="restore-terminals-mode"
+          className="settings-select"
+          value={mode}
+          onChange={(e) => onModeChange(e.target.value as RestoreTerminalsMode)}
+        >
+          {RESTORE_MODE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <label className="settings-checkbox-row">
+        <input
+          type="checkbox"
+          checked={nudgeAgents}
+          onChange={(e) => onNudgeAgentsChange(e.target.checked)}
+        />
+        <span>Nudge relaunched task and merge-resolver agents to continue</span>
+      </label>
+      <label className="settings-checkbox-row">
+        <input
+          type="checkbox"
+          checked={nudgeUserTabs}
+          onChange={(e) => onNudgeUserTabsChange(e.target.checked)}
+        />
+        <span>Also nudge my own sidebar sessions when they were interrupted mid-turn</span>
+      </label>
+    </SettingsSection>
+  );
+}
+
+// The Terminals tab's project-settings block: the sections above, wired to
 // the parent draft slice. Composed by `SettingsDialog` ahead of the
 // `StartupTerminalsTab` panel.
 export function TerminalSettingsSections({ drafts }: { drafts: SettingsDrafts }) {
@@ -210,6 +295,14 @@ export function TerminalSettingsSections({ drafts }: { drafts: SettingsDrafts })
         terminalClaudeSkipPermissions={drafts.terminalClaudeSkipPermissions}
         onTerminalDefaultHarnessChange={drafts.setTerminalDefaultHarness}
         onTerminalClaudeSkipPermissionsChange={drafts.setTerminalClaudeSkipPermissions}
+      />
+      <RestoreTerminalsSection
+        mode={drafts.restoreTerminalsOnOpen}
+        nudgeAgents={drafts.restoreNudgeAgents}
+        nudgeUserTabs={drafts.restoreNudgeUserTabs}
+        onModeChange={drafts.setRestoreTerminalsOnOpen}
+        onNudgeAgentsChange={drafts.setRestoreNudgeAgents}
+        onNudgeUserTabsChange={drafts.setRestoreNudgeUserTabs}
       />
       <CodexYoloSection enabled={drafts.codexYolo} onChange={drafts.setCodexYolo} />
       <ClaudeInstrumentationSection

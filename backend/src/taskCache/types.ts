@@ -84,6 +84,11 @@ export type Task = {
   // rings. Persisted so the color never reshuffles as sibling tasks finish;
   // freed for reuse once this task leaves the active lanes.
   colorIndex?: number;
+  // The harness conversation the worktree agent is running, recorded at spawn
+  // (Claude / Pi ids are minted by Lattice; a Codex id is learned from its
+  // rollout file shortly after). Lets Resume — and the terminal-tab restore
+  // after a crash — continue the SAME conversation instead of starting over.
+  agentSession?: { harness: AgentHarness; id: string };
 };
 
 export type TaskUpdates = Partial<

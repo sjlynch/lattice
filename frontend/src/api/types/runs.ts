@@ -33,6 +33,7 @@ export type MergeRunEvent =
       cwd: string;
       conflictedFiles: string[];
       serverId?: string;
+      terminalId?: string;
     }
   | { type: 'completed'; run: MergeRun }
   | { type: 'cancelled'; run: MergeRun }
@@ -43,6 +44,7 @@ export type StartPushRunResult = {
   command: string;
   cwd: string;
   serverId?: string;
+  terminalId?: string;
 };
 
 export type PushRunStatus = 'running' | 'done';
@@ -56,6 +58,7 @@ export type StartQaRunResult = {
   command: string;
   cwd: string;
   serverId?: string;
+  terminalId?: string;
 };
 
 export type QaRunStatus = 'running' | 'done';

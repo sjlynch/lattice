@@ -73,6 +73,7 @@ export type StartedHomeScratchSession = {
   cwd: string;
   command: string;
   serverId: string;
+  terminalId?: string;
 };
 
 // Phase 2 — full one-off agent-session spawn: materialize the scratch dir
@@ -100,6 +101,10 @@ export async function startHomeScratchAgentSession(args: {
   // Opt this session into the QA-scoped Playwright MCP at the injection
   // chokepoint. Only QA runs set it.
   isQaRun?: boolean;
+  // Durable terminal-registry decorations for the pty's tab record. A QA run
+  // is always recorded as `qa`; other sites default to `push`.
+  registryOwner?: 'push' | 'post-merge' | 'prompt-customization';
+  registryLabel?: string;
   // Record the run + register the orange presence node. Called synchronously
   // after a successful spawn (matching the pre-refactor ordering).
   onSpawned: (ctx: { id: string; cwd: string; serverId: string }) => void;
@@ -122,6 +127,10 @@ export async function startHomeScratchAgentSession(args: {
     cwd: session.cwd,
     initialCommand: command,
     projectPath: args.projectPath,
+    registry: {
+      owner: args.isQaRun ? 'qa' : args.registryOwner ?? 'push',
+      ...(args.registryLabel ? { label: args.registryLabel } : {}),
+    },
   };
   if (args.isQaRun) opts.isQaRun = true;
 
@@ -143,5 +152,6 @@ export async function startHomeScratchAgentSession(args: {
     cwd: session.cwd,
     command,
     serverId: sess.id,
+    terminalId: sess.terminalId,
   };
 }

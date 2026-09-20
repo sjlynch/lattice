@@ -11,21 +11,36 @@ export function deleteBackendSession(serverId: string): void {
   });
 }
 
+export type CreatedBackendSession = {
+  // The pty session id (attach target).
+  serverId: string;
+  // The durable registry tab id (see api/types/terminalTabs.ts). Used as the
+  // sidebar tab's own id so a restore rebuilds the same tab. Absent only when
+  // an older backend answered.
+  terminalId?: string;
+};
+
 // Pre-create a backend pty session through the main backend's spawn chokepoint
 // (POST /api/terminals → proxyCreateSession → resolveHarnessSpawnBody) and
-// return its serverId, so a harness terminal's MCP config is resolved + applied
-// (Codex `-c` args, Pi `<cwd>/.pi/mcp.json`) BEFORE the pty spawns. Attaching by
-// the returned id is what routes a sidebar Codex/Pi launch through the same path
-// tasks use; a serverless `/ws/terminal` connect bypasses it entirely.
+// return its ids, so a harness terminal's MCP config is resolved + applied
+// (Codex `-c` args, Pi `<cwd>/.pi/mcp.json`) BEFORE the pty spawns, and the
+// tab is recorded in the durable registry (label / owner / startupId ride
+// along as its decorations). Attaching by the returned serverId is what routes
+// a sidebar Codex/Pi launch through the same path tasks use; a serverless
+// `/ws/terminal` connect bypasses both.
 //
 // Returns null on ANY failure (backend unreachable, at capacity, malformed
 // reply) so the caller can fall back to a serverless connect — no worse than
-// the old behaviour, and a plain terminal never needs this at all.
+// the old behaviour.
 export async function createBackendSession(opts: {
   cwd: string;
   initialCommand?: string;
   projectPath?: string;
-}): Promise<string | null> {
+  label?: string;
+  owner?: 'user' | 'startup';
+  startupId?: string;
+  piModel?: string;
+}): Promise<CreatedBackendSession | null> {
   try {
     const r = await fetch('/api/terminals', {
       method: 'POST',
@@ -33,8 +48,12 @@ export async function createBackendSession(opts: {
       body: JSON.stringify(opts),
     });
     if (!r.ok) return null;
-    const data = (await r.json()) as { id?: unknown };
-    return typeof data.id === 'string' ? data.id : null;
+    const data = (await r.json()) as { id?: unknown; terminalId?: unknown };
+    if (typeof data.id !== 'string') return null;
+    return {
+      serverId: data.id,
+      terminalId: typeof data.terminalId === 'string' ? data.terminalId : undefined,
+    };
   } catch {
     return null;
   }

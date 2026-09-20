@@ -14,6 +14,7 @@ export function startedQaRunResponse(started: StartedQaSession): {
   command: string;
   cwd: string;
   serverId?: string;
+  terminalId?: string;
 } {
   return {
     id: started.id,
@@ -21,6 +22,7 @@ export function startedQaRunResponse(started: StartedQaSession): {
     command: started.command,
     cwd: started.cwd,
     serverId: started.serverId,
+    terminalId: started.terminalId,
   };
 }
 

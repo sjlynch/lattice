@@ -18,6 +18,7 @@ import { buildPostMergeHooksWss } from './endpoints/postMergeHooks.js';
 import { buildTasksWss } from './endpoints/tasks.js';
 import { buildTerminalWss } from './endpoints/terminal.js';
 import { buildTerminalActivityWss } from './endpoints/terminalActivity.js';
+import { buildTerminalTabsWss } from './endpoints/terminalTabs.js';
 import { buildWorkflowRunsWss } from './endpoints/workflowRuns.js';
 import { buildWorkflowsWss } from './endpoints/workflows.js';
 
@@ -30,6 +31,7 @@ function buildWebSocketRoutes(): WebSocketRoute[] {
   return [
     ['/ws/terminal', buildTerminalWss()],
     ['/ws/terminal-activity', buildTerminalActivityWss()],
+    ['/ws/terminal-tabs', buildTerminalTabsWss()],
     ['/ws/tasks', buildTasksWss()],
     ['/ws/agent-sessions', buildAgentSessionsWss()],
     ['/ws/merge-runs', buildMergeRunsWss()],

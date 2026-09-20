@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fetchUserSettings,
+  type RestoreTerminalsMode,
   type TerminalDefaultHarness,
   type TerminalLaunchSettings,
 } from '../../api';
@@ -22,10 +23,21 @@ export type SettingsDrafts = {
   setDisableMemory: (value: boolean) => void;
   qaTerminalAutoClose: boolean;
   setQaTerminalAutoClose: (value: boolean) => void;
+  // Terminal-tab restore (see api/types/terminalTabs.ts).
+  restoreTerminalsOnOpen: RestoreTerminalsMode;
+  setRestoreTerminalsOnOpen: (value: RestoreTerminalsMode) => void;
+  restoreNudgeAgents: boolean;
+  setRestoreNudgeAgents: (value: boolean) => void;
+  restoreNudgeUserTabs: boolean;
+  setRestoreNudgeUserTabs: (value: boolean) => void;
   // True when any parent-owned draft differs from its last-loaded value. Feeds
   // the Terminals tab's dirty dot and the warn-on-close check.
   dirty: boolean;
 };
+
+function normalizeRestoreMode(value: unknown): RestoreTerminalsMode {
+  return value === 'ask' || value === 'never' ? value : 'always';
+}
 
 export function useSettingsDrafts(
   open: boolean,
@@ -45,11 +57,20 @@ export function useSettingsDrafts(
   const [disableMemory, setDisableMemory] = useState(true);
   // Default OFF (terminal stays open) — only an explicit `true` auto-closes.
   const [qaTerminalAutoClose, setQaTerminalAutoClose] = useState(false);
+  // Terminal-tab restore: mode defaults to 'always', the agent nudge to ON,
+  // the user-tab nudge to OFF (see backend userSettings/types.ts).
+  const [restoreTerminalsOnOpen, setRestoreTerminalsOnOpen] =
+    useState<RestoreTerminalsMode>('always');
+  const [restoreNudgeAgents, setRestoreNudgeAgents] = useState(true);
+  const [restoreNudgeUserTabs, setRestoreNudgeUserTabs] = useState(false);
   // Last-loaded baselines for the fetched toggles, so we can tell "dirty".
   const [loadedInstrumentClaude, setLoadedInstrumentClaude] = useState(true);
   const [loadedDisableMemory, setLoadedDisableMemory] = useState(true);
   const [loadedQaTerminalAutoClose, setLoadedQaTerminalAutoClose] =
     useState(false);
+  const [loadedRestore, setLoadedRestore] = useState<{
+    mode: RestoreTerminalsMode; agents: boolean; userTabs: boolean;
+  }>({ mode: 'always', agents: true, userTabs: false });
   // A settings GET can resolve after the user has already toggled one of these
   // fields. Track touched state outside render so the late response can update
   // dirty baselines without clobbering the user's draft value.
@@ -57,6 +78,9 @@ export function useSettingsDrafts(
     instrumentClaude: false,
     disableMemory: false,
     qaTerminalAutoClose: false,
+    restoreTerminalsOnOpen: false,
+    restoreNudgeAgents: false,
+    restoreNudgeUserTabs: false,
   });
 
   // Reseed the terminal-default drafts from the latest saved settings each
@@ -85,6 +109,19 @@ export function useSettingsDrafts(
     setQaTerminalAutoClose(value);
   }, []);
 
+  const setRestoreTerminalsOnOpenDraft = useCallback((value: RestoreTerminalsMode) => {
+    fetchedToggleTouchedRef.current.restoreTerminalsOnOpen = true;
+    setRestoreTerminalsOnOpen(value);
+  }, []);
+  const setRestoreNudgeAgentsDraft = useCallback((value: boolean) => {
+    fetchedToggleTouchedRef.current.restoreNudgeAgents = true;
+    setRestoreNudgeAgents(value);
+  }, []);
+  const setRestoreNudgeUserTabsDraft = useCallback((value: boolean) => {
+    fetchedToggleTouchedRef.current.restoreNudgeUserTabs = true;
+    setRestoreNudgeUserTabs(value);
+  }, []);
+
   // The instrument/memory/QA toggles aren't part of terminalLaunchSettings, so
   // fetch them fresh when the dialog opens. Seed only untouched drafts; always
   // refresh the loaded baselines so dirty reflects the saved value.
@@ -95,6 +132,9 @@ export function useSettingsDrafts(
       instrumentClaude: false,
       disableMemory: false,
       qaTerminalAutoClose: false,
+      restoreTerminalsOnOpen: false,
+      restoreNudgeAgents: false,
+      restoreNudgeUserTabs: false,
     };
     fetchUserSettings(activeFolder)
       .then((s) => {
@@ -102,6 +142,9 @@ export function useSettingsDrafts(
           const instrument = s.instrumentProjectClaudeSessions !== false;
           const memory = s.disableClaudeMemory !== false;
           const qaAutoClose = s.qaTerminalAutoClose === true;
+          const restoreMode = normalizeRestoreMode(s.restoreTerminalsOnOpen);
+          const nudgeAgents = s.restoreNudgeAgents !== false;
+          const nudgeUserTabs = s.restoreNudgeUserTabs === true;
           const touched = fetchedToggleTouchedRef.current;
           setLoadedInstrumentClaude(instrument);
           if (!touched.instrumentClaude) setInstrumentClaude(instrument);
@@ -109,6 +152,10 @@ export function useSettingsDrafts(
           if (!touched.disableMemory) setDisableMemory(memory);
           setLoadedQaTerminalAutoClose(qaAutoClose);
           if (!touched.qaTerminalAutoClose) setQaTerminalAutoClose(qaAutoClose);
+          setLoadedRestore({ mode: restoreMode, agents: nudgeAgents, userTabs: nudgeUserTabs });
+          if (!touched.restoreTerminalsOnOpen) setRestoreTerminalsOnOpen(restoreMode);
+          if (!touched.restoreNudgeAgents) setRestoreNudgeAgents(nudgeAgents);
+          if (!touched.restoreNudgeUserTabs) setRestoreNudgeUserTabs(nudgeUserTabs);
         }
       })
       .catch(() => { /* keep current draft */ });
@@ -122,7 +169,10 @@ export function useSettingsDrafts(
     codexYolo !== terminalLaunchSettings.codexYolo ||
     instrumentClaude !== loadedInstrumentClaude ||
     disableMemory !== loadedDisableMemory ||
-    qaTerminalAutoClose !== loadedQaTerminalAutoClose;
+    qaTerminalAutoClose !== loadedQaTerminalAutoClose ||
+    restoreTerminalsOnOpen !== loadedRestore.mode ||
+    restoreNudgeAgents !== loadedRestore.agents ||
+    restoreNudgeUserTabs !== loadedRestore.userTabs;
 
   return {
     terminalDefaultHarness,
@@ -137,6 +187,12 @@ export function useSettingsDrafts(
     setDisableMemory: setDisableMemoryDraft,
     qaTerminalAutoClose,
     setQaTerminalAutoClose: setQaTerminalAutoCloseDraft,
+    restoreTerminalsOnOpen,
+    setRestoreTerminalsOnOpen: setRestoreTerminalsOnOpenDraft,
+    restoreNudgeAgents,
+    setRestoreNudgeAgents: setRestoreNudgeAgentsDraft,
+    restoreNudgeUserTabs,
+    setRestoreNudgeUserTabs: setRestoreNudgeUserTabsDraft,
     dirty,
   };
 }

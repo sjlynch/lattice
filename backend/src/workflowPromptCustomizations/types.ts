@@ -29,6 +29,7 @@ export type WorkflowPromptCustomization = {
   command: string;
   cwd: string;
   serverId?: string;
+  terminalId?: string;
 };
 
 export type StartWorkflowPromptCustomizationInput = {

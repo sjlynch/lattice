@@ -6,6 +6,7 @@ import {
   type ResyncOutcome,
 } from '../../worktree.js';
 import type { MergeReadyTask } from './manualMergeTypes.js';
+import { mergeTerminalLabel } from '../../terminalRegistry/labels.js';
 
 type ResolverSessionPayload = {
   stashConflict?: true;
@@ -29,8 +30,16 @@ export async function respondResolverSession(
       cwd: payload.cwd,
       initialCommand: payload.command,
       projectPath: task.projectPath,
+      registry: {
+        owner: 'merge',
+        kind: 'merge',
+        taskId: task.id,
+        label: mergeTerminalLabel(task.title, task.id),
+      },
     },
   });
+  const serverId = 'id' in sess ? sess.id : undefined;
+  const terminalId = 'id' in sess ? sess.terminalId : undefined;
   if (payload.stashConflict) {
     return res.json({
       merged: false,
@@ -38,7 +47,8 @@ export async function respondResolverSession(
       command: payload.command,
       cwd: payload.cwd,
       conflictedFiles: payload.conflictedFiles,
-      serverId: 'id' in sess ? sess.id : undefined,
+      serverId,
+      terminalId,
     });
   }
   if (payload.conflictedFiles) {
@@ -48,7 +58,8 @@ export async function respondResolverSession(
       command: payload.command,
       cwd: payload.cwd,
       conflictedFiles: payload.conflictedFiles,
-      serverId: 'id' in sess ? sess.id : undefined,
+      serverId,
+      terminalId,
     });
   }
   return res.json({
@@ -56,7 +67,8 @@ export async function respondResolverSession(
     conflict: true,
     command: payload.command,
     cwd: payload.cwd,
-    serverId: 'id' in sess ? sess.id : undefined,
+    serverId,
+    terminalId,
   });
 }
 

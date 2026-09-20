@@ -114,6 +114,7 @@ export type WorkflowPromptCustomization = {
   command: string;
   cwd: string;
   serverId?: string;
+  terminalId?: string;
 };
 
 export type StartWorkflowPromptCustomizationInput = {
@@ -141,6 +142,7 @@ export type WorkflowRunEvent =
       command: string;
       cwd: string;
       serverId?: string;
+      terminalId?: string;
     }
   | {
       type: 'workflow-task-spawned';
@@ -152,6 +154,7 @@ export type WorkflowRunEvent =
       command: string;
       cwd: string;
       serverId?: string;
+      terminalId?: string;
     }
   | {
       type: 'step-control-progress';

@@ -19,6 +19,7 @@ import {
 } from './config.js';
 import { createHttpServerWithWebSockets } from './http.js';
 import { beginWorkflowRecovery } from '../workflowRuns/recoveryReadiness.js';
+import { startTerminalRegistryWatch } from '../terminalRegistry/watch.js';
 
 export async function startBackend(
   config: BackendServerConfig = getBackendServerConfig(),
@@ -144,4 +145,8 @@ export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecov
   // which only catches `ready_to_merge` tasks with deleted branches.
   // See recovery/inProgressSweep.ts for the criteria.
   startInProgressSweepLoop();
+  // Keep the durable terminal-tab registry honest against the live executor
+  // (exited ptys are ended so restore never relaunches them; busy transitions
+  // are stamped for the interruption detector). See terminalRegistry/watch.ts.
+  startTerminalRegistryWatch();
 }

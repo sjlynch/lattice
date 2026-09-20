@@ -1,14 +1,51 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { StartupTerminal } from '../../../api';
 import type { TerminalSpec } from '../../../TerminalsContext';
+import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
+import { createBackendSession } from '../../../terminal/terminalApi';
 
 type UseStartupTerminalsArgs = {
   activeFolder: string;
   startupTerminals: StartupTerminal[];
   projectTerminals: TerminalSpec[];
-  addTerminal: (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
+  addTerminal: (spec: AddTerminalSpec, focus?: boolean) => string;
   closeTerminals: (ids: string[]) => void;
 };
+
+// Spawn one startup terminal. Pre-created through the backend chokepoint so
+// (a) a harness set as a startup command gets its MCP config and (b) the tab
+// lands in the durable registry as `owner: startup`. A pre-create failure
+// falls back to the serverless connect (the pane's WS attach runs the
+// command), exactly the old behaviour.
+async function spawnStartup(
+  cfg: StartupTerminal,
+  activeFolder: string,
+  addTerminal: UseStartupTerminalsArgs['addTerminal'],
+): Promise<void> {
+  const label = cfg.label || 'startup';
+  const created = await createBackendSession({
+    cwd: activeFolder,
+    initialCommand: cfg.command,
+    projectPath: activeFolder,
+    label,
+    owner: 'startup',
+    startupId: cfg.id,
+  });
+  addTerminal(
+    {
+      id: created?.terminalId,
+      label,
+      cwd: activeFolder,
+      initialCommand: cfg.command,
+      projectPath: activeFolder,
+      kind: 'startup',
+      startupId: cfg.id,
+      serverId: created?.serverId,
+      registered: !!created?.terminalId,
+    },
+    false, // don't steal focus
+  );
+}
 
 export function useStartupTerminals({
   activeFolder,
@@ -86,11 +123,17 @@ export function useStartupTerminals({
       const existing = projectTerminalsRef.current;
 
       if (liveIds) {
-        // Drop specs whose serverId is gone. closeTerminals tolerates
-        // a 404 from the DELETE; the local state is what matters here.
+        // Drop UNREGISTERED specs whose serverId is gone (legacy sessionStorage
+        // tabs from before the registry). closeTerminals tolerates a 404 from
+        // the DELETE; the local state is what matters here.
+        //
+        // A REGISTERED tab is the registry's to reconcile: after a crash or
+        // reboot its recorded pty id is dead by definition, and the restore
+        // pass is about to relaunch it. Closing it here would DELETE the
+        // record and there would be nothing left to restore.
         const liveIdsLocal = liveIds;
         const staleIds = existing
-          .filter((t) => t.serverId && !liveIdsLocal.has(t.serverId))
+          .filter((t) => !t.registered && t.serverId && !liveIdsLocal.has(t.serverId))
           .map((t) => t.id);
         if (staleIds.length > 0) closeTerminals(staleIds);
       }
@@ -113,17 +156,7 @@ export function useStartupTerminals({
         );
         if (liveSpec) continue;
         inFlightStartupRef.current.add(key);
-        addTerminal(
-          {
-            label: cfg.label || 'startup',
-            cwd: activeFolder,
-            initialCommand: cfg.command,
-            projectPath: activeFolder,
-            kind: 'startup',
-            startupId: cfg.id,
-          },
-          false, // don't steal focus
-        );
+        void spawnStartup(cfg, activeFolder, addTerminal);
       }
     })();
     return () => {
@@ -143,17 +176,7 @@ export function useStartupTerminals({
     if (ids.length > 0) closeTerminals(ids);
     for (const cfg of startupTerminals) {
       if (!cfg.command.trim()) continue;
-      addTerminal(
-        {
-          label: cfg.label || 'startup',
-          cwd: activeFolder,
-          initialCommand: cfg.command,
-          projectPath: activeFolder,
-          kind: 'startup',
-          startupId: cfg.id,
-        },
-        false,
-      );
+      void spawnStartup(cfg, activeFolder, addTerminal);
     }
   }, [activeFolder, closeTerminals, addTerminal, startupTerminals]);
 

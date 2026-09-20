@@ -30,6 +30,7 @@ export type StartTaskByIdResult = {
   taskFile: string;
   command: string;
   serverId?: string;
+  terminalId?: string;
 };
 
 export type StartTaskByIdOptions = {
@@ -118,6 +119,11 @@ export async function startTaskById(
     // Persist the model used so a resume re-spawns with the same one.
     piModel: selectedHarness.harness === 'pi' ? piModel : undefined,
     colorIndex,
+    // The pinned harness conversation (Claude / Pi); a Codex id lands later
+    // via the registry's rollout discovery (resumeTask reads the registry).
+    agentSession: spawn.agentSession
+      ? { harness: spawn.agentSession.harness, id: spawn.agentSession.id }
+      : undefined,
     // The run finally spawned — drop the queued badge, the persisted execution
     // policy, and the attempt counter so a later re-run isn't gated by boot
     // recovery's retry ceiling.
@@ -135,6 +141,7 @@ export async function startTaskById(
     taskFile: result.taskFile,
     command: spawn.command,
     serverId: spawn.serverId,
+    terminalId: spawn.terminalId,
   };
 }
 

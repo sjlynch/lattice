@@ -26,6 +26,7 @@ export type SpawnThunkResult = {
   worktreePath: string;
   command: string;
   serverId?: string;
+  terminalId?: string;
 };
 
 // Count this run attempt BEFORE the spawn, persisted crash-safely. A run can
@@ -144,6 +145,7 @@ export async function runSpawnThunk(
         command: result.command,
         worktreePath: result.worktreePath,
         serverId: result.serverId,
+        terminalId: result.terminalId,
       });
     }
   } catch (err) {

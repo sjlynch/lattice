@@ -53,6 +53,9 @@ export type StartHomeScratchAgentSessionArgs = {
   // pre-refactor ordering). projectPath + any feature fields (taskId, status,
   // createdAt) are supplied by the closure.
   recordRun: (ctx: { id: string; cwd: string }) => void;
+  // Label for the durable terminal-registry tab record; defaults to the
+  // presence label ('push' / 'qa').
+  registryLabel?: string;
 };
 
 export type StartedHomeScratchAgentSession = StartedHomeScratchSession;
@@ -81,6 +84,8 @@ export function createHomeScratchAgentSession(
       queuePriority: 'interactive',
       dedupeKeyPrefix: spec.dedupeKeyPrefix,
       ...(spec.isQaRun ? { isQaRun: true } : {}),
+      registryOwner: 'push',
+      registryLabel: args.registryLabel ?? spec.presenceLabel,
       onSpawned: ({ id, cwd }) => {
         args.recordRun({ id, cwd });
         // Presence: show an orange Claude node for this non-worktree session.

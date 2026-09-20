@@ -3,11 +3,11 @@
 // the result straight into TerminalsContext, so the label/serverId mapping is
 // testable without a TerminalsContext.
 
-import type { TerminalSpec } from '../../../TerminalsContext';
+import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
 import { shortLabel } from '../../taskboard/lanes';
 
 export type TerminalSpawn = {
-  spec: Omit<TerminalSpec, 'id'>;
+  spec: AddTerminalSpec;
   // Second arg to `addTerminal` (focus). Neither step nor fanned-out task
   // terminals steal focus from a currently-focused tab — `addTerminal`'s
   // `pickActiveAfterAdd` still focuses the spawn when nothing is focused
@@ -30,11 +30,13 @@ export function stepSpawnedTerminal(
     command: string;
     cwd: string;
     serverId?: string;
+    terminalId?: string;
   },
   projectPath: string,
 ): TerminalSpawn {
   return {
     spec: {
+      id: ev.terminalId,
       label: `wf:step${ev.stepIndex + 1}`,
       cwd: ev.cwd,
       initialCommand: ev.command,
@@ -55,11 +57,13 @@ export function workflowTaskSpawnedTerminal(
     command: string;
     cwd: string;
     serverId?: string;
+    terminalId?: string;
   },
   projectPath: string,
 ): TerminalSpawn {
   return {
     spec: {
+      id: ev.terminalId,
       label: shortLabel(ev.title),
       cwd: ev.cwd,
       initialCommand: ev.command,

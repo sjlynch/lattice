@@ -190,6 +190,7 @@ export function useWorkflowPromptCustomization({
         harness,
       });
       addTerminal({
+        id: request.terminalId,
         label: `customize:${step.title.trim() || index + 1}`,
         cwd: request.cwd,
         initialCommand: request.command,

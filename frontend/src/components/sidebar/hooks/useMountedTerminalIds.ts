@@ -59,12 +59,17 @@ export function useMountedTerminalIds(
   // set → lazy-mount as designed; failed pre-spawn → no serverId →
   // mount immediately so the user-facing behavior degrades to a small
   // startup latency instead of a hung task.
+  //
+  // A tab in a restore state (`restore: 'pending' | 'failed'`) also has no
+  // serverId but must NOT be force-mounted: the registry is relaunching (or
+  // failed to relaunch) its pty, and a serverless attach would run the launch
+  // command a second time. The Sidebar gates the pane on `!t.restore` too.
   useEffect(() => {
     setMountedIds((prev) => {
       let changed = false;
       const next = new Set(prev);
       for (const t of projectTerminals) {
-        if (!t.serverId && !next.has(t.id)) {
+        if (!t.serverId && !t.restore && !next.has(t.id)) {
           next.add(t.id);
           changed = true;
         }

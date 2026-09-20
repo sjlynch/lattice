@@ -18,7 +18,27 @@ side effect can each be reasoned about (and changed) on their own.
   wrong repo. Consumed by `components/sidebar/hooks/useTerminalGroups.ts`.
 - `terminalStorage.ts` — `STORAGE_KEY = 'lattice.terminals'`, `loadPersisted`,
   `persist`. sessionStorage, not localStorage, so each browser tab tracks its
-  own terminal list (two tabs on `lattice.terminals` would race writes).
+  own terminal list (two tabs on `lattice.terminals` would race writes). Since
+  the registry (below) this is only a paint-before-fetch CACHE for registered
+  tabs; the backend's records are the durable truth.
+- `terminalRegistrySync.ts` — pure reconciliation with the backend's durable
+  terminal-tab registry (`/api/terminal-tabs`, `/ws/terminal-tabs`; see
+  `backend/src/terminalRegistry/CLAUDE.md`). `recordToSpec` projects a record
+  onto a `TerminalSpec` (`registered: true`, `restore: 'pending'` while it has
+  no pty, `'failed'` when ended as cwd-missing / restore-failed; transient
+  `status` carried over only while the same pty backs the tab; `relaunchNonce`
+  bumped when a DIFFERENT pty appears, which is what makes the Sidebar remount
+  a pane that already gave up on the dead one). `mergeRegistryTabs` replaces a
+  project's registered tabs with the registry's view, keeps unregistered
+  fallback tabs unless a record owns their pty, and never touches other
+  projects. `applyTerminalTabsEvent` folds the live events: `ended` removes for
+  closed/killed/owner-finished, marks `exited` for exit (the tab stays until
+  closed, like today), marks `failed` for restore failures. The context calls
+  `POST /restore` on project open per the `restoreTerminalsOnOpen` setting and
+  marks the summary's `relaunchedIds` from the HTTP response (the WS events can
+  precede a fresh page's socket). **A tab in a `restore` state must never mount
+  a pane** — a serverless attach would run its launch command a second time
+  (`Sidebar.tsx` + `useMountedTerminalIds` both gate on it).
 - `terminalState.ts` — barrel that re-exports the pure functions from the two
   modules below, so `./terminalState` stays the stable import surface for
   `TerminalsContext` and the tests.

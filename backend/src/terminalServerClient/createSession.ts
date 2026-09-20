@@ -20,6 +20,11 @@ import { terminalServerAuthHeaders } from '../terminalServerAuth.js';
 import { randomUUID } from 'node:crypto';
 import type { SessionRequestIdentity, TerminalServerInfo } from '../terminalProtocol.js';
 import { withCodexActivityTitle } from '../codexTerminalActivity.js';
+import { agentHarnessForCommand } from '../harnesses.js';
+import { terminalRegistry } from '../terminalRegistry/store.js';
+import { assignHarnessSessionId } from '../terminalRegistry/sessionIdentity.js';
+import { scheduleCodexDiscovery } from '../terminalRegistry/codexDiscovery.js';
+import type { AgentSessionRef, TerminalRecord, TerminalRegistryHint } from '../terminalRegistry/types.js';
 
 export type CreateSessionOptions = {
   cwd?: string;
@@ -39,6 +44,11 @@ export type CreateSessionOptions = {
   // without having to read its id back out of LATTICE_TASK.md. Like `isQaRun`,
   // it rides the wire body but the terminal-server never reads it.
   taskId?: string;
+  // What the durable terminal registry should record about this pty (who owns
+  // the tab, its label, …). Every Lattice spawn site passes one; a missing
+  // hint is recorded as a plain user tab so the tab is still restorable. Not
+  // shipped to the terminal-server.
+  registry?: TerminalRegistryHint;
 };
 
 // The POST /sessions wire body: the caller's options plus the spawn-time Claude
@@ -180,8 +190,82 @@ const CREATE_SESSION_TIMEOUT_MS = 30_000;
 // The spawn queue keys its over-admit back-off on this; any other failure
 // is a genuine error.
 export type CreateSessionResult =
-  | { id: string }
+  | {
+      id: string;
+      // The durable registry tab id (`TerminalRecord.id`); the frontend uses
+      // it as the tab's own id so a restore rebuilds the same tab.
+      terminalId?: string;
+      // The harness conversation this pty runs, when Lattice pinned one.
+      agentSession?: AgentSessionRef;
+    }
   | { error: string; code?: 'CAP' };
+
+// Derive the registry record for a freshly created pty and persist it. The
+// ORIGINAL command is stored (not the identity-injected one) so a relaunch
+// re-enters the chokepoint cleanly. Best-effort: a registry failure never
+// fails the spawn — the pty exists and must be returned.
+async function recordSpawnedTerminal(
+  opts: CreateSessionOptions,
+  originalCommand: string | undefined,
+  serverId: string,
+  serverInstanceId: string | undefined,
+  agentSession: AgentSessionRef | undefined,
+): Promise<TerminalRecord | null> {
+  if (!opts.cwd) return null;
+  const hint: TerminalRegistryHint = opts.registry ?? { owner: 'user' };
+  const harness = agentHarnessForCommand(originalCommand) ?? undefined;
+  const projectPath = opts.projectPath ?? opts.cwd;
+  const launch: TerminalRecord['launch'] = {
+    ...(originalCommand ? { initialCommand: originalCommand } : {}),
+    ...(harness ? { harness } : {}),
+    ...(hint.piModel ? { piModel: hint.piModel } : {}),
+    ...(opts.isQaRun ? { isQaRun: true } : {}),
+    ...(opts.taskId ? { taskId: opts.taskId } : {}),
+  };
+  const session = agentSession ?? hint.agentSession;
+  try {
+    if (hint.existingId) {
+      // A relaunch. The record keeps its ORIGINAL launch (the command it was
+      // first created with) — the relaunch command (`--resume <id>`,
+      // `resume <id>`, …) is derived from it every time and must never
+      // replace it, or the next restore would try to resume a resume.
+      const prev = await terminalRegistry.get(hint.existingId, projectPath);
+      return await terminalRegistry.update(hint.existingId, {
+        serverId,
+        serverInstanceId,
+        ...(session ? { agentSession: session } : {}),
+        ended: undefined,
+        restoredAt: Date.now(),
+        restoreCount: (prev?.restoreCount ?? 0) + 1,
+        lastBusy: undefined,
+      }, projectPath);
+    }
+    const label = hint.label ?? defaultTerminalLabel(originalCommand, harness);
+    return await terminalRegistry.create({
+      projectPath,
+      cwd: opts.cwd,
+      label,
+      owner: hint.owner,
+      launch,
+      ...(hint.kind ? { kind: hint.kind } : {}),
+      ...(hint.taskId ? { taskId: hint.taskId } : {}),
+      ...(hint.startupId ? { startupId: hint.startupId } : {}),
+      ...(session ? { agentSession: session } : {}),
+      serverId,
+      ...(serverInstanceId ? { serverInstanceId } : {}),
+    });
+  } catch (err) {
+    console.warn('[terminal-registry] could not record spawned terminal:', err);
+    return null;
+  }
+}
+
+function defaultTerminalLabel(command: string | undefined, harness: string | undefined): string {
+  if (harness) return harness;
+  if (!command) return 'terminal';
+  const first = command.trim().split(/\s+/)[0] ?? 'terminal';
+  return first.length > 18 ? first.slice(0, 17) + '…' : first;
+}
 
 type CreateOnce =
   | { id: string }
@@ -202,12 +286,33 @@ export async function proxyCreateSession(
   try { server = await ensureTerminalServer(); }
   catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
   const canRetry = server.capabilities?.idempotentCreate === true && !!server.instanceId;
+  // Pin the harness conversation id before the command reaches the executor
+  // (Claude / Pi `--session-id`), so a later relaunch can resume it. The
+  // registry keeps the ORIGINAL command; the wire carries the pinned one.
+  const { registry: _registry, ...wireOpts } = opts;
+  const identity = assignHarnessSessionId(opts.initialCommand);
+  const spawnOpts: CreateSessionOptions = identity.agentSession
+    ? { ...wireOpts, initialCommand: identity.command }
+    : wireOpts;
   const body: SessionWireBody = {
-    ...await resolveHarnessSpawnBody(opts),
+    ...await resolveHarnessSpawnBody(spawnOpts),
     ...(canRetry ? { requestId: randomUUID(), requestTimestamp: Date.now(), serverInstanceId: server.instanceId } : {}),
   };
+  const finish = async (id: string): Promise<CreateSessionResult> => {
+    const record = await recordSpawnedTerminal(
+      opts, opts.initialCommand, id, server.instanceId, identity.agentSession,
+    );
+    if (record?.launch.harness === 'codex' && !record.agentSession) {
+      scheduleCodexDiscovery(record.id, record.projectPath);
+    }
+    return {
+      id,
+      ...(record ? { terminalId: record.id } : {}),
+      ...(record?.agentSession ? { agentSession: record.agentSession } : {}),
+    };
+  };
   const first = await tryCreateSessionOnce(body);
-  if ('id' in first) return first;
+  if ('id' in first) return finish(first.id);
   if (!first.recoverable) return { error: first.error, code: first.code };
   const uncertain = `${first.error}. Session creation outcome is unknown; it was not replayed to avoid starting a duplicate agent.`;
   if (!canRetry) return { error: uncertain };
@@ -215,7 +320,7 @@ export async function proxyCreateSession(
   if (current.kind !== 'ready' || current.info.instanceId !== server.instanceId
       || !current.info.capabilities?.idempotentCreate) return { error: uncertain };
   const retry = await tryCreateSessionOnce(body);
-  if ('id' in retry) return retry;
+  if ('id' in retry) return finish(retry.id);
   return { error: retry.recoverable
     ? `${retry.error}. Session creation outcome remains unknown after the bounded retry.`
     : retry.error, code: retry.code };

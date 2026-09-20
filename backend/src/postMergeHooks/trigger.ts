@@ -237,7 +237,12 @@ async function spawnAndRegister(
       kind: 'post-merge-hook',
       priority: 'priority',
       dedupeKey: `post-merge-hook:${projectPath}`,
-      opts: { cwd: session.cwd, initialCommand: command, projectPath },
+      opts: {
+        cwd: session.cwd,
+        initialCommand: command,
+        projectPath,
+        registry: { owner: 'post-merge', label: `post-merge:${id.slice(-6)}` },
+      },
     });
 
     if ('error' in sess) {
@@ -250,7 +255,7 @@ async function spawnAndRegister(
       return { kind: 'error', message: sess.error };
     }
 
-    const updated = deps.patchPostMergeHook(id, { serverId: sess.id });
+    const updated = deps.patchPostMergeHook(id, { serverId: sess.id, terminalId: sess.terminalId });
     // Presence: orange Claude node for this non-worktree session. Only for
     // Claude — a Pi/codex hook isn't a "Claude session" and has no activity
     // hooks, so it gets no node.

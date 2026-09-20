@@ -1,0 +1,107 @@
+# backend/src/terminalRegistry
+
+The durable terminal-tab registry: what lets the sidebar's tabs — and the
+harness conversation inside each — come back after a backend restart, a closed
+browser, a `Ctrl+C` of the dev server, or a reboot.
+
+Before this, the tab list lived only in the browser's `sessionStorage`, the
+backend never learned which harness conversation a pty was running, and a
+normal `Ctrl+C` (`POST /shutdown`) killed every pty with nothing to relaunch
+from.
+
+## The model
+
+- `types.ts` — `TerminalRecord`: one per tab the backend ever created a pty
+  for. Carries the tab's decorations (`label`, `order`, `kind`, `taskId`,
+  `startupId`), its `owner` (who decides when it disappears / whether restore
+  may relaunch it), the ORIGINAL `launch` (command + harness + Pi model, before
+  any Lattice injection), the pinned `agentSession`, the last pty
+  (`serverId` + `serverInstanceId`), `lastBusy`, and `ended`.
+- `store.ts` — `TerminalRegistryStore` (a `ProjectStateManager` subclass) over
+  `~/.lattice/per-project/<hash>/terminals.json` (versioned envelope, atomic
+  write, every field re-validated on read, long-ended records pruned). The
+  BACKEND is the sole creator of records (`proxyCreateSession` →
+  `recordSpawnedTerminal` in `terminalServerClient/createSession.ts`); the
+  frontend only patches decorations. `end()` REMOVES a record for
+  `exit` / `closed` / `killed` / `owner-finished` and KEEPS it (with the
+  marker) for `cwd-missing` / `restore-failed` so the UI can show why.
+  `endWhere()` is what the kill paths (`terminalProxy.ts` wrappers, the
+  `/api/terminals/:id` DELETE) and the exit watcher use.
+
+## Session identity
+
+- `sessionIdentity.ts` — `assignHarnessSessionId`: pins the conversation id
+  at launch. Claude `--session-id <uuid>`, Pi `--session-id lattice-<uuid>`
+  (create-or-resume). Never stacks on a command that already names a session
+  (`--resume`, `-c`, …). Codex has no such flag (openai/codex#46672) —
+- `codexDiscovery.ts` — learns a Codex thread id after the fact from
+  `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl` line 1
+  (`session_meta.payload.{id,cwd,timestamp}`): cwd match + started after our
+  spawn + not claimed by another record, earliest first; `ambiguous` when two
+  Codex tabs share a cwd in the window. Polled for 2 min after each Codex spawn.
+- `harnessPaths.ts` — where each harness keeps transcripts (verified on
+  Windows): Claude `~/.claude/projects/<cwd, non-alnum → '-'>/<id>.jsonl`, Pi
+  `~/.pi/agent/sessions/--<cwd, [/\:] → '-'>--/<ts>_<id>.jsonl`, Codex rollouts.
+
+## Relaunch
+
+- `commandParse.ts` — a small shell-ish tokenizer / re-emitter for the launch
+  commands Lattice builds, with a per-harness table of value-taking flags so
+  the trailing prompt can be told from a flag value.
+- `restoreCommand.ts` — `buildRestoreCommand`: original flags kept, session
+  flags stripped, prompt dropped. Claude: transcript exists → `--resume <id>`,
+  else (died before its first turn) `--session-id <id>` with the original
+  prompt. Pi: `--session-id <id>`. Codex: `resume <id>` or `resume --last`.
+  Plain shell → no command; a non-harness command reruns verbatim. The
+  `RESTORE_NUDGE` prompt tells a relaunched agent to check git and continue.
+  The Codex title config and harness system-prompt files are NOT here — the
+  spawn chokepoint re-injects them like on any launch. **A relaunch never
+  overwrites the record's `launch`** (else the next restore would try to
+  resume a resume).
+- `interruption.ts` — "was the agent mid-turn when it died?" Two evidence
+  sources: the transcript tail (claude dangling `tool_use` / trailing user
+  prompt → open, the `[Request interrupted by user…]` marker → idle; pi
+  `stopReason`; codex `task_started` without `task_complete`) and a
+  busy-at-death record (Claude's own `~/.claude/sessions/<pid>.json`
+  `status`, else Lattice's persisted `lastBusy`). `decideInterruption`:
+  nudge only on open + non-idle; any idle evidence vetoes; unknown never
+  nudges. Gates the user-tab nudge (`restoreNudgeUserTabs`).
+- `restore.ts` — `restoreProjectTerminals(project)`, single-flighted, safe to
+  re-run. Per non-ended record: pty live → adopt; unclaimed live pty in the
+  same cwd + harness → adopt; pty gone while the executor INSTANCE is
+  unchanged → it exited → end; otherwise relaunch if the owner allows
+  (`user` — cwd must exist; `task`/`merge` — task still `in_progress` (+
+  conflict for merge) with its worktree; `startup` — never, `useStartupTerminals`
+  reseeds those; one-shot runs — never, ended as `owner-finished`).
+  Relaunches clear the dead `serverId` first (every client renders the tab as
+  "restoring", no pane attaches to a dead id), go through the spawn queue at
+  `batch` priority, and land as `restored` / `restore-failed` events. An
+  unreachable executor changes nothing.
+- `watch.ts` — `startTerminalRegistryWatch` (boot): every 3 s diff loaded
+  records against `/sessions` + `/health.instanceId` (pty missing, same
+  instance ⇒ `exit`) and stamp `lastBusy` transitions from the
+  terminal-activity signal (kept always-on for this).
+
+## Surfaces
+
+`routes/terminalTabs.ts` (`GET`/`PATCH`/`DELETE /api/terminal-tabs[/:id]`,
+`POST /api/terminal-tabs/restore`) and `ws/endpoints/terminalTabs.ts`
+(`/ws/terminal-tabs`: `hello`, `upsert`, `ended`, `removed`, `restored`,
+`restore-failed`, `restore-summary`). Settings (`userSettings/types.ts`):
+`restoreTerminalsOnOpen` (`always` | `ask` | `never`), `restoreNudgeAgents`
+(default on), `restoreNudgeUserTabs` (default off). `Task.agentSession` is
+copied from the spawn so `routes/tasks/resumeTask.ts` can do a TRUE resume of
+the worktree conversation when the harness matches.
+
+## Invariants
+
+- The registry must never touch a pty of another executor instance, and
+  "can't list sessions" is never "no sessions".
+- Records are keyed by a backend-minted id that the frontend adopts as the
+  tab id; every spawn site returns it (`terminalId`) alongside `serverId`.
+- The startup-terminal stale-drop (`frontend/.../useStartupTerminals.ts`) must
+  skip registered tabs — closing a dead-pty tab there DELETEs the record and
+  leaves nothing to restore (the bug the first e2e run found).
+- Tests: `__tests__/terminalRestoreCommand.test.ts`,
+  `terminalInterruption.test.ts`, `terminalRegistryStore.test.ts`,
+  `terminalRestore.test.ts` (the decision matrix with injected deps).

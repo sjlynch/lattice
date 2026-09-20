@@ -122,6 +122,9 @@ export function SidebarTabsBar({
               kind={t.kind}
               status={t.status}
               exitCode={t.exitCode}
+              restore={t.restore}
+              restoreReason={t.restoreReason}
+              restored={t.restored}
               busy={t.serverId !== undefined && busyServerIds.has(t.serverId)}
               isActive={t.id === activeId}
               isDragging={t.id === draggingId}

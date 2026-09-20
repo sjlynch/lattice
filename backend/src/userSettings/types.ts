@@ -27,6 +27,22 @@ export type UserSettings = {
   // counts as `true`, only an explicit `false` runs plain `codex`. See
   // `isCodexYoloEnabled` in features.ts.
   codexYolo?: boolean;
+  // Terminal-tab restore (backend/src/terminalRegistry/). When a project is
+  // opened, the sidebar's tabs are rebuilt from the durable registry: live
+  // ptys are re-attached, dead ones (after a crash / Ctrl+C / reboot) are
+  // relaunched into their previous harness conversation.
+  //   'always' (default) — restore silently on project open
+  //   'ask'              — show a prompt in the sidebar first
+  //   'never'            — only the manual "Restore tabs" button restores
+  restoreTerminalsOnOpen?: 'always' | 'ask' | 'never';
+  // Whether a relaunched task / merge-resolver agent is sent the continue
+  // nudge (so it picks its work back up without anyone typing into the tab).
+  // Default ON — absent counts as `true`.
+  restoreNudgeAgents?: boolean;
+  // Whether a relaunched USER tab (a sidebar claude/pi/codex) is nudged too.
+  // Default OFF, and even when on the nudge is only sent when the interruption
+  // detector finds positive evidence the agent was mid-turn when it died.
+  restoreNudgeUserTabs?: boolean;
   // Per-step collapse state for the workflow editor, keyed by step id.
   // Only collapsed=true entries are persisted to keep the file tidy.
   workflowStepsCollapsed?: Record<string, boolean>;

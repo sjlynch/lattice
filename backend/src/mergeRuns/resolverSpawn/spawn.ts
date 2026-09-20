@@ -4,6 +4,8 @@ import { type Task } from '../../tasks.js';
 import { queuedCreateSession } from '../../queuedCreateSession.js';
 import { proxyListSessionsOrNull } from '../../terminalServerClient.js';
 import { agentHarnessForCommand } from '../../harnesses.js';
+import { mergeTerminalLabel } from '../../terminalRegistry/labels.js';
+import { terminalRegistry } from '../../terminalRegistry/store.js';
 import path from 'node:path';
 import { notify, type MergeRun } from '../state.js';
 import type { ProcessTargetContext } from '../processTarget.js';
@@ -42,7 +44,17 @@ async function spawnResolverAndNotifyConflict({
     dedupeKey: `mr-resolver:${run.id}:${task.id}`,
     signal: mergeRunCancellation(run),
     timeoutMs: 10 * 60_000,
-    opts: { cwd, initialCommand: command, projectPath: task.projectPath },
+    opts: {
+      cwd,
+      initialCommand: command,
+      projectPath: task.projectPath,
+      registry: {
+        owner: 'merge',
+        kind: 'merge',
+        taskId: task.id,
+        label: mergeTerminalLabel(task.title, task.id),
+      },
+    },
   }).catch((err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }));
   // queuedCreateSession returns { error } when the terminal-server can't
   // start (we hit this when a missing dist asset killed terminal-server's
@@ -68,6 +80,7 @@ async function spawnResolverAndNotifyConflict({
     cwd,
     conflictedFiles,
     serverId: sess.id,
+    terminalId: sess.terminalId,
   });
   return { kind: 'spawned', serverId: sess.id };
 }
@@ -134,9 +147,15 @@ export async function respawnResolverForFlaggedConflict(
       .map((r) => r.resolvers?.[task.id]).find((r) => r?.sessionId === existing.id);
     (run.resolvers ??= {})[task.id] = prior ? { ...prior } : { sessionId: existing.id, lastProgressAt: Date.now() };
     run.conflicted.push(task.id);
+    // The re-adopted pty's durable tab, if the registry knows it.
+    const terminalId = await terminalRegistry
+      .list(task.projectPath)
+      .then((records) => records.find((r) => r.serverId === existing.id)?.id)
+      .catch(() => undefined);
     notify(runCtx.state, {
       type: 'conflict', runId: run.id, projectPath: runCtx.projectPath,
       taskId: task.id, command, cwd: task.worktreePath!, conflictedFiles, serverId: existing.id,
+      terminalId,
     });
     console.log(`[merge-run] task ${task.id}: reattached existing resolver ${existing.id}`);
     return { kind: 'spawned', serverId: existing.id };

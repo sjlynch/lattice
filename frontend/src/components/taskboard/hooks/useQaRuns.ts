@@ -5,14 +5,14 @@ import {
   startQaRun as apiStartQaRun,
   type Task,
 } from '../../../api';
-import type { TerminalSpec } from '../../../TerminalsContext';
+import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
 import { shortLabel } from '../lanes';
 import {
   pollWithErrorSentinel,
   useVisibilityPolling,
 } from './useVisibilityPolling';
 
-type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
+type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
 type CloseTerminal = (id: string) => void;
 
 type ActiveQaRun = { runId: string; taskId: string; terminalId: string };
@@ -100,6 +100,7 @@ export function useQaRuns(
         const res = await apiStartQaRun(activeFolder, task.id);
         const terminalId = addTerminal(
           {
+            id: res.terminalId,
             label: `qa:${shortLabel(task.title)}`,
             cwd: res.cwd,
             initialCommand: res.command,

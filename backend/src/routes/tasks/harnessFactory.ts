@@ -9,6 +9,8 @@ import {
 import { proxyCreateSession } from '../../terminalProxy.js';
 import type { Task } from '../../tasks.js';
 import { normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
+import { taskTerminalLabel } from '../../terminalRegistry/labels.js';
+import type { AgentSessionRef } from '../../terminalRegistry/types.js';
 
 export type TaskHarness = AgentHarness;
 export type HarnessMode = 'run' | 'resume';
@@ -26,11 +28,19 @@ type SelectHarnessCommandOptions = {
   // caller resolves it from UserSettings.codexYolo (default ON); this binds it
   // into the Codex command builder. Absent means "use the default (ON)".
   codexYolo?: boolean;
+  // When set, the pty is created with THIS command instead of the mode's
+  // builder — the true-resume path (resumeTask.ts hands in a
+  // `--resume <id>`-style command that continues the previous conversation).
+  commandOverride?: string;
 };
 
 export type CreateSessionOutcome = {
   command: string;
   serverId?: string;
+  // Durable registry tab id + the pinned harness conversation, when a pty
+  // was created (see terminalRegistry/).
+  terminalId?: string;
+  agentSession?: AgentSessionRef;
   // True when the spawn was rejected by the terminal-server's hard cap.
   // The queue path turns this into a SpawnCapacityError so the spawn is
   // re-queued; the un-queued workflow control-step path ignores it and
@@ -80,7 +90,7 @@ export function selectHarnessCommand(
     harness,
     commandBuilder,
     async createSession({ taskFile, cwd }) {
-      const command = commandBuilder(taskFile);
+      const command = options.commandOverride ?? commandBuilder(taskFile);
       const sess = await proxyCreateSession({
         cwd,
         initialCommand: command,
@@ -89,6 +99,12 @@ export function selectHarnessCommand(
         // LATTICE_TASK_ID into the `lattice` MCP server's env (see
         // terminalServerClient/createSession.ts) for both run and resume.
         taskId: task.id,
+        registry: {
+          owner: 'task',
+          label: taskTerminalLabel(task.title),
+          taskId: task.id,
+          ...(harness === 'pi' && options.piModel ? { piModel: options.piModel } : {}),
+        },
       });
       if ('error' in sess) {
         console.warn(
@@ -96,7 +112,12 @@ export function selectHarnessCommand(
         );
         return { command, capHit: sess.code === 'CAP' };
       }
-      return { command, serverId: sess.id };
+      return {
+        command,
+        serverId: sess.id,
+        terminalId: sess.terminalId,
+        agentSession: sess.agentSession,
+      };
     },
   };
 }

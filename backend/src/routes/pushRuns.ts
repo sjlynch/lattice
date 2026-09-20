@@ -69,6 +69,7 @@ export function buildPushRunsRouter(backendOrigin: string): Router {
         command: started.command,
         cwd: started.cwd,
         serverId: started.serverId,
+        terminalId: started.terminalId,
       });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });

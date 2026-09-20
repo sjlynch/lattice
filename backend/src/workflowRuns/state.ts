@@ -47,6 +47,7 @@ export type WorkflowRunEvent =
       command: string;
       cwd: string;
       serverId?: string;
+      terminalId?: string;
     }
   // Emitted by the Start control step for each Open task it kicks off.
   // The frontend turns each one into a task-tagged terminal tab in the
@@ -63,6 +64,7 @@ export type WorkflowRunEvent =
       command: string;
       cwd: string;
       serverId?: string;
+      terminalId?: string;
     }
   // Emitted by control-flow steps (Start/Merge/Push) so the frontend can
   // render kind-specific progress in the run strip without spawning a

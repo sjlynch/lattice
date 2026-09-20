@@ -9,6 +9,7 @@ import {
   proxyListSessions,
 } from '../terminalProxy.js';
 import { getSpawnQueueSnapshot } from '../spawnQueue.js';
+import { terminalRegistry } from '../terminalRegistry/store.js';
 
 export function buildTerminalsRouter(): Router {
   const r = Router();
@@ -39,23 +40,43 @@ export function buildTerminalsRouter(): Router {
       projectPath?: string;
       cols?: number;
       rows?: number;
+      // Registry decorations for the durable tab record (see
+      // terminalRegistry/). Only `user` / `startup` owners are accepted from
+      // the browser; every other owner is reserved for backend spawn sites.
+      label?: string;
+      owner?: string;
+      startupId?: string;
+      piModel?: string;
     };
+    const owner = body.owner === 'startup' ? 'startup' : 'user';
     const result = await proxyCreateSession({
       cwd: body.cwd,
       initialCommand: body.initialCommand,
       projectPath: body.projectPath,
       cols: body.cols,
       rows: body.rows,
+      registry: {
+        owner,
+        ...(typeof body.label === 'string' && body.label.trim() ? { label: body.label.trim() } : {}),
+        ...(owner === 'startup' ? { kind: 'startup' as const } : {}),
+        ...(typeof body.startupId === 'string' && body.startupId ? { startupId: body.startupId } : {}),
+        ...(typeof body.piModel === 'string' && body.piModel ? { piModel: body.piModel } : {}),
+      },
     });
     if ('error' in result) {
       // 503 for the hard-cap refusal (matches the terminal-server's CAP code)
       // so the frontend can distinguish "at capacity" from a real spawn error.
       return res.status(result.code === 'CAP' ? 503 : 500).json(result);
     }
-    res.json({ id: result.id });
+    res.json({ id: result.id, terminalId: result.terminalId, agentSession: result.agentSession });
   });
 
+  // Kill a pty by session id. Also ends its registry record as user-closed
+  // (a tab closed from the sidebar must never be relaunched by restore).
   r.delete('/api/terminals/:id', async (req, res) => {
+    await terminalRegistry
+      .endWhere((r) => r.serverId === req.params.id, { reason: 'closed' })
+      .catch(() => 0);
     const ok = await proxyKillSession(req.params.id);
     if (!ok) return res.status(404).json({ error: 'not found' });
     res.json({ ok: true });

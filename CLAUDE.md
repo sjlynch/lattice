@@ -37,6 +37,7 @@ force-directed DAG.
     `dist/index.js`, a grandchild the orchestrator never sees). Windows fault
     codes are decoded here, so `3221225477` reads as
     `0xC0000005 STATUS_ACCESS_VIOLATION`.
+- `~/.lattice/per-project/<sha1(path)[:12]>/terminals.json` — the durable **terminal-tab registry** (`backend/src/terminalRegistry/`): one record per sidebar tab with its owner, original launch command, pinned harness conversation id and last pty. What "restore tabs on project open" rebuilds from after a backend restart / closed browser / `Ctrl+C` / reboot.
 - `~/.lattice/globalSettings.json` — machine-global settings (`maxConcurrentAgents`, MCP defs/overrides, `piModelMenu`, `piProviders`).
 - `~/.lattice/piManagedProviders.json` — sidecar listing the Pi provider ids Lattice manages in `~/.pi/agent/models.json`, so a UI removal deletes precisely those (hand-written providers are never touched). See `backend/src/piModels.ts` `reconcilePiModelsJson`.
 
@@ -236,10 +237,16 @@ therefore stay safely re-runnable.
 | POST | `/api/post-merge-hooks/:id/abort` | Abort an active post-merge hook |
 | GET | `/api/terminals` | Debug: list active pty sessions |
 | POST | `/api/terminals` | Pre-spawn a pty for a sidebar-launched harness terminal; returns its `serverId`. Routes the launch through the same spawn chokepoint (`resolveHarnessSpawnBody`) as tasks, so Codex/Pi MCP config is applied (a bare `/ws/terminal` connect would bypass it) |
-| DELETE | `/api/terminals/:id` | Kill a pty session |
+| DELETE | `/api/terminals/:id` | Kill a pty session (also ends its registry tab as user-closed) |
+| GET | `/api/terminal-tabs?project=` | The project's durable terminal-tab records (`backend/src/terminalRegistry/`), incl. ended-but-kept restore failures |
+| POST | `/api/terminal-tabs/restore?project=` | Rebuild the sidebar's tabs: adopt live ptys, relaunch dead ones into their previous harness conversation; returns `{status, adopted, queued, dropped}` and streams per-tab outcomes on `/ws/terminal-tabs` |
+| PATCH | `/api/terminal-tabs?project=` | Persist the project's tab order `{order: id[]}` |
+| PATCH | `/api/terminal-tabs/:id?project=` | Rename a tab `{label}` |
+| DELETE | `/api/terminal-tabs/:id?project=` | Close a tab: end its record (never relaunched) and kill its pty |
 | GET | `/api/spawn-queue` | Debug: spawn-queue snapshot (pending/in-flight/reserved, softCap) |
 | WS | `/ws/terminal?id=&cwd=&cols=&rows=&initialCommand=` | xterm proxy via node-pty (with replay) |
 | WS | `/ws/terminal-activity?project=` | Which pty sessions are running a harness that's *still working* (sustained printable output seen recently). Pushed on connect + on every change; backs the sidebar's per-tab spinner. Payload is machine-wide (`{busy: serverId[]}`), not project-filtered |
+| WS | `/ws/terminal-tabs?project=` | The durable terminal-tab registry, live: `hello` snapshot, then `upsert` / `ended` / `removed` / `restored` / `restore-failed` / `restore-summary` |
 | WS | `/ws/tasks?project=` | Live task list updates + `task-spawned` events (a queued run's pty spawned) + `task-spawn-failed` (a deferred run/resume failed for a non-CAP reason; the UI toasts it) + `task-activity` (worktree Claude agent's current file) + `agent-activity` (non-worktree Claude session's current file) for the graph focus beams |
 | WS | `/ws/agent-sessions?project=` | Presence snapshots of Claude sessions running outside a worktree (push / workflow step / post-merge hook); one orange graph node each |
 | WS | `/ws/merge-runs?project=` | Run progress + per-conflict resolver spawn events |
@@ -522,6 +529,24 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   default, or unopened tabs on an old executor without native titles, remain
   unknown until a new launch or telemetry becomes available. Live PTYs are
   preserved across backend restarts; never kill them to upgrade this indicator.
+- **Terminal tabs survive restarts and reboots.** Every pty the backend creates
+  (all ten spawn sites, incl. sidebar `+` launches and startup terminals) is
+  recorded in the per-project registry (`backend/src/terminalRegistry/`) under a
+  backend-minted tab id that the frontend adopts as `TerminalSpec.id`. At the
+  spawn chokepoint Lattice pins the harness conversation — Claude
+  `--session-id <uuid>`, Pi `--session-id lattice-<uuid>` — and learns a Codex
+  thread id from its rollout file afterwards. On project open the frontend calls
+  `POST /api/terminal-tabs/restore` (per `restoreTerminalsOnOpen`: `always` /
+  `ask` / `never`, plus a manual button): live ptys are re-attached, a pty that
+  exited while the executor lived is dropped, and a dead one (executor replaced)
+  is relaunched INTO ITS PREVIOUS CONVERSATION (`claude --resume <id>`,
+  `pi --session-id <id>`, `codex resume <id>`) with the original flags. Task /
+  merge-resolver relaunches get a continue-nudge prompt (the Stop hook still
+  drives `/complete`); a user tab only when `restoreNudgeUserTabs` is on AND
+  the interruption detector finds the agent was mid-turn. One-shot runs (push /
+  QA / post-merge / workflow steps) are owned by their own recovery and never
+  resurrected here. Scrollback is not restored across a reboot (harness TUIs
+  re-render on resume).
 - **Terminal pty pre-spawn.** When a task/workflow/conflict spawn would
   produce a UI terminal, the backend pre-creates the pty via the
   terminal-server's `POST /sessions` and ships back a `serverId`. The

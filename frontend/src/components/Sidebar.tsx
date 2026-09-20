@@ -1,4 +1,5 @@
-import { RefreshCw, Search, X } from 'lucide-react';
+import { History, RefreshCw, Search, X } from 'lucide-react';
+import { RestoreNotice } from './sidebar/RestoreNotice';
 import { memo, useCallback, useEffect } from 'react';
 import type { StartupTerminal, TerminalLaunchSettings } from '../api';
 import { usePiModelMenu } from '../hooks/usePiModelMenu';
@@ -56,6 +57,10 @@ export const Sidebar = memo(function Sidebar({
     setStatus,
     renameTerminal,
     reorderTerminal,
+    restoreTabs,
+    lastRestore,
+    dismissRestoreNotice,
+    restorePrompt,
   } = useTerminals();
 
   // Curated "Pi — X" model menu for the new-terminal dropdown, from the shared
@@ -155,16 +160,24 @@ export const Sidebar = memo(function Sidebar({
       // the persistent ~/.claude.json reconcile). A plain terminal (no
       // initialCommand) or a pre-create failure falls back to the serverless
       // connect, which addTerminal's WS wiring already handles.
-      let serverId: string | undefined;
-      if (spec.initialCommand) {
-        serverId =
-          (await createBackendSession({
-            cwd: spec.cwd,
-            initialCommand: spec.initialCommand,
-            projectPath: spec.projectPath,
-          })) ?? undefined;
-      }
-      addTerminal({ ...spec, serverId });
+      // Every kind — plain shells included — pre-creates through the backend
+      // now, so the tab lands in the durable registry (and comes back after a
+      // restart / reboot). A pre-create failure still falls back to the
+      // serverless connect, which just isn't restorable.
+      const created = await createBackendSession({
+        cwd: spec.cwd,
+        initialCommand: spec.initialCommand,
+        projectPath: spec.projectPath,
+        label: spec.label,
+        owner: 'user',
+        ...(piModel && kind === 'pi' ? { piModel } : {}),
+      });
+      addTerminal({
+        ...spec,
+        id: created?.terminalId,
+        serverId: created?.serverId,
+        registered: !!created?.terminalId,
+      });
     },
     [addTerminal, activeFolder, projectTerminals.length, terminalLaunchSettings.codexYolo],
   );
@@ -247,14 +260,32 @@ export const Sidebar = memo(function Sidebar({
           )}
 
           {activePanel === 'terminals' && (
-            <NewTerminalDropdown
-              defaultKind={defaultShellKind(terminalLaunchSettings)}
-              piMenu={piMenu}
-              onNewTerminal={newTerminal}
-            />
+            <>
+              <button
+                className="icon-btn sm sidebar-restore-btn"
+                onClick={() => { void restoreTabs(); }}
+                title="Restore terminal tabs (re-attach live sessions, relaunch dead ones)"
+                aria-label="Restore terminal tabs"
+              >
+                <History size={12} />
+              </button>
+              <NewTerminalDropdown
+                defaultKind={defaultShellKind(terminalLaunchSettings)}
+                piMenu={piMenu}
+                onNewTerminal={newTerminal}
+              />
+            </>
           )}
         </div>
       </div>
+
+      <RestoreNotice
+        activeFolder={activeFolder}
+        prompt={restorePrompt}
+        notice={lastRestore}
+        onRestore={() => { void restoreTabs(); }}
+        onDismiss={dismissRestoreNotice}
+      />
 
       {panelTerminals.length > 0 && (
         <SidebarTabsBar
@@ -284,8 +315,16 @@ export const Sidebar = memo(function Sidebar({
               key={t.id}
               className={`sidebar-pane ${t.id === activeId ? '' : 'hidden'}`}
             >
-              {mountedIds.has(t.id) && (
+              {/* A tab whose pty is being relaunched (or whose relaunch
+                  failed) has no session to attach to; mounting it would open
+                  a serverless connect that re-runs the launch command. */}
+              {mountedIds.has(t.id) && !t.restore && (
                 <TerminalPane
+                  // Keyed on the relaunch nonce (NOT serverId): a pane that
+                  // gave up on a dead pty must be recreated against the one
+                  // restore put behind the tab, while a serverless pane
+                  // capturing its own id keeps its Terminal intact.
+                  key={`${t.id}:${t.relaunchNonce ?? 0}`}
                   cwd={t.cwd}
                   active={t.id === activeId}
                   initialCommand={t.initialCommand}

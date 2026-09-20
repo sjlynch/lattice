@@ -12,9 +12,16 @@ Implementation pieces for `../Sidebar.tsx`.
   (`resolveHarnessSpawnBody`) so its MCP config is applied — a serverless
   `/ws/terminal` connect bypasses that, and only Claude survives it (via the
   persistent `~/.claude.json` reconcile). A plain terminal (no `initialCommand`)
-  or a pre-create failure falls back to the serverless connect. NOTE: startup
-  terminals (`useStartupTerminals`) still connect serverlessly — a harness set as
-  a startup command would not get MCP; the manual dropdown is the covered path.
+  or a pre-create failure falls back to the serverless connect. Since the
+  terminal-tab registry, EVERY kind (plain shells too) and the startup terminals
+  (`useStartupTerminals` → `spawnStartup`) pre-create this way, passing the
+  tab's `label` / `owner` / `startupId` so the record carries them; the returned
+  `terminalId` becomes the tab's own id (`registered: true`). Only a pre-create
+  failure leaves a tab serverless — and therefore not restorable.
+- `RestoreNotice.tsx` — the strip under the header for the registry restore:
+  the 'ask'-mode prompt ("N tabs from your last session can be restored") and
+  the last pass's summary (`describeRestoreSummary`: re-attached / relaunching /
+  dropped-with-reason). The header also carries a manual "Restore tabs" button.
   Beneath bare "Pi" it also lists one **"Pi — <model>"** row per curated Pi model
   (the `GET /api/pi-models` `.menu`, fetched once in `Sidebar.tsx` and passed as
   `piMenu`). Picking one spawns `pi --approve --model "<provider/model>"` —
@@ -74,10 +81,15 @@ Implementation pieces for `../Sidebar.tsx`.
   confirms the bulk close first, since the ptys are killed); the popover markup is
   rendered by `TabContextMenu.tsx`.
 - `hooks/useStartupTerminals.ts` — validates/reseeds startup ptys and exposes
-  restart-all.
+  restart-all. Its stale-drop (a spec whose `serverId` is no longer live)
+  applies ONLY to unregistered legacy specs: a registered tab's dead pty is the
+  registry restore's to relaunch, and closing it here would DELETE the record.
 - `hooks/useMountedTerminalIds.ts` — owns `mountedIds`: lazy-mounts
   `TerminalPane` only after first activation (startup panes excepted), which
-  prevents WebGL context exhaustion across many pre-spawned panes.
+  prevents WebGL context exhaustion across many pre-spawned panes. A tab in a
+  registry `restore` state (pending / failed) is never force-mounted, and
+  `Sidebar.tsx` keys each pane on `relaunchNonce` so a relaunched tab remounts
+  against its new pty.
 - `hooks/useBusyAgentTerminals.ts` — the `serverId` set behind the per-tab
   spinner, from `/ws/terminal-activity` (see `backend/src/terminalActivity.ts`).
   Deliberately **not** derived from the panes: `useMountedTerminalIds` above

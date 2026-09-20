@@ -56,6 +56,10 @@ export async function preSpawnCustomizationSession(
       cwd: request.cwd,
       initialCommand: request.command,
       projectPath: request.projectPath,
+      registry: {
+        owner: 'prompt-customization',
+        label: `customize:${request.stepTitle ?? request.id.slice(-6)}`,
+      },
     },
   });
   if ('error' in sess) {
@@ -64,5 +68,6 @@ export async function preSpawnCustomizationSession(
     );
   } else {
     request.serverId = sess.id;
+    request.terminalId = sess.terminalId;
   }
 }

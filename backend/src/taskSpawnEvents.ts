@@ -22,6 +22,9 @@ export type TaskSpawnedEvent = {
   worktreePath: string;
   // Always set: the thunk only emits the event when a pty was created.
   serverId: string;
+  // Durable registry tab id (terminalRegistry/); the frontend uses it as the
+  // tab's own id so a later restore rebuilds the same tab.
+  terminalId?: string;
 };
 
 export type TaskSpawnFailedEvent = {

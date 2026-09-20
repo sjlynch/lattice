@@ -8,10 +8,10 @@ import {
   type Task,
   type TaskStatus,
 } from '../../../api';
-import type { TerminalSpec } from '../../../TerminalsContext';
+import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
 import { shortLabel } from '../lanes';
 
-type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
+type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
 
 type UseTaskMergeActionsArgs = {
   activeFolder: string;
@@ -42,6 +42,7 @@ export function useTaskMergeActions({
         // Either a worktree merge conflict or a stash-pop conflict in main —
         // both are handled by spawning a resolver Claude as a merge terminal.
         addTerminal({
+          id: res.terminalId,
           label: `merge:${shortLabel(task.title)}`,
           cwd: res.cwd,
           initialCommand: res.command,

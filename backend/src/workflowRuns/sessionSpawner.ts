@@ -189,6 +189,7 @@ export function enqueueWorkflowStepSession(opts: {
         cwd: stepDir,
         initialCommand: command,
         projectPath,
+        registry: { owner: 'workflow-step', label: `wf:step${stepIndex + 1}` },
       });
       const sess: CreateSessionResult = await spawnRecord.spawning;
 
@@ -252,6 +253,7 @@ export function enqueueWorkflowStepSession(opts: {
         command,
         cwd: stepDir,
         serverId: sess.id,
+        terminalId: sess.terminalId,
       });
     },
   });

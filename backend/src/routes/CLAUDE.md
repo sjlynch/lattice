@@ -2,8 +2,9 @@
 
 One Express `Router` per domain. Every module exports a `buildXRouter(...)`
 factory and `server/app.ts` mounts them in this order: health, search,
-settings, globalSettings, mcp, projectInit, terminals, tasks, agentActivity,
-projectClaude, mergeRuns, postMergeHooks, pushRuns, qaRuns, workflows.
+settings, globalSettings, mcp, projectInit, terminals, terminalTabs, tasks,
+agentActivity, projectClaude, mergeRuns, postMergeHooks, pushRuns, qaRuns,
+workflows.
 
 ## Route map
 
@@ -24,6 +25,12 @@ projectClaude, mergeRuns, postMergeHooks, pushRuns, qaRuns, workflows.
   `POST /api/project-init` (`git init` + first commit). Thin: validation plus
   the `ProjectInitError.code` → 409/422/500/503 mapping; the work lives in
   `projectInit/`. Both paths are static, so mount order is unconstrained.
+- `terminalTabs.ts` — the durable terminal-tab registry's surface
+  (`backend/src/terminalRegistry/`): `GET /api/terminal-tabs` (records),
+  `POST /api/terminal-tabs/restore` (adopt / relaunch on project open),
+  `PATCH /api/terminal-tabs` (order), `PATCH /api/terminal-tabs/:id` (label),
+  `DELETE /api/terminal-tabs/:id` (close: end the record, kill the pty). All
+  `?project=`-scoped. Static paths, so mount order is unconstrained.
 - `terminals.ts` — terminal list (debug) + `DELETE /api/terminals/:id`, plus
   **`POST /api/terminals`**: pre-create a pty via `proxyCreateSession` and return
   its `serverId`, so a sidebar-launched harness terminal joins the same spawn

@@ -76,7 +76,16 @@ function App() {
   return (
     <ConfirmProvider>
       <GitSetupProvider>
-      <TerminalsProvider>
+      <TerminalsProvider
+        activeFolder={activeFolder}
+        restoreMode={
+          !activeFolder
+            ? 'never'
+            : userSettings.loaded && userSettings.settings
+              ? (userSettings.settings.restoreTerminalsOnOpen ?? 'always')
+              : null
+        }
+      >
       <div className="app-shell">
         <TopAppBar
           activeFolder={activeFolder}

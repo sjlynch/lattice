@@ -198,6 +198,16 @@ const UNDOCUMENTED_ROUTES: Record<string, string> = {
   'GET /api/harness-system-prompts': 'system-prompt editor data (Settings UI)',
   'GET /api/pi-models': 'Pi model dropdown data (Settings UI)',
   'POST /api/pi-endpoints/probe': 'Pi endpoint "Detect models" button (Settings UI)',
+
+  // Terminal-tab registry (backend/src/terminalRegistry/). The sidebar's own
+  // bookkeeping: which tabs exist, their order/labels, and the restore pass
+  // that re-attaches / relaunches them on project open. An agent has no
+  // business relaunching or closing the user's terminals.
+  'GET /api/terminal-tabs': 'sidebar tab records (UI)',
+  'PATCH /api/terminal-tabs': 'sidebar tab order (UI)',
+  'PATCH /api/terminal-tabs/:id': 'sidebar tab label (UI)',
+  'DELETE /api/terminal-tabs/:id': 'close a sidebar tab (UI)',
+  'POST /api/terminal-tabs/restore': 'restore tabs on project open (UI)',
   'GET /api/mcp-catalog': 'MCP catalog (Settings UI)',
   'GET /api/mcp-secrets': 'MCP secret presence — never advertise to agents',
   'PATCH /api/mcp-secrets': 'MCP secret write — never advertise to agents',

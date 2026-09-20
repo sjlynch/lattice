@@ -6,9 +6,9 @@ import {
   type MergeRun,
   type MergeRunErrorEntry,
 } from '../../../api';
-import type { TerminalSpec } from '../../../TerminalsContext';
+import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
 
-type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
+type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
 type CloseTerminalsForTask = (taskId: string) => void;
 type ShowError = (msg: string) => void;
 
@@ -137,6 +137,7 @@ export function useMergeRunSync(
         // `task-spawned` handler applies.
         closeTerminalsForTask(ev.taskId);
         addTerminal({
+          id: ev.terminalId,
           label: `merge:${ev.taskId.slice(-6)}`,
           cwd: ev.cwd,
           initialCommand: ev.command,

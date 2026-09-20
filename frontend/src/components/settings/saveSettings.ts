@@ -2,6 +2,7 @@ import {
   ensureProjectInstrumentation,
   patchGlobalSettings,
   patchUserSettings,
+  type RestoreTerminalsMode,
   type StartupTerminal,
   type TerminalDefaultHarness,
   type TerminalLaunchSettings,
@@ -28,6 +29,9 @@ type SaveDrafts = {
   instrumentClaude: boolean;
   disableMemory: boolean;
   qaTerminalAutoClose: boolean;
+  restoreTerminalsOnOpen: RestoreTerminalsMode;
+  restoreNudgeAgents: boolean;
+  restoreNudgeUserTabs: boolean;
 };
 
 // Imperative handles for each tab. Each may be null if its tab hasn't
@@ -85,6 +89,9 @@ export async function saveSettings({
     instrumentProjectClaudeSessions: drafts.instrumentClaude,
     disableClaudeMemory: drafts.disableMemory,
     qaTerminalAutoClose: drafts.qaTerminalAutoClose,
+    restoreTerminalsOnOpen: drafts.restoreTerminalsOnOpen,
+    restoreNudgeAgents: drafts.restoreNudgeAgents,
+    restoreNudgeUserTabs: drafts.restoreNudgeUserTabs,
   };
   // Only touch worktreeEnvNotes if the env fetch finished — otherwise we'd
   // overwrite the saved overrides with an empty map.

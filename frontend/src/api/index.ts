@@ -30,3 +30,4 @@ export {
 export * from './workflows';
 export * from './health';
 export * from './terminals';
+export * from './terminalTabs';

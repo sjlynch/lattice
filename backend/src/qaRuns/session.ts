@@ -6,6 +6,7 @@ import { qaPaths } from './paths.js';
 import { recordQaRun } from './registry.js';
 import { installQaStopHook, qaAgentId } from './stopHook.js';
 import { cleanupQaSession } from './cleanup.js';
+import { shortLabel } from '../terminalRegistry/labels.js';
 
 export type StartQaSessionArgs = {
   projectPath: string;
@@ -43,6 +44,7 @@ export type StartedQaSession = {
   cwd: string;
   command: string;
   serverId?: string;
+  terminalId?: string;
 };
 
 // The shared mirror skeleton (command, queue metadata, presence node, cleanup),
@@ -77,6 +79,7 @@ export async function startQaSession(
     installHooks: ({ cwd, id }) =>
       installQaStopHook(cwd, id, args.backendOrigin, args.projectPath),
     renderInstructions: ({ id }) => renderQa(args, id),
+    registryLabel: `qa:${shortLabel(args.taskTitle)}`,
     recordRun: ({ id, cwd }) =>
       recordQaRun({
         id,
@@ -93,5 +96,6 @@ export async function startQaSession(
     cwd: started.cwd,
     command: started.command,
     serverId: started.serverId,
+    terminalId: started.terminalId,
   };
 }

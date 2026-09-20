@@ -170,6 +170,7 @@ export async function runStartStep(
         command: spawned.command,
         cwd: spawned.worktreePath,
         serverId: spawned.serverId,
+        terminalId: spawned.terminalId,
       });
       started += 1;
       console.log(

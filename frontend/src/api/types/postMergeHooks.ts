@@ -17,6 +17,7 @@ export type PostMergeHookRun = {
   finishedAt?: number;
   error?: string;
   serverId?: string;
+  terminalId?: string;
   trigger: 'merge-run' | 'manual-merge';
 };
 

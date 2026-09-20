@@ -20,6 +20,21 @@ cache, whose home path binds once at module load. Keep tests as plain
 
 ## Suite index
 
+- `terminalRestoreCommand.test.ts`, `terminalInterruption.test.ts`,
+  `terminalRegistryStore.test.ts`, `terminalRestore.test.ts` — the durable
+  terminal-tab registry (`terminalRegistry/`). Command parsing round-trips the
+  quoted prompts `agentCommandBuilder` emits; `assignHarnessSessionId` pins a
+  UUID on Claude / a `lattice-` id on Pi and never stacks on a user's own
+  `--resume`; `buildRestoreCommand` per harness (Claude `--resume` vs the
+  transcript-missing `--session-id` fallback, Pi `--session-id`, Codex
+  `resume <id>` / `--last`, shell, verbatim). The interruption classifiers on
+  transcript fixtures (dangling tool_use, Esc marker, Pi `stopReason`, Codex
+  `task_started`) plus the veto matrix. The store's versioned file, ended
+  semantics (remove vs keep) and busy stamping. And the restore decision matrix
+  driven through the real store with injected live-session / spawn / task /
+  settings deps: adopt, adopt-orphan-by-cwd, exited-not-relaunched, relaunch
+  with `--resume` under the same tab id, nudge gating, owner rules, cwd
+  missing, fresh Claude fallback, spawn failure, unreachable executor.
 - `codexTerminalActivity.test.ts`, `codexActivityReplay.test.ts` — per-launch
   status-title defaults, actual Codex Ready/Working lifecycle traces, animated
   idle output, and a real animations-disabled turn silent for over 20 seconds.

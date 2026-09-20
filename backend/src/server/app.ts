@@ -22,6 +22,7 @@ import { buildSearchRouter } from '../routes/search.js';
 import { buildSettingsRouter } from '../routes/settings.js';
 import { buildTasksRouter } from '../routes/tasks.js';
 import { buildTerminalsRouter } from '../routes/terminals.js';
+import { buildTerminalTabsRouter } from '../routes/terminalTabs.js';
 import { buildWorkflowsRouter } from '../routes/workflows.js';
 
 export type BackendAppOptions = {
@@ -115,6 +116,7 @@ export function mountRouteFactories(
   // them and they shadow nothing.
   app.use(buildProjectInitRouter());
   app.use(buildTerminalsRouter());
+  app.use(buildTerminalTabsRouter());
   app.use(buildTasksRouter(options.backendOrigin));
   app.use(buildAgentActivityRouter());
   app.use(buildProjectClaudeRouter(options.backendOrigin));

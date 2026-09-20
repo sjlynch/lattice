@@ -43,6 +43,7 @@ export type StartedPushSession = {
   cwd: string;
   command: string;
   serverId?: string;
+  terminalId?: string;
 };
 
 // The shared mirror skeleton (command, queue metadata, presence node, cleanup).
@@ -87,5 +88,6 @@ export async function startPushSession(
     cwd: started.cwd,
     command: started.command,
     serverId: started.serverId,
+    terminalId: started.terminalId,
   };
 }

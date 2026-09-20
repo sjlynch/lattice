@@ -1,9 +1,9 @@
 import { useCallback, useRef } from 'react';
 import { type TaskSpawnedEvent } from '../../../api';
-import { type TerminalSpec } from '../../../TerminalsContext';
+import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
 import { shortLabel } from '../lanes';
 
-type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
+type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
 type CloseTerminalsForTask = (taskId: string) => void;
 
 // Builds the `/ws/tasks` `task-spawned` handler. A queued task's run has no pty
@@ -41,6 +41,7 @@ export function useTaskSpawnHandler(
       closeTerminalsForTask(event.taskId);
       addTerminal(
         {
+          id: event.terminalId,
           label: shortLabel(event.title),
           cwd: event.worktreePath,
           initialCommand: event.command,

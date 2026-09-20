@@ -8,9 +8,9 @@ import {
   type PostMergeHookRun,
 } from '../../../api';
 import { normalizeAgentHarness, type AgentHarness } from '../../../harnesses';
-import type { TerminalSpec } from '../../../TerminalsContext';
+import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
 
-type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
+type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
 
 export type PostMergeHookFormState = {
   prompt: string;
@@ -117,6 +117,7 @@ export function usePostMergeHook(
             // whether the hook had even started).
             addTerminal(
               {
+                id: ev.run.terminalId,
                 label: `post-merge:${ev.run.id.slice(-6)}`,
                 cwd: ev.run.cwd,
                 projectPath: ev.run.projectPath,

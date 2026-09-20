@@ -16,6 +16,8 @@ export type PostMergeHookRun = {
   finishedAt?: number;
   error?: string;
   serverId?: string;
+  // Durable terminal-registry tab id for the hook's pty (terminalRegistry/).
+  terminalId?: string;
   // What triggered this hook — surfaced for telemetry / debugging.
   trigger: 'merge-run' | 'manual-merge';
 };

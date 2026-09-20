@@ -32,6 +32,15 @@ export type UserSettings = {
   // absent counts as `true`; only an explicit `false` runs plain `codex`. See
   // backend userSettings.ts.
   codexYolo?: boolean;
+  // Terminal-tab restore on project open (see backend terminalRegistry/).
+  // 'always' (default) | 'ask' | 'never'.
+  restoreTerminalsOnOpen?: 'always' | 'ask' | 'never';
+  // Send the continue-nudge to relaunched task / merge-resolver agents.
+  // Default ON (absent counts as true).
+  restoreNudgeAgents?: boolean;
+  // Also nudge relaunched sidebar (user) harness tabs — only when the
+  // interruption detector finds the agent was mid-turn. Default OFF.
+  restoreNudgeUserTabs?: boolean;
   workflowStepsCollapsed?: Record<string, boolean>;
   // Per-env override of the auto-injected "fresh worktree, don't reinstall"
   // note in task instructions. Key = env id; '' suppresses the note;

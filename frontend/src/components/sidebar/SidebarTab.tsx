@@ -31,6 +31,10 @@ type SidebarTabProps = {
   status?: TerminalStatus;
   exitCode?: number;
   busy?: boolean;
+  // Registry restore state (see terminal/terminalTypes.ts).
+  restore?: 'pending' | 'failed';
+  restoreReason?: string;
+  restored?: boolean;
   isActive: boolean;
   isDragging: boolean;
   isDragOver: boolean;
@@ -60,6 +64,9 @@ export const SidebarTab = memo(function SidebarTab({
   status,
   exitCode,
   busy,
+  restore,
+  restoreReason,
+  restored,
   isActive,
   isDragging,
   isDragOver,
@@ -123,14 +130,31 @@ export const SidebarTab = memo(function SidebarTab({
       ) : (
         <span>{label}</span>
       )}
-      {status && status !== 'live' && status !== 'connecting' && (
+      {restore ? (
+        // A relaunch in flight (amber pulse) or one that failed (red, with
+        // the reason in the tooltip) — takes precedence over the pane's own
+        // connection status, which has nothing to say without a pty.
+        <span
+          className={`sidebar-tab-status ${restore === 'pending' ? 'reconnecting' : 'dead'}`}
+          title={restore === 'pending' ? 'Restoring…' : `Restore failed — ${restoreReason ?? 'unknown'}`}
+          aria-label={restore === 'pending' ? 'Restoring' : 'Restore failed'}
+          role="img"
+        />
+      ) : status && status !== 'live' && status !== 'connecting' ? (
         <span
           className={`sidebar-tab-status ${status}`}
           title={statusTooltip(status, exitCode)}
           aria-label={statusTooltip(status, exitCode)}
           role="img"
         />
-      )}
+      ) : restored ? (
+        <span
+          className="sidebar-tab-status restored"
+          title="Restored from your last session"
+          aria-label="Restored"
+          role="img"
+        />
+      ) : null}
       <button
         className="sidebar-tab-close"
         onClick={(e) => { e.stopPropagation(); onClose(id); }}

@@ -69,6 +69,9 @@ export type TaskSpawnedEvent = {
   worktreePath: string;
   serverId: string;
   projectPath: string;
+  // Durable registry tab id (see api/types/terminalTabs.ts); used as the
+  // sidebar tab's own id so a restore rebuilds the same tab.
+  terminalId?: string;
 };
 
 // Pushed on `/ws/tasks` when a queued run/resume fails for a non-CAP reason
@@ -150,6 +153,7 @@ export type MergeTaskResult =
       cwd: string;
       conflictedFiles?: string[];
       serverId?: string;
+      terminalId?: string;
     }
   | {
       merged: false;
@@ -158,4 +162,5 @@ export type MergeTaskResult =
       cwd: string;
       conflictedFiles?: string[];
       serverId?: string;
+      terminalId?: string;
     };

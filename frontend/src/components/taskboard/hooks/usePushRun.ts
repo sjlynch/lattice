@@ -6,13 +6,13 @@ import {
   startPushRun,
   type PushRunStatus,
 } from '../../../api';
-import type { TerminalSpec } from '../../../TerminalsContext';
+import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
 import {
   pollWithErrorSentinel,
   useVisibilityPolling,
 } from './useVisibilityPolling';
 
-type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
+type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
 type CloseTerminal = (id: string) => void;
 
 // The resolved value of one status poll: a real status object, `null` for a
@@ -132,6 +132,7 @@ export function usePushRun(
     try {
       const res = await startPushRun(activeFolder);
       const terminalId = addTerminal({
+        id: res.terminalId,
         label: 'push',
         cwd: res.cwd,
         initialCommand: res.command,
