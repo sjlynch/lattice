@@ -25,7 +25,7 @@ import { buildRestoreCommand } from '../../terminalRegistry/restoreCommand.js';
 import { claudeTranscriptPath } from '../../terminalRegistry/harnessPaths.js';
 import { fileExists } from '../../terminalRegistry/interruption.js';
 import { terminalRegistry } from '../../terminalRegistry/store.js';
-import type { AgentSessionRef } from '../../terminalRegistry/types.js';
+import type { AgentSessionRef, TerminalRecord } from '../../terminalRegistry/types.js';
 import { selectHarnessCommand } from './harnessFactory.js';
 
 export type ResumeTaskByIdResult = {
@@ -46,20 +46,25 @@ const RESUME_PROMPT =
   "to see any existing progress before deciding what to do next; don't redo work " +
   "that's already committed.";
 
+// The task's registry records (newest first), or none when the registry is
+// unreadable.
+async function taskRecords(task: Task): Promise<TerminalRecord[]> {
+  try {
+    const records = await terminalRegistry.list(task.projectPath, { includeEnded: true });
+    return records
+      .filter((r) => r.owner === 'task' && r.taskId === task.id)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  } catch {
+    return [];
+  }
+}
+
 // The conversation the previous agent ran: the task's own record first, else
 // the registry's task-owned record (a Codex id is discovered there after the
 // fact and may not have been copied back onto the task yet).
-async function knownAgentSession(task: Task): Promise<AgentSessionRef | undefined> {
+function knownAgentSession(task: Task, records: TerminalRecord[]): AgentSessionRef | undefined {
   if (task.agentSession) return { ...task.agentSession, source: 'minted' };
-  try {
-    const records = await terminalRegistry.list(task.projectPath, { includeEnded: true });
-    const owned = records
-      .filter((r) => r.owner === 'task' && r.taskId === task.id && r.agentSession)
-      .sort((a, b) => b.updatedAt - a.updatedAt);
-    return owned[0]?.agentSession;
-  } catch {
-    return undefined;
-  }
+  return records.find((r) => r.agentSession)?.agentSession;
 }
 
 // Build the true-resume command for a task, or null when there is nothing to
@@ -68,16 +73,12 @@ async function knownAgentSession(task: Task): Promise<AgentSessionRef | undefine
 export async function buildTaskResumeCommand(
   task: Task,
   harness: 'claude' | 'pi' | 'codex',
-  deps = { knownAgentSession, fileExists },
+  deps = { taskRecords, fileExists },
 ): Promise<string | null> {
-  const session = await deps.knownAgentSession(task);
+  const records = await deps.taskRecords(task);
+  const session = knownAgentSession(task, records);
   if (!session || session.harness !== harness) return null;
-  const records = await terminalRegistry
-    .list(task.projectPath, { includeEnded: true })
-    .catch(() => []);
-  const launch = records
-    .filter((r) => r.owner === 'task' && r.taskId === task.id && r.launch.initialCommand)
-    .sort((a, b) => b.updatedAt - a.updatedAt)[0]?.launch;
+  const launch = records.find((r) => r.launch.initialCommand)?.launch;
   if (!launch?.initialCommand) return null;
   const transcriptExists = harness === 'claude'
     ? await deps.fileExists(claudeTranscriptPath(task.worktreePath!, session.id))

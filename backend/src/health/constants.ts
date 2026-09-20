@@ -91,14 +91,33 @@ export function hasIgnoredPathSegment(filePath: string): boolean {
   return segments.some((segment) => IGNORE_DIR_NAMES.has(segment));
 }
 
+// Windows hands the recursive watcher `\\?\C:\…` (extended-length namespace)
+// paths for some events — notably when the watched ROOT itself is deleted or
+// renamed. `path.relative` treats that as a different root and returns the
+// absolute path unchanged, which the `ignore` package then rejects with a
+// RangeError. Thrown from a watcher callback, that took the whole backend
+// down the moment a user deleted a project folder Lattice had open. Strip the
+// prefix so the path compares like any other.
+function stripWindowsNamespacePrefix(p: string): string {
+  const m = /^[\\/]{2}\?[\\/](UNC[\\/])?(.*)$/i.exec(p);
+  if (!m) return p;
+  return m[1] ? `\\\\${m[2]}` : m[2];
+}
+
 export function matchIgnoredSourcePath(
   filePath: string,
   projectRoot: string,
   gitignore: Pick<Ignore, 'ignores'>,
   isDirectory = false,
 ): boolean {
-  let rel = path.relative(projectRoot, filePath);
+  let rel = path.relative(
+    stripWindowsNamespacePrefix(projectRoot),
+    stripWindowsNamespacePrefix(filePath),
+  );
   if (!rel || rel.startsWith('..')) return false;
+  // Still absolute ⇒ the two paths share no root (a drive/UNC mismatch);
+  // there is nothing project-relative to match, and `ignore` would throw.
+  if (path.isAbsolute(rel) || /^[a-z]:/i.test(rel)) return false;
   rel = rel.split(path.sep).join('/');
   if (!rel) return false;
 
@@ -107,6 +126,14 @@ export function matchIgnoredSourcePath(
   // the project-relative path so repos that live under ~/.lattice/worktrees are
   // still watchable.
   if (hasIgnoredPathSegment(rel)) return true;
-  if (gitignore.ignores(rel)) return true;
-  return isDirectory ? gitignore.ignores(`${rel}/`) : false;
+  // The `ignore` package throws on anything it does not consider a relative
+  // path. This runs inside filesystem-watcher callbacks, where a throw is an
+  // uncaughtException that kills the backend — so an unexpected shape is
+  // "not ignored", never fatal.
+  try {
+    if (gitignore.ignores(rel)) return true;
+    return isDirectory ? gitignore.ignores(`${rel}/`) : false;
+  } catch {
+    return false;
+  }
 }

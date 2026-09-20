@@ -35,6 +35,14 @@ cache, whose home path binds once at module load. Keep tests as plain
   settings deps: adopt, adopt-orphan-by-cwd, exited-not-relaunched, relaunch
   with `--resume` under the same tab id, nudge gating, owner rules, cwd
   missing, fresh Claude fallback, spawn failure, unreachable executor.
+- `ignoredPathNamespace.test.ts` — `matchIgnoredSourcePath` against the
+  `\\?\C:\…` extended-length paths the Windows recursive watcher reports when
+  a watched ROOT is deleted or renamed. `path.relative` returned them
+  unchanged and the `ignore` package threw from inside an `fs.watch`
+  callback — an uncaughtException that killed the backend the moment a user
+  deleted a project folder Lattice had open (2026-09-20, three crash files in
+  one second). Pins the prefix strip, the other-root / out-of-project cases,
+  and that a throwing matcher reads as "not ignored" rather than fatal.
 - `codexTerminalActivity.test.ts`, `codexActivityReplay.test.ts` — per-launch
   status-title defaults, actual Codex Ready/Working lifecycle traces, animated
   idle output, and a real animations-disabled turn silent for over 20 seconds.

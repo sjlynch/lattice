@@ -39,6 +39,9 @@ from.
   (`session_meta.payload.{id,cwd,timestamp}`): cwd match + started after our
   spawn + not claimed by another record, earliest first; `ambiguous` when two
   Codex tabs share a cwd in the window. Polled for 2 min after each Codex spawn.
+  "After our spawn" is the record's `createdAt`, never the relaunch time: a
+  `codex resume --last` relaunch reopens the ORIGINAL rollout, whose
+  `session_meta` timestamp is the thread's creation.
 - `harnessPaths.ts` — where each harness keeps transcripts (verified on
   Windows): Claude `~/.claude/projects/<cwd, non-alnum → '-'>/<id>.jsonl`, Pi
   `~/.pi/agent/sessions/--<cwd, [/\:] → '-'>--/<ts>_<id>.jsonl`, Codex rollouts.
@@ -66,17 +69,25 @@ from.
   `status`, else Lattice's persisted `lastBusy`). `decideInterruption`:
   nudge only on open + non-idle; any idle evidence vetoes; unknown never
   nudges. Gates the user-tab nudge (`restoreNudgeUserTabs`).
-- `restore.ts` — `restoreProjectTerminals(project)`, single-flighted, safe to
-  re-run. Per non-ended record: pty live → adopt; unclaimed live pty in the
-  same cwd + harness → adopt; pty gone while the executor INSTANCE is
-  unchanged → it exited → end; otherwise relaunch if the owner allows
-  (`user` — cwd must exist; `task`/`merge` — task still `in_progress` (+
-  conflict for merge) with its worktree; `startup` — never, `useStartupTerminals`
-  reseeds those; one-shot runs — never, ended as `owner-finished`).
-  Relaunches clear the dead `serverId` first (every client renders the tab as
-  "restoring", no pane attaches to a dead id), go through the spawn queue at
-  `batch` priority, and land as `restored` / `restore-failed` events. An
-  unreachable executor changes nothing.
+- `restore.ts` — `restoreProjectTerminals(project)`, single-flighted per
+  project **including while its relaunch thunks are still running** (a
+  second pass answers `already-running`; the thunk also skips a record that
+  regained a pty meanwhile), safe to re-run. Candidates are the non-ended
+  records plus ended-but-retryable ones (`cwd-missing` / `restore-failed` get
+  another go once the cause is fixed). Per candidate: pty live → adopt;
+  unclaimed live AGENT pty in the same cwd + harness → adopt (plain shells and
+  startup commands never adopt — with no harness to match on they would claim
+  any pty in the folder); pty gone while the executor INSTANCE is unchanged →
+  it exited → end; otherwise relaunch if the owner allows (`user` — cwd must
+  exist; `task` — still `in_progress` with its worktree; `merge` — task still
+  `conflict`-flagged (it stays `ready_to_merge` while a resolver works) with
+  its worktree; `startup` — never: the dead record is ended silently and
+  `useStartupTerminals` re-seeds a fresh one; one-shot runs — never, ended as
+  `owner-finished`). Relaunches clear the dead `serverId` (and any `ended`
+  marker) first — every client renders the tab as "restoring", no pane
+  attaches to a dead id — go through the spawn queue at `batch` priority, and
+  land as `restored` / `restore-failed` events. An unreachable executor changes
+  nothing.
 - `watch.ts` — `startTerminalRegistryWatch` (boot): every 3 s diff loaded
   records against `/sessions` + `/health.instanceId` (pty missing, same
   instance ⇒ `exit`) and stamp `lastBusy` transitions from the

@@ -158,9 +158,15 @@ test('registeredOrder lists only the project\'s registered tabs in order; restor
     spec({ id: 'w', registered: true }),
   ];
   assert.deepEqual(registeredOrder(list, P), ['x', 'w']);
-  assert.equal(restorableCount([
+  const records = [
     rec({ id: 'a' }),
     rec({ id: 's', owner: 'startup' }),
     rec({ id: 'e', ended: { at: 1, reason: 'cwd-missing' } }),
-  ]), 1);
+    rec({ id: 'b', serverId: 'srv_b' }),
+    rec({ id: 'p', serverId: undefined }),
+  ];
+  assert.equal(restorableCount(records), 3, 'no live set → every candidate counts');
+  assert.equal(restorableCount(records, null), 3, 'unreadable live set → same');
+  assert.equal(restorableCount(records, new Set(['srv_a'])), 2, 'a live pty is nothing to ask about');
+  assert.equal(restorableCount(records, new Set(['srv_a', 'srv_b'])), 1, 'only the pty-less record remains');
 });

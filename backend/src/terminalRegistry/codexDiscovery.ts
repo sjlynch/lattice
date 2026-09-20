@@ -46,11 +46,16 @@ async function readFirstLine(file: string): Promise<string | null> {
   }
 }
 
-// Every rollout started at/after `since` (minus a small clock-skew allowance)
-// in the last two day-directories, newest dirs first.
+// Every rollout started at/after `since` (minus a small clock-skew allowance),
+// scanning as many day-directories back as `since` reaches (plus slack), newest
+// first. A RESUMED thread appends to its original rollout, whose
+// `session_meta` timestamp is the thread's creation — so a relaunched tab must
+// pass the record's original `createdAt`, not the relaunch time, or the file
+// is filtered out and the tab stays id-less.
 export async function scanRecentCodexRollouts(since: number, root = codexSessionsDir()): Promise<CodexRolloutMeta[]> {
   const out: CodexRolloutMeta[] = [];
-  for (const dir of await listCodexDayDirs(root, 2)) {
+  const days = Math.min(30, Math.max(2, Math.ceil((Date.now() - since) / 86_400_000) + 2));
+  for (const dir of await listCodexDayDirs(root, days)) {
     let names: string[];
     try { names = await fs.readdir(dir); } catch { continue; }
     for (const name of names) {
@@ -94,7 +99,9 @@ export async function discoverCodexSessionFor(recordId: string, projectPath: str
   const record = await terminalRegistry.get(recordId, projectPath);
   if (!record || record.ended) return true; // nothing left to do
   if (record.agentSession?.harness === 'codex') return true;
-  const since = record.restoredAt ?? record.createdAt;
+  // The thread this tab runs was created no earlier than the tab itself —
+  // even after a `codex resume --last` relaunch, which reopens an older file.
+  const since = record.createdAt;
   const candidates = await scanRecentCodexRollouts(since);
   const pick = pickCodexSession(candidates, record.cwd, claimedCodexIds());
   if (!pick) return false;

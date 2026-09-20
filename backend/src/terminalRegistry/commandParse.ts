@@ -9,6 +9,8 @@
 // enough for every command Lattice itself produces; a user-typed exotic
 // command that doesn't round-trip is handed back unchanged by the callers.
 
+import { shellDoubleQuoted } from '../agentCommandBuilder.js';
+
 export type CommandToken = {
   value: string;
   // True when the token was quoted in the source, so a re-emit preserves it
@@ -59,9 +61,9 @@ export function tokenizeCommand(command: string): CommandToken[] {
   return tokens;
 }
 
-export function quoteArg(value: string): string {
-  return `"${value.replace(/["\\$`]/g, '\\$&')}"`;
-}
+// Same rule `agentCommandBuilder` quotes prompts with, so a re-emitted prompt
+// is byte-identical to what the original launch carried.
+export const quoteArg = shellDoubleQuoted;
 
 export function renderToken(token: CommandToken): string {
   if (token.quoted || /[\s"'$`\\]/.test(token.value) || token.value === '') {

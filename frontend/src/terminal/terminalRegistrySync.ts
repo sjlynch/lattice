@@ -63,9 +63,9 @@ export function mergeRegistryTabs(
 ): TerminalSpec[] {
   const prevById = new Map(terminals.map((t) => [t.id, t] as const));
   const recordServerIds = new Set(records.map((r) => r.serverId).filter(Boolean));
-  const projected = records
-    .filter((r) => sameProject(r.projectPath, projectPath) || sameProject(prevById.get(r.id)?.projectPath, projectPath) || true)
-    .map((r) => recordToSpec(r, prevById.get(r.id)));
+  // `records` is the registry's answer for THIS project (the fetch and the WS
+  // subscription are both project-scoped), so every one is projected.
+  const projected = records.map((r) => recordToSpec(r, prevById.get(r.id)));
   const others: TerminalSpec[] = [];
   const localUnregistered: TerminalSpec[] = [];
   for (const t of terminals) {
@@ -162,7 +162,18 @@ export function registeredOrder(terminals: TerminalSpec[], projectPath: string):
     .map((t) => t.id);
 }
 
-// How many of a project's records restore could bring back (for 'ask' mode).
-export function restorableCount(records: TerminalRecord[]): number {
-  return records.filter((r) => !r.ended && r.owner !== 'startup').length;
+// How many of a project's records would need a RELAUNCH (for 'ask' mode):
+// non-ended, non-startup records whose pty is not in the live set. A record
+// whose pty is still alive re-attaches on its own, so it is nothing to ask
+// about. `liveServerIds === null` means the live set could not be read; then
+// every candidate counts (prompting is the safe side).
+export function restorableCount(
+  records: TerminalRecord[],
+  liveServerIds: ReadonlySet<string> | null = null,
+): number {
+  return records.filter((r) => {
+    if (r.ended || r.owner === 'startup') return false;
+    if (liveServerIds && r.serverId && liveServerIds.has(r.serverId)) return false;
+    return true;
+  }).length;
 }

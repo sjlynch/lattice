@@ -48,7 +48,7 @@ import {
   restoreTerminalTabs,
   subscribeTerminalTabs,
 } from './api/terminalTabs';
-import type { RestoreSummary, RestoreTerminalsMode } from './api/types/terminalTabs';
+import type { RestoreSummary, RestoreTerminalsMode, TerminalRecord } from './api/types/terminalTabs';
 
 export type { TerminalSpec };
 
@@ -65,6 +65,27 @@ type ProviderProps = {
 };
 
 const ORDER_PATCH_DEBOUNCE_MS = 300;
+
+// A pure re-attach of live tabs happens on every reload and is not worth a
+// notice; relaunches, drops and failures are.
+function isNoteworthy(summary: RestoreSummary): boolean {
+  if (summary.status === 'already-running') return false;
+  if (summary.status !== 'ok') return true;
+  return summary.queued > 0 || summary.dropped.length > 0;
+}
+
+// The live pty ids, or null when the list could not be read ("can't tell").
+async function fetchLiveServerIds(): Promise<ReadonlySet<string> | null> {
+  try {
+    const r = await fetch('/api/terminals');
+    if (!r.ok) return null;
+    const sessions = (await r.json()) as Array<{ id?: unknown }>;
+    if (!Array.isArray(sessions)) return null;
+    return new Set(sessions.map((s) => s.id).filter((id): id is string => typeof id === 'string'));
+  } catch {
+    return null;
+  }
+}
 
 export function TerminalsProvider({ children, activeFolder, restoreMode }: ProviderProps) {
   // Initialize from sessionStorage so terminals persist across reloads in
@@ -120,7 +141,7 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
         // tab asked for: the matching WS `restore-summary` can fire before
         // the socket is even open on a fresh page load. The WS event still
         // covers restores triggered from another browser tab.
-        if (summary.status !== 'already-running') {
+        if (isNoteworthy(summary)) {
           setLastRestore({ projectPath: folder, summary, at: Date.now() });
         }
         // Tabs being relaunched: flag them "restored" now and drop the dead
@@ -149,6 +170,15 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
     return run;
   }, []);
 
+  // The registry's records for the open project, stamped with the folder they
+  // came from. The auto-restore decision keys on THIS (plus the setting), not
+  // on the subscription effect, so the setting arriving a moment after the
+  // folder (restoreMode null → value) never tears the socket down or refetches.
+  const [registryLoaded, setRegistryLoaded] = useState<{
+    folder: string;
+    records: TerminalRecord[];
+  } | null>(null);
+
   useEffect(() => {
     if (!activeFolder) return;
     let cancelled = false;
@@ -160,7 +190,9 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
         return;
       }
       if (ev.type === 'restore-summary') {
-        setLastRestore({ projectPath: activeFolder, summary: ev.summary, at: Date.now() });
+        if (isNoteworthy(ev.summary)) {
+          setLastRestore({ projectPath: activeFolder, summary: ev.summary, at: Date.now() });
+        }
         return;
       }
       setTerminals((ts) => applyTerminalTabsEvent(ts, ev));
@@ -172,15 +204,7 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
       .then((records) => {
         if (cancelled) return;
         setTerminals((ts) => mergeRegistryTabs(ts, records, activeFolder));
-        if (restoreMode === null) return;
-        if (autoRestoredRef.current.has(activeFolder)) return;
-        autoRestoredRef.current.add(activeFolder);
-        if (restoreMode === 'always') {
-          void runRestore();
-        } else if (restoreMode === 'ask') {
-          const count = restorableCount(records);
-          if (count > 0) setRestorePrompt({ count });
-        }
+        setRegistryLoaded({ folder: activeFolder, records });
       })
       .catch((err) => {
         console.warn('[lattice] terminal registry fetch failed:', err);
@@ -189,7 +213,34 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
       cancelled = true;
       unsub();
     };
-  }, [activeFolder, restoreMode, runRestore]);
+  }, [activeFolder]);
+
+  // Auto-restore — once per project per page session — as soon as both the
+  // project's records and its restore setting are known.
+  useEffect(() => {
+    if (!activeFolder || restoreMode === null) return;
+    if (!registryLoaded || registryLoaded.folder !== activeFolder) return;
+    if (autoRestoredRef.current.has(activeFolder)) return;
+    autoRestoredRef.current.add(activeFolder);
+    if (restoreMode === 'always') {
+      void runRestore();
+      return;
+    }
+    if (restoreMode !== 'ask') return;
+    // Only ask when something would actually be relaunched. Tabs whose pty is
+    // still alive re-attach by themselves, and restoring them is a harmless
+    // adopt — so with nothing dead, run that silently.
+    let cancelled = false;
+    void fetchLiveServerIds().then((live) => {
+      if (cancelled) return;
+      const count = restorableCount(registryLoaded.records, live);
+      if (count > 0) setRestorePrompt({ count });
+      else void runRestore();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeFolder, restoreMode, registryLoaded, runRestore]);
 
   // ---- decorations → registry -------------------------------------------
 

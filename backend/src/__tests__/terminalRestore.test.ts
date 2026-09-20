@@ -244,3 +244,86 @@ test('an unreachable terminal-server changes nothing', async () => {
   assert.equal(h.spawns.length, 0);
   assert.equal((await terminalRegistry.get(r.id, h.project))?.serverId, 'tty_old');
 });
+
+// ---- review follow-ups --------------------------------------------------
+
+test('a merge-resolver tab is relaunched while its task is still conflict-flagged (ready_to_merge), else dropped', async () => {
+  const h = await harness();
+  const wt = path.join(h.project, 'wt');
+  await fs.mkdir(wt);
+  const live = await record(h, { owner: 'merge', kind: 'merge', taskId: 'm1', cwd: wt });
+  const done = await record(h, { owner: 'merge', kind: 'merge', taskId: 'm2', cwd: wt, serverId: 'tty_old2' });
+  h.tasks.set('m1', { id: 'm1', projectPath: h.project, title: 'M1', status: 'ready_to_merge', conflict: true, createdAt: 0, worktreePath: wt } as Task);
+  h.tasks.set('m2', { id: 'm2', projectPath: h.project, title: 'M2', status: 'ready_to_merge', createdAt: 0, worktreePath: wt } as Task);
+  const summary = await restoreProjectTerminals(h.project, h.deps);
+  await settle();
+  assert.deepEqual(summary.relaunchedIds, [live.id]);
+  assert.deepEqual(summary.dropped.map((d) => d.id), [done.id]);
+  assert.equal(h.spawns[0]!.registry?.owner, 'merge');
+});
+
+test('a dead startup record is ended silently (the settings re-seed it), not relaunched or reported', async () => {
+  const h = await harness();
+  const r = await record(h, { owner: 'startup', kind: 'startup', startupId: 's1', launch: { initialCommand: 'npm run dev' }, agentSession: undefined });
+  const summary = await restoreProjectTerminals(h.project, h.deps);
+  await settle();
+  assert.equal(h.spawns.length, 0);
+  assert.deepEqual(summary.dropped, []);
+  assert.equal(await terminalRegistry.get(r.id, h.project), null);
+});
+
+test('a plain-shell record never adopts an unrelated live non-agent pty in its cwd', async () => {
+  const h = await harness();
+  const r = await record(h, { launch: {}, agentSession: undefined });
+  h.live.ids = ['tty_devserver'];
+  h.live.sessions = [{ id: 'tty_devserver', cwd: h.project, initialCommand: 'npm run dev' }];
+  const summary = await restoreProjectTerminals(h.project, h.deps);
+  await settle();
+  assert.equal(summary.adopted, 0);
+  assert.deepEqual(summary.relaunchedIds, [r.id]);
+  assert.equal(h.spawns.length, 1);
+  assert.equal(h.spawns[0]!.initialCommand, undefined);
+});
+
+test('a tab whose relaunch failed is retried by the next restore pass', async () => {
+  const h = await harness();
+  const r = await record(h, {});
+  h.deps.createSession = async () => ({ error: 'no slot today' });
+  await restoreProjectTerminals(h.project, h.deps);
+  await settle();
+  assert.equal((await terminalRegistry.get(r.id, h.project))?.ended?.reason, 'restore-failed');
+  // Fixed: the next pass relaunches it and clears the marker.
+  h.deps.createSession = async (opts) => {
+    await terminalRegistry.update(opts.registry!.existingId!, { serverId: 'tty_retry', serverInstanceId: h.live.instanceId, ended: undefined }, opts.projectPath);
+    return { id: 'tty_retry', terminalId: opts.registry!.existingId };
+  };
+  const summary = await restoreProjectTerminals(h.project, h.deps);
+  await settle();
+  assert.deepEqual(summary.relaunchedIds, [r.id]);
+  const after = await terminalRegistry.get(r.id, h.project);
+  assert.equal(after?.ended, undefined);
+  assert.equal(after?.serverId, 'tty_retry');
+});
+
+test('a second restore while relaunches are still in flight is refused, and a relaunched tab is never spawned twice', async () => {
+  const h = await harness();
+  const r = await record(h, {});
+  let finish!: () => void;
+  const gate = new Promise<void>((resolve) => { finish = resolve; });
+  const original = h.deps.createSession;
+  h.deps.createSession = async (opts) => { await gate; return original(opts); };
+  const first = await restoreProjectTerminals(h.project, h.deps);
+  assert.deepEqual(first.relaunchedIds, [r.id]);
+  const second = await restoreProjectTerminals(h.project, h.deps);
+  assert.equal(second.status, 'already-running');
+  finish();
+  await settle();
+  await settle();
+  assert.equal(h.spawns.length, 1);
+  // Once settled, a further pass sees the live pty and only adopts it.
+  h.live.ids = ['tty_new_1'];
+  const third = await restoreProjectTerminals(h.project, h.deps);
+  assert.equal(third.status, 'ok');
+  assert.equal(third.adopted, 1);
+  assert.equal(h.spawns.length, 1);
+});

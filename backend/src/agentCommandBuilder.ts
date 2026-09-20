@@ -45,7 +45,10 @@ export function promptFileName(instructionsFile: string): string {
   return path.basename(instructionsFile);
 }
 
-function shellDoubleQuoted(value: string): string {
+// The ONE quoting rule for a prompt argument on a Lattice-built command line.
+// Also used by `terminalRegistry/commandParse.ts` to re-emit a prompt when a
+// relaunch command is rebuilt, so the two can never drift apart.
+export function shellDoubleQuoted(value: string): string {
   return `"${value.replace(/["\\$`]/g, '\\$&')}"`;
 }
 

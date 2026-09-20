@@ -1,17 +1,23 @@
 // Rebuild a project's terminal tabs after a backend restart, a browser
 // restart, a `Ctrl+C` of the dev server, or a reboot. Triggered on project
 // open (`POST /api/terminal-tabs/restore`) and by the sidebar's "Restore tabs"
-// button. Single-flighted per project; safe to re-run.
+// button. Single-flighted per project — including while its relaunches are
+// still in flight, so an overlapping pass can never double-spawn a tab.
 //
-// Per non-ended record, in tab order:
+// Per candidate record (non-ended, plus ended-but-retryable ones: a tab whose
+// relaunch failed or whose cwd was missing gets another go), in tab order:
 //   1. its pty id is live                    → ADOPT (nothing to do)
-//   2. a live pty with the same cwd+harness  → ADOPT it (record lost its id)
+//   2. an unclaimed live AGENT pty in the same cwd running the same harness
+//                                            → ADOPT it (record lost its id)
 //   3. pty gone, executor instance unchanged → it EXITED → end the record
 //   4. otherwise                             → RELAUNCH, if the owner allows:
 //        user  — cwd must still exist
 //        task  — task still in_progress + worktree present
-//        merge — task still conflict-flagged + worktree present
-//        startup — never (useStartupTerminals owns re-seeding)
+//        merge — task still conflict-flagged (it stays ready_to_merge while a
+//                resolver works) + worktree present
+//        startup — never: the record is ended so useStartupTerminals reseeds
+//                a fresh one from the settings (a dead startup record would
+//                otherwise linger as a dead tab beside the fresh one)
 //        one-shot runs — never (their own recovery owns them) → ended
 //
 // Relaunches go through the spawn queue at batch priority so 40 tabs come
@@ -27,7 +33,7 @@ import { getUserSettings, type UserSettings } from '../userSettings.js';
 import { proxyCreateSession } from '../terminalServerClient/createSession.js';
 import { proxyListSessionsOrNull } from '../terminalServerClient/sessions.js';
 import { normalizeCwd } from './harnessPaths.js';
-import { detectInterruption } from './interruption.js';
+import { detectInterruption, type InterruptionVerdict } from './interruption.js';
 import { buildRestoreCommand, RESTORE_NUDGE } from './restoreCommand.js';
 import { terminalRegistry } from './store.js';
 import type { RestoreDropped, RestoreSummary, TerminalRecord } from './types.js';
@@ -72,7 +78,12 @@ const productionDeps: RestoreDeps = {
   now: Date.now,
 };
 
-type OwnerCheck = { ok: true } | { ok: false; reason: string; end: boolean };
+// Ended records that restore may try again once the user has fixed the cause.
+export function isRetryableEnd(record: TerminalRecord): boolean {
+  return record.ended?.reason === 'cwd-missing' || record.ended?.reason === 'restore-failed';
+}
+
+type OwnerCheck = { ok: true } | { ok: false; reason: string; end: boolean; report: boolean };
 
 async function checkOwner(record: TerminalRecord, deps: RestoreDeps): Promise<OwnerCheck> {
   switch (record.owner) {
@@ -80,70 +91,102 @@ async function checkOwner(record: TerminalRecord, deps: RestoreDeps): Promise<Ow
       return { ok: true };
     case 'task':
     case 'merge': {
-      if (!record.taskId) return { ok: false, reason: 'task id missing', end: true };
+      if (!record.taskId) return { ok: false, reason: 'task id missing', end: true, report: true };
       const task = await deps.getTask(record.taskId);
-      if (!task) return { ok: false, reason: 'task no longer exists', end: true };
-      if (task.status !== 'in_progress') {
-        return { ok: false, reason: `task is ${task.status}`, end: true };
+      if (!task) return { ok: false, reason: 'task no longer exists', end: true, report: true };
+      if (record.owner === 'task' && task.status !== 'in_progress') {
+        return { ok: false, reason: `task is ${task.status}`, end: true, report: true };
       }
       if (record.owner === 'merge' && !task.conflict) {
-        return { ok: false, reason: 'task is no longer in conflict', end: true };
+        return { ok: false, reason: 'task is no longer in conflict', end: true, report: true };
       }
       if (!task.worktreePath || normalizeCwd(task.worktreePath) !== normalizeCwd(record.cwd)) {
-        return { ok: false, reason: 'task worktree moved', end: true };
+        return { ok: false, reason: 'task worktree moved', end: true, report: true };
       }
       return { ok: true };
     }
     case 'startup':
-      return { ok: false, reason: 'startup terminals are re-seeded by their settings', end: false };
+      // Expected turnover, not a dropped tab: the settings re-seed it.
+      return { ok: false, reason: 'startup terminals are re-seeded from their settings', end: true, report: false };
     default:
-      return { ok: false, reason: `${record.owner} runs are owned by their own recovery`, end: true };
+      return { ok: false, reason: `${record.owner} runs are owned by their own recovery`, end: true, report: true };
   }
 }
 
-// Whether to send the continue-nudge for this relaunch.
-async function resolveNudge(record: TerminalRecord, deps: RestoreDeps): Promise<string | undefined> {
+// The nudge decision plus (for Claude) the transcript-exists fact, from ONE
+// read of the harness's files.
+async function planRelaunch(
+  record: TerminalRecord,
+  deps: RestoreDeps,
+): Promise<{ nudge?: string; transcriptExists: boolean }> {
   const settings: UserSettings = await deps.getUserSettings(record.projectPath).catch(() => ({}));
+  const needsVerdict = record.agentSession?.harness === 'claude'
+    || (record.owner === 'user' && settings.restoreNudgeUserTabs === true);
+  let verdict: InterruptionVerdict | null = null;
+  if (needsVerdict) {
+    try { verdict = await deps.detectInterruption(record); } catch { verdict = null; }
+  }
+  let nudge: string | undefined;
   if (record.owner === 'task' || record.owner === 'merge') {
-    return settings.restoreNudgeAgents === false ? undefined : RESTORE_NUDGE;
+    nudge = settings.restoreNudgeAgents === false ? undefined : RESTORE_NUDGE;
+  } else if (record.owner === 'user' && settings.restoreNudgeUserTabs === true) {
+    nudge = verdict?.interruption === 'interrupted' ? RESTORE_NUDGE : undefined;
   }
-  if (record.owner === 'user' && settings.restoreNudgeUserTabs === true) {
-    const verdict = await deps.detectInterruption(record);
-    return verdict.interruption === 'interrupted' ? RESTORE_NUDGE : undefined;
-  }
-  return undefined;
+  return { nudge, transcriptExists: verdict?.transcriptExists === true };
 }
 
-const inFlight = new Map<string, Promise<RestoreSummary>>();
+// Per project: the summary of the pass in progress plus a promise that settles
+// once every relaunch it queued has finished. A second call while that is
+// pending answers `already-running` instead of racing the thunks.
+const inFlight = new Map<string, Promise<void>>();
 
-export function restoreProjectTerminals(
+export async function restoreProjectTerminals(
   projectPath: string,
   deps: RestoreDeps = productionDeps,
 ): Promise<RestoreSummary> {
   const key = normalizeCwd(projectPath);
-  const existing = inFlight.get(key);
-  if (existing) {
-    return Promise.resolve({ status: 'already-running', adopted: 0, queued: 0, dropped: [], relaunchedIds: [] });
+  if (inFlight.has(key)) {
+    return { status: 'already-running', adopted: 0, queued: 0, dropped: [], relaunchedIds: [] };
   }
-  const run = performRestore(projectPath, deps).finally(() => { inFlight.delete(key); });
-  inFlight.set(key, run);
-  return run;
+  let release!: () => void;
+  const settled = new Promise<void>((resolve) => { release = resolve; });
+  inFlight.set(key, settled);
+  try {
+    const { summary, relaunches } = await performRestore(projectPath, deps);
+    // Hold the single-flight until the relaunches are done — but never let a
+    // stuck thunk hold it forever.
+    void Promise.allSettled(relaunches).then(() => {
+      inFlight.delete(key);
+      release();
+    });
+    const guard = setTimeout(() => { inFlight.delete(key); release(); }, 10 * 60_000);
+    guard.unref();
+    return summary;
+  } catch (err) {
+    inFlight.delete(key);
+    release();
+    throw err;
+  }
 }
 
-async function performRestore(projectPath: string, deps: RestoreDeps): Promise<RestoreSummary> {
+async function performRestore(
+  projectPath: string,
+  deps: RestoreDeps,
+): Promise<{ summary: RestoreSummary; relaunches: Promise<void>[] }> {
   const live = await deps.readLiveSessions();
   if (!live) {
     const summary: RestoreSummary = {
       status: 'terminal-server-unreachable', adopted: 0, queued: 0, dropped: [], relaunchedIds: [],
     };
     terminalRegistry.emitRestoreSummary(projectPath, summary);
-    return summary;
+    return { summary, relaunches: [] };
   }
   // Load the project's records, then apply the exit rule across everything
   // loaded so a pty that died while the executor lived is never relaunched.
   await terminalRegistry.list(projectPath);
   await reconcileExitedTerminals(live);
-  const records = await terminalRegistry.list(projectPath);
+  const records = (await terminalRegistry.list(projectPath, { includeEnded: true }))
+    .filter((r) => !r.ended || isRetryableEnd(r));
   const liveSessions = await deps.listLiveSessions();
   const claimed = new Set<string>();
   for (const r of records) if (r.serverId && live.serverIds.has(r.serverId)) claimed.add(r.serverId);
@@ -152,6 +195,7 @@ async function performRestore(projectPath: string, deps: RestoreDeps): Promise<R
   let queued = 0;
   const dropped: RestoreDropped[] = [];
   const relaunchedIds: string[] = [];
+  const relaunches: Promise<void>[] = [];
 
   for (const record of records) {
     // 1. pty still live → adopt.
@@ -160,19 +204,25 @@ async function performRestore(projectPath: string, deps: RestoreDeps): Promise<R
       terminalRegistry.emitRestored(record, 'adopted');
       continue;
     }
-    // 2. an unclaimed live pty in the same cwd running the same harness → adopt.
+    // 2. an unclaimed live AGENT pty in the same cwd running the same harness
+    //    → adopt. Plain shells and startup commands never adopt: with no
+    //    harness to match on, a dead shell record would claim whatever
+    //    non-agent pty happened to open in that folder (a freshly re-seeded
+    //    `npm run dev`, say).
     const harness = agentHarnessForCommand(record.launch.initialCommand);
-    const orphan = liveSessions.find((s) =>
-      !claimed.has(s.id) && normalizeCwd(s.cwd) === normalizeCwd(record.cwd)
-      && agentHarnessForCommand(s.initialCommand) === harness);
-    if (orphan) {
-      claimed.add(orphan.id);
-      const updated = await terminalRegistry.update(record.id, {
-        serverId: orphan.id, serverInstanceId: live.instanceId ?? undefined,
-      }, record.projectPath);
-      adopted += 1;
-      terminalRegistry.emitRestored(updated ?? record, 'adopted');
-      continue;
+    if (harness && !record.ended) {
+      const orphan = liveSessions.find((s) =>
+        !claimed.has(s.id) && normalizeCwd(s.cwd) === normalizeCwd(record.cwd)
+        && agentHarnessForCommand(s.initialCommand) === harness);
+      if (orphan) {
+        claimed.add(orphan.id);
+        const updated = await terminalRegistry.update(record.id, {
+          serverId: orphan.id, serverInstanceId: live.instanceId ?? undefined,
+        }, record.projectPath);
+        adopted += 1;
+        terminalRegistry.emitRestored(updated ?? record, 'adopted');
+        continue;
+      }
     }
     // 3. (handled by reconcileExitedTerminals: exited records are gone by now)
     // 4. relaunch, if the owner allows.
@@ -180,7 +230,7 @@ async function performRestore(projectPath: string, deps: RestoreDeps): Promise<R
     if (!owner.ok) {
       if (owner.end) {
         await terminalRegistry.end(record.id, { reason: 'owner-finished', detail: owner.reason }, record.projectPath);
-        dropped.push({ id: record.id, label: record.label, reason: owner.reason });
+        if (owner.report) dropped.push({ id: record.id, label: record.label, reason: owner.reason });
       }
       continue;
     }
@@ -193,41 +243,38 @@ async function performRestore(projectPath: string, deps: RestoreDeps): Promise<R
     relaunchedIds.push(record.id);
     // The recorded pty is dead: drop its id now so every client renders the
     // tab as "restoring" (no pane attaches to a dead id) until the relaunch
-    // lands a new one.
-    await terminalRegistry.update(record.id, { serverId: undefined, serverInstanceId: undefined }, record.projectPath);
-    enqueueRelaunch(record, deps);
+    // lands a new one. A retried failure sheds its `ended` marker the same way.
+    await terminalRegistry.update(record.id, {
+      serverId: undefined, serverInstanceId: undefined, ended: undefined,
+    }, record.projectPath);
+    relaunches.push(enqueueRelaunch(record, deps));
   }
 
   const summary: RestoreSummary = { status: 'ok', adopted, queued, dropped, relaunchedIds };
   terminalRegistry.emitRestoreSummary(projectPath, summary);
-  return summary;
+  return { summary, relaunches };
 }
 
-function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): void {
+function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): Promise<void> {
   const { done } = deps.enqueue<void>({
     kind: 'terminal-restore',
     priority: 'batch',
     dedupeKey: `terminal-restore:${record.id}`,
     thunk: async () => {
       const current = await terminalRegistry.get(record.id, record.projectPath);
-      if (!current || current.ended) return; // closed while queued
+      // Closed while queued, or already backed by a pty again (another pass
+      // adopted / relaunched it in the meantime): nothing to spawn.
+      if (!current || current.ended || current.serverId) return;
       const fail = async (reason: string) => {
         await terminalRegistry.end(current.id, { reason: 'restore-failed', detail: reason }, current.projectPath);
         terminalRegistry.emitRestoreFailed(current, reason);
       };
-      let nudge: string | undefined;
-      let transcriptExists = false;
-      try {
-        nudge = await resolveNudge(current, deps);
-        if (current.agentSession?.harness === 'claude') {
-          transcriptExists = (await deps.detectInterruption(current)).transcriptExists === true;
-        }
-      } catch { /* nudge / evidence are best-effort */ }
+      const plan = await planRelaunch(current, deps);
       const built = buildRestoreCommand({
         launch: current.launch,
         agentSession: current.agentSession,
-        claudeTranscriptExists: transcriptExists,
-        nudge,
+        claudeTranscriptExists: plan.transcriptExists,
+        nudge: plan.nudge,
       });
       const sess = await deps.createSession({
         cwd: current.cwd,
@@ -260,7 +307,7 @@ function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): void {
       }
     },
   });
-  done.catch(async (err: unknown) => {
+  return done.catch(async (err: unknown) => {
     const reason = err instanceof Error ? err.message : String(err);
     const current = await terminalRegistry.get(record.id, record.projectPath).catch(() => null);
     if (!current || current.ended) return;
