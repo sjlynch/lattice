@@ -22,6 +22,7 @@ import {
 import { validateMcpServer } from '../mcp/validators.js';
 import { applyImport, scanImportableServers } from '../mcp/importConfigs.js';
 import { canonicalProjectPath } from '../projectPath.js';
+import { readProjectParam } from './projectParam.js';
 
 export function buildMcpRouter(): Router {
   const r = Router();
@@ -92,7 +93,8 @@ export function buildMcpRouter(): Router {
   // Scan other tools' MCP configs (Claude Code / Cursor / Codex / VS Code /
   // Windsurf). Secrets redacted to presence booleans.
   r.get('/api/mcp-import/scan', async (req, res) => {
-    const project = typeof req.query.project === 'string' ? req.query.project : '';
+    const project = readProjectParam(req, res, { source: 'query', optional: true });
+    if (project === null) return;
     const projectPath = project ? canonicalProjectPath(project) : undefined;
     res.json(await scanImportableServers(projectPath));
   });
@@ -105,10 +107,9 @@ export function buildMcpRouter(): Router {
       ? body.ids.filter((x): x is string => typeof x === 'string')
       : [];
     if (ids.length === 0) return res.status(400).json({ error: 'ids required' });
-    const projectPath =
-      typeof body.project === 'string' && body.project
-        ? canonicalProjectPath(body.project)
-        : undefined;
+    const project = readProjectParam(req, res, { source: 'body', optional: true });
+    if (project === null) return;
+    const projectPath = project ? canonicalProjectPath(project) : undefined;
     res.json(await applyImport(ids, projectPath));
   });
 

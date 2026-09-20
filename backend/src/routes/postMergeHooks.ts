@@ -28,14 +28,14 @@ import { unregisterAgentSession } from '../agentSessions.js';
 import { forgetAgentQuiescence } from '../agentQuiescence.js';
 import { cleanupPostMergeHookSession } from '../postMergeHooks/cleanup.js';
 import { finishHomeScratchDoneResponse } from '../homeScratch/routes.js';
+import { readProjectParam } from './projectParam.js';
 
 export function buildPostMergeHooksRouter(): Router {
   const r = Router();
 
   r.get('/api/post-merge-hooks/active', (req, res) => {
-    const project =
-      typeof req.query.project === 'string' ? req.query.project : '';
-    if (!project) return res.status(400).json({ error: 'project required' });
+    const project = readProjectParam(req, res, { source: 'query' });
+    if (project === null) return;
     const key = canonicalProjectPath(project);
     const active = getActiveHookForProject(key);
     if (active) return res.json({ active, recent: null });

@@ -25,6 +25,10 @@ import fsp from 'node:fs/promises';
 // low-level file-tail mechanics live in `scrollbackLogFile.ts` and the
 // boot-time directory wipe in `scrollbackCleanup.ts`.
 
+const RENAME_ATTEMPTS = 5;
+const RENAME_RETRY_MS = 40;
+const COMPACT_RETRY_COOLDOWN_MS = 5_000;
+
 export type ScrollbackStoreOptions = {
   // Directory the log file lives in. Defaults to the shared
   // ~/.lattice/terminal-scrollback. Overridable for tests.
@@ -53,6 +57,10 @@ export class ScrollbackStore {
   // The in-flight async compaction (see compact()). While it runs, flushes
   // are held in `pending` so no append lands between its read and its rename.
   private compaction: Promise<void> | null = null;
+  // After a compaction whose rename failed (see compact()), don't retry before
+  // this time: each attempt re-reads the kept tail, and a threshold-crossing
+  // flush arrives every 64 KB.
+  private compactNotBefore = 0;
 
   constructor(id: string, opts: ScrollbackStoreOptions = {}) {
     const dir = opts.dir ?? terminalScrollbackDir();
@@ -141,7 +149,9 @@ export class ScrollbackStore {
       this.diskBytes += Buffer.byteLength(chunk);
       this.pending = [];
       this.pendingBytes = 0;
-      if (this.diskBytes > this.maxDiskBytes) this.compaction = this.compact();
+      if (this.diskBytes > this.maxDiskBytes && Date.now() >= this.compactNotBefore) {
+        this.compaction = this.compact();
+      }
     } catch {
       // Disk unavailable — degrade to a bounded in-memory tail (keep pending
       // so recent output still replays). Never throw out of the pty data path.
@@ -165,8 +175,27 @@ export class ScrollbackStore {
       if (this.disposed) return;
       await fsp.writeFile(tmp, kept);
       if (this.disposed) return;
-      await fsp.rename(tmp, this.filePath);
-      this.diskBytes = kept.length;
+      // The rename runs on a worker thread, so on Windows it can land while a
+      // concurrent replay() holds the log open for its synchronous readTail —
+      // and Windows refuses to replace a file another handle has open (EPERM
+      // / EBUSY, momentarily). That is not "disk unavailable": retry briefly,
+      // and if it still fails leave the OLD log intact (it is complete, just
+      // over the cap) rather than dropping to memory-only for the rest of the
+      // session, and try again at the next crossing after a cooldown.
+      let renamed = false;
+      for (let attempt = 0; attempt < RENAME_ATTEMPTS && !this.disposed; attempt++) {
+        try {
+          await fsp.rename(tmp, this.filePath);
+          renamed = true;
+          break;
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') throw err;
+          await new Promise((r) => setTimeout(r, RENAME_RETRY_MS));
+        }
+      }
+      if (renamed) this.diskBytes = kept.length;
+      else this.compactNotBefore = Date.now() + COMPACT_RETRY_COOLDOWN_MS;
     } catch {
       if (!this.disposed) this.degraded = true;
     } finally {

@@ -8,13 +8,14 @@ import { Router } from 'express';
 import { describeProjectEnvs } from '../../worktree.js';
 import { getUserSettings } from '../../userSettings.js';
 import { canonicalProjectPath } from '../../projectPath.js';
+import { readProjectParam } from '../projectParam.js';
 
 export function buildProjectEnvRouter(): Router {
   const r = Router();
 
   r.get('/api/project-env', async (req, res) => {
-    const project = typeof req.query.project === 'string' ? req.query.project : '';
-    if (!project) return res.status(400).json({ error: 'project required' });
+    const project = readProjectParam(req, res, { source: 'query' });
+    if (project === null) return;
     const repoRoot = canonicalProjectPath(project);
     const settings = await getUserSettings(repoRoot);
     const environments = await describeProjectEnvs(repoRoot, settings);

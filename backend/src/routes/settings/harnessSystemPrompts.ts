@@ -6,13 +6,14 @@
 
 import { Router } from 'express';
 import { buildHarnessSystemPromptEditorData } from '../../harnessSystemPrompts.js';
+import { readProjectParam } from '../projectParam.js';
 
 export function buildHarnessSystemPromptsRouter(): Router {
   const r = Router();
 
   r.get('/api/harness-system-prompts', async (req, res) => {
-    const project = typeof req.query.project === 'string' ? req.query.project : '';
-    if (!project) return res.status(400).json({ error: 'project required' });
+    const project = readProjectParam(req, res, { source: 'query' });
+    if (project === null) return;
     const harnesses = await buildHarnessSystemPromptEditorData(project);
     res.json({ harnesses });
   });

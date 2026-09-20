@@ -10,24 +10,36 @@ import {
   type WorkflowStep,
   type WorkflowVariable,
 } from '../../workflows.js';
+import { readProjectParam } from '../projectParam.js';
 
 export function buildWorkflowCrudRouter(): Router {
   const r = Router();
 
   r.get('/api/workflows', async (req, res) => {
-    const project = typeof req.query.project === 'string' ? req.query.project : '';
-    if (!project) return res.status(400).json({ error: 'project required' });
+    const project = readProjectParam(req, res, { source: 'query' });
+    if (project === null) return;
     res.json(await listWorkflows(project));
   });
 
+  // A relative project would land the definitions file under the backend's
+  // own cwd (`<backend>/<project>/.lattice/workflows.json`); refused.
   r.post('/api/workflows', async (req, res) => {
-    const { project, name, steps, variables } = (req.body || {}) as {
-      project?: string;
+    const project = readProjectParam(req, res);
+    if (project === null) return;
+    const { name, steps, variables } = (req.body || {}) as {
       name?: string;
       steps?: WorkflowStep[];
       variables?: WorkflowVariable[];
     };
-    if (!project) return res.status(400).json({ error: 'project required' });
+    if (name !== undefined && typeof name !== 'string') {
+      return res.status(400).json({ error: 'name must be a string' });
+    }
+    if (steps !== undefined && !Array.isArray(steps)) {
+      return res.status(400).json({ error: 'steps must be an array' });
+    }
+    if (variables !== undefined && !Array.isArray(variables)) {
+      return res.status(400).json({ error: 'variables must be an array' });
+    }
     const w = await createWorkflow(project, name ?? '', steps, variables);
     res.json(w);
   });
@@ -38,6 +50,15 @@ export function buildWorkflowCrudRouter(): Router {
       steps?: WorkflowStep[];
       variables?: WorkflowVariable[];
     };
+    if (updates.name !== undefined && typeof updates.name !== 'string') {
+      return res.status(400).json({ error: 'name must be a string' });
+    }
+    if (updates.steps !== undefined && !Array.isArray(updates.steps)) {
+      return res.status(400).json({ error: 'steps must be an array' });
+    }
+    if (updates.variables !== undefined && !Array.isArray(updates.variables)) {
+      return res.status(400).json({ error: 'variables must be an array' });
+    }
     const w = await updateWorkflow(req.params.id, updates);
     if (!w) return res.status(404).json({ error: 'not found' });
     res.json(w);

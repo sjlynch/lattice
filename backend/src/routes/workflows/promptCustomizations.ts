@@ -3,6 +3,7 @@
 // Backed by workflowPromptCustomizations.ts.
 
 import { Router } from 'express';
+import { readProjectParam } from '../projectParam.js';
 import {
   completeWorkflowPromptCustomization,
   getWorkflowPromptCustomization,
@@ -14,6 +15,9 @@ export function buildWorkflowPromptCustomizationsRouter(backendOrigin: string): 
   const r = Router();
 
   r.post('/api/workflow-prompt-customizations', async (req, res) => {
+    // The session's scratch lives under `<project>/.lattice/`, so a relative
+    // project is refused before it can resolve under the backend's cwd.
+    if (readProjectParam(req, res, { source: 'body' }) === null) return;
     try {
       const body = (req.body || {}) as {
         project?: string;

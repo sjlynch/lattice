@@ -18,11 +18,7 @@ Implementation pieces for `../Sidebar.tsx`.
   tab's `label` / `owner` / `startupId` so the record carries them; the returned
   `terminalId` becomes the tab's own id (`registered: true`). Only a pre-create
   failure leaves a tab serverless — and therefore not restorable.
-- `RestoreNotice.tsx` — the strip under the header for the registry restore:
-  the 'ask'-mode prompt ("N tabs from your last session can be restored") and
-  the last pass's summary (`describeRestoreSummary`: re-attached / relaunching /
-  dropped-with-reason). The header also carries a manual "Restore tabs" button.
-  Beneath bare "Pi" it also lists one **"Pi — <model>"** row per curated Pi model
+  Beneath bare "Pi" the menu also lists one **"Pi — <model>"** row per curated Pi model
   (the `GET /api/pi-models` `.menu`, fetched once in `Sidebar.tsx` and passed as
   `piMenu`). Picking one spawns `pi --approve --model "<provider/model>"` —
   per-spawn model selection, same as the taskboard/workflow harness pickers.
@@ -36,6 +32,10 @@ Implementation pieces for `../Sidebar.tsx`.
   `--dangerously-skip-permissions`); `createTerminalSpec` drops the flag to plain
   `codex` when the `codexYolo` setting (Settings → Terminals) is off — the flag
   is passed down from `terminalLaunchSettings.codexYolo`.
+- `RestoreNotice.tsx` — the strip under the header for the registry restore:
+  the 'ask'-mode prompt ("N tabs from your last session can be restored") and
+  the last pass's summary (`describeRestoreSummary`: re-attached / relaunching /
+  dropped-with-reason). The header also carries a manual "Restore tabs" button.
 - `SidebarPanelTabs.tsx` — Terminals / Merging / Startup panel switcher (Merging
   tab carries a count badge; each shown only when non-empty).
 - `SidebarTabsBar.tsx` — the scrollable tab strip: scroll arrows, HTML5
@@ -81,9 +81,17 @@ Implementation pieces for `../Sidebar.tsx`.
   confirms the bulk close first, since the ptys are killed); the popover markup is
   rendered by `TabContextMenu.tsx`.
 - `hooks/useStartupTerminals.ts` — validates/reseeds startup ptys and exposes
-  restart-all. Its stale-drop (a spec whose `serverId` is no longer live)
-  applies ONLY to unregistered legacy specs: a registered tab's dead pty is the
-  registry restore's to relaunch, and closing it here would DELETE the record.
+  restart-all. The seeding decision is the pure `startupSeedPlan.ts`
+  (`planStartupSeeding`, unit-tested): it reads `GET /api/terminals` AND the
+  registry snapshot (`fetchTerminalTabs`), because the sidebar's local list
+  lags the registry — on a fresh browser context it is EMPTY until the
+  snapshot lands, and deciding from it alone spawned a second `npm run dev`
+  for a startup whose pty was alive and about to be re-attached. A startup
+  record with a live pty blocks the spawn; a dead or ended one does not (the
+  restore pass ends dead startup records silently and this hook reseeds).
+  Its stale-drop (a spec whose `serverId` is no longer live) applies ONLY to
+  unregistered legacy specs: a registered tab's dead pty is the registry
+  restore's to relaunch, and closing it here would DELETE the record.
 - `hooks/useMountedTerminalIds.ts` — owns `mountedIds`: lazy-mounts
   `TerminalPane` only after first activation (startup panes excepted), which
   prevents WebGL context exhaustion across many pre-spawned panes. A tab in a

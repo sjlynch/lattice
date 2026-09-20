@@ -258,6 +258,13 @@ therefore stay safely re-runnable.
 | WS | `/ws/git-status?project=` | Compact git-status *signature* (HEAD + dirty set) for the active project, pushed on connect and whenever a commit/stage/checkout or a working-tree edit changes it. The timeline scrubber re-fetches `/api/git-history` on a new signature (deduped against the one it last fetched), so the commit list + uncommitted view update live instead of only on page refresh |
 | WS | `/ws/harnesses` | Harness availability snapshots/refresh notifications |
 
+Every project-scoped route refuses a relative or drive-relative `project`
+(or `path` / `cwd`) with a **400** naming the likely cause (shell-stripped
+backslashes: `C:developmentproj`). The stores resolve paths via
+`canonicalProjectPath` = `path.resolve`, so such a value would land under the
+backend's own cwd — `backend/src/routes/projectParam.ts` (non-task routes) and
+`routes/tasks/requestUtils.ts` (task routes) are the guards.
+
 All WS endpoints share the HTTP server via a single `upgrade` dispatcher
 (`noServer: true`); routing by `pathname` so multiple WSs can coexist.
 
@@ -522,8 +529,10 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   which is what made a sidebar drag or a reconnect take minutes. The
   frontend also sends the pty ONE resize per settled drag
   (`terminalSocket.ts` `RESIZE_DEBOUNCE_MS`), refits only the visible pane,
-  and resets the xterm buffer on every `attached` frame so a reconnect's
-  scrollback replay is painted once, not appended under the old content.
+  and clears the xterm buffer (never a full reset, which would drop the TUI's
+  bracketed-paste / mouse / alt-screen modes) on every `attached` frame so a
+  reconnect's scrollback replay is painted once, not appended under the old
+  content.
   **Claude/Pi use sustained printable output that the user isn't driving**;
   focus, scrolling and resizing must not accumulate false busy runs.
   `backend/src/terminalActivity.ts` derives the signal and pushes it over
@@ -559,7 +568,10 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   the interruption detector finds the agent was mid-turn. One-shot runs (push /
   QA / post-merge / workflow steps) are owned by their own recovery and never
   resurrected here. Scrollback is not restored across a reboot (harness TUIs
-  re-render on resume).
+  re-render on resume). Startup terminals are reseeded by the sidebar
+  (`useStartupTerminals` → `planStartupSeeding`), which consults the registry
+  snapshot as well as the live pty list, so a startup whose pty is alive is
+  never spawned a second time on a fresh browser context.
 - **Terminal pty pre-spawn.** When a task/workflow/conflict spawn would
   produce a UI terminal, the backend pre-creates the pty via the
   terminal-server's `POST /sessions` and ships back a `serverId`. The

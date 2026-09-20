@@ -1,0 +1,105 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import { access, mkdtemp, rm } from 'node:fs/promises';
+import { readProjectParam } from '../routes/projectParam.js';
+
+// Every per-project store resolves its path through canonicalProjectPath ==
+// path.resolve, so a RELATIVE `project` used to land under the backend's own
+// cwd: `PATCH /api/settings?project=foo` created
+// `<backend>/foo/.lattice/userSettings.json`, and the workflow / terminal-tab
+// / merge-run / instrumentation routes did the same for their stores. The
+// task routes have refused this for a while; `readProjectParam` extends the
+// rule to every other project-scoped route.
+
+async function listen(server: http.Server): Promise<number> {
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return (server.address() as AddressInfo).port;
+}
+
+async function close(server: http.Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((err) => (err ? reject(err) : resolve()));
+  });
+}
+
+function fakeRes() {
+  const sent = { status: null as number | null, body: null as unknown };
+  const res = {
+    status(n: number) { sent.status = n; return res; },
+    json(b: unknown) { sent.body = b; return res; },
+  };
+  return { res: res as unknown as Parameters<typeof readProjectParam>[1], sent };
+}
+
+test('readProjectParam: query first, then body; trims; refuses relative; optional yields empty', () => {
+  const abs = path.resolve(os.tmpdir(), 'proj');
+  const { res, sent } = fakeRes();
+  assert.equal(readProjectParam({ query: { project: ` ${abs} ` }, body: { project: 'ignored' } }, res), abs);
+  assert.equal(readProjectParam({ query: {}, body: { project: abs } }, res), abs);
+  assert.equal(readProjectParam({ query: {}, body: { project: abs } }, res, { source: 'query' }), null);
+  assert.equal(sent.status, 400);
+  assert.equal(readProjectParam({ query: { project: 'C:developmentproj' }, body: {} }, res), null);
+  assert.match(String((sent.body as { error: string }).error), /absolute path/);
+  assert.equal(readProjectParam({ query: {}, body: {} }, res, { optional: true }), '');
+  assert.equal(readProjectParam({ query: { project: 'rel' }, body: {} }, res, { optional: true }), null);
+});
+
+test('project-scoped routes refuse a relative project with 400 and create nothing under the backend cwd', async () => {
+  const tmpHome = await mkdtemp(path.join(os.tmpdir(), 'lattice-relproj-'));
+  const originalEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = tmpHome;
+  process.env.USERPROFILE = tmpHome;
+  const rel = `lattice-relproj-probe-${Date.now()}`;
+  let server: http.Server | null = null;
+  try {
+    const { createBackendApp } = await import('../server/app.js');
+    const app = createBackendApp({ defaultRoot: tmpHome, backendOrigin: 'http://127.0.0.1:5184' });
+    server = http.createServer(app);
+    const port = await listen(server);
+    const base = `http://127.0.0.1:${port}`;
+    const q = `project=${encodeURIComponent(rel)}`;
+    const json = { 'Content-Type': 'application/json' };
+    const calls: Array<[string, RequestInit?]> = [
+      [`/api/settings?${q}`],
+      [`/api/settings?${q}`, { method: 'PATCH', headers: json, body: JSON.stringify({ sidebarWidth: 400 }) }],
+      [`/api/instruction-templates?${q}`],
+      [`/api/harness-system-prompts?${q}`],
+      [`/api/project-env?${q}`],
+      [`/api/workflows?${q}`],
+      ['/api/workflows', { method: 'POST', headers: json, body: JSON.stringify({ project: rel, name: 'x' }) }],
+      [`/api/workflow-runs/active?${q}`],
+      [`/api/terminal-tabs?${q}`],
+      [`/api/terminal-tabs/restore?${q}`, { method: 'POST' }],
+      [`/api/terminal-tabs?${q}`, { method: 'PATCH', headers: json, body: JSON.stringify({ order: [] }) }],
+      ['/api/merge-runs', { method: 'POST', headers: json, body: JSON.stringify({ project: rel }) }],
+      [`/api/merge-runs/active?${q}`],
+      [`/api/merge-runs/recovery?${q}`],
+      [`/api/post-merge-hooks/active?${q}`],
+      ['/api/project-instrumentation', { method: 'POST', headers: json, body: JSON.stringify({ project: rel }) }],
+      ['/api/push-runs', { method: 'POST', headers: json, body: JSON.stringify({ project: rel }) }],
+      [`/api/git-check?path=${encodeURIComponent(rel)}`],
+      ['/api/qa-runs', { method: 'POST', headers: json, body: JSON.stringify({ project: rel, taskId: 't' }) }],
+      ['/api/workflow-prompt-customizations', { method: 'POST', headers: json, body: JSON.stringify({ project: rel, prompt: 'p' }) }],
+      [`/api/mcp-import/scan?${q}`],
+      ['/api/terminals', { method: 'POST', headers: json, body: JSON.stringify({ cwd: rel }) }],
+    ];
+    for (const [p, init] of calls) {
+      const res = await fetch(base + p, init);
+      const body = (await res.json()) as { error?: string };
+      assert.equal(res.status, 400, `${init?.method ?? 'GET'} ${p} → ${res.status} ${JSON.stringify(body)}`);
+      assert.match(String(body.error), /absolute path/, `${p}: ${body.error}`);
+    }
+    // Nothing was born under the backend's cwd for the phantom project.
+    await assert.rejects(access(path.join(process.cwd(), rel)));
+  } finally {
+    if (server) await close(server);
+    process.env.HOME = originalEnv.HOME;
+    process.env.USERPROFILE = originalEnv.USERPROFILE;
+    await rm(tmpHome, { recursive: true, force: true });
+    await rm(path.join(process.cwd(), rel), { recursive: true, force: true });
+  }
+});

@@ -10,10 +10,19 @@ export function startChild(
   args,
   { filterViteProxy = false, cwd = ROOT } = {},
 ) {
-  const child = spawn(npmCmd, args, {
+  // On Windows npm is a .cmd shim that only a shell can launch. Hand the shell
+  // ONE command string instead of args + shell:true — that combination trips
+  // Node's DEP0190 deprecation warning at every boot (twice: once per child).
+  // The args are constant npm script names, never user input; refuse anything
+  // else so the string can't smuggle shell syntax.
+  const win = process.platform === 'win32';
+  if (win && args.some((a) => !/^[\w.:-]+$/.test(a))) {
+    throw new Error(`startChild: refusing to shell-join non-word argument in ${JSON.stringify(args)}`);
+  }
+  const child = spawn(win ? `${npmCmd} ${args.join(' ')}` : npmCmd, win ? [] : args, {
     cwd,
     stdio: ['inherit', 'pipe', 'pipe'],
-    shell: process.platform === 'win32',
+    shell: win,
     env: process.env,
   });
 

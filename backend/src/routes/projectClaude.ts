@@ -14,16 +14,18 @@
 import { Router } from 'express';
 import { applyProjectActivityHook } from '../projectClaude/activity.js';
 import { reconcileProjectInstrumentation } from '../projectClaude/reconcile.js';
+import { readProjectParam } from './projectParam.js';
 
 export { applyProjectActivityEvent } from '../projectClaude/lifecycle.js';
 
 export function buildProjectClaudeRouter(backendOrigin: string): Router {
   const r = Router();
 
+  // Writes `<project>/.claude/settings.local.json`, so a relative project is
+  // refused before it can resolve under the backend's cwd.
   r.post('/api/project-instrumentation', async (req, res) => {
-    const project =
-      typeof req.body?.project === 'string' ? req.body.project : '';
-    if (!project) return res.status(400).json({ error: 'project required' });
+    const project = readProjectParam(req, res);
+    if (project === null) return;
     try {
       const result = await reconcileProjectInstrumentation(project, backendOrigin);
       res.json({ ok: true, ...result });

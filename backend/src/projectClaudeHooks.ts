@@ -17,6 +17,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { canonicalProjectPath } from './projectPath.js';
 import { encodeAgentToken } from './agentActivityTokens.js';
+import { atomicWriteFile } from './claudeTrust/configFile.js';
 
 const URL_MARKER = '/api/project-activity/';
 const FILE_TOOL_MATCHER = 'Read|Edit|Write|MultiEdit|NotebookEdit';
@@ -88,12 +89,36 @@ function stripLatticeEntries(hooks: HooksMap): HooksMap {
   return hooks;
 }
 
-async function readJson(file: string): Promise<Record<string, unknown> | null> {
+// A settings file that exists but does not parse (the user mid-edit, a stray
+// trailing comma, a non-object root). Distinct from ABSENT: every writer below
+// must leave such a file alone — treating it as `{}` and writing back used to
+// replace the user's whole `settings.local.json` (permissions, env, their own
+// hooks) with just Lattice's entries.
+const MALFORMED = Symbol('malformed-settings');
+
+async function readJson(
+  file: string,
+): Promise<Record<string, unknown> | null | typeof MALFORMED> {
+  let raw: string;
   try {
-    return JSON.parse(await fs.readFile(file, 'utf8')) as Record<string, unknown>;
+    raw = await fs.readFile(file, 'utf8');
   } catch {
     return null;
   }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : MALFORMED;
+  } catch {
+    return MALFORMED;
+  }
+}
+
+function warnMalformed(file: string, action: string): void {
+  console.warn(
+    `[project-claude-hooks] ${file} exists but is not a JSON object; ${action} skipped so the file is never overwritten`,
+  );
 }
 
 // Write `next` only if it differs from what's on disk; returns whether it wrote.
@@ -106,7 +131,10 @@ async function writeIfChanged(file: string, next: string): Promise<boolean> {
   }
   if (prev === next) return false;
   await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(file, next, 'utf8');
+  // This is the USER's own `.claude/settings.local.json` (their permissions,
+  // hooks, env). Temp + rename, never an in-place write: a crash or a
+  // force-kill mid-write would otherwise leave it truncated.
+  await atomicWriteFile(file, next);
   return true;
 }
 
@@ -118,7 +146,9 @@ export async function installProjectClaudeHooks(
 ): Promise<void> {
   const root = canonicalProjectPath(projectPath);
   const file = settingsLocalFile(root);
-  const settings = (await readJson(file)) ?? {};
+  const existing = await readJson(file);
+  if (existing === MALFORMED) return warnMalformed(file, 'hook install');
+  const settings = existing ?? {};
   const hooks: HooksMap =
     settings.hooks && typeof settings.hooks === 'object'
       ? (settings.hooks as HooksMap)
@@ -142,6 +172,7 @@ export async function removeProjectClaudeHooks(
   const root = canonicalProjectPath(projectPath);
   const file = settingsLocalFile(root);
   const settings = await readJson(file);
+  if (settings === MALFORMED) return warnMalformed(file, 'hook removal');
   if (!settings || typeof settings.hooks !== 'object' || !settings.hooks) return;
   stripLatticeEntries(settings.hooks as HooksMap);
   if (Object.keys(settings.hooks as HooksMap).length === 0) delete settings.hooks;
@@ -161,7 +192,9 @@ export async function setProjectClaudeMemoryDisabled(
 ): Promise<void> {
   const root = canonicalProjectPath(projectPath);
   const file = settingsLocalFile(root);
-  const settings = (await readJson(file)) ?? {};
+  const existing = await readJson(file);
+  if (existing === MALFORMED) return warnMalformed(file, 'auto-memory reconcile');
+  const settings = existing ?? {};
   if (disabled) {
     if (settings.autoMemoryEnabled === false) return;
     settings.autoMemoryEnabled = false;

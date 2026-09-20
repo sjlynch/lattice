@@ -36,9 +36,13 @@ CLAUDE.md) — different directory, don't conflate.
   its settled size — every pty resize is a SIGWINCH, and Codex (since its
   resize-reflow shipped) clears and re-emits up to thousands of transcript rows
   per width change, which turned one drag into minutes of redraw; and **an
-  `attached` frame resets the xterm buffer** before the scrollback replay that
+  `attached` frame clears the xterm buffer** before the scrollback replay that
   follows it — a reconnect used to append the ~2 MB replay under the content the
-  pane already showed. Pinned by `__tests__/terminalSocketResize.test.ts`.
+  pane already showed. It is `term.clear()`, never `term.reset()`: a full RIS
+  also drops the DEC private modes the running TUI switched on at startup
+  (bracketed paste, mouse tracking, alternate screen), and those sequences sit
+  far outside a long session's replay window, so nothing would restore them.
+  Pinned by `__tests__/terminalSocketResize.test.ts`.
 - `terminalConfig.ts` — `Terminal` options + theme. `clipboardPaste.ts` — Ctrl+V
   → `term.paste()` (xterm would otherwise forward ^V as a raw byte).
 

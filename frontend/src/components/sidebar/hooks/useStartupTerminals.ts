@@ -3,6 +3,8 @@ import type { StartupTerminal } from '../../../api';
 import type { TerminalSpec } from '../../../TerminalsContext';
 import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
 import { createBackendSession, fetchLiveTerminalIds } from '../../../terminal/terminalApi';
+import { fetchTerminalTabs } from '../../../api';
+import { planStartupSeeding, startupInFlightKey } from './startupSeedPlan';
 
 type UseStartupTerminalsArgs = {
   activeFolder: string;
@@ -104,49 +106,44 @@ export function useStartupTerminals({
     if (!activeFolder) return;
     let cancelled = false;
     void (async () => {
-      // null = couldn't validate (backend unreachable / non-OK). In that
-      // case we skip the drop-stale step entirely instead of treating
-      // every persisted serverId as dead — a transient failure shouldn't
-      // wipe the user's terminals.
-      const liveIds = await fetchLiveTerminalIds();
+      // liveIds: null = couldn't validate (backend unreachable / non-OK). In
+      // that case the drop-stale step is skipped entirely instead of treating
+      // every persisted serverId as dead — a transient failure shouldn't wipe
+      // the user's terminals.
+      // records: the registry's own view of this project's tabs. The local
+      // list can lag it (a fresh browser context has NO local specs until the
+      // registry snapshot lands), and a startup whose pty is alive in the
+      // registry must not be spawned a second time — see planStartupSeeding.
+      const [liveIds, records] = await Promise.all([
+        fetchLiveTerminalIds(),
+        fetchTerminalTabs(activeFolder).catch(() => null),
+      ]);
       if (cancelled) return;
 
-      const existing = projectTerminalsRef.current;
+      const plan = planStartupSeeding({
+        activeFolder,
+        configs: startupTerminals,
+        existing: projectTerminalsRef.current,
+        liveIds,
+        records,
+        inFlight: inFlightStartupRef.current,
+      });
 
-      if (liveIds) {
-        // Drop UNREGISTERED specs whose serverId is gone (legacy sessionStorage
-        // tabs from before the registry). closeTerminals tolerates a 404 from
-        // the DELETE; the local state is what matters here.
-        //
-        // A REGISTERED tab is the registry's to reconcile: after a crash or
-        // reboot its recorded pty id is dead by definition, and the restore
-        // pass is about to relaunch it. Closing it here would DELETE the
-        // record and there would be nothing left to restore.
-        const liveIdsLocal = liveIds;
-        const staleIds = existing
-          .filter((t) => !t.registered && t.serverId && !liveIdsLocal.has(t.serverId))
-          .map((t) => t.id);
-        if (staleIds.length > 0) closeTerminals(staleIds);
-      }
+      // Drop UNREGISTERED specs whose serverId is gone (legacy sessionStorage
+      // tabs from before the registry). closeTerminals tolerates a 404 from
+      // the DELETE; the local state is what matters here.
+      //
+      // A REGISTERED tab is the registry's to reconcile: after a crash or
+      // reboot its recorded pty id is dead by definition, and the restore
+      // pass is about to relaunch it. Closing it here would DELETE the
+      // record and there would be nothing left to restore.
+      if (plan.staleIds.length > 0) closeTerminals(plan.staleIds);
 
-      // Spawn each configured startup whose spec is either missing OR
-      // whose serverId we just confirmed dead. When liveIds is null
-      // (validation failed) we treat every existing spec as live and
-      // only spawn truly missing ones, falling back to the original
-      // seeding behavior.
-      for (const cfg of startupTerminals) {
-        if (!cfg.command.trim()) continue;
-        const key = `${activeFolder}::${cfg.id}`;
-        if (inFlightStartupRef.current.has(key)) continue;
-        const liveSpec = existing.find(
-          (t) =>
-            t.kind === 'startup' &&
-            t.startupId === cfg.id &&
-            t.projectPath === activeFolder &&
-            (!liveIds || !t.serverId || liveIds.has(t.serverId)),
-        );
-        if (liveSpec) continue;
-        inFlightStartupRef.current.add(key);
+      // Spawn each configured startup with no live spec anywhere. When liveIds
+      // is null (validation failed) every existing spec counts as live and
+      // only truly missing ones spawn — the original seeding behaviour.
+      for (const cfg of plan.spawn) {
+        inFlightStartupRef.current.add(startupInFlightKey(activeFolder, cfg.id));
         void spawnStartup(cfg, activeFolder, addTerminal);
       }
     })();

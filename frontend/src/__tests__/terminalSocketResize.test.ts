@@ -16,7 +16,7 @@ import {
 //    drag became dozens of full redraws. Only the settled size may be sent.
 // 2. A reconnect appended the scrollback replay UNDER the pane's existing
 //    content (only a brand-new session cleared it), so the transcript was
-//    painted twice. The `attached` frame now resets the buffer unconditionally.
+//    painted twice. The `attached` frame now clears the buffer unconditionally.
 
 type Handler<T> = (arg: T) => void;
 
@@ -87,7 +87,7 @@ test('resize events are trailing-debounced: a drag reaches the pty once, at its 
   assert.equal(sent.filter((m) => (m as { type: string }).type === 'resize').length, 1);
 });
 
-test('an attached frame resets the buffer whether or not a replay follows', () => {
+test('an attached frame clears the buffer (never a full reset) whether or not a replay follows', () => {
   for (const replayed of [true, false, undefined]) {
     const t = fakeTerminal();
     handleTerminalMessage(JSON.stringify({ type: 'attached', id: 'srv', replayed }), {
@@ -97,6 +97,8 @@ test('an attached frame resets the buffer whether or not a replay follows', () =
       onServerId: () => t.calls.push('serverId'),
       onTerminated: () => t.calls.push('terminated'),
     });
-    assert.deepEqual(t.calls, ['attached', 'reset'], `replayed=${String(replayed)}`);
+    // `clear`, not `reset`: a RIS would also drop the TUI's bracketed-paste /
+    // mouse / alt-screen modes, which the replay window rarely re-establishes.
+    assert.deepEqual(t.calls, ['attached', 'clear'], `replayed=${String(replayed)}`);
   }
 });

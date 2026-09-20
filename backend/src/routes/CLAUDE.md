@@ -60,6 +60,23 @@ workflows.
 - `workflows.ts` — workflow definition CRUD, workflow-run start/cancel/
   step-complete/active, and prompt-customization start/status/complete.
 
+## The `project` parameter
+
+`projectParam.ts` — `readProjectParam(req, res, {source?, optional?})` is the
+ONE way a non-task route reads the project it acts on (`?project=` first, then
+the body; the tasks routes have their own `requireAbsoluteProject` /
+`validateProjectForCreate` with the same rule). It refuses a relative or
+drive-relative value with a 400 that names the likely cause (shell-stripped
+backslashes: `C:developmentproj`). This matters because every per-project
+store resolves its path through `canonicalProjectPath` == `path.resolve`, so a
+relative project silently landed under the BACKEND's own cwd —
+`PATCH /api/settings?project=foo` created `backend/foo/.lattice/
+userSettings.json`, and the workflow / terminal-tab / merge-run /
+instrumentation / prompt-customization routes did the same for theirs.
+`POST /api/terminals` applies the same rule to `cwd`. Pinned by
+`__tests__/relativeProjectRefused.test.ts`, which drives every project-scoped
+route through the real app.
+
 ## Why factories?
 
 Routes need `BACKEND_ORIGIN` (for generated curl callbacks in hooks/prompts)

@@ -116,10 +116,15 @@ export function handleTerminalMessage(
       // Whatever the pane shows now is stale: the frame that follows is the
       // scrollback replay (or nothing at all, for a brand-new session). A
       // reconnect used to APPEND the ~2 MB replay underneath the content the
-      // pane already had — the same transcript twice, and for a full-screen
-      // TUI (Codex, Claude) a minutes-long repaint on a busy machine. Reset,
-      // so the replay repaints from a clean buffer exactly once.
-      h.term.reset();
+      // pane already had — the same transcript twice, and for an inline TUI
+      // (Codex, Claude) a minutes-long repaint on a busy machine. Clear the
+      // buffer so the replay repaints exactly once. `clear()`, deliberately
+      // not `reset()`: a full reset (RIS) also drops the DEC private modes the
+      // running TUI switched on at startup — bracketed paste, mouse tracking,
+      // the alternate screen — and those sequences sit far outside the replay
+      // window of a long session, so nothing would switch them back on until
+      // the TUI restarted (multi-line pastes would submit line by line).
+      h.term.clear();
     } else if (msg.type === 'error') {
       terminalNotices.error(h.term, msg.message);
     } else if (msg.type === 'exit') {

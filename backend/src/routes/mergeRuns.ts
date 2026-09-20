@@ -12,16 +12,14 @@ import {
 import { getActiveHookForProject } from '../postMergeHooks.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { readRecoveryAttempts } from '../recovery/retryBudget.js';
+import { readProjectParam } from './projectParam.js';
 
 export function buildMergeRunsRouter(backendOrigin: string): Router {
   const r = Router();
 
   r.post('/api/merge-runs', async (req, res) => {
-    const project =
-      typeof req.body?.project === 'string' && req.body.project
-        ? req.body.project
-        : '';
-    if (!project) return res.status(400).json({ error: 'project required' });
+    const project = readProjectParam(req, res);
+    if (project === null) return;
     if (getActiveHookForProject(canonicalProjectPath(project))) {
       return res.status(409).json({
         error: 'A post-merge hook is still running for this project — wait for it to finish (or abort it).',
@@ -36,15 +34,14 @@ export function buildMergeRunsRouter(backendOrigin: string): Router {
   });
 
   r.get('/api/merge-runs/active', (req, res) => {
-    const project =
-      typeof req.query.project === 'string' ? req.query.project : '';
-    if (!project) return res.status(400).json({ error: 'project required' });
+    const project = readProjectParam(req, res, { source: 'query' });
+    if (project === null) return;
     res.json(getActiveRunForProject(project));
   });
 
   r.get('/api/merge-runs/recovery', async (req, res) => {
-    const project = typeof req.query.project === 'string' ? req.query.project : '';
-    if (!project) return res.status(400).json({ error: 'project required' });
+    const project = readProjectParam(req, res, { source: 'query' });
+    if (project === null) return;
     res.json({ attempts: await readRecoveryAttempts(project) });
   });
 

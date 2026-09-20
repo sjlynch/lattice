@@ -138,7 +138,12 @@ owns the node-pty processes.
   which hosts every pty — so thirty agents each crossing the disk cap froze
   all of them in turn. While a compaction is in flight, flushes hold output in
   `pending` (bounded to the replay window) and land after the rename; `replay`
-  appends that held tail. `settle()` awaits it (tests).
+  appends that held tail. `settle()` awaits it (tests). The rename runs on a
+  worker thread, so on Windows it can collide with a concurrent `replay()`'s
+  synchronous `readTail` holding the log open (EPERM/EBUSY): it is retried a
+  few times, and if it still fails the OLD log is kept (complete, merely over
+  the cap) with a 5 s cooldown before the next crossing retries — never a drop
+  to memory-only, which is reserved for a genuinely unavailable disk.
 - `scrollbackLogFile.ts` — pure, stateless file-tail helpers `trimToLineStart`
   (drop a partial leading line so a windowed replay never begins mid-escape-
   sequence) and `readTail` (byte-level last-`maxBytes` read, trimmed to a line

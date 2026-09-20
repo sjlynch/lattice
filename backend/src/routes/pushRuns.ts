@@ -16,6 +16,7 @@ import {
   startPushSession,
 } from '../pushRuns.js';
 import { pushAgentId } from '../pushRuns/stopHook.js';
+import { readProjectParam, relativeProjectError } from './projectParam.js';
 import { unregisterAgentSession } from '../agentSessions.js';
 import {
   deleteHomeScratchRunResponse,
@@ -35,8 +36,11 @@ export function buildPushRunsRouter(backendOrigin: string): Router {
   // `git` probe is additive — it's what the Git Setup chip keys off, and it
   // is the one that distinguishes 'none' from 'nested'.
   r.get('/api/git-check', async (req, res) => {
-    const raw = typeof req.query.path === 'string' ? req.query.path : '';
+    const raw = typeof req.query.path === 'string' ? req.query.path.trim() : '';
     if (!raw) return res.status(400).json({ error: 'path required' });
+    // A relative path would probe (and the Git Setup chip would offer to
+    // initialise) a folder under the backend's own cwd.
+    if (!path.isAbsolute(raw)) return res.status(400).json({ error: relativeProjectError(raw) });
     const project = canonicalProjectPath(raw);
     let hasGit = false;
     try {
@@ -49,8 +53,8 @@ export function buildPushRunsRouter(backendOrigin: string): Router {
   });
 
   r.post('/api/push-runs', async (req, res) => {
-    const raw = (req.body || {}).project as string | undefined;
-    if (!raw) return res.status(400).json({ error: 'project required' });
+    const raw = readProjectParam(req, res);
+    if (raw === null) return;
     const project = canonicalProjectPath(raw);
 
     try {

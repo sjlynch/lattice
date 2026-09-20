@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { atomicWriteFile } from './claudeTrust/configFile.js';
 
 // Codex Stop hook — the Codex analogue of the Claude Stop hook
 // (claudeStopHook.ts) and the Pi `session_shutdown` completion extension
@@ -123,6 +124,6 @@ export async function installCodexStopHook(
     /* absent — fall through to write */
   }
   await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(file, expected, 'utf8');
+  await atomicWriteFile(file, expected);
   return true;
 }

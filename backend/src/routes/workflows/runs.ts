@@ -18,6 +18,7 @@ import { waitForWorkflowRecovery } from '../../workflowRuns/recoveryReadiness.js
 import { requestStopHookStepComplete } from '../../workflowRuns/stopHookGate.js';
 import { unregisterAgentSession } from '../../agentSessions.js';
 import { forgetAgentQuiescence } from '../../agentQuiescence.js';
+import { readProjectParam } from '../projectParam.js';
 
 export function buildWorkflowRunsRouter(backendOrigin: string): Router {
   const r = Router();
@@ -109,9 +110,8 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
   });
 
   r.get('/api/workflow-runs/active', (req, res) => {
-    const project =
-      typeof req.query.project === 'string' ? req.query.project : '';
-    if (!project) return res.status(400).json({ error: 'project required' });
+    const project = readProjectParam(req, res, { source: 'query' });
+    if (project === null) return;
     res.json(getActiveWorkflowRunsForProject(project));
   });
 

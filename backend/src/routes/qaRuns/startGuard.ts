@@ -4,7 +4,9 @@
 // an `ok:false` carries the exact status code + error string the route must
 // send; an `ok:true` carries the canonicalized project and the resolved task.
 
+import path from 'node:path';
 import { canonicalProjectPath } from '../../projectPath.js';
+import { relativeProjectError } from '../projectParam.js';
 import { getTask } from '../../tasks.js';
 import type { Task } from '../../tasks.js';
 
@@ -16,10 +18,18 @@ export async function resolveQaRunStart(
   body: unknown,
   lookupTask: typeof getTask,
 ): Promise<QaRunStartResolution> {
-  const b = (body || {}) as { project?: string; taskId?: string };
-  if (!b.project) return { ok: false, status: 400, error: 'project required' };
-  if (!b.taskId) return { ok: false, status: 400, error: 'taskId required' };
-  const project = canonicalProjectPath(b.project);
+  const b = (body || {}) as { project?: unknown; taskId?: unknown };
+  const rawProject = typeof b.project === 'string' ? b.project.trim() : '';
+  if (!rawProject) return { ok: false, status: 400, error: 'project required' };
+  // canonicalProjectPath is path.resolve underneath: a relative project would
+  // resolve under the backend's cwd and never match the task's board anyway.
+  if (!path.isAbsolute(rawProject)) {
+    return { ok: false, status: 400, error: relativeProjectError(rawProject) };
+  }
+  if (typeof b.taskId !== 'string' || !b.taskId) {
+    return { ok: false, status: 400, error: 'taskId required' };
+  }
+  const project = canonicalProjectPath(rawProject);
 
   const task = await lookupTask(b.taskId);
   if (!task) return { ok: false, status: 404, error: 'task not found' };

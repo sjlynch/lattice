@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { atomicWriteFile } from './claudeTrust/configFile.js';
 
 // Render a Stop-hook config that runs an arbitrary shell command. Most
 // call-sites use the bare `curl -s -m 5 -X POST <url>` form via
@@ -97,7 +98,10 @@ async function writeStopHookFile(dir: string, expected: string): Promise<void> {
   } catch {
     /* file absent — fall through to write */
   }
-  await fs.writeFile(file, expected, 'utf8');
+  // Temp + rename: Claude reads this file at session start, and a half-written
+  // one (a kill mid-write) means a session with NO Stop hook, i.e. a task that
+  // never reports `/complete`.
+  await atomicWriteFile(file, expected);
 }
 
 export async function installClaudeStopHook(

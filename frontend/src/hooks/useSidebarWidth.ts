@@ -84,14 +84,14 @@ export function useSidebarWidth(
     // commit re-renders App (and lays the graph + sidebar out again), and a
     // pointer delivers several moves per frame.
     let frame: number | null = null;
-    let latestX = 0;
+    let latestX: number | null = null;
     const handleMove = (ev: PointerEvent) => {
       if (!resizingRef.current) return;
       latestX = ev.clientX;
       if (frame !== null) return;
       frame = requestAnimationFrame(() => {
         frame = null;
-        if (resizingRef.current) setSidebarWidth(clampSidebarWidth(latestX));
+        if (resizingRef.current && latestX !== null) setSidebarWidth(clampSidebarWidth(latestX));
       });
     };
     const handleUp = (ev: PointerEvent) => {
@@ -101,9 +101,14 @@ export function useSidebarWidth(
         frame = null;
       }
       // The final width comes from the release point, not the state ref: the
-      // last coalesced frame may not have committed yet.
-      const finalWidth = clampSidebarWidth(ev.clientX);
-      setSidebarWidth(finalWidth);
+      // last coalesced frame may not have committed yet. A `pointercancel`
+      // (touch cancelled, window lost the pointer) carries no useful
+      // coordinates — often clientX 0, which would slam the sidebar to its
+      // minimum — so it settles on the last move instead; with no move at all
+      // there is nothing to commit.
+      const releaseX = ev.type === 'pointercancel' ? latestX : ev.clientX;
+      const finalWidth = releaseX === null ? null : clampSidebarWidth(releaseX);
+      if (finalWidth !== null) setSidebarWidth(finalWidth);
       document.body.style.userSelect = prevUserSelect;
       document.body.style.cursor = prevCursor;
       try {
@@ -114,7 +119,7 @@ export function useSidebarWidth(
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
       window.removeEventListener('pointercancel', handleUp);
-      if (activeFolderRef.current) {
+      if (activeFolderRef.current && finalWidth !== null) {
         patchUserSettings(activeFolderRef.current, {
           sidebarWidth: finalWidth,
         }).catch(() => {});

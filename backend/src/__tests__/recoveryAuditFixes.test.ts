@@ -127,6 +127,7 @@ test('/merge-aborted refuses with 409 while the per-task merge lock is held', as
   const handler = handleTaskMergeAborted(ORIGIN, {
     recover: async () => { recovered += 1; },
     signalConflictWaiter: () => false,
+    lockWaitMs: 250,
   });
   const lock = tryAcquire(task.id);
   try {
@@ -134,7 +135,17 @@ test('/merge-aborted refuses with 409 while the per-task merge lock is held', as
     await handler({ params: { id: task.id }, query: {} } as never, held as unknown as Response);
     assert.equal(held.statusCode, 409, 'a live merge/finalize on this task refuses the abort');
     assert.equal(recovered, 0, 'git merge --abort never raced the in-flight merge');
+
+    // A lock released while the abort is waiting lets it through: a one-shot
+    // resolver curl must not be bounced by the few seconds a finalize takes.
+    const waited = mockRes();
+    const pending = handler({ params: { id: task.id }, query: {} } as never, waited as unknown as Response);
+    await new Promise((r) => setTimeout(r, 60));
     release(lock!);
+    await pending;
+    assert.deepEqual(waited.body, { ok: true }, 'the abort waited for the lock instead of 409ing');
+    assert.equal(recovered, 1);
+    recovered = 0;
 
     const free = mockRes();
     await handler({ params: { id: task.id }, query: {} } as never, free as unknown as Response);

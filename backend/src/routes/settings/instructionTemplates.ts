@@ -6,13 +6,14 @@
 
 import { Router } from 'express';
 import { buildInstructionTemplateEditorData } from '../../instructionTemplates.js';
+import { readProjectParam } from '../projectParam.js';
 
 export function buildInstructionTemplatesRouter(): Router {
   const r = Router();
 
   r.get('/api/instruction-templates', async (req, res) => {
-    const project = typeof req.query.project === 'string' ? req.query.project : '';
-    if (!project) return res.status(400).json({ error: 'project required' });
+    const project = readProjectParam(req, res, { source: 'query' });
+    if (project === null) return;
     const templates = await buildInstructionTemplateEditorData(project);
     res.json({ templates });
   });

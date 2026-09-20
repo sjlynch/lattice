@@ -2,7 +2,9 @@
 // subprocess. Sessions are listed and killed via the proxy because the
 // terminal server is detached and lives in a separate process.
 
+import path from 'node:path';
 import { Router } from 'express';
+import { relativeProjectError } from './projectParam.js';
 import {
   proxyCreateSession,
   proxyKillSession,
@@ -49,12 +51,25 @@ export function buildTerminalsRouter(): Router {
       piModel?: string;
     };
     const owner = body.owner === 'startup' ? 'startup' : 'user';
+    // Shape checks: a non-string cwd/command would otherwise reach the pty
+    // spawn (and the registry record) as garbage; a relative cwd would spawn
+    // the shell under the backend's own cwd and register a tab for it.
+    for (const [key, value] of [['cwd', body.cwd], ['initialCommand', body.initialCommand], ['projectPath', body.projectPath]] as const) {
+      if (value !== undefined && typeof value !== 'string') {
+        return res.status(400).json({ error: `${key} must be a string` });
+      }
+    }
+    if (typeof body.cwd === 'string' && body.cwd.trim() && !path.isAbsolute(body.cwd.trim())) {
+      return res.status(400).json({ error: relativeProjectError(body.cwd.trim()).replace('project must', 'cwd must') });
+    }
+    const cols = Number.isInteger(body.cols) && (body.cols as number) > 0 ? body.cols : undefined;
+    const rows = Number.isInteger(body.rows) && (body.rows as number) > 0 ? body.rows : undefined;
     const result = await proxyCreateSession({
       cwd: body.cwd,
       initialCommand: body.initialCommand,
       projectPath: body.projectPath,
-      cols: body.cols,
-      rows: body.rows,
+      cols,
+      rows,
       registry: {
         owner,
         ...(typeof body.label === 'string' && body.label.trim() ? { label: body.label.trim() } : {}),

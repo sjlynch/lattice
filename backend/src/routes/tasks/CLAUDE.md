@@ -113,10 +113,14 @@ Idempotent Stop-hook / resolver callbacks. `hooks/index.ts`'s
   ready_to_merge to retry on the next merge-all (no auto-restart, unlike
   /complete + /merged). Runs the recovery **under the per-task `mergeLocks`
   lock** (`git merge --abort` mutates the worktree index, like every other
-  in-worktree git mutation that takes it) and answers **409** while a merge /
-  finalize holds it, so a Cancel can't race a live `git merge` on the same
-  index. Has an injectable deps seam (`recover` + `signalConflictWaiter`)
-  mirroring `finalizeResolved.ts` for the parked-run regression test.
+  in-worktree git mutation that takes it), so a Cancel can't race a live
+  `git merge` on the same index. A held lock is WAITED for (up to
+  `MERGE_ABORT_LOCK_WAIT_MS`, 5 s — the run's conflict wait parks lock-free,
+  so the lock is only held for the seconds a merge/finalize takes, and a
+  resolver Claude's give-up curl is one-shot and cannot retry) and only then
+  answered **409**. Has an injectable deps seam (`recover` +
+  `signalConflictWaiter` + `lockWaitMs`) mirroring `finalizeResolved.ts` for
+  the parked-run regression test.
 - `hooks/stashResolved.ts` — `/stash-resolved`. Cleanup → qa, then
   auto-restart the merge run for remaining work.
 - `hooks/postMergeHookHelper.ts` — `awaitPostMergeHookOutsideRun`, shared by
