@@ -108,11 +108,33 @@ class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
   private flushing = false;
   private closed = false;
 
+  private readonly opts: WatchTreeOptions;
+
   constructor(
     private readonly root: string,
-    private readonly opts: WatchTreeOptions,
+    opts: WatchTreeOptions,
   ) {
     super();
+    // The predicate runs inside fs.watch callbacks, where a throw is an
+    // uncaughtException that kills the backend (a `\\?\`-prefixed root path on
+    // Windows did exactly that). Guard it once here for every caller: an
+    // unexpected path shape reads as "not ignored", never fatal.
+    const ignored = opts.ignored;
+    let warned = false;
+    this.opts = {
+      ...opts,
+      ignored: (filePath, stats) => {
+        try {
+          return ignored(filePath, stats);
+        } catch (err) {
+          if (!warned) {
+            warned = true;
+            console.warn(`[watchTree] ignored() threw for ${filePath}; treating as not ignored:`, err);
+          }
+          return false;
+        }
+      },
+    };
     // Never let a listener-less 'error' take the process down (an EventEmitter
     // 'error' with no listener throws). Both call sites attach one, but the
     // window between construction and `.on('error')` is real.

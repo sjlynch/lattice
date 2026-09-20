@@ -274,7 +274,12 @@ export class TerminalRegistryStore extends ProjectStateManager<TerminalRecord[],
       const idx = records.findIndex((r) => r.id === id);
       if (idx < 0) return false;
       const record = records[idx]!;
-      const full: TerminalEnded = { at: ended.at ?? Date.now(), ...ended };
+      // Re-ending an already-ended record for the same reason keeps its
+      // original timestamp, so the retention prune still counts from the
+      // FIRST failure rather than restarting on every retry.
+      const at = ended.at
+        ?? (record.ended?.reason === ended.reason ? record.ended.at : Date.now());
+      const full: TerminalEnded = { ...ended, at };
       const keep = full.reason === 'cwd-missing' || full.reason === 'restore-failed';
       const list = [...records];
       if (keep) {

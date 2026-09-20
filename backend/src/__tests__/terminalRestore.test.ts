@@ -247,19 +247,23 @@ test('an unreachable terminal-server changes nothing', async () => {
 
 // ---- review follow-ups --------------------------------------------------
 
-test('a merge-resolver tab is relaunched while its task is still conflict-flagged (ready_to_merge), else dropped', async () => {
+test('a merge-resolver tab is adopt-only: a live resolver is re-attached, a dead one is ended silently', async () => {
   const h = await harness();
   const wt = path.join(h.project, 'wt');
   await fs.mkdir(wt);
-  const live = await record(h, { owner: 'merge', kind: 'merge', taskId: 'm1', cwd: wt });
-  const done = await record(h, { owner: 'merge', kind: 'merge', taskId: 'm2', cwd: wt, serverId: 'tty_old2' });
+  const alive = await record(h, { owner: 'merge', kind: 'merge', taskId: 'm1', cwd: wt, serverId: 'tty_res', serverInstanceId: 'inst-B' });
+  const dead = await record(h, { owner: 'merge', kind: 'merge', taskId: 'm2', cwd: wt, serverId: 'tty_old2' });
+  h.live.ids = ['tty_res'];
   h.tasks.set('m1', { id: 'm1', projectPath: h.project, title: 'M1', status: 'ready_to_merge', conflict: true, createdAt: 0, worktreePath: wt } as Task);
-  h.tasks.set('m2', { id: 'm2', projectPath: h.project, title: 'M2', status: 'ready_to_merge', createdAt: 0, worktreePath: wt } as Task);
+  h.tasks.set('m2', { id: 'm2', projectPath: h.project, title: 'M2', status: 'ready_to_merge', conflict: true, createdAt: 0, worktreePath: wt } as Task);
   const summary = await restoreProjectTerminals(h.project, h.deps);
   await settle();
-  assert.deepEqual(summary.relaunchedIds, [live.id]);
-  assert.deepEqual(summary.dropped.map((d) => d.id), [done.id]);
-  assert.equal(h.spawns[0]!.registry?.owner, 'merge');
+  assert.equal(summary.adopted, 1);
+  assert.deepEqual(summary.relaunchedIds, []);
+  assert.deepEqual(summary.dropped, [], 'a dead resolver is not reported as dropped (the merge flow respawns it)');
+  assert.equal(h.spawns.length, 0, 'never a second Claude on one conflict');
+  assert.equal((await terminalRegistry.get(alive.id, h.project))?.serverId, 'tty_res');
+  assert.equal(await terminalRegistry.get(dead.id, h.project), null);
 });
 
 test('a dead startup record is ended silently (the settings re-seed it), not relaunched or reported', async () => {
@@ -285,24 +289,48 @@ test('a plain-shell record never adopts an unrelated live non-agent pty in its c
   assert.equal(h.spawns[0]!.initialCommand, undefined);
 });
 
-test('a tab whose relaunch failed is retried by the next restore pass', async () => {
+test('a tab whose relaunch failed is left alone by the on-open pass and retried only on an explicit retry', async () => {
   const h = await harness();
   const r = await record(h, {});
   h.deps.createSession = async () => ({ error: 'no slot today' });
   await restoreProjectTerminals(h.project, h.deps);
   await settle();
-  assert.equal((await terminalRegistry.get(r.id, h.project))?.ended?.reason, 'restore-failed');
-  // Fixed: the next pass relaunches it and clears the marker.
+  const failed = await terminalRegistry.get(r.id, h.project);
+  assert.equal(failed?.ended?.reason, 'restore-failed');
+  const firstAt = failed!.ended!.at;
+  // The on-open pass neither retries nor re-reports it.
+  const quiet = await restoreProjectTerminals(h.project, h.deps);
+  await settle();
+  assert.deepEqual(quiet, { status: 'ok', adopted: 0, queued: 0, dropped: [], relaunchedIds: [] });
+  // A retry that fails again keeps the ORIGINAL failure time (retention clock).
+  const again = await restoreProjectTerminals(h.project, h.deps, { retryFailed: true });
+  await settle();
+  assert.deepEqual(again.relaunchedIds, [r.id]);
+  assert.equal((await terminalRegistry.get(r.id, h.project))?.ended?.at, firstAt);
+  // Fixed: the next retry relaunches it and clears the marker.
   h.deps.createSession = async (opts) => {
     await terminalRegistry.update(opts.registry!.existingId!, { serverId: 'tty_retry', serverInstanceId: h.live.instanceId, ended: undefined }, opts.projectPath);
     return { id: 'tty_retry', terminalId: opts.registry!.existingId };
   };
-  const summary = await restoreProjectTerminals(h.project, h.deps);
+  const summary = await restoreProjectTerminals(h.project, h.deps, { retryFailed: true });
   await settle();
   assert.deepEqual(summary.relaunchedIds, [r.id]);
   const after = await terminalRegistry.get(r.id, h.project);
   assert.equal(after?.ended, undefined);
   assert.equal(after?.serverId, 'tty_retry');
+});
+
+test('a retried tab whose pty actually landed is adopted, not spawned beside', async () => {
+  const h = await harness();
+  const r = await record(h, { serverId: undefined, serverInstanceId: undefined });
+  await terminalRegistry.end(r.id, { reason: 'restore-failed', detail: 'bookkeeping blew up' }, h.project);
+  h.live.ids = ['tty_landed'];
+  h.live.sessions = [{ id: 'tty_landed', cwd: h.project, initialCommand: 'claude --resume S1' }];
+  const summary = await restoreProjectTerminals(h.project, h.deps, { retryFailed: true });
+  await settle();
+  assert.equal(summary.adopted, 1);
+  assert.equal(h.spawns.length, 0);
+  assert.equal((await terminalRegistry.get(r.id, h.project))?.serverId, 'tty_landed');
 });
 
 test('a second restore while relaunches are still in flight is refused, and a relaunched tab is never spawned twice', async () => {

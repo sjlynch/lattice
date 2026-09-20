@@ -34,10 +34,13 @@ export function buildTerminalTabsRouter(): Router {
     res.json({ project: canonicalProjectPath(project), tabs });
   });
 
+  // `?retry=1` (the sidebar's explicit "Restore tabs" click) also retries tabs
+  // that ended as cwd-missing / restore-failed; the on-open pass never does.
   r.post('/api/terminal-tabs/restore', async (req, res) => {
     const project = projectFrom(req);
     if (!project) return res.status(400).json({ error: 'project required' });
-    const summary = await restoreProjectTerminals(project);
+    const retryFailed = req.query.retry === '1' || req.query.retry === 'true';
+    const summary = await restoreProjectTerminals(project, undefined, { retryFailed });
     res.json(summary);
   });
 

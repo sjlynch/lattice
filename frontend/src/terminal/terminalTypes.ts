@@ -68,8 +68,9 @@ export type Ctx = {
   renameTerminal: (id: string, label: string) => void;
   reorderTerminal: (draggedId: string, targetId: string) => void;
   // Run (or re-run) the registry restore for the active project. Resolves
-  // with the backend's summary (adopted / queued / dropped).
-  restoreTabs: () => Promise<RestoreSummary | null>;
+  // with the backend's summary (adopted / queued / dropped). `retry` also
+  // retries tabs that ended as cwd-missing / restore-failed (the button does).
+  restoreTabs: (opts?: { retry?: boolean }) => Promise<RestoreSummary | null>;
   // The last restore summary for the active project, for the sidebar notice.
   lastRestore: RestoreNotice | null;
   dismissRestoreNotice: () => void;

@@ -33,7 +33,7 @@ import {
   setStatusInList,
   terminalIdsForTask,
 } from './terminal/terminalState';
-import { deleteBackendSession } from './terminal/terminalApi';
+import { deleteBackendSession, fetchLiveTerminalIds } from './terminal/terminalApi';
 import {
   applyTerminalTabsEvent,
   mergeRegistryTabs,
@@ -74,18 +74,6 @@ function isNoteworthy(summary: RestoreSummary): boolean {
   return summary.queued > 0 || summary.dropped.length > 0;
 }
 
-// The live pty ids, or null when the list could not be read ("can't tell").
-async function fetchLiveServerIds(): Promise<ReadonlySet<string> | null> {
-  try {
-    const r = await fetch('/api/terminals');
-    if (!r.ok) return null;
-    const sessions = (await r.json()) as Array<{ id?: unknown }>;
-    if (!Array.isArray(sessions)) return null;
-    return new Set(sessions.map((s) => s.id).filter((id): id is string => typeof id === 'string'));
-  } catch {
-    return null;
-  }
-}
 
 export function TerminalsProvider({ children, activeFolder, restoreMode }: ProviderProps) {
   // Initialize from sessionStorage so terminals persist across reloads in
@@ -129,13 +117,13 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
   const autoRestoredRef = useRef<Set<string>>(new Set());
   const restoreInFlightRef = useRef<Promise<RestoreSummary | null> | null>(null);
 
-  const runRestore = useCallback(async (): Promise<RestoreSummary | null> => {
+  const runRestore = useCallback(async (opts: { retry?: boolean } = {}): Promise<RestoreSummary | null> => {
     const folder = activeFolderRef.current;
     if (!folder) return null;
     if (restoreInFlightRef.current) return restoreInFlightRef.current;
     const run = (async () => {
       try {
-        const summary = await restoreTerminalTabs(folder);
+        const summary = await restoreTerminalTabs(folder, opts);
         setRestorePrompt(null);
         // The HTTP response is the authoritative summary for a restore THIS
         // tab asked for: the matching WS `restore-summary` can fire before
@@ -221,18 +209,21 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
     if (!activeFolder || restoreMode === null) return;
     if (!registryLoaded || registryLoaded.folder !== activeFolder) return;
     if (autoRestoredRef.current.has(activeFolder)) return;
-    autoRestoredRef.current.add(activeFolder);
     if (restoreMode === 'always') {
+      autoRestoredRef.current.add(activeFolder);
       void runRestore();
       return;
     }
     if (restoreMode !== 'ask') return;
     // Only ask when something would actually be relaunched. Tabs whose pty is
     // still alive re-attach by themselves, and restoring them is a harmless
-    // adopt — so with nothing dead, run that silently.
+    // adopt — so with nothing dead, run that silently. The folder is marked
+    // done only once we act: a fetch cancelled by a project switch must leave
+    // it eligible for the next visit.
     let cancelled = false;
-    void fetchLiveServerIds().then((live) => {
+    void fetchLiveTerminalIds().then((live) => {
       if (cancelled) return;
+      autoRestoredRef.current.add(activeFolder);
       const count = restorableCount(registryLoaded.records, live);
       if (count > 0) setRestorePrompt({ count });
       else void runRestore();

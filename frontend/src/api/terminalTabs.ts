@@ -13,9 +13,15 @@ export async function fetchTerminalTabs(project: string): Promise<TerminalRecord
   return Array.isArray(data.tabs) ? data.tabs : [];
 }
 
-export async function restoreTerminalTabs(project: string): Promise<RestoreSummary> {
+// `retry` (the explicit "Restore tabs" click) also retries tabs whose earlier
+// relaunch failed or whose cwd was missing; the on-open pass leaves those alone.
+export async function restoreTerminalTabs(
+  project: string,
+  opts: { retry?: boolean } = {},
+): Promise<RestoreSummary> {
+  const retry = opts.retry ? '&retry=1' : '';
   return postJson<RestoreSummary>(
-    `/api/terminal-tabs/restore?project=${encodeURIComponent(project)}`,
+    `/api/terminal-tabs/restore?project=${encodeURIComponent(project)}${retry}`,
   );
 }
 

@@ -109,6 +109,14 @@ test('codex: session_meta parsing and cwd-matched, unclaimed, earliest-first pic
   const both = pickCodexSession(candidates, 'c:\\proj\\a', new Set());
   assert.deepEqual(both, { id: 'old', ambiguous: true });
   assert.equal(pickCodexSession(candidates, 'c:\\proj\\zzz', new Set()), null);
+  // A `codex resume --last` relaunch reopened the thread written most recently
+  // in the cwd — pick by mtime, newest first, not the earliest-created one.
+  const withMtimes = [
+    { id: 'older-thread', cwd: 'c:/proj/a', timestamp: 1, file: '1', mtimeMs: 500 },
+    { id: 'newer-thread', cwd: 'c:/proj/a', timestamp: 2, file: '2', mtimeMs: 900 },
+  ];
+  assert.deepEqual(pickCodexSession(withMtimes, 'c:/proj/a', new Set(), 'resumed'), { id: 'newer-thread', ambiguous: true });
+  assert.deepEqual(pickCodexSession(withMtimes, 'c:/proj/a', new Set(), 'fresh'), { id: 'older-thread', ambiguous: true });
 });
 
 // ---- the decision --------------------------------------------------------

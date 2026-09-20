@@ -263,8 +263,8 @@ export const Sidebar = memo(function Sidebar({
             <>
               <button
                 className="icon-btn sm sidebar-restore-btn"
-                onClick={() => { void restoreTabs(); }}
-                title="Restore terminal tabs (re-attach live sessions, relaunch dead ones)"
+                onClick={() => { void restoreTabs({ retry: true }); }}
+                title="Restore terminal tabs (re-attach live sessions, relaunch dead ones, retry failed ones)"
                 aria-label="Restore terminal tabs"
               >
                 <History size={12} />
@@ -283,7 +283,7 @@ export const Sidebar = memo(function Sidebar({
         activeFolder={activeFolder}
         prompt={restorePrompt}
         notice={lastRestore}
-        onRestore={() => { void restoreTabs(); }}
+        onRestore={() => { void restoreTabs({ retry: true }); }}
         onDismiss={dismissRestoreNotice}
       />
 

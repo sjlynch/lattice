@@ -11,6 +11,22 @@ export function deleteBackendSession(serverId: string): void {
   });
 }
 
+// The ids of every live pty (`GET /api/terminals`), or null when the list could
+// not be read — "can't tell", which callers must never treat as "no sessions".
+export async function fetchLiveTerminalIds(): Promise<ReadonlySet<string> | null> {
+  try {
+    const r = await fetch('/api/terminals');
+    if (!r.ok) return null;
+    const sessions = (await r.json()) as Array<{ id?: unknown }>;
+    if (!Array.isArray(sessions)) return null;
+    return new Set(
+      sessions.map((s) => s.id).filter((id): id is string => typeof id === 'string' && id.length > 0),
+    );
+  } catch {
+    return null;
+  }
+}
+
 export type CreatedBackendSession = {
   // The pty session id (attach target).
   serverId: string;

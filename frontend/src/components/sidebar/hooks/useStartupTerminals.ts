@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { StartupTerminal } from '../../../api';
 import type { TerminalSpec } from '../../../TerminalsContext';
 import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
-import { createBackendSession } from '../../../terminal/terminalApi';
+import { createBackendSession, fetchLiveTerminalIds } from '../../../terminal/terminalApi';
 
 type UseStartupTerminalsArgs = {
   activeFolder: string;
@@ -108,16 +108,7 @@ export function useStartupTerminals({
       // case we skip the drop-stale step entirely instead of treating
       // every persisted serverId as dead — a transient failure shouldn't
       // wipe the user's terminals.
-      let liveIds: Set<string> | null = null;
-      try {
-        const r = await fetch('/api/terminals');
-        if (r.ok) {
-          const sessions: Array<{ id: string }> = await r.json();
-          liveIds = new Set(sessions.map((s) => s.id));
-        }
-      } catch {
-        // Backend unreachable.
-      }
+      const liveIds = await fetchLiveTerminalIds();
       if (cancelled) return;
 
       const existing = projectTerminalsRef.current;
