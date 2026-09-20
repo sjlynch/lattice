@@ -23,10 +23,27 @@ label physics in `labelPhysics/CLAUDE.md`.
 ## Module map
 
 **Coordinator & chrome (React)**
-- `ForceGraphView.tsx` — coordinator: holds `selected`/`hoverNode`, threads refs
-  through `useGraphOverlays` + `useForceGraphInitialization`, and stays focused
-  on graph lifecycle / scene runtime orchestration. Imperative syncs + keyboard
-  live in focused hooks.
+- `ForceGraphView.tsx` — the exported component is a **retry shell** (WebGL
+  faults, below) around the coordinator: holds `selected`/`hoverNode`, threads
+  refs through `useGraphOverlays` + `useForceGraphInitialization`, and stays
+  focused on graph lifecycle / scene runtime orchestration. Imperative syncs +
+  keyboard live in focused hooks.
+- `rendererStatus.ts` / `GraphRendererNotice.tsx` — **WebGL faults are expected,
+  not bugs.** The graph owns the app's only long-lived WebGL context and the
+  browser can refuse one outright: the per-page context budget is spent (each
+  *active* xterm WebglAddon holds one too — see
+  `terminal/useActiveTerminalWebgl`), or the GPU process is down after an
+  out-of-memory kill, in which case Chrome withholds contexts until the
+  **browser** restarts — a page reload does nothing. THREE throws
+  `Error creating WebGL context.` out of `new ForceGraph3D`, and an exception
+  escaping the init layout effect used to reach `<ErrorBoundary compact>` and
+  blank the whole graph subtree behind a raw stack. So init catches it, the
+  coordinator renders a recoverable notice over the dead viewport, and Retry
+  **remounts the coordinator** — re-running init alone would leave every hook
+  below wired to a graph instance that no longer exists. The same notice covers
+  `webglcontextlost` (frozen canvas, previously silent) and clears itself on
+  `webglcontextrestored`. Classification/copy is pure + unit-tested in
+  `src/__tests__/rendererStatus.test.ts`.
 - `useGraphViewChromeModel.ts` — shapes the coordinator's state into HUD,
   overlay-key, timeline, selection, context-menu, task-modal, toast, and settings
   chrome props (including counts, timeline range handler, and active-pin state).

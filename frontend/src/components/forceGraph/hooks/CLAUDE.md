@@ -11,6 +11,12 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
 - `useForceGraphInitialization` — mounts `ForceGraph3D` once; lifecycle wiring
   only (accessor closures delegate to `nodeObjectFactory`, scene/camera to
   `sceneSetup`). Sets the d3 cooldown bounds and wires the frame/motion drivers.
+  Construction runs in a `try` and reports a WebGL failure through
+  `onRendererFailure` instead of throwing out of the layout effect (that throw
+  reached the error boundary and blanked the graph subtree); it also forwards
+  `webglcontextlost`/`webglcontextrestored`, waking the idle loop on restore.
+  Those three callbacks must be identity-stable — the effect mounts once and
+  captures them. See `../CLAUDE.md` → `rendererStatus.ts`.
 - `useRadialTidyLayout` — the on-load untangler. Fires once per project on first
   data populate (and on demand via the returned `runLayout`, wired to the Spread
   tab's "Untangle now" button): seeds each node at its radial tidy-tree X/Z

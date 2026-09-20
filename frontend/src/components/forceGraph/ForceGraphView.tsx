@@ -2,6 +2,8 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import type { ScanResult } from '../../api';
 import { GraphViewChrome } from './GraphViewChrome';
+import { GraphRendererNotice } from './GraphRendererNotice';
+import { describeRendererFailure, type RendererStatus } from './rendererStatus';
 import { useGraphViewChromeModel } from './useGraphViewChromeModel';
 import { useStructuralScan } from '../../hooks/useStructuralScan';
 import { useBoxSelect } from './hooks/useBoxSelect';
@@ -45,12 +47,55 @@ type Props = {
   onHealthModeChange: (mode: boolean) => void;
 };
 
+type RendererCallbacks = {
+  onRendererFailure: (error: unknown) => void;
+  onContextLost: () => void;
+  onContextRestored: () => void;
+};
+
+// A WebGL fault is the one mount failure the graph is expected to survive (the
+// browser can refuse a context outright — see ./rendererStatus), so the
+// exported component is a thin retry shell around the coordinator. Retry
+// *remounts* it rather than re-running init alone: every hook below wires
+// itself to the graph instance at mount, so a graph that appeared later would
+// have nothing attached to it.
+export function ForceGraphView(props: Props) {
+  const [attempt, setAttempt] = useState(0);
+  const [status, setStatus] = useState<RendererStatus>({ kind: 'ok' });
+
+  const onRendererFailure = useCallback((error: unknown) => {
+    console.error('[graph] renderer unavailable:', error);
+    setStatus(describeRendererFailure(error));
+  }, []);
+  const onContextLost = useCallback(() => setStatus({ kind: 'lost' }), []);
+  const onContextRestored = useCallback(() => setStatus({ kind: 'ok' }), []);
+  const retry = useCallback(() => {
+    setStatus({ kind: 'ok' });
+    setAttempt((n) => n + 1);
+  }, []);
+
+  return (
+    <div className="graph-view-root">
+      <ForceGraphViewCoordinator
+        key={attempt}
+        {...props}
+        onRendererFailure={onRendererFailure}
+        onContextLost={onContextLost}
+        onContextRestored={onContextRestored}
+      />
+      {status.kind !== 'ok' && (
+        <GraphRendererNotice status={status} onRetry={retry} />
+      )}
+    </div>
+  );
+}
+
 // Hosts the 3d-force-graph instance and stitches together the per-concern
 // hooks under ./hooks/: graph initialization, settings persistence, git
 // timeline, LOC / health / labels overlays, shift-drag box-select, and the
 // right-click "create task" menu. Render-only chrome lives in the
 // Graph*.tsx siblings.
-export function ForceGraphView({
+function ForceGraphViewCoordinator({
   data,
   loading,
   hiddenExts,
@@ -58,7 +103,10 @@ export function ForceGraphView({
   activeFolder,
   healthMode,
   onHealthModeChange,
-}: Props) {
+  onRendererFailure,
+  onContextLost,
+  onContextRestored,
+}: Props & RendererCallbacks) {
   // ----- Phase 1: shared refs and overlay state -----
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraph3DInstance | null>(null);
@@ -155,6 +203,9 @@ export function ForceGraphView({
     metricsIgnoredExtsRef,
     batchedNodesRef,
     onHoverNodeChange: debouncedSetHoverNode,
+    onRendererFailure,
+    onContextLost,
+    onContextRestored,
   });
 
   // Save the camera position/orbit target per project and restore it on mount /
