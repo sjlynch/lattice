@@ -9,7 +9,10 @@ CLAUDE.md) — different directory, don't conflate.
   a `ResizeObserver`. Does **not** attach the WebglAddon. **`serverId` is not a
   dependency** — capturing a backend session id is an attach detail and must not
   dispose+recreate the Terminal. A pane keeps its single Terminal/FitAddon for
-  its whole life.
+  its whole life. **The observer refits only the active pane** (`activeRef`):
+  inactive panes are `visibility: hidden`, so they keep a layout size and a
+  sidebar drag fired a fit + pty resize on every mounted pane per pointer move.
+  An inactive pane refits once when it becomes active (`useActiveTerminalWebgl`).
 - `useActiveTerminalWebgl.ts` — attaches a `WebglAddon` only while this pane is
   `active`, disposes it on deactivate. Each WebGL context counts toward Chrome's
   ~16-per-page cap; holding one per terminal made "Run All" blow past it.
@@ -28,6 +31,14 @@ CLAUDE.md) — different directory, don't conflate.
   `canReattachTerminal` / `shouldGiveUpReconnect` (backoff/give-up decisions),
   `forwardTerminalInput` (xterm onData/onResize → socket), `terminalNotices` (all
   user-visible terminal-body status lines, in one place), and `MAX_RECONNECT_ATTEMPTS`.
+  Two behaviours here exist for the harness TUIs, not for xterm: **resizes are
+  trailing-debounced** (`RESIZE_DEBOUNCE_MS`) so a drag reaches the pty once at
+  its settled size — every pty resize is a SIGWINCH, and Codex (since its
+  resize-reflow shipped) clears and re-emits up to thousands of transcript rows
+  per width change, which turned one drag into minutes of redraw; and **an
+  `attached` frame resets the xterm buffer** before the scrollback replay that
+  follows it — a reconnect used to append the ~2 MB replay under the content the
+  pane already showed. Pinned by `__tests__/terminalSocketResize.test.ts`.
 - `terminalConfig.ts` — `Terminal` options + theme. `clipboardPaste.ts` — Ctrl+V
   → `term.paste()` (xterm would otherwise forward ^V as a raw byte).
 

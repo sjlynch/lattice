@@ -10,7 +10,7 @@ import type {
   ProjectEnvResponse,
   UserSettings,
 } from './types';
-import { subscribeWs } from './ws';
+import { subscribeWsShared } from './ws';
 
 // The Pi models available for the harness dropdowns: the full
 // `pi --list-models` list, the curated "Pi — X" menu, and Pi's current default.
@@ -49,7 +49,9 @@ export async function probePiEndpoint(
 export function subscribeHarnesses(
   onUpdate: (avail: HarnessAvailability) => void,
 ): () => void {
-  return subscribeWs<HarnessAvailability>('/ws/harnesses', onUpdate);
+  // Shared: the task board, workflow editor, settings and sidebar each mount a
+  // consumer, and one socket with a replayed snapshot serves them all.
+  return subscribeWsShared<HarnessAvailability>('/ws/harnesses', onUpdate, () => true);
 }
 
 export async function fetchUserSettings(projectPath: string): Promise<UserSettings> {

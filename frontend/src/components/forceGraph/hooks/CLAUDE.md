@@ -80,7 +80,11 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
 - `useGraphSearchController` — owns query + regex/contents toggles; wires
   `useGraphSearch` (filename pass + opt-in debounced contents pass, both feeding
   the shared `selected` set) and `useGraphSearchNavigation` (prev/next cursor +
-  camera focus, pulsing `wakeForRefresh` across the tween).
+  camera focus, pulsing `wakeForRefresh` across the tween). `useGraphSearch`
+  takes `useGraphDataSync`'s `dataGeneration`: a full structural swap resets the
+  shared selection, so the "already applied" guard is keyed on the generation
+  and the same match set is re-applied once after every swap (search halos used
+  to vanish on the first rescan).
 - `useSelectionHaloSync` — in-place selection-halo delta (toggles only changed
   ids + `wakeForRefresh`, never a full refresh). `useSelectionHaloPulse` —
   animates the single shared halo material's tint (brighter/whiter ⇄ base) while
@@ -135,7 +139,12 @@ tab) forces, pixel ratio, and link width.
 Settings effects skip work on the initial mount and on an empty/unmounted graph
 (`nodeThreeObject` reads `settingsRef` live, so the data-sync build already uses
 current values — a pre-population refresh/reheat is a byte-identical wake):
-- **Sizes** → clear label registries + `graph.refresh()` (no sim restart).
+- **Sizes** → clear label registries + `graph.refresh()` (no sim restart),
+  trailing-debounced (`SPRITE_REFRESH_DEBOUNCE_MS`): the sliders fire a change
+  per pointer move and the refresh rebuilds every sprite, so a drag pays one
+  rebuild when it settles. Persistence (`usePerProjectGraphSettings`) is
+  likewise debounced (`SETTINGS_PERSIST_DEBOUNCE_MS`), with the pending save
+  flushed on unmount and before a save for another project.
 - **Physics** (`charge`/`link`/`decay`/`chargeTheta`/`repulsionMode`) → poke
   `d3Force` + `d3ReheatSimulation`; the force pokes run on *every* run (incl.
   setup) so persisted non-defaults aren't left at d3 defaults. `repulsionMode`

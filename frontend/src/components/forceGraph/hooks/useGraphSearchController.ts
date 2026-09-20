@@ -9,6 +9,7 @@ type Args = {
   activeFolder: string;
   graphRef: MutableRefObject<ForceGraph3DInstance | null>;
   setSelected: (next: Set<string>) => void;
+  dataGeneration?: number;
 };
 
 // Owns the file-search state (query + regex/contents toggles) and wires the two
@@ -26,6 +27,7 @@ export function useGraphSearchController({
   activeFolder,
   graphRef,
   setSelected,
+  dataGeneration,
 }: Args) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchRegex, setSearchRegex] = useState(false);
@@ -43,6 +45,7 @@ export function useGraphSearchController({
     regex: searchRegex,
     contents: searchContents,
     setSelected,
+    dataGeneration,
   });
 
   // Prev/next match navigation + camera focus: cursor state (tracked by match

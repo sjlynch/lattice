@@ -55,29 +55,37 @@ function sameProject(a: string | undefined, b: string): boolean {
 
 // Replace the project's registered tabs with the registry's records (in
 // registry order), keep unregistered local tabs unless a record already owns
-// their pty, and leave every other project's tabs untouched.
+// their pty, and leave every other project's tabs untouched. `keepIds` are
+// registered tabs created AFTER the snapshot was requested (the snapshot
+// predates them); they are kept when the records don't list them.
 export function mergeRegistryTabs(
   terminals: TerminalSpec[],
   records: TerminalRecord[],
   projectPath: string,
+  keepIds: ReadonlySet<string> | null = null,
 ): TerminalSpec[] {
   const prevById = new Map(terminals.map((t) => [t.id, t] as const));
+  const recordIds = new Set(records.map((r) => r.id));
   const recordServerIds = new Set(records.map((r) => r.serverId).filter(Boolean));
   // `records` is the registry's answer for THIS project (the fetch and the WS
   // subscription are both project-scoped), so every one is projected.
   const projected = records.map((r) => recordToSpec(r, prevById.get(r.id)));
   const others: TerminalSpec[] = [];
   const localUnregistered: TerminalSpec[] = [];
+  const newerRegistered: TerminalSpec[] = [];
   for (const t of terminals) {
     if (!sameProject(t.projectPath, projectPath)) {
       others.push(t);
       continue;
     }
-    if (t.registered) continue; // superseded by the registry's view
+    if (t.registered) {
+      if (keepIds?.has(t.id) && !recordIds.has(t.id)) newerRegistered.push(t);
+      continue; // otherwise superseded by the registry's view
+    }
     if (t.serverId && recordServerIds.has(t.serverId)) continue; // a record owns this pty
     localUnregistered.push(t);
   }
-  return [...others, ...projected, ...localUnregistered];
+  return [...others, ...projected, ...newerRegistered, ...localUnregistered];
 }
 
 // Apply one live registry event to the list. `restore-summary` and `hello`

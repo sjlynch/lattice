@@ -28,7 +28,6 @@ export function useSidebarWidth(
   );
   const resizingRef = useRef(false);
   const activeFolderRef = useSyncedRef(activeFolder);
-  const sidebarWidthRef = useSyncedRef(sidebarWidth);
   const { settings, loaded } = userSettings;
 
   // Apply the per-project sidebar width from the shared userSettings fetch
@@ -81,12 +80,30 @@ export function useSidebarWidth(
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'ew-resize';
 
+    // Coalesce pointer moves to one width commit per animation frame: each
+    // commit re-renders App (and lays the graph + sidebar out again), and a
+    // pointer delivers several moves per frame.
+    let frame: number | null = null;
+    let latestX = 0;
     const handleMove = (ev: PointerEvent) => {
       if (!resizingRef.current) return;
-      setSidebarWidth(clampSidebarWidth(ev.clientX));
+      latestX = ev.clientX;
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        if (resizingRef.current) setSidebarWidth(clampSidebarWidth(latestX));
+      });
     };
     const handleUp = (ev: PointerEvent) => {
       resizingRef.current = false;
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+        frame = null;
+      }
+      // The final width comes from the release point, not the state ref: the
+      // last coalesced frame may not have committed yet.
+      const finalWidth = clampSidebarWidth(ev.clientX);
+      setSidebarWidth(finalWidth);
       document.body.style.userSelect = prevUserSelect;
       document.body.style.cursor = prevCursor;
       try {
@@ -99,14 +116,14 @@ export function useSidebarWidth(
       window.removeEventListener('pointercancel', handleUp);
       if (activeFolderRef.current) {
         patchUserSettings(activeFolderRef.current, {
-          sidebarWidth: sidebarWidthRef.current,
+          sidebarWidth: finalWidth,
         }).catch(() => {});
       }
     };
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
     window.addEventListener('pointercancel', handleUp);
-  }, [activeFolderRef, sidebarWidthRef]);
+  }, [activeFolderRef]);
 
   const onResizerDoubleClick = useCallback(() => {
     const width = clampSidebarWidth(APP_CONFIG.sidebar.defaultWidth);

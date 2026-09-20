@@ -65,6 +65,8 @@ type ProviderProps = {
 };
 
 const ORDER_PATCH_DEBOUNCE_MS = 300;
+const REGISTRY_FETCH_ATTEMPTS = 4;
+const REGISTRY_FETCH_RETRY_MS = 750;
 
 // A pure re-attach of live tabs happens on every reload and is not worth a
 // notice; relaunches, drops and failures are.
@@ -116,16 +118,24 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
   // Projects this page session has already auto-restored, so a settings
   // refetch or a re-render never fires a second automatic pass.
   const autoRestoredRef = useRef<Set<string>>(new Set());
-  const restoreInFlightRef = useRef<Promise<RestoreSummary | null> | null>(null);
+  // One silent pass in flight PER PROJECT. Keyed by folder (a single global
+  // slot used to hand project B's on-open pass project A's still-running
+  // promise, so B was marked auto-restored without ever being restored). An
+  // explicit "Restore tabs" click always goes through: the backend answers
+  // `already-running` if a pass is still busy, and that is the feedback the
+  // button owes the user.
+  const restoreInFlightRef = useRef<Map<string, Promise<RestoreSummary | null>>>(new Map());
 
   const runRestore = useCallback(async (opts: { retry?: boolean } = {}): Promise<RestoreSummary | null> => {
     const folder = activeFolderRef.current;
     if (!folder) return null;
-    if (restoreInFlightRef.current) return restoreInFlightRef.current;
-    const run = (async () => {
+    const inFlight = restoreInFlightRef.current.get(folder);
+    if (inFlight && !opts.retry) return inFlight;
+    let run: Promise<RestoreSummary | null> | null = null;
+    run = (async () => {
       try {
         const summary = await restoreTerminalTabs(folder, opts);
-        setRestorePrompt(null);
+        if (activeFolderRef.current === folder) setRestorePrompt(null);
         // The HTTP response is the authoritative summary for a restore THIS
         // tab asked for: the matching WS `restore-summary` can fire before
         // the socket is even open on a fresh page load. The WS event still
@@ -154,10 +164,10 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
         console.warn('[lattice] terminal restore failed:', err);
         return null;
       } finally {
-        restoreInFlightRef.current = null;
+        if (run && restoreInFlightRef.current.get(folder) === run) restoreInFlightRef.current.delete(folder);
       }
     })();
-    restoreInFlightRef.current = run;
+    if (!opts.retry) restoreInFlightRef.current.set(folder, run);
     return run;
   }, []);
 
@@ -170,14 +180,23 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
     records: TerminalRecord[];
   } | null>(null);
 
+  // Ids of registered tabs added (addTerminal) while the project's registry
+  // fetch is in flight. The fetch's answer predates them, so a plain merge
+  // would drop them as "not in the registry"; they are kept explicitly.
+  const addedDuringFetchRef = useRef<Set<string> | null>(null);
+
   useEffect(() => {
+    setRestorePrompt(null);
     if (!activeFolder) return;
     let cancelled = false;
-    setRestorePrompt(null);
     const unsub = subscribeTerminalTabs(activeFolder, (ev) => {
       if (cancelled) return;
       if (ev.type === 'hello') {
-        setTerminals((ts) => mergeRegistryTabs(ts, ev.tabs, activeFolder));
+        setTerminals((ts) => mergeRegistryTabs(ts, ev.tabs, activeFolder, addedDuringFetchRef.current));
+        // The socket's snapshot is as good as the HTTP answer for gating the
+        // auto-restore — a slow or failed fetch must not leave every pending
+        // tab unmountable with no restore ever fired.
+        setRegistryLoaded((cur) => (cur && cur.folder === activeFolder ? cur : { folder: activeFolder, records: ev.tabs }));
         return;
       }
       if (ev.type === 'restore-summary') {
@@ -191,17 +210,33 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
     // The HTTP fetch is what gates the auto-restore: it settles even when the
     // WS is slow to connect, and its result tells 'ask' mode how many tabs
     // are on offer.
-    void fetchTerminalTabs(activeFolder)
-      .then((records) => {
-        if (cancelled) return;
-        setTerminals((ts) => mergeRegistryTabs(ts, records, activeFolder));
-        setRegistryLoaded({ folder: activeFolder, records });
-      })
-      .catch((err) => {
-        console.warn('[lattice] terminal registry fetch failed:', err);
-      });
+    const added = new Set<string>();
+    addedDuringFetchRef.current = added;
+    // A backend still booting (the dev runner restarting it under the page)
+    // fails the first fetch; retry a few times before leaving it to the WS
+    // `hello` above.
+    const attempt = (n: number): void => {
+      void fetchTerminalTabs(activeFolder)
+        .then((records) => {
+          if (cancelled) return;
+          setTerminals((ts) => mergeRegistryTabs(ts, records, activeFolder, added));
+          setRegistryLoaded((cur) => (cur && cur.folder === activeFolder ? cur : { folder: activeFolder, records }));
+          if (addedDuringFetchRef.current === added) addedDuringFetchRef.current = null;
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          if (n < REGISTRY_FETCH_ATTEMPTS) {
+            setTimeout(() => { if (!cancelled) attempt(n + 1); }, REGISTRY_FETCH_RETRY_MS * n);
+            return;
+          }
+          console.warn('[lattice] terminal registry fetch failed:', err);
+          if (addedDuringFetchRef.current === added) addedDuringFetchRef.current = null;
+        });
+    };
+    attempt(1);
     return () => {
       cancelled = true;
+      if (addedDuringFetchRef.current === added) addedDuringFetchRef.current = null;
       unsub();
     };
   }, [activeFolder]);
@@ -249,6 +284,9 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
       void patchTerminalTabOrder(folder, order).catch(() => {});
     }, ORDER_PATCH_DEBOUNCE_MS);
   }, []);
+  useEffect(() => () => {
+    if (orderTimerRef.current) clearTimeout(orderTimerRef.current);
+  }, []);
 
   const setActiveId = useCallback((id: string | null) => {
     setActiveIdState(id);
@@ -267,6 +305,7 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
       const id = spec.id ?? newTerminalId();
       const registered = spec.registered ?? spec.id !== undefined;
       const { id: _ignored, ...rest } = spec;
+      if (registered) addedDuringFetchRef.current?.add(id);
       setTerminals((ts) => {
         // A registry `upsert` for a backend-minted id can land before the
         // caller's addTerminal: merge onto it instead of duplicating.

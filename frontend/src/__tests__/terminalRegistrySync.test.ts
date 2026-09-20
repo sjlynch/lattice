@@ -73,6 +73,21 @@ test('mergeRegistryTabs replaces the project slice, keeps other projects and unr
   assert.equal(merged.find((t) => t.id === 'a')?.registered, true);
 });
 
+test('mergeRegistryTabs keeps a registered tab created after the snapshot was requested', () => {
+  // The fetch was answered before `fresh` existed; a plain merge would drop it
+  // as "unknown to the registry" and the user's brand-new tab would vanish.
+  const local: TerminalSpec[] = [
+    spec({ id: 'a', registered: true, serverId: 'srv_a' }),
+    spec({ id: 'fresh', registered: true, serverId: 'srv_fresh' }),
+    spec({ id: 'gone', registered: true, serverId: 'srv_gone' }),
+  ];
+  const merged = mergeRegistryTabs(local, [rec({ id: 'a' })], P, new Set(['fresh']));
+  assert.deepEqual(merged.map((t) => t.id), ['a', 'fresh']);
+  // Once the registry lists it, the record wins (no duplicate).
+  const later = mergeRegistryTabs(merged, [rec({ id: 'a' }), rec({ id: 'fresh' })], P, new Set(['fresh']));
+  assert.deepEqual(later.map((t) => t.id), ['a', 'fresh']);
+});
+
 test('upsert adds unknown live records, updates known ones, ignores unknown ended ones', () => {
   let list = [spec({ id: 'a', registered: true, serverId: 'srv_a', status: 'live' })];
   list = applyTerminalTabsEvent(list, { type: 'upsert', projectPath: P, record: rec({ id: 'a', label: 'renamed' }) });

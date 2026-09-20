@@ -306,7 +306,7 @@ function ForceGraphViewCoordinator({
     goPrevMatch,
     goNextMatch,
     clearCurrentMatch,
-  } = useGraphSearchController({ data, activeFolder, graphRef, setSelected });
+  } = useGraphSearchController({ data, activeFolder, graphRef, setSelected, dataGeneration });
 
   const { contextMenu, setContextMenu } = useNodeContextMenu(containerRef);
   const closeContextMenu = useCallback(() => setContextMenu(null), [setContextMenu]);

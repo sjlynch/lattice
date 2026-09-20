@@ -52,6 +52,7 @@ function makeFakeTerminal(): Terminal {
     rows: 24,
     write: () => {},
     clear: () => {},
+    reset: () => {},
     onData: () => ({ dispose() {} }),
     onResize: () => ({ dispose() {} }),
   } as unknown as Terminal;

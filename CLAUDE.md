@@ -272,7 +272,11 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   source of truth: card left edge, graph Claude node, `W` worktree rings).
   Each running task gets a stable palette *slot* (`Task.colorIndex`,
   assigned at spawn by `backend/src/routes/tasks/colorSlot.ts` — smallest
-  index free among active tasks) mapped through a golden-angle palette, so
+  index free among active tasks, with an in-memory *reservation* held from
+  the moment a start picks its slot until its status flip lands, since the
+  spawn queue admits up to `softCap` starts concurrently and overlapping
+  "Run All" siblings otherwise computed the same lowest free slot) mapped
+  through a golden-angle palette, so
   30–80 concurrent agents stay maximally distinct and colors never
   reshuffle when a sibling finishes.
 - **Graph overlays (hold-key, or pin).** Momentary recolors of the file graph,
@@ -511,6 +515,15 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   welcome-screen animation at an empty prompt must never count as Codex work.
   Quiet active turns remain busy, including when Codex animations are disabled.
   No global Codex config is written; later explicit command-line overrides win.
+  The same injection sets `tui.terminal_resize_reflow_max_rows=500`: Codex
+  clears and re-emits its transcript on every terminal width change (its
+  resize reflow, no off switch), capped per detected terminal — 9001 rows
+  under the `WT_SESSION` a Lattice-spawned Codex inherits from the dev server —
+  which is what made a sidebar drag or a reconnect take minutes. The
+  frontend also sends the pty ONE resize per settled drag
+  (`terminalSocket.ts` `RESIZE_DEBOUNCE_MS`), refits only the visible pane,
+  and resets the xterm buffer on every `attached` frame so a reconnect's
+  scrollback replay is painted once, not appended under the old content.
   **Claude/Pi use sustained printable output that the user isn't driving**;
   focus, scrolling and resizing must not accumulate false busy runs.
   `backend/src/terminalActivity.ts` derives the signal and pushes it over

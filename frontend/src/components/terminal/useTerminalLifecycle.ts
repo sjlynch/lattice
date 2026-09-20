@@ -12,6 +12,9 @@ type UseTerminalLifecycleArgs = {
   fitRef: RefObject<FitAddon | null>;
   webglRef: RefObject<WebglAddon | null>;
   cwd: string;
+  // Whether this pane is the visible tab. Read live from the resize observer
+  // (a ref, so a tab switch never re-runs the mount effect).
+  activeRef: RefObject<boolean>;
 };
 
 export function useTerminalLifecycle({
@@ -20,6 +23,7 @@ export function useTerminalLifecycle({
   fitRef,
   webglRef,
   cwd,
+  activeRef,
 }: UseTerminalLifecycleArgs) {
   useEffect(() => {
     if (!containerRef.current) return;
@@ -36,7 +40,14 @@ export function useTerminalLifecycle({
     termRef.current = term;
     attachClipboardPasteHandler(term);
 
+    // Inactive panes are `visibility: hidden`, not `display: none` — they keep
+    // their layout size, so a sidebar drag fires this observer on EVERY mounted
+    // pane per pointer move. Each fit reflows that xterm's buffer and (via
+    // onResize) queues a pty resize, which for a Codex session means a full
+    // transcript re-emit. Only the visible pane tracks the container live;
+    // a pane refits once when it becomes active (useActiveTerminalWebgl).
     const ro = new ResizeObserver(() => {
+      if (!activeRef.current) return;
       try {
         fit.fit();
       } catch {
@@ -63,5 +74,5 @@ export function useTerminalLifecycle({
     // id is an attach detail and must not dispose+recreate the Terminal/FitAddon
     // (which clears the screen, drops focus, and churns a WebGL context). The
     // single Terminal lives for the pane's whole life. See terminal/CLAUDE.md.
-  }, [containerRef, cwd, fitRef, termRef, webglRef]);
+  }, [containerRef, cwd, fitRef, termRef, webglRef, activeRef]);
 }

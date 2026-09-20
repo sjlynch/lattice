@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 import { loadSettings, saveSettings, type GraphSettings } from '../graphSettings';
 
+export const SETTINGS_PERSIST_DEBOUNCE_MS = 250;
+
 export type ScopedGraphSettings = {
   project: string;
   settings: GraphSettings;
@@ -74,10 +76,28 @@ export function usePerProjectGraphSettings(activeFolder: string) {
   // Persist only settings that are tagged with the currently-active project.
   // This prevents the project-switch render where project B is active but the
   // state object still belongs to project A from stamping A's settings under B.
+  // Trailing-debounced: a slider drag changes the settings per pointer move,
+  // and each save is a synchronous JSON.stringify + localStorage write. The
+  // pending save is flushed (not dropped) when the effect is torn down — a
+  // project switch or unmount mid-drag still lands the last value.
+  const pendingSaveRef = useRef<ScopedGraphSettings | null>(null);
+  const flushPendingSave = useCallback(() => {
+    const p = pendingSaveRef.current;
+    if (!p) return;
+    pendingSaveRef.current = null;
+    saveSettings(p.project, p.settings);
+  }, []);
   useEffect(() => {
     if (!shouldPersistScopedGraphSettings(activeFolder, scoped)) return;
-    saveSettings(activeFolder, scoped.settings);
-  }, [activeFolder, scoped]);
+    // A save still pending for ANOTHER project (a switch mid-debounce) lands
+    // first, under its own key.
+    if (pendingSaveRef.current && pendingSaveRef.current.project !== scoped.project) flushPendingSave();
+    pendingSaveRef.current = scoped;
+    const timer = setTimeout(flushPendingSave, SETTINGS_PERSIST_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [activeFolder, scoped, flushPendingSave]);
+  // Unmount: land whatever is still pending.
+  useEffect(() => flushPendingSave, [flushPendingSave]);
 
   return { settings, setSettings, settingsRef };
 }

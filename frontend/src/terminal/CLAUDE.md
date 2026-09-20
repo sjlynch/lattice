@@ -38,7 +38,15 @@ side effect can each be reasoned about (and changed) on their own.
   marks the summary's `relaunchedIds` from the HTTP response (the WS events can
   precede a fresh page's socket). **A tab in a `restore` state must never mount
   a pane** — a serverless attach would run its launch command a second time
-  (`Sidebar.tsx` + `useMountedTerminalIds` both gate on it).
+  (`Sidebar.tsx` + `useMountedTerminalIds` both gate on it). The on-open pass
+  is single-flighted PER PROJECT (a global slot once handed project B's pass
+  project A's promise, marking B restored without restoring it); an explicit
+  "Restore tabs" click always goes through so the backend's `already-running`
+  can be shown. The registry fetch retries a few times (a backend still
+  booting) and the WS `hello` snapshot also gates the auto-restore, so a slow
+  fetch never leaves pending tabs unmountable. `mergeRegistryTabs` takes the
+  ids of registered tabs created while a snapshot was in flight (`keepIds`)
+  and keeps them when the older snapshot doesn't list them.
 - `terminalState.ts` — barrel that re-exports the pure functions from the two
   modules below, so `./terminalState` stays the stable import surface for
   `TerminalsContext` and the tests.

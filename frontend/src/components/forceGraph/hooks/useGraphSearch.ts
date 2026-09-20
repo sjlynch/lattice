@@ -75,8 +75,11 @@ export function useGraphSearch(params: {
   regex: boolean;
   contents: boolean;
   setSelected: (next: Set<string>) => void;
+  // Bumped by useGraphDataSync on every full graphData() swap — which also
+  // resets the shared selection. An active search must re-apply after it.
+  dataGeneration?: number;
 }): SearchResult {
-  const { data, activeFolder, query, regex, contents, setSelected } = params;
+  const { data, activeFolder, query, regex, contents, setSelected, dataGeneration = 0 } = params;
   const trimmed = query.trim();
 
   const matcher = useMemo(
@@ -175,8 +178,12 @@ export function useGraphSearch(params: {
   // clear if *we* were the last to drive the selection. Guarded against
   // redundant applies (the health watcher churns `data`, hence
   // `fileNameMatches`, with an identical match set on every file save).
+  // A structural rescan (`dataGeneration` bump) wipes the selection out from
+  // under the search, so the "already applied" guard is keyed on the generation
+  // too: the same match set is re-applied once after every swap.
   const droveRef = useRef(false);
   const lastAppliedRef = useRef<Set<string>>(new Set());
+  const lastAppliedGenRef = useRef(dataGeneration);
   useEffect(() => {
     if (trimmed.length === 0) {
       if (droveRef.current) {
@@ -186,11 +193,16 @@ export function useGraphSearch(params: {
       }
       return;
     }
-    if (droveRef.current && sameSet(union, lastAppliedRef.current)) return;
+    if (
+      droveRef.current &&
+      lastAppliedGenRef.current === dataGeneration &&
+      sameSet(union, lastAppliedRef.current)
+    ) return;
     droveRef.current = true;
     lastAppliedRef.current = union;
+    lastAppliedGenRef.current = dataGeneration;
     setSelected(new Set(union));
-  }, [trimmed, union, setSelected]);
+  }, [trimmed, union, setSelected, dataGeneration]);
 
   // Ordered match list for prev/next navigation — a stable sort over the union
   // so stepping is predictable, and a fresh reference only when the set changes.

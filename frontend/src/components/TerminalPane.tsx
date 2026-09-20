@@ -31,8 +31,10 @@ export function TerminalPane({
   const fitRef = useRef<FitAddon | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const webglRef = useRef<WebglAddon | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
-  useTerminalLifecycle({ containerRef, termRef, fitRef, webglRef, cwd });
+  useTerminalLifecycle({ containerRef, termRef, fitRef, webglRef, cwd, activeRef });
   useTerminalConnection({
     termRef,
     cwd,

@@ -117,6 +117,9 @@ posts) has to be keyed so it can't fire on a mismatched pair. Pinned by
   `subscribeHarnesses`) + a `harnessAvailLoaded` flag, shared by every harness
   dropdown (task board / workflow overrides + steps / post-merge hook). Replaces
   the per-feature copies; each feature keeps its own selection/persistence.
+  `subscribeHarnesses` rides `subscribeWsShared` with snapshot replay, so the
+  several mounted consumers share ONE `/ws/harnesses` socket and a late mount
+  gets the last map at once.
 - `usePiModelMenu()` — the curated "Pi — X" menu, read from the shared
   `../piModelMenuStore` (`piMenuStoreCore.ts` = pure `createPiMenuStore(fetcher)`
   core + the `getPiModels`-backed singleton). One cached list across all
