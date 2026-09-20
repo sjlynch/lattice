@@ -61,6 +61,9 @@ export type TerminalRecord = {
   updatedAt: number;
   restoreCount?: number;
   restoredAt?: number;
+  // A restore pass (possibly another browser tab's) has this tab's relaunch
+  // queued or in flight.
+  relaunching?: boolean;
   ended?: TerminalEnded;
 };
 

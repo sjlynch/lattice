@@ -15,7 +15,9 @@ export function describeRestoreSummary(summary: RestoreNoticeState['summary']): 
   if (summary.status === 'terminal-server-unreachable') {
     return 'Could not restore tabs: the terminal server is unreachable.';
   }
-  if (summary.status === 'already-running') return 'A restore is already running.';
+  if (summary.status === 'already-running') {
+    return 'A restore is already in progress — tabs relaunch as the concurrency cap allows.';
+  }
   const parts: string[] = [];
   if (summary.adopted > 0) parts.push(`${summary.adopted} re-attached`);
   if (summary.queued > 0) parts.push(`${summary.queued} relaunching`);

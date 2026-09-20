@@ -169,4 +169,6 @@ test('registeredOrder lists only the project\'s registered tabs in order; restor
   assert.equal(restorableCount(records, null), 3, 'unreadable live set → same');
   assert.equal(restorableCount(records, new Set(['srv_a'])), 2, 'a live pty is nothing to ask about');
   assert.equal(restorableCount(records, new Set(['srv_a', 'srv_b'])), 1, 'only the pty-less record remains');
+  // A relaunch another browser tab already has in flight is nothing to ask about.
+  assert.equal(restorableCount([...records, rec({ id: 'q', serverId: undefined, relaunching: true })], new Set(['srv_a', 'srv_b'])), 1);
 });

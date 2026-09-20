@@ -238,6 +238,7 @@ async function recordSpawnedTerminal(
         restoredAt: Date.now(),
         restoreCount: (prev?.restoreCount ?? 0) + 1,
         lastBusy: undefined,
+        relaunching: undefined,
       }, projectPath);
     }
     const label = hint.label ?? defaultTerminalLabel(originalCommand, harness);

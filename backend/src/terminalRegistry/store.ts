@@ -89,6 +89,9 @@ export function deserializeTerminalRecord(raw: unknown): TerminalRecord | null {
   if (str(r.serverInstanceId)) record.serverInstanceId = r.serverInstanceId as string;
   if (num(r.restoreCount) !== undefined) record.restoreCount = r.restoreCount as number;
   if (num(r.restoredAt) !== undefined) record.restoredAt = r.restoredAt as number;
+  // A relaunch that was in flight when the process died is not in flight now.
+  // (Deliberately not persisted-through: the flag only means anything for the
+  // backend process that queued it.)
   const as = r.agentSession as Record<string, unknown> | undefined;
   if (as && typeof as === 'object' && isAgentHarness(as.harness) && str(as.id)) {
     record.agentSession = {

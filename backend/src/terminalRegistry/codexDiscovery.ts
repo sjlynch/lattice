@@ -60,7 +60,9 @@ export async function scanRecentCodexRollouts(
   writtenSince = createdSince,
 ): Promise<CodexRolloutMeta[]> {
   const out: CodexRolloutMeta[] = [];
-  const days = Math.min(30, Math.max(2, Math.ceil((Date.now() - createdSince) / 86_400_000) + 2));
+  // Bounded so an ancient tab cannot turn each poll into a walk of years of
+  // rollouts; the stat pre-filter keeps the per-file cost to one stat.
+  const days = Math.min(120, Math.max(2, Math.ceil((Date.now() - createdSince) / 86_400_000) + 2));
   for (const dir of await listCodexDayDirs(root, days)) {
     let names: string[];
     try { names = await fs.readdir(dir); } catch { continue; }

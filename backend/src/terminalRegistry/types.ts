@@ -96,6 +96,10 @@ export type TerminalRecord = {
   // How many times this tab has been relaunched by restore.
   restoreCount?: number;
   restoredAt?: number;
+  // True while a restore pass has this tab's relaunch queued or in flight
+  // (the dead `serverId` is cleared at that point). Lets another client tell
+  // "being relaunched right now" from "dead and waiting to be asked about".
+  relaunching?: boolean;
   ended?: TerminalEnded;
 };
 

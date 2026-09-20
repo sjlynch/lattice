@@ -68,8 +68,9 @@ const ORDER_PATCH_DEBOUNCE_MS = 300;
 
 // A pure re-attach of live tabs happens on every reload and is not worth a
 // notice; relaunches, drops and failures are.
+// `already-running` counts too: it is the only feedback the button can give
+// while a previous pass's relaunches are still queued behind the cap.
 function isNoteworthy(summary: RestoreSummary): boolean {
-  if (summary.status === 'already-running') return false;
   if (summary.status !== 'ok') return true;
   return summary.queued > 0 || summary.dropped.length > 0;
 }
@@ -129,7 +130,9 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
         // tab asked for: the matching WS `restore-summary` can fire before
         // the socket is even open on a fresh page load. The WS event still
         // covers restores triggered from another browser tab.
-        if (isNoteworthy(summary)) {
+        // A silent on-open pass colliding with an in-progress one stays silent;
+        // an explicit click deserves the "already in progress" line.
+        if (isNoteworthy(summary) && (summary.status !== 'already-running' || opts.retry)) {
           setLastRestore({ projectPath: folder, summary, at: Date.now() });
         }
         // Tabs being relaunched: flag them "restored" now and drop the dead

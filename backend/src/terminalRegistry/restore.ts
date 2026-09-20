@@ -264,7 +264,7 @@ async function performRestore(
     // tab as "restoring" (no pane attaches to a dead id) until the relaunch
     // lands a new one. A retried failure sheds its `ended` marker the same way.
     await terminalRegistry.update(record.id, {
-      serverId: undefined, serverInstanceId: undefined, ended: undefined,
+      serverId: undefined, serverInstanceId: undefined, ended: undefined, relaunching: true,
     }, record.projectPath);
     relaunches.push(enqueueRelaunch(record, deps));
   }
@@ -286,8 +286,14 @@ function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): Promise<voi
       const current = await terminalRegistry.get(record.id, record.projectPath);
       // Closed while queued, or already backed by a pty again (another pass
       // adopted / relaunched it in the meantime): nothing to spawn.
-      if (!current || current.ended || current.serverId) return;
+      if (!current || current.ended || current.serverId) {
+        if (current?.relaunching) {
+          await terminalRegistry.update(current.id, { relaunching: undefined }, current.projectPath).catch(() => null);
+        }
+        return;
+      }
       const fail = async (reason: string) => {
+        await terminalRegistry.update(current.id, { relaunching: undefined }, current.projectPath);
         await terminalRegistry.end(
           current.id, { reason: 'restore-failed', detail: reason, at: firstFailedAt }, current.projectPath,
         );
@@ -335,6 +341,7 @@ function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): Promise<voi
     const reason = err instanceof Error ? err.message : String(err);
     const current = await terminalRegistry.get(record.id, record.projectPath).catch(() => null);
     if (!current || current.ended) return;
+    await terminalRegistry.update(current.id, { relaunching: undefined }, current.projectPath).catch(() => null);
     await terminalRegistry
       .end(current.id, { reason: 'restore-failed', detail: reason, at: firstFailedAt }, current.projectPath)
       .catch(() => {});

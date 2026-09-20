@@ -173,6 +173,8 @@ export function restorableCount(
 ): number {
   return records.filter((r) => {
     if (r.ended || r.owner === 'startup') return false;
+    // Another client's restore pass already has this one in flight.
+    if (r.relaunching) return false;
     if (liveServerIds && r.serverId && liveServerIds.has(r.serverId)) return false;
     return true;
   }).length;
