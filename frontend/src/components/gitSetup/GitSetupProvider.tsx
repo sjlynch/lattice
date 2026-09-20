@@ -105,7 +105,9 @@ export function GitSetupProvider({ children }: { children: ReactNode }) {
         // caller through rather than blocking it: the pre-existing error path
         // (a 400 with the backend's own message) is strictly better than a
         // dialog Lattice can't populate.
-        if (!probe || probe.state === 'repo') return true;
+        // An unborn repo (no commits) is the one 'repo' that still needs the
+        // dialog: a task worktree cannot be created from it.
+        if (!probe || (probe.state === 'repo' && !probe.unborn)) return true;
         return ask(projectPath, probe);
       })();
 

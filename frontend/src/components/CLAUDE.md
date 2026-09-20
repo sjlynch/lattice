@@ -16,7 +16,13 @@
   (navbar chip, task *create*, ▶ run); it probes first, resolves `true` with no
   UI for an existing repo, opens `GitSetupDialog` for `none` + `initable`, and
   explains-then-refuses everything else. **`nested` is never offered init** — a
-  repo inside a repo is the worst outcome the feature can produce. Concurrent
+  repo inside a repo is the worst outcome the feature can produce. A `repo`
+  that is **`unborn`** (no commits — its first commit failed, typically on a
+  missing git identity) is the one repo state that still opens the dialog: the
+  chip reads "`<branch> · finish setup`", and the same init flow completes it
+  (the backend skips `git init`). The folder picker's create-and-init path
+  shows git's own stderr under a failed init, since that is where the identity
+  fix commands are spelled out. Concurrent
   calls for one project are coalesced, so a "run all" asks once. `useGitSetupNonce()`
   bumps after a successful init so the navbar re-probes and re-subscribes to
   `/ws/git-branch`. Pure chip/copy/format logic is in `gitSetupDerive.ts`

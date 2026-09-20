@@ -57,6 +57,17 @@ export function deriveGitChipState(
 
   switch (probe.state) {
     case 'repo':
+      if (probe.unborn && probe.initable) {
+        // `git init` ran but the first commit never landed (a missing git
+        // identity, usually). Tasks can't run until it does, so this is an
+        // invitation, like "Set up Git" — carrying the branch name when known.
+        return {
+          kind: 'action',
+          label: branch ? `${branch} · finish setup` : 'Finish Git setup',
+          title:
+            'This repository has no commits yet, so Lattice cannot create task worktrees. Click to make the first commit.',
+        };
+      }
       return branch ? branchChip(branch) : null;
     case 'nested': {
       const parent = probe.toplevel ? basename(probe.toplevel) : '';

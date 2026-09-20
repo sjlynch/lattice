@@ -83,3 +83,24 @@ test('subscribeGitBranch delivers the current branch and updates on checkout', a
     }
   });
 });
+
+// A freshly `git init`ed repo has an unborn HEAD: no commit for
+// `rev-parse --abbrev-ref HEAD` to resolve, which is why the navbar chip
+// vanished for exactly the projects a user had just created (and for any
+// project whose first commit failed on a missing git identity).
+test('getCurrentBranch names the branch of a repo with no commits yet', async () => {
+  await withTempDir('lattice-branch-', async (dir) => {
+    const repo = path.join(dir, 'unborn');
+    await fs.mkdir(repo, { recursive: true });
+    const run = promisify(execFile);
+    try {
+      await run('git', ['init', '-q', '-b', 'main'], { cwd: repo });
+    } catch {
+      await run('git', ['init', '-q'], { cwd: repo });
+    }
+    const branch = await getCurrentBranch(repo);
+    assert.ok(branch, 'an unborn HEAD still has a branch name');
+    assert.notEqual(branch, 'HEAD');
+    assert.ok(!branch!.startsWith('detached'));
+  });
+});

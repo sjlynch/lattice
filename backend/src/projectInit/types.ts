@@ -20,8 +20,19 @@ export type ProjectGitProbe = {
   state: ProjectGitState;
   /** Repo root git reports. For 'nested' this is the ANCESTOR repo. */
   toplevel?: string;
-  /** True only when state === 'none' AND every path guard passes. */
+  /**
+   * True when Lattice may (still) run the init flow here: state === 'none'
+   * with every path guard passing, OR a 'repo' whose HEAD is unborn (see
+   * `unborn`), where init skips `git init` and just creates the first commit.
+   */
   initable: boolean;
+  /**
+   * 'repo' only: the repository has no commits yet — `git init` ran but the
+   * first commit never landed (typically a missing git identity aborted it).
+   * Lattice cannot create task worktrees from an unborn HEAD, so the setup is
+   * offered again to finish the job.
+   */
+  unborn?: boolean;
   /** Why `initable` is false, or what went wrong for 'error'. Human-readable. */
   reason?: string;
 };

@@ -24,24 +24,30 @@ const GIT_BRANCH_TIMEOUT_MS = 4000;
 // some platforms) into one branch re-derivation.
 const RECOMPUTE_DEBOUNCE_MS = 150;
 
-// Current branch of a repo's working tree. `rev-parse --abbrev-ref HEAD` yields
-// the branch name, or the literal "HEAD" when detached — in which case we
-// surface the short sha so the navbar shows something meaningful instead of a
-// bare "HEAD". Returns null when the folder isn't a git repo (or git isn't
+// Current branch of a repo's working tree. `symbolic-ref --short HEAD` yields
+// the branch name whenever HEAD points at a branch — INCLUDING an "unborn"
+// branch in a repo with no commits yet, which is what a freshly initialized
+// project is (and what a project whose first commit failed for a missing git
+// identity stays). `rev-parse --abbrev-ref HEAD` cannot resolve that (HEAD is
+// not a commit), so the navbar chip used to vanish for exactly the projects a
+// user had just created. Detached HEAD fails `symbolic-ref`; then we surface
+// the short sha so the chip shows something meaningful instead of a bare
+// "HEAD". Returns null when the folder isn't a git repo (or git isn't
 // available), so the navbar can just omit the branch indicator.
 export async function getCurrentBranch(repoRoot: string): Promise<string | null> {
   try {
-    const r = await exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot, {
+    const ref = await exec('git', ['symbolic-ref', '--short', '-q', 'HEAD'], repoRoot, {
       timeoutMs: GIT_BRANCH_TIMEOUT_MS,
     });
-    const name = r.stdout.trim();
-    if (r.code !== 0 || !name) return null;
-    if (name !== 'HEAD') return name;
+    const name = ref.stdout.trim();
+    if (ref.code === 0 && name) return name;
+    // Not a symbolic ref: detached, or not a repo at all. Only a detached HEAD
+    // resolves to a commit.
     const sha = await exec('git', ['rev-parse', '--short', 'HEAD'], repoRoot, {
       timeoutMs: GIT_BRANCH_TIMEOUT_MS,
     });
     const short = sha.stdout.trim();
-    return short ? `detached @ ${short}` : null;
+    return sha.code === 0 && short ? `detached @ ${short}` : null;
   } catch {
     return null;
   }

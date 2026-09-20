@@ -95,25 +95,34 @@ async function runInit(
       probe.reason ?? 'the `git` CLI is not on PATH',
     );
   }
-  if (probe.state !== 'none' || !probe.initable) {
+  // Two ways in: a plain folder (`none` + initable → `git init` first), or a
+  // repo whose HEAD is still unborn (`repo` + `unborn` → skip `git init`, the
+  // rest of the flow is exactly the first commit that never landed). The
+  // latter is what a failed first commit leaves behind — most often a missing
+  // git identity — and is the only way to make that project usable again
+  // without leaving Lattice.
+  const finishingUnborn = probe.state === 'repo' && probe.unborn === true && probe.initable;
+  if (!finishingUnborn && (probe.state !== 'none' || !probe.initable)) {
     throw new ProjectInitError(
       'not-initable',
       probe.reason ?? `cannot initialize a git repository at ${root} (${probe.state})`,
     );
   }
 
-  let init = await bareGit(root, ['init', '-b', 'main']);
-  if (init.code !== 0) {
-    // `-b` landed in git 2.28; on an older git fall back and report whichever
-    // branch name it defaults to.
-    init = await bareGit(root, ['init']);
-  }
-  if (init.code !== 0) {
-    throw new ProjectInitError(
-      'git-failed',
-      'git init failed',
-      init.stderr.trim() || init.stdout.trim(),
-    );
+  if (!finishingUnborn) {
+    let init = await bareGit(root, ['init', '-b', 'main']);
+    if (init.code !== 0) {
+      // `-b` landed in git 2.28; on an older git fall back and report whichever
+      // branch name it defaults to.
+      init = await bareGit(root, ['init']);
+    }
+    if (init.code !== 0) {
+      throw new ProjectInitError(
+        'git-failed',
+        'git init failed',
+        init.stderr.trim() || init.stdout.trim(),
+      );
+    }
   }
 
   const ignorePath = path.join(root, '.gitignore');

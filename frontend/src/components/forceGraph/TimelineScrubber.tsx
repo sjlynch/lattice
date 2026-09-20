@@ -53,9 +53,13 @@ export const TimelineScrubber = memo(function TimelineScrubber({
   );
 
   if (commits.length === 0) {
+    // A repo with no commits yet (a freshly created project whose first
+    // commit never landed) has nothing to scrub, but is not "no git".
     return (
       <div className="timeline-scrubber empty" role="status">
-        No git history available
+        {hasUncommitted
+          ? 'No commits yet — the working tree has uncommitted changes'
+          : 'No git history available'}
       </div>
     );
   }

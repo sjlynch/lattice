@@ -31,9 +31,11 @@ type Props = {
 // Rendered only while the provider has a pending request, so `open` is always
 // true and remounting (via a fresh key) is what resets its state.
 export function GitSetupDialog({ project, probe, onDone }: Props) {
-  // `none` + `initable` is the ONLY state that may create a repo. Everything
-  // else — most importantly `nested` — gets an explanation and nothing more.
-  if (probe.state === 'none' && probe.initable) {
+  // `none` + `initable` is the ONLY state that may create a repo; an unborn
+  // `repo` (no commits) may FINISH one — same dialog, the backend skips
+  // `git init`. Everything else — most importantly `nested` — gets an
+  // explanation and nothing more.
+  if (probe.initable && (probe.state === 'none' || (probe.state === 'repo' && probe.unborn))) {
     return <InitDialog project={project} onDone={onDone} />;
   }
   return <BlockerDialog probe={probe} onDone={onDone} />;

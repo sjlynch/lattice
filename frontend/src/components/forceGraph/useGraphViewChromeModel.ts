@@ -117,9 +117,12 @@ export function useGraphViewChromeModel({
   });
 
   // The bottom-anchored counts chip and gear FAB shift up when the timeline is
-  // visible so the timeline can claim the entire viewport bottom edge.
-  const hasTimeline =
-    !!history && history.isRepo && history.commits.length > 0;
+  // visible so the timeline can claim the entire viewport bottom edge. Any git
+  // repo gets the bar — a repo with no commits yet (a freshly created project)
+  // shows the scrubber's "No commits yet" state rather than nothing at all,
+  // which read as "the timeline is broken" for exactly the projects a user had
+  // just created.
+  const hasTimeline = !!history && history.isRepo;
 
   return {
     hasTimeline,

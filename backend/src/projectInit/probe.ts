@@ -39,13 +39,37 @@ export async function probeProjectGit(project: string): Promise<ProjectGitProbe>
   // common case (every already-adopted project) costs one stat and no spawn.
   // A `.git` FILE counts too — that's a linked worktree / submodule pointer,
   // and it's still a working repo.
+  let isRepoHere = false;
   try {
     const st = await fs.stat(path.join(canonical, '.git'));
-    if (st.isDirectory() || st.isFile()) {
-      return { state: 'repo', toplevel: canonical, initable: false };
-    }
+    isRepoHere = st.isDirectory() || st.isFile();
   } catch {
     /* no `.git` here — fall through to the walk-up check */
+  }
+  if (isRepoHere) {
+    // A repo with no commits (its `git init` ran but the first commit never
+    // landed — a missing git identity is the usual cause) is useless to
+    // Lattice: `git worktree add` has no HEAD to branch from. Report it so the
+    // navbar can offer to FINISH the setup, which then only needs the commit.
+    // `--verify -q HEAD` exits 1 (quietly) for an unborn HEAD and 128 with a
+    // fatal for a repo git cannot open at all (a `.git` file whose gitdir
+    // pointer is dangling, say) — the latter is not ours to "finish".
+    let unborn = false;
+    try {
+      const head = await probeGit(canonical, ['rev-parse', '--verify', '-q', 'HEAD']);
+      unborn = head.code === 1;
+    } catch {
+      /* git missing / probe failed — treat as a normal repo; nothing to offer */
+    }
+    return unborn
+      ? {
+          state: 'repo',
+          toplevel: canonical,
+          initable: true,
+          unborn: true,
+          reason: `${canonical} is a git repository with no commits yet`,
+        }
+      : { state: 'repo', toplevel: canonical, initable: false };
   }
 
   // Spawning with a non-existent cwd fails as ENOENT, which we would otherwise

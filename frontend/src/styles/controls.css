@@ -71,6 +71,10 @@
   padding: 6px 8px;
   border-radius: var(--radius-sm);
   background: rgba(245, 120, 120, 0.08);
+  /* Multi-line detail (git's own stderr, with the fix commands) keeps its
+     line breaks instead of collapsing into one run-on sentence. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .spinner {

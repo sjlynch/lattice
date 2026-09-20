@@ -63,13 +63,19 @@ async function withGitIdentity<T>(fn: () => Promise<T>): Promise<T> {
 // --- probe ---------------------------------------------------------------------
 
 test('probeProjectGit reports a plain repo as `repo`', async () => {
-  await withTempDir(PREFIX, async (dir) => {
-    await git(dir, ['init']);
+  await withGitIdentity(async () => {
+    await withTempDir(PREFIX, async (dir) => {
+      await git(dir, ['init']);
+      // A repo WITH a commit is the finished, ordinary case; an empty one is
+      // `unborn` and still initable (covered below).
+      await git(dir, ['commit', '--allow-empty', '-m', 'init']);
 
-    const probe = await probeProjectGit(dir);
-    assert.equal(probe.state, 'repo');
-    assert.equal(probe.initable, false);
-    assert.equal(probe.toplevel, canonicalProjectPath(dir));
+      const probe = await probeProjectGit(dir);
+      assert.equal(probe.state, 'repo');
+      assert.equal(probe.initable, false);
+      assert.equal(probe.unborn, undefined);
+      assert.equal(probe.toplevel, canonicalProjectPath(dir));
+    });
   });
 });
 
@@ -370,6 +376,38 @@ test('a user-edited .gitignore that drops the Lattice entries still ignores .lat
         !tracked.includes('.lattice/'),
         'Lattice scratch must never reach the first commit',
       );
+    });
+  });
+});
+
+// A repo whose `git init` ran but whose first commit never landed (a missing
+// git identity is the usual cause) is a dead end: `git worktree add` has no
+// HEAD to branch from, and the old probe reported it as an ordinary 'repo' the
+// init flow refused to touch (409). It is now reported as `unborn` + initable,
+// and init finishes the job without a second `git init`.
+test('probeProjectGit reports a repo with no commits as `repo` + unborn + initable', async () => {
+  await withTempDir(PREFIX, async (dir) => {
+    await git(dir, ['init', '-q']);
+    const p = await probeProjectGit(dir);
+    assert.equal(p.state, 'repo');
+    assert.equal(p.unborn, true);
+    assert.equal(p.initable, true);
+    assert.match(p.reason ?? '', /no commits/);
+  });
+});
+
+test('initProjectGit finishes an unborn repo with its first commit (no second git init)', async () => {
+  await withGitIdentity(async () => {
+    await withTempDir(PREFIX, async (dir) => {
+      await git(dir, ['init', '-q']);
+      await writeLayout(dir, { 'README.md': '# hi\n' });
+      const result = await initProjectGit(dir);
+      assert.ok(result.commit, 'the first commit landed');
+      assert.ok(result.filesCommitted >= 2, 'README + .gitignore');
+      assert.equal((await git(dir, ['rev-list', '--count', 'HEAD'])).trim(), '1');
+      const after = await probeProjectGit(dir);
+      assert.equal(after.unborn, undefined);
+      assert.equal(after.initable, false);
     });
   });
 });

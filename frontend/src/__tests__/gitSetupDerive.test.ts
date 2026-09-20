@@ -152,3 +152,15 @@ test('hasLargeEntry only fires once something is worth worrying about', () => {
   assert.equal(hasLargeEntry([{ bytes: LARGE_ENTRY_BYTES }]), true);
   assert.equal(hasLargeEntry([{ bytes: 10 }, { bytes: 40 * 1024 * 1024 }]), true);
 });
+
+test('an unborn repo (no commits) is an action chip that offers to finish the setup', () => {
+  const p = probe({ state: 'repo', toplevel: 'C:/proj', initable: true, unborn: true });
+  const withBranch = deriveGitChipState(p, 'main');
+  assert.equal(withBranch?.kind, 'action');
+  assert.equal(withBranch?.label, 'main · finish setup');
+  const noBranch = deriveGitChipState(p, null);
+  assert.equal(noBranch?.kind, 'action');
+  assert.equal(noBranch?.label, 'Finish Git setup');
+  // A normal repo is unaffected.
+  assert.equal(deriveGitChipState(probe({ state: 'repo', toplevel: 'C:/proj' }), 'main')?.kind, 'branch');
+});

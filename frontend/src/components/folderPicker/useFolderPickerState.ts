@@ -97,9 +97,16 @@ export function useFolderPickerState({ open, initialPath }: UseFolderPickerState
       } catch (err) {
         if (!isLatest()) return;
         // The folder exists either way — say so, and report the git failure
-        // separately rather than making it look like the create failed.
+        // separately rather than making it look like the create failed. The
+        // backend forwards git's own stderr as `detail`; for a missing identity
+        // that text is the only place the fix (two `git config` commands) is
+        // spelled out, so it must reach the user rather than a bare summary.
         setNotice(`Created ${folderName}.`);
-        setError(`Git setup failed: ${(err as Error).message}`);
+        const detail = (err as { detail?: unknown }).detail;
+        setError(
+          `Git setup failed: ${(err as Error).message}` +
+            (typeof detail === 'string' && detail.trim() ? `\n${detail.trim()}` : ''),
+        );
       }
     } catch (err) {
       if (!isLatest()) return;

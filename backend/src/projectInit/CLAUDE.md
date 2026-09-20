@@ -41,6 +41,21 @@ Without it, opening a non-repo folder dead-ends: `routes/tasks/projectValidation
   run (invariant 2), pinned against git's real message text in
   `__tests__/projectInit.test.ts`.
 
+## Unborn repos
+
+A repo whose `git init` ran but whose first commit never landed — the usual
+cause is a missing git identity aborting `initProjectGit` at the commit — is
+reported by the probe as `state: 'repo'` + `unborn: true` + `initable: true`
+(decided by `git rev-parse --verify -q HEAD` exiting 1; a 128 is a repo git
+cannot open at all and is left alone). `initProjectGit` accepts that state and
+skips `git init`, so the navbar's "finish setup" chip / the Git Setup dialog
+can complete the job once the identity exists. Without this the project was a
+dead end: `GET /api/git-check` said `repo`, init said 409, and no task could
+ever run (`git worktree add` has no HEAD to branch from). The navbar chip also
+stopped vanishing for these: `gitBranch.ts` names the branch with
+`symbolic-ref --short HEAD`, which works on an unborn HEAD, where
+`rev-parse --abbrev-ref HEAD` does not.
+
 ## Invariants
 
 1. **Walk-up detection, always.** `'nested'` (a repo exists ABOVE this folder)
