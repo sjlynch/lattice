@@ -138,7 +138,7 @@ export function digestFor(
 // Scan with the project's effective configuration and render its digest.
 export async function scanProjectWithDigest(
   project: string,
-  opts: { targets?: string[]; timeoutMs?: number; render?: DigestRenderContext } = {},
+  opts: { targets?: string[]; timeoutMs?: number; render?: DigestRenderContext; signal?: AbortSignal } = {},
 ): Promise<ScanWithDigestResult> {
   const canonical = canonicalProjectPath(project);
   const config = await loadEffectiveConfig(canonical);
@@ -149,6 +149,7 @@ export async function scanProjectWithDigest(
     excludeGlobs: config.excludeGlobs,
     targets: opts.targets,
     timeoutMs: opts.timeoutMs,
+    signal: opts.signal,
   });
   const stored = await readOpengrepScan(canonical, record.id);
   if (!stored) throw new Error(`scan ${record.id} was not stored`);

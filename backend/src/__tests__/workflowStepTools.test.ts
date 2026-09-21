@@ -2,11 +2,21 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { OpengrepNotInstalledError, OpengrepScanBusyError } from '../opengrep/index.js';
+import {
+  OpengrepNotInstalledError,
+  OpengrepScanAbortedError,
+  OpengrepScanBusyError,
+} from '../opengrep/index.js';
 import type { ScanWithDigestResult } from '../opengrep/service.js';
 import { DEFAULT_WORKFLOW_STEP_TEMPLATE } from '../instructionTemplates/defs.js';
 import { renderStepMarkdown } from '../workflowRuns/stepMarkdown.js';
-import { OPENGREP_REPORT_FILENAME, runStepTools } from '../workflowRuns/stepTools.js';
+import {
+  OPENGREP_REPORT_FILENAME,
+  abortStepPreRun,
+  beginStepPreRun,
+  endStepPreRun,
+  runStepTools,
+} from '../workflowRuns/stepTools.js';
 import { normalizeStepTools } from '../workflows/normalization.js';
 import type { Workflow } from '../workflows.js';
 import type { WorkflowRun } from '../workflowRuns/state.js';
@@ -112,6 +122,29 @@ test('a step with no tools (or a control step) contributes nothing', async () =>
       markdown: '',
     });
     assert.equal(called, 0);
+    await assert.rejects(fs.access(path.join(dir, OPENGREP_REPORT_FILENAME)));
+  });
+});
+
+test('a run cancelled mid-scan aborts the pre-run through beginStepPreRun/abortStepPreRun and the brief says so', async () => {
+  await withTempDir('lattice-step-tools-', async (dir) => {
+    const signal = beginStepPreRun('run-1');
+    assert.equal(signal.aborted, false);
+    // The fake scan behaves like the real one: it rejects with the aborted
+    // error once the caller's signal fires.
+    const pending = runStepTools({ tools: ['opengrep'], kind: 'agent' }, PROJECT, dir, {
+      scan: async (_project, opts) =>
+        new Promise((_resolve, reject) => {
+          opts?.signal?.addEventListener('abort', () => reject(new OpengrepScanAbortedError()), { once: true });
+        }),
+    }, signal);
+    assert.equal(abortStepPreRun('run-1'), true, 'cancel finds the in-flight pre-run');
+    assert.equal(signal.aborted, true);
+    const { reports, markdown } = await pending;
+    endStepPreRun('run-1');
+    assert.equal(reports[0].ok, false);
+    assert.match(markdown, /cancelled while the scan was running/);
+    assert.equal(abortStepPreRun('run-1'), false, 'nothing left to abort once it ended');
     await assert.rejects(fs.access(path.join(dir, OPENGREP_REPORT_FILENAME)));
   });
 });

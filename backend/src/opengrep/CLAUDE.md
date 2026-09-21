@@ -98,6 +98,11 @@ licence text + a source pointer) — keep it a runtime download.
   scan per project (`OpengrepScanBusyError`; `isAnyOpengrepScanRunning` is
   what the pack routes consult), `--jobs = max(1, cores-2)`, hard wall-clock
   timeout (kill), last 10 scans kept as `<id>.json` + `<id>.meta.json`.
+  Cancellable: a request `signal` or `abortOpengrepScan(project)` kills the
+  engine, stores nothing, rejects with `OpengrepScanAbortedError` and frees
+  the slot at once (a cancelled workflow run uses this); a `process` `exit`
+  handler aborts every running scan so a backend restart never leaves an
+  orphaned engine writing an unrecorded `-o` file.
   Rules under `<project>/.opengrep/rules/` and `extraRulePaths` are passed as
   ABSOLUTE `-f` paths, so their check ids (and fingerprints) embed the local
   path — stable on one machine, not across machines; only the packs get the

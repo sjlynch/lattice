@@ -40,7 +40,7 @@ import {
 } from './scratchDirectory.js';
 import { buildWorkflowStepCommand } from './commandBuilder.js';
 import { enqueueWorkflowStepSession, workflowStepAgentId } from './sessionSpawner.js';
-import { runStepTools } from './stepTools.js';
+import { beginStepPreRun, endStepPreRun, runStepTools } from './stepTools.js';
 
 // Re-export the public surface so existing importers (routes/workflows/runs.ts,
 // the workflowScratchPrune test) keep resolving these from stepSpawner.
@@ -106,7 +106,7 @@ async function writeStepAssets(args: {
   backendOrigin: string;
   stepDir: string;
   stepFile: string;
-}): Promise<void> {
+}): Promise<boolean> {
   const { wf, run, stepIndex, backendOrigin, stepDir, stepFile } = args;
   // Best-effort working-tree-drift probe — if the project repo has
   // uncommitted changes, the rendered WORKFLOW_STEP.md gets a warning
@@ -138,7 +138,20 @@ async function writeStepAssets(args: {
       message: `running ${step.tools.map((t) => (t === 'opengrep' ? 'the Opengrep scan' : t)).join(', ')} before the agent starts…`,
     });
   }
-  const tools = await runStepTools(step, wf.projectPath, stepDir);
+  const signal = beginStepPreRun(run.id);
+  let tools: Awaited<ReturnType<typeof runStepTools>>;
+  try {
+    tools = await runStepTools(step, wf.projectPath, stepDir, {}, signal);
+  } finally {
+    endStepPreRun(run.id);
+  }
+  // A cancel (or a completed step racing a re-dispatch) during the pre-run:
+  // the brief would be for a step nobody will spawn. Stop here; the spawn
+  // guard below would skip it anyway.
+  if (run.status !== 'running' || run.currentStepIndex !== stepIndex) {
+    console.log(`[workflow-step] ${run.id} step ${stepIndex}: run is ${run.status}; not writing the brief`);
+    return false;
+  }
 
   const stepTemplate = await resolveInstructionTemplate(wf.projectPath, 'workflow-step');
   await fs.writeFile(
@@ -153,6 +166,7 @@ async function writeStepAssets(args: {
     renderHelperScript(wf.projectPath, backendOrigin),
     'utf8',
   );
+  return true;
 }
 
 async function installStepCallbacks(args: {
@@ -248,7 +262,11 @@ export async function spawnWorkflowStep(
   const { stepDir, stepFile } = await prepareStepScratch(wf, run, stepIndex);
   const harness = effectiveStepHarness(wf, run, stepIndex);
 
-  await writeStepAssets({ wf, run, stepIndex, backendOrigin, stepDir, stepFile });
+  const live = await writeStepAssets({ wf, run, stepIndex, backendOrigin, stepDir, stepFile });
+  if (!live) {
+    // Cancelled during the pre-run: no callbacks, no pty, no progress event.
+    return { command: '', cwd: stepDir };
+  }
   await installStepCallbacks({ wf, run, stepIndex, backendOrigin, stepDir, harness });
   // Resolve the Codex `--yolo` toggle only for a Codex step (default ON).
   const codexYolo =

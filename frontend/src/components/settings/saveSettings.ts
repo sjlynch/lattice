@@ -59,6 +59,34 @@ export type SaveSettingsParams = {
   onMetricsIgnoredExtsChange: (next: string[]) => void | Promise<void>;
 };
 
+// The machine-global half of a save (Agents' max-agents, the Pi tab's
+// providers + model menu, Tools' pack enables). Separate from the per-project
+// half because these tabs are editable with NO project open — the dialog then
+// saves only this half instead of silently doing nothing. (The Pi providers +
+// model menu come from the Pi tab; max-agents from Agents. The backend
+// reconciles piProviders into ~/.pi/agent/models.json.)
+export async function saveGlobalSettings(
+  handles: Pick<SaveHandles, 'agents' | 'pi' | 'tools'>,
+): Promise<void> {
+  const maxAgentsPatch = handles.agents?.getMaxConcurrentAgentsPatch();
+  const piProvidersPatch = handles.pi?.getPiProvidersPatch();
+  const piModelMenuPatch = handles.pi?.getPiModelMenuPatch();
+  const opengrepGlobalPatch = handles.tools?.getOpengrepGlobalPatch();
+  const globalPatch: Parameters<typeof patchGlobalSettings>[0] = {};
+  if (maxAgentsPatch !== undefined) globalPatch.maxConcurrentAgents = maxAgentsPatch;
+  if (piProvidersPatch !== undefined) globalPatch.piProviders = piProvidersPatch;
+  if (piModelMenuPatch !== undefined) globalPatch.piModelMenu = piModelMenuPatch;
+  if (opengrepGlobalPatch !== undefined) globalPatch.opengrep = opengrepGlobalPatch;
+  if (Object.keys(globalPatch).length === 0) return;
+  await patchGlobalSettings(globalPatch);
+  // The Pi providers/menu feed the curated "Pi — X" dropdowns. If either
+  // changed, refresh the shared menu cache so every mounted dropdown (task
+  // board, workflow steps, post-merge hook, sidebar) updates without a reload.
+  if (piProvidersPatch !== undefined || piModelMenuPatch !== undefined) {
+    void notifyPiModelsChanged();
+  }
+}
+
 // Save orchestration for SettingsDialog, with the ordering made explicit:
 //  1. collect cleaned startup terminals (+ the other per-tab patches),
 //  2. patch project user settings,
@@ -133,26 +161,7 @@ export async function saveSettings({
   void ensureProjectInstrumentation(activeFolder);
 
   // 4. Machine-global settings go to a separate endpoint, not userSettings.
-  // (The Pi providers + model menu come from the Pi tab; max-agents from
-  // Agents. The backend reconciles piProviders into ~/.pi/agent/models.json.)
-  const maxAgentsPatch = handles.agents?.getMaxConcurrentAgentsPatch();
-  const piProvidersPatch = handles.pi?.getPiProvidersPatch();
-  const piModelMenuPatch = handles.pi?.getPiModelMenuPatch();
-  const opengrepGlobalPatch = handles.tools?.getOpengrepGlobalPatch();
-  const globalPatch: Parameters<typeof patchGlobalSettings>[0] = {};
-  if (maxAgentsPatch !== undefined) globalPatch.maxConcurrentAgents = maxAgentsPatch;
-  if (piProvidersPatch !== undefined) globalPatch.piProviders = piProvidersPatch;
-  if (piModelMenuPatch !== undefined) globalPatch.piModelMenu = piModelMenuPatch;
-  if (opengrepGlobalPatch !== undefined) globalPatch.opengrep = opengrepGlobalPatch;
-  if (Object.keys(globalPatch).length > 0) {
-    await patchGlobalSettings(globalPatch);
-    // The Pi providers/menu feed the curated "Pi — X" dropdowns. If either
-    // changed, refresh the shared menu cache so every mounted dropdown (task
-    // board, workflow steps, post-merge hook, sidebar) updates without a reload.
-    if (piProvidersPatch !== undefined || piModelMenuPatch !== undefined) {
-      void notifyPiModelsChanged();
-    }
-  }
+  await saveGlobalSettings(handles);
 
   // 5. Notify the parent callbacks.
   onStartupTerminalsChange(cleaned);

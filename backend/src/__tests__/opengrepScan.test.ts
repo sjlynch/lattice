@@ -8,8 +8,10 @@ import {
   OpengrepBadTargetError,
   OpengrepNoRulesError,
   OpengrepNotInstalledError,
+  OpengrepScanAbortedError,
   OpengrepScanBusyError,
   OpengrepScanFailedError,
+  abortOpengrepScan,
   buildScanArgs,
   defaultScanJobs,
   isAnyOpengrepScanRunning,
@@ -26,6 +28,15 @@ import type { SpawnWithTimeoutResult } from '../spawnWithTimeout.js';
 // command line and cwd Lattice would use and writes the fixture JSON to the
 // `-o` path. HOME is the suite's throwaway (isolateHome.mjs), so the rules
 // root / state.json / per-project scan dir all land in temp.
+
+// This file writes a FAKE rule pack + state.json under ~/.lattice/opengrep/.
+// Refuse to run against a real home: `npm test` preloads helpers/isolateHome.mjs.
+if (!process.env.LATTICE_TEST_HOME_ISOLATED) {
+  throw new Error(
+    'opengrepScan.test.ts writes under ~/.lattice — run it via `npm test` (or with ' +
+      '`--import ./src/__tests__/helpers/isolateHome.mjs`), never bare `node --test`.',
+  );
+}
 
 const FIXTURE = fileURLToPath(new URL('./fixtures/opengrep-scan.json', import.meta.url));
 const ENGINE = { command: 'C:\\fake\\opengrep.exe', source: 'path' as const, version: '1.30.0' };
@@ -140,6 +151,39 @@ test('one scan per project: a concurrent request is refused with OpengrepScanBus
     // …and the slot frees once it settles.
     await runOpengrepScan({ project, packIds: ['qodana-mit'] }, deps);
     assert.equal(calls.length, 2);
+  });
+});
+
+test('abortOpengrepScan kills the running scan, frees the busy slot at once, and stores nothing', async () => {
+  await installFakePack();
+  await withProject(async (project) => {
+    const calls: SpawnCall[] = [];
+    // A fake engine that only returns once the caller's signal fires.
+    const spawn = async (command: string, args: string[], o: { cwd?: string; timeoutMs: number; signal?: AbortSignal }): Promise<SpawnWithTimeoutResult> => {
+      calls.push({ command, args, cwd: o.cwd });
+      await new Promise<void>((r) => o.signal!.addEventListener('abort', () => r(), { once: true }));
+      return { code: null, stdout: '', stderr: '', combined: '', timedOut: false, aborted: true, error: null };
+    };
+    const deps = { resolve: async () => ENGINE, spawn };
+    const scan = runOpengrepScan({ project, packIds: ['qodana-mit'] }, deps);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(isAnyOpengrepScanRunning(), true);
+    assert.equal(abortOpengrepScan(project), true);
+    await assert.rejects(scan, OpengrepScanAbortedError);
+    assert.equal(isAnyOpengrepScanRunning(), false, 'the slot frees when the abort settles');
+    assert.equal(abortOpengrepScan(project), false, 'nothing left to abort');
+    assert.deepEqual(await listOpengrepScans(project), [], 'no record for a cancelled scan');
+    assert.equal(calls.length, 1);
+
+    // A caller-supplied signal works the same way.
+    const ctrl = new AbortController();
+    const second = runOpengrepScan({ project, packIds: ['qodana-mit'], signal: ctrl.signal }, deps);
+    await new Promise((r) => setTimeout(r, 20));
+    ctrl.abort();
+    await assert.rejects(second, OpengrepScanAbortedError);
+    // …and a scan can run again afterwards.
+    await runOpengrepScan({ project, packIds: ['qodana-mit'] }, { resolve: async () => ENGINE, spawn: fakeSpawn(calls) });
+    assert.equal((await listOpengrepScans(project)).length, 1);
   });
 });
 

@@ -55,6 +55,13 @@ export class OpengrepNoRulesError extends Error {
   }
 }
 export class OpengrepScanFailedError extends Error {}
+// The caller's AbortSignal fired (a workflow run was cancelled mid-scan, or the
+// backend is exiting): the engine was killed and nothing was stored.
+export class OpengrepScanAbortedError extends OpengrepScanFailedError {
+  constructor() {
+    super('the Opengrep scan was cancelled before it finished');
+  }
+}
 
 export type OpengrepScanRequest = {
   project: string;
@@ -68,6 +75,9 @@ export type OpengrepScanRequest = {
   timeoutMs?: number;
   // Project-relative sub-paths to scan instead of the whole project.
   targets?: string[];
+  // Cancels the scan: the engine is killed, nothing is stored, and the call
+  // rejects with OpengrepScanAbortedError.
+  signal?: AbortSignal;
 };
 
 export type OpengrepScanRecord = {
@@ -97,7 +107,8 @@ export type ScanDeps = {
   cpuCount?: number;
 };
 
-const running = new Map<string, Promise<OpengrepScanRecord>>();
+type RunningScan = { promise: Promise<OpengrepScanRecord>; abort: AbortController };
+const running = new Map<string, RunningScan>();
 
 export function isOpengrepScanRunning(project: string): boolean {
   return running.has(canonicalProjectPath(project));
@@ -108,6 +119,24 @@ export function isOpengrepScanRunning(project: string): boolean {
 export function isAnyOpengrepScanRunning(): boolean {
   return running.size > 0;
 }
+
+// Kill the project's in-flight scan (if any). The awaiting caller gets
+// OpengrepScanAbortedError and the busy slot frees at once, so a workflow run
+// cancelled mid-scan does not leave the project "busy" for the next run.
+export function abortOpengrepScan(project: string): boolean {
+  const entry = running.get(canonicalProjectPath(project));
+  if (!entry) return false;
+  entry.abort.abort();
+  return true;
+}
+
+// The engine is a plain child process; when this backend exits (a dev-runner
+// restart, a fail-fast) nothing else would reap it, and its `-o` file would
+// land as an orphan without a record. `child.kill()` is synchronous, so an
+// 'exit' handler is enough.
+process.once('exit', () => {
+  for (const entry of running.values()) entry.abort.abort();
+});
 
 export class OpengrepBadTargetError extends Error {}
 
@@ -222,10 +251,16 @@ export function defaultExcludeGlobs(): string[] {
   return [...IGNORE_DIR_NAMES].filter((d) => d !== '.git');
 }
 
-async function performScan(req: OpengrepScanRequest, project: string, deps: ScanDeps): Promise<OpengrepScanRecord> {
+async function performScan(
+  req: OpengrepScanRequest,
+  project: string,
+  deps: ScanDeps,
+  signal: AbortSignal,
+): Promise<OpengrepScanRecord> {
   // Validate the caller's input before touching the engine so a bad target is
   // a 400-class error, not a half-started scan.
   const targets = resolveScanTargets(project, req.targets);
+  if (signal.aborted) throw new OpengrepScanAbortedError();
   const resolved = await (deps.resolve ?? resolveOpengrep)();
   if (!resolved) throw new OpengrepNotInstalledError();
   const { rulePaths, packIds } = await resolveRuleConfigs(project, req.packIds, req.extraRulePaths ?? []);
@@ -246,8 +281,14 @@ async function performScan(req: OpengrepScanRequest, project: string, deps: Scan
   const r = await (deps.spawn ?? spawnWithTimeout)(resolved.command, args, {
     cwd: rulesRootDir(),
     timeoutMs,
+    signal,
   });
   const finishedAt = Date.now();
+  if (r.aborted) {
+    await fs.rm(jsonFile, { force: true }).catch(() => {});
+    console.log(`[opengrep] scan ${id} cancelled after ${finishedAt - startedAt}ms`);
+    throw new OpengrepScanAbortedError();
+  }
   if (r.error) {
     await fs.rm(jsonFile, { force: true }).catch(() => {});
     // A binary that was there at resolve time and is gone now (uninstalled,
@@ -305,13 +346,19 @@ async function performScan(req: OpengrepScanRequest, project: string, deps: Scan
 export function runOpengrepScan(req: OpengrepScanRequest, deps: ScanDeps = {}): Promise<OpengrepScanRecord> {
   const project = canonicalProjectPath(req.project);
   if (running.has(project)) return Promise.reject(new OpengrepScanBusyError(project));
-  const p = performScan(req, project, deps).finally(() => {
+  const abort = new AbortController();
+  if (req.signal) {
+    if (req.signal.aborted) abort.abort();
+    else req.signal.addEventListener('abort', () => abort.abort(), { once: true });
+  }
+  const entry: RunningScan = { promise: undefined as unknown as Promise<OpengrepScanRecord>, abort };
+  entry.promise = performScan(req, project, deps, abort.signal).finally(() => {
     // Only clear our own entry: a caller that raced in after this scan's
     // rejection settled must not have its fresh entry removed.
-    if (running.get(project) === p) running.delete(project);
+    if (running.get(project) === entry) running.delete(project);
   });
-  running.set(project, p);
-  return p;
+  running.set(project, entry);
+  return entry.promise;
 }
 
 async function readMeta(file: string): Promise<OpengrepScanRecord | null> {

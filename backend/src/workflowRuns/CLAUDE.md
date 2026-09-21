@@ -35,8 +35,11 @@ explicit-curl callbacks — never by polling task state.
   process and are re-runnable) / `error` (agent step whose pty is gone; its
   callback can never arrive, so surface it instead of hanging) / `skip`. A
   `stepSessionAlive: null` ("couldn't probe the terminal-server") re-adopts —
-  "can't tell" is never treated as "gone". `findStepSessionId` matches a live
-  pty to a step by cwd. The IO wrapper is `../recovery/workflowRunResume.ts`.
+  "can't tell" is never treated as "gone" — EXCEPT for a `pending` step, which
+  never requested a terminal (the phase flips to `spawning` first): that one is
+  re-dispatched whatever the probe said, since re-adopting nothing would park
+  the run forever. `findStepSessionId` matches a live pty to a step by cwd. The
+  IO wrapper is `../recovery/workflowRunResume.ts`.
 - `stepMarkdown.ts` — `renderStepMarkdown` (the WORKFLOW_STEP.md prompt)
   and `effectiveStepHarness` (run override → step harness → `'claude'`).
   Completion instructions branch on harness: Claude relies on its silent
@@ -67,7 +70,17 @@ explicit-curl callbacks — never by polling task state.
   (the first `step-spawned` lands after the scan). While it runs the spawner
   emits one `step-control-progress` with `kind: 'agent'` + a message so the
   run strip says what the wait is; the frontend drops it on that step's
-  `step-spawned` (`clearControlProgressForStep`). Covered by
+  `step-spawned` (`clearControlProgressForStep`). **A cancel during the
+  pre-run aborts it**: the spawner brackets `runStepTools` with
+  `beginStepPreRun(runId)` / `endStepPreRun`, `cancelWorkflowRun` calls
+  `abortStepPreRun(runId)`, and the signal reaches `abortOpengrepScan` so the
+  engine is killed and the project's one-scan slot frees — otherwise the run
+  the user starts next would find the scan "busy" and get a findings-less
+  brief. After the pre-run `writeStepAssets` re-checks the run and writes no
+  brief / installs no callbacks for a cancelled one. While the pre-run runs
+  the step's checkpoint phase is `pending`, which the boot resume
+  (`resumeDecision.ts`) always re-dispatches — there is no session to
+  re-adopt, whatever the terminal-server probe says. Covered by
   `__tests__/workflowStepTools.test.ts`.
 - `stepSpawner.ts` — `spawnWorkflowStep`: the coordinator, split into
   named setup phases (`prepareStepScratch`, `writeStepAssets`,
@@ -203,8 +216,11 @@ explicit-curl callbacks — never by polling task state.
   Version-1 records without a definition use the legacy lookup for compatibility.
 - Execution checkpoints distinguish `pending`, `spawning`, `running`, and
   `completing`. Required writes precede launch/teardown; a persistence failure
-  prevents an unrecorded launch. Only a `pending` step with confirmed absent PTY
-  is safe to re-enqueue. `spawning` without a terminal is ambiguous and errors.
+  prevents an unrecorded launch. A `pending` step never requested a PTY, so it
+  is always safe to re-enqueue — even when the terminal-server could not be
+  probed (a step inside its pre-run scan sits in `pending` for minutes, and
+  "re-adopt nothing" would hang the run). `spawning` without a terminal is
+  ambiguous and errors; `spawning` with an unprobeable server re-adopts.
   `completing` records are advanced without replaying the finished prompt.
 - Completion is claimed by an in-flight promise per run and a persisted
   `completing` phase before ending the old terminal. Advancing awaits any

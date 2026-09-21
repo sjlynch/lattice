@@ -42,8 +42,12 @@ renders `saving` / `error` / `dirtyByTab`.
 `saveSettings.ts` is the orchestrator. The controller hands it every tab's
 handle (any may be `null` if unmounted), it reads each `*Patch()`, merges the
 *defined* ones into one `PATCH /api/settings` body, then applies project Claude
-instrumentation and the global max-agents patch, and finally fires the parent
-callbacks. `useSettingsDrafts.ts` owns the handful of drafts that live on the
+instrumentation and the machine-global half (`saveGlobalSettings`: max-agents,
+Pi providers + model menu, Opengrep pack enables), and finally fires the parent
+callbacks. With NO project open the controller calls `saveGlobalSettings` alone
+— the global tabs are editable without a folder, and a silent early return used
+to leave the dialog stuck on "Save" (the unsaved-changes prompt's Save did
+nothing). `useSettingsDrafts.ts` owns the handful of drafts that live on the
 parent itself rather than a tab — the terminal-default harness +
 skip-permissions, the Codex `--yolo` toggle (default ON — part of
 `terminalLaunchSettings`, so it's reseeded synchronously with the harness/skip
@@ -100,7 +104,14 @@ pack enable checkboxes are machine-global (`getOpengrepGlobalPatch`), and the
 "Scan filter (this project)" section — severity floor, ignored rule ids /
 fingerprints, extra rule paths, exclude globs, digest budget — is per-project
 `userSettings.opengrep` (`getOpengrepProjectPatch`), both with the usual
-`undefined`-until-touched clobber-guard. "Run scan" runs against the active
+`undefined`-until-touched clobber-guard. Both patches are WHOLE objects, so
+the guard's other half matters as much: each `*Loaded` flag flips only on a
+SUCCESSFUL fetch (`fetchUserSettingsStrict`, which throws where
+`fetchUserSettings` returns `{}`); a failed load shows an error and leaves the
+controls disabled, because "empty draft, then Save" would erase the project's
+ignore lists — including every fingerprint agents appended through
+`opengrep_ignore`. A status reply for a folder that is no longer the active one
+is dropped (`folderRef`). "Run scan" runs against the active
 project and shows the record + digest counts with a link to the markdown. Styles
 in `styles/settings/tools.css`. Backend: `backend/src/opengrep/`. (These tabs read/write the global file
 directly, not `userSettings` — don't assume "a tab ⇒ per-project".) `PiTab` manages OpenAI-compatible Pi endpoints (id / baseUrl /

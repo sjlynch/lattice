@@ -19,6 +19,8 @@ export type SpawnWithTimeoutResult = {
   combined: string;
   // True if the timeout fired and we killed the child.
   timedOut: boolean;
+  // True if the caller's AbortSignal fired and we killed the child.
+  aborted?: boolean;
   // A spawn-level error (e.g. ENOENT when the binary is missing), else null.
   // Never thrown — surfaced here so the caller decides how to react.
   error: Error | null;
@@ -31,10 +33,22 @@ export type SpawnWithTimeoutResult = {
 export function spawnWithTimeout(
   command: string,
   args: string[],
-  opts: { cwd?: string; shell?: boolean; timeoutMs: number; env?: NodeJS.ProcessEnv },
+  opts: {
+    cwd?: string;
+    shell?: boolean;
+    timeoutMs: number;
+    env?: NodeJS.ProcessEnv;
+    // Optional cancellation: aborting kills the child and resolves with
+    // `aborted: true` (an already-aborted signal resolves without spawning).
+    signal?: AbortSignal;
+  },
 ): Promise<SpawnWithTimeoutResult> {
   return new Promise((resolve) => {
     let settled = false;
+    if (opts.signal?.aborted) {
+      resolve({ code: null, stdout: '', stderr: '', combined: '', timedOut: false, aborted: true, error: null });
+      return;
+    }
     let stdout = '';
     let stderr = '';
     let combined = '';
@@ -84,12 +98,26 @@ export function spawnWithTimeout(
       finish({ code: null, stdout, stderr, combined, timedOut: true, error: null });
     }, opts.timeoutMs);
 
+    const onAbort = () => {
+      clearTimeout(timer);
+      try {
+        child.kill();
+      } catch {
+        /* already exited */
+      }
+      finish({ code: null, stdout, stderr, combined, timedOut: false, aborted: true, error: null });
+    };
+    opts.signal?.addEventListener('abort', onAbort, { once: true });
+    const detach = () => opts.signal?.removeEventListener('abort', onAbort);
+
     child.on('error', (err) => {
       clearTimeout(timer);
+      detach();
       finish({ code: null, stdout, stderr, combined, timedOut: false, error: err });
     });
     child.on('close', (code) => {
       clearTimeout(timer);
+      detach();
       finish({ code, stdout, stderr, combined, timedOut: false, error: null });
     });
   });

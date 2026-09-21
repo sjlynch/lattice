@@ -8,6 +8,15 @@ import { awaitOpengrepInstall, downloadToFile, startOpengrepInstall } from '../o
 import { readOpengrepState } from '../opengrep/state.js';
 import { OPENGREP_VERSION } from '../opengrep/versions.js';
 
+// Writes ~/.lattice/opengrep/state.json — never against a real home (see
+// helpers/isolateHome.mjs, preloaded by `npm test`).
+if (!process.env.LATTICE_TEST_HOME_ISOLATED) {
+  throw new Error(
+    'opengrepInstall.test.ts writes under ~/.lattice — run it via `npm test` (or with ' +
+      '`--import ./src/__tests__/helpers/isolateHome.mjs`), never bare `node --test`.',
+  );
+}
+
 // The managed install around a FAKE GitHub: a fetch seam serving bytes of our
 // choosing, a pin table of our choosing, and a `--version` probe stub. What is
 // pinned is the verification contract — size, then digest, then "does it run"

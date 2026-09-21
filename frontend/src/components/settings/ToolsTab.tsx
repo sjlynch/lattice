@@ -10,7 +10,7 @@ import {
   HttpError,
   fetchGlobalSettings,
   fetchOpengrepStatus,
-  fetchUserSettings,
+  fetchUserSettingsStrict,
   installOpengrepRulePack,
   removeOpengrepRulePack,
   runOpengrepScan,
@@ -129,10 +129,12 @@ export const ToolsTab = forwardRef<ToolsTabHandle, Props>(function ToolsTab(
   const [packDraft, setPackDraft] = useState<Record<string, boolean>>({});
   const [packTouched, setPackTouched] = useState(false);
   const [packLoaded, setPackLoaded] = useState(false);
+  const [packLoadError, setPackLoadError] = useState<string | null>(null);
 
   const [draft, setDraft] = useState<ProjectDraft>(EMPTY_DRAFT);
   const [projectTouched, setProjectTouched] = useState(false);
   const [projectLoaded, setProjectLoaded] = useState(false);
+  const [projectLoadError, setProjectLoadError] = useState<string | null>(null);
 
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<OpengrepScanEnvelope | null>(null);
@@ -141,28 +143,44 @@ export const ToolsTab = forwardRef<ToolsTabHandle, Props>(function ToolsTab(
   const { confirm } = useConfirm();
   const openRef = useRef(open);
   openRef.current = open;
+  // The folder the tab is currently showing. The panel has no backdrop, so the
+  // active folder can change while a status request for the previous one is
+  // still in flight; its late answer must not overwrite the new folder's.
+  const folderRef = useRef(activeFolder);
+  folderRef.current = activeFolder;
 
   const refreshStatus = useCallback(async () => {
+    const folder = activeFolder;
     try {
-      const s = await fetchOpengrepStatus(activeFolder || undefined);
-      if (!openRef.current) return null;
+      const s = await fetchOpengrepStatus(folder || undefined);
+      if (!openRef.current || folderRef.current !== folder) return null;
       setStatus(s);
       setStatusError(null);
       return s;
     } catch (err) {
-      if (openRef.current) setStatusError((err as Error).message);
+      if (openRef.current && folderRef.current === folder) setStatusError((err as Error).message);
       return null;
     }
   }, [activeFolder]);
 
-  // (Re)load everything each time the dialog opens.
+  // (Re)load everything each time the dialog opens. Both loads flip their
+  // `loaded` flag ONLY on success: the Save patch is the whole `opengrep`
+  // object (resp. the whole `packs` map), so a failed fetch taken as "empty"
+  // would have Save erase the lists the project already has — including the
+  // fingerprints agents appended through `opengrep_ignore`. Until a load
+  // succeeds the controls stay disabled and the error says why.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    setStatus(null);
+    setStatusError(null);
     setPackLoaded(false);
     setPackTouched(false);
+    setPackLoadError(null);
     setProjectLoaded(false);
     setProjectTouched(false);
+    setProjectLoadError(null);
+    setDraft(EMPTY_DRAFT);
     setScanResult(null);
     setScanError(null);
     setActionError(null);
@@ -173,18 +191,26 @@ export const ToolsTab = forwardRef<ToolsTabHandle, Props>(function ToolsTab(
         setPackDraft({ ...(g.opengrep?.packs ?? {}) });
         setPackLoaded(true);
       })
-      .catch(() => {
-        if (!cancelled) setPackLoaded(true);
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setPackLoadError(
+          `Could not load the machine-global settings (${(err as Error).message || String(err)}); ` +
+            'the pack enables are read-only until the dialog is reopened.',
+        );
       });
     if (activeFolder) {
-      fetchUserSettings(activeFolder)
+      fetchUserSettingsStrict(activeFolder)
         .then((u) => {
           if (cancelled) return;
           setDraft(draftFromSettings(u.opengrep));
           setProjectLoaded(true);
         })
-        .catch(() => {
-          if (!cancelled) setProjectLoaded(true);
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          setProjectLoadError(
+            `Could not load this project's settings (${(err as Error).message || String(err)}); ` +
+              'the scan filter is read-only until the dialog is reopened.',
+          );
         });
     }
     return () => {
@@ -381,6 +407,7 @@ export const ToolsTab = forwardRef<ToolsTabHandle, Props>(function ToolsTab(
           </>
         }
       >
+        {packLoadError && <div className="error-msg">{packLoadError}</div>}
         <div className="tools-packs">
           {(status?.packs ?? []).map((p) => {
             const enabled = packDraft[p.id] ?? p.defaultEnabled;
@@ -496,6 +523,10 @@ export const ToolsTab = forwardRef<ToolsTabHandle, Props>(function ToolsTab(
           </>
         }
       >
+        {projectLoadError && <div className="error-msg">{projectLoadError}</div>}
+        {!activeFolder && (
+          <div className="settings-section-sub">Open a project to edit its scan filter.</div>
+        )}
         <div className="settings-control-row">
           <label className="settings-control-label" htmlFor="opengrep-severity-floor">
             Severity floor

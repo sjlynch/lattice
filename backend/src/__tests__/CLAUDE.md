@@ -5,8 +5,14 @@ execution (`npm test` from `backend/`). The `test` script `--import`s
 `helpers/isolateHome.mjs` first, redirecting `HOME`/`USERPROFILE` to a throwaway
 temp dir so the suite never writes into the real `~/.lattice` (task DBs,
 `projects.json`, snapshots) — it must load before any test imports the task
-cache, whose home path binds once at module load. Keep tests as plain
-`.test.ts` files in this directory unless a helper belongs under `helpers/`.
+cache, whose home path binds once at module load. It also sets
+`LATTICE_TEST_HOME_ISOLATED`; a test that writes under `~/.lattice`
+(`opengrepScan`, `opengrepInstall`) throws at import when the marker is absent,
+so a bare `node --test src/__tests__/x.test.ts` (no `--import`) cannot land
+fixtures in the developer's real home — run one file with
+`node --import tsx --import ./src/__tests__/helpers/isolateHome.mjs --test <file>`.
+Keep tests as plain `.test.ts` files in this directory unless a helper belongs
+under `helpers/`.
 
 ## Conventions
 

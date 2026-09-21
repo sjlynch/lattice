@@ -88,10 +88,18 @@ export function classifyWorkflowRunResume(
       reason: `${kind} control step was killed by the restart and is re-runnable`,
     };
   }
+  // `pending` = the step was checkpointed but no terminal was ever requested
+  // for it (the phase flips to `spawning` before the pty call). That covers a
+  // queued-but-not-admitted step AND a step still inside its pre-run tool (an
+  // Opengrep scan can take minutes). No session exists to re-adopt, so the
+  // probe result is irrelevant: an unprobeable terminal-server must not park
+  // the run in "readopt" forever, since no `/complete` will ever come. Only a
+  // positively-alive session (a `spawning` write that failed to land) is
+  // re-adopted.
+  if (input.stepPhase === 'pending' && input.stepSessionAlive !== true) {
+    return { action: 'redispatch', reason: 'agent step was queued and never admitted (no terminal was requested)' };
+  }
   if (input.stepSessionAlive === false) {
-    if (input.stepPhase === 'pending') {
-      return { action: 'redispatch', reason: 'agent step was queued and never admitted' };
-    }
     return {
       action: 'error',
       reason:

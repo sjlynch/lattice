@@ -24,6 +24,11 @@ import fs from 'node:fs';
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'lattice-test-home-'));
 process.env.USERPROFILE = tempHome;
 process.env.HOME = tempHome;
+// Tests that write under ~/.lattice check this marker and refuse to run
+// without it: `node --test src/__tests__/x.test.ts` (no `--import` of this
+// file) otherwise lands their fixtures in the developer's REAL home — which is
+// how a fake rule pack once overwrote a real ~/.lattice/opengrep/state.json.
+process.env.LATTICE_TEST_HOME_ISOLATED = tempHome;
 
 // Best-effort cleanup when the test process exits (sync — 'exit' can't await).
 process.on('exit', () => {

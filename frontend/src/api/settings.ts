@@ -64,6 +64,15 @@ export async function fetchUserSettings(projectPath: string): Promise<UserSettin
   }
 }
 
+// Same GET, but a failure THROWS (an `HttpError` for a non-2xx) instead of
+// reading as "this project has no settings". An editor that saves a whole
+// sub-object back (Settings → Tools' `opengrep` block) must be able to tell
+// the two apart: `{}` from a mid-restart backend, taken as the loaded state,
+// would have the next Save wipe every list the project had.
+export async function fetchUserSettingsStrict(projectPath: string): Promise<UserSettings> {
+  return asJson<UserSettings>(await fetch(`/api/settings?project=${encodeURIComponent(projectPath)}`));
+}
+
 export async function patchUserSettings(
   projectPath: string,
   partial: Partial<UserSettings>,

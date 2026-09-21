@@ -12,7 +12,7 @@ import { type AgentsTabHandle } from './AgentsTab';
 import { type PiTabHandle } from './PiTab';
 import { type McpTabHandle } from './McpTab';
 import { type ToolsTabHandle } from './ToolsTab';
-import { saveSettings } from './saveSettings';
+import { saveGlobalSettings, saveSettings } from './saveSettings';
 import { type SettingsDrafts } from './useSettingsDrafts';
 import { useSettingsDirty } from './useSettingsDirty';
 import { useSettingsCloseFlow } from './useSettingsCloseFlow';
@@ -91,10 +91,21 @@ export function useSettingsController({
   });
 
   const save = async () => {
-    if (!activeFolder) return;
     setSaving(true);
     setError(null);
     try {
+      if (!activeFolder) {
+        // No project open: the per-project tabs are read-only, but the
+        // machine-global ones (Agents / Pi / Tools packs) are not. Save that
+        // half; a silent return here used to strand the dialog on "Save".
+        await saveGlobalSettings({
+          agents: agentsRef.current,
+          pi: piRef.current,
+          tools: toolsRef.current,
+        });
+        onClose();
+        return;
+      }
       await saveSettings({
         activeFolder,
         startupTerminals,

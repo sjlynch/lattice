@@ -149,7 +149,8 @@ export function SettingsDialog({
         <button
           className="btn-primary"
           onClick={save}
-          disabled={saving || !activeFolder}
+          disabled={saving}
+          title={activeFolder ? undefined : 'No project open: only the machine-global tabs are saved'}
         >
           {saving ? 'Saving…' : 'Save'}
         </button>

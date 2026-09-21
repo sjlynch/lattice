@@ -39,6 +39,7 @@ import { nextRunnableStepIndex } from './workflowRuns/frozenSteps.js';
 import { executeControlStep } from './workflowRuns/controlStep.js';
 import { cancelWorkflowStepSessions, killWorkflowStepSession } from './workflowRuns/sessionSpawner.js';
 import { cancelStopHookGate } from './workflowRuns/stopHookGate.js';
+import { abortStepPreRun } from './workflowRuns/stepTools.js';
 import { cloneWorkflowDefinition } from './workflowRuns/definition.js';
 
 export type {
@@ -184,6 +185,9 @@ export function cancelWorkflowRun(runId: string): boolean {
   if (!run || run.status !== 'running') return false;
   run.status = 'cancelled';
   run.finishedAt = Date.now();
+  // A step still inside its pre-run (an Opengrep scan) has no session to kill;
+  // abort the scan so the project's one-scan slot frees for the next run.
+  abortStepPreRun(run.id);
   cancelWorkflowStepSessions(run.id);
   cancelStopHookGate(run.id);
   notify({ type: 'cancelled', run: snapshot(run) });

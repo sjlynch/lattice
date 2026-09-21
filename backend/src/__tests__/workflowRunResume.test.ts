@@ -85,6 +85,32 @@ test('classifyWorkflowRunResume: an unprobeable terminal-server re-adopts, never
   assert.equal(d.action, 'readopt');
 });
 
+test('classifyWorkflowRunResume: a pending agent step (no terminal ever requested) is redispatched even when the probe fails', () => {
+  // A step still inside its pre-run tool (an Opengrep scan) is checkpointed
+  // `pending`; nothing exists to re-adopt, and a `null` probe used to park it
+  // in readopt with no `/complete` ever coming.
+  for (const alive of [null, false] as const) {
+    const d = classifyWorkflowRunResume({
+      status: 'running',
+      currentStepIndex: 1,
+      definitionStepCount: 2,
+      stepKind: 'agent',
+      stepPhase: 'pending',
+      stepSessionAlive: alive,
+    });
+    assert.equal(d.action, 'redispatch', `alive=${String(alive)}`);
+  }
+  const live = classifyWorkflowRunResume({
+    status: 'running',
+    currentStepIndex: 1,
+    definitionStepCount: 2,
+    stepKind: 'agent',
+    stepPhase: 'pending',
+    stepSessionAlive: true,
+  });
+  assert.equal(live.action, 'readopt', 'a positively-alive session is still re-adopted');
+});
+
 test('classifyWorkflowRunResume: an agent step whose pty is gone errors instead of hanging', () => {
   const d = classifyWorkflowRunResume({
     status: 'running',

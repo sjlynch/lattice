@@ -105,7 +105,13 @@ test('only never-admitted agents are replayable; ambiguous spawn and dead runnin
   assert.equal(classifyWorkflowRunResume({ ...base, stepPhase: 'spawning' }).action, 'error');
   assert.equal(classifyWorkflowRunResume({ ...base, stepPhase: 'running' }).action, 'error');
   assert.equal(classifyWorkflowRunResume({ ...base, stepPhase: 'completing' }).action, 'complete');
-  assert.equal(classifyWorkflowRunResume({ ...base, stepPhase: 'pending', stepSessionAlive: null }).action, 'readopt');
+  // A `pending` step never requested a terminal (the `spawning` checkpoint
+  // precedes the pty call and a failed checkpoint prevents it), so an
+  // unprobeable terminal-server changes nothing: there is no session to
+  // re-adopt, and re-adopting would park the run forever — a real risk now
+  // that a step's pre-run Opengrep scan keeps it `pending` for minutes.
+  assert.equal(classifyWorkflowRunResume({ ...base, stepPhase: 'pending', stepSessionAlive: null }).action, 'redispatch');
+  assert.equal(classifyWorkflowRunResume({ ...base, stepPhase: 'spawning', stepSessionAlive: null }).action, 'readopt');
   assert.equal(findStepSessionId([{ id: 'other', cwd: '/step' }], '/step', 'owner'), null);
 });
 

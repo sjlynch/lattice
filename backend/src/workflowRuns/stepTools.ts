@@ -16,6 +16,7 @@ import path from 'node:path';
 import {
   OpengrepNoRulesError,
   OpengrepNotInstalledError,
+  OpengrepScanAbortedError,
   OpengrepScanBusyError,
   scanProjectWithDigest,
 } from '../opengrep/index.js';
@@ -40,15 +41,42 @@ export type StepToolsDeps = {
   scan?: typeof scanProjectWithDigest;
 };
 
+// One AbortController per run whose current step is inside its pre-run, so a
+// cancelled run kills its scan instead of leaving the project "busy" (one scan
+// per project) for the run the user starts next. `cancelWorkflowRun` calls
+// `abortStepPreRun`; the spawner brackets `runStepTools` with begin/end.
+const preRuns = new Map<string, AbortController>();
+
+export function beginStepPreRun(runId: string): AbortSignal {
+  preRuns.get(runId)?.abort();
+  const controller = new AbortController();
+  preRuns.set(runId, controller);
+  return controller.signal;
+}
+
+export function endStepPreRun(runId: string): void {
+  preRuns.delete(runId);
+}
+
+export function abortStepPreRun(runId: string): boolean {
+  const controller = preRuns.get(runId);
+  if (!controller) return false;
+  preRuns.delete(runId);
+  controller.abort();
+  return true;
+}
+
 async function runOpengrepTool(
   projectPath: string,
   stepDir: string,
   deps: StepToolsDeps,
+  signal?: AbortSignal,
 ): Promise<StepToolReport> {
   const file = path.join(stepDir, OPENGREP_REPORT_FILENAME);
   try {
     const result = await (deps.scan ?? scanProjectWithDigest)(projectPath, {
       timeoutMs: OPENGREP_STEP_TIMEOUT_MS,
+      signal,
       render: {
         title: 'Opengrep findings for this workflow step',
         drillDownHint:
@@ -56,7 +84,28 @@ async function runOpengrepTool(
           'severity=INFO shows everything) or GET /api/opengrep/scans/latest?project=…&format=md&rule=<ruleId>.',
       },
     });
-    await fs.writeFile(file, result.markdown, 'utf8');
+    try {
+      await fs.writeFile(file, result.markdown, 'utf8');
+    } catch (err) {
+      // The scan itself succeeded and is stored; only the copy beside the
+      // brief failed. Say exactly that rather than "the scan failed".
+      await fs.rm(file, { force: true }).catch(() => {});
+      const why = err instanceof Error ? err.message : String(err);
+      console.warn(`[workflow-step] opengrep report could not be written to ${file}: ${why}`);
+      return {
+        tool: 'opengrep',
+        ok: false,
+        markdown: [
+          '### Opengrep (static analysis) — report file not written',
+          '',
+          `Lattice scanned the project (scan \`${result.record.id}\`, ${result.digest.shown} finding${result.digest.shown === 1 ? '' : 's'} ` +
+            `after the project's filter) but could not write \`${OPENGREP_REPORT_FILENAME}\` here: ${why}.`,
+          'Read the digest with the `opengrep_findings` MCP tool (or ' +
+            `GET /api/opengrep/scans/${result.record.id}?project=…&format=md) and triage it as if the file were present.`,
+          '',
+        ].join('\n'),
+      };
+    }
     const { digest, record } = result;
     const sev = digest.bySeverity;
     const lines = [
@@ -84,7 +133,9 @@ async function runOpengrepTool(
     return { tool: 'opengrep', ok: true, file, markdown: lines.join('\n') };
   } catch (err) {
     const reason =
-      err instanceof OpengrepNotInstalledError
+      err instanceof OpengrepScanAbortedError
+        ? 'The workflow run was cancelled while the scan was running.'
+        : err instanceof OpengrepNotInstalledError
         ? 'Opengrep is not installed on this machine (Settings → Tools installs it, or put `opengrep` on PATH).'
         : err instanceof OpengrepNoRulesError
           ? 'No Opengrep rule pack is installed/enabled (Settings → Tools).'
@@ -114,11 +165,12 @@ export async function runStepTools(
   projectPath: string,
   stepDir: string,
   deps: StepToolsDeps = {},
+  signal?: AbortSignal,
 ): Promise<{ reports: StepToolReport[]; markdown: string }> {
   const tools = (step.kind ?? 'agent') === 'agent' ? (step.tools ?? []) : [];
   const reports: StepToolReport[] = [];
   for (const tool of tools) {
-    if (tool === 'opengrep') reports.push(await runOpengrepTool(projectPath, stepDir, deps));
+    if (tool === 'opengrep') reports.push(await runOpengrepTool(projectPath, stepDir, deps, signal));
   }
   if (reports.length === 0) return { reports, markdown: '' };
   const markdown = ['## Tool reports (generated before this step started)', '', ...reports.map((r) => r.markdown)].join('\n');
