@@ -79,30 +79,25 @@ export function StepFreezeButton({
   );
 }
 
-// The Opengrep pre-run toggle an AGENT step carries (`step.tools` includes
-// `opengrep`): a shield that latches when on. Before the step's harness spawns
-// the backend scans the project and drops OPENGREP_FINDINGS.md beside the
-// brief; the brief's `{{tool_reports}}` section tells the agent to read it.
-export function StepOpengrepButton({
-  on,
-  onToggle,
-}: {
-  on: boolean;
-  onToggle: () => void;
-}) {
-  const label = on
-    ? 'Opengrep scan before this step: ON (click to turn off)'
-    : 'Run an Opengrep static-analysis scan before this step and hand the findings digest to the agent (needs Opengrep installed in Settings → Tools)';
+// Read-only marker on an AGENT step whose `tools` include `opengrep` — i.e. a
+// step added from the "Opengrep" quick-add chip or template. Before that
+// step's harness spawns the backend scans the project and drops
+// OPENGREP_FINDINGS.md beside the brief. Deliberately NOT a toggle: the scan
+// belongs to the Opengrep step, not to arbitrary steps (a per-step switch was
+// tried and removed at the user's request, 2026-09-21).
+export function StepOpengrepBadge({ on }: { on: boolean }) {
+  if (!on) return null;
+  const label =
+    'Opengrep step: Lattice scans the project before this step and hands the agent the findings digest';
   return (
-    <button
-      className={`icon-btn sm workflows-step-tool${on ? ' on' : ''}`}
-      onClick={onToggle}
+    <span
+      className="workflows-step-tool on"
       title={label}
       aria-label={label}
-      aria-pressed={on}
+      role="img"
       data-tool="opengrep"
     >
       <ShieldCheck size={12} />
-    </button>
+    </span>
   );
 }

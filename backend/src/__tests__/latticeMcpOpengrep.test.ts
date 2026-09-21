@@ -88,6 +88,35 @@ test('opengrep_findings reads a stored scan with the narrowing knobs as query pa
   }
 });
 
+test('opengrep_ignore POSTs the rule ids / fingerprints to the ignore route and returns the envelope', async () => {
+  const calls: Recorded[] = [];
+  const envelope = {
+    canonicalProject: PROJECT,
+    added: { ruleIds: ['i18next-key-format'], fingerprints: ['62da25210dcc0ac0_0'] },
+    ignoreRuleIds: ['i18next-key-format'],
+    ignoreFingerprints: ['62da25210dcc0ac0_0'],
+  };
+  const { client, close } = await connect(calls, () => ({ body: envelope }));
+  try {
+    const r = await client.callTool({
+      name: 'opengrep_ignore',
+      arguments: { ruleIds: ['i18next-key-format'], fingerprints: ['opengrep:62da25210dcc0ac0_0'], reason: 'noise' },
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].method, 'POST');
+    assert.match(calls[0].url, /\/api\/opengrep\/ignore\?project=/);
+    // `reason` is for the model's own bookkeeping; only the lists travel.
+    assert.deepEqual(JSON.parse(calls[0].body ?? '{}'), {
+      ruleIds: ['i18next-key-format'],
+      fingerprints: ['opengrep:62da25210dcc0ac0_0'],
+    });
+    assert.notEqual((r as { isError?: boolean }).isError, true);
+    assert.deepEqual(JSON.parse(textOf(r)), envelope);
+  } finally {
+    await close();
+  }
+});
+
 test('a 409 from the scan route (busy / not installed / no rules) is an error result carrying the reason', async () => {
   const calls: Recorded[] = [];
   const { client, close } = await connect(calls, () => ({

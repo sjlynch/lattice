@@ -361,7 +361,7 @@ function renderGroup(g: DigestGroup, opts: RenderOptions): string {
   g.files.slice(0, maxFiles).forEach((file) => {
     const occ = file.occurrences;
     const shownOcc = occ.slice(0, maxOcc);
-    out.push(`- \`${file.path}\`: ${shownOcc.map((o) => `L${o.line} (fp \`${o.shortFingerprint}\`)`).join(', ')}${occ.length > maxOcc ? ` … +${occ.length - maxOcc} more` : ''}`);
+    out.push(`- \`${file.path}\`: ${shownOcc.map((o) => `L${o.line} (fp \`${o.shortFingerprint}\`)`).join(', ')}${occ.length > maxOcc ? ` … +${occ.length - maxOcc} more in this file (same rule; narrow the digest with file=\`${file.path}\` to list them all)` : ''}`);
     if (!firstSnippetShown && shownOcc[0]?.snippet.trim()) {
       out.push('');
       out.push(`  ${file.path}:${shownOcc[0].line}`);

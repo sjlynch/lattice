@@ -184,6 +184,7 @@ therefore stay safely re-runnable.
 | POST | `/api/opengrep/scan` | `{project, targets?, includeMarkdown?}` — run a scan with the project's enabled packs + `.opengrep/rules/` + extra paths; returns the scan record and the digest counts (`markdown` on request). **409** `busy` (one scan per project), `not-installed`, `no-rules` |
 | GET | `/api/opengrep/scans?project=` | Recent scan records (last 10 kept, newest first) |
 | GET | `/api/opengrep/scans/:id?project=&format=md&rule=&file=&severity=&budgetKb=&include=markdown` | One stored scan (`latest` allowed) rendered as the agent-facing digest — filtered by the project's severity floor / ignore lists, narrowed by `rule` / `file` / `severity`, under `budgetKb`. `format=md` returns text/markdown; default is the JSON envelope (+ `markdown` with `include=markdown`) |
+| POST | `/api/opengrep/ignore` | `{project, ruleIds?, fingerprints?}` — append to the project's Opengrep ignore lists (`userSettings.opengrep`); additive, deduplicated, `opengrep:<fp>` spelling accepted. The one settings write a planning agent makes (via the `opengrep_ignore` MCP tool) so rule noise becomes a setting instead of a "please ignore X" ticket. Entries are removed in Settings → Tools |
 | GET | `/api/project-env?project=` | Auto-detected package-manager envs + the "fresh worktree, don't reinstall" notes (default + effective) |
 | GET | `/api/projects` | Known project roots + hashes, for agent sanity checks |
 | POST | `/api/project-init/preview` | `{project, gitignore?}` → what a first commit would capture (`{probe, isEmpty, gitignore, generated, fileCount, byteCount, truncated, largest}`). Backs the Git Setup dialog; re-POSTed (debounced) on every `.gitignore` edit |
@@ -439,9 +440,10 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   ignore lists (rule id or fingerprint, `userSettings.opengrep`) applied
   first, deduplicated by Opengrep's stable per-finding **fingerprint**,
   grouped rule → file, under a byte budget (60 KB) with a drill-down pointer.
-  Surfaces: a workflow **agent step with the shield toggle**
-  (`WorkflowStep.tools: ['opengrep']`, the built-in "Security review
-  (Opengrep)" template) scans before the harness spawns and drops
+  Surfaces: the **Opengrep workflow step** (the "Opengrep" quick-add chip or
+  the "Security review (Opengrep)" template seed a step with
+  `WorkflowStep.tools: ['opengrep']`, shown as a read-only shield badge — there
+  is deliberately no per-step toggle) scans before the harness spawns and drops
   `OPENGREP_FINDINGS.md` beside `WORKFLOW_STEP.md` (the brief's
   `{{tool_reports}}` section; a missing engine explains itself in the brief
   rather than failing the step); the `opengrep_scan` / `opengrep_findings`

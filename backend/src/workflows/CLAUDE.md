@@ -17,8 +17,9 @@ imports from `'../workflows.js'`; this directory holds the implementation.
   (the editor's snowflake toggle) is kind-agnostic: the step stays in the
   definition but the run engine skips it — see
   `../workflowRuns/frozenSteps.ts`. `tools` (`WorkflowStepTool[]`, v1 only
-  `opengrep` — the editor's shield toggle) names the pre-run tools an agent
-  step runs before its harness spawns; see `../workflowRuns/stepTools.ts`.
+  `opengrep` — set by the "Opengrep" quick-add chip / template, shown as a
+  read-only shield badge, no per-step toggle) names the pre-run tools an
+  agent step runs before its harness spawns; see `../workflowRuns/stepTools.ts`.
 - `normalization.ts` — defensive coercion of untrusted disk/HTTP input into the
   types above (`normalizeWorkflows` / `normalizeSteps` / `normalizeVariables`
   + name/harness helpers). `frozen` is coerced to `true` or `undefined` (never

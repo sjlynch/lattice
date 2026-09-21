@@ -411,6 +411,41 @@ export function createLatticeMcpServer(
       ),
   );
 
+  server.registerTool(
+    'opengrep_ignore',
+    {
+      description:
+        "Add rule ids and/or finding fingerprints to THIS project's Opengrep ignore " +
+        'list, so they are filtered out of every future digest. Use it for findings ' +
+        'you have judged to be rule noise for this codebase (a rule that ' +
+        'misfires on a local helper, a policy the project already meets another ' +
+        'way) instead of filing a task that asks a human to do it. Additive and ' +
+        'deduplicated; entries are removed in Settings → Tools. Say in your ' +
+        'wrap-up what you ignored and why.',
+      inputSchema: {
+        ruleIds: z
+          .array(z.string())
+          .optional()
+          .describe('Rule ids to ignore: full check ids or any dot-suffix (e.g. "i18next-key-format").'),
+        fingerprints: z
+          .array(z.string())
+          .optional()
+          .describe('Individual findings to ignore, by the short fp from the digest (the `opengrep:<fp>` spelling is accepted).'),
+        reason: z.string().optional().describe('One line on why — echoed back, not stored.'),
+      },
+    },
+    async ({ ruleIds, fingerprints }) =>
+      toToolResult(
+        await client.call('/api/opengrep/ignore', {
+          method: 'POST',
+          body: {
+            ...(ruleIds?.length ? { ruleIds } : {}),
+            ...(fingerprints?.length ? { fingerprints } : {}),
+          },
+        }),
+      ),
+  );
+
   // ---- Board management: NOT registered in a task-worktree session ----------
   //
   // A worktree agent's job is one task; its brief is untrusted input written by

@@ -64,6 +64,8 @@ export {
   scanProjectWithDigest,
   digestOfStoredScan,
   loadEffectiveConfig,
+  addOpengrepIgnores,
+  type OpengrepIgnoreResult,
   type OpengrepStatus,
   type ScanWithDigestResult,
   type DigestRenderContext,

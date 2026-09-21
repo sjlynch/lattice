@@ -72,8 +72,10 @@ async function runOpengrepTool(
       'The report is grouped by rule, worst severity first, one short fingerprint (`fp`) per finding.',
       'When you file a task for a finding, put `opengrep:<fp>` on its own line in the task description',
       'and search the board for that marker first (`--find opengrep:<fp>` / `search_tasks`) so a re-run',
-      'of this step never files the same finding twice. Findings that are noise for this project can be',
-      "proposed as rule ids for the project's Opengrep ignore list instead of tasks.",
+      'of this step never files the same finding twice. Findings that are rule noise for this project',
+      "belong on the project's Opengrep ignore list, not on the board: add them with the `opengrep_ignore`",
+      'MCP tool (or `POST /api/opengrep/ignore` with `{project, ruleIds, fingerprints}`) and say so in',
+      'your wrap-up — do not file a task asking a human to do it.',
       '',
     ];
     if (digest.shown === 0) {

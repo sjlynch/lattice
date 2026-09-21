@@ -18,7 +18,7 @@ import {
 import {
   StepFreezeButton,
   StepIndexBadge,
-  StepOpengrepButton,
+  StepOpengrepBadge,
   type StepRowCallbacks,
 } from './StepRowShared';
 import type { StepRunStatus } from './stepRunStatus';
@@ -143,16 +143,7 @@ export const AgentStepHeader = memo(function AgentStepHeader({
         selectedPiModel={piModel}
         onChange={(h, pm) => onChange(index, { harness: h, piModel: pm })}
       />
-      <StepOpengrepButton
-        on={opengrepOn}
-        onToggle={() =>
-          onChange(index, {
-            tools: opengrepOn
-              ? (tools ?? []).filter((t) => t !== 'opengrep')
-              : [...(tools ?? []).filter((t) => t !== 'opengrep'), 'opengrep'],
-          })
-        }
-      />
+      <StepOpengrepBadge on={opengrepOn} />
       <StepFreezeButton
         frozen={frozen}
         onToggle={() => onChange(index, { frozen: !frozen })}

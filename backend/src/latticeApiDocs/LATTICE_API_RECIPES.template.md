@@ -56,6 +56,7 @@ Before acting on any response, confirm its `canonicalProject` matches
 | POST   | /api/opengrep/scan                 | `{project, targets?, includeMarkdown?}` — run an Opengrep (SAST) scan with the project's rule packs; returns `{scan, digest:{shown,total,bySeverity,rules,bytes}, markdown?}`. **409** `busy` / `not-installed` / `no-rules` |
 | GET    | /api/opengrep/scans?project=       | Recent scan records (last 10) |
 | GET    | /api/opengrep/scans/:id?project=&format=md&rule=&file=&severity=&budgetKb= | A stored scan (`latest` allowed) as the agent-facing digest: markdown grouped rule → file with a short fingerprint per finding; `rule=`/`file=`/`severity=` narrow it, `budgetKb=` raises the size ceiling. Prefer the `opengrep_scan` / `opengrep_findings` MCP tools when the session has them |
+| POST   | /api/opengrep/ignore               | `{project, ruleIds?, fingerprints?}` — add rule ids (full id or dot-suffix) / finding fingerprints (`opengrep:<fp>` spelling accepted) to this project's Opengrep ignore list so future digests skip them. Additive + deduplicated. Use it for rule noise instead of filing a "please ignore X" task (MCP: `opengrep_ignore`) |
 
 Statuses: `backlog | open | in_progress | ready_to_merge | qa | done | deleted`.
 Pipeline: `open → in_progress → ready_to_merge → qa → done` (drag-and-drop

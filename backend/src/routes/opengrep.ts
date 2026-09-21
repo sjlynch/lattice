@@ -12,6 +12,7 @@ import {
   OpengrepScanBusyError,
   OpengrepScanFailedError,
   RulePackError,
+  addOpengrepIgnores,
   digestOfStoredScan,
   findRulePackDef,
   getOpengrepStatus,
@@ -169,6 +170,22 @@ export function buildOpengrepRouter(): Router {
     }
     const include = str((req.query as Record<string, unknown>).include);
     res.json(scanEnvelope(result, include === 'markdown'));
+  });
+
+  // Append rule ids / fingerprints to the project's ignore lists. Body:
+  // `{project, ruleIds?: string[], fingerprints?: string[]}` (a fingerprint
+  // may be spelled with its task-marker prefix `opengrep:<fp>`). Additive and
+  // deduplicated; the Settings → Tools textareas remove entries.
+  r.post('/api/opengrep/ignore', async (req, res) => {
+    const project = readProjectParam(req, res);
+    if (project === null) return;
+    const body = (req.body ?? {}) as { ruleIds?: unknown; fingerprints?: unknown };
+    const ruleIds = Array.isArray(body.ruleIds) ? body.ruleIds : [];
+    const fingerprints = Array.isArray(body.fingerprints) ? body.fingerprints : [];
+    if (ruleIds.length === 0 && fingerprints.length === 0) {
+      return res.status(400).json({ error: 'ruleIds and/or fingerprints required' });
+    }
+    res.json(await addOpengrepIgnores(project, { ruleIds, fingerprints }));
   });
 
   return r;

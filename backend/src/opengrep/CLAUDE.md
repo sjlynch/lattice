@@ -115,7 +115,14 @@ licence text + a source pointer) — keep it a runtime download.
   rules/:packId,scan,scans,scans/:id}`; 409 codes `busy` / `not-installed` /
   `no-rules`.
 - `latticeMcp/createServer.ts` — `opengrep_scan`, `opengrep_findings` (every
-  session; both return the digest markdown, never raw JSON).
+  session; both return the digest markdown, never raw JSON) and
+  `opengrep_ignore` → `POST /api/opengrep/ignore` → `service.ts
+  addOpengrepIgnores`: append rule ids / fingerprints to the project's ignore
+  lists. This is the ONE Lattice-settings write a planning agent may make —
+  rule noise is a per-project setting, not a ticket for a human — additive
+  and deduplicated; entries are removed in Settings → Tools. The Opengrep
+  step prompt (`frontend/src/components/workflows/prompts/opengrep.md`) and
+  the `{{tool_reports}}` block both point the agent at it.
 - `workflowRuns/stepTools.ts` — the pre-run hook for an agent step whose
   `tools` includes `opengrep`: scan → `OPENGREP_FINDINGS.md` beside
   `WORKFLOW_STEP.md` → the `{{tool_reports}}` token in the brief. A missing

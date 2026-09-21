@@ -6,7 +6,7 @@
 
 import { getGlobalSettings } from '../globalSettings.js';
 import { canonicalProjectPath } from '../projectPath.js';
-import { getUserSettings } from '../userSettings.js';
+import { getUserSettings, patchUserSettings } from '../userSettings.js';
 import { resolveOpengrep, type OpengrepResolution } from './detect.js';
 import {
   buildDigest,
@@ -25,7 +25,11 @@ import {
   runOpengrepScan,
   type OpengrepScanRecord,
 } from './scan.js';
-import { effectiveOpengrepConfig, type EffectiveOpengrepConfig } from './settings.js';
+import {
+  effectiveOpengrepConfig,
+  sanitizeOpengrepProjectSettings,
+  type EffectiveOpengrepConfig,
+} from './settings.js';
 import { readOpengrepState } from './state.js';
 import { OPENGREP_VERSION } from './versions.js';
 
@@ -160,4 +164,46 @@ export async function digestOfStoredScan(
   const config = await loadEffectiveConfig(canonical);
   const { digest, markdown } = digestFor(stored.parsed, stored.record, config, ctx);
   return { record: stored.record, digest, markdown, config };
+}
+
+export type OpengrepIgnoreResult = {
+  canonicalProject: string;
+  added: { ruleIds: string[]; fingerprints: string[] };
+  ignoreRuleIds: string[];
+  ignoreFingerprints: string[];
+};
+
+// Append rule ids / fingerprints to the project's ignore lists
+// (`userSettings.opengrep`). This is the one Lattice-settings write an agent
+// may make from a planning step: a rule that is pure noise for a codebase is a
+// settings fact, not a task for a human, and filing "please add X to the
+// ignore list" tickets just moves the click. Deduplicated; never removes.
+export async function addOpengrepIgnores(
+  project: string,
+  add: { ruleIds?: string[]; fingerprints?: string[] },
+): Promise<OpengrepIgnoreResult> {
+  const canonical = canonicalProjectPath(project);
+  const clean = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map((s) => s.trim()).filter(Boolean) : [];
+  // Accept the task-marker spelling too (`opengrep:<fp>`).
+  const fps = clean(add.fingerprints).map((f) => f.replace(/^opengrep:/i, ''));
+  const rules = clean(add.ruleIds);
+  const current = sanitizeOpengrepProjectSettings((await getUserSettings(canonical)).opengrep);
+  const ruleSet = new Set(current.ignoreRuleIds ?? []);
+  const fpSet = new Set(current.ignoreFingerprints ?? []);
+  const addedRules = rules.filter((r) => !ruleSet.has(r));
+  const addedFps = fps.filter((f) => !fpSet.has(f));
+  for (const r of addedRules) ruleSet.add(r);
+  for (const f of addedFps) fpSet.add(f);
+  if (addedRules.length || addedFps.length) {
+    await patchUserSettings(canonical, {
+      opengrep: { ...current, ignoreRuleIds: [...ruleSet], ignoreFingerprints: [...fpSet] },
+    });
+  }
+  return {
+    canonicalProject: canonical,
+    added: { ruleIds: addedRules, fingerprints: addedFps },
+    ignoreRuleIds: [...ruleSet],
+    ignoreFingerprints: [...fpSet],
+  };
 }
