@@ -52,10 +52,14 @@ export function makeAgentStep({
   id = localStepId(),
   title,
   prompt,
+  tools,
 }: {
   id?: string;
   title: string;
   prompt: string;
+  // Pre-run tools (e.g. the Opengrep chip's `['opengrep']`). Left out of the
+  // step when empty so the field stays absent for the common case.
+  tools?: WorkflowStep['tools'];
 }): WorkflowStep {
   return {
     id,
@@ -64,6 +68,7 @@ export function makeAgentStep({
     mode: 'sequential',
     harness: 'claude',
     kind: 'agent',
+    ...(tools?.length ? { tools: [...tools] } : {}),
   };
 }
 

@@ -111,7 +111,7 @@ export function useEditorMutationActions(
         steps: [
           ...base.steps,
           // Built-in quick-add prompts end with {{user_instructions}}.
-          makeAgentStep({ id, title: p.title, prompt: withUserInstructions(p.prompt) }),
+          makeAgentStep({ id, title: p.title, prompt: withUserInstructions(p.prompt), tools: p.tools }),
         ],
         dirty: true,
       };

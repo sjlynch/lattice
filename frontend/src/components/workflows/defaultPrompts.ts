@@ -1,5 +1,17 @@
-import { BookText, Bug, FlaskConical, Lightbulb, Merge, ShieldAlert, Target, Wrench } from 'lucide-react';
+import {
+  BookText,
+  Bug,
+  FlaskConical,
+  Lightbulb,
+  Merge,
+  ShieldAlert,
+  ShieldCheck,
+  Target,
+  Wrench,
+} from 'lucide-react';
+import type { WorkflowStepTool } from '../../api';
 import refactorPrompt from './prompts/refactor.md?raw';
+import opengrepPrompt from './prompts/opengrep.md?raw';
 import combineTasksPrompt from './prompts/combine-tasks.md?raw';
 import pmfPrompt from './prompts/pmf.md?raw';
 import brainstormPrompt from './prompts/brainstorm.md?raw';
@@ -14,6 +26,9 @@ export type DefaultPrompt = {
   label: string;
   icon: typeof Wrench;
   prompt: string;
+  // Pre-run tools the seeded step carries (`WorkflowStep.tools`) — the
+  // Opengrep chip sets `['opengrep']` so the scan runs before the agent starts.
+  tools?: WorkflowStepTool[];
 };
 
 // Quick-insert prompts surfaced as chips at the bottom of the editor. Each
@@ -61,6 +76,16 @@ export const DEFAULT_PROMPTS: DefaultPrompt[] = [
     label: 'Security',
     icon: ShieldAlert,
     prompt: securityPrompt,
+  },
+  {
+    // Seeds a step with the Opengrep pre-run tool ON: Lattice scans the
+    // project before the agent starts and the prompt triages the digest.
+    id: 'opengrep',
+    title: 'Opengrep Triage',
+    label: 'Opengrep',
+    icon: ShieldCheck,
+    prompt: opengrepPrompt,
+    tools: ['opengrep'],
   },
   {
     id: 'brainstorm',

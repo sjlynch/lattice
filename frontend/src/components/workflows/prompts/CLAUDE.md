@@ -3,7 +3,12 @@
 Raw markdown bodies for built-in workflow quick-add prompts.
 
 - Prompt metadata lives in `../defaultPrompts.ts`; these files are the bodies
-  imported with Vite's raw asset handling.
+  imported with Vite's raw asset handling. A chip may also carry `tools`
+  (`opengrep.md` → `tools: ['opengrep']`): the seeded step then runs that
+  pre-run tool before its harness spawns, and the body is written against the
+  report the tool leaves beside the brief (`OPENGREP_FINDINGS.md`). The
+  "Security review (Opengrep)" template in `src/workflowTemplates.ts` imports
+  the same body, so there is one copy to keep planner-only.
 - **Every prompt here must be planner-only.** A workflow step runs under
   `WORKFLOW_STEP.md`, which forbids editing project files or committing — the
   step's only output is Lattice task-board entries. A prompt that says "do the
