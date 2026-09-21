@@ -36,28 +36,32 @@ test('every asset the picker can choose has a verified pin', () => {
   assert.match(OPENGREP_VERSION, /^\d+\.\d+\.\d+$/);
 });
 
-test('rule-pack catalog: exactly one default-on pack, every pack pinned to a full commit, licences stated', () => {
-  assert.equal(OPENGREP_RULE_PACKS.filter((p) => p.defaultEnabled).length, 1);
+test('rule-pack catalog: both packs used once installed, every pack pinned to a full commit, licences stated', () => {
+  assert.equal(OPENGREP_RULE_PACKS.filter((p) => p.defaultEnabled).length, 2);
   for (const p of OPENGREP_RULE_PACKS) {
     assert.match(p.commit, /^[0-9a-f]{40}$/, `${p.id} pinned by full commit`);
     assert.match(p.repo, /^https:\/\/github\.com\/.+\.git$/);
     assert.ok(p.licence.length > 0 && p.note.length > 20, `${p.id} carries licence + note`);
   }
   const archived = OPENGREP_RULE_PACKS.find((p) => p.id === 'opengrep-archived')!;
-  assert.equal(archived.defaultEnabled, false, 'the Commons-Clause pack is opt-in');
+  // Used once installed (it is the only real TS/Node coverage); the licence
+  // condition is carried on the row so the INSTALL click stays informed.
+  assert.equal(archived.defaultEnabled, true, 'the archived pack is used as soon as it is installed');
   assert.match(archived.licence, /Commons Clause/);
+  assert.match(archived.note, /Commons Clause/);
   const qodana = OPENGREP_RULE_PACKS.find((p) => p.id === 'qodana-mit')!;
   assert.ok(qodana.prune.includes('jetbrains') && qodana.prune.includes('rules/lgpl'));
 });
 
 test('enabledPackIds: defaults, overrides in both directions, unknown ids ignored', () => {
-  assert.deepEqual(enabledPackIds(undefined), ['qodana-mit']);
-  assert.deepEqual(enabledPackIds({ packs: { 'qodana-mit': false } }), []);
+  assert.deepEqual(enabledPackIds(undefined), ['qodana-mit', 'opengrep-archived']);
+  assert.deepEqual(enabledPackIds({ packs: { 'qodana-mit': false, 'opengrep-archived': false } }), []);
   assert.deepEqual(
     enabledPackIds({ packs: { 'qodana-mit': false, 'opengrep-archived': true } }),
     ['opengrep-archived'],
   );
-  assert.deepEqual(enabledPackIds({ packs: { bogus: true } }), ['qodana-mit']);
+  assert.deepEqual(enabledPackIds({ packs: { 'opengrep-archived': false } }), ['qodana-mit']);
+  assert.deepEqual(enabledPackIds({ packs: { bogus: true } }), ['qodana-mit', 'opengrep-archived']);
   assert.deepEqual(sanitizeOpengrepGlobalSettings({ packs: { bogus: true, 'qodana-mit': 'yes' } }), {
     packs: {},
   });
@@ -88,7 +92,7 @@ test('project settings are sanitized on read: severity case-folds, junk degrades
 
   const cfg = effectiveOpengrepConfig(undefined, undefined);
   assert.deepEqual(cfg, {
-    packIds: ['qodana-mit'],
+    packIds: ['qodana-mit', 'opengrep-archived'],
     extraRulePaths: [],
     excludeGlobs: [],
     filter: { severityFloor: 'WARNING', ignoreRuleIds: [], ignoreFingerprints: [] },

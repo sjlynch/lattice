@@ -426,10 +426,12 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   the Sigstore signature of the Opengrep release workflow), and run once. A
   copy already on PATH always wins. Rule packs are fetched the same way at a
   pinned commit (`git fetch --depth 1`) into `~/.lattice/opengrep/rules/`:
-  `qodana-mit` (MIT, on by default, its LGPL/Commons-Clause folders pruned)
-  and the opt-in archived `opengrep-rules` snapshot (LGPL-2.1 + Commons
-  Clause — the only pack with real TypeScript/Node/Express coverage — off by
-  default and labelled); `<project>/.opengrep/rules/` is always loaded.
+  `qodana-mit` (MIT, its LGPL/Commons-Clause folders pruned) and the archived
+  `opengrep-rules` snapshot (LGPL-2.1 + Commons Clause — the only pack with
+  real TypeScript/Node/Express coverage). Both are used by scans once
+  installed; each INSTALL is an explicit click with the licence named on the
+  row, and the archived pack's install asks you to acknowledge its no-resale
+  condition first. `<project>/.opengrep/rules/` is always loaded.
   **Lattice stays MIT because nothing third-party is ever committed or
   bundled** (guard test `opengrepNoVendoredAssets`) and the engine only runs
   as a child process. Agents never see raw JSON: `backend/src/opengrep/digest.ts`

@@ -30,8 +30,13 @@ distribution obligations attach to whoever distributes the engine — GitHub's
 release page, not Lattice. The Commons Clause on the archived pack forbids
 *selling* a product whose value derives substantially from those rules; it
 constrains a hosted-Lattice-as-a-service offering's use of that pack, not the
-Lattice source, and the pack is off by default with its licence named on the
-Settings row. Lattice-authored rules (MIT) may live in the repo; third-party
+Lattice source. The pack is therefore USED as soon as it is installed
+(`defaultEnabled: true` — it is the only pack with real TypeScript/Node/Express
+coverage), while the DOWNLOAD stays an explicit click with the licence named
+on the Settings row and a confirmation that spells out the no-resale condition.
+Flipping the default changed nothing about Lattice's own licence; what must
+never change is the "nothing is fetched without a click, nothing is
+committed" pair. Lattice-authored rules (MIT) may live in the repo; third-party
 ones may not. What would change the answer: shipping an installer that bundles
 `opengrep.exe` (then Lattice distributes an LGPL work and must carry its
 licence text + a source pointer) — keep it a runtime download.
@@ -47,7 +52,8 @@ licence text + a source pointer) — keep it a runtime download.
   Also `OPENGREP_RULE_PACKS`: `qodana-mit` (MIT subset, default ON, prunes
   `jetbrains/` + `rules/lgpl/`) and `opengrep-archived` (the Dec-2024 Semgrep
   community snapshot — the only real TypeScript/React/Node/Express coverage,
-  LGPL-2.1 + Commons Clause, default OFF). Each pinned by full commit.
+  LGPL-2.1 + Commons Clause, used once installed; the install click is the
+  informed step). Each pinned by full commit.
 - `paths.ts` — `~/.lattice/opengrep/{bin/<version>/, downloads/, rules/<packId>/,
   state.json}`, `~/.lattice/per-project/<hash>/opengrep/` for scans, and the
   optional read-only `<project>/.opengrep/rules/`. Home-scoped, never inside

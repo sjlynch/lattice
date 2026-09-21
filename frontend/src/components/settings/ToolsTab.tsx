@@ -22,6 +22,14 @@ import {
   type OpengrepStatus,
 } from '../../api';
 import { SettingsSection } from './SettingsSection';
+import { useConfirm } from '../shared/ConfirmDialog';
+
+// Packs whose licence carries a use condition (the Commons Clause forbids
+// SELLING a product whose value derives substantially from the rules) get a
+// confirmation before the download so the install click is an informed one.
+// Lattice's own licence is unaffected either way — the rules are only ever
+// downloaded here, never redistributed.
+const needsLicenceAcknowledgement = (licence: string): boolean => /commons clause/i.test(licence);
 
 type Props = {
   active: boolean;
@@ -129,6 +137,7 @@ export const ToolsTab = forwardRef<ToolsTabHandle, Props>(function ToolsTab(
   const [scanResult, setScanResult] = useState<OpengrepScanEnvelope | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
 
+  const { confirm } = useConfirm();
   const openRef = useRef(open);
   openRef.current = open;
 
@@ -414,7 +423,34 @@ export const ToolsTab = forwardRef<ToolsTabHandle, Props>(function ToolsTab(
                     <button
                       className="btn-primary"
                       disabled={running}
-                      onClick={() => void runAction(() => installOpengrepRulePack(p.id))}
+                      onClick={() =>
+                        void (async () => {
+                          if (!p.installed && needsLicenceAcknowledgement(p.licence)) {
+                            const ok = await confirm({
+                              title: `Install "${p.label}"?`,
+                              confirmLabel: 'Install',
+                              message: (
+                                <>
+                                  <p>
+                                    This pack is licensed <strong>{p.licence}</strong>. The Commons Clause
+                                    forbids <em>selling</em> a product or service whose value derives
+                                    substantially from these rules. Scanning your own code with Lattice
+                                    is fine; Lattice itself stays MIT because the rules are only
+                                    downloaded to this machine, never redistributed.
+                                  </p>
+                                  <p>
+                                    The rules are fetched at their pinned commit into{' '}
+                                    <code>~/.lattice/opengrep/rules/{p.id}/</code> and used by every scan
+                                    while the pack is enabled.
+                                  </p>
+                                </>
+                              ),
+                            });
+                            if (!ok) return;
+                          }
+                          await runAction(() => installOpengrepRulePack(p.id));
+                        })()
+                      }
                     >
                       {running ? 'Fetching…' : p.installed ? 'Update' : 'Install'}
                     </button>

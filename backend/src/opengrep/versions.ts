@@ -110,9 +110,14 @@ export const OPENGREP_RULE_PACKS: readonly OpengrepRulePackDef[] = [
       'Frozen since 2025 (the repository is archived) but by far the broadest pack: ' +
       'the only one with real TypeScript / React / Node / Express coverage. Its LICENSE ' +
       'is LGPL-2.1 with the Commons Clause, which forbids SELLING a product whose value ' +
-      'derives substantially from these rules; scanning your own code locally is fine. ' +
-      'Off by default — enable it knowingly.',
-    defaultEnabled: false,
+      'derives substantially from these rules; scanning your own code locally is fine, and ' +
+      'Lattice itself stays MIT because the rules are only ever downloaded here, at your click. ' +
+      'Used by scans once installed; installing it is the explicit step.',
+    // Used by scans as soon as it is installed: it is the only pack with real
+    // TypeScript/Node/Express coverage, and its licence condition (no resale)
+    // attaches to the user of the rules, not to Lattice — see ./CLAUDE.md.
+    // The DOWNLOAD stays an explicit click with the licence named on the row.
+    defaultEnabled: true,
     prune: ['scripts', 'stats', 'template.yaml', 'metadata-schema.yaml.schm', 'Makefile', 'Pipfile', 'Pipfile.lock'],
   },
 ];
