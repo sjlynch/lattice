@@ -80,14 +80,19 @@ export function shortFingerprint(fp: string): string {
   return m ? `${m[1]}${m[2] ?? ''}` : fp;
 }
 
-// `x` may be a full fingerprint, a short one, or any hex prefix of ≥ 8 chars.
+// `x` may be a full fingerprint, a short one, or any hex prefix of ≥ 8 chars
+// (case-insensitive: the engine prints lower-case hex, a hand-typed ignore
+// entry may not), optionally spelled with the `opengrep:` task-marker prefix.
 export function fingerprintMatches(fp: string, x: string): boolean {
   if (!x) return false;
-  if (fp === x) return true;
-  const short = shortFingerprint(fp);
-  if (short === x) return true;
-  const [hex, suffix] = fp.split('_');
-  const [xhex, xsuffix] = x.split('_');
+  const want = x.trim().replace(/^opengrep:/i, '').toLowerCase();
+  if (!want) return false;
+  const have = fp.toLowerCase();
+  if (have === want) return true;
+  const short = shortFingerprint(have);
+  if (short === want) return true;
+  const [hex, suffix] = have.split('_');
+  const [xhex, xsuffix] = want.split('_');
   if (xhex.length < 8 || !hex.startsWith(xhex)) return false;
   return xsuffix === undefined || xsuffix === suffix;
 }
@@ -235,6 +240,10 @@ export function buildDigest(parsed: ParsedOpengrepOutput, filter: DigestFilter =
   const dropped = { belowFloor: 0, ignoredRules: 0, ignoredFingerprints: 0, duplicates: 0 };
   const seen = new Set<string>();
   const byRule = new Map<string, DigestGroup>();
+  // Per-group `path → DigestFile` index so a rule with thousands of hits does
+  // not pay a linear file lookup per finding (a broad pack over a mature repo
+  // easily reaches 10^3 findings on one rule).
+  const filesByRule = new Map<string, Map<string, DigestFile>>();
   const bySeverity: Record<OpengrepSeverity, number> = { ERROR: 0, WARNING: 0, INFO: 0 };
   let shown = 0;
 
@@ -259,7 +268,8 @@ export function buildDigest(parsed: ParsedOpengrepOutput, filter: DigestFilter =
     shown += 1;
     bySeverity[f.severity] += 1;
     let group = byRule.get(f.ruleId);
-    if (!group) {
+    let fileIndex = filesByRule.get(f.ruleId);
+    if (!group || !fileIndex) {
       group = {
         ruleId: f.ruleId,
         severity: f.severity,
@@ -270,15 +280,18 @@ export function buildDigest(parsed: ParsedOpengrepOutput, filter: DigestFilter =
         count: 0,
         files: [],
       };
+      fileIndex = new Map();
       byRule.set(f.ruleId, group);
+      filesByRule.set(f.ruleId, fileIndex);
     }
     group.count += 1;
     // The group's severity is the worst any occurrence carries.
     if (SEVERITY_RANK[f.severity] < SEVERITY_RANK[group.severity]) group.severity = f.severity;
-    let file = group.files.find((x) => x.path === f.path);
+    let file = fileIndex.get(f.path);
     if (!file) {
       file = { path: f.path, occurrences: [] };
       group.files.push(file);
+      fileIndex.set(f.path, file);
     }
     file.occurrences.push({
       line: f.line,
@@ -414,27 +427,51 @@ export function renderDigestMarkdown(digest: OpengrepDigest, opts: RenderOptions
     head.push('');
   }
 
+  // The caveats section is rendered FIRST so its real size is reserved from
+  // the budget (it is bounded, but 15 partially-parsed paths plus 10 engine
+  // errors run to several KB — a fixed reserve used to let the digest overrun).
+  const caveats = renderCaveats(digest);
+  const caveatsBytes = Buffer.byteLength(caveats, 'utf8');
+  // Room for the "Budget reached" line + drill-down hint.
+  const budgetLineReserve = 400 + Buffer.byteLength(opts.drillDownHint ?? '', 'utf8');
+
   const sections: string[] = [];
-  let used = Buffer.byteLength(head.join('\n'), 'utf8');
+  let used = Buffer.byteLength(head.join('\n'), 'utf8') + caveatsBytes + budgetLineReserve;
   let cutGroups = 0;
   let cutFindings = 0;
-  const tailReserve = 600;
+  let trimmedGroups = 0;
   for (const g of digest.groups) {
-    const text = renderGroup(g, opts);
-    const size = Buffer.byteLength(text, 'utf8');
-    if (used + size + tailReserve > budget) {
-      cutGroups += 1;
-      cutFindings += g.count;
+    const full = renderGroup(g, opts);
+    const fullSize = Buffer.byteLength(full, 'utf8');
+    if (used + fullSize <= budget) {
+      sections.push(full);
+      used += fullSize;
       continue;
     }
-    sections.push(text);
-    used += size;
+    // The group does not fit whole. Groups are worst-severity-first, so
+    // dropping this one while smaller, lower-severity groups still render
+    // would hide exactly the findings the reader most needs. Try a trimmed
+    // rendering (few files, fewer occurrences — the group's own "… N more
+    // files" line points at the drill-down) before giving up on it.
+    const trimmed = renderGroup(g, { ...opts, maxFilesPerGroup: 3, maxOccurrencesPerFile: 2 });
+    const trimmedSize = Buffer.byteLength(trimmed, 'utf8');
+    if (trimmedSize < fullSize && used + trimmedSize <= budget) {
+      sections.push(trimmed);
+      used += trimmedSize;
+      trimmedGroups += 1;
+      continue;
+    }
+    cutGroups += 1;
+    cutFindings += g.count;
   }
 
   const tail: string[] = [];
-  if (cutGroups > 0) {
+  if (cutGroups > 0 || trimmedGroups > 0) {
+    const parts: string[] = [];
+    if (trimmedGroups > 0) parts.push(`${trimmedGroups} rule${trimmedGroups === 1 ? ' is' : 's are'} listed with only a few of its files`);
+    if (cutGroups > 0) parts.push(`${cutGroups} more rule${cutGroups === 1 ? '' : 's'} (${cutFindings} finding${cutFindings === 1 ? '' : 's'}) ${cutGroups === 1 ? 'was' : 'were'} left out entirely`);
     tail.push(
-      `> **Budget reached:** ${cutGroups} more rule${cutGroups === 1 ? '' : 's'} (${cutFindings} findings) were left out of this digest to stay under ${Math.round(budget / 1024)} KB.` +
+      `> **Budget reached:** ${parts.join('; ')} to stay under ${Math.round(budget / 1024)} KB.` +
         (opts.drillDownHint ? ` ${opts.drillDownHint}` : ''),
     );
     tail.push('');
@@ -442,22 +479,25 @@ export function renderDigestMarkdown(digest: OpengrepDigest, opts: RenderOptions
     tail.push(`> ${opts.drillDownHint}`);
     tail.push('');
   }
-  if (digest.partiallyParsed.length || digest.errors.length || digest.skippedRules) {
-    tail.push('## Scan caveats');
-    tail.push('');
-    if (digest.partiallyParsed.length) {
-      const shown = digest.partiallyParsed.slice(0, 15);
-      tail.push(
-        `- ${digest.partiallyParsed.length} file${digest.partiallyParsed.length === 1 ? ' was' : 's were'} only PARTIALLY parsed (a syntax the engine's parser does not support yet); findings in the unparsed regions are missing: ${shown.map((p) => `\`${p}\``).join(', ')}${digest.partiallyParsed.length > shown.length ? ` … +${digest.partiallyParsed.length - shown.length} more` : ''}`,
-      );
-    }
-    if (digest.skippedRules) tail.push(`- ${digest.skippedRules} rule${digest.skippedRules === 1 ? '' : 's'} skipped by the engine (unsupported features or invalid definitions).`);
-    for (const e of digest.errors.slice(0, 10)) {
-      tail.push(`- ${e.level} ${e.kind}${e.path ? ` in \`${e.path}\`` : ''}: ${e.message}`);
-    }
-    if (digest.errors.length > 10) tail.push(`- … +${digest.errors.length - 10} more errors`);
-    tail.push('');
-  }
+  if (caveats) tail.push(caveats);
 
   return [head.join('\n'), ...sections, tail.join('\n')].join('\n').replace(/\n{3,}/g, '\n\n');
+}
+
+function renderCaveats(digest: OpengrepDigest): string {
+  if (!digest.partiallyParsed.length && !digest.errors.length && !digest.skippedRules) return '';
+  const out: string[] = ['## Scan caveats', ''];
+  if (digest.partiallyParsed.length) {
+    const shown = digest.partiallyParsed.slice(0, 15);
+    out.push(
+      `- ${digest.partiallyParsed.length} file${digest.partiallyParsed.length === 1 ? ' was' : 's were'} only PARTIALLY parsed (a syntax the engine's parser does not support yet); findings in the unparsed regions are missing: ${shown.map((p) => `\`${p}\``).join(', ')}${digest.partiallyParsed.length > shown.length ? ` … +${digest.partiallyParsed.length - shown.length} more` : ''}`,
+    );
+  }
+  if (digest.skippedRules) out.push(`- ${digest.skippedRules} rule${digest.skippedRules === 1 ? '' : 's'} skipped by the engine (unsupported features or invalid definitions).`);
+  for (const e of digest.errors.slice(0, 10)) {
+    out.push(`- ${e.level} ${e.kind}${e.path ? ` in \`${e.path}\`` : ''}: ${e.message}`);
+  }
+  if (digest.errors.length > 10) out.push(`- … +${digest.errors.length - 10} more errors`);
+  out.push('');
+  return out.join('\n');
 }

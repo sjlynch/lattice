@@ -64,7 +64,10 @@ explicit-curl callbacks — never by polling task state.
   one-paragraph explanation in the brief and the step proceeds — a wedged run
   helps nobody. Control steps ignore `tools`. The pre-run runs inside the
   step materialization, so a `startWorkflowRun` response returns before it
-  (the first `step-spawned` lands after the scan). Covered by
+  (the first `step-spawned` lands after the scan). While it runs the spawner
+  emits one `step-control-progress` with `kind: 'agent'` + a message so the
+  run strip says what the wait is; the frontend drops it on that step's
+  `step-spawned` (`clearControlProgressForStep`). Covered by
   `__tests__/workflowStepTools.test.ts`.
 - `stepSpawner.ts` — `spawnWorkflowStep`: the coordinator, split into
   named setup phases (`prepareStepScratch`, `writeStepAssets`,

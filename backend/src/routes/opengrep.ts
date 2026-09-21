@@ -6,6 +6,7 @@
 import { Router } from 'express';
 import { canonicalProjectPath } from '../projectPath.js';
 import {
+  OpengrepBadTargetError,
   OpengrepInstallError,
   OpengrepNoRulesError,
   OpengrepNotInstalledError,
@@ -17,6 +18,7 @@ import {
   findRulePackDef,
   getOpengrepStatus,
   installRulePack,
+  isAnyOpengrepScanRunning,
   listOpengrepScans,
   listRulePacks,
   removeRulePack,
@@ -70,6 +72,7 @@ function scanEnvelope(r: ScanWithDigestResult, includeMarkdown: boolean) {
 }
 
 function statusFor(err: unknown): { status: number; code: string } | null {
+  if (err instanceof OpengrepBadTargetError) return { status: 400, code: 'bad-target' };
   if (err instanceof OpengrepScanBusyError) return { status: 409, code: 'busy' };
   if (err instanceof OpengrepNotInstalledError) return { status: 409, code: 'not-installed' };
   if (err instanceof OpengrepNoRulesError) return { status: 409, code: 'no-rules' };
@@ -100,11 +103,21 @@ export function buildOpengrepRouter(): Router {
     }
   });
 
+  // A pack install swaps the pack directory into place and a removal deletes
+  // it; both while an engine process may be reading that tree (one scan per
+  // project, but several projects can scan at once). Refuse until it is idle
+  // rather than hand the user a half-swapped pack or a Windows EBUSY.
+  const PACKS_BUSY = {
+    error: 'An Opengrep scan is running; wait for it to finish before changing rule packs.',
+    code: 'busy',
+  };
+
   r.post('/api/opengrep/rules/install', async (req, res) => {
     const packId = str((req.body as { packId?: unknown } | undefined)?.packId);
     if (!packId || !findRulePackDef(packId)) {
       return res.status(400).json({ error: 'packId must name a known rule pack' });
     }
+    if (isAnyOpengrepScanRunning()) return res.status(409).json(PACKS_BUSY);
     // Fire-and-poll like the engine install: a pack fetch is a git clone that
     // can take a while on a slow link.
     void installRulePack(packId).catch(() => {});
@@ -114,6 +127,7 @@ export function buildOpengrepRouter(): Router {
   r.delete('/api/opengrep/rules/:packId', async (req, res) => {
     const packId = String(req.params.packId);
     if (!findRulePackDef(packId)) return res.status(404).json({ error: 'unknown rule pack' });
+    if (isAnyOpengrepScanRunning()) return res.status(409).json(PACKS_BUSY);
     await removeRulePack(packId);
     res.json({ packs: await listRulePacks() });
   });

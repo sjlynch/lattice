@@ -105,10 +105,15 @@ there.
   each event (`hello` / `started` / `progress` / terminal / `step-spawned` /
   `workflow-task-spawned` / `step-control-progress`) through the `workflowRunSync`
   reducers + `workflowTerminalSpawns` mappers; clears project-scoped run state on
-  every folder change so one project's runs never leak into another's.
+  every folder change so one project's runs never leak into another's. A
+  `step-spawned` also clears that step's `kind: 'agent'` control progress — the
+  "running the Opengrep scan before the agent starts…" wait the backend reports
+  for a step with pre-run tools, which nothing else would end since the run
+  index only moves on completion.
 - `workflowRunSync.ts` — pure, side-effect-free state transitions + linger
   constants for the active/recent/control-progress maps (`activeRunsFromHello`,
-  `upsertRun`, `removeKey`, `clearStaleControlProgress`, `setControlProgress`,
+  `upsertRun`, `removeKey`, `clearStaleControlProgress`,
+  `clearControlProgressForStep`, `setControlProgress`,
   `mergeFetchedActiveRuns` additive reconcile, `recentDismissalDelayMs`). Also
   the home of the `ControlProgress` type (re-exported from `useWorkflowRuns`
   for back-compat). Unit-tested in `src/__tests__/workflowRunSync.test.ts`.

@@ -99,6 +99,32 @@ test('addDefaultPromptStep reports its id when it bootstraps an empty editor', (
   assert.deepEqual(reported, [steps[0].id]);
 });
 
+test('a chip that carries pre-run tools (the "Opengrep" chip) seeds the step with them; other chips leave the field absent', () => {
+  mount();
+  const opengrep: DefaultPrompt = {
+    ...prompt,
+    id: 'opengrep',
+    label: 'Opengrep',
+    title: 'Opengrep Triage',
+    tools: ['opengrep'],
+  };
+  // Both add paths — the empty-editor bootstrap and the append — go through
+  // the same step factory, so the tool must survive either way, and a chip
+  // without tools must not leave an empty `tools` key behind (the backend
+  // normalizer treats absent and empty alike, but the editor's dirty
+  // comparison does not).
+  act(() => latestActions!.addDefaultPromptStep(opengrep));
+  act(() => latestActions!.addDefaultPromptStep(prompt));
+  act(() => latestActions!.addDefaultPromptStep(opengrep));
+
+  const steps = latestEditor!.steps;
+  assert.equal(steps.length, 3);
+  assert.deepEqual(steps[0].tools, ['opengrep']);
+  assert.ok(!('tools' in steps[1]), 'a plain chip adds no tools field');
+  assert.deepEqual(steps[2].tools, ['opengrep']);
+  assert.notEqual(steps[0].tools, opengrep.tools, 'the step owns a copy, not the chip definition');
+});
+
 test('control steps are not reported — they have no collapse toggle', () => {
   mount();
   act(() => latestActions!.addControlStep('merge'));

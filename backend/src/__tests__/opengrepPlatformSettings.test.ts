@@ -89,6 +89,11 @@ test('project settings are sanitized on read: severity case-folds, junk degrades
     },
   );
   assert.deepEqual(sanitizeOpengrepProjectSettings({ severityFloor: 'LOUD', digestBudgetKb: 1 }), {});
+  assert.deepEqual(
+    sanitizeOpengrepProjectSettings({ ignoreFingerprints: ['opengrep:abcdef0123456789_0', 'abcdef0123456789_0', 'opengrep:', 'OPENGREP:ffff0000ffff0000_1'] }),
+    { ignoreFingerprints: ['abcdef0123456789_0', 'ffff0000ffff0000_1'] },
+    'the task-marker prefix is stripped and the list deduplicated',
+  );
 
   const cfg = effectiveOpengrepConfig(undefined, undefined);
   assert.deepEqual(cfg, {

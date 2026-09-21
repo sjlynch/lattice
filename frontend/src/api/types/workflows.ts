@@ -25,9 +25,10 @@ export type WorkflowStep = {
   // Frozen (the step row's snowflake toggle): the step is kept in the workflow
   // but skipped when the workflow runs. Applies to every step kind.
   frozen?: boolean;
-  // Pre-run tools for an agent step (the step row's shield toggle): each runs
-  // before the harness spawns and its report lands beside WORKFLOW_STEP.md.
-  // v1: `opengrep`. Mirrors backend `WorkflowStepTool`.
+  // Pre-run tools for an agent step (shown as a read-only shield badge; set by
+  // the "Opengrep" quick-add chip / template, never by a per-step toggle): each
+  // runs before the harness spawns and its report lands beside
+  // WORKFLOW_STEP.md. v1: `opengrep`. Mirrors backend `WorkflowStepTool`.
   tools?: WorkflowStepTool[];
 };
 

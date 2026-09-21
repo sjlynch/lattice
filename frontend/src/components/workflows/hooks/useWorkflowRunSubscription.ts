@@ -7,6 +7,7 @@ import {
 import type { Ctx } from '../../../terminal/terminalTypes';
 import {
   activeRunsFromHello,
+  clearControlProgressForStep,
   clearStaleControlProgress,
   removeKey,
   setControlProgress as applyControlProgress,
@@ -75,6 +76,8 @@ export function handleWorkflowRunEvent(
   } else if (ev.type === 'step-spawned') {
     const { spec, focus } = stepSpawnedTerminal(ev, projectPath);
     addTerminal(spec, focus);
+    // The step's pre-run tool wait (if any) is over once its terminal exists.
+    setControlProgress((cur) => clearControlProgressForStep(cur, ev.runId, ev.stepIndex));
   } else if (ev.type === 'workflow-task-spawned') {
     const { spec, focus } = workflowTaskSpawnedTerminal(ev, projectPath);
     addTerminal(spec, focus);

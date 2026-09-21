@@ -71,7 +71,13 @@ export function sanitizeOpengrepProjectSettings(raw: unknown): OpengrepProjectSe
     out.severityFloor = r.severityFloor.toUpperCase() as OpengrepSeverity;
   }
   if (r.ignoreRuleIds !== undefined) out.ignoreRuleIds = stringArray(r.ignoreRuleIds);
-  if (r.ignoreFingerprints !== undefined) out.ignoreFingerprints = stringArray(r.ignoreFingerprints);
+  if (r.ignoreFingerprints !== undefined) {
+    // A fingerprint pasted from a task marker keeps its `opengrep:` prefix;
+    // store the bare form so the list reads uniformly.
+    out.ignoreFingerprints = [
+      ...new Set(stringArray(r.ignoreFingerprints).map((f) => f.replace(/^opengrep:/i, '').trim()).filter(Boolean)),
+    ];
+  }
   if (typeof r.digestBudgetKb === 'number' && Number.isFinite(r.digestBudgetKb) && r.digestBudgetKb >= 8) {
     out.digestBudgetKb = Math.min(2048, Math.floor(r.digestBudgetKb));
   }

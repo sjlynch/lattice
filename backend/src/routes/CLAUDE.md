@@ -25,9 +25,14 @@ qaRuns, workflows.
   `DELETE /api/opengrep/rules/:packId` (202 + poll `/status`), and the
   agent-facing `POST /api/opengrep/scan` + `GET /api/opengrep/scans[/:id]`
   (`latest` allowed; `format=md`, `rule=`/`file=`/`severity=`/`budgetKb=`
-  narrow the digest). 409 codes `busy` / `not-installed` / `no-rules`. Thin
-  over `../opengrep/` (see its CLAUDE.md); project-scoped paths use
-  `readProjectParam`. Static paths, mount order unconstrained.
+  narrow the digest) and `POST /api/opengrep/ignore` (append to the project's
+  ignore lists). 409 codes `busy` / `not-installed` / `no-rules`; 400
+  `bad-target` for a scan target outside the project. The pack install/remove
+  routes also answer 409 `busy` while ANY project's scan is running, since a
+  pack swap or delete under a reading engine is a half-swapped tree (or a
+  Windows EBUSY). Thin over `../opengrep/` (see its CLAUDE.md);
+  project-scoped paths use `readProjectParam`. Static paths, mount order
+  unconstrained.
 - `projectInit.ts` — `POST /api/project-init/preview` (what a first commit
   would capture, re-POSTed as the user edits the `.gitignore`) and
   `POST /api/project-init` (`git init` + first commit). Thin: validation plus

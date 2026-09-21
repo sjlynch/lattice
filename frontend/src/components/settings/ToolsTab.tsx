@@ -90,7 +90,8 @@ function settingsFromDraft(d: ProjectDraft): OpengrepProjectSettings {
     ignoreFingerprints: lines(d.ignoreFingerprints),
     extraRulePaths: lines(d.extraRulePaths),
     excludeGlobs: lines(d.excludeGlobs),
-    digestBudgetKb: Number.isFinite(kb) && kb >= 8 ? Math.floor(kb) : 60,
+    // Same clamp as the backend's read-side sanitizer (8 … 2048 KB).
+    digestBudgetKb: Number.isFinite(kb) && kb >= 8 ? Math.min(2048, Math.floor(kb)) : 60,
   };
 }
 
@@ -263,9 +264,10 @@ export const ToolsTab = forwardRef<ToolsTabHandle, Props>(function ToolsTab(
             <p>
               Opengrep is a local, offline static-analysis (SAST) engine — the LGPL-2.1 community
               fork of Semgrep CE. Lattice runs it as a separate process over your project and hands
-              agents a compact <em>digest</em> of the findings: a workflow agent step with the shield
-              toggle on scans the project before the agent starts, and every session has the{' '}
-              <code>opengrep_scan</code> / <code>opengrep_findings</code> MCP tools.
+              agents a compact <em>digest</em> of the findings: an "Opengrep" workflow step (the
+              quick-add chip or the "Security review (Opengrep)" template) scans the project before
+              the agent starts, and every session has the <code>opengrep_scan</code> /{' '}
+              <code>opengrep_findings</code> / <code>opengrep_ignore</code> MCP tools.
             </p>
             <p>
               The engine and the rule packs are downloaded into <code>~/.lattice/opengrep/</code>{' '}

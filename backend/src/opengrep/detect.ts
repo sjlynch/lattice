@@ -105,14 +105,17 @@ async function resolveUncached(): Promise<OpengrepResolution | null> {
 
 export function resolveOpengrep(): Promise<OpengrepResolution | null> {
   if (!cached) {
-    cached = resolveUncached().catch((err) => {
+    const probe = resolveUncached().catch((err) => {
       console.warn('[opengrep] resolve failed:', err);
       return null;
     });
+    cached = probe;
     // A miss is not cached for long: the user may install it (or install the
-    // managed one) and expect the next status call to see it.
-    void cached.then((r) => {
-      if (!r) cached = null;
+    // managed one) and expect the next status call to see it. Only clear the
+    // slot if it still holds THIS probe — an install that reset the cache and
+    // started a fresh probe in the meantime must not have it thrown away.
+    void probe.then((r) => {
+      if (!r && cached === probe) cached = null;
     });
   }
   return cached;

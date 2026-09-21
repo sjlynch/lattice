@@ -103,6 +103,45 @@ export function isOpengrepScanRunning(project: string): boolean {
   return running.has(canonicalProjectPath(project));
 }
 
+// Any project at all — the rule-pack routes refuse to swap or delete a pack
+// directory while an engine process may be reading it.
+export function isAnyOpengrepScanRunning(): boolean {
+  return running.size > 0;
+}
+
+export class OpengrepBadTargetError extends Error {}
+
+// The `targets` an API / MCP caller passes are project-relative sub-paths. They
+// are resolved against the project and must stay inside it: a `../../etc` (or
+// an absolute path elsewhere) would scan — and put into the stored record —
+// files outside the project the caller is scoped to. Duplicates and `.` /
+// empty entries collapse to the project root.
+export function resolveScanTargets(project: string, targets: string[] | undefined): { abs: string[]; rel: string[] } {
+  const cleaned = (targets ?? []).map((t) => t.trim()).filter(Boolean);
+  if (cleaned.length === 0) return { abs: [project], rel: ['.'] };
+  const abs: string[] = [];
+  const rel: string[] = [];
+  const seen = new Set<string>();
+  for (const t of cleaned) {
+    const resolved = path.resolve(project, t);
+    const relative = path.relative(project, resolved);
+    // `..` itself or a `../…` prefix escapes; a subdirectory literally named
+    // `..foo` does not (hence the separator check), and a different drive
+    // comes back absolute.
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new OpengrepBadTargetError(`target ${JSON.stringify(t)} is outside the project`);
+    }
+    const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    abs.push(resolved);
+    rel.push(relative ? relative.replace(/\\/g, '/') : '.');
+  }
+  // The whole project subsumes every other target.
+  if (rel.includes('.')) return { abs: [project], rel: ['.'] };
+  return { abs, rel };
+}
+
 export function defaultScanJobs(cpuCount = os.cpus().length): number {
   return Math.max(1, cpuCount - 2);
 }
@@ -184,6 +223,9 @@ export function defaultExcludeGlobs(): string[] {
 }
 
 async function performScan(req: OpengrepScanRequest, project: string, deps: ScanDeps): Promise<OpengrepScanRecord> {
+  // Validate the caller's input before touching the engine so a bad target is
+  // a 400-class error, not a half-started scan.
+  const targets = resolveScanTargets(project, req.targets);
   const resolved = await (deps.resolve ?? resolveOpengrep)();
   if (!resolved) throw new OpengrepNotInstalledError();
   const { rulePaths, packIds } = await resolveRuleConfigs(project, req.packIds, req.extraRulePaths ?? []);
@@ -194,12 +236,9 @@ async function performScan(req: OpengrepScanRequest, project: string, deps: Scan
   await fs.mkdir(rulesRootDir(), { recursive: true });
   const id = scanId();
   const jsonFile = path.join(dir, `${id}.json`);
-  const targets = (req.targets?.length ? req.targets : ['']).map((t) =>
-    t ? path.join(project, t) : project,
-  );
   const excludeGlobs = [...new Set([...defaultExcludeGlobs(), ...(req.excludeGlobs ?? [])])];
   const jobs = req.jobs && req.jobs > 0 ? Math.floor(req.jobs) : defaultScanJobs(deps.cpuCount);
-  const args = buildScanArgs({ rulePaths, excludeGlobs, jobs, outFile: jsonFile, targets });
+  const args = buildScanArgs({ rulePaths, excludeGlobs, jobs, outFile: jsonFile, targets: targets.abs });
   const timeoutMs = req.timeoutMs && req.timeoutMs > 0 ? req.timeoutMs : DEFAULT_SCAN_TIMEOUT_MS;
 
   const startedAt = Date.now();
@@ -245,7 +284,7 @@ async function performScan(req: OpengrepScanRequest, project: string, deps: Scan
     engine: { version: resolved.version, source: resolved.source },
     packIds,
     rulePaths,
-    targets: req.targets?.length ? req.targets : ['.'],
+    targets: targets.rel,
     exitCode: r.code,
     findings: parsed.findings.length,
     bySeverity,
@@ -267,7 +306,9 @@ export function runOpengrepScan(req: OpengrepScanRequest, deps: ScanDeps = {}): 
   const project = canonicalProjectPath(req.project);
   if (running.has(project)) return Promise.reject(new OpengrepScanBusyError(project));
   const p = performScan(req, project, deps).finally(() => {
-    running.delete(project);
+    // Only clear our own entry: a caller that raced in after this scan's
+    // rejection settled must not have its fresh entry removed.
+    if (running.get(project) === p) running.delete(project);
   });
   running.set(project, p);
   return p;

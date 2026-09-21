@@ -103,6 +103,9 @@ test('fingerprint + rule matchers', () => {
   assert.ok(!fingerprintMatches(fp, `${'ab'.repeat(8)}_4`), 'suffix must agree when given');
   assert.ok(!fingerprintMatches(fp, 'abab'), 'too short a prefix never matches');
   assert.ok(!fingerprintMatches(fp, ''));
+  assert.ok(fingerprintMatches(fp, `opengrep:${shortFingerprint(fp)}`), 'the task-marker spelling matches');
+  assert.ok(fingerprintMatches(fp, ` ${'AB'.repeat(8)}_3 `), 'case-insensitive, whitespace-tolerant');
+  assert.ok(!fingerprintMatches(fp, 'opengrep:'), 'a bare prefix matches nothing');
   assert.ok(ruleMatches('pack.javascript.lang.security.foo', 'foo'));
   assert.ok(ruleMatches('pack.javascript.lang.security.foo', 'security.foo'));
   assert.ok(ruleMatches('pack.javascript.lang.security.foo', 'pack.javascript.lang.security.foo'));
@@ -144,11 +147,81 @@ test('render: markdown carries the header, fingerprint guidance, ERROR groups fi
 test('render: the byte budget is honoured with a "budget reached" tail naming what was cut', () => {
   const d = buildDigest(parsed(), { severityFloor: 'INFO', ignoreRuleIds: [], ignoreFingerprints: [] });
   const small = renderDigestMarkdown(d, { budgetBytes: 2 * 1024 });
-  assert.ok(Buffer.byteLength(small, 'utf8') < 4 * 1024, `small digest stays small (${small.length})`);
-  assert.match(small, /Budget reached:\*\* \d+ more rules? \(\d+ findings\)/);
+  assert.ok(Buffer.byteLength(small, 'utf8') <= 2 * 1024, `the budget is a hard ceiling (${Buffer.byteLength(small, 'utf8')})`);
+  assert.match(small, /Budget reached:\*\* .*\d+ more rules? \(\d+ findings?\) (was|were) left out entirely/);
+  assert.match(small, /## Scan caveats/, 'the caveats section is never the thing that gets cut');
   const big = renderDigestMarkdown(d, { budgetBytes: 512 * 1024 });
   assert.ok(!big.includes('Budget reached'));
   for (const g of d.groups) assert.ok(big.includes(`\`${g.ruleId}\``), `all groups rendered: ${g.ruleId}`);
+});
+
+test('render: a top-severity group too big for the budget is trimmed, not dropped in favour of smaller lower groups', () => {
+  // One ERROR rule with 60 files × 3 occurrences, then a handful of small INFO
+  // groups. Under a budget the ERROR group cannot fit whole, the reader must
+  // still see it (worst first), listed with a few files and a pointer.
+  const findings = [];
+  for (let i = 0; i < 60; i += 1) {
+    for (let j = 0; j < 3; j += 1) {
+      findings.push({
+        fingerprint: `${i.toString(16).padStart(8, '0')}${j.toString(16).padStart(120, '0')}_0`,
+        shortFingerprint: `${i.toString(16).padStart(8, '0')}${'0'.repeat(8)}_0`,
+        ruleId: 'pack.big.rule',
+        severity: 'ERROR' as const,
+        message: 'a serious thing',
+        path: `src/file${i}.ts`,
+        line: 10 + j,
+        endLine: 10 + j,
+        col: 1,
+        snippet: 'const x = dangerous();',
+        cwe: [],
+        references: [],
+      });
+    }
+  }
+  for (let k = 0; k < 4; k += 1) {
+    findings.push({
+      fingerprint: `${'f'.repeat(120)}${k.toString(16).padStart(8, '0')}_0`,
+      shortFingerprint: `${'f'.repeat(16)}_0`,
+      ruleId: `pack.small.rule${k}`,
+      severity: 'INFO' as const,
+      message: 'minor',
+      path: 'src/other.ts',
+      line: k + 1,
+      endLine: k + 1,
+      col: 1,
+      snippet: '',
+      cwe: [],
+      references: [],
+    });
+  }
+  const d = buildDigest(
+    { version: '1', findings, errors: [], partiallyParsed: [], scannedFiles: 61, skippedRules: 0 },
+    { severityFloor: 'INFO', ignoreRuleIds: [], ignoreFingerprints: [] },
+  );
+  assert.equal(d.groups[0].ruleId, 'pack.big.rule');
+  const md = renderDigestMarkdown(d, { budgetBytes: 3 * 1024, drillDownHint: 'DRILL' });
+  assert.ok(Buffer.byteLength(md, 'utf8') <= 3 * 1024);
+  assert.match(md, /### ERROR · `pack\.big\.rule` — 180 findings in 60 files/, 'the ERROR group is still listed');
+  assert.match(md, /… 57 more files \(171 findings\) — see the drill-down below/, 'trimmed to 3 files');
+  assert.match(md, /Budget reached:\*\* 1 rule is listed with only a few of its files/);
+  assert.match(md, /DRILL/);
+});
+
+test('render: the caveats section is reserved from the budget, so many engine errors cannot push the digest past it', () => {
+  const base = parsed();
+  const errors = Array.from({ length: 10 }, (_, i) => ({
+    kind: 'OtherError',
+    level: 'error',
+    message: `engine error ${i}: ${'x'.repeat(380)}`,
+    path: `backend/src/e${i}.ts`,
+  }));
+  const partiallyParsed = Array.from({ length: 15 }, (_, i) => `frontend/src/components/some/long/path/partial${i}.tsx`);
+  const d = buildDigest({ ...base, errors, partiallyParsed }, { severityFloor: 'INFO', ignoreRuleIds: [], ignoreFingerprints: [] });
+  const md = renderDigestMarkdown(d, { budgetBytes: 8 * 1024 });
+  assert.ok(Buffer.byteLength(md, 'utf8') <= 8 * 1024, `under budget (${Buffer.byteLength(md, 'utf8')})`);
+  assert.match(md, /## Scan caveats/);
+  assert.match(md, /engine error 9/);
+  assert.match(md, /15 files were only PARTIALLY parsed/);
 });
 
 test('render: an empty digest says so instead of rendering nothing', () => {

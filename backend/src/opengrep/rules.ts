@@ -55,7 +55,10 @@ export function getRulePackJob(packId: string): RulePackJob | null {
 }
 
 async function git(args: string[], cwd: string): Promise<string> {
-  const r = await spawnWithTimeout('git', args, { cwd, timeoutMs: GIT_TIMEOUT_MS });
+  // Public repositories only: a credential prompt (a proxy, a mistyped URL)
+  // must fail instead of parking the fetch until the 5-minute timeout.
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
+  const r = await spawnWithTimeout('git', args, { cwd, timeoutMs: GIT_TIMEOUT_MS, env });
   if (r.error) throw new RulePackError(`git ${args[0]} failed to start: ${r.error.message}`);
   if (r.timedOut) throw new RulePackError(`git ${args[0]} timed out after ${GIT_TIMEOUT_MS / 1000}s`);
   if (r.code !== 0) {
@@ -150,9 +153,25 @@ export async function prunePackTree(
   return { ruleFiles, ruleCount };
 }
 
+// `.tmp-<pack>-…` / `.old-<pack>-…` siblings a crashed or killed install left
+// under the rules root. Only ever touches the rules root Lattice owns.
+async function sweepStalePackDirs(root: string): Promise<void> {
+  let names: string[];
+  try {
+    names = await fs.readdir(root);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!/^\.(tmp|old)-/.test(name)) continue;
+    await fs.rm(path.join(root, name), { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function performInstall(def: OpengrepRulePackDef): Promise<OpengrepPackState> {
   const root = rulesRootDir();
   await fs.mkdir(root, { recursive: true });
+  await sweepStalePackDirs(root);
   const finalDir = rulePackDir(def.id);
   const tmp = path.join(root, `.tmp-${def.id}-${process.pid}-${Date.now()}`);
   const old = path.join(root, `.old-${def.id}-${Date.now()}`);
@@ -162,13 +181,23 @@ async function performInstall(def: OpengrepRulePackDef): Promise<OpengrepPackSta
     if (counts.ruleFiles === 0) {
       throw new RulePackError(`pack ${def.id} contained no rule files after pruning`);
     }
-    // Swap: move any previous install aside, then the new tree into place.
+    // Swap: move any previous install aside, then the new tree into place. If
+    // the second rename fails (Windows EBUSY with a scan still reading the
+    // tree, a permissions hiccup) the previous install is put back so an
+    // update attempt can never leave the user with NO pack.
+    let movedAside = false;
     try {
       await fs.rename(finalDir, old);
+      movedAside = true;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
-    await fs.rename(tmp, finalDir);
+    try {
+      await fs.rename(tmp, finalDir);
+    } catch (err) {
+      if (movedAside) await fs.rename(old, finalDir).catch(() => {});
+      throw err;
+    }
     await fs.rm(old, { recursive: true, force: true }).catch(() => {});
     const entry: OpengrepPackState = {
       commit: def.commit,

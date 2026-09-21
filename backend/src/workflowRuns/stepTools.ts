@@ -63,7 +63,7 @@ async function runOpengrepTool(
       `### Opengrep (static analysis) — read \`${OPENGREP_REPORT_FILENAME}\` in this directory`,
       '',
       `Lattice ran an Opengrep scan of the project just before this step (${record.scannedFiles} files, ` +
-        `${record.packIds.length + (record.rulePaths.length - record.packIds.length)} rule source${record.rulePaths.length === 1 ? '' : 's'}, ` +
+        `${record.rulePaths.length} rule source${record.rulePaths.length === 1 ? '' : 's'}, ` +
         `${Math.round(record.durationMs / 1000)}s). ` +
         `**${digest.shown} finding${digest.shown === 1 ? '' : 's'}** across ${digest.groups.length} rule${digest.groups.length === 1 ? '' : 's'} ` +
         `survived the project's filter (${sev.ERROR} ERROR, ${sev.WARNING} WARNING, ${sev.INFO} INFO; ` +

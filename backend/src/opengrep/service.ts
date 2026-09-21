@@ -6,6 +6,7 @@
 
 import { getGlobalSettings } from '../globalSettings.js';
 import { canonicalProjectPath } from '../projectPath.js';
+import { runExclusive } from '../serializeWrites.js';
 import { getUserSettings, patchUserSettings } from '../userSettings.js';
 import { resolveOpengrep, type OpengrepResolution } from './detect.js';
 import {
@@ -106,7 +107,12 @@ export function digestFor(
   let scoped = parsed;
   if (ctx.rule || ctx.file) {
     const rule = ctx.rule;
-    const file = ctx.file?.replace(/\\/g, '/');
+    // Findings carry project-relative forward-slash paths; accept the same
+    // path spelled with backslashes, a leading `./` or a trailing `/`.
+    const file = ctx.file
+      ?.replace(/\\/g, '/')
+      .replace(/^(\.\/)+/, '')
+      .replace(/\/+$/, '');
     scoped = {
       ...parsed,
       findings: parsed.findings.filter(
@@ -186,24 +192,29 @@ export async function addOpengrepIgnores(
   const clean = (v: unknown): string[] =>
     Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map((s) => s.trim()).filter(Boolean) : [];
   // Accept the task-marker spelling too (`opengrep:<fp>`).
-  const fps = clean(add.fingerprints).map((f) => f.replace(/^opengrep:/i, ''));
-  const rules = clean(add.ruleIds);
-  const current = sanitizeOpengrepProjectSettings((await getUserSettings(canonical)).opengrep);
-  const ruleSet = new Set(current.ignoreRuleIds ?? []);
-  const fpSet = new Set(current.ignoreFingerprints ?? []);
-  const addedRules = rules.filter((r) => !ruleSet.has(r));
-  const addedFps = fps.filter((f) => !fpSet.has(f));
-  for (const r of addedRules) ruleSet.add(r);
-  for (const f of addedFps) fpSet.add(f);
-  if (addedRules.length || addedFps.length) {
-    await patchUserSettings(canonical, {
-      opengrep: { ...current, ignoreRuleIds: [...ruleSet], ignoreFingerprints: [...fpSet] },
-    });
-  }
-  return {
-    canonicalProject: canonical,
-    added: { ruleIds: addedRules, fingerprints: addedFps },
-    ignoreRuleIds: [...ruleSet],
-    ignoreFingerprints: [...fpSet],
-  };
+  const fps = [...new Set(clean(add.fingerprints).map((f) => f.replace(/^opengrep:/i, '').trim()).filter(Boolean))];
+  const rules = [...new Set(clean(add.ruleIds))];
+  // The read → merge → write below is serialized per project: a planning agent
+  // that fires several `opengrep_ignore` calls in a row (one per rule group)
+  // must not have the later write clobber the earlier one.
+  return runExclusive(`opengrep-ignore:${canonical}`, async () => {
+    const current = sanitizeOpengrepProjectSettings((await getUserSettings(canonical)).opengrep);
+    const ruleSet = new Set(current.ignoreRuleIds ?? []);
+    const fpSet = new Set(current.ignoreFingerprints ?? []);
+    const addedRules = rules.filter((r) => !ruleSet.has(r));
+    const addedFps = fps.filter((f) => !fpSet.has(f));
+    for (const r of addedRules) ruleSet.add(r);
+    for (const f of addedFps) fpSet.add(f);
+    if (addedRules.length || addedFps.length) {
+      await patchUserSettings(canonical, {
+        opengrep: { ...current, ignoreRuleIds: [...ruleSet], ignoreFingerprints: [...fpSet] },
+      });
+    }
+    return {
+      canonicalProject: canonical,
+      added: { ruleIds: addedRules, fingerprints: addedFps },
+      ignoreRuleIds: [...ruleSet],
+      ignoreFingerprints: [...fpSet],
+    };
+  });
 }

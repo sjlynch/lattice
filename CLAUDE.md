@@ -179,9 +179,9 @@ therefore stay safely re-runnable.
 | POST | `/api/mcp-import` | Apply selected imports `{ids, project?}` → add custom-server defs + store literal keys |
 | GET | `/api/opengrep/status?project=` | Opengrep (SAST) state: the resolved engine (`path` install wins over the Lattice-managed one), the pinned managed version, this machine's release asset, the running install job, each rule pack's install/licence state, and (with `project`) whether a scan is running + the last scan record. Backs Settings → Tools |
 | POST | `/api/opengrep/install` | Start the managed engine install (`202 {job}`; single-flight; poll `/status`). Downloads the pinned release asset for this platform into `~/.lattice/opengrep/`, verifies its pinned SHA-256, runs `--version` once. Never runs at boot — user-clicked only |
-| POST | `/api/opengrep/rules/install` | `{packId}` — fetch/update a rule pack at its pinned commit (`git fetch --depth 1`), prune non-rule + excluded-licence folders, record it (`202 {packs}`; poll `/status`) |
-| DELETE | `/api/opengrep/rules/:packId` | Remove an installed rule pack |
-| POST | `/api/opengrep/scan` | `{project, targets?, includeMarkdown?}` — run a scan with the project's enabled packs + `.opengrep/rules/` + extra paths; returns the scan record and the digest counts (`markdown` on request). **409** `busy` (one scan per project), `not-installed`, `no-rules` |
+| POST | `/api/opengrep/rules/install` | `{packId}` — fetch/update a rule pack at its pinned commit (`git fetch --depth 1`), prune non-rule + excluded-licence folders, record it (`202 {packs}`; poll `/status`). **409** `busy` while any project's scan is running (the swap must not pull a tree out from under the engine) |
+| DELETE | `/api/opengrep/rules/:packId` | Remove an installed rule pack (**409** `busy` while a scan is running) |
+| POST | `/api/opengrep/scan` | `{project, targets?, includeMarkdown?}` — run a scan with the project's enabled packs + `.opengrep/rules/` + extra paths; returns the scan record and the digest counts (`markdown` on request). `targets` are project-relative and confined to the project (**400** `bad-target` for `../…` or an absolute path elsewhere). **409** `busy` (one scan per project), `not-installed`, `no-rules` |
 | GET | `/api/opengrep/scans?project=` | Recent scan records (last 10 kept, newest first) |
 | GET | `/api/opengrep/scans/:id?project=&format=md&rule=&file=&severity=&budgetKb=&include=markdown` | One stored scan (`latest` allowed) rendered as the agent-facing digest — filtered by the project's severity floor / ignore lists, narrowed by `rule` / `file` / `severity`, under `budgetKb`. `format=md` returns text/markdown; default is the JSON envelope (+ `markdown` with `include=markdown`) |
 | POST | `/api/opengrep/ignore` | `{project, ruleIds?, fingerprints?}` — append to the project's Opengrep ignore lists (`userSettings.opengrep`); additive, deduplicated, `opengrep:<fp>` spelling accepted. The one settings write a planning agent makes (via the `opengrep_ignore` MCP tool) so rule noise becomes a setting instead of a "please ignore X" ticket. Entries are removed in Settings → Tools |
@@ -446,8 +446,10 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   is deliberately no per-step toggle) scans before the harness spawns and drops
   `OPENGREP_FINDINGS.md` beside `WORKFLOW_STEP.md` (the brief's
   `{{tool_reports}}` section; a missing engine explains itself in the brief
-  rather than failing the step); the `opengrep_scan` / `opengrep_findings`
-  MCP tools in every session; `/api/opengrep/*`. Task markers:
+  rather than failing the step; the run strip says "running the Opengrep scan
+  before the agent starts…" meanwhile); the `opengrep_scan` /
+  `opengrep_findings` / `opengrep_ignore` MCP tools in every session;
+  `/api/opengrep/*`. Task markers:
   `opengrep:<fp>` on its own line, so a re-run finds the existing task via
   `search_tasks`. One scan per project at a time, `--jobs = cores-2`, 10-min
   cap, never on file watch; results under

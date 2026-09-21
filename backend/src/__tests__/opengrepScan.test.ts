@@ -5,14 +5,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  OpengrepBadTargetError,
   OpengrepNoRulesError,
   OpengrepNotInstalledError,
   OpengrepScanBusyError,
   OpengrepScanFailedError,
   buildScanArgs,
   defaultScanJobs,
+  isAnyOpengrepScanRunning,
   listOpengrepScans,
   readOpengrepScan,
+  resolveScanTargets,
   runOpengrepScan,
 } from '../opengrep/scan.js';
 import { rulePackDir, rulesRootDir, projectScansDir } from '../opengrep/paths.js';
@@ -128,12 +131,49 @@ test('one scan per project: a concurrent request is refused with OpengrepScanBus
   await withProject(async (project) => {
     const calls: SpawnCall[] = [];
     const deps = { resolve: async () => ENGINE, spawn: fakeSpawn(calls, { delayMs: 150 }) };
+    assert.equal(isAnyOpengrepScanRunning(), false);
     const first = runOpengrepScan({ project, packIds: ['qodana-mit'] }, deps);
+    assert.equal(isAnyOpengrepScanRunning(), true, 'the pack routes see a scan in flight');
     await assert.rejects(runOpengrepScan({ project, packIds: ['qodana-mit'] }, deps), OpengrepScanBusyError);
     await first;
+    assert.equal(isAnyOpengrepScanRunning(), false);
     // …and the slot frees once it settles.
     await runOpengrepScan({ project, packIds: ['qodana-mit'] }, deps);
     assert.equal(calls.length, 2);
+  });
+});
+
+test('targets are confined to the project: relative sub-paths resolve, escapes are refused, "." subsumes the rest', async () => {
+  const project = 'C:\\proj';
+  const inside = resolveScanTargets(project, ['backend/src', './frontend\\src', 'backend/src']);
+  assert.deepEqual(inside.rel, ['backend/src', 'frontend/src'], 'normalized, deduplicated, forward slashes');
+  assert.deepEqual(inside.abs.map((p) => p.toLowerCase()), [
+    path.resolve(project, 'backend/src').toLowerCase(),
+    path.resolve(project, 'frontend/src').toLowerCase(),
+  ]);
+  assert.deepEqual(resolveScanTargets(project, undefined), { abs: [project], rel: ['.'] });
+  assert.deepEqual(resolveScanTargets(project, ['backend', '.']), { abs: [project], rel: ['.'] });
+  assert.throws(() => resolveScanTargets(project, ['../other']), OpengrepBadTargetError);
+  assert.throws(() => resolveScanTargets(project, ['..']), OpengrepBadTargetError);
+  assert.deepEqual(resolveScanTargets(project, ['..dots']).rel, ['..dots'], 'a subdir named ..dots is inside');
+  assert.throws(() => resolveScanTargets(project, ['backend/../../other']), OpengrepBadTargetError);
+  assert.throws(() => resolveScanTargets(project, ['D:\\elsewhere']), OpengrepBadTargetError);
+
+  // Through the runner: refused before the engine is even resolved.
+  await installFakePack();
+  await withProject(async (p) => {
+    const calls: SpawnCall[] = [];
+    await assert.rejects(
+      runOpengrepScan({ project: p, packIds: ['qodana-mit'], targets: ['..'] }, { resolve: async () => ENGINE, spawn: fakeSpawn(calls) }),
+      OpengrepBadTargetError,
+    );
+    assert.equal(calls.length, 0);
+    const record = await runOpengrepScan(
+      { project: p, packIds: ['qodana-mit'], targets: ['src/'] },
+      { resolve: async () => ENGINE, spawn: fakeSpawn(calls) },
+    );
+    assert.deepEqual(record.targets, ['src']);
+    assert.equal(calls[0].args[calls[0].args.length - 1].toLowerCase(), path.join(record.project, 'src').toLowerCase());
   });
 });
 

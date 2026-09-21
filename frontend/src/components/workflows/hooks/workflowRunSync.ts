@@ -64,6 +64,21 @@ export function clearStaleControlProgress(
   return removeKey(cur, runId);
 }
 
+// An agent step's pre-run tool progress ("running the Opengrep scan before the
+// agent starts…") ends the moment that step's terminal spawns. Nothing else
+// clears it — the run's `currentStepIndex` does not move until the step
+// completes — so `step-spawned` drops the entry when it belongs to that step.
+// Progress for a different step (a stale event) is left alone.
+export function clearControlProgressForStep(
+  cur: ControlProgressMap,
+  runId: string,
+  stepIndex: number,
+): ControlProgressMap {
+  const prev = cur[runId];
+  if (!prev || prev.stepIndex !== stepIndex) return cur;
+  return removeKey(cur, runId);
+}
+
 // Delete a key from a map, returning the same reference when absent so React
 // can skip the re-render. Used for active/recent run and control-progress
 // removal alike.

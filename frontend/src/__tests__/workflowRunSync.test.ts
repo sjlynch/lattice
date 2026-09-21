@@ -4,6 +4,7 @@ import type { WorkflowRun } from '../api';
 import {
   activeRunsFromHello,
   addRecentRun,
+  clearControlProgressForStep,
   clearStaleControlProgress,
   mergeFetchedActiveRuns,
   recentDismissalDelayMs,
@@ -94,6 +95,22 @@ test('clearStaleControlProgress is a no-op when the step is unchanged', () => {
 test('clearStaleControlProgress is a no-op when nothing is tracked', () => {
   const cur: ControlProgressMap = {};
   assert.strictEqual(clearStaleControlProgress(cur, 'a', 5), cur);
+});
+
+// ---------- clearControlProgressForStep (agent pre-run tool wait) ----------
+
+test('clearControlProgressForStep drops the pre-run wait once THAT step spawned', () => {
+  // An Opengrep agent step reports "running the scan…" as agent-kind progress;
+  // its terminal spawning is the end of that wait. The run index does not move
+  // until the step completes, so this is the only thing that clears it.
+  const cur: ControlProgressMap = {
+    a: { stepIndex: 1, kind: 'agent', current: 0, total: 0, message: 'running the Opengrep scan…' },
+    b: { stepIndex: 0, kind: 'merge', current: 1, total: 2 },
+  };
+  const next = clearControlProgressForStep(cur, 'a', 1);
+  assert.deepEqual(next, { b: cur.b });
+  assert.strictEqual(clearControlProgressForStep(cur, 'a', 2), cur, 'a spawn for another step leaves it');
+  assert.strictEqual(clearControlProgressForStep(cur, 'zzz', 1), cur, 'an untracked run is a no-op');
 });
 
 // ---------- setControlProgress ----------

@@ -31,7 +31,7 @@ export type SpawnWithTimeoutResult = {
 export function spawnWithTimeout(
   command: string,
   args: string[],
-  opts: { cwd?: string; shell?: boolean; timeoutMs: number },
+  opts: { cwd?: string; shell?: boolean; timeoutMs: number; env?: NodeJS.ProcessEnv },
 ): Promise<SpawnWithTimeoutResult> {
   return new Promise((resolve) => {
     let settled = false;
@@ -50,6 +50,7 @@ export function spawnWithTimeout(
         cwd: opts.cwd,
         shell: opts.shell ?? false,
         windowsHide: true,
+        ...(opts.env ? { env: opts.env } : {}),
       });
     } catch (err) {
       finish({

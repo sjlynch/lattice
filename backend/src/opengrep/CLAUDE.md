@@ -78,7 +78,12 @@ licence text + a source pointer) — keep it a runtime download.
   tree by construction; tarball bytes are not stable) → `prunePackTree` (keep
   only `*.yaml`/`*.yml` with a top-level `rules:` key that are not
   `*.test.yaml`, plus LICENSE/README; drop the pack's `prune` folders, dot
-  dirs, tests, scripts) → swap into place → state.json.
+  dirs, tests, scripts) → swap into place → state.json. The swap moves the
+  previous install aside first and puts it BACK if the new tree cannot be
+  renamed in, so an update can never leave the user with no pack; stale
+  `.tmp-*` / `.old-*` siblings from a killed install are swept at the start of
+  the next one. `git` runs with `GIT_TERMINAL_PROMPT=0` so a credential prompt
+  fails fast instead of parking the job until its timeout.
 - `scan.ts` — `runOpengrepScan()`: `opengrep scan --json --quiet --jobs N
   --timeout 30 --timeout-threshold 3 --max-target-bytes 1000000 --exclude …
   -f <pack> … -o <raw.json> <project>` with **cwd = the rules root** and packs
@@ -86,19 +91,34 @@ licence text + a source pointer) — keep it a runtime download.
   `check_id` from the config path relative to its cwd, and the FINGERPRINT
   hashes the check_id — running from anywhere else would make ids and
   fingerprints differ per machine. Gitignore is still honoured (verified: the
-  engine finds the project root from the target). One scan per project
-  (`OpengrepScanBusyError`), `--jobs = max(1, cores-2)`, hard wall-clock
+  engine finds the project root from the target). `targets` are resolved
+  against the project and CONFINED to it (`resolveScanTargets` →
+  `OpengrepBadTargetError` for `../…` / an absolute path elsewhere — the
+  caller is scoped to one project and the stored record must be too). One
+  scan per project (`OpengrepScanBusyError`; `isAnyOpengrepScanRunning` is
+  what the pack routes consult), `--jobs = max(1, cores-2)`, hard wall-clock
   timeout (kill), last 10 scans kept as `<id>.json` + `<id>.meta.json`.
+  Rules under `<project>/.opengrep/rules/` and `extraRulePaths` are passed as
+  ABSOLUTE `-f` paths, so their check ids (and fingerprints) embed the local
+  path — stable on one machine, not across machines; only the packs get the
+  machine-stable relative ids.
 - `digest.ts` — pure. `parseOpengrepJson` (project-relative forward-slash
   paths, severity normalization, `PartialParsing` errors split out) →
   `buildDigest` (severity floor + `ignoreRuleIds` (full id or dot-suffix) +
   `ignoreFingerprints` (full or short) applied FIRST, dedup by fingerprint,
   group rule → file → occurrence, worst severity first then count) →
   `renderDigestMarkdown` (hard byte budget with per-group file/occurrence
-  caps and a "Budget reached: N more rules" tail + drill-down hint; a "Scan
-  caveats" section for partially-parsed files and engine errors). The
+  caps; a "Scan caveats" section for partially-parsed files and engine
+  errors, rendered FIRST and reserved from the budget so it can never push the
+  digest over). Groups render worst-severity-first; a group that does not fit
+  whole is re-rendered TRIMMED (3 files × 2 occurrences + its own "… N more
+  files" pointer) before being cut, so a single huge ERROR rule is never
+  dropped while small INFO groups stay. The "Budget reached" tail names what
+  was trimmed and what was left out, plus the drill-down hint. The
   **short fingerprint** (first 16 hex + `_N`) is what the digest prints and
-  what the built-in template asks agents to put in tasks as `opengrep:<fp>`.
+  what the built-in template asks agents to put in tasks as `opengrep:<fp>`;
+  every matcher accepts the full or short form, case-insensitively, with or
+  without the `opengrep:` prefix.
 - `settings.ts` — `globalSettings.opengrep.packs` (per-pack enable, machine-
   global because packs are installed once per machine) and
   `userSettings.opengrep` (`extraRulePaths`, `excludeGlobs`, `severityFloor`
@@ -120,7 +140,9 @@ licence text + a source pointer) — keep it a runtime download.
   addOpengrepIgnores`: append rule ids / fingerprints to the project's ignore
   lists. This is the ONE Lattice-settings write a planning agent may make —
   rule noise is a per-project setting, not a ticket for a human — additive
-  and deduplicated; entries are removed in Settings → Tools. The Opengrep
+  and deduplicated, serialized per project (`runExclusive`) so a burst of
+  calls from one agent cannot clobber each other; entries are removed in
+  Settings → Tools. The Opengrep
   step prompt (`frontend/src/components/workflows/prompts/opengrep.md`) and
   the `{{tool_reports}}` block both point the agent at it.
 - `workflowRuns/stepTools.ts` — the pre-run hook for an agent step whose

@@ -124,6 +124,19 @@ async function writeStepAssets(args: {
     console.log(
       `[workflow-step] ${run.id} step ${stepIndex}: running pre-run tools (${step.tools.join(', ')})`,
     );
+    // An Opengrep scan can take minutes, during which the run has no terminal
+    // yet and the strip would just say "Step N of M". Surface the wait the
+    // same way control steps do; the frontend drops it on `step-spawned`.
+    notify({
+      type: 'step-control-progress',
+      runId: run.id,
+      projectPath: run.projectPath,
+      stepIndex,
+      kind: 'agent',
+      current: 0,
+      total: 0,
+      message: `running ${step.tools.map((t) => (t === 'opengrep' ? 'the Opengrep scan' : t)).join(', ')} before the agent starts…`,
+    });
   }
   const tools = await runStepTools(step, wf.projectPath, stepDir);
 

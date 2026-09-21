@@ -72,6 +72,8 @@ export type WorkflowRunEvent =
   //   - start: tasks started / total open tasks
   //   - merge: tasks moved to QA / total ready+conflict tasks at step entry
   //   - push: 0..1 / 1 (binary; uses `message` to surface state)
+  //   - agent: 0 / 0 + `message` while a pre-run tool (an Opengrep scan) runs
+  //     before the harness spawns — the frontend clears it on `step-spawned`
   | {
       type: 'step-control-progress';
       runId: string;
