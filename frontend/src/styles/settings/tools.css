@@ -1,0 +1,158 @@
+/* Settings → Tools (Opengrep engine + rule packs + the per-project scan
+   filter). Builds on shell.css's section/control/checkbox base. */
+
+.tools-engine {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tools-engine-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.tools-path {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tools-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.tools-badge.ok {
+  color: var(--tool-on);
+  border-color: rgba(90, 211, 154, 0.4);
+  background: var(--tool-on-bg);
+}
+.tools-badge.warn {
+  color: #f0c060;
+  border-color: rgba(240, 192, 96, 0.4);
+  background: rgba(240, 192, 96, 0.12);
+}
+.tools-badge.off {
+  color: var(--text-tertiary);
+}
+
+.tools-job {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tools-progress {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+.tools-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.tools-packs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tools-pack {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+}
+.tools-pack-enable {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.tools-pack-label {
+  font-weight: 600;
+}
+.tools-pack-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.tools-pack-installed code {
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.tools-pack-note {
+  max-width: none;
+}
+.tools-pack-link {
+  color: var(--accent);
+  font-size: 11px;
+  text-decoration: none;
+}
+.tools-pack-link:hover {
+  text-decoration: underline;
+}
+.tools-pack-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.tools-textareas {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+.tools-textarea {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.tools-textarea textarea {
+  min-height: 72px;
+  resize: vertical;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: #15181d;
+  color: var(--text-primary);
+  font-family: var(--mono);
+  font-size: 11px;
+  outline: none;
+}
+.tools-textarea textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.tools-scan-result {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+}

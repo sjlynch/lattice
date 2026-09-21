@@ -28,6 +28,10 @@ import {
   type PiProvider,
   type PiProviderModel,
 } from './piProviderValidation.js';
+import {
+  sanitizeOpengrepGlobalSettings,
+  type OpengrepGlobalSettings,
+} from './opengrep/settings.js';
 
 // Re-exported so the historical `import { ... } from './globalSettings.js'`
 // surface (piModels.ts + the unit tests) keeps working after the split.
@@ -55,6 +59,11 @@ export type GlobalSettings = {
   // are stored inline here per the v1-simple decision: literal, an env-var
   // name, or a `!command` — all resolved by Pi natively. See piModels.ts.
   piProviders?: PiProvider[];
+  // Opengrep (SAST) rule-pack enables — machine-global because the packs are
+  // installed once per machine under `~/.lattice/opengrep/rules/`. See
+  // opengrep/settings.ts (`packs: { [packId]: boolean }`, absent = the pack's
+  // default).
+  opengrep?: OpengrepGlobalSettings;
 };
 
 // --- maxConcurrentAgents (the spawn queue's softCap) ---------------------
@@ -114,6 +123,9 @@ function sanitize(raw: Partial<GlobalSettings>): Partial<GlobalSettings> {
   }
   if (raw.piProviders !== undefined) {
     out.piProviders = sanitizePiProviders(raw.piProviders);
+  }
+  if (raw.opengrep !== undefined) {
+    out.opengrep = sanitizeOpengrepGlobalSettings(raw.opengrep);
   }
   return out;
 }

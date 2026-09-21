@@ -1,4 +1,4 @@
-import { AlertCircle, Check, Snowflake } from 'lucide-react';
+import { AlertCircle, Check, ShieldCheck, Snowflake } from 'lucide-react';
 import type { WorkflowStep } from '../../api';
 import type { StepRunStatus } from './stepRunStatus';
 
@@ -75,6 +75,34 @@ export function StepFreezeButton({
       aria-pressed={frozen}
     >
       <Snowflake size={12} />
+    </button>
+  );
+}
+
+// The Opengrep pre-run toggle an AGENT step carries (`step.tools` includes
+// `opengrep`): a shield that latches when on. Before the step's harness spawns
+// the backend scans the project and drops OPENGREP_FINDINGS.md beside the
+// brief; the brief's `{{tool_reports}}` section tells the agent to read it.
+export function StepOpengrepButton({
+  on,
+  onToggle,
+}: {
+  on: boolean;
+  onToggle: () => void;
+}) {
+  const label = on
+    ? 'Opengrep scan before this step: ON (click to turn off)'
+    : 'Run an Opengrep static-analysis scan before this step and hand the findings digest to the agent (needs Opengrep installed in Settings → Tools)';
+  return (
+    <button
+      className={`icon-btn sm workflows-step-tool${on ? ' on' : ''}`}
+      onClick={onToggle}
+      title={label}
+      aria-label={label}
+      aria-pressed={on}
+      data-tool="opengrep"
+    >
+      <ShieldCheck size={12} />
     </button>
   );
 }

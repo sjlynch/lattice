@@ -1,5 +1,6 @@
-// The Lattice task-board MCP server: 11 typed tools over the HTTP API in
-// `routes/tasks/`, pinned to ONE project.
+// The Lattice task-board MCP server: 11 typed board tools over the HTTP API in
+// `routes/tasks/` (plus the two Opengrep tools over `routes/opengrep.ts`),
+// pinned to ONE project.
 //
 // Why a server and not just the HTTP docs: an agent reading LATTICE_API.md has
 // to remember to pass `project=`, to check the echoed `canonicalProject`, and —
@@ -322,6 +323,92 @@ export function createLatticeMcpServer(
         }),
       );
     },
+  );
+
+  // ---- Opengrep (SAST) -------------------------------------------------------
+  //
+  // Both tools return the agent-facing DIGEST (markdown, severity-ordered,
+  // grouped rule → file, under the project's byte budget), never the raw JSON.
+  // Available in every session: a worktree agent fixing a finding wants the
+  // drill-down for its file as much as a planner wants the overview.
+
+  // Unwrap the `markdown` field of a scan envelope into the text block; every
+  // other outcome (busy / not installed / unreachable) passes through as-is.
+  const digestResult = (outcome: LatticeCallOutcome): ToolResult => {
+    if (outcome.kind !== 'ok') return toToolResult(outcome);
+    try {
+      const parsed = JSON.parse(outcome.text) as { markdown?: unknown; digest?: unknown; scan?: unknown };
+      if (typeof parsed.markdown === 'string') {
+        return { content: [{ type: 'text', text: parsed.markdown }] };
+      }
+    } catch {
+      /* fall through */
+    }
+    return toToolResult(outcome);
+  };
+
+  server.registerTool(
+    'opengrep_scan',
+    {
+      description:
+        'Run an Opengrep static-analysis (SAST) scan of this project with its ' +
+        "configured rule packs and return the findings DIGEST: markdown, worst " +
+        'severity first, grouped by rule then file, each finding tagged with a ' +
+        'short fingerprint (`fp`). Put `opengrep:<fp>` on its own line in any task ' +
+        'you file for a finding and search_tasks for it first so re-runs do not ' +
+        'duplicate. A scan takes seconds to minutes; one runs per project at a ' +
+        'time (a second call reports busy). If the digest says findings were cut ' +
+        'for the byte budget, use opengrep_findings with rule= to drill down.',
+      inputSchema: {
+        targets: z
+          .array(z.string())
+          .optional()
+          .describe('Project-relative paths to scan instead of the whole project.'),
+      },
+    },
+    async ({ targets }) =>
+      digestResult(
+        await client.call('/api/opengrep/scan', {
+          method: 'POST',
+          body: { ...(targets?.length ? { targets } : {}), includeMarkdown: true },
+        }),
+      ),
+  );
+
+  server.registerTool(
+    'opengrep_findings',
+    {
+      description:
+        'The digest of an EXISTING Opengrep scan (the latest by default) without ' +
+        'scanning again — narrowed by rule id, file path or severity floor, and ' +
+        'with an optional larger byte budget. This is the drill-down when a digest ' +
+        'says rules were left out, and the cheap way to re-read findings for one ' +
+        'file. Returns an error if the project has never been scanned.',
+      inputSchema: {
+        scan: z.string().optional().describe('Scan id from an earlier scan; default "latest".'),
+        rule: z
+          .string()
+          .optional()
+          .describe('Only this rule: the full check id or any dot-suffix of it (e.g. "xss.foo").'),
+        file: z.string().optional().describe('Only this project-relative file or directory.'),
+        severity: z
+          .enum(['ERROR', 'WARNING', 'INFO'])
+          .optional()
+          .describe('Severity floor for this read (INFO shows everything). Default: the project setting.'),
+        budgetKb: z
+          .number()
+          .int()
+          .min(8)
+          .optional()
+          .describe('Digest size ceiling in KB for this read (default: the project setting, 60).'),
+      },
+    },
+    async ({ scan, rule, file, severity, budgetKb }) =>
+      digestResult(
+        await client.call(`/api/opengrep/scans/${encodeURIComponent(scan ?? 'latest')}`, {
+          query: { include: 'markdown', rule, file, severity, budgetKb },
+        }),
+      ),
   );
 
   // ---- Board management: NOT registered in a task-worktree session ----------

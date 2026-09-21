@@ -31,6 +31,12 @@
   --freeze-bg: rgba(92, 196, 245, 0.14);
   --freeze-bg-strong: rgba(92, 196, 245, 0.22);
 
+  /* A pre-run tool latched ON for a workflow step (the shield toggle). Green so
+     it reads as "checks before this step", distinct from freeze and accent. */
+  --tool-on: #5ad39a;
+  --tool-on-bg: rgba(90, 211, 154, 0.14);
+  --tool-on-bg-strong: rgba(90, 211, 154, 0.24);
+
   --node-dir: #9aa0a6;
   --node-file: #5b9bff;
 

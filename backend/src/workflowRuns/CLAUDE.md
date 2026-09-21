@@ -51,7 +51,21 @@ explicit-curl callbacks — never by polling task state.
   prompt, keep it unconditional, and don't reintroduce completion wording that
   presupposes the step prompt enumerated tasks. The shipped step prompts
   themselves are kept planner-only by
-  `../workflows/defaultPromptMigrations.ts`.
+  `../workflows/defaultPromptMigrations.ts`. Takes the rendered
+  `{{tool_reports}}` block as its last argument (see `stepTools.ts`), placed
+  between the step prompt and the "Active project" section.
+- `stepTools.ts` — pre-run tools for an agent step (`WorkflowStep.tools`,
+  v1: `opengrep`). `runStepTools` runs each BEFORE the harness spawns
+  (called from `writeStepAssets`), writes its report into the step dir
+  (`OPENGREP_FINDINGS.md` = the digest from `../opengrep/service.ts`) and
+  returns the `{{tool_reports}}` block that names the file, its counts and the
+  `opengrep:<fp>` task-marker rule. **A tool that cannot run never fails the
+  step**: engine missing / no rules / scan busy / scan failed become a
+  one-paragraph explanation in the brief and the step proceeds — a wedged run
+  helps nobody. Control steps ignore `tools`. The pre-run runs inside the
+  step materialization, so a `startWorkflowRun` response returns before it
+  (the first `step-spawned` lands after the scan). Covered by
+  `__tests__/workflowStepTools.test.ts`.
 - `stepSpawner.ts` — `spawnWorkflowStep`: the coordinator, split into
   named setup phases (`prepareStepScratch`, `writeStepAssets`,
   `installStepCallbacks`, `spawnStepSession`). Creates

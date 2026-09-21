@@ -18,6 +18,7 @@ import {
 import {
   StepFreezeButton,
   StepIndexBadge,
+  StepOpengrepButton,
   type StepRowCallbacks,
 } from './StepRowShared';
 import type { StepRunStatus } from './stepRunStatus';
@@ -78,6 +79,7 @@ export const AgentStepHeader = memo(function AgentStepHeader({
   harness,
   piModel,
   frozen,
+  tools,
   harnessAvail,
   piMenu,
   runStatus,
@@ -95,6 +97,7 @@ export const AgentStepHeader = memo(function AgentStepHeader({
   harness: WorkflowStep['harness'];
   piModel?: string;
   frozen: boolean;
+  tools?: WorkflowStep['tools'];
   harnessAvail: HarnessAvailability;
   piMenu: PiMenuEntry[];
   runStatus?: StepRunStatus;
@@ -104,6 +107,7 @@ export const AgentStepHeader = memo(function AgentStepHeader({
   'onChange' | 'onRemove' | 'onToggleCollapse' | 'onCustomize'
 >) {
   const selectedHarness = normalizeAgentHarness(harness);
+  const opengrepOn = tools?.includes('opengrep') === true;
   return (
     <div className="workflows-step-row">
       <button
@@ -138,6 +142,16 @@ export const AgentStepHeader = memo(function AgentStepHeader({
         selectedHarness={selectedHarness}
         selectedPiModel={piModel}
         onChange={(h, pm) => onChange(index, { harness: h, piModel: pm })}
+      />
+      <StepOpengrepButton
+        on={opengrepOn}
+        onToggle={() =>
+          onChange(index, {
+            tools: opengrepOn
+              ? (tools ?? []).filter((t) => t !== 'opengrep')
+              : [...(tools ?? []).filter((t) => t !== 'opengrep'), 'opengrep'],
+          })
+        }
       />
       <StepFreezeButton
         frozen={frozen}

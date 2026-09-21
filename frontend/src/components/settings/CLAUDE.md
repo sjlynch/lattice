@@ -4,8 +4,8 @@ Tab panels for the Settings dialog. The parent, `SettingsDialog.tsx`, lives one
 level up in `components/`: a **`FloatingPanel`** (draggable/resizable/
 maximizable, no backdrop so the app stays interactive; titlebar `×`/maximize;
 geometry persisted under `lattice.settings.window`) with a tab strip (Terminals /
-Agent prompts / Metrics / Agents / Pi / MCP) that renders every tab and a single
-Save/Cancel footer. The dialog itself is now essentially just that chrome plus
+Agent prompts / Metrics / Agents / Pi / MCP / Tools) that renders every tab and a
+single Save/Cancel footer. The dialog itself is now essentially just that chrome plus
 body rendering — all the save/dirty/close machinery lives in
 `useSettingsController.ts` (below).
 
@@ -88,8 +88,21 @@ returns the full desired map. Read-only harness *defaults* come from
 
 **Machine-global** — `globalSettings.json`, via `PATCH /api/global-settings`:
 `AgentsTab` (`maxConcurrentAgents`), `PiTab` (`piProviders` + `piModelMenu`),
-and the MCP tab's custom-server defs (`mcpCustomServers`, written immediately on
-add/remove — not via the footer). (These tabs read/write the global file
+the MCP tab's custom-server defs (`mcpCustomServers`, written immediately on
+add/remove — not via the footer), and `ToolsTab`'s rule-pack enables
+(`opengrep.packs`).
+
+**`ToolsTab`** (Opengrep, SAST) is the one tab that spans both files: the engine
+install / rule-pack install-update-remove buttons act **immediately** through
+`/api/opengrep/*` (a 50 MB download and a git fetch are not "Save" material;
+the tab polls `/api/opengrep/status` every 1.5 s while a job or scan runs), the
+pack enable checkboxes are machine-global (`getOpengrepGlobalPatch`), and the
+"Scan filter (this project)" section — severity floor, ignored rule ids /
+fingerprints, extra rule paths, exclude globs, digest budget — is per-project
+`userSettings.opengrep` (`getOpengrepProjectPatch`), both with the usual
+`undefined`-until-touched clobber-guard. "Run scan" runs against the active
+project and shows the record + digest counts with a link to the markdown. Styles
+in `styles/settings/tools.css`. Backend: `backend/src/opengrep/`. (These tabs read/write the global file
 directly, not `userSettings` — don't assume "a tab ⇒ per-project".) `PiTab` manages OpenAI-compatible Pi endpoints (id / baseUrl /
 apiKey / models, with a "Detect models" probe via `POST /api/pi-endpoints/probe`
 that also captures each model's advertised context window and shows it as a

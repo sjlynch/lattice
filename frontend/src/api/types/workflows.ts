@@ -25,7 +25,13 @@ export type WorkflowStep = {
   // Frozen (the step row's snowflake toggle): the step is kept in the workflow
   // but skipped when the workflow runs. Applies to every step kind.
   frozen?: boolean;
+  // Pre-run tools for an agent step (the step row's shield toggle): each runs
+  // before the harness spawns and its report lands beside WORKFLOW_STEP.md.
+  // v1: `opengrep`. Mirrors backend `WorkflowStepTool`.
+  tools?: WorkflowStepTool[];
 };
+
+export type WorkflowStepTool = 'opengrep';
 
 // A user-defined variable injected into step prompts via `{{name}}`. Every
 // workflow always carries the built-in `user_instructions` variable.

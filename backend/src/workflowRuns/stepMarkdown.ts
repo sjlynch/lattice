@@ -49,6 +49,8 @@ export function renderStepMarkdown(
   backendOrigin: string,
   dirtyState: DirtyStateSummary | null = null,
   template: string = DEFAULT_WORKFLOW_STEP_TEMPLATE,
+  // The rendered `{{tool_reports}}` block from stepTools.ts ('' = no tools).
+  toolReports: string = '',
 ): string {
   const step = wf.steps[stepIndex];
   const harness = effectiveStepHarness(wf, run, stepIndex);
@@ -129,6 +131,9 @@ export function renderStepMarkdown(
     dirty_state_warning: dirtyWarning,
     autonomy_preamble: autonomyPreamble,
     step_prompt: renderedPrompt,
+    // Trailing '\n\n' so the block sits as its own section under the prompt;
+    // empty when the step has no pre-run tools.
+    tool_reports: toolReports ? `${toolReports.replace(/\n+$/, '')}\n\n` : '',
     project_path: canonicalProject,
     project_path_encoded: encodedProject,
     // The auto-managed full API cheatsheet. `ensureLatticeApiDoc` writes it at

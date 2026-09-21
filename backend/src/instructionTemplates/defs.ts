@@ -193,6 +193,11 @@ export const INSTRUCTION_TEMPLATE_CATALOG: InstructionTemplateDef[] = [
         name: 'step_prompt',
         description: 'Your step prompt, with {{variables}} already substituted.',
       },
+      {
+        name: 'tool_reports',
+        description:
+          'Reports from the step’s pre-run tools (e.g. the Opengrep scan → OPENGREP_FINDINGS.md beside this brief: counts, what the file holds, the fingerprint-marker rule). Empty when the step has no tools.',
+      },
       COMMON.project_path,
       {
         name: 'project_path_encoded',

@@ -235,6 +235,15 @@ const UNDOCUMENTED_ROUTES: Record<string, string> = {
   'POST /api/terminals': 'pty pre-spawn for the sidebar terminal',
   'DELETE /api/terminals/:id': 'debug: kill a pty session',
   'GET /api/spawn-queue': 'debug: spawn-queue snapshot',
+
+  // Opengrep engine / rule-pack management (Settings → Tools). Downloading a
+  // 50 MB binary or a rule pack is the user's explicit click, never an agent's;
+  // the scan + digest routes ARE documented (an agent triaging findings needs
+  // them, and the `opengrep_scan` / `opengrep_findings` MCP tools wrap them).
+  'POST /api/opengrep/install': 'managed engine install — user-clicked from Settings',
+  'POST /api/opengrep/rules/install': 'rule-pack fetch — user-clicked from Settings',
+  'DELETE /api/opengrep/rules/:packId': 'rule-pack removal (Settings UI)',
+  'GET /api/opengrep/status': 'engine / pack / install-job state for the Settings card',
 };
 
 // ---------------------------------------------------------------------- tests

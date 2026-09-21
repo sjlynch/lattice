@@ -1,0 +1,127 @@
+# backend/src/opengrep
+
+Opengrep (the LGPL-2.1 community fork of Semgrep CE — a local, offline SAST
+engine) as a Lattice **tool**: installed at the user's click, run as a child
+process, and its findings handed to agents as a size-bounded markdown
+**digest**. v1 surfaces it in two places: a workflow agent step with the
+`opengrep` tool ticked (the scan runs before the harness spawns and the digest
+lands beside `WORKFLOW_STEP.md`), and the `opengrep_scan` /
+`opengrep_findings` MCP tools + `/api/opengrep/*` routes for any session.
+Graph overlays and QA-lane baseline diffs were deliberately left out; the
+storage is fingerprint-keyed so they can be added later without rework.
+
+## Licence boundary (read before adding anything here)
+
+Lattice is MIT. The engine is LGPL-2.1; the default rule pack is MIT; the
+optional broad pack is LGPL-2.1 + Commons Clause. Lattice's licence is
+unaffected because of two rules, both enforced:
+
+1. **No third-party binary or rule file is ever committed to this repository
+   or bundled into a Lattice package.** The repo holds URLs, a pinned version,
+   pinned commits and SHA-256 digests (`versions.ts`) — nothing else. Every
+   download lands under `~/.lattice/opengrep/` on the user's machine, at the
+   user's explicit click. Pinned by `__tests__/opengrepNoVendoredAssets.test.ts`,
+   which walks `git ls-files`.
+2. **Opengrep runs only as a separate process** (`spawnWithTimeout`), talking
+   JSON over a file. It is never linked, loaded in-process or modified.
+
+Process separation is not a derivative work under the LGPL, and the LGPL's
+distribution obligations attach to whoever distributes the engine — GitHub's
+release page, not Lattice. The Commons Clause on the archived pack forbids
+*selling* a product whose value derives substantially from those rules; it
+constrains a hosted-Lattice-as-a-service offering's use of that pack, not the
+Lattice source, and the pack is off by default with its licence named on the
+Settings row. Lattice-authored rules (MIT) may live in the repo; third-party
+ones may not. What would change the answer: shipping an installer that bundles
+`opengrep.exe` (then Lattice distributes an LGPL work and must carry its
+licence text + a source pointer) — keep it a runtime download.
+
+## Modules
+
+- `versions.ts` — the pins. `OPENGREP_VERSION` + per-asset `{sha256, bytes}`
+  in a block that ONLY `scripts/opengrep-pin.mjs` writes: the script downloads
+  every release asset, verifies each Sigstore `.sig`/`.cert` with
+  `cosign verify-blob` against `OPENGREP_SIGNING_IDENTITY` (Opengrep's GitHub
+  Actions release workflow), and refuses to write digests it could not verify.
+  A user installing from the pins inherits that check without needing cosign.
+  Also `OPENGREP_RULE_PACKS`: `qodana-mit` (MIT subset, default ON, prunes
+  `jetbrains/` + `rules/lgpl/`) and `opengrep-archived` (the Dec-2024 Semgrep
+  community snapshot — the only real TypeScript/React/Node/Express coverage,
+  LGPL-2.1 + Commons Clause, default OFF). Each pinned by full commit.
+- `paths.ts` — `~/.lattice/opengrep/{bin/<version>/, downloads/, rules/<packId>/,
+  state.json}`, `~/.lattice/per-project/<hash>/opengrep/` for scans, and the
+  optional read-only `<project>/.opengrep/rules/`. Home-scoped, never inside
+  a project tree.
+- `state.ts` — `state.json`: installed binary (version/asset/digest) + per-pack
+  (commit, rule counts, licence). Atomic + serialized.
+- `platform.ts` — `pickOpengrepAsset({platform, arch, musl})`: the release
+  asset for this machine, chosen automatically (Windows ARM64 → the x64 build
+  under emulation, with a note; Linux musl via `/etc/alpine-release` or
+  `/lib/ld-musl-*`). The user never picks.
+- `detect.ts` — `resolveOpengrep()`: a PATH install always wins over the
+  managed one (a package-manager copy is never overridden); each candidate is
+  probed by running `--version`, which doubles as the antivirus-quarantine
+  check. Memoized; a miss is re-probed on the next call.
+- `install.ts` — `startOpengrepInstall()`: stream the asset to `downloads/`
+  while hashing → byte count vs pin → digest vs pin → atomic rename into
+  `bin/<version>/` → `--version` once (a vanished file reads as "your
+  antivirus quarantined it") → state.json. Single-flight job snapshot for the
+  Settings card. **Never at boot** — the user clicks Install.
+- `rules.ts` — `installRulePack(id)`: `git init` + `fetch --depth 1 origin
+  <commit>` + `checkout FETCH_HEAD` (content-addressed, so the pin verifies the
+  tree by construction; tarball bytes are not stable) → `prunePackTree` (keep
+  only `*.yaml`/`*.yml` with a top-level `rules:` key that are not
+  `*.test.yaml`, plus LICENSE/README; drop the pack's `prune` folders, dot
+  dirs, tests, scripts) → swap into place → state.json.
+- `scan.ts` — `runOpengrepScan()`: `opengrep scan --json --quiet --jobs N
+  --timeout 30 --timeout-threshold 3 --max-target-bytes 1000000 --exclude …
+  -f <pack> … -o <raw.json> <project>` with **cwd = the rules root** and packs
+  as RELATIVE ids. That is load-bearing: Opengrep derives a finding's
+  `check_id` from the config path relative to its cwd, and the FINGERPRINT
+  hashes the check_id — running from anywhere else would make ids and
+  fingerprints differ per machine. Gitignore is still honoured (verified: the
+  engine finds the project root from the target). One scan per project
+  (`OpengrepScanBusyError`), `--jobs = max(1, cores-2)`, hard wall-clock
+  timeout (kill), last 10 scans kept as `<id>.json` + `<id>.meta.json`.
+- `digest.ts` — pure. `parseOpengrepJson` (project-relative forward-slash
+  paths, severity normalization, `PartialParsing` errors split out) →
+  `buildDigest` (severity floor + `ignoreRuleIds` (full id or dot-suffix) +
+  `ignoreFingerprints` (full or short) applied FIRST, dedup by fingerprint,
+  group rule → file → occurrence, worst severity first then count) →
+  `renderDigestMarkdown` (hard byte budget with per-group file/occurrence
+  caps and a "Budget reached: N more rules" tail + drill-down hint; a "Scan
+  caveats" section for partially-parsed files and engine errors). The
+  **short fingerprint** (first 16 hex + `_N`) is what the digest prints and
+  what the built-in template asks agents to put in tasks as `opengrep:<fp>`.
+- `settings.ts` — `globalSettings.opengrep.packs` (per-pack enable, machine-
+  global because packs are installed once per machine) and
+  `userSettings.opengrep` (`extraRulePaths`, `excludeGlobs`, `severityFloor`
+  default WARNING, `ignoreRuleIds`, `ignoreFingerprints`, `digestBudgetKb`
+  default 60). Sanitized on READ; `effectiveOpengrepConfig` is the merge.
+- `service.ts` — the facade: `getOpengrepStatus`, `scanProjectWithDigest`,
+  `digestOfStoredScan` (with `rule` / `file` / `severity` / budget overrides
+  for drill-down). Routes, MCP tools and the workflow pre-run hook call only
+  this.
+
+## Consumers
+
+- `routes/opengrep.ts` — `/api/opengrep/{status,install,rules/install,
+  rules/:packId,scan,scans,scans/:id}`; 409 codes `busy` / `not-installed` /
+  `no-rules`.
+- `latticeMcp/createServer.ts` — `opengrep_scan`, `opengrep_findings` (every
+  session; both return the digest markdown, never raw JSON).
+- `workflowRuns/stepTools.ts` — the pre-run hook for an agent step whose
+  `tools` includes `opengrep`: scan → `OPENGREP_FINDINGS.md` beside
+  `WORKFLOW_STEP.md` → the `{{tool_reports}}` token in the brief. A missing
+  engine / no rules / busy / failed scan does NOT fail the step: the token
+  becomes a one-paragraph explanation and the step runs.
+- Settings → Tools tab (`frontend/src/components/settings/ToolsTab.tsx`).
+
+## Tests
+
+`opengrepDigest` (fixture = a trimmed real scan of Lattice), `opengrepScan`
+(fake engine at the spawn seam: cwd, args, storage, busy, error classes),
+`opengrepInstall` (fake fetch + pin table: size → digest → runs, quarantine
+message), `opengrepRulesPrune` (the licence boundary on a fixture tree),
+`opengrepPlatformSettings` (asset table, pin presence, settings sanitizing),
+`opengrepNoVendoredAssets` (no binary / pack in `git ls-files`).

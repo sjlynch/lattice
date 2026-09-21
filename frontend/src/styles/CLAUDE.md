@@ -23,7 +23,8 @@ ordered partial folder, each `@import`ed in its own cascade order:
   `variables`, `steps`, `actions`, `chips`)
 - `settings.css` → `settings/` (`shell` — dialog chrome + sections + controls +
   startup list + the `SettingsInfo` info-popover; `pi` — managed endpoints +
-  advanced; `env-notes`; `prompts`; `mcp`). Shell imports first (its
+  advanced; `env-notes`; `prompts`; `mcp`; `tools` — the Opengrep engine /
+  rule-pack cards + scan-filter textareas). Shell imports first (its
   section/control/checkbox base is built on by the later tabs).
 - `graph.css` → `graph/` (`hud-search` — overlay/search/counts + loc-view chip;
   `overlay-key`; `context-menu` — box-select rect + selection chip + node menu;

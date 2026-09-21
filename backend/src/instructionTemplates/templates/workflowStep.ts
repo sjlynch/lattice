@@ -49,7 +49,7 @@ export const DEFAULT_WORKFLOW_STEP_TEMPLATE = [
   '',
   '{{autonomy_preamble}}{{step_prompt}}',
   '',
-  '## Active project (use ONLY this one)',
+  '{{tool_reports}}## Active project (use ONLY this one)',
   '',
   '`{{project_path}}`',
   '',

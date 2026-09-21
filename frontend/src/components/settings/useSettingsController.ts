@@ -11,6 +11,7 @@ import { type MetricsIgnoredExtsTabHandle } from './MetricsIgnoredExtsTab';
 import { type AgentsTabHandle } from './AgentsTab';
 import { type PiTabHandle } from './PiTab';
 import { type McpTabHandle } from './McpTab';
+import { type ToolsTabHandle } from './ToolsTab';
 import { saveSettings } from './saveSettings';
 import { type SettingsDrafts } from './useSettingsDrafts';
 import { useSettingsDirty } from './useSettingsDirty';
@@ -52,6 +53,7 @@ export function useSettingsController({
   const agentsRef = useRef<AgentsTabHandle>(null);
   const piRef = useRef<PiTabHandle>(null);
   const mcpRef = useRef<McpTabHandle>(null);
+  const toolsRef = useRef<ToolsTabHandle>(null);
   const refs = useMemo(
     () => ({
       startupTerminals: startupTerminalsRef,
@@ -62,6 +64,7 @@ export function useSettingsController({
       agents: agentsRef,
       pi: piRef,
       mcp: mcpRef,
+      tools: toolsRef,
     }),
     [
       agentsRef,
@@ -72,6 +75,7 @@ export function useSettingsController({
       metricsIgnoredExtsRef,
       piRef,
       startupTerminalsRef,
+      toolsRef,
     ],
   );
 
@@ -114,6 +118,7 @@ export function useSettingsController({
           agents: agentsRef.current,
           pi: piRef.current,
           mcp: mcpRef.current,
+          tools: toolsRef.current,
         },
         onStartupTerminalsChange,
         onTerminalLaunchSettingsChange,

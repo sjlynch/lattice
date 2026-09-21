@@ -35,7 +35,15 @@ export type WorkflowStep = {
   // prompt and position intact — but the run engine walks straight past it, for
   // every kind. Absent/false = runs normally. See workflowRuns/frozenSteps.ts.
   frozen?: boolean;
+  // Pre-run tools for an agent step. Each runs BEFORE the harness spawns and
+  // drops its report beside WORKFLOW_STEP.md, surfaced through the brief's
+  // `{{tool_reports}}` token. v1: `opengrep` (a SAST scan → OPENGREP_FINDINGS.md).
+  // Absent/empty = none. Ignored on control steps. See workflowRuns/stepTools.ts.
+  tools?: WorkflowStepTool[];
 };
+
+export const WORKFLOW_STEP_TOOLS = ['opengrep'] as const;
+export type WorkflowStepTool = (typeof WORKFLOW_STEP_TOOLS)[number];
 
 // A user-defined variable whose `value` is substituted into any step prompt
 // that references it as `{{name}}` before the prompt is handed to an agent.

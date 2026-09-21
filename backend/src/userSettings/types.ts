@@ -1,4 +1,5 @@
 import type { AgentHarness } from '../harnesses.js';
+import type { OpengrepProjectSettings } from '../opengrep/settings.js';
 
 export type StartupTerminal = {
   id: string;
@@ -165,4 +166,10 @@ export type UserSettings = {
   harnessSystemPrompts?: Partial<
     Record<'claude' | 'codex' | 'pi', { append?: string; replace?: string }>
   >;
+  // Opengrep (SAST) scan configuration for this project: extra rule paths,
+  // exclude globs, and what the agent-facing digest filters out (severity
+  // floor, ignored rule ids / fingerprints) plus its size budget. Read
+  // defensively by `opengrep/settings.ts` — a malformed value degrades to the
+  // default. The rule-pack enables are machine-global (`globalSettings.opengrep`).
+  opengrep?: OpengrepProjectSettings;
 };

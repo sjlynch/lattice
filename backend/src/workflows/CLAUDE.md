@@ -16,12 +16,15 @@ imports from `'../workflows.js'`; this directory holds the implementation.
   harness. The fields are retained on disk for schema uniformity. `frozen`
   (the editor's snowflake toggle) is kind-agnostic: the step stays in the
   definition but the run engine skips it — see
-  `../workflowRuns/frozenSteps.ts`.
+  `../workflowRuns/frozenSteps.ts`. `tools` (`WorkflowStepTool[]`, v1 only
+  `opengrep` — the editor's shield toggle) names the pre-run tools an agent
+  step runs before its harness spawns; see `../workflowRuns/stepTools.ts`.
 - `normalization.ts` — defensive coercion of untrusted disk/HTTP input into the
   types above (`normalizeWorkflows` / `normalizeSteps` / `normalizeVariables`
   + name/harness helpers). `frozen` is coerced to `true` or `undefined` (never
   `false`), so the flag stays out of the JSON for the common case — same shape
-  convention as `piModel`. **Invariant:** `ensureUserInstructions` guarantees
+  convention as `piModel`; `tools` likewise (`normalizeStepTools`: known ids
+  only, deduplicated, `undefined` when empty). **Invariant:** `ensureUserInstructions` guarantees
   every workflow always carries the built-in `user_instructions` variable
   (`USER_INSTRUCTIONS_VAR`, leading the list). Variable names are coerced to the
   `[A-Za-z0-9_]` token grammar.

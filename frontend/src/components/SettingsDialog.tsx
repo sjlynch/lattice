@@ -11,6 +11,7 @@ import { MetricsIgnoredExtsTab } from './settings/MetricsIgnoredExtsTab';
 import { AgentsTab } from './settings/AgentsTab';
 import { PiTab } from './settings/PiTab';
 import { McpTab } from './settings/McpTab';
+import { ToolsTab } from './settings/ToolsTab';
 import { InstructionTemplatesTab } from './settings/InstructionTemplatesTab';
 import { HarnessSystemPromptsTab } from './settings/HarnessSystemPromptsTab';
 import { useSettingsDrafts } from './settings/useSettingsDrafts';
@@ -129,6 +130,12 @@ export function SettingsDialog({
           <McpTab
             ref={refs.mcp}
             active={tab === 'mcp'}
+            open={open}
+            activeFolder={activeFolder}
+          />
+          <ToolsTab
+            ref={refs.tools}
+            active={tab === 'tools'}
             open={open}
             activeFolder={activeFolder}
           />

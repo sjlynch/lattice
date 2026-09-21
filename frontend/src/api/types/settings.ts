@@ -112,6 +112,20 @@ export type UserSettings = {
   harnessSystemPrompts?: Partial<
     Record<'claude' | 'codex' | 'pi', { append?: string; replace?: string }>
   >;
+  // Opengrep (SAST) scan configuration for this project. Edited in Settings →
+  // Tools. Mirrors backend opengrep/settings.ts `OpengrepProjectSettings`.
+  opengrep?: OpengrepProjectSettings;
+};
+
+export type OpengrepSeverity = 'ERROR' | 'WARNING' | 'INFO';
+
+export type OpengrepProjectSettings = {
+  extraRulePaths?: string[];
+  excludeGlobs?: string[];
+  severityFloor?: OpengrepSeverity;
+  ignoreRuleIds?: string[];
+  ignoreFingerprints?: string[];
+  digestBudgetKb?: number;
 };
 
 // Extensions Lattice ignores by default in the LOC and code-health overlays.

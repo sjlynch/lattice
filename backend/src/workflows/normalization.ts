@@ -5,16 +5,29 @@ import {
   normalizeAgentHarness,
 } from '../harnesses.js';
 import { normalizePiModel } from '../worktree/commands.js';
-import type {
-  Workflow,
-  WorkflowRunHarnessOverride,
-  WorkflowStep,
-  WorkflowStepHarness,
-  WorkflowStepKind,
-  WorkflowVariable,
+import {
+  WORKFLOW_STEP_TOOLS,
+  type Workflow,
+  type WorkflowRunHarnessOverride,
+  type WorkflowStep,
+  type WorkflowStepHarness,
+  type WorkflowStepKind,
+  type WorkflowStepTool,
+  type WorkflowVariable,
 } from './types.js';
 
 const STEP_KINDS = new Set<WorkflowStepKind>(['agent', 'start', 'merge', 'push']);
+const STEP_TOOLS = new Set<string>(WORKFLOW_STEP_TOOLS);
+
+// Known tool ids only, deduplicated, in catalog order; `undefined` (never `[]`)
+// when nothing is set so the field stays out of the JSON — the `frozen` /
+// `piModel` shape convention.
+export function normalizeStepTools(value: unknown): WorkflowStepTool[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const wanted = new Set(value.filter((t): t is string => typeof t === 'string' && STEP_TOOLS.has(t)));
+  const out = WORKFLOW_STEP_TOOLS.filter((t) => wanted.has(t));
+  return out.length ? [...out] : undefined;
+}
 
 // The built-in variable every workflow carries. Built-in workflow steps end
 // with `{{user_instructions}}`, so its value is injected at the bottom of each
@@ -64,6 +77,7 @@ export function normalizeSteps(steps: unknown): WorkflowStep[] {
       // keeps the flag out of the JSON for the overwhelmingly common
       // not-frozen case — same shape convention as `piModel`.
       frozen: step.frozen === true ? true : undefined,
+      tools: normalizeStepTools(step.tools),
     };
   });
 }

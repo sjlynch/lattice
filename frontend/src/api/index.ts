@@ -8,6 +8,7 @@ export * from './scan';
 export * from './settings';
 export * from './globalSettings';
 export * from './mcp';
+export * from './opengrep';
 export * from './tasks';
 export * from './mergeRuns';
 export {

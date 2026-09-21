@@ -1,6 +1,14 @@
-import { BarChart3, Cpu, Plug, ScrollText, Server, TerminalSquare } from 'lucide-react';
+import {
+  BarChart3,
+  Cpu,
+  Plug,
+  ScrollText,
+  Server,
+  ShieldCheck,
+  TerminalSquare,
+} from 'lucide-react';
 
-export type Tab = 'terminals' | 'prompts' | 'metrics' | 'agents' | 'pi' | 'mcp';
+export type Tab = 'terminals' | 'prompts' | 'metrics' | 'agents' | 'pi' | 'mcp' | 'tools';
 
 // Scope tells the user whether a tab's settings are machine-global (apply to
 // every project on this machine — Agents' max-agents, Pi endpoints/model menu)
@@ -19,4 +27,7 @@ export const SETTINGS_TABS: {
   { id: 'agents', label: 'Agents', Icon: Cpu, scope: 'global' },
   { id: 'pi', label: 'Pi', Icon: Server, scope: 'global' },
   { id: 'mcp', label: 'MCP', Icon: Plug, scope: 'project' },
+  // Engine + rule packs are machine-global; the per-project scan filter on the
+  // same tab is the exception the tab's copy calls out.
+  { id: 'tools', label: 'Tools', Icon: ShieldCheck, scope: 'global' },
 ];

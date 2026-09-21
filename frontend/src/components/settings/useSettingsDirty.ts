@@ -10,6 +10,7 @@ import { type MetricsIgnoredExtsTabHandle } from './MetricsIgnoredExtsTab';
 import { type AgentsTabHandle } from './AgentsTab';
 import { type PiTabHandle } from './PiTab';
 import { type McpTabHandle } from './McpTab';
+import { type ToolsTabHandle } from './ToolsTab';
 import { type SettingsDrafts } from './useSettingsDrafts';
 import { type Tab } from './settingsTabs';
 import { type StartupTerminal } from '../../api';
@@ -21,6 +22,7 @@ export const EMPTY_DIRTY: Record<Tab, boolean> = {
   agents: false,
   pi: false,
   mcp: false,
+  tools: false,
 };
 
 export type SettingsTabRefs = {
@@ -32,6 +34,7 @@ export type SettingsTabRefs = {
   agents: RefObject<AgentsTabHandle | null>;
   pi: RefObject<PiTabHandle | null>;
   mcp: RefObject<McpTabHandle | null>;
+  tools: RefObject<ToolsTabHandle | null>;
 };
 
 type SettingsDirtyParams = {
@@ -73,6 +76,9 @@ export function useSettingsDirty({
         refs.pi.current?.getPiProvidersPatch() !== undefined ||
         refs.pi.current?.getPiModelMenuPatch() !== undefined,
       mcp: refs.mcp.current?.getMcpUserPatch() !== undefined,
+      tools:
+        refs.tools.current?.getOpengrepProjectPatch() !== undefined ||
+        refs.tools.current?.getOpengrepGlobalPatch() !== undefined,
     };
   }, [drafts.dirty, refs, startupTerminals]);
 

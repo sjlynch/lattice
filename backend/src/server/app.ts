@@ -14,6 +14,7 @@ import { buildGlobalSettingsRouter } from '../routes/globalSettings.js';
 import { buildHealthRouter } from '../routes/health.js';
 import { buildMcpRouter } from '../routes/mcp.js';
 import { buildMergeRunsRouter } from '../routes/mergeRuns.js';
+import { buildOpengrepRouter } from '../routes/opengrep.js';
 import { buildPostMergeHooksRouter } from '../routes/postMergeHooks.js';
 import { buildProjectInitRouter } from '../routes/projectInit.js';
 import { buildPushRunsRouter } from '../routes/pushRuns.js';
@@ -112,6 +113,7 @@ export function mountRouteFactories(
   app.use(buildSettingsRouter());
   app.use(buildGlobalSettingsRouter());
   app.use(buildMcpRouter());
+  app.use(buildOpengrepRouter());
   // Both paths are static (no `:param` segment), so nothing later can shadow
   // them and they shadow nothing.
   app.use(buildProjectInitRouter());

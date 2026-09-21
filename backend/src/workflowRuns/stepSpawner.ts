@@ -40,6 +40,7 @@ import {
 } from './scratchDirectory.js';
 import { buildWorkflowStepCommand } from './commandBuilder.js';
 import { enqueueWorkflowStepSession, workflowStepAgentId } from './sessionSpawner.js';
+import { runStepTools } from './stepTools.js';
 
 // Re-export the public surface so existing importers (routes/workflows/runs.ts,
 // the workflowScratchPrune test) keep resolving these from stepSpawner.
@@ -115,10 +116,21 @@ async function writeStepAssets(args: {
   const dirtyState = await getProjectDirtyState(wf.projectPath);
   if (dirtyState) logDirtyState(run, stepIndex, dirtyState);
 
+  // Pre-run tools (an Opengrep scan, …) write their report files into the step
+  // dir and contribute the `{{tool_reports}}` block. A tool failure never fails
+  // the step — see stepTools.ts.
+  const step = wf.steps[stepIndex];
+  if (step.tools?.length) {
+    console.log(
+      `[workflow-step] ${run.id} step ${stepIndex}: running pre-run tools (${step.tools.join(', ')})`,
+    );
+  }
+  const tools = await runStepTools(step, wf.projectPath, stepDir);
+
   const stepTemplate = await resolveInstructionTemplate(wf.projectPath, 'workflow-step');
   await fs.writeFile(
     stepFile,
-    renderStepMarkdown(wf, run, stepIndex, backendOrigin, dirtyState, stepTemplate),
+    renderStepMarkdown(wf, run, stepIndex, backendOrigin, dirtyState, stepTemplate, tools.markdown),
     'utf8',
   );
 

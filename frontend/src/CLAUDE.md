@@ -29,7 +29,10 @@ styled-components.
   row — **don't bundle `start`/`merge`/`push` control steps into one.** Landing
   work stays an explicit action the user adds. `plan-build-ship` is the single
   deliberate exception: driving the board to a push is its entire purpose and
-  its name says so.
+  its name says so. A template step may carry `tools` (e.g.
+  `security-review-opengrep` sets `tools: ['opengrep']`) — the editor's shield
+  toggle — so the backend runs that pre-run tool before the step's harness
+  spawns; `newFromTemplate` spreads the step so the field survives.
 - `harnesses.ts` — shared frontend vocabulary/helpers for agent harness strings, labels, and availability-filtered option lists. Also the Pi-model dropdown encoding: `buildHarnessOptions` (flattens harness + curated Pi models into "Pi — X" rows) and `encodeHarnessValue`/`decodeHarnessValue` (the `pi:<provider/model>` `<select>` value ⇄ `{harness, piModel}`).
 - `piMenuStoreCore.ts` / `piModelMenuStore.ts` — shared cache + refresh signal for the curated "Pi — X" model menu. `piMenuStoreCore` is the pure `createPiMenuStore(fetcher)` factory (unit-tested); `piModelMenuStore` builds the `getPiModels`-backed singleton + `notifyPiModelsChanged()`. Consumed via `hooks/usePiModelMenu`; alongside `hooks/useHarnessAvailability`, this is the one source of harness/Pi-menu data shared by the task board, workflow steps/overrides, post-merge hook, and sidebar new-terminal dropdowns.
 

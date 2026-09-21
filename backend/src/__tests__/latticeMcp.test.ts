@@ -98,6 +98,8 @@ const EXPECTED_TOOLS = [
   'delete_task',
   'get_task',
   'list_tasks',
+  'opengrep_findings',
+  'opengrep_scan',
   'run_task',
   'search_tasks',
   'transition_tasks',
@@ -145,6 +147,8 @@ const WORKTREE_TOOLS = [
   'get_task',
   'list_tasks',
   'my_task',
+  'opengrep_findings',
+  'opengrep_scan',
   'search_tasks',
 ];
 

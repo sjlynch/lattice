@@ -40,6 +40,8 @@ force-directed DAG.
 - `~/.lattice/per-project/<sha1(path)[:12]>/terminals.json` — the durable **terminal-tab registry** (`backend/src/terminalRegistry/`): one record per sidebar tab with its owner, original launch command, pinned harness conversation id and last pty. What "restore tabs on project open" rebuilds from after a backend restart / closed browser / `Ctrl+C` / reboot.
 - `~/.lattice/globalSettings.json` — machine-global settings (`maxConcurrentAgents`, MCP defs/overrides, `piModelMenu`, `piProviders`).
 - `~/.lattice/piManagedProviders.json` — sidecar listing the Pi provider ids Lattice manages in `~/.pi/agent/models.json`, so a UI removal deletes precisely those (hand-written providers are never touched). See `backend/src/piModels.ts` `reconcilePiModelsJson`.
+- `~/.lattice/opengrep/` — the Lattice-managed Opengrep (SAST) engine (`bin/<version>/opengrep[.exe]`, downloaded at the user's click and verified against the pinned SHA-256), the fetched rule packs (`rules/<packId>/`, pinned commits, pruned to rule files; also the cwd every scan runs from so finding fingerprints are machine-stable), `downloads/` for in-flight transfers, and `state.json`. Never committed, never bundled — see `backend/src/opengrep/CLAUDE.md`.
+- `~/.lattice/per-project/<sha1(path)[:12]>/opengrep/` — the project's stored scans: `<scanId>.json` (raw engine output) + `<scanId>.meta.json` (record); last 10 kept.
 
 ### `.git`-deletion defences (read before touching the merge pipeline)
 
@@ -175,6 +177,13 @@ therefore stay safely re-runnable.
 | POST | `/api/mcp/validate` | `{serverId}` — run the server's key validator (v1: Brave one-search probe); `{ok, error?}` |
 | GET | `/api/mcp-import/scan?project=` | Scan other tools' MCP configs (Claude Code / Cursor / Codex / VS Code / Windsurf), secrets redacted |
 | POST | `/api/mcp-import` | Apply selected imports `{ids, project?}` → add custom-server defs + store literal keys |
+| GET | `/api/opengrep/status?project=` | Opengrep (SAST) state: the resolved engine (`path` install wins over the Lattice-managed one), the pinned managed version, this machine's release asset, the running install job, each rule pack's install/licence state, and (with `project`) whether a scan is running + the last scan record. Backs Settings → Tools |
+| POST | `/api/opengrep/install` | Start the managed engine install (`202 {job}`; single-flight; poll `/status`). Downloads the pinned release asset for this platform into `~/.lattice/opengrep/`, verifies its pinned SHA-256, runs `--version` once. Never runs at boot — user-clicked only |
+| POST | `/api/opengrep/rules/install` | `{packId}` — fetch/update a rule pack at its pinned commit (`git fetch --depth 1`), prune non-rule + excluded-licence folders, record it (`202 {packs}`; poll `/status`) |
+| DELETE | `/api/opengrep/rules/:packId` | Remove an installed rule pack |
+| POST | `/api/opengrep/scan` | `{project, targets?, includeMarkdown?}` — run a scan with the project's enabled packs + `.opengrep/rules/` + extra paths; returns the scan record and the digest counts (`markdown` on request). **409** `busy` (one scan per project), `not-installed`, `no-rules` |
+| GET | `/api/opengrep/scans?project=` | Recent scan records (last 10 kept, newest first) |
+| GET | `/api/opengrep/scans/:id?project=&format=md&rule=&file=&severity=&budgetKb=&include=markdown` | One stored scan (`latest` allowed) rendered as the agent-facing digest — filtered by the project's severity floor / ignore lists, narrowed by `rule` / `file` / `severity`, under `budgetKb`. `format=md` returns text/markdown; default is the JSON envelope (+ `markdown` with `include=markdown`) |
 | GET | `/api/project-env?project=` | Auto-detected package-manager envs + the "fresh worktree, don't reinstall" notes (default + effective) |
 | GET | `/api/projects` | Known project roots + hashes, for agent sanity checks |
 | POST | `/api/project-init/preview` | `{project, gitignore?}` → what a first commit would capture (`{probe, isEmpty, gitignore, generated, fileCount, byteCount, truncated, largest}`). Backs the Git Setup dialog; re-POSTed (debounced) on every `.gitignore` edit |
@@ -406,6 +415,40 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   (`{verdict, confidence}`) — a confident PASS auto-advances the task qa → done
   (`backend/src/qaRuns/verdict.ts`); anything else leaves it in QA. See
   `backend/src/mcp/CLAUDE.md`.
+- **Opengrep (SAST) is a pre-run tool, not a dependency.** Opengrep — the
+  LGPL-2.1 community fork of Semgrep CE, a local offline static-analysis
+  engine — is installed at the user's click in **Settings → Tools**: the
+  pinned release asset for this platform (picked automatically from
+  `process.platform`/`arch`, Windows ARM64 falls back to the x64 build) is
+  downloaded into `~/.lattice/opengrep/bin/<version>/`, verified against the
+  SHA-256 pinned in `backend/src/opengrep/versions.ts` (which
+  `scripts/opengrep-pin.mjs` only writes after `cosign verify-blob` confirms
+  the Sigstore signature of the Opengrep release workflow), and run once. A
+  copy already on PATH always wins. Rule packs are fetched the same way at a
+  pinned commit (`git fetch --depth 1`) into `~/.lattice/opengrep/rules/`:
+  `qodana-mit` (MIT, on by default, its LGPL/Commons-Clause folders pruned)
+  and the opt-in archived `opengrep-rules` snapshot (LGPL-2.1 + Commons
+  Clause — the only pack with real TypeScript/Node/Express coverage — off by
+  default and labelled); `<project>/.opengrep/rules/` is always loaded.
+  **Lattice stays MIT because nothing third-party is ever committed or
+  bundled** (guard test `opengrepNoVendoredAssets`) and the engine only runs
+  as a child process. Agents never see raw JSON: `backend/src/opengrep/digest.ts`
+  renders a **digest** — the project's severity floor (default WARNING) and
+  ignore lists (rule id or fingerprint, `userSettings.opengrep`) applied
+  first, deduplicated by Opengrep's stable per-finding **fingerprint**,
+  grouped rule → file, under a byte budget (60 KB) with a drill-down pointer.
+  Surfaces: a workflow **agent step with the shield toggle**
+  (`WorkflowStep.tools: ['opengrep']`, the built-in "Security review
+  (Opengrep)" template) scans before the harness spawns and drops
+  `OPENGREP_FINDINGS.md` beside `WORKFLOW_STEP.md` (the brief's
+  `{{tool_reports}}` section; a missing engine explains itself in the brief
+  rather than failing the step); the `opengrep_scan` / `opengrep_findings`
+  MCP tools in every session; `/api/opengrep/*`. Task markers:
+  `opengrep:<fp>` on its own line, so a re-run finds the existing task via
+  `search_tasks`. One scan per project at a time, `--jobs = cores-2`, 10-min
+  cap, never on file watch; results under
+  `~/.lattice/per-project/<hash>/opengrep/` (last 10). See
+  `backend/src/opengrep/CLAUDE.md`.
 - **Pi sub-agents** (`@tintinweb/pi-subagents`) are auto-installed when the
   `pi` CLI is detected, scoped to Lattice's own Pi sessions so the user's
   global pi config (`~/.pi/agent/settings.json`) is never polluted. Lattice

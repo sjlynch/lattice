@@ -286,6 +286,16 @@
   color: var(--freeze);
   background: var(--freeze-bg-strong);
 }
+/* The Opengrep pre-run toggle on an agent step (StepOpengrepButton): latches
+   accent-green when the step scans before its harness spawns. */
+.workflows-step-tool.on {
+  color: var(--tool-on);
+  background: var(--tool-on-bg);
+}
+.workflows-step-tool.on:hover {
+  color: var(--tool-on);
+  background: var(--tool-on-bg-strong);
+}
 
 .workflows-add-step {
   display: inline-flex;

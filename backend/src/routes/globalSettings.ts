@@ -42,6 +42,7 @@ export function buildGlobalSettingsRouter(): Router {
     }
     if (body.piModelMenu !== undefined) patch.piModelMenu = body.piModelMenu;
     if (body.piProviders !== undefined) patch.piProviders = body.piProviders;
+    if (body.opengrep !== undefined) patch.opengrep = body.opengrep;
 
     const updated = await updateGlobalSettings(patch);
     // Apply the new softCap to the live queue so it takes effect without a

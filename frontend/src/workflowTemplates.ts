@@ -127,4 +127,20 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
       },
     ],
   },
+  {
+    id: 'security-review-opengrep',
+    name: 'Security review (Opengrep)',
+    description:
+      'Runs an Opengrep static-analysis scan before the step and has the agent triage the findings into tasks — one per rule group, fingerprint-tagged so re-runs never duplicate. Needs Opengrep installed in Settings → Tools.',
+    steps: [
+      {
+        title: 'Triage Opengrep findings',
+        prompt:
+          'Lattice ran an Opengrep static-analysis scan before this step; the digest is in OPENGREP_FINDINGS.md in this directory (see the Tool reports section). Read it in full. Group the findings by rule and by the subsystem they touch, and for each group decide whether it is a real problem, a defensible pattern that needs no change, or rule noise for this codebase — say which, briefly, for every group. File ONE Lattice task per group that deserves work, describing: the rule id and why it matters (CWE / category), every affected file:line, the fix approach the implementing agent should take, and a line `opengrep:<fp>` for each finding\'s short fingerprint so the task can be matched to the finding later. Before filing each task, search the board for its fingerprints and skip any finding that already has a task — open or done (a done task whose finding still shows means "won\'t fix", not "file again"). For rule groups that are pure noise here, file a single task proposing those rule ids for the project\'s Opengrep ignore list instead. If the report says the scan could not run, say so and file nothing. Do not fix anything yourself.',
+        mode: 'sequential',
+        kind: 'agent',
+        tools: ['opengrep'],
+      },
+    ],
+  },
 ];

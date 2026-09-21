@@ -53,6 +53,9 @@ Before acting on any response, confirm its `canonicalProject` matches
 | PATCH  | /api/settings?project=             | Per-project user settings (update) |
 | GET    | /api/project-env?project=          | Auto-detected package-manager envs + injected worktree notes |
 | GET    | /api/health/dead-code?project=     | Files the analyzer flags as unreachable: `{files:[{path,ext}], total, scannedAt}` (empty if the confidence guard tripped) |
+| POST   | /api/opengrep/scan                 | `{project, targets?, includeMarkdown?}` — run an Opengrep (SAST) scan with the project's rule packs; returns `{scan, digest:{shown,total,bySeverity,rules,bytes}, markdown?}`. **409** `busy` / `not-installed` / `no-rules` |
+| GET    | /api/opengrep/scans?project=       | Recent scan records (last 10) |
+| GET    | /api/opengrep/scans/:id?project=&format=md&rule=&file=&severity=&budgetKb= | A stored scan (`latest` allowed) as the agent-facing digest: markdown grouped rule → file with a short fingerprint per finding; `rule=`/`file=`/`severity=` narrow it, `budgetKb=` raises the size ceiling. Prefer the `opengrep_scan` / `opengrep_findings` MCP tools when the session has them |
 
 Statuses: `backlog | open | in_progress | ready_to_merge | qa | done | deleted`.
 Pipeline: `open → in_progress → ready_to_merge → qa → done` (drag-and-drop
@@ -312,6 +315,30 @@ curl -sG "{{API_URL}}/api/health/dead-code" \
   --data-urlencode "project={{PROJECT_FWD}}"
 # → { "files": [ { "path": "src/old/util.ts", "ext": ".ts" }, ... ],
 #     "total": 3, "scannedAt": 1718323200000 }
+```
+
+## Static analysis (Opengrep)
+
+When Opengrep is installed (Settings → Tools), a scan returns a **digest** —
+markdown, worst severity first, grouped rule → file, each finding tagged with
+a short fingerprint `fp` that stays stable across unrelated edits. File one
+task per rule group, put `opengrep:<fp>` on its own line in the description,
+and search the board for that marker before filing so a re-run never
+duplicates a task. One scan runs per project at a time (a second call is a
+**409** `busy`).
+
+```bash
+curl -s -X POST "{{API_URL}}/api/opengrep/scan" \
+  -H "Content-Type: application/json" \
+  -d '{"project":"{{PROJECT_FWD}}","includeMarkdown":true}'
+# → { scan: {id, findings, bySeverity, scannedFiles, …},
+#     digest: {shown, total, rules, bytes}, markdown: "# Opengrep findings …" }
+
+# Re-read a stored scan (the id from the scan record, or the word `latest`)
+# narrowed to one rule, as markdown
+curl -sG "{{API_URL}}/api/opengrep/scans/$scanId" \
+  --data-urlencode "project={{PROJECT_FWD}}" \
+  --data-urlencode "format=md" --data-urlencode "rule=<ruleId>"
 ```
 
 ## Working with the board

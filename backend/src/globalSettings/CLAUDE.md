@@ -18,6 +18,7 @@ validators living next to the shape each produces. There is no
 | `mcpBuiltinOverrides` | Per-id partial edits of built-in catalog entries (e.g. edited args). | `sanitizeBuiltinOverrides` in `../mcp/settingsValidation.ts`. |
 | `piModelMenu` | Curated `provider/model` patterns surfaced as "Pi — X" rows in the harness dropdowns; empty/absent → the default menu (see `piModels.ts`). | Inline string-array filter in `../globalSettings.ts`'s `sanitize`. |
 | `piProviders` | Lattice-managed Pi providers (OpenAI-compatible endpoints, e.g. vLLM), reconciled INTO `~/.pi/agent/models.json` by `piModels.ts`. | `sanitizePiProviders` in `../piProviderValidation.ts` (which also owns the `PiProvider`/`PiProviderModel` types). |
+| `opengrep` | Opengrep rule-pack enables (`packs: { [packId]: boolean }`, absent = the pack's `defaultEnabled`). Machine-global because packs are installed once per machine under `~/.lattice/opengrep/rules/`. | `sanitizeOpengrepGlobalSettings` in `../opengrep/settings.ts` (unknown pack ids and non-boolean values dropped). |
 
 ## Shape
 

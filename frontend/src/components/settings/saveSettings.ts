@@ -20,6 +20,7 @@ import { type MetricsIgnoredExtsTabHandle } from './MetricsIgnoredExtsTab';
 import { type AgentsTabHandle } from './AgentsTab';
 import { type PiTabHandle } from './PiTab';
 import { type McpTabHandle } from './McpTab';
+import { type ToolsTabHandle } from './ToolsTab';
 
 // The parent-owned draft values that participate in a save.
 type SaveDrafts = {
@@ -45,6 +46,7 @@ type SaveHandles = {
   agents: AgentsTabHandle | null;
   pi: PiTabHandle | null;
   mcp: McpTabHandle | null;
+  tools: ToolsTabHandle | null;
 };
 
 export type SaveSettingsParams = {
@@ -119,6 +121,10 @@ export async function saveSettings({
   // custom-server defs persist on their own immediately, so they're not here.
   const mcpPatch = handles.mcp?.getMcpUserPatch();
   if (mcpPatch !== undefined) Object.assign(patch, mcpPatch);
+  // Opengrep per-project scan filter (Settings → Tools). Engine / pack installs
+  // happen immediately from the tab; only the settings wait for Save.
+  const opengrepProjectPatch = handles.tools?.getOpengrepProjectPatch();
+  if (opengrepProjectPatch !== undefined) patch.opengrep = opengrepProjectPatch;
 
   // 2. Persist the project user settings.
   await patchUserSettings(activeFolder, patch);
@@ -132,10 +138,12 @@ export async function saveSettings({
   const maxAgentsPatch = handles.agents?.getMaxConcurrentAgentsPatch();
   const piProvidersPatch = handles.pi?.getPiProvidersPatch();
   const piModelMenuPatch = handles.pi?.getPiModelMenuPatch();
+  const opengrepGlobalPatch = handles.tools?.getOpengrepGlobalPatch();
   const globalPatch: Parameters<typeof patchGlobalSettings>[0] = {};
   if (maxAgentsPatch !== undefined) globalPatch.maxConcurrentAgents = maxAgentsPatch;
   if (piProvidersPatch !== undefined) globalPatch.piProviders = piProvidersPatch;
   if (piModelMenuPatch !== undefined) globalPatch.piModelMenu = piModelMenuPatch;
+  if (opengrepGlobalPatch !== undefined) globalPatch.opengrep = opengrepGlobalPatch;
   if (Object.keys(globalPatch).length > 0) {
     await patchGlobalSettings(globalPatch);
     // The Pi providers/menu feed the curated "Pi — X" dropdowns. If either

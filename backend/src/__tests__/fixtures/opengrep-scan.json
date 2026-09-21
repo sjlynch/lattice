@@ -1,0 +1,1274 @@
+{
+ "version": "1.30.0",
+ "results": [
+  {
+   "check_id": "rules-archived.typescript.lang.correctness.useless-ternary",
+   "path": "C:\\proj\\backend\\src\\__tests__\\postMergeHookTrigger.test.ts",
+   "start": {
+    "line": 40,
+    "col": 7,
+    "offset": 1537
+   },
+   "end": {
+    "line": 40,
+    "col": 59,
+    "offset": 1589
+   },
+   "extra": {
+    "message": "It looks like no matter how currentRun?.status === 'running' is evaluated, this expression returns currentRun. This is probably a copy-paste error.",
+    "metadata": {
+     "category": "correctness",
+     "technology": [
+      "react"
+     ]
+    },
+    "severity": "ERROR",
+    "fingerprint": "a4ebe7f8fa29faf011397b396b2ace914a96b9b6230c43521e4dd816bdd3ae9675d2a06cd1924410f0d6fa6f4fe49b4a710a9ffec63ed9076fe41620587846a1_0",
+    "lines": "      currentRun?.status === 'running' ? currentRun : null,"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.detect-child-process",
+   "path": "C:\\proj\\backend\\src\\ripgrep.ts",
+   "start": {
+    "line": 48,
+    "col": 26,
+    "offset": 1911
+   },
+   "end": {
+    "line": 48,
+    "col": 29,
+    "offset": 1914
+   },
+   "extra": {
+    "message": "Detected calls to child_process from a function argument `cmd`. This could lead to a command injection if the input is user controllable. Try to avoid calls to child_process, and if it is needed ensure user input is correctly sanitized or sandboxed. ",
+    "metadata": {
+     "cwe": [
+      "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+     ],
+     "owasp": [
+      "A01:2017 - Injection",
+      "A03:2021 - Injection"
+     ],
+     "references": [
+      "https://cheatsheetseries.owasp.org/cheatsheets/Nodejs_Security_Cheat_Sheet.html#do-not-use-dangerous-functions"
+     ],
+     "source-rule-url": "https://github.com/nodesecurity/eslint-plugin-security/blob/master/rules/detect-child-process.js",
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "license": "Commons Clause License Condition v1.0[LGPL-2.1-only]",
+     "cwe2022-top25": true,
+     "cwe2021-top25": true,
+     "subcategory": [
+      "audit"
+     ],
+     "likelihood": "LOW",
+     "impact": "HIGH",
+     "confidence": "LOW"
+    },
+    "severity": "ERROR",
+    "fingerprint": "84c1932e8516e6d6e2ed4d24c89a8d2c322f73c386a28cb37128ddc9d834386d9152cf61fe8fa2e393aba8a155a9fb6e155202d549dc19a9655aacb74a40ecd4_0",
+    "lines": "      const proc = spawn(cmd, ['--version'], {"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.detect-child-process",
+   "path": "C:\\proj\\backend\\src\\ripgrep.ts",
+   "start": {
+    "line": 189,
+    "col": 24,
+    "offset": 7219
+   },
+   "end": {
+    "line": 189,
+    "col": 29,
+    "offset": 7224
+   },
+   "extra": {
+    "message": "Detected calls to child_process from a function argument `rgCmd`. This could lead to a command injection if the input is user controllable. Try to avoid calls to child_process, and if it is needed ensure user input is correctly sanitized or sandboxed. ",
+    "metadata": {
+     "cwe": [
+      "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+     ],
+     "owasp": [
+      "A01:2017 - Injection",
+      "A03:2021 - Injection"
+     ],
+     "references": [
+      "https://cheatsheetseries.owasp.org/cheatsheets/Nodejs_Security_Cheat_Sheet.html#do-not-use-dangerous-functions"
+     ],
+     "source-rule-url": "https://github.com/nodesecurity/eslint-plugin-security/blob/master/rules/detect-child-process.js",
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "license": "Commons Clause License Condition v1.0[LGPL-2.1-only]",
+     "cwe2022-top25": true,
+     "cwe2021-top25": true,
+     "subcategory": [
+      "audit"
+     ],
+     "likelihood": "LOW",
+     "impact": "HIGH",
+     "confidence": "LOW"
+    },
+    "severity": "ERROR",
+    "fingerprint": "bb86fd494543c5fdcf7a5321923dc36ad47da24334991ef27360cc5fab74e8814079a5a5478ee8fb6ade7a7ff8cace9aa8dc636561308702a3f746662db90273_0",
+    "lines": "    const proc = spawn(rgCmd, args, { windowsHide: true });"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.detect-child-process",
+   "path": "C:\\proj\\backend\\src\\spawnWithTimeout.ts",
+   "start": {
+    "line": 49,
+    "col": 21,
+    "offset": 2028
+   },
+   "end": {
+    "line": 49,
+    "col": 28,
+    "offset": 2035
+   },
+   "extra": {
+    "message": "Detected calls to child_process from a function argument `command`. This could lead to a command injection if the input is user controllable. Try to avoid calls to child_process, and if it is needed ensure user input is correctly sanitized or sandboxed. ",
+    "metadata": {
+     "cwe": [
+      "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+     ],
+     "owasp": [
+      "A01:2017 - Injection",
+      "A03:2021 - Injection"
+     ],
+     "references": [
+      "https://cheatsheetseries.owasp.org/cheatsheets/Nodejs_Security_Cheat_Sheet.html#do-not-use-dangerous-functions"
+     ],
+     "source-rule-url": "https://github.com/nodesecurity/eslint-plugin-security/blob/master/rules/detect-child-process.js",
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "license": "Commons Clause License Condition v1.0[LGPL-2.1-only]",
+     "cwe2022-top25": true,
+     "cwe2021-top25": true,
+     "subcategory": [
+      "audit"
+     ],
+     "likelihood": "LOW",
+     "impact": "HIGH",
+     "confidence": "LOW"
+    },
+    "severity": "ERROR",
+    "fingerprint": "d776e460329178c0fc47c1a479311bc37a503e457e4da490d2e4b7a1b0f5019772e5b8aafd81a45fc1fe01b9a1cd7580e5fe1a26dd65f6da5da1195dfecf23f8_0",
+    "lines": "      child = spawn(command, args, {"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.spawn-shell-true",
+   "path": "C:\\proj\\backend\\src\\spawnWithTimeout.ts",
+   "start": {
+    "line": 49,
+    "col": 15,
+    "offset": 2022
+   },
+   "end": {
+    "line": 53,
+    "col": 9,
+    "offset": 2143
+   },
+   "extra": {
+    "message": "Found '$SPAWN' with '{shell: opts.shell ?? false}'. This is dangerous because this call will spawn the command using a shell process. Doing so propagates current shell settings and variables, which makes it much easier for a malicious actor to execute commands. Use '{shell: false}' instead.",
+    "metadata": {
+     "owasp": [
+      "A01:2017 - Injection",
+      "A03:2021 - Injection"
+     ],
+     "cwe": [
+      "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+     ],
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "cwe2022-top25": true,
+     "cwe2021-top25": true,
+     "subcategory": [
+      "audit"
+     ],
+     "likelihood": "LOW",
+     "impact": "LOW",
+     "confidence": "LOW",
+     "references": [
+      "https://owasp.org/Top10/A03_2021-Injection"
+     ]
+    },
+    "severity": "ERROR",
+    "fingerprint": "070305c988e01d2a74a3cf54a8603ab6054375acffea06cde47728901642739caf6a491aad676c4e085753023956756578a4008efd820d2e43c2647dc0611fdc_0",
+    "lines": "      child = spawn(command, args, {\n        cwd: opts.cwd,\n        shell: opts.shell ?? false,\n        windowsHide: true,\n      });"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.detect-insecure-websocket",
+   "path": "C:\\proj\\frontend\\src\\components\\terminal\\terminalSocket.ts",
+   "start": {
+    "line": 49,
+    "col": 6,
+    "offset": 2773
+   },
+   "end": {
+    "line": 49,
+    "col": 11,
+    "offset": 2778
+   },
+   "extra": {
+    "message": "Insecure WebSocket Detected. WebSocket Secure (wss) should be used for all WebSocket connections.",
+    "metadata": {
+     "cwe": [
+      "CWE-319: Cleartext Transmission of Sensitive Information"
+     ],
+     "asvs": {
+      "control_id": "13.5.1 Insecure WebSocket",
+      "control_url": "https://github.com/OWASP/ASVS/blob/master/4.0/en/0x21-V13-API.md#v135-websocket-security-requirements",
+      "section": "V13: API and Web Service Verification Requirements",
+      "version": "4"
+     },
+     "category": "security",
+     "technology": [
+      "regex"
+     ],
+     "owasp": [
+      "A03:2017 - Sensitive Data Exposure",
+      "A02:2021 - Cryptographic Failures"
+     ],
+     "subcategory": [
+      "audit"
+     ],
+     "likelihood": "LOW",
+     "impact": "MEDIUM",
+     "confidence": "LOW",
+     "references": [
+      "https://owasp.org/Top10/A02_2021-Cryptographic_Failures"
+     ]
+    },
+    "severity": "ERROR",
+    "fingerprint": "06f85a01cc581113a7befece7a4bf7ccd0b413ccd642f607a934f5a89cd26df2b16cd990907162e568365db7b5b927b3d4a3b8ebbc9e648a7fe64d3d3f84f148_0",
+    "lines": "  // ws://host prefix."
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.correctness.no-stringify-keys",
+   "path": "C:\\proj\\backend\\src\\__tests__\\claudeConfigApply.test.ts",
+   "start": {
+    "line": 126,
+    "col": 16,
+    "offset": 6399
+   },
+   "end": {
+    "line": 126,
+    "col": 27,
+    "offset": 6410
+   },
+   "extra": {
+    "message": "JSON stringify does not produce a stable key ordering, and should not be relied on for producing object keys. Consider using json-stable-stringify instead.",
+    "metadata": {
+     "category": "correctness",
+     "references": [
+      "https://www.npmjs.com/package/json-stable-stringify",
+      "https://stackoverflow.com/a/16168003"
+     ],
+     "technology": [
+      "javascript",
+      "typescript"
+     ]
+    },
+    "severity": "WARNING",
+    "fingerprint": "31d29f775fbb77bc2f7106522dbb718ebab21bbfe218fd7be9f922ce65c77df44335a7f3139f44dc74690681d8e9e41f6f5dca9964eaa573b873e6b3de6beade_0",
+    "lines": "  assert.match(warnings[0], /EPERM/);"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.correctness.no-stringify-keys",
+   "path": "C:\\proj\\backend\\src\\__tests__\\claudeConfigApply.test.ts",
+   "start": {
+    "line": 127,
+    "col": 16,
+    "offset": 6438
+   },
+   "end": {
+    "line": 127,
+    "col": 27,
+    "offset": 6449
+   },
+   "extra": {
+    "message": "JSON stringify does not produce a stable key ordering, and should not be relied on for producing object keys. Consider using json-stable-stringify instead.",
+    "metadata": {
+     "category": "correctness",
+     "references": [
+      "https://www.npmjs.com/package/json-stable-stringify",
+      "https://stackoverflow.com/a/16168003"
+     ],
+     "technology": [
+      "javascript",
+      "typescript"
+     ]
+    },
+    "severity": "WARNING",
+    "fingerprint": "31d29f775fbb77bc2f7106522dbb718ebab21bbfe218fd7be9f922ce65c77df44335a7f3139f44dc74690681d8e9e41f6f5dca9964eaa573b873e6b3de6beade_1",
+    "lines": "  assert.match(warnings[0], /MCP settings/);"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.correctness.no-stringify-keys",
+   "path": "C:\\proj\\backend\\src\\__tests__\\claudeConfigApply.test.ts",
+   "start": {
+    "line": 128,
+    "col": 23,
+    "offset": 6491
+   },
+   "end": {
+    "line": 128,
+    "col": 34,
+    "offset": 6502
+   },
+   "extra": {
+    "message": "JSON stringify does not produce a stable key ordering, and should not be relied on for producing object keys. Consider using json-stable-stringify instead.",
+    "metadata": {
+     "category": "correctness",
+     "references": [
+      "https://www.npmjs.com/package/json-stable-stringify",
+      "https://stackoverflow.com/a/16168003"
+     ],
+     "technology": [
+      "javascript",
+      "typescript"
+     ]
+    },
+    "severity": "WARNING",
+    "fingerprint": "31d29f775fbb77bc2f7106522dbb718ebab21bbfe218fd7be9f922ce65c77df44335a7f3139f44dc74690681d8e9e41f6f5dca9964eaa573b873e6b3de6beade_2",
+    "lines": "  assert.doesNotMatch(warnings[0], /never-log-this-config/);"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.correctness.no-stringify-keys",
+   "path": "C:\\proj\\backend\\src\\__tests__\\tsconfig.test.ts",
+   "start": {
+    "line": 29,
+    "col": 16,
+    "offset": 1040
+   },
+   "end": {
+    "line": 29,
+    "col": 26,
+    "offset": 1050
+   },
+   "extra": {
+    "message": "JSON stringify does not produce a stable key ordering, and should not be relied on for producing object keys. Consider using json-stable-stringify instead.",
+    "metadata": {
+     "category": "correctness",
+     "references": [
+      "https://www.npmjs.com/package/json-stable-stringify",
+      "https://stackoverflow.com/a/16168003"
+     ],
+     "technology": [
+      "javascript",
+      "typescript"
+     ]
+    },
+    "severity": "WARNING",
+    "fingerprint": "b958d51183c24461d0df79c103484095d42ffdb8b4ffdf9841098d63d40318a4fe9755ba4cbf67ab26d81bc04f87069b2c8fef080590cabebe008f29d206dbdc_0",
+    "lines": "  assert.equal(aliases[0].prefix, '@components/');"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.unsafe-dynamic-method",
+   "path": "C:\\proj\\backend\\src\\__tests__\\sweepScheduler.test.ts",
+   "start": {
+    "line": 20,
+    "col": 7,
+    "offset": 711
+   },
+   "end": {
+    "line": 20,
+    "col": 34,
+    "offset": 738
+   },
+   "extra": {
+    "message": "Using non-static data to retrieve and run functions from the object is dangerous. If the data is user-controlled, it may allow executing arbitrary code.",
+    "metadata": {
+     "owasp": [
+      "A03:2021 - Injection"
+     ],
+     "cwe": [
+      "CWE-94: Improper Control of Generation of Code ('Code Injection')"
+     ],
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "cwe2022-top25": true,
+     "subcategory": [
+      "audit"
+     ],
+     "likelihood": "LOW",
+     "impact": "LOW",
+     "confidence": "LOW",
+     "references": [
+      "https://owasp.org/Top10/A03_2021-Injection"
+     ]
+    },
+    "severity": "WARNING",
+    "fingerprint": "e7ab59bfa29a945cee1649c846ce61ea866a732956c9fc9971522c601b5d35d5e3ea2af272fce251c05d223fbdd8b65a2af52bf71c299b03183b26f21280fda8_0",
+    "lines": "      resolvers[index]?.(changed);"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.unsafe-dynamic-method",
+   "path": "C:\\proj\\backend\\src\\__tests__\\taskCacheConcurrency.test.ts",
+   "start": {
+    "line": 72,
+    "col": 19,
+    "offset": 3147
+   },
+   "end": {
+    "line": 72,
+    "col": 40,
+    "offset": 3168
+   },
+   "extra": {
+    "message": "Using non-static data to retrieve and run functions from the object is dangerous. If the data is user-controlled, it may allow executing arbitrary code.",
+    "metadata": {
+     "owasp": [
+      "A03:2021 - Injection"
+     ],
+     "cwe": [
+      "CWE-94: Improper Control of Generation of Code ('Code Injection')"
+     ],
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "cwe2022-top25": true,
+     "subcategory": [
+      "audit"
+     ],
+     "likelihood": "LOW",
+     "impact": "LOW",
+     "confidence": "LOW",
+     "references": [
+      "https://owasp.org/Top10/A03_2021-Injection"
+     ]
+    },
+    "severity": "WARNING",
+    "fingerprint": "7e872108d577cce507120c893e79b8c203d8e0be36dbdcae7bffb480c82ef912bb009cd1fa8c54dc0c87f36319dc487de91f1c7e8d0eb6a89aac0c0b6944af05_0",
+    "lines": "    values: () => [][Symbol.iterator](),"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.unsafe-dynamic-method",
+   "path": "C:\\proj\\backend\\src\\__tests__\\taskCacheConcurrency.test.ts",
+   "start": {
+    "line": 194,
+    "col": 19,
+    "offset": 7842
+   },
+   "end": {
+    "line": 194,
+    "col": 40,
+    "offset": 7863
+   },
+   "extra": {
+    "message": "Using non-static data to retrieve and run functions from the object is dangerous. If the data is user-controlled, it may allow executing arbitrary code.",
+    "metadata": {
+     "owasp": [
+      "A03:2021 - Injection"
+     ],
+     "cwe": [
+      "CWE-94: Improper Control of Generation of Code ('Code Injection')"
+     ],
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "cwe2022-top25": true,
+     "subcategory": [
+      "audit"
+     ],
+     "likelihood": "LOW",
+     "impact": "LOW",
+     "confidence": "LOW",
+     "references": [
+      "https://owasp.org/Top10/A03_2021-Injection"
+     ]
+    },
+    "severity": "WARNING",
+    "fingerprint": "7e872108d577cce507120c893e79b8c203d8e0be36dbdcae7bffb480c82ef912bb009cd1fa8c54dc0c87f36319dc487de91f1c7e8d0eb6a89aac0c0b6944af05_1",
+    "lines": "    values: () => [][Symbol.iterator](),"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.unsafe-dynamic-method",
+   "path": "C:\\proj\\frontend\\src\\components\\forceGraph\\healthScoreContributions.ts",
+   "start": {
+    "line": 74,
+    "col": 17,
+    "offset": 2437
+   },
+   "end": {
+    "line": 74,
+    "col": 62,
+    "offset": 2482
+   },
+   "extra": {
+    "message": "Using non-static data to retrieve and run functions from the object is dangerous. If the data is user-controlled, it may allow executing arbitrary code.",
+    "metadata": {
+     "owasp": [
+      "A03:2021 - Injection"
+     ],
+     "cwe": [
+      "CWE-94: Improper Control of Generation of Code ('Code Injection')"
+     ],
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "cwe2022-top25": true,
+     "subcategory": [
+      "audit"
+     ],
+     "likelihood": "LOW",
+     "impact": "LOW",
+     "confidence": "LOW",
+     "references": [
+      "https://owasp.org/Top10/A03_2021-Injection"
+     ]
+    },
+    "severity": "WARNING",
+    "fingerprint": "e553acdfa245e0195d4b909dbf715609f99fc6b94ffe4162a15d527667e3ec66e1234a3707afa33c75e119bc0c617390530e55f3119701f903f74c25854fe3a9_0",
+    "lines": "  const value = SCORE_COMPONENT_VALUES[component.id](metrics);"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.detect-redos",
+   "path": "C:\\proj\\backend\\src\\health\\crossFile\\roots.ts",
+   "start": {
+    "line": 63,
+    "col": 39,
+    "offset": 3698
+   },
+   "end": {
+    "line": 63,
+    "col": 63,
+    "offset": 3722
+   },
+   "extra": {
+    "message": "Detected the use of a regular expression `^(?:(?!src\\/)[^/]+\\/)*(scripts?|tools)\\/` which appears to be vulnerable to a Regular expression Denial-of-Service (ReDoS). For this reason, it is recommended to review the regex and ensure it is not vulnerable to catastrophic backtracking, and if possible use a library which offers default safety against ReDoS vulnerabilities.",
+    "metadata": {
+     "owasp": [
+      "A05:2021 - Security Misconfiguration",
+      "A06:2017 - Security Misconfiguration"
+     ],
+     "cwe": [
+      "CWE-1333: Inefficient Regular Expression Complexity"
+     ],
+     "references": [
+      "https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS",
+      "https://www.regular-expressions.info/redos.html"
+     ],
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "subcategory": [
+      "vuln"
+     ],
+     "likelihood": "MEDIUM",
+     "impact": "MEDIUM",
+     "confidence": "LOW"
+    },
+    "severity": "WARNING",
+    "fingerprint": "6a44a0be808d683893e412e6df25915e3172f9c897d9624444e248f96dac9bb95610c3ba9ed63065a956c96ca77dd08cf49ba8f7bf6ac97ed0d0f355aa368bc4_0",
+    "lines": "  if (rel && !rel.startsWith('..') && TOOLING_DIR_RE.test(rel)) return true;"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.detect-non-literal-regexp",
+   "path": "C:\\proj\\backend\\src\\health\\crossFile\\roots.ts",
+   "start": {
+    "line": 99,
+    "col": 10,
+    "offset": 5038
+   },
+   "end": {
+    "line": 99,
+    "col": 31,
+    "offset": 5059
+   },
+   "extra": {
+    "message": "RegExp() called with a `glob` function argument, this might allow an attacker to cause a Regular Expression Denial-of-Service (ReDoS) within your application as RegExP blocks the main thread. For this reason, it is recommended to use hardcoded regexes instead. If your regex is run on user-controlled input, consider performing input validation or use a regex checking/sanitization library such as https://www.npmjs.com/package/recheck to verify that the regex does not appear vulnerable to ReDoS.",
+    "metadata": {
+     "owasp": [
+      "A05:2021 - Security Misconfiguration",
+      "A06:2017 - Security Misconfiguration"
+     ],
+     "cwe": [
+      "CWE-1333: Inefficient Regular Expression Complexity"
+     ],
+     "references": [
+      "https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS"
+     ],
+     "source-rule-url": "https://github.com/nodesecurity/eslint-plugin-security/blob/master/rules/detect-non-literal-regexp.js",
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "subcategory": [
+      "vuln"
+     ],
+     "likelihood": "MEDIUM",
+     "impact": "MEDIUM",
+     "confidence": "LOW"
+    },
+    "severity": "WARNING",
+    "fingerprint": "504d22187c987ca530b4037716bcc661bf4d6f5a4d902c0c12967c044f9d45e6e707d90b906186a9ee0240a07af0120166aa7e634a8598deb7651ed18c8a7c29_0",
+    "lines": "  return new RegExp(`^${re}$`);"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.detect-non-literal-regexp",
+   "path": "C:\\proj\\backend\\src\\homeScratch\\paths.ts",
+   "start": {
+    "line": 96,
+    "col": 16,
+    "offset": 3713
+   },
+   "end": {
+    "line": 96,
+    "col": 58,
+    "offset": 3755
+   },
+   "extra": {
+    "message": "RegExp() called with a `config` function argument, this might allow an attacker to cause a Regular Expression Denial-of-Service (ReDoS) within your application as RegExP blocks the main thread. For this reason, it is recommended to use hardcoded regexes instead. If your regex is run on user-controlled input, consider performing input validation or use a regex checking/sanitization library such as https://www.npmjs.com/package/recheck to verify that the regex does not appear vulnerable to ReDoS.",
+    "metadata": {
+     "owasp": [
+      "A05:2021 - Security Misconfiguration",
+      "A06:2017 - Security Misconfiguration"
+     ],
+     "cwe": [
+      "CWE-1333: Inefficient Regular Expression Complexity"
+     ],
+     "references": [
+      "https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS"
+     ],
+     "source-rule-url": "https://github.com/nodesecurity/eslint-plugin-security/blob/master/rules/detect-non-literal-regexp.js",
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "subcategory": [
+      "vuln"
+     ],
+     "likelihood": "MEDIUM",
+     "impact": "MEDIUM",
+     "confidence": "LOW"
+    },
+    "severity": "WARNING",
+    "fingerprint": "ff1679954ae234dbd5db4e78b1718b77ea407aabb73fa644134acd2016ab8670eb14fc2f42d5101d795887f39a5bc3983ca6c3776fffb7b1142f6998ff66ca93_0",
+    "lines": "  const idRe = new RegExp(`^${idPrefix}_\\\\d+_[0-9a-f]+$`);"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.detect-non-literal-regexp",
+   "path": "C:\\proj\\backend\\src\\projectIdentity.ts",
+   "start": {
+    "line": 116,
+    "col": 19,
+    "offset": 4969
+   },
+   "end": {
+    "line": 116,
+    "col": 75,
+    "offset": 5025
+   },
+   "extra": {
+    "message": "RegExp() called with a `field` function argument, this might allow an attacker to cause a Regular Expression Denial-of-Service (ReDoS) within your application as RegExP blocks the main thread. For this reason, it is recommended to use hardcoded regexes instead. If your regex is run on user-controlled input, consider performing input validation or use a regex checking/sanitization library such as https://www.npmjs.com/package/recheck to verify that the regex does not appear vulnerable to ReDoS.",
+    "metadata": {
+     "owasp": [
+      "A05:2021 - Security Misconfiguration",
+      "A06:2017 - Security Misconfiguration"
+     ],
+     "cwe": [
+      "CWE-1333: Inefficient Regular Expression Complexity"
+     ],
+     "references": [
+      "https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS"
+     ],
+     "source-rule-url": "https://github.com/nodesecurity/eslint-plugin-security/blob/master/rules/detect-non-literal-regexp.js",
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "subcategory": [
+      "vuln"
+     ],
+     "likelihood": "MEDIUM",
+     "impact": "MEDIUM",
+     "confidence": "LOW"
+    },
+    "severity": "WARNING",
+    "fingerprint": "6e57596e739025d3b2c340e4cccb7bcccc214e400900d39e4d7c2c748c6c313f2783bf04cdb40f59c17b62bf2c76f3f52a42d204404e7c0146e09dc54502b50c_0",
+    "lines": "    const match = new RegExp(`\"${field}\"\\\\s*:\\\\s*(\"(?:[^\"\\\\\\\\]|\\\\\\\\.)*\")`).exec(buffer.toString('utf8', 0, length));"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.detect-non-literal-regexp",
+   "path": "C:\\proj\\backend\\src\\projectInit\\preview.ts",
+   "start": {
+    "line": 49,
+    "col": 10,
+    "offset": 2162
+   },
+   "end": {
+    "line": 49,
+    "col": 35,
+    "offset": 2187
+   },
+   "extra": {
+    "message": "RegExp() called with a `glob` function argument, this might allow an attacker to cause a Regular Expression Denial-of-Service (ReDoS) within your application as RegExP blocks the main thread. For this reason, it is recommended to use hardcoded regexes instead. If your regex is run on user-controlled input, consider performing input validation or use a regex checking/sanitization library such as https://www.npmjs.com/package/recheck to verify that the regex does not appear vulnerable to ReDoS.",
+    "metadata": {
+     "owasp": [
+      "A05:2021 - Security Misconfiguration",
+      "A06:2017 - Security Misconfiguration"
+     ],
+     "cwe": [
+      "CWE-1333: Inefficient Regular Expression Complexity"
+     ],
+     "references": [
+      "https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS"
+     ],
+     "source-rule-url": "https://github.com/nodesecurity/eslint-plugin-security/blob/master/rules/detect-non-literal-regexp.js",
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "subcategory": [
+      "vuln"
+     ],
+     "likelihood": "MEDIUM",
+     "impact": "MEDIUM",
+     "confidence": "LOW"
+    },
+    "severity": "WARNING",
+    "fingerprint": "f552e3aeb4eee78ce18db7861055e58ceb8ddbfe30df8c9433e4df23cbdd840d03c63cd0aaba9c2819a72301de6968628e64da28f6e3958c484fa28dba506d5d_0",
+    "lines": "  return new RegExp(`^${source}$`);"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.correctness.missing-template-string-indicator",
+   "path": "C:\\proj\\backend\\src\\__tests__\\claudeConfigLockProcess.test.ts",
+   "start": {
+    "line": 16,
+    "col": 33,
+    "offset": 836
+   },
+   "end": {
+    "line": 22,
+    "col": 6,
+    "offset": 1125
+   },
+   "extra": {
+    "message": "This looks like a JavaScript template string. Are you missing a '$' in front of '{...}'?",
+    "metadata": {
+     "category": "correctness",
+     "technology": [
+      "js"
+     ]
+    },
+    "severity": "INFO",
+    "fingerprint": "68d4b1e36f9fe0cbc3c6ba24333a27c9f16c170528dccacda37eee1db3da86fe067711092856fc71e95061a725e183d5fdb0785da1dc80be30bbc404e05df302_0",
+    "lines": "    await fs.writeFile(fixture, `\n      import { withClaudeConfigLock } from ${JSON.stringify(moduleUrl)};\n      await withClaudeConfigLock(async () => {\n        process.stdout.write('holding-lock\\\\n');\n        await new Promise(() => { setInterval(() => {}, 1000); });\n      }, { lockDir: process.argv[2] });\n    `);"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.correctness.missing-template-string-indicator",
+   "path": "C:\\proj\\backend\\src\\__tests__\\claudeConfigLockProcess.test.ts",
+   "start": {
+    "line": 16,
+    "col": 34,
+    "offset": 837
+   },
+   "end": {
+    "line": 17,
+    "col": 44,
+    "offset": 882
+   },
+   "extra": {
+    "message": "This looks like a JavaScript template string. Are you missing a '$' in front of '{...}'?",
+    "metadata": {
+     "category": "correctness",
+     "technology": [
+      "js"
+     ]
+    },
+    "severity": "INFO",
+    "fingerprint": "a9e9d7b00f8d5535993382878e3a44499c9df130e10b7a114e1a9c87507d74a99b096bfc4ad7073a974c001c43d0791e9240229e3c616274ac08a6f7b06eb883_0",
+    "lines": "    await fs.writeFile(fixture, `\n      import { withClaudeConfigLock } from ${JSON.stringify(moduleUrl)};"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.correctness.missing-template-string-indicator",
+   "path": "C:\\proj\\backend\\src\\__tests__\\claudeConfigLockProcess.test.ts",
+   "start": {
+    "line": 17,
+    "col": 72,
+    "offset": 910
+   },
+   "end": {
+    "line": 22,
+    "col": 5,
+    "offset": 1124
+   },
+   "extra": {
+    "message": "This looks like a JavaScript template string. Are you missing a '$' in front of '{...}'?",
+    "metadata": {
+     "category": "correctness",
+     "technology": [
+      "js"
+     ]
+    },
+    "severity": "INFO",
+    "fingerprint": "8e58585e12ec832b3e71fcc3facb65e73eae06e9316e3d344f520a054f328333cc9ca310b95b4daa4339a7f0bc982e7b1e4f27a4d0adbc0c18476051bdf50b00_0",
+    "lines": "      import { withClaudeConfigLock } from ${JSON.stringify(moduleUrl)};\n      await withClaudeConfigLock(async () => {\n        process.stdout.write('holding-lock\\\\n');\n        await new Promise(() => { setInterval(() => {}, 1000); });\n      }, { lockDir: process.argv[2] });\n    `);"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.correctness.missing-template-string-indicator",
+   "path": "C:\\proj\\backend\\src\\__tests__\\consoleSink.test.ts",
+   "start": {
+    "line": 53,
+    "col": 21,
+    "offset": 2534
+   },
+   "end": {
+    "line": 70,
+    "col": 2,
+    "offset": 3218
+   },
+   "extra": {
+    "message": "This looks like a JavaScript template string. Are you missing a '$' in front of '{...}'?",
+    "metadata": {
+     "category": "correctness",
+     "technology": [
+      "js"
+     ]
+    },
+    "severity": "INFO",
+    "fingerprint": "b11d65f6388539ac0308d903d237395badc7be422c67f8058466e85f28e81f4b59116f3a0d4516fbbc4b1b910d2d9f67af9d3ca17e9308f79f7c2f500c9b9ba0_0",
+    "lines": "const FLOOD_CHILD = `\n(async () => {\n  const { installCrashLogging } = await import(process.env.CRASHLOG_URL);\n  installCrashLogging('backend');\n  let beats = 0;\n  const beat = setInterval(() => { console.error('BEAT ' + ++beats); }, 20);\n  // ~80KB per tick â€” past a 64KB pipe buffer on the very first one.\n  const flood = setInterval(() => {\n    for (let i = 0; i < 20; i++) console.log('x'.repeat(4000));\n  }, 5);\n  setTimeout(() => {\n    clearInterval(beat); clearInterval(flood);\n    // Exit code, not a log line: reaching its own shutdown is the assertion,\n    // and a queued line can legitimately be dropped when output is stalled.\n    process.exit(7);\n  }, 2500);\n})();\n`;"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.correctness.missing-template-string-indicator",
+   "path": "C:\\proj\\backend\\src\\__tests__\\consoleSink.test.ts",
+   "start": {
+    "line": 53,
+    "col": 22,
+    "offset": 2535
+   },
+   "end": {
+    "line": 69,
+    "col": 8,
+    "offset": 3217
+   },
+   "extra": {
+    "message": "This looks like a JavaScript template string. Are you missing a '$' in front of '{...}'?",
+    "metadata": {
+     "category": "correctness",
+     "technology": [
+      "js"
+     ]
+    },
+    "severity": "INFO",
+    "fingerprint": "a31d0c2cd23425a627e7d57e0dfcadf60e6ed5eb4bac5e85b04999625dfc5ddbe88456dd9e0852c08fb9d7f08fa4927ec5bd980950687589d94f988b034e599e_0",
+    "lines": "const FLOOD_CHILD = `\n(async () => {\n  const { installCrashLogging } = await import(process.env.CRASHLOG_URL);\n  installCrashLogging('backend');\n  let beats = 0;\n  const beat = setInterval(() => { console.error('BEAT ' + ++beats); }, 20);\n  // ~80KB per tick â€” past a 64KB pipe buffer on the very first one.\n  const flood = setInterval(() => {\n    for (let i = 0; i < 20; i++) console.log('x'.repeat(4000));\n  }, 5);\n  setTimeout(() => {\n    clearInterval(beat); clearInterval(flood);\n    // Exit code, not a log line: reaching its own shutdown is the assertion,\n    // and a queued line can legitimately be dropped when output is stalled.\n    process.exit(7);\n  }, 2500);\n})();"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.correctness.missing-template-string-indicator",
+   "path": "C:\\proj\\backend\\src\\__tests__\\consoleSink.test.ts",
+   "start": {
+    "line": 117,
+    "col": 23,
+    "offset": 5326
+   },
+   "end": {
+    "line": 124,
+    "col": 2,
+    "offset": 5540
+   },
+   "extra": {
+    "message": "This looks like a JavaScript template string. Are you missing a '$' in front of '{...}'?",
+    "metadata": {
+     "category": "correctness",
+     "technology": [
+      "js"
+     ]
+    },
+    "severity": "INFO",
+    "fingerprint": "ad3e5082e9cc08bc50b7696b8b678d1e15f11017de2b262141a3c5119a21b24309d0827ccc3a4856dd4e4f67f3516f555c0f1ac19c59ef22483442977cab6e43_0",
+    "lines": "const EXITING_CHILD = `\n(async () => {\n  const { installCrashLogging } = await import(process.env.CRASHLOG_URL);\n  installCrashLogging('backend');\n  console.log('[lattice-backend] startup error: boom');\n  process.exit(3);\n})();\n`;"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.unsafe-formatstring",
+   "path": "C:\\proj\\backend\\src\\health\\watcher\\fileAnalysis.ts",
+   "start": {
+    "line": 143,
+    "col": 21,
+    "offset": 5982
+   },
+   "end": {
+    "line": 143,
+    "col": 63,
+    "offset": 6024
+   },
+   "extra": {
+    "message": "Detected string concatenation with a non-literal variable in a util.format / console.log function. If an attacker injects a format specifier in the string, it will forge the log message. Try to use constant values for the format string.",
+    "metadata": {
+     "cwe": [
+      "CWE-134: Use of Externally-Controlled Format String"
+     ],
+     "owasp": [
+      "A01:2021 - Broken Access Control"
+     ],
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "subcategory": [
+      "audit"
+     ],
+     "likelihood": "MEDIUM",
+     "impact": "LOW",
+     "confidence": "LOW",
+     "references": [
+      "https://cwe.mitre.org/data/definitions/134.html"
+     ]
+    },
+    "severity": "INFO",
+    "fingerprint": "280709590df574d8e528856d39714f15d427f6b5434653a56ec7c9978cbf3a6f74641ee9d6d1e27b2f307a3f21cea9fef98e3507ad7ed3a1e5d2868ed972a9d3_0",
+    "lines": "      console.error(`[health] analyze failed for ${filePath}:`, err);"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.unsafe-formatstring",
+   "path": "C:\\proj\\backend\\src\\homeScratch\\cleanup.ts",
+   "start": {
+    "line": 64,
+    "col": 18,
+    "offset": 3135
+   },
+   "end": {
+    "line": 64,
+    "col": 65,
+    "offset": 3182
+   },
+   "extra": {
+    "message": "Detected string concatenation with a non-literal variable in a util.format / console.log function. If an attacker injects a format specifier in the string, it will forge the log message. Try to use constant values for the format string.",
+    "metadata": {
+     "cwe": [
+      "CWE-134: Use of Externally-Controlled Format String"
+     ],
+     "owasp": [
+      "A01:2021 - Broken Access Control"
+     ],
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "subcategory": [
+      "audit"
+     ],
+     "likelihood": "MEDIUM",
+     "impact": "LOW",
+     "confidence": "LOW",
+     "references": [
+      "https://cwe.mitre.org/data/definitions/134.html"
+     ]
+    },
+    "severity": "INFO",
+    "fingerprint": "8fc1e694d543b9939d1bf13bae483e1f574040e0ac33ed1c07ea8f756c2b836af568c3dadb1ddd9fb9b3d8d02baaae3625ad51ef88becb8bf9bce5667985da76_0",
+    "lines": "    console.warn(`${logLabel} cleanup skipped/failed for ${id}:`, err);"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.unsafe-formatstring",
+   "path": "C:\\proj\\backend\\src\\homeScratch\\registry.ts",
+   "start": {
+    "line": 53,
+    "col": 23,
+    "offset": 1903
+   },
+   "end": {
+    "line": 53,
+    "col": 57,
+    "offset": 1937
+   },
+   "extra": {
+    "message": "Detected string concatenation with a non-literal variable in a util.format / console.log function. If an attacker injects a format specifier in the string, it will forge the log message. Try to use constant values for the format string.",
+    "metadata": {
+     "cwe": [
+      "CWE-134: Use of Externally-Controlled Format String"
+     ],
+     "owasp": [
+      "A01:2021 - Broken Access Control"
+     ],
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "subcategory": [
+      "audit"
+     ],
+     "likelihood": "MEDIUM",
+     "impact": "LOW",
+     "confidence": "LOW",
+     "references": [
+      "https://cwe.mitre.org/data/definitions/134.html"
+     ]
+    },
+    "severity": "INFO",
+    "fingerprint": "20518cdb3d06863a2dfc162c9a857f977b39d3fea4554ef19590f67ecfacd13561fea625d04f05af60b563937f02af55406bc340989a4be840c2f643257f4141_0",
+    "lines": "        console.error(`${args.logLabel} listener threw:`, err);"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.unsafe-formatstring",
+   "path": "C:\\proj\\backend\\src\\mergeRuns\\abandonedResolver.ts",
+   "start": {
+    "line": 34,
+    "col": 9,
+    "offset": 1760
+   },
+   "end": {
+    "line": 34,
+    "col": 80,
+    "offset": 1831
+   },
+   "extra": {
+    "message": "Detected string concatenation with a non-literal variable in a util.format / console.log function. If an attacker injects a format specifier in the string, it will forge the log message. Try to use constant values for the format string.",
+    "metadata": {
+     "cwe": [
+      "CWE-134: Use of Externally-Controlled Format String"
+     ],
+     "owasp": [
+      "A01:2021 - Broken Access Control"
+     ],
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "subcategory": [
+      "audit"
+     ],
+     "likelihood": "MEDIUM",
+     "impact": "LOW",
+     "confidence": "LOW",
+     "references": [
+      "https://cwe.mitre.org/data/definitions/134.html"
+     ]
+    },
+    "severity": "INFO",
+    "fingerprint": "1826fc3b98947d555645ea2971e86b8be705d6d76234bc2895f3473c672c7bf8d63ddb08cd09f543af405009f69531fb558ca49e2f186567f2e85a6ddd0a0b40_0",
+    "lines": "        `[abandoned-resolver] task ${task.id}: abort check threw (continuing):`,"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.unsafe-formatstring",
+   "path": "C:\\proj\\backend\\src\\mergeRuns\\flaggedConflict.ts",
+   "start": {
+    "line": 68,
+    "col": 19,
+    "offset": 2465
+   },
+   "end": {
+    "line": 68,
+    "col": 64,
+    "offset": 2510
+   },
+   "extra": {
+    "message": "Detected string concatenation with a non-literal variable in a util.format / console.log function. If an attacker injects a format specifier in the string, it will forge the log message. Try to use constant values for the format string.",
+    "metadata": {
+     "cwe": [
+      "CWE-134: Use of Externally-Controlled Format String"
+     ],
+     "owasp": [
+      "A01:2021 - Broken Access Control"
+     ],
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "subcategory": [
+      "audit"
+     ],
+     "likelihood": "MEDIUM",
+     "impact": "LOW",
+     "confidence": "LOW",
+     "references": [
+      "https://cwe.mitre.org/data/definitions/134.html"
+     ]
+    },
+    "severity": "INFO",
+    "fingerprint": "81da5f0eb0708ecd47889909b99fab139de9278391f444c65ceb631bd6be814bac957d1129ad0369a59668e0784f3fe1ee1d70bdf13535c1c362010512c1a23c_0",
+    "lines": "    console.error(`[merge-run] re-spawn for ${task.id} failed:`, err);"
+   }
+  },
+  {
+   "check_id": "rules-archived.javascript.lang.security.audit.unsafe-formatstring",
+   "path": "C:\\proj\\backend\\src\\mergeRuns\\withMergeLock.ts",
+   "start": {
+    "line": 49,
+    "col": 19,
+    "offset": 2082
+   },
+   "end": {
+    "line": 49,
+    "col": 75,
+    "offset": 2138
+   },
+   "extra": {
+    "message": "Detected string concatenation with a non-literal variable in a util.format / console.log function. If an attacker injects a format specifier in the string, it will forge the log message. Try to use constant values for the format string.",
+    "metadata": {
+     "cwe": [
+      "CWE-134: Use of Externally-Controlled Format String"
+     ],
+     "owasp": [
+      "A01:2021 - Broken Access Control"
+     ],
+     "category": "security",
+     "technology": [
+      "javascript"
+     ],
+     "subcategory": [
+      "audit"
+     ],
+     "likelihood": "MEDIUM",
+     "impact": "LOW",
+     "confidence": "LOW",
+     "references": [
+      "https://cwe.mitre.org/data/definitions/134.html"
+     ]
+    },
+    "severity": "INFO",
+    "fingerprint": "ac8ab2a411107c8d15a1becb950bd1a7c3948b6545d3d989495c846104924822f2fcafd179d6b27751cc74f22b0e5de47a63d7cc29b2a9f4de7d482c0a6e6a7c_0",
+    "lines": "    console.error(`[merge-run] uncaught error ${errorContext} ${task.id}:`, err);"
+   }
+  },
+  {
+   "check_id": "rules-archived.typescript.lang.correctness.useless-ternary",
+   "path": "C:\\proj\\backend\\src\\__tests__\\postMergeHookTrigger.test.ts",
+   "start": {
+    "line": 40,
+    "col": 7,
+    "offset": 1537
+   },
+   "end": {
+    "line": 40,
+    "col": 59,
+    "offset": 1589
+   },
+   "extra": {
+    "message": "It looks like no matter how currentRun?.status === 'running' is evaluated, this expression returns currentRun. This is probably a copy-paste error.",
+    "metadata": {
+     "category": "correctness",
+     "technology": [
+      "react"
+     ]
+    },
+    "severity": "ERROR",
+    "fingerprint": "a4ebe7f8fa29faf011397b396b2ace914a96b9b6230c43521e4dd816bdd3ae9675d2a06cd1924410f0d6fa6f4fe49b4a710a9ffec63ed9076fe41620587846a1_0",
+    "lines": "      currentRun?.status === 'running' ? currentRun : null,"
+   }
+  }
+ ],
+ "errors": [
+  {
+   "code": 3,
+   "level": "warn",
+   "type": [
+    "PartialParsing",
+    [
+     {
+      "path": "C:\\proj\\backend\\src\\health\\analyze.ts",
+      "start": {
+       "line": 69,
+       "col": 9,
+       "offset": 0
+      },
+      "end": {
+       "line": 69,
+       "col": 35,
+       "offset": 26
+      }
+     }
+    ]
+   ],
+   "message": "Syntax error at line C:\\proj\\backend\\src\\health\\analyze.ts:69:\n `import('web-tree-sitter').` was unexpected",
+   "path": "C:\\proj\\backend\\src\\health\\analyze.ts"
+  },
+  {
+   "code": 3,
+   "level": "warn",
+   "type": "Syntax error",
+   "message": "Syntax error at line C:\\proj\\backend\\src\\__tests__\\markdownBatch.test.ts:1:\n `import { test } from 'node:test';\r\nimport assert from 'node:assert/strict';\r\nimport {\r\n  parseMarkdownDoc,\r\n  parseMarkdownTasks,\r\n  serializeTasksAsMarkdown,\r\n} from '../routes/tasks/markdownBatch.js';\r\n\r\ntest('parseMarkdownTasks: top-level headings create tasks', () => {\r\n  assert.deepEqual(parseMarkdownTasks('# First\\nBody\\n# Second\\nMore'), [\r\n    { title: 'First', description: 'Body' },\r\n    { title: 'Second', description: 'More' },\r\n  ]);\r\n});\r\n\r\ntest('parseMarkdownTasks: discards preamble before the first heading', () => {\r\n  assert.deepEqual(parseMarkdownTasks('intro\\n\\nstill intro\\n# Task\\nBody'), [\r\n    { title: 'Task', description: 'Body' },\r\n  ]);\r\n});\r\n\r\ntest('parseMarkdownTasks: omits blank descriptions', () => {\r\n  assert.deepEqual(parseMarkdownTasks('# Title only\\n\\n\\n# Also blank\\n   '), [\r\n    { title: 'Title only' },\r\n    { title: 'Also blank' },\r\n  ]);\r\n});\r\n\r\ntest('parseMarkdownTasks: preserves multi-line descriptions', () => {\r\n  assert.deepEqual(parseMarkdownTasks('# Task\\nline one\\nline two\\n\\nline four'), [\r\n    { title: 'Task', description: 'line one\\nline two\\n\\nline four' },\r\n  ]);\r\n});\r\n\r\ntest('parseMarkdownDoc: extracts id + status from heading metadata block', () => {\r\n  const doc = parseMarkdownDoc('# {id=t_abc, status=open} Title\\nBody');\r\n  assert.deepEqual(doc.tasks, [\r\n    { id: 't_abc', status: 'open', title: 'Title', description: 'Body' },\r\n  ]);\r\n});\r\n\r\ntest('parseMarkdownDoc: metadata block supports whitespace separator', () => {\r\n  const doc = parseMarkdownDoc('# {id=t_abc status=qa} Title');\r\n  assert.deepEqual(doc.tasks, [{ id: 't_abc', status: 'qa', title: 'Title' }]);\r\n});\r\n\r\ntest('parseMarkdownDoc: heading without metadata is a plain task', () => {\r\n  const doc = parseMarkdownDoc('# Brand new task\\nDetails');\r\n  assert.deepEqual(doc.tasks, [{ title: 'Brand new task', description: 'Details' }]);\r\n});\r\n\r\ntest('parseMarkdownDoc: frontmatter project + hash are extracted', () => {\r\n  const doc = parseMarkdownDoc(\r\n    '<!-- lattice: project=C:/dev/foo, hash=abc123 -->\\n# Title',\r\n  );\r\n  assert.equal(doc.project, 'C:/dev/foo');\r\n  assert.equal(doc.hash, 'abc123');\r\n  assert.deepEqual(doc.tasks, [{ title: 'Title' }]);\r\n});\r\n\r\ntest('parseMarkdownDoc: subheadings stay in description body', () => {\r\n  const doc = parseMarkdownDoc('# Task\\n## Subhead\\nBody\\n### Deeper');\r\n  assert.deepEqual(doc.tasks, [\r\n    { title: 'Task', description: '## Subhead\\nBody\\n### Deeper' },\r\n  ]);\r\n});\r\n\r\ntest('parseMarkdownDoc: # inside fenced code is body, not a heading', () => {\r\n  const doc = parseMarkdownDoc('# Task\\nIntro\\n```\\n# fake heading\\nmore\\n```\\nafter');\r\n  assert.equal(doc.tasks.length, 1);\r\n  assert.equal(doc.tasks[0].title, 'Task');\r\n  assert.match(doc.tasks[0].description!, /# fake heading/);\r\n  assert.match(doc.tasks[0].description!, /after$/);\r\n});\r\n\r\ntest('serializeTasksAsMarkdown: emits frontmatter + round-trippable heading', () => {\r\n  const md = serializeTasksAsMarkdown(\r\n    [\r\n      { id: 't_one', title: 'First', description: 'body', status: 'open' },\r\n      { id: 't_two', title: 'Second', status: 'qa' },\r\n    ],\r\n    { canonicalProject: 'C:/dev/foo', hash: 'abc123', statusFilter: 'open,qa' },\r\n  );\r\n  assert.match(md, /<!-- lattice: project=C:\\/dev\\/foo, hash=abc123, status=open,qa -->/);\r\n  assert.match(md, /^# \\{id=t_one, status=open\\} First$/m);\r\n  assert.match(md, /^# \\{id=t_two, status=qa\\} Second$/m);\r\n\r\n  // Round-trip: serialize → parse → same data\r\n  const doc = parseMarkdownDoc(md);\r\n  assert.equal(doc.project, 'C:/dev/foo');\r\n  assert.equal(doc.hash, 'abc123');\r\n  assert.deepEqual(doc.tasks, [\r\n    { id: 't_one', status: 'open', title: 'First', description: 'body' },\r\n    { id: 't_two', status: 'qa', title: 'Second' },\r\n  ]);\r\n});\r\n\r\ntest('serializeTasksAsMarkdown: empty list still emits frontmatter', () => {\r\n  const md = serializeTasksAsMarkdown([], { canonicalProject: 'X', hash: 'h' });\r\n  assert.match(md, /<!-- lattice: project=X, hash=h -->/);\r\n  assert.match(md, /<!-- no tasks -->/);\r\n});\r\n` was unexpected",
+   "path": "C:\\proj\\backend\\src\\__tests__\\markdownBatch.test.ts"
+  }
+ ],
+ "paths": {
+  "scanned": [
+   "C:\\proj\\backend\\src\\__tests__\\activityHook.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\agentActivity.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\agentCommandBuilder.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\AGENTS.md",
+   "C:\\proj\\backend\\src\\__tests__\\agentSessions.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\appendSummary.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\CLAUDE.md",
+   "C:\\proj\\backend\\src\\__tests__\\claudeConfigApply.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\claudeConfigAtomicWrite.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\claudeConfigLock.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\claudeConfigLockProcess.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\claudeConfigLockSteal.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\claudeProjectEntryPrune.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\cleanupSafety.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\codexActivityReplay.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\codexStopHook.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\codexTerminalActivity.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\codexTrust.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\colorSlot.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\completeCrashSafe.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\completeDecision.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\concurrencyLimit.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\configReloader.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\consoleSink.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\corsCsrf.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\crashLog.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\defaultPromptMigrations.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\defaultShell.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\depsCheck.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\devBackendLifecycle.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\devCompilerLifecycle.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\devCompilerRecoveryIntegration.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\devDistWatcher.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\devExitStatus.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\devTscWatch.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\distRestartVerify.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\envDetect.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\execSignalKill.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\finalizeResolved.test.ts",
+   "C:\\proj\\backend\\src\\__tests__\\finalizeResyncConflict.test.ts"
+  ]
+ },
+ "skipped_rules": []
+}

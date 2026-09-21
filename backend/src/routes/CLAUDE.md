@@ -2,9 +2,9 @@
 
 One Express `Router` per domain. Every module exports a `buildXRouter(...)`
 factory and `server/app.ts` mounts them in this order: health, search,
-settings, globalSettings, mcp, projectInit, terminals, terminalTabs, tasks,
-agentActivity, projectClaude, mergeRuns, postMergeHooks, pushRuns, qaRuns,
-workflows.
+settings, globalSettings, mcp, opengrep, projectInit, terminals, terminalTabs,
+tasks, agentActivity, projectClaude, mergeRuns, postMergeHooks, pushRuns,
+qaRuns, workflows.
 
 ## Route map
 
@@ -20,6 +20,14 @@ workflows.
 - `globalSettings.ts` — `/api/global-settings` machine-global PATCH/GET;
   applies spawn softCap live and reconciles Pi providers when changed.
 - `mcp.ts` — MCP catalog, secrets, env presence, validation, and config import.
+- `opengrep.ts` — Opengrep (SAST): `GET /api/opengrep/status`, the user-clicked
+  `POST /api/opengrep/install` + `POST /api/opengrep/rules/install` /
+  `DELETE /api/opengrep/rules/:packId` (202 + poll `/status`), and the
+  agent-facing `POST /api/opengrep/scan` + `GET /api/opengrep/scans[/:id]`
+  (`latest` allowed; `format=md`, `rule=`/`file=`/`severity=`/`budgetKb=`
+  narrow the digest). 409 codes `busy` / `not-installed` / `no-rules`. Thin
+  over `../opengrep/` (see its CLAUDE.md); project-scoped paths use
+  `readProjectParam`. Static paths, mount order unconstrained.
 - `projectInit.ts` — `POST /api/project-init/preview` (what a first commit
   would capture, re-POSTed as the user edits the `.gitignore`) and
   `POST /api/project-init` (`git init` + first commit). Thin: validation plus

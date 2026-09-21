@@ -44,6 +44,9 @@ export type GlobalSettings = {
   piModelMenu?: string[];
   // Lattice-managed Pi providers, reconciled into ~/.pi/agent/models.json.
   piProviders?: PiProvider[];
+  // Opengrep rule-pack enables (`packs: { [packId]: boolean }`, absent = the
+  // pack's default). Machine-global: packs are installed once per machine.
+  opengrep?: { packs?: Record<string, boolean> };
 };
 
 export async function fetchGlobalSettings(): Promise<GlobalSettings> {

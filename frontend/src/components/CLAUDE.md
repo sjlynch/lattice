@@ -27,7 +27,7 @@
   bumps after a successful init so the navbar re-probes and re-subscribes to
   `/ws/git-branch`. Pure chip/copy/format logic is in `gitSetupDerive.ts`
   (unit-tested in `src/__tests__/gitSetupDerive.test.ts`).
-- `SettingsDialog.tsx` + `settings/` — settings tabs (Terminals / Agent prompts / Metrics / Agents / Pi / MCP) hosted in a **`FloatingPanel`** (draggable/resizable/maximizable, no backdrop — the app behind it stays interactive; titlebar carries the `×` close + maximize; geometry persists under `lattice.settings.window`), not a modal `Modal`; keep the ref handles as thin save adapters and put per-tab draft state in focused `use*Draft` hooks. The "Pi" tab (`settings/PiTab.tsx`) manages Pi endpoints + the model-menu curation (machine-global).
+- `SettingsDialog.tsx` + `settings/` — settings tabs (Terminals / Agent prompts / Metrics / Agents / Pi / MCP / Tools) hosted in a **`FloatingPanel`** (draggable/resizable/maximizable, no backdrop — the app behind it stays interactive; titlebar carries the `×` close + maximize; geometry persists under `lattice.settings.window`), not a modal `Modal`; keep the ref handles as thin save adapters and put per-tab draft state in focused `use*Draft` hooks. The "Pi" tab (`settings/PiTab.tsx`) manages Pi endpoints + the model-menu curation (machine-global). The "Tools" tab (`settings/ToolsTab.tsx`) is the Opengrep (SAST) engine / rule-pack installer (immediate, machine-global) plus this project's scan filter (saved with the footer).
 
 ## Big launchers (split into subdirs)
 
@@ -60,7 +60,7 @@ modules after.
 | `sidebar.css` | `.sidebar-*` — panel tabs, terminal tab strip, empty state, search, new-menu |
 | `modal.css` | `.modal-backdrop`, `.modal`, `.modal-header/body/footer` (+ `@keyframes modal-fade`) |
 | `confirm-dialog.css` | `.confirm-dialog-message`, `.btn-danger` (`shared/ConfirmDialog`) |
-| `settings.css` | Settings aggregator. Ordered partials under `styles/settings/`: `shell` (chrome/sections/controls/startup/`.settings-info-*`), `pi`, `env-notes`, `prompts`, `mcp` |
+| `settings.css` | Settings aggregator. Ordered partials under `styles/settings/`: `shell` (chrome/sections/controls/startup/`.settings-info-*`), `pi`, `env-notes`, `prompts`, `mcp`, `tools` (`.tools-*` — the Opengrep engine/pack cards + scan-filter textareas) |
 | `folder-picker.css` | `.path-row`, `.drive-*`, `.create-folder-row/input`, `.dir-list/row` |
 | `git-setup.css` | `.git-setup-*` (Git Setup dialog) + the folder picker's `.create-folder-block/git` and `.git-setup-inline-note`. Imported after `modal.css` so `.modal-header.git-setup-header` wins on order; the navbar chip's own rules stay in `appbar.css` |
 | `graph.css` | Graph aggregator. Ordered partials under `styles/graph/`: `hud-search` (`.graph-overlay`/`.graph-bottom-left`/`.graph-search*`/`.graph-counts`/`.loc-view-chip`), `overlay-key`, `context-menu` (`.graph-select-rect`/`.graph-selection-chip`/`.graph-context-menu`), `settings-panel` (`.graph-settings-fab/panel`), `toast` |
