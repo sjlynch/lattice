@@ -111,35 +111,51 @@ export async function startHomeScratchAgentSession(args: {
   // Bounded recursive scratch delete, run if the pty spawn fails.
   cleanup: (projectPath: string, id: string) => Promise<void>;
 }): Promise<StartedHomeScratchSession> {
-  const session = await setupHomeScratchSession({
-    paths: args.paths,
-    projectPath: args.projectPath,
-    instructionsFileName: args.instructionsFileName,
-    installHooks: args.installHooks,
-    renderInstructions: args.renderInstructions,
-  });
+  // Minted up front so ANY failure between mkdir and a live pty — a hook
+  // install / brief render that throws, or a spawn-queue rejection (not only
+  // an `{ error }` result) — reclaims the scratch dir now instead of leaving
+  // it for the next boot's sweep. The cleanup is the guarded bounded delete
+  // (id regex + strictly-under-root + not-in-repo), and it swallows its own
+  // errors, so it can never mask the original failure.
+  const id = args.paths.createSessionId();
+  let session: HomeScratchSession;
+  let sess: Awaited<ReturnType<typeof queuedCreateSession>>;
+  let command: string;
+  try {
+    session = await setupHomeScratchSession({
+      paths: args.paths,
+      projectPath: args.projectPath,
+      id,
+      instructionsFileName: args.instructionsFileName,
+      installHooks: args.installHooks,
+      renderInstructions: args.renderInstructions,
+    });
 
-  const command = args.buildCommand({
-    instructionsFile: session.instructionsFile,
-  });
+    command = args.buildCommand({
+      instructionsFile: session.instructionsFile,
+    });
 
-  const opts: CreateSessionOptions = {
-    cwd: session.cwd,
-    initialCommand: command,
-    projectPath: args.projectPath,
-    registry: {
-      owner: args.isQaRun ? 'qa' : args.registryOwner ?? 'push',
-      ...(args.registryLabel ? { label: args.registryLabel } : {}),
-    },
-  };
-  if (args.isQaRun) opts.isQaRun = true;
+    const opts: CreateSessionOptions = {
+      cwd: session.cwd,
+      initialCommand: command,
+      projectPath: args.projectPath,
+      registry: {
+        owner: args.isQaRun ? 'qa' : args.registryOwner ?? 'push',
+        ...(args.registryLabel ? { label: args.registryLabel } : {}),
+      },
+    };
+    if (args.isQaRun) opts.isQaRun = true;
 
-  const sess = await queuedCreateSession({
-    kind: args.queueKind,
-    priority: args.queuePriority,
-    dedupeKey: `${args.dedupeKeyPrefix}:${session.id}`,
-    opts,
-  });
+    sess = await queuedCreateSession({
+      kind: args.queueKind,
+      priority: args.queuePriority,
+      dedupeKey: `${args.dedupeKeyPrefix}:${session.id}`,
+      opts,
+    });
+  } catch (err) {
+    await args.cleanup(args.projectPath, id);
+    throw err;
+  }
   if ('error' in sess) {
     await args.cleanup(args.projectPath, session.id);
     throw new Error(sess.error);

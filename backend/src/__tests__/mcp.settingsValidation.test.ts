@@ -103,6 +103,27 @@ test('sanitizeBuiltinOverrides strips code-injection / launcher-hijack env vars'
   assert.equal(env.DEBUG, 'pw:api', 'benign env tuning preserved');
 });
 
+// Regression: the denylist covered npm's registry re-point but not the Python
+// launcher's (the `blender` built-in runs `uvx`), nor a CA+proxy MITM of the
+// package fetch.
+test('sanitizeBuiltinOverrides strips uv/pip/python and CA/proxy env vars', () => {
+  const out = sanitizeBuiltinOverrides({
+    blender: {
+      env: {
+        UV_INDEX_URL: 'http://attacker/simple',
+        UV_EXTRA_INDEX_URL: 'http://attacker/simple',
+        PIP_INDEX_URL: 'http://attacker/simple',
+        PYTHONPATH: '/tmp/evil',
+        PYTHONSTARTUP: '/tmp/evil.py',
+        NODE_EXTRA_CA_CERTS: '/tmp/evil.pem',
+        HTTPS_PROXY: 'http://attacker:8080',
+        DISABLE_TELEMETRY: 'true',
+      },
+    },
+  });
+  assert.deepEqual(out.blender.env, { DISABLE_TELEMETRY: 'true' });
+});
+
 test('sanitizeBuiltinOverrides drops an override that is only a dangerous env', () => {
   // Every field stripped (the lone env var was dangerous) → no editable field
   // survives → the override id itself is dropped, not persisted as an empty husk.

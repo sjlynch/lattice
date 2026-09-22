@@ -32,6 +32,18 @@ export function parseGitStatusPorcelain(out: string): GitUncommitted {
       applyHigherPriorityStatus(byPath, filePath, 'A');
       continue;
     }
+    // Unmerged (a conflicted merge/rebase): `DD` both-deleted is the only state
+    // whose file is actually gone. `DU`/`UD` ("deleted by us/them") still have
+    // the surviving side on disk — reading them as `D` fed `computeDeletedPaths`
+    // a phantom working-tree deletion and ghosted a file that was right there.
+    if (x === 'U' || y === 'U' || xy === 'AA' || xy === 'DD') {
+      applyHigherPriorityStatus(
+        byPath,
+        filePath,
+        xy === 'DD' ? 'D' : xy === 'AA' || xy === 'AU' || xy === 'UA' ? 'A' : 'M',
+      );
+      continue;
+    }
     if (x === '?' || y === '?') {
       applyHigherPriorityStatus(byPath, filePath, 'A');
       continue;

@@ -12,7 +12,10 @@ import path from 'node:path';
 // `import()`/`require()`, and the resolver maps NodeNext `.js` specifiers to
 // their `.ts` sources — the cached `imports` arrays from v2 predate all three,
 // so reuse would keep the dead-code graph disconnected.
-export const CACHE_VERSION = 3;
+// v4: Python import extraction records every name of `import a, b as c` and
+// the `pkg.name` submodule candidates of `from pkg import name` (v3 kept only
+// the first name / the bare package), and bare Python specs now resolve.
+export const CACHE_VERSION = 4;
 
 const CACHE_DIRNAME = '.lattice';
 const CACHE_FILENAME = 'health-cache.json';

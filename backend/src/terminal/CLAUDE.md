@@ -133,13 +133,19 @@ owns the node-pty processes.
   every pty shares, and N re-attaches after a backend restart pushed the health
   probe past its timeout. `kill` goes through `killSession` (the `killing`
   guard + process-tree kill), never a bare `pty.kill()`. Sizes are validated
-  with `isPtyDimension` (positive integer) here and in the upgrade handler. An
+  with `isPtyDimension` (positive integer, at most 32767 — ConPTY's 16-bit limit)
+  here and in the upgrade handler. A malformed upgrade target (one `new URL()`
+  rejects) is refused, never thrown — a throw there would exit the executor. An
   unknown id sends `session_lost` and does **not** silently respawn (that would
   be a reconnect loop). A client disconnect drops the subscriber but leaves the
   pty alive (refresh-recovery).
 - `kill.ts` — `killSession` (idempotent via the `killing` flag; `pty.kill` +
   Windows process-tree kill + a deferred `ensureClaudeConfigValid`) and
-  `killSessionsByCwd` (used by worktree teardown).
+  `killSessionsByCwd` (used by worktree teardown). Its `cwdIsAtOrUnder`
+  predicate is separator-agnostic and case-folds only on win32 — the same
+  comparison the backend's own "is a pty alive under this worktree" checks
+  (`mergeRuns/waiterLiveness.ts`, `recovery/liveSessions.ts`) make, so the two
+  can never disagree about which ptys a teardown kills.
 - `scrollbackStore.ts` — the disk-backed replay concern: a per-session append
   log under `~/.lattice/terminal-scrollback` so a large replay window stays off
   the heap, degrading to a bounded in-memory tail if disk is unavailable. Owns

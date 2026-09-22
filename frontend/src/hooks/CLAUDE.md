@@ -100,7 +100,9 @@ shared `userSettings.json` fetch:
 from**, and `loaded` is derived from that stamp *during render* — never set by
 an effect. An effect runs after the render that changed `activeFolder`, so the
 flag-based version reported `loaded: true` alongside the PREVIOUS project's
-settings for one commit.
+settings for one commit. The stored result is also dropped *during render* on
+any folder change, so an A→B→A round-trip can't serve A's older snapshot as
+loaded while A's refetch is in flight (`__tests__/userSettingsRoundTrip.test.ts`).
 
 `useStartupTerminalSync` stamps its list the same way, and a mismatched stamp
 reads as an EMPTY list rather than the last project's. Holding the old value is
@@ -136,7 +138,11 @@ posts) has to be keyed so it can't fire on a mismatched pair. Pinned by
   the dialog container; moves focus inside on open (respecting a child's
   `autoFocus`), wraps Tab/Shift+Tab within it, and restores focus to the opener
   on close. Used by `Modal`, `FloatingPanel`, and `TaskDetailOverlay`;
-  Escape-to-close stays each wrapper's own concern.
+  Escape-to-close stays each wrapper's own concern. Traps form an
+  innermost-wins stack (like `shared/useEscapeToClose`): only the most recently
+  opened one handles Tab, since `Modal` and `FloatingPanel` portal as sibling
+  trees and two live traps pulled focus back and forth (a confirm's middle
+  button was unreachable). Pinned by `__tests__/focusTrapStack.test.ts`.
 - `useDismissOnOutside(open, ref, onClose)` — shared popover/menu dismissal.
   While `open`, a document `pointerdown` outside `ref`'s element and a window
   Escape `keydown` both call `onClose` (read through a ref, so its identity never

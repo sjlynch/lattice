@@ -193,7 +193,9 @@ a space in it.
   **additive-only args** (an override can append a Playwright `--browser` flag but
   can't swap the package spec). `overrideSecurity.ts` is the env denylist
   (`sanitizeOverrideEnv`): an override's `env` can never set a code-exec /
-  launcher-hijack var (`NODE_OPTIONS`, `LD_PRELOAD`, `PATH`, `npm_config_*`, …).
+  launcher-hijack var (`NODE_OPTIONS`, `LD_PRELOAD`, `PATH`, `npm_config_*`,
+  the uv/pip equivalents `uv_*` / `pip_*`, `PYTHONPATH`-style interpreter
+  startup vars, CA-bundle / proxy vars that would MITM the package fetch, …).
   **A built-in override may TUNE a server but never re-point what it runs.**
 - `resolverPolicy.ts` — **MCP resolver policy** (pure, no I/O): `resolvePlaywright`.
   **Playwright has two scopes** — `mcpOverrides.playwright` is the GLOBAL toggle
@@ -224,7 +226,11 @@ a space in it.
 - `secrets.ts` — read/write `~/.lattice/mcpSecrets.json` (`0600`), kept in its
   OWN file so the settings endpoints never touch secret bytes. `redactSecrets()`
   → presence booleans; `secretHints()` → `••••<last4>`. **Raw values never cross
-  backend → browser.**
+  backend → browser.** (A value under 12 chars gets no tail at all.) Server ids
+  and env var names `__proto__` / `constructor` / `prototype` are refused on
+  every write and dropped on read: as plain-object keys they reached
+  Object.prototype (`constructor` + `keys` replaced the process-wide
+  `Object.keys`).
 - `claudeInject.ts` — pure shaping: `reconcileMcpServers(entry, managed)` (add
   managed, strip previously-managed-now-disabled via the `__latticeManagedMcp`
   sibling marker, leave the user's own entries alone) + `platformizeCommand`

@@ -17,7 +17,30 @@ export type WorktreeModifiedServiceDeps = {
   modifiedFilesForTask?: (task: Task, baseBranch: string) => Promise<string[]>;
   ttlMs?: number;
   now?: () => number;
+  probeConcurrency?: number;
 };
+
+// Worktrees probed at once (two short git processes each).
+const PROBE_CONCURRENCY = 8;
+
+// `Promise.all(items.map(fn))` with at most `limit` calls in flight; results
+// keep input order.
+async function mapBounded<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 function isActiveWorktreeTask(task: Task): boolean {
   return (
@@ -32,6 +55,7 @@ export function createWorktreeModifiedService(
   const loadTasks = deps.listTasks ?? listTasks;
   const resolveBaseBranch = deps.resolveBaseBranch ?? baseBranchResolver.resolve;
   const probeModifiedFiles = deps.modifiedFilesForTask ?? modifiedFilesForTask;
+  const probeConcurrency = Math.max(1, deps.probeConcurrency ?? PROBE_CONCURRENCY);
   const cache = createTtlCache<WorktreeModifiedPayload>(
     deps.ttlMs ?? RESULT_TTL_MS,
     deps.now,
@@ -64,13 +88,14 @@ export function createWorktreeModifiedService(
       payload = { tasks: [] };
     } else {
       const baseBranch = await resolveBaseBranch(projectPath);
-      const results = await Promise.all(
-        active.map(async (t) => ({
-          taskId: t.id,
-          colorIndex: t.colorIndex,
-          files: await probeModifiedFiles(t, baseBranch),
-        })),
-      );
+      // Bounded: each probe spawns two git processes, and a "Run All" board
+      // has dozens of active worktrees — an unbounded fan-out launched ~2N git
+      // processes at once on every `W` press.
+      const results = await mapBounded(active, probeConcurrency, async (t) => ({
+        taskId: t.id,
+        colorIndex: t.colorIndex,
+        files: await probeModifiedFiles(t, baseBranch),
+      }));
       payload = { tasks: results.filter((t) => t.files.length > 0) };
     }
 

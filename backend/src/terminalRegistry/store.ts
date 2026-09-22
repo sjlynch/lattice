@@ -187,8 +187,8 @@ export class TerminalRegistryStore extends ProjectStateManager<TerminalRecord[],
     return visible.map((r) => ({ ...r })).sort((a, b) => a.order - b.order || a.createdAt - b.createdAt);
   }
 
-  // Every non-ended record across every project loaded in this process (the
-  // exit watcher's working set).
+  // Every record (ended ones included — callers filter) across every project
+  // loaded in this process (the exit watcher's working set).
   loadedRecords(): Array<{ projectKey: string; record: TerminalRecord }> {
     const out: Array<{ projectKey: string; record: TerminalRecord }> = [];
     for (const [projectKey, records] of this.cacheEntries()) {
@@ -372,6 +372,12 @@ export class TerminalRegistryStore extends ProjectStateManager<TerminalRecord[],
         const records = this.getCached(projectKey) ?? [];
         const idx = records.findIndex((r) => r.id === record.id);
         if (idx < 0) return;
+        // The verdict is about the pty the snapshot named. A record relaunched
+        // onto a new pty (or ended) since then must not inherit it — a
+        // relaunch clears `lastBusy` precisely so the dead pty's state can't
+        // leak into the interruption verdict for the new one.
+        const cur = records[idx]!;
+        if (cur.ended || cur.serverId !== record.serverId) return;
         const list = [...records];
         list[idx] = { ...list[idx]!, lastBusy: { busy, at: now } };
         this.setCached(projectKey, list);

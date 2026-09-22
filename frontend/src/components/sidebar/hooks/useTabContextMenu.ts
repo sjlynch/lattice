@@ -4,6 +4,7 @@ import type { TerminalSpec } from '../../../TerminalsContext';
 import { useDismissOnOutside } from '../../../hooks/useDismissOnOutside';
 import { useConfirm } from '../../shared/ConfirmDialog';
 import type { Panel } from './usePanelState';
+import { bulkCloseTargets, type BulkCloseSide } from './tabBulkClose';
 
 type TabContextMenuState = {
   x: number;
@@ -58,30 +59,38 @@ export function useTabContextMenu({
     setTabContextMenu({ x: e.clientX, y: e.clientY, termId });
   }, []);
 
-  const handleCloseTabsToLeft = useCallback(
-    (termId: string) => {
-      const idx = visibleTerminals.findIndex((t) => t.id === termId);
-      const toClose = visibleTerminals.slice(0, idx).map((t) => t.id);
-      void confirmBulkClose(toClose, 'to the left');
+  // Targets are resolved against the tab's CURRENT position; a tab that has
+  // left the visible list since the menu opened closes nothing (see
+  // bulkCloseTargets).
+  const closeSide = useCallback(
+    (termId: string, side: BulkCloseSide, where: string) => {
+      const toClose = bulkCloseTargets(
+        visibleTerminals.map((t) => t.id),
+        termId,
+        side,
+      );
+      if (toClose === null) {
+        setTabContextMenu(null);
+        return;
+      }
+      void confirmBulkClose(toClose, where);
     },
     [visibleTerminals, confirmBulkClose],
+  );
+
+  const handleCloseTabsToLeft = useCallback(
+    (termId: string) => closeSide(termId, 'left', 'to the left'),
+    [closeSide],
   );
 
   const handleCloseTabsToRight = useCallback(
-    (termId: string) => {
-      const idx = visibleTerminals.findIndex((t) => t.id === termId);
-      const toClose = visibleTerminals.slice(idx + 1).map((t) => t.id);
-      void confirmBulkClose(toClose, 'to the right');
-    },
-    [visibleTerminals, confirmBulkClose],
+    (termId: string) => closeSide(termId, 'right', 'to the right'),
+    [closeSide],
   );
 
   const handleCloseOtherTabs = useCallback(
-    (termId: string) => {
-      const toClose = visibleTerminals.filter((t) => t.id !== termId).map((t) => t.id);
-      void confirmBulkClose(toClose, 'other than this one');
-    },
-    [visibleTerminals, confirmBulkClose],
+    (termId: string) => closeSide(termId, 'others', 'other than this one'),
+    [closeSide],
   );
 
   return {

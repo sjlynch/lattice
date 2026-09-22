@@ -68,3 +68,41 @@ test('a healthy file keeps every user key across install + remove, with no temp 
     assert.deepEqual(await readdir(path.join(root, '.claude')), ['settings.local.json']);
   });
 });
+
+test('a hooks value of the wrong shape is left alone instead of being spliced into', async () => {
+  const bodies = [
+    { hooks: { PreToolUse: 'echo mine' } },
+    { hooks: ['not', 'a', 'map'] },
+    { hooks: 'nope' },
+  ];
+  for (const user of bodies) {
+    await withProject(async (root, file) => {
+      const body = JSON.stringify(user, null, 2);
+      await writeFile(file, body, 'utf8');
+      await installProjectClaudeHooks(root, 'http://127.0.0.1:5184');
+      assert.equal(await readFile(file, 'utf8'), body, `install left ${body} alone`);
+      await removeProjectClaudeHooks(root);
+      assert.equal(await readFile(file, 'utf8'), body, `removal left ${body} alone`);
+    });
+  }
+});
+
+test('concurrent hook install and auto-memory reconcile both land', async () => {
+  await withProject(async (root, file) => {
+    await writeFile(file, JSON.stringify({ permissions: { allow: [] } }, null, 2), 'utf8');
+    await Promise.all([
+      installProjectClaudeHooks(root, 'http://127.0.0.1:5184'),
+      setProjectClaudeMemoryDisabled(root, true),
+      installProjectClaudeHooks(root, 'http://127.0.0.1:5184'),
+    ]);
+    const settings = JSON.parse(await readFile(file, 'utf8')) as {
+      hooks?: Record<string, unknown[]>;
+      autoMemoryEnabled?: boolean;
+      permissions?: unknown;
+    };
+    assert.ok(settings.hooks?.SessionStart, 'the hook install survived');
+    assert.equal(settings.hooks?.SessionStart.length, 1, 'no duplicate Lattice group');
+    assert.equal(settings.autoMemoryEnabled, false, 'the memory opt-out survived');
+    assert.deepEqual(settings.permissions, { allow: [] });
+  });
+});

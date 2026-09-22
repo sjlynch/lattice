@@ -178,6 +178,11 @@ export function searchWithRipgrep(
       '--null',
       '--ignore-case',
       '--hidden',
+      // rg only honors .gitignore INSIDE a git repo by default, but the scanner
+      // (scanner/ignore.ts) applies the root .gitignore to any project — so in a
+      // not-yet-`git init`ed folder rg searched ignored build output too,
+      // returning non-graph paths that ate the match `limit`.
+      '--no-require-git',
       '--max-filesize',
       String(params.maxFileBytes),
       '--glob',

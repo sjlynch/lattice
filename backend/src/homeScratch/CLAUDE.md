@@ -25,7 +25,8 @@ single source of truth for all three.
     render+write the instruction brief (`renderInstructions` feature callback).
     Used by push, QA, **and** post-merge.
   - `startHomeScratchAgentSession(...)` — the full spawn: `setupHomeScratchSession`
-    → `buildCommand` → `queuedCreateSession` → on error run `cleanup` + rethrow,
+    → `buildCommand` → `queuedCreateSession` → on ANY failure after the id is
+    minted (setup throw, spawn rejection, `{ error }`) run `cleanup` + rethrow,
     on success `onSpawned` (record run + register the orange presence node).
     Used by push + QA, whose flows are exact mirrors. Post-merge keeps its own
     trigger/gate/waiter (`postMergeHooks/trigger.ts`) but reuses the materialize

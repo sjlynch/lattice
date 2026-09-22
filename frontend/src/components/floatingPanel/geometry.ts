@@ -41,10 +41,39 @@ export function loadPersistedFloatingPanelGeometry(
   try {
     const raw = localStorage.getItem(storageKey);
     if (!raw) return null;
-    return JSON.parse(raw);
+    return sanitizePersistedGeometry(JSON.parse(raw));
   } catch {
     return null;
   }
+}
+
+const isFiniteNumber = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isFinite(v);
+
+// Keep only a well-formed `pos` / positive `size` from a stored entry. The raw
+// JSON is whatever the key holds — a hand-edit, an older shape, or a NaN that
+// JSON.stringify wrote as `null` — and a non-numeric coordinate survives
+// clampPos as NaN, rendering the panel somewhere unreachable with no way back
+// short of clearing site data.
+export function sanitizePersistedGeometry(
+  value: unknown,
+): PersistedFloatingPanelGeometry | null {
+  if (!value || typeof value !== 'object') return null;
+  const { pos, size } = value as { pos?: Partial<Pos>; size?: Partial<Size> };
+  const out: PersistedFloatingPanelGeometry = {};
+  if (pos && isFiniteNumber(pos.x) && isFiniteNumber(pos.y)) {
+    out.pos = { x: pos.x, y: pos.y };
+  }
+  if (
+    size &&
+    isFiniteNumber(size.width) &&
+    isFiniteNumber(size.height) &&
+    size.width > 0 &&
+    size.height > 0
+  ) {
+    out.size = { width: size.width, height: size.height };
+  }
+  return out.pos || out.size ? out : null;
 }
 
 export function persistFloatingPanelGeometry(storageKey: string | undefined, pos: Pos, size: Size) {

@@ -60,6 +60,19 @@ export function sanitizeProvidersForSave(providers: PiProvider[]): PiProvider[] 
     });
 }
 
+// The Pi-providers save patch. `undefined` (= leave the saved list alone)
+// unless the saved list actually LOADED and the user edited it. The patch is
+// the whole list and the backend reconcile deletes every Lattice-managed
+// provider missing from it, so a draft seeded from a FAILED load (empty) plus
+// one "Add endpoint" used to delete every endpoint the user had configured.
+export function piProvidersPatch(
+  providers: PiProvider[],
+  state: { loaded: boolean; touched: boolean },
+): PiProvider[] | undefined {
+  if (!state.loaded || !state.touched) return undefined;
+  return sanitizeProvidersForSave(providers);
+}
+
 // The next free auto-generated endpoint id. Scans the current providers for the
 // `endpoint-<N>` pattern and returns `endpoint-<max+1>` — guaranteed not to
 // collide with an existing `endpoint-N`. Fixes the Add-endpoint duplicate-id
@@ -88,6 +101,39 @@ export function dropEndpointKey<T>(
   const next = { ...map };
   delete next[id];
   return next;
+}
+
+// Apply a "Detect models" probe result to the endpoint it was started for.
+// The probe is async, so the target is found by the endpoint's id at APPLY
+// time, not by the row index captured at click time: removing an earlier
+// endpoint while the probe is in flight shifts every later row down one, and
+// an index-addressed write then replaced a DIFFERENT endpoint's model list.
+// An endpoint that was removed (or renamed) meanwhile gets nothing — `cur` is
+// returned as-is. Keeps any per-model fields already saved for a model that
+// survived, but a context window the server advertised WINS over a stored one:
+// a re-detect is the user asking what this endpoint serves now, and a stale
+// window (a server restarted with a different `--max-model-len`) is exactly
+// what makes Pi mis-size its budget.
+export function applyDetectedModels(
+  cur: PiProvider[],
+  endpointId: string,
+  probed: PiProbeModel[],
+): PiProvider[] {
+  const idx = cur.findIndex((p) => p.id === endpointId);
+  if (idx === -1) return cur;
+  return cur.map((p, i) =>
+    i === idx
+      ? {
+          ...p,
+          models: probed.map((pm) => ({
+            ...(p.models.find((m) => m.id === pm.id) ?? { id: pm.id }),
+            ...(pm.contextWindow === undefined
+              ? {}
+              : { contextWindow: pm.contextWindow }),
+          })),
+        }
+      : p,
+  );
 }
 
 // The universe of selectable model patterns = saved models ∪ everything the

@@ -104,15 +104,18 @@ export class AgentOverlay {
 
   // A `task-activity` / `agent-activity` event for the MAIN agent: open/refresh
   // the beam for the touched file and record it as the agent's current file.
+  // Returns false when the agent isn't on screen (nothing changed, so the caller
+  // needn't wake the render loop).
   addActivity(
     taskId: string,
     file: string,
     phase: 'start' | 'end',
     now: number,
-  ): void {
+  ): boolean {
     const agent = this.ctx.agents.get(taskId);
-    if (!agent) return;
+    if (!agent) return false;
     applyActivity(this.ctx, agent, file, phase, now);
+    return true;
   }
 
   // A subagent (Task/Agent) of `taskId` spawned — show a satellite around its
@@ -151,7 +154,7 @@ export class AgentOverlay {
 
   // A subagent's own tool-use: beam from its satellite to the touched file.
   // Lazily creates the satellite if its SubagentStart was missed, so a beam
-  // never has nowhere to land.
+  // never has nowhere to land. Returns false when the parent isn't on screen.
   addSubagentActivity(
     taskId: string,
     subagentId: string,
@@ -159,14 +162,15 @@ export class AgentOverlay {
     file: string,
     phase: 'start' | 'end',
     now: number,
-  ): void {
+  ): boolean {
     const agent = this.ctx.agents.get(taskId);
-    if (!agent) return;
+    if (!agent) return false;
     let sat = agent.satellites.get(subagentId);
     if (!sat) sat = createSatellite(this.ctx, agent, subagentId, subagentType, now);
     sat.lastSeen = now;
     if (subagentType && !sat.subagentType) sat.subagentType = subagentType;
     applyActivity(this.ctx, sat, file, phase, now);
+    return true;
   }
 
   // Per-frame update. Returns whether the overlay still has SELF-DRIVEN motion

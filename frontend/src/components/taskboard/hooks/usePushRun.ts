@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   checkGit,
   fetchPushRunStatus,
@@ -77,7 +77,17 @@ export function usePushRun(
   // push for the entire duration of A's run. The old terminal is project-
   // scoped, so no extra cleanup is needed. Mirrors useQaRuns / useMergeRunSync /
   // usePostMergeHook.
+  // `activePush` stays null for the whole POST round-trip, and the button is
+  // disabled only off `activePush` — so a double-click used to start TWO push
+  // sessions racing `git commit`/`git push` in one repo (the backend does not
+  // dedupe). `startingRef` is the in-flight guard. `folderRef` lets a start
+  // that resolves after a project switch skip tracking itself as the NEW
+  // project's push (which would disable project B's Push button for A's whole
+  // run — the exact thing this reset prevents).
+  const startingRef = useRef(false);
+  const folderRef = useRef(activeFolder);
   useEffect(() => {
+    folderRef.current = activeFolder;
     setActivePush(null);
   }, [activeFolder]);
 
@@ -132,7 +142,8 @@ export function usePushRun(
   });
 
   const startPush = useCallback(async () => {
-    if (!activeFolder || activePush) return;
+    if (!activeFolder || activePush || startingRef.current) return;
+    startingRef.current = true;
     try {
       const res = await startPushRun(activeFolder);
       const terminalId = addTerminal({
@@ -143,9 +154,13 @@ export function usePushRun(
         projectPath: activeFolder,
         serverId: res.serverId,
       });
-      setActivePush({ runId: res.id, terminalId });
+      if (folderRef.current === activeFolder) {
+        setActivePush({ runId: res.id, terminalId });
+      }
     } catch (err) {
       showError(`Push failed to start: ${(err as Error).message}`);
+    } finally {
+      startingRef.current = false;
     }
   }, [activeFolder, activePush, addTerminal, showError]);
 

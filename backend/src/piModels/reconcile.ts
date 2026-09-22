@@ -15,7 +15,7 @@ import path from 'node:path';
 import { atomicWriteFile } from '../claudeTrust/configFile.js';
 import { runExclusive } from '../serializeWrites.js';
 import { latticeHomeDir } from '../projectPath.js';
-import { getGlobalSettings, type PiProvider } from '../globalSettings.js';
+import { readGlobalSettingsStrict, type PiProvider } from '../globalSettings.js';
 import { piAgentDir } from './config.js';
 import { buildThinkingLevelMap } from './thinkingLevels.js';
 import { resetPiModelsCache } from './discovery.js';
@@ -149,12 +149,21 @@ export function reconcilePiModelsJson(): Promise<void> {
 async function reconcileLocked(): Promise<void> {
   let providers: PiProvider[];
   try {
-    providers = (await getGlobalSettings()).piProviders ?? [];
-  } catch {
+    // STRICT: the display read falls back to defaults (no providers) on an
+    // unreadable/corrupt globalSettings.json, which here would delete every
+    // managed provider from models.json — and with them any hand-tuned
+    // compat/headers that only lived there. A missing file still reads as
+    // defaults (a genuine "nothing managed").
+    providers = (await readGlobalSettingsStrict()).piProviders ?? [];
+  } catch (err) {
+    console.warn(
+      '[pi-models] reconcile skipped: globalSettings.json unreadable:',
+      (err as Error).message,
+    );
     return;
   }
 
-  // Defend against duplicate managed ids reaching the upsert (getGlobalSettings
+  // Defend against duplicate managed ids reaching the upsert (the settings read
   // already de-dupes, but a hand-edited globalSettings.json could bypass it):
   // models.json's `providers` map is keyed by id, so a later duplicate would
   // silently clobber the earlier one. Keep the first occurrence of each id.

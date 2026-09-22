@@ -3,8 +3,14 @@ import {
   GIT_LOG_FIELD_SEPARATOR,
   normalizeGitPath,
   parseNameStatusToken,
+  unquoteGitPath,
 } from './parserShared.js';
 import type { GitCommit, GitCommitChange } from './types.js';
+
+// A name-status path column: C-quoting undone, separators normalized.
+function logPath(col: string): string {
+  return normalizeGitPath(unquoteGitPath(col));
+}
 
 export function gitLogFormat(): string {
   return [
@@ -45,14 +51,14 @@ export function parseGitLogNameStatus(out: string): GitCommit[] {
       const parsed = parseNameStatusToken(cols[0]);
       if (!parsed) continue;
       if (parsed.hasPathPair && cols.length >= 3) {
-        const oldPath = normalizeGitPath(cols[1]);
-        const newPath = normalizeGitPath(cols[2]);
+        const oldPath = logPath(cols[1]);
+        const newPath = logPath(cols[2]);
         // Surface a rename as one delete + one add so the frontend can
         // ring both (deleted ghost + green-ringed new node).
         changes.push({ path: oldPath, status: 'D' });
         changes.push({ path: newPath, status: 'A', oldPath });
       } else {
-        changes.push({ path: normalizeGitPath(cols[1]), status: parsed.status });
+        changes.push({ path: logPath(cols[1]), status: parsed.status });
       }
     }
     commits.push({

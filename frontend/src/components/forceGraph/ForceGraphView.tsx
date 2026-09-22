@@ -277,6 +277,7 @@ function ForceGraphViewCoordinator({
     settings,
     { settingsRef, healthModeRef, locModeRef, deadModeRef },
     dataGeneration,
+    metricOverlayActive,
   );
 
   // Drag UX: dragging a node carries its descendant subtree along and locks the

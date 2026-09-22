@@ -238,6 +238,16 @@ under `helpers/`.
   is the drift guard** — a new route fails the suite until someone decides which
   side it belongs on. A final case holds the root `CLAUDE.md` HTTP table to
   total coverage in both directions (it caught `POST /api/terminals` missing).
+- `taskCacheDurability.test.ts` — task-DB durability holes around load,
+  boot restore and migration: a `tasks.json` that parses but isn't an array is
+  preserved aside rather than overwritten; boot restore skips on a non-ENOENT
+  read error (a lock must not roll the DB back to the backup) and preserves a
+  corrupt main file before restoring; first-touch migration leaves a
+  backup-only home dir for recovery instead of copying the stale in-project
+  legacy file over the newer backup; the global legacy migration survives a
+  path-less row and sets its file aside when a project fails; and (in a child
+  process) a task created just before `process.exit()` reaches disk via the
+  `flushOnExit` sync flush.
 - `cleanupSafety.test.ts` — the two `.git`-deletion throw-guards in
   `worktree/cleanupSafety.ts`: `assertSafeWorktreePath` (empty/whitespace path,
   the repo root, out-of-bounds and wrong-project paths, the managed base dir

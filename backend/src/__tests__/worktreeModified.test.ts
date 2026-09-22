@@ -184,3 +184,27 @@ test('worktree-modified service single-flights concurrent loads of one project',
   assert.deepEqual(await first, await second);
   assert.equal(listCalls, 1);
 });
+
+test('worktree-modified service bounds concurrent worktree probes', async () => {
+  const project = path.join('tmp', 'lattice-worktree-modified-bound');
+  let inFlight = 0;
+  let peak = 0;
+  const tasks = Array.from({ length: 20 }, (_, i) =>
+    makeTask({ id: `t${i}`, projectPath: project, status: 'in_progress', worktreePath: `/wt/${i}` }));
+  const service = createWorktreeModifiedService({
+    listTasks: async () => tasks,
+    resolveBaseBranch: async () => 'main',
+    probeConcurrency: 3,
+    modifiedFilesForTask: async (t) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight -= 1;
+      return [`${t.id}.ts`];
+    },
+  });
+  const payload = await service.load(project);
+  assert.equal(peak, 3, 'never more than probeConcurrency worktrees probed at once');
+  // Every task is still probed, and input order is preserved.
+  assert.deepEqual(payload.tasks.map((t) => t.taskId), tasks.map((t) => t.id));
+});

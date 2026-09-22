@@ -206,3 +206,14 @@ test('renderStepMarkdown places the tool reports under the step prompt, and omit
   assert.ok(!without.includes('{{tool_reports}}'), 'the token never leaks');
   assert.match(without, /THE PROMPT\n\n## Active project/);
 });
+
+test('a superseded pre-run ending does not orphan the newer pre-run from cancel', () => {
+  const older = beginStepPreRun('run-supersede');
+  const newer = beginStepPreRun('run-supersede');
+  assert.equal(older.aborted, true, 'the newer begin aborts the older scan');
+  // The older spawn unwinds after the newer one began.
+  endStepPreRun('run-supersede', older);
+  assert.equal(abortStepPreRun('run-supersede'), true, 'cancel still reaches the newer scan');
+  assert.equal(newer.aborted, true);
+  endStepPreRun('run-supersede', newer);
+});

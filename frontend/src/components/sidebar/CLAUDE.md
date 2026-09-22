@@ -88,7 +88,10 @@ Implementation pieces for `../Sidebar.tsx`.
   Escape clears it. `switchPanel` resets the filter when changing panels.
 - `hooks/useTabContextMenu.ts` — close-left/right/others state + actions (each
   confirms the bulk close first, since the ptys are killed); the popover markup is
-  rendered by `TabContextMenu.tsx`.
+  rendered by `TabContextMenu.tsx`. The targets come from the pure
+  `hooks/tabBulkClose.ts` (`bulkCloseTargets`), which closes NOTHING when the
+  menu's tab has left the visible list meanwhile (an index of -1 used to target
+  every tab).
 - `hooks/useStartupTerminals.ts` — validates/reseeds startup ptys and exposes
   restart-all. The seeding decision is the pure `startupSeedPlan.ts`
   (`planStartupSeeding`, unit-tested): it reads `GET /api/terminals` AND the

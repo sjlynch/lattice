@@ -43,7 +43,7 @@ import { detectInterruption, type InterruptionVerdict } from './interruption.js'
 import { buildRestoreCommand, RESTORE_NUDGE } from './restoreCommand.js';
 import { terminalRegistry } from './store.js';
 import type { RestoreDropped, RestoreSummary, TerminalRecord } from './types.js';
-import { readLiveSessions, reconcileExitedTerminals, type LiveSessionsView } from './watch.js';
+import { isNewerThanLiveView, readLiveSessions, reconcileExitedTerminals, type LiveSessionsView } from './watch.js';
 import { scheduleCodexDiscovery } from './codexDiscovery.js';
 
 export type RestoreDeps = {
@@ -210,8 +210,13 @@ async function performRestore(
   const records = (await terminalRegistry.list(projectPath, { includeEnded: true }))
     .filter((r) => !r.ended || (options.retryFailed === true && isRetryableEnd(r)));
   const liveSessions = await deps.listLiveSessions();
+  // A record (re)pointed at a pty after the live view was taken — a tab
+  // spawned while this pass was reading — is live as far as this pass can
+  // tell: relaunching it would put a second agent beside the first.
+  const isLive = (r: TerminalRecord): boolean =>
+    !!r.serverId && (live.serverIds.has(r.serverId) || isNewerThanLiveView(r, live));
   const claimed = new Set<string>();
-  for (const r of records) if (r.serverId && live.serverIds.has(r.serverId)) claimed.add(r.serverId);
+  for (const r of records) if (isLive(r)) claimed.add(r.serverId!);
 
   let adopted = 0;
   let queued = 0;
@@ -221,7 +226,7 @@ async function performRestore(
 
   for (const record of records) {
     // 1. pty still live → adopt.
-    if (record.serverId && live.serverIds.has(record.serverId)) {
+    if (isLive(record)) {
       adopted += 1;
       terminalRegistry.emitRestored(record, 'adopted');
       continue;

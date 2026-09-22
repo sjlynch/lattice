@@ -71,6 +71,10 @@ export const LATTICE_EXCLUDE_PATTERNS = [
   '.pi/extensions/lattice-system-prompt.json',
   '.pi/mcp.json',
   '.codex/hooks.json',
+  // The merge-time shelve copies (mergeOwnedFiles.ts). Normally gone within
+  // one merge, but a backend killed mid-merge leaves them behind, and a
+  // resolver's `git add -A` must not commit them onto main.
+  '*.lattice-bak',
 ] as const;
 
 // .gitignore entries appended to the project's repo-root .gitignore.

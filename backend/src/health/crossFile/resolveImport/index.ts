@@ -12,19 +12,20 @@
 //   - aliasResolution.ts      — tsconfig path-alias resolution (`resolveByAlias`)
 //
 // Resolution order: Python-relative normalization (Python importers only) →
-// tsconfig aliases → external-package bail → relative filesystem candidates.
+// tsconfig aliases → bare specs: Python absolute import (ancestor dirs) or
+// external-package bail → relative filesystem candidates.
 
 import path from 'node:path';
 import type { ParsedAlias } from '../../tsconfig.js';
 import { tryAllExtensions } from './extensionCandidates.js';
 import { isRelativeSpec, resolveByAlias } from './aliasResolution.js';
-import { normalizePythonRelativeImport } from './pythonImports.js';
+import { normalizePythonRelativeImport, resolvePythonAbsoluteImport } from './pythonImports.js';
 
 // Re-export the public surface so existing `./resolveImport.js` imports are
 // unaffected by the split.
 export { RESOLVE_EXTS, INDEX_FILES, tryAllExtensions } from './extensionCandidates.js';
 export { resolveByAlias } from './aliasResolution.js';
-export { normalizePythonRelativeImport } from './pythonImports.js';
+export { normalizePythonRelativeImport, resolvePythonAbsoluteImport } from './pythonImports.js';
 
 export function resolveImport(
   fromFile: string,
@@ -34,9 +35,8 @@ export function resolveImport(
 ): string | null {
   if (!spec) return null;
 
-  const normalized = fromFile.endsWith('.py') || fromFile.endsWith('.pyi')
-    ? normalizePythonRelativeImport(spec)
-    : spec;
+  const isPython = fromFile.endsWith('.py') || fromFile.endsWith('.pyi');
+  const normalized = isPython ? normalizePythonRelativeImport(spec) : spec;
 
   // Path-alias check has to come BEFORE the "external package" bail because
   // aliased specs (like `@/components/Foo`) look identical to scoped npm
@@ -49,8 +49,12 @@ export function resolveImport(
   // External package — `react`, `lodash/fp`, etc. (Bare specifiers that a
   // baseUrl catch-all could resolve were already handled by the alias pass
   // above; anything still bare here is a real node_modules dependency.)
+  // A bare Python spec is an absolute package import, resolved against the
+  // importer's ancestor dirs (see resolvePythonAbsoluteImport).
   if (!isRelativeSpec(normalized)) {
-    return null;
+    return isPython
+      ? resolvePythonAbsoluteImport(fromFile, normalized, presentFiles)
+      : null;
   }
 
   const fromDir = path.dirname(fromFile);

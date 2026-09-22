@@ -49,7 +49,15 @@ export function validateUpsertBlocks(blocks: ParsedTaskBlock[]): string | null {
     if (!b || typeof b !== 'object') {
       return `tasks[${i}] must be an object with a title`;
     }
-    if (typeof b.title !== 'string' || !b.title.trim()) {
+    if (b.id !== undefined && typeof b.id !== 'string') {
+      return `tasks[${i}].id must be a string`;
+    }
+    // A block that UPDATES (has an id) may leave the title out — a status-only
+    // `# {id=t_1, status=done}` keeps the existing title. Only a create needs one.
+    if (b.title !== undefined && typeof b.title !== 'string') {
+      return `tasks[${i}].title must be a string`;
+    }
+    if (!b.id && !b.title?.trim()) {
       return `tasks[${i}].title is required`;
     }
     if (b.description !== undefined && typeof b.description !== 'string') {

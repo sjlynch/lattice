@@ -88,7 +88,14 @@ export function usePerProjectGraphSettings(activeFolder: string) {
     saveSettings(p.project, p.settings);
   }, []);
   useEffect(() => {
-    if (!shouldPersistScopedGraphSettings(activeFolder, scoped)) return;
+    if (!shouldPersistScopedGraphSettings(activeFolder, scoped)) {
+      // Project-switch render (or no project): the previous project's
+      // debounced save lost its timer to the cleanup, so land it now under its
+      // own key. Waiting for the next persist run left it unsaved when switching
+      // to "no project" (which never persists) until unmount.
+      flushPendingSave();
+      return;
+    }
     // A save still pending for ANOTHER project (a switch mid-debounce) lands
     // first, under its own key.
     if (pendingSaveRef.current && pendingSaveRef.current.project !== scoped.project) flushPendingSave();

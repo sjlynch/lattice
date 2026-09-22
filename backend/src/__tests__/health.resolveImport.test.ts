@@ -157,3 +157,26 @@ test('resolveByAlias resolves non-wildcard exact and wildcard prefix aliases', (
   assert.equal(resolveByAlias('~/missing', aliases, present), null, 'unresolved alias tail → null');
   assert.equal(resolveByAlias('@other', aliases, present), null, 'non-matching spec → null');
 });
+
+// ---- Python absolute imports ----
+
+// Bare Python specs were treated like npm packages and dropped, so a codebase
+// importing by package path (`from app.models import User`) had almost no
+// edges and its modules read as dead.
+test('resolveImport resolves absolute Python imports against the importer ancestors', () => {
+  const root = path.resolve('resolve-python-abs-fixture');
+  const main = path.join(root, 'app', 'main.py');
+  const models = path.join(root, 'app', 'models.py');
+  const pkgInit = path.join(root, 'app', 'services', '__init__.py');
+  const stub = path.join(root, 'app', 'typed.pyi');
+  const present = new Set([main, models, pkgInit, stub]);
+
+  assert.equal(resolveImport(main, 'app.models', present), models, 'root-relative dotted module');
+  assert.equal(resolveImport(main, 'app.services', present), pkgInit, 'package → __init__.py');
+  assert.equal(resolveImport(main, 'app.typed', present), stub, 'stub-only module → .pyi');
+  assert.equal(resolveImport(main, 'models', present), models, 'script-dir sibling (sys.path[0])');
+  assert.equal(resolveImport(main, 'os', present), null, 'stdlib / site-packages stays unresolved');
+  assert.equal(resolveImport(main, 'app..models', present), null, 'malformed dotted spec');
+  // A TS importer's bare spec is still an npm package, never a Python module.
+  assert.equal(resolveImport(path.join(root, 'web.ts'), 'app.models', present), null);
+});

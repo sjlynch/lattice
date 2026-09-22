@@ -138,6 +138,25 @@ async function writeIfChanged(file: string, next: string): Promise<boolean> {
   return true;
 }
 
+// Every writer below is a read-modify-write of the same file, and a project
+// open runs the hook reconcile and the auto-memory reconcile back to back — a
+// second open / settings save overlapping them used to interleave the two
+// read-modify-writes, so the later write (built from a stale read) dropped the
+// other's change (the hooks, or `autoMemoryEnabled: false`) until the next
+// reconcile. Serialize per file.
+const fileQueues = new Map<string, Promise<void>>();
+
+function withSettingsFile(file: string, fn: () => Promise<void>): Promise<void> {
+  const previous = fileQueues.get(file) ?? Promise.resolve();
+  const run = previous.catch(() => {}).then(fn);
+  const settled = run.catch(() => {});
+  fileQueues.set(file, settled);
+  void settled.then(() => {
+    if (fileQueues.get(file) === settled) fileQueues.delete(file);
+  });
+  return run;
+}
+
 // Merge Lattice's activity hooks into the project's settings.local.json,
 // preserving everything else. Idempotent.
 export async function installProjectClaudeHooks(
@@ -146,17 +165,36 @@ export async function installProjectClaudeHooks(
 ): Promise<void> {
   const root = canonicalProjectPath(projectPath);
   const file = settingsLocalFile(root);
+  return withSettingsFile(file, () => installHooksLocked(file, root, backendOrigin));
+}
+
+async function installHooksLocked(
+  file: string,
+  root: string,
+  backendOrigin: string,
+): Promise<void> {
   const existing = await readJson(file);
   if (existing === MALFORMED) return warnMalformed(file, 'hook install');
   const settings = existing ?? {};
-  const hooks: HooksMap =
-    settings.hooks && typeof settings.hooks === 'object'
-      ? (settings.hooks as HooksMap)
-      : {};
+  const fresh = latticeHookGroups(backendOrigin, root);
+  // A `hooks` value (or one of the events we add to) that isn't the documented
+  // shape is the user's mistake to fix, not ours to "repair": spreading a
+  // string event value splices it into characters, and an array `hooks` loses
+  // our keys in JSON.stringify. Leave the file alone, like a malformed one.
+  if (
+    settings.hooks != null &&
+    (typeof settings.hooks !== 'object' || Array.isArray(settings.hooks) ||
+      Object.keys(fresh).some((event) => {
+        const groups = (settings.hooks as Record<string, unknown>)[event];
+        return groups !== undefined && !Array.isArray(groups);
+      }))
+  ) {
+    return warnMalformed(file, 'hook install');
+  }
+  const hooks: HooksMap = (settings.hooks as HooksMap | null | undefined) ?? {};
   // Strip any prior Lattice entries (e.g. an old backendOrigin/token) before
   // re-adding, so we never accumulate duplicates.
   stripLatticeEntries(hooks);
-  const fresh = latticeHookGroups(backendOrigin, root);
   for (const [event, groups] of Object.entries(fresh)) {
     hooks[event] = [...(hooks[event] ?? []), ...groups];
   }
@@ -171,12 +209,15 @@ export async function removeProjectClaudeHooks(
 ): Promise<void> {
   const root = canonicalProjectPath(projectPath);
   const file = settingsLocalFile(root);
-  const settings = await readJson(file);
-  if (settings === MALFORMED) return warnMalformed(file, 'hook removal');
-  if (!settings || typeof settings.hooks !== 'object' || !settings.hooks) return;
-  stripLatticeEntries(settings.hooks as HooksMap);
-  if (Object.keys(settings.hooks as HooksMap).length === 0) delete settings.hooks;
-  await writeIfChanged(file, JSON.stringify(settings, null, 2));
+  return withSettingsFile(file, async () => {
+    const settings = await readJson(file);
+    if (settings === MALFORMED) return warnMalformed(file, 'hook removal');
+    if (!settings || typeof settings.hooks !== 'object' || !settings.hooks) return;
+    if (Array.isArray(settings.hooks)) return warnMalformed(file, 'hook removal');
+    stripLatticeEntries(settings.hooks as HooksMap);
+    if (Object.keys(settings.hooks as HooksMap).length === 0) delete settings.hooks;
+    await writeIfChanged(file, JSON.stringify(settings, null, 2));
+  });
 }
 
 // Reconcile the `autoMemoryEnabled` flag in the project's OWN
@@ -192,17 +233,19 @@ export async function setProjectClaudeMemoryDisabled(
 ): Promise<void> {
   const root = canonicalProjectPath(projectPath);
   const file = settingsLocalFile(root);
-  const existing = await readJson(file);
-  if (existing === MALFORMED) return warnMalformed(file, 'auto-memory reconcile');
-  const settings = existing ?? {};
-  if (disabled) {
-    if (settings.autoMemoryEnabled === false) return;
-    settings.autoMemoryEnabled = false;
-  } else {
-    // Re-enabling: strip only the value we manage. If our `false` isn't there,
-    // do nothing (and don't create an otherwise-empty settings file).
-    if (settings.autoMemoryEnabled !== false) return;
-    delete settings.autoMemoryEnabled;
-  }
-  await writeIfChanged(file, JSON.stringify(settings, null, 2));
+  return withSettingsFile(file, async () => {
+    const existing = await readJson(file);
+    if (existing === MALFORMED) return warnMalformed(file, 'auto-memory reconcile');
+    const settings = existing ?? {};
+    if (disabled) {
+      if (settings.autoMemoryEnabled === false) return;
+      settings.autoMemoryEnabled = false;
+    } else {
+      // Re-enabling: strip only the value we manage. If our `false` isn't
+      // there, do nothing (and don't create an otherwise-empty settings file).
+      if (settings.autoMemoryEnabled !== false) return;
+      delete settings.autoMemoryEnabled;
+    }
+    await writeIfChanged(file, JSON.stringify(settings, null, 2));
+  });
 }

@@ -12,7 +12,7 @@ import {
 import {
   alwaysShownPatterns,
   dropEndpointKey,
-  sanitizeProvidersForSave,
+  piProvidersPatch,
 } from './piTabUtils';
 import { PiEndpointCard } from './PiEndpointCard';
 import { PiModelMenu } from './PiModelMenu';
@@ -60,10 +60,14 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
   // earlier endpoint can't shift the Advanced section onto a different card.
   const [advancedOpen, setAdvancedOpen] = useState<Record<string, boolean>>({});
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     endpoints.setTouched(false);
+    endpoints.setLoaded(false);
+    setLoadError(null);
     probe.reset();
     fetchGlobalSettings()
       .then((s) => {
@@ -73,8 +77,17 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
         // Saved models are part of the checklist's universe, not just its
         // selection — see useProbeDetection.seed.
         probe.seed(loaded);
+        endpoints.setLoaded(true);
       })
-      .catch(() => { /* leave empty */ });
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // `loaded` stays false: the endpoint list is read-only and Save leaves
+        // the saved providers alone (see piProvidersPatch).
+        setLoadError(
+          `Could not load the saved Pi endpoints (${(err as Error).message || String(err)}); ` +
+            'they are read-only until the dialog is reopened.',
+        );
+      });
     return () => {
       cancelled = true;
     };
@@ -84,13 +97,15 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
   useImperativeHandle(
     ref,
     () => ({
-      getPiProvidersPatch: () => {
-        if (!endpoints.touched) return undefined;
-        return sanitizeProvidersForSave(providers);
-      },
-      getPiModelMenuPatch: () => modelMenu.getPatch(endpoints.touched),
+      getPiProvidersPatch: () =>
+        piProvidersPatch(providers, {
+          loaded: endpoints.loaded,
+          touched: endpoints.touched,
+        }),
+      getPiModelMenuPatch: () =>
+        modelMenu.getPatch(endpoints.loaded && endpoints.touched),
     }),
-    [endpoints.touched, modelMenu, providers],
+    [endpoints.loaded, endpoints.touched, modelMenu, providers],
   );
 
   if (!active) return null;
@@ -138,7 +153,9 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
           </div>
         </div>
 
-        {providers.length === 0 && (
+        {loadError && <div className="error-msg">{loadError}</div>}
+
+        {providers.length === 0 && !loadError && (
           <div className="settings-section-sub" style={{ opacity: 0.7 }}>
             No managed endpoints. Add one to expose its models as “Pi — …”
             options.
@@ -172,7 +189,14 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
           />
         ))}
 
-        <button className="btn-ghost" onClick={addProvider} style={{ marginTop: 8 }}>
+        <button
+          className="btn-ghost"
+          onClick={addProvider}
+          // Until the saved list is in the draft, a new row would either be
+          // wiped by the landing load or (on a failed load) never be savable.
+          disabled={!endpoints.loaded}
+          style={{ marginTop: 8 }}
+        >
           <Plus size={12} />
           Add endpoint
         </button>

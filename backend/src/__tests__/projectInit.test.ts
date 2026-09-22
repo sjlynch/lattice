@@ -411,3 +411,37 @@ test('initProjectGit finishes an unborn repo with its first commit (no second gi
     });
   });
 });
+
+// Regression: "unborn" was any repo whose HEAD didn't resolve, and the unborn
+// path skipped the init path guards. An orphan branch in a repo WITH history
+// looks unborn too ("finish" overwrote .gitignore and committed the whole tree
+// as an "Initial commit"), and a stray `git init` in the home directory became
+// a one-click commit of everything in it.
+test('probeProjectGit: an orphan branch in a repo with history is not "unborn"', async () => {
+  await withGitIdentity(async () => {
+    await withTempDir(PREFIX, async (dir) => {
+      await git(dir, ['init', '-q']);
+      await writeLayout(dir, { 'a.txt': 'a\n' });
+      await git(dir, ['add', '-A']);
+      await git(dir, ['commit', '-q', '-m', 'first']);
+      await git(dir, ['checkout', '-q', '--orphan', 'gh-pages']);
+      const p = await probeProjectGit(dir);
+      assert.equal(p.state, 'repo');
+      assert.equal(p.unborn, undefined);
+      assert.equal(p.initable, false);
+    });
+  });
+});
+
+test('probeProjectGit: an unborn repo at a guarded path (home) is not offered for finishing', async () => {
+  const home = os.homedir();
+  assert.ok(process.env.LATTICE_TEST_HOME_ISOLATED, 'needs the isolated test home');
+  await git(home, ['init', '-q']);
+  try {
+    const p = await probeProjectGit(home);
+    assert.equal(p.initable, false);
+    assert.match(p.reason ?? '', /home directory/);
+  } finally {
+    await fs.rm(path.join(home, '.git'), { recursive: true, force: true });
+  }
+});

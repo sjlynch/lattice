@@ -129,3 +129,40 @@ test("restore keeps the repo's own .codex/hooks.json when the merge made it trac
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 });
+
+// Regression: a backend killed between shelve and restore (routine in dev: a
+// merge that fast-forwards backend/src restarts it) left every shelved file at
+// `<f>.lattice-bak`. The next merge's shelve skipped the now-absent originals
+// and restore had nothing to put back, so the worktree permanently lost its
+// Stop hook / brief, and the untracked `.lattice-bak` copies were fair game for
+// a resolver's `git add -A`.
+test('a shelve left behind by an interrupted merge is recovered on the next shelve', async () => {
+  const dir = await repo();
+  try {
+    await write(dir, 'README.md', 'hi');
+    await exec('git', ['add', '-A'], dir);
+    await exec('git', ['commit', '-m', 'init'], dir);
+
+    await write(dir, '.claude/settings.local.json', '{"stop-hook":"old"}');
+    await write(dir, 'LATTICE_TASK.md', 'brief');
+    const crashed = await shelveLatticeManagedFiles(dir);
+    assert.ok(crashed.includes('LATTICE_TASK.md'));
+    // ...the process dies here: restore never runs. Later the Stop hook is
+    // re-installed (post-merge installStopHook) but the brief is not.
+    await write(dir, '.claude/settings.local.json', '{"stop-hook":"new"}');
+
+    const shelved = await shelveLatticeManagedFiles(dir);
+    await restoreLatticeManagedFiles(dir, shelved);
+
+    assert.equal(await fs.readFile(path.join(dir, 'LATTICE_TASK.md'), 'utf8'), 'brief', 'the orphaned brief is back');
+    assert.equal(
+      await fs.readFile(path.join(dir, '.claude/settings.local.json'), 'utf8'),
+      '{"stop-hook":"new"}',
+      'a re-created file supersedes its stale shelved copy',
+    );
+    assert.equal(await exists(path.join(dir, 'LATTICE_TASK.md.lattice-bak')), false);
+    assert.equal(await exists(path.join(dir, '.claude/settings.local.json.lattice-bak')), false);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+});

@@ -70,25 +70,47 @@ type BranchWatcher = {
 // distinct project roots opened in a session.
 const watchers = new Map<string, Promise<BranchWatcher>>();
 
-// Resolve the HEAD file to watch. For a normal repo `<root>/.git` is a
-// directory and HEAD lives directly inside it. For a linked worktree /
-// submodule `.git` is a file (`gitdir: <path>`) pointing at the real git dir,
-// whose own HEAD tracks that checkout's branch. Returns null when the folder
-// isn't a git repo.
-async function resolveHeadFile(repoRoot: string): Promise<string | null> {
-  const dotGit = path.join(repoRoot, '.git');
-  try {
-    const st = await fs.stat(dotGit);
-    if (st.isDirectory()) return path.join(dotGit, 'HEAD');
-    const content = await fs.readFile(dotGit, 'utf8');
-    const m = content.match(/^gitdir:\s*(.+)\s*$/m);
-    if (!m) return null;
-    const raw = m[1].trim();
-    const gitdir = path.isAbsolute(raw) ? raw : path.resolve(repoRoot, raw);
-    return path.join(gitdir, 'HEAD');
-  } catch {
-    return null;
+// Resolve the git metadata directory for a project folder. For a normal repo
+// that's `<repo>/.git`; for a linked worktree / submodule `.git` is a FILE
+// (`gitdir: <path>`, relative to the folder holding it) pointing at the real
+// git dir, whose own HEAD/index/logs track that checkout. The search walks UP
+// from the project folder the way git itself does, so a project opened on a
+// subfolder of a repo (the `nested` probe state) still gets live branch and
+// status updates — probing only `<project>/.git` left those with no watcher at
+// all, while `getCurrentBranch` (plain git, which walks up) still showed the
+// branch it could then never update. Returns null when no repo encloses it.
+// Shared by gitStatus.ts.
+export async function resolveGitDir(projectRoot: string): Promise<string | null> {
+  let dir = path.resolve(projectRoot);
+  for (;;) {
+    const dotGit = path.join(dir, '.git');
+    let isDir: boolean | null = null;
+    try {
+      isDir = (await fs.stat(dotGit)).isDirectory();
+    } catch {
+      isDir = null;
+    }
+    if (isDir === true) return dotGit;
+    if (isDir === false) {
+      try {
+        const content = await fs.readFile(dotGit, 'utf8');
+        const m = content.match(/^gitdir:\s*(.+)\s*$/m);
+        if (!m) return null;
+        const raw = m[1].trim();
+        return path.isAbsolute(raw) ? raw : path.resolve(dir, raw);
+      } catch {
+        return null;
+      }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
   }
+}
+
+async function resolveHeadFile(repoRoot: string): Promise<string | null> {
+  const gitDir = await resolveGitDir(repoRoot);
+  return gitDir ? path.join(gitDir, 'HEAD') : null;
 }
 
 function ensureBranchWatcher(root: string): Promise<BranchWatcher> {
@@ -134,7 +156,11 @@ async function armBranchWatcher(proj: BranchWatcher): Promise<void> {
         if (branch === proj.current) return; // unchanged — don't wake clients
         proj.current = branch;
         for (const cb of [...proj.subscribers]) cb(branch);
-      })();
+      })().catch((err) => {
+        // A throwing subscriber must not surface as an unhandled rejection —
+        // the process guards fail fast on those (gitStatus.ts does the same).
+        console.error('[git-branch watcher]', err);
+      });
     }, RECOMPUTE_DEBOUNCE_MS);
   };
 

@@ -71,6 +71,9 @@ export function useFolderPickerState({ open, initialPath }: UseFolderPickerState
     // create's own writes too, so a newer navigation started mid-create wins.
     const seq = (loadSeq.current += 1);
     const isLatest = () => seq === loadSeq.current;
+    // The superseded load's `finally` only clears the spinner when it is still
+    // the latest, which it no longer is — so clear it here or it sticks.
+    setLoading(false);
 
     setCreating(true);
     setError(null);

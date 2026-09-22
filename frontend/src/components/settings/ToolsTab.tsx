@@ -253,15 +253,20 @@ export const ToolsTab = forwardRef<ToolsTabHandle, Props>(function ToolsTab(
 
   const onScan = async () => {
     if (!activeFolder) return;
+    const folder = activeFolder;
     setScanning(true);
     setScanError(null);
     setScanResult(null);
     try {
-      const r = await runOpengrepScan(activeFolder);
-      setScanResult(r);
+      const r = await runOpengrepScan(folder);
+      // A scan outlives a project switch (the panel has no backdrop); its
+      // result belongs to the folder it scanned, not the one now showing.
+      if (folderRef.current === folder) setScanResult(r);
     } catch (err) {
       const e = err as HttpError;
-      setScanError(e.code ? `${e.message} (${e.code})` : e.message || String(err));
+      if (folderRef.current === folder) {
+        setScanError(e.code ? `${e.message} (${e.code})` : e.message || String(err));
+      }
     } finally {
       setScanning(false);
       await refreshStatus();

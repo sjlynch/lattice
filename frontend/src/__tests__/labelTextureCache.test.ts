@@ -111,6 +111,33 @@ test('eviction reclaims released (free) entries and disposes texture + paired ma
   assert.ok(!disposedTextures.has(built[3].tex), 'in-use f3 never disposed');
 });
 
+// Regression: after a burst that grew the cache past its cap (every entry in
+// use, e.g. a 2,000-file Alt band), releasing them all left the cache at its
+// peak size for the rest of the session — each later miss evicted exactly one
+// free entry and added one. The next miss must shrink it back under the cap.
+test('a miss after a released over-cap burst evicts back down to maxEntries', () => {
+  disposedTextures.clear();
+  const cache = createLabelTextureCache();
+  const opts = OPTS(4);
+  const burst: object[] = [];
+  for (let i = 0; i < 12; i++) {
+    burst.push(buildMeasuredLabelTexture(cache, `burst${i}`, '#ffffff', opts));
+  }
+  assert.equal(cache.byKey.size, 12, 'in-use entries may exceed the cap');
+  for (const t of burst) releaseLabelTexture(cache, t as any);
+
+  buildMeasuredLabelTexture(cache, 'next', '#ffffff', opts);
+  assert.ok(cache.byKey.size <= 4, `cache shrank to the cap (size ${cache.byKey.size})`);
+  assert.equal(disposedTextures.size, 9, 'the oldest released textures were disposed');
+  assert.ok(!disposedTextures.has(burst[11]), 'newest released entries stay cached');
+
+  // A re-hit on a still-cached free entry takes it back out of the free set.
+  const again = buildMeasuredLabelTexture(cache, 'burst11', '#ffffff', opts);
+  assert.equal(again, burst[11]);
+  for (let i = 0; i < 6; i++) buildMeasuredLabelTexture(cache, `more${i}`, '#ffffff', opts);
+  assert.ok(!disposedTextures.has(burst[11]), 'a re-referenced entry is never evicted');
+});
+
 test('AgentOverlay.destroy disposes agent label textures + materials', () => {
   disposedTextures.clear();
   disposedMaterials.clear();

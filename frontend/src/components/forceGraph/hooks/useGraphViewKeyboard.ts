@@ -1,5 +1,11 @@
 import { useEffect, type MutableRefObject } from 'react';
 import { useRefMirror } from './useRefMirror';
+import { isTextInput } from './refresh';
+
+function isInsideGraphView(target: EventTarget | null): boolean {
+  const el = target as { closest?: (selector: string) => unknown } | null;
+  return Boolean(el?.closest?.('.graph-view-root'));
+}
 
 type Args = {
   // The currently-open context menu (or null) + its setter.
@@ -42,6 +48,11 @@ export function useGraphViewKeyboard({
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key !== 'Escape') return;
+      // An Escape typed into a text field OUTSIDE the graph view is that
+      // field's — most often an agent terminal (xterm's helper textarea does
+      // not stop propagation), where Escape interrupts the agent. It used to
+      // bubble here and wipe the graph's search + selection as a side effect.
+      if (isTextInput(e.target) && !isInsideGraphView(e.target)) return;
       if (contextMenuRef.current) setContextMenu(null);
       else if (modalOpenRef.current) {
         // Modal handles its own Escape close

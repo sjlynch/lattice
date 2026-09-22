@@ -37,6 +37,13 @@ export type QaVerdictOutcome = {
 // once `movedToDone` is set, a second trigger (or a duplicate /done) short-
 // circuits, and the task-status guard means we never resurrect a deleted/done
 // task or yank one back out of an earlier lane if the ids somehow disagree.
+// The promotion in flight per run. `/verdict` and the `/done` backstop can land
+// together (the agent's curl racing its own Stop hook): both used to pass the
+// `movedToDone` check before either's `updateTask` resolved, so the task was
+// written `done` twice and BOTH callers reported `moved: true`. A second
+// trigger now waits for the first and then sees its result.
+const promotions = new Map<string, Promise<QaVerdictOutcome>>();
+
 async function promoteOnConfidentPass(
   run: QaRun,
   input: QaVerdictInput,
@@ -47,6 +54,21 @@ async function promoteOnConfidentPass(
   if (!input.confident) {
     return { ok: true, tracked: true, moved: false, reason: 'pass but not confident' };
   }
+  const inFlight = promotions.get(run.id);
+  if (inFlight) {
+    await inFlight.catch(() => undefined);
+    return promoteOnConfidentPass(run, input);
+  }
+  const promotion = promoteTask(run);
+  promotions.set(run.id, promotion);
+  try {
+    return await promotion;
+  } finally {
+    if (promotions.get(run.id) === promotion) promotions.delete(run.id);
+  }
+}
+
+async function promoteTask(run: QaRun): Promise<QaVerdictOutcome> {
   if (run.movedToDone) {
     // Already promoted by the earlier trigger (the /verdict curl, or a prior
     // /done). Nothing left to do.

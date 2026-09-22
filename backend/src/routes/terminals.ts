@@ -62,8 +62,9 @@ export function buildTerminalsRouter(): Router {
     if (typeof body.cwd === 'string' && body.cwd.trim() && !path.isAbsolute(body.cwd.trim())) {
       return res.status(400).json({ error: relativeProjectError(body.cwd.trim()).replace('project must', 'cwd must') });
     }
-    const cols = Number.isInteger(body.cols) && (body.cols as number) > 0 ? body.cols : undefined;
-    const rows = Number.isInteger(body.rows) && (body.rows as number) > 0 ? body.rows : undefined;
+    // Positive integer within ConPTY's 16-bit limit — mirrors `isPtyDimension`.
+    const cols = Number.isInteger(body.cols) && (body.cols as number) > 0 && (body.cols as number) <= 32767 ? body.cols : undefined;
+    const rows = Number.isInteger(body.rows) && (body.rows as number) > 0 && (body.rows as number) <= 32767 ? body.rows : undefined;
     const result = await proxyCreateSession({
       cwd: body.cwd,
       initialCommand: body.initialCommand,

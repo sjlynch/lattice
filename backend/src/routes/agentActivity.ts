@@ -35,7 +35,8 @@ export function mapFileToProject(
     ? rawFile
     : path.resolve(hookCwd ?? root, rawFile);
   const rel = path.relative(root, abs);
-  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  // `..` as a whole SEGMENT is an escape; a file named `..foo` is not.
+  if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
   if (isManaged(rel)) return null;
   return path.join(root, rel);
 }

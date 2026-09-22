@@ -16,7 +16,8 @@ export async function createDir(parent: string, name: string): Promise<DirListin
   const folderName = validateNewFolderName(name);
   const target = canonicalProjectPath(path.join(base, folderName));
   const relative = path.relative(base, target);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+  // `..` as a whole SEGMENT is an escape; a folder named `..cache` is not.
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error('New folder must be inside the current directory');
   }
 

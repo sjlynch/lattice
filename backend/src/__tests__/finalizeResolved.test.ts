@@ -192,3 +192,26 @@ test('finalizeResolvedTask signals the conflict waiter on a stash-conflict', asy
     assert.equal(isLocked(task.id), false);
   });
 });
+
+test('finalizeResolvedTask signals the conflict waiter when the re-sync THROWS', async () => {
+  // A throw (git failing to spawn, withProjectMutation refusing a closing
+  // owner) skipped every signalling branch, so a merge-run worker parked on
+  // this task's untimed waiter hung forever holding the project run-lock.
+  const task = makeResolverTask(`throw_signal_${Date.now()}`);
+  await withExistingWorktree(task, async () => {
+    const waiters = new ConflictWaiterRegistry();
+    const waiterPromise = waiters.register('run-fake', task.id);
+    const deps = depsThatSignal(waiters, async () => {
+      throw new Error('simulated git spawn failure');
+    });
+    await assert.rejects(
+      finalizeResolvedTask(task, ORIGIN, 'complete', deps),
+      /simulated git spawn failure/,
+    );
+    await assertResolvesQuickly(
+      waiterPromise,
+      'a throwing finalize must still unblock the waiting merge run',
+    );
+    assert.equal(isLocked(task.id), false);
+  });
+});

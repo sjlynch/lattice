@@ -141,3 +141,24 @@ test(`recovery cannot dispatch or error a successor advanced during the retry jo
   } finally { mock.mock.restore(); runs.delete(run.id); }
 });
 }
+
+test('an invalid recovery journal refuses automatic replay but never blocks an explicit merge retry', async (t) => {
+  const project = await fixture(t);
+  await claimRecoveryAttempt(project, 'merge', 'one');
+  await fs.writeFile(recoveryAttemptsFile(project), '{broken');
+  let preflights = 0;
+  const task = { id: 'one', projectPath: project, status: 'ready_to_merge', createdAt: 1 } as Task;
+  const deps = { listTasks: async () => [task], runPreflight: async () => { preflights++; throw new Error('test worker halted'); },
+    processTarget: async () => 'halt' as const };
+  await assert.rejects(startMergeRun(project, 'http://unused', { automaticRecovery: true }, deps));
+  assert.equal(preflights, 0);
+  let finished!: () => void;
+  const completion = new Promise<void>((resolve) => { finished = resolve; });
+  const unsub = subscribe((event) => { if (event.type === 'completed' && event.run.projectPath === project) finished(); });
+  try {
+    await startMergeRun(project, 'http://unused', { resetRecoveryBudget: true }, deps);
+    await completion;
+    assert.equal(preflights, 1, 'the explicit retry reached the worker');
+    assert.equal(await fs.readFile(recoveryAttemptsFile(project), 'utf8'), '{broken', 'the invalid journal is preserved');
+  } finally { unsub(); }
+});

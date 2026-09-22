@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { atomicWriteFile } from '../claudeTrust/configFile.js';
+import { TEMP_SUFFIX, atomicWriteFile } from '../claudeTrust/configFile.js';
 
 export type LoadProjectStateOptions<TState> = {
   name: string;
@@ -128,4 +130,37 @@ export async function writeProjectStateToDisk<TState>({
   // mid-write can no longer truncate the live file — readers see either the
   // old complete file or the new complete file, never a half-written one.
   await atomicWriteFile(file, JSON.stringify(state, null, 2));
+}
+
+// Synchronous twin of writeProjectStateToDisk for a process `exit` handler,
+// which cannot await: same write protection, same temp→rename atomicity (and
+// the same `.lattice-*.tmp` temp naming the orphan-temp sweep recognizes).
+// No Windows rename retry — there is no way to wait in an exit handler — so a
+// locked target fails loudly and the temp is removed.
+export function writeProjectStateToDiskSync<TState>({
+  name,
+  key,
+  file,
+  state,
+  isWriteProtected,
+}: WriteProjectStateOptions<TState>): void {
+  if (isWriteProtected(key)) {
+    throw new Error(
+      `[${name}] refusing to overwrite corrupt ${file}: its bytes could ` +
+        `not be preserved at load; recover it manually first`,
+    );
+  }
+  fsSync.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.lattice-${process.pid}-${Date.now()}-${randomUUID()}${TEMP_SUFFIX}`;
+  try {
+    fsSync.writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8');
+    fsSync.renameSync(tmp, file);
+  } catch (err) {
+    try {
+      fsSync.unlinkSync(tmp);
+    } catch {
+      /* already gone */
+    }
+    throw err;
+  }
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { fetchUserSettings, type UserSettings } from '../../api';
+import { fetchUserSettingsStrict, type UserSettings } from '../../api';
 
 // Shared draft engine behind the two "override-merge" settings tabs
 // (InstructionTemplatesTab + EnvNotesTab). Both own the same shape — a list of
@@ -83,7 +83,10 @@ export function useOverrideDraft<T>(config: OverrideDraftConfig<T>): OverrideDra
     setLoading(true);
     setLoaded(false);
     setError(null);
-    Promise.all([fetchItems(activeFolder), fetchUserSettings(activeFolder)])
+    // Strict settings GET: the lenient one maps a failure (a 502 mid backend
+    // restart) to `{}`, which would load as "no saved overrides" and let the
+    // next Save drop every override for an id this tab doesn't list.
+    Promise.all([fetchItems(activeFolder), fetchUserSettingsStrict(activeFolder)])
       .then(([list, settings]) => {
         if (cancelled) return;
         setItems(list);

@@ -136,6 +136,19 @@ test('replay on attach: history first, then live frames that arrived during the 
   await cleanup(session, dir);
 });
 
+test('a failed replay read still releases the held live frames (no unhandled rejection)', async () => {
+  const { session, dir } = await makeSession();
+  session.scrollback.replayAsync = () => Promise.reject(new Error('EIO'));
+  const c = fakeWs();
+  attachTerminal(c.ws, { id: session.id });
+  ptyOutput(session, 'live-1\n');
+  await until(() => c.sent().length >= 2);
+  assert.deepEqual(c.sent().slice(1).map((f) => f.data), ['live-1\n']);
+  ptyOutput(session, 'live-2\n');
+  assert.equal(c.sent().at(-1)?.data, 'live-2\n', 'the subscriber is no longer held');
+  await cleanup(session, dir);
+});
+
 test('an unknown id answers session_lost, closes, and never spawns', async () => {
   const c = fakeWs();
   attachTerminal(c.ws, { id: 'tty_does_not_exist' });

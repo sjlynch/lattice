@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { patchUserSettings, getUserSettings } from '../userSettings.js';
-import { getGlobalSettings, updateGlobalSettings } from '../globalSettings.js';
+import { getGlobalSettings, updateGlobalSettings, updateGlobalSettingsWith } from '../globalSettings.js';
 import { latticeHomeDir } from '../projectPath.js';
 import { runExclusive } from '../serializeWrites.js';
 
@@ -170,6 +170,17 @@ for (const scope of ['project', 'global'] as const) {
     assert.equal(await fs.readFile(f.file, 'utf8'), previous);
   });
 
+  test(`${scope} settings: valid JSON that is not an object is never replaced by a patch`, async (t) => {
+    const f = await fixture();
+    t.after(() => fs.rm(f.project, { recursive: true, force: true }));
+    for (const previous of ['[{"postMergeHookPrompt":"keep"}]', 'null']) {
+      await fs.writeFile(f.file, previous, 'utf8');
+      await f.read(); // display reads still fall back to defaults
+      await assert.rejects(f.patch(), /does not hold a settings object/);
+      assert.equal(await fs.readFile(f.file, 'utf8'), previous);
+    }
+  });
+
   test(`${scope} settings: a partial write failure preserves the complete previous file`, async (t) => {
     const f = await fixture();
     t.after(() => fs.rm(f.project, { recursive: true, force: true }));
@@ -187,3 +198,22 @@ for (const scope of ['project', 'global'] as const) {
     assert.equal(await fs.readFile(f.file, 'utf8'), previous);
   });
 }
+
+// A caller that derives its patch from an earlier (unlocked) read wrote that
+// stale snapshot back over a save that landed in between (Pi auto-discovery,
+// MCP config import). updateGlobalSettingsWith computes the patch from the
+// value read INSIDE the lock, so the interleaved save survives.
+test('updateGlobalSettingsWith: the updater sees a save queued ahead of it', async () => {
+  await updateGlobalSettings({ piModelMenu: [] });
+  const save = updateGlobalSettings({ piModelMenu: ['a/saved'] });
+  const derived = updateGlobalSettingsWith((cur) => ({
+    piModelMenu: [...(cur.piModelMenu ?? []), 'b/derived'],
+  }));
+  await Promise.all([save, derived]);
+  assert.deepEqual((await getGlobalSettings()).piModelMenu, ['a/saved', 'b/derived']);
+  // A null patch skips the write entirely.
+  const file = path.join(latticeHomeDir(), 'globalSettings.json');
+  const before = await fs.readFile(file, 'utf8');
+  await updateGlobalSettingsWith(() => null);
+  assert.equal(await fs.readFile(file, 'utf8'), before);
+});

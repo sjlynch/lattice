@@ -14,7 +14,11 @@ import {
   recordQaRun,
   recordQaVerdict,
 } from '../qaRuns.js';
+import { createTask, getTask, updateTask } from '../tasks.js';
 import type { Task, TaskStatus } from '../tasks.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 // ---------- parseVerdictBody ----------
 //
@@ -303,4 +307,39 @@ test('POST /api/qa-runs: a task in another project is rejected and spawns nothin
     assert.equal(res.status, 400);
     assert.equal(startCalls(), 0);
   });
+});
+
+// ---------- /verdict racing the /done backstop ----------
+//
+// The agent's explicit /verdict curl and its own Stop hook's /done can land
+// together. Both used to pass the `movedToDone` check before either's
+// updateTask resolved, so the task was written twice and both reported
+// `moved: true`. Exactly one trigger performs the move now.
+
+test('a concurrent /verdict and /done backstop promote the task exactly once', async () => {
+  const project = await mkdtemp(path.join(os.tmpdir(), 'lattice-qa-race-'));
+  try {
+    const task = await createTask(project, 'QA race');
+    await updateTask(task.id, { status: 'qa' });
+    const id = 'qa_race_verdict_done';
+    recordQaRun({
+      id,
+      taskId: task.id,
+      projectPath: task.projectPath,
+      cwd: path.join(project, 'scratch'),
+      status: 'running',
+      createdAt: 1,
+    });
+    recordQaVerdict(id, { passed: true, confident: true, receivedAt: 1 });
+    const outcomes = await Promise.all([
+      applyQaVerdict(id, { passed: true, confident: true }),
+      applyRecordedQaVerdict(id),
+    ]);
+    assert.equal(outcomes.filter((o) => o.moved).length, 1, JSON.stringify(outcomes));
+    assert.equal((await getTask(task.id))?.status, 'done');
+    markQaRunDone(id);
+    forgetQaRun(id);
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
 });

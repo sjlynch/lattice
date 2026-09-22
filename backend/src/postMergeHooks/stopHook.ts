@@ -18,17 +18,13 @@ export function postMergeHookAgentId(id: string): string {
 }
 
 // Installs the harness-specific completion plumbing into the hook scratch
-// dir. The hook *runs* with cwd=project root, so we cannot write
+// dir. The hook's work targets the project root, but we cannot write
 // `.claude/settings.local.json` next to the project's checkout (would
-// clobber the user's own Claude config). Instead we both:
-//   1. Write the Stop hook config into the scratch dir.
-//   2. Reuse the same scratch dir as Claude's --add-dir / cwd hint in the
-//      command (see command builder).
-//
-// The harness command itself does `cd <scratchDir>` before launching the
-// agent, so Claude picks up the scratch `.claude/settings.local.json` while
-// the model still operates against the project repo via explicit absolute
-// paths in POST_MERGE_HOOK.md.
+// clobber the user's own Claude config). So the pty is spawned with
+// cwd = this home-scoped scratch dir (see trigger.ts): Claude reads the
+// scratch `.claude/settings.local.json`, Pi the scratch `.pi/extensions/`,
+// Codex the scratch `.codex/hooks.json`, and POST_MERGE_HOOK.md tells the
+// agent to `cd` into the project as its first step.
 //
 // Defence-in-depth (the "always install both" rule, see piExtension.ts):
 // we always install the Claude Stop hook, the Pi extension, AND the Codex

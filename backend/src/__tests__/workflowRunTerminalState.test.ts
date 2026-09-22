@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { canonicalProjectPath } from '../projectPath.js';
@@ -12,10 +13,21 @@ import {
   subscribe,
   type WorkflowRun,
 } from '../workflowRuns/state.js';
-import { cancelWorkflowRun, failWorkflowRun } from '../workflowRuns.js';
+import {
+  cancelWorkflowRun,
+  completeWorkflowStep,
+  failWorkflowRun,
+  startWorkflowRun,
+} from '../workflowRuns.js';
+import { createWorkflow } from '../workflows.js';
 import { workflowStepAgentId } from '../workflowRuns/sessionSpawner.js';
 import { agentQuiescence, noteAgentSignal } from '../agentQuiescence.js';
-import { flushWorkflowRunPersist, writeWorkflowRunsNow } from '../workflowRuns/persistence.js';
+import {
+  flushWorkflowRunPersist,
+  loadPersistedWorkflowRuns,
+  workflowRunsFile,
+  writeWorkflowRunsNow,
+} from '../workflowRuns/persistence.js';
 import type { Workflow } from '../workflows.js';
 
 // Terminal-state edges of a workflow run: a control-step failure must not
@@ -132,5 +144,112 @@ test('finished runs are pruned to MAX_FINISHED_RUNS_PER_PROJECT per project; run
     runs.delete(live.id);
     for (const id of ids) runs.delete(id);
     await settlePersistence();
+  }
+});
+
+test('a completeStep rejection after the run was cancelled keeps `cancelled`', async () => {
+  const run = makeRun(`wfrun_cancel_then_advance_fail_${Date.now()}`);
+  const wf = { projectPath: PROJECT, steps: [{ kind: 'merge' }] } as unknown as Workflow;
+  const events: string[] = [];
+  const unsub = subscribe((ev) => {
+    if ('run' in ev && ev.run.id === run.id) events.push(ev.type);
+  });
+  try {
+    await runControlStepWorker(
+      wf,
+      run,
+      0,
+      'http://127.0.0.1:1',
+      async () => {
+        // Cancel lands during the advance, whose checkpoint then fails.
+        run.status = 'cancelled';
+        run.finishedAt = Date.now();
+        throw new Error('completion checkpoint failed');
+      },
+      {
+        acquireLock: async () => ({ release: async () => undefined }) as never,
+        runStart: async () => undefined,
+        runMerge: async () => undefined,
+        runPush: async () => undefined,
+      },
+    );
+    assert.equal(run.status, 'cancelled');
+    assert.equal(run.error, undefined);
+    assert.deepEqual(events, [], 'no errored event over the cancel');
+  } finally {
+    unsub();
+  }
+});
+
+test('a failed advance dispatch errors the run durably and forgets the next step\'s quiescence', async () => {
+  const run = makeRun(`wfrun_advance_dispatch_fail_${Date.now()}`, {
+    totalSteps: 2,
+    stepPhase: 'running',
+    definition: {
+      id: 'wf', name: 'wf', projectPath: PROJECT, createdAt: 1, variables: [], steps: [
+        { id: 'a', title: 'A', prompt: 'a', mode: 'sequential', harness: 'claude' },
+        { id: 'b', title: 'B', prompt: 'b', mode: 'sequential', harness: 'claude' },
+      ],
+    },
+  });
+  runs.set(run.id, run);
+  const nextAgent = workflowStepAgentId(run.id, 1);
+  try {
+    await completeWorkflowStep(run.id, 0, 'http://127.0.0.1:1', {
+      killStepSession: async () => {},
+      dispatchStep: async () => {
+        noteAgentSignal(nextAgent);
+        throw new Error('dispatch exploded');
+      },
+    });
+    assert.equal(run.status, 'errored');
+    assert.match(run.error ?? '', /dispatch exploded/);
+    assert.equal(agentQuiescence(nextAgent).quietForMs, Number.POSITIVE_INFINITY);
+    // The terminal checkpoint is issued immediately: the run leaves disk well
+    // inside the 100 ms debounce (no flush, which would mask a missing one).
+    const deadline = Date.now() + 60;
+    let onDisk = true;
+    while (Date.now() < deadline) {
+      onDisk = (await loadPersistedWorkflowRuns(PROJECT)).some((r) => r.id === run.id);
+      if (!onDisk) break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.equal(onDisk, false, 'errored run still mirrored as running');
+  } finally {
+    runs.delete(run.id);
+    await settlePersistence();
+  }
+});
+
+test('a start whose setup fails after a cancel keeps `cancelled`', async (t) => {
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-wf-start-cancel-'));
+  const wf = await createWorkflow(project, 'start-cancel', [
+    { id: 's1', title: 'Step 1', prompt: 'do it', mode: 'sequential', harness: 'claude' },
+  ]);
+  const file = workflowRunsFile(wf.projectPath);
+  let runId = '';
+  const unsub = subscribe((ev) => {
+    if (ev.type === 'started' && ev.run.projectPath === wf.projectPath) runId = ev.run.id;
+  });
+  const rename = fs.rename;
+  t.mock.method(fs, 'rename', async (...args: Parameters<typeof fs.rename>) => {
+    if (runId && String(args[1]) === file && runs.get(runId)?.status === 'running') {
+      cancelWorkflowRun(runId);
+      throw new Error('checkpoint refused');
+    }
+    return rename(...args);
+  });
+  try {
+    await assert.rejects(startWorkflowRun(wf.id, 'http://127.0.0.1:1'), /checkpoint refused/);
+    assert.ok(runId);
+    assert.equal(runs.get(runId)?.status, 'cancelled');
+    assert.equal(runs.get(runId)?.error, undefined);
+  } finally {
+    t.mock.restoreAll();
+    unsub();
+    if (runId) runs.delete(runId);
+    await flushWorkflowRunPersist(wf.projectPath);
+    await writeWorkflowRunsNow(wf.projectPath, []);
+    await fs.rm(project, { recursive: true, force: true });
   }
 });

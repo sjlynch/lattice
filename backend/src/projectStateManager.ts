@@ -8,6 +8,7 @@ import {
 import {
   loadProjectStateFromDisk,
   writeProjectStateToDisk,
+  writeProjectStateToDiskSync,
 } from './projectState/diskPersistence.js';
 import { runExclusive } from './serializeWrites.js';
 
@@ -23,7 +24,28 @@ export type ProjectStateManagerOptions<TState> = {
   deserialize?: (raw: unknown, projectPath: string) => TState | null;
   snapshot?: (state: TState) => TState;
   persistDelayMs?: number;
+  // Write any still-debounced state synchronously from a process `exit`
+  // handler. Opt-in because the sync write bypasses `writeStateNow`, so only a
+  // store that doesn't override it (its on-disk shape IS its cached state)
+  // may enable it.
+  flushOnExit?: boolean;
 };
+
+// Stores holding a debounced persist that has not fired yet. A natural exit
+// waits for those timers, but `process.exit()` does not: the health watcher's
+// SIGINT/SIGTERM handler, the fatal-error guard and a restart all exit
+// explicitly, and each used to drop up to `persistDelayMs` of task mutations
+// (a just-created task, a status flip) with the timer.
+const storesWithPendingPersist = new Set<{ flushPendingPersistsSync(): void }>();
+let exitFlushInstalled = false;
+
+function ensureExitFlushHook(): void {
+  if (exitFlushInstalled) return;
+  exitFlushInstalled = true;
+  process.once('exit', () => {
+    for (const store of [...storesWithPendingPersist]) store.flushPendingPersistsSync();
+  });
+}
 
 // Where a cross-project by-id lookup found an item: the project key whose
 // cached list holds it, the list, the index within it, and the item itself.
@@ -60,6 +82,7 @@ export class ProjectStateManager<
   private readonly deserialize: (raw: unknown, projectPath: string) => TState | null;
   private readonly snapshot: (state: TState) => TState;
   private readonly persistDelayMs: number;
+  private readonly flushOnExit: boolean;
 
   constructor(options: ProjectStateManagerOptions<TState>) {
     this.name = options.name;
@@ -68,6 +91,7 @@ export class ProjectStateManager<
     this.deserialize = options.deserialize ?? ((raw) => raw as TState);
     this.snapshot = options.snapshot ?? ((state) => state);
     this.persistDelayMs = options.persistDelayMs ?? 100;
+    this.flushOnExit = options.flushOnExit ?? false;
   }
 
   protected canonicalize(projectPath: string): string {
@@ -224,15 +248,48 @@ export class ProjectStateManager<
     if (!timer) return;
     clearTimeout(timer);
     this.persistTimers.delete(key);
+    this.untrackIfNoPendingPersist();
+  }
+
+  private untrackIfNoPendingPersist(): void {
+    if (this.persistTimers.size === 0) storesWithPendingPersist.delete(this);
+  }
+
+  // Synchronous last-chance write of every project whose debounced persist
+  // hasn't fired, for the process `exit` handler (which cannot await). Honors
+  // the corrupt-file write protection and stays temp→rename atomic; a failure
+  // is logged and never thrown (an exit handler must not throw).
+  public flushPendingPersistsSync(): void {
+    for (const [key, timer] of [...this.persistTimers]) {
+      clearTimeout(timer);
+      this.persistTimers.delete(key);
+      try {
+        writeProjectStateToDiskSync({
+          name: this.name,
+          key,
+          file: this.fileForProject(key),
+          state: this.cache.get(key) ?? this.defaultState(key),
+          isWriteProtected: (projectKey) => this.unpreservedCorruptKeys.has(projectKey),
+        });
+      } catch (e) {
+        console.error(`[${this.name}] exit flush failed for`, key, e);
+      }
+    }
+    storesWithPendingPersist.delete(this);
   }
 
   protected schedulePersist(projectPath: string): void {
     const key = this.canonicalize(projectPath);
     if (this.persistTimers.has(key)) return;
+    if (this.flushOnExit) {
+      ensureExitFlushHook();
+      storesWithPendingPersist.add(this);
+    }
     this.persistTimers.set(
       key,
       setTimeout(async () => {
         this.persistTimers.delete(key);
+        this.untrackIfNoPendingPersist();
         try {
           // A fired timer is no longer cancellable by updateTaskCrashSafe.
           // Serialize the actual write with mutations, and take the snapshot

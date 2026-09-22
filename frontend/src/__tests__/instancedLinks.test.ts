@@ -185,3 +185,52 @@ test('writes consecutive links and keeps a mid-list degenerate segment isolated'
     3, 3, 3, 4, 4, 4, // last link, normal
   ]);
 });
+
+// Regression: a rebuild that runs before the library's debounced digest has
+// hydrated link endpoints (string ids) can't judge visibility — the filter
+// accessor keeps every link — so links to hidden nodes (out-of-window ghosts,
+// hidden-ext files) were captured and later drawn as lines into empty space.
+// Once hydration lands, the next frame must re-capture against the real nodes.
+test('a pre-hydration capture is re-captured once endpoints hydrate', () => {
+  type Node = Vec & { id: string; hidden?: boolean };
+  type RawLink = { source: Node | string; target: Node | string };
+  const dir: Node = { id: 'dir', x: 0, y: 0, z: 0 };
+  const shown: Node = { id: 'shown', x: 1, y: 1, z: 0 };
+  const ghost: Node = { id: 'ghost', x: 2, y: 2, z: 0, hidden: true };
+  const links: RawLink[] = [
+    { source: 'dir', target: 'shown' },
+    { source: 'dir', target: 'ghost' },
+  ];
+  const nodeVisible = (n: Node | string) => typeof n === 'string' || !n.hidden;
+  const scene = new THREE.Scene();
+  const graph = {
+    scene: () => scene,
+    graphData: () => ({ links, nodes: [dir, shown, ghost] }),
+    // Same shape as useGraphFilter's accessor: string endpoints read visible.
+    linkVisibility: () => (l: RawLink) => nodeVisible(l.source) && nodeVisible(l.target),
+    linkColor: () => '#f0f0f0',
+    linkOpacity: () => 1,
+    linkThreeObject: () => {},
+    onEngineTick: () => {},
+    onNodeDrag: () => {},
+    onNodeDragEnd: () => {},
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ctrl = createInstancedLinks(graph as any);
+  ctrl.setEnabled(true);
+  const segments = () =>
+    (scene.children.find((o) => o.userData['lattice:batchedLinks']) as THREE.LineSegments)
+      .geometry.drawRange.count / 2;
+  assert.equal(segments(), 2, 'pre-hydration: both links captured');
+
+  // The digest hydrates endpoints in place.
+  const byId = new Map([dir, shown, ghost].map((n) => [n.id, n]));
+  for (const l of links) {
+    l.source = byId.get(l.source as string)!;
+    l.target = byId.get(l.target as string)!;
+  }
+  ctrl.onFrame();
+  assert.equal(segments(), 1, 'the link to the hidden ghost is dropped');
+
+  ctrl.dispose();
+});

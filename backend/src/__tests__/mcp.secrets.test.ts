@@ -12,6 +12,9 @@ import {
   setMcpSecret,
 } from '../mcp/secrets.js';
 import { latticeHomeDir } from '../projectPath.js';
+import { once } from 'node:events';
+import express from 'express';
+import { buildMcpRouter } from '../routes/mcp.js';
 
 // The write-path tests below touch ~/.lattice/mcpSecrets.json — never against
 // a real home (see helpers/isolateHome.mjs, preloaded by `npm test`).
@@ -70,4 +73,51 @@ test('redactSecrets reduces values to presence booleans', () => {
 test('secretHints reveals only the last 4 characters', () => {
   const hints = secretHints({ brave: { BRAVE_API_KEY: 'sk-abcd1234wxyz' } });
   assert.equal(hints.brave.BRAVE_API_KEY, '••••wxyz');
+});
+
+// Regression: `(secrets[serverId] ??= {})[envVar] = value` with serverId
+// "constructor" resolved the inherited Object function and assigned
+// `Object.keys = value` process-wide; "__proto__" wrote onto Object.prototype.
+test('prototype-reaching secret keys are refused and never touch Object', async () => {
+  await fs.rm(SECRETS_FILE(), { force: true });
+  const keysBefore = Object.keys;
+  await assert.rejects(setMcpSecret('constructor', 'keys', 'x'), /refusing MCP secret key/);
+  await assert.rejects(setMcpSecret('__proto__', 'polluted', 'x'), /refusing MCP secret key/);
+  await assert.rejects(setMcpSecret('brave', '__proto__', 'x'), /refusing MCP secret key/);
+  await assert.rejects(setMcpSecret('constructor', 'hasOwnProperty', null), /refusing MCP secret key/);
+  await mergeMcpSecrets({ constructor: { keys: 'x' }, brave: { BRAVE_API_KEY: 'sk-abcdefgh1234' } });
+  assert.equal(Object.keys, keysBefore);
+  assert.equal(({} as Record<string, unknown>).polluted, undefined);
+  assert.deepEqual(Object.keys(await readMcpSecrets()), ['brave']);
+});
+
+test('secretHints reveals no tail for a short secret', () => {
+  const hints = secretHints({ s: { SHORT: 'abcd', MID: 'abcdefgh' } });
+  assert.equal(hints.s.SHORT, '••••');
+  assert.equal(hints.s.MID, '••••');
+});
+
+test('PATCH /api/mcp-secrets answers 400 (not 500) for a prototype-polluting key', async () => {
+  const app = express();
+  app.use(express.json());
+  app.use(buildMcpRouter());
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = server.address() as { port: number };
+  try {
+    for (const body of [
+      { serverId: 'constructor', envVar: 'keys', value: 'x' },
+      { serverId: 'brave', envVar: '__proto__', value: 'x' },
+    ]) {
+      const res = await fetch(`http://127.0.0.1:${port}/api/mcp-secrets`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      assert.equal(res.status, 400);
+    }
+    assert.equal(typeof Object.keys, 'function');
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });

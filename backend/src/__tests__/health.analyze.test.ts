@@ -494,3 +494,21 @@ class Second {}
   assert.equal(smellCount(r.metrics, 'long_param_list'), 1);
   assert.equal(smellCount(r.metrics, 'multiple_classes'), 1);
 });
+
+// Both Python import statements carry a REPEATED `name` field; reading only the
+// first dropped `import a, b` edges, `as` forms were recorded verbatim, and
+// `from . import views` never recorded the submodule it pulls in.
+test('Python import extraction records every imported module and from-import submodule', async () => {
+  const src = [
+    'import os, pkg.a as pa',
+    'from . import views, models as m',
+    'from pkg.c import (x, y)',
+    'from .. import z',
+    '',
+  ].join('\n');
+  const r = await analyzeFile(src, '.py', src.split('\n').length);
+  for (const spec of ['os', 'pkg.a', '.', '.views', '.models', 'pkg.c', 'pkg.c.x', 'pkg.c.y', '..', '..z']) {
+    assert.ok(r.imports.includes(spec), `expected ${spec} in ${JSON.stringify(r.imports)}`);
+  }
+  assert.ok(!r.imports.some((s) => s.includes(' as ')), 'alias text never recorded as a module');
+});

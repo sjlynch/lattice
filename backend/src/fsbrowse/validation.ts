@@ -2,8 +2,11 @@ import path from 'node:path';
 
 // Windows reserved DOS device names. Reserved regardless of extension, so
 // `NUL`, `nul`, and `NUL.txt` are all forbidden while boundary names like
-// `COM10` / `LPT10` remain allowed.
-const WIN32_RESERVED_DEVICE_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+// `COM10` / `LPT10` remain allowed. Windows also reserves the superscript-digit
+// ports (`COM¹`–`COM³`, `LPT¹`–`LPT³`) and the console handles `CONIN$` /
+// `CONOUT$`.
+const WIN32_RESERVED_DEVICE_NAME =
+  /^(con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(\..*)?$/i;
 
 export function validateNewFolderName(name: string): string {
   const folderName = name.trim();

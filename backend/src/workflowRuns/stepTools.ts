@@ -54,7 +54,11 @@ export function beginStepPreRun(runId: string): AbortSignal {
   return controller.signal;
 }
 
-export function endStepPreRun(runId: string): void {
+// Pass the signal `beginStepPreRun` returned: a superseded pre-run (a newer
+// begin for the same run already replaced and aborted it) must not delete the
+// NEWER controller as it unwinds, or a cancel could no longer reach that scan.
+export function endStepPreRun(runId: string, signal?: AbortSignal): void {
+  if (signal && preRuns.get(runId)?.signal !== signal) return;
   preRuns.delete(runId);
 }
 

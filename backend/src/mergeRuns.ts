@@ -123,7 +123,16 @@ export async function startMergeRun(
       const budget = await claimRecoveryAttempt(canonicalPath, 'merge', targets.map((t) => t.id).sort().join('|'));
       if (budget.paused) throw new Error(budget.paused);
     } else if (options.resetRecoveryBudget) {
-      await resetRecoveryAttempt(canonicalPath, 'merge');
+      // An unreadable/invalid journal is preserved on purpose and refuses
+      // AUTOMATIC replay — but it must not also block the user's explicit
+      // retry, which is the documented way out of a paused recovery. Leave
+      // the file alone (it stays refusing automatic replay) and merge.
+      await resetRecoveryAttempt(canonicalPath, 'merge').catch((err: unknown) => {
+        console.warn(
+          `[merge-run] could not reset the recovery budget for ${canonicalPath} (continuing with the explicit run):`,
+          err instanceof Error ? err.message : err,
+        );
+      });
     }
   } catch (err) {
     if (options.automaticRecovery) {

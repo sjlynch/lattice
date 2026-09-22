@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { canonicalProjectPath } from '../projectPath.js';
-import { projectTasksFile } from '../taskCache/paths.js';
+import { projectTasksBackupFile, projectTasksFile } from '../taskCache/paths.js';
 import {
   isStructurallyJunkPath,
   shouldPruneProjectEntry,
@@ -68,6 +68,39 @@ test('shouldPruneProjectEntry: a non-existent path WITH task data is kept (offli
   );
   try {
     assert.equal(await shouldPruneProjectEntry(p), false);
+  } finally {
+    await fs.rm(path.dirname(tasksFile), { recursive: true, force: true });
+  }
+});
+
+// Regression: "corrupt ⇒ no tasks" pruned an offline project whose tasks.json
+// was truncated, or whose main file was lost but whose merge-run backup
+// survived — exactly the projects boot recovery (which walks this index)
+// exists to restore, hidden from it for good.
+for (const [label, file, contents] of [
+  ['a corrupt tasks.json', 'main', '[{"id":"t_x","ti'],
+  ['a backup-only task DB', 'backup', JSON.stringify([{ id: 't_b' }])],
+] as const) {
+  test(`shouldPruneProjectEntry: a non-existent path with ${label} is kept`, async () => {
+    const p = offlineProjectPath(`offline-${file}`);
+    const target = file === 'main' ? projectTasksFile(p) : projectTasksBackupFile(p);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, contents);
+    try {
+      assert.equal(await shouldPruneProjectEntry(p), false);
+    } finally {
+      await fs.rm(path.dirname(target), { recursive: true, force: true });
+    }
+  });
+}
+
+test('shouldPruneProjectEntry: an empty task DB does not keep a phantom entry', async () => {
+  const p = offlineProjectPath('offline-empty');
+  const tasksFile = projectTasksFile(p);
+  await fs.mkdir(path.dirname(tasksFile), { recursive: true });
+  await fs.writeFile(tasksFile, '[]');
+  try {
+    assert.equal(await shouldPruneProjectEntry(p), true);
   } finally {
     await fs.rm(path.dirname(tasksFile), { recursive: true, force: true });
   }

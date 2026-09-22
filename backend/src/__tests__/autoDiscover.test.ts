@@ -11,7 +11,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { getGlobalSettings, updateGlobalSettings } from '../globalSettings.js';
+import { reconcilePiModelsJson } from '../piModels/reconcile.js';
+import { sanitizePiProviders } from '../piProviderValidation.js';
 import { refreshEndpointDiscovery } from '../piModels/autoDiscover.js';
 import { probeThinkingLevels } from '../piModels/probe.js';
 import type { PiProvider } from '../piProviderValidation.js';
@@ -155,4 +160,58 @@ test('probeThinkingLevels: tokens on an enumerating 400, [] on a 2xx, null on ev
   );
   // Network error (nothing listening) → no answer.
   assert.equal(await probeThinkingLevels('http://127.0.0.1:9/v1', undefined, 'm1'), null);
+});
+
+// Regression: sanitizeThinkingLevels mapped the `[]` "probed, ordinary" marker
+// to undefined, so it never survived the settings round-trip — every sweep
+// re-sent the capability probe and rewrote globalSettings.json.
+test('an ordinary model is probed once: the [] marker survives the settings round-trip', async () => {
+  let chats = 0;
+  await withEndpoint(
+    () => {
+      chats += 1;
+      return { status: 200, body: '{"choices":[]}' };
+    },
+    async (baseUrl) => {
+      const boxA: PiProvider = { id: 'box-a', baseUrl, autoDiscover: true, models: [] };
+      await updateGlobalSettings({ piProviders: [boxA] });
+      assert.equal(await refreshEndpointDiscovery({ force: true }), true);
+      const a = ((await getGlobalSettings()).piProviders ?? []).find((p) => p.id === 'box-a')!;
+      assert.deepEqual(a.models, [{ id: 'm1', contextWindow: 4096, thinkingLevels: [] }]);
+      assert.equal(chats, 1);
+      assert.equal(await refreshEndpointDiscovery({ force: true }), false, 'nothing changed');
+      assert.equal(chats, 1, 'the model was not probed again');
+    },
+  );
+});
+
+test('sanitizePiProviders drops prototype-key and slash-bearing provider ids', () => {
+  const out = sanitizePiProviders([
+    { id: '__proto__', baseUrl: 'http://h/v1', models: [] },
+    { id: 'a/b', baseUrl: 'http://h/v1', models: [] },
+    { id: 'ok', baseUrl: 'http://h/v1', models: [] },
+  ]);
+  assert.deepEqual(out.map((p) => p.id), ['ok']);
+});
+
+// Regression: reconcile read globalSettings with the display fallback, so an
+// unreadable/corrupt globalSettings.json read as "no providers" and every
+// managed provider was deleted from models.json.
+test('reconcile leaves models.json alone when globalSettings.json is corrupt', async () => {
+  const boxA: PiProvider = { id: 'box-a', baseUrl: 'http://127.0.0.1:9/v1', autoDiscover: false, models: [{ id: 'm' }] };
+  await updateGlobalSettings({ piProviders: [boxA] });
+  await reconcilePiModelsJson();
+  const modelsFile = path.join(os.homedir(), '.pi', 'agent', 'models.json');
+  const before = await fs.readFile(modelsFile, 'utf8');
+  assert.ok(JSON.parse(before).providers['box-a'], 'managed provider reconciled in');
+
+  const settingsFile = path.join(os.homedir(), '.lattice', 'globalSettings.json');
+  const good = await fs.readFile(settingsFile, 'utf8');
+  await fs.writeFile(settingsFile, '{"piProviders": [');
+  try {
+    await reconcilePiModelsJson();
+    assert.equal(await fs.readFile(modelsFile, 'utf8'), before, 'models.json untouched');
+  } finally {
+    await fs.writeFile(settingsFile, good);
+  }
 });

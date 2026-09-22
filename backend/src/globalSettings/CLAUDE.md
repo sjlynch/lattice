@@ -29,8 +29,15 @@ validators living next to the shape each produces. There is no
   validator. Only *present* fields are touched, so a partial PATCH (e.g. just
   the agent cap) never wipes the MCP / Pi fields.
   Writes are atomic. Display reads retain the defaults fallback, while PATCH
-  reads reject unreadable/corrupt existing files so a partial edit cannot reset
+  reads reject unreadable/corrupt existing files (incl. valid JSON that is not an object, e.g. `[]`/`null`) so a partial edit cannot reset
   the remaining settings; only a missing file starts from defaults.
+  `updateGlobalSettingsWith(fn)` is the read-modify-write form: `fn` gets the
+  settings read INSIDE the lock (strict) and returns the patch (or `null` to
+  skip) — use it whenever a write is derived from the current value (Pi
+  auto-discovery, MCP config import); patching from an earlier unlocked read
+  overwrites a save that landed in between. `readGlobalSettingsStrict()` is the
+  throwing read for callers that derive destructive writes elsewhere (the Pi
+  models.json reconcile).
 - `../mcp/settingsValidation.ts` — the two MCP defensive parsers (next to the
   `McpServerEntry` shape they validate).
 - `../piProviderValidation.ts` — the Pi-provider parser + its types (next to

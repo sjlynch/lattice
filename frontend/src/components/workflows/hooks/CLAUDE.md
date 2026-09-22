@@ -130,7 +130,9 @@ there.
   missing key means expanded; newly added steps get an explicit `true` via
   `collapseSteps(ids)` (wired to the editor's `onStepsAdded`) rather than the map
   default being flipped — flipping it would retroactively collapse every step of
-  every existing workflow.
+  every existing workflow. The map resets on a project switch and loads via
+  `fetchUserSettingsStrict`; nothing is PATCHed until that load succeeded (a
+  failed GET read as `{}` would otherwise overwrite every saved collapse).
 - `useWorkflowErrorHandler.ts` — shared auto-dismissing error toast state.
 - `useWorkflowPromptCustomization.ts` — owns per-step customization state,
   custom-step instruction prompting, terminal creation, polling, editor patching,

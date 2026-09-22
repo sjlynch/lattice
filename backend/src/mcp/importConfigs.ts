@@ -14,7 +14,7 @@
 // `bearer_token_env_var`) is recorded as a secret env var with NO stored value.
 
 import { mergeMcpSecrets, type McpSecrets } from './secrets.js';
-import { getGlobalSettings, updateGlobalSettings } from '../globalSettings.js';
+import { getGlobalSettings, updateGlobalSettingsWith } from '../globalSettings.js';
 import { BUILTIN_MCP_SERVERS, type McpServerEntry } from './catalog.js';
 import { type Normalized } from './import/normalize.js';
 import {
@@ -139,7 +139,16 @@ export async function applyImport(
   }
 
   if (toAdd.length > 0) {
-    await updateGlobalSettings({ mcpCustomServers: [...existing, ...toAdd] });
+    // Append against the list as it is INSIDE the settings lock, not the
+    // lenient snapshot above: that read falls back to defaults on a transient
+    // lock/parse error (so `[...existing, ...toAdd]` replaced every stored
+    // custom server with just the imports), and a save landing between the two
+    // reads was overwritten. The strict in-lock read refuses instead.
+    await updateGlobalSettingsWith((current) => {
+      const cur = current.mcpCustomServers ?? [];
+      const curIds = new Set(cur.map((s) => s.id));
+      return { mcpCustomServers: [...cur, ...toAdd.filter((s) => !curIds.has(s.id))] };
+    });
   }
   if (Object.keys(secrets).length > 0) {
     await mergeMcpSecrets(secrets);

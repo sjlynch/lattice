@@ -45,6 +45,15 @@ function buildWebSocketRoutes(): WebSocketRoute[] {
   ];
 }
 
+// The route key for an upgrade request, or null for a URL `new URL` rejects.
+export function upgradePathname(reqUrl: string | undefined): string | null {
+  try {
+    return new URL(reqUrl || '', 'http://localhost').pathname;
+  } catch {
+    return null;
+  }
+}
+
 export function attachWebSockets(server: http.Server): void {
   const routes = buildWebSocketRoutes();
 
@@ -56,8 +65,11 @@ export function attachWebSockets(server: http.Server): void {
         socket.destroy();
         return;
       }
-      const pathname = new URL(req.url || '', 'http://localhost').pathname;
-      const match = routes.find(([p]) => p === pathname);
+      // An absolute-form request target (`GET http://[ HTTP/1.1`) passes
+      // Node's HTTP parser but makes `new URL` throw — inside an `upgrade`
+      // listener that is an uncaughtException, i.e. the whole backend exits.
+      const pathname = upgradePathname(req.url);
+      const match = pathname === null ? undefined : routes.find(([p]) => p === pathname);
       if (!match) {
         socket.destroy();
         return;

@@ -122,3 +122,74 @@ test('subscribeGitStatus delivers the current signature and wakes on an edit + c
     }
   });
 });
+
+// The working-tree filter used to be frozen at subscribe time: un-ignoring a
+// directory in the root .gitignore left every later edit under it filtered
+// out, so a file git had just started reporting as untracked never woke the
+// scrubber.
+test('subscribeGitStatus reloads the root .gitignore so un-ignored paths wake it', async () => {
+  await withTempDir('lattice-gitstatus-', async (dir) => {
+    const repo = path.join(dir, 'repo');
+    await fs.mkdir(repo, { recursive: true });
+    await fs.writeFile(path.join(repo, '.gitignore'), 'gen/\n');
+    await initRepo(repo);
+    await git(repo, ['add', '.gitignore']);
+    await git(repo, ['commit', '-m', 'ignore gen']);
+
+    const seen: string[] = [];
+    const unsub = await subscribeGitStatus(repo, (sig) => seen.push(sig));
+    try {
+      await waitFor(() => seen.length >= 1);
+      const initial = seen[seen.length - 1];
+      // Un-ignore gen/ (itself a dirtying edit — retry until the watcher is live).
+      const start = Date.now();
+      while (seen[seen.length - 1] === initial) {
+        await fs.writeFile(path.join(repo, '.gitignore'), `# nothing ignored ${Date.now()}\n`);
+        if (Date.now() - start > 10000) throw new Error('timed out waiting for .gitignore edit');
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      // Let the index-refresh echo of that recompute settle, so the next wake
+      // can only come from the gen/ write itself.
+      await new Promise((r) => setTimeout(r, 1500));
+      const afterIgnoreEdit = seen[seen.length - 1];
+
+      await fs.mkdir(path.join(repo, 'gen'), { recursive: true });
+      await fs.writeFile(path.join(repo, 'gen', 'new.txt'), 'now visible to git\n');
+      await waitFor(() => seen[seen.length - 1] !== afterIgnoreEdit);
+      assert.notEqual(seen[seen.length - 1], afterIgnoreEdit);
+    } finally {
+      unsub();
+      await _resetGitStatusWatchersForTest();
+    }
+  });
+});
+
+// A project opened on a SUBFOLDER of a repo has no `<project>/.git`; probing
+// only that path left it with no watchers at all, so commits never refreshed
+// the scrubber. The git dir is found by walking up, as git does.
+test('subscribeGitStatus watches the enclosing repo of a nested project folder', async () => {
+  await withTempDir('lattice-gitstatus-', async (dir) => {
+    const repo = path.join(dir, 'repo');
+    await fs.mkdir(repo, { recursive: true });
+    await initRepo(repo);
+    const sub = path.join(repo, 'packages', 'app');
+    await fs.mkdir(sub, { recursive: true });
+
+    const seen: string[] = [];
+    const unsub = await subscribeGitStatus(sub, (sig) => seen.push(sig));
+    try {
+      await waitFor(() => seen.length >= 1);
+      const initial = seen[seen.length - 1];
+      assert.ok(initial, 'a nested folder still yields the repo signature');
+      // A commit elsewhere in the repo (no working-tree event under `sub`) must
+      // be seen through the git-metadata watcher.
+      await fs.appendFile(path.join(repo, 'file.txt'), 'more\n');
+      await new Promise((r) => setTimeout(r, 500));
+      await git(repo, ['commit', '-am', 'outside the project folder']);
+      await waitFor(() => seen[seen.length - 1] !== initial);
+    } finally {
+      unsub();
+      await _resetGitStatusWatchersForTest();
+    }
+  });
+});

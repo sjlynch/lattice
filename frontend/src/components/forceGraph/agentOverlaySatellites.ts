@@ -80,6 +80,25 @@ export function disposeSatellite(ctx: AgentOverlayCtx, sat: Satellite): void {
 // the type label, and the satellite's own beam geometries, and idle-reaps a
 // satellite whose SubagentStop was missed and has gone fully quiet. Returns
 // whether any satellite still has motion to paint.
+// A satellite whose SubagentStop was missed (backend restart mid-POST, events
+// dropped across a /ws/tasks reconnect) is reaped once it has been quiet past
+// the TTL with no FADING beam. The current-file beam is persistent
+// (`endAt = Infinity`) from the first tool use on, so the old "no beams at all"
+// test only ever caught a subagent that never touched a file — a dead one kept
+// its satellite, tether and lit beam (which also pulls the parent's centroid)
+// for the parent's whole session. A wrongly-reaped live subagent is recreated
+// by its next tool use (`addSubagentActivity` creates lazily).
+export function shouldReapSatellite(
+  sat: Pick<Satellite, 'beams' | 'lastSeen'>,
+  now: number,
+): boolean {
+  if (now - sat.lastSeen <= SATELLITE_IDLE_TTL_MS) return false;
+  for (const beam of sat.beams.values()) {
+    if (beam.endAt !== Infinity) return false;
+  }
+  return true;
+}
+
 export function updateSatellites(
   ctx: AgentOverlayCtx,
   agent: Agent,
@@ -90,10 +109,8 @@ export function updateSatellites(
   // allocation; Satellite.subagentId is the exact map key for the delete.
   // Deleting mid-values()-iteration is safe.
   for (const sat of agent.satellites.values()) {
-    // Missed-SubagentStop safety net: a satellite with no live beam that has
-    // been quiet past the TTL is reaped. SubagentStop is the primary signal,
-    // so a satellite still showing its last file (a persistent beam) is kept.
-    if (sat.beams.size === 0 && now - sat.lastSeen > SATELLITE_IDLE_TTL_MS) {
+    // Missed-SubagentStop safety net (see shouldReapSatellite).
+    if (shouldReapSatellite(sat, now)) {
       disposeSatellite(ctx, sat);
       agent.satellites.delete(sat.subagentId);
       moving = true;

@@ -113,12 +113,10 @@ export function useSettingsController({
           terminalDefaultHarness: drafts.terminalDefaultHarness,
           terminalClaudeSkipPermissions: drafts.terminalClaudeSkipPermissions,
           codexYolo: drafts.codexYolo,
-          instrumentClaude: drafts.instrumentClaude,
-          disableMemory: drafts.disableMemory,
-          qaTerminalAutoClose: drafts.qaTerminalAutoClose,
-          restoreTerminalsOnOpen: drafts.restoreTerminalsOnOpen,
-          restoreNudgeAgents: drafts.restoreNudgeAgents,
-          restoreNudgeUserTabs: drafts.restoreNudgeUserTabs,
+          // Only the fetched toggles that loaded or were edited — an
+          // unloaded, untouched one would write its default over the
+          // project's saved value.
+          ...drafts.getSavableFetchedToggles(),
         },
         handles: {
           startupTerminals: startupTerminalsRef.current,

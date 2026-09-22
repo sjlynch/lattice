@@ -83,6 +83,10 @@ export function spawnWithTimeout(
       return;
     }
 
+    // StringDecoder-backed (setEncoding), not String(chunk): a multi-byte
+    // UTF-8 character split across two pipe reads must not decode as U+FFFD.
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
     child.stdout?.on('data', (d) => {
       const s = String(d);
       stdout += s;

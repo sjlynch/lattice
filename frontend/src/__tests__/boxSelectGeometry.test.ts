@@ -107,3 +107,20 @@ test('selectNodesInRect selects projected visible files and respects hidden exte
     ['center-ts', 'inside-dir'],
   );
 });
+
+test('selectNodesInRect skips nodes the graph visibility accessor hides (ghosts, metric-ignored files)', () => {
+  const camera = testCamera();
+  const viewport = { width: 100, height: 100 };
+  const rect = { x1: 40, y1: 40, x2: 80, y2: 60 };
+  const nodes: PositionedGraphNode[] = [
+    node('visible-ts', 'file', { ext: 'ts', x: 0, y: 0, z: 0 }),
+    node('hidden-ghost', 'file', { ext: 'ts', x: 0.1, y: 0, z: 0 }),
+  ];
+  const opts = { rect, camera, viewport, includeDirs: false, hiddenExts: new Set<string>() };
+
+  assert.deepEqual(ids(selectNodesInRect(nodes, opts)), ['hidden-ghost', 'visible-ts']);
+  assert.deepEqual(
+    ids(selectNodesInRect(nodes, { ...opts, isVisible: (n) => n.id !== 'hidden-ghost' })),
+    ['visible-ts'],
+  );
+});

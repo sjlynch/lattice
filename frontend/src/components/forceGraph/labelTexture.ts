@@ -25,6 +25,10 @@ export type LabelTextureCache = {
   refs: Map<string, number>;
   // texture → its key, so a release given only the texture can find its slot.
   keyOf: WeakMap<MeasuredLabelTexture, string>;
+  // Keys whose refcount is 0 (evictable), in the order they became free, so
+  // eviction is O(1) instead of a scan over every in-use entry — which made
+  // building N labels O(N²) once the cache had grown past its cap.
+  free: Set<string>;
 };
 
 export type LabelTextureOptions = {
@@ -44,6 +48,7 @@ export function createLabelTextureCache(): LabelTextureCache {
     byKey: new Map<string, MeasuredLabelTexture>(),
     refs: new Map<string, number>(),
     keyOf: new WeakMap<MeasuredLabelTexture, string>(),
+    free: new Set<string>(),
   };
 }
 
@@ -67,23 +72,26 @@ function measuredTextWidth(metrics: TextMetrics): number {
   return Math.ceil(actual > 0 ? actual : metrics.width);
 }
 
-// Reclaim a single cache slot when the cache is at capacity. Evicts the OLDEST
-// entry that no live sprite is using (refcount 0); in-use entries are skipped
-// entirely, so a mounted texture is never disposed. If every entry is in use
-// the cache simply grows past maxEntries until some labels are released —
-// correctness beats the soft cap. Evicting frees the texture AND its paired
-// material together (the material is keyed by, and only useful with, that one
-// texture).
-function evictOneFreeEntry(cache: LabelTextureCache, maxEntries: number): void {
-  if (cache.byKey.size < maxEntries) return;
-  for (const [key, tex] of cache.byKey) {
-    if ((cache.refs.get(key) ?? 0) > 0) continue;
+// Make room for one new entry: evict the OLDEST free (refcount 0) entries until
+// the cache is below maxEntries or nothing free is left. In-use entries are
+// never touched, so a mounted texture is never disposed; if every entry is in
+// use the cache grows past maxEntries until labels are released — correctness
+// beats the soft cap. Evicting down to the cap (not just one slot) matters after
+// such a burst: a 2,000-label Alt band left 2,000 canvases + GPU textures cached
+// for the rest of the session when each later miss only swapped one out.
+// Evicting frees the texture AND its paired material together (the material is
+// keyed by, and only useful with, that one texture).
+function evictFreeEntries(cache: LabelTextureCache, maxEntries: number): void {
+  for (const key of cache.free) {
+    if (cache.byKey.size < maxEntries) return;
+    cache.free.delete(key);
+    const tex = cache.byKey.get(key);
     cache.byKey.delete(key);
     cache.refs.delete(key);
+    if (!tex) continue;
     cache.keyOf.delete(tex);
     disposeLabelMaterial(tex);
     tex.dispose();
-    return;
   }
 }
 
@@ -99,6 +107,7 @@ export function buildMeasuredLabelTexture(
     // Another sprite is about to reference this texture — count it as in-use so
     // a concurrent eviction can't dispose it from under that sprite.
     cache.refs.set(key, (cache.refs.get(key) ?? 0) + 1);
+    cache.free.delete(key);
     return cached;
   }
 
@@ -138,7 +147,7 @@ export function buildMeasuredLabelTexture(
     maxV: options.maxV ?? 0.88,
   };
 
-  evictOneFreeEntry(cache, options.maxEntries);
+  evictFreeEntries(cache, options.maxEntries);
   cache.byKey.set(key, tex);
   cache.keyOf.set(tex, key);
   cache.refs.set(key, 1);
@@ -157,8 +166,12 @@ export function releaseLabelTexture(
   const key = cache.keyOf.get(texture as MeasuredLabelTexture);
   if (key === undefined) return;
   const n = cache.refs.get(key) ?? 0;
-  if (n <= 1) cache.refs.delete(key);
-  else cache.refs.set(key, n - 1);
+  if (n <= 1) {
+    cache.refs.delete(key);
+    cache.free.add(key);
+  } else {
+    cache.refs.set(key, n - 1);
+  }
 }
 
 // Dispose every texture (and its paired material) in the cache and empty it.
@@ -171,5 +184,6 @@ export function disposeLabelTextureCache(cache: LabelTextureCache): void {
   }
   cache.byKey.clear();
   cache.refs.clear();
+  cache.free.clear();
   // keyOf is a WeakMap — its entries drop as the textures are GC'd.
 }

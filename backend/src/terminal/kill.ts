@@ -2,14 +2,34 @@ import { ensureClaudeConfigValid } from '../claudeConfigGuard.js';
 import { killProcessTreeWindows } from '../processTree.js';
 import { allSessions, getSession } from './sessionStore.js';
 
-// Kill all sessions whose cwd is `prefix` or starts with `prefix + sep`.
+// Separator-agnostic (a `C:/x/wt` prefix must match a `C:\x\wt\sub` session —
+// the backend's liveness checks, mergeRuns/waiterLiveness.ts and
+// recovery/liveSessions.ts, already compare this way, so a mismatch here meant
+// "a live pty is under the worktree" yet the kill found nothing and the pty
+// kept its Windows file locks), case-folded only where paths are
+// case-insensitive.
+function normCwd(p: string, platform: NodeJS.Platform): string {
+  const s = p.replace(/\\/g, '/').replace(/\/+$/, '');
+  return platform === 'win32' ? s.toLowerCase() : s;
+}
+
+// `cwd` is `prefix` itself or nested under it.
+export function cwdIsAtOrUnder(
+  cwd: string,
+  prefix: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const base = normCwd(prefix, platform);
+  const norm = normCwd(cwd, platform);
+  return norm === base || norm.startsWith(base + '/');
+}
+
+// Kill all sessions whose cwd is `prefix` or nested under it.
 // Returns the count of sessions killed.
 export function killSessionsByCwd(prefix: string): number {
-  const norm = prefix.replace(/[\\/]+$/, '').toLowerCase();
   let count = 0;
   for (const session of allSessions()) {
-    const sessionNorm = session.cwd.replace(/[\\/]+$/, '').toLowerCase();
-    if (sessionNorm === norm || sessionNorm.startsWith(norm + '/') || sessionNorm.startsWith(norm + '\\')) {
+    if (cwdIsAtOrUnder(session.cwd, prefix)) {
       killSession(session.id);
       count += 1;
     }

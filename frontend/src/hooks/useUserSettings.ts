@@ -45,6 +45,18 @@ export function useUserSettings(activeFolder: string): UserSettingsResult {
     settings: UserSettings;
   } | null>(null);
 
+  // Drop the previous result the moment the folder changes, during render (the
+  // supported "adjust state on prop change" pattern, so no commit ever sees the
+  // stale value). The folder stamp alone isn't enough: an A→B→A switch before
+  // B's fetch lands would find `fetched` still stamped A and serve A's OLD
+  // snapshot as `loaded` — pre-PATCH values (startup terminals, restore mode)
+  // — until A's refetch returned.
+  const [fetchedFor, setFetchedFor] = useState(activeFolder);
+  if (fetchedFor !== activeFolder) {
+    setFetchedFor(activeFolder);
+    setFetched(null);
+  }
+
   useEffect(() => {
     if (!activeFolder) return;
     let cancelled = false;
@@ -83,9 +95,9 @@ export function useUserSettings(activeFolder: string): UserSettingsResult {
 
   return useMemo<UserSettingsResult>(() => {
     if (!activeFolder) return { settings: NO_PROJECT_SETTINGS, loaded: true };
-    if (!fetched || fetched.folder !== activeFolder) {
+    if (fetchedFor !== activeFolder || !fetched || fetched.folder !== activeFolder) {
       return { settings: null, loaded: false };
     }
     return { settings: fetched.settings, loaded: true };
-  }, [activeFolder, fetched]);
+  }, [activeFolder, fetched, fetchedFor]);
 }

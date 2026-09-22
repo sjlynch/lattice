@@ -92,8 +92,20 @@ export async function assertGitDirIntact(repoRoot: string): Promise<void> {
 // Resolve a worktree's git-dir (where MERGE_HEAD etc. live). Worktrees
 // store their per-worktree state under <main-repo>.git/worktrees/<name>,
 // not in <worktree>/.git (which is just a file pointer).
+//
+// A directory that doesn't exist (a hand-deleted worktree) makes the spawn
+// itself fail — `exec` REJECTS with `spawn git ENOENT` rather than returning a
+// non-zero code. That is "no git-dir", not an exception: `isMidMerge` used to
+// throw it straight up through `handleFlaggedConflictTask`, crashing the whole
+// merge-run worker on one conflict-flagged task with a missing worktree
+// instead of letting the normal merge path re-create the checkout.
 async function getWorktreeGitDir(worktreePath: string): Promise<string | null> {
-  const r = await exec('git', ['rev-parse', '--git-dir'], worktreePath);
+  let r;
+  try {
+    r = await exec('git', ['rev-parse', '--git-dir'], worktreePath);
+  } catch {
+    return null;
+  }
   if (r.code !== 0) return null;
   return path.resolve(worktreePath, r.stdout.trim());
 }
@@ -229,14 +241,15 @@ export async function mainIsAncestorOfWorktree(
   return r.code === 0;
 }
 
+// `-z`: without it git C-quotes any path with a non-ASCII byte, a quote or a
+// backslash (core.quotePath) — `"src/caf\303\251.ts"` — and that escaped form
+// is not a path: `git checkout --ours -- <it>` fails, and the resolver brief
+// lists a file that doesn't exist. NUL-separated output is verbatim.
 export async function listConflictedFiles(repoRoot: string): Promise<string[]> {
   const conflicts = await exec(
     'git',
-    ['diff', '--name-only', '--diff-filter=U'],
+    ['diff', '--name-only', '-z', '--diff-filter=U'],
     repoRoot,
   );
-  return conflicts.stdout
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  return conflicts.stdout.split('\0').filter(Boolean);
 }

@@ -100,12 +100,16 @@ export async function pruneStaleClaudeProjectEntries(): Promise<number> {
   }
 }
 
+// Only ENOENT/ENOTDIR prove a cwd is gone. A transient EPERM/EBUSY/EACCES on a
+// live worktree used to read as "gone", and the prune then deleted that live
+// session's trust + MCP entry out from under it.
 async function pathExists(p: string): Promise<boolean> {
   try {
     await fs.stat(p);
     return true;
-  } catch {
-    return false;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    return code !== 'ENOENT' && code !== 'ENOTDIR';
   }
 }
 

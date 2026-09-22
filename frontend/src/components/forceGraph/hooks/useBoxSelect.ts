@@ -132,6 +132,13 @@ export function useBoxSelect(
       if (graph) {
         const camera = graph.camera() as Camera;
         const nodes = graph.graphData().nodes as PositionedGraphNode[];
+        // Honour the installed visibility accessor (useGraphFilter) so hidden
+        // ghosts / metrics-ignored files under the rect aren't selected.
+        const visibility = graph.nodeVisibility() as unknown;
+        const isVisible =
+          typeof visibility === 'function'
+            ? (n: PositionedGraphNode) => Boolean((visibility as (n: object) => unknown)(n))
+            : undefined;
         setSelected(
           selectNodesInRect(nodes, {
             rect: finalRect,
@@ -139,23 +146,36 @@ export function useBoxSelect(
             viewport: { width: container!.clientWidth, height: container!.clientHeight },
             includeDirs: altAtStart,
             hiddenExts: hiddenExtsRef.current,
+            isVisible,
           }),
         );
       }
       setDragRect(null);
     }
 
+    // A cancelled gesture (touch hijacked, pointer lost) aborts the box: the
+    // cancel event carries no meaningful end position, so committing it as a
+    // pointerup selected whatever the last reported point happened to span.
+    function onPointerCancel(e: PointerEvent) {
+      if (!dragging || e.pointerId !== activePointerId) return;
+      dragging = false;
+      activePointerId = null;
+      cancelScheduledRect();
+      restoreControls();
+      setDragRect(null);
+    }
+
     container.addEventListener('pointerdown', onPointerDown, { capture: true });
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
-    window.addEventListener('pointercancel', onPointerUp);
+    window.addEventListener('pointercancel', onPointerCancel);
     return () => {
       cancelScheduledRect();
       restoreControls();
       container.removeEventListener('pointerdown', onPointerDown, { capture: true });
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
-      window.removeEventListener('pointercancel', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerCancel);
     };
   }, [containerRef, graphRef, hiddenExtsRef, setSelected, closeContextMenu]);
 

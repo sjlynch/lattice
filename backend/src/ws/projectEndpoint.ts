@@ -27,8 +27,13 @@ export type ProjectWsOptions<TEvent> = {
 // register `<backend cwd>/foo` in `~/.lattice/projects.json` and write a junk
 // identity binding for it.
 export function parseProject(reqUrl: string | undefined): string {
-  const url = new URL(reqUrl || '', 'http://localhost');
-  const raw = url.searchParams.get('project') || '';
+  let raw: string;
+  try {
+    raw = new URL(reqUrl || '', 'http://localhost').searchParams.get('project') || '';
+  } catch {
+    // Malformed request target — same as no project (the socket is closed).
+    return '';
+  }
   return raw && path.isAbsolute(raw) ? canonicalProjectPath(raw) : '';
 }
 

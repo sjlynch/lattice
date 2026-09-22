@@ -39,13 +39,19 @@ export function isManaged(rel: string): boolean {
 // Map a worktree-absolute (or worktree-relative) file path to the matching
 // project-absolute path the scanner emits as `node.path`. Returns null if the
 // path escapes the worktree or is a Lattice-managed file.
-function mapWorktreeFileToProject(task: Task, rawFile: string): string | null {
+// Exported for its regression test.
+export function mapWorktreeFileToProject(
+  task: Pick<Task, 'worktreePath' | 'projectPath'>,
+  rawFile: string,
+): string | null {
   if (!task.worktreePath) return null;
   const abs = path.isAbsolute(rawFile)
     ? rawFile
     : path.resolve(task.worktreePath, rawFile);
   const rel = path.relative(task.worktreePath, abs);
-  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  // An escape is exactly `..` or `../…` — a bare `startsWith('..')` also
+  // dropped a real in-worktree file or dir named like `..foo`.
+  if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
   if (isManaged(rel)) return null;
   // The scanner roots node paths at canonicalProjectPath(root); match that so
   // the frontend lookup hits.

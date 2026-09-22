@@ -25,8 +25,20 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
       name: 'tasks',
       fileForProject: projectTasksFile,
       defaultState: () => [],
-      deserialize: (raw) => (Array.isArray(raw) ? (raw as Task[]) : []),
+      // A file that parses but isn't a task array (`{}`, `null`, a wrapper
+      // object) is corruption, not an empty board: throwing routes it through
+      // the load's preserve-aside path. Mapping it to `[]` let the next
+      // mutation silently overwrite the unread bytes with a one-task list.
+      deserialize: (raw) => {
+        if (!Array.isArray(raw)) throw new Error('expected a JSON array of tasks');
+        return raw as Task[];
+      },
       snapshot: (tasks) => [...tasks],
+      // A task mutation still inside its 100 ms debounce must survive a
+      // `process.exit` (signal handler, fatal guard). Safe: this store's
+      // on-disk shape is its cached list (writeStateNow is only overridden by
+      // test fakes, whose pending timers fire before a natural test exit).
+      flushOnExit: true,
     });
     this.projectsIndex = opts.projectsIndex ?? new ProjectsIndex();
     this.migrations = opts.migrations ?? new TaskMigrations(this.projectsIndex);

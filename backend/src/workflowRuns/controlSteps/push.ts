@@ -6,10 +6,14 @@
 // never held longer than necessary.
 
 import {
+  cleanupPushSession,
   getPushRun,
+  markPushRunDone,
   startPushSession,
   subscribePushRuns,
 } from '../../pushRuns.js';
+import { pushAgentId } from '../../pushRuns/stopHook.js';
+import { unregisterAgentSession } from '../../agentSessions.js';
 import { proxyKillSession } from '../../terminalProxy.js';
 import type { Workflow } from '../../workflows.js';
 import { notify, subscribe, type WorkflowRun } from '../state.js';
@@ -41,7 +45,20 @@ export type PushStepDeps = {
   proxyKillSession: typeof proxyKillSession;
   subscribeWorkflowRuns: typeof subscribe;
   waitForLaneEmpty: typeof waitForLaneEmpty;
+  // Settle a push session the step gave up on (cancel / timeout) the way its
+  // own /done callback would. Optional so test doubles can omit it.
+  abandonPushRun?: (projectPath: string, id: string) => void;
 };
+
+// A session the step killed never reaches its Stop hook, so nothing else marked
+// the push run done (it stayed `running` in the registry for the life of the
+// process), dropped its orange graph node (left until the 30-min silence
+// sweep), or removed its scratch dir (left until the next boot sweep).
+function abandonPushRun(projectPath: string, id: string): void {
+  unregisterAgentSession(pushAgentId(id));
+  markPushRunDone(id);
+  void cleanupPushSession(projectPath, id);
+}
 
 const productionDeps: PushStepDeps = {
   startPushSession,
@@ -50,6 +67,7 @@ const productionDeps: PushStepDeps = {
   proxyKillSession,
   subscribeWorkflowRuns: subscribe,
   waitForLaneEmpty,
+  abandonPushRun,
 };
 
 export async function runPushStep(
@@ -100,6 +118,15 @@ export async function runPushStep(
   const done = new Promise<void>((resolve) => {
     resolveDone = resolve;
   });
+  // Once the step has killed its session, settle the push run too (see
+  // abandonPushRun). A push whose own /done already landed is left alone.
+  let abandoned = false;
+  const abandonSession = (): void => {
+    if (abandoned || !sessionId) return;
+    if (deps.getPushRun(sessionId)?.status === 'done') return;
+    abandoned = true;
+    deps.abandonPushRun?.(wf.projectPath, sessionId);
+  };
   const unsubPush = deps.subscribePushRuns((ev) => {
     if (ev.type !== 'done') return;
     if (sessionId && ev.run.id === sessionId) resolveDone();
@@ -119,6 +146,7 @@ export async function runPushStep(
     if (sessionServerId) {
       deps.proxyKillSession(sessionServerId).catch(() => undefined);
     }
+    abandonSession();
     resolveDone();
   });
   // Hard timeout backstop. If Claude crashed before the Stop hook fired the
@@ -130,6 +158,7 @@ export async function runPushStep(
     if (sessionServerId) {
       deps.proxyKillSession(sessionServerId).catch(() => undefined);
     }
+    abandonSession();
     resolveDone();
   }, PUSH_STEP_TIMEOUT_MS);
 
@@ -147,6 +176,7 @@ export async function runPushStep(
       if (session.serverId) {
         await deps.proxyKillSession(session.serverId).catch(() => undefined);
       }
+      abandonSession();
       resolveDone();
       return;
     }

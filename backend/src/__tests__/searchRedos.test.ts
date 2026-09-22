@@ -96,3 +96,20 @@ test('an invalid regex still throws before the worker runs', async () => {
     );
   });
 });
+
+// Regression: the JS worker flagged `truncated` as soon as `limit` matches were
+// in — a worker looping back after the LAST file's match reported a complete
+// result as truncated. Like the rg path, truncation needs a (limit+1)th match.
+test('the JS fallback reports truncated only when there are more matches than the limit', async () => {
+  await withTempDir('lattice-search-limit-', async (dir) => {
+    await writeLayout(dir, { 'a.ts': 'needle\n', 'b.ts': 'needle\n', 'c.ts': 'hay\n' });
+    const exact = await searchProjectContents(dir, { pattern: 'needle', regex: false, limit: 2 });
+    assert.equal(exact.matches.length, 2);
+    assert.equal(exact.truncated, false);
+
+    await writeLayout(dir, { 'c.ts': 'needle\n' });
+    const over = await searchProjectContents(dir, { pattern: 'needle', regex: false, limit: 2 });
+    assert.equal(over.matches.length, 2);
+    assert.equal(over.truncated, true);
+  });
+});

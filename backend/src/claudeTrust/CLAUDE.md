@@ -73,7 +73,13 @@ implementation here.
   (EPERM/EBUSY/EACCES). The shared `TEMP_SUFFIX` / `tempPrefix` let
   `sweepOrphanedClaudeConfigTemps` recognize leftovers.
 - **Heal, never wipe.** A corrupt `~/.claude.json` (truncated by a force-kill
-  mid-write) is restored from `CLAUDE_JSON_BACKUP`; if there's no usable backup
+  mid-write) is restored from `CLAUDE_JSON_BACKUP` — but only after a SECOND
+  read ~200 ms later still fails to parse (Claude rewrites the file in place,
+  so one failed parse may be a read landing mid-write, and restoring then rolls
+  a newer config back to the backup). The guard's lock-acquiring
+  `restoreClaudeConfigFromBackup` likewise re-checks the live file inside the
+  lock and returns `'healthy'` without writing if it now parses. A stat error
+  other than ENOENT/ENOTDIR never counts as a dead cwd in the prune. If there's no usable backup
   the parse error is surfaced so the caller skips its write — never reset to `{}`
   (that would erase the user's real projects/auth/history).
 - **Best-effort, never throw.** `applyClaudeProjectConfig` /

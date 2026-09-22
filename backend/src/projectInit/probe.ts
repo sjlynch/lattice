@@ -54,12 +54,27 @@ export async function probeProjectGit(project: string): Promise<ProjectGitProbe>
     // `--verify -q HEAD` exits 1 (quietly) for an unborn HEAD and 128 with a
     // fatal for a repo git cannot open at all (a `.git` file whose gitdir
     // pointer is dangling, say) — the latter is not ours to "finish".
+    //
+    // Two extra conditions, because "finish" runs `add -A` + commit:
+    //   - NO refs at all. An unborn HEAD is also what an orphan branch
+    //     (`git checkout --orphan gh-pages`) in a repo WITH history looks like;
+    //     "finishing" that overwrote .gitignore and committed the whole tree.
+    //   - the same path guards a fresh init gets. A stray `git init` in the
+    //     home directory (or ~/.lattice, a system tree) must not become a
+    //     one-click commit of everything under it.
     let unborn = false;
     try {
       const head = await probeGit(canonical, ['rev-parse', '--verify', '-q', 'HEAD']);
-      unborn = head.code === 1;
+      if (head.code === 1) {
+        const refs = await probeGit(canonical, ['for-each-ref', '--count=1']);
+        unborn = refs.code === 0 && refs.stdout.trim() === '';
+      }
     } catch {
       /* git missing / probe failed — treat as a normal repo; nothing to offer */
+    }
+    if (unborn) {
+      const refused = await refuseInitReason(canonical);
+      if (refused) return { state: 'repo', toplevel: canonical, initable: false, reason: refused };
     }
     return unborn
       ? {

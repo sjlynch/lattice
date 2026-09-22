@@ -69,8 +69,10 @@ losing tasks.
 - `pruneIndex.ts` — the conservative index-pruning predicate
   (`isStructurallyJunkPath` / `projectHasTasksOnDisk` / `shouldPruneProjectEntry`):
   drops temp-dir scratch, shell-mangled, and phantom (gone-from-disk AND
-  task-less) entries; a path that still exists on disk OR has task data is
-  always kept. Run at boot by `projectsIndex.ts` and to reap an emptied scratch
+  task-less) entries; a path that still exists on disk (or can't be stat'd for
+  a reason other than ENOENT) OR has task data is always kept — "task data"
+  includes a corrupt/unreadable `tasks.json` and a non-empty
+  `tasks.backup.json`, since those are what boot recovery restores. Run at boot by `projectsIndex.ts` and to reap an emptied scratch
   project in `manager.ts`'s `deleteTask`.
 - `migrations.ts` — `TaskMigrations` class (holds the once-per-process
   legacy-migration flag) plus the two pure migration functions:
@@ -154,9 +156,26 @@ read so the cache sees restored disk state.
   the next persist can't silently overwrite the still-recoverable bytes with
   `[]`. If the bytes can't be preserved at all, the key is write-protected and
   `writeStateNow` refuses to overwrite it.
+- A `tasks.json` that parses but is **not an array** (`{}`, `null`) is
+  corruption, not an empty board: `deserialize` throws so it takes the same
+  preserve-aside path as a parse failure. Backup / restore / first-touch
+  migration use the same "valid = parses AND is an array" test.
+- **Exit flush.** The task store opts into `flushOnExit`: a mutation still
+  inside its 100 ms debounce when something calls `process.exit()` (the health
+  watcher's signal handler, the fatal-error guard) is written synchronously
+  (temp→rename, write protection honoured) from a process `exit` handler.
+  Only stores whose on-disk shape is their cached state may opt in (the
+  sync path bypasses a `writeStateNow` override).
 - Every merge run takes a `backupTasksFile` snapshot up front; boot
   recovery (`restoreAllProjectsFromBackup`) restores from it if the main
-  file is missing/corrupt.
+  file is **missing (ENOENT) or corrupt** — never on another read error (a
+  transient Windows lock must not roll the DB back to the backup), and a
+  corrupt main file is moved to `.corrupt-<ts>` before the backup replaces it.
+- First-touch migration treats a home dir holding EITHER `tasks.json` or
+  `tasks.backup.json` as already migrated, so a lost main file is restored
+  from the recent backup rather than from the stale in-project legacy copy.
+  The global legacy migration sets `~/.lattice/tasks.json` aside as
+  `.unmigrated-<ts>` (instead of deleting it) when any row failed to migrate.
 - Storage lives under `~/.lattice/`, never inside the project tree — a
   project-side catastrophe (`rm -rf .lattice`, accidental `git clean -fdx`,
   the 2026-05-08 `.git`-deletion incident) cannot reach it.

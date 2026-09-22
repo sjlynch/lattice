@@ -96,10 +96,21 @@ export async function finalizeResolvedTask(
       return { kind: 'already-finalizing' };
     }
     const worktreePath = task.worktreePath;
-    return await withProjectMutation(task.projectPath, () => runFinalize(task, worktreePath, backendOrigin, source, {
-      ...deps,
-      signalOrRestartMergeRun: () => { signalAfterMutation = true; },
-    }));
+    try {
+      return await withProjectMutation(task.projectPath, () => runFinalize(task, worktreePath, backendOrigin, source, {
+        ...deps,
+        signalOrRestartMergeRun: () => { signalAfterMutation = true; },
+      }));
+    } catch (err) {
+      // A THROW (git failing to spawn under isMidMerge / the re-sync, a
+      // "project ownership is closing" refusal from withProjectMutation) is the
+      // same hang-forever hazard as the `error` result below: a merge-run
+      // worker parked on this task's untimed conflict waiter would never be
+      // signalled, holding the project run-lock until a restart. Unblock it,
+      // then let the route report the failure.
+      signalAfterMutation = true;
+      throw err;
+    }
   } finally {
     release(lock);
     // A standalone callback has released its short project owner now. Starting

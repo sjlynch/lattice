@@ -89,6 +89,12 @@ test('project-scoped routes refuse a relative project with 400 and create nothin
       ['/api/qa-runs', { method: 'POST', headers: json, body: JSON.stringify({ project: rel, taskId: 't' }) }],
       ['/api/workflow-prompt-customizations', { method: 'POST', headers: json, body: JSON.stringify({ project: rel, prompt: 'p' }) }],
       [`/api/mcp-import/scan?${q}`],
+      ['/api/project-init/preview', { method: 'POST', headers: json, body: JSON.stringify({ project: rel }) }],
+      ['/api/project-init', { method: 'POST', headers: json, body: JSON.stringify({ project: rel }) }],
+      [`/api/opengrep/status?${q}`],
+      ['/api/opengrep/scan', { method: 'POST', headers: json, body: JSON.stringify({ project: rel }) }],
+      [`/api/opengrep/scans?${q}`],
+      ['/api/opengrep/ignore', { method: 'POST', headers: json, body: JSON.stringify({ project: rel, ruleIds: ['r'] }) }],
       ['/api/terminals', { method: 'POST', headers: json, body: JSON.stringify({ cwd: rel }) }],
       // The task routes that used to slip through: transition's fromStatus
       // branch, reorder, and the worktree-modified graph read.
@@ -109,6 +115,8 @@ test('project-scoped routes refuse a relative project with 400 and create nothin
       const body = (await res.json()) as { error?: string };
       assert.equal(res.status, 400, `${init?.method ?? 'GET'} ${p} → ${res.status} ${JSON.stringify(body)}`);
       assert.match(String(body.error), /absolute path/, `${p}: ${body.error}`);
+      // Every one names the likely cause, not just the rule.
+      assert.match(String(body.error), /backslashes/, `${p}: ${body.error}`);
     }
     // Nothing was born under the backend's cwd for the phantom project.
     await assert.rejects(access(path.join(process.cwd(), rel)));

@@ -153,9 +153,19 @@ export async function prunePackTree(
   return { ruleFiles, ruleCount };
 }
 
-// `.tmp-<pack>-…` / `.old-<pack>-…` siblings a crashed or killed install left
-// under the rules root. Only ever touches the rules root Lattice owns.
-async function sweepStalePackDirs(root: string): Promise<void> {
+// `.tmp-<pack>-…` / `.old-<pack>-…` siblings a crashed or killed install of
+// THIS pack left under the rules root. Scoped to the one pack: installs of
+// different packs are allowed to overlap (single-flight is per pack), and a
+// root-wide sweep deleted a sibling install's in-flight fetch dir — or its
+// moved-aside previous tree mid-swap, leaving that pack uninstalled. Only ever
+// touches the rules root Lattice owns.
+export async function sweepStalePackDirs(root: string, packId: string): Promise<void> {
+  // `<prefix><digit>`: the digit after the id keeps `qodana` from matching a
+  // `qodana-mit` sibling's dirs.
+  const isOwn = (name: string): boolean =>
+    [`.tmp-${packId}-`, `.old-${packId}-`].some(
+      (prefix) => name.startsWith(prefix) && /^\d/.test(name.slice(prefix.length)),
+    );
   let names: string[];
   try {
     names = await fs.readdir(root);
@@ -163,7 +173,7 @@ async function sweepStalePackDirs(root: string): Promise<void> {
     return;
   }
   for (const name of names) {
-    if (!/^\.(tmp|old)-/.test(name)) continue;
+    if (!isOwn(name)) continue;
     await fs.rm(path.join(root, name), { recursive: true, force: true }).catch(() => {});
   }
 }
@@ -171,7 +181,7 @@ async function sweepStalePackDirs(root: string): Promise<void> {
 async function performInstall(def: OpengrepRulePackDef): Promise<OpengrepPackState> {
   const root = rulesRootDir();
   await fs.mkdir(root, { recursive: true });
-  await sweepStalePackDirs(root);
+  await sweepStalePackDirs(root, def.id);
   const finalDir = rulePackDir(def.id);
   const tmp = path.join(root, `.tmp-${def.id}-${process.pid}-${Date.now()}`);
   const old = path.join(root, `.old-${def.id}-${Date.now()}`);

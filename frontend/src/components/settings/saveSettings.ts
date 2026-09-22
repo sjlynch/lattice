@@ -22,17 +22,20 @@ import { type PiTabHandle } from './PiTab';
 import { type McpTabHandle } from './McpTab';
 import { type ToolsTabHandle } from './ToolsTab';
 
-// The parent-owned draft values that participate in a save.
+// The parent-owned draft values that participate in a save. The fetched
+// toggles are optional: an absent one is left untouched on the backend (its
+// settings GET never loaded and the user didn't edit it — see
+// `pickSavableFetchedToggles`).
 type SaveDrafts = {
   terminalDefaultHarness: TerminalDefaultHarness;
   terminalClaudeSkipPermissions: boolean;
   codexYolo: boolean;
-  instrumentClaude: boolean;
-  disableMemory: boolean;
-  qaTerminalAutoClose: boolean;
-  restoreTerminalsOnOpen: RestoreTerminalsMode;
-  restoreNudgeAgents: boolean;
-  restoreNudgeUserTabs: boolean;
+  instrumentClaude?: boolean;
+  disableMemory?: boolean;
+  qaTerminalAutoClose?: boolean;
+  restoreTerminalsOnOpen?: RestoreTerminalsMode;
+  restoreNudgeAgents?: boolean;
+  restoreNudgeUserTabs?: boolean;
 };
 
 // Imperative handles for each tab. Each may be null if its tab hasn't
@@ -116,6 +119,8 @@ export async function saveSettings({
   const patch: Partial<UserSettings> = {
     startupTerminals: cleaned,
     ...terminalLaunchPatch,
+  };
+  const fetchedToggles: Partial<UserSettings> = {
     instrumentProjectClaudeSessions: drafts.instrumentClaude,
     disableClaudeMemory: drafts.disableMemory,
     qaTerminalAutoClose: drafts.qaTerminalAutoClose,
@@ -123,6 +128,9 @@ export async function saveSettings({
     restoreNudgeAgents: drafts.restoreNudgeAgents,
     restoreNudgeUserTabs: drafts.restoreNudgeUserTabs,
   };
+  for (const [key, value] of Object.entries(fetchedToggles)) {
+    if (value !== undefined) (patch as Record<string, unknown>)[key] = value;
+  }
   // Only touch worktreeEnvNotes if the env fetch finished — otherwise we'd
   // overwrite the saved overrides with an empty map.
   const envNotesPatch = handles.envNotes?.getWorktreeEnvNotesPatch();

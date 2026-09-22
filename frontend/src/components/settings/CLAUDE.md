@@ -56,8 +56,13 @@ by the backend for every Codex spawn), the instrument-Claude /
 disable-memory / qa-auto-close toggles, and the three terminal-tab restore
 drafts (`restoreTerminalsOnOpen` — `always` / `ask` / `never` —,
 `restoreNudgeAgents`, `restoreNudgeUserTabs`; see the terminal-registry notes
-in the root `CLAUDE.md`). All of these ride the per-project `PATCH` in
-`saveSettings.ts` unconditionally. Its async settings load updates fetched
+in the root `CLAUDE.md`). The terminal-default drafts ride the per-project
+`PATCH` in `saveSettings.ts` unconditionally; the fetched toggles (instrument /
+memory / qa-auto-close / the three restore drafts) ride it only via
+`getSavableFetchedToggles()` (`pickSavableFetchedToggles`): all of them once this
+open's GET (`fetchUserSettingsStrict`) succeeded, otherwise only the ones the
+user edited — an unloaded, untouched draft still holds its default and would
+reset the saved value. Its async settings load updates fetched
 baselines but seeds only untouched toggle drafts, so a late GET never overwrites
 edits made while the dialog was opening. `TerminalSettingsSections.tsx` renders
 those sections (the project-settings block atop the Terminals tab); it's a plain
@@ -155,7 +160,9 @@ rather than blinking silently — plus `dropEndpoint(id)` to forget a removed
 endpoint's state), and `usePiEndpointEditors(endpoints,
 probe, providers)` (the per-endpoint field editors — `updateCompat`,
 the header mutators sharing one `mutateHeaderEntries` body, `toggleEndpointModel`,
-`detectModels` — extracted out of `PiTab.tsx`). **All per-endpoint transient
+`detectModels` — extracted out of `PiTab.tsx`; a probe result is applied to its
+endpoint by id when it resolves — `applyDetectedModels` — never by the row index
+captured at click time). **All per-endpoint transient
 state — `useProbeDetection`'s three maps and `PiTab`'s `advancedOpen` — is keyed
 by the endpoint's stable `ep.id`, not its array index** (the React `key` is
 `ep.id` too), so removing a non-last endpoint never misattributes a survivor's
@@ -165,7 +172,9 @@ fields through (it previously forwarded only `maxConcurrentAgents`, silently
 dropping the rest).
 
 `PiTab.tsx` stays the orchestrator (loads endpoint providers, wires the
-`PiTabHandle` save patch) — with the per-endpoint editors in
+`PiTabHandle` save patch — `piProvidersPatch`, `undefined` until the saved list
+LOADED *and* was touched, because the backend deletes every managed provider
+missing from the list; a failed load shows an error and disables "Add endpoint") — with the per-endpoint editors in
 `usePiEndpointEditors` and the model-menu draft/auto-include behavior in
 `usePiModelMenuDraft` — and renders through focused pieces: `PiEndpointCard`
 (one managed endpoint — id/baseUrl/key/detect/model checklist + the Advanced

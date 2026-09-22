@@ -101,8 +101,11 @@ export function reconcileAgents(
       // released, currentFile untouched) so the next tick's updateAgentLabel
       // rebuilds it in the new color instead of leaving it stuck in the old one.
       if (existing.label) removeFloatingLabel(ctx.group, existing);
-      // Recolor satellites + tethers to match (existing beams age out in the
-      // old color; new ones pick up the new color).
+      // Recolor the beams in place too (each owns its material). Fading beams
+      // would age out, but the persistent current-file beam never does — an
+      // idle agent kept an old-color beam beside its new-color node.
+      for (const beam of existing.beams.values()) beam.material.color.set(d.color);
+      // Recolor satellites, tethers and their beams to match.
       const ss = ctx.nodeSize * NODE_SCALE_MULTIPLIER * SATELLITE_SCALE;
       for (const sat of existing.satellites.values()) {
         sat.color = d.color;
@@ -111,6 +114,7 @@ export function reconcileAgents(
         sat.node.position.copy(sat.pos);
         ctx.group.add(sat.node);
         sat.tether.material.color.set(d.color);
+        for (const beam of sat.beams.values()) beam.material.color.set(d.color);
         // Same baked-color label issue for the satellite's type label.
         if (sat.label) removeFloatingLabel(ctx.group, sat);
       }

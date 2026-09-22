@@ -60,13 +60,30 @@ export async function readPackageJsonRoots(
       if (json.scripts && typeof json.scripts === 'object') {
         for (const cmd of Object.values(json.scripts as Record<string, unknown>)) {
           if (typeof cmd !== 'string') continue;
-          for (const tok of cmd.split(/\s+/)) {
+          for (const tok of scriptPathTokens(cmd)) {
             resolvePackageSpec(tok, dir, presentFiles, out, true);
           }
         }
       }
     }),
   );
+  return out;
+}
+
+// Candidate path tokens of one `scripts` command. Splitting on whitespace alone
+// missed the common spellings where the path is glued to something else, so
+// the entry it runs was flagged dead: a shell operator with no space
+// (`node a.mjs&&node b.mjs`), a quoted path (`node "scripts/x.mjs"` — quotes
+// are how cross-platform scripts protect paths on Windows), and a `--flag=path`
+// option (`--import=./src/register.ts`). Exported for tests.
+export function scriptPathTokens(cmd: string): string[] {
+  const out: string[] = [];
+  for (const raw of cmd.split(/\s+|&&|\|\||[;|&]/)) {
+    let tok = raw.replace(/^['"]+|['"]+$/g, '');
+    const eq = /^--?[\w-]+=(.+)$/.exec(tok);
+    if (eq) tok = eq[1].replace(/^['"]+|['"]+$/g, '');
+    if (tok) out.push(tok);
+  }
   return out;
 }
 

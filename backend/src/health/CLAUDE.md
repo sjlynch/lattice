@@ -60,7 +60,11 @@ Halstead token counts and a Maintainability Index, and folded into a composite
     specifiers only — relative imports always resolve against the importer);
     and the walker captures `export … from` re-exports + string-literal dynamic
     `import()`/`require()` (`walker/importEdges.ts`, delegated from
-    `walker/visitors.ts`) so barrels and lazy routes aren't orphaned.
+    `walker/visitors.ts`) so barrels and lazy routes aren't orphaned. Python:
+    every name of `import a, b as c` plus the `pkg.name` submodule candidate
+    of each `from pkg import name` is captured, and a bare dotted spec is
+    resolved against the importer's ancestor dirs (`resolveImport/pythonImports.ts`)
+    instead of being dropped as an external package.
   - **Entry-point roots** (`roots.ts`): conventional filenames (`index`/`main`/
     `*.config.*`/tests/`.d.ts`), standalone process/CLI entries (`*-server`,
     `*.worker`, files under a `scripts/`|`tools/` dir — spawned by path, never

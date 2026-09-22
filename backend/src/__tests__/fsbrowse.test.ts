@@ -100,3 +100,25 @@ test('createDir validates parent and returns the new folder listing', async () =
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+
+// Regression: the containment check was `relative.startsWith('..')`, which also
+// matched a perfectly contained folder whose NAME starts with two dots, so
+// creating `..cache` failed with "must be inside the current directory".
+test('createDir accepts a folder name that merely starts with two dots', async () => {
+  const root = await makeTempDir();
+  try {
+    const listing = await createDir(root, '..cache');
+    assert.equal(listing.path, canonicalProjectPath(path.join(root, '..cache')));
+    assert.ok((await fs.stat(path.join(root, '..cache'))).isDirectory());
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+// Windows also reserves the superscript-digit forms COM¹-³ / LPT¹-³ and the
+// console handles CONIN$ / CONOUT$.
+test('validateNewFolderName rejects the less common reserved Windows device names', { skip: process.platform !== 'win32' }, () => {
+  for (const reserved of ['COM¹', 'com²', 'LPT³.txt', 'CONIN$', 'conout$']) {
+    assert.throws(() => validateNewFolderName(reserved), /reserved Windows device name/, reserved);
+  }
+});

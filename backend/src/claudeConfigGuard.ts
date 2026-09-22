@@ -81,8 +81,10 @@ export async function ensureClaudeConfigValid(opts: Opts = {}): Promise<void> {
     return;
   }
   try {
-    const restored = await restoreClaudeConfigFromBackup();
-    if (restored) {
+    const outcome = await restoreClaudeConfigFromBackup();
+    if (outcome === 'healthy') {
+      // A valid file landed while we waited for the lock — nothing to heal.
+    } else if (outcome === 'restored') {
       console.warn(`[lattice] restored corrupt ${CLAUDE_JSON} from ${BACKUP}`);
     } else {
       console.warn(

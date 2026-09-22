@@ -366,6 +366,17 @@ export function writeCrashLog(kind: string, errOrReason: unknown): string | null
   }
 }
 
+let exitingOnSignal = false;
+
+function handleLifecycleSignal(signal: 'SIGINT' | 'SIGTERM' | 'SIGHUP'): void {
+  noteCrashContext(`[lifecycle] received ${signal}`);
+  // Another listener owns shutdown for this signal (the terminal-server's
+  // graceful shutdown, the health watcher's flush-then-exit) — defer to it.
+  if (process.listenerCount(signal) > 1) return;
+  exitingOnSignal = true;
+  process.exit(128 + (os.constants.signals[signal] ?? 0));
+}
+
 // Install once, as early in the process as possible. `label` distinguishes the
 // backend's crash files from the terminal-server's.
 export function installCrashLogging(label: string): void {
@@ -404,8 +415,15 @@ export function installCrashLogging(label: string): void {
   // A signal is an orderly shutdown, not a crash — record it so a crash file
   // written by a later handler shows the process was already going down, and so
   // "it vanished" can be told apart from "it was asked to stop".
+  //
+  // A listener on a signal REMOVES Node's default "terminate" for it, so this
+  // breadcrumb must not be the reason the process survives: with no other
+  // listener (the backend before any health watcher registers its flush hook;
+  // SIGHUP always) Ctrl+C was ignored and a closed terminal left a backend
+  // holding :5184. When nothing else handles the signal, exit the way Node's
+  // default would have (128 + signal number) — as an orderly exit, not a crash.
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
-    process.on(signal, () => noteCrashContext(`[lifecycle] received ${signal}`));
+    process.on(signal, () => handleLifecycleSignal(signal));
   }
 
   // Backstop for a non-zero exit that no fatal handler covered (an explicit
@@ -415,7 +433,7 @@ export function installCrashLogging(label: string): void {
     // unconditionally, or the next boot would report this orderly exit as a
     // process that vanished.
     removeLiveFile();
-    if (code === 0 || crashWritten) return;
+    if (code === 0 || crashWritten || exitingOnSignal) return;
     writeCrashLog('exit', new Error(`process exited with code ${code}`));
   });
 

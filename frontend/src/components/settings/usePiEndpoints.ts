@@ -1,6 +1,11 @@
 import { useState } from 'react';
 import { probePiEndpoint, type PiProbeModel, type PiProvider } from '../../api';
-import { dropEndpointKey, entriesToHeaders, nextEndpointId } from './piTabUtils';
+import {
+  applyDetectedModels,
+  dropEndpointKey,
+  entriesToHeaders,
+  nextEndpointId,
+} from './piTabUtils';
 
 // A blank provider row with a stable, non-colliding generated id. New endpoints
 // auto-discover: pasting a base URL and saving is meant to be the whole job.
@@ -16,6 +21,11 @@ function blankProvider(id: string): PiProvider {
 export function useEndpointState() {
   const [providers, setProviders] = useState<PiProvider[]>([]);
   const [touched, setTouched] = useState(false);
+  // True once this open's global-settings GET succeeded. The save patch is the
+  // WHOLE provider list (the backend deletes every managed provider missing
+  // from it), so until the saved list is actually in the draft nothing may be
+  // written — see `piProvidersPatch`.
+  const [loaded, setLoaded] = useState(false);
 
   const mutate = (updater: (cur: PiProvider[]) => PiProvider[]) => {
     setTouched(true);
@@ -32,7 +42,18 @@ export function useEndpointState() {
   const remove = (idx: number) =>
     mutate((cur) => cur.filter((_, i) => i !== idx));
 
-  return { providers, setProviders, touched, setTouched, mutate, patch, add, remove };
+  return {
+    providers,
+    setProviders,
+    touched,
+    setTouched,
+    loaded,
+    setLoaded,
+    mutate,
+    patch,
+    add,
+    remove,
+  };
 }
 
 // Owns the per-endpoint "Detect models" transient state (probing / detected /
@@ -210,28 +231,11 @@ export function usePiEndpointEditors(
   const detectModels = (idx: number) => {
     const ep = providers[idx];
     if (!ep) return;
-    // Replace the model list with what the server actually offers, keeping any
-    // per-model fields already saved for a model that survived. A context
-    // window the server advertised WINS over a stored one: a re-detect is the
-    // user asking what this endpoint serves now, and a stale window (from a
-    // server restarted with a different `--max-model-len`) is exactly what
-    // makes Pi mis-size its budget.
+    // Replace the model list with what the server actually offers. Addressed
+    // by the endpoint's id when the probe resolves, never by `idx` — see
+    // applyDetectedModels.
     return probe.detect(ep.id, ep, (probed) =>
-      endpoints.mutate((cur) =>
-        cur.map((p, i) =>
-          i === idx
-            ? {
-                ...p,
-                models: probed.map((pm) => ({
-                  ...(p.models.find((m) => m.id === pm.id) ?? { id: pm.id }),
-                  ...(pm.contextWindow === undefined
-                    ? {}
-                    : { contextWindow: pm.contextWindow }),
-                })),
-              }
-            : p,
-        ),
-      ),
+      endpoints.mutate((cur) => applyDetectedModels(cur, ep.id, probed)),
     );
   };
 

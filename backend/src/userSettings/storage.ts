@@ -91,7 +91,14 @@ async function readUserSettings(
   const key = canonicalProjectPath(projectPath);
   try {
     const raw = await fs.readFile(settingsFile(key), 'utf8');
-    return normalizeUserSettings(JSON.parse(raw) as UserSettings);
+    const parsed: unknown = JSON.parse(raw);
+    // Valid JSON that isn't a settings object (`[]`, `null`, `"x"`) is as
+    // unreadable as a parse error: a PATCH merged over `[]` would otherwise
+    // write `{...patch}` and discard whatever the file held.
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`${settingsFile(key)} does not hold a settings object`);
+    }
+    return normalizeUserSettings(parsed as UserSettings);
   } catch (err) {
     // Display-only reads may use defaults; a PATCH must never merge them
     // over an existing file whose bytes could not be read or parsed.
@@ -102,6 +109,29 @@ async function readUserSettings(
 
 export async function getUserSettings(projectPath: string): Promise<UserSettings> {
   return readUserSettings(projectPath, true);
+}
+
+// Read-modify-write under the same per-project lock as patchUserSettings, with
+// the patch computed FROM the settings read inside the lock (strictly: an
+// unreadable file throws rather than reading as `{}`). For callers that merge
+// into a nested field — reading it with getUserSettings and patching later
+// wrote a stale snapshot of the whole field over a Settings save that landed
+// in between, or wiped it outright when the lenient read returned `{}`.
+// Returning `null` from `fn` skips the write.
+export async function updateUserSettings(
+  projectPath: string,
+  fn: (current: UserSettings) => Partial<UserSettings> | null,
+): Promise<UserSettings> {
+  const key = canonicalProjectPath(projectPath);
+  return runExclusive(`userSettings:${key}`, async () => {
+    const current = await readUserSettings(key, false);
+    const partial = fn(current);
+    if (partial === null) return current;
+    const updated = { ...current, ...normalizeUserSettings({ ...partial }) };
+    await fs.mkdir(path.join(key, PROJECT_DIR_NAME), { recursive: true });
+    await atomicWriteFile(settingsFile(key), JSON.stringify(updated, null, 2));
+    return updated;
+  });
 }
 
 export async function patchUserSettings(

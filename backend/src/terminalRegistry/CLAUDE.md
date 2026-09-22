@@ -115,7 +115,15 @@ from.
   shared ≤750 ms snapshot (`proxyListSessionsShared`): a snapshot taken before
   a pty was spawned reports it missing, and this read's verdict is "ended —
   exit", which deletes the record. A tab created inside that window lost its
-  record within a tick when the watch briefly used the snapshot.
+  record within a tick when the watch briefly used the snapshot. Even a live
+  read has that window (the GET is in flight, or the caller awaits other work
+  before judging), so the view carries `listedAt` and `isNewerThanLiveView`
+  exempts any record written at/after it (`updatedAt`) from the verdict for
+  that pass: the watch defers its "exit" to the next tick (re-reading the
+  record first, since `loadedRecords()` is a pre-await snapshot), and restore
+  treats such a record as live — adopt, never relaunch beside it. `noteBusy`
+  likewise only stamps `lastBusy` onto a record still on the pty its snapshot
+  named.
 
 ## Surfaces
 
@@ -139,4 +147,5 @@ the worktree conversation when the harness matches.
   leaves nothing to restore (the bug the first e2e run found).
 - Tests: `__tests__/terminalRestoreCommand.test.ts`,
   `terminalInterruption.test.ts`, `terminalRegistryStore.test.ts`,
-  `terminalRestore.test.ts` (the decision matrix with injected deps).
+  `terminalRestore.test.ts` (the decision matrix with injected deps),
+  `terminalRegistryWatchRace.test.ts` (live-view vs concurrent-spawn races).

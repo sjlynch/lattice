@@ -176,11 +176,12 @@ export async function startWorkflowRun(
     await dispatchStep(run.definition!, run, firstIndex, backendOrigin);
     return snapshot(run);
   } catch (err) {
-    run.status = 'errored';
-    run.finishedAt = Date.now();
-    run.error = (err as Error).message ?? 'spawn failed';
-    notify({ type: 'errored', run: snapshot(run) });
     console.error(`[workflow-run] ${run.id} failed to start step ${firstIndex}:`, err);
+    // Through failWorkflowRun, not an inline flip: it keeps a run the user
+    // cancelled during setup `cancelled` (the dispatch can throw after the
+    // cancel), reclaims any queued/spawned step session, and checkpoints the
+    // terminal state immediately instead of via the 100 ms debounce.
+    failWorkflowRun(run.id, (err as Error).message ?? 'spawn failed');
     throw err;
   }
 }
@@ -309,10 +310,7 @@ async function advanceCompletedStep(run: WorkflowRun, stepIndex: number, backend
     const wf = run.definition ?? await getWorkflow(run.workflowId);
     if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return;
     if (!wf) {
-      run.status = 'errored';
-      run.finishedAt = Date.now();
-      run.error = 'workflow definition not found';
-      notify({ type: 'errored', run: snapshot(run) });
+      failWorkflowRun(run.id, 'workflow definition not found');
       return;
     }
     // Walk past any frozen steps between here and the next runnable one; `null`
@@ -342,10 +340,10 @@ async function advanceCompletedStep(run: WorkflowRun, stepIndex: number, backend
     await (deps.dispatchStep ?? dispatchStep)(wf, run, nextIndex, backendOrigin);
   } catch (err) {
     if (run.status !== 'running') return;
-    run.status = 'errored';
-    run.finishedAt = Date.now();
-    run.error = (err as Error).message ?? 'advance failed';
     console.error(`[workflow-run] ${run.id} advance failed:`, err);
-    notify({ type: 'errored', run: snapshot(run) });
+    // failWorkflowRun: durable terminal checkpoint (not the debounce — a
+    // restart in that window re-dispatched the failed step) and teardown of
+    // whatever the failed dispatch had already queued.
+    failWorkflowRun(run.id, (err as Error).message ?? 'advance failed');
   }
 }

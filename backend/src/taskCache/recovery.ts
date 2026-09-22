@@ -8,6 +8,18 @@ import { projectTasksBackupFile, projectTasksFile } from './paths.js';
 import type { ProjectsIndex } from './projectsIndex.js';
 import type { Task } from './types.js';
 
+// A task DB is valid only if it parses AND is an array. `{}` / `null` parse,
+// but the loader treats them as corrupt (TaskCacheManager's deserialize), so
+// backup/restore must agree or they would snapshot or keep a DB the loader
+// then moves aside as unreadable.
+function isValidTasksJson(raw: string): boolean {
+  try {
+    return Array.isArray(JSON.parse(raw));
+  } catch {
+    return false;
+  }
+}
+
 // Minimal provider interface the recovery list helpers need from the
 // in-memory cache — kept narrow so recovery.ts doesn't depend on the full
 // TaskCacheManager shape.
@@ -28,7 +40,7 @@ export async function backupTasksFile(projectPath: string): Promise<void> {
   const dst = projectTasksBackupFile(key);
   try {
     const raw = await fs.readFile(src, 'utf8');
-    JSON.parse(raw);
+    if (!isValidTasksJson(raw)) throw new Error(`${src} is not a valid task array`);
     // temp → rename, like every other persistence path: a crash mid-write must
     // not leave a truncated backup (this file IS the recovery source).
     await atomicWriteFile(dst, raw);
@@ -53,24 +65,48 @@ export async function restoreTasksFromBackupIfMissing(
   await migrations.runFirstTouch(key);
   const src = projectTasksFile(key);
   const dst = projectTasksBackupFile(key);
-  let needsRestore = false;
+  let srcRaw: string | null = null;
   try {
-    const raw = await fs.readFile(src, 'utf8');
-    JSON.parse(raw);
-  } catch {
-    needsRestore = true;
+    srcRaw = await fs.readFile(src, 'utf8');
+  } catch (e) {
+    // Only a MISSING main file is grounds for a restore. A transient read
+    // failure (a Windows EBUSY/EPERM share lock at boot) says nothing about
+    // the file's contents; restoring over it used to roll the live task DB
+    // back to the last merge-run snapshot.
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn(`[tasks] could not read ${src}; skipping backup restore:`, e);
+      return;
+    }
   }
-  if (!needsRestore) return;
+  if (srcRaw !== null && isValidTasksJson(srcRaw)) return;
+  let backupRaw: string;
   try {
-    const raw = await fs.readFile(dst, 'utf8');
-    JSON.parse(raw);
+    backupRaw = await fs.readFile(dst, 'utf8');
+  } catch {
+    return; // no backup — nothing to do
+  }
+  if (!isValidTasksJson(backupRaw)) return; // backup also corrupt
+  try {
+    if (srcRaw !== null) {
+      // The corrupt main file may still hold tasks newer than the backup
+      // (hand-recoverable from a truncated file): move it aside, as the
+      // loader would, before replacing it. If its bytes can't be preserved
+      // this throws and the restore is skipped — the loader then gets its
+      // own chance to preserve or write-protect it.
+      const corruptPath = `${src}.corrupt-${Date.now()}`;
+      try {
+        await fs.rename(src, corruptPath);
+      } catch {
+        await fs.writeFile(corruptPath, srcRaw, 'utf8');
+      }
+    }
     await fs.mkdir(path.dirname(src), { recursive: true });
-    await atomicWriteFile(src, raw);
+    await atomicWriteFile(src, backupRaw);
     console.warn(
       `[tasks] restored ${src} from ${dst} — main file was missing or corrupt`,
     );
-  } catch {
-    /* no backup, or backup also corrupt — nothing to do */
+  } catch (e) {
+    console.error(`[tasks] restore of ${src} from ${dst} failed:`, e);
   }
 }
 

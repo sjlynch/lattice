@@ -44,10 +44,15 @@ type Sink = {
   queuedBytes: number;
   writing: boolean;
   dropped: number;
+  // Pending EAGAIN back-off; no write is in flight while it is armed.
+  retry: ReturnType<typeof setTimeout> | null;
 };
 
+// Back-off before retrying a write the non-blocking fd refused (EAGAIN).
+const EAGAIN_RETRY_MS = 25;
+
 function createSink(fd: number): Sink {
-  return { fd, queue: [], queuedBytes: 0, writing: false, dropped: 0 };
+  return { fd, queue: [], queuedBytes: 0, writing: false, dropped: 0, retry: null };
 }
 
 const sinks = new Map<number, Sink>();
@@ -62,7 +67,7 @@ function sinkFor(fd: number): Sink {
 }
 
 function pump(sink: Sink): void {
-  if (sink.writing || sink.queue.length === 0) return;
+  if (sink.writing || sink.retry || sink.queue.length === 0) return;
   const chunk = sink.queue.length === 1 ? sink.queue[0] : Buffer.concat(sink.queue);
   sink.queue = [];
   sink.queuedBytes = 0;
@@ -70,12 +75,27 @@ function pump(sink: Sink): void {
   let done = false;
   const onWritten = (err: NodeJS.ErrnoException | null, written: number) => {
     // fs.write can report a short write; re-queue the tail so a long line is
-    // never silently truncated.
+    // never silently truncated — at the FRONT, since anything logged while this
+    // write was in flight is newer (appending it split the line around them).
     if (done) return;
     done = true;
     sink.writing = false;
     if (!err && written < chunk.length) {
-      enqueue(sink, chunk.subarray(written));
+      requeueFront(sink, chunk.subarray(written));
+    }
+    // EAGAIN: the fd is non-blocking (on POSIX, touching `process.stdout` for a
+    // pipe makes libuv set O_NONBLOCK on fd 1/2, and crashLog does) and the
+    // reader's pipe buffer is full — the stall this module exists for, not a
+    // dead reader. Dropping the chunk here silently lost every burst past 64KB;
+    // put it back at the front and retry shortly instead.
+    if (err && (err.code === 'EAGAIN' || err.code === 'EWOULDBLOCK')) {
+      requeueFront(sink, chunk);
+      sink.retry = setTimeout(() => {
+        sink.retry = null;
+        pump(sink);
+      }, EAGAIN_RETRY_MS);
+      sink.retry.unref?.();
+      return;
     }
     // On error (EPIPE when the reader is gone, EBADF when the fd is closed)
     // drop the chunk — there is nowhere to report it to.
@@ -90,10 +110,21 @@ function pump(sink: Sink): void {
   }
 }
 
+// Back to the FRONT: an unwritten chunk is older than anything queued since.
+function requeueFront(sink: Sink, chunk: Buffer): void {
+  sink.queue.unshift(chunk);
+  sink.queuedBytes += chunk.length;
+  evictOverCap(sink);
+}
+
 function enqueue(sink: Sink, chunk: Buffer): void {
   if (chunk.length === 0) return;
   sink.queue.push(chunk);
   sink.queuedBytes += chunk.length;
+  evictOverCap(sink);
+}
+
+function evictOverCap(sink: Sink): void {
   // Drop from the FRONT: when output is stalled the newest lines are the ones
   // worth keeping, and they're the ones that explain what the process is doing
   // now. Whole chunks only — a half-written line is worse than a missing one.

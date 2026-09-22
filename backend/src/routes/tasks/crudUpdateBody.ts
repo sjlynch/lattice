@@ -3,7 +3,7 @@
 // wiring while this module owns the JSON-or-markdown normalization details.
 
 import type { TaskStatus } from '../../tasks.js';
-import type { ParsedTaskBlock } from './markdownBatch.js';
+import { parseMarkdownDoc, type ParsedTaskBlock } from './markdownBatch.js';
 import { isValidTaskStatus, normalizeBody, statusValidationError } from './requestUtils.js';
 import { pickTaskPatch, taskPatchFieldError, type TaskPatch } from './crudTypes.js';
 
@@ -16,7 +16,10 @@ export type ParseResult<T> =
 // validate it first (PATCH inline, upsert in its up-front validation loop) so an
 // invalid value never reaches this.
 export function blockToPatch(block: ParsedTaskBlock): TaskPatch {
-  const patch: TaskPatch = { title: block.title };
+  // An empty title (a metadata-only heading like `# {id=t_1, status=done}`)
+  // means "keep the title", never "blank it".
+  const patch: TaskPatch = {};
+  if (typeof block.title === 'string' && block.title.trim()) patch.title = block.title;
   if (block.description !== undefined) patch.description = block.description;
   if (block.status) patch.status = block.status as TaskStatus;
   return patch;
@@ -29,18 +32,21 @@ export function blockToPatch(block: ParsedTaskBlock): TaskPatch {
 //   - if it has no heading, the whole body replaces the description and
 //     the title is left alone.
 export function taskPatchFromBody(body: unknown): ParseResult<TaskPatch> {
-  const parsed = normalizeBody(body);
-  if (parsed.kind === 'markdown') {
-    const block = parsed.doc.tasks[0];
+  if (typeof body === 'string') {
+    // One task: only the FIRST heading is the title; any later `# Heading` is
+    // part of the new description rather than a second (silently dropped) task.
+    const block = parseMarkdownDoc(body, { singleTask: true }).tasks[0];
     if (!block) {
       // No heading found — treat the whole body as a description replacement.
-      return { ok: true, value: { description: parsed.source.trim() } };
+      return { ok: true, value: { description: body.trim() } };
     }
     if (block.status && !isValidTaskStatus(block.status)) {
       return { ok: false, error: statusValidationError('status') };
     }
     return { ok: true, value: blockToPatch(block) };
   }
+  const parsed = normalizeBody(body);
+  if (parsed.kind !== 'json') return { ok: false, error: 'unsupported body' };
   if (parsed.json.status !== undefined && !isValidTaskStatus(parsed.json.status)) {
     return { ok: false, error: statusValidationError('status') };
   }

@@ -20,7 +20,8 @@ Both are read-only against the disposable worktree (plain `exec`, never
   route; the git diff/status polling, per-project base-branch cache, and
   short-TTL result cache live in focused sibling modules (`worktreeModifiedService.ts`,
   `…Git.ts`, `…Cache.ts`, `…Constants.ts`, `…Parsers.ts`). Preserves the response
-  shape, TTL, and git timeout behavior.
+  shape, TTL, and git timeout behavior. Loads are single-flighted per project
+  and probe at most 8 worktrees at once (two git processes each).
 
 ## CRUD (`crud.ts` builds the router; handlers split by concern)
 
@@ -64,7 +65,12 @@ the implementations live in focused modules:
 - `crudTypes.ts` — shared `TaskIdRequest` type.
 
 Keep the markdown/`text/plain` body handling intact — those routes use the
-shared `textOrMarkdownBody` parser in `crud.ts`.
+shared `textOrMarkdownBody` parser in `crud.ts`. Grammar (`markdownBatch.ts`):
+a metadata-only heading (`# {id=t_1, status=done}`) is a valid heading with an
+EMPTY title, which means "keep the title" on an update (PATCH / an id-bearing
+upsert block) and is a 400 on a create. A markdown PATCH parses in
+`singleTask` mode — only the first `#` heading is the title; later level-1
+headings are description text rather than silently dropped extra tasks.
 
 ## Queued spawns (`queuedSpawn.ts` barrel; split by concern)
 

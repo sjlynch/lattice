@@ -51,9 +51,15 @@ export function useSidebarWidth(
 
     if (!loaded || !settings) return; // hold previous width until settings arrive
 
-    if (typeof settings.sidebarWidth === 'number') {
-      setSidebarWidth(clampSidebarWidth(settings.sidebarWidth));
-    }
+    // A project with no saved width gets the default, not whatever width the
+    // previous project was dragged to.
+    setSidebarWidth(
+      clampSidebarWidth(
+        typeof settings.sidebarWidth === 'number'
+          ? settings.sidebarWidth
+          : APP_CONFIG.sidebar.defaultWidth,
+      ),
+    );
     setSidebarSettingsLoaded(true);
   }, [activeFolder, loaded, settings]);
 

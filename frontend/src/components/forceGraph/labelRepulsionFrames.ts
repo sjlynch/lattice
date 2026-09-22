@@ -18,6 +18,7 @@ import type { ForceGraph3DInstance } from '3d-force-graph';
 import { getIdleController } from './idleController';
 import { onFrame } from './sceneFrameDriver';
 import { repelLabels, type RepulsionEntry } from './labelRepulsion';
+import { resetRepulsionScratch } from './labelPhysics/scratchBuffers';
 
 export function startLabelRepulsion(
   graph: ForceGraph3DInstance | null,
@@ -54,5 +55,6 @@ export function startLabelRepulsion(
   return () => {
     off();
     release();
+    resetRepulsionScratch();
   };
 }

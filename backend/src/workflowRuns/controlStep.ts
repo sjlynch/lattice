@@ -197,6 +197,15 @@ export async function runControlStepWorker(
     await completeStep(run.id, stepIndex, backendOrigin);
   } catch (err) {
     const error = err as Error | undefined;
+    // A cancel that lands while the advance is in flight (its `completing`
+    // checkpoint write, say) stands — same rule as the worker-error path.
+    if (run.status !== 'running') {
+      console.log(
+        `[workflow-run] ${run.id} control step ${stepIndex} (${kind}) advance failed after the run ended in ${run.status}; keeping that state:`,
+        error?.message,
+      );
+      return;
+    }
     run.status = 'errored';
     run.finishedAt = Date.now();
     run.error = error?.message ?? 'advancing past control step failed';

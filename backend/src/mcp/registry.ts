@@ -142,7 +142,9 @@ function shapeLatticeEntry(
   // one in the entry env would give every sidebar/workflow/push agent a bogus
   // `my_task`. Strip the whole prefix so the ctx is the only source.
   const baseEnv = Object.fromEntries(
-    Object.entries(entry.env ?? {}).filter(([key]) => !key.startsWith('LATTICE_')),
+    // Case-insensitive: Windows env is, so a `lattice_task_id` key would reach
+    // `process.env.LATTICE_TASK_ID` in the server just the same.
+    Object.entries(entry.env ?? {}).filter(([key]) => !/^lattice_/i.test(key)),
   );
   return {
     ...entry,

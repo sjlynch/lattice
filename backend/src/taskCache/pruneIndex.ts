@@ -11,7 +11,8 @@
 // user cares about:
 //   - A path that currently EXISTS on disk is always kept (even a non-git dir —
 //     an index entry is harmless).
-//   - A path with task data is always kept, EVEN IF its directory is gone. Task
+//   - A path with task data (or a corrupt / backup-only task DB that boot
+//     recovery could still restore) is always kept, EVEN IF its directory is gone. Task
 //     data lives in ~/.lattice/per-project/<hash>/tasks.json, independent of the
 //     project's drive, so a real project on a temporarily-offline network /
 //     removable drive (which still has its tasks) survives.
@@ -24,7 +25,7 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { canonicalProjectPath } from '../projectPath.js';
-import { projectTasksFile } from './paths.js';
+import { projectTasksBackupFile, projectTasksFile } from './paths.js';
 
 // True if the string contains any ASCII control character (NUL..US) — e.g. a
 // CR/LF/tab left behind by shell mangling. No real filesystem path has one.
@@ -51,26 +52,56 @@ export function isStructurallyJunkPath(
   return c === tmp || c.startsWith(tmp + path.sep);
 }
 
+// Only ENOENT/ENOTDIR prove a path is gone. EACCES / EBUSY / an offline share's
+// EIO say nothing about it, and conservatively count as "exists".
 async function pathExists(p: string): Promise<boolean> {
   try {
     await fsp.stat(p);
     return true;
-  } catch {
-    return false;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    return code !== 'ENOENT' && code !== 'ENOTDIR';
   }
 }
 
-// True if the project's home-scoped tasks.json holds at least one task. Missing
-// or corrupt ⇒ treated as no tasks. Independent of whether the project's own
-// directory exists (that's the whole point — it survives an offline drive).
-export async function projectHasTasksOnDisk(canonical: string): Promise<boolean> {
+// Does this task file hold data worth keeping the index entry for? A non-empty
+// task array does; so does a file that exists but can't be read or parsed —
+// it is exactly what boot recovery (driven by this index) exists to restore or
+// preserve, and pruning the entry would hide it from that recovery for good.
+// Only a missing file or an empty `[]` counts as "no data".
+async function taskFileHoldsData(file: string): Promise<boolean> {
+  let raw: string;
   try {
-    const raw = await fsp.readFile(projectTasksFile(canonical), 'utf8');
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) && arr.length > 0;
-  } catch {
-    return false;
+    raw = await fsp.readFile(file, 'utf8');
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code !== 'ENOENT';
   }
+  try {
+    const arr = JSON.parse(raw);
+    return !Array.isArray(arr) || arr.length > 0;
+  } catch {
+    return true;
+  }
+}
+
+// True if the project's home-scoped task storage holds anything recoverable:
+// tasks in tasks.json, a corrupt/unreadable tasks.json, or tasks in the
+// merge-run backup (a lost main file is restored from it on boot). Independent
+// of whether the project's own directory exists (that's the whole point — it
+// survives an offline drive).
+export async function projectHasTasksOnDisk(canonical: string): Promise<boolean> {
+  let main: string;
+  let backup: string;
+  try {
+    main = projectTasksFile(canonical);
+    backup = projectTasksBackupFile(canonical);
+  } catch {
+    // Storage path unresolvable (e.g. an ambiguous legacy identity): keep the
+    // entry — the conservative answer — rather than fail the whole index load.
+    return true;
+  }
+  if (await taskFileHoldsData(main)) return true;
+  return taskFileHoldsData(backup);
 }
 
 // Full decision, used by the boot-time loader. Structurally-junk paths are

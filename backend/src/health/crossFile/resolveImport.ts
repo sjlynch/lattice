@@ -7,6 +7,7 @@ export {
   INDEX_FILES,
   RESOLVE_EXTS,
   normalizePythonRelativeImport,
+  resolvePythonAbsoluteImport,
   resolveByAlias,
   resolveImport,
   tryAllExtensions,

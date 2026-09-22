@@ -68,7 +68,10 @@ export function useActiveFolder() {
       onRetry: (err, attempt) =>
         console.warn(`default-root fetch failed (retry ${attempt + 1})`, err),
     }).then((root) => {
-      if (!cancelled) setActiveFolder(root);
+      // Only fill a still-empty folder: the retry loop can run ~19 s during a
+      // backend restart, and a project the user picked meanwhile must win —
+      // a late default (or the '' of exhausted retries) used to replace it.
+      if (!cancelled) setActiveFolderRaw((cur) => cur || canonicalProjectPath(root));
     });
     return () => {
       cancelled = true;

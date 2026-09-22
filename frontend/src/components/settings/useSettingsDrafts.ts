@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  fetchUserSettings,
+  fetchUserSettingsStrict,
   type RestoreTerminalsMode,
   type TerminalDefaultHarness,
   type TerminalLaunchSettings,
@@ -33,7 +33,41 @@ export type SettingsDrafts = {
   // True when any parent-owned draft differs from its last-loaded value. Feeds
   // the Terminals tab's dirty dot and the warn-on-close check.
   dirty: boolean;
+  // The fetched toggles that are safe to write on Save — see
+  // `pickSavableFetchedToggles`.
+  getSavableFetchedToggles: () => Partial<FetchedToggles>;
 };
+
+// The drafts that are NOT part of the synchronous terminalLaunchSettings slice
+// and so are seeded from a per-open GET /api/settings.
+export type FetchedToggles = {
+  instrumentClaude: boolean;
+  disableMemory: boolean;
+  qaTerminalAutoClose: boolean;
+  restoreTerminalsOnOpen: RestoreTerminalsMode;
+  restoreNudgeAgents: boolean;
+  restoreNudgeUserTabs: boolean;
+};
+
+// Which fetched toggles a Save may write. Until the settings GET has
+// succeeded, an untouched draft still holds the hard-coded default (or the
+// previous open's value), NOT the project's saved value — writing it would
+// silently reset e.g. a saved `qaTerminalAutoClose: true` or
+// `restoreTerminalsOnOpen: 'never'` whenever the user saved another tab while
+// the fetch was slow or had failed (a backend restart). So: everything once
+// loaded, otherwise only the fields the user actually edited.
+export function pickSavableFetchedToggles(
+  values: FetchedToggles,
+  touched: Record<keyof FetchedToggles, boolean>,
+  loaded: boolean,
+): Partial<FetchedToggles> {
+  if (loaded) return { ...values };
+  const out: Partial<FetchedToggles> = {};
+  for (const key of Object.keys(values) as (keyof FetchedToggles)[]) {
+    if (touched[key]) (out as Record<string, unknown>)[key] = values[key];
+  }
+  return out;
+}
 
 function normalizeRestoreMode(value: unknown): RestoreTerminalsMode {
   return value === 'ask' || value === 'never' ? value : 'always';
@@ -82,6 +116,8 @@ export function useSettingsDrafts(
     restoreNudgeAgents: false,
     restoreNudgeUserTabs: false,
   });
+  // True once this open's settings GET succeeded (gates what Save may write).
+  const [fetchedLoaded, setFetchedLoaded] = useState(false);
 
   // Reseed the terminal-default drafts from the latest saved settings each
   // time the dialog opens.
@@ -128,6 +164,7 @@ export function useSettingsDrafts(
   useEffect(() => {
     if (!open || !activeFolder) return;
     let cancelled = false;
+    setFetchedLoaded(false);
     fetchedToggleTouchedRef.current = {
       instrumentClaude: false,
       disableMemory: false,
@@ -136,7 +173,11 @@ export function useSettingsDrafts(
       restoreNudgeAgents: false,
       restoreNudgeUserTabs: false,
     };
-    fetchUserSettings(activeFolder)
+    // Strict: a failed GET (a 502 mid backend restart) must throw rather than
+    // read as `{}` — the lenient variant would seed every draft with its
+    // default and mark it "loaded", so the next Save would write those
+    // defaults over the project's real values.
+    fetchUserSettingsStrict(activeFolder)
       .then((s) => {
         if (!cancelled) {
           const instrument = s.instrumentProjectClaudeSessions !== false;
@@ -156,9 +197,10 @@ export function useSettingsDrafts(
           if (!touched.restoreTerminalsOnOpen) setRestoreTerminalsOnOpen(restoreMode);
           if (!touched.restoreNudgeAgents) setRestoreNudgeAgents(nudgeAgents);
           if (!touched.restoreNudgeUserTabs) setRestoreNudgeUserTabs(nudgeUserTabs);
+          setFetchedLoaded(true);
         }
       })
-      .catch(() => { /* keep current draft */ });
+      .catch(() => { /* keep current draft; Save writes only touched fields */ });
     return () => { cancelled = true; };
   }, [open, activeFolder]);
 
@@ -173,6 +215,31 @@ export function useSettingsDrafts(
     restoreTerminalsOnOpen !== loadedRestore.mode ||
     restoreNudgeAgents !== loadedRestore.agents ||
     restoreNudgeUserTabs !== loadedRestore.userTabs;
+
+  const getSavableFetchedToggles = useCallback(
+    () =>
+      pickSavableFetchedToggles(
+        {
+          instrumentClaude,
+          disableMemory,
+          qaTerminalAutoClose,
+          restoreTerminalsOnOpen,
+          restoreNudgeAgents,
+          restoreNudgeUserTabs,
+        },
+        fetchedToggleTouchedRef.current,
+        fetchedLoaded,
+      ),
+    [
+      instrumentClaude,
+      disableMemory,
+      qaTerminalAutoClose,
+      restoreTerminalsOnOpen,
+      restoreNudgeAgents,
+      restoreNudgeUserTabs,
+      fetchedLoaded,
+    ],
+  );
 
   return {
     terminalDefaultHarness,
@@ -194,5 +261,6 @@ export function useSettingsDrafts(
     restoreNudgeUserTabs,
     setRestoreNudgeUserTabs: setRestoreNudgeUserTabsDraft,
     dirty,
+    getSavableFetchedToggles,
   };
 }

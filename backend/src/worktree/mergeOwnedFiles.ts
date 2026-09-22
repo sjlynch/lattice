@@ -49,6 +49,7 @@ async function trackedPaths(worktreePath: string, files: readonly string[]): Pro
 export async function shelveLatticeManagedFiles(worktreePath: string): Promise<string[]> {
   const shelved: string[] = [];
   const tracked = await trackedPaths(worktreePath, LATTICE_SHELVE_PATHS);
+  await recoverStaleShelvedFiles(worktreePath, tracked);
   for (const f of LATTICE_SHELVE_PATHS) {
     const src = path.join(worktreePath, f);
     try {
@@ -65,6 +66,43 @@ export async function shelveLatticeManagedFiles(worktreePath: string): Promise<s
     }
   }
   return shelved;
+}
+
+// A backend killed between shelve and restore (the dev `tsc -w` restart a
+// merge that fast-forwards `backend/src` routinely triggers) leaves each
+// shelved file sitting at `<f>.lattice-bak`: the worktree loses its Stop hook
+// / Pi extension / brief, the next shelve skips the now-absent originals, and
+// nothing ever moves them back. Put an orphaned copy back where it belongs
+// (only while the path is absent — a tracked version
+// wins for a non-owned path, as in restore below), and drop a stale copy that
+// has since been superseded by a re-created file. Single-file
+// operations only; never recursive.
+async function recoverStaleShelvedFiles(worktreePath: string, tracked: Set<string>): Promise<void> {
+  for (const f of LATTICE_SHELVE_PATHS) {
+    const src = path.join(worktreePath, f);
+    const bak = `${src}.lattice-bak`;
+    try {
+      const st = await fs.lstat(bak);
+      if (!st.isFile()) continue;
+    } catch {
+      continue; // no leftover — the common case
+    }
+    try {
+      const srcPresent = await fs.lstat(src).then(() => true, () => false);
+      // Same precedence as restoreLatticeManagedFiles: an owned file's
+      // content is per-worktree (Lattice's copy wins); a non-owned one yields
+      // to a tracked version.
+      if (!srcPresent && (OWNED_PATHS.has(f) || !tracked.has(f))) {
+        await fs.rename(bak, src);
+        console.warn(`[merge] recovered ${f} left shelved by an interrupted merge in ${worktreePath}`);
+      } else {
+        await fs.unlink(bak);
+        console.warn(`[merge] dropped a stale shelved copy of ${f} in ${worktreePath}`);
+      }
+    } catch (err) {
+      console.warn(`[merge] could not recover shelved ${f} in ${worktreePath}:`, err);
+    }
+  }
 }
 
 const OWNED_PATHS = new Set<string>(LATTICE_OWNED_FILE_PATHS);

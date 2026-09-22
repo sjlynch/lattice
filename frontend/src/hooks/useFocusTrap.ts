@@ -25,6 +25,28 @@ function getFocusable(container: HTMLElement): HTMLElement[] {
   ).filter((el) => el.getClientRects().length > 0);
 }
 
+// Innermost-wins stack of open traps, in open (= nesting) order. `Modal` and
+// `FloatingPanel` both portal to `document.body`, so a confirm dialog over a
+// panel is a SIBLING tree: with every trap handling Tab, the panel's listener
+// (registered first) pulled focus into the panel, then the modal's pulled it
+// back to its first control — so Tab from the modal's last button always landed
+// on the first one and the middle ones were unreachable by keyboard. Only the
+// top trap acts; mirrors `components/shared/useEscapeToClose`.
+const openTraps: symbol[] = [];
+
+export function pushFocusTrap(token: symbol): void {
+  openTraps.push(token);
+}
+
+export function removeFocusTrap(token: symbol): void {
+  const i = openTraps.indexOf(token);
+  if (i >= 0) openTraps.splice(i, 1);
+}
+
+export function isTopFocusTrap(token: symbol): boolean {
+  return openTraps[openTraps.length - 1] === token;
+}
+
 /**
  * Shared focus management for modal/dialog wrappers. Attach the returned ref to
  * the dialog container. While `open`:
@@ -59,8 +81,13 @@ export function useFocusTrap<T extends HTMLElement = HTMLElement>(open: boolean)
       if (focusable.length > 0) focusable[0].focus();
     }
 
+    const token = Symbol('focus-trap');
+    pushFocusTrap(token);
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Tab') return;
+      // A dialog stacked over this one owns the Tab cycle.
+      if (!isTopFocusTrap(token)) return;
       const focusable = getFocusable(container);
       if (focusable.length === 0) {
         e.preventDefault();
@@ -83,6 +110,7 @@ export function useFocusTrap<T extends HTMLElement = HTMLElement>(open: boolean)
     document.addEventListener('keydown', onKeyDown);
     return () => {
       document.removeEventListener('keydown', onKeyDown);
+      removeFocusTrap(token);
       // Restore focus to the opener. Guarded so a removed element (or one that
       // can't take focus) is skipped silently.
       const toRestore = restoreRef.current;

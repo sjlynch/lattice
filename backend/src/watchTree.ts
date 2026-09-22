@@ -77,6 +77,11 @@ const MAX_STABILITY_RETRIES = 20;
 
 type SnapshotEntry = { dir: boolean; mtimeMs: number; size: number };
 
+// Windows and (by default) macOS resolve paths case-insensitively, which is
+// what makes a case-only rename invisible to a plain stat diff.
+const CASE_INSENSITIVE_FS =
+  process.platform === 'win32' || process.platform === 'darwin';
+
 function useRecursiveBackend(): boolean {
   const mode = process.env.LATTICE_WATCH_MODE;
   if (mode === 'chokidar') return false;
@@ -246,7 +251,10 @@ class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
     if (this.opts.ignored(filePath, stats)) return;
 
     if (stats.isDirectory()) {
-      if (this.snapshot.has(filePath)) return;
+      if (this.snapshot.has(filePath)) {
+        await this.dropStaleCaseSpelling(filePath);
+        return;
+      }
       this.snapshot.set(filePath, { dir: true, mtimeMs: 0, size: 0 });
       this.emit('addDir', filePath);
       // A directory can appear complete (moved/renamed in), and the recursive
@@ -279,6 +287,34 @@ class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
     } else if (forced || prev.mtimeMs !== next.mtimeMs || prev.size !== next.size) {
       this.snapshot.set(filePath, next);
       this.emit('change', filePath);
+    } else {
+      await this.dropStaleCaseSpelling(filePath);
+    }
+  }
+
+  // On a case-insensitive filesystem a case-only rename (`mv Foo.ts foo.ts`)
+  // leaves the OLD spelling still statable, with unchanged (mtime,size) — so
+  // the diff above saw "nothing changed" for it while the new spelling was
+  // reported as an add, and the snapshot (and every subscriber's graph) kept a
+  // phantom `Foo.ts` forever. Only reached on an event that otherwise emits
+  // nothing, so the extra realpath is off the common path. The OS's real
+  // casing comes back from the native realpath; a basename mismatch means the
+  // recorded spelling is gone: report its removal and queue the real one.
+  private async dropStaleCaseSpelling(filePath: string): Promise<void> {
+    if (!CASE_INSENSITIVE_FS) return;
+    let real: string;
+    try {
+      real = await fsp.realpath(filePath);
+    } catch {
+      return;
+    }
+    const actual = path.basename(real);
+    if (actual === path.basename(filePath)) return;
+    this.emitRemoval(filePath);
+    const respelled = path.join(path.dirname(filePath), actual);
+    if (!this.snapshot.has(respelled)) {
+      this.pending.add(respelled);
+      this.schedule();
     }
   }
 

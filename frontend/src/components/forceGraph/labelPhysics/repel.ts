@@ -11,6 +11,7 @@ import {
   entries,
   tmpVec,
   ensureCapacity,
+  resetRepulsionScratch,
 } from './scratchBuffers';
 import { buildSpatialGridFromScratch, pairwiseGrid } from './spatialGrid';
 import {
@@ -32,7 +33,10 @@ export function repelLabels(
 ): boolean {
   cleanupStaleRegistryEntries(registry, undefined, onDetached);
   const count = registry.size;
-  if (count === 0) return true;
+  if (count === 0) {
+    resetRepulsionScratch();
+    return true;
+  }
 
   ensureCapacity(count);
 

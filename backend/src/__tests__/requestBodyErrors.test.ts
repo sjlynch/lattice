@@ -149,3 +149,30 @@ test('an error after headers were sent delegates without attempting a second res
     assert.equal(delegated, failure);
   });
 });
+
+// Regression: Express's own client errors carry a 4xx `status` — a malformed
+// percent-escape in a `:param` throws "Failed to decode param" with status 400
+// — but the JSON error middleware answered every non-body error with a 500 and
+// logged it as a server failure.
+test('an Express client error (undecodable :param) keeps its 400 and is not logged as a failure', async (t) => {
+  const errors: unknown[][] = [];
+  t.mock.method(console, 'warn', () => {});
+  t.mock.method(console, 'error', (...args: unknown[]) => { errors.push(args); });
+  const app = express();
+  let handled = 0;
+  app.get('/api/things/:id', (_req, res) => { handled++; res.json({ ok: true }); });
+  app.get('/secret', (_req, _res, next) => {
+    next(Object.assign(new Error('internal detail'), { status: 403, expose: false }));
+  });
+  mountJsonErrorMiddleware(app);
+  await withApp(app, async (base) => {
+    const response = await fetch(base + '/api/things/%E0%A4%A');
+    assert.equal(response.status, 400);
+    assert.match((await response.json() as { error: string }).error, /decode param/);
+    assert.equal(handled, 0);
+    assert.equal(errors.length, 0);
+    // An error that says it is not safe to show stays an opaque 500.
+    const hidden = await fetch(base + '/secret');
+    assert.equal(hidden.status, 500);
+  });
+});

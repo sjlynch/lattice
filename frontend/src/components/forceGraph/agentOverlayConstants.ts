@@ -86,8 +86,9 @@ export const SATELLITE_TETHER_OPACITY = 0.3;
 export const SATELLITE_BEAM_OPACITY_FACTOR = 0.8;
 // Safety net for a satellite whose SubagentStop never arrives (e.g. the
 // terminal was hard-killed). SubagentStop is the primary removal signal; this
-// only reaps a satellite that has gone fully quiet (no live beam) for this long.
-// Generous so a long-thinking subagent is never reaped early.
+// only reaps a satellite that has gone quiet (no fading beam — its persistent
+// current-file beam doesn't count) for this long. Generous so a long-thinking
+// subagent is rarely reaped early; one that is comes back on its next tool use.
 export const SATELLITE_IDLE_TTL_MS = 5 * 60 * 1000;
 // Satellite type label offset from its node (multiples of the satellite size).
 export const SATELLITE_LABEL_OFFSET_X_FACTOR = 1.3;

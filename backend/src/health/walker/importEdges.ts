@@ -22,8 +22,12 @@ export function handleImportStatement(
 ): void {
   if (!ctx.kinds.import.has(t)) return;
 
-  const src = importSourceText(ctx, node, t);
-  if (src) ctx.result.imports.push(src);
+  if (ctx.grammar === 'python') {
+    for (const spec of pythonImportSpecs(node, t)) ctx.result.imports.push(spec);
+  } else {
+    const src = importSourceText(node);
+    if (src) ctx.result.imports.push(src);
+  }
 
   if (ctx.grammar === 'python' && t === 'import_from_statement') {
     for (const c of node.children) {
@@ -70,25 +74,49 @@ export function handleDynamicImportEdge(
   }
 }
 
-// Pull the source path off an import-statement node. Field names differ between
-// grammars and even between Python's two import statement kinds.
-function importSourceText(
-  ctx: WalkerContext,
-  node: Node,
-  t: string,
-): string | null {
-  if (ctx.grammar === 'python') {
-    if (t === 'import_from_statement') {
-      const mod = node.childForFieldName('module_name');
-      return mod?.text ?? null;
-    }
-    // import_statement: `import a.b.c[, d.e]`
-    const name = node.childForFieldName('name');
-    return name?.text ?? null;
-  }
-
-  // TS/JS: import_statement with a `source` field.
+// TS/JS: the source path of an import_statement's `source` field.
+function importSourceText(node: Node): string | null {
   const src = node.childForFieldName('source');
   if (!src) return null;
   return stripStringQuotes(src.text);
+}
+
+// The dotted module name of a Python `name` child: a bare `dotted_name`, or
+// the `name` half of an `aliased_import` (`a.b as c` — its full text is not a
+// module name).
+function pythonDottedName(n: Node): string | null {
+  if (n.type === 'aliased_import') return n.childForFieldName('name')?.text ?? null;
+  if (n.type === 'dotted_name') return n.text;
+  return null;
+}
+
+// Every module a Python import statement can pull in. Both statement kinds
+// carry a REPEATED `name` field, and reading only the first one dropped edges:
+//   - `import a.b, c.d as e` → `a.b`, `c.d` (was just `a.b`; `as` forms were
+//     taken verbatim, `c.d as e`, which never resolves).
+//   - `from pkg import mod, other` → `pkg` plus `pkg.mod` / `pkg.other`, and
+//     `from . import views` → `.` plus `.views`: the imported names are very
+//     often SUBMODULES, and with only the package recorded every module pulled
+//     in that way (the common Django/Flask `from . import views` shape) read as
+//     dead. A name that is really a function/class simply fails to resolve and
+//     is dropped, so over-emitting is harmless.
+function pythonImportSpecs(node: Node, t: string): string[] {
+  const out: string[] = [];
+  const names = node.childrenForFieldName('name').filter((n): n is Node => Boolean(n));
+  if (t === 'import_from_statement') {
+    const mod = node.childForFieldName('module_name')?.text;
+    if (!mod) return out;
+    out.push(mod);
+    const joiner = /^\.+$/.test(mod) ? '' : '.';
+    for (const n of names) {
+      const name = pythonDottedName(n);
+      if (name) out.push(`${mod}${joiner}${name}`);
+    }
+    return out;
+  }
+  for (const n of names) {
+    const name = pythonDottedName(n);
+    if (name) out.push(name);
+  }
+  return out;
 }

@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { clampPos, VIEWPORT_PAD } from '../components/floatingPanel/geometry.ts';
+import {
+  clampPos,
+  sanitizePersistedGeometry,
+  VIEWPORT_PAD,
+} from '../components/floatingPanel/geometry.ts';
 import { withWindow } from './domDoubles.ts';
 
 function withViewport<T>(width: number, height: number, fn: () => T): T {
@@ -41,4 +45,25 @@ test('clampPos keeps the header reachable when the panel is larger than the view
     assert.ok(recovered.x >= VIEWPORT_PAD);
     assert.ok(recovered.y >= VIEWPORT_PAD);
   });
+});
+
+// Regression: the persisted `lattice.<panel>.window` entry was returned
+// unvalidated, so a malformed one (a NaN stored as `null`, an older shape, a
+// hand-edit) reached clampPos as NaN and parked the panel out of reach.
+test('sanitizePersistedGeometry keeps only well-formed pos / size', () => {
+  assert.deepEqual(
+    sanitizePersistedGeometry({ pos: { x: 10, y: 20 }, size: { width: 300, height: 200 } }),
+    { pos: { x: 10, y: 20 }, size: { width: 300, height: 200 } },
+  );
+  assert.deepEqual(
+    sanitizePersistedGeometry({ pos: { x: null, y: 20 }, size: { width: 300, height: 200 } }),
+    { size: { width: 300, height: 200 } },
+  );
+  assert.deepEqual(
+    sanitizePersistedGeometry({ pos: { x: 1, y: 2 }, size: { width: 0, height: 'x' } }),
+    { pos: { x: 1, y: 2 } },
+  );
+  assert.equal(sanitizePersistedGeometry(null), null);
+  assert.equal(sanitizePersistedGeometry(42), null);
+  assert.equal(sanitizePersistedGeometry({ pos: 'nope' }), null);
 });

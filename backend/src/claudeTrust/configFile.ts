@@ -31,6 +31,10 @@ export const CLAUDE_JSON_BACKUP = path.join(os.homedir(), '.lattice', 'claude-js
 // and it used to (a) leak the temp and (b) silently drop the trust/MCP seed.
 // A short bounded retry lets the write land once the other handle closes.
 const RENAME_RETRY_DELAYS_MS = [15, 30, 60, 120, 250];
+// Pause before re-reading a ~/.claude.json that failed to parse, so a read
+// that landed mid-way through Claude's in-place rewrite isn't mistaken for
+// corruption (matches the guard's REVALIDATE_DELAY_MS).
+export const HEAL_REREAD_DELAY_MS = 200;
 // Suffix on every Lattice-written temp, so a boot sweep can recognize orphans
 // regardless of which file (config or secrets) produced them.
 export const TEMP_SUFFIX = '.tmp';
@@ -80,6 +84,25 @@ export async function readClaudeConfig(): Promise<ClaudeGlobalConfig> {
   try {
     return JSON.parse(raw) as ClaudeGlobalConfig;
   } catch (parseErr) {
+    // One failed parse is not proof of corruption: Claude rewrites this file
+    // in place (non-atomically), so with many live agents a read can land
+    // mid-write. Healing on that single read replaced a live, newer config
+    // with the (up to a minute old) backup. Re-read once after a short pause
+    // — the same read-twice rule the guard applies — and heal only if the
+    // file is still unparseable.
+    await sleep(HEAL_REREAD_DELAY_MS);
+    let reread: string;
+    try {
+      reread = await fs.readFile(CLAUDE_GLOBAL_CONFIG, 'utf8');
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return {};
+      throw e; // unreadable ≠ corrupt: never restore over it
+    }
+    try {
+      return JSON.parse(reread) as ClaudeGlobalConfig;
+    } catch {
+      /* still corrupt on the second read — heal below */
+    }
     const restored = await restoreClaudeConfigFromBackupLocked();
     if (restored) {
       console.warn(
@@ -150,9 +173,32 @@ async function restoreClaudeConfigFromBackupLocked(): Promise<ClaudeGlobalConfig
 }
 
 // Lock-acquiring wrapper for the guard (claudeConfigGuard.ts), which is not
-// otherwise holding the config lock. Returns true when a restore happened.
-export async function restoreClaudeConfigFromBackup(): Promise<boolean> {
-  return withClaudeConfigLock(
-    async () => (await restoreClaudeConfigFromBackupLocked()) !== null,
-  );
+// otherwise holding the config lock. The guard decided "corrupt" from reads
+// taken BEFORE the lock, and acquiring it can take seconds — long enough for
+// Claude (or a spawn's own heal) to write a valid, newer file. So re-check the
+// live file inside the lock and restore only if it is STILL unparseable;
+// restoring regardless rolled a healthy config back to the (up to a minute
+// old) backup. `'healthy'` = nothing to do, `'restored'` = restored,
+// `'no-backup'` = still corrupt and no usable backup.
+export async function restoreClaudeConfigFromBackup(): Promise<'restored' | 'healthy' | 'no-backup'> {
+  return withClaudeConfigLock(async () => {
+    if (await liveConfigParses()) return 'healthy';
+    return (await restoreClaudeConfigFromBackupLocked()) !== null ? 'restored' : 'no-backup';
+  });
+}
+
+// True when ~/.claude.json is absent (nothing to heal) or parses.
+async function liveConfigParses(): Promise<boolean> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(CLAUDE_GLOBAL_CONFIG, 'utf8');
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT';
+  }
+  try {
+    JSON.parse(raw);
+    return true;
+  } catch {
+    return false;
+  }
 }

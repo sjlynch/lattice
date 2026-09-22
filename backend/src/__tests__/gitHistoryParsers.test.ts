@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { gitLogFormat, parseGitLogNameStatus } from '../gitHistory/parseLog.js';
 import { parseGitStatusPorcelain } from '../gitHistory/parseStatus.js';
-import { GIT_LOG_COMMIT_HEADER, GIT_LOG_FIELD_SEPARATOR } from '../gitHistory/parserShared.js';
+import { GIT_LOG_COMMIT_HEADER, GIT_LOG_FIELD_SEPARATOR, unquoteGitPath } from '../gitHistory/parserShared.js';
 
 function commitHeader(
   sha: string,
@@ -130,6 +130,52 @@ test('parseGitStatusPorcelain keeps dirty priority D > A > M per path', () => {
   assert.deepEqual(result.changes, [
     { path: 'promoted.ts', status: 'D' },
     { path: 'not-downgraded.ts', status: 'D' },
+  ]);
+});
+
+test('parseGitLogNameStatus keeps type changes and unquotes C-quoted paths', () => {
+  // `T` (file <-> symlink) was dropped outright; a path holding a quote,
+  // backslash or control char stays C-quoted even under core.quotePath=false,
+  // and the quoted spelling never matched a graph file id.
+  const out =
+    `${commitHeader('5555555555555555555555555555555555555555', '5555555', 'Eve', 1700000005, 'odd')}\n` +
+    `T\tlink.ts\n` +
+    `A\t"tab\\there.ts"\n` +
+    `M\t"quote\\"d.ts"\n` +
+    `M\t"caf\\303\\251.ts"\n` +
+    `R100\t"old\\tname.ts"\tplain.ts\n`;
+
+  const commits = parseGitLogNameStatus(out);
+
+  assert.deepEqual(commits[0].changes, [
+    { path: 'link.ts', status: 'M' },
+    { path: 'tab\there.ts', status: 'A' },
+    { path: 'quote"d.ts', status: 'M' },
+    { path: 'café.ts', status: 'M' },
+    { path: 'old\tname.ts', status: 'D' },
+    { path: 'plain.ts', status: 'A', oldPath: 'old\tname.ts' },
+  ]);
+});
+
+test('unquoteGitPath leaves unquoted paths alone', () => {
+  assert.equal(unquoteGitPath('src/a.ts'), 'src/a.ts');
+  assert.equal(unquoteGitPath('"'), '"');
+  assert.equal(unquoteGitPath('"a\\\\b"'), 'a\\b');
+});
+
+test('parseGitStatusPorcelain treats only both-deleted conflicts as deletions', () => {
+  // `DU`/`UD` ("deleted by us/them") leave the surviving side on disk; reading
+  // them as `D` made computeDeletedPaths ghost a file that was right there.
+  const result = parseGitStatusPorcelain(
+    `DU by-us.ts\0UD by-them.ts\0UU both.ts\0AA both-added.ts\0DD gone.ts\0`,
+  );
+
+  assert.deepEqual(result.changes, [
+    { path: 'by-us.ts', status: 'M' },
+    { path: 'by-them.ts', status: 'M' },
+    { path: 'both.ts', status: 'M' },
+    { path: 'both-added.ts', status: 'A' },
+    { path: 'gone.ts', status: 'D' },
   ]);
 });
 

@@ -52,10 +52,24 @@ function normalize(raw: unknown): OpengrepState {
 }
 
 export async function readOpengrepState(): Promise<OpengrepState> {
+  return readState(true);
+}
+
+// `lenient` (display / scan reads) treats an unreadable file as empty. The
+// WRITE path must not: building the next state on that `{}` dropped `binary`
+// and every other pack's record the moment one pack install landed during a
+// transient read failure (an antivirus hold right after a rename), and scans
+// then silently skipped the "uninstalled" pack still on disk.
+async function readState(lenient: boolean): Promise<OpengrepState> {
   try {
     return normalize(JSON.parse(await fs.readFile(stateFilePath(), 'utf8')));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { ...EMPTY, packs: {} };
+    if (!lenient) {
+      throw new Error(
+        `Opengrep state.json unreadable (${(err as Error).message}) — refusing to overwrite it`,
+      );
+    }
     // A corrupt file reads as empty (the install paths will rewrite it); the
     // engine/packs on disk are re-discoverable, so nothing is lost.
     console.warn('[opengrep] state.json unreadable, treating as empty:', (err as Error).message);
@@ -68,7 +82,7 @@ export async function updateOpengrepState(
 ): Promise<OpengrepState> {
   const file = stateFilePath();
   return runExclusive(`opengrep-state:${file}`, async () => {
-    const current = await readOpengrepState();
+    const current = await readState(false);
     const next = mutate(current) ?? current;
     await fs.mkdir(path.dirname(file), { recursive: true });
     await atomicWriteFile(file, JSON.stringify(next, null, 2));

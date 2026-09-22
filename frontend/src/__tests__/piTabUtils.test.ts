@@ -2,12 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   AGGREGATOR_MODEL_COUNT,
+  applyDetectedModels,
   alwaysShownPatterns,
   dropEndpointKey,
   extendedThinkingLevels,
   formatContextWindow,
   isAggregatorEndpoint,
   nextEndpointId,
+  piProvidersPatch,
   sanitizeProvidersForSave,
   shownEndpointModels,
 } from '../components/settings/piTabUtils.ts';
@@ -188,5 +190,42 @@ test('an aggregator endpoint does not force its models into the menu', () => {
   assert.deepEqual(
     [...alwaysShownPatterns([aggregator, local], ['openrouter/m0', 'swarm/qwen'])],
     ['swarm/qwen'],
+  );
+});
+
+// Regression: "Detect models" is async and used to write its result to the row
+// INDEX captured at click time. Removing an earlier endpoint mid-probe shifted
+// the rows, so the probe replaced a different endpoint's model list.
+test('applyDetectedModels targets the probed endpoint by id, not by stale index', () => {
+  const b = ep('b', { models: [{ id: 'keep-me' }] });
+  const c = ep('c', { models: [{ id: 'old', contextWindow: 1000 }] });
+  // Probe started for `c` at index 2; `a` (index 0) was removed meanwhile.
+  const next = applyDetectedModels([b, c], 'c', [
+    { id: 'old', contextWindow: 2000 },
+    { id: 'new' },
+  ]);
+  assert.deepEqual(next[0], b, 'the endpoint now at the stale index is untouched');
+  assert.deepEqual(next[1].models, [
+    { id: 'old', contextWindow: 2000 },
+    { id: 'new' },
+  ]);
+});
+
+test('applyDetectedModels is a no-op when the probed endpoint was removed', () => {
+  const cur = [ep('a'), ep('b')];
+  assert.equal(applyDetectedModels(cur, 'gone', [{ id: 'x' }]), cur);
+});
+
+// Regression: the Pi tab's providers patch is the WHOLE list and the backend
+// deletes every managed provider missing from it. A failed global-settings GET
+// left the draft empty, and one "Add endpoint" + Save then wiped every endpoint
+// the user had configured. Nothing is written until the saved list loaded.
+test('piProvidersPatch writes nothing until the saved list loaded', () => {
+  const draft = [ep('endpoint-1')];
+  assert.equal(piProvidersPatch(draft, { loaded: false, touched: true }), undefined);
+  assert.equal(piProvidersPatch(draft, { loaded: true, touched: false }), undefined);
+  assert.deepEqual(
+    piProvidersPatch(draft, { loaded: true, touched: true }),
+    sanitizeProvidersForSave(draft),
   );
 });

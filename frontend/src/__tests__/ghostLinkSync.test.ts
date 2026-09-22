@@ -195,3 +195,25 @@ test('an unmounted ghost that should stay hidden does not refresh', () => {
 
   assert.equal(g.refreshes(), 0, 'no refresh for a ghost that stays hidden');
 });
+
+// Regression: the in-place hide only flipped `.visible`, which THREE's
+// Raycaster ignores — the hidden ghost stayed hoverable/draggable over empty
+// space (its "(deleted)" tooltip) and stole hover from nodes behind it. A
+// hidden ghost must drop out of picking and come back when shown again.
+test('a ghost scrubbed out of the window is no longer pickable', () => {
+  const g = makeGraph(deleted());
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2));
+  g.ghost.__threeObj!.add(body);
+  const raycaster = new THREE.Raycaster(
+    new THREE.Vector3(0, 0, 10),
+    new THREE.Vector3(0, 0, -1),
+  );
+  const hits = () => raycaster.intersectObject(g.ghost.__threeObj!, true).length;
+  assert.ok(hits() > 0, 'a shown ghost is pickable');
+
+  g.scrub(deleted(), empty());
+  assert.equal(hits(), 0, 'a hidden ghost is not pickable');
+
+  g.scrub(empty(), deleted());
+  assert.ok(hits() > 0, 'pickable again once shown');
+});

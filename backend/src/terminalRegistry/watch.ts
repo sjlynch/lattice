@@ -24,7 +24,23 @@ const WATCH_INTERVAL_MS = 3_000;
 export type LiveSessionsView = {
   instanceId: string | null;
   serverIds: Set<string>;
+  // Wall-clock (this process) just BEFORE `/sessions` was requested. A record
+  // written at/after it may carry a pty the list could not have contained —
+  // one created while the GET was in flight or while the caller was still
+  // awaiting other work — so its absence proves nothing. Absent ⇒ no guard.
+  listedAt?: number;
 };
+
+// True when `record` was (re)pointed at its pty after the live view was
+// taken: `recordSpawnedTerminal` writes serverId (bumping `updatedAt`) only
+// after the executor created the pty, which is after the GET was sent. Such a
+// record is judged on the next pass, never ended (or relaunched) on this one.
+export function isNewerThanLiveView(
+  record: { updatedAt: number },
+  live: LiveSessionsView,
+): boolean {
+  return live.listedAt !== undefined && record.updatedAt >= live.listedAt;
+}
 
 // The session list is read LIVE, never from the activity poller's shared
 // ≤750 ms snapshot: this read decides "the pty is gone, end the record", and a
@@ -39,6 +55,7 @@ export async function readLiveSessions(
 ): Promise<LiveSessionsView | null> {
   const probe = await deps.probe();
   if (probe.kind !== 'ready') return null;
+  const listedAt = Date.now();
   const sessions = await deps.list();
   if (sessions === null) return null;
   const serverIds = new Set<string>();
@@ -46,7 +63,7 @@ export async function readLiveSessions(
     const id = (s as { id?: unknown })?.id;
     if (typeof id === 'string' && id) serverIds.add(id);
   }
-  return { instanceId: probe.info.instanceId ?? null, serverIds };
+  return { instanceId: probe.info.instanceId ?? null, serverIds, listedAt };
 }
 
 // One reconciliation pass over the loaded records. Exported for tests and for
@@ -62,9 +79,15 @@ export async function reconcileExitedTerminals(live: LiveSessionsView): Promise<
       }
       continue;
     }
-    if (record.serverInstanceId && record.serverInstanceId === live.instanceId) {
-      if (await terminalRegistry.end(record.id, { reason: 'exit' }, projectKey)) ended += 1;
-    }
+    if (!record.serverInstanceId || record.serverInstanceId !== live.instanceId) continue;
+    // `loadedRecords()` was snapshotted before this loop's awaits: re-read the
+    // record so one that was relaunched / re-pointed meanwhile is judged on
+    // its CURRENT pty. And a pty spawned after the list was requested is
+    // missing from it by construction — ending it would delete a live tab.
+    const current = await terminalRegistry.get(record.id, projectKey);
+    if (!current || current.ended || current.serverId !== record.serverId) continue;
+    if (isNewerThanLiveView(current, live)) continue;
+    if (await terminalRegistry.end(record.id, { reason: 'exit' }, projectKey)) ended += 1;
   }
   return ended;
 }

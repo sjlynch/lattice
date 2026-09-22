@@ -244,8 +244,10 @@ let stopped = false;
 
 async function worker() {
   for (;;) {
+    // Truncation needs a (limit+1)th MATCH, same as the rg path — not merely
+    // "limit reached": a worker looping back after the last file's match used
+    // to report truncated for a result that was exactly complete.
     if (stopped) return;
-    if (matched >= limit) { truncated = true; stopped = true; return; }
     const i = cursor++;
     if (i >= files.length) return;
     const file = files[i];

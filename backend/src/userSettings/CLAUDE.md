@@ -16,7 +16,7 @@ keeps importing from `'../userSettings.js'` and the public surface is unchanged.
   `__tests__/settingsPersistence.test.ts`). All paths are canonicalized via
   `canonicalProjectPath`. Also the **shape boundary** — see the invariant below.
   Writes use atomic temp-to-rename persistence. Display reads may fall back to
-  defaults, but a PATCH rejects unreadable/corrupt existing state and preserves
+  defaults, but a PATCH rejects unreadable/corrupt existing state (incl. valid JSON that is not an object) and preserves
   its bytes; only ENOENT starts from empty settings.
 - `features.ts` — feature-specific accessors layered on `getUserSettings`, each
   encoding a field's default semantics: `isClaudeMemoryDisabled`,

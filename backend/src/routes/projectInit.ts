@@ -12,6 +12,7 @@ import {
   ProjectInitError,
   type ProjectInitErrorCode,
 } from '../projectInit/index.js';
+import { relativeProjectError } from './projectParam.js';
 
 const STATUS_FOR_CODE: Record<ProjectInitErrorCode, number> = {
   'not-initable': 409,
@@ -35,9 +36,9 @@ function readProject(body: ProjectInitBody, res: Response): string | null {
     return null;
   }
   if (!path.isAbsolute(raw)) {
-    res.status(400).json({
-      error: `project must be an absolute path, got ${JSON.stringify(raw)}`,
-    });
+    // Same message as every other project-scoped route: it names the likely
+    // cause (shell-stripped backslashes), which this one used to omit.
+    res.status(400).json({ error: relativeProjectError(raw) });
     return null;
   }
   return canonicalProjectPath(raw);

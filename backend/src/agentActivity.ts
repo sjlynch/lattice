@@ -7,12 +7,12 @@
 // `/api/agent-activity/<token>` endpoint. The graph renders an orange
 // (Claude-colored) free-floating node for each, with the same focus beams.
 //
-// The model is deliberately STATELESS: the HMAC-signed token baked into the
-// hook URL (see agentActivityTokens.ts) carries everything the endpoint needs
-// (agent id, project, label), so there is no server-side registry to keep in
-// sync with session lifecycles. The frontend creates the node on first
-// activity and TTL-expires it when the session goes quiet — no explicit
-// "session ended" signal required.
+// This module is only the per-file event pub/sub: the HMAC-signed token baked
+// into the hook URL (see agentActivityTokens.ts) carries everything the
+// endpoint needs (agent id, project, label). Whether a session's node exists
+// at all is PRESENCE, owned separately by agentSessions.ts (registered at
+// spawn, unregistered at the completion callback, served over
+// /ws/agent-sessions) — the beams here hang off that node.
 
 export type AgentActivityPhase = 'start' | 'end';
 // A subagent (Task/Agent) of this session's Claude appeared ('spawn',

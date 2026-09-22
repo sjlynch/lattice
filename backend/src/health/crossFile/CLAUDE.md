@@ -23,8 +23,9 @@ the watcher and the full scan both drive `computeCrossFile`.
   import resolution behind the `resolveImport.ts` re-export shim. Focused pure
   modules under `resolveImport/`:
   - `resolveImport/index.ts` — the `resolveImport()` orchestrator (Python-relative
-    normalization → tsconfig aliases → external-package bail → relative
-    filesystem candidates) plus the re-export barrel for the public surface.
+    normalization → tsconfig aliases → bare spec: Python absolute resolution or
+    external-package bail → relative filesystem candidates) plus the re-export
+    barrel for the public surface.
   - `resolveImport/caseFold.ts` — case-insensitive filesystem support
     (`CASE_INSENSITIVE_FS`, the Set-identity-memoized case-folded index, and
     `lookupPresent`, the exact-then-case-folded membership test).
@@ -33,7 +34,13 @@ the watcher and the full scan both drive `computeCrossFile`.
     `tryAllExtensions` (exact → JS-to-TS remap → extensionless append → directory
     index).
   - `resolveImport/pythonImports.ts` — `normalizePythonRelativeImport` (`.foo` /
-    `..pkg.sub` → fs-relative spec).
+    `..pkg.sub` → fs-relative spec) and `resolvePythonAbsoluteImport`: a bare
+    dotted spec from a Python importer (`pkg.mod`) is tried against each
+    ancestor directory of the importer, nearest first (`pkg/mod.py`/`.pyi`/
+    `__init__`), approximating sys.path. Before this every absolute Python
+    import was treated as an npm package and dropped, so a package-importing
+    Python codebase read as mostly dead. The walker emits `pkg.name` for each
+    `from pkg import name` too, since the name is often a submodule.
   - `resolveImport/aliasResolution.ts` — `resolveByAlias` (tsconfig path aliases,
     baseUrl-catch-all-is-bare-only rule) + the shared `isRelativeSpec` predicate.
 - `roots.ts` — pure, synchronous, fs-free entry-point heuristics +

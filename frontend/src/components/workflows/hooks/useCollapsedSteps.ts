@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchUserSettings, patchUserSettings } from '../../../api';
+import { fetchUserSettingsStrict, patchUserSettings } from '../../../api';
 
 // Per-step collapse state, keyed by step id. Persisted in the project's
 // userSettings.json under workflowStepsCollapsed so collapse/expand state
@@ -29,17 +29,24 @@ export function useCollapsedSteps(activeFolder: string) {
 
   // Load persisted collapse state when the active folder changes.
   useEffect(() => {
-    if (!activeFolder) {
-      collapsedRef.current = {};
-      setCollapsedSteps({});
-      collapsedLoadedForRef.current = null;
-      return;
-    }
+    // Drop the previous project's map up front: its step ids mean nothing
+    // here, and a collapse made before this folder's load lands would
+    // otherwise be built on top of it.
+    collapsedRef.current = {};
+    setCollapsedSteps({});
+    collapsedLoadedForRef.current = null;
+    if (!activeFolder) return;
     let cancelled = false;
-    fetchUserSettings(activeFolder)
+    // Strict: the lenient GET maps a failure (a 502 mid backend restart) to
+    // `{}`, which would count as "loaded" and let the next toggle PATCH a map
+    // missing every step the project had collapsed. A failed load leaves
+    // persistence gated off instead.
+    fetchUserSettingsStrict(activeFolder)
       .then((s) => {
         if (cancelled) return;
-        const loaded = s.workflowStepsCollapsed ?? {};
+        // Keep any collapse made while the load was in flight (a step added
+        // right after opening the project) — it would otherwise be lost.
+        const loaded = { ...(s.workflowStepsCollapsed ?? {}), ...collapsedRef.current };
         collapsedRef.current = loaded;
         setCollapsedSteps(loaded);
         collapsedLoadedForRef.current = activeFolder;

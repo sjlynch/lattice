@@ -143,7 +143,7 @@ async function writeStepAssets(args: {
   try {
     tools = await runStepTools(step, wf.projectPath, stepDir, {}, signal);
   } finally {
-    endStepPreRun(run.id);
+    endStepPreRun(run.id, signal);
   }
   // A cancel (or a completed step racing a re-dispatch) during the pre-run:
   // the brief would be for a step nobody will spawn. Stop here; the spawn

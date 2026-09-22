@@ -122,12 +122,15 @@ function renderBody(template: string, vals: DocValues): string {
   // substituting the shorter PROJECT placeholder ahead of them would leave a
   // mangled `<path>_FWD}}` behind.
   return template
-    .replaceAll(API_PORT_PLACEHOLDER, String(vals.apiPort))
-    .replaceAll(API_URL_PLACEHOLDER, vals.apiUrl)
-    .replaceAll(PROJECT_FWD_PLACEHOLDER, vals.projectFwd)
-    .replaceAll(PROJECT_HASH_PLACEHOLDER, vals.projectHash)
-    .replaceAll(PROJECT_PLACEHOLDER, vals.project)
-    .replaceAll(RECIPES_PATH_PLACEHOLDER, vals.recipesPath);
+    // Function replacers: a string replacement interprets `$$`, `$&` and the
+    // other `$` patterns — a project at `C:\dev\cost$$calc` was documented as
+    // `cost$calc`.
+    .replaceAll(API_PORT_PLACEHOLDER, () => String(vals.apiPort))
+    .replaceAll(API_URL_PLACEHOLDER, () => vals.apiUrl)
+    .replaceAll(PROJECT_FWD_PLACEHOLDER, () => vals.projectFwd)
+    .replaceAll(PROJECT_HASH_PLACEHOLDER, () => vals.projectHash)
+    .replaceAll(PROJECT_PLACEHOLDER, () => vals.project)
+    .replaceAll(RECIPES_PATH_PLACEHOLDER, () => vals.recipesPath);
 }
 
 function hashContent(body: string): string {

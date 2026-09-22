@@ -76,7 +76,9 @@ explicit-curl callbacks — never by polling task state.
   run strip says what the wait is; the frontend drops it on that step's
   `step-spawned` (`clearControlProgressForStep`). **A cancel during the
   pre-run aborts it**: the spawner brackets `runStepTools` with
-  `beginStepPreRun(runId)` / `endStepPreRun`, `cancelWorkflowRun` calls
+  `beginStepPreRun(runId)` / `endStepPreRun(runId, signal)` (the signal
+  guard stops a superseded pre-run from deleting its successor's controller),
+  `cancelWorkflowRun` calls
   `abortStepPreRun(runId)`, and the signal reaches `abortOpengrepScan` so the
   engine is killed and the project's one-scan slot frees — otherwise the run
   the user starts next would find the scan "busy" and get a findings-less
@@ -198,7 +200,10 @@ explicit-curl callbacks — never by polling task state.
     workflow can't start on top of the previous one's hook.
   - `controlSteps/push.ts` — `runPushStep`: drain Ready-to-Merge, spawn a
     push session, wait for its Stop hook with the `PUSH_STEP_TIMEOUT_MS`
-    (15 min) backstop and prompt cancel/pty cleanup.
+    (15 min) backstop and prompt cancel/pty cleanup. A session the step kills
+    (cancel / timeout) never reaches its own `/done`, so the step settles it
+    the same way (`abandonPushRun`: mark the push run done, drop its graph
+    node, remove its scratch) — unless that `/done` already landed.
   - `controlSteps/shared.ts` — `waitForLaneEmpty` (lane-drain subscription,
     subscribes before the initial read; resolves on cancellation) and
     `emitControlProgress` (the single `step-control-progress` WS shaper).
@@ -261,9 +266,14 @@ explicit-curl callbacks — never by polling task state.
   step. So `cancelWorkflowRun`, `failWorkflowRun`, `markWorkflowStepSpawnErrored`
   and the control-step error paths follow their `notify` with
   `void checkpointWorkflowRun(run)` — the run is no longer active, so that write
-  is the mirror's deletion. A control-step worker error that lands after the
-  run already left `running` (a cancel during a pending lock acquire) keeps
-  the existing terminal state rather than clobbering it with `errored`.
+  is the mirror's deletion. `startWorkflowRun`'s setup failure and
+  `completeWorkflowStep`'s failed advance (definition missing, a dispatch that
+  threw) go through `failWorkflowRun` for the same reason — they used to flip
+  the run inline with only the debounced mirror. A control-step worker error
+  (or a `completeStep` rejection) that lands after the run already left
+  `running` (a cancel during a pending lock acquire / an in-flight advance), and
+  a start whose setup throws after a cancel, keep the existing terminal state
+  rather than clobbering it with `errored`.
 - Every rejected queued step spawn must error its still-current run, including
   thrown setup/transport exceptions. CAP retries remain pending, and a late
   spawn rejection must preserve cancellation or a newer step.

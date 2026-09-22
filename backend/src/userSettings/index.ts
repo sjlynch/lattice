@@ -17,7 +17,7 @@ export type {
   StartupTerminal,
   TerminalDefaultHarness,
 } from './types.js';
-export { getUserSettings, patchUserSettings } from './storage.js';
+export { getUserSettings, patchUserSettings, updateUserSettings } from './storage.js';
 export {
   isClaudeMemoryDisabled,
   isQaTerminalAutoCloseEnabled,

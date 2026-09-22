@@ -437,3 +437,18 @@ test('blender: all three shapers carry the telemetry-off env to the spawned serv
   }
   assert.deepEqual(pi.env, {});
 });
+
+// Regression: the LATTICE_* strip on the lattice entry's env was
+// case-sensitive, but the Windows environment is not — a `lattice_task_id`
+// override key reached the server as LATTICE_TASK_ID for every spawn.
+test('resolveMcpEntries: the lattice entry drops LATTICE_* env keys in any case', () => {
+  const lattice = builtinMcpServerById('lattice')!;
+  const catalog = [{ ...lattice, env: { ...(lattice.env ?? {}), lattice_task_id: 't_bogus', Lattice_Project: 'x', KEEP: '1' } }];
+  const [resolved] = resolveMcpEntries(catalog, {}, {}, 'claude', LATTICE_CTX);
+  const env = resolved.entry.env ?? {};
+  assert.equal(env.KEEP, '1');
+  assert.deepEqual(
+    Object.keys(env).filter((k) => /^lattice_/i.test(k)).sort(),
+    ['LATTICE_API_URL', 'LATTICE_PROJECT'],
+  );
+});

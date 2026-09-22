@@ -133,8 +133,14 @@ function sanitize(raw: Partial<GlobalSettings>): Partial<GlobalSettings> {
 async function readGlobalSettings(fallbackOnError: boolean): Promise<GlobalSettings> {
   try {
     const raw = await fs.readFile(globalSettingsFile(), 'utf8');
-    const parsed = JSON.parse(raw) as Partial<GlobalSettings>;
-    return { ...GLOBAL_SETTINGS_DEFAULTS, ...sanitize(parsed) };
+    const parsed: unknown = JSON.parse(raw);
+    // Valid JSON that isn't an object (`[]`, `null`) is as unreadable as a
+    // parse error, so a PATCH refuses to replace it rather than merging over
+    // an empty base.
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`${globalSettingsFile()} does not hold a settings object`);
+    }
+    return { ...GLOBAL_SETTINGS_DEFAULTS, ...sanitize(parsed as Partial<GlobalSettings>) };
   } catch (err) {
     // Reads may display defaults, but writes must not replace unread or
     // corrupt settings with a partial PATCH plus those defaults.
@@ -146,6 +152,33 @@ async function readGlobalSettings(fallbackOnError: boolean): Promise<GlobalSetti
 // Read global settings, falling back to defaults for a missing/corrupt file.
 export async function getGlobalSettings(): Promise<GlobalSettings> {
   return readGlobalSettings(true);
+}
+
+// Strict read for callers that DERIVE writes from the settings (e.g. the Pi
+// models.json reconcile, which deletes every managed provider absent from
+// them): `{defaults}` only for a missing file; an unreadable/corrupt file
+// throws instead of reading as "no providers".
+export async function readGlobalSettingsStrict(): Promise<GlobalSettings> {
+  return readGlobalSettings(false);
+}
+
+// Read-modify-write under the same lock as updateGlobalSettings, with the
+// patch computed FROM the value read inside the lock. A caller that read the
+// settings earlier (outside the lock) and patched from that snapshot could
+// write back a stale field over a save that landed in between. Returning
+// `null` from `fn` skips the write. Resolves to the settings as they now are.
+export async function updateGlobalSettingsWith(
+  fn: (current: GlobalSettings) => Partial<GlobalSettings> | null,
+): Promise<GlobalSettings> {
+  return runExclusive(`globalSettings:${globalSettingsFile()}`, async () => {
+    const current = await readGlobalSettings(false);
+    const patch = fn(current);
+    if (patch === null) return current;
+    const updated: GlobalSettings = { ...current, ...sanitize(patch) };
+    await fs.mkdir(latticeHomeDir(), { recursive: true });
+    await atomicWriteFile(globalSettingsFile(), JSON.stringify(updated, null, 2));
+    return updated;
+  });
 }
 
 // Merge-update and persist global settings; returns the full updated record.

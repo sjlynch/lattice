@@ -39,6 +39,13 @@ export async function handleTaskTransition(
   let ids: string[];
   let foreign: string[] = [];
   if (Array.isArray(body.ids) && body.ids.length > 0) {
+    // Like bulk-update's `updates[i].id`: a non-string id (`[1]`, `[null]`,
+    // `[{}]`) is a malformed request, not a task that happens to be missing.
+    const bad = (body.ids as unknown[]).findIndex((id) => typeof id !== 'string' || !id.trim());
+    if (bad !== -1) {
+      res.status(400).json({ error: `ids[${bad}] must be a non-empty string` });
+      return;
+    }
     // Explicit ids are a global lookup — honour the `?project=` pin (see
     // partitionIdsByRequestedProject) so a foreign id is reported, not moved.
     ({ own: ids, foreign } = await partitionIdsByRequestedProject(body.ids, req));

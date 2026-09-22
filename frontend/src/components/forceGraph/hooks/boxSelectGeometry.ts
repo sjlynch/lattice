@@ -39,6 +39,11 @@ export type SelectNodesInRectOptions = {
   viewport: ViewportSize;
   includeDirs: boolean;
   hiddenExts: ReadonlySet<string>;
+  // The graph's live node-visibility accessor. Nodes it hides are still laid
+  // out (ghost/deleted-file nodes outside the scrubber window, metrics-ignored
+  // files while H/Z/D is showing), so without this a box drawn over their empty
+  // space selected invisible nodes and inflated the selection count.
+  isVisible?: (node: PositionedGraphNode) => boolean;
 };
 
 export function selectNodesInRect(
@@ -50,6 +55,7 @@ export function selectNodesInRect(
 
   for (const node of nodes) {
     if (!isNodeEligibleForBoxSelect(node, options.includeDirs, options.hiddenExts)) continue;
+    if (options.isVisible && !options.isVisible(node)) continue;
 
     const point = projectNodeToScreenWithVector(
       node,

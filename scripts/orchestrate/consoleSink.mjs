@@ -32,16 +32,31 @@ import fs from 'node:fs';
 void process.stdout.isTTY;
 
 const MAX_QUEUED_BYTES = 256 * 1024;
+// Back-off before retrying a write the non-blocking fd refused (EAGAIN).
+const EAGAIN_RETRY_MS = 25;
 
 // Exported for tests, which point a sink at a temp file rather than the
 // runner's own stdout.
 export function createSink(fd) {
-  const state = { queue: [], queuedBytes: 0, writing: false, dropped: 0 };
+  // `retry`: a pending EAGAIN back-off; no write is in flight while it is armed.
+  const state = { queue: [], queuedBytes: 0, writing: false, dropped: 0, retry: null };
 
   function enqueue(chunk) {
     if (chunk.length === 0) return;
     state.queue.push(chunk);
     state.queuedBytes += chunk.length;
+    evictOverCap();
+  }
+
+  // Back to the FRONT: an unwritten chunk is older than anything queued while
+  // its write was in flight (appending it split a line around newer output).
+  function requeueFront(chunk) {
+    state.queue.unshift(chunk);
+    state.queuedBytes += chunk.length;
+    evictOverCap();
+  }
+
+  function evictOverCap() {
     // Drop whole chunks from the front: while output is stalled the newest
     // lines are the ones worth keeping, and half a line is worse than none.
     while (state.queuedBytes > MAX_QUEUED_BYTES && state.queue.length > 1) {
@@ -51,14 +66,27 @@ export function createSink(fd) {
   }
 
   function pump() {
-    if (state.writing || state.queue.length === 0) return;
+    if (state.writing || state.retry || state.queue.length === 0) return;
     const chunk = state.queue.length === 1 ? state.queue[0] : Buffer.concat(state.queue);
     state.queue = [];
     state.queuedBytes = 0;
     state.writing = true;
     fs.write(fd, chunk, (err, written) => {
       state.writing = false;
-      if (!err && written < chunk.length) enqueue(chunk.subarray(written));
+      // EAGAIN: the fd is non-blocking (libuv sets O_NONBLOCK on a piped
+      // fd 1/2 on POSIX) and the reader's pipe buffer is full — the stall this
+      // module exists for, not a dead reader. Dropping the chunk silently lost
+      // every burst past the pipe buffer; put it back and retry shortly.
+      if (err && (err.code === 'EAGAIN' || err.code === 'EWOULDBLOCK')) {
+        requeueFront(chunk);
+        state.retry = setTimeout(() => {
+          state.retry = null;
+          pump();
+        }, EAGAIN_RETRY_MS);
+        state.retry.unref?.();
+        return;
+      }
+      if (!err && written < chunk.length) requeueFront(chunk.subarray(written));
       else if (!err && state.dropped > 0 && state.queue.length === 0) {
         // Only worth saying once output is moving again.
         const n = state.dropped;

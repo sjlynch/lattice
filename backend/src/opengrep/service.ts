@@ -4,10 +4,10 @@
 // (detect / install / rules / scan / digest) is independently testable; this
 // file only wires settings into them.
 
+import path from 'node:path';
 import { getGlobalSettings } from '../globalSettings.js';
 import { canonicalProjectPath } from '../projectPath.js';
-import { runExclusive } from '../serializeWrites.js';
-import { getUserSettings, patchUserSettings } from '../userSettings.js';
+import { getUserSettings, updateUserSettings } from '../userSettings.js';
 import { resolveOpengrep, type OpengrepResolution } from './detect.js';
 import {
   buildDigest,
@@ -109,7 +109,15 @@ export function digestFor(
     const rule = ctx.rule;
     // Findings carry project-relative forward-slash paths; accept the same
     // path spelled with backslashes, a leading `./` or a trailing `/`.
-    const file = ctx.file
+    // An agent often passes the ABSOLUTE path it has open; findings are
+    // project-relative, so that matched nothing and the digest claimed there
+    // was nothing to triage. Relativize one that lies inside the project.
+    let fileArg = ctx.file;
+    if (fileArg && path.isAbsolute(fileArg)) {
+      const rel = path.relative(record.project, fileArg);
+      if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) fileArg = rel;
+    }
+    const file = fileArg
       ?.replace(/\\/g, '/')
       .replace(/^(\.\/)+/, '')
       .replace(/\/+$/, '');
@@ -195,27 +203,36 @@ export async function addOpengrepIgnores(
   // Accept the task-marker spelling too (`opengrep:<fp>`).
   const fps = [...new Set(clean(add.fingerprints).map((f) => f.replace(/^opengrep:/i, '').trim()).filter(Boolean))];
   const rules = [...new Set(clean(add.ruleIds))];
-  // The read → merge → write below is serialized per project: a planning agent
-  // that fires several `opengrep_ignore` calls in a row (one per rule group)
-  // must not have the later write clobber the earlier one.
-  return runExclusive(`opengrep-ignore:${canonical}`, async () => {
-    const current = sanitizeOpengrepProjectSettings((await getUserSettings(canonical)).opengrep);
-    const ruleSet = new Set(current.ignoreRuleIds ?? []);
-    const fpSet = new Set(current.ignoreFingerprints ?? []);
-    const addedRules = rules.filter((r) => !ruleSet.has(r));
-    const addedFps = fps.filter((f) => !fpSet.has(f));
+  // The read → merge → write runs INSIDE the settings file's own per-project
+  // lock, on a strict read: a burst of `opengrep_ignore` calls cannot clobber
+  // each other, a Settings save landing mid-call (a new severity floor, an
+  // exclude glob) is merged rather than overwritten with a stale snapshot, and
+  // a transient read failure refuses instead of reading as `{}` and wiping
+  // every other Opengrep setting. The raw `opengrep` object is spread first so
+  // a sub-field this build doesn't know survives the write.
+  let addedRules: string[] = [];
+  let addedFps: string[] = [];
+  let ruleSet = new Set<string>();
+  let fpSet = new Set<string>();
+  await updateUserSettings(canonical, (settings) => {
+    const raw = settings.opengrep;
+    const current = sanitizeOpengrepProjectSettings(raw);
+    ruleSet = new Set(current.ignoreRuleIds ?? []);
+    fpSet = new Set(current.ignoreFingerprints ?? []);
+    addedRules = rules.filter((r) => !ruleSet.has(r));
+    addedFps = fps.filter((f) => !fpSet.has(f));
     for (const r of addedRules) ruleSet.add(r);
     for (const f of addedFps) fpSet.add(f);
-    if (addedRules.length || addedFps.length) {
-      await patchUserSettings(canonical, {
-        opengrep: { ...current, ignoreRuleIds: [...ruleSet], ignoreFingerprints: [...fpSet] },
-      });
-    }
+    if (!addedRules.length && !addedFps.length) return null;
+    const base = raw && typeof raw === 'object' ? raw : {};
     return {
-      canonicalProject: canonical,
-      added: { ruleIds: addedRules, fingerprints: addedFps },
-      ignoreRuleIds: [...ruleSet],
-      ignoreFingerprints: [...fpSet],
+      opengrep: { ...base, ignoreRuleIds: [...ruleSet], ignoreFingerprints: [...fpSet] },
     };
   });
+  return {
+    canonicalProject: canonical,
+    added: { ruleIds: addedRules, fingerprints: addedFps },
+    ignoreRuleIds: [...ruleSet],
+    ignoreFingerprints: [...fpSet],
+  };
 }

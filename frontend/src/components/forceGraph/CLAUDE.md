@@ -137,7 +137,10 @@ label physics in `labelPhysics/CLAUDE.md`.
   show but has no `__threeObj` (an earlier `refresh()` ran while it was outside
   the scrubber window, and the digest drops filtered-out nodes from the scene
   entirely) falls back to `clearLabelsAndRefresh`, since there's nothing left to
-  toggle. Pinned by `src/__tests__/ghostLinkSync.test.ts`.
+  toggle. The in-place hide goes through `setGhostRootShown`, which also
+  disables the subtree's layers: THREE's Raycaster ignores `.visible`, so a
+  hidden ghost otherwise stayed hoverable/draggable over empty space (and stole
+  hover from nodes behind it). Pinned by `src/__tests__/ghostLinkSync.test.ts`.
 - `mountedNodes.ts` — cache-free shared helpers every delta walker reuses
   (`mountedNodes`/`mountedRoot`/`mountedNodesById`/`baseSizeFor`).
 
@@ -171,7 +174,13 @@ label physics in `labelPhysics/CLAUDE.md`.
   `instancedLinks` also stamps its controller onto the graph instance (mirrors
   `attachIdleController`) — `getInstancedLinks(graph)?.rebuild()` is how a
   non-React caller forces the visible-link re-read; `changeRingSync` needs it
-  after toggling a ghost.
+  after toggling a ghost. A rebuild that runs before the library's debounced
+  digest has hydrated link endpoints (string ids — `linkVisibility` can't judge
+  those) is re-captured by `onFrame` once they hydrate, or links to hidden
+  ghosts / hidden-ext files stayed drawn. Both controllers also rebuild when a
+  metric view toggles (`metricOverlayActive`): that view hides metrics-ignored
+  files via `nodeVisibility`, so a batched-node rebuild made during it dropped
+  them — and they drew nothing after the view ended.
 
 **Settings, physics, misc**
 - `graphSettings.ts` — `GraphSettings`/`DEFAULT_SETTINGS`/`loadSettings`; perf
@@ -239,7 +248,10 @@ render-vs-physics splits, the Escape chord). See `hooks/CLAUDE.md`.
   + idempotent, guarded against re-entrancy in `idleControllerLoop`.
 - **Label-registry teardown (GPU-buffer-leak guard).** Label/connector resources
   are module-owned + refcount-guarded: balance every `buildMeasuredLabelTexture`
-  with a `releaseLabelTexture`; eviction skips in-use (refcount>0) textures; route
+  with a `releaseLabelTexture`; eviction skips in-use (refcount>0) textures and
+  evicts free ones (O(1), via the cache's `free` set) back down to the cap after
+  an over-cap burst; the repulsion scratch list is reset when an overlay stops so
+  it doesn't pin the last frame's sprites; route
   every teardown through `clearAllLabelRegistries` (never `.clear()` a registry).
   Each connector gets its own `clone()`d geometry — the only thing
   `disposeLabelEntry` frees; `AgentOverlay.destroy` frees the agent-label cache.

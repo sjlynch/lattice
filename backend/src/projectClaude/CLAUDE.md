@@ -8,3 +8,5 @@ This folder owns project-root Claude instrumentation used by `routes/projectClau
 - `activity.ts` fans live project-session hook events into graph activity/focus beams after lifecycle admits the event.
 
 Invariant: after `SessionEnd`, the session id is held in a short recently-ended guard. Any late or reordered hook for that id, including a second `SessionStart`, is dropped so duplicate/ghost nodes cannot reappear.
+
+Invariant: `../projectClaudeHooks.ts` read-modify-writes the user's own `<project>/.claude/settings.local.json` from three writers (hook install, hook removal, auto-memory reconcile). They are serialized per file — an overlapping reconcile (second project open / settings save) used to interleave them and drop one writer's change. A file that doesn't parse, or whose `hooks` (or an event Lattice adds to) isn't the documented object/array shape, is left byte-for-byte alone.

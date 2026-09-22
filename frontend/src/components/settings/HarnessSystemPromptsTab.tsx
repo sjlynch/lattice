@@ -7,7 +7,7 @@ import {
 } from 'react';
 import {
   fetchHarnessSystemPrompts,
-  fetchUserSettings,
+  fetchUserSettingsStrict,
   type HarnessSystemPromptEntry,
   type UserSettings,
 } from '../../api';
@@ -55,7 +55,7 @@ function useHarnessSystemPromptsDraft(
     setError(null);
     Promise.all([
       fetchHarnessSystemPrompts(activeFolder),
-      fetchUserSettings(activeFolder),
+      fetchUserSettingsStrict(activeFolder),
     ])
       .then(([list, settings]) => {
         if (cancelled) return;

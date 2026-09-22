@@ -59,7 +59,9 @@ licence text + a source pointer) — keep it a runtime download.
   optional read-only `<project>/.opengrep/rules/`. Home-scoped, never inside
   a project tree.
 - `state.ts` — `state.json`: installed binary (version/asset/digest) + per-pack
-  (commit, rule counts, licence). Atomic + serialized.
+  (commit, rule counts, licence). Atomic + serialized. Display/scan reads are
+  lenient (unreadable → empty); `updateOpengrepState` reads STRICTLY and refuses
+  to write over an unreadable file (it would drop `binary` + the other packs).
 - `platform.ts` — `pickOpengrepAsset({platform, arch, musl})`: the release
   asset for this machine, chosen automatically (Windows ARM64 → the x64 build
   under emulation, with a note; Linux musl via `/etc/alpine-release` or
@@ -81,8 +83,9 @@ licence text + a source pointer) — keep it a runtime download.
   dirs, tests, scripts) → swap into place → state.json. The swap moves the
   previous install aside first and puts it BACK if the new tree cannot be
   renamed in, so an update can never leave the user with no pack; stale
-  `.tmp-*` / `.old-*` siblings from a killed install are swept at the start of
-  the next one. `git` runs with `GIT_TERMINAL_PROMPT=0` so a credential prompt
+  `.tmp-<id>-*` / `.old-<id>-*` siblings from a killed install are swept at the
+  start of the next install of THE SAME pack (never another pack's: installs of
+  different packs may overlap). `git` runs with `GIT_TERMINAL_PROMPT=0` so a credential prompt
   fails fast instead of parking the job until its timeout.
 - `scan.ts` — `runOpengrepScan()`: `opengrep scan --json --quiet --jobs N
   --timeout 30 --timeout-threshold 3 --max-target-bytes 1000000 --exclude …
@@ -145,8 +148,9 @@ licence text + a source pointer) — keep it a runtime download.
   addOpengrepIgnores`: append rule ids / fingerprints to the project's ignore
   lists. This is the ONE Lattice-settings write a planning agent may make —
   rule noise is a per-project setting, not a ticket for a human — additive
-  and deduplicated, serialized per project (`runExclusive`) so a burst of
-  calls from one agent cannot clobber each other; entries are removed in
+  and deduplicated, merged inside the settings file's own lock on a strict read
+  (`userSettings` `updateUserSettings`) so neither a burst of calls nor a
+  concurrent Settings save is clobbered; entries are removed in
   Settings → Tools. The Opengrep
   step prompt (`frontend/src/components/workflows/prompts/opengrep.md`) and
   the `{{tool_reports}}` block both point the agent at it.

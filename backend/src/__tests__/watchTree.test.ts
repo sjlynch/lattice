@@ -153,3 +153,30 @@ async function exists(p: string): Promise<boolean> {
     return false;
   }
 }
+
+// On a case-insensitive filesystem the OLD spelling of a case-only rename still
+// stats, with unchanged (mtime,size), so a plain snapshot diff reported only
+// the new spelling's `add` and kept a phantom `Foo.ts` (and every subscriber's
+// graph node for it) forever.
+test('watchTree reports a case-only rename as unlink(old) + add(new)', async () => {
+  if (process.platform !== 'win32') return; // the recursive backend's platform
+  await withTempDir('lattice-watchtree-case-', async (dir) => {
+    const watcher = watchTree(dir, { ignored: () => false });
+    const seen = record(watcher);
+    try {
+      await settle();
+      const upper = path.join(dir, 'Foo.ts');
+      const lower = path.join(dir, 'foo.ts');
+      await fs.writeFile(upper, 'export const f = 1;', 'utf8');
+      await settle();
+      assert.ok(has(seen, 'add', upper), `expected add for Foo.ts, got ${JSON.stringify(seen)}`);
+
+      await fs.rename(upper, lower);
+      await settle();
+      assert.ok(has(seen, 'add', lower), `expected add for foo.ts, got ${JSON.stringify(seen)}`);
+      assert.ok(has(seen, 'unlink', upper), `expected unlink for Foo.ts, got ${JSON.stringify(seen)}`);
+    } finally {
+      await watcher.close();
+    }
+  });
+});

@@ -62,7 +62,13 @@ export function createSweepScheduler(deps: {
   const schedule = async (force: boolean): Promise<boolean> => {
     if (force) {
       // Wait the stale sweep out rather than adopting its result, then run.
-      if (inFlight) await inFlight.catch(() => false);
+      // A LOOP, not a single await: two forcers waiting on the same stale
+      // sweep both resumed and each called start(), running two sweeps in
+      // parallel (duplicate probes, racing settings writes). The first to
+      // resume starts the fresh sweep; the second sees it in flight and waits
+      // it out too — it started after both forcers' changes, but waiting keeps
+      // exactly one sweep running and costs at most one extra (TTL-free) pass.
+      while (inFlight) await inFlight.catch(() => false);
       return start();
     }
     if (inFlight) return inFlight;

@@ -51,7 +51,16 @@ export function attachTerminalWebSocketUpgrade(
       socket.destroy();
       return;
     }
-    if (new URL(req.url || '', 'http://localhost').pathname === '/ws/terminal') {
+    // `new URL()` throws on some targets Node's HTTP parser accepts (`http://[`),
+    // and a throw here is an uncaughtException that exits the terminal-server
+    // and every live pty with it — so a malformed target is just refused.
+    let pathname: string | null;
+    try {
+      pathname = new URL(req.url || '', 'http://localhost').pathname;
+    } catch {
+      pathname = null;
+    }
+    if (pathname === '/ws/terminal') {
       wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
     } else {
       socket.destroy();

@@ -58,6 +58,23 @@ type SimLinkWithObj = {
 // Rel-paths whose change kind differs between the two maps (added, removed,
 // or recolored). These are the only nodes whose ring / ghost visibility can
 // possibly need touching.
+// Hide/show a ghost root in place AND take it out of (or back into) picking.
+// THREE's Raycaster never looks at `.visible` — only at layers — so a ghost
+// hidden this way stayed hoverable and draggable: its "🗑 <path> (deleted)"
+// tooltip popped up over empty space, and being nearest-first it stole hover
+// from real nodes behind it. Nodes hidden by `nodeVisibility` don't have the
+// problem (the digest removes them from the scene); only this in-place toggle
+// does. Every layer disabled ⇒ `layers.test` fails for the raycaster (and the
+// camera, which the `visible = false` already covers); layer 0 is the default
+// the root and its children were built with.
+export function setGhostRootShown(root: THREE.Object3D, shown: boolean): void {
+  root.visible = shown;
+  root.traverse((o) => {
+    if (shown) o.layers.set(0);
+    else o.layers.disableAll();
+  });
+}
+
 function changedPaths(
   prev: Map<string, ChangeKind>,
   next: Map<string, ChangeKind>,
@@ -159,7 +176,7 @@ export function applyChangeRingDelta(
         continue;
       }
       if (root.visible !== want) {
-        root.visible = want;
+        setGhostRootShown(root, want);
         ghostFlipped = true;
         changed = true;
       }

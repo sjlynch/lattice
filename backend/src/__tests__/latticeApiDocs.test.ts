@@ -225,3 +225,15 @@ test('regeneration is byte-stable for the same inputs (no rewrite churn)', async
 
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+// Regression: `replaceAll(placeholder, value)` interprets `$$` / `$&` in the
+// value, so a project path containing them was written into the docs wrong.
+test('a project path containing `$` patterns is written verbatim', async () => {
+  const dir = await mkProject('lattice-docs-$$x$&y-');
+  const canonical = canonicalProjectPath(dir);
+  assert.ok(canonical.includes('$$x$&y'), 'fixture path keeps its `$` patterns');
+  const index = await fs.readFile(ensureLatticeApiDoc(dir, 5184) as string, 'utf8');
+  assert.ok(index.includes(canonical), 'the literal path, not a `$`-expanded one');
+  const recipes = await fs.readFile(recipesPathFor(dir), 'utf8');
+  assert.ok(recipes.includes(canonical));
+});

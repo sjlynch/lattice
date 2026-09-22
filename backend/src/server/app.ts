@@ -157,6 +157,15 @@ const requestBodyErrors = new Map<string, { status: number; message: string }>([
   ['request.size.invalid', { status: 400, message: 'Request body length does not match Content-Length.' }],
 ]);
 
+function clientErrorStatus(err: unknown): number | null {
+  if (!err || typeof err !== 'object') return null;
+  const e = err as { status?: unknown; statusCode?: unknown; expose?: unknown };
+  const status = typeof e.status === 'number' ? e.status : e.statusCode;
+  if (typeof status !== 'number' || !Number.isInteger(status)) return null;
+  if (status < 400 || status >= 500) return null;
+  return e.expose === false ? null : status;
+}
+
 export const jsonErrorMiddleware: ErrorRequestHandler = (
   err,
   req,
@@ -176,6 +185,20 @@ export const jsonErrorMiddleware: ErrorRequestHandler = (
     });
     if (res.headersSent) return next(err);
     res.status(bodyError.status).json({ error: bodyError.message, code: type });
+    return;
+  }
+  // Express's own client errors carry a 4xx `status` — notably a malformed
+  // percent-escape in a `:param` (`/api/tasks/%E0%A4%A` → "Failed to decode
+  // param"), which used to come back as a 500 and be logged as a server
+  // failure. Keep their status. Only http-errors-style errors that mark
+  // themselves safe to show (`expose`, true by default for 4xx) pass through.
+  const clientStatus = clientErrorStatus(err);
+  if (clientStatus) {
+    console.warn('[lattice] rejected request', {
+      method: req.method, path: req.path.slice(0, 256), status: clientStatus,
+    });
+    if (res.headersSent) return next(err);
+    res.status(clientStatus).json({ error: (err as Error).message || 'Bad request' });
     return;
   }
   console.error('[lattice] route error', err);

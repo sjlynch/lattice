@@ -24,7 +24,7 @@
 // is down or briefly unreachable leaves the last known-good model list in
 // place, because blanking it is what breaks Pi.
 
-import { getGlobalSettings, updateGlobalSettings } from '../globalSettings.js';
+import { getGlobalSettings, updateGlobalSettingsWith } from '../globalSettings.js';
 import {
   isAutoDiscoverEnabled,
   type PiProvider,
@@ -162,10 +162,7 @@ async function runRefresh(): Promise<boolean> {
   // take up to its full timeout, and a Settings save landing while it ran
   // used to be overwritten by the write that followed (the route waits the
   // in-flight sweep out, so that window is exactly where a second save lands).
-  const probedById = new Map<
-    string,
-    { baseUrl: string; models: ProbedModel[] | null; thinking: Map<string, string[] | null> }
-  >();
+  const probedById: ProbeResults = new Map();
   await Promise.all(
     targets.map(async (p) => {
       const models = await probeProvider(p);
@@ -189,26 +186,23 @@ async function runRefresh(): Promise<boolean> {
   // belongs: same provider id, still auto-discovering, still the same baseUrl.
   // NOTHING may be awaited between this read and the write below — every
   // `await` in that gap is a window in which a save is lost.
-  const current = (await getGlobalSettings()).piProviders ?? [];
-  const next: PiProvider[] = current.map((p) => {
-    const hit = probedById.get(p.id);
-    if (!hit || hit.baseUrl !== p.baseUrl || !isAutoDiscoverEnabled(p)) return p;
-    const models = nextModelsForProvider(p, hit.models).map((m) => {
-      // Still unprobed as far as the stored record knows, and the probe got a
-      // real answer → record it. A `null` (no answer) leaves the model alone so
-      // it is asked again next sweep instead of being marked "ordinary".
-      if (m.thinkingLevels !== undefined) return m;
-      const tokens = hit.thinking.get(m.id);
-      return tokens == null ? m : applyThinkingLevels(m, tokens);
-    });
-    return { ...p, models };
+  //
+  // The re-read therefore happens INSIDE the global-settings write lock
+  // (updateGlobalSettingsWith): reading first and then calling
+  // updateGlobalSettings queued the write behind any in-progress save, and
+  // then wrote this sweep's pre-save snapshot back over it — a deleted
+  // endpoint came back, an edited apiKey/baseUrl reverted.
+  let changed = false;
+  let next: PiProvider[] = [];
+  await updateGlobalSettingsWith((settings) => {
+    const current = settings.piProviders ?? [];
+    next = applyProbeResults(current, probedById);
+    changed = JSON.stringify(next) !== JSON.stringify(current);
+    // Persist only when the probe actually moved something — this runs on
+    // every dropdown open and globalSettings.json should not churn.
+    return changed ? { piProviders: next } : null;
   });
-
-  const changed = JSON.stringify(next) !== JSON.stringify(current);
-  // Persist only when the probe actually moved something — this runs on every
-  // dropdown open and globalSettings.json should not churn.
   if (changed) {
-    await updateGlobalSettings({ piProviders: next });
     const summary = next
       .filter((p) => probedById.has(p.id))
       .map((p) => `${p.id}=[${p.models.map((m) => m.id).join(', ')}]`)
@@ -225,5 +219,28 @@ async function runRefresh(): Promise<boolean> {
   // matches, so this is free in the common case.
   await reconcilePiModelsJson();
   return changed;
+}
+
+type ProbeResults = Map<
+  string,
+  { baseUrl: string; models: ProbedModel[] | null; thinking: Map<string, string[] | null> }
+>;
+
+// Apply a sweep's probe results to the CURRENT provider list: only where the
+// result still belongs (same id, still auto-discovering, same baseUrl).
+function applyProbeResults(current: PiProvider[], probedById: ProbeResults): PiProvider[] {
+  return current.map((p) => {
+    const hit = probedById.get(p.id);
+    if (!hit || hit.baseUrl !== p.baseUrl || !isAutoDiscoverEnabled(p)) return p;
+    const models = nextModelsForProvider(p, hit.models).map((m) => {
+      // Still unprobed as far as the stored record knows, and the probe got a
+      // real answer → record it. A `null` (no answer) leaves the model alone so
+      // it is asked again next sweep instead of being marked "ordinary".
+      if (m.thinkingLevels !== undefined) return m;
+      const tokens = hit.thinking.get(m.id);
+      return tokens == null ? m : applyThinkingLevels(m, tokens);
+    });
+    return { ...p, models };
+  });
 }
 

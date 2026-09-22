@@ -39,7 +39,13 @@ export interface ParsedMarkdownDoc {
 }
 
 const FRONTMATTER_RE = /^<!--\s*lattice:\s*(.+?)\s*-->\s*$/;
-const HEADING_RE = /^#\s+(?:\{([^}]*)\}\s*)?(.+?)\s*$/;
+// The title may be EMPTY when a metadata block is present (`# {id=t_1,
+// status=done}` — a status-only edit). It used to be required, so that line
+// failed the optional-metadata branch and fell back to reading the WHOLE
+// `{id=…}` text as the title: an upsert then created a junk task titled
+// "{id=t_1, status=done}" instead of moving t_1, and a PATCH renamed the task
+// to it. A heading with neither metadata nor title (`#   `) is still body.
+const HEADING_RE = /^#\s+(?:\{([^}]*)\}\s*)?(.*?)\s*$/;
 const FENCE_RE = /^(?:```|~~~)/;
 
 function parseMetadataBlock(raw: string): Record<string, string> {
@@ -56,7 +62,17 @@ function parseMetadataBlock(raw: string): Record<string, string> {
   return out;
 }
 
-export function parseMarkdownDoc(md: string): ParsedMarkdownDoc {
+export interface ParseMarkdownOptions {
+  /**
+   * The body describes ONE task (PATCH /api/tasks/:id): only the first
+   * heading is a title, and every later `# Heading` is description content.
+   * Without this a PATCH whose new description carried its own level-1
+   * section headings silently lost everything after the first of them.
+   */
+  singleTask?: boolean;
+}
+
+export function parseMarkdownDoc(md: string, options: ParseMarkdownOptions = {}): ParsedMarkdownDoc {
   const lines = md.split(/\r?\n/);
   const doc: ParsedMarkdownDoc = { tasks: [] };
   let current: { meta: Record<string, string>; title: string; body: string[] } | null = null;
@@ -84,9 +100,9 @@ export function parseMarkdownDoc(md: string): ParsedMarkdownDoc {
       if (current) current.body.push(line);
       continue;
     }
-    if (!inFence) {
+    if (!inFence && !(options.singleTask && current)) {
       const h = HEADING_RE.exec(line);
-      if (h) {
+      if (h && (h[1] !== undefined || h[2])) {
         if (current) doc.tasks.push(finalizeBlock(current));
         const meta = h[1] ? parseMetadataBlock(h[1]) : {};
         current = { meta, title: h[2], body: [] };

@@ -37,6 +37,25 @@ export function isUnsafeOverrideEnvName(name: string): boolean {
   // from (a trojaned build of the very package the launcher runs). The whole
   // surface is launcher-trusted config — keep it out of a built-in tweak.
   if (n.startsWith('npm_config_')) return true;
+  // The same attack for the Python launchers (`uvx blender-mcp`): uv / pip
+  // index + config vars re-point where the package comes from, and the
+  // interpreter's startup vars load arbitrary code into it.
+  if (n.startsWith('uv_') || n.startsWith('pip_')) return true;
+  if (n === 'pythonpath' || n === 'pythonstartup' || n === 'pythonhome' || n === 'pythonuserbase') {
+    return true;
+  }
+  // A CA bundle + proxy override is a MITM on the package fetch itself.
+  if (
+    n === 'node_extra_ca_certs' ||
+    n === 'ssl_cert_file' ||
+    n === 'ssl_cert_dir' ||
+    n === 'requests_ca_bundle' ||
+    n === 'https_proxy' ||
+    n === 'http_proxy' ||
+    n === 'all_proxy'
+  ) {
+    return true;
+  }
   // Catch NODE_OPTIONS smuggled under a wrapper var name.
   if (n.includes('node_options')) return true;
   return false;

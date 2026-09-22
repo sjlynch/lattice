@@ -140,6 +140,12 @@ export function writeLinkSegments(links: SimLink[], out: Float32Array): void {
   }
 }
 
+function isHydratedLink(link: SimLink): boolean {
+  const l = link as unknown as { source: unknown; target: unknown };
+  return typeof l.source === 'object' && l.source !== null
+    && typeof l.target === 'object' && l.target !== null;
+}
+
 export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLinks {
   const g = graph as unknown as LinkGraph;
   const scene = g.scene();
@@ -151,6 +157,14 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
   let positions = new Float32Array(0);
   // The visible links captured at the last rebuild, in buffer order.
   let links: SimLink[] = [];
+  // Set when the last rebuild captured links whose endpoints were still id
+  // strings (the library hydrates them to node objects on its debounced digest,
+  // AFTER graphData() and our rebuild effect). The visibility accessor can only
+  // judge hydrated endpoints, so a pre-hydration capture keeps every link —
+  // including those to hidden-ext files and out-of-window ghosts (the git-history
+  // ghost merge ~1s after open is the usual trigger), which then drew as lines
+  // into empty space. onFrame re-captures once hydration lands.
+  let needsRecapture = false;
   // Shared "should I re-upload positions this frame?" gate: engine-tick / drag
   // motion + one trailing settle frame + forced-dirty. See motionSyncGate.ts.
   const gate = createMotionSyncGate(graph);
@@ -193,6 +207,7 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
   function rebuild(): void {
     if (!enabled) return;
     links = visibleLinks();
+    needsRecapture = links.some((l) => !isHydratedLink(l));
     const needed = links.length * 2 * 3;
     if (!geometry) geometry = new THREE.BufferGeometry();
     if (positions.length < needed) {
@@ -246,6 +261,10 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
 
   function onFrame(): void {
     if (!enabled || !lineSegments) return;
+    if (needsRecapture && links.every(isHydratedLink)) {
+      rebuild();
+      return;
+    }
     if (gate.shouldSync()) syncPositions();
   }
 
@@ -281,6 +300,7 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
     material = null;
     positions = new Float32Array(0);
     links = [];
+    needsRecapture = false;
     // Only clear the stamp if it's still ours — a StrictMode remount creates the
     // replacement controller before this teardown runs.
     const holder = graph as unknown as WithInstancedLinks;

@@ -46,6 +46,8 @@ export type PiProvider = {
 // Defensive shape validation for Lattice-managed Pi providers. Keeps only
 // well-formed entries (a non-empty id + baseUrl and at least the model id) and
 // rejects duplicate ids (keeping the first). Exported for unit testing.
+const UNSAFE_PROVIDER_IDS = new Set(['__proto__', 'constructor', 'prototype']);
+
 export function sanitizePiProviders(raw: unknown): PiProvider[] {
   if (!Array.isArray(raw)) return [];
   const out: PiProvider[] = [];
@@ -54,6 +56,12 @@ export function sanitizePiProviders(raw: unknown): PiProvider[] {
     if (!item || typeof item !== 'object') continue;
     const e = item as Record<string, unknown>;
     if (typeof e.id !== 'string' || !e.id.trim()) continue;
+    // The id becomes a key of models.json's `providers` map and the
+    // `provider/` half of a `provider/model` pattern. `__proto__` as a key
+    // re-points the map's prototype instead of adding an entry (the provider
+    // silently never reaches Pi), and a `/` splits the pattern in the wrong
+    // place.
+    if (UNSAFE_PROVIDER_IDS.has(e.id.trim()) || e.id.includes('/')) continue;
     if (typeof e.baseUrl !== 'string' || !e.baseUrl.trim()) continue;
     // models.json is keyed by provider id, so a second provider sharing an id
     // would silently overwrite the first on reconcile while globalSettings

@@ -73,7 +73,9 @@ test('cancelling mid-startPushSession kills the resolved session and never repor
       killed.push(serverId);
       return true;
     },
+    abandonPushRun: (_projectPath, id) => abandoned.push(id),
   };
+  const abandoned: string[] = [];
 
   // Observe the real workflow-run bus for 'push complete' / step-spawned.
   const progressMessages: string[] = [];
@@ -107,6 +109,7 @@ test('cancelling mid-startPushSession kills the resolved session and never repor
     ['srv-push-1'],
     'a cancelled push must kill the resolved session pty',
   );
+  assert.deepEqual(abandoned, ['push_1'], 'the killed push run is settled');
   assert.ok(
     !progressMessages.includes('push complete'),
     'a cancelled push must not report push complete',
@@ -161,4 +164,67 @@ test('a normal (uncancelled) push completes and reports push complete', async ()
     progressMessages.includes('push complete'),
     'a normal push reports push complete',
   );
+});
+
+// A session the step killed never reaches its Stop hook, so the push run used
+// to stay `running` in the registry forever, its orange graph node lingered for
+// the 30-min silence sweep, and its scratch dir waited for the next boot.
+test('a cancel after the push session spawned kills it and settles the push run', async () => {
+  const run = makeRun();
+  const holder = { cancel: undefined as ((ev: WorkflowRunEvent) => void) | undefined };
+  const killed: string[] = [];
+  const abandoned: Array<[string, string]> = [];
+  let spawned = false;
+  const deps: PushStepDeps = {
+    waitForLaneEmpty: async () => undefined,
+    subscribePushRuns: () => () => undefined,
+    subscribeWorkflowRuns: (cb) => {
+      holder.cancel = cb;
+      return () => undefined;
+    },
+    startPushSession: async () => {
+      spawned = true;
+      return { id: 'push_live', serverId: 'srv-live', command: 'claude', cwd: '/scratch' };
+    },
+    getPushRun: () =>
+      ({ id: 'push_live', projectPath: PROJECT, cwd: '/scratch', status: 'running', createdAt: 1 }) as ReturnType<
+        PushStepDeps['getPushRun']
+      >,
+    proxyKillSession: async (serverId: string) => {
+      killed.push(serverId);
+      return true;
+    },
+    abandonPushRun: (projectPath, id) => abandoned.push([projectPath, id]),
+  };
+  const stepPromise = runPushStep(makeWorkflow(), run, 0, 'http://localhost', deps);
+  await waitFor(() => spawned);
+  // Let the post-spawn code reach `await done`.
+  await new Promise((resolve) => setImmediate(resolve));
+  run.status = 'cancelled';
+  holder.cancel!({ type: 'cancelled', run });
+  await stepPromise;
+  assert.deepEqual(killed, ['srv-live']);
+  assert.deepEqual(abandoned, [[PROJECT, 'push_live']]);
+});
+
+test('a push whose own /done already landed is not abandoned by a later cancel', async () => {
+  const run = makeRun();
+  const abandoned: string[] = [];
+  const deps: PushStepDeps = {
+    waitForLaneEmpty: async () => undefined,
+    subscribePushRuns: () => () => undefined,
+    subscribeWorkflowRuns: () => () => undefined,
+    startPushSession: async () => {
+      run.status = 'cancelled';
+      return { id: 'push_done', serverId: 'srv-done', command: 'claude', cwd: '/scratch' };
+    },
+    getPushRun: () =>
+      ({ id: 'push_done', projectPath: PROJECT, cwd: '/scratch', status: 'done', createdAt: 1 }) as ReturnType<
+        PushStepDeps['getPushRun']
+      >,
+    proxyKillSession: async () => true,
+    abandonPushRun: (_projectPath, id) => abandoned.push(id),
+  };
+  await runPushStep(makeWorkflow(), run, 0, 'http://localhost', deps);
+  assert.deepEqual(abandoned, []);
 });

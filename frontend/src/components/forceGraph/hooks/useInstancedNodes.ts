@@ -30,6 +30,13 @@ export function useInstancedNodes(
   // the meshes would keep tracking orphaned pre-swap node objects. Re-rebuild on
   // every swap to re-capture.
   dataGeneration: number,
+  // True while a metric view (health/loc/dead) is showing. That view hides
+  // metrics-ignored files (.json, .md, …) through `nodeVisibility`, so a rebuild
+  // made DURING it (size slider, legend toggle, new file) drops them from the
+  // meshes — and on return to the base view their per-node sprites are hidden
+  // again (batched), so they drew nothing at all until some unrelated rebuild.
+  // Re-capture on the toggle, exactly as useBatchedLinks does.
+  metricOverlayActive: boolean,
 ) {
   const ctrlRef = useRef<InstancedNodes | null>(null);
   const mountedRef = useRef(false);
@@ -84,5 +91,6 @@ export function useInstancedNodes(
     settings.fileNodeSize,
     settings.dirNodeSize,
     dataGeneration,
+    metricOverlayActive,
   ]);
 }

@@ -74,13 +74,31 @@ export async function readMcpSecretsStrict(): Promise<McpSecrets> {
   return sanitizeSecrets(parsed);
 }
 
+// Keys that, used as a plain-object property name, reach Object.prototype
+// instead of adding an entry: `secrets.constructor` is the inherited Object
+// function, so `(secrets[id] ??= {})[k] = v` with id "constructor" and k
+// "keys" replaced the process-wide Object.keys (every later call threw until a
+// restart), and "__proto__" wrote onto Object.prototype. Server ids and env
+// var names arrive in HTTP bodies and imported configs, so refuse them.
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+export function isSafeSecretKey(key: string): boolean {
+  return typeof key === 'string' && key.length > 0 && !UNSAFE_KEYS.has(key);
+}
+
+// Own-property lookup: never resolves an inherited member as a server's map.
+function ownVars(secrets: McpSecrets, serverId: string): Record<string, string> | undefined {
+  return Object.hasOwn(secrets, serverId) ? secrets[serverId] : undefined;
+}
+
 function sanitizeSecrets(raw: unknown): McpSecrets {
   if (!raw || typeof raw !== 'object') return {};
   const out: McpSecrets = {};
   for (const [serverId, vars] of Object.entries(raw as Record<string, unknown>)) {
-    if (!vars || typeof vars !== 'object') continue;
+    if (!isSafeSecretKey(serverId) || !vars || typeof vars !== 'object') continue;
     const inner: Record<string, string> = {};
     for (const [envVar, value] of Object.entries(vars as Record<string, unknown>)) {
+      if (!isSafeSecretKey(envVar)) continue;
       if (typeof value === 'string' && value.length > 0) inner[envVar] = value;
     }
     if (Object.keys(inner).length > 0) out[serverId] = inner;
@@ -106,15 +124,21 @@ export async function setMcpSecret(
   envVar: string,
   value: string | null,
 ): Promise<RedactedMcpSecrets> {
+  if (!isSafeSecretKey(serverId) || !isSafeSecretKey(envVar)) {
+    throw new Error(
+      `refusing MCP secret key ${JSON.stringify(serverId)}/${JSON.stringify(envVar)}`,
+    );
+  }
   return runExclusive(secretsWriteKey(), async () => {
     const secrets = await readMcpSecretsStrict();
+    const vars = ownVars(secrets, serverId);
     if (value === null || value === '') {
-      if (secrets[serverId]) {
-        delete secrets[serverId][envVar];
-        if (Object.keys(secrets[serverId]).length === 0) delete secrets[serverId];
+      if (vars) {
+        delete vars[envVar];
+        if (Object.keys(vars).length === 0) delete secrets[serverId];
       }
     } else {
-      (secrets[serverId] ??= {})[envVar] = value;
+      (vars ?? (secrets[serverId] = {}))[envVar] = value;
     }
     await writeMcpSecrets(secrets);
     return redactSecrets(secrets);
@@ -128,9 +152,11 @@ export async function mergeMcpSecrets(
   return runExclusive(secretsWriteKey(), async () => {
     const secrets = await readMcpSecretsStrict();
     for (const [serverId, vars] of Object.entries(incoming)) {
+      if (!isSafeSecretKey(serverId)) continue;
       for (const [envVar, value] of Object.entries(vars)) {
+        if (!isSafeSecretKey(envVar)) continue;
         if (typeof value === 'string' && value.length > 0) {
-          (secrets[serverId] ??= {})[envVar] = value;
+          (ownVars(secrets, serverId) ?? (secrets[serverId] = {}))[envVar] = value;
         }
       }
     }
@@ -149,7 +175,10 @@ export function redactSecrets(secrets: McpSecrets): RedactedMcpSecrets {
 }
 
 // Last-4 hints (e.g. "••••cD3f") so the UI can confirm WHICH key is stored
-// without exposing it. Only the tail is ever revealed.
+// without exposing it. Only the tail is ever revealed — and only for a value
+// long enough that four characters are a small part of it: `slice(-4)` of a
+// 4-char secret was the whole secret, sent to the browser.
+const MIN_HINTED_SECRET_LENGTH = 12;
 export type McpSecretHints = Record<string, Record<string, string>>;
 
 export function secretHints(secrets: McpSecrets): McpSecretHints {
@@ -157,7 +186,7 @@ export function secretHints(secrets: McpSecrets): McpSecretHints {
   for (const [serverId, vars] of Object.entries(secrets)) {
     out[serverId] = {};
     for (const [envVar, value] of Object.entries(vars)) {
-      const tail = value.slice(-4);
+      const tail = value.length >= MIN_HINTED_SECRET_LENGTH ? value.slice(-4) : '';
       out[serverId][envVar] = `••••${tail}`;
     }
   }

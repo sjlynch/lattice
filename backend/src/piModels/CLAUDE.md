@@ -44,7 +44,9 @@ is **read vs. write of Pi config**.
   is **serialized** (`runExclusive`) using the shared `atomicWriteFile` — it now
   runs on every discovery sweep, so two calls can overlap, and Pi re-reads
   models.json every time `/model` opens (a plain rename over a file another
-  process holds throws EPERM on Windows).
+  process holds throws EPERM on Windows). It reads `globalSettings` STRICTLY:
+  an unreadable/corrupt `globalSettings.json` aborts the reconcile rather than
+  reading as "no providers" and deleting every managed one.
 - `probe.ts` — `probeEndpointModels()` GETs `<baseUrl>/models` (OpenAI-compatible)
   behind the "Detect models" button, returning `{id, contextWindow?}` per model;
   only a literal `apiKey` becomes the bearer token (never ambient env /
@@ -61,11 +63,11 @@ is **read vs. write of Pi config**.
   empty probe KEEPS the stored models — blanking them is what leaves Pi with no
   model to run — and reconcile runs on every sweep, so a models.json that
   drifted out of sync is repaired even when the probe changed nothing. The
-  provider list is **re-read immediately before writing** (with no `await`
-  between the re-read and the write — every probe, thinking levels included,
-  finishes first) and each result is applied only where it still belongs (same
-  id, still auto, same `baseUrl`), so a Settings save landing mid-probe isn't
-  silently undone. Pinned by `__tests__/autoDiscover.test.ts`.
+  provider list is **re-read inside the global-settings write lock**
+  (`updateGlobalSettingsWith` — every probe, thinking levels included, finishes
+  first) and each result is applied only where it still belongs (same id, still
+  auto, same `baseUrl`), so a Settings save landing mid-probe — or queued on the
+  lock ahead of the sweep's write — isn't silently undone. Pinned by `__tests__/autoDiscover.test.ts`.
 - `thinkingLevels.ts` — Pi gives a model `xhigh` / `max` ONLY if it declares a
   `thinkingLevelMap`; with the map absent Pi **silently clamps** them to `high`
   (verified: asking for `max` sends `reasoning_effort: "high"`, no error). The
@@ -80,13 +82,16 @@ is **read vs. write of Pi config**.
   as a 5xx or a 401 from a `$VAR` key, an unparseable rejection) — on `null`
   the model is left untouched and asked again next sweep, never marked
   "ordinary". Detection runs once per newly-seen model (`[]` records "asked,
-  nothing extended") and never against an aggregator. Both probes run on the
+  nothing extended" — `sanitizeThinkingLevels` must keep an empty array, or the
+  marker is lost on the settings round-trip and every sweep re-probes) and
+  never against an aggregator. Both probes run on the
   provider snapshot BEFORE the re-read, so a save landing mid-probe survives.
 - `sweepScheduler.ts` — the scheduling policy behind it, isolated so it is
   testable without a server: join an in-flight sweep (even inside the TTL, or
   the caller reads state that sweep is about to replace), throttle by TTL only
   when idle, `force` never adopts a sweep that started before the change that
-  forced it, and `maxWaitMs` bounds the WAIT without bounding the work (an HTTP
+  forced it (and two concurrent forcers still run ONE sweep at a time), and
+  `maxWaitMs` bounds the WAIT without bounding the work (an HTTP
   handler must not sit behind a probe timing out against a dead host).
   Pinned by `__tests__/sweepScheduler.test.ts`.
 - `config.ts` — tunables (`PI_MODELS_CONFIG`: list/probe timeouts, cache TTL)

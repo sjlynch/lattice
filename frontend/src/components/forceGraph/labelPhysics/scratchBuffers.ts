@@ -26,6 +26,16 @@ export let cellZ: Int32Array = new Int32Array(0);
 
 // Entry list + temp vector collected once per tick by `repelLabels`.
 export const entries: RepulsionEntry[] = [];
+
+// Drop the entry references held from the last tick. `entries` is module-level
+// and only trimmed by the NEXT `repelLabels` call, which never comes once an
+// overlay stops — so it kept every last-frame label sprite (material, texture,
+// canvas) reachable after the registry released them, even past the texture
+// cache evicting them. Safe with several overlays live: each tick rewrites it.
+export function resetRepulsionScratch(): void {
+  entries.length = 0;
+}
+
 export const tmpVec = new THREE.Vector3();
 
 // `cellGrid` is cleared and rebuilt each call; its bucket arrays come

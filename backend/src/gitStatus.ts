@@ -23,11 +23,12 @@
 // event-driven — no polling / continuous scanning; a single fast `git status`
 // runs only when a watched path actually changes, and only after a debounce.
 
-import { promises as fs, type Stats } from 'node:fs';
+import type { Stats } from 'node:fs';
 import path from 'node:path';
 import { watchTree, type TreeWatcher } from './watchTree.js';
 import { canonicalProjectPath } from './projectPath.js';
 import { computeStatusSignature } from './gitHistory/signature.js';
+import { resolveGitDir } from './gitBranch.js';
 import { loadGitignore } from './scanner/ignore.js';
 import { matchIgnoredSourcePath } from './health/constants.js';
 
@@ -51,25 +52,6 @@ type GitStatusWatcher = {
 // would otherwise churn the chokidar watchers on every drop, and a couple of
 // watchers per opened project is cheap.
 const watchers = new Map<string, Promise<GitStatusWatcher>>();
-
-// Resolve the repo's git metadata directory. For a normal repo that's
-// `<root>/.git`; for a linked worktree / submodule `.git` is a FILE
-// (`gitdir: <path>`) pointing at the real git dir, whose HEAD/index/logs track
-// that checkout. Returns null when the folder isn't a git repo.
-async function resolveGitDir(repoRoot: string): Promise<string | null> {
-  const dotGit = path.join(repoRoot, '.git');
-  try {
-    const st = await fs.stat(dotGit);
-    if (st.isDirectory()) return dotGit;
-    const content = await fs.readFile(dotGit, 'utf8');
-    const m = content.match(/^gitdir:\s*(.+)\s*$/m);
-    if (!m) return null;
-    const raw = m[1].trim();
-    return path.isAbsolute(raw) ? raw : path.resolve(repoRoot, raw);
-  } catch {
-    return null;
-  }
-}
 
 function ensureGitStatusWatcher(root: string): Promise<GitStatusWatcher> {
   const existing = watchers.get(root);
@@ -141,7 +123,24 @@ async function armGitStatusWatchers(proj: GitStatusWatcher): Promise<void> {
     }, RECOMPUTE_DEBOUNCE_MS);
   };
 
-  const gitignore = await loadGitignore(root);
+  // The working-tree filter's matcher. Reloaded when the ROOT `.gitignore`
+  // changes (see `onTreeEvent`): with a matcher frozen at subscribe time,
+  // un-ignoring a directory left every later edit under it filtered out, so
+  // the scrubber never lit up the files git had just started reporting.
+  let gitignore = await loadGitignore(root);
+  const rootGitignore = path.join(root, '.gitignore');
+  let gitignoreRevision = 0;
+  const reloadGitignore = async (): Promise<void> => {
+    const revision = ++gitignoreRevision;
+    const next = await loadGitignore(root);
+    // Only the newest reload may publish (two quick saves, reads out of order).
+    if (revision !== gitignoreRevision) return;
+    gitignore = next;
+    // Re-cover the tree under the new rules: chokidar never descended into a
+    // previously-ignored directory, and the recursive backend re-diffs it
+    // (diff-based, so only real differences are reported).
+    treeWatcher.add(root);
+  };
 
   // 1. Git metadata: watch the whole git dir but prune the heavy content-object
   //    subtrees (a commit writes many loose objects we don't care about).
@@ -161,15 +160,23 @@ async function armGitStatusWatchers(proj: GitStatusWatcher): Promise<void> {
       matchIgnoredSourcePath(p, root, gitignore, stats?.isDirectory() ?? false),
   });
 
-  for (const w of [metaWatcher, treeWatcher]) {
+  const onTreeEvent = (p: string) => {
+    if (path.resolve(p) === rootGitignore) void reloadGitignore().catch(() => {});
+    recompute();
+  };
+
+  for (const [w, handler] of [
+    [metaWatcher, recompute],
+    [treeWatcher, onTreeEvent],
+  ] as const) {
     // Without an 'error' listener the watcher re-emits into the void, which Node
     // treats as an unhandled exception and crashes the process. Log and swallow.
     w.on('error', (err) => console.error('[git-status watcher]', err));
-    w.on('add', recompute);
-    w.on('change', recompute);
-    w.on('unlink', recompute);
-    w.on('addDir', recompute);
-    w.on('unlinkDir', recompute);
+    w.on('add', handler);
+    w.on('change', handler);
+    w.on('unlink', handler);
+    w.on('addDir', handler);
+    w.on('unlinkDir', handler);
   }
   proj.watchers = [metaWatcher, treeWatcher];
 }

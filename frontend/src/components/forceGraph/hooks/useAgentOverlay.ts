@@ -137,19 +137,19 @@ export function useAgentOverlay(
         return;
       }
       if (!event.file) return;
-      if (event.subagentId) {
-        ov.addSubagentActivity(
-          parentId,
-          event.subagentId,
-          event.subagentType,
-          event.file,
-          event.phase,
-          now,
-        );
-      } else {
-        ov.addActivity(parentId, event.file, event.phase, now);
-      }
-      kick();
+      // Activity for an agent that isn't on screen (e.g. a non-Claude or not-yet-
+      // reconciled session) changes nothing — don't wake a settled scene for it.
+      const applied = event.subagentId
+        ? ov.addSubagentActivity(
+            parentId,
+            event.subagentId,
+            event.subagentType,
+            event.file,
+            event.phase,
+            now,
+          )
+        : ov.addActivity(parentId, event.file, event.phase, now);
+      if (applied) kick();
     },
     [kick, wakeRefresh],
   );

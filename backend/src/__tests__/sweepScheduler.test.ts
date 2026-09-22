@@ -156,3 +156,39 @@ test('a rejecting sweep is reported, resolves false, and does not wedge the sche
   c.advance(1001);
   assert.equal(await s.run(), true);
 });
+
+// Regression: two forcers waiting on the same stale sweep both resumed and
+// each called start(), running two sweeps in parallel (duplicate probes,
+// racing settings writes). Exactly one sweep may be in flight at a time.
+test('two concurrent forced runs never overlap their sweeps', async () => {
+  let active = 0;
+  let maxActive = 0;
+  const resolvers: Array<() => void> = [];
+  const s = createSweepScheduler({
+    sweep: () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      return new Promise<boolean>((resolve) =>
+        resolvers.push(() => {
+          active -= 1;
+          resolve(true);
+        }),
+      );
+    },
+    ttlMs: 1000,
+    now: clock().now,
+  });
+  const stale = s.run();
+  const a = s.run({ force: true });
+  const b = s.run({ force: true });
+  const drain = async () => {
+    while (resolvers.length) {
+      resolvers.shift()!();
+      await new Promise((r) => setImmediate(r));
+    }
+  };
+  await drain();
+  await Promise.all([stale, a, b]);
+  await drain();
+  assert.equal(maxActive, 1, 'sweeps ran one at a time');
+});

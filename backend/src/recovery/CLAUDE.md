@@ -59,7 +59,9 @@ Split by concern so the eligibility decision is auditable in isolation:
   internal callbacks and worker auto-restarts must not replenish it.
 - A paused workflow's stale control lock must not bypass its budget through the
   independent merge-resume fallback. The journal remains home-scoped; invalid
-  journals are preserved and prevent automatic replay. GET
+  journals are preserved and prevent automatic replay (but never block an
+  explicit POST `/api/merge-runs`: its failed budget reset is logged and the
+  run proceeds, leaving the invalid file in place). GET
   `/api/merge-runs/recovery?project=...` exposes the retained diagnostic.
 
 - Keep recovery best-effort: log a failed phase/project and continue booting.

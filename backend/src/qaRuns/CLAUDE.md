@@ -41,7 +41,10 @@ Differences from pushRuns:
   whatever verdict was recorded, so the transition still fires if the explicit
   curl never landed (it failed, the agent forgot it, or it raced `/done`). Both
   funnel through the idempotent `promoteOnConfidentPass`, so either firing — or
-  both — advances the task exactly once. A run that stops with **no** recorded
+  both — advances the task exactly once. Idempotency covers the concurrent case
+  too: a per-run in-flight promise makes a `/verdict` and `/done` that land
+  together share one promotion (only one reports `moved: true`), instead of
+  both passing the `movedToDone` check before either `updateTask` resolved. A run that stops with **no** recorded
   verdict is left in QA for a human (the Stop hook can't synthesize a pass/fail),
   same as a fail or an unsure pass. So `/done` is no longer pure cleanup; it is
   the QA analogue of the Claude Stop hook / Pi extension that closes the lane.

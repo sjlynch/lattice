@@ -8,8 +8,9 @@ import type { HealthComponent } from './healthComponents';
 // the rows container) all establish overflow / scroll contexts that
 // would clip an absolutely-positioned popover trying to render to the
 // left of the icon. Portaling to document.body sidesteps every
-// containing-block trap. Position is computed live from the icon's
-// bounding rect so the popover stays glued to it during scroll/resize.
+// containing-block trap. Position is computed from the icon's bounding
+// rect on hover/focus (not tracked afterwards), so the popover is placed
+// where the icon is when it opens.
 const POPOVER_WIDTH = 280;
 const POPOVER_GAP = 10;
 const POPOVER_VIEWPORT_PAD = 8;

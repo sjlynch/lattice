@@ -18,6 +18,7 @@ import {
   redactSecrets,
   secretHints,
   setMcpSecret,
+  isSafeSecretKey,
 } from '../mcp/secrets.js';
 import { validateMcpServer } from '../mcp/validators.js';
 import { applyImport, scanImportableServers } from '../mcp/importConfigs.js';
@@ -52,6 +53,9 @@ export function buildMcpRouter(): Router {
     }
     if (typeof body.envVar !== 'string' || !body.envVar) {
       return res.status(400).json({ error: 'envVar required' });
+    }
+    if (!isSafeSecretKey(body.serverId) || !isSafeSecretKey(body.envVar)) {
+      return res.status(400).json({ error: 'serverId/envVar may not be __proto__, constructor or prototype' });
     }
     const value =
       body.value === null || body.value === undefined

@@ -44,7 +44,13 @@ export function useQaPlaywright(activeFolder: string): QaPlaywrightControls {
   const persist = useCallback(
     (next: QaPlaywrightState) => {
       setState(next);
-      if (activeFolder) void patchUserSettings(activeFolder, { qaPlaywright: next });
+      if (activeFolder) {
+        // Best-effort like the optimistic toggle itself; never leave the
+        // rejection unhandled.
+        patchUserSettings(activeFolder, { qaPlaywright: next }).catch((err) => {
+          console.warn('[lattice] saving the QA Playwright toggle failed:', err);
+        });
+      }
     },
     [activeFolder],
   );

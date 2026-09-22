@@ -104,6 +104,11 @@ export function sanitizeThinkingLevels(raw: unknown): string[] | undefined {
   for (const item of raw) {
     if (typeof item === 'string' && KNOWN_TOKENS.includes(item)) found.add(item);
   }
-  if (found.size === 0) return undefined;
+  // An EMPTY array is the "probed, nothing beyond `high`" marker
+  // (applyThinkingLevels) and must survive the settings round-trip: mapping it
+  // to `undefined` left the model "unprobed" after every save, so each sweep
+  // re-sent the capability probe and rewrote globalSettings.json. An array of
+  // only unrecognized tokens still reads as unprobed.
+  if (found.size === 0) return raw.length === 0 ? [] : undefined;
   return inTokenOrder(found);
 }
