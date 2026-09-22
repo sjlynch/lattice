@@ -18,7 +18,24 @@ export type ProjectWsOptions<TEvent> = {
   ) => MaybePromise<Unsubscribe>;
   projectFromEvent?: (event: TEvent) => string;
   payloadFromEvent?: (event: TEvent) => unknown;
+  // Classifies a live event that arrives WHILE the `initial` snapshot is
+  // loading (see the connect handshake in `buildProjectWss`):
+  //   - true  ⇒ a FULL snapshot of the same state `initial` loads. It is
+  //     dropped and marks the in-flight load stale, so the snapshot is
+  //     re-loaded (a fresh load covers it; forwarding the event itself could
+  //     put an OLDER snapshot on the wire after a newer one).
+  //   - false / absent ⇒ a delta or transient event (task-spawned,
+  //     task-activity, registry upserts, run lifecycle, …). It is buffered and
+  //     flushed, in order, right after the snapshot — never dropped, since a
+  //     snapshot need not contain it.
+  // Events after the handshake are always forwarded as they come.
+  isSnapshotEvent?: (event: TEvent) => boolean;
 };
+
+// How many times the connect handshake loads the `initial` snapshot when
+// snapshot events keep landing during the load. After the cap the latest
+// loaded snapshot is sent as-is (a busy project converges on its next event).
+export const MAX_INITIAL_SNAPSHOT_LOADS = 3;
 
 // A relative `project` is refused (empty ⇒ the connection handler closes the
 // socket), matching the HTTP routes' rule. Canonicalising it first defeated
@@ -101,38 +118,86 @@ export function buildProjectWss<TEvent>(
       }
     });
 
+    const forward = (event: TEvent) => {
+      if (ws.readyState !== ws.OPEN) return;
+      ws.send(serialize(event));
+    };
+
+    // Connect handshake: SUBSCRIBE FIRST, then load the initial snapshot.
+    // Loading first (the old order) lost any event fired during the await —
+    // e.g. a task change while `listTasks` ran — until the next change. While
+    // `loading`, live events are held back per `isSnapshotEvent`: snapshot
+    // events mark the load `dirty` (→ re-load), deltas queue in `pending` and
+    // are flushed after the snapshot. Nothing is sent before the snapshot, and
+    // a snapshot event is never sent after a newer loaded snapshot.
+    let loading = options.initial !== undefined;
+    let dirty = false;
+    let lastSnapshotEvent: { event: TEvent } | null = null;
+    const pending: TEvent[] = [];
+
+    const onEvent = (event: TEvent) => {
+      if (options.projectFromEvent && options.projectFromEvent(event) !== project) {
+        return;
+      }
+      if (loading) {
+        if (options.isSnapshotEvent?.(event)) {
+          dirty = true;
+          lastSnapshotEvent = { event };
+        } else {
+          pending.push(event);
+        }
+        return;
+      }
+      forward(event);
+    };
+
     const attach = async () => {
-      if (options.initial) {
+      let nextUnsub: Unsubscribe;
+      try {
+        nextUnsub = await options.subscribe(onEvent, project);
+      } catch {
+        ws.close();
+        return;
+      }
+      if (closed || ws.readyState !== ws.OPEN) {
+        nextUnsub();
+        return;
+      }
+      // From here the 'close' handler owns teardown, so a socket that closes
+      // mid-load unsubscribes (no leaked listener).
+      unsub = nextUnsub;
+      if (!options.initial) return;
+
+      let payload: unknown;
+      let loaded = false;
+      for (let attempt = 0; attempt < MAX_INITIAL_SNAPSHOT_LOADS; attempt++) {
+        dirty = false;
+        lastSnapshotEvent = null;
         try {
-          const payload = await options.initial(project);
-          if (payload !== undefined) sendJson(ws, payload);
+          payload = await options.initial(project);
+          loaded = true;
         } catch {
           if (options.initialError !== 'ignore') {
             ws.close();
             return;
           }
+          // Keep the last good load (if any) rather than nothing.
+          break;
         }
+        if (closed) return;
+        if (!dirty) break;
       }
 
-      let nextUnsub: Unsubscribe;
-      try {
-        nextUnsub = await options.subscribe((event) => {
-          if (options.projectFromEvent && options.projectFromEvent(event) !== project) {
-            return;
-          }
-          if (ws.readyState !== ws.OPEN) return;
-          ws.send(serialize(event));
-        }, project);
-      } catch {
-        ws.close();
-        return;
+      loading = false;
+      if (loaded) {
+        if (payload !== undefined) sendJson(ws, payload);
+      } else if (lastSnapshotEvent) {
+        // No snapshot could be loaded ('ignore'), so nothing newer is on the
+        // wire: the latest live snapshot is the best the client can get.
+        forward((lastSnapshotEvent as { event: TEvent }).event);
       }
-
-      if (closed || ws.readyState !== ws.OPEN) {
-        nextUnsub();
-        return;
-      }
-      unsub = nextUnsub;
+      lastSnapshotEvent = null;
+      for (const event of pending.splice(0)) forward(event);
     };
 
     attach().catch(() => {
@@ -160,6 +225,8 @@ export function buildProjectSnapshotWss<TSnapshot>(options: {
       listener({ projectPath, snapshot });
     }),
     projectFromEvent: (event) => event.projectPath,
+    // Every event IS a full snapshot: one landing mid-load re-loads instead.
+    isSnapshotEvent: () => true,
     payloadFromEvent: (event) => ({
       type: options.messageType,
       [options.snapshotKey]: event.snapshot,

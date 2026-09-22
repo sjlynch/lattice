@@ -11,6 +11,7 @@ import {
   sanitizeBuiltinOverrides,
 } from '../globalSettings.js';
 import { applyBuiltinOverride } from '../mcp/settingsValidation.js';
+import { isUnsafeOverrideArg } from '../mcp/overrideSecurity.js';
 import { builtinMcpServerById } from '../mcp/catalog.js';
 
 // ---- sanitizeCustomServers ----
@@ -254,4 +255,68 @@ test('sanitizeCustomServers: a user-added server can never ship defaultEnabled',
   ]);
   assert.equal(entry.id, 'sneaky');
   assert.equal(entry.defaultEnabled, undefined);
+});
+
+// ---- additive args: no flag may point a built-in at an arbitrary binary ----
+//
+// Appending keeps the package spec, but `--executable-path <x>` still makes
+// Playwright / chrome-devtools launch `<x>` as "the browser" — i.e. run an
+// arbitrary command. Every spelling, both `--flag value` and `--flag=value`,
+// case-insensitive, rejects the whole override (the catalog args stand).
+
+test('isUnsafeOverrideArg: binary-launching flags in every spelling and form', () => {
+  for (const flag of [
+    '--executable-path',
+    '--executablePath',
+    '--browser-executable',
+    '--chrome-path',
+    '--browser-path',
+    '--EXECUTABLE-PATH',
+    '--ExecutablePath',
+    '--executable_path',
+    '--Browser-Executable',
+    '--CHROME-PATH',
+    '--chromeArg',
+    '--chrome-arg',
+  ]) {
+    assert.ok(isUnsafeOverrideArg(flag), `${flag} (flag value form)`);
+    assert.ok(isUnsafeOverrideArg(`${flag}=C:/evil.exe`), `${flag}=value form`);
+  }
+  // Ordinary tuning flags and plain values stay allowed.
+  for (const ok of ['--browser', '--browser=firefox', 'firefox', '--headless', '--isolated', '--viewport-size=1280,720', '--executable', 'C:/evil.exe']) {
+    assert.equal(isUnsafeOverrideArg(ok), false, ok);
+  }
+});
+
+test('isUnsafeOverrideArg: chrome-devtools short alias -e, only for that server', () => {
+  for (const a of ['-e', '-E', '-e=C:/evil.exe', '-eC:/evil.exe', '-ie']) {
+    assert.ok(isUnsafeOverrideArg(a, 'chrome-devtools'), a);
+  }
+  assert.equal(isUnsafeOverrideArg('-y', 'chrome-devtools'), false);
+  assert.equal(isUnsafeOverrideArg('-e', 'playwright'), false);
+});
+
+test('applyBuiltinOverride: --executable-path (both forms) is refused for playwright + chrome-devtools', () => {
+  const pw = builtinMcpServerById('playwright');
+  const cd = builtinMcpServerById('chrome-devtools');
+  assert.ok(pw && cd);
+  const cases: Array<[typeof pw, string[]]> = [
+    [pw, ['--executable-path', 'C:/evil.exe']],
+    [pw, ['--Executable-Path=C:/evil.exe']],
+    [pw, ['--browser', 'chrome', '--browser-executable', '/tmp/x']],
+    [cd, ['--executablePath', 'C:/evil.exe']],
+    [cd, ['--EXECUTABLEPATH=C:/evil.exe']],
+    [cd, ['--chrome-path=C:/evil.exe']],
+    [cd, ['--browser-path', 'C:/evil.exe']],
+    [cd, ['--chromeArg=--renderer-cmd-prefix=C:/evil.exe']],
+    [cd, ['-e', 'C:/evil.exe']],
+  ];
+  for (const [entry, extra] of cases) {
+    const overrides = sanitizeBuiltinOverrides({ [entry.id]: { args: [...(entry.args ?? []), ...extra] } });
+    const merged = applyBuiltinOverride(entry, overrides[entry.id]);
+    assert.deepEqual(merged.args, entry.args, `${entry.id} ${extra.join(' ')}`);
+  }
+  // A safe additive flag on the same servers still lands.
+  const ok = applyBuiltinOverride(cd, { args: [...(cd.args ?? []), '--headless'] });
+  assert.deepEqual(ok.args, [...(cd.args ?? []), '--headless']);
 });

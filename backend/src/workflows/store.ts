@@ -48,7 +48,15 @@ export class WorkflowStore extends ProjectStateManager<Workflow[], WorkflowSubsc
       name: 'workflows',
       fileForProject: workflowsFile,
       defaultState: () => [],
-      deserialize: normalizeWorkflows,
+      // A file that parses but isn't a workflow array (`{}`, `null`, a wrapper
+      // object) is corruption, not "no workflows": throwing routes it through
+      // the load's preserve-aside path (`.corrupt-*` sidecar). Mapping it to
+      // `[]` let the next save silently overwrite the unread bytes. Same fix
+      // as taskCache/manager.ts.
+      deserialize: (raw, projectPath) => {
+        if (!Array.isArray(raw)) throw new Error('expected a JSON array of workflows');
+        return normalizeWorkflows(raw, projectPath);
+      },
       snapshot: (workflows) => [...workflows],
     });
     this.listKnownProjects = opts.listKnownProjects ?? listKnownTaskProjects;

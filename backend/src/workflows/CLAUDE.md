@@ -25,7 +25,12 @@ imports from `'../workflows.js'`; this directory holds the implementation.
   + name/harness helpers). `frozen` is coerced to `true` or `undefined` (never
   `false`), so the flag stays out of the JSON for the common case — same shape
   convention as `piModel`; `tools` likewise (`normalizeStepTools`: known ids
-  only, deduplicated, `undefined` when empty). **Invariant:** `ensureUserInstructions` guarantees
+  only, deduplicated, `undefined` when empty). **Invariant:** every workflow's
+  `projectPath` is the project that OWNS the `workflows.json`
+  (`normalizeWorkflows(raw, projectPath)`), never the path embedded in the
+  record — a copied/moved project keeps the old absolute path in its file, and
+  honouring it made its workflows merge into / push from the ORIGINAL repo.
+  **Invariant:** `ensureUserInstructions` guarantees
   every workflow always carries the built-in `user_instructions` variable
   (`USER_INSTRUCTIONS_VAR`, leading the list). Variable names are coerced to the
   `[A-Za-z0-9_]` token grammar.
@@ -64,7 +69,11 @@ imports from `'../workflows.js'`; this directory holds the implementation.
   (create via `runProjectWrite`, update/delete via `withLockedItemAcrossProjects`)
   so two concurrent edits can't clobber via a read-before-write race. The base
   also gives this store atomic temp→rename writes + the corrupt-load guard for
-  free (see `taskCache/CLAUDE.md` "Crash-safety contract"). It overrides
+  free (see `taskCache/CLAUDE.md` "Crash-safety contract"); its `deserialize`
+  throws on a file that parses but is not an array (`{}`, `null`, a wrapper
+  object) so that too is preserved to a `.corrupt-*` sidecar instead of loading
+  as `[]` and being overwritten by the next save (mirrors
+  `taskCache/manager.ts`). It overrides
   `loadIfNeeded` to run `defaultPromptMigrations` once per project after the
   disk read; keep that override cheap and idempotent (it runs inside every
   cache-miss path, including `loadAllKnown`).

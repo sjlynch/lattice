@@ -139,8 +139,14 @@ and waits for its Stop hook.
   fast `done` / a cancel can't slip past. `sessionServerId` is unknown until
   `startPushSession` resolves — the subscriber captures it by closure.
 - **`PUSH_STEP_TIMEOUT_MS` (15 min)** backstop: if Claude died before its Stop
-  hook fired, the wait would otherwise hang forever — the timer kills the pty
-  and resolves.
+  hook fired, the wait would otherwise hang forever — the timer kills the pty,
+  settles the push run (`abandonPushRun`) and the step **throws**
+  `push step timed out after 15 minutes`, so `controlStep.ts` **errors the
+  run** (it used to report `'push complete'` and advance as if the push had
+  landed). A push whose own `/done` already landed is not a timeout, and a user
+  cancel (or an `errored` run) that lands first keeps its state — the timeout
+  never turns a cancel into `errored`. `PushStepDeps.pushTimeoutMs` overrides
+  the bound for tests (`__tests__/workflowPushStepCancel.test.ts`).
 - **Cancel/spawn race (do not regress)**: cancelling the run *while*
   `startPushSession` is in flight runs the cancel handler with
   `sessionServerId` still `undefined`, so it kills nothing. A `cancelled` flag

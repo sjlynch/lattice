@@ -7,6 +7,7 @@ import {
   parseWorktreesPorcelain,
   projectGit,
 } from '../worktree.js';
+import { archiveUncommittedWorktreeChanges } from '../worktree/discardArchive.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';
 import { collectLiveSessionCwds, hasLiveSessionAtOrUnder, normalizeCwd } from './liveSessions.js';
 
@@ -31,11 +32,14 @@ export type WorktreeSweepDeps = {
   projectGit: typeof projectGit;
   cleanupWorktreeForTask: typeof cleanupWorktreeForTask;
   collectLiveSessionCwds: typeof collectLiveSessionCwds;
+  // Optional so hand-built test deps keep compiling; defaults to the real one.
+  archiveUncommitted?: typeof archiveUncommittedWorktreeChanges;
 };
 
 const defaultDeps: WorktreeSweepDeps = {
   forEachKnownProjectSafely, listTasks, gitDirExists, projectGit,
   cleanupWorktreeForTask, collectLiveSessionCwds,
+  archiveUncommitted: archiveUncommittedWorktreeChanges,
 };
 
 export async function sweepOrphanedWorktrees(deps: WorktreeSweepDeps = defaultDeps): Promise<void> {
@@ -100,6 +104,22 @@ export async function sweepOrphanedWorktrees(deps: WorktreeSweepDeps = defaultDe
           );
           continue;
         }
+      }
+      // `worktree remove --force` would also silently discard uncommitted
+      // edits. Archive them to ~/.lattice/snapshots/ (a keep-for-the-user
+      // copy that boot recovery never auto-restores); if that fails, the
+      // orphan is left in place for the next boot or a human.
+      const archive = deps.archiveUncommitted ?? archiveUncommittedWorktreeChanges;
+      const archived = await archive(repoRoot, resolved, branch);
+      if (archived.status === 'failed') {
+        console.error(
+          `[startup] sweep: NOT reclaiming ${resolved} — could not archive its uncommitted changes ` +
+            `(${archived.error}); leaving the checkout in place`,
+        );
+        continue;
+      }
+      if (archived.status === 'archived') {
+        console.warn(`[startup] sweep: archived ${archived.files} uncommitted change(s) from ${resolved} to ${archived.dir}`);
       }
       console.warn(
         `[startup] sweep: removing orphaned worktree ${resolved} ` +

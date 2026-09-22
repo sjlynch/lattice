@@ -63,11 +63,26 @@ export async function createTask(
   return postJson<Task>('/api/tasks', { project: projectPath, title, description });
 }
 
+// Every by-id task call carries the board's project as `?project=`. The
+// backend's `getTask(id)` is a GLOBAL lookup across every indexed project, so
+// an id alone reaches any board on the machine; with the pin, the by-id routes
+// (`requireTaskInRequestedProject`) 404 a task that belongs to a different
+// board. Callers pass the ACTIVE board's project — never the task's own
+// `projectPath`, which would make the check vacuous. An empty project omits the
+// param, which the backend treats as unpinned (the old behaviour).
+// `/merge-aborted` does not read the param today; it is harmless there and sent
+// for uniformity, so the route pins the moment it starts checking.
+export function taskByIdUrl(projectPath: string, id: string, suffix = ''): string {
+  const base = `/api/tasks/${encodeURIComponent(id)}${suffix}`;
+  return projectPath ? `${base}?project=${encodeURIComponent(projectPath)}` : base;
+}
+
 export async function updateTask(
+  projectPath: string,
   id: string,
   updates: Partial<Pick<Task, 'title' | 'description' | 'status'>>,
 ): Promise<Task> {
-  return patchJson<Task>(`/api/tasks/${encodeURIComponent(id)}`, updates);
+  return patchJson<Task>(taskByIdUrl(projectPath, id), updates);
 }
 
 export async function reorderTasks(
@@ -82,41 +97,44 @@ export async function reorderTasks(
   });
 }
 
-export async function deleteTask(id: string): Promise<void> {
-  await deleteJson<{ ok: true }>(`/api/tasks/${encodeURIComponent(id)}`);
+export async function deleteTask(projectPath: string, id: string): Promise<void> {
+  await deleteJson<{ ok: true }>(taskByIdUrl(projectPath, id));
 }
 
 export async function runTask(
+  projectPath: string,
   id: string,
   harness?: AgentHarness,
   piModel?: string,
 ): Promise<RunTaskResult> {
-  return postJson<RunTaskResult>(`/api/tasks/${encodeURIComponent(id)}/run`, {
+  return postJson<RunTaskResult>(taskByIdUrl(projectPath, id, '/run'), {
     harness,
     piModel,
   });
 }
 
 export async function resumeTask(
+  projectPath: string,
   id: string,
   harness?: AgentHarness,
   piModel?: string,
 ): Promise<RunTaskResult> {
-  return postJson<RunTaskResult>(`/api/tasks/${encodeURIComponent(id)}/resume`, {
+  return postJson<RunTaskResult>(taskByIdUrl(projectPath, id, '/resume'), {
     harness,
     piModel,
   });
 }
 
 // Drop a queued task run back to a plain Open task. Returns the updated task.
-export async function cancelQueuedRun(id: string): Promise<Task> {
-  return postJson<Task>(
-    `/api/tasks/${encodeURIComponent(id)}/cancel-queued-run`,
-  );
+export async function cancelQueuedRun(projectPath: string, id: string): Promise<Task> {
+  return postJson<Task>(taskByIdUrl(projectPath, id, '/cancel-queued-run'));
 }
 
-export async function mergeTask(id: string): Promise<MergeTaskResult> {
-  return postJson<MergeTaskResult>(`/api/tasks/${encodeURIComponent(id)}/merge`);
+export async function mergeTask(
+  projectPath: string,
+  id: string,
+): Promise<MergeTaskResult> {
+  return postJson<MergeTaskResult>(taskByIdUrl(projectPath, id, '/merge'));
 }
 
 // Abandon an in-flight conflict resolution: aborts any lingering mid-merge in
@@ -125,10 +143,8 @@ export async function mergeTask(id: string): Promise<MergeTaskResult> {
 // here it backs the "Cancel" button on the Resolving strip, the user's escape
 // hatch out of a conflict that's been orphaned (resolver died, merge run was
 // cancelled, or the backend restarted mid-resolution).
-export async function abortTaskMerge(id: string): Promise<void> {
-  await postJson<{ ok: true }>(
-    `/api/tasks/${encodeURIComponent(id)}/merge-aborted`,
-  );
+export async function abortTaskMerge(projectPath: string, id: string): Promise<void> {
+  await postJson<{ ok: true }>(taskByIdUrl(projectPath, id, '/merge-aborted'));
 }
 
 // `/ws/tasks` carries five message types: the full task-list snapshot; for

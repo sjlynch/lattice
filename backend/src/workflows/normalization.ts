@@ -1,5 +1,4 @@
 import { generateWorkflowId } from '../ids.js';
-import { canonicalProjectPath } from '../projectPath.js';
 import {
   isAgentHarness,
   normalizeAgentHarness,
@@ -125,14 +124,14 @@ export function normalizeWorkflows(raw: unknown, projectPath: string): Workflow[
   if (!Array.isArray(raw)) return [];
   return raw.map((w) => {
     const item = (w && typeof w === 'object' ? w : {}) as Partial<Workflow>;
-    const embeddedProject =
-      typeof item.projectPath === 'string' && item.projectPath
-        ? canonicalProjectPath(item.projectPath)
-        : projectPath;
     return {
       ...item,
       id: typeof item.id === 'string' && item.id ? item.id : generateWorkflowId(),
-      projectPath: embeddedProject,
+      // The project that OWNS the workflows.json always wins over the path
+      // embedded in each record. A copied/moved project keeps the old absolute
+      // path in its file, and honouring it made that project's workflows run
+      // against (merge into, push from) the ORIGINAL repo.
+      projectPath,
       name:
         typeof item.name === 'string' && item.name.trim()
           ? item.name.trim()

@@ -191,7 +191,14 @@ a space in it.
   only resolver-read fields; `applyBuiltinOverride` (used by `mergedCatalog`)
   re-pins a built-in's id/command/url from the catalog and enforces
   **additive-only args** (an override can append a Playwright `--browser` flag but
-  can't swap the package spec). `overrideSecurity.ts` is the env denylist
+  can't swap the package spec). Appended args are also checked by
+  `isUnsafeOverrideArg` (`overrideSecurity.ts`): a flag that points the server
+  at an arbitrary binary — `--executable-path` / `--executablePath` /
+  `--browser-executable` / `--chrome-path` / `--browser-path` (+ `--chrome-arg`,
+  whose Chrome switches like `--renderer-cmd-prefix` launch a binary too, and
+  chrome-devtools' `-e` alias) — in either `--flag value` or `--flag=value`
+  form, matched case-/dash-/underscore-insensitively, rejects the whole override
+  (catalog args stand). `overrideSecurity.ts` is also the env denylist
   (`sanitizeOverrideEnv`): an override's `env` can never set a code-exec /
   launcher-hijack var (`NODE_OPTIONS`, `LD_PRELOAD`, `PATH`, `npm_config_*`,
   the uv/pip equivalents `uv_*` / `pip_*`, `PYTHONPATH`-style interpreter
@@ -235,7 +242,22 @@ a space in it.
   managed, strip previously-managed-now-disabled via the `__latticeManagedMcp`
   sibling marker, leave the user's own entries alone) + `platformizeCommand`
   (wrap `npx`/`uvx`/… in `cmd /c` on win32, since the MCP SDK spawns without a
-  shell and a bare `npx` ENOENTs on Windows).
+  shell and a bare `npx` ENOENTs on Windows). **Every wrapped arg goes through
+  `escapeCmdArgument`** — cmd re-parses them, so an unescaped `&`/`|`/`>`/
+  `%VAR%` in a custom-server or override arg was command injection. The escaper
+  is built around what the harness transport (libuv for Claude/Pi, Rust std for
+  Codex — CommandLineToArgvW quoting, no `windowsVerbatimArguments`) actually
+  hands cmd: a whitespace-free arg arrives verbatim and is caret-escaped
+  (cross-spawn's metachar set), **doubled** when the target is a `.cmd`/`.bat`
+  shim (npm's `npx.cmd` re-parses on `%*`) — `windowsShimIsBatch` resolves that
+  via PATH × PATHEXT and assumes batch when unresolved (the safe side); an arg
+  with whitespace arrives quoted and passes through untouched (metachars are
+  literal in quotes). Unrepresentable args — any `"`, a control char, or
+  whitespace together with `%`/`!` — throw `UnsafeCmdArgumentError`, and the
+  registry shapers (`shapeOrSkip`) skip THAT server with a warning. Ordinary
+  args (`-y @playwright/mcp@latest --headless`) are byte-identical to before.
+  Secrets never ride argv (env / headers only). Pinned end to end against the
+  real cmd.exe in `__tests__/mcp.inject.test.ts`.
 - `../latticeMcp/` — not part of this folder, but the other half of the
   first-party server: the stdio MCP process itself (11 board tools over the task
   HTTP API), plus `entryPath.ts`, which `catalog.ts` calls to bake the compiled

@@ -203,7 +203,9 @@ explicit-curl callbacks — never by polling task state.
     (15 min) backstop and prompt cancel/pty cleanup. A session the step kills
     (cancel / timeout) never reaches its own `/done`, so the step settles it
     the same way (`abandonPushRun`: mark the push run done, drop its graph
-    node, remove its scratch) — unless that `/done` already landed.
+    node, remove its scratch) — unless that `/done` already landed. A timeout
+    then **errors the run** ("push step timed out after 15 minutes") instead of
+    reporting `push complete`; a cancel stays cancelled.
   - `controlSteps/shared.ts` — `waitForLaneEmpty` (lane-drain subscription,
     subscribes before the initial read; resolves on cancellation) and
     `emitControlProgress` (the single `step-control-progress` WS shaper).

@@ -150,6 +150,19 @@ under `helpers/`.
   `/merged` from an abandoned resolver no-ops (conflict-flag gate), AND a
   merge-run worker parked on the conflict waiter is released so the project
   run-lock is freed (Part A of the parked-waiter wedge fix).
+- `mergeAbortedProjectPin.test.ts` — `/merge-aborted` 404s a task from another
+  board (`?project=` pin) without aborting anything; an absent/empty project
+  stays unpinned for the resolver agent's curl.
+- `resumeHarnessDefault.test.ts` — `resolveResumeHarness`: a body-less
+  `/resume` reuses the task's recorded harness (Pi/Codex no longer silently
+  become Claude); an explicit valid harness wins; no recorded harness → Claude.
+- `projectEndpointSnapshotRace.test.ts` — the `buildProjectWss` connect
+  handshake: subscribed before the snapshot load; a snapshot event fired while
+  the load is pending forces a re-load whose result is what the client gets
+  (the stale load is never sent); deltas during the load are buffered and
+  flushed after the snapshot; re-loads cap at `MAX_INITIAL_SNAPSHOT_LOADS` and
+  send the latest load, never an older event; a socket closed mid-load
+  unsubscribes and gets nothing.
 - `repoIntegrity.test.ts` — `checkRepoIntegrity`, the merge-run circuit breaker
   (`.git`-deletion defence #6). Both failure directions: it must fire on a
   vanished `.git`, an unreadable HEAD, and a HEAD moved *sideways* to a

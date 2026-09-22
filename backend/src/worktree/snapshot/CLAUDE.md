@@ -69,3 +69,9 @@ Ownership and edit preservation (2026-09 follow-up):
 - External editors do not participate in Lattice's lock. Version checks detect
   changes before cleanup, but a write racing the final comparison and Git/file
   replacement is not an OS-level compare-and-swap; that residual window remains.
+
+Discarded-worktree archives (`../discardArchive.ts`) share this directory tree
+and the copy routine but are NOT pending snapshots: their manifest is
+`_lattice-discarded-worktree.json` and the payload sits under `files/`.
+`recovery.ts` only acts on `_lattice-snapshot.json`, so they are never
+auto-restored. Do not give them a `_lattice-snapshot.json`.

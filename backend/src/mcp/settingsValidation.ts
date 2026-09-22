@@ -13,7 +13,7 @@ import type { McpServerEntry } from './catalog.js';
 // The env code-injection / launcher-hijack denylist lives on its own — an
 // override may TUNE a built-in but never re-point what it runs. See
 // ./overrideSecurity.ts.
-import { sanitizeOverrideEnv } from './overrideSecurity.js';
+import { isUnsafeOverrideArg, sanitizeOverrideEnv } from './overrideSecurity.js';
 
 // Defensive shape validation for user-supplied custom MCP servers. Keeps only
 // well-formed entries with the fields the resolver reads; unknown junk is
@@ -130,7 +130,7 @@ export function applyBuiltinOverride(
   const merged: McpServerEntry = { ...base };
 
   if (Array.isArray(override.args)) {
-    merged.args = mergeOverrideArgs(base.args ?? [], override.args);
+    merged.args = mergeOverrideArgs(base.args ?? [], override.args, base.id);
   }
   if (override.env) merged.env = { ...(base.env ?? {}), ...override.env };
   if (override.headers) merged.headers = { ...(base.headers ?? {}), ...override.headers };
@@ -148,12 +148,23 @@ export function applyBuiltinOverride(
 // Additive-only arg merge: the override must preserve every catalog arg in order,
 // then may append. Otherwise it's trying to replace the runner — reject it and
 // keep the catalog args. (When the catalog entry has no args there's nothing to
-// protect, so the override's flags apply as-is.)
-function mergeOverrideArgs(baseArgs: string[], overrideArgs: string[]): string[] {
+// protect, so the override's flags apply as-is.) An appended flag that points
+// the server at an arbitrary binary (`--executable-path` & co., see
+// overrideSecurity.ts `isUnsafeOverrideArg`) rejects the whole override the
+// same way — the catalog args stand, rather than keeping a half-stripped list
+// whose orphaned path value would read as a stray positional.
+function mergeOverrideArgs(
+  baseArgs: string[],
+  overrideArgs: string[],
+  serverId: string,
+): string[] {
   const preservesBase =
     overrideArgs.length >= baseArgs.length &&
     baseArgs.every((a, i) => overrideArgs[i] === a);
-  return preservesBase ? overrideArgs : baseArgs;
+  if (!preservesBase) return baseArgs;
+  const appended = overrideArgs.slice(baseArgs.length);
+  if (appended.some((a) => isUnsafeOverrideArg(a, serverId))) return baseArgs;
+  return overrideArgs;
 }
 
 // Keep only the string-valued keys of an object (env / headers maps).

@@ -31,6 +31,7 @@ import { getTask, type Task } from '../../../tasks.js';
 import { signalConflictWaiter } from '../../../mergeRuns.js';
 import { recoverAbandonedResolverTask } from '../../../mergeRuns/abandonedResolver.js';
 import { release, tryAcquire, type MergeLockToken } from '../../../mergeLocks.js';
+import { requireTaskInRequestedProject } from '../requestUtils.js';
 
 // How long /merge-aborted polls for a held per-task merge lock before 409ing.
 export const MERGE_ABORT_LOCK_WAIT_MS = 5_000;
@@ -67,6 +68,10 @@ export function handleTaskMergeAborted(
   return async (req: Request<{ id: string }>, res: Response): Promise<Response | void> => {
     const task = await getTask(req.params.id);
     if (!task) return res.status(404).json({ error: 'not found' });
+    // The board's Cancel button sends `?project=`; a task from another board
+    // is a 404, like every other by-id route. No/empty project = unpinned, so
+    // a resolver agent's give-up curl (which carries none) still works.
+    if (!requireTaskInRequestedProject(task, req, res)) return;
 
     // `git merge --abort` mutates the worktree's index. Every other
     // in-worktree git mutation (the run worker's processTarget /

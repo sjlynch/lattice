@@ -8,6 +8,7 @@ import { fsRmWithRetries } from './rmRetry.js';
 import { isPathStrictlyInside } from './paths.js';
 import { homeWorktreesDir } from '../projectPath.js';
 import { assertNotReparsePoint, assertSafeWorktreePath } from './cleanupSafety.js';
+import { archiveUncommittedWorktreeChanges } from './discardArchive.js';
 
 // A busy candidate is preserved while setup tries "-r2" through "-r5".
 export const MAX_PATH_RETRY_SUFFIXES = 4;
@@ -20,6 +21,7 @@ type ReconcileDeps = {
   pruneReparsePoints: typeof pruneReparsePointsUnder;
   removeStray: typeof fsRmWithRetries;
   waitForHandles: () => Promise<void>;
+  archiveUncommitted: typeof archiveUncommittedWorktreeChanges;
 };
 
 function pathKey(value: string): string {
@@ -54,6 +56,7 @@ export async function reconcileStaleState(
     pruneReparsePoints: pruneReparsePointsUnder,
     removeStray: fsRmWithRetries,
     waitForHandles: () => new Promise((resolve) => setTimeout(resolve, 200)),
+    archiveUncommitted: archiveUncommittedWorktreeChanges,
     ...overrides,
   };
   const refuse = (reason: string): false => {
@@ -142,6 +145,20 @@ export async function reconcileStaleState(
         return refuse('registration changed during reconciliation');
       }
       await assertNotReparsePoint(worktreePath);
+      // A fresh Run starts fresh, but uncommitted edits in the old checkout
+      // are still the user's work (the unmerged-commit guard above only
+      // covers commits). Archive them to ~/.lattice/snapshots/ first; if
+      // that fails, keep the checkout and let setup take the -rN suffix.
+      const archived = await deps.archiveUncommitted(repoRoot, worktreePath, branchName);
+      if (archived.status === 'failed') {
+        return refuse(`could not archive uncommitted changes (${archived.error}); keeping the checkout`);
+      }
+      if (archived.status === 'archived') {
+        console.warn(
+          `[worktree] reconcile: archived ${archived.files} uncommitted change(s) from ${worktreePath} ` +
+            `to ${archived.dir} before starting fresh`,
+        );
+      }
       await deps.pruneReparsePoints(worktreePath).catch((err) =>
         console.warn(`[worktree] reconcile: link pruning failed for ${worktreePath}:`, err),
       );

@@ -22,7 +22,7 @@ import {
   type McpHarnessSupport,
   type McpServerEntry,
 } from './catalog.js';
-import type { ClaudeMcpServerConfig } from './claudeInject.js';
+import { UnsafeCmdArgumentError, type ClaudeMcpServerConfig } from './claudeInject.js';
 import { resolvePlaywright } from './resolverPolicy.js';
 import { toClaudeConfig } from './claudeServerConfig.js';
 import { safeCodexServerId, toCodexServerConfig } from './codexServerConfig.js';
@@ -233,9 +233,26 @@ export function resolveClaudeServers(
     'claude',
     ctx,
   )) {
-    out[entry.id] = toClaudeConfig(entry, serverSecrets, headless);
+    const shaped = shapeOrSkip('claude', entry.id, () =>
+      toClaudeConfig(entry, serverSecrets, headless),
+    );
+    if (shaped) out[entry.id] = shaped;
   }
   return out;
+}
+
+// Run one shaper, skipping (with a warning) a server whose args can't be carried
+// safely through the win32 `cmd /c` wrap — see `escapeCmdArgument` in
+// claudeInject.ts. One bad custom server must not take the other servers (or
+// the spawn) down with it. Any other error still propagates.
+function shapeOrSkip<T>(harness: AgentHarness, id: string, shape: () => T): T | null {
+  try {
+    return shape();
+  } catch (err) {
+    if (!(err instanceof UnsafeCmdArgumentError)) throw err;
+    console.warn(`[mcp] ${harness}: skipping server "${id}" — ${err.message}`);
+    return null;
+  }
 }
 
 // The resolved Codex spawn payload: one inline-TOML `-c` override string per
@@ -276,7 +293,10 @@ export function resolveCodexServers(
       );
       continue;
     }
-    const shaped = toCodexServerConfig(entry, serverSecrets, headless);
+    const shaped = shapeOrSkip('codex', entry.id, () =>
+      toCodexServerConfig(entry, serverSecrets, headless),
+    );
+    if (!shaped) continue;
     const clash = envNameClash(env, shaped.env);
     if (clash) {
       console.warn(
@@ -331,7 +351,8 @@ export function resolvePiServers(
     'pi',
     ctx,
   )) {
-    const shaped = toPiServerConfig(entry, serverSecrets, headless);
+    const shaped = shapeOrSkip('pi', entry.id, () => toPiServerConfig(entry, serverSecrets, headless));
+    if (!shaped) continue;
     // The map is keyed by the exact id, but secret-header env-var names are a
     // lossy fold shared with Codex (`my-api` / `my_api` → the same var): a
     // second server would overwrite the first's secret in the pty env.

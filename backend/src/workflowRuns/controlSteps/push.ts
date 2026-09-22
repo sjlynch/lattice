@@ -48,7 +48,17 @@ export type PushStepDeps = {
   // Settle a push session the step gave up on (cancel / timeout) the way its
   // own /done callback would. Optional so test doubles can omit it.
   abandonPushRun?: (projectPath: string, id: string) => void;
+  // Override for PUSH_STEP_TIMEOUT_MS so the timeout path is testable.
+  pushTimeoutMs?: number;
 };
+
+function describeTimeout(ms: number): string {
+  if (ms >= 60_000 && ms % 60_000 === 0) {
+    const min = ms / 60_000;
+    return `${min} minute${min === 1 ? '' : 's'}`;
+  }
+  return `${ms}ms`;
+}
 
 // A session the step killed never reaches its Stop hook, so nothing else marked
 // the push run done (it stayed `running` in the registry for the life of the
@@ -150,17 +160,26 @@ export async function runPushStep(
     resolveDone();
   });
   // Hard timeout backstop. If Claude crashed before the Stop hook fired the
-  // workflow would otherwise wait forever. Log loud so the user can diagnose.
+  // workflow would otherwise wait forever. A timeout is a FAILURE, not a
+  // completion: nothing confirmed the push landed, so the step throws below and
+  // controlStep.ts errors the run (it used to report 'push complete' and
+  // advance). A push whose own /done already landed is not a timeout.
+  const timeoutMs = deps.pushTimeoutMs ?? PUSH_STEP_TIMEOUT_MS;
+  const timeoutMessage = `push step timed out after ${describeTimeout(timeoutMs)}`;
+  let timedOut = false;
   const timeout = setTimeout(() => {
-    console.warn(
-      `[workflow-run] ${run.id} push step timed out after ${PUSH_STEP_TIMEOUT_MS}ms — resolving`,
-    );
+    if (sessionId && deps.getPushRun(sessionId)?.status === 'done') {
+      resolveDone();
+      return;
+    }
+    timedOut = true;
+    console.warn(`[workflow-run] ${run.id} ${timeoutMessage} — killing the push session`);
     if (sessionServerId) {
       deps.proxyKillSession(sessionServerId).catch(() => undefined);
     }
     abandonSession();
     resolveDone();
-  }, PUSH_STEP_TIMEOUT_MS);
+  }, timeoutMs);
 
   try {
     const session = await deps.startPushSession(wf.projectPath, backendOrigin);
@@ -172,12 +191,16 @@ export async function runPushStep(
     // ran with sessionServerId still undefined and killed nothing. Now that the
     // pty exists, kill it and bail — a cancelled push must NOT stay live and run
     // `git push` to completion. Mirrors the post-spawn 'already done' guard below.
-    if (cancelled || run.status !== 'running') {
+    // A timeout that fired mid-spawn is handled the same way, then fails below.
+    if (cancelled || timedOut || run.status !== 'running') {
       if (session.serverId) {
         await deps.proxyKillSession(session.serverId).catch(() => undefined);
       }
       abandonSession();
       resolveDone();
+      if (timedOut && !cancelled && run.status === 'running') {
+        throw new Error(timeoutMessage);
+      }
       return;
     }
 
@@ -200,7 +223,9 @@ export async function runPushStep(
     if (current && current.status === 'done') resolveDone();
 
     await done;
-    if (run.status !== 'running') return;
+    // A cancel wins over a timeout: the run keeps its cancelled state.
+    if (cancelled || run.status !== 'running') return;
+    if (timedOut) throw new Error(timeoutMessage);
     emitControlProgress(run, stepIndex, 'push', 1, 1, 'push complete');
   } finally {
     clearTimeout(timeout);

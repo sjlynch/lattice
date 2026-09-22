@@ -37,7 +37,7 @@ export function useTaskMergeActions({
   const mergeTaskAction = useCallback(
     async (task: Task): Promise<boolean> => {
       try {
-        const res = await apiMergeTask(task.id);
+        const res = await apiMergeTask(activeFolder, task.id);
         if (res.merged) return true;
         // Either a worktree merge conflict or a stash-pop conflict in main —
         // both are handled by spawning a resolver Claude as a merge terminal.
@@ -57,7 +57,7 @@ export function useTaskMergeActions({
         return false;
       }
     },
-    [addTerminal, showError],
+    [activeFolder, addTerminal, showError],
   );
 
   const mergeAllReady = useCallback(async () => {
@@ -91,7 +91,7 @@ export function useTaskMergeActions({
     const stuck = tasks.filter((task) => task.conflict);
     if (stuck.length === 0) return;
     const results = await Promise.allSettled(
-      stuck.map((task) => apiAbortTaskMerge(task.id)),
+      stuck.map((task) => apiAbortTaskMerge(activeFolder, task.id)),
     );
     const failed = results.filter((r) => r.status === 'rejected').length;
     if (failed > 0) {
@@ -99,7 +99,7 @@ export function useTaskMergeActions({
         `Failed to clear ${failed} of ${stuck.length} stuck conflict${stuck.length === 1 ? '' : 's'}`,
       );
     }
-  }, [tasks, showError]);
+  }, [activeFolder, tasks, showError]);
 
   // Fire each move-to-done without awaiting (moveTask handles its own errors)
   // and return the ids so the caller can drive a progress strip immediately.

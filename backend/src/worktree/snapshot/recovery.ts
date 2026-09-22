@@ -44,7 +44,11 @@ export async function recoverPendingSnapshots(): Promise<void> {
       const manifest = await readSnapshotManifest(manifestPath);
       if (!manifest) {
         // Missing/corrupt/unsupported manifest — leave it alone, user will
-        // see and can clean up.
+        // see and can clean up. This is also how discarded-worktree archives
+        // (../discardArchive.ts) are skipped: they carry
+        // _lattice-discarded-worktree.json instead, because they are a
+        // keep-for-the-user copy of a WORKTREE's edits, never a pending
+        // restore into the project tree.
         continue;
       }
       // Defence in depth: a tampered manifest could claim repoRoot is

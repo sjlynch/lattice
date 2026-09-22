@@ -78,6 +78,11 @@ export function buildTasksWss(): WebSocketServer {
       ev.kind === 'snapshot'
         ? ev.projectPath
         : canonicalProjectPath(ev.event.projectPath),
+    // Only the task-list snapshot is re-derivable from `initial`: one landing
+    // while the connect-time `listTasks` runs re-loads the list. spawned /
+    // spawn-failed / activity events are transient (not in the list), so the
+    // helper buffers them during the load and flushes them after it.
+    isSnapshotEvent: (ev) => ev.kind === 'snapshot',
     payloadFromEvent: (ev) => {
       if (ev.kind === 'snapshot') return { type: 'tasks', tasks: ev.tasks };
       if (ev.kind === 'spawned') return { type: 'task-spawned', ...ev.event };

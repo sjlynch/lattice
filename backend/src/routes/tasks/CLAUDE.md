@@ -91,6 +91,14 @@ undoes that bump, and any other failure clears the run-queue state:
 - `queuedSpawnFailure.ts` — the shared thunk body (`runSpawnThunk`): crash-safe
   at-admission attempt counting, CAP retry undo, and terminal-failure reporting
   (`reportSpawnFailure` → `task-spawn-failed`).
+- `resumeTask.ts` — the resume spawn itself. **Harness default**: a body with
+  no (valid) `harness` resumes under the harness the task was actually run
+  with (`Task.harness`, recorded at spawn — `resolveResumeHarness`), and a Pi
+  resume reuses the task's recorded `piModel` when none is given; only a task
+  with no recorded harness falls back to Claude. An explicit harness in the
+  body still wins, and the harness/model a resume actually spawned is written
+  back onto the task so the switch sticks. (It used to default every
+  body-less resume to Claude, silently moving Pi/Codex tasks onto Claude.)
 - `queuedSpawnEnqueue.ts` — the run/resume enqueue wrappers (`enqueueTaskRun` /
   `enqueueTaskResume`) plus cancellation (`cancelQueuedTaskSpawns` /
   `dequeueTaskRun`).
@@ -109,7 +117,10 @@ Idempotent Stop-hook / resolver callbacks. `hooks/index.ts`'s
   resolver branch uses). A late `/merged` from a resolver abandoned by
   `/merge-aborted` (the Cancel button cleared the flag) is a harmless no-op
   rather than a silent finalize + main fast-forward.
-- `hooks/mergeAborted.ts` — `/merge-aborted`. Delegates the abort-mid-merge +
+- `hooks/mergeAborted.ts` — `/merge-aborted`. Honours the `?project=` pin
+  (`requireTaskInRequestedProject`: a task from another board is a 404 and
+  nothing is aborted); a missing/empty project is unpinned, so the resolver
+  agent's give-up curl keeps working. Delegates the abort-mid-merge +
   clear-conflict-flags (what makes a Cancel authoritative — see `/merged`'s guard
   above) + kill-orphaned-resolver-pty to the shared
   `mergeRuns/abandonedResolver.ts` `recoverAbandonedResolverTask`, **then**

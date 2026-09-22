@@ -15,10 +15,10 @@
 //     "continue this task, check git log first" prompt.
 
 import path from 'node:path';
-import { getTask, updateTask, type Task } from '../../tasks.js';
+import { getTask, updateTask, type Task, type TaskUpdates } from '../../tasks.js';
 import { worktreeExists } from '../../worktree.js';
 import { SpawnCapacityError } from '../../spawnQueue.js';
-import { normalizeAgentHarness } from '../../harnesses.js';
+import { isAgentHarness, normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
 import { normalizePiModel, resolvePiModel } from '../../piModels.js';
 import { isCodexYoloEnabled } from '../../userSettings.js';
 import { buildRestoreCommand } from '../../terminalRegistry/restoreCommand.js';
@@ -95,6 +95,18 @@ export async function buildTaskResumeCommand(
   return built.command;
 }
 
+// The harness a resume spawns: an explicit (valid) request wins, else the
+// harness the task was actually run with (`Task.harness`, recorded at spawn),
+// else Claude. Without the task fallback, a body-less /resume of a Pi or Codex
+// task silently re-spawned it under Claude.
+export function resolveResumeHarness(
+  requestedHarness: unknown,
+  task: Pick<Task, 'harness'>,
+): AgentHarness {
+  if (isAgentHarness(requestedHarness)) return requestedHarness;
+  return normalizeAgentHarness(task.harness);
+}
+
 // Re-validates the task (status, worktree on disk) and re-spawns the pty.
 // Re-validation matters because a queued resume's thunk can run minutes
 // after the route accepted it. Throws on any precondition failure.
@@ -120,9 +132,10 @@ export async function resumeTaskById(
   }
 
   const taskFile = path.join(task.worktreePath, 'LATTICE_TASK.md');
-  // Pi model for the resume: explicit request wins, else the model the task
-  // originally ran with, else the per-project default.
-  const harness = normalizeAgentHarness(requestedHarness);
+  // Harness: explicit request wins, else the task's recorded harness (see
+  // resolveResumeHarness). Pi model for the resume: explicit request wins,
+  // else the model the task originally ran with, else the per-project default.
+  const harness = resolveResumeHarness(requestedHarness, task);
   const piModel =
     harness === 'pi'
       ? normalizePiModel(requestedPiModel) ??
@@ -134,7 +147,7 @@ export async function resumeTaskById(
     harness === 'codex' ? await isCodexYoloEnabled(task.projectPath) : undefined;
   const commandOverride = (await buildTaskResumeCommand(task, harness)) ?? undefined;
   const selectedHarness = selectHarnessCommand(task, {
-    requestedHarness,
+    requestedHarness: harness,
     mode: 'resume',
     piModel,
     codexYolo,
@@ -150,11 +163,20 @@ export async function resumeTaskById(
     );
   }
   // A fresh resume pins a NEW conversation; remember it for the next one.
+  // Likewise record the harness (+ Pi model) this resume actually ran, so an
+  // explicit harness switch sticks for the next body-less resume.
+  const patch: TaskUpdates = {};
   if (spawn.agentSession && spawn.agentSession.id !== task.agentSession?.id) {
-    await updateTask(task.id, {
-      agentSession: { harness: spawn.agentSession.harness, id: spawn.agentSession.id },
-    });
+    patch.agentSession = { harness: spawn.agentSession.harness, id: spawn.agentSession.id };
   }
+  if (
+    spawn.serverId &&
+    (task.harness !== harness || (harness === 'pi' && task.piModel !== piModel))
+  ) {
+    patch.harness = harness;
+    patch.piModel = harness === 'pi' ? piModel : undefined;
+  }
+  if (Object.keys(patch).length > 0) await updateTask(task.id, patch);
 
   return {
     task,

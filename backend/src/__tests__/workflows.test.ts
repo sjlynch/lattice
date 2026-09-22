@@ -60,7 +60,12 @@ test('workflow normalization applies persisted fallbacks and harness defaults', 
 
   assert.equal(normalized.length, 2);
   assert.equal(normalized[0].id, 'wf_existing');
-  assert.equal(normalized[0].projectPath, canonicalProjectPath(embeddedProject));
+  // The OWNING project wins over the path embedded in the record: a copied /
+  // moved project keeps the old absolute path in its workflows.json, and
+  // honouring it made that project's workflows merge into / push from the
+  // ORIGINAL repo.
+  assert.notEqual(canonicalProjectPath(embeddedProject), project);
+  assert.equal(normalized[0].projectPath, project);
   assert.equal(normalized[0].name, 'Named flow');
   assert.equal(normalized[0].createdAt, 123);
   assert.equal(normalized[0].steps[0].mode, 'parallel');
@@ -361,6 +366,49 @@ test('getWorkflow/updateWorkflow/deleteWorkflow resolve by id with an empty cach
     assert.equal(await empty.getWorkflow('wf_missing'), null);
     assert.equal(await empty.deleteWorkflow('wf_missing'), false);
     assert.equal(await empty.updateWorkflow('wf_missing', { name: 'x' }), null);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('WorkflowStore: a copied/moved project loads its workflows against ITSELF, not the old embedded path', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-workflows-moved-'));
+  try {
+    const project = canonicalProjectPath(dir);
+    const oldProject = canonicalProjectPath(path.join(os.tmpdir(), 'lattice-workflows-original-repo'));
+    await fs.mkdir(path.dirname(workflowsFile(project)), { recursive: true });
+    await fs.writeFile(
+      workflowsFile(project),
+      JSON.stringify([{ id: 'wf_copied', projectPath: oldProject, name: 'Copied', steps: [], createdAt: 1 }]),
+    );
+    const store = new WorkflowStore({ listKnownProjects: async () => [project] });
+    const listed = await store.listWorkflows(dir);
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].projectPath, project);
+    assert.equal((await store.getWorkflow('wf_copied'))?.projectPath, project);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('WorkflowStore: a workflows.json that parses but is not an array is preserved, not overwritten by the next save', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-workflows-nonarray-'));
+  try {
+    const project = canonicalProjectPath(dir);
+    const file = workflowsFile(project);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const bad = JSON.stringify({ workflows: [{ id: 'wf_keep', name: 'precious' }] });
+    await fs.writeFile(file, bad);
+
+    const store = new WorkflowStore({ listKnownProjects: async () => [project] });
+    assert.deepEqual(await store.listWorkflows(dir), []);
+    await store.createWorkflow(dir, 'New', []);
+    await store.flushPersist(dir);
+
+    const base = path.basename(file);
+    const kept = (await fs.readdir(path.dirname(file))).filter((f) => f.startsWith(`${base}.corrupt-`));
+    assert.equal(kept.length, 1, 'the non-array file was moved aside');
+    assert.equal(await fs.readFile(path.join(path.dirname(file), kept[0]), 'utf8'), bad);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

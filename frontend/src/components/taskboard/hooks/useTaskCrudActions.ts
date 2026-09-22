@@ -40,7 +40,7 @@ export function useTaskCrudActions({ activeFolder, showError }: UseTaskCrudActio
       // overlay open and a retry would create a duplicate in Open.
       if (status !== 'open') {
         try {
-          await apiUpdateTask(created.id, { status });
+          await apiUpdateTask(activeFolder, created.id, { status });
         } catch (err) {
           showError(
             `Task created in Open, but moving it to ${status} failed: ${(err as Error).message}`,
@@ -55,12 +55,12 @@ export function useTaskCrudActions({ activeFolder, showError }: UseTaskCrudActio
   const moveTask = useCallback(
     async (id: string, status: TaskStatus) => {
       try {
-        await apiUpdateTask(id, { status });
+        await apiUpdateTask(activeFolder, id, { status });
       } catch (err) {
         showError((err as Error).message);
       }
     },
-    [showError],
+    [activeFolder, showError],
   );
 
   // Resolves true only when the backend PATCH succeeds. The detail overlay
@@ -73,27 +73,27 @@ export function useTaskCrudActions({ activeFolder, showError }: UseTaskCrudActio
       updates: { title?: string; description?: string },
     ): Promise<boolean> => {
       try {
-        await apiUpdateTask(id, updates);
+        await apiUpdateTask(activeFolder, id, updates);
         return true;
       } catch (err) {
         showError((err as Error).message);
         return false;
       }
     },
-    [showError],
+    [activeFolder, showError],
   );
 
   const deleteTask = useCallback(
     async (id: string): Promise<boolean> => {
       try {
-        await apiDeleteTask(id);
+        await apiDeleteTask(activeFolder, id);
         return true;
       } catch (err) {
         showError((err as Error).message);
         return false;
       }
     },
-    [showError],
+    [activeFolder, showError],
   );
 
   return { addTask, moveTask, editTask, deleteTask };

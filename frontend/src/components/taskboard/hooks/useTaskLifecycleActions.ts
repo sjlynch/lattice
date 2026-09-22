@@ -37,7 +37,7 @@ export function useTaskLifecycleActions({
       if (!(await ensureGitRepo(activeFolder))) return;
       try {
         const sel = pickRunHarness();
-        await apiRunTask(task.id, sel.harness, sel.piModel);
+        await apiRunTask(activeFolder, task.id, sel.harness, sel.piModel);
       } catch (err) {
         showError(`Run failed: ${(err as Error).message}`);
       }
@@ -62,24 +62,24 @@ export function useTaskLifecycleActions({
   const cancelQueuedRun = useCallback(
     async (task: Task) => {
       try {
-        await apiCancelQueuedRun(task.id);
+        await apiCancelQueuedRun(activeFolder, task.id);
       } catch (err) {
         showError(`Cancel failed: ${(err as Error).message}`);
       }
     },
-    [showError],
+    [activeFolder, showError],
   );
 
   const resumeTaskAction = useCallback(
     async (task: Task) => {
       try {
         const sel = pickRunHarness();
-        await apiResumeTask(task.id, sel.harness, sel.piModel);
+        await apiResumeTask(activeFolder, task.id, sel.harness, sel.piModel);
       } catch (err) {
         showError(`Resume failed: ${(err as Error).message}`);
       }
     },
-    [pickRunHarness, showError],
+    [activeFolder, pickRunHarness, showError],
   );
 
   // Returns the ids re-spawned so the caller can drive a progress strip.
