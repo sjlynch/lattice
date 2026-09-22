@@ -40,6 +40,12 @@ export function HealthTooltip({ node }: Props) {
   // Last clamped position actually written to `transform`; lets us skip the
   // write entirely when a pointer move doesn't change the clamped placement.
   const lastPosRef = useRef<TooltipPosition | null>(null);
+  // The element `lastPosRef` was written to. The component returns null for a
+  // node without `healthDetails`, so hovering such a file unmounts the div and
+  // the next health-bearing hover mounts a FRESH one (hidden, no transform)
+  // while this instance survives; a cursor back at the same clamped spot then
+  // matched the stale cache and the new tooltip was never revealed.
+  const placedElRef = useRef<HTMLDivElement | null>(null);
   // RAF coalescing for pointer-driven placement: keep the latest cursor and
   // flush at most one transform write per frame.
   const pendingRef = useRef<{ x: number; y: number } | null>(null);
@@ -49,9 +55,10 @@ export function HealthTooltip({ node }: Props) {
     const el = ref.current;
     if (!el) return;
     const pos = clampPosition(clientX, clientY, TOOLTIP_WIDTH, heightRef.current);
-    const last = lastPosRef.current;
+    const last = placedElRef.current === el ? lastPosRef.current : null;
     if (last && last.left === pos.left && last.top === pos.top) return;
     lastPosRef.current = pos;
+    placedElRef.current = el;
     // translate3d so the position update stays on the compositor and
     // never invalidates layout for the rest of the page.
     el.style.transform = `translate3d(${pos.left}px, ${pos.top}px, 0)`;

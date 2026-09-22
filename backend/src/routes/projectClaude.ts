@@ -11,7 +11,9 @@
 //     same orange node + focus beams as the Lattice-spawned non-worktree
 //     sessions (reuses agentSessions + agentActivity).
 
+import { promises as fs } from 'node:fs';
 import { Router } from 'express';
+import { canonicalProjectPath } from '../projectPath.js';
 import { applyProjectActivityHook } from '../projectClaude/activity.js';
 import { reconcileProjectInstrumentation } from '../projectClaude/reconcile.js';
 import { readProjectParam } from './projectParam.js';
@@ -26,6 +28,15 @@ export function buildProjectClaudeRouter(backendOrigin: string): Router {
   r.post('/api/project-instrumentation', async (req, res) => {
     const project = readProjectParam(req, res);
     if (project === null) return;
+    // The reconcile mkdirs `<project>/.claude/` and writes a `~/.claude.json`
+    // entry for it, so a mistyped (or since-deleted) absolute project used to
+    // be CREATED on disk as a phantom folder. Refuse anything that isn't an
+    // existing directory.
+    const root = canonicalProjectPath(project);
+    const isDir = await fs.stat(root).then((st) => st.isDirectory(), () => false);
+    if (!isDir) {
+      return res.status(400).json({ error: `project is not an existing directory: ${JSON.stringify(root)}` });
+    }
     try {
       const result = await reconcileProjectInstrumentation(project, backendOrigin);
       res.json({ ok: true, ...result });

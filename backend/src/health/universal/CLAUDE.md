@@ -6,9 +6,11 @@ AST metrics need a text-level pass.
 - `strip.ts` owns `stripStringsAndComments` (the scanner core plus
   string/comment/template lexing); it must preserve input length and newline
   positions so downstream ranges/line counts stay aligned.
-- `stripRegex.ts` holds the JS/TS-only regex-vs-division disambiguation
-  (`consumeRegexLiteral`), which `strip.ts` invokes for the JS family so a
-  regex like `/[0-9]{3}/` is blanked as a string rather than read as division.
+- `stripRegex.ts` holds the JS-semantics regex-vs-division disambiguation
+  (`consumeRegexLiteral`) so a regex like `/[0-9]{3}/` is blanked as a string
+  rather than read as division. `strip.ts` invokes it for EVERY extension (it
+  is not gated on language), so gating it would change smell counts for
+  non-JS files and needs a `CACHE_VERSION` bump.
 - The lexer distinguishes string, template interpolation, line-comment, and
   block-comment modes. Template `${...}` code is intentionally re-entered so
   regex smells can still see expressions inside templates.

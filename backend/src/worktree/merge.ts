@@ -149,9 +149,9 @@ async function performFastForward(
     // surface the FF error. We use restore (not discard) because the FF
     // didn't change anything — the working tree is back at its pre-FF
     // HEAD, and the user's mods belong on top of that exactly as before.
-    if (snapshot && snapshot.dir) {
-      await restoreSnapshot(snapshot, repoRoot).catch(() => undefined);
-    }
+    // A partial/failed restore used to be swallowed, leaving the user's edits
+    // in a retained snapshot nobody was told about — append it to the error.
+    const restoreWarning = await restoreAfterFastForward(repoRoot, snapshot);
     return {
       ok: false,
       outcome: {
@@ -160,7 +160,8 @@ async function performFastForward(
           `Fast-forward of main to ${branchName} failed: ` +
           (ff.stderr.trim() ||
             ff.stdout.trim() ||
-            'git merge --ff-only failed'),
+            'git merge --ff-only failed') +
+          (restoreWarning ? ` (${restoreWarning})` : ''),
       },
     };
   }

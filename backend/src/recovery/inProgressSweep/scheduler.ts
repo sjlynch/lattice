@@ -12,10 +12,6 @@ let sweepTimer: NodeJS.Timeout | null = null;
 // spawnQueue/poll.ts's `pollInProgress`).
 let sweepInProgress = false;
 
-export function isInProgressSweepRunning(): boolean {
-  return sweepInProgress;
-}
-
 // `sweep` is an injectable seam for the overlap test; production always uses
 // the real sweep. Returns false when a tick was skipped because one is live.
 export async function runInProgressSweepTick(
@@ -35,7 +31,7 @@ export function startInProgressSweepLoop(
   intervalMs: number = IN_PROGRESS_SWEEP_INTERVAL_MS,
 ): void {
   if (sweepTimer) return;
-  // First pass after a short delay so it doesn't pile onto boot recovery.
+  // First pass after one full interval so it doesn't pile onto boot recovery.
   sweepTimer = setInterval(() => {
     runInProgressSweepTick().catch((err) => {
       console.error('[in-progress-sweep] tick threw:', err);

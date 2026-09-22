@@ -35,8 +35,8 @@ export function FloatingPanel({
     defaultSize,
     storageKey,
   );
-  useFloatingPanelEscape(open, onClose);
   const dialogRef = useFocusTrap<HTMLDivElement>(open);
+  useFloatingPanelEscape(open, onClose, dialogRef);
 
   const onTitleDown = usePanelDrag({ pos, size, setPos });
   const onResizeDown = usePanelResize({ pos, size, minSize, setSize });

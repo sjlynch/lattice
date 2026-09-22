@@ -131,3 +131,78 @@ test('resetAll counts as an edit (touched), even though it restores defaults', a
     renderer!.unmount();
   });
 });
+
+test('switching to another tab and back keeps unsaved edits (no re-seed)', async () => {
+  let renderer: ReturnType<typeof TestRenderer.create> | null = null;
+  let fetches = 0;
+  g.fetch = () => {
+    fetches += 1;
+    return Promise.resolve({ ok: true, json: async () => ({}) });
+  };
+  await act(async () => {
+    renderer = TestRenderer.create(
+      React.createElement(Harness, { open: true, active: true, folder: 'C:/project' }),
+    );
+  });
+  await flush();
+  act(() => {
+    latest.setDraft('a', 'EDITED TEXT');
+  });
+
+  // Away to another tab, then back.
+  await act(async () => {
+    renderer!.update(React.createElement(Harness, { open: true, active: false, folder: 'C:/project' }));
+  });
+  await act(async () => {
+    renderer!.update(React.createElement(Harness, { open: true, active: true, folder: 'C:/project' }));
+  });
+  await flush();
+
+  assert.equal(fetches, 1, 'no second seeding fetch on re-activation');
+  assert.equal(latest.draftMap.a, 'EDITED TEXT');
+  assert.deepEqual(latest.getPatch(), { a: 'EDITED TEXT' });
+
+  // A project switch while the tab is inactive must not hand the old
+  // project's drafts to the new project's Save.
+  await act(async () => {
+    renderer!.update(React.createElement(Harness, { open: true, active: false, folder: 'C:/other' }));
+  });
+  assert.equal(latest.getPatch(), undefined);
+
+  act(() => {
+    renderer!.unmount();
+  });
+});
+
+test('closing and reopening the dialog re-seeds from the saved state', async () => {
+  let renderer: ReturnType<typeof TestRenderer.create> | null = null;
+  let fetches = 0;
+  g.fetch = () => {
+    fetches += 1;
+    return Promise.resolve({ ok: true, json: async () => ({}) });
+  };
+  await act(async () => {
+    renderer = TestRenderer.create(
+      React.createElement(Harness, { open: true, active: true, folder: 'C:/project' }),
+    );
+  });
+  await flush();
+  act(() => {
+    latest.setDraft('a', 'EDITED TEXT');
+  });
+  await act(async () => {
+    renderer!.update(React.createElement(Harness, { open: false, active: true, folder: 'C:/project' }));
+  });
+  await act(async () => {
+    renderer!.update(React.createElement(Harness, { open: true, active: true, folder: 'C:/project' }));
+  });
+  await flush();
+
+  assert.equal(fetches, 2);
+  assert.equal(latest.draftMap.a, 'DEFAULT TEXT');
+  assert.equal(latest.getPatch(), undefined);
+
+  act(() => {
+    renderer!.unmount();
+  });
+});

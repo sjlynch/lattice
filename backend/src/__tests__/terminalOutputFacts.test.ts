@@ -160,3 +160,22 @@ test('session output records printable facts without dropping raw traffic or cha
   assert.equal(listSessions().find(s => s.id === session.id)?.lastTextOutputAt, NOW + 1);
   assert.equal(JSON.parse(broadcast.at(-1)!).data, '\x1b]2;Idle\x07');
 });
+
+test('output of a pty with no subscribers is recorded but never JSON-encoded', (t) => {
+  let onData!: (data: string) => void;
+  const scrollback: string[] = [];
+  const session = {
+    id: 'no-subscriber-fixture', cols: 80, rows: 24, cwd: '/fixture', shell: 'shell',
+    projectPath: '/fixture', createdAt: NOW, lastOutputAt: NOW, initialCommand: 'claude',
+    outputFacts: new TerminalOutputFacts(), killing: false,
+    pty: { onData: (handler: typeof onData) => { onData = handler; }, onExit: () => {} },
+    scrollback: { append: (data: string) => scrollback.push(data), dispose: () => {}, size: 0 },
+    subscribers: new Set(),
+  } as unknown as Session;
+  wireSessionPtyEvents(session);
+  const stringify = t.mock.method(JSON, 'stringify');
+  onData('hello');
+  stringify.mock.restore();
+  assert.deepEqual(scrollback, ['hello']);
+  assert.equal(stringify.mock.callCount(), 0);
+});

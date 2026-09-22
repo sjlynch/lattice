@@ -83,18 +83,28 @@ let backendLifecycle;
 let restartPolicy;
 let compilerLifecycle;
 
-async function shutdown(signal) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  try {
-    closeDistWatch();
-  } catch {
-    /* ignore */
+// The one in-flight shutdown, shared by every trigger. On Windows Ctrl+C
+// reaches dist/index.js too, so it can exit while the terminal-server
+// `/shutdown` POST below is still in flight; its exit handler (onExit) must
+// wait for that POST rather than `process.exit` over it.
+let shutdownDone = null;
+
+function shutdown(signal) {
+  if (!shutdownDone) {
+    shuttingDown = true;
+    shutdownDone = (async () => {
+      try {
+        closeDistWatch();
+      } catch {
+        /* ignore */
+      }
+      restartPolicy.stopDeferredPoll();
+      compilerLifecycle?.stop(signal);
+      await shutdownTerminalServer();
+      backendLifecycle.kill(signal);
+    })();
   }
-  restartPolicy.stopDeferredPoll();
-  compilerLifecycle?.stop(signal);
-  await shutdownTerminalServer();
-  backendLifecycle.kill(signal);
+  return shutdownDone;
 }
 
 async function onExit(code) {

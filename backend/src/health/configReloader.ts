@@ -69,8 +69,8 @@ export class ConfigReloader {
       // sees inside a worktree) over-fires a full-project rescan +
       // proj.watcher.add(root) + cross-file recompute on edits the root never
       // consumes — and reloads aliases from the root regardless of which file
-      // changed. Nested edits fall through to normal analysis (return false);
-      // their aliases refresh on the next root-tsconfig change or full scan.
+      // changed. Nested edits return false here; the watcher refreshes their
+      // aliases via `reloadAliasesForNestedTsconfig` instead (no rescan).
       if (path.dirname(path.resolve(filePath)) === path.resolve(this.projectRoot)) {
         const revision = ++this.aliasRevision;
         const aliases = await loadProjectAliases(this.projectRoot);
@@ -80,6 +80,28 @@ export class ConfigReloader {
     }
 
     return false;
+  }
+
+  // A NESTED tsconfig (frontend/tsconfig.app.json, backend/tsconfig.json)
+  // feeds the same merged alias map as the root one — `loadProjectAliases`
+  // walks every tsconfig in the tree — but `reloadForPath` deliberately skips
+  // it (it cannot change which files are visible, so it must not fire the
+  // full-rescan path). Nothing else refreshed the watcher's map: a full scan
+  // resolves its own aliases and never touches this reloader, so a `paths`
+  // edit in a nested tsconfig left the live graph resolving imports against
+  // the old aliases until the backend restarted. Reload the map (no rescan);
+  // returns true when it did so the caller can re-run the cross-file pass.
+  async reloadAliasesForNestedTsconfig(filePath: string): Promise<boolean> {
+    if (!TSCONFIG_BASENAME_RE.test(path.basename(filePath))) return false;
+    const resolved = path.resolve(filePath);
+    const root = path.resolve(this.projectRoot);
+    if (path.dirname(resolved) === root) return false; // root: reloadForPath's job
+    const rel = path.relative(root, resolved);
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return false;
+    const revision = ++this.aliasRevision;
+    const aliases = await loadProjectAliases(this.projectRoot);
+    if (this.aliasRevision === revision) this.projectAliases = aliases;
+    return true;
   }
 
   private async loadGitignore(): Promise<Ignore> {

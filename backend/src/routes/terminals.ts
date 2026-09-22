@@ -9,7 +9,7 @@ import { proxyCreateSession, proxyListSessions } from '../terminalProxy.js';
 // The RAW kill (no registry bookkeeping): this route ends the record itself,
 // with the `closed` reason a user-closed tab needs — see the DELETE handler.
 import { proxyKillSession as rawProxyKillSession } from '../terminalServerClient.js';
-import { getSpawnQueueSnapshot } from '../spawnQueue.js';
+import { getSpawnQueueSnapshot, notifySessionsFreed } from '../spawnQueue.js';
 import { terminalRegistry } from '../terminalRegistry/store.js';
 import { endPostMergeHook, getActiveHookForServerId } from '../postMergeHooks.js';
 
@@ -62,13 +62,21 @@ export function buildTerminalsRouter(): Router {
     if (typeof body.cwd === 'string' && body.cwd.trim() && !path.isAbsolute(body.cwd.trim())) {
       return res.status(400).json({ error: relativeProjectError(body.cwd.trim()).replace('project must', 'cwd must') });
     }
+    // Same for projectPath: it keys the registry record and the MCP / system-
+    // prompt resolution, so a relative one registered the tab (and read the
+    // settings) of a phantom project under the backend's cwd.
+    if (typeof body.projectPath === 'string' && body.projectPath.trim() && !path.isAbsolute(body.projectPath.trim())) {
+      return res.status(400).json({ error: relativeProjectError(body.projectPath.trim()).replace('project must', 'projectPath must') });
+    }
     // Positive integer within ConPTY's 16-bit limit — mirrors `isPtyDimension`.
     const cols = Number.isInteger(body.cols) && (body.cols as number) > 0 && (body.cols as number) <= 32767 ? body.cols : undefined;
     const rows = Number.isInteger(body.rows) && (body.rows as number) > 0 && (body.rows as number) <= 32767 ? body.rows : undefined;
     const result = await proxyCreateSession({
-      cwd: body.cwd,
+      // Pass the TRIMMED paths that were validated above: `" C:\\proj"` passed
+      // the absolute check yet, raw, resolves relative to the cwd.
+      cwd: typeof body.cwd === 'string' ? body.cwd.trim() || undefined : undefined,
       initialCommand: body.initialCommand,
-      projectPath: body.projectPath,
+      projectPath: typeof body.projectPath === 'string' ? body.projectPath.trim() || undefined : undefined,
       cols,
       rows,
       registry: {
@@ -108,6 +116,9 @@ export function buildTerminalsRouter(): Router {
       .catch(() => 0);
     const ok = await rawProxyKillSession(req.params.id);
     if (!ok) return res.status(404).json({ error: 'not found' });
+    // A freed pty slot: wake the spawn queue now rather than on its next poll
+    // (the tab-close route in terminalTabs.ts does the same).
+    notifySessionsFreed();
     res.json({ ok: true });
   });
 

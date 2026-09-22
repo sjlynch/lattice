@@ -52,7 +52,12 @@ export function killTree(
   signal = 'SIGTERM',
   { graceMs = KILL_GRACE_MS, platform = process.platform, spawnProcess = spawn } = {},
 ) {
-  if (!child || child.killed || child.exitCode !== null) return Promise.resolve();
+  // A child that died by a signal has `exitCode === null` but `signalCode`
+  // set — without that check the win32 path waited the full grace for an
+  // 'exit' that had already fired, then taskkill'd a PID the OS may reuse.
+  if (!child || child.killed || child.exitCode !== null || (child.signalCode ?? null) !== null) {
+    return Promise.resolve();
+  }
   if (platform === 'win32' && child.pid) {
     return new Promise((resolve) => {
       let timer = null;

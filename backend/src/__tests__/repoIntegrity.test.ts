@@ -129,3 +129,33 @@ test('checkRepoIntegrity halts when HEAD cannot be read', async () => {
     assert.match(reason, /^cannot read HEAD: /);
   });
 });
+
+// Regression: the baseline was the run-START head and never advanced, so a
+// rewind back to it after task 1 fast-forwarded (A -> B, then reset to A)
+// read as "unchanged" and passed — task 1 was already qa with its branch
+// deleted, its commits silently gone from main.
+test('finishTaskAndCheckIntegrity advances the baseline so a rewind to the run-start HEAD trips', async () => {
+  const { finishTaskAndCheckIntegrity } = await import('../mergeRuns/repoIntegrity.js');
+  const { createRunState } = await import('../mergeRuns/state.js');
+  await withTempDir(PREFIX, async (repo) => {
+    await initEmptyRepo(repo);
+    const a = await commit(repo, 'base.txt', 'base\n');
+    const b = await commit(repo, 'task1.txt', 'task 1\n');
+    const state = createRunState();
+    state.emit = () => {};
+    const run = {
+      id: 'run-baseline', projectPath: repo, status: 'running' as const, startedAt: 1, total: 2,
+      processed: 0, merged: [], conflicted: [], errored: [], cancelRequested: false,
+    };
+    const ctx = { projectPath: repo, backendOrigin: 'http://unused', baselineHead: a as string | null, state };
+
+    const first = await finishTaskAndCheckIntegrity(run, ctx, 't1', { kind: 'finalized' });
+    assert.equal(first.kind, 'finalized');
+    assert.equal(ctx.baselineHead, b);
+
+    await git(repo, ['reset', '-q', '--hard', a]);
+    const second = await finishTaskAndCheckIntegrity(run, ctx, 't2', { kind: 'finalized' });
+    assert.equal(second.kind, 'integrity-halt');
+    assert.equal(run.cancelRequested, true);
+  });
+});

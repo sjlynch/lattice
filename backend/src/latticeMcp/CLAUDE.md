@@ -51,7 +51,8 @@ that is already running.
   user session, or — when `taskId` is set (a task worktree's agent) — the
   eight-tool read / `my_task` / file / report set with the board-management
   tools (`update_task`, `transition_tasks`, `delete_task`, `run_task`) left
-  out. Registered via `registerTool` + zod input schemas. Also owns
+  out. Both sets also carry the three Opengrep tools (14 / 11 tools in
+  total). Registered via `registerTool` + zod input schemas. Also owns
   `toToolResult`, the outcome → MCP-result mapping.
 - `client.ts` — the HTTP layer. Builds URLs with `project` pinned (sent on
   EVERY call, so the by-id routes can 404 a foreign task), sends/parses JSON,
@@ -76,7 +77,7 @@ that is already running.
 | 2 expand | `my_task` | **task worktree sessions only** — the live record of the task this agent is running. Registered iff `LATTICE_TASK_ID` is set (run/resume spawns); the same variable makes `append_summary`'s `id` optional |
 | find | `search_tasks` | ranked, all lanes, snippets |
 | write | `create_task`, `create_tasks`, `append_summary` | in every session |
-| manage | `update_task`, `transition_tasks`, `delete_task` | **not in a task-worktree session** — a worktree agent's brief is untrusted input; it reads, files follow-ups and reports, it does not re-lane or delete |
+| manage | `update_task`, `transition_tasks`, `delete_task` | **not in a task-worktree session** — a worktree agent's brief is untrusted input; it reads, files follow-ups and reports, it does not re-lane or delete. `delete_task` is `DELETE /api/tasks/:id` — a PERMANENT erase that also tears down the task's worktree + branch, not a move to the `deleted` lane (that is `update_task` / `transition_tasks` with `status: "deleted"`) |
 | run | `run_task` | returns `{accepted, queued}` — admitted, **not started**. Also **not in a task-worktree session** |
 | tools | `opengrep_scan`, `opengrep_findings`, `opengrep_ignore` | in every session. The first two return the Opengrep **digest markdown** (never the JSON envelope): `opengrep_scan` runs a scan with the project's packs/filter (409 busy / not-installed / no-rules surfaces as an error the agent can act on); `opengrep_findings` re-reads a stored scan (`latest` by default) narrowed by `rule` / `file` / `severity` / `budgetKb` — the drill-down when a digest says rules were cut for the byte budget. `opengrep_ignore` appends rule ids / fingerprints to the project's ignore lists (`POST /api/opengrep/ignore`, additive) and echoes the agent's optional `reason` back in the result text (never stored). Backed by `routes/opengrep.ts`; see `../opengrep/CLAUDE.md` |
 

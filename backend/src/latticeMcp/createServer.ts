@@ -531,8 +531,10 @@ export function createLatticeMcpServer(
     'delete_task',
     {
       description:
-        'Move a task to the deleted bin. To retire finished work instead, move ' +
-        'it to done with update_task or transition_tasks.',
+        'PERMANENTLY remove a task: the record is erased (not moved to the ' +
+        'deleted lane) and any worktree + branch it has are torn down. Cannot ' +
+        'be undone. To bin it recoverably, move it to "deleted" with ' +
+        'update_task or transition_tasks; to retire finished work, move it to done.',
       inputSchema: { id: z.string().describe('Task id.') },
     },
     async ({ id }) =>

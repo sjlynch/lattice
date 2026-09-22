@@ -24,4 +24,4 @@ export {
   type FileImports,
   type CrossFileResult,
 } from './crossFile.js';
-export { preloadGrammar, grammarKeyForExt } from './parser.js';
+export { grammarKeyForExt } from './parser.js';

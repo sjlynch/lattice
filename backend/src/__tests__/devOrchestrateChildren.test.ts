@@ -73,6 +73,13 @@ test('killTree resolves immediately for a child that already exited', async () =
   await killTree(null, 'SIGTERM', { graceMs: 10_000, platform: 'win32', spawnProcess });
 });
 
+test('killTree resolves immediately for a child that already died by a signal', async () => {
+  const child = Object.assign(fakeChild(), { signalCode: 'SIGTERM' as NodeJS.Signals });
+  const { calls, spawnProcess } = taskkillSpy();
+  await killTree(child, 'SIGTERM', { graceMs: 10_000, platform: 'win32', spawnProcess });
+  assert.deepEqual(calls, [], 'no taskkill against a PID that has already exited');
+});
+
 test('killTree (POSIX) signals the child directly', async () => {
   const child = fakeChild();
   const { calls, spawnProcess } = taskkillSpy();

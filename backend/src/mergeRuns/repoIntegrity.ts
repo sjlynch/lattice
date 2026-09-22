@@ -22,10 +22,20 @@ export async function checkRepoIntegrity(
   repoRoot: string,
   baselineHead: string | null,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const r = await inspectRepoIntegrity(repoRoot, baselineHead);
+  return r.ok ? { ok: true } : r;
+}
+
+// checkRepoIntegrity plus the HEAD it verified (null when there was no
+// baseline to compare against), so the caller can advance its baseline.
+async function inspectRepoIntegrity(
+  repoRoot: string,
+  baselineHead: string | null,
+): Promise<{ ok: true; head: string | null } | { ok: false; reason: string }> {
   if (!(await gitDirExists(repoRoot))) {
     return { ok: false, reason: `${repoRoot}/.git is missing` };
   }
-  if (!baselineHead) return { ok: true }; // couldn't read it at the start
+  if (!baselineHead) return { ok: true, head: null }; // couldn't read it at the start
   let head: string;
   try {
     const r = await projectGit(repoRoot, ['rev-parse', 'HEAD']);
@@ -34,7 +44,7 @@ export async function checkRepoIntegrity(
   } catch (err) {
     return { ok: false, reason: `rev-parse HEAD threw: ${(err as Error).message}` };
   }
-  if (head === baselineHead) return { ok: true };
+  if (head === baselineHead) return { ok: true, head };
   // HEAD moved — it must be a descendant of the baseline (FF), never sideways.
   try {
     const anc = await projectGit(repoRoot, [
@@ -52,7 +62,7 @@ export async function checkRepoIntegrity(
   } catch (err) {
     return { ok: false, reason: `merge-base check threw: ${(err as Error).message}` };
   }
-  return { ok: true };
+  return { ok: true, head };
 }
 
 export async function finishTaskAndCheckIntegrity(
@@ -69,7 +79,7 @@ export async function finishTaskAndCheckIntegrity(
   // Circuit breaker: bail out of the whole run if the repo looks
   // damaged. Better to leave the remaining tasks at ready_to_merge
   // than to keep processing against a broken `.git`.
-  const integrity = await checkRepoIntegrity(runCtx.projectPath, runCtx.baselineHead);
+  const integrity = await inspectRepoIntegrity(runCtx.projectPath, runCtx.baselineHead);
   if (!integrity.ok) {
     console.error(
       `[merge-run] !!! INTEGRITY CHECK FAILED after task ${taskId}: ${integrity.reason}. ` +
@@ -80,6 +90,11 @@ export async function finishTaskAndCheckIntegrity(
     run.cancelRequested = true;
     return { kind: 'integrity-halt' };
   }
+  // Advance the baseline to the HEAD just verified. Comparing only against the
+  // run-START head let a rewind back to it (task 1 FF'd A→B, something reset
+  // main to A) pass as "unchanged" while task 1 — already qa, branch deleted —
+  // had silently lost its commits from main.
+  if (integrity.head) runCtx.baselineHead = integrity.head;
 
   return outcome;
 }

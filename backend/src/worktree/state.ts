@@ -193,7 +193,14 @@ export async function countBetween(
     );
   }
   const n = parseInt(r.stdout.trim(), 10);
-  return Number.isFinite(n) ? n : 0;
+  // Unparseable output on exit 0 is not "0 commits" either — reading it as 0
+  // is exactly the misread the non-zero check above exists to prevent.
+  if (!Number.isFinite(n)) {
+    throw new Error(
+      `git rev-list --count ${from}..${to} in ${repoRoot} printed no count: ${JSON.stringify(r.stdout.slice(0, 200))}`,
+    );
+  }
+  return n;
 }
 
 // Count of commits on `branchName` that are not yet on HEAD. Throws on a git

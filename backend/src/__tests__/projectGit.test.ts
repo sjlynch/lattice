@@ -81,6 +81,20 @@ test('projectGit policy refuses everything that could damage the repo', () => {
   denied(['reset', 'HEAD~1']); // moves HEAD — no `--`
   denied(['update-ref', '-d', 'refs/heads/main']);
   denied(['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  // Bypasses of the whitelist's own gates (third sweep).
+  denied(['symbolic-ref', '-d', 'HEAD']);
+  denied(['symbolic-ref', '--delete', 'HEAD']);
+  denied(['merge', '--ff-only', '--no-ff', 'lattice/foo']);
+  denied(['merge', '--ff-only', '--squash', 'lattice/foo']);
+  denied(['worktree', 'add', '-f', '-B', 'main', '/tmp/x', 'abc123']);
+  denied(['worktree', 'add', '/tmp/x', '-b', 'feature']);
+  denied(['worktree', 'add', '-Bmain', '/tmp/x']);
+  allowed(['worktree', 'add', '/home/u/.lattice/worktrees/h/foo', 'lattice/foo']);
+  denied(['checkout', 'HEAD', '--', ':/']);
+  denied(['checkout', 'HEAD', '--', ':(top)']);
+  denied(['checkout', 'HEAD', '--', './']);
+  denied(['checkout', 'HEAD', '--', ':(literal).']);
+  allowed(['checkout', 'HEAD', '--', ':(literal)src/a b.ts']);
   // Branch deletion limited to lattice/*.
   denied(['branch', '-D', 'main']);
   denied(['branch', '-d', 'develop']);

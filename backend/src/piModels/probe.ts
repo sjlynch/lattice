@@ -29,10 +29,6 @@ export type ProbedModel = {
 //   max_context_length — KoboldCpp / TabbyAPI style
 //   context_window     — misc. OpenAI-compatible shims
 // A server that reports none simply yields no contextWindow (Pi's default).
-// Deliberately not a level name, and namespaced so it is obvious in a server
-// log what sent it.
-const INVALID_EFFORT = '__lattice_capability_probe__';
-
 const CONTEXT_KEYS = [
   'max_model_len',
   'context_length',
@@ -108,6 +104,10 @@ export async function probeEndpointModels(
     clearTimeout(timer);
   }
 }
+
+// The `reasoning_effort` sent by probeThinkingLevels below. Deliberately not a
+// level name, and namespaced so it is obvious in a server log what sent it.
+const INVALID_EFFORT = '__lattice_capability_probe__';
 
 // Ask an endpoint which `reasoning_effort` values it accepts, by sending one it
 // certainly does not. A server that validates the field answers 400 with a

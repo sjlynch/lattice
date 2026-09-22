@@ -167,6 +167,28 @@ test('a normal (uncancelled) push completes and reports push complete', async ()
   );
 });
 
+// Nothing polls a workflow step's push run (the Task Board's poller is what
+// DELETEs its own), so the step must forget it or every workflow push stays in
+// the in-memory registry for the life of the process.
+test('a finished push step forgets its push run', async () => {
+  const run = makeRun();
+  const forgotten: string[] = [];
+  const deps: PushStepDeps = {
+    waitForLaneEmpty: async () => undefined,
+    subscribePushRuns: () => () => undefined,
+    subscribeWorkflowRuns: () => () => undefined,
+    startPushSession: async () => ({ id: 'push_f', serverId: 'srv-f', command: 'claude', cwd: '/scratch' }),
+    getPushRun: () =>
+      ({ id: 'push_f', projectPath: PROJECT, cwd: '/scratch', status: 'done', createdAt: 1 }) as ReturnType<
+        PushStepDeps['getPushRun']
+      >,
+    proxyKillSession: async () => true,
+    forgetPushRun: (id) => forgotten.push(id),
+  };
+  await runPushStep(makeWorkflow(), run, 0, 'http://localhost', deps);
+  assert.deepEqual(forgotten, ['push_f']);
+});
+
 // A session the step killed never reaches its Stop hook, so the push run used
 // to stay `running` in the registry forever, its orange graph node lingered for
 // the 30-min silence sweep, and its scratch dir waited for the next boot.

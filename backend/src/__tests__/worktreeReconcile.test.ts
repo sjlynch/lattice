@@ -294,6 +294,25 @@ test('reconcile refuses to clear a candidate whose branch has unmerged commits (
   });
 });
 
+test('reconcile keeps the branch when the previous agent commits while its PTY is being released', async (t) => {
+  // The unmerged-commit count used to run only BEFORE the PTY kill + wait +
+  // archive; a commit landing in that window was then dropped by `branch -D`.
+  t.mock.method(console, 'error', () => {});
+  await withRepo(async (repo, candidate) => {
+    await git(repo, ['worktree', 'add', '-q', '-b', branch, candidate]);
+    const { deps, effects } = observed({ waitForHandles: async () => {
+      await fs.writeFile(path.join(candidate, 'late.txt'), 'late work');
+      await git(candidate, ['add', '-A']);
+      await git(candidate, ['-c', 'user.name=Lattice Test', '-c', 'user.email=lattice-test@example.invalid',
+        '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'late']);
+    } });
+    assert.equal(await reconcileStaleState(repo, branch, candidate, deps), false);
+    assert.ok(!effects.some((e) => e.startsWith('branch -D')), effects.join('\n'));
+    await assertBranchPresent(repo);
+    assert.equal((await git(repo, ['rev-list', '--count', `main..${branch}`])).trim(), '1');
+  });
+});
+
 test('reconcile preserves a stray-looking candidate nested inside another registered worktree', async () => {
   await withRepo(async (repo, parent) => {
     await git(repo, ['worktree', 'add', '-q', '-b', 'user/parent', parent]);

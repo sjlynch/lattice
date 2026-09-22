@@ -146,8 +146,15 @@ export async function untrackOwnedFilesPostMerge(worktreePath: string): Promise<
   const check = await exec('git', ['ls-files', '-z', '--', ...LATTICE_OWNED_FILE_PATHS], worktreePath);
   const toRemove = check.code === 0 ? trackedOwnedPaths(check.stdout) : [];
   if (toRemove.length === 0) return;
-  await exec('git', ['rm', '--cached', ...toRemove], worktreePath);
-  await exec(
+  const rm = await exec('git', ['rm', '--cached', '--', ...toRemove], worktreePath);
+  if (rm.code !== 0) {
+    console.warn(`[merge] could not untrack lattice file(s) ${toRemove.join(', ')}: ${rm.stderr.trim() || `exit ${rm.code}`}`);
+    return;
+  }
+  // The commit runs the repo's own hooks here (a commit-msg linter can reject
+  // this message). On failure, un-stage the deletions rather than leave them
+  // behind in the worktree index and log a success that never happened.
+  const commit = await exec(
     'git',
     [
       'commit',
@@ -156,5 +163,13 @@ export async function untrackOwnedFilesPostMerge(worktreePath: string): Promise<
     ],
     worktreePath,
   );
+  if (commit.code !== 0) {
+    await exec('git', ['reset', '-q', 'HEAD', '--', ...toRemove], worktreePath);
+    console.warn(
+      `[merge] untrack commit for lattice file(s) ${toRemove.join(', ')} failed ` +
+        `(${commit.stderr.trim() || commit.stdout.trim() || `exit ${commit.code}`}); left tracked`,
+    );
+    return;
+  }
   console.log(`[merge] untracked accidentally committed lattice file(s): ${toRemove.join(', ')}`);
 }

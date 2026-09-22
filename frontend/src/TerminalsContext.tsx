@@ -407,7 +407,7 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
     const prev = terminalsRef.current;
     const { next } = planCloseTerminals(prev, idSet);
     // One backend teardown per tab (registered → registry DELETE, else the
-    // pty DELETE); planCloseTerminals dedupes the id set.
+    // pty DELETE); `seen` dedupes a repeated id.
     const seen = new Set<string>();
     for (const t of prev) {
       if (!idSet.has(t.id) || seen.has(t.id)) continue;

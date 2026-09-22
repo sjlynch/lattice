@@ -50,13 +50,17 @@ export function FolderPicker({ open, initialPath, onClose, onSelect }: Props) {
   };
 
   // Enter confirms the selection, mirroring the footer button. Skip it while
-  // typing in the path / new-folder inputs (they handle Enter themselves).
+  // typing in the path / new-folder inputs (they handle Enter themselves) and
+  // on the footer buttons, which activate themselves: handling it here too
+  // switched the project on a Tab-focused Cancel + Enter.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Enter') return;
-      const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      const target = e.target as { closest?: (selector: string) => unknown } | null;
+      if (typeof target?.closest === 'function' && target.closest('input, textarea, select, .modal-footer')) {
+        return;
+      }
       if (!listing) return;
       onSelect(selectedPath ?? listing.path);
     };

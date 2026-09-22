@@ -92,10 +92,9 @@ export function grammarKeyForExt(ext: string): GrammarKey | null {
   return GRAMMAR_KEY_BY_EXT[ext] ?? null;
 }
 
-// Resolve the path to the `tree-sitter-wasms` package's `out/` folder
-// at runtime. The package layout is stable: `node_modules/tree-sitter-
-// wasms/out/tree-sitter-<lang>.wasm`. We look up via require.resolve so
-// the project still works in monorepo / pnpm hoisting scenarios.
+// Resolve a grammar inside `@vscode/tree-sitter-wasm`'s `wasm/` folder at
+// runtime (`node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-<lang>.wasm`).
+// Located by the node_modules walk above so monorepo / hoisted layouts work.
 function resolveGrammarPath(filename: string): string {
   return path.join(findPackageDir('@vscode/tree-sitter-wasm'), 'wasm', filename);
 }
@@ -112,6 +111,12 @@ function ensureRuntime(): Promise<void> {
     // backend dir.
     locateFile: (file: string) => path.join(findPackageDir('web-tree-sitter'), file),
   });
+  // A failed init must not be memoized for the life of the process — every
+  // later file would then silently lose its AST analysis. Let the next call retry.
+  const attempt = runtimeReady;
+  attempt.catch(() => {
+    if (runtimeReady === attempt) runtimeReady = null;
+  });
   return runtimeReady;
 }
 
@@ -126,6 +131,12 @@ async function loadGrammar(ext: string): Promise<Language | null> {
       return Language.load(wasmPath);
     })();
     grammarCache.set(wasmFile, entry);
+    // Same rule for a grammar: drop a rejected load (e.g. a transient EBUSY
+    // reading the .wasm) so the next file of that language retries it.
+    const loading = entry;
+    loading.catch(() => {
+      if (grammarCache.get(wasmFile) === loading) grammarCache.delete(wasmFile);
+    });
   }
   return entry;
 }
@@ -141,8 +152,7 @@ const parserPool = new Map<GrammarKey, Parser>();
 // Get a parser ready for the given extension. Returns null for any
 // extension that isn't a recognised grammar — the caller should fall
 // back to text-only analysis. The returned parser is shared; the
-// caller MUST NOT call `.delete()` on it (do that only at process
-// teardown via `disposePool`).
+// caller MUST NOT call `.delete()` on it (the pool lives for the process).
 export async function getParser(ext: string): Promise<{
   parser: Parser;
   language: Language;
@@ -159,29 +169,4 @@ export async function getParser(ext: string): Promise<{
     parserPool.set(key, parser);
   }
   return { parser, language, key };
-}
-
-// Drop the cached parsers — only call at process teardown or in tests.
-export function disposePool(): void {
-  for (const p of parserPool.values()) {
-    try {
-      p.delete();
-    } catch {
-      /* ignore */
-    }
-  }
-  parserPool.clear();
-}
-
-// Pre-warm a grammar (used by the file watcher to avoid a first-edit
-// spike when a project is opened).
-export async function preloadGrammar(ext: string): Promise<void> {
-  await loadGrammar(ext);
-}
-
-// Reset for tests.
-export function _resetForTest(): void {
-  runtimeReady = null;
-  grammarCache.clear();
-  disposePool();
 }

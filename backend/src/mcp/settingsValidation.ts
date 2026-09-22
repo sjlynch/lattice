@@ -15,16 +15,29 @@ import type { McpServerEntry } from './catalog.js';
 // ./overrideSecurity.ts.
 import { isUnsafeOverrideArg, sanitizeOverrideEnv } from './overrideSecurity.js';
 
+// Ids that, used as a plain-object key, reach Object.prototype instead of
+// naming an entry (mirrors secrets.ts's UNSAFE_KEYS; not imported from there so
+// this leaf validator doesn't pull in the secrets file's I/O dependencies).
+const UNSAFE_SERVER_IDS = new Set(['__proto__', 'constructor', 'prototype']);
+
 // Defensive shape validation for user-supplied custom MCP servers. Keeps only
 // well-formed entries with the fields the resolver reads; unknown junk is
 // dropped rather than trusted. Exported for unit testing.
 export function sanitizeCustomServers(raw: unknown): McpServerEntry[] {
   if (!Array.isArray(raw)) return [];
   const out: McpServerEntry[] = [];
+  const seenIds = new Set<string>();
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue;
     const e = item as Record<string, unknown>;
-    if (typeof e.id !== 'string' || !e.id) continue;
+    // The id keys plain objects downstream — the secrets map, Claude's
+    // `mcpServers`, `.pi/mcp.json` — so `__proto__` / `constructor` /
+    // `prototype` would resolve inherited members (or set a prototype) instead
+    // of naming a server. Same refusal as secrets.ts. Duplicate ids are dropped
+    // too: every downstream map is keyed by id, so a second entry would
+    // silently replace the first at spawn while the Settings list showed both.
+    if (typeof e.id !== 'string' || !e.id || UNSAFE_SERVER_IDS.has(e.id) || seenIds.has(e.id)) continue;
+    seenIds.add(e.id);
     const transport = e.transport === 'http' ? 'http' : 'stdio';
     const support = (e.harnessSupport ?? {}) as Record<string, unknown>;
     const entry: McpServerEntry = {

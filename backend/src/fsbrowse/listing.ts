@@ -10,7 +10,14 @@ export async function listDir(target?: string): Promise<DirListing> {
   // Windows. Without this, picking f:\foo vs F:\foo here would diverge from
   // the canonical task.projectPath produced by the tasks API and the
   // per-project filter (Sidebar) would hide spawn'd terminals.
-  const abs = canonicalProjectPath(target && target.trim() ? target : os.homedir());
+  const requested = target && target.trim() ? target.trim() : os.homedir();
+  // A relative path (typed into the picker's path box, or shell-stripped
+  // backslashes) would resolve under the BACKEND's cwd and list a folder the
+  // user never named — which they could then pick as a project.
+  if (!path.isAbsolute(requested)) {
+    throw new Error(`Path must be absolute, got ${JSON.stringify(requested)}`);
+  }
+  const abs = canonicalProjectPath(requested);
   const stat = await fs.stat(abs);
   if (!stat.isDirectory()) {
     throw new Error(`Not a directory: ${abs}`);

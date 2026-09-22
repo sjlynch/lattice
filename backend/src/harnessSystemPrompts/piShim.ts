@@ -16,6 +16,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { atomicWriteFile } from '../claudeTrust/configFile.js';
 import type { HarnessSystemPromptOverride } from './defs.js';
 
 export const PI_SYSTEM_PROMPT_EXTENSION_FILENAME = 'lattice-system-prompt.ts';
@@ -92,7 +93,9 @@ async function writeIfChanged(file: string, expected: string): Promise<void> {
   } catch {
     /* absent — write it */
   }
-  await fs.writeFile(file, expected, 'utf8');
+  // Temp + rename: Pi loads the extension (and it reads the sidecar) at
+  // session start; a torn write must never be what it sees.
+  await atomicWriteFile(file, expected);
 }
 
 // Remove a previously-installed pair (best-effort). Called when the project has

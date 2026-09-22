@@ -164,8 +164,10 @@ function consumeNonCode(scanner: StripScanner): boolean {
     consumeTemplate(scanner);
     return true;
   }
-  // Regex literals are a JS/TS concern; delegate that disambiguation to the
-  // sibling module (a no-op for other languages, where a `/` is just division).
+  // Regex-vs-division disambiguation lives in the sibling module. It is NOT
+  // gated on language: it runs for every extension, so in a non-JS file a `/`
+  // after an operator/opening token with another `/` later on the same line
+  // (a shell/YAML path like `x=/usr/local/`) is blanked like a regex too.
   if (scanner.blankStrings && ch === '/' && consumeRegexLiteral(scanner, emitString)) {
     return true;
   }

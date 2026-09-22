@@ -86,7 +86,10 @@ relative project silently landed under the BACKEND's own cwd —
 `PATCH /api/settings?project=foo` created `backend/foo/.lattice/
 userSettings.json`, and the workflow / terminal-tab / merge-run /
 instrumentation / prompt-customization routes did the same for theirs.
-`POST /api/terminals` applies the same rule to `cwd`. The read-only graph
+`POST /api/terminals` applies the same rule to `cwd` and `projectPath`, and
+`POST /api/project-instrumentation` additionally requires the project to be
+an existing directory (its reconcile mkdirs `<project>/.claude/`). Always act
+on the value `readProjectParam` returns (trimmed), never the raw body field. The read-only graph
 routes that take `?path=` (or `?project=`) with a default-root fallback —
 `/api/scan`, `/api/search`, `/api/health/dead-code`, `/api/git-history`,
 `/api/git-branch` — go through `readPathParam` (same module): absent → the

@@ -104,6 +104,22 @@ export async function reconcileStaleState(
     return true;
   };
 
+  const branchHasNoUnmergedCommits = async (): Promise<boolean> => {
+    const unmerged = await git(['rev-list', '--count', `HEAD..${branchRef}`]);
+    const count = unmerged.code === 0 ? parseInt(unmerged.stdout.trim(), 10) : NaN;
+    if (!Number.isFinite(count)) {
+      return refuse(`cannot count unmerged commits on ${branchName} (exit ${unmerged.code}): ${unmerged.stderr.trim() || unmerged.stdout.trim()}`);
+    }
+    if (count > 0) {
+      console.error(
+        `[worktree] reconcile: branch ${branchName} has ${count} unmerged commit(s) — ` +
+          `NOT deleting it or its checkout at ${worktreePath}; the new run will use a suffixed branch/path instead.`,
+      );
+      return refuse(`branch has ${count} unmerged commit(s)`);
+    }
+    return true;
+  };
+
   let tracked = await readTracked();
   if (!validateRegistrations(tracked)) return false;
   const registration = tracked.find((entry) => pathKey(entry.path) === candidateKey);
@@ -119,18 +135,7 @@ export async function reconcileStaleState(
     // that work gone, with no backup. Refuse before ANY mutation so setup
     // falls through to the next `-rN` suffix and the old branch (and its
     // checkout, uncommitted edits included) survives for the user.
-    const unmerged = await git(['rev-list', '--count', `HEAD..${branchRef}`]);
-    const count = unmerged.code === 0 ? parseInt(unmerged.stdout.trim(), 10) : NaN;
-    if (!Number.isFinite(count)) {
-      return refuse(`cannot count unmerged commits on ${branchName} (exit ${unmerged.code}): ${unmerged.stderr.trim() || unmerged.stdout.trim()}`);
-    }
-    if (count > 0) {
-      console.error(
-        `[worktree] reconcile: branch ${branchName} has ${count} unmerged commit(s) — ` +
-          `NOT deleting it or its checkout at ${worktreePath}; the new run will use a suffixed branch/path instead.`,
-      );
-      return refuse(`branch has ${count} unmerged commit(s)`);
-    }
+    if (!(await branchHasNoUnmergedCommits())) return false;
   }
 
   if (registration) {
@@ -208,6 +213,11 @@ export async function reconcileStaleState(
     if (tracked.some((entry) => entry.branch === branchRef)) {
       return refuse('branch remains checked out');
     }
+    // Re-count: the first count ran before the PTY kill + handle wait +
+    // archive, and a still-running agent from the previous run could commit
+    // in that window. Removing the checkout lost nothing (the commit is on
+    // the branch); deleting the branch now would.
+    if (!(await branchHasNoUnmergedCommits())) return false;
     const deleted = await git(['branch', '-D', branchName]);
     if (deleted.code !== 0) {
       return refuse(`git branch delete failed (exit ${deleted.code}): ${deleted.stderr.trim() || deleted.stdout.trim()}`);

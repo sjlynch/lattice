@@ -34,6 +34,19 @@ export function createWatcherHandlers(
   };
 }
 
+// A nested tsconfig's `paths` feed the merged alias map but cannot change which
+// files are visible: reload the aliases and re-run cross-file (edges may now
+// resolve differently) without the full-rescan broadcast. True = handled.
+async function reloadNestedAliases(
+  proj: ProjectWatcher,
+  filePath: string,
+  isCurrent: () => boolean,
+): Promise<boolean> {
+  if (!(await proj.config.reloadAliasesForNestedTsconfig(filePath))) return false;
+  if (isCurrent()) proj.crossFile.scheduleRecompute(null);
+  return true;
+}
+
 async function handleAddOrChange(
   proj: ProjectWatcher,
   filePath: string,
@@ -53,6 +66,7 @@ async function handleAddOrChange(
     proj.crossFile.scheduleRecompute(null);
     return;
   }
+  if (await reloadNestedAliases(proj, filePath, isCurrent)) return;
   if (!isCurrent()) return;
 
   const ext = path.extname(filePath).toLowerCase();
@@ -95,6 +109,7 @@ async function handleRemove(
     proj.crossFile.scheduleRecompute(null);
     return;
   }
+  if (await reloadNestedAliases(proj, filePath, isCurrent)) return;
   if (!isCurrent()) return;
 
   const ext = path.extname(filePath).toLowerCase();

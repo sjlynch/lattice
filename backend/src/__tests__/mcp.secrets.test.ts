@@ -121,3 +121,29 @@ test('PATCH /api/mcp-secrets answers 400 (not 500) for a prototype-polluting key
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+// A non-string `value` used to fall through to `null` and silently CLEAR the
+// stored key; it is a malformed request and must leave the secret in place.
+test('PATCH /api/mcp-secrets answers 400 for a non-string value and keeps the stored key', async () => {
+  await setMcpSecret('typecheck-srv', 'API_KEY', 'keep-me-1234');
+  const app = express();
+  app.use(express.json());
+  app.use(buildMcpRouter());
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = server.address() as { port: number };
+  try {
+    for (const value of [123, { v: 'x' }, true]) {
+      const res = await fetch(`http://127.0.0.1:${port}/api/mcp-secrets`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ serverId: 'typecheck-srv', envVar: 'API_KEY', value }),
+      });
+      assert.equal(res.status, 400);
+    }
+    assert.equal((await readMcpSecrets())['typecheck-srv']?.API_KEY, 'keep-me-1234');
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await setMcpSecret('typecheck-srv', 'API_KEY', null);
+  }
+});

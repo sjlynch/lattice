@@ -7,6 +7,7 @@ import {
   type WorkflowRun,
   type WorkflowRunHarnessOverride,
 } from '../../../api';
+import { sameProjectPath } from '../../../terminal/terminalScope';
 import type { EditorState } from '../editorState';
 
 // Options threaded from the sequential queue into a run start.
@@ -78,7 +79,7 @@ export function useWorkflowRunActions({
       if (
         activeFolderRef.current !== requestedProject ||
         activeFolderGenerationRef.current !== requestedGeneration ||
-        res.run.projectPath !== requestedProject
+        !sameProjectPath(res.run.projectPath, requestedProject)
       ) {
         return { status: 'failed' };
       }
@@ -106,7 +107,7 @@ export function useWorkflowRunActions({
     const requestedProject = activeFolderRef.current;
     const requestedGeneration = activeFolderGenerationRef.current;
     const wf = workflowsById.get(workflowId);
-    if (!requestedProject || !wf || wf.projectPath !== requestedProject) {
+    if (!requestedProject || !wf || !sameProjectPath(wf.projectPath, requestedProject)) {
       return { status: 'failed' };
     }
 
@@ -118,7 +119,7 @@ export function useWorkflowRunActions({
         !saved ||
         activeFolderRef.current !== requestedProject ||
         activeFolderGenerationRef.current !== requestedGeneration ||
-        saved.projectPath !== requestedProject
+        !sameProjectPath(saved.projectPath, requestedProject)
       ) {
         return { status: 'failed' };
       }
@@ -148,7 +149,7 @@ export function useWorkflowRunActions({
         : null;
       if (
         editor.workflowId &&
-        (!loadedWorkflow || loadedWorkflow.projectPath !== activeFolderRef.current)
+        (!loadedWorkflow || !sameProjectPath(loadedWorkflow.projectPath, activeFolderRef.current))
       ) {
         return;
       }
@@ -160,7 +161,7 @@ export function useWorkflowRunActions({
         requestedProject &&
         activeFolderRef.current === requestedProject &&
         activeFolderGenerationRef.current === requestedGeneration &&
-        saved.projectPath === requestedProject
+        sameProjectPath(saved.projectPath, requestedProject)
       ) {
         await startWorkflowDefinition(saved.id, harnessOverride, piModelOverride);
       }

@@ -17,7 +17,11 @@ export function buildWorkflowPromptCustomizationsRouter(backendOrigin: string): 
   r.post('/api/workflow-prompt-customizations', async (req, res) => {
     // The session's scratch lives under `<project>/.lattice/`, so a relative
     // project is refused before it can resolve under the backend's cwd.
-    if (readProjectParam(req, res, { source: 'body' }) === null) return;
+    // Use the VALIDATED (trimmed) value: the raw `body.project` was passed on
+    // before, so `" C:\\proj"` passed the absolute check yet reached
+    // path.resolve with its leading space — a relative path under the cwd.
+    const project = readProjectParam(req, res, { source: 'body' });
+    if (project === null) return;
     try {
       const body = (req.body || {}) as {
         project?: string;
@@ -30,7 +34,7 @@ export function buildWorkflowPromptCustomizationsRouter(backendOrigin: string): 
       };
       const request = await startWorkflowPromptCustomization(
         {
-          project: body.project ?? '',
+          project,
           stepTitle: body.stepTitle,
           prompt: body.prompt ?? '',
           templateId: body.templateId,

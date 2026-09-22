@@ -57,6 +57,29 @@ test('reloadForPath ignores a nested tsconfig (no rescan, root aliases untouched
   assert.equal(reloader.aliases, aliasesBefore, 'root aliases are not reloaded');
 });
 
+test('reloadAliasesForNestedTsconfig picks up a nested tsconfig paths edit', async () => {
+  const dir = await makeProject({
+    'tsconfig.json': ROOT_ALIAS,
+    'frontend/tsconfig.app.json': '{}',
+  });
+  const reloader = await ConfigReloader.create(dir);
+  assert.ok(!reloader.aliases.some((a) => a.prefix === '@nested/'));
+
+  // Root tsconfig and non-tsconfig files are not this method's job.
+  assert.equal(await reloader.reloadAliasesForNestedTsconfig(path.join(dir, 'tsconfig.json')), false);
+  assert.equal(await reloader.reloadAliasesForNestedTsconfig(path.join(dir, 'frontend', 'a.ts')), false);
+  assert.equal(
+    await reloader.reloadAliasesForNestedTsconfig(path.join(path.dirname(dir), 'elsewhere', 'tsconfig.json')),
+    false,
+  );
+
+  const nested = path.join(dir, 'frontend', 'tsconfig.app.json');
+  await fs.writeFile(nested, NESTED_ALIAS, 'utf8');
+  assert.equal(await reloader.reloadAliasesForNestedTsconfig(nested), true);
+  assert.ok(reloader.aliases.some((a) => a.prefix === '@nested/'), 'nested alias is live');
+  assert.ok(reloader.aliases.some((a) => a.prefix === '@root/'), 'root alias kept');
+});
+
 test('reloadForPath ignores a non-root .gitignore but fires for the root one', async () => {
   const dir = await makeProject({
     '.gitignore': 'dist/\n',

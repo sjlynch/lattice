@@ -145,3 +145,15 @@ test('resumeQueuedTaskRuns: skips tasks that are not queued or not freshly runna
   assert.equal(enqueued[0].taskId, 'c');
   assert.equal(updated.length, 0);
 });
+
+test('resumeQueuedTaskRuns: one task whose enqueue throws does not strand the rest of its project', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const { deps, enqueued } = makeDeps([makeTask({ id: 'bad' }), makeTask({ id: 'good' })]);
+  const real = deps.enqueueTaskRun;
+  deps.enqueueTaskRun = async (taskId, ...rest) => {
+    if (taskId === 'bad') throw new Error('boom');
+    return real(taskId, ...rest);
+  };
+  await resumeQueuedTaskRuns(ORIGIN, deps);
+  assert.deepEqual(enqueued.map((e) => e.taskId), ['good']);
+});

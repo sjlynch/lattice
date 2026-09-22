@@ -41,7 +41,9 @@ test('a conflict cleared while the re-spawn was queued kills the new resolver an
   const outcome = await tryRespawnMidMergeResolver(f.task, f.run, f.ctx, f.deps);
   assert.equal(outcome.kind, 'errored');
   assert.deepEqual(f.killed, ['fresh-pty']);
-  assert.equal(f.run.processed, 1);
+  // processed is the caller's job (handleFlaggedConflictTask, after the
+  // integrity check), not the re-spawn helper's.
+  assert.equal(f.run.processed, 0);
   assert.match(f.run.errored[0]?.error ?? '', /aborted while its resolver re-spawn was queued/);
   // The waiter registered up front was abandoned, so a later signal is a no-op
   // rather than a release of some other run's waiter.
@@ -67,4 +69,23 @@ test('a still-conflicted task keeps its re-spawned resolver and parks on the wai
   assert.equal(outcome.kind, 'awaiting-resolver');
   assert.deepEqual(f.killed, []);
   assert.deepEqual(f.run.errored, []);
+});
+
+// Regression: the mid-merge re-spawn path returned straight to the run loop,
+// skipping finishTaskAndCheckIntegrity — no progress bump after the park and,
+// worse, no `.git`/HEAD circuit-breaker check after the resolver's finalize
+// fast-forwarded main. The fixture's project path has no `.git`, so a run
+// that performs the check must halt.
+test('the mid-merge re-spawn path runs the after-task integrity check', async () => {
+  const { handleFlaggedConflictTask } = await import('../mergeRuns/flaggedConflict.js');
+  const f = fixture({ conflict: undefined });
+  const result = await handleFlaggedConflictTask(
+    f.task, f.run, f.ctx,
+    () => { throw new Error('resync options must not be needed on this path'); },
+    { isMidMerge: async () => true, respawn: f.deps },
+  );
+  assert.equal(result.action, 'handled');
+  assert.equal(result.action === 'handled' ? result.outcome.kind : '', 'integrity-halt');
+  assert.equal(f.run.processed, 1);
+  assert.equal(f.run.cancelRequested, true);
 });

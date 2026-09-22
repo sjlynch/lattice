@@ -54,6 +54,10 @@ const MUTATING_SUBCOMMAND_VALIDATORS = new Map<string, ProjectGitSubcommandValid
 function assertAllowedSymbolicRefArgs(rest: string[]): void {
   // `git symbolic-ref HEAD <ref>` writes; the read form is `symbolic-ref
   // [-q] [--short] <name>`. Forbid the 2-positional-arg write form.
+  // `-d`/`--delete` deletes the symbolic ref (HEAD) with ONE positional.
+  if (rest.some((a) => a === '-d' || a === '--delete')) {
+    throw new DisallowedProjectGitError('symbolic-ref delete is not allowed');
+  }
   const positionals = rest.filter((a) => !a.startsWith('-'));
   if (positionals.length >= 2) {
     throw new DisallowedProjectGitError('symbolic-ref write form is not allowed');

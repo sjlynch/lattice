@@ -75,7 +75,8 @@ export function requireAbsoluteProject(project: string, res: Response): boolean 
 }
 
 // Optional project pinning for the by-id routes (`GET/PATCH/DELETE /api/tasks/
-// :id`, `/append-summary`, `/run`, `/resume`, `/merge`, `/cancel-queued-run`).
+// :id`, `/append-summary`, `/run`, `/resume`, `/merge`, `/cancel-queued-run`,
+// and the resolver callbacks `/merged`, `/merge-aborted`, `/stash-resolved`).
 // `getTask(id)` is a GLOBAL lookup across every indexed project, so an id alone
 // reaches any board on the machine. When the caller sends `?project=` — the
 // `lattice` MCP server does on every call, and the generated docs' recipes do

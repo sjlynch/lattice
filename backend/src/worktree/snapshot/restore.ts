@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { withProjectMutation } from '../../projectRunLock.js';
 import { constants, type Stats } from 'node:fs';
 import { isPathInsideRepo } from '../paths.js';
-import { isSnapshotMetadataPath, SNAPSHOTS_BASE, type SnapshotHandle } from './manifest.js';
+import { isSnapshotMetadataPath, type SnapshotHandle } from './manifest.js';
 import { assertNotReparsePoint } from '../cleanupSafety.js';
 import { projectGit } from '../projectGit.js';
 import { pathVersion } from './versions.js';
@@ -313,21 +313,6 @@ async function restoreOwnedSnapshot(handle: SnapshotHandle, repoRoot: string, op
     );
   }
   return result;
-}
-
-// Drop a snapshot without restoring (caller decided the snapshot is
-// no longer relevant — e.g. the FF failed and was rolled back through a
-// different path).
-export async function discardSnapshot(handle: SnapshotHandle): Promise<void> {
-  if (!handle.dir) return;
-  try {
-    const relative = path.relative(path.resolve(SNAPSHOTS_BASE), path.resolve(handle.dir));
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('snapshot outside the managed snapshot root');
-    await assertNotReparsePoint(handle.dir);
-    await fs.rm(handle.dir, { recursive: true, force: true });
-  } catch {
-    /* ignore */
-  }
 }
 
 async function assertSnapshotRemovalSafe(snapshotDir: string, repoRoot: string): Promise<void> {

@@ -216,6 +216,23 @@ test('resolve: an explicit false override stays off', () => {
   assert.ok('context7' in out);
 });
 
+test('resolve: a server id naming an Object member never resolves an inherited secret map', () => {
+  // `secrets.toString` is Object.prototype.toString; reading `.name` off it
+  // yielded the string "toString", which was injected as the NAME env var.
+  const custom: McpServerEntry = {
+    id: 'toString',
+    label: 'x',
+    description: '',
+    transport: 'stdio',
+    command: 'node',
+    runtime: 'node',
+    harnessSupport: { claude: true, codex: false, pi: false },
+    secretEnvVars: ['name'],
+  };
+  const out = resolveClaudeServers([custom], { mcpOverrides: { toString: true } }, {});
+  assert.equal(asStdio(out.toString).env, undefined);
+});
+
 test('resolve: a server not supporting Claude is filtered out', () => {
   const custom: McpServerEntry = {
     id: 'pi-only',

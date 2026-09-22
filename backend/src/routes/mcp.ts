@@ -57,12 +57,12 @@ export function buildMcpRouter(): Router {
     if (!isSafeSecretKey(body.serverId) || !isSafeSecretKey(body.envVar)) {
       return res.status(400).json({ error: 'serverId/envVar may not be __proto__, constructor or prototype' });
     }
-    const value =
-      body.value === null || body.value === undefined
-        ? null
-        : typeof body.value === 'string'
-          ? body.value
-          : null;
+    // A non-string value (a number, an object) is a malformed request — it
+    // used to fall through to `null` and silently CLEAR the stored key.
+    if (body.value !== null && body.value !== undefined && typeof body.value !== 'string') {
+      return res.status(400).json({ error: 'value must be a string, or null to clear' });
+    }
+    const value = typeof body.value === 'string' ? body.value : null;
     const redacted = await setMcpSecret(body.serverId, body.envVar, value);
     res.json({ redacted });
   });

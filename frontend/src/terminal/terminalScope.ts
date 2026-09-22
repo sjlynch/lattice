@@ -13,6 +13,18 @@ export function normalizeDirPath(p: string): string {
   return p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 }
 
+// Do two project paths name the same project? For comparing a value the
+// BACKEND stamped (its `realpathSync.native` spelling: a registry record's,
+// workflow's or workflow run's `projectPath`) against the frontend's
+// `activeFolder`, which only has its drive letter canonicalized — never `===`.
+export function sameProjectPath(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  if (!a || !b) return false;
+  return normalizeDirPath(a) === normalizeDirPath(b);
+}
+
 // Is `child` the same directory as, or nested inside, `parent`? Uses a
 // segment-boundary check so `/foo/bar-baz` is NOT treated as inside `/foo/bar`.
 export function isPathWithin(child: string, parent: string): boolean {

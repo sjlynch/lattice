@@ -3,6 +3,7 @@
 // need a fresh spawn. React-free so the reseed-vs-registry race is testable.
 
 import type { StartupTerminal, TerminalRecord } from '../../../api';
+import { normalizeDirPath } from '../../../terminal/terminalScope';
 import type { TerminalSpec } from '../../../terminal/terminalTypes';
 
 export type StartupSeedPlan = {
@@ -12,8 +13,29 @@ export type StartupSeedPlan = {
   spawn: StartupTerminal[];
 };
 
+// Keyed on the NORMALIZED folder, like `terminalBelongsToProject`.
 export function startupInFlightKey(activeFolder: string, startupId: string): string {
-  return `${activeFolder}::${startupId}`;
+  return `${normalizeDirPath(activeFolder)}::${startupId}`;
+}
+
+// Drop the in-flight markers whose spawn has COMMITTED a startup spec for this
+// project — from then on `planStartupSeeding`'s `existing` check covers it (and
+// a later close + settings change can respawn). `projectTerminals` is already
+// scoped to `activeFolder`. A marker whose spawn is still awaiting its
+// pre-create must survive every unrelated list change meanwhile: the old
+// cleanup deleted exactly those markers (any other tab's status update did
+// it), so a seeding pass re-run during the await spawned the command twice.
+export function settleInFlightStartups(
+  inFlight: Set<string>,
+  activeFolder: string,
+  projectTerminals: readonly TerminalSpec[],
+): void {
+  if (inFlight.size === 0) return;
+  for (const t of projectTerminals) {
+    if (t.kind === 'startup' && t.startupId) {
+      inFlight.delete(startupInFlightKey(activeFolder, t.startupId));
+    }
+  }
 }
 
 function ptyIsLive(serverId: string | undefined, liveIds: ReadonlySet<string> | null): boolean {
@@ -27,6 +49,9 @@ export function planStartupSeeding(args: {
   activeFolder: string;
   configs: StartupTerminal[];
   // The sidebar's current specs for this project (may lag the registry).
+  // Already project-scoped by the caller (normalized compare): a strict
+  // `projectPath === activeFolder` here missed a registry-restored startup
+  // tab carrying the backend's realpath spelling and spawned a duplicate.
   existing: TerminalSpec[];
   // `GET /api/terminals` ids, or null when unreadable.
   liveIds: ReadonlySet<string> | null;
@@ -60,7 +85,6 @@ export function planStartupSeeding(args: {
       (t) =>
         t.kind === 'startup' &&
         t.startupId === cfg.id &&
-        t.projectPath === activeFolder &&
         ptyIsLive(t.serverId, liveIds),
     );
     if (liveSpec) continue;

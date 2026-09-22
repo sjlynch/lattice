@@ -1,3 +1,4 @@
+import { normalizeDirPath } from './terminalScope';
 import type { Persisted, TerminalSpec } from './terminalTypes';
 
 // Active-id selection policies. Kept separate so the policy can be reasoned
@@ -15,13 +16,22 @@ function terminalPanelKind(t: TerminalSpec): TerminalPanelKind {
       : 'regular';
 }
 
+function samePath(a: string | undefined, b: string | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return normalizeDirPath(a) === normalizeDirPath(b);
+}
+
 function isSameFallbackGroup(
   terminal: TerminalSpec,
   target: TerminalSpec,
 ): boolean {
+  // Normalized, like `terminalBelongsToProject`: registry tabs carry the
+  // backend's realpath spelling of the project, locally-created fallback tabs
+  // the frontend's, and both are listed in the same panel. A strict compare
+  // left the panel empty-selected after closing the active tab of one spelling.
   return (
     terminalPanelKind(terminal) === terminalPanelKind(target) &&
-    terminal.projectPath === target.projectPath
+    samePath(terminal.projectPath, target.projectPath)
   );
 }
 

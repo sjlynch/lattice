@@ -53,6 +53,19 @@ type GitStatusWatcher = {
 // watchers per opened project is cheap.
 const watchers = new Map<string, Promise<GitStatusWatcher>>();
 
+// Per-subscriber isolation (same as health/watcher/subscribers.ts): one
+// throwing subscriber used to abort the loop, so every client after it in the
+// set silently missed the change and its scrubber stayed stale.
+function fanOut(proj: GitStatusWatcher, sig: string): void {
+  for (const cb of [...proj.subscribers]) {
+    try {
+      cb(sig);
+    } catch (err) {
+      console.error('[git-status watcher] subscriber threw:', err);
+    }
+  }
+}
+
 function ensureGitStatusWatcher(root: string): Promise<GitStatusWatcher> {
   const existing = watchers.get(root);
   if (existing) return existing;
@@ -100,7 +113,7 @@ async function armGitStatusWatchers(proj: GitStatusWatcher): Promise<void> {
       const sig = await computeStatusSignature(root);
       if (sig !== proj.current) {
         proj.current = sig;
-        for (const cb of [...proj.subscribers]) cb(sig);
+        fanOut(proj, sig);
       }
     } finally {
       running = false;
@@ -199,7 +212,7 @@ export async function rearmGitStatusWatcher(projectRoot: string): Promise<void> 
   const sig = await computeStatusSignature(root);
   if (sig === proj.current) return;
   proj.current = sig;
-  for (const cb of [...proj.subscribers]) cb(sig);
+  fanOut(proj, sig);
 }
 
 // Subscribe to the active project's git-status signature. The current value is
@@ -219,12 +232,6 @@ export async function subscribeGitStatus(
   return () => {
     proj.subscribers.delete(cb);
   };
-}
-
-// Test-only: number of git-status watchers currently tracked (incl. in-flight
-// builds).
-export function _gitStatusWatcherCountForTest(): number {
-  return watchers.size;
 }
 
 // Test-only: close every watcher and clear the map so suites don't leak

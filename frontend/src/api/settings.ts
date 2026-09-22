@@ -15,14 +15,13 @@ import { subscribeWsShared } from './ws';
 // The Pi models available for the harness dropdowns: the full
 // `pi --list-models` list, the curated "Pi — X" menu, and Pi's current default.
 // Machine-global (no project param). Empty lists when `pi` isn't installed.
+// A failed request THROWS rather than reading as "no models": both callers
+// must tell the two apart — the Settings → Pi menu draft saves its WHOLE list
+// (an empty load then Save would drop every curated pattern), and the shared
+// dropdown cache keeps its prior menu on failure instead of blanking every
+// "Pi — X" row until the next settings save.
 export async function getPiModels(): Promise<PiModelsResult> {
-  try {
-    const r = await fetch('/api/pi-models');
-    if (!r.ok) return { models: [], menu: [], defaultPattern: null };
-    return r.json();
-  } catch {
-    return { models: [], menu: [], defaultPattern: null };
-  }
+  return asJson<PiModelsResult>(await fetch('/api/pi-models'));
 }
 
 // "Detect models" for the Settings → Pi endpoint form: ask the backend to GET

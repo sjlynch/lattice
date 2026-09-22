@@ -96,6 +96,9 @@ test('project-scoped routes refuse a relative project with 400 and create nothin
       [`/api/opengrep/scans?${q}`],
       ['/api/opengrep/ignore', { method: 'POST', headers: json, body: JSON.stringify({ project: rel, ruleIds: ['r'] }) }],
       ['/api/terminals', { method: 'POST', headers: json, body: JSON.stringify({ cwd: rel }) }],
+      // projectPath keys the registry record + MCP resolution, so a relative
+      // one registered a phantom project's tab.
+      ['/api/terminals', { method: 'POST', headers: json, body: JSON.stringify({ projectPath: rel }) }],
       // The task routes that used to slip through: transition's fromStatus
       // branch, reorder, and the worktree-modified graph read.
       [`/api/tasks/transition?${q}`, { method: 'POST', headers: json, body: JSON.stringify({ fromStatus: 'open', status: 'done' }) }],
@@ -126,6 +129,32 @@ test('project-scoped routes refuse a relative project with 400 and create nothin
     process.env.USERPROFILE = originalEnv.USERPROFILE;
     await rm(tmpHome, { recursive: true, force: true });
     await rm(path.join(process.cwd(), rel), { recursive: true, force: true });
+  }
+});
+
+// An ABSOLUTE project that doesn't exist: the instrumentation reconcile mkdirs
+// `<project>/.claude/`, so a mistyped path used to be born on disk.
+test('/api/project-instrumentation refuses a nonexistent project and creates nothing', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'lattice-instr-missing-'));
+  const missing = path.join(tmp, 'does-not-exist');
+  let server: http.Server | null = null;
+  try {
+    const { createBackendApp } = await import('../server/app.js');
+    const app = createBackendApp({ defaultRoot: tmp, backendOrigin: 'http://127.0.0.1:5184' });
+    server = http.createServer(app);
+    const port = await listen(server);
+    const res = await fetch(`http://127.0.0.1:${port}/api/project-instrumentation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: missing }),
+    });
+    const body = (await res.json()) as { error?: string };
+    assert.equal(res.status, 400, JSON.stringify(body));
+    assert.match(String(body.error), /not an existing directory/);
+    await assert.rejects(access(missing));
+  } finally {
+    if (server) await close(server);
+    await rm(tmp, { recursive: true, force: true });
   }
 });
 

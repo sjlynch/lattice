@@ -1,8 +1,10 @@
 // JS/TS-specific regex-vs-division disambiguation for the strip lexer. Regex
 // literals (`/pattern/flags`) look like division at the character level, so
-// this is the one piece of `strip.ts` that is language-specific — it is only
-// invoked for the JS family. Blanking a regex like a string keeps digits in a
-// pattern (e.g. `/[0-9]{3}/`) from counting as magic numbers.
+// this is the one piece of `strip.ts` written for JS semantics. Note it is NOT
+// gated on language — `strip.ts` calls it for every extension (whenever strings
+// are being blanked), so a same-line `/…/` after an operator in any language is
+// blanked too. Blanking a regex like a string keeps digits in a pattern (e.g.
+// `/[0-9]{3}/`) from counting as magic numbers.
 
 import type { StripScanner } from './strip.js';
 

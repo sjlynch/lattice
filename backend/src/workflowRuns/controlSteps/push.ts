@@ -7,6 +7,7 @@
 
 import {
   cleanupPushSession,
+  forgetPushRun,
   getPushRun,
   markPushRunDone,
   startPushSession,
@@ -48,6 +49,12 @@ export type PushStepDeps = {
   // Settle a push session the step gave up on (cancel / timeout) the way its
   // own /done callback would. Optional so test doubles can omit it.
   abandonPushRun?: (projectPath: string, id: string) => void;
+  // Drop the finished push run from the in-memory registry. The Task Board's
+  // push is forgotten by its UI poller (DELETE /api/push-runs/:id); nothing
+  // polls a workflow step's push, so without this every workflow push stayed
+  // in the map for the life of the process. The registry never forgets a run
+  // that is still `running`. Optional so test doubles can omit it.
+  forgetPushRun?: (id: string) => void;
   // Override for PUSH_STEP_TIMEOUT_MS so the timeout path is testable.
   pushTimeoutMs?: number;
 };
@@ -78,6 +85,7 @@ const productionDeps: PushStepDeps = {
   subscribeWorkflowRuns: subscribe,
   waitForLaneEmpty,
   abandonPushRun,
+  forgetPushRun,
 };
 
 export async function runPushStep(
@@ -231,5 +239,6 @@ export async function runPushStep(
     clearTimeout(timeout);
     unsubPush();
     unsubWf();
+    if (sessionId) deps.forgetPushRun?.(sessionId);
   }
 }

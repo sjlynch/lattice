@@ -101,6 +101,13 @@ test('createDir validates parent and returns the new folder listing', async () =
   }
 });
 
+// Regression: a relative path resolved under the BACKEND's cwd — listDir showed
+// a folder the user never named, and createDir created one there.
+test('listDir and createDir refuse relative paths', async () => {
+  await assert.rejects(() => listDir('some-relative-dir'), /Path must be absolute/);
+  await assert.rejects(() => createDir('some-relative-dir', 'child'), /Parent path must be absolute/);
+});
+
 // Regression: the containment check was `relative.startsWith('..')`, which also
 // matched a perfectly contained folder whose NAME starts with two dots, so
 // creating `..cache` failed with "must be inside the current directory".

@@ -76,12 +76,16 @@ here instead of bloating the parent file.
   `conflict` (or the task left `ready_to_merge`) while the spawn sat in the
   queue (this path holds no merge lock), kills the just-spawned resolver and
   records an errored entry rather than letting it work a worktree that is no
-  longer mid-merge; worktree already clean →
+  longer mid-merge. Either way its outcome goes through
+  `finishTaskAndCheckIntegrity` like every other path (progress bump + circuit
+  breaker after the resolver's FF); worktree already clean →
   `tryFinalizeAfterResolverFinished` re-syncs + finalizes directly when main is
   already an ancestor, else falls through to the normal merge path.
 - `repoIntegrity.ts` — the run **circuit breaker** (`checkRepoIntegrity` /
   `finishTaskAndCheckIntegrity`): between tasks verify `.git` still exists and
-  HEAD only moved *forward* (FF). On a violation it records a `(run)` error,
+  HEAD only moved *forward* (FF) since the previous check — the baseline
+  (`runCtx.baselineHead`) advances after each passing check, so a rewind to
+  the run-start HEAD trips too. On a violation it records a `(run)` error,
   sets `cancelRequested`, and halts so the remaining `ready_to_merge` tasks stay
   put rather than piling onto a damaged repo.
 - `resolverSpawn.ts` + `resolverSpawn/` — conflict-resolver spawn subsystem

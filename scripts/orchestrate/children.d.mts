@@ -19,6 +19,7 @@ export interface KillableChild {
   pid?: number;
   killed: boolean;
   exitCode: number | null;
+  signalCode?: NodeJS.Signals | null;
   kill(signal?: NodeJS.Signals | number): boolean;
   once(event: 'exit', listener: (...args: unknown[]) => void): unknown;
   off(event: 'exit', listener: (...args: unknown[]) => void): unknown;

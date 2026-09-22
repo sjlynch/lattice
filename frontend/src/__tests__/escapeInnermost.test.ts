@@ -22,7 +22,7 @@ import { LANE_BY_ID } from '../components/taskboard/lanes.ts';
 // plain capture+stop on two stacked layers is not enough and the shared hook
 // keeps a layer stack.
 
-type Listener = (e: { key: string; stopPropagation: () => void; preventDefault: () => void }) => void;
+type Listener = (e: { key: string; target: unknown; stopPropagation: () => void; preventDefault: () => void }) => void;
 
 function makeFakeWindow() {
   const capture = new Set<Listener>();
@@ -38,9 +38,10 @@ function makeFakeWindow() {
     removeEventListener(type: string, fn: Listener, opts?: unknown) {
       if (type === 'keydown') bucket(opts).delete(fn);
     },
-    dispatchKeydown(key: string) {
+    // `target` defaults to document.body — a keydown with nothing focused.
+    dispatchKeydown(key: string, target: unknown = (g.document as { body: unknown }).body) {
       let stopped = false;
-      const e = { key, stopPropagation: () => { stopped = true; }, preventDefault: () => {} };
+      const e = { key, target, stopPropagation: () => { stopped = true; }, preventDefault: () => {} };
       for (const fn of [...capture]) fn(e);
       if (stopped) return;
       for (const fn of [...bubble]) fn(e);
@@ -64,6 +65,8 @@ beforeEach(() => {
   win = makeFakeWindow();
   g.window = win;
   g.document = {
+    body: { tag: 'body' },
+    documentElement: { tag: 'html' },
     activeElement: null,
     addEventListener() {},
     removeEventListener() {},
@@ -79,10 +82,24 @@ afterEach(() => {
 });
 
 // Stand-in for the FloatingPanel chrome: the real bubble-phase Escape hook.
-function Panel({ onClose, children }: { onClose: () => void; children?: React.ReactNode }) {
-  useFloatingPanelEscape(true, onClose);
+function Panel({
+  onClose,
+  children,
+  el = {},
+}: {
+  onClose: () => void;
+  children?: React.ReactNode;
+  el?: object;
+}) {
+  const ref = React.useRef(el as HTMLElement);
+  useFloatingPanelEscape(true, onClose, ref);
   return React.createElement(React.Fragment, null, children);
 }
+
+// A keydown target that sits inside `panel` (models Element.closest).
+const insidePanel = (panel: object) => ({
+  closest: (sel: string) => (sel === '.floating-panel' ? panel : null),
+});
 
 function Layer({ onClose }: { onClose: () => void }) {
   useEscapeToClose(true, onClose);
@@ -193,6 +210,38 @@ test('two stacked layers: only the top one closes, then the next takes over', ()
   act(() => win.dispatchKeydown('Escape'));
   assert.equal(inner, 1);
   assert.equal(outer, 1);
+
+  act(() => renderer.unmount());
+});
+
+test('two open FloatingPanels: one Escape closes only the panel it was pressed in', () => {
+  const a = { name: 'board' };
+  const b = { name: 'settings' };
+  let closedA = 0;
+  let closedB = 0;
+  const renderer = mount(
+    React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(Panel, { key: 'a', el: a, onClose: () => { closedA += 1; } }),
+      React.createElement(Panel, { key: 'b', el: b, onClose: () => { closedB += 1; } }),
+    ),
+  );
+
+  // Pressed inside the older panel: only that one closes.
+  act(() => win.dispatchKeydown('Escape', insidePanel(a)));
+  assert.equal(closedA, 1);
+  assert.equal(closedB, 0);
+
+  // Nothing focused: only the most recently opened panel closes.
+  act(() => win.dispatchKeydown('Escape'));
+  assert.equal(closedA, 1);
+  assert.equal(closedB, 1);
+
+  // Focus in some control outside every panel (e.g. a terminal): none close.
+  act(() => win.dispatchKeydown('Escape', { closest: () => null }));
+  assert.equal(closedA, 1);
+  assert.equal(closedB, 1);
 
   act(() => renderer.unmount());
 });

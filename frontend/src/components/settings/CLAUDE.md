@@ -72,7 +72,12 @@ those drafts — `SettingsDialog` just composes it ahead of the
 
 `useOverrideDraft.ts` is the shared draft engine behind the two
 **override-merge** tabs (`InstructionTemplatesTab` + `EnvNotesTab`): both fetch
-a list of items + the saved override map (gated on `open && active`), keep an
+a list of items + the saved override map (gated on `open && active`, and only
+ONCE per dialog-open per project — switching tabs and back must not re-seed,
+which silently dropped unsaved edits; `getPatch` also returns `undefined` while
+the seeded project isn't the active one, so a project switch with the dialog
+open never saves one project's drafts into another; `HarnessSystemPromptsTab`
+follows the same rule), keep an
 editable text draft per item, and on Save clone the saved overrides then per
 item either drop the key (draft means "use Lattice's default") or write the
 edited text — with the `undefined`-until-loaded clobber-guard above. It's

@@ -20,7 +20,6 @@ import {
 import {
   snapshotWorkingTree,
   restoreSnapshot,
-  discardSnapshot,
   type SnapshotHandle,
 } from './snapshot.js';
 
@@ -35,7 +34,6 @@ export type { SnapshotHandle } from './snapshot.js';
 export {
   snapshotWorkingTree,
   restoreSnapshot,
-  discardSnapshot,
   recoverPendingSnapshots,
 } from './snapshot.js';
 

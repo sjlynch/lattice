@@ -7,6 +7,7 @@ import {
   type QueueState,
   type StepContext,
 } from '../queueScheduler';
+import { sameProjectPath } from '../../../terminal/terminalScope';
 import type { StartOutcome, StartRunOptions } from './useWorkflowRunActions';
 
 // Count the active runs the queue itself didn't dispatch (a manual ▶ Run, or a
@@ -119,7 +120,7 @@ export function useWorkflowQueue({
       const startProject = activeFolderRef.current;
       const startGeneration = activeFolderGenerationRef.current;
       const wf = workflowsByIdRef.current.get(entry.workflowId);
-      if (!wf || !startProject || wf.projectPath !== startProject) {
+      if (!wf || !startProject || !sameProjectPath(wf.projectPath, startProject)) {
         // Workflow disappeared between enqueue and start (or belonged to a
         // previous project's stale map). Recover in the current queue only.
         dispatch({ type: 'dispatchFailed', entryId: entry.id });
@@ -135,11 +136,11 @@ export function useWorkflowQueue({
           // (or failure) to the newly active project's queue state.
           return;
         }
-        if (outcome.status === 'started' && outcome.run.projectPath === startProject) {
+        if (outcome.status === 'started' && sameProjectPath(outcome.run.projectPath, startProject)) {
           dispatch({ type: 'workflowStarted', entryId: entry.id, runId: outcome.run.id });
         } else if (
           outcome.status === 'finished' &&
-          outcome.run.projectPath === startProject
+          sameProjectPath(outcome.run.projectPath, startProject)
         ) {
           // The completion WS event arrived before /run returned, so this run
           // never appeared in activeRuns and the diff effect cannot emit

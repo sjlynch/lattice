@@ -64,10 +64,6 @@ const STAT_BATCH = 32;
 // moment the file analyzes successfully or its (mtime,size) moves.
 const unanalyzable = new Map<string, { mtimeMs: number; size: number; loc: number | undefined }>();
 
-export function resetUnanalyzableMemoForTests(): void {
-  unanalyzable.clear();
-}
-
 export async function computeFileMetrics(
   files: string[],
   options: ComputeFileMetricsOptions = {},

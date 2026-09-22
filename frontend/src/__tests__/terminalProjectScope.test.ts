@@ -6,8 +6,19 @@ import type { TerminalSpec } from '../terminal/terminalTypes.ts';
 import {
   isPathWithin,
   normalizeDirPath,
+  sameProjectPath,
   terminalBelongsToProject,
 } from '../terminal/terminalScope.ts';
+
+// Workflows / workflow runs carry the backend's realpath spelling; a strict
+// `===` against activeFolder hid every workflow and made a started queue run
+// look failed when the two differed only by casing or separators.
+test('sameProjectPath ignores casing, separators and a trailing slash', () => {
+  assert.equal(sameProjectPath('C:\\Dev\\Proj', 'c:/dev/proj/'), true);
+  assert.equal(sameProjectPath('C:\\Dev\\Proj', 'C:\\Dev\\Proj2'), false);
+  assert.equal(sameProjectPath(undefined, 'C:\\Dev\\Proj'), false);
+  assert.equal(sameProjectPath('', ''), false);
+});
 import { useTerminalGroups } from '../components/sidebar/hooks/useTerminalGroups.ts';
 import { installGlobal } from './domDoubles.ts';
 

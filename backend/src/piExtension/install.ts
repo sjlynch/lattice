@@ -7,6 +7,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 
+import { atomicWriteFile } from '../claudeTrust/configFile.js';
 import {
   defaultPiExtensionFileName,
   defaultPiSentinelFileName,
@@ -49,7 +50,10 @@ export async function installPiCompletionExtension(args: {
   } catch {
     /* file absent — fall through to write */
   }
-  await fs.writeFile(extensionFile, expected, 'utf8');
+  // Temp + rename (as claudeStopHook.ts does for the Claude Stop hook): Pi
+  // loads this file at session start, and a half-written one (a kill or a
+  // full disk mid-write) is a session with no completion backstop.
+  await atomicWriteFile(extensionFile, expected);
   console.log(
     `[pi-extension] installed ${args.site} backstop at ${extensionFile} ` +
       `(gate=${args.respectQuitGate ? 'quit-only' : 'any-reason'}` +

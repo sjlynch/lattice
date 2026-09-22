@@ -14,6 +14,7 @@ import path from 'node:path';
 import { computeStatusSignature } from '../gitHistory/signature.js';
 import {
   subscribeGitStatus,
+  rearmGitStatusWatcher,
   _resetGitStatusWatchersForTest,
 } from '../gitStatus.js';
 import { withTempDir } from './helpers/tempDir.js';
@@ -189,6 +190,33 @@ test('subscribeGitStatus watches the enclosing repo of a nested project folder',
       await waitFor(() => seen[seen.length - 1] !== initial);
     } finally {
       unsub();
+      await _resetGitStatusWatchersForTest();
+    }
+  });
+});
+
+// One throwing subscriber must not starve the rest: the fan-out loop used to
+// abort on the first throw, so every later client's scrubber stayed stale.
+test('a throwing git-status subscriber does not block the others', async () => {
+  await withTempDir('lattice-gitstatus-', async (dir) => {
+    const repo = path.join(dir, 'plain');
+    await fs.mkdir(repo, { recursive: true });
+    let armed = false;
+    const seen: string[] = [];
+    const unsubA = await subscribeGitStatus(repo, () => {
+      if (armed) throw new Error('boom');
+    });
+    const unsubB = await subscribeGitStatus(repo, (sig) => seen.push(sig));
+    try {
+      assert.deepEqual(seen, [''], 'non-repo starts with the empty signature');
+      armed = true;
+      await initRepo(repo);
+      await rearmGitStatusWatcher(repo);
+      assert.ok(seen.length >= 2, 'second subscriber still woken');
+      assert.ok(seen[1], 'with the new repo signature');
+    } finally {
+      unsubA();
+      unsubB();
       await _resetGitStatusWatchersForTest();
     }
   });

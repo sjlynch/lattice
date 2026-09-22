@@ -81,7 +81,6 @@ export {
   snapshotForRun,
   snapshotWorkingTree,
   restoreSnapshot,
-  discardSnapshot,
   recoverPendingSnapshots,
   assertSafeForStash,
   RUN_STASH_LABEL,

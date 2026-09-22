@@ -1,6 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cwdIsAtOrUnder } from '../terminal/kill.js';
+import { cwdIsAtOrUnder, POST_KILL_CHECK_DELAY_MS, schedulePostKillConfigCheck } from '../terminal/kill.js';
+
+// A burst of kills (kill-by-cwd, shutdown) must cost ONE ~/.claude.json check,
+// run a full delay after the last kill, not one synchronous read per session.
+test('post-kill config checks are debounced across a burst of kills', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let checks = 0;
+  const check = async () => { checks += 1; };
+  schedulePostKillConfigCheck(check);
+  t.mock.timers.tick(POST_KILL_CHECK_DELAY_MS - 1);
+  schedulePostKillConfigCheck(check);
+  schedulePostKillConfigCheck(check);
+  t.mock.timers.tick(POST_KILL_CHECK_DELAY_MS - 1);
+  assert.equal(checks, 0);
+  t.mock.timers.tick(1);
+  assert.equal(checks, 1);
+  t.mock.timers.tick(POST_KILL_CHECK_DELAY_MS * 2);
+  assert.equal(checks, 1);
+});
 
 // The terminal-server's kill-by-cwd predicate (worktree teardown releases the
 // worktree's Windows file locks through it). It must agree with the backend's

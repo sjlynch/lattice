@@ -43,13 +43,13 @@ export async function proxyListSessionsOrNull(): Promise<unknown[] | null> {
   }
 }
 
-// A short-lived, single-flighted snapshot of proxyListSessionsOrNull for the
-// periodic readers that only need a recent view — the terminal-activity poller
-// (1 Hz) and the terminal-registry watch (every 3 s) used to each GET
-// `/sessions` on their own schedule, so the executor serialized its whole
-// session list ~1.3×/s at idle for two consumers of identical data. Not for
-// paths that act on exact liveness right now (the spawn queue's admission
-// count, recovery sweeps, restore) — those keep calling the uncached form.
+// A short-lived, single-flighted snapshot of proxyListSessionsOrNull for
+// periodic readers that only need a recent view (today: the terminal-activity
+// poller, 1 Hz). Not for paths that act on exact liveness right now — the
+// spawn queue's admission count, recovery sweeps, restore, and the
+// terminal-registry watch (a snapshot taken before a pty was spawned reports
+// it missing, and the watch would end its record) — those call the uncached
+// form.
 const SESSIONS_SNAPSHOT_TTL_MS = 750;
 let sessionsSnapshot: { at: number; value: unknown[] | null } | null = null;
 let sessionsSnapshotInFlight: Promise<unknown[] | null> | null = null;

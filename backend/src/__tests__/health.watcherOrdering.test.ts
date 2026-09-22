@@ -26,7 +26,7 @@ function project(root: string) {
     imports: new Map(),
     metrics: new Map(),
     revision: new WatcherRevision(),
-    config: { reloadForPath: async () => false },
+    config: { reloadForPath: async () => false, reloadAliasesForNestedTsconfig: async () => false },
     watcher: { add() {} },
     crossFile: { invalidateRoots() {}, scheduleRecompute(p: string | null) { scheduled.push(p); } },
     subscribers: new Set([(update: HealthUpdate) => updates.push(update)]),
@@ -100,6 +100,25 @@ test('event ownership is stamped before waiting for config', async () => {
   await first;
   assert.equal(analyses, 0);
   await proj.cache.flush();
+});
+
+test('a nested tsconfig edit re-runs cross-file without a rescan broadcast or analysis', async () => {
+  const { proj, updates, scheduled } = project(path.resolve('watch-nested-tsconfig'));
+  const nested = path.join(proj.root, 'frontend', 'tsconfig.app.json');
+  let reloaded = 0;
+  proj.config.reloadAliasesForNestedTsconfig = async (p: string) => {
+    if (p !== nested) return false;
+    reloaded++;
+    return true;
+  };
+  let analyses = 0;
+  const handlers = createWatcherHandlers(proj, async () => { analyses++; return null; });
+  await handlers.onAddOrChange(nested, 'change');
+  await handlers.onRemove(nested);
+  assert.equal(reloaded, 2);
+  assert.equal(analyses, 0);
+  assert.deepEqual(scheduled, [null, null]);
+  assert.deepEqual(updates, []);
 });
 
 test('overlapping config reloads retain the most recent ignore contents', async (t) => {

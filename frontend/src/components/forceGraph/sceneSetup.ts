@@ -1,5 +1,6 @@
 import { Vector2 } from 'three';
 import type { ForceGraph3DInstance } from '3d-force-graph';
+import { getIdleController } from './idleController';
 
 // Camera can swing from straight overhead all the way down to ~45° below
 // horizon (PI * 0.75 ≈ 135° from +Y), enough to peek up at the graph
@@ -121,6 +122,12 @@ export function createResizeObserver(
   const onResize = () => {
     graph.width(container.clientWidth);
     graph.height(container.clientHeight);
+    // Resizing the canvas clears its drawing buffer, and the library's resize
+    // path (`renderer.setSize`) doesn't render. With the render loop paused on a
+    // settled scene (render-on-demand), a sidebar drag left the graph blank
+    // until the cursor next crossed the canvas — so paint a short frame tail.
+    // (No controller yet on the initial call during init; that's fine.)
+    getIdleController(graph)?.wakeForRefresh();
   };
   onResize();
 

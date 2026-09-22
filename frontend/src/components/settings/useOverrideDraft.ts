@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchUserSettingsStrict, type UserSettings } from '../../api';
 
 // Shared draft engine behind the two "override-merge" settings tabs
@@ -15,8 +15,10 @@ import { fetchUserSettingsStrict, type UserSettings } from '../../api';
 
 export type OverrideDraftConfig<T> = {
   // Fetch only when the dialog is open, this tab is active, and a project is
-  // selected. Re-seeds on reopen / tab re-activation / project change (unsaved
-  // edits are dropped on re-seed, matching the prior per-tab hooks).
+  // selected. Seeds once per dialog-open per project: a reopen or a project
+  // change re-seeds (dropping unsaved edits), but switching to another tab and
+  // back does NOT — re-seeding there silently discarded the edits and cleared
+  // the tab's dirty flag, so closing the dialog didn't even warn.
   open: boolean;
   active: boolean;
   activeFolder: string;
@@ -76,9 +78,17 @@ export function useOverrideDraft<T>(config: OverrideDraftConfig<T>): OverrideDra
   // mark it dirty. Reset on every re-seed so a fresh load starts clean.
   const [touched, setTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The project this dialog-open already seeded successfully, or null. Cleared
+  // on close so the next open re-reads the saved state.
+  const seededFor = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!open || !active || !activeFolder) return;
+    if (!open) {
+      seededFor.current = null;
+      return;
+    }
+    if (!active || !activeFolder) return;
+    if (seededFor.current === activeFolder) return;
     let cancelled = false;
     setLoading(true);
     setLoaded(false);
@@ -94,6 +104,7 @@ export function useOverrideDraft<T>(config: OverrideDraftConfig<T>): OverrideDra
         setExistingOverrides(readOverrides(settings));
         // Re-seeding drops any unsaved edits, so the tab is no longer touched.
         setTouched(false);
+        seededFor.current = activeFolder;
         // Only flip `loaded` on success — a failed fetch leaves the clobber-
         // guard armed so getPatch() returns undefined instead of an empty map.
         setLoaded(true);
@@ -107,8 +118,8 @@ export function useOverrideDraft<T>(config: OverrideDraftConfig<T>): OverrideDra
     return () => {
       cancelled = true;
     };
-    // fetchItems / idOf / etc. are stable module-level fns; re-seed only on
-    // open / tab activation / project change.
+    // fetchItems / idOf / etc. are stable module-level fns; seed on open /
+    // first tab activation / project change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, active, activeFolder]);
 
@@ -134,7 +145,10 @@ export function useOverrideDraft<T>(config: OverrideDraftConfig<T>): OverrideDra
   // each item drop the key when the draft matches the default (or is blank),
   // else store the edited text.
   const getPatch = useCallback((): Record<string, string> | undefined => {
-    if (!loaded || !touched) return undefined;
+    // The dialog stays open across a project switch (no backdrop), and a tab
+    // not active at the switch keeps the OLD project's drafts until it is
+    // re-activated — never hand those to the new project's Save.
+    if (!loaded || !touched || seededFor.current !== activeFolder) return undefined;
     const next: Record<string, string> = { ...existingOverrides };
     for (const item of items) {
       const id = idOf(item);
@@ -146,7 +160,7 @@ export function useOverrideDraft<T>(config: OverrideDraftConfig<T>): OverrideDra
       }
     }
     return next;
-  }, [loaded, touched, existingOverrides, items, draftMap, idOf, currentOf, matchesDefault]);
+  }, [loaded, touched, activeFolder, existingOverrides, items, draftMap, idOf, currentOf, matchesDefault]);
 
   return { items, draftMap, loading, error, setDraft, resetDraft, resetAll, getPatch };
 }

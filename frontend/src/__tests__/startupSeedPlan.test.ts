@@ -4,6 +4,7 @@ import type { StartupTerminal, TerminalRecord } from '../api';
 import type { TerminalSpec } from '../terminal/terminalTypes';
 import {
   planStartupSeeding,
+  settleInFlightStartups,
   startupInFlightKey,
 } from '../components/sidebar/hooks/startupSeedPlan.ts';
 
@@ -108,4 +109,25 @@ test('an unreadable live set never drops anything and treats every pty as alive'
     liveIds: null, records: null, inFlight: new Set(),
   });
   assert.deepEqual(plan, { staleIds: [], spawn: [] });
+});
+
+test('a local startup spec in the backend realpath spelling still counts as live', () => {
+  // `existing` is already project-scoped (normalized); a strict projectPath
+  // compare treated a registry-restored tab as absent and spawned a duplicate.
+  const plan = planStartupSeeding({
+    activeFolder: P, configs: [dev],
+    existing: [spec({ id: 'l', projectPath: 'c:/proj', serverId: 'srv_l' })],
+    liveIds: new Set(['srv_l']), records: null, inFlight: new Set(),
+  });
+  assert.deepEqual(plan.spawn, []);
+});
+
+test('in-flight markers survive unrelated list changes and settle only on commit', () => {
+  const inFlight = new Set([startupInFlightKey(P, 's1')]);
+  // Another tab's status update while the pre-create is still pending.
+  settleInFlightStartups(inFlight, P, [spec({ id: 'x', kind: undefined, startupId: undefined })]);
+  assert.ok(inFlight.has(startupInFlightKey(P, 's1')), 'pending marker must survive');
+  // The spawn's spec commits (in the realpath spelling) → the marker drops.
+  settleInFlightStartups(inFlight, P, [spec({ id: 'a', projectPath: 'c:/proj' })]);
+  assert.equal(inFlight.size, 0);
 });

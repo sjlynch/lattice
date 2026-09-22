@@ -68,7 +68,8 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
   the **only** one with live scene state to tear down (fetches worktree-modified
   files, rings them per task color, strips on deactivate/project-change/unmount).
 - `useGraphFilter` — swaps the `nodeVisibility`/`linkVisibility` accessors for
-  `hiddenExts` (no sim restart). While a metric view (`h`/`z`/`d`) is active it
+  `hiddenExts` (no sim restart) and wakes the idle loop so the digest's scene
+  change paints even with the batched renderers off. While a metric view (`h`/`z`/`d`) is active it
   also hides ghost (deleted-file) nodes and metrics-ignored-ext files (`.json`,
   …) so the colored view stays uncluttered — reading `metricOverlayActiveRef`
   live, re-evaluated by the view-toggle refresh. The same flag short-circuits
@@ -113,7 +114,8 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
 - `useBatchedLinks` / `useInstancedNodes` — own the `instancedLinks`/
   `instancedNodes` controllers: create once, subscribe the per-frame sync to the
   scene frame driver, toggle on the setting, and **rebuild on a graphData swap /
-  hidden-ext change / node-size change / `dataGeneration` bump** (every full
+  hidden-ext change / node-size change / metric-view toggle /
+  `dataGeneration` bump** (every full
   `graphData()` swap, so they re-capture the fresh arrays after a ghost merge).
   Do not depend on `structuralData`: a same-shape backend rescan replaces that
   reference even when `useGraphDataSync` correctly skips a graph swap. Rebuilding

@@ -249,7 +249,7 @@ therefore stay safely re-runnable.
 | POST | `/api/post-merge-hooks/:id/abort` | Abort an active post-merge hook |
 | GET | `/api/terminals` | Debug: list active pty sessions |
 | POST | `/api/terminals` | Pre-spawn a pty for a sidebar-launched harness terminal; returns its `serverId`. Routes the launch through the same spawn chokepoint (`resolveHarnessSpawnBody`) as tasks, so Codex/Pi MCP config is applied (a bare `/ws/terminal` connect would bypass it) |
-| DELETE | `/api/terminals/:id` | Kill a pty session (also ends its registry tab as user-closed) |
+| DELETE | `/api/terminals/:id` | Kill a pty session (also ends its registry tab as user-closed; if the pty belongs to a running post-merge hook, that hook is ended `aborted` so its merge run / workflow unblocks) |
 | GET | `/api/terminal-tabs?project=` | The project's durable terminal-tab records (`backend/src/terminalRegistry/`), incl. ended-but-kept restore failures |
 | POST | `/api/terminal-tabs/restore?project=` | Rebuild the sidebar's tabs: adopt live ptys, relaunch dead ones into their previous harness conversation; returns `{status, adopted, queued, dropped}` and streams per-tab outcomes on `/ws/terminal-tabs` |
 | PATCH | `/api/terminal-tabs?project=` | Persist the project's tab order `{order: id[]}` |

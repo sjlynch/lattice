@@ -7,6 +7,11 @@ import type { DirListing } from './types.js';
 
 export async function createDir(parent: string, name: string): Promise<DirListing> {
   if (!parent.trim()) throw new Error('Parent path is required');
+  // A relative parent would resolve under the backend's cwd and create the
+  // folder there.
+  if (!path.isAbsolute(parent.trim())) {
+    throw new Error(`Parent path must be absolute, got ${JSON.stringify(parent.trim())}`);
+  }
   const base = canonicalProjectPath(parent.trim());
   const stat = await fs.stat(base);
   if (!stat.isDirectory()) {

@@ -1,9 +1,10 @@
 // Crash-recovery sweep run on every backend boot.
 //
-// Detects ready_to_merge tasks whose branch no longer exists. This happens
-// when finalizeMergedTask completed FF + cleanup but the server crashed
-// before writing the qa status. The branch being gone is the reliable
-// indicator: cleanup ran, so the task is already in main.
+// Detects ready_to_merge tasks whose branch no longer exists. finalize now
+// writes qa BEFORE scheduling cleanup (and keeps the branch when that write
+// fails), so this is a backstop for older backends / out-of-band deletions:
+// a Lattice cleanup only ever deletes a branch after its FF landed, so the
+// work is assumed to be in main.
 
 import {
   listReadyToMergeTasks,

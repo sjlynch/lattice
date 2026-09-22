@@ -16,4 +16,17 @@ export function assertAllowedCheckoutArgs(rest: string[]): void {
   if (paths.some((p) => p === '.' || p === '*' || p === '' || p === '/')) {
     throw new DisallowedProjectGitError('checkout with a wildcard/dot path is not allowed');
   }
+  // Pathspec magic (`:/`, `:(top)`, `:!x`, …) and `./` reach the whole tree
+  // past the literal checks above. The one magic Lattice uses is
+  // `:(literal)<path>` (snapshot restore), which disables globbing — allowed
+  // only with a real path after it.
+  const wholeTree = (p: string) => p === '' || p === '.' || p === '*' || p === '/' || p === './' || p === '.\\';
+  if (paths.some((p) => {
+    if (wholeTree(p)) return true;
+    if (!p.startsWith(':')) return false;
+    const literal = /^:\(literal\)(.+)$/.exec(p);
+    return !literal || wholeTree(literal[1]);
+  })) {
+    throw new DisallowedProjectGitError('checkout with a pathspec-magic path is not allowed');
+  }
 }

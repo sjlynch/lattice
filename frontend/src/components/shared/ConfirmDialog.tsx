@@ -52,6 +52,15 @@ type ConfirmApi = {
 
 const ConfirmContext = createContext<ConfirmApi | null>(null);
 
+// True when the focused control owns Enter — a button activates ITSELF. The
+// dialog-wide "Enter = primary" listener sits on `window`, so it used to
+// `preventDefault` + settle the primary action even then: Tab to Cancel (or
+// Discard) + Enter ran Delete (or Save).
+export function enterBelongsToFocusedControl(target: EventTarget | null): boolean {
+  const el = target as { closest?: (selector: string) => unknown } | null;
+  return typeof el?.closest === 'function' && !!el.closest('button, a[href], select, textarea');
+}
+
 export function useConfirm(): ConfirmApi {
   const ctx = useContext(ConfirmContext);
   if (!ctx) throw new Error('useConfirm must be used within a <ConfirmProvider>');
@@ -94,12 +103,14 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     [open],
   );
 
-  // Enter activates the primary action. Escape / backdrop are handled by Modal
-  // (its onClose → settle('cancel')).
+  // Enter activates the primary action — unless a focused button owns it (the
+  // primary is autoFocused, so a plain Enter still lands there natively; a
+  // Tab-focused Cancel/Discard must activate ITSELF, not Delete/Save). Escape /
+  // backdrop are handled by Modal (its onClose → settle('cancel')).
   useEffect(() => {
     if (!request) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !enterBelongsToFocusedControl(e.target)) {
         e.preventDefault();
         settle(request.kind === 'danger' ? 'confirm' : 'save');
       }

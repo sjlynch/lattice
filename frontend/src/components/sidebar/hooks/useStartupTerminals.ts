@@ -4,7 +4,7 @@ import type { TerminalSpec } from '../../../TerminalsContext';
 import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
 import { createBackendSession, fetchLiveTerminalIds } from '../../../terminal/terminalApi';
 import { fetchTerminalTabs } from '../../../api';
-import { planStartupSeeding, startupInFlightKey } from './startupSeedPlan';
+import { planStartupSeeding, settleInFlightStartups, startupInFlightKey } from './startupSeedPlan';
 
 // Retry schedule for the seeding pass's two backend reads while the backend
 // is still booting. Mirrors REGISTRY_FETCH_ATTEMPTS / REGISTRY_FETCH_RETRY_MS
@@ -82,20 +82,12 @@ export function useStartupTerminals({
   const inFlightStartupRef = useRef<Set<string>>(new Set());
 
   // Drop in-flight markers once the corresponding TerminalSpec has actually
-  // committed to state. Without this, closing a startup tab and then
-  // changing settings would refuse to respawn (the ref still has the key).
+  // committed to state (and never before — see settleInFlightStartups).
+  // Without this, closing a startup tab and then changing settings would
+  // refuse to respawn (the ref still has the key).
   useEffect(() => {
-    if (inFlightStartupRef.current.size === 0) return;
-    const liveKeys = new Set<string>();
-    for (const t of projectTerminals) {
-      if (t.kind === 'startup' && t.startupId && t.projectPath) {
-        liveKeys.add(`${t.projectPath}::${t.startupId}`);
-      }
-    }
-    for (const key of inFlightStartupRef.current) {
-      if (!liveKeys.has(key)) inFlightStartupRef.current.delete(key);
-    }
-  }, [projectTerminals]);
+    settleInFlightStartups(inFlightStartupRef.current, activeFolder, projectTerminals);
+  }, [activeFolder, projectTerminals]);
 
   // Validate persisted serverIds and auto-spawn startup terminals.
   //
@@ -180,8 +172,11 @@ export function useStartupTerminals({
   // wouldn't fire again on its own.
   const restartStartupTerminals = useCallback(() => {
     if (!activeFolder) return;
+    // projectTerminals is already scoped to activeFolder (normalized). A strict
+    // `projectPath === activeFolder` skipped a registry-restored startup tab
+    // (backend realpath spelling), leaving its pty running beside the respawn.
     const ids = projectTerminalsRef.current
-      .filter((t) => t.kind === 'startup' && t.projectPath === activeFolder)
+      .filter((t) => t.kind === 'startup')
       .map((t) => t.id);
     if (ids.length > 0) closeTerminals(ids);
     for (const cfg of startupTerminals) {

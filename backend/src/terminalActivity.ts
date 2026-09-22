@@ -205,8 +205,8 @@ let activity: TerminalActivityState = EMPTY_TERMINAL_ACTIVITY;
 const poller = createTerminalActivityPoller({
   reset: () => { activity = EMPTY_TERMINAL_ACTIVITY; },
   fetchBusy: async (isCurrent) => {
-    // The shared ≤750 ms snapshot (also read by the terminal-registry watch);
-    // one `/sessions` GET per poll tick serves both consumers.
+    // The shared ≤750 ms `/sessions` snapshot. The terminal-registry watch
+    // deliberately does NOT share it (see terminalRegistry/watch.ts).
     const sessions = await proxyListSessionsShared();
     // Fence fold state too: a finished old probe must not revive the previous
     // subscriber generation after the last browser has disconnected.

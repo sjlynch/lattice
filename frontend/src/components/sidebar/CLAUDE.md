@@ -109,6 +109,9 @@ Implementation pieces for `../Sidebar.tsx`.
   `TerminalsContext`'s registry fetch) and `planStartupSeeding` then spawns
   NOTHING from two nulls — live ptys survive a backend restart, so guessing
   from an empty local list put a second `npm run dev` beside the live one.
+  A spawn's in-flight marker (`startupInFlightKey`, normalized folder) is
+  dropped only once its spec has COMMITTED (`settleInFlightStartups`); it used
+  to be dropped by any unrelated list change during the pre-create await.
 - `hooks/useMountedTerminalIds.ts` — owns `mountedIds`: lazy-mounts
   `TerminalPane` only after first activation (startup panes excepted), which
   prevents WebGL context exhaustion across many pre-spawned panes. A tab in a

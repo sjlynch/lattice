@@ -12,7 +12,11 @@ export function wireSessionPtyEvents(session: Session): void {
     session.lastOutputAt = Date.now();
     session.outputFacts.write(data, session.lastOutputAt);
     session.scrollback.append(data);
-    broadcastToSubscribers(session.subscribers, JSON.stringify({ type: 'data', data }));
+    // Most ptys have no viewer at all (an un-opened agent tab, a backgrounded
+    // project): don't JSON-encode every output chunk just to send it nowhere.
+    if (session.subscribers.size > 0) {
+      broadcastToSubscribers(session.subscribers, JSON.stringify({ type: 'data', data }));
+    }
   });
   session.pty.onExit(({ exitCode }) => {
     console.log(

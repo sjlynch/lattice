@@ -11,6 +11,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { atomicWriteFile } from '../claudeTrust/configFile.js';
 import { getPiSubagentsEntry } from './ensure.js';
 import { PI_SUBAGENTS_SHIM_FILENAME, renderPiSubagentsShim } from './render.js';
 
@@ -35,6 +36,8 @@ export async function installPiSubagentsShim(args: {
     /* absent — fall through to write */
   }
   await fs.mkdir(extDir, { recursive: true });
-  await fs.writeFile(shimFile, expected, 'utf8');
+  // Temp + rename: concurrent Pi spawns share the project-root shim, and a
+  // truncate-then-write lets a starting Pi load an empty/torn file.
+  await atomicWriteFile(shimFile, expected);
   console.log(`[pi-subagents] installed subagents shim at ${shimFile}`);
 }

@@ -7,6 +7,7 @@ import { getTask, updateTaskCrashSafe } from '../../../tasks.js';
 import { cleanupWorktreeForTask } from '../../../worktree.js';
 import { startMergeRun } from '../../../mergeRuns.js';
 import { awaitPostMergeHookOutsideRun } from './postMergeHookHelper.js';
+import { requireTaskInRequestedProject } from '../requestUtils.js';
 
 // Injectable seam (production default below), mirroring mergeAborted.ts, so the
 // status-guard regression test can prove cleanup is never reached.
@@ -25,6 +26,9 @@ export function handleTaskStashResolved(
   return async (req: Request<{ id: string }>, res: Response): Promise<Response | void> => {
     const task = await getTask(req.params.id);
     if (!task) return res.status(404).json({ error: 'not found' });
+    // Removes the worktree and re-lanes the task: a `?project=` naming
+    // another board is a 404 (the resolver's own curl sends none).
+    if (!requireTaskInRequestedProject(task, req, res)) return;
     // The legitimate caller (worktree/finalize.ts) only ever spawns the stash
     // resolver for a ready_to_merge task. A stray or late curl against any other
     // lane must be an idempotent no-op (like /merged): before this guard it

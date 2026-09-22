@@ -112,6 +112,9 @@ async function considerOneTask(args: {
   const outcome = await autoCompleteStuckTask(task, verdict.commits, verdict.ageMs);
   if (outcome.ok) {
     result.flipped += 1;
+  } else if ('stale' in outcome) {
+    // Changed since the pass began (resumed / moved / completed) — the next
+    // pass re-evaluates it. Silent, like the other expected-healthy skips.
   } else {
     result.skipped.push({ reason: 'updateTask threw', taskId: task.id });
   }

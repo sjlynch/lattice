@@ -1,6 +1,7 @@
 import { useEffect, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import type { GraphNode } from '../../../api';
+import { getIdleController } from '../idleController';
 import { isGhost } from '../timelineDiff';
 import type { ChangeKind } from '../changeRing';
 
@@ -70,6 +71,12 @@ export function useGraphFilter(
         const t = typeof link.target === 'object' ? link.target : null;
         return (!s || isNodeVisible(s)) && (!t || isNodeVisible(t));
       });
+    // The accessor swap only takes effect at the library's next digest, which
+    // mutates the scene without rendering it. With the batched renderers on,
+    // their rebuild effects happen to wake the loop; with them off, a legend
+    // toggle on a settled (paused) scene didn't repaint until the next
+    // interaction. Wake a short frame tail here so the filter always paints.
+    getIdleController(graphRef.current)?.wakeForRefresh();
   }, [
     graphRef,
     hiddenExts,

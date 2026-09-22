@@ -141,11 +141,18 @@ export function toCodexServerConfig(
   // Secret stdio env: value → pty env under its real name; name → env_vars so
   // Codex forwards it from the parent (pty) env to the MCP server. Static
   // (non-secret) env stays inline.
+  //
+  // The NAME is listed even when no value is stored (the "ambient" path: the
+  // key lives in the user's shell env). Unlike Claude/Pi, Codex does not let a
+  // stdio MCP server inherit the parent env — it starts the server from a
+  // cleared env holding only a small default set (PATH, HOME, …) plus `env`
+  // and the names in `env_vars`. Omitting the name therefore meant an ambient
+  // BRAVE_API_KEY never reached the server. A listed name that is unset in the
+  // parent is simply skipped, so listing it is harmless.
   for (const varName of secretEnvVarsFor(entry)) {
-    const value = serverSecrets?.[varName];
-    if (!value) continue; // no stored value → rely on ambient inheritance below
-    env[varName] = value;
     envVarNames.push(varName);
+    const value = serverSecrets?.[varName];
+    if (value) env[varName] = value;
   }
 
   const body = fields([

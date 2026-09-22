@@ -39,7 +39,10 @@ Per-invocation `-c "mcp_servers.<lattice_id>={…}"` inline-TOML overrides (valu
 parsed as TOML, dotted key MERGES so the user's own servers survive), mirroring
 `terminal/codexTrust.ts`'s trust override — never writes `~/.codex/config.toml`.
 Secrets ride the pty env by NAME: stdio → `env_vars=['VAR']`, HTTP header →
-`env_http_headers={Header='VAR'}` (value in pty env, never argv). The backend
+`env_http_headers={Header='VAR'}` (value in pty env, never argv). A stdio
+secret's name is listed in `env_vars` even with NO stored value: Codex starts a
+stdio server from a cleared env (a small default set + `env` + `env_vars`), so
+that is the only way an ambient shell key reaches it. The backend
 resolves the strings; the terminal-server turns each into a `--config` flag
 referencing an env var (`configureCodexProjectMcp` in `terminal/codexTrust.ts`),
 so braces/quotes never enter shell source.
@@ -266,7 +269,7 @@ a space in it.
   (tricky args byte-for-byte, and a cwd-planted shim that does NOT run).
 - `../latticeMcp/` — not part of this folder, but the other half of the
   first-party server: the stdio MCP process itself (11 board tools over the task
-  HTTP API), plus `entryPath.ts`, which `catalog.ts` calls to bake the compiled
+  HTTP API, plus the three Opengrep tools), plus `entryPath.ts`, which `catalog.ts` calls to bake the compiled
   entry point into the `lattice` entry's `args`. See its own `CLAUDE.md`.
 - `validators.ts` — per-server "is my key working?" probes behind
   `POST /api/mcp/validate` (v1: Brave one-search request only).

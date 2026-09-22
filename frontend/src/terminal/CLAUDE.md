@@ -7,8 +7,14 @@ side effect can each be reasoned about (and changed) on their own.
 - `terminalTypes.ts` — `TerminalSpec`, `Persisted`, `Ctx`. Re-exported as
   `TerminalSpec` from `../TerminalsContext` for backward compat.
 - `terminalScope.ts` — pure per-project scoping predicate for the sidebar
-  terminal list (`terminalBelongsToProject` + `isPathWithin`/`normalizeDirPath`).
-  A terminal with a recorded `projectPath` matches that project exactly. A
+  terminal list (`terminalBelongsToProject` + `isPathWithin`/`normalizeDirPath`),
+  plus `sameProjectPath` — THE comparison for a backend-stamped `projectPath`
+  (registry record, workflow, workflow run: `realpathSync.native` spelling)
+  against the frontend's `activeFolder`; never `===` (a strict compare hid every
+  workflow and dropped a started queue run on a casing/separator difference).
+  A terminal with a recorded `projectPath` matches that project (normalized
+  compare). The close-fallback grouping in `terminalActivePolicy.ts` and the
+  startup seeding (`sidebar/hooks/startupSeedPlan.ts`) compare the same way. A
   **legacy** terminal persisted before `projectPath` existed (field missing) is
   scoped by its `cwd` — shown only when `cwd` equals/descends from the active
   folder. **Do NOT reintroduce the old `!projectPath` catch-all** (`filter((t)

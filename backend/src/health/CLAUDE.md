@@ -179,7 +179,9 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   walker shared by tsconfig discovery + `crossFile/packageRoots.ts`
 - `configReloader.ts` — `ConfigReloader`: loads the project `.gitignore` matcher
   + tsconfig aliases and refreshes them when the ROOT `.gitignore`/`tsconfig*`
-  changes (nested edits fall through to normal analysis)
+  changes (full rescan). A NESTED `tsconfig*` edit reloads only the merged
+  alias map (`reloadAliasesForNestedTsconfig`) and re-runs cross-file, with no
+  rescan broadcast; a nested `.gitignore` is ignored
 - `index.ts` / `utils.ts` — public re-export barrel; `smellsToArray` helper
 - `types.ts` — `HealthMetrics` / `HealthSmellId` definitions
 

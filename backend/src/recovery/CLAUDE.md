@@ -45,8 +45,12 @@ Split by concern so the eligibility decision is auditable in isolation:
   `EligibilityVerdict` (`skip` with a typed `SkipReason`, or `complete`). Read
   only; no mutation. `too-young` / `session-live` skips are the expected-healthy
   cases (silent, uncounted); the rest are surfaced.
-- `complete.ts` — the auto-complete mutation: read the Pi shutdown sentinel for
-  the diagnostic log, then `updateTask` to `ready_to_merge`.
+- `complete.ts` — the auto-complete mutation: re-read the task and bail
+  (`stale`, silent, retried next pass) if it changed since the pass snapshotted
+  it (`updatedAt`/status/worktree/branch — a Resume, lane move or real
+  `/complete` landing during the git probe must not be overwritten), read the
+  Pi shutdown sentinel for the diagnostic log, then `updateTaskCrashSafe` to
+  `ready_to_merge`.
 
 ## Safety invariants
 

@@ -147,6 +147,10 @@ and waits for its Stop hook.
   cancel (or an `errored` run) that lands first keeps its state — the timeout
   never turns a cancel into `errored`. `PushStepDeps.pushTimeoutMs` overrides
   the bound for tests (`__tests__/workflowPushStepCancel.test.ts`).
+- **The step forgets its push run** (`forgetPushRun` in its `finally`). The
+  Task Board's push is forgotten by its UI poller's DELETE; nothing polls a
+  workflow push, so without this every one stayed in the registry for the life
+  of the process. The registry never forgets a still-`running` run.
 - **Cancel/spawn race (do not regress)**: cancelling the run *while*
   `startPushSession` is in flight runs the cancel handler with
   `sessionServerId` still `undefined`, so it kills nothing. A `cancelled` flag

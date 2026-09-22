@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useRef,
   useState,
 } from 'react';
 import {
@@ -46,9 +47,17 @@ function useHarnessSystemPromptsDraft(
   const [loaded, setLoaded] = useState(false);
   const [touched, setTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Seed once per dialog-open per project, like useOverrideDraft: re-seeding on
+  // every tab re-activation silently dropped unsaved edits.
+  const seededFor = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!open || !active || !activeFolder) return;
+    if (!open) {
+      seededFor.current = null;
+      return;
+    }
+    if (!active || !activeFolder) return;
+    if (seededFor.current === activeFolder) return;
     let cancelled = false;
     setLoading(true);
     setLoaded(false);
@@ -68,6 +77,7 @@ function useHarnessSystemPromptsDraft(
         );
         setExisting(settings.harnessSystemPrompts ?? {});
         setTouched(false);
+        seededFor.current = activeFolder;
         setLoaded(true);
       })
       .catch((err) => {
@@ -91,7 +101,9 @@ function useHarnessSystemPromptsDraft(
   }, []);
 
   const getPatch = useCallback((): HarnessSystemPromptsMap | undefined => {
-    if (!loaded || !touched) return undefined;
+    // A project switch with the dialog open leaves the old project's drafts
+    // here until re-activation — never save them into the new project.
+    if (!loaded || !touched || seededFor.current !== activeFolder) return undefined;
     const next: HarnessSystemPromptsMap = { ...existing };
     for (const e of entries) {
       const append = appendDraft[e.harness] ?? e.currentAppend;
@@ -103,7 +115,7 @@ function useHarnessSystemPromptsDraft(
       else delete next[e.harness];
     }
     return next;
-  }, [loaded, touched, existing, entries, appendDraft, replaceDraft]);
+  }, [loaded, touched, activeFolder, existing, entries, appendDraft, replaceDraft]);
 
   return {
     entries,

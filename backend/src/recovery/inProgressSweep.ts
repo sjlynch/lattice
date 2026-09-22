@@ -15,8 +15,8 @@
 // whose PTY is dead AND whose branch has a commit get auto-completed.
 //
 // All eligibility conditions (see `eligibility.ts`) must hold for a task to be
-// auto-completed. The transition runs through the same crash-safe update +
-// post-flip pty cleanup as the normal `/complete` path.
+// auto-completed. The transition uses the same crash-safe (disk-before-cache)
+// update as the normal `/complete` path, after re-reading the task.
 
 export {
   startInProgressSweepLoop,

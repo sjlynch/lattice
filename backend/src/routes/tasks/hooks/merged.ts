@@ -5,12 +5,17 @@
 import type { Request, Response } from 'express';
 import { getTask } from '../../../tasks.js';
 import { finalizeResolvedTask } from '../finalizeResolved.js';
+import { requireTaskInRequestedProject } from '../requestUtils.js';
 import { awaitPostMergeHookOutsideRun } from './postMergeHookHelper.js';
 
 export function handleTaskMerged(backendOrigin: string) {
   return async (req: Request<{ id: string }>, res: Response): Promise<Response | void> => {
     const task = await getTask(req.params.id);
     if (!task) return res.status(404).json({ error: 'not found' });
+    // Finalizing fast-forwards main, so a `?project=` naming another board is
+    // a 404 like /merge-aborted. The resolver's own curl sends no project and
+    // stays unpinned.
+    if (!requireTaskInRequestedProject(task, req, res)) return;
     // Resolver finalization is authoritative ONLY while the task is still
     // flagged conflicted. The Resolving-strip Cancel button (/merge-aborted)
     // clears task.conflict to abandon a stuck resolution; a late /merged from

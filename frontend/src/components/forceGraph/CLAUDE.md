@@ -240,7 +240,9 @@ render-vs-physics splits, the Escape chord). See `hooks/CLAUDE.md`.
 - **One-shot scene mutations must wake the loop.** While settled the loop is
   *paused*, so a one-shot change only paints if it wakes — `kick()` for motion,
   `wakeForRefresh()` for a set change (agent removal, selection halo, worktree
-  ring, Alt labels). The motion gate alone leaves a stopped node painted.
+  ring, Alt labels, and a canvas resize — `renderer.setSize` clears the buffer
+  without rendering, see `sceneSetup.createResizeObserver`). The motion gate
+  alone leaves a stopped node painted.
 - **Deferred pause via microtask.** The library reschedules its own RAF at frame
   end and `onEngineStop` fires *inside* that cycle, so a synchronous
   `pauseAnimation()` is overwritten and the loop never stops. All pauses route

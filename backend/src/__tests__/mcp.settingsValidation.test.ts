@@ -50,6 +50,22 @@ test('sanitizeCustomServers preserves secretHeaders for imported HTTP servers', 
   assert.deepEqual(out[0].headers, { Accept: 'application/json' });
 });
 
+test('sanitizeCustomServers drops prototype-key ids and duplicate ids (first wins)', () => {
+  // Ids key plain objects downstream (secrets map, Claude mcpServers, .pi/mcp.json):
+  // `__proto__` would set a prototype, `constructor` resolves Object itself.
+  const out = sanitizeCustomServers([
+    { id: '__proto__', command: 'a' },
+    { id: 'constructor', command: 'b' },
+    { id: 'prototype', command: 'c' },
+    { id: 'dup', command: 'first' },
+    { id: 'dup', command: 'second' },
+  ]);
+  assert.deepEqual(
+    out.map((e) => [e.id, e.command]),
+    [['dup', 'first']],
+  );
+});
+
 // ---- sanitizeBuiltinOverrides: shape + env denylist ----
 
 test('sanitizeBuiltinOverrides keeps only the editable fields', () => {

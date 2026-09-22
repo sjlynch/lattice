@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchWorkflows, subscribeWorkflows, type Workflow } from '../../../api';
+import { sameProjectPath } from '../../../terminal/terminalScope';
 
 // Hydrates the saved workflow list for a project and keeps it in sync via
 // the `/ws/workflows` subscription.
@@ -18,7 +19,7 @@ export function useWorkflowList(activeFolder: string) {
 
     let cancelled = false;
     const keepProjectWorkflows = (ws: Workflow[]) =>
-      ws.filter((w) => w.projectPath === projectPath);
+      ws.filter((w) => sameProjectPath(w.projectPath, projectPath));
     fetchWorkflows(projectPath)
       .then((ws) => {
         if (!cancelled) {

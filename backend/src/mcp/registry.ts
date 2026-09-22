@@ -212,7 +212,10 @@ export function resolveMcpEntries(
       resolvedEntry = shaped;
     }
 
-    out.push({ entry: resolvedEntry, serverSecrets: secrets[entry.id], headless });
+    // Own-property lookup: an id like `toString` must not resolve an inherited
+    // Object member as the server's secret map.
+    const serverSecrets = Object.hasOwn(secrets, entry.id) ? secrets[entry.id] : undefined;
+    out.push({ entry: resolvedEntry, serverSecrets, headless });
   }
   return out;
 }

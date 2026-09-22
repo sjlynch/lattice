@@ -108,7 +108,8 @@ export async function tryRespawnMidMergeResolver(
     });
     outcome = { kind: 'errored' };
   }
-  run.processed += 1;
+  // `processed` is bumped by the caller's finishTaskAndCheckIntegrity (see
+  // handleFlaggedConflictTask), after the park — like the fresh-conflict path.
 
   if (spawned) {
     // Block the run until the re-spawned resolver finishes — same contract
@@ -213,11 +214,20 @@ export async function handleFlaggedConflictTask(
   run: MergeRun,
   runCtx: ProcessTargetContext,
   mergeRunResyncOptions: MergeRunResyncOptionsFactory,
+  deps: { isMidMerge: typeof isMidMerge; respawn: RespawnMidMergeDeps } = {
+    isMidMerge,
+    respawn: productionRespawnDeps,
+  },
 ): Promise<FlaggedConflictTaskResult> {
   if (!task.conflict) return fallthrough();
 
-  if (await isMidMerge(task.worktreePath!)) {
-    return handled(await tryRespawnMidMergeResolver(task, run, runCtx));
+  if (await deps.isMidMerge(task.worktreePath!)) {
+    // The re-spawned resolver's finalize fast-forwards main, so this path
+    // needs the same after-task circuit breaker (and progress bump) as every
+    // other one — it used to skip it, so a damaged repo was only noticed
+    // after the NEXT task had already run against it.
+    const outcome = await tryRespawnMidMergeResolver(task, run, runCtx, deps.respawn);
+    return handled(await finishTaskAndCheckIntegrity(run, runCtx, task.id, outcome));
   }
 
   return tryFinalizeAfterResolverFinished(

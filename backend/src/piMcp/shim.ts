@@ -5,6 +5,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { atomicWriteFile } from '../claudeTrust/configFile.js';
 import { getPiMcpEntry } from './ensure.js';
 import { PI_MCP_SHIM_FILENAME, renderPiMcpShim } from './render.js';
 
@@ -20,6 +21,8 @@ export async function installPiMcpShim(args: { dir: string }): Promise<void> {
     /* absent — fall through to write */
   }
   await fs.mkdir(extDir, { recursive: true });
-  await fs.writeFile(shimFile, expected, 'utf8');
+  // Temp + rename (see piSubagents/shim.ts): never let a starting Pi load a
+  // torn shim from a concurrent write.
+  await atomicWriteFile(shimFile, expected);
   console.log(`[pi-mcp] installed mcp shim at ${shimFile}`);
 }

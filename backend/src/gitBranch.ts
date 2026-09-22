@@ -113,6 +113,18 @@ async function resolveHeadFile(repoRoot: string): Promise<string | null> {
   return gitDir ? path.join(gitDir, 'HEAD') : null;
 }
 
+// Per-subscriber isolation: one throwing subscriber used to abort the loop, so
+// every client after it missed the branch change (see gitStatus.ts).
+function fanOut(proj: BranchWatcher, branch: string | null): void {
+  for (const cb of [...proj.subscribers]) {
+    try {
+      cb(branch);
+    } catch (err) {
+      console.error('[git-branch watcher] subscriber threw:', err);
+    }
+  }
+}
+
 function ensureBranchWatcher(root: string): Promise<BranchWatcher> {
   const existing = watchers.get(root);
   if (existing) return existing;
@@ -155,7 +167,7 @@ async function armBranchWatcher(proj: BranchWatcher): Promise<void> {
         const branch = await getCurrentBranch(root);
         if (branch === proj.current) return; // unchanged — don't wake clients
         proj.current = branch;
-        for (const cb of [...proj.subscribers]) cb(branch);
+        fanOut(proj, branch);
       })().catch((err) => {
         // A throwing subscriber must not surface as an unhandled rejection —
         // the process guards fail fast on those (gitStatus.ts does the same).
@@ -198,7 +210,7 @@ export async function rearmGitBranchWatcher(projectRoot: string): Promise<void> 
   const branch = await getCurrentBranch(root);
   if (branch === proj.current) return;
   proj.current = branch;
-  for (const cb of [...proj.subscribers]) cb(branch);
+  fanOut(proj, branch);
 }
 
 // Subscribe to the active project's current git branch. The current value is
@@ -217,12 +229,6 @@ export async function subscribeGitBranch(
   return () => {
     proj.subscribers.delete(cb);
   };
-}
-
-// Test-only: number of branch watchers currently tracked (incl. in-flight
-// builds).
-export function _branchWatcherCountForTest(): number {
-  return watchers.size;
 }
 
 // Test-only: close every watcher and clear the map so suites don't leak

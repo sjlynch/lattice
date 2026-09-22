@@ -99,3 +99,19 @@ test('getMenu returns a stable reference between loads (useSyncExternalStore-saf
   const first = store.getMenu();
   assert.equal(store.getMenu(), first, 'identity must be stable without a reload');
 });
+
+test('getPiModels rejects on a failed request instead of reading as an empty menu', async () => {
+  const { getPiModels } = await import('../api/settings.ts');
+  const g = globalThis as { fetch: typeof fetch };
+  const original = g.fetch;
+  g.fetch = (async () =>
+    ({ ok: false, status: 502, json: async () => { throw new Error('html'); } }) as unknown as Response) as typeof fetch;
+  try {
+    // An empty `{models: [], menu: []}` here would let a Settings → Pi save
+    // persist a menu missing every curated pattern, and would blank the shared
+    // dropdown cache.
+    await assert.rejects(getPiModels());
+  } finally {
+    g.fetch = original;
+  }
+});

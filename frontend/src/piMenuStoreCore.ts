@@ -39,8 +39,8 @@ export function createPiMenuStore(fetchMenu: PiMenuFetcher): PiMenuStore {
         loaded = true;
       })
       .catch(() => {
-        // Keep the prior cache on failure (getPiModels already swallows its own
-        // errors into empty lists; this guards a custom fetcher too).
+        // Keep the prior cache on failure (getPiModels throws on a failed
+        // request, so a backend restart never blanks the menu).
       })
       .finally(() => {
         if (inFlight === p) inFlight = null;

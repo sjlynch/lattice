@@ -110,8 +110,15 @@ export function useGraphSearchNavigation(params: {
   // when there's none. The camera follow runs in the effect below, off the
   // committed id — so a rapid double-step animates once to the final match
   // instead of fighting two tweens.
+  //
+  // `focusSeq` bumps on every step so the camera re-centers even when the step
+  // lands on the SAME id (a single match, or wrapping back onto the current
+  // one) — keying the effect on the id alone skipped that, so after orbiting
+  // away "next" on a one-match search did nothing.
+  const [focusSeq, setFocusSeq] = useState(0);
   const stepMatch = useCallback(
     (delta: number) => {
+      setFocusSeq((n) => n + 1);
       setCurrentMatchId((curId) => {
         const list = searchMatchesRef.current;
         if (list.length === 0) return null;
@@ -129,7 +136,7 @@ export function useGraphSearchNavigation(params: {
   );
   useEffect(() => {
     if (currentMatchId) focusNodeById(currentMatchId);
-  }, [currentMatchId, focusNodeById]);
+  }, [currentMatchId, focusSeq, focusNodeById]);
   const goPrevMatch = useCallback(() => stepMatch(-1), [stepMatch]);
   const goNextMatch = useCallback(() => stepMatch(1), [stepMatch]);
   // 1-based position of the current match in the live list (0 = none / dropped).

@@ -76,13 +76,19 @@ export async function resumeQueuedTaskRuns(
         );
         // Clear the queued state so the UI is not stuck with a permanent
         // "Queued" pill and a later manual re-run starts from a clean counter.
-        await deps.updateTask(task.id, {
-          runQueued: undefined,
-          runQueuedAt: undefined,
-          runQueuedHarness: undefined,
-          runQueuedPiModel: undefined,
-          runFailureCount: undefined,
-        });
+        // Per-task isolation (as everywhere else in recovery): one throw must
+        // not strand every remaining queued task of this project.
+        try {
+          await deps.updateTask(task.id, {
+            runQueued: undefined,
+            runQueuedAt: undefined,
+            runQueuedHarness: undefined,
+            runQueuedPiModel: undefined,
+            runFailureCount: undefined,
+          });
+        } catch (err) {
+          console.warn(`[startup] could not clear queued state for task ${task.id}:`, err);
+        }
       }
       for (const task of queued) {
         console.log(
@@ -93,12 +99,16 @@ export async function resumeQueuedTaskRuns(
         // alongside runQueued. Absent ⇒ enqueueTaskRun falls back to the
         // project/global default (the same path a fresh run with no explicit
         // harness takes).
-        await deps.enqueueTaskRun(
-          task.id,
-          backendOrigin,
-          task.runQueuedHarness,
-          task.runQueuedPiModel,
-        );
+        try {
+          await deps.enqueueTaskRun(
+            task.id,
+            backendOrigin,
+            task.runQueuedHarness,
+            task.runQueuedPiModel,
+          );
+        } catch (err) {
+          console.warn(`[startup] could not re-enqueue queued run for task ${task.id}:`, err);
+        }
       }
     },
   );

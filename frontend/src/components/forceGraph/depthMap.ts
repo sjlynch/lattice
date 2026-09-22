@@ -19,13 +19,18 @@ export function depthMapStructuralKey(data: ScanResult): string {
   // FNV-1a rolling hash over the root then every node id, with a separator byte
   // mixed in between entries (so ['ab','c'] and ['a','bc'] can't collide). No
   // substring allocation, no Map build — unlike the depth recompute it guards.
+  //
+  // The multiply MUST be `Math.imul` (a true 32-bit product). A plain `h *
+  // FNV_PRIME` reaches ~2^56, past a double's 53-bit mantissa, so its low bits
+  // were rounded away before `>>> 0` — not FNV-1a at all, and ~72% of keys came
+  // out with their low 3 bits zero, raising the odds that a same-count rename
+  // collides and reuses a stale depth map.
   let h = FNV_OFFSET_BASIS;
   const mix = (s: string) => {
     for (let i = 0; i < s.length; i++) {
-      h = (h ^ s.charCodeAt(i)) >>> 0;
-      h = (h * FNV_PRIME) >>> 0;
+      h = Math.imul(h ^ s.charCodeAt(i), FNV_PRIME) >>> 0;
     }
-    h = ((h ^ FNV_SEPARATOR) * FNV_PRIME) >>> 0;
+    h = Math.imul(h ^ FNV_SEPARATOR, FNV_PRIME) >>> 0;
   };
   mix(data.root);
   for (const n of data.nodes) mix(n.id);

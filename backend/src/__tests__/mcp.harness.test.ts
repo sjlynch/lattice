@@ -224,10 +224,12 @@ test('toCodexServerConfig: a stored stdio secret rides env_vars (name in argv) +
   assert.deepEqual(env, { BRAVE_API_KEY: 'sk-secret' });
 });
 
-test('toCodexServerConfig: a keyed server with no stored secret omits env_vars (ambient path)', () => {
+test('toCodexServerConfig: a keyed server with no stored secret still forwards the NAME (ambient path)', () => {
+  // Codex starts a stdio MCP server from a cleared env (defaults + `env` +
+  // `env_vars`), so an ambient key only reaches it when its name is listed.
   const brave = builtinMcpServerById('brave-search')!;
   const { configArg, env } = toCodexServerConfig(brave, undefined, false);
-  assert.ok(!configArg.includes('env_vars'));
+  assert.ok(configArg.includes("env_vars=['BRAVE_API_KEY']"));
   assert.deepEqual(env, {});
 });
 

@@ -193,13 +193,16 @@ async function writeStashConflictFinalizeOutcome(
   };
 }
 
-async function transitionTaskToQaOnDisk(ctx: FinalizeContext): Promise<void> {
+// Resolves false when the qa state was NOT recorded — the disk write failed
+// (updateTaskCrashSafe leaves cache + disk untouched and returns null) or the
+// task no longer exists.
+async function transitionTaskToQaOnDisk(ctx: FinalizeContext): Promise<boolean> {
   // Write QA status to disk BEFORE cleanup. This is the critical ordering:
   // if the server crashes after this write, the task is already QA on disk
   // and will be recovered correctly on restart. A crash between FF and here
   // still leaves the task at ready_to_merge (recoverable via startup check).
   console.log(`[finalize] writing qa state for task ${ctx.task.id} to disk...`);
-  await updateTaskCrashSafe(ctx.task.id, {
+  const updated = await updateTaskCrashSafe(ctx.task.id, {
     status: 'qa',
     mergedAt: Date.now(),
     worktreePath: undefined,
@@ -207,7 +210,9 @@ async function transitionTaskToQaOnDisk(ctx: FinalizeContext): Promise<void> {
     conflict: undefined,
     conflictStartedAt: undefined,
   });
+  if (!updated) return false;
   console.log(`[finalize] task ${ctx.task.id} → qa ✓`);
+  return true;
 }
 
 function scheduleBackgroundCleanup(ctx: FinalizeContext): void {
@@ -227,7 +232,18 @@ function scheduleBackgroundCleanup(ctx: FinalizeContext): void {
 async function handleFastForwardSuccess(
   ctx: FinalizeContext,
 ): Promise<FinalizeOutcome> {
-  await transitionTaskToQaOnDisk(ctx);
+  if (!(await transitionTaskToQaOnDisk(ctx))) {
+    // main already fast-forwarded, but the task is still ready_to_merge.
+    // Cleaning up now would delete the worktree + branch the task still
+    // points at, so a retry could never re-finalize it (and the run would
+    // count it merged while the board shows it waiting). Keep both: a retry
+    // FF is a no-op "already up to date" and records qa then.
+    console.error(`[finalize] task ${ctx.task.id}: could not record qa state — keeping worktree for a retry`);
+    return {
+      ok: false,
+      error: 'Branch fast-forwarded, but the task\'s qa state could not be saved; retry the merge to finish it.',
+    };
+  }
   scheduleBackgroundCleanup(ctx);
   return { ok: true };
 }

@@ -61,12 +61,31 @@ export function killSession(id: string): boolean {
   // grandchildren (claude/node spawned by powershell). Force-kill the whole
   // process tree on Windows so they don't accumulate as orphans.
   killProcessTreeWindows(pid);
-  // taskkill /F gives Claude no chance to flush ~/.claude.json. After it's
-  // landed, validate the file and restore from backup if the kill
-  // truncated a write. Without refreshBackup — the file may still be in
-  // a pending-flush state we don't want to capture as "known good".
-  setTimeout(() => {
-    void ensureClaudeConfigValid();
-  }, 2000);
+  schedulePostKillConfigCheck();
   return true;
+}
+
+// taskkill /F gives Claude no chance to flush ~/.claude.json. After it's
+// landed, validate the file and restore from backup if the kill truncated a
+// write. Without refreshBackup — the file may still be in a pending-flush
+// state we don't want to capture as "known good".
+//
+// Debounced: a kill-by-cwd / run cancel / shutdown kills N sessions in one
+// burst, and each check is a synchronous read + JSON.parse of a file that can
+// be hundreds of KB, on the event loop every pty shares. One check
+// POST_KILL_CHECK_DELAY_MS after the LAST kill of a burst covers every kill in
+// it (each taskkill has had at least that long to land).
+export const POST_KILL_CHECK_DELAY_MS = 2000;
+let postKillCheck: ReturnType<typeof setTimeout> | null = null;
+
+export function schedulePostKillConfigCheck(
+  check: () => Promise<void> = ensureClaudeConfigValid,
+): void {
+  if (postKillCheck) clearTimeout(postKillCheck);
+  postKillCheck = setTimeout(() => {
+    postKillCheck = null;
+    void check().catch(() => { /* best-effort backstop */ });
+  }, POST_KILL_CHECK_DELAY_MS);
+  // Never hold the process open just for this backstop.
+  postKillCheck.unref();
 }
