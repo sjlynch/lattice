@@ -128,7 +128,10 @@ export async function sweepOrphanedWorktrees(deps: WorktreeSweepDeps = defaultDe
       try {
         // cleanupWorktreeForTask skips the branch delete for non-`lattice/`
         // names, so passing '' (detached) or a stray branch is safe.
-        if (await deps.cleanupWorktreeForTask(repoRoot, resolved, branch)) removed += 1;
+        // Already archived above — don't take a second, identical archive.
+        if (await deps.cleanupWorktreeForTask(repoRoot, resolved, branch, undefined, { skipArchive: true })) {
+          removed += 1;
+        }
       } catch (err) {
         console.error(`[startup] sweep: cleanup of ${resolved} failed:`, err);
       }

@@ -92,6 +92,13 @@ const UNSAFE_SHORT_FLAGS_BY_SERVER: Record<string, string> = {
   'chrome-devtools': 'e',
 };
 
+// Long flags refused only for one server. Playwright MCP's `--config <file>`
+// loads a JSON config whose `browser.launchOptions.executablePath` launches any
+// binary — the same escape as `--executable-path`, one file away.
+const UNSAFE_LONG_FLAGS_BY_SERVER: Record<string, ReadonlySet<string>> = {
+  playwright: new Set(['config']),
+};
+
 // Normalized long-flag name of an arg, or null when it isn't a `--flag`.
 function longFlagName(arg: string): string | null {
   const m = /^--([^=]*)/.exec(arg);
@@ -104,7 +111,10 @@ function longFlagName(arg: string): string | null {
 // Case-insensitive. `serverId` scopes the short-alias check.
 export function isUnsafeOverrideArg(arg: string, serverId?: string): boolean {
   const long = longFlagName(arg);
-  if (long !== null) return UNSAFE_OVERRIDE_ARG_FLAGS.has(long);
+  if (long !== null) {
+    if (UNSAFE_OVERRIDE_ARG_FLAGS.has(long)) return true;
+    return serverId ? UNSAFE_LONG_FLAGS_BY_SERVER[serverId]?.has(long) === true : false;
+  }
   const shortBanned = serverId ? UNSAFE_SHORT_FLAGS_BY_SERVER[serverId] : undefined;
   if (shortBanned && /^-[^-]/.test(arg)) {
     // Only the flag letters before any `=` / value characters matter.

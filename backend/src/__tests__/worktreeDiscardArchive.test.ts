@@ -6,6 +6,7 @@ import path from 'node:path';
 import { exec } from '../worktree/exec.js';
 import { projectGit } from '../worktree/projectGit.js';
 import { reconcileStaleState } from '../worktree/reconcile.js';
+import { cleanupWorktreeForTask, type WorktreeCleanupDeps } from '../worktree/cleanup.js';
 import {
   DISCARDED_WORKTREE_MANIFEST_FILENAME,
   archiveUncommittedWorktreeChanges,
@@ -203,5 +204,70 @@ test('archive retention keeps the newest N and never touches pending merge snaps
       '2026-01-04-discarded-worktree-t3-x',
       '2026-01-05-discarded-worktree-t4-x',
     ]);
+  });
+});
+
+// ---- cleanupWorktreeForTask (post-merge finalize, task delete, …) ----
+
+function cleanupDeps(extra: Partial<WorktreeCleanupDeps> = {}): WorktreeCleanupDeps {
+  return {
+    projectGit,
+    proxyKillSessionsByCwd: (async () => {}) as unknown as WorktreeCleanupDeps['proxyKillSessionsByCwd'],
+    notifySessionsFreed: () => {},
+    ...extra,
+  };
+}
+
+test('cleanupWorktreeForTask archives leftover uncommitted edits before removing the worktree', async () => {
+  await withRepo(async (repo, candidate) => {
+    await git(repo, ['worktree', 'add', '-q', '-b', branch, candidate]);
+    await fs.writeFile(path.join(candidate, 'tracked.txt'), 'left behind after merge\n');
+    await fs.writeFile(path.join(candidate, 'MERGE_INSTRUCTIONS.md'), '# managed, not archived\n');
+    assert.equal(await cleanupWorktreeForTask(repo, candidate, branch, cleanupDeps()), true);
+    await assert.rejects(fs.stat(candidate), { code: 'ENOENT' });
+    const archives = await archivesFor(repo);
+    assert.equal(archives.length, 1);
+    const manifest = await readDiscardedWorktreeManifest(archives[0]);
+    assert.deepEqual(manifest?.modifiedTracked, ['tracked.txt']);
+    assert.deepEqual(manifest?.untracked, []);
+    assert.equal(
+      await fs.readFile(path.join(archives[0], 'files', 'tracked.txt'), 'utf8'),
+      'left behind after merge\n',
+    );
+  });
+});
+
+test('cleanupWorktreeForTask takes no archive for a worktree holding only managed files', async () => {
+  await withRepo(async (repo, candidate) => {
+    await git(repo, ['worktree', 'add', '-q', '-b', branch, candidate]);
+    await fs.writeFile(path.join(candidate, 'LATTICE_TASK.md'), '# task\n');
+    assert.equal(await cleanupWorktreeForTask(repo, candidate, branch, cleanupDeps()), true);
+    assert.deepEqual(await archivesFor(repo), []);
+  });
+});
+
+test('cleanupWorktreeForTask keeps the worktree and branch when the archive fails', async () => {
+  await withRepo(async (repo, candidate) => {
+    await git(repo, ['worktree', 'add', '-q', '-b', branch, candidate]);
+    await fs.writeFile(path.join(candidate, 'tracked.txt'), 'precious\n');
+    const removed = await cleanupWorktreeForTask(repo, candidate, branch, cleanupDeps({
+      archiveUncommitted: async () => ({ status: 'failed', error: 'injected copy failure' }),
+    }));
+    assert.equal(removed, false);
+    assert.equal(await fs.readFile(path.join(candidate, 'tracked.txt'), 'utf8'), 'precious\n');
+    assert.match(await git(repo, ['branch', '--list', branch]), /archive-test/);
+  });
+});
+
+test('cleanupWorktreeForTask skipArchive: the caller already archived, so no second archive', async () => {
+  await withRepo(async (repo, candidate) => {
+    await git(repo, ['worktree', 'add', '-q', '-b', branch, candidate]);
+    await fs.writeFile(path.join(candidate, 'tracked.txt'), 'archived by the sweep\n');
+    let called = 0;
+    const removed = await cleanupWorktreeForTask(repo, candidate, branch, cleanupDeps({
+      archiveUncommitted: async () => { called += 1; return { status: 'clean' }; },
+    }), { skipArchive: true });
+    assert.equal(removed, true);
+    assert.equal(called, 0);
   });
 });

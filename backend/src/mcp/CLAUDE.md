@@ -196,7 +196,8 @@ a space in it.
   at an arbitrary binary — `--executable-path` / `--executablePath` /
   `--browser-executable` / `--chrome-path` / `--browser-path` (+ `--chrome-arg`,
   whose Chrome switches like `--renderer-cmd-prefix` launch a binary too, and
-  chrome-devtools' `-e` alias) — in either `--flag value` or `--flag=value`
+  chrome-devtools' `-e` alias, and Playwright's `--config <file>`, whose JSON can
+  set `launchOptions.executablePath`) — in either `--flag value` or `--flag=value`
   form, matched case-/dash-/underscore-insensitively, rejects the whole override
   (catalog args stand). `overrideSecurity.ts` is also the env denylist
   (`sanitizeOverrideEnv`): an override's `env` can never set a code-exec /
@@ -256,8 +257,13 @@ a space in it.
   whitespace together with `%`/`!` — throw `UnsafeCmdArgumentError`, and the
   registry shapers (`shapeOrSkip`) skip THAT server with a warning. Ordinary
   args (`-y @playwright/mcp@latest --headless`) are byte-identical to before.
-  Secrets never ride argv (env / headers only). Pinned end to end against the
-  real cmd.exe in `__tests__/mcp.inject.test.ts`.
+  Secrets never ride argv (env / headers only). The wrapped line starts with
+  `set NoDefaultCurrentDirectoryInExePath=1&&<cmd>` — cmd otherwise searches the
+  session cwd before PATH, so an `npx.cmd` dropped at a repo's root would run
+  instead of the real one. It is set in-line, not via the server's `env`, so each
+  harness's "absent `env` = inherit the ambient shell" behaviour is unchanged.
+  Pinned end to end against the real cmd.exe in `__tests__/mcp.inject.test.ts`
+  (tricky args byte-for-byte, and a cwd-planted shim that does NOT run).
 - `../latticeMcp/` — not part of this folder, but the other half of the
   first-party server: the stdio MCP process itself (11 board tools over the task
   HTTP API), plus `entryPath.ts`, which `catalog.ts` calls to bake the compiled

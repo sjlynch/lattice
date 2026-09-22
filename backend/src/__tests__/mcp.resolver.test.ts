@@ -242,7 +242,7 @@ test('resolve: enabling Brave injects its secret + win32-wraps the command', () 
   assert.equal(cfg.env?.BRAVE_API_KEY, 'sk-1');
   if (process.platform === 'win32') {
     assert.equal(cfg.command, 'cmd');
-    assert.deepEqual(cfg.args?.slice(0, 3), ['/c', 'npx', '-y']);
+    assert.deepEqual(cfg.args?.slice(0, 4), ['/c', 'set', 'NoDefaultCurrentDirectoryInExePath=1&&npx', '-y']);
   } else {
     assert.equal(cfg.command, 'npx');
   }

@@ -320,3 +320,14 @@ test('applyBuiltinOverride: --executable-path (both forms) is refused for playwr
   const ok = applyBuiltinOverride(cd, { args: [...(cd.args ?? []), '--headless'] });
   assert.deepEqual(ok.args, [...(cd.args ?? []), '--headless']);
 });
+
+test('isUnsafeOverrideArg: Playwright --config (a file that can set executablePath) is refused for playwright only', () => {
+  for (const arg of ['--config', '--config=./pw.json', '--CONFIG', '--Config=x']) {
+    assert.ok(isUnsafeOverrideArg(arg, 'playwright'), arg);
+  }
+  // Other servers' own --config flags aren't this escape.
+  assert.equal(isUnsafeOverrideArg('--config', 'chrome-devtools'), false);
+  assert.equal(isUnsafeOverrideArg('--config'), false);
+  // A near-miss is not caught.
+  assert.equal(isUnsafeOverrideArg('--config-dir', 'playwright'), false);
+});

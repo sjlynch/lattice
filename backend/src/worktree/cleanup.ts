@@ -33,6 +33,7 @@ import { notifySessionsFreed } from '../spawnQueue.js';
 import { assertGitDirIntact, parseWorktreesPorcelain } from './state.js';
 import { assertNotReparsePoint, assertSafeWorktreePath } from './cleanupSafety.js';
 import { pruneReparsePointsUnder } from './reparsePoints.js';
+import { archiveUncommittedWorktreeChanges } from './discardArchive.js';
 
 const CLEANUP_GIT_TIMEOUT_MS = 15_000;
 
@@ -40,9 +41,16 @@ export type WorktreeCleanupDeps = {
   projectGit: typeof projectGit;
   proxyKillSessionsByCwd: typeof proxyKillSessionsByCwd;
   notifySessionsFreed: typeof notifySessionsFreed;
+  archiveUncommitted?: typeof archiveUncommittedWorktreeChanges;
 };
 const defaultDeps: WorktreeCleanupDeps = {
   projectGit, proxyKillSessionsByCwd, notifySessionsFreed,
+};
+
+export type WorktreeCleanupOptions = {
+  // The caller already archived the uncommitted changes (the boot sweep does,
+  // before deciding to reclaim), so don't take a second, identical archive.
+  skipArchive?: boolean;
 };
 
 function normalizePath(value: string): string {
@@ -71,6 +79,7 @@ export async function cleanupWorktreeForTask(
   worktreePath: string,
   branchName: string,
   deps: WorktreeCleanupDeps = defaultDeps,
+  opts: WorktreeCleanupOptions = {},
 ): Promise<boolean> {
   // Sanity bound + .git-intact check before any git work. (projectGit also
   // asserts .git, but the explicit call here gives a clearer trace.)
@@ -132,6 +141,27 @@ export async function cleanupWorktreeForTask(
       return false;
     }
     await assertNotReparsePoint(worktreePath);
+
+    // `worktree remove --force` silently drops uncommitted edits. Every caller
+    // (post-merge finalize, task delete, a failed run's teardown, …) gets the
+    // same keep-for-the-user archive a fresh Run's reconcile takes — AFTER the
+    // PTY kill, so the agent can't still be writing. A normal finalize leaves
+    // only Lattice-managed files behind, which aren't archived ('clean').
+    // If the archive fails, keep the checkout rather than lose the work.
+    if (!opts.skipArchive) {
+      const archive = deps.archiveUncommitted ?? archiveUncommittedWorktreeChanges;
+      const archived = await archive(repoRoot, worktreePath, branchName);
+      if (archived.status === 'failed') {
+        console.error(
+          `[worktree] cleanup deferred for ${worktreePath}: could not archive its uncommitted ` +
+            `changes (${archived.error}); preserving the checkout and branch.`,
+        );
+        return false;
+      }
+      if (archived.status === 'archived') {
+        console.warn(`[worktree] archived ${archived.files} uncommitted change(s) from ${worktreePath} to ${archived.dir}`);
+      }
+    }
 
     // Break any reparse-point loops inside the worktree (npm `file:` self-dep
     // junctions, etc.) before handing it to git — otherwise `git worktree

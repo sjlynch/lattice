@@ -158,6 +158,8 @@ function fileExists(p: string): boolean {
 
 // Throws `UnsafeCmdArgumentError` on win32 when an arg can't be carried through
 // `cmd /c` safely (see escapeCmdArgument). `opts` exist for tests.
+export const CMD_NO_CWD_SEARCH_VAR = 'NoDefaultCurrentDirectoryInExePath';
+
 export function platformizeCommand(
   command: string,
   args: string[] = [],
@@ -168,7 +170,16 @@ export function platformizeCommand(
     const batch = opts.batch ?? windowsShimIsBatch(command);
     return {
       command: 'cmd',
-      args: ['/c', command, ...args.map((a) => escapeCmdArgument(a, batch))],
+      // cmd.exe looks in the CURRENT directory before PATH, and an MCP server's
+      // cwd is the session cwd — a repo (or an agent) could drop an `npx.cmd`
+      // at its root and have it run instead of the real one. cmd skips the
+      // current directory once NoDefaultCurrentDirectoryInExePath is set, so
+      // the command line sets it first (`set X=1&&npx …`). Done in-line rather
+      // than via the server's `env`, so each harness's env-inheritance
+      // semantics (an absent `env` = inherit the ambient shell) are untouched.
+      // The token has no whitespace, so the transport passes it unquoted and
+      // cmd sees `&&` as the operator.
+      args: ['/c', 'set', `${CMD_NO_CWD_SEARCH_VAR}=1&&${command}`, ...args.map((a) => escapeCmdArgument(a, batch))],
     };
   }
   return { command, args };

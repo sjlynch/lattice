@@ -30,7 +30,7 @@ test('toPiServerConfig: stdio Playwright — eager lifecycle, direct tools, head
   assert.deepEqual(env, {});
   if (process.platform === 'win32') {
     assert.equal(config.command, 'cmd'); // platformized npx
-    assert.deepEqual(config.args?.slice(0, 2), ['/c', 'npx']);
+    assert.deepEqual(config.args?.slice(0, 3), ['/c', 'set', 'NoDefaultCurrentDirectoryInExePath=1&&npx']);
   } else {
     assert.equal(config.command, 'npx');
   }

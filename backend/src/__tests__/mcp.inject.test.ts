@@ -66,7 +66,10 @@ test('platformizeCommand wraps npx in cmd /c on win32, passes node through', () 
   const wrapped = platformizeCommand('npx', ['-y', 'pkg']);
   const node = platformizeCommand('node', ['server.js']);
   if (process.platform === 'win32') {
-    assert.deepEqual(wrapped, { command: 'cmd', args: ['/c', 'npx', '-y', 'pkg'] });
+    assert.deepEqual(wrapped, {
+      command: 'cmd',
+      args: ['/c', 'set', 'NoDefaultCurrentDirectoryInExePath=1&&npx', '-y', 'pkg'],
+    });
     assert.deepEqual(node, { command: 'node', args: ['server.js'] });
   } else {
     assert.deepEqual(wrapped, { command: 'npx', args: ['-y', 'pkg'] });
@@ -96,7 +99,7 @@ test('platformizeCommand: ordinary package-runner args are unchanged by escaping
   for (const batch of [true, false]) {
     assert.deepEqual(platformizeCommand('npx', args, { platform: 'win32', batch }), {
       command: 'cmd',
-      args: ['/c', 'npx', ...args],
+      args: ['/c', 'set', 'NoDefaultCurrentDirectoryInExePath=1&&npx', ...args],
     });
   }
   // Non-win32 never wraps or escapes.
@@ -237,6 +240,29 @@ test(
       // Control: the UNescaped form really is injectable, so the test can't pass
       // for the wrong reason.
       assert.match(run(['/c', 'echoargs', 'a&echo.PWNED']), /PWNED/);
+      // (c) the real platformizeCommand output (cwd-search prefix included)
+      // still delivers every arg byte-for-byte.
+      // Only npx/uvx are wrapped, so take npx's real output and point it at the
+      // test shim.
+      const asEchoargs = (args: string[]): string[] => {
+        const wrapped = platformizeCommand('npx', args, { platform: 'win32', batch: true }).args;
+        assert.match(wrapped[2], /&&npx$/);
+        return [...wrapped.slice(0, 2), wrapped[2].replace(/npx$/, 'echoargs'), ...wrapped.slice(3)];
+      };
+      assert.deepEqual(JSON.parse(run(asEchoargs(TRICKY_ARGS))), TRICKY_ARGS);
+      // (d) a same-named shim in the CURRENT directory (not on PATH) is not
+      // what runs: the prefix turns off cmd's cwd-first lookup.
+      const cwdOnly = path.join(dir, 'cwd');
+      await fs.mkdir(cwdOnly);
+      await fs.writeFile(path.join(cwdOnly, 'echoargs.cmd'), '@echo HIJACKED\r\n');
+      const noCwdEnv: NodeJS.ProcessEnv = { ...env };
+      for (const k of Object.keys(noCwdEnv)) {
+        if (k.toLowerCase() === 'nodefaultcurrentdirectoryinexepath') delete noCwdEnv[k];
+      }
+      const inCwd = (args: string[]) =>
+        spawnSync('cmd', args, { cwd: cwdOnly, env: noCwdEnv, encoding: 'utf8', windowsHide: true }).stdout;
+      assert.match(inCwd(['/c', 'echoargs', 'x']), /HIJACKED/, 'control: unprefixed cmd searches cwd first');
+      assert.deepEqual(JSON.parse(inCwd(asEchoargs(['x']))), ['x']);
     });
   },
 );
