@@ -10,8 +10,8 @@ import { TerminalPane } from './TerminalPane';
 import { createTerminalSpec } from './sidebar/constants';
 import { NewTerminalDropdown } from './sidebar/NewTerminalDropdown';
 import type { ShellKind } from './sidebar/NewTerminalDropdown';
-import { SidebarEmptyState } from './sidebar/SidebarEmptyState';
 import { SidebarPanelTabs } from './sidebar/SidebarPanelTabs';
+import { SidebarPanes } from './sidebar/SidebarPanes';
 import { SidebarTabsBar } from './sidebar/SidebarTabsBar';
 import { TabContextMenu } from './sidebar/TabContextMenu';
 import { useBusyAgentTerminals } from './sidebar/hooks/useBusyAgentTerminals';
@@ -306,38 +306,33 @@ export const Sidebar = memo(function Sidebar({
         />
       )}
 
-      <div className="sidebar-content">
-        {panelTerminals.length === 0 ? (
-          <SidebarEmptyState activePanel={activePanel} activeFolder={activeFolder} />
-        ) : (
-          projectTerminals.map((t) => (
-            <div
-              key={t.id}
-              className={`sidebar-pane ${t.id === activeId ? '' : 'hidden'}`}
-            >
-              {/* A tab whose pty is being relaunched (or whose relaunch
-                  failed) has no session to attach to; mounting it would open
-                  a serverless connect that re-runs the launch command. */}
-              {mountedIds.has(t.id) && !t.restore && (
-                <TerminalPane
-                  // Keyed on the relaunch nonce (NOT serverId): a pane that
-                  // gave up on a dead pty must be recreated against the one
-                  // restore put behind the tab, while a serverless pane
-                  // capturing its own id keeps its Terminal intact.
-                  key={`${t.id}:${t.relaunchNonce ?? 0}`}
-                  cwd={t.cwd}
-                  active={t.id === activeId}
-                  initialCommand={t.initialCommand}
-                  serverId={t.serverId}
-                  projectPath={t.projectPath}
-                  onServerId={(srv) => handleServerId(t.id, srv)}
-                  onStatus={(status, exitCode) => handleStatus(t.id, status, exitCode)}
-                />
-              )}
-            </div>
-          ))
+      {/* Every pane of the project stays in the tree whichever panel is
+          viewed (see SidebarPanes) — an empty viewed panel must never unmount
+          the force-mounted startup panes behind another panel. */}
+      <SidebarPanes
+        activePanel={activePanel}
+        activeFolder={activeFolder}
+        projectTerminals={projectTerminals}
+        panelTerminals={panelTerminals}
+        activeId={activeId}
+        mountedIds={mountedIds}
+        renderPane={(t) => (
+          <TerminalPane
+            // Keyed on the relaunch nonce (NOT serverId): a pane that
+            // gave up on a dead pty must be recreated against the one
+            // restore put behind the tab, while a serverless pane
+            // capturing its own id keeps its Terminal intact.
+            key={`${t.id}:${t.relaunchNonce ?? 0}`}
+            cwd={t.cwd}
+            active={t.id === activeId}
+            initialCommand={t.initialCommand}
+            serverId={t.serverId}
+            projectPath={t.projectPath}
+            onServerId={(srv) => handleServerId(t.id, srv)}
+            onStatus={(status, exitCode) => handleStatus(t.id, status, exitCode)}
+          />
         )}
-      </div>
+      />
 
       <TabContextMenu
         menu={tabContextMenu}

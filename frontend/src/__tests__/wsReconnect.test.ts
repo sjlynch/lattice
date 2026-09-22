@@ -168,6 +168,37 @@ test('teardown ignores queued socket callbacks without restoring timers or deliv
   assert.equal(timers.scheduled.length, 0);
 });
 
+test('a throwing message handler is reported and does not close the socket', () => {
+  const reported: unknown[][] = [];
+  const origError = console.error;
+  console.error = (...args: unknown[]) => { reported.push(args); };
+  try {
+    const received: unknown[] = [];
+    const teardown = subscribeWs<{ n: number }>('/ws/throwing', (msg) => {
+      received.push(msg);
+      if (msg.n === 1) throw new Error('consumer failed');
+    });
+    const ws = latestSocket();
+    ws.serverAccept();
+    ws.onmessage?.({ data: '{"n":1}' });
+    ws.onmessage?.({ data: '{"n":2}' });
+    assert.deepEqual(received, [{ n: 1 }, { n: 2 }], 'the frame after the throw is still delivered');
+    assert.equal(reported.length, 1, 'the throw is reported once');
+    assert.equal(reported[0][0], '[ws] handler failed');
+    assert.equal(reported[0][1], '/ws/throwing');
+    assert.equal(ws.closed, false, 'the socket stays open');
+    // Only the stability timer is pending — no reconnect was scheduled.
+    assert.equal(pendingReconnect().delay, WS_STABLE_MS);
+    // A malformed frame is still dropped silently, not reported as a handler failure.
+    ws.onmessage?.({ data: 'not json' });
+    assert.equal(received.length, 2);
+    assert.equal(reported.length, 1);
+    teardown();
+  } finally {
+    console.error = origError;
+  }
+});
+
 test('a throwing disconnect callback cannot stop reconnecting', () => {
   const teardown = subscribeWs('/disconnect-error', () => {}, () => { throw new Error('subscriber failed'); });
   latestSocket().serverDrop();

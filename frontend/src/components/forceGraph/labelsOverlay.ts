@@ -55,9 +55,10 @@ export const LABEL_Y = 100;
 export const LABEL_REPULSION_BASE = 90;
 
 // Local-space registry of active name-label sprites + their connector
-// lines. The relaxation loop in ForceGraphView walks this each frame to
-// spread overlapping labels apart and to keep the connector's upper
-// endpoint anchored to its label, mirroring the LOC overlay.
+// lines. The scene-frame-driven repulsion step (`labelRepulsionFrames` →
+// `repelLabels`) walks this each frame to spread overlapping labels apart and
+// to keep the connector's upper endpoint anchored to its label, mirroring the
+// LOC overlay.
 export type LabelEntry = FloatingLabelEntry;
 export const labelsRegistry = new Set<LabelEntry>();
 
@@ -101,7 +102,11 @@ function shouldShowLabel(
   return true;
 }
 
-function disposeLabelEntry(entry: FloatingLabelEntry): void {
+// Release one name-label entry's solely-owned resources. Also the per-entry
+// release the repulsion loop's stale sweep runs for a label whose node root
+// was detached from the scene by a visibility digest (hidden-ext toggle) — see
+// `cleanupStaleRegistryEntries`.
+export function releaseNameLabelEntry(entry: FloatingLabelEntry): void {
   // The label texture (nameLabelTextureCache), the sprite material (shared per
   // texture) and the connector's line material (shared per color) are all
   // module-owned caches in floatingLabelSprite/labelTexture — disposing any of
@@ -123,7 +128,7 @@ function disposeLabelEntry(entry: FloatingLabelEntry): void {
 // accumulate phantom references and never become reclaimable) AND dispose the
 // per-line connector geometry the library leaves orphaned on refresh.
 export function clearNameLabelRegistry(): void {
-  for (const entry of labelsRegistry) disposeLabelEntry(entry);
+  for (const entry of labelsRegistry) releaseNameLabelEntry(entry);
   labelsRegistry.clear();
 }
 
@@ -159,7 +164,7 @@ export function applyNodeLabelState(
     labelsRegistry.delete(existing);
     root.remove(existing.label);
     root.remove(existing.line);
-    disposeLabelEntry(existing);
+    releaseNameLabelEntry(existing);
     delete root.userData[LABEL_ENTRY];
   }
 }

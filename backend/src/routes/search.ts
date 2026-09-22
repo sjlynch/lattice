@@ -3,6 +3,7 @@
 
 import { Router } from 'express';
 import { searchProjectContents } from '../search.js';
+import { readPathParam } from './projectParam.js';
 
 // Coerce the user-supplied `limit` query param to a positive integer, else
 // undefined (search.ts then applies its default). A fractional/garbage value
@@ -15,19 +16,18 @@ export function parseLimitParam(raw: unknown): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-export function buildSearchRouter(defaultRoot: string): Router {
+export function buildSearchRouter(
+  defaultRoot: string,
+  search: typeof searchProjectContents = searchProjectContents,
+): Router {
   const r = Router();
 
   // GET /api/search?project=&q=&regex=0|1&limit=
   //   → { matches: string[]  // absolute paths == graph file-node ids
   //     , scanned: number, truncated: boolean }
   r.get('/api/search', async (req, res) => {
-    const target =
-      typeof req.query.project === 'string'
-        ? req.query.project
-        : typeof req.query.path === 'string'
-          ? req.query.path
-          : defaultRoot;
+    const target = readPathParam(req, res, defaultRoot);
+    if (target === null) return;
     const q = typeof req.query.q === 'string' ? req.query.q : '';
     const regex = req.query.regex === '1' || req.query.regex === 'true';
     const limit = parseLimitParam(req.query.limit);
@@ -39,14 +39,18 @@ export function buildSearchRouter(defaultRoot: string): Router {
     }
 
     // The browser aborts a superseded debounced request; stop reading files
-    // once it does (mirrors /api/scan's client-gone handling).
+    // once it does (mirrors /api/scan's client-gone handling). Observe the
+    // RESPONSE's close, not the request's: IncomingMessage `close` also fires
+    // for a fully consumed GET while its response is still pending, which
+    // would have cancelled every search that outlived its own body.
     let clientGone = false;
-    req.on('close', () => {
+    const onClose = () => {
       if (!res.writableEnded) clientGone = true;
-    });
+    };
+    res.on('close', onClose);
 
     try {
-      const result = await searchProjectContents(target, {
+      const result = await search(target, {
         pattern: q,
         regex,
         limit,
@@ -58,6 +62,8 @@ export function buildSearchRouter(defaultRoot: string): Router {
       if (clientGone) return;
       // Most likely an invalid user-supplied regex.
       res.status(400).json({ error: (err as Error).message });
+    } finally {
+      res.off('close', onClose);
     }
   });
 

@@ -58,12 +58,17 @@ export function spawnWithTimeout(
       resolve(r);
     };
 
+    const useShell = opts.shell ?? false;
     let child: ChildProcess;
     try {
       child = spawn(command, args, {
         cwd: opts.cwd,
-        shell: opts.shell ?? false,
+        shell: useShell,
         windowsHide: true,
+        // POSIX shell spawns get their own process group so the timeout can
+        // signal the WHOLE tree (see killChild). Not on win32, where a tree
+        // kill goes through taskkill and `detached` would only add a console.
+        detached: useShell && process.platform !== 'win32',
         ...(opts.env ? { env: opts.env } : {}),
       });
     } catch (err) {
@@ -89,22 +94,49 @@ export function spawnWithTimeout(
       combined += s;
     });
 
-    const timer = setTimeout(() => {
+    // Kill the child — and, for a `shell: true` spawn, everything under it.
+    // `child.kill()` only reaches the process we spawned; behind a shell that is
+    // cmd.exe / sh, and the real work (`pi`, `npm install`) is its grandchild,
+    // which used to survive the timeout holding our stdio pipes. win32: taskkill
+    // walks the tree (fire-and-forget; falls back to child.kill() if taskkill
+    // itself can't start). POSIX: the shell child is its own process group
+    // (`detached` above), so one negative-pid signal takes the whole tree.
+    // A non-shell spawn keeps the plain child.kill() (opengrep relies on it).
+    const killChild = (): void => {
       try {
-        child.kill();
+        if (!useShell || child.pid === undefined) {
+          child.kill();
+          return;
+        }
+        if (process.platform === 'win32') {
+          const tk = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+            windowsHide: true,
+            stdio: 'ignore',
+          });
+          tk.on('error', () => {
+            try {
+              child.kill();
+            } catch {
+              /* already exited */
+            }
+          });
+          tk.unref();
+        } else {
+          process.kill(-child.pid, 'SIGKILL');
+        }
       } catch {
         /* already exited */
       }
+    };
+
+    const timer = setTimeout(() => {
+      killChild();
       finish({ code: null, stdout, stderr, combined, timedOut: true, error: null });
     }, opts.timeoutMs);
 
     const onAbort = () => {
       clearTimeout(timer);
-      try {
-        child.kill();
-      } catch {
-        /* already exited */
-      }
+      killChild();
       finish({ code: null, stdout, stderr, combined, timedOut: false, aborted: true, error: null });
     };
     opts.signal?.addEventListener('abort', onAbort, { once: true });

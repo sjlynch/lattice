@@ -272,6 +272,28 @@ test('reconcile preserves registered worktrees nested under an unregistered cand
   });
 });
 
+test('reconcile refuses to clear a candidate whose branch has unmerged commits (no mutation at all)', async (t) => {
+  // "Move to Open" from in_progress / ready_to_merge keeps task.branch, so a
+  // fresh ▶ Run reconciles the very branch that carries the previous run's
+  // commits. Clearing it would `branch -D` the only copy of that work.
+  const errors: string[] = [];
+  t.mock.method(console, 'error', (...args: unknown[]) => errors.push(args.join(' ')));
+  await withRepo(async (repo, candidate) => {
+    await git(repo, ['worktree', 'add', '-q', '-b', branch, candidate]);
+    await fs.writeFile(path.join(candidate, 'work.txt'), 'unmerged work');
+    await git(candidate, ['add', '-A']);
+    await git(candidate, ['-c', 'user.name=Lattice Test', '-c', 'user.email=lattice-test@example.invalid',
+      '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'unmerged']);
+    const { deps, effects } = observed();
+    assert.equal(await reconcileStaleState(repo, branch, candidate, deps), false);
+    assert.deepEqual(effects, [], 'no kill / remove / branch delete may run');
+    assert.equal(await fs.readFile(path.join(candidate, 'work.txt'), 'utf8'), 'unmerged work');
+    assert.ok((await registered(repo)).some((entry) => entry.branch === `refs/heads/${branch}`));
+    await assertBranchPresent(repo);
+    assert.ok(errors.some((e) => e.includes(branch) && /1 unmerged commit/.test(e)), errors.join('\n'));
+  });
+});
+
 test('reconcile preserves a stray-looking candidate nested inside another registered worktree', async () => {
   await withRepo(async (repo, parent) => {
     await git(repo, ['worktree', 'add', '-q', '-b', 'user/parent', parent]);

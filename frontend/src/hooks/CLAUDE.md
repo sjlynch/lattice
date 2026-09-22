@@ -79,7 +79,12 @@ shared `userSettings.json` fetch:
 
 - `useUserSettings(activeFolder)` — the **single** per-folder
   `userSettings.json` fetch; the slice hooks below read from its result instead
-  of each fetching. `useHiddenExtensions` (per-ext graph visibility in
+  of each fetching. Uses `fetchUserSettingsStrict` and retries a failure with
+  the `APP_CONFIG.scanRetry` backoff (cancelled on folder change); `loaded`
+  is stamped only by a real answer. The lenient fetch's `{}`-on-failure,
+  stamped as loaded, put an F5 during the ~2 s backend restart (proxy 502) on
+  defaults for the whole page session — no startup terminals, restore mode
+  read as `always`, sidebar width reset. `useHiddenExtensions` (per-ext graph visibility in
   `localStorage`; folder-switch persist guard extracted to `hiddenExtsPersist.ts`)
   · `useMetricsIgnoredExts` (exts skipped by the LOC/health overlays) ·
   `usePersistedToggle` (generic boolean ↔ `localStorage`) · `useActiveFolder`

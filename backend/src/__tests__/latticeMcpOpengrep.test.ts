@@ -111,7 +111,11 @@ test('opengrep_ignore POSTs the rule ids / fingerprints to the ignore route and 
       fingerprints: ['opengrep:62da25210dcc0ac0_0'],
     });
     assert.notEqual((r as { isError?: boolean }).isError, true);
-    assert.deepEqual(JSON.parse(textOf(r)), envelope);
+    // The envelope comes back as the first line; the agent's `reason` is
+    // echoed beneath it (never sent to the API) so the transcript keeps the why.
+    const [first, ...rest] = textOf(r).split('\n');
+    assert.deepEqual(JSON.parse(first), envelope);
+    assert.deepEqual(rest, ['reason: noise']);
   } finally {
     await close();
   }

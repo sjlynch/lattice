@@ -45,6 +45,36 @@ async function withTempProject(fn: (projectPath: string) => Promise<void>): Prom
   }
 }
 
+test('persisted merge-runs are capped to the newest 50 settled runs plus every running one', async () => {
+  // merge-runs.json is rewritten on every progress event; unbounded, a
+  // long-lived project turned each event into a multi-megabyte write.
+  await withTempProject(async (projectPath) => {
+    const state = createRunState();
+    const key = await state.loadProject(projectPath);
+    // The oldest record of all is still running — it must never be dropped.
+    const running: MergeRun = { ...makeRun(key, 'run_running_oldest'), startedAt: 1 };
+    state.runs.set(running.id, running);
+    state.markRunLive(running.id);
+    for (let i = 0; i < 60; i += 1) {
+      const settled: MergeRun = { ...makeRun(key, `run_${i}`), status: 'completed', startedAt: 100 + i };
+      state.runs.set(settled.id, settled);
+    }
+
+    state.emit({ type: 'progress', run: { ...running } });
+    await state.flushPersist(key);
+
+    const file = path.join(homeProjectDir(key), 'merge-runs.json');
+    const persisted = JSON.parse(await fs.readFile(file, 'utf8')) as MergeRun[];
+    const ids = new Set(persisted.map((run) => run.id));
+    assert.equal(persisted.length, 51);
+    assert.ok(ids.has('run_running_oldest'), 'a running run is always persisted');
+    for (let i = 0; i < 10; i += 1) assert.ok(!ids.has(`run_${i}`), `oldest settled run_${i} is dropped`);
+    for (let i = 10; i < 60; i += 1) assert.ok(ids.has(`run_${i}`), `run_${i} is kept`);
+    assert.equal(state.runs.size, 61, 'the in-memory map is not trimmed');
+    assert.equal(state.getRun('run_0')?.status, 'completed');
+  });
+});
+
 test('loadProject never swaps a live run object for its persisted snapshot', async () => {
   await withTempProject(async (projectPath) => {
     const state = createRunState();

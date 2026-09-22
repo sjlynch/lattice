@@ -5,13 +5,13 @@
 import path from 'node:path';
 import { Router } from 'express';
 import { relativeProjectError } from './projectParam.js';
-import {
-  proxyCreateSession,
-  proxyKillSession,
-  proxyListSessions,
-} from '../terminalProxy.js';
+import { proxyCreateSession, proxyListSessions } from '../terminalProxy.js';
+// The RAW kill (no registry bookkeeping): this route ends the record itself,
+// with the `closed` reason a user-closed tab needs — see the DELETE handler.
+import { proxyKillSession as rawProxyKillSession } from '../terminalServerClient.js';
 import { getSpawnQueueSnapshot } from '../spawnQueue.js';
 import { terminalRegistry } from '../terminalRegistry/store.js';
+import { endPostMergeHook, getActiveHookForServerId } from '../postMergeHooks.js';
 
 export function buildTerminalsRouter(): Router {
   const r = Router();
@@ -87,12 +87,25 @@ export function buildTerminalsRouter(): Router {
   });
 
   // Kill a pty by session id. Also ends its registry record as user-closed
-  // (a tab closed from the sidebar must never be relaunched by restore).
+  // (a tab closed from the sidebar must never be relaunched by restore) — once,
+  // here, with the raw kill underneath: the `terminalProxy` wrapper would end
+  // the same record a second time as `killed`.
+  //
+  // If the pty belongs to a running post-merge hook, closing its tab is the
+  // user giving up on it: end the hook `aborted` so the merge run / workflow
+  // Merge step waiting on its callback unblocks instead of parking until the
+  // wait's deadline. The hook's own kill is skipped — it happens right below.
   r.delete('/api/terminals/:id', async (req, res) => {
+    const hook = getActiveHookForServerId(req.params.id);
+    if (hook) {
+      await endPostMergeHook(hook.id, 'aborted', 'terminal closed by user', {
+        killSession: false,
+      });
+    }
     await terminalRegistry
       .endWhere((r) => r.serverId === req.params.id, { reason: 'closed' })
       .catch(() => 0);
-    const ok = await proxyKillSession(req.params.id);
+    const ok = await rawProxyKillSession(req.params.id);
     if (!ok) return res.status(404).json({ error: 'not found' });
     res.json({ ok: true });
   });

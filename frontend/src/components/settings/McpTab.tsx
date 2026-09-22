@@ -9,7 +9,7 @@ import {
   fetchMcpCatalog,
   fetchMcpEnvPresence,
   fetchMcpSecrets,
-  fetchUserSettings,
+  fetchUserSettingsStrict,
   patchGlobalSettings,
   type McpEnvPresence,
   type McpSecretHints,
@@ -70,7 +70,13 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
   // touched from this tab.
   const [overridesTouched, setOverridesTouched] = useState(false);
   const [harnessTouched, setHarnessTouched] = useState(false);
+  // `loaded` flips only on a SUCCESSFUL load (same clobber-guard as Tools):
+  // the enable patches are whole maps, so a lenient "settings → {}" load
+  // followed by one toggle + Save would rewrite `mcpOverrides` as a one-key
+  // map and silently turn every other server off. A failed load shows
+  // `error` and leaves the toggles unmounted, so no patch can be produced.
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const reloadCatalog = async () => {
     const { servers } = await fetchMcpCatalog();
@@ -88,13 +94,16 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
     if (!open) return;
     let cancelled = false;
     setLoaded(false);
+    setError(null);
     setOverridesTouched(false);
     setHarnessTouched(false);
     setHeadedTouched(false);
     (async () => {
       const [{ servers }, settings, secrets, env] = await Promise.all([
         fetchMcpCatalog(),
-        activeFolder ? fetchUserSettings(activeFolder) : Promise.resolve({} as UserSettings),
+        activeFolder
+          ? fetchUserSettingsStrict(activeFolder)
+          : Promise.resolve({} as UserSettings),
         fetchMcpSecrets(),
         fetchMcpEnvPresence(),
       ]);
@@ -107,8 +116,9 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
       setHints(secrets.hints);
       setEnvPresence(env.presence);
       setLoaded(true);
-    })().catch(() => {
-      if (!cancelled) setLoaded(true);
+    })().catch((err) => {
+      // Keep `loaded` false: no toggles, no patch, nothing to clobber.
+      if (!cancelled) setError(`Could not load MCP settings: ${(err as Error).message}`);
     });
     return () => {
       cancelled = true;
@@ -171,10 +181,14 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
   };
 
   const removeCustom = async (id: string) => {
-    const global = await fetchGlobalSettings();
-    const customs = (global.mcpCustomServers ?? []).filter((c) => c.id !== id);
-    await patchGlobalSettings({ mcpCustomServers: customs });
-    await reloadCatalog();
+    try {
+      const global = await fetchGlobalSettings();
+      const customs = (global.mcpCustomServers ?? []).filter((c) => c.id !== id);
+      await patchGlobalSettings({ mcpCustomServers: customs });
+      await reloadCatalog();
+    } catch (err) {
+      setError(`Could not remove "${id}": ${(err as Error).message}`);
+    }
   };
 
   if (!active) return null;
@@ -198,7 +212,8 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
         </div>
       </div>
 
-      {!loaded && <div className="settings-section-sub">Loading…</div>}
+      {error && <div className="error-msg">{error}</div>}
+      {!loaded && !error && <div className="settings-section-sub">Loading…</div>}
 
       {loaded && (
         <>

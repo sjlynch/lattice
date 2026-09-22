@@ -27,13 +27,25 @@ test('parseStatus classifies porcelain (-z) modified and untracked paths', () =>
     '',
   ].join('\0'));
 
-  assert.deepEqual(parsed.modified, [
-    'src/unstaged.ts',
-    'src/staged.ts',
-    'src/deleted.ts',
-    'src/new.ts',
-  ]);
+  // Staged-new and deleted paths are NOT `modified`: `checkout HEAD -- <path>`
+  // cannot reset a path HEAD doesn't have (`A`), and a deleted path has no
+  // working copy to snapshot — each needs its own cleanup (see
+  // pathClassification.ts). A rename is a staged-new destination plus a
+  // deleted source.
+  assert.deepEqual(parsed.modified, ['src/unstaged.ts']);
+  assert.deepEqual(parsed.added, ['src/staged.ts', 'src/new.ts']);
+  assert.deepEqual(parsed.deleted, ['src/deleted.ts', 'src/old.ts']);
   assert.deepEqual(parsed.untracked, ['notes/todo.md']);
+});
+
+test('parseStatus keeps an index-only-content path (`MD`) out of the deleted bucket', () => {
+  // `MD` = staged edit whose working copy was then deleted: the index holds
+  // content nothing else has, so it must not be `checkout HEAD`-reset. It
+  // stays `modified` (the copy fails ENOENT and the path is left dirty).
+  const parsed = parseStatus(['MD src/staged-then-deleted.ts', ' D src/gone.ts', 'D  src/staged-gone.ts', ''].join('\0'));
+  assert.deepEqual(parsed.modified, ['src/staged-then-deleted.ts']);
+  assert.deepEqual(parsed.deleted, ['src/gone.ts', 'src/staged-gone.ts']);
+  assert.deepEqual(parsed.added, []);
 });
 
 test('parseStatus captures renames as their new path and non-ASCII names verbatim', () => {
@@ -51,12 +63,13 @@ test('parseStatus captures renames as their new path and non-ASCII names verbati
     '',
   ].join('\0'));
 
-  assert.deepEqual(parsed.modified, [
+  assert.deepEqual(parsed.added, [
     'docs/new-name.md',
     'src/renamed.ts',
     'copy/dst.ts',
-    'résumé.txt',
   ]);
+  assert.deepEqual(parsed.deleted, ['docs/old-name.md', 'src/before.ts']);
+  assert.deepEqual(parsed.modified, ['résumé.txt']);
   assert.deepEqual(parsed.untracked, ['śx.txt']);
 });
 
@@ -109,11 +122,13 @@ test('buildSnapshotCleanupPlan resets/deletes only successfully copied paths', (
   const plan = buildSnapshotCleanupPlan({
     copiedModified: ['src/ok.ts'],
     copiedUntracked: ['new.txt'],
+    copiedAdded: ['staged-new.txt'],
     copyFailures: ['src/failed.ts', 'failed-new.txt'],
   });
 
   assert.deepEqual(plan.resetTracked, ['src/ok.ts']);
   assert.deepEqual(plan.deleteUntracked, ['new.txt']);
+  assert.deepEqual(plan.unstageAdded, ['staged-new.txt']);
 });
 
 test('restoreSnapshot restores safe files and removes snapshot only after full success', async () => {
@@ -331,6 +346,7 @@ test('snapshot capture and restore preserve symlinks without copying outside con
     assert.deepEqual(copied, {
       copiedModified: ['tracked-link.txt'],
       copiedUntracked: ['untracked-link.txt'],
+      copiedAdded: [],
       copyFailures: [],
     });
     assert.equal((await fs.lstat(path.join(snapshotDir, 'untracked-link.txt'))).isSymbolicLink(), true);

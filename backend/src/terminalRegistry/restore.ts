@@ -33,11 +33,11 @@
 
 import fs from 'node:fs/promises';
 import { agentHarnessForCommand } from '../harnesses.js';
-import { enqueueSpawn, SpawnCapacityError } from '../spawnQueue.js';
+import { enqueueSpawn, notifySessionsFreed, SpawnCapacityError } from '../spawnQueue.js';
 import { getTask } from '../tasks.js';
 import { getUserSettings, type UserSettings } from '../userSettings.js';
 import { proxyCreateSession } from '../terminalServerClient/createSession.js';
-import { proxyListSessionsOrNull } from '../terminalServerClient/sessions.js';
+import { proxyKillSession, proxyListSessionsOrNull } from '../terminalServerClient/sessions.js';
 import { normalizeCwd } from './harnessPaths.js';
 import { detectInterruption, type InterruptionVerdict } from './interruption.js';
 import { buildRestoreCommand, RESTORE_NUDGE } from './restoreCommand.js';
@@ -50,6 +50,8 @@ export type RestoreDeps = {
   readLiveSessions: () => Promise<LiveSessionsView | null>;
   listLiveSessions: () => Promise<Array<{ id: string; cwd: string; initialCommand?: string }>>;
   createSession: typeof proxyCreateSession;
+  // Reclaims a pty whose tab was closed while the relaunch was in flight.
+  killSession: (id: string) => Promise<boolean>;
   enqueue: typeof enqueueSpawn;
   getTask: typeof getTask;
   getUserSettings: typeof getUserSettings;
@@ -76,6 +78,7 @@ const productionDeps: RestoreDeps = {
     return out;
   },
   createSession: proxyCreateSession,
+  killSession: proxyKillSession,
   enqueue: enqueueSpawn,
   getTask,
   getUserSettings,
@@ -329,11 +332,18 @@ function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): Promise<voi
         return;
       }
       const restored = await terminalRegistry.get(current.id, current.projectPath);
-      if (restored) {
-        terminalRegistry.emitRestored(restored, 'relaunched');
-        if (current.launch.harness === 'codex' && !current.agentSession) {
-          scheduleCodexDiscovery(current.id, current.projectPath);
-        }
+      // The tab was closed (record ended / removed) while the spawn was in
+      // flight — recordSpawnedTerminal's update found nothing to attach the
+      // new pty to. Nothing owns that agent now: kill it rather than leave it
+      // running headless with no tab to ever find it again.
+      if (!restored || restored.ended || restored.serverId !== sess.id) {
+        await deps.killSession(sess.id).catch(() => false);
+        notifySessionsFreed();
+        return;
+      }
+      terminalRegistry.emitRestored(restored, 'relaunched');
+      if (current.launch.harness === 'codex' && !current.agentSession) {
+        scheduleCodexDiscovery(current.id, current.projectPath);
       }
     },
   });

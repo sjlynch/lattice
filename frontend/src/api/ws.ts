@@ -67,11 +67,21 @@ export function subscribeWs<T>(
     };
     socket.onmessage = (ev) => {
       if (cancelled || ws !== socket) return;
+      let msg: T;
       try {
-        const msg = JSON.parse(ev.data) as T;
-        onMessage(msg);
+        msg = JSON.parse(ev.data) as T;
       } catch {
         /* ignore malformed frames */
+        return;
+      }
+      // Dispatched OUTSIDE the parse guard: a consumer that threw used to be
+      // swallowed by the same silent catch, so the failure never surfaced and
+      // the UI quietly drifted from the stream. Report it — and never close
+      // the socket over it; the next frame still gets delivered.
+      try {
+        onMessage(msg);
+      } catch (err) {
+        console.error('[ws] handler failed', pathWithQuery, err);
       }
     };
     socket.onerror = () => {

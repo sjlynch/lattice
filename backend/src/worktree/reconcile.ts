@@ -108,6 +108,27 @@ export async function reconcileStaleState(
   if (branch.code !== 0 && branch.code !== 1) {
     throw new Error(`git branch lookup failed (exit ${branch.code}): ${branch.stderr.trim() || branch.stdout.trim()}`);
   }
+  if (branch.code === 0) {
+    // A fresh Run reuses the task's canonical branch name — but "Move to
+    // Open" from in_progress / ready_to_merge keeps `task.branch`, so this
+    // candidate branch can still carry real, unmerged commits. Clearing it
+    // (`worktree remove --force` + `branch -D`) would be the only copy of
+    // that work gone, with no backup. Refuse before ANY mutation so setup
+    // falls through to the next `-rN` suffix and the old branch (and its
+    // checkout, uncommitted edits included) survives for the user.
+    const unmerged = await git(['rev-list', '--count', `HEAD..${branchRef}`]);
+    const count = unmerged.code === 0 ? parseInt(unmerged.stdout.trim(), 10) : NaN;
+    if (!Number.isFinite(count)) {
+      return refuse(`cannot count unmerged commits on ${branchName} (exit ${unmerged.code}): ${unmerged.stderr.trim() || unmerged.stdout.trim()}`);
+    }
+    if (count > 0) {
+      console.error(
+        `[worktree] reconcile: branch ${branchName} has ${count} unmerged commit(s) — ` +
+          `NOT deleting it or its checkout at ${worktreePath}; the new run will use a suffixed branch/path instead.`,
+      );
+      return refuse(`branch has ${count} unmerged commit(s)`);
+    }
+  }
 
   if (registration) {
     if (await entryExists(worktreePath)) {

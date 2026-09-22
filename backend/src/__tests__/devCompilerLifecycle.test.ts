@@ -232,6 +232,7 @@ test('a new compilation between backend restart kill and exit postpones spawning
   const backend = createBackendLifecycle({
     copyAssetsBeforeRespawn() {}, isShuttingDown: () => false, onExitDuringShutdown() {},
     canSpawnBackend: () => ready,
+    probePort: async () => false, // never probe the real port from a unit test
     spawnProcess: (() => {
       const child = Object.assign(new EventEmitter(), { kill: () => true });
       children.push(child);
@@ -264,6 +265,7 @@ test('a failed asynchronous backend kill leaves new compiled bytes eligible for 
   const backend = createBackendLifecycle({
     copyAssetsBeforeRespawn() {}, isShuttingDown: () => false, onExitDuringShutdown() {},
     onBackendSpawned: () => policy.onBackendSpawned(),
+    probePort: async () => false, // never probe the real port from a unit test
     spawnProcess: (() => {
       const child = Object.assign(new EventEmitter(), { kill: () => { kills++; return true; } });
       children.push(child);
@@ -298,6 +300,7 @@ test('a newer successful compile during a pending backend kill is baselined on a
   const backend = createBackendLifecycle({
     copyAssetsBeforeRespawn() {}, isShuttingDown: () => false, onExitDuringShutdown() {},
     onBackendSpawned: () => policy.onBackendSpawned(),
+    probePort: async () => false, // never probe the real port from a unit test
     spawnProcess: (() => {
       const child = Object.assign(new EventEmitter(), { kill: () => { kills++; return true; } });
       children.push(child);
@@ -331,6 +334,7 @@ test('spawn commits its captured candidate even when the next compilation is alr
     canSpawnBackend: () => ready,
     captureBackendVersion: () => policy.captureDistBaseline(),
     onBackendSpawned: (candidate) => policy.onBackendSpawned(candidate),
+    probePort: async () => false, // never probe the real port from a unit test
     spawnProcess: (() => {
       const child = Object.assign(new EventEmitter(), { kill: () => { kills++; return true; } });
       children.push(child); return child;

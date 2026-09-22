@@ -12,9 +12,11 @@ snapshot / fast-forward. `../projectRunLock.ts` is the public facade.
 
 One lockfile per project: `~/.lattice/per-project/<sha1(canonicalPath)[:12]>/run.lock`
 (confirm via `paths.ts` → `homeProjectDir`). Body is `{pid, hostname,
-startedAt, label}`. Held for the duration of a merge run (`label:
-merge-run`) and a manual `/merge` (`label: manual-merge`); `label` exists
-only so a human inspecting the file knows what's holding it. Created with the
+startedAt, label, ownerId}` (`ownerId` is a UUID minted per acquisition — the
+generation identity; locks written before 2026-09 lack it). Held for the
+duration of a merge run (`label: merge-run`) and a manual `/merge` (`label:
+manual-merge`); `label` exists only so a human inspecting the file knows what's
+holding it. Created with the
 `wx` flag (atomic fail-if-exists) — that's the actual mutual-exclusion
 primitive; everything else is staleness handling.
 
@@ -37,7 +39,14 @@ does not provide this guarantee. Read errors other than ENOENT refuse recovery.
 Tombstones also distinguish legacy generations by their entire original bytes.
 
 Keep the tombstones: deleting them while any process can retain an observation
-reintroduces the race. They contain tiny retirement audit records. A crash after
+reintroduces the race. They contain tiny retirement audit records. The one
+sanctioned deletion is `tombstones.ts` `pruneRetiredTombstones`: on the first
+acquisition per project per process, and only while NO `run.lock` exists, it
+removes tombstones older than 7 days (by the `at` in the body, mtime as the
+fallback). A generation's raw body can't be re-issued (UUID `ownerId` +
+timestamp), so a week-old observation of it can never again match a live lock —
+the CAS guarantee is unaffected; without the pruning every retirement left a
+permanent file. A crash after
 claiming retirement but before unlink leaves the old lock blocked deliberately;
 the diagnostic requires stopping all backends before inspecting/removing only
 `run.lock`, preserving the tombstones. This is a fail-closed availability limit,
@@ -87,6 +96,7 @@ and silently aborts every later run on that project.
 | `paths.ts` | Lockfile path (`run.lock` under `homeProjectDir`). |
 | `types.ts` | `LockBody`, `ProjectRunLockHandle`, `ProjectRunLockInspection`. |
 | `lockfile.ts` | Read/parse/`wx`-write/delete + `sameLockBody` — all raw fs. |
+| `tombstones.ts` | `pruneRetiredTombstones` — the bounded, lock-absent-only 7-day prune of `run.lock.retired/`, run once per project per process from `acquire.ts`. |
 | `liveness.ts` | `currentLockBody`, PID-alive probe, PID-reuse disambiguation. |
 | `steal.ts` | `clearStaleLockOrThrow` — decide steal vs. throw. |
 | `acquire.ts` | `acquireProjectRunLock` — `wx` write + one steal-retry. |

@@ -32,6 +32,18 @@ function spec(over: Partial<TerminalSpec> & { id: string }): TerminalSpec {
   return { label: over.id, cwd: P, projectPath: P, ...over };
 }
 
+test('mergeRegistryTabs treats a local tab whose projectPath differs only by casing / separators as this project', () => {
+  // The registry's records carry the backend's realpath spelling; a local
+  // spec stamped from the frontend's activeFolder may differ by `\` vs `/`
+  // or directory casing. Filing it under "other projects" left a stale
+  // duplicate that the registry snapshot could never replace.
+  const local = spec({ id: 'a', projectPath: 'c:/PROJ', serverId: 'srv_old', registered: true });
+  const foreign = spec({ id: 'x', projectPath: OTHER, registered: true });
+  const merged = mergeRegistryTabs([local, foreign], [rec({ id: 'a' })], P);
+  assert.deepEqual(merged.map((t) => t.id), ['x', 'a']);
+  assert.equal(merged.find((t) => t.id === 'a')?.serverId, 'srv_a', 'the registry record superseded the local spec');
+});
+
 test('recordToSpec projects a record and derives its restore state', () => {
   const live = recordToSpec(rec({ id: 'a', taskId: 't', kind: 'merge' }));
   assert.equal(live.registered, true);

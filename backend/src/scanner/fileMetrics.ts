@@ -50,6 +50,24 @@ export class ScanCancelledError extends Error {
 
 type MissJob = AnalysisJob & { hasStat: boolean; size: number; mtimeMs: number };
 
+// How many `fs.stat`s to keep in flight at once during phase 1. A serial
+// await per file cost one thread-pool round trip per file (20k of them on a
+// large tree, before any analysis started — even on a fully cached refresh).
+const STAT_BATCH = 32;
+
+// Files the analyzer could NOT produce metrics for (a minified bundle, a file
+// that threw, a watchdog-killed hang), keyed by path with the (mtime,size) the
+// verdict was reached at. The health cache only stores positive results, so
+// without this every scan re-read and re-attempted the same pathological
+// file — for a watchdog culprit that is a 10 s stall + a worker respawn on
+// EVERY `/api/scan`, forever. Process-lifetime memo; an entry is dropped the
+// moment the file analyzes successfully or its (mtime,size) moves.
+const unanalyzable = new Map<string, { mtimeMs: number; size: number; loc: number | undefined }>();
+
+export function resetUnanalyzableMemoForTests(): void {
+  unanalyzable.clear();
+}
+
 export async function computeFileMetrics(
   files: string[],
   options: ComputeFileMetricsOptions = {},
@@ -60,45 +78,51 @@ export async function computeFileMetrics(
   const misses: MissJob[] = [];
   if (options.isCancelled?.()) throw new ScanCancelledError();
 
-  // ── Phase 1 (main thread): stat + cache lookup. Cheap and non-hanging. ──
-  for (let i = 0; i < files.length; i += 1) {
+  // ── Phase 1 (main thread): stat + cache lookup. Cheap and non-hanging.
+  // Stats run STAT_BATCH at a time; the event loop is yielded between
+  // batches so other requests keep being served during a large pass. ──
+  for (let start = 0; start < files.length; start += STAT_BATCH) {
     if (options.isCancelled?.()) throw new ScanCancelledError();
-    if (i > 0 && i % YIELD_EVERY_N_FILES === 0) {
+    if (start > 0) {
       await new Promise<void>((r) => setImmediate(r));
       if (options.isCancelled?.()) throw new ScanCancelledError();
     }
+    const slice = files.slice(start, start + STAT_BATCH);
+    const stats = await Promise.all(slice.map((f) => fs.stat(f).then((st) => st, () => null)));
 
-    const filePath = files[i];
-    const name = path.basename(filePath);
-    const ext = path.extname(name).toLowerCase();
-    let size = 0;
-    let mtimeMs = 0;
-    let hasStat = false;
-    try {
-      const st = await fs.stat(filePath);
-      size = st.size;
-      mtimeMs = st.mtimeMs;
-      hasStat = true;
-    } catch {
-      // Keep the file in the graph if the directory walk saw it, but
-      // skip cache hits because the stat tuple is unknown.
-    }
+    for (let k = 0; k < slice.length; k += 1) {
+      const i = start + k;
+      const filePath = slice[k];
+      const name = path.basename(filePath);
+      const ext = path.extname(name).toLowerCase();
+      // A file the directory walk saw but that no longer stats stays in the
+      // graph, but skips cache hits because the stat tuple is unknown.
+      const st = stats[k];
+      const hasStat = st !== null;
+      const size = st ? st.size : 0;
+      const mtimeMs = st ? st.mtimeMs : 0;
 
-    // Cache hit (matching mtime + size) skips read + analysis entirely — the
-    // typical scan after a no-op refresh costs only the directory walk + stat.
-    const cached = hasStat ? options.cache?.get(filePath, mtimeMs, size) : undefined;
-    if (cached) {
-      out[i] = {
-        filePath,
-        name,
-        ext,
-        size,
-        mtimeMs,
-        loc: cached.metrics.loc,
-        healthDetails: cached.metrics,
-        imports: cached.imports,
-      };
-    } else {
+      // Cache hit (matching mtime + size) skips read + analysis entirely — the
+      // typical scan after a no-op refresh costs only the directory walk + stat.
+      const cached = hasStat ? options.cache?.get(filePath, mtimeMs, size) : undefined;
+      if (cached) {
+        out[i] = {
+          filePath,
+          name,
+          ext,
+          size,
+          mtimeMs,
+          loc: cached.metrics.loc,
+          healthDetails: cached.metrics,
+          imports: cached.imports,
+        };
+        continue;
+      }
+      const skipped = hasStat ? unanalyzable.get(filePath) : undefined;
+      if (skipped && skipped.mtimeMs === mtimeMs && skipped.size === size) {
+        out[i] = { filePath, name, ext, size, mtimeMs, loc: skipped.loc, healthDetails: undefined, imports: [] };
+        continue;
+      }
       // Placeholder graph node; loc/health filled in by the analysis result.
       out[i] = { filePath, name, ext, size, mtimeMs, loc: undefined, healthDetails: undefined, imports: [] };
       misses.push({ index: i, filePath, ext, hasStat, size, mtimeMs });
@@ -111,13 +135,16 @@ export async function computeFileMetrics(
   const apply = (index: number, loc: number | undefined, analysis: JobAnalysis | null): void => {
     const slot = out[index];
     if (loc !== undefined) slot.loc = loc;
+    const m = missByIndex.get(index);
     if (analysis) {
       slot.healthDetails = analysis.metrics;
       slot.imports = analysis.imports;
-      const m = missByIndex.get(index);
+      unanalyzable.delete(files[index]);
       if (m?.hasStat && loc !== undefined) {
         options.cache?.set(files[index], m.mtimeMs, m.size, analysis.metrics, analysis.imports);
       }
+    } else if (m?.hasStat) {
+      unanalyzable.set(files[index], { mtimeMs: m.mtimeMs, size: m.size, loc });
     }
   };
 

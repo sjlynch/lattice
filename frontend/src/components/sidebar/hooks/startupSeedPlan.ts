@@ -40,6 +40,12 @@ export function planStartupSeeding(args: {
   inFlight: ReadonlySet<string>;
 }): StartupSeedPlan {
   const { activeFolder, configs, existing, liveIds, records, inFlight } = args;
+  // Neither read answered: the backend is unreachable (restarting under the
+  // page). Live ptys SURVIVE a backend restart, so with nothing to check
+  // against — a fresh browser context has no local specs either — the only
+  // safe plan is to spawn nothing; guessing here put a second `npm run dev`
+  // beside the still-alive one once the backend came back.
+  if (liveIds === null && records === null) return { staleIds: [], spawn: [] };
   const staleIds = liveIds
     ? existing
         .filter((t) => !t.registered && t.serverId && !liveIds.has(t.serverId))

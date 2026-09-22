@@ -5,6 +5,7 @@
 // (connection status) and any unregistered fallback tabs.
 
 import type { TerminalRecord, TerminalTabsEvent } from '../api/types/terminalTabs';
+import { normalizeDirPath } from './terminalScope';
 import type { TerminalSpec } from './terminalTypes';
 
 function restoreStateFor(record: TerminalRecord): Pick<TerminalSpec, 'restore' | 'restoreReason'> {
@@ -49,8 +50,12 @@ export function recordToSpec(record: TerminalRecord, prev?: TerminalSpec): Termi
   };
 }
 
+// Normalized, like `terminalBelongsToProject`: a record's `projectPath` is the
+// backend's realpath spelling, `activeFolder` the frontend's. A strict compare
+// filed the project's own tabs under "other projects" on a casing/separator
+// difference, so the registry snapshot could never replace them.
 function sameProject(a: string | undefined, b: string): boolean {
-  return a === b;
+  return a !== undefined && normalizeDirPath(a) === normalizeDirPath(b);
 }
 
 // Replace the project's registered tabs with the registry's records (in

@@ -20,10 +20,12 @@ function fixture(overrides: Partial<WorktreeSweepDeps> = {}) {
     },
     listTasks: async () => [{ id: 'historical-task', status: 'qa' } as Task],
     gitDirExists: async () => true,
-    projectGit: async () => ({
-      code: 0, stderr: '',
-      stdout: `worktree ${project}\nbranch refs/heads/main\n\nworktree ${worktree}\nbranch refs/heads/lattice/task-abc\n`,
-    }),
+    projectGit: async (_project, args) => args[0] === 'rev-list'
+      ? { code: 0, stderr: '', stdout: '0\n' } // the orphan's branch is fully merged
+      : {
+        code: 0, stderr: '',
+        stdout: `worktree ${project}\nbranch refs/heads/main\n\nworktree ${worktree}\nbranch refs/heads/lattice/task-abc\n`,
+      },
     cleanupWorktreeForTask: async (_project, dir) => { removed.push(dir); return true; },
     collectLiveSessionCwds: async () => new Set(),
     ...overrides,
@@ -95,6 +97,34 @@ test('orphan worktree sweep still reclaims a checkout with no task or live PTY',
   const { deps, removed } = fixture();
   await sweepOrphanedWorktrees(deps);
   assert.deepEqual(removed, [worktree]);
+});
+
+test('orphan worktree sweep never reclaims a checkout whose branch has unmerged commits', async (t) => {
+  // A task moved back to Open keeps its branch; at boot no active task
+  // references the worktree, but cleanup would `branch -D` the only copy of
+  // that work. Refuse loudly instead.
+  const errors: string[] = [];
+  t.mock.method(console, 'error', (...args: unknown[]) => errors.push(args.join(' ')));
+  const list = fixture().deps.projectGit;
+  const { deps, removed } = fixture({
+    projectGit: async (project, args, opts) => args[0] === 'rev-list'
+      ? { code: 0, stderr: '', stdout: '2\n' }
+      : list(project, args, opts),
+  });
+  await sweepOrphanedWorktrees(deps);
+  assert.deepEqual(removed, []);
+  assert.ok(errors.some((e) => /lattice\/task-abc has 2 unmerged commit/.test(e)), errors.join('\n'));
+});
+
+test('orphan worktree sweep defers when the unmerged-commit count cannot be read', async () => {
+  const list = fixture().deps.projectGit;
+  const { deps, removed } = fixture({
+    projectGit: async (project, args, opts) => args[0] === 'rev-list'
+      ? { code: 128, stderr: 'fatal: bad revision', stdout: '' }
+      : list(project, args, opts),
+  });
+  await sweepOrphanedWorktrees(deps);
+  assert.deepEqual(removed, []);
 });
 
 test('orphan worktree sweep honors an explicit Git worktree lock', async () => {

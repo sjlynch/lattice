@@ -61,9 +61,11 @@ is **read vs. write of Pi config**.
   empty probe KEEPS the stored models — blanking them is what leaves Pi with no
   model to run — and reconcile runs on every sweep, so a models.json that
   drifted out of sync is repaired even when the probe changed nothing. The
-  provider list is **re-read immediately before writing** and each result is
-  applied only where it still belongs (same id, still auto, same `baseUrl`), so
-  a Settings save landing mid-probe isn't silently undone.
+  provider list is **re-read immediately before writing** (with no `await`
+  between the re-read and the write — every probe, thinking levels included,
+  finishes first) and each result is applied only where it still belongs (same
+  id, still auto, same `baseUrl`), so a Settings save landing mid-probe isn't
+  silently undone. Pinned by `__tests__/autoDiscover.test.ts`.
 - `thinkingLevels.ts` — Pi gives a model `xhigh` / `max` ONLY if it declares a
   `thinkingLevelMap`; with the map absent Pi **silently clamps** them to `high`
   (verified: asking for `max` sends `reasoning_effort: "high"`, no error). The
@@ -72,9 +74,14 @@ is **read vs. write of Pi config**.
   field rejects it with a message enumerating the valid ones — the whole answer,
   for zero generated tokens. `parseAcceptedEffortTokens` needs ≥2 recognizable
   tokens before it trusts a message, so prose can't produce a map that hides
-  levels which actually work; on anything unparseable the model is left alone.
-  Detection runs once per newly-seen model (`[]` records "asked, nothing
-  extended") and never against an aggregator.
+  levels which actually work. `probeThinkingLevels` is tri-state: tokens, `[]`
+  (a 2xx — the server validates nothing, recorded so the model isn't re-asked),
+  or `null` for NO answer (network error / timeout, a non-400/422 status such
+  as a 5xx or a 401 from a `$VAR` key, an unparseable rejection) — on `null`
+  the model is left untouched and asked again next sweep, never marked
+  "ordinary". Detection runs once per newly-seen model (`[]` records "asked,
+  nothing extended") and never against an aggregator. Both probes run on the
+  provider snapshot BEFORE the re-read, so a save landing mid-probe survives.
 - `sweepScheduler.ts` — the scheduling policy behind it, isolated so it is
   testable without a server: join an in-flight sweep (even inside the TTL, or
   the caller reads state that sweep is about to replace), throttle by TTL only

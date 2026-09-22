@@ -18,6 +18,10 @@ process on `:5185`; see `terminalServer/CLAUDE.md` for that boundary).
   `proxyKillSession` use the same timeout (return `[]` / `false` on any error). The
   `…OrNull` / `Count` variants return `null` (not `[]` / `0`) when unreachable so
   callers that act on "no live sessions" can distinguish it from a real empty.
+  `proxyListSessionsShared` is a ≤750 ms memoized + single-flighted
+  `…OrNull` for pollers that all want the same snapshot (the terminal-activity
+  poller); the registry watch must NOT use it (a pre-spawn snapshot reports a
+  new pty missing). `resetSessionsSnapshot` clears that memo (test seam).
 - `createSession.ts` — `POST /sessions` (`proxyCreateSession` /
   `tryCreateSessionOnce`), the heavy path, **30s** cap. `resolveHarnessSpawnBody`
   resolves the per-harness spawn config (Claude/Codex managed MCP via

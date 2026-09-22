@@ -140,8 +140,10 @@ The run executes *inside the backend process*. In dev that process gets
 restarted by `tsc -w` + the dev runner whenever a merged task
 fast-forwards `main` with a `backend/src` change — which would kill the
 run. Two layers keep "merge all" a one-click operation anyway: (1)
-`scripts/dev.mjs` doesn't restart the backend while a per-project
-`run.lock` is held (it defers until the run finishes); (2) if a restart
+`backend/scripts/dev.mjs` doesn't restart the backend while a per-project
+`run.lock` is held (it defers until the run finishes, with a 15-minute
+force backstop that WILL interrupt a merge run parked on a conflict
+resolver); (2) if a restart
 happens regardless (a crash, or `dev.mjs` isn't the one running it), the
 next boot's `resumeInterruptedMergeRuns` spots the stale `merge-run`
 `run.lock` and starts a fresh run for whatever's still `ready_to_merge`

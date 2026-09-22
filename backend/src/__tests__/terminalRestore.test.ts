@@ -19,6 +19,7 @@ type Harness = {
   project: string;
   deps: RestoreDeps;
   spawns: CreateSessionOptions[];
+  kills: string[];
   events: TerminalRegistryEvent[];
   live: { instanceId: string; ids: string[]; sessions: Array<{ id: string; cwd: string; initialCommand?: string }> };
   tasks: Map<string, Task>;
@@ -34,6 +35,7 @@ async function harness(): Promise<Harness> {
   const h: Harness = {
     project,
     spawns: [],
+    kills: [],
     events: [],
     live: { instanceId: 'inst-B', ids: [], sessions: [] },
     tasks: new Map(),
@@ -57,6 +59,7 @@ async function harness(): Promise<Harness> {
       }
       return { id, terminalId: opts.registry?.existingId };
     },
+    killSession: async (id) => { h.kills.push(id); return true; },
     enqueue: ((args: { thunk: () => Promise<unknown> }) => {
       const done = args.thunk();
       return { queued: false, done };
@@ -331,6 +334,24 @@ test('a retried tab whose pty actually landed is adopted, not spawned beside', a
   assert.equal(summary.adopted, 1);
   assert.equal(h.spawns.length, 0);
   assert.equal((await terminalRegistry.get(r.id, h.project))?.serverId, 'tty_landed');
+});
+
+test('a tab closed while its relaunch is in flight gets the new pty killed instead of orphaned', async () => {
+  const h = await harness();
+  const r = await record(h, {});
+  h.deps.createSession = async (opts) => {
+    // The user closes the tab (DELETE /api/terminal-tabs/:id) while the spawn
+    // is in flight: the record is gone before the pty lands, so the update
+    // recordSpawnedTerminal would do has nothing to attach the pty to.
+    await terminalRegistry.end(opts.registry!.existingId!, { reason: 'closed' }, opts.projectPath);
+    return { id: 'tty_headless', terminalId: opts.registry!.existingId };
+  };
+  await restoreProjectTerminals(h.project, h.deps);
+  await settle();
+  assert.equal(h.spawns.length, 0, 'the fake createSession replaced the recording one');
+  assert.deepEqual(h.kills, ['tty_headless'], 'nothing owns that pty — it is killed');
+  assert.equal(await terminalRegistry.get(r.id, h.project), null);
+  assert.ok(!h.events.some((e) => e.type === 'restored' && e.mode === 'relaunched'), 'no restored event for a closed tab');
 });
 
 test('a second restore while relaunches are still in flight is refused, and a relaunched tab is never spawned twice', async () => {

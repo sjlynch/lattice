@@ -10,8 +10,10 @@
 //
 // Replaces concurrently for `npm run dev`. Output is line-prefixed
 // [backend] / [frontend] in matching colors so the console looks similar.
-// Mid-session backend restarts (tsc-w → emit → node --watch restart) are
-// handled by the existing client-side retry/reconnect logic.
+// Mid-session backend restarts (tsc -w → emit → the dev runner's own dist/
+// watch-and-restart loop in backend/scripts/dev.mjs, which defers while a
+// run.lock is held) are handled by the existing client-side retry/reconnect
+// logic.
 
 import { killTree, startChild } from './orchestrate/children.mjs';
 import {
@@ -32,17 +34,28 @@ const backend = startChild('backend', COLORS.backend, ['run', 'dev'], {
 });
 
 let shuttingDown = false;
+let shutdownDone = null; // the one in-flight shutdown, shared by every trigger
 let frontend = null;
 
+// On Windows `killTree` first waits for a child's OWN exit (the dev runner is
+// shutting down its terminal-server on the same Ctrl+C) before `taskkill /F`,
+// so exiting this process must wait for it — otherwise the pending force-kill
+// never runs and the tree is orphaned.
 function shutdown(signal) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  killTree(backend, signal);
-  if (frontend) killTree(frontend, signal);
+  if (!shutdownDone) {
+    shuttingDown = true;
+    shutdownDone = Promise.all([
+      killTree(backend, signal),
+      frontend ? killTree(frontend, signal) : Promise.resolve(),
+    ]).then(() => {});
+  }
+  return shutdownDone;
 }
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, () => shutdown(sig));
+  process.on(sig, () => {
+    void shutdown(sig);
+  });
 }
 
 backend.on('exit', (code, signal) => {
@@ -56,8 +69,7 @@ backend.on('exit', (code, signal) => {
         : 'crash details (if any) in ~/.lattice/logs/',
     );
   }
-  shutdown('SIGTERM');
-  process.exit(code ?? 0);
+  void shutdown('SIGTERM').then(() => process.exit(code ?? 0));
 });
 
 const ready = await waitForHealth(HEALTH_URL, HEALTH_TIMEOUT_MS);
@@ -81,6 +93,5 @@ frontend.on('exit', (code, signal) => {
     note(`frontend exited (${cause}) — stopping backend.`);
     if (log) note(`last frontend output appended to ${log}`);
   }
-  shutdown('SIGTERM');
-  process.exit(code ?? 0);
+  void shutdown('SIGTERM').then(() => process.exit(code ?? 0));
 });

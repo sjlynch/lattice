@@ -60,6 +60,15 @@ Implementation pieces for `../Sidebar.tsx`.
 - `TabContextMenu.tsx` — the right-click popover (Close Tabs to the Left / Right /
   All Others), fixed-positioned at the click point; each item disables when
   there's nothing on that side. State/handlers come from `hooks/useTabContextMenu`.
+- `SidebarPanes.tsx` — the pane list under the tab strip. Renders a
+  `.sidebar-pane` wrapper for EVERY `projectTerminals` entry unconditionally
+  (each pane built by Sidebar's `renderPane` → `TerminalPane`), with
+  `SidebarEmptyState` as a *sibling* when the viewed panel is empty — never a
+  replacement. Swapping the list for the message unmounted every mounted pane
+  in the project on a `switchPanel('terminals')` with only startup tabs
+  (force-mounted startup panes lost their WS + xterm, cost a ~2 MB replay on
+  return, and a serverless pane without its `attached` frame yet reconnected
+  as a second pty). Pinned by `__tests__/sidebarPanesMount.test.ts`.
 - `SidebarEmptyState.tsx` — per-panel empty messaging.
 - `hooks/useTerminalGroups.ts` — project-scoped regular/merge/startup grouping.
   Scoping goes through `terminal/terminalScope.ts`'s `terminalBelongsToProject`:
@@ -92,6 +101,11 @@ Implementation pieces for `../Sidebar.tsx`.
   Its stale-drop (a spec whose `serverId` is no longer live) applies ONLY to
   unregistered legacy specs: a registered tab's dead pty is the registry
   restore's to relaunch, and closing it here would DELETE the record.
+  When BOTH reads fail (backend restarting under the page) the effect retries
+  the pair a few times (`SEED_FETCH_ATTEMPTS` / `SEED_FETCH_RETRY_MS`, mirroring
+  `TerminalsContext`'s registry fetch) and `planStartupSeeding` then spawns
+  NOTHING from two nulls — live ptys survive a backend restart, so guessing
+  from an empty local list put a second `npm run dev` beside the live one.
 - `hooks/useMountedTerminalIds.ts` — owns `mountedIds`: lazy-mounts
   `TerminalPane` only after first activation (startup panes excepted), which
   prevents WebGL context exhaustion across many pre-spawned panes. A tab in a

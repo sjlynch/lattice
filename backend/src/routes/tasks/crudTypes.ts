@@ -32,3 +32,20 @@ export function pickTaskPatch(raw: unknown): TaskPatch {
   if (src.status !== undefined) patch.status = src.status as TaskStatus;
   return patch;
 }
+
+// Type-check the text fields BEFORE pickTaskPatch casts them through. The
+// JSON write paths used to persist `{"title": null}` / `123` / `""` verbatim,
+// and a non-string title then 500'd every later `/api/tasks/search` on the
+// board (`task.title.toLowerCase()`) and the `/run` terminal label. Returns the
+// 400 message, or null when the fields are well-formed (status is validated
+// separately by the callers, as before).
+export function taskPatchFieldError(raw: unknown): string | null {
+  const src = (raw ?? {}) as Record<string, unknown>;
+  if (src.title !== undefined && (typeof src.title !== 'string' || !src.title.trim())) {
+    return 'title must be a non-empty string';
+  }
+  if (src.description !== undefined && typeof src.description !== 'string') {
+    return 'description must be a string';
+  }
+  return null;
+}

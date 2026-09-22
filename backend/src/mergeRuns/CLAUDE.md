@@ -39,7 +39,10 @@ here instead of bloating the parent file.
   ready_to_merge to retry on the next merge-all.
 - `state.ts` — stable public facade and `RunState` / `MergeRunStateManager`:
   persistent run maps, notify/subscribe fan-out, active-run lookup/cancel, and
-  delegation to snapshot/normalization/waiter helpers. Two rules keep the
+  delegation to snapshot/normalization/waiter helpers. `merge-runs.json` is
+  rewritten on every event, so `syncProjectFromRunMap` persists only the newest
+  `MAX_PERSISTED_RUNS_PER_PROJECT` (50) settled runs plus every running one
+  (the in-memory map is not trimmed). Two rules keep the
   "one active run per project" gate from turning into a permanent wedge:
   - **The in-memory run object is authoritative; `loadProject` may only ADD
     ids it doesn't already have.** The persisted cache holds *snapshots*
@@ -68,7 +71,12 @@ here instead of bloating the parent file.
   update run progress, and run the repo-integrity check.
 - `flaggedConflict.ts` — `handleFlaggedConflictTask`: a retried `conflict:true`
   task. Still mid-merge (worktree has markers) → `tryRespawnMidMergeResolver`
-  re-spawns a resolver and parks the run on its waiter; worktree already clean →
+  re-spawns a resolver and parks the run on its waiter — after the spawn
+  resolves it **re-reads the task** and, if a `/merge-aborted` cleared
+  `conflict` (or the task left `ready_to_merge`) while the spawn sat in the
+  queue (this path holds no merge lock), kills the just-spawned resolver and
+  records an errored entry rather than letting it work a worktree that is no
+  longer mid-merge; worktree already clean →
   `tryFinalizeAfterResolverFinished` re-syncs + finalizes directly when main is
   already an ancestor, else falls through to the normal merge path.
 - `repoIntegrity.ts` — the run **circuit breaker** (`checkRepoIntegrity` /

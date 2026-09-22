@@ -132,3 +132,14 @@ test('parseGitStatusPorcelain keeps dirty priority D > A > M per path', () => {
     { path: 'not-downgraded.ts', status: 'D' },
   ]);
 });
+
+test('parseGitStatusPorcelain consumes the old path of a copy record like a rename', () => {
+  // `status.renames=copies` emits `C  new\0old\0`; the old path must not be
+  // parsed as a record of its own (with its first three characters lost).
+  const result = parseGitStatusPorcelain(`C  copy.ts\0source.ts\0 M other.ts\0`);
+
+  assert.deepEqual(result.changes, [
+    { path: 'copy.ts', status: 'A' },
+    { path: 'other.ts', status: 'M' },
+  ]);
+});

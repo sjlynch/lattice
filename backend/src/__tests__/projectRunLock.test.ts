@@ -13,6 +13,7 @@ import { readLockBody, readLockObservation, retireLockFile } from '../projectRun
 import { clearStaleLockOrThrow } from '../projectRunLock/steal.js';
 import { releaseLockFile } from '../projectRunLock/release.js';
 import { projectRunLockFilePath } from '../projectRunLock/paths.js';
+import { pruneRetiredTombstones } from '../projectRunLock/tombstones.js';
 import type { LockBody } from '../projectRunLock/types.js';
 
 async function createFixture(): Promise<{
@@ -75,6 +76,60 @@ async function stopChild(child: ChildProcess): Promise<void> {
     });
   });
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const tombstoneName = (ch: string) => ch.repeat(64);
+
+test('tombstone pruning removes only >7-day-old retirements, and nothing while a lock exists', async () => {
+  const fixture = await createFixture();
+  try {
+    const dir = `${fixture.lockFile}.retired`;
+    await fs.mkdir(dir, { recursive: true });
+    const now = Date.now();
+    await fs.writeFile(path.join(dir, tombstoneName('a')), JSON.stringify({ pid: 1, at: now - 8 * DAY_MS }));
+    await fs.writeFile(path.join(dir, tombstoneName('b')), JSON.stringify({ pid: 1, at: now - 6 * DAY_MS }));
+    await fs.writeFile(path.join(dir, 'README'), 'not a tombstone');
+
+    // A lock on disk means a retirement may be in flight: touch nothing.
+    await writeLock(fixture.lockFile, holder());
+    assert.equal(await pruneRetiredTombstones(fixture.lockFile, { now }), 0);
+    assert.equal((await fs.readdir(dir)).length, 3);
+
+    await fs.unlink(fixture.lockFile);
+    assert.equal(await pruneRetiredTombstones(fixture.lockFile, { now }), 1);
+    assert.deepEqual((await fs.readdir(dir)).sort(), ['README', tombstoneName('b')]);
+
+    // A tombstone with no readable `at` is aged by its mtime.
+    const legacy = path.join(dir, tombstoneName('c'));
+    await fs.writeFile(legacy, 'legacy');
+    const stale = new Date(now - 30 * DAY_MS);
+    await fs.utimes(legacy, stale, stale);
+    assert.equal(await pruneRetiredTombstones(fixture.lockFile, { now }), 1);
+    assert.equal(await fs.access(legacy).then(() => true, () => false), false);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('acquire prunes stale tombstones lazily on the first acquisition for a project', async () => {
+  const fixture = await createFixture();
+  try {
+    const dir = `${fixture.lockFile}.retired`;
+    await fs.mkdir(dir, { recursive: true });
+    const old = path.join(dir, tombstoneName('d'));
+    await fs.writeFile(old, JSON.stringify({ pid: 1, at: Date.now() - 8 * DAY_MS }));
+    const handle = await acquireProjectRunLock(fixture.projectPath, 'test-lock');
+    try {
+      assert.equal(await fs.access(old).then(() => true, () => false), false, 'the stale tombstone is gone');
+    } finally {
+      await handle.release();
+    }
+    // Release wrote THIS generation's tombstone; that one is fresh and stays.
+    assert.equal((await fs.readdir(dir)).length, 1);
+  } finally {
+    await fixture.cleanup();
+  }
+});
 
 test('acquire steals an unparseable lockfile', async () => {
   const fixture = await createFixture();

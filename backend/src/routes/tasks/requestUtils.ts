@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { Response } from 'express';
-import type { Task, TaskStatus } from '../../tasks.js';
+import { getTask, type Task, type TaskStatus } from '../../tasks.js';
 import { canonicalProjectPath } from '../../projectPath.js';
 import { parseMarkdownDoc, type ParsedMarkdownDoc } from './markdownBatch.js';
 
@@ -101,6 +101,32 @@ export function requireTaskInRequestedProject(
       'to a different board. Check the project this session is pinned to before retrying.',
   });
   return false;
+}
+
+// The same `?project=` pin for the bulk by-id write routes (`/transition` with
+// explicit `ids`, `/bulk-update`), mirroring what `/upsert` does per block:
+// `updateTask(id)` is a global lookup, so without this the `lattice` MCP
+// `transition_tasks` tool (which always sends `project=`) could re-lane or
+// "delete" another board's task. Ids that belong to a different project land in
+// `foreign` (reported, never written); everything else — including ids that
+// exist nowhere, which the write path still reports as `missing` — stays in
+// `own`. With no project sent, every id is `own`, exactly as before.
+export async function partitionIdsByRequestedProject(
+  ids: string[],
+  req: { query: unknown },
+): Promise<{ own: string[]; foreign: string[] }> {
+  const q = req.query as Record<string, unknown> | undefined;
+  const project = typeof q?.project === 'string' ? q.project.trim() : '';
+  if (!project) return { own: ids, foreign: [] };
+  const canonical = canonicalProjectPath(project);
+  const existing = await Promise.all(ids.map((id) => getTask(id)));
+  const own: string[] = [];
+  const foreign: string[] = [];
+  existing.forEach((task, i) => {
+    if (task && canonicalProjectPath(task.projectPath) !== canonical) foreign.push(ids[i]);
+    else own.push(ids[i]);
+  });
+  return { own, foreign };
 }
 
 export function isValidTaskStatus(status: unknown): status is TaskStatus {

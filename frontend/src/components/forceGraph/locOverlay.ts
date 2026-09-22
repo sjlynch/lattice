@@ -1,7 +1,8 @@
 // Lines-of-code overlay (active while the user holds `z`). Each file node
 // becomes a tinted shape with a vertical connector + camera-scaled text
-// label showing its LOC count. Labels are repulsed against each other in
-// the parent component's RAF loop via locLabelRegistry.
+// label showing its LOC count. Labels are repulsed against each other by the
+// scene-frame-driven repulsion step (`labelRepulsionFrames`) via
+// locLabelRegistry.
 
 import type * as THREE from 'three';
 import type { GraphNode } from '../../api';
@@ -25,9 +26,10 @@ export function locColor(loc: number): string {
 // well clear of the node so dense clusters don't overlap their labels.
 export const LABEL_Y = 100;
 
-// Local-space registry of active LOC label sprites. The relaxation loop
-// in ForceGraphView walks this each frame to apply pairwise repulsion and
-// to keep each connector line's upper endpoint anchored to its label.
+// Local-space registry of active LOC label sprites. The scene-frame-driven
+// repulsion step (`labelRepulsionFrames` → `repelLabels`) walks this each frame
+// to apply pairwise repulsion and to keep each connector line's upper endpoint
+// anchored to its label.
 export type LocLabelEntry = FloatingLabelEntry;
 export const locLabelRegistry = new Set<LocLabelEntry>();
 

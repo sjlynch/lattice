@@ -7,10 +7,14 @@
 // WS subscription, settings keys) all line up.
 //
 // Browser environment: no `path` module, so we work on the raw string.
-//   - Forward slashes get folded to backslashes (Windows-style) before
-//     uppercasing the drive, since user input via folder picker can be
-//     either separator. This isn't a full path.resolve — we trust the
-//     backend's listDir to have already resolved relative segments.
+//   - ONLY the drive letter is folded. Separators and the casing of every
+//     other segment are left exactly as given — this isn't a full
+//     path.resolve; we trust the backend's listDir to have already resolved
+//     relative segments. So a value the BACKEND stamped (a registry record's
+//     `projectPath`, from `realpathSync.native`) may still differ from the
+//     canonical `activeFolder` by `\` vs `/` or directory casing: compare
+//     those through `terminal/terminalScope.ts`'s `normalizeDirPath`, never
+//     with `===`.
 //   - On non-Windows-shaped paths (no drive letter), return as-is.
 
 export function canonicalProjectPath(input: string): string {

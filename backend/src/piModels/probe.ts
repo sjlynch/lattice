@@ -115,15 +115,24 @@ export async function probeEndpointModels(
 // medium, high, xhigh, or max") — which is the whole answer, obtained without
 // generating a single token, so it costs nothing even on a metered endpoint.
 //
-// Returns [] whenever the answer isn't trustworthy: the server accepted the
-// nonsense value (so it validates nothing and tells us nothing), the error was
-// unparseable, or the request failed. The caller then leaves the model as-is
-// rather than writing a map built on a guess.
+// Three outcomes, and the caller must tell them apart:
+//   - tokens  → the server enumerated what it accepts; record them.
+//   - []      → a 2xx: the server accepted the nonsense value, so it validates
+//               nothing and its acceptance of `xhigh` would prove nothing
+//               either. "Asked and answered, nothing to record" — persisted so
+//               the model is not re-probed every sweep.
+//   - null    → NO answer: network error / timeout, a status that isn't a
+//               validation rejection (5xx, a 401 from a `$VAR` key the probe
+//               deliberately doesn't resolve), or a rejection whose message
+//               enumerates nothing recognizable. The caller must leave the
+//               model UNTOUCHED — writing `[]` here would mark a model that was
+//               merely unreachable as "ordinary" and clamp `xhigh`/`max` for
+//               good, since the marker is what stops the next probe.
 export async function probeThinkingLevels(
   baseUrl: string,
   apiKey: string | undefined,
   modelId: string,
-): Promise<string[]> {
+): Promise<string[] | null> {
   const url = `${baseUrl.trim().replace(/\/+$/, '')}/chat/completions`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PI_MODELS_CONFIG.probeTimeoutMs);
@@ -146,9 +155,14 @@ export async function probeThinkingLevels(
     // A 2xx means the server ignored an obviously invalid value, so its
     // acceptance of `xhigh` would prove nothing either.
     if (r.ok) return [];
-    return parseAcceptedEffortTokens(await r.text());
+    // Only a validation rejection carries the enumeration. Anything else (5xx,
+    // 401/403, 404 on a server without chat completions) says nothing about
+    // the model's levels — it is "no answer", not "no extended levels".
+    if (r.status !== 400 && r.status !== 422) return null;
+    const tokens = parseAcceptedEffortTokens(await r.text());
+    return tokens.length > 0 ? tokens : null;
   } catch {
-    return [];
+    return null;
   } finally {
     clearTimeout(timer);
   }

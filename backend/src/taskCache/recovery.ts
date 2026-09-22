@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import { ProjectIdentityConflictError } from '../projectIdentity.js';
 import path from 'node:path';
 import { canonicalProjectPath } from '../projectPath.js';
+import { atomicWriteFile } from '../claudeTrust/configFile.js';
 import type { TaskMigrations } from './migrations.js';
 import { projectTasksBackupFile, projectTasksFile } from './paths.js';
 import type { ProjectsIndex } from './projectsIndex.js';
@@ -28,7 +29,9 @@ export async function backupTasksFile(projectPath: string): Promise<void> {
   try {
     const raw = await fs.readFile(src, 'utf8');
     JSON.parse(raw);
-    await fs.writeFile(dst, raw, 'utf8');
+    // temp → rename, like every other persistence path: a crash mid-write must
+    // not leave a truncated backup (this file IS the recovery source).
+    await atomicWriteFile(dst, raw);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
     console.warn('[tasks] backup failed for', key, e);
@@ -62,7 +65,7 @@ export async function restoreTasksFromBackupIfMissing(
     const raw = await fs.readFile(dst, 'utf8');
     JSON.parse(raw);
     await fs.mkdir(path.dirname(src), { recursive: true });
-    await fs.writeFile(src, raw, 'utf8');
+    await atomicWriteFile(src, raw);
     console.warn(
       `[tasks] restored ${src} from ${dst} — main file was missing or corrupt`,
     );

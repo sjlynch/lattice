@@ -2,7 +2,7 @@
 //
 //   GET    /api/terminal-tabs?project=            the project's live tab records
 //   POST   /api/terminal-tabs/restore?project=    rebuild tabs (adopt / relaunch)
-//   PATCH  /api/terminal-tabs?project=            { order?: id[], activeId? }
+//   PATCH  /api/terminal-tabs?project=            { order: id[] }
 //   PATCH  /api/terminal-tabs/:id?project=        { label }
 //   DELETE /api/terminal-tabs/:id?project=        close: kill the pty (if any) and
 //                                                 drop the record

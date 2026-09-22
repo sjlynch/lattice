@@ -7,6 +7,7 @@ import { proxyCreateSession, proxyKillSession } from '../terminalProxy.js';
 import type { CreateSessionResult } from '../terminalServerClient.js';
 import { cancelSpawn, enqueueSpawn, notifySessionsFreed, SpawnCapacityError } from '../spawnQueue.js';
 import { registerAgentSession, unregisterAgentSession } from '../agentSessions.js';
+import { forgetAgentQuiescence } from '../agentQuiescence.js';
 import type { Workflow } from '../workflows.js';
 import { checkpointWorkflowRun, notify, snapshot, type WorkflowRun } from './state.js';
 
@@ -57,6 +58,7 @@ function markWorkflowStepSpawnErrored(
   error: string,
 ): void {
   unregisterAgentSession(workflowStepAgentId(run.id, stepIndex));
+  forgetAgentQuiescence(workflowStepAgentId(run.id, stepIndex));
   stepSpawnRecords.delete(recordKey(run.id, stepIndex));
   // A queued spawn may settle after cancellation or after a stale completion
   // callback advanced the run. In that case, do not overwrite the terminal
@@ -66,6 +68,9 @@ function markWorkflowStepSpawnErrored(
   run.finishedAt = Date.now();
   run.error = `workflow step ${stepIndex + 1} failed to spawn: ${error}`;
   notify({ type: 'errored', run: snapshot(run) });
+  // Durable now — `notify` only schedules the debounced mirror (see
+  // cancelWorkflowRun in ../workflowRuns.ts).
+  void checkpointWorkflowRun(run).catch(() => {});
 }
 
 async function killWorkflowStepServer(

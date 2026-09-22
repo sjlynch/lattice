@@ -7,11 +7,11 @@ import express from 'express';
 import { once } from 'node:events';
 import { canonicalProjectPath } from '../projectPath.js';
 import { runs, snapshot, type WorkflowRun } from '../workflowRuns/state.js';
-import { completeWorkflowStep, restoreWorkflowRun } from '../workflowRuns.js';
+import { cancelWorkflowRun, completeWorkflowStep, restoreWorkflowRun } from '../workflowRuns.js';
 import { registerPersistedWorkflowRuns, resumePersistedRun } from '../recovery/workflowRunResume.js';
 import { buildWorkflowRunsRouter } from '../routes/workflows/runs.js';
 import { beginWorkflowRecovery, waitForWorkflowRecovery } from '../workflowRuns/recoveryReadiness.js';
-import { deserializeWorkflowRuns, loadPersistedWorkflowRuns, flushWorkflowRunPersist, writeWorkflowRunsNow } from '../workflowRuns/persistence.js';
+import { deserializeWorkflowRuns, loadPersistedWorkflowRuns, flushWorkflowRunPersist, workflowRunsFile, writeWorkflowRunsNow } from '../workflowRuns/persistence.js';
 import { classifyWorkflowRunResume, findStepSessionId } from '../workflowRuns/resumeDecision.js';
 import { enqueueWorkflowStepSession, cancelWorkflowStepSessions } from '../workflowRuns/sessionSpawner.js';
 import { queueState } from '../spawnQueue/state.js';
@@ -214,6 +214,39 @@ test('first resumed run cannot checkpoint away its not-yet-dispatched siblings',
     await resumePersistedRun(loaded[0], [], 'http://127.0.0.1:1', true);
     assert.deepEqual((await loadPersistedWorkflowRuns(run.projectPath)).map((r) => r.id), [sibling.id]);
   } finally { runs.delete(sibling.id); await cleanup(); }
+});
+
+// A cancel used to reach disk only through `notify`'s 100 ms debounced mirror;
+// a restart inside that window found the run still `running` on disk and boot
+// resume re-dispatched a cancelled control step. The terminal transition now
+// checkpoints immediately (the run is no longer active, so the write is the
+// mirror's deletion).
+test('cancel removes the run from workflow-runs.json without waiting for the debounce', async (t) => {
+  const { run, cleanup } = await fixture();
+  runs.set(run.id, run);
+  const file = workflowRunsFile(run.projectPath);
+  try {
+    await writeWorkflowRunsNow(run.projectPath, [run]);
+    assert.equal((await loadPersistedWorkflowRuns(run.projectPath)).length, 1);
+    const rm = fs.rm;
+    const removed = new Promise<void>((resolve) => {
+      t.mock.method(fs, 'rm', async (...args: Parameters<typeof fs.rm>) => {
+        await rm(...args);
+        if (String(args[0]) === file) resolve();
+      });
+    });
+    assert.equal(cancelWorkflowRun(run.id), true);
+    // Well inside the 100 ms debounce, so only the immediate checkpoint can be
+    // what removed it.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      removed,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('mirror not removed within 50 ms')), 50);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    assert.deepEqual(await loadPersistedWorkflowRuns(run.projectPath), []);
+  } finally { t.mock.restoreAll(); await cleanup(); }
 });
 
 test('an invalid version-2 definition remains a visible recovery error instead of disappearing', async () => {

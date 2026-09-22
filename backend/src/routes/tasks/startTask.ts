@@ -6,7 +6,8 @@
 // through an HTTP hop or duplicating the logic.
 
 import { getTask, listTasks, updateTask, type Task } from '../../tasks.js';
-import { setupTaskWorktree } from '../../worktree.js';
+import { cleanupWorktreeForTask, setupTaskWorktree } from '../../worktree.js';
+import { proxyKillSession } from '../../terminalProxy.js';
 import { SpawnCapacityError } from '../../spawnQueue.js';
 import { normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
 import { normalizePiModel, resolvePiModel } from '../../piModels.js';
@@ -120,9 +121,19 @@ export async function startTaskById(
   } finally {
     reservation?.release();
   }
+  if (!updated) {
+    // The task was deleted between the queue admitting this run and the
+    // status flip (DELETE /api/tasks/:id saw no `worktreePath` yet, so it had
+    // nothing to clean up). Returning the spawn here would have `runSpawnThunk`
+    // announce a `task-spawned` pty for a task that no longer exists and orphan
+    // the worktree + pty until the next boot's sweep — tear both down and
+    // fail the spawn instead.
+    await discardOrphanedSpawn(task, result, spawn.serverId);
+    throw new Error(`task ${taskId} was deleted while its run was being started`);
+  }
 
   return {
-    task: updated ?? task,
+    task: updated,
     worktreePath: result.worktreePath,
     branch: result.branch,
     taskFile: result.taskFile,
@@ -156,6 +167,43 @@ export async function startTaskById(
     runFailureCount: undefined,
   });
   }
+}
+
+// Injectable seam for the teardown above, so the regression test can prove the
+// pty kill + worktree cleanup fire without standing up git/terminal-server.
+export type DiscardOrphanedSpawnDeps = {
+  killSession: (serverId: string) => Promise<unknown>;
+  cleanupWorktree: typeof cleanupWorktreeForTask;
+};
+
+const defaultDiscardDeps: DiscardOrphanedSpawnDeps = {
+  killSession: proxyKillSession,
+  cleanupWorktree: cleanupWorktreeForTask,
+};
+
+// Best-effort teardown of a worktree + pre-spawned pty whose task vanished
+// before the in_progress flip landed. Kill the pty first so Windows releases
+// its file locks, then let `git worktree remove` reclaim the checkout. Never
+// throws — the caller raises its own error naming the real cause.
+export async function discardOrphanedSpawn(
+  task: Pick<Task, 'id' | 'projectPath'>,
+  worktree: { worktreePath: string; branch: string },
+  serverId: string | undefined,
+  deps: DiscardOrphanedSpawnDeps = defaultDiscardDeps,
+): Promise<void> {
+  if (serverId) {
+    await deps.killSession(serverId).catch((err) => {
+      console.warn(`[task-run] task ${task.id} vanished mid-start; pty ${serverId} kill failed:`, err);
+    });
+  }
+  await deps
+    .cleanupWorktree(task.projectPath, worktree.worktreePath, worktree.branch)
+    .catch((err) => {
+      console.warn(
+        `[task-run] task ${task.id} vanished mid-start; worktree cleanup deferred to the boot sweep:`,
+        err,
+      );
+    });
 }
 
 // Convenience for callers that already have a harness string (e.g. workflow

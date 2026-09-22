@@ -103,6 +103,52 @@ test('compaction keeps the on-disk log bounded while preserving recent output', 
   await fsp.rm(dir, { recursive: true, force: true });
 });
 
+test('replayAsync during an in-flight compaction includes the held pending exactly once', async () => {
+  const dir = await tmpDir();
+  const id = 'tty_compact_async';
+  const store = new ScrollbackStore(id, {
+    dir,
+    replayWindowBytes: 100,
+    flushThresholdBytes: 16,
+    maxDiskBytes: 200,
+    compactKeepBytes: 120,
+  });
+  // Push the log over the cap: the crossing flush kicks off a compaction.
+  for (let i = 0; i < 30; i++) store.append(`entry${String(i).padStart(5, '0')}\n`);
+  assert.ok(store['compaction'], 'a compaction should be in flight');
+  // Output arriving now is held in `pending` until the rewrite lands.
+  store.append('held-line\n');
+  const replay = await store.replayAsync();
+  assert.ok(replay.endsWith('held-line\n'), 'the held output is the newest, so it ends the replay');
+  assert.equal(replay.split('held-line').length - 1, 1, 'held output appears exactly once');
+  await store.settle();
+  const after = store.replay();
+  assert.ok(after.endsWith('held-line\n'));
+  assert.equal(after.split('held-line').length - 1, 1, 'still once after the rewrite + flush landed');
+  store.dispose();
+  await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('replayAsync is a snapshot as of the call: output appended during the read is excluded', async () => {
+  const dir = await tmpDir();
+  const store = new ScrollbackStore('tty_snapshot', {
+    dir,
+    replayWindowBytes: 10_000,
+    flushThresholdBytes: 4, // every append lands on disk immediately
+    maxDiskBytes: 1_000_000,
+    compactKeepBytes: 1_000_000,
+  });
+  store.append('before\n');
+  const inFlight = store.replayAsync();
+  // Lands on disk while the read above is still in flight. An attaching
+  // client receives this as a held live frame, so it must NOT be in the replay.
+  store.append('after\n');
+  assert.equal(await inFlight, 'before\n');
+  assert.equal(store.replay(), 'before\nafter\n', 'the next replay sees everything');
+  store.dispose();
+  await fsp.rm(dir, { recursive: true, force: true });
+});
+
 test('multibyte UTF-8 in the replay body is not corrupted across flush boundaries', async () => {
   const dir = await tmpDir();
   const store = new ScrollbackStore('tty_utf8', {

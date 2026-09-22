@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
+import { useRefMirror } from './hooks/useRefMirror';
 import {
   rangeForHandleMove,
   rangeForTrackSelection,
@@ -25,6 +26,16 @@ export function useTimelineScrubberDrag(
 ): UseTimelineScrubberDragResult {
   const [activeHandle, setActiveHandle] = useState<TimelineHandle | null>(null);
 
+  // The drag effect reads these through refs so its deps are just the handle
+  // and the geometry. Every `onChange` it emits re-renders the parent with a
+  // new `left`/`right` (and usually a fresh `onChange`); if those were deps the
+  // effect would re-run mid-drag, cancelling a pending coalesced RAF — a
+  // `pointermove` landing between `emit()` and the commit was dropped, and the
+  // following `pointerup` released one tick behind the cursor.
+  const leftRef = useRefMirror(left);
+  const rightRef = useRefMirror(right);
+  const onChangeRef = useRefMirror(onChange);
+
   const indexFromClientX = useCallback(
     (clientX: number): number => {
       const rect = trackRef.current?.getBoundingClientRect();
@@ -47,8 +58,13 @@ export function useTimelineScrubberDrag(
 
     function emit() {
       const idx = indexFromClientX(latestClientX);
-      const range = rangeForHandleMove(handle, idx, left, right);
-      onChange(range.left, range.right);
+      const range = rangeForHandleMove(
+        handle,
+        idx,
+        leftRef.current,
+        rightRef.current,
+      );
+      onChangeRef.current(range.left, range.right);
     }
 
     function onFrame() {
@@ -89,7 +105,7 @@ export function useTimelineScrubberDrag(
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onCancel);
     };
-  }, [activeHandle, indexFromClientX, left, onChange, right]);
+  }, [activeHandle, indexFromClientX, leftRef, onChangeRef, rightRef]);
 
   const startHandleDrag = useCallback(
     (handle: TimelineHandle) => (e: ReactPointerEvent) => {

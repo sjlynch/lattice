@@ -35,6 +35,11 @@ export function terminalBelongsToProject(
   t: TerminalSpec,
   activeFolder: string,
 ): boolean {
-  if (t.projectPath) return t.projectPath === activeFolder;
+  // Normalized, not `===`: a registry record's `projectPath` is stamped by the
+  // backend from `realpathSync.native` (its own casing / separators), while
+  // `activeFolder` only has its drive letter canonicalized (`projectPath.ts`).
+  // A strict compare listed NO registry tabs for a folder that differed only
+  // by directory casing or `\` vs `/`.
+  if (t.projectPath) return normalizeDirPath(t.projectPath) === normalizeDirPath(activeFolder);
   return isPathWithin(t.cwd, activeFolder);
 }

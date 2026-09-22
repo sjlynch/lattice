@@ -92,7 +92,7 @@ async function preflightProjectGit(
 async function fastForwardBranch(ctx: FinalizeContext): Promise<MergeOutcome> {
   // FF main if it's behind. fastForwardMain is a no-op when main is
   // already at the branch tip (git just says "Already up to date") and
-  // still handles the auto-stash + pop dance correctly.
+  // still handles the copy-snapshot + restore of a dirty tree correctly.
   console.log(`[finalize] fast-forwarding main to ${ctx.branch}...`);
   const ff = await fastForwardMain(ctx.task.projectPath, ctx.branch);
   console.log(`[finalize] fastForwardMain → ${mergeStatusSummary(ff)}`);

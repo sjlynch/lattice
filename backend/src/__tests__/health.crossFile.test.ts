@@ -456,3 +456,17 @@ test('matchesEntryGlob matches project-relative paths and refuses root escapes',
     'the project root itself has an empty relative path and never matches',
   );
 });
+
+test('a tests-like directory ABOVE the project root does not make every file a root', () => {
+  // The project lives under `.../tests/app`; only the project-relative path
+  // may decide root-ness, otherwise the dead-code view could never report
+  // anything for such a checkout.
+  const root = path.resolve(path.sep, 'work', 'tests', 'app');
+  const util = path.join(root, 'src', 'util.ts');
+  const spec = path.join(root, 'src', '__tests__', 'util.test.ts');
+  assert.equal(isConventionalRoot(util, root), false, 'plain source under an ancestor tests/ dir is not a root');
+  assert.equal(isConventionalRoot(spec, root), true, 'an in-project __tests__ file still is');
+  const roots = detectRoots(new Set([util, spec]), { projectRoot: root });
+  assert.equal(roots.has(util), false);
+  assert.equal(roots.has(spec), true);
+});

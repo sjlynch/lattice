@@ -162,3 +162,17 @@ test('cancelled scans cannot publish after waiting for watcher creation', async 
     await proj.cache.flush();
   });
 });
+
+test('a committed scan hands its dead-code root inputs to the watcher', async () => {
+  await withTempDir('lattice-scan-watch-roots-', async (root) => {
+    const { proj, publisher, payload } = fixture(root);
+    const received: unknown[] = [];
+    (proj.crossFile as unknown as { setRootInputs: (i: unknown) => void }).setRootInputs = (i) => { received.push(i); };
+    const scan = publisher.begin(root);
+    const packageRoots = new Set([path.join(root, 'src', 'app.ts')]);
+    assert.equal(await scan.commit(...payload, { packageRoots, entryGlobs: ['lib/**'] }), true);
+    scan.finish();
+    assert.deepEqual(received, [{ packageRoots, entryGlobs: ['lib/**'] }]);
+    await proj.cache.flush();
+  });
+});

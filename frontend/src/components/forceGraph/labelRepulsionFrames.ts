@@ -23,6 +23,10 @@ export function startLabelRepulsion(
   graph: ForceGraph3DInstance | null,
   registry: Set<RepulsionEntry>,
   minDist: () => number,
+  // The overlay's per-entry release for a label whose node root was detached
+  // from the scene by a visibility digest (hidden-ext toggle) — see
+  // `cleanupStaleRegistryEntries`.
+  onDetached?: (entry: RepulsionEntry) => void,
 ): () => void {
   const idle = getIdleController(graph);
   let held = false;
@@ -43,7 +47,7 @@ export function startLabelRepulsion(
   // then let the per-frame rest check hand the hold back.
   acquire();
   const off = onFrame(graph, () => {
-    if (repelLabels(registry, minDist())) release();
+    if (repelLabels(registry, minDist(), onDetached)) release();
     else acquire();
   });
 

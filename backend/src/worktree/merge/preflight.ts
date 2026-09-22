@@ -5,16 +5,91 @@ import {
   isMidMerge,
   worktreeExists,
 } from '../state.js';
+import { assertSafeWorktreePath } from '../cleanupSafety.js';
+import { installStopHook, writeWorktreeExclude } from '../stopHook.js';
+import { LATTICE_EXCLUDE_PATTERNS } from '../managedFiles.js';
 import type { MergeOutcome } from '../merge.js';
 
 export type WorktreeMergePreflightResult =
   | { ok: true; mainHeadSha: string; recoveredFromOrphanMerge: boolean }
   | { ok: false; outcome: MergeOutcome };
 
+// What a re-created worktree needs so its resolver Claude can still report
+// back: the task id + backend origin for the Stop hook.
+export type WorktreeStopHookSpec = { taskId: string; backendOrigin: string };
+
+// The project checkout must be ON A BRANCH. `git merge --ff-only` merges into
+// whatever HEAD is: on a detached HEAD the branch tip lands only on that
+// detached HEAD, `main` never moves, and the `lattice/*` branch is then
+// deleted by cleanup — leaving the merged commits reachable from nothing but
+// the reflog. `symbolic-ref -q HEAD` exits non-zero exactly when HEAD is
+// detached (the read form is on the projectGit whitelist).
+export async function assertMainOnBranch(
+  repoRoot: string,
+): Promise<{ ok: true } | { ok: false; outcome: MergeOutcome }> {
+  const ref = await projectGit(repoRoot, ['symbolic-ref', '-q', 'HEAD']);
+  if (ref.code === 0 && ref.stdout.trim()) return { ok: true };
+  return {
+    ok: false,
+    outcome: {
+      status: 'error',
+      message:
+        'main checkout is on a detached HEAD — check out a branch before merging',
+    },
+  };
+}
+
+// A `ready_to_merge` task whose worktree DIRECTORY was deleted by hand (an
+// Explorer delete, a disk clean-up) but whose branch still exists used to
+// fail preflight forever ("Worktree directory not found"). The branch holds
+// the work; the checkout is disposable — re-create it: drop the stale
+// registration (`worktree remove --force` exits 0 on a missing dir), add the
+// worktree back on the existing branch, and re-install the Stop hook so the
+// resolver's `/complete` still lands. Any failure falls through to the
+// existing error. Only the branch-exists case is recovered: no branch means
+// nothing to check out.
+async function tryRecreateMissingWorktree(
+  repoRoot: string,
+  branchName: string,
+  worktreePath: string,
+  stopHook: WorktreeStopHookSpec | undefined,
+): Promise<boolean> {
+  try {
+    assertSafeWorktreePath(repoRoot, worktreePath);
+  } catch (err) {
+    console.warn(`[merge] not re-creating ${worktreePath}: ${(err as Error).message}`);
+    return false;
+  }
+  const ref = await projectGit(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}`]);
+  if (ref.code !== 0) return false;
+  // Best-effort: a registration that still points at the missing dir blocks
+  // `worktree add`; when there is none this fails harmlessly.
+  await projectGit(repoRoot, ['worktree', 'remove', '--force', worktreePath]);
+  const add = await projectGit(repoRoot, ['worktree', 'add', worktreePath, branchName]);
+  if (add.code !== 0) {
+    console.warn(
+      `[merge] re-creating missing worktree ${worktreePath} on ${branchName} failed ` +
+        `(exit ${add.code}): ${add.stderr.trim() || add.stdout.trim()}`,
+    );
+    return false;
+  }
+  try {
+    await writeWorktreeExclude(worktreePath, [...LATTICE_EXCLUDE_PATTERNS]);
+    if (stopHook) await installStopHook(worktreePath, stopHook.taskId, stopHook.backendOrigin);
+  } catch (err) {
+    console.warn(`[merge] re-created ${worktreePath} but could not install its hooks:`, err);
+  }
+  console.warn(
+    `[merge] worktree directory ${worktreePath} was missing — re-created it from branch ${branchName}`,
+  );
+  return true;
+}
+
 export async function preflightWorktreeMerge(
   repoRoot: string,
   branchName: string,
   worktreePath: string,
+  stopHook?: WorktreeStopHookSpec,
 ): Promise<WorktreeMergePreflightResult> {
   // Bail before any git command runs if the main repo's .git has gone
   // missing since the merge was queued. Otherwise git invoked in repoRoot
@@ -40,6 +115,9 @@ export async function preflightWorktreeMerge(
     };
   }
 
+  const onBranch = await assertMainOnBranch(repoRoot);
+  if (!onBranch.ok) return onBranch;
+
   if (await isMidMerge(repoRoot)) {
     return {
       ok: false,
@@ -52,7 +130,10 @@ export async function preflightWorktreeMerge(
     };
   }
 
-  if (!(await worktreeExists(worktreePath))) {
+  if (
+    !(await worktreeExists(worktreePath)) &&
+    !(await tryRecreateMissingWorktree(repoRoot, branchName, worktreePath, stopHook))
+  ) {
     return {
       ok: false,
       outcome: {

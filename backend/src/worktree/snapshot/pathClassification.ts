@@ -1,9 +1,25 @@
 import { isPathInsideRepo } from '../paths.js';
 import type { DirtyPaths, SafeDirtyPaths } from './capture.js';
 
-// Parse `git status --porcelain=v1 -z --untracked-files=all` output. We
-// treat anything that isn't '??' (untracked) as 'modified' for snapshot
-// purposes — staged, unstaged, deleted, type-changed all need preserving.
+// Parse `git status --porcelain=v1 -z --untracked-files=all` output into
+// the four buckets the capture has to treat differently:
+//   * `untracked` (`??`) — copy, then delete the working copy;
+//   * `modified`  (tracked, present in HEAD and on disk) — copy, then
+//     `git checkout HEAD -- <path>` resets it;
+//   * `added`     (`A`/`R`/`C` in the index column: the path is in the index
+//     but NOT in HEAD) — copy, `git reset HEAD -- <path>` de-indexes it, then
+//     delete the working copy. It used to be classed as `modified`, and since
+//     `checkout HEAD` fails on a pathspec HEAD doesn't know, git refused the
+//     WHOLE batched checkout — every genuinely modified file in the same
+//     command stayed dirty and the fast-forward failed for every task;
+//   * `deleted`   (` D`/`D ` — the path exists in HEAD but not on disk; also a
+//     rename's source) — nothing to copy; `git checkout HEAD -- <path>` brings
+//     it back so the FF sees a clean tree, and restore re-deletes it. It also
+//     used to be `modified`, where the copy failed ENOENT and the path was
+//     left out of the reset set, so the FF refused on the local deletion.
+// `MD` (staged edit, then deleted on disk) stays `modified`: the index holds
+// content the working tree doesn't, and resetting it would lose that; the copy
+// fails and the path is left dirty, exactly as before.
 //
 // We use the `-z` (machine-parse) variant on purpose. In the default
 // (newline) form git mangles two kinds of path so the snapshot copy then
@@ -27,6 +43,8 @@ export type StatusRecord = {
   x: string;
   y: string;
   file: string;
+  // Rename/copy source path (the second NUL-separated field), when present.
+  from?: string;
 };
 
 export function parseStatusRecords(out: string): StatusRecord[] {
@@ -40,11 +58,15 @@ export function parseStatusRecords(out: string): StatusRecord[] {
     const x = field[0];
     const y = field[1];
     const file = field.slice(3); // skip the 2-char XY code + its space
-    records.push({ x, y, file });
-    // Rename/copy: the next NUL-separated field is the source path. Skip it.
+    const record: StatusRecord = { x, y, file };
+    // Rename/copy: the next NUL-separated field is the source path. Consume
+    // it so it isn't mis-read as its own record.
     if (x === 'R' || y === 'R' || x === 'C' || y === 'C') {
       i += 1;
+      const from = fields[i];
+      if (from) record.from = from;
     }
+    records.push(record);
   }
   return records;
 }
@@ -52,14 +74,25 @@ export function parseStatusRecords(out: string): StatusRecord[] {
 export function parseStatus(out: string): DirtyPaths {
   const modified: string[] = [];
   const untracked: string[] = [];
-  for (const { x, y, file } of parseStatusRecords(out)) {
+  const added: string[] = [];
+  const deleted: string[] = [];
+  for (const { x, y, file, from } of parseStatusRecords(out)) {
     if (x === '?' && y === '?') {
       untracked.push(file);
-    } else if (x !== ' ' || y !== ' ') {
+    } else if (x === ' ' && y === ' ') {
+      continue;
+    } else if (x === 'A' || x === 'R' || x === 'C') {
+      // Index-only entry: not in HEAD. A staged rename's source is gone from
+      // both the index and the working tree but still in HEAD — a deletion.
+      added.push(file);
+      if (x === 'R' && from) deleted.push(from);
+    } else if ((y === 'D' && (x === ' ' || x === 'D')) || (x === 'D' && y === ' ')) {
+      deleted.push(file);
+    } else {
       modified.push(file);
     }
   }
-  return { modified, untracked };
+  return { modified, untracked, added, deleted };
 }
 
 export function filterSafeDirtyPaths(
@@ -73,17 +106,17 @@ export function filterSafeDirtyPaths(
   // repo. A path we drop here also won't be reset/deleted, so the user's
   // working tree is left exactly as it was for that path.
   const dropped: string[] = [];
-  const modified = dirty.modified.filter((f) => {
-    if (isPathInsideRepo(repoRoot, f)) return true;
-    dropped.push(f);
-    return false;
-  });
-  const untracked = dirty.untracked.filter((f) => {
-    if (isPathInsideRepo(repoRoot, f)) return true;
-    dropped.push(f);
-    return false;
-  });
-  return { modified, untracked, dropped };
+  const keep = (files: readonly string[] | undefined): string[] =>
+    (files ?? []).filter((f) => {
+      if (isPathInsideRepo(repoRoot, f)) return true;
+      dropped.push(f);
+      return false;
+    });
+  const modified = keep(dirty.modified);
+  const untracked = keep(dirty.untracked);
+  const added = keep(dirty.added);
+  const deleted = keep(dirty.deleted);
+  return { modified, untracked, added, deleted, dropped };
 }
 
 export function classifySafeDirtyPaths(

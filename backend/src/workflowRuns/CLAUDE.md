@@ -13,7 +13,11 @@ explicit-curl callbacks — never by polling task state.
   every payload that flows over `/ws/workflow-runs`** — preserve
   `WorkflowRunEvent` discriminants and field shapes (especially
   `step-spawned`) since the WS dispatcher and frontend consume them
-  directly.
+  directly. Finished runs are pruned to the newest
+  `MAX_FINISHED_RUNS_PER_PROJECT` (20) per project on every terminal event
+  (`pruneFinishedRuns`, from `notify`); nothing reads a finished run by id
+  afterwards (the frontend keeps its own `recentRuns` from the WS event), so
+  this is a memory bound, not retention. Running runs are never pruned.
 - `persistence.ts` — the on-disk mirror of every **running** run, at
   `~/.lattice/per-project/<hash>/workflow-runs.json` (home-scoped, atomic
   temp→rename, debounced, never throws). Written from `state.ts`'s `notify` for
@@ -121,8 +125,14 @@ explicit-curl callbacks — never by polling task state.
   and still advance immediately; control steps never hit the route. Fed by
   `../agentQuiescence.ts` (per-session `liveSubagents` / `lastSignalAt`), which
   the agent-activity route (`routes/agentActivity.ts`) updates from the very
-  hooks that already drive the graph's satellites. `cancelStopHookGate` clears a
-  pending gate on run cancel.
+  hooks that already drive the graph's satellites — and from **every** `wf:` /
+  `pmh:` hook event, not only the ones that yield a graph event: a tool use on a
+  managed path (the step's own `.lattice/workflow-steps/…` dir) or outside the
+  project draws no beam but is still a "still working" signal, and gating the
+  signal on the graph event once let the gate see a quiet session that was
+  mid-work. `cancelStopHookGate` clears a pending gate on run cancel, and the
+  terminal transitions (`cancelWorkflowRun` / `failWorkflowRun` / a failed step
+  spawn) drop the current step's quiescence entry so the map doesn't grow.
   Failed asynchronous completion checkpoints rearm the quiescence gate up to
   three attempts. Each retry checks live subagents and renewed quiet time;
   exhaustion keeps the run and terminal intact with a visible error message.
@@ -245,6 +255,15 @@ explicit-curl callbacks — never by polling task state.
 - Mirror writes and deletions are serialized per project; atomic rename alone
   does not prevent a delayed running-state write from resurrecting a finished
   run after a newer deletion. Flushing must await writes already in flight.
+- **A terminal transition checkpoints immediately.** `notify` only schedules
+  the 100 ms debounced mirror; a restart inside that window left a cancelled /
+  errored run `running` on disk, and boot resume re-dispatched its control
+  step. So `cancelWorkflowRun`, `failWorkflowRun`, `markWorkflowStepSpawnErrored`
+  and the control-step error paths follow their `notify` with
+  `void checkpointWorkflowRun(run)` — the run is no longer active, so that write
+  is the mirror's deletion. A control-step worker error that lands after the
+  run already left `running` (a cancel during a pending lock acquire) keeps
+  the existing terminal state rather than clobbering it with `errored`.
 - Every rejected queued step spawn must error its still-current run, including
   thrown setup/transport exceptions. CAP retries remain pending, and a late
   spawn rejection must preserve cancellation or a newer step.

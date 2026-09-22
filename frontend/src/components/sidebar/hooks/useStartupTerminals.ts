@@ -6,6 +6,12 @@ import { createBackendSession, fetchLiveTerminalIds } from '../../../terminal/te
 import { fetchTerminalTabs } from '../../../api';
 import { planStartupSeeding, startupInFlightKey } from './startupSeedPlan';
 
+// Retry schedule for the seeding pass's two backend reads while the backend
+// is still booting. Mirrors REGISTRY_FETCH_ATTEMPTS / REGISTRY_FETCH_RETRY_MS
+// in TerminalsContext.tsx (attempt n waits n × 750 ms).
+const SEED_FETCH_ATTEMPTS = 4;
+const SEED_FETCH_RETRY_MS = 750;
+
 type UseStartupTerminalsArgs = {
   activeFolder: string;
   startupTerminals: StartupTerminal[];
@@ -114,10 +120,26 @@ export function useStartupTerminals({
       // list can lag it (a fresh browser context has NO local specs until the
       // registry snapshot lands), and a startup whose pty is alive in the
       // registry must not be spawned a second time — see planStartupSeeding.
-      const [liveIds, records] = await Promise.all([
-        fetchLiveTerminalIds(),
-        fetchTerminalTabs(activeFolder).catch(() => null),
-      ]);
+      //
+      // Both reads fail together while the backend is down (a restart under
+      // the page). Live ptys SURVIVE a backend restart, so deciding from two
+      // nulls on a fresh browser context — no local specs either — would
+      // spawn a second `npm run dev` beside the still-alive one once the
+      // backend returns. Retry the pair a few times first (mirrors the
+      // registry fetch in TerminalsContext); planStartupSeeding spawns
+      // nothing if both are still unreadable after that.
+      const fetchPair = () =>
+        Promise.all([
+          fetchLiveTerminalIds(),
+          fetchTerminalTabs(activeFolder).catch(() => null),
+        ]);
+      let [liveIds, records] = await fetchPair();
+      for (let n = 1; n < SEED_FETCH_ATTEMPTS && (liveIds === null || records === null); n++) {
+        if (cancelled) return;
+        await new Promise<void>((res) => setTimeout(res, SEED_FETCH_RETRY_MS * n));
+        if (cancelled) return;
+        [liveIds, records] = await fetchPair();
+      }
       if (cancelled) return;
 
       const plan = planStartupSeeding({

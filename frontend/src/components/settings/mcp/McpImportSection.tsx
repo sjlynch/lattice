@@ -30,6 +30,10 @@ export function McpImportSection({ activeFolder, onImported }: Props) {
       // Pre-check everything importable (non-colliding).
       setSelected(new Set(res.servers.filter((s) => !s.collides).map((s) => s.id)));
       if (res.servers.length === 0) setMsg('No MCP servers found in other tools.');
+    } catch (err) {
+      // Surface the failure in the section's own message slot — an unhandled
+      // rejection here left the button silently doing nothing.
+      setMsg(`Scan failed: ${(err as Error).message}`);
     } finally {
       setBusy(false);
     }

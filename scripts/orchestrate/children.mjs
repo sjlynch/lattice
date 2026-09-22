@@ -35,23 +35,51 @@ export function startChild(
   return child;
 }
 
-export function killTree(child, signal = 'SIGTERM') {
-  if (!child || child.killed || child.exitCode !== null) return;
-  if (process.platform === 'win32' && child.pid) {
-    // npm.cmd spawns node as a child; SIGTERM on the .cmd doesn't kill
-    // the descendants. taskkill /T walks the tree.
-    try {
-      spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-        stdio: 'ignore',
-      });
-    } catch {
-      /* ignore */
-    }
-  } else {
-    try {
-      child.kill(signal);
-    } catch {
-      /* ignore */
-    }
+// How long a Windows child gets to exit on its own before `taskkill /F`. On
+// Ctrl+C every process on the console receives the break, so
+// `backend/scripts/dev.mjs` is already running its own shutdown — which
+// awaits the terminal-server `/shutdown` POST (2.5 s cap) before exiting.
+// Force-killing its tree first lands `/F` on it mid-request and orphans the
+// detached terminal-server with every pty inside it. So exceed that cap.
+export const KILL_GRACE_MS = 3000;
+
+// Resolves once the child is gone (or the force-kill was issued). On win32,
+// wait up to `graceMs` for the child's own exit before `taskkill /F /T`; a
+// child that had no reason to exit on its own (the other child crashed) just
+// costs the grace period, which is bounded.
+export function killTree(
+  child,
+  signal = 'SIGTERM',
+  { graceMs = KILL_GRACE_MS, platform = process.platform, spawnProcess = spawn } = {},
+) {
+  if (!child || child.killed || child.exitCode !== null) return Promise.resolve();
+  if (platform === 'win32' && child.pid) {
+    return new Promise((resolve) => {
+      let timer = null;
+      const onExit = () => {
+        if (timer) clearTimeout(timer);
+        resolve();
+      };
+      child.once('exit', onExit);
+      timer = setTimeout(() => {
+        child.off('exit', onExit);
+        // npm.cmd spawns node as a child; SIGTERM on the .cmd doesn't kill
+        // the descendants. taskkill /T walks the tree.
+        try {
+          spawnProcess('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+            stdio: 'ignore',
+          });
+        } catch {
+          /* ignore */
+        }
+        resolve();
+      }, graceMs);
+    });
   }
+  try {
+    child.kill(signal);
+  } catch {
+    /* ignore */
+  }
+  return Promise.resolve();
 }

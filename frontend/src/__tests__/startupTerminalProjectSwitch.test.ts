@@ -188,3 +188,64 @@ test("an empty active folder clears the list rather than keeping the last projec
 
   act(() => renderer.unmount());
 });
+
+// Regression: an F5 during the ~2 s backend-restart window. The Vite proxy
+// answers the settings GET with a 502, which the lenient fetch mapped to `{}`
+// and the hook stamped as `loaded: true` — so the whole page session ran on
+// defaults (no startup terminals, restore mode read as `always`, sidebar width
+// reset) with no refetch until the folder changed. The hook now uses the
+// strict fetch and retries with backoff; `loaded` stays false until a real
+// answer lands, and the startup terminal then spawns exactly once.
+test('a settings fetch that fails twice is retried, stays unloaded meanwhile, and spawns once on success', async () => {
+  // The hook warns once on the first failure; keep the test output clean.
+  const origWarn = console.warn;
+  console.warn = () => {};
+  let calls = 0;
+  g.fetch = (url: string) => {
+    if (!url.includes('/api/settings')) return Promise.reject(new Error(`unexpected ${url}`));
+    calls += 1;
+    if (calls <= 2) {
+      // A proxy 502 with an HTML body — the same shape asJson sees mid-restart.
+      return Promise.resolve({ ok: false, status: 502, json: () => Promise.reject(new Error('html')) });
+    }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve(A_SETTINGS) });
+  };
+
+  const loadedSeen: boolean[] = [];
+  function RetryHarness({ folder }: { folder: string }) {
+    const userSettings = useUserSettings(folder);
+    const [startupTerminals] = useStartupTerminalSync(folder, userSettings);
+    loadedSeen.push(userSettings.loaded);
+    useEffect(() => {
+      for (const cfg of startupTerminals) spawned.push({ cwd: folder, command: cfg.command });
+    }, [folder, startupTerminals]);
+    return null;
+  }
+
+  let renderer!: ReturnType<typeof TestRenderer.create>;
+  await act(async () => {
+    renderer = TestRenderer.create(React.createElement(RetryHarness, { folder: A }));
+  });
+  await act(async () => {
+    await flush();
+  });
+  assert.equal(calls, 1, 'first attempt fired');
+  assert.ok(loadedSeen.every((l) => l === false), 'a failed fetch must not read as loaded');
+  assert.deepEqual(spawned, [], 'nothing spawns on a failed fetch');
+
+  // Wait out the first two backoff delays (300 ms + 600 ms) with real timers.
+  await act(async () => {
+    await new Promise<void>((res) => setTimeout(res, 1100));
+    await flush();
+  });
+  assert.equal(calls, 3, 'two retries followed the failures');
+  assert.equal(loadedSeen.at(-1), true, 'the successful answer is stamped as loaded');
+  assert.deepEqual(
+    spawned,
+    [{ cwd: A, command: 'npx next dev -p 3005' }],
+    'the startup terminal spawns exactly once, after the successful fetch',
+  );
+
+  act(() => renderer.unmount());
+  console.warn = origWarn;
+});

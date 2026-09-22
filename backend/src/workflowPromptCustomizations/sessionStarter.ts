@@ -44,11 +44,16 @@ export async function resolveCustomizationCommand(
   );
 }
 
+export type PreSpawnCustomizationDeps = {
+  queuedCreateSession: typeof queuedCreateSession;
+};
+
 export async function preSpawnCustomizationSession(
   request: WorkflowPromptCustomization,
+  deps: PreSpawnCustomizationDeps = { queuedCreateSession },
 ): Promise<void> {
   // `interactive` band — user-initiated, infrequent.
-  const sess = await queuedCreateSession({
+  const sess = await deps.queuedCreateSession({
     kind: 'workflow-prompt-customization',
     priority: 'interactive',
     dedupeKey: `wf-prompt:${request.id}`,
@@ -63,9 +68,18 @@ export async function preSpawnCustomizationSession(
     },
   });
   if ('error' in sess) {
+    // A non-CAP spawn failure (CAP is retried inside the queue and never
+    // surfaces here). The record must reach a terminal status: left `running`
+    // with no serverId, the frontend polled it for its whole budget and the
+    // user saw a customization that never started and never failed.
     console.warn(
       `[workflow-prompt-customization] ${request.id}: pre-spawn failed: ${sess.error}`,
     );
+    if (request.status === 'running') {
+      request.status = 'errored';
+      request.error = sess.error;
+      request.finishedAt = Date.now();
+    }
   } else {
     request.serverId = sess.id;
     request.terminalId = sess.terminalId;

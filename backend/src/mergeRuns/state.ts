@@ -17,6 +17,12 @@ export type {
 
 const MERGE_RUNS_FILENAME = 'merge-runs.json';
 
+// `merge-runs.json` is rewritten on EVERY progress event, with every run the
+// project ever recorded; unbounded, a long-lived project made each event a
+// multi-megabyte write. Persist only the newest settled runs (plus every
+// running one — a live run must never fall off the persisted record).
+export const MAX_PERSISTED_RUNS_PER_PROJECT = 50;
+
 function projectMergeRunsFile(projectPath: string): string {
   return path.join(homeProjectDir(projectPath), MERGE_RUNS_FILENAME);
 }
@@ -73,8 +79,14 @@ export class MergeRunStateManager extends ProjectStateManager<
 
   private syncProjectFromRunMap(projectPath: string): void {
     const key = canonicalProjectPath(projectPath);
-    const projectRuns = Array.from(this.runs.values())
-      .filter((run) => run.projectPath === key)
+    const all = Array.from(this.runs.values()).filter((run) => run.projectPath === key);
+    const running = all.filter((run) => run.status === 'running');
+    const settled = all
+      .filter((run) => run.status !== 'running')
+      .sort((a, b) => b.startedAt - a.startedAt)
+      .slice(0, MAX_PERSISTED_RUNS_PER_PROJECT);
+    const projectRuns = [...running, ...settled]
+      .sort((a, b) => a.startedAt - b.startedAt)
       .map(snapshotRun);
     this.setCached(key, projectRuns);
     this.schedulePersist(key);

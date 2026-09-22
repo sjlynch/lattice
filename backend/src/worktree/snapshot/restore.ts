@@ -201,6 +201,32 @@ async function restoreSnapshotPath(
   }
 }
 
+// Re-apply a deletion the snapshot captured (the path was locally deleted; the
+// capture resurrected HEAD's copy so the FF could run). There is no captured
+// content to compare against, so the rule is the same in both modes: delete
+// only a tracked file that is byte-identical to HEAD (recoverable with one
+// `git checkout` if the user disagrees). Anything else — an edited file, an
+// untracked replacement, a directory — is newer work and is kept; the throw
+// makes restoreSnapshot report it and retain the snapshot dir.
+async function reapplySnapshotDeletion(repoRoot: string, file: string): Promise<void> {
+  const dst = path.join(repoRoot, file);
+  await assertNoSymlinkParents(repoRoot, file);
+  let stat: Stats;
+  try {
+    stat = await fs.lstat(dst);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return; // still deleted
+    throw err;
+  }
+  if (stat.isDirectory()) {
+    throw new Error('a directory now exists at the captured deletion; keeping it');
+  }
+  if (!(await cleanTrackedVersion(repoRoot, file, dst))) {
+    throw new Error('on-disk content differs from HEAD; keeping it instead of re-deleting');
+  }
+  await fs.rm(dst, { force: true, recursive: false });
+}
+
 // Restore captured work, preserving divergent dirty destinations. Immediate
 // restoration can overlay clean committed HEAD; boot recovery is stricter.
 //
@@ -218,7 +244,12 @@ export async function restoreSnapshot(
 
 async function restoreOwnedSnapshot(handle: SnapshotHandle, repoRoot: string, opts: RestoreSnapshotOptions): Promise<SnapshotRestoreResult> {
   const result: SnapshotRestoreResult = { status: 'restored', restored: [], conflicts: [], failed: [], retained: false };
-  const all = [...handle.modifiedTracked, ...handle.untracked];
+  const copied = [...handle.modifiedTracked, ...handle.untracked];
+  // A path with a captured copy is restored from it; only a path that has NO
+  // copy is treated as a captured deletion.
+  const copiedSet = new Set(copied);
+  const deletions = new Set((handle.deleted ?? []).filter((f) => !copiedSet.has(f)));
+  const all = [...copied, ...deletions];
   // Path safety gate: the manifest is JSON on disk that may have been
   // written by an older Lattice build (without path validation), corrupted,
   // or tampered with. A bad entry — `..\..\.git\HEAD`, an absolute path,
@@ -245,7 +276,8 @@ async function restoreOwnedSnapshot(handle: SnapshotHandle, repoRoot: string, op
   let staleConflicts = 0;
   for (const file of safe) {
     try {
-      await restoreSnapshotPath(handle.dir, repoRoot, file, opts);
+      if (deletions.has(file)) await reapplySnapshotDeletion(repoRoot, file);
+      else await restoreSnapshotPath(handle.dir, repoRoot, file, opts);
       result.restored.push(file);
     } catch (err) {
       failed += 1;

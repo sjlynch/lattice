@@ -108,7 +108,8 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   process-exit handlers) and the public surface (`subscribeHealth`,
   `beginWatcherScan`, `watcherScanRevision`, test helpers, `HealthUpdate` type). `watcher/` holds the
   extracted helpers: `setup.ts` (`createWatcher` — per-root construction plus
-  the chokidar-creation + event-wiring; takes the facade's shutdown-flush
+  the tree-watcher creation (`../../watchTree.ts`: recursive `fs.watch` on
+  win32, chokidar elsewhere) + event-wiring; takes the facade's shutdown-flush
   registrar as a callback), `cacheHydration.ts` (cache → in-memory graph
   mirror), `fileAnalysis.ts` (read/LOC count/cache-or-analyze — the read +
   analyzer hand-off of one file runs under a machine-wide 8-slot gate,
@@ -133,6 +134,12 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   `imports` array, not a `structuredClone` per entry, which cost tens of ms of
   uninterruptible main-thread time at the front of every scan), and
   seeds maps/cache only if no event, newer scan, or watcher creation intervened.
+  A committed scan also hands the watcher its freshly-resolved dead-code
+  root inputs (package.json entry targets + entry globs) via
+  `CrossFileAnalyzer.setRootInputs` — the watcher resolves those once at
+  creation against the on-disk cache, which is EMPTY for a fresh project, so
+  without the hand-over its first recompute after any keystroke flipped every
+  package.json entry target (and the subtree only it reaches) to `dead`.
   Scans never share mutable metrics with the watcher during analysis. Cache I/O
   is ordered across cache instances, including reads during a pending flush.
   `isolatedAnalyze.ts` runs each changed file's analysis in a **warm persistent

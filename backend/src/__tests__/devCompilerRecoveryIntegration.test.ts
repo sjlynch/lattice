@@ -66,6 +66,7 @@ test('a real compiler exit -1 preserves the backend and recovers through workflo
       canSpawnBackend: () => !compiler || compiler.canRestartBackend(),
       captureBackendVersion: () => policy.captureDistBaseline(),
       onBackendSpawned: (candidate) => policy.onBackendSpawned(candidate),
+      probePort: async () => false, // never probe the real port from a unit test
       spawnProcess: (() => {
         const child = Object.assign(new EventEmitter(), {
           pid: 987000 + backendChildren.length,

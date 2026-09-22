@@ -24,15 +24,33 @@ import type {
 // needed in the parent component.
 export const stateMap = new WeakMap<THREE.Sprite, LabelState>();
 
+// True when the label's ancestor chain no longer reaches a Scene: either the
+// label itself was unparented, or its node root was detached. The library's
+// visibility digest (a hidden-ext toggle) removes a filtered-out node's root
+// from the scene WITHOUT rebuilding the others, so the root's label children
+// stay parented to an orphan — nothing else ever releases them.
+function isDetachedFromScene(label: THREE.Object3D): boolean {
+  let top: THREE.Object3D = label;
+  while (top.parent) top = top.parent;
+  return top === label || !(top as THREE.Scene).isScene;
+}
+
+// Drop registry entries whose label is no longer in the scene. `onDetached`
+// is the owning overlay's per-entry release (connector geometry + label-texture
+// refcount) — it runs for a label still hanging off a detached root, the case
+// that used to pin the texture and keep the label in the repulsion loop until
+// the next full registry clear. A label unparented on its own was already torn
+// down by whoever removed it, so it is only dropped from the set.
 export function cleanupStaleRegistryEntries(
   registry: Set<RepulsionEntry>,
   states: WeakMap<THREE.Sprite, LabelState> = stateMap,
+  onDetached?: (entry: RepulsionEntry) => void,
 ): void {
   for (const entry of registry) {
-    if (!entry.label.parent) {
-      registry.delete(entry);
-      states.delete(entry.label);
-    }
+    if (!isDetachedFromScene(entry.label)) continue;
+    registry.delete(entry);
+    states.delete(entry.label);
+    if (entry.label.parent) onDetached?.(entry);
   }
 }
 

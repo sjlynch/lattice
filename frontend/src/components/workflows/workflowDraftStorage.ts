@@ -5,6 +5,7 @@
 // `lattice.<thing>.<projectPath>` convention so a reload/close doesn't lose it.
 
 import type { EditorState } from './editorState';
+import { ensureUserInstructions } from './promptVariables';
 
 const PREFIX = 'lattice.workflowEditorDraft.';
 
@@ -24,8 +25,15 @@ export function loadWorkflowDraft(projectPath: string): EditorState | null {
       return null;
     }
     if (parsed.steps.length === 0 && !parsed.name?.trim()) return null;
+    // A draft stashed before workflows had variables (or a hand-mangled one)
+    // has no `variables` array; the editor maps over it unconditionally, so a
+    // missing/invalid list would throw and wedge the panel. Normalize to the
+    // shape the editor expects (always including the built-in variable).
+    const variables = ensureUserInstructions(
+      Array.isArray(parsed.variables) ? parsed.variables : [],
+    );
     // A restored draft is, by definition, unsaved.
-    return { ...parsed, dirty: true };
+    return { ...parsed, variables, dirty: true };
   } catch {
     return null;
   }

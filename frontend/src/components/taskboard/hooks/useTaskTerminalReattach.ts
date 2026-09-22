@@ -36,23 +36,38 @@ export function useTaskTerminalReattach(
   // Latest values mirrored into refs so the effect can read them without
   // re-subscribing on every change.
   const terminalsRef = useRef(terminals);
+  const tasksRef = useRef(tasks);
   const activeFolderRef = useRef(activeFolder);
   useEffect(() => {
     terminalsRef.current = terminals;
   }, [terminals]);
   useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
+  useEffect(() => {
     activeFolderRef.current = activeFolder;
   }, [activeFolder]);
+
+  // The effect is keyed on the SET of reattachable tasks, not the task array:
+  // every `/ws/tasks` snapshot is a new array, and depending on it re-ran the
+  // effect (cancelling the in-flight retry chain and restarting it at attempt
+  // 0) on every update — on a busy board the one-shot never completed and
+  // `/api/terminals` was polled indefinitely.
+  const inProgressKey = tasks
+    .filter((t) => t.status === 'in_progress' && !!t.worktreePath)
+    .map((t) => t.id)
+    .sort()
+    .join('\n');
 
   useEffect(() => {
     if (!activeFolder) return;
     if (reattachedFor.current === activeFolder) return;
-    const inProgress = tasks.filter(
-      (t) => t.status === 'in_progress' && !!t.worktreePath,
-    );
     // Tasks may not have loaded on the first render — wait for them before
     // starting the one-shot reattach attempt.
-    if (inProgress.length === 0) return;
+    if (!inProgressKey) return;
+    const inProgress = tasksRef.current.filter(
+      (t) => t.status === 'in_progress' && !!t.worktreePath,
+    );
 
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -138,5 +153,5 @@ export function useTaskTerminalReattach(
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [activeFolder, tasks, addTerminal]);
+  }, [activeFolder, inProgressKey, addTerminal]);
 }

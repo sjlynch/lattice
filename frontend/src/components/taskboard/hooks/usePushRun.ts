@@ -7,6 +7,7 @@ import {
   type PushRunStatus,
 } from '../../../api';
 import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
+import { useGitSetupNonce } from '../../gitSetup/GitSetupProvider';
 import {
   pollWithErrorSentinel,
   useVisibilityPolling,
@@ -81,7 +82,10 @@ export function usePushRun(
   }, [activeFolder]);
 
   // Probe for `.git` so the QA-lane Push button is hidden in non-git
-  // projects (where the action is meaningless). Re-runs on folder switch.
+  // projects (where the action is meaningless). Re-runs on folder switch and
+  // after Git Setup initializes a repo (the nonce bumps), so the button
+  // appears without a project switch.
+  const gitSetupNonce = useGitSetupNonce();
   useEffect(() => {
     if (!activeFolder) {
       setHasGit(false);
@@ -92,7 +96,7 @@ export function usePushRun(
       .then((r) => { if (!cancelled) setHasGit(r.hasGit); })
       .catch(() => { if (!cancelled) setHasGit(false); });
     return () => { cancelled = true; };
-  }, [activeFolder]);
+  }, [activeFolder, gitSetupNonce]);
 
   // Poll the active push run; when the backend's Stop hook flips it to
   // `done`, close the local terminal and forget the run. 2 s feels live

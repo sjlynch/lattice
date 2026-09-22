@@ -102,7 +102,7 @@ async function scanProject(
     importsByPath.set(metric.filePath, metric.imports);
     metricsByPath.set(metric.filePath, metric.healthDetails);
   }
-  await publication.commit(cache, importsByPath, metricsByPath);
+  await publication.commit(cache, importsByPath, metricsByPath, { packageRoots, entryGlobs });
   checkCancelled();
 
   return result;

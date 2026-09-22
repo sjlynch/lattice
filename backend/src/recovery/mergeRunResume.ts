@@ -1,5 +1,7 @@
 import { startMergeRun, getActiveRunForProject } from '../mergeRuns.js';
 import { inspectProjectRunLock } from '../projectRunLock.js';
+import { projectRunLockFilePath } from '../projectRunLock/paths.js';
+import { clearStaleLockOrThrow } from '../projectRunLock/steal.js';
 import { listTasks, type Task } from '../tasks.js';
 import { getActiveRunsForProject as getActiveWorkflowRunsForProject } from '../workflowRuns.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';
@@ -100,8 +102,19 @@ export async function resumeInterruptedMergeRuns(backendOrigin: string): Promise
     if (pending.length === 0) {
       console.log(
         `[startup] stale run lock "${lock.holder.label}" for ${repoRoot} (owner pid=${lock.holder.pid} died, ` +
-          `started ${startedIso}) but no ready_to_merge tasks remain — nothing to resume.`,
+          `started ${startedIso}) but no ready_to_merge tasks remain — nothing to resume; retiring the lock.`,
       );
+      // Nothing will ever acquire (and so steal) this lock on its own, so
+      // without this it outlives every boot that noticed it — and a dead lock
+      // whose PID the OS later recycles is what the dev runner's restart
+      // deferral misread as a live operation (2026-09-22). `clearStaleLockOrThrow`
+      // re-checks liveness (PID + process start time) before retiring, so a
+      // holder that came alive meanwhile is refused, not stolen.
+      try {
+        await clearStaleLockOrThrow(projectRunLockFilePath(repoRoot));
+      } catch (err) {
+        console.warn(`[startup] could not retire the stale run lock for ${repoRoot}:`, err);
+      }
       return;
     }
 

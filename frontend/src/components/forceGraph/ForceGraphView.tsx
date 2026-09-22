@@ -188,6 +188,12 @@ function ForceGraphViewCoordinator({
   // visibility, then kept in sync for runtime toggles.
   const batchedNodesRef = useRefMirror(settings.batchedNodes);
 
+  // The `W` worktree overlay's live path→color snapshot (null while inactive).
+  // Written by useWorktreeHighlight, read by nodeObjectFactory so any full
+  // sprite rebuild while the view is active re-attaches the rings instead of
+  // dropping them (see worktreeRingSync).
+  const worktreeRingsRef = useRef<Map<string, string> | null>(null);
+
   useForceGraphInitialization(containerRef, graphRef, {
     settingsRef,
     selectedRef,
@@ -202,6 +208,7 @@ function ForceGraphViewCoordinator({
     changeMapRef,
     metricsIgnoredExtsRef,
     batchedNodesRef,
+    worktreeRingsRef,
     onHoverNodeChange: debouncedSetHoverNode,
     onRendererFailure,
     onContextLost,
@@ -287,6 +294,7 @@ function ForceGraphViewCoordinator({
     settingsRef,
     activeFolder,
     pinned.worktree,
+    worktreeRingsRef,
   );
 
   // Search: query + regex/contents toggle state, the filename/contents passes,

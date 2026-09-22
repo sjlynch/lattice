@@ -89,6 +89,9 @@ export function modelsNeedingThinkingProbe(
 // behaviour, so writing a map for it would add config that changes nothing.
 // A model that was probed and found ordinary gets an empty array — that is the
 // "asked and answered" marker which stops us probing it again every sweep.
+// Only ever called with a real answer: a probe that got NO answer (`null` from
+// probeThinkingLevels) must not reach here, or a transiently-down server would
+// be recorded as "ordinary" and have `xhigh`/`max` clamped for good.
 export function applyThinkingLevels(
   model: PiProviderModel,
   tokens: string[],
@@ -146,12 +149,37 @@ async function runRefresh(): Promise<boolean> {
   );
   if (targets.length === 0) return false;
 
-  // Remember which URL each result came FROM, so it can't be applied to a
-  // provider that has since been pointed somewhere else.
-  const probedById = new Map<string, { baseUrl: string; models: ProbedModel[] | null }>();
+  // EVERY probe runs against the snapshot read above — the model listing AND
+  // the per-model capability probe — and the results are only APPLIED after
+  // the re-read below. Remember which URL each result came FROM, so it can't
+  // be applied to a provider that has since been pointed somewhere else.
+  //
+  // Capability detection, once per newly-seen model: ask each endpoint which
+  // `reasoning_effort` values it accepts. This is what makes `xhigh` / `max`
+  // reachable at all — Pi clamps them to `high` unless the model declares a
+  // thinkingLevelMap, silently and with nothing in the output to say so. It is
+  // done HERE, on the snapshot, rather than after the re-read: each probe can
+  // take up to its full timeout, and a Settings save landing while it ran
+  // used to be overwritten by the write that followed (the route waits the
+  // in-flight sweep out, so that window is exactly where a second save lands).
+  const probedById = new Map<
+    string,
+    { baseUrl: string; models: ProbedModel[] | null; thinking: Map<string, string[] | null> }
+  >();
   await Promise.all(
     targets.map(async (p) => {
-      probedById.set(p.id, { baseUrl: p.baseUrl, models: await probeProvider(p) });
+      const models = await probeProvider(p);
+      const thinking = new Map<string, string[] | null>();
+      const pending = modelsNeedingThinkingProbe(
+        nextModelsForProvider(p, models),
+        PI_MODELS_CONFIG.thinkingProbeModelLimit,
+      );
+      await Promise.all(
+        pending.map(async (m) => {
+          thinking.set(m.id, await probeThinkingLevels(p.baseUrl, p.apiKey, m.id));
+        }),
+      );
+      probedById.set(p.id, { baseUrl: p.baseUrl, models, thinking });
     }),
   );
 
@@ -159,39 +187,22 @@ async function runRefresh(): Promise<boolean> {
   // land in the middle of it — writing back the list we read at the start would
   // silently undo the user's edit. Apply each result only where it still
   // belongs: same provider id, still auto-discovering, still the same baseUrl.
+  // NOTHING may be awaited between this read and the write below — every
+  // `await` in that gap is a window in which a save is lost.
   const current = (await getGlobalSettings()).piProviders ?? [];
-  const synced: PiProvider[] = current.map((p) => {
+  const next: PiProvider[] = current.map((p) => {
     const hit = probedById.get(p.id);
     if (!hit || hit.baseUrl !== p.baseUrl || !isAutoDiscoverEnabled(p)) return p;
-    return { ...p, models: nextModelsForProvider(p, hit.models) };
+    const models = nextModelsForProvider(p, hit.models).map((m) => {
+      // Still unprobed as far as the stored record knows, and the probe got a
+      // real answer → record it. A `null` (no answer) leaves the model alone so
+      // it is asked again next sweep instead of being marked "ordinary".
+      if (m.thinkingLevels !== undefined) return m;
+      const tokens = hit.thinking.get(m.id);
+      return tokens == null ? m : applyThinkingLevels(m, tokens);
+    });
+    return { ...p, models };
   });
-  // Capability detection, once per newly-seen model: ask each endpoint which
-  // `reasoning_effort` values it accepts. This is what makes `xhigh` / `max`
-  // reachable at all — Pi clamps them to `high` unless the model declares a
-  // thinkingLevelMap, silently and with nothing in the output to say so.
-  const next = await Promise.all(
-    synced.map(async (p) => {
-      if (!probedById.has(p.id)) return p;
-      const pending = modelsNeedingThinkingProbe(
-        p.models,
-        PI_MODELS_CONFIG.thinkingProbeModelLimit,
-      );
-      if (pending.length === 0) return p;
-      const byId = new Map<string, string[]>();
-      await Promise.all(
-        pending.map(async (m) => {
-          byId.set(m.id, await probeThinkingLevels(p.baseUrl, p.apiKey, m.id));
-        }),
-      );
-      return {
-        ...p,
-        models: p.models.map((m) => {
-          const tokens = byId.get(m.id);
-          return tokens === undefined ? m : applyThinkingLevels(m, tokens);
-        }),
-      };
-    }),
-  );
 
   const changed = JSON.stringify(next) !== JSON.stringify(current);
   // Persist only when the probe actually moved something — this runs on every

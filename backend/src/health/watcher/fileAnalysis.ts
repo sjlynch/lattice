@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { analyzeFile } from '../analyze.js';
 import { LOC_MAX_BYTES, isMinifiedForAnalysis } from '../constants.js';
+import { decodeSourceText } from '../decodeSource.js';
 import type { HealthMetrics } from '../types.js';
 import type { ProjectWatcher } from './types.js';
 import { analyzeContentIsolated, WorkerUnavailableError } from './isolatedAnalyze.js';
@@ -37,7 +38,7 @@ export async function readFileForAnalysis(
     // multi-MB minified bundle to the analyzer's synchronous regex passes (a
     // `change` event on such a file used to bypass this and pin the main thread).
     if (isMinifiedForAnalysis(buf.length, loc)) return { loc };
-    return { loc, content: buf.toString('utf8') };
+    return { loc, content: decodeSourceText(buf) };
   } catch {
     return null;
   }

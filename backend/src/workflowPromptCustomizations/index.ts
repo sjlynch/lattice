@@ -37,7 +37,18 @@ export async function startWorkflowPromptCustomization(
 
   request.command = await resolveCustomizationCommand(request);
   storeWorkflowPromptCustomization(request);
-  await preSpawnCustomizationSession(request);
+  try {
+    await preSpawnCustomizationSession(request);
+  } catch (err) {
+    // The record is already stored (and pollable): a thrown spawn must not
+    // leave it `running` forever — see the {error} branch in sessionStarter.
+    if (request.status === 'running') {
+      request.status = 'errored';
+      request.error = (err as Error).message ?? 'pre-spawn failed';
+      request.finishedAt = Date.now();
+    }
+    throw err;
+  }
 
   return cloneWorkflowPromptCustomization(request);
 }

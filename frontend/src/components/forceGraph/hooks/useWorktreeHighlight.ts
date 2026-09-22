@@ -5,14 +5,13 @@ import { taskColor } from '../../../taskColors';
 import { setChangeRingsSuppressed, setNodeChangeRingsVisible } from '../changeRing';
 import type { GraphSettings } from '../graphSettings';
 import { getIdleController } from '../idleController';
+import { mountedNodes, mountedRoot } from '../mountedNodes';
+import { normalizeWorktreePath } from '../worktreeRing';
 import {
-  baseSizeFor,
-  mountedNodes,
-  mountedNodesById,
-  mountedRoot,
-  type MountedNode,
-} from '../mountedNodes';
-import { setNodeWorktreeRing } from '../worktreeRing';
+  applyWorktreeRings,
+  clearWorktreeRings,
+  type WorktreeRingsRef,
+} from '../worktreeRingSync';
 import { momentaryLetterMode, useHoldKeyMode } from './useHoldKeyMode';
 
 // `W` outlines every file changed by a not-yet-merged task (in_progress +
@@ -25,20 +24,19 @@ import { momentaryLetterMode, useHoldKeyMode } from './useHoldKeyMode';
 // The modified-file set comes from a git-backed snapshot fetched once on
 // activation (`GET /api/tasks/worktree-modified`). Momentary by design — release
 // (or unpin) and re-activate to refresh.
-
-function normalizePath(p: string): string {
-  return p.replace(/\\/g, '/').toLowerCase();
-}
+//
+// The snapshot is published through `worktreeRingsRef` (owned by the
+// coordinator, shared with `nodeObjectFactory`) so a full sprite rebuild while
+// the view is active re-attaches the rings instead of dropping them — see
+// `worktreeRingSync`.
 
 export function useWorktreeHighlight(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   settingsRef: MutableRefObject<GraphSettings>,
   activeFolder: string,
   pinned: boolean,
+  worktreeRingsRef: WorktreeRingsRef,
 ) {
-  // Node ids currently wearing a worktree ring, so we can strip exactly
-  // those on release.
-  const appliedRef = useRef<Set<string>>(new Set());
   // Guards against a stale fetch (key released before it resolved) painting
   // rings after the fact.
   const activeRef = useRef(false);
@@ -69,62 +67,22 @@ export function useWorktreeHighlight(
     [graphRef],
   );
 
+  // Strip every ring across the graph and drop the published snapshot. A
+  // one-shot O(N) scene walk, not a remembered id set: a rebuild between apply
+  // and clear replaces the roots such a set pointed at.
   const clearRings = useCallback(() => {
-    const graph = graphRef.current;
-    if (!graph || appliedRef.current.size === 0) {
-      appliedRef.current.clear();
-      return;
-    }
-    // Strip only the previously-ringed ids, resolving each through one
-    // id→node index, instead of scanning every mounted node to test
-    // membership of the (usually small) applied set.
-    const byId = mountedNodesById(graph);
-    for (const id of appliedRef.current) {
-      const node = byId.get(id);
-      if (!node) continue;
-      const root = mountedRoot(node);
-      if (root) setNodeWorktreeRing(root, false, '', 0);
-    }
-    appliedRef.current.clear();
-    getIdleController(graph)?.wakeForRefresh();
-  }, [graphRef]);
+    clearWorktreeRings(graphRef.current, worktreeRingsRef);
+  }, [graphRef, worktreeRingsRef]);
 
+  // Publish the snapshot and ring every mounted match in one O(N) pass (the
+  // factory re-rings from the same snapshot on any later full rebuild).
   const applyRings = useCallback(
     (pathColors: Map<string, string>) => {
       const graph = graphRef.current;
       if (!graph) return;
-      const settings = settingsRef.current;
-      const next = new Set<string>();
-      // Single pass over every mounted node: ring the matching files into
-      // `next` and, in the same walk, index each node by id so the strip
-      // phase can reach previously-ringed nodes without a second full scan.
-      // Mirrors the incremental diff in selectionHaloSync.ts — O(N) + O(applied)
-      // rather than the old O(2N).
-      const byId = new Map<string, MountedNode>();
-      for (const node of mountedNodes(graph)) {
-        if (typeof node.id !== 'string') continue;
-        byId.set(node.id, node);
-        if (typeof node.path !== 'string') continue;
-        const color = pathColors.get(normalizePath(node.path));
-        if (!color) continue;
-        const root = mountedRoot(node);
-        if (!root) continue;
-        setNodeWorktreeRing(root, true, color, baseSizeFor(node, settings));
-        next.add(node.id);
-      }
-      // Strip any previously-ringed node no longer in the set — work is
-      // proportional to the previous set (prev minus next), not the whole graph.
-      for (const id of appliedRef.current) {
-        if (next.has(id)) continue;
-        const node = byId.get(id);
-        if (!node) continue;
-        const root = mountedRoot(node);
-        if (root) setNodeWorktreeRing(root, false, '', 0);
-      }
-      appliedRef.current = next;
-      getIdleController(graph)?.wakeForRefresh();
+      applyWorktreeRings(graph, worktreeRingsRef, pathColors, settingsRef.current);
     },
-    [graphRef, settingsRef],
+    [graphRef, settingsRef, worktreeRingsRef],
   );
 
   const activate = useCallback(async () => {
@@ -146,7 +104,7 @@ export function useWorktreeHighlight(
       const pathColors = new Map<string, string>();
       for (const t of tasks) {
         const color = taskColor({ id: t.taskId, colorIndex: t.colorIndex });
-        for (const file of t.files) pathColors.set(normalizePath(file), color);
+        for (const file of t.files) pathColors.set(normalizeWorktreePath(file), color);
       }
       applyRings(pathColors);
     } catch {

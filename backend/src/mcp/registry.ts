@@ -25,7 +25,7 @@ import {
 import type { ClaudeMcpServerConfig } from './claudeInject.js';
 import { resolvePlaywright } from './resolverPolicy.js';
 import { toClaudeConfig } from './claudeServerConfig.js';
-import { toCodexServerConfig } from './codexServerConfig.js';
+import { safeCodexServerId, toCodexServerConfig } from './codexServerConfig.js';
 import { toPiServerConfig, type PiMcpServerConfig } from './piServerConfig.js';
 import { applyBuiltinOverride } from './settingsValidation.js';
 
@@ -254,6 +254,11 @@ export function resolveCodexServers(
 ): CodexMcpResolution {
   const configArgs: string[] = [];
   const env: Record<string, string> = {};
+  // The Codex key is a lossy fold of the catalog id (`my-api` and `my_api` both
+  // become `lattice_my_api`), and so are the secret env-var names. A second
+  // server landing on a taken key would silently replace the first (or hand it
+  // the other server's secret), so it is skipped with a warning instead.
+  const keyOwner = new Map<string, string>();
   for (const { entry, serverSecrets, headless } of resolveMcpEntries(
     catalog,
     settings,
@@ -261,11 +266,42 @@ export function resolveCodexServers(
     'codex',
     ctx,
   )) {
+    const key = safeCodexServerId(entry.id);
+    const owner = keyOwner.get(key);
+    if (owner !== undefined) {
+      console.warn(
+        `[mcp] codex: skipping server "${entry.id}" — its Codex key ${key} collides with "${owner}"`,
+      );
+      continue;
+    }
     const shaped = toCodexServerConfig(entry, serverSecrets, headless);
+    const clash = envNameClash(env, shaped.env);
+    if (clash) {
+      console.warn(
+        `[mcp] codex: skipping server "${entry.id}" — its secret env var ${clash} is already ` +
+          'claimed by another server with a different value',
+      );
+      continue;
+    }
+    keyOwner.set(key, entry.id);
     configArgs.push(shaped.configArg);
     Object.assign(env, shaped.env);
   }
   return { configArgs, env };
+}
+
+// The first var name in `incoming` that `env` already holds with a DIFFERENT
+// value — the same name with the same value is harmless (one secret shared by
+// two servers), a different value would cross one server's secret into the
+// other. Undefined when there is no such clash.
+function envNameClash(
+  env: Record<string, string>,
+  incoming: Record<string, string>,
+): string | undefined {
+  for (const [name, value] of Object.entries(incoming)) {
+    if (name in env && env[name] !== value) return name;
+  }
+  return undefined;
 }
 
 // The resolved Pi spawn payload: the `mcpServers` map for `<cwd>/.pi/mcp.json`
@@ -294,6 +330,17 @@ export function resolvePiServers(
     ctx,
   )) {
     const shaped = toPiServerConfig(entry, serverSecrets, headless);
+    // The map is keyed by the exact id, but secret-header env-var names are a
+    // lossy fold shared with Codex (`my-api` / `my_api` → the same var): a
+    // second server would overwrite the first's secret in the pty env.
+    const clash = envNameClash(env, shaped.env);
+    if (clash) {
+      console.warn(
+        `[mcp] pi: skipping server "${entry.id}" — its secret env var ${clash} is already ` +
+          'claimed by another server with a different value',
+      );
+      continue;
+    }
     mcpServers[entry.id] = shaped.config;
     Object.assign(env, shaped.env);
   }

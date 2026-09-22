@@ -3,7 +3,7 @@
 // the same 400 response shapes the route historically returned.
 
 import { isValidTaskStatus, statusValidationError } from './requestUtils.js';
-import { pickTaskPatch, type TaskPatch } from './crudTypes.js';
+import { pickTaskPatch, taskPatchFieldError, type TaskPatch } from './crudTypes.js';
 import type { ParsedTaskBlock } from './markdownBatch.js';
 
 export type BulkTaskUpdate = { id?: string } & TaskPatch;
@@ -29,6 +29,8 @@ export function bulkUpdatesFromBody(body: unknown): ValidationResult<BulkTaskUpd
     if (u.status !== undefined && !isValidTaskStatus(u.status)) {
       return { ok: false, error: `updates[${i}].${statusValidationError('status')}` };
     }
+    const fieldError = taskPatchFieldError(u);
+    if (fieldError) return { ok: false, error: `updates[${i}].${fieldError}` };
     projected.push({ id: u.id, ...pickTaskPatch(u) });
   }
   return { ok: true, value: projected };

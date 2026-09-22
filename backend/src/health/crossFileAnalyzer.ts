@@ -50,7 +50,7 @@ export class CrossFileAnalyzer {
   // Precompiled `deadCodeEntryGlobs` → RegExp[]. Compiled once here instead of
   // rebuilding a RegExp per glob per file on every pass (the empty-globs case —
   // the common one — early-returns in matchesEntryGlob, so this is free there).
-  private readonly entryRegexps: readonly RegExp[];
+  private entryRegexps: readonly RegExp[];
 
   // Memoized root set. A file's CONTENT edit never changes any file's root-ness;
   // only an add/remove/rename does. The watcher invalidates this (see
@@ -99,6 +99,21 @@ export class CrossFileAnalyzer {
   invalidateRoots(): void {
     this.cachedRoots = null;
     this.cachedPresentFiles = null;
+  }
+
+  // Replace the non-membership root inputs. A full scan resolves package.json
+  // entry targets against the files it actually found and re-reads the user's
+  // entry globs; without handing those over, a watcher created against an
+  // empty on-disk cache (a fresh project) would keep an EMPTY package-root
+  // set for the life of the process and flip `main`/`bin`/`exports` targets
+  // — and everything only they reach — to `dead` on the first recompute
+  // after any keystroke.
+  setRootInputs(inputs: { packageRoots: Set<string>; entryGlobs: readonly string[] }): void {
+    const pr = this.options.packageRoots;
+    pr.clear();
+    for (const r of inputs.packageRoots) pr.add(r);
+    this.entryRegexps = compileEntryGlobs(inputs.entryGlobs);
+    this.invalidateRoots();
   }
 
   // The present-file Set for a pass. Rebuilt on invalidation, or — belt and

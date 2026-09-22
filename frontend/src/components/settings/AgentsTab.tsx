@@ -9,11 +9,16 @@ type Props = {
 export type AgentsTabHandle = {
   // The maxConcurrentAgents value to persist on save, or `undefined` if the
   // user hasn't changed it (so an unrelated save doesn't rewrite the file).
+  // THROWS when the field holds an edited-but-invalid value: the save
+  // orchestrator surfaces the message and keeps the dialog open, instead of
+  // silently skipping the patch and closing while the field shows an error.
+  // (`useSettingsDirty` treats the throw as "dirty".)
   getMaxConcurrentAgentsPatch: () => number | undefined;
 };
 
 const MIN_AGENTS = 1;
 const MAX_AGENTS = 150;
+const INVALID_MESSAGE = `Max concurrent agents must be a whole number between ${MIN_AGENTS} and ${MAX_AGENTS}.`;
 
 // Machine-global settings tab. Unlike the other tabs (per-project
 // userSettings) this reads/writes ~/.lattice/globalSettings.json.
@@ -54,8 +59,11 @@ export const AgentsTab = forwardRef<AgentsTabHandle, Props>(function AgentsTab(
   useImperativeHandle(
     ref,
     () => ({
-      getMaxConcurrentAgentsPatch: () =>
-        touched && valid ? parsed : undefined,
+      getMaxConcurrentAgentsPatch: () => {
+        if (!touched) return undefined;
+        if (!valid) throw new Error(INVALID_MESSAGE);
+        return parsed;
+      },
     }),
     [touched, valid, parsed],
   );

@@ -10,6 +10,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { runExclusive } from '../serializeWrites.js';
+import { atomicWriteFile } from '../claudeTrust.js';
 import { MANAGED_MCP_MARKER } from '../mcp/claudeInject.js';
 import type { PiMcpServerConfig } from '../mcp/piServerConfig.js';
 
@@ -54,6 +55,13 @@ export function reconcilePiMcpDocument(
 // Reconcile-write `<cwd>/.pi/mcp.json`. Per-cwd serialized so concurrent spawns
 // into the same cwd can't interleave; atomic temp→rename. A no-op when there is
 // nothing managed and nothing previously-managed to strip.
+//
+// "Absent" and "unreadable" are NOT the same thing: only ENOENT starts a fresh
+// document. A file that exists but cannot be read (EBUSY/EPERM/EACCES) or does
+// not parse (mid-edit, a comment, a BOM) is the user's hand-written config at
+// the project root — replacing it from scratch would destroy it. Warn and skip
+// the write instead (same discipline as piModels/reconcile.ts's
+// readExistingModelsJson); that spawn simply runs without the managed servers.
 export async function writePiMcpConfig(
   cwd: string,
   managed: Record<string, PiMcpServerConfig>,
@@ -61,17 +69,37 @@ export async function writePiMcpConfig(
   const file = path.join(cwd, '.pi', 'mcp.json');
   await runExclusive(`piMcp:${cwd}`, async () => {
     let existing: PiMcpDocument = {};
+    let raw: string | null = null;
     try {
-      const parsed = JSON.parse(await fs.readFile(file, 'utf8')) as unknown;
-      if (parsed && typeof parsed === 'object') existing = parsed as PiMcpDocument;
-    } catch {
-      /* absent / unparseable → start fresh */
+      raw = await fs.readFile(file, 'utf8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+        console.warn(`[pi-mcp] leaving ${file} untouched — could not read it:`, err);
+        return;
+      }
+      // Genuinely absent → safe to create.
+    }
+    if (raw !== null) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (err) {
+        console.warn(
+          `[pi-mcp] leaving ${file} untouched — it exists but is not valid JSON ` +
+            `(refusing to overwrite it):`,
+          err,
+        );
+        return;
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        console.warn(`[pi-mcp] leaving ${file} untouched — it is not a JSON object.`);
+        return;
+      }
+      existing = parsed as PiMcpDocument;
     }
     const next = reconcilePiMcpDocument(existing, managed);
     if (!next) return; // nothing to do
     await fs.mkdir(path.dirname(file), { recursive: true });
-    const tmp = `${file}.lattice-tmp`;
-    await fs.writeFile(tmp, JSON.stringify(next, null, 2), 'utf8');
-    await fs.rename(tmp, file);
+    await atomicWriteFile(file, JSON.stringify(next, null, 2));
   });
 }

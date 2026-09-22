@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Play, Trash2, X } from 'lucide-react';
 import type { Task, TaskStatus } from '../../api';
 import { LANE_BY_ID } from './lanes';
@@ -6,6 +6,7 @@ import { getApplicableMoveTargets } from './moveTargets';
 import { TaskDetailMeta } from './TaskDetailMeta';
 import { useTaskDetailEdit } from './hooks/useTaskDetailEdit';
 import { useConfirm } from '../shared/ConfirmDialog';
+import { useEscapeToClose } from '../shared/useEscapeToClose';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 // Detail overlay for a single task. Title and description are always editable;
@@ -81,13 +82,9 @@ export function TaskDetailOverlay({
     setSaving(false);
   }
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  // Innermost-wins: Escape closes just this overlay, not the board panel
+  // behind it (and a confirm dialog opened from here takes it first).
+  useEscapeToClose(true, onClose);
 
   const moveTargets = getApplicableMoveTargets(task.status);
 

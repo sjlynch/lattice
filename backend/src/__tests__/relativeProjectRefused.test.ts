@@ -5,7 +5,11 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { access, mkdtemp, rm } from 'node:fs/promises';
+import { WebSocket } from 'ws';
 import { readProjectParam } from '../routes/projectParam.js';
+import { parseProject } from '../ws/projectEndpoint.js';
+import { buildTasksWss } from '../ws/endpoints/tasks.js';
+import { canonicalProjectPath } from '../projectPath.js';
 
 // Every per-project store resolves its path through canonicalProjectPath ==
 // path.resolve, so a RELATIVE `project` used to land under the backend's own
@@ -86,6 +90,19 @@ test('project-scoped routes refuse a relative project with 400 and create nothin
       ['/api/workflow-prompt-customizations', { method: 'POST', headers: json, body: JSON.stringify({ project: rel, prompt: 'p' }) }],
       [`/api/mcp-import/scan?${q}`],
       ['/api/terminals', { method: 'POST', headers: json, body: JSON.stringify({ cwd: rel }) }],
+      // The task routes that used to slip through: transition's fromStatus
+      // branch, reorder, and the worktree-modified graph read.
+      [`/api/tasks/transition?${q}`, { method: 'POST', headers: json, body: JSON.stringify({ fromStatus: 'open', status: 'done' }) }],
+      ['/api/tasks/reorder', { method: 'POST', headers: json, body: JSON.stringify({ project: rel, status: 'open', ids: [] }) }],
+      [`/api/tasks/worktree-modified?${q}`],
+      // The `?path=` / `?project=` read-only graph routes (absent → default
+      // root, still; present-but-relative → 400).
+      [`/api/search?${q}&q=x`],
+      [`/api/search?path=${encodeURIComponent(rel)}&q=x`],
+      [`/api/scan?path=${encodeURIComponent(rel)}`],
+      [`/api/health/dead-code?${q}`],
+      [`/api/git-history?path=${encodeURIComponent(rel)}`],
+      [`/api/git-branch?path=${encodeURIComponent(rel)}`],
     ];
     for (const [p, init] of calls) {
       const res = await fetch(base + p, init);
@@ -101,5 +118,46 @@ test('project-scoped routes refuse a relative project with 400 and create nothin
     process.env.USERPROFILE = originalEnv.USERPROFILE;
     await rm(tmpHome, { recursive: true, force: true });
     await rm(path.join(process.cwd(), rel), { recursive: true, force: true });
+  }
+});
+
+// The WS side of the same rule. `parseProject` used to canonicalise (`path.resolve`)
+// BEFORE the endpoint's `listTasks`, which defeated the task cache's read-path
+// guard (it only skips indexing when the path it is HANDED is relative) — so
+// `ws://…/ws/tasks?project=foo` registered `<backend cwd>/foo` in
+// `~/.lattice/projects.json` and wrote a junk identity binding for it.
+test('parseProject refuses a relative project (empty ⇒ the socket is closed)', () => {
+  assert.equal(parseProject('/ws/tasks?project=foo'), '');
+  assert.equal(parseProject('/ws/tasks?project=C%3Adevelopmentproj'), '');
+  assert.equal(parseProject('/ws/tasks'), '');
+  const abs = path.resolve(os.tmpdir(), 'proj');
+  assert.equal(parseProject(`/ws/tasks?project=${encodeURIComponent(abs)}`), canonicalProjectPath(abs));
+});
+
+test('/ws/tasks?project=<relative> closes the socket and indexes nothing', async () => {
+  const rel = `lattice-relproj-ws-${Date.now()}`;
+  const wss = buildTasksWss();
+  const server = http.createServer();
+  server.on('upgrade', (req, socket, head) => {
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  });
+  const port = await listen(server);
+  try {
+    const { listKnownProjects } = await import('../tasks.js');
+    const client = new WebSocket(`ws://127.0.0.1:${port}/ws/tasks?project=${encodeURIComponent(rel)}`);
+    client.on('error', () => { /* a server-side close can surface as an error */ });
+    const messages: string[] = [];
+    client.on('message', (data) => messages.push(String(data)));
+    await new Promise<void>((resolve) => client.once('close', () => resolve()));
+    assert.deepEqual(messages, [], 'no snapshot is sent for a refused project');
+    const phantom = canonicalProjectPath(rel);
+    assert.ok(
+      !(await listKnownProjects()).includes(phantom),
+      `${phantom} must not be indexed in ~/.lattice/projects.json`,
+    );
+    await assert.rejects(access(path.join(process.cwd(), rel)));
+  } finally {
+    wss.close();
+    await close(server);
   }
 });

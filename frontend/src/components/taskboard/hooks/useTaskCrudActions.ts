@@ -27,17 +27,27 @@ export function useTaskCrudActions({ activeFolder, showError }: UseTaskCrudActio
       // already typed — returning false here only on a genuine decline, which
       // keeps the new-task overlay open with their text intact.
       if (!(await ensureGitRepo(activeFolder))) return false;
+      let created: { id: string };
       try {
-        const created = await apiCreateTask(activeFolder, title, description);
-        // If we're adding to a non-open lane, immediately update its status.
-        if (status !== 'open') {
-          await apiUpdateTask(created.id, { status });
-        }
-        return true;
+        created = await apiCreateTask(activeFolder, title, description);
       } catch (err) {
         showError((err as Error).message);
         return false;
       }
+      // If we're adding to a non-open lane, immediately update its status.
+      // The task already exists at this point, so a failed PATCH is reported
+      // but still counts as "created" (true) — returning false would keep the
+      // overlay open and a retry would create a duplicate in Open.
+      if (status !== 'open') {
+        try {
+          await apiUpdateTask(created.id, { status });
+        } catch (err) {
+          showError(
+            `Task created in Open, but moving it to ${status} failed: ${(err as Error).message}`,
+          );
+        }
+      }
+      return true;
     },
     [activeFolder, ensureGitRepo, showError],
   );

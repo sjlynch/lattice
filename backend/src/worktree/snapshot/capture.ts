@@ -18,6 +18,8 @@ import {
   copyDirtyPathsToSnapshot,
   logCopyFailures,
   resetTrackedSnapshotPaths,
+  unstageAddedSnapshotPaths,
+  restoreDeletedSnapshotPaths,
   cleanupCapturedUntrackedPaths,
 } from './copyAndCleanup.js';
 
@@ -33,27 +35,37 @@ export {
 export {
   copyDirtyPathsToSnapshot,
   resetTrackedSnapshotPaths,
+  unstageAddedSnapshotPaths,
+  restoreDeletedSnapshotPaths,
   cleanupCapturedUntrackedPaths,
 } from './copyAndCleanup.js';
 
+// See pathClassification.ts for what each bucket means and why `added` /
+// `deleted` are not folded into `modified`. The two newer buckets are optional
+// on INPUT so hand-built inputs (tests, older callers) keep working; the
+// parser always emits all four.
 export type DirtyPaths = {
   modified: string[];
   untracked: string[];
+  added?: string[];
+  deleted?: string[];
 };
 
-export type SafeDirtyPaths = DirtyPaths & {
+export type SafeDirtyPaths = Required<DirtyPaths> & {
   dropped: string[];
 };
 
 export type SnapshotCopyResult = {
   copiedModified: string[];
   copiedUntracked: string[];
+  copiedAdded: string[];
   copyFailures: string[];
 };
 
 export type SnapshotCleanupPlan = {
   resetTracked: string[];
   deleteUntracked: string[];
+  unstageAdded: string[];
 };
 
 export async function createSnapshotDirectory(
@@ -72,17 +84,26 @@ export async function writeCapturedSnapshotManifest(
   label: string,
   snapshotDir: string,
   copies: SnapshotCopyResult,
+  deleted: string[] = [],
 ): Promise<void> {
   // Manifest written AFTER copies so it reflects what was actually
   // captured. recoverPendingSnapshots reads this on boot — if a file isn't
   // listed, it won't be restored (correctly: we never copied it).
+  //
+  // A staged-new (`added`) path is listed under `untracked`: restore puts it
+  // back as a plain file either way (the staging is not preserved, same as a
+  // staged modification comes back unstaged). `deleted` paths have no copy —
+  // they are listed BEFORE the `checkout HEAD` that resurrects them, so a
+  // crash in between leaves a manifest whose restore is a no-op for a path
+  // that is still absent, and a correct re-deletion for one that came back.
   await writeSnapshotManifest(snapshotDir, {
     version: 1,
     repoRoot,
     label,
     createdAt: Date.now(),
     modifiedTracked: copies.copiedModified,
-    untracked: copies.copiedUntracked,
+    untracked: [...copies.copiedUntracked, ...copies.copiedAdded],
+    ...(deleted.length > 0 ? { deleted: [...deleted] } : {}),
     owner: currentProjectMutationOwner(repoRoot),
   });
 }
@@ -93,6 +114,7 @@ export function buildSnapshotCleanupPlan(
   return {
     resetTracked: [...copies.copiedModified],
     deleteUntracked: [...copies.copiedUntracked],
+    unstageAdded: [...(copies.copiedAdded ?? [])],
   };
 }
 
@@ -129,20 +151,26 @@ async function captureWorkingTree(repoRoot: string, label: string): Promise<Snap
 
   const dirty = classifySafeDirtyPaths(repoRoot, status.stdout);
   logDroppedPaths(repoRoot, dirty.dropped);
-  if (dirty.modified.length === 0 && dirty.untracked.length === 0) return EMPTY_HANDLE;
+  if (
+    dirty.modified.length === 0 && dirty.untracked.length === 0 &&
+    dirty.added.length === 0 && dirty.deleted.length === 0
+  ) return EMPTY_HANDLE;
 
   const dir = await createSnapshotDirectory(repoRoot, label);
   const copies = await copyDirtyPathsToSnapshot(repoRoot, dir, dirty);
   logCopyFailures(copies.copyFailures);
-  await writeCapturedSnapshotManifest(repoRoot, label, dir, copies);
+  await writeCapturedSnapshotManifest(repoRoot, label, dir, copies, dirty.deleted);
 
   const cleanupPlan = buildSnapshotCleanupPlan(copies);
   await resetTrackedSnapshotPaths(repoRoot, cleanupPlan.resetTracked, dir);
+  await unstageAddedSnapshotPaths(repoRoot, cleanupPlan.unstageAdded, dir);
   await cleanupCapturedUntrackedPaths(repoRoot, cleanupPlan.deleteUntracked, dir);
+  await restoreDeletedSnapshotPaths(repoRoot, dirty.deleted);
 
   return {
     dir,
     modifiedTracked: cleanupPlan.resetTracked,
-    untracked: cleanupPlan.deleteUntracked,
+    untracked: [...cleanupPlan.deleteUntracked, ...cleanupPlan.unstageAdded],
+    deleted: [...dirty.deleted],
   };
 }

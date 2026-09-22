@@ -4,7 +4,8 @@ import {
   resyncWithMainAndFinalize,
   type ResyncFinalizeOptions,
 } from '../worktree.js';
-import { type Task } from '../tasks.js';
+import { getTask, type Task } from '../tasks.js';
+import { proxyKillSession } from '../terminalProxy.js';
 import { finishTaskAndCheckIntegrity } from './repoIntegrity.js';
 import {
   handleResyncOutcome,
@@ -36,10 +37,24 @@ function handled(outcome: ProcessOutcome): FlaggedConflictTaskResult {
   return { action: 'handled', outcome };
 }
 
+// Injectable seams for the unit test (production defaults below).
+export type RespawnMidMergeDeps = {
+  respawn: typeof respawnResolverForFlaggedConflict;
+  getTask: typeof getTask;
+  killSession: typeof proxyKillSession;
+};
+
+const productionRespawnDeps: RespawnMidMergeDeps = {
+  respawn: respawnResolverForFlaggedConflict,
+  getTask,
+  killSession: proxyKillSession,
+};
+
 export async function tryRespawnMidMergeResolver(
   task: Task,
   run: MergeRun,
   runCtx: ProcessTargetContext,
+  deps: RespawnMidMergeDeps = productionRespawnDeps,
 ): Promise<ProcessOutcome> {
   console.log(`[merge-run] task ${task.id} mid-merge — recovering resolver`);
   // A surviving resolver may complete during session probing / instruction
@@ -49,7 +64,7 @@ export async function tryRespawnMidMergeResolver(
   let spawned = false;
   let serverId: string | undefined;
   try {
-    const result = await respawnResolverForFlaggedConflict(task, run, runCtx);
+    const result = await deps.respawn(task, run, runCtx);
     if (result.kind === 'spawn-error') {
       // terminal-server is unavailable — no resolver was actually spawned.
       // Surface as an error so the run moves on (task stays at
@@ -58,6 +73,27 @@ export async function tryRespawnMidMergeResolver(
       run.errored.push({
         taskId: task.id,
         error: `resolver spawn failed (terminals unavailable): ${result.error}`,
+      });
+      outcome = { kind: 'errored' };
+    } else if (!(await stillAwaitingResolution(task.id, deps))) {
+      // This path parks lock-free, so nothing stopped a `/merge-aborted`
+      // (the Resolving-strip Cancel, a give-up resolver) from landing while
+      // the spawn sat in the queue: it cleared `task.conflict` and ran
+      // `git merge --abort` in the worktree. The resolver that just came up
+      // would be told to resolve a merge that no longer exists — and its
+      // Stop-hook /complete would land on a plain ready_to_merge task. Kill
+      // it and honour the abort (task stays at ready_to_merge for the next
+      // merge-all, exactly as /merge-aborted intends).
+      console.warn(
+        `[merge-run] task ${task.id}: conflict was cleared while the resolver re-spawn was queued — ` +
+          `killing the freshly spawned resolver ${result.serverId ?? '(unknown session)'} and treating it as aborted`,
+      );
+      if (result.serverId && !(await deps.killSession(result.serverId))) {
+        console.warn(`[merge-run] task ${task.id}: could not confirm kill of resolver ${result.serverId}`);
+      }
+      run.errored.push({
+        taskId: task.id,
+        error: 'conflict resolution was aborted while its resolver re-spawn was queued; task left at ready_to_merge',
       });
       outcome = { kind: 'errored' };
     } else {
@@ -112,6 +148,13 @@ export async function tryRespawnMidMergeResolver(
     abandonConflictWaiter(runCtx.state, task.id, run.id);
   }
   return outcome;
+}
+
+// Re-read the task after an await of unbounded length: still the same
+// conflict-flagged ready_to_merge task we were asked to recover?
+async function stillAwaitingResolution(taskId: string, deps: RespawnMidMergeDeps): Promise<boolean> {
+  const fresh = await deps.getTask(taskId);
+  return !!fresh && fresh.status === 'ready_to_merge' && !!fresh.conflict;
 }
 
 export async function tryFinalizeAfterResolverFinished(

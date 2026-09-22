@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createTask, type GraphNode, type ScanResult } from '../../../api';
 import { useGitSetup } from '../../gitSetup/GitSetupProvider';
+import { useStructuralScan } from '../../../hooks/useStructuralScan';
 import { relPath, type MenuItemDef } from '../menu';
 
 type Args = {
@@ -37,16 +38,21 @@ export function useGraphTaskCreation({
   }, [toast]);
 
   // Files actually selected (filter out anything no longer in the dataset).
+  // Keyed off the structural ref, not live `data`: only `id`/`path` are read,
+  // and `data` gets a fresh reference on every metric-only HealthUpdate (one
+  // per file save) — which rebuilt this O(N) map per save while a selection
+  // existed. The structural ref only changes when files are added/removed.
+  const structuralData = useStructuralScan(data);
   const selectedFiles = useMemo(() => {
-    if (!data || selected.size === 0) return [] as GraphNode[];
-    const byId = new Map(data.nodes.map((n) => [n.id, n]));
+    if (!structuralData || selected.size === 0) return [] as GraphNode[];
+    const byId = new Map(structuralData.nodes.map((n) => [n.id, n]));
     const out: GraphNode[] = [];
     for (const id of selected) {
       const n = byId.get(id);
       if (n) out.push(n);
     }
     return out;
-  }, [data, selected]);
+  }, [structuralData, selected]);
 
   const openMenuItem = useCallback(
     (item: MenuItemDef) => {

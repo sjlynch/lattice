@@ -8,13 +8,32 @@ import { cleanupWorktreeForTask } from '../../../worktree.js';
 import { startMergeRun } from '../../../mergeRuns.js';
 import { awaitPostMergeHookOutsideRun } from './postMergeHookHelper.js';
 
-export function handleTaskStashResolved(backendOrigin: string) {
+// Injectable seam (production default below), mirroring mergeAborted.ts, so the
+// status-guard regression test can prove cleanup is never reached.
+export type StashResolvedDeps = {
+  cleanupWorktree: typeof cleanupWorktreeForTask;
+};
+
+const productionDeps: StashResolvedDeps = {
+  cleanupWorktree: cleanupWorktreeForTask,
+};
+
+export function handleTaskStashResolved(
+  backendOrigin: string,
+  deps: StashResolvedDeps = productionDeps,
+) {
   return async (req: Request<{ id: string }>, res: Response): Promise<Response | void> => {
     const task = await getTask(req.params.id);
     if (!task) return res.status(404).json({ error: 'not found' });
+    // The legitimate caller (worktree/finalize.ts) only ever spawns the stash
+    // resolver for a ready_to_merge task. A stray or late curl against any other
+    // lane must be an idempotent no-op (like /merged): before this guard it
+    // ran cleanupWorktreeForTask — killing the ptys and removing the worktree
+    // of an in_progress task — and flipped it to qa.
+    if (task.status !== 'ready_to_merge') return res.json({ ok: true });
     if (task.worktreePath && task.branch) {
       try {
-        await cleanupWorktreeForTask(task.projectPath, task.worktreePath, task.branch);
+        await deps.cleanupWorktree(task.projectPath, task.worktreePath, task.branch);
       } catch {
         /* ignore — worktree may have already been removed */
       }

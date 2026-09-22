@@ -42,6 +42,17 @@ test('terminalBelongsToProject scopes tagged terminals strictly by projectPath',
   assert.equal(terminalBelongsToProject(tagged, PROJECT_B), false);
 });
 
+test('terminalBelongsToProject matches a registry projectPath that differs only by casing / separators', () => {
+  // A registry record's projectPath is stamped by the backend from
+  // realpathSync.native; the frontend's canonicalProjectPath only uppercases
+  // the drive letter. A strict `===` listed NO registry tabs for such a folder.
+  const registered = term({ id: 'r', cwd: 'C:\\Project-A\\sub', projectPath: 'C:\\Project-A' });
+  assert.equal(terminalBelongsToProject(registered, 'C:/project-a'), true, 'separators + dir casing');
+  assert.equal(terminalBelongsToProject(registered, 'c:\\PROJECT-A\\'), true, 'drive casing + trailing slash');
+  assert.equal(terminalBelongsToProject(registered, 'C:/project-B'), false, 'a different project still differs');
+  assert.equal(terminalBelongsToProject(registered, 'C:/project-A-other'), false, 'a name prefix is not a match');
+});
+
 test('terminalBelongsToProject scopes LEGACY (no projectPath) terminals by cwd', () => {
   // The bug: a persisted terminal from an older sessionStorage shape, missing
   // projectPath, whose cwd points at project A.

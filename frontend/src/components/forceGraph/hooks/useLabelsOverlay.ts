@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import type { ScanResult } from '../../../api';
-import { labelsRegistry, LABEL_REPULSION_BASE } from '../labelsOverlay';
+import {
+  labelsRegistry,
+  LABEL_REPULSION_BASE,
+  releaseNameLabelEntry,
+} from '../labelsOverlay';
 import { applyLabelsToGraph } from '../labelSync';
 import { startLabelRepulsion } from '../labelRepulsionFrames';
 import { getIdleController } from '../idleController';
@@ -33,6 +37,12 @@ export function useLabelsOverlay(
   // labels of exactly these nodes and no others (depth band + Shift ignored).
   selected: Set<string>,
   pinned: boolean,
+  // True while a recolor view (health `h` / loc `z` / dead `d`) owns the
+  // sprites. `decideSpriteState` already suppresses Alt labels under a metric
+  // view on the full-rebuild path; the in-place delta below has to apply the
+  // same gate, or "hold H, then Alt" stacks labels on the recolored sprites
+  // while the other order strips them.
+  metricOverlayActive: boolean,
 ) {
   // `labelHeld` tracks just the Alt key; the effective mode is held OR pinned.
   const [labelHeld, setLabelHeld] = useState(false);
@@ -171,17 +181,32 @@ export function useLabelsOverlay(
   useEffect(() => {
     const graph = graphRef.current;
     if (!graph) return;
+    // Same gate as `decideSpriteState`: no Alt labels while a metric view owns
+    // the sprites. The metric flag is a dep so releasing the view re-syncs.
+    const enabled = labelMode && !metricOverlayActive;
+    // This effect also re-runs on every selection change. With labels off and
+    // none mounted there is nothing to reconcile — skip the O(N) walk and the
+    // ~120 ms of frames `wakeForRefresh` would otherwise burn per click.
+    if (!enabled && labelsRegistry.size === 0) return;
     applyLabelsToGraph(
       graph,
       nodeDepthsRef.current,
       settingsRef.current,
       labelLevel,
       labelShift,
-      labelMode,
+      enabled,
       selected,
     );
     getIdleController(graph)?.wakeForRefresh();
-  }, [labelMode, labelShift, labelLevel, selected, graphRef, settingsRef]);
+  }, [
+    labelMode,
+    metricOverlayActive,
+    labelShift,
+    labelLevel,
+    selected,
+    graphRef,
+    settingsRef,
+  ]);
 
   // Same physics as LOC/health, but with the wider `LABEL_REPULSION_BASE`
   // because file-name labels are much longer than the 3-digit LOC / health
@@ -195,6 +220,7 @@ export function useLabelsOverlay(
       graphRef.current,
       labelsRegistry,
       () => LABEL_REPULSION_BASE * settingsRef.current.labelSpread,
+      releaseNameLabelEntry,
     );
   }, [labelMode, settingsRef, graphRef]);
 

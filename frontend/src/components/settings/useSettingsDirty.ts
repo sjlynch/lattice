@@ -44,6 +44,15 @@ type SettingsDirtyParams = {
   refs: SettingsTabRefs;
 };
 
+// A patch getter that throws (an edited-but-invalid field) counts as dirty.
+function patchIsDirty(read: () => unknown): boolean {
+  try {
+    return read() !== undefined;
+  } catch {
+    return true;
+  }
+}
+
 // Owns the Settings dialog's derived dirty state. Most tab panels expose only
 // imperative patch getters, so the dialog bumps a cheap tick after body edits
 // and this hook re-reads the handles after React commits.
@@ -71,7 +80,10 @@ export function useSettingsDirty({
         refs.envNotes.current?.getWorktreeEnvNotesPatch() !== undefined,
       metrics:
         refs.metricsIgnoredExts.current?.getMetricsIgnoredExtsPatch() !== undefined,
-      agents: refs.agents.current?.getMaxConcurrentAgentsPatch() !== undefined,
+      // The Agents getter throws on an edited-but-invalid value (so Save is
+      // blocked with the message); for the dirty map that simply reads as
+      // "has pending edits".
+      agents: patchIsDirty(() => refs.agents.current?.getMaxConcurrentAgentsPatch()),
       pi:
         refs.pi.current?.getPiProvidersPatch() !== undefined ||
         refs.pi.current?.getPiModelMenuPatch() !== undefined,

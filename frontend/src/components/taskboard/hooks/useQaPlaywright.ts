@@ -19,6 +19,12 @@ export function useQaPlaywright(activeFolder: string): QaPlaywrightControls {
   const [state, setState] = useState<QaPlaywrightState>({ enabled: false, headless: true });
 
   useEffect(() => {
+    // Reset to defaults synchronously BEFORE the fetch resolves (mirrors
+    // usePostMergeHook): otherwise a project switch shows the previous
+    // project's toggles until the new fetch lands, and if that fetch fails the
+    // old values stick — and a later toggle would patch them onto the new
+    // project.
+    setState({ enabled: false, headless: true });
     if (!activeFolder) return;
     let cancelled = false;
     fetchUserSettings(activeFolder)

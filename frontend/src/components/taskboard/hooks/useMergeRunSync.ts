@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  fetchTasks,
   getActiveMergeRun,
   subscribeMergeRuns,
   type MergeRun,
   type MergeRunErrorEntry,
+  type Task,
 } from '../../../api';
 import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
 
@@ -12,22 +12,25 @@ type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
 type CloseTerminalsForTask = (taskId: string) => void;
 type ShowError = (msg: string) => void;
 
-// Build a user-facing label for a per-task merge-run error. Resolves the
-// task title at call time so a fresh fetch isn't needed in the common case
-// (the task list is already in the tab's state via subscribeTasks).
+// Build a user-facing label for a per-task merge-run error. Resolves just the
+// one task's title via `GET /api/tasks/:id` (project-pinned) — never the
+// whole-board `fetchTasks`, which pulls every lane's full text (~1 MB on a big
+// board) for one title. Falls back to the id.
 async function buildErrorMessage(
   projectPath: string,
   entry: MergeRunErrorEntry,
 ): Promise<string> {
+  const fallback = `Merge failed for task ${entry.taskId}: ${entry.error}`;
   try {
-    const tasks = await fetchTasks(projectPath);
-    const task = tasks.find((t) => t.id === entry.taskId);
+    const r = await fetch(
+      `/api/tasks/${encodeURIComponent(entry.taskId)}?project=${encodeURIComponent(projectPath)}`,
+    );
+    if (!r.ok) return fallback;
+    const task = (await r.json()) as Pick<Task, 'title'> | null;
     const title = task?.title?.trim();
-    return title
-      ? `Merge failed for "${title}": ${entry.error}`
-      : `Merge failed for task ${entry.taskId}: ${entry.error}`;
+    return title ? `Merge failed for "${title}": ${entry.error}` : fallback;
   } catch {
-    return `Merge failed for task ${entry.taskId}: ${entry.error}`;
+    return fallback;
   }
 }
 

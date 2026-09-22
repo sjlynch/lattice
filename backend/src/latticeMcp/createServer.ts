@@ -1,6 +1,6 @@
 // The Lattice task-board MCP server: 11 typed board tools over the HTTP API in
-// `routes/tasks/` (plus the two Opengrep tools over `routes/opengrep.ts`),
-// pinned to ONE project.
+// `routes/tasks/` (plus the three Opengrep tools — scan / findings / ignore —
+// over `routes/opengrep.ts`), pinned to ONE project.
 //
 // Why a server and not just the HTTP docs: an agent reading LATTICE_API.md has
 // to remember to pass `project=`, to check the echoed `canonicalProject`, and —
@@ -434,16 +434,23 @@ export function createLatticeMcpServer(
         reason: z.string().optional().describe('One line on why — echoed back, not stored.'),
       },
     },
-    async ({ ruleIds, fingerprints }) =>
-      toToolResult(
-        await client.call('/api/opengrep/ignore', {
-          method: 'POST',
-          body: {
-            ...(ruleIds?.length ? { ruleIds } : {}),
-            ...(fingerprints?.length ? { fingerprints } : {}),
-          },
-        }),
-      ),
+    async ({ ruleIds, fingerprints, reason }) => {
+      const outcome = await client.call('/api/opengrep/ignore', {
+        method: 'POST',
+        body: {
+          ...(ruleIds?.length ? { ruleIds } : {}),
+          ...(fingerprints?.length ? { fingerprints } : {}),
+        },
+      });
+      const result = toToolResult(outcome);
+      // Echo the agent's stated reason back with the result (it is never sent
+      // to the API), so the transcript carries the why next to the what.
+      const why = reason?.trim();
+      if (why && !result.isError) {
+        result.content = [{ type: 'text', text: `${outcome.text}\nreason: ${why}` }];
+      }
+      return result;
+    },
   );
 
   // ---- Board management: NOT registered in a task-worktree session ----------

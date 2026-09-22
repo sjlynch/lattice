@@ -85,7 +85,11 @@ async function readCommits(repoRoot: string, limit: number): Promise<GitCommit[]
 async function readTrackedPaths(repoRoot: string): Promise<Set<string> | null> {
   // `-z` is NUL-separated AND turns off path quoting, so non-ASCII names arrive
   // literally — matching what the log and status paths already produce.
-  const r = await exec('git', ['ls-files', '-z'], repoRoot, {
+  // `--full-name` makes the paths repo-root-relative like `log --name-status`
+  // and `status --porcelain` always are; plain `ls-files` is cwd-relative, so
+  // for a folder opened INSIDE a repo nothing would ever match and every
+  // history path would be declared deleted.
+  const r = await exec('git', ['ls-files', '-z', '--full-name'], repoRoot, {
     timeoutMs: GIT_LS_FILES_TIMEOUT_MS,
   });
   if (r.code !== 0) return null;

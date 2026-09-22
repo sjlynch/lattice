@@ -86,9 +86,15 @@ relative project silently landed under the BACKEND's own cwd —
 `PATCH /api/settings?project=foo` created `backend/foo/.lattice/
 userSettings.json`, and the workflow / terminal-tab / merge-run /
 instrumentation / prompt-customization routes did the same for theirs.
-`POST /api/terminals` applies the same rule to `cwd`. Pinned by
+`POST /api/terminals` applies the same rule to `cwd`. The read-only graph
+routes that take `?path=` (or `?project=`) with a default-root fallback —
+`/api/scan`, `/api/search`, `/api/health/dead-code`, `/api/git-history`,
+`/api/git-branch` — go through `readPathParam` (same module): absent → the
+default root, present-but-relative → the same 400. The WS endpoints apply it
+too (`ws/projectEndpoint.ts` `parseProject` yields `''` for a relative
+project, which closes the socket). Pinned by
 `__tests__/relativeProjectRefused.test.ts`, which drives every project-scoped
-route through the real app.
+route (and `/ws/tasks`) through the real app.
 
 ## Why factories?
 

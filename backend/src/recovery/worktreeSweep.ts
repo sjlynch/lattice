@@ -82,6 +82,25 @@ export async function sweepOrphanedWorktrees(deps: WorktreeSweepDeps = defaultDe
       if (hasLiveSessionAtOrUnder(liveCwds, resolved)) continue;
 
       const branch = wt.branch ? wt.branch.replace(/^refs\/heads\//, '') : '';
+      // An orphan with real unmerged commits on its branch (a task moved back
+      // to Open from in_progress / ready_to_merge, a deleted task record) must
+      // not be reclaimed: cleanup deletes the branch, and that is the only
+      // copy of the work. Only a count of 0 (or a non-lattice branch, which
+      // cleanup never deletes) is safe to sweep.
+      if (branch.startsWith('lattice/')) {
+        const unmerged = await deps.projectGit(repoRoot, ['rev-list', '--count', `HEAD..${wt.branch}`]);
+        const count = unmerged.code === 0 ? parseInt(unmerged.stdout.trim(), 10) : NaN;
+        if (!Number.isFinite(count) || count > 0) {
+          console.error(
+            `[startup] sweep: NOT reclaiming ${resolved} — branch ${branch} ` +
+              (Number.isFinite(count)
+                ? `has ${count} unmerged commit(s)`
+                : `unmerged-commit count failed (exit ${unmerged.code}): ${unmerged.stderr.trim()}`) +
+              '; merge or delete the branch by hand if the work is no longer wanted',
+          );
+          continue;
+        }
+      }
       console.warn(
         `[startup] sweep: removing orphaned worktree ${resolved} ` +
           `(branch=${branch || 'detached'}) — no active task references it`,

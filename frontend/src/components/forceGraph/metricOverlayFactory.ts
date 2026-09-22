@@ -137,9 +137,16 @@ export function createMetricOverlaySpriteFactory(
 // each entry's per-line geometry frees the GPU buffer the library leaves
 // orphaned when `graph.refresh()` replaces the node objects.
 export function clearMetricLabelRegistry(registry: Set<FloatingLabelEntry>): void {
-  for (const entry of registry) {
-    disposeLabelEntry(entry);
-    releaseLabelTexture(sharedMetricLabelTextureCache, entry.label.material.map);
-  }
+  for (const entry of registry) releaseMetricLabelEntry(entry);
   registry.clear();
+}
+
+// Per-entry counterpart of `clearMetricLabelRegistry`: the release the
+// repulsion loop's stale sweep runs for a metric label whose node root was
+// detached from the scene by a visibility digest (hidden-ext toggle) — the
+// entry would otherwise pin its texture refcount and keep repelling until the
+// next full clear. Same two steps, same shared cache.
+export function releaseMetricLabelEntry(entry: FloatingLabelEntry): void {
+  disposeLabelEntry(entry);
+  releaseLabelTexture(sharedMetricLabelTextureCache, entry.label.material.map);
 }

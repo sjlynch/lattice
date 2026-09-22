@@ -35,7 +35,7 @@ import {
   type ProjectRunLockHandle,
 } from '../projectRunLock.js';
 import type { Workflow, WorkflowStepKind } from '../workflows.js';
-import { notify, snapshot, type WorkflowRun } from './state.js';
+import { checkpointWorkflowRun, notify, snapshot, type WorkflowRun } from './state.js';
 import { runStartStep } from './controlSteps/start.js';
 import { runMergeStep } from './controlSteps/merge.js';
 import { runPushStep } from './controlSteps/push.js';
@@ -151,10 +151,25 @@ export async function runControlStepWorker(
   }
 
   if (workerError) {
+    if (run.status !== 'running') {
+      // The run was already cancelled (or otherwise finished) while the worker
+      // was in flight — a cancel during a pending `acquireLock`, say, whose
+      // acquire then throws. That terminal state stands; don't clobber it with
+      // `errored` and emit a second terminal event.
+      console.log(
+        `[workflow-run] ${run.id} control step ${stepIndex} (${kind}) failed after the run ended in ${run.status}; keeping that state:`,
+        workerError.message,
+      );
+      return;
+    }
     run.status = 'errored';
     run.finishedAt = Date.now();
     run.error = workerError.message ?? 'control step failed';
     notify({ type: 'errored', run: snapshot(run) });
+    // Make the terminal state durable NOW: `notify` only schedules the
+    // debounced mirror, and a restart inside that window left the run
+    // `running` on disk, so boot resume re-dispatched a finished control step.
+    void checkpointWorkflowRun(run).catch(() => {});
     console.error(
       `[workflow-run] ${run.id} control step ${stepIndex} (${kind}) failed:`,
       workerError,
@@ -186,6 +201,7 @@ export async function runControlStepWorker(
     run.finishedAt = Date.now();
     run.error = error?.message ?? 'advancing past control step failed';
     notify({ type: 'errored', run: snapshot(run) });
+    void checkpointWorkflowRun(run).catch(() => {});
     console.error(
       `[workflow-run] ${run.id} control step ${stepIndex} (${kind}) could not advance:`,
       err,

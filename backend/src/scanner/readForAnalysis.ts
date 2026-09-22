@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import { LOC_MAX_BYTES, isMinifiedForAnalysis } from '../health/constants.js';
+import { decodeSourceText } from '../health/decodeSource.js';
 
 export type ReadResult = {
   loc?: number;
@@ -32,7 +33,7 @@ export async function readForAnalysis(filePath: string): Promise<ReadResult> {
 
     if (isMinifiedForAnalysis(buf.length, count)) return { loc: count };
 
-    return { loc: count, content: buf.toString('utf8') };
+    return { loc: count, content: decodeSourceText(buf) };
   } catch {
     return {};
   }

@@ -11,10 +11,24 @@ import {
 // line for the card preview. The full text is in the title tooltip and the
 // detail overlay; here we just want a readable one-liner.
 function summaryPreview(summary: string): string {
-  return summary
-    .replace(/\n?-{3,}\n?/g, ' · ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return clipPreview(
+    summary
+      .replace(/\n?-{3,}\n?/g, ' · ')
+      .replace(/\s+/g, ' ')
+      .trim(),
+  );
+}
+
+// Cards only ever show one clipped line, but a description with agent-appended
+// summaries can run to tens of KB — rendering all of it as text AND again in
+// the `title` tooltip for every card is pure waste (and a giant tooltip). Keep
+// a short preview here; the detail overlay shows the full text.
+const CARD_PREVIEW_CHARS = 300;
+
+function clipPreview(text: string): string {
+  return text.length > CARD_PREVIEW_CHARS
+    ? `${text.slice(0, CARD_PREVIEW_CHARS).trimEnd()}…`
+    : text;
 }
 
 // Title/description block plus the queued/conflict pills. The click handler
@@ -61,12 +75,12 @@ export const TaskCardBody = memo(function TaskCardBody({
         {task.title}
       </div>
       {task.description && (
-        <div className="task-card-desc" title={task.description}>
-          {task.description}
+        <div className="task-card-desc" title={clipPreview(task.description)}>
+          {clipPreview(task.description)}
         </div>
       )}
       {task.summary && (
-        <div className="task-card-summary" title={task.summary}>
+        <div className="task-card-summary" title={clipPreview(task.summary)}>
           <span className="task-card-summary-label">summary</span>
           {summaryPreview(task.summary)}
         </div>

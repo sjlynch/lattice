@@ -14,6 +14,14 @@ import { WORKTREE_RING_RENDER_ORDER } from './renderOrders';
 const RING_TAG = 'lattice:worktree-ring';
 const SIZE = 128;
 
+// Key for the `W` overlay's path→color map: forward slashes, lowercased, so a
+// backend-reported worktree path matches `node.path` regardless of separator
+// or drive-letter case. Shared by the ring walker (`worktreeRingSync`) and the
+// node-object factory so both sides of the map agree on the key.
+export function normalizeWorktreePath(p: string): string {
+  return p.replace(/\\/g, '/').toLowerCase();
+}
+
 function rgba(c: THREE.Color, a: number): string {
   return `rgba(${Math.round(c.r * 255)}, ${Math.round(c.g * 255)}, ${Math.round(
     c.b * 255,

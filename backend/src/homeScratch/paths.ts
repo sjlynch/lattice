@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { homeProjectScratchDir } from '../projectPath.js';
+import { isPathStrictlyInside } from '../worktree/paths.js';
 
 // Shared home-scoped scratch path helpers + the `.git`-deletion path-safety
 // guard, used by the one-off agent run-types (pushRuns / qaRuns /
@@ -37,29 +38,17 @@ export function isPathInsideOrSame(
   targetPath: string,
 ): boolean {
   const rel = safeRelative(basePath, targetPath);
-  return (
-    rel !== null &&
-    (rel === '' ||
-      (!path.isAbsolute(rel) &&
-        rel !== '..' &&
-        !rel.startsWith(`..${path.sep}`)))
-  );
+  if (rel === null) return false;
+  if (rel === '') return true;
+  return isPathStrictlyInside(basePath, targetPath);
 }
 
-// True when `targetPath` is strictly under `basePath` (not equal to it).
-export function isPathStrictlyInside(
-  basePath: string,
-  targetPath: string,
-): boolean {
-  const rel = safeRelative(basePath, targetPath);
-  return (
-    rel !== null &&
-    rel !== '' &&
-    !path.isAbsolute(rel) &&
-    rel !== '..' &&
-    !rel.startsWith(`..${path.sep}`)
-  );
-}
+// True when `targetPath` is strictly under `basePath` (not equal to it). This
+// is the ONE canonical implementation (`worktree/paths.ts` — case-folded on
+// win32, the same helper the worktree sweep/cleanup bounds use); this module
+// used to carry its own copy without the fold. Re-exported so the per-feature
+// `paths.ts` files and the tests keep their import path.
+export { isPathStrictlyInside };
 
 export type HomeScratchConfig = {
   // Scratch dir name under `~/.lattice/per-project/<hash>/` (e.g. 'push', 'qa',

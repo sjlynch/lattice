@@ -12,10 +12,21 @@ import {
   trackedOwnedPaths,
 } from './managedFiles.js';
 
-// Is `file` tracked in this worktree's index?
-async function isTracked(worktreePath: string, file: string): Promise<boolean> {
-  const res = await exec('git', ['ls-files', '--', file], worktreePath);
-  return res.stdout.trim().length > 0;
+// Which of `files` are tracked in this worktree's index — ONE `git ls-files -z`
+// for the whole set (was one git spawn per shelve path per merge; see
+// managedFiles.ts `trackedOwnedPaths` for the same batching at the owned-file
+// sites). A failed listing reads as "nothing tracked", exactly as the old
+// per-path probe's empty stdout did.
+async function trackedPaths(worktreePath: string, files: readonly string[]): Promise<Set<string>> {
+  if (files.length === 0) return new Set();
+  const res = await exec('git', ['ls-files', '-z', '--', ...files], worktreePath);
+  if (res.code !== 0) return new Set();
+  return new Set(
+    res.stdout
+      .split('\0')
+      .map((p) => p.replace(/\\/g, '/').trim())
+      .filter(Boolean),
+  );
 }
 
 // Move Lattice's UNTRACKED copies of its managed files aside so `git merge`
@@ -37,6 +48,7 @@ async function isTracked(worktreePath: string, file: string): Promise<boolean> {
 //     is shelved, and the tracked case still goes down the auto-resolve path.
 export async function shelveLatticeManagedFiles(worktreePath: string): Promise<string[]> {
   const shelved: string[] = [];
+  const tracked = await trackedPaths(worktreePath, LATTICE_SHELVE_PATHS);
   for (const f of LATTICE_SHELVE_PATHS) {
     const src = path.join(worktreePath, f);
     try {
@@ -45,7 +57,7 @@ export async function shelveLatticeManagedFiles(worktreePath: string): Promise<s
       continue; // file absent — nothing to move
     }
     try {
-      if (await isTracked(worktreePath, f)) continue;
+      if (tracked.has(f)) continue;
       await fs.rename(src, `${src}.lattice-bak`);
       shelved.push(f);
     } catch {
@@ -65,11 +77,13 @@ const OWNED_PATHS = new Set<string>(LATTICE_OWNED_FILE_PATHS);
 // version, that is the user's file and Lattice's copy is dropped rather than
 // silently overwriting it with a dirty working-tree change.
 export async function restoreLatticeManagedFiles(worktreePath: string, files: string[]): Promise<void> {
+  // Only the non-owned shelved paths need the tracked check; one listing.
+  const tracked = await trackedPaths(worktreePath, files.filter((f) => !OWNED_PATHS.has(f)));
   for (const f of files) {
     const dest = path.join(worktreePath, f);
     const bak = `${dest}.lattice-bak`;
     try {
-      if (!OWNED_PATHS.has(f) && (await isTracked(worktreePath, f))) {
+      if (!OWNED_PATHS.has(f) && tracked.has(f)) {
         console.log(`[merge] merge brought in a tracked ${f}; keeping it over Lattice's copy`);
         await fs.rm(bak, { force: true });
         continue;

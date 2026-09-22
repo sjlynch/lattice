@@ -48,9 +48,12 @@ close admission. Unknown/unhealthy listeners are never force-killed.
   an undefined state (the main backend respawns it on demand). Installed first,
   before any PTY can throw asynchronously. Fail-fast contract regression-covered
   by `../__tests__/processGuards.test.ts`.
-- `routes.ts` — `registerTerminalRoutes(app, { fingerprint, shutdown, authToken })`:
-  the JSON HTTP surface — `GET /health` (fingerprint, protocol, instance ID and
-  capabilities), protected
+- `routes.ts` — `registerTerminalRoutes(app, { fingerprint, shutdown, authToken,
+  admission?, instanceId?, sessionCount?, sessionHandler? })` (the optional
+  ones default to a fresh admission gate, a random instance id, the live
+  session count, and `createSessionHandler()`; `sessionHandler` is a test
+  seam): the JSON HTTP surface — `GET /health` (fingerprint, protocol, instance
+  ID and capabilities), protected
   `GET /sessions`, `POST /sessions`, `DELETE /sessions/by-cwd` (**must** precede
   `/:id` — Express matches in registration order), `DELETE /sessions/:id`, and
   `POST /shutdown` (explicit user shutdown), `POST /shutdown-if-idle` (upgrade).

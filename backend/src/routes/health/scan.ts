@@ -6,6 +6,7 @@ import { Router } from 'express';
 import { scanCoordinator } from '../../scanner/coordinator.js';
 import { ScanCancelledError } from '../../scanner/fileMetrics.js';
 import { getDeadCodeSummary } from '../../deadCode.js';
+import { readPathParam } from '../projectParam.js';
 
 export function buildScanRouter(
   defaultRoot: string,
@@ -14,8 +15,8 @@ export function buildScanRouter(
   const r = Router();
 
   r.get('/api/scan', async (req, res) => {
-    const target =
-      typeof req.query.path === 'string' ? req.query.path : defaultRoot;
+    const target = readPathParam(req, res, defaultRoot);
+    if (target === null) return;
     const startedAt = Date.now();
     console.log(`[scan] start ${target}`);
     // Track whether the client gave up first. The browser cancels the
@@ -70,12 +71,8 @@ export function buildScanRouter(
   // dead-code note in LATTICE_TASK.md and lets an in-worktree agent fetch
   // the current list to investigate before removing anything.
   r.get('/api/health/dead-code', async (req, res) => {
-    const target =
-      typeof req.query.project === 'string'
-        ? req.query.project
-        : typeof req.query.path === 'string'
-          ? req.query.path
-          : defaultRoot;
+    const target = readPathParam(req, res, defaultRoot);
+    if (target === null) return;
     try {
       res.json(await getDeadCodeSummary(target));
     } catch (err) {

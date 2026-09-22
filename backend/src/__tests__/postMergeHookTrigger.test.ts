@@ -19,6 +19,8 @@ function makeDeps(settings: UserSettings): {
     recorded: PostMergeHookRun[];
     registered: Parameters<TriggerPostMergeHookDeps['registerAgentSession']>[0][];
     cleaned: { projectPath: string; id: string }[];
+    patched: Partial<PostMergeHookRun>[];
+    killed: string[];
   };
 } {
   let currentRun: PostMergeHookRun | null = null;
@@ -32,12 +34,19 @@ function makeDeps(settings: UserSettings): {
       TriggerPostMergeHookDeps['registerAgentSession']
     >[0][],
     cleaned: [] as { projectPath: string; id: string }[],
+    patched: [] as Partial<PostMergeHookRun>[],
+    killed: [] as string[],
   };
 
   const deps: TriggerPostMergeHookDeps = {
     getUserSettings: async () => settings,
     getActiveHookForProject: () =>
       currentRun?.status === 'running' ? currentRun : null,
+    getPostMergeHook: (id) => (currentRun?.id === id ? currentRun : null),
+    killSession: async (serverId) => {
+      calls.killed.push(serverId);
+      return true;
+    },
     setupPostMergeHookSession: async (args) => {
       calls.setup.push(args);
       return {
@@ -62,6 +71,7 @@ function makeDeps(settings: UserSettings): {
     },
     patchPostMergeHook: (id, patch) => {
       if (!currentRun || currentRun.id !== id) return null;
+      calls.patched.push(patch);
       currentRun = { ...currentRun, ...patch };
       return currentRun;
     },
@@ -274,4 +284,79 @@ test('simultaneous triggers atomically claim one hook for the project', async ()
   assert.equal(calls.recorded.length, 1);
   assert.equal(calls.setup.length, 1);
   assert.equal(calls.queued.length, 1);
+});
+
+// The run is recorded BEFORE scratch setup and the queued pty spawn, so /abort
+// can land while either is in flight. The trigger must then not act on the
+// abandoned launch: no pty kept alive, no `progress` (patch) for a finished
+// run, no orange node re-added after the abort removed it.
+test('an abort while the queued spawn is pending kills the late pty and registers nothing', async () => {
+  const { deps, calls } = makeDeps({
+    postMergeHookPrompt: 'run the post-merge checks',
+  });
+  let releaseSpawn: () => void = () => undefined;
+  const spawnBlocked = new Promise<void>((resolve) => {
+    releaseSpawn = resolve;
+  });
+  deps.queuedCreateSession = async (args) => {
+    calls.queued.push(args);
+    await spawnBlocked;
+    return { id: 'server_late' };
+  };
+
+  const pending = triggerPostMergeHookWithDeps(
+    { projectPath: PROJECT, backendOrigin: ORIGIN, trigger: 'merge-run' },
+    deps,
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(calls.queued.length, 1, 'the pty spawn is in flight');
+
+  // What the /abort route does to the registry while the spawn is queued.
+  deps.finishPostMergeHook(calls.recorded[0].id, 'aborted', 'aborted by user');
+  releaseSpawn();
+  const outcome = await pending;
+
+  assert.equal(outcome.kind, 'skipped');
+  if (outcome.kind !== 'skipped') return;
+  assert.equal(outcome.reason, 'aborted');
+  assert.deepEqual(calls.killed, ['server_late'], 'the late pty is reclaimed');
+  assert.equal(calls.registered.length, 0, 'no presence node after the abort');
+  assert.equal(calls.patched.length, 0, 'no progress event for a finished run');
+  assert.deepEqual(calls.cleaned, [{ projectPath: PROJECT, id: calls.recorded[0].id }]);
+});
+
+test('an abort while scratch setup is pending skips the spawn entirely', async () => {
+  const { deps, calls } = makeDeps({
+    postMergeHookPrompt: 'run the post-merge checks',
+  });
+  let releaseSetup: () => void = () => undefined;
+  const setupBlocked = new Promise<void>((resolve) => {
+    releaseSetup = resolve;
+  });
+  deps.setupPostMergeHookSession = async (args) => {
+    calls.setup.push(args);
+    await setupBlocked;
+    return {
+      id: args.id,
+      cwd: `/tmp/lattice/${args.id}`,
+      instructionsFile: `/tmp/lattice/${args.id}/POST_MERGE_HOOK.md`,
+      harness: args.harness,
+    };
+  };
+
+  const pending = triggerPostMergeHookWithDeps(
+    { projectPath: PROJECT, backendOrigin: ORIGIN, trigger: 'manual-merge' },
+    deps,
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  deps.finishPostMergeHook(calls.recorded[0].id, 'aborted', 'aborted by user');
+  releaseSetup();
+  const outcome = await pending;
+
+  assert.equal(outcome.kind, 'skipped');
+  if (outcome.kind !== 'skipped') return;
+  assert.equal(outcome.reason, 'aborted');
+  assert.equal(calls.queued.length, 0, 'no pty is requested for an aborted hook');
+  assert.equal(calls.registered.length, 0);
+  assert.equal(calls.cleaned.length, 1);
 });

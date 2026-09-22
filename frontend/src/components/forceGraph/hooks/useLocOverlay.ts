@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { locLabelRegistry } from '../locOverlay';
-import { METRIC_REPULSION_BASE } from '../metricOverlayFactory';
+import {
+  METRIC_REPULSION_BASE,
+  releaseMetricLabelEntry,
+} from '../metricOverlayFactory';
 import { startLabelRepulsion } from '../labelRepulsionFrames';
 import type { GraphSettings } from '../graphSettings';
 import { clearLabelsAndRefresh } from './refresh';
@@ -54,6 +57,7 @@ export function useLocOverlay(
       graphRef.current,
       locLabelRegistry,
       () => METRIC_REPULSION_BASE * settingsRef.current.labelSpread,
+      releaseMetricLabelEntry,
     );
   }, [locMode, settingsRef, graphRef]);
 

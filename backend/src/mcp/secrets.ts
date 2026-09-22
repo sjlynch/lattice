@@ -31,14 +31,47 @@ function secretsWriteKey(): string {
   return `mcpSecrets:${secretsFile()}`;
 }
 
+// Lenient read for the READ paths (spawn resolution, the redacted GET): a file
+// that can't be read or parsed reads as "no secrets" so a session still spawns.
+// Never use this as the base of a read-modify-write — see readMcpSecretsStrict.
 export async function readMcpSecrets(): Promise<McpSecrets> {
   try {
-    const raw = await fs.readFile(secretsFile(), 'utf8');
-    const parsed = JSON.parse(raw) as unknown;
-    return sanitizeSecrets(parsed);
+    return await readMcpSecretsStrict();
   } catch {
     return {};
   }
+}
+
+// Strict read for the WRITE paths. `{}` only when the file is genuinely absent
+// (ENOENT); any other read error (a transient EBUSY/EPERM lock) or a parse
+// failure THROWS, because the writers below read-modify-write whatever this
+// returns — with the lenient `{}` a single transient failure followed by
+// saving one key silently wiped every other stored secret. The route lets the
+// error through as a 500 whose message says why (express-async-errors).
+export async function readMcpSecretsStrict(): Promise<McpSecrets> {
+  const file = secretsFile();
+  let raw: string;
+  try {
+    raw = await fs.readFile(file, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return {};
+    throw new Error(
+      `MCP secrets file unreadable (${file}: ${(err as Error).message}) — refusing to overwrite it`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    // A UTF-8 BOM (an editor's doing) is not a reason to refuse.
+    parsed = JSON.parse(raw.replace(/^﻿/, ''));
+  } catch (err) {
+    throw new Error(
+      `MCP secrets file is not valid JSON (${file}: ${(err as Error).message}) — refusing to overwrite it`,
+    );
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`MCP secrets file is not a JSON object (${file}) — refusing to overwrite it`);
+  }
+  return sanitizeSecrets(parsed);
 }
 
 function sanitizeSecrets(raw: unknown): McpSecrets {
@@ -74,7 +107,7 @@ export async function setMcpSecret(
   value: string | null,
 ): Promise<RedactedMcpSecrets> {
   return runExclusive(secretsWriteKey(), async () => {
-    const secrets = await readMcpSecrets();
+    const secrets = await readMcpSecretsStrict();
     if (value === null || value === '') {
       if (secrets[serverId]) {
         delete secrets[serverId][envVar];
@@ -93,7 +126,7 @@ export async function mergeMcpSecrets(
   incoming: McpSecrets,
 ): Promise<RedactedMcpSecrets> {
   return runExclusive(secretsWriteKey(), async () => {
-    const secrets = await readMcpSecrets();
+    const secrets = await readMcpSecretsStrict();
     for (const [serverId, vars] of Object.entries(incoming)) {
       for (const [envVar, value] of Object.entries(vars)) {
         if (typeof value === 'string' && value.length > 0) {

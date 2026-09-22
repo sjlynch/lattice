@@ -5,6 +5,7 @@
 import type { Request, Response } from 'express';
 import { getTask, updateTask, type Task } from '../../tasks.js';
 import {
+  partitionIdsByRequestedProject,
   requireTaskInRequestedProject,
   resolveProject,
   respondJson,
@@ -84,6 +85,10 @@ export async function handleTaskAppendSummary(
   res: Response,
 ): Promise<void> {
   const summary = summaryFromBody(req.body);
+  if (summary !== undefined && typeof summary !== 'string') {
+    res.status(400).json({ error: 'summary must be a string' });
+    return;
+  }
   if (!summary?.trim()) {
     res.status(400).json({ error: 'summary required' });
     return;
@@ -123,9 +128,17 @@ export async function handleTaskBulkUpdate(
     res.status(400).json({ error: parsed.error });
     return;
   }
-  const updates = parsed.value;
+  const all = parsed.value;
 
   await respondJson(res, async () => {
+    // Honour the `?project=` pin like the single PATCH does: an id from another
+    // board is reported as `foreign`, never written (updateTask is global).
+    const { own, foreign } = await partitionIdsByRequestedProject(
+      all.map((u) => u.id!),
+      req,
+    );
+    const ownIds = new Set(own);
+    const updates = all.filter((u) => ownIds.has(u.id!));
     const results = await Promise.all(
       updates.map(({ id, ...patch }) => updateTask(id!, patch)),
     );
@@ -135,7 +148,7 @@ export async function handleTaskBulkUpdate(
       if (r) updated.push(r);
       else missing.push(updates[i].id!);
     });
-    return { updated: updated.length, missing, tasks: updated };
+    return { updated: updated.length, missing, foreign, tasks: updated };
   });
 }
 

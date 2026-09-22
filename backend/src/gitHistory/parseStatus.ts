@@ -19,12 +19,14 @@ export function parseGitStatusPorcelain(out: string): GitUncommitted {
     const filePath = normalizeGitPath(t.slice(3)); // skip "XY "
     const x = xy[0];
     const y = xy[1];
-    // Renames: porcelain emits `R  newPath\0oldPath`. Consume the next
-    // token as the previous path.
-    if (x === 'R' || y === 'R') {
+    // Renames and copies: porcelain emits `R  newPath\0oldPath` (and, with
+    // `status.renames=copies`, `C  newPath\0oldPath`). Consume the next token
+    // as the previous path so it is not parsed as a record of its own.
+    if (x === 'R' || y === 'R' || x === 'C' || y === 'C') {
       const oldPath = tokens[i + 1] ?? '';
       i += 1;
-      if (oldPath) {
+      // Only a rename removes the source; a copy's source still exists.
+      if (oldPath && (x === 'R' || y === 'R')) {
         applyHigherPriorityStatus(byPath, normalizeGitPath(oldPath), 'D');
       }
       applyHigherPriorityStatus(byPath, filePath, 'A');

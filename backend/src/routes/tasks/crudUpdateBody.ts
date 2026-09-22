@@ -5,7 +5,7 @@
 import type { TaskStatus } from '../../tasks.js';
 import type { ParsedTaskBlock } from './markdownBatch.js';
 import { isValidTaskStatus, normalizeBody, statusValidationError } from './requestUtils.js';
-import { pickTaskPatch, type TaskPatch } from './crudTypes.js';
+import { pickTaskPatch, taskPatchFieldError, type TaskPatch } from './crudTypes.js';
 
 export type ParseResult<T> =
   | { ok: true; value: T }
@@ -44,18 +44,22 @@ export function taskPatchFromBody(body: unknown): ParseResult<TaskPatch> {
   if (parsed.json.status !== undefined && !isValidTaskStatus(parsed.json.status)) {
     return { ok: false, error: statusValidationError('status') };
   }
+  const fieldError = taskPatchFieldError(parsed.json);
+  if (fieldError) return { ok: false, error: fieldError };
   // Whitelist onto {title, description, status} — never cast the raw body
   // through (mass-assignment: worktreePath/branch/conflict/… are internal).
   return { ok: true, value: pickTaskPatch(parsed.json) };
 }
 
 // Accepts EITHER a JSON body ({summary}) OR a text/markdown / text/plain body
-// whose whole content becomes the summary.
-export function summaryFromBody(body: unknown): string | undefined {
+// whose whole content becomes the summary. The JSON `summary` is returned
+// as-is (unknown) — the handler type-checks it, since `{summary: 1}` used to
+// reach `.trim()` and 500.
+export function summaryFromBody(body: unknown): unknown {
   const parsed = normalizeBody(body);
   return parsed.kind === 'markdown'
     ? parsed.source
-    : (parsed.json as { summary?: string }).summary;
+    : (parsed.json as { summary?: unknown }).summary;
 }
 
 // Pull the upsert blocks out of either a markdown round-trip document or a JSON

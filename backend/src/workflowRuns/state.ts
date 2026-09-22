@@ -109,8 +109,31 @@ export function persistRunsForProject(projectPath: string): void {
   scheduleWorkflowRunPersist(projectPath, () => getActiveRunsForProject(projectPath));
 }
 
+// Finished runs kept in `runs` per project. Nothing reads a finished run by id
+// after its terminal event: the frontend keeps its own `recentRuns` from the WS
+// event, `/api/workflow-runs/active` and `getRunningRunIds` filter to
+// `running`, and the completion route's `getRun` only needs a live run. So
+// this is a memory bound, not a retention contract — every terminal transition
+// used to leave the run in the map for the life of the process, and each
+// `getActiveRunsForProject` (called from every persist) then walked and cloned
+// the whole history. Running runs are never pruned.
+export const MAX_FINISHED_RUNS_PER_PROJECT = 20;
+
+export function pruneFinishedRuns(projectPath: string): void {
+  const key = canonicalProjectPath(projectPath);
+  const finished = [...runs.values()]
+    .filter((r) => r.projectPath === key && r.status !== 'running')
+    .sort((a, b) => (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt));
+  for (const stale of finished.slice(MAX_FINISHED_RUNS_PER_PROJECT)) {
+    runs.delete(stale.id);
+  }
+}
+
 export function notify(ev: WorkflowRunEvent): void {
   if ('run' in ev) persistRunsForProject(ev.run.projectPath);
+  if (ev.type === 'completed' || ev.type === 'errored' || ev.type === 'cancelled') {
+    pruneFinishedRuns(ev.run.projectPath);
+  }
   // Per-listener isolation. notify() is called inline from `dispatchStep`
   // (and other advance points) — if a single subscriber throws, the
   // exception used to bubble up to `completeWorkflowStep`'s try/catch and

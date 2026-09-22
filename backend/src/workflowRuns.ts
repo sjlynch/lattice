@@ -37,8 +37,13 @@ import {
 import { spawnWorkflowStep } from './workflowRuns/stepSpawner.js';
 import { nextRunnableStepIndex } from './workflowRuns/frozenSteps.js';
 import { executeControlStep } from './workflowRuns/controlStep.js';
-import { cancelWorkflowStepSessions, killWorkflowStepSession } from './workflowRuns/sessionSpawner.js';
+import {
+  cancelWorkflowStepSessions,
+  killWorkflowStepSession,
+  workflowStepAgentId,
+} from './workflowRuns/sessionSpawner.js';
 import { cancelStopHookGate } from './workflowRuns/stopHookGate.js';
+import { forgetAgentQuiescence } from './agentQuiescence.js';
 import { abortStepPreRun } from './workflowRuns/stepTools.js';
 import { cloneWorkflowDefinition } from './workflowRuns/definition.js';
 
@@ -190,7 +195,12 @@ export function cancelWorkflowRun(runId: string): boolean {
   abortStepPreRun(run.id);
   cancelWorkflowStepSessions(run.id);
   cancelStopHookGate(run.id);
+  forgetAgentQuiescence(workflowStepAgentId(run.id, run.currentStepIndex));
   notify({ type: 'cancelled', run: snapshot(run) });
+  // Durable now, not after the 100 ms debounce: a restart in that window left
+  // the run `running` on disk and boot resume re-dispatched a cancelled control
+  // step. The run is no longer active, so this write is the mirror's deletion.
+  void checkpointWorkflowRun(run).catch(() => {});
   console.log(`[workflow-run] ${run.id} cancelled`);
   return true;
 }
@@ -248,7 +258,9 @@ export function failWorkflowRun(runId: string, error: string): boolean {
   run.error = error;
   cancelWorkflowStepSessions(run.id);
   cancelStopHookGate(run.id);
+  forgetAgentQuiescence(workflowStepAgentId(run.id, run.currentStepIndex));
   notify({ type: 'errored', run: snapshot(run) });
+  void checkpointWorkflowRun(run).catch(() => {});
   console.error(`[workflow-run] ${run.id} errored: ${error}`);
   return true;
 }

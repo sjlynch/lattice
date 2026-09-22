@@ -3,14 +3,16 @@ import { abortWorktreeMerge, isMidMerge } from '../worktree.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
 import { notifySessionsFreed } from '../spawnQueue.js';
 
-// Recover a task whose conflict resolver was abandoned. Two callers:
+// Recover a task whose conflict resolver was abandoned. One caller:
 //   - POST /api/tasks/:id/merge-aborted — a give-up resolver aborted the merge
 //     and curled the callback (or the user clicked "Cancel" on the Resolving
 //     strip).
-//   - the merge-run parked-waiter liveness backstop (waiterLiveness.ts) — a
-//     resolver pty died / the wait timed out with NO callback at all.
+// (The merge-run liveness backstop — a resolver pty that died / a wait that
+// timed out with no callback — does NOT use this: `resolverWaitFailure.ts`
+// stops the run and PRESERVES the conflict state, terminals and unfinished
+// edits instead.)
 //
-// In both cases the resolution is being abandoned, so we: abort any lingering
+// The resolution is being abandoned, so we: abort any lingering
 // in-worktree merge (belt + braces — preflight also auto-recovers a stray
 // MERGE_HEAD, but leaving one wedges the next /merge in the orphan-mid-merge
 // state), clear the conflict flags (which is what makes a late /merged from the

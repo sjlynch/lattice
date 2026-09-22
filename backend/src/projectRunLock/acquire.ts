@@ -7,6 +7,7 @@ import { releaseLockFile } from './release.js';
 import { clearStaleLockOrThrow } from './steal.js';
 import type { ProjectRunLockHandle } from './types.js';
 import { registerProjectRunLock } from './mutation.js';
+import { pruneRetiredTombstonesOnce } from './tombstones.js';
 
 // Acquire the per-project run lock or throw. `label` is logged into the
 // lockfile so a developer inspecting `~/.lattice/per-project/<hash>/run.lock`
@@ -17,6 +18,9 @@ export async function acquireProjectRunLock(
 ): Promise<ProjectRunLockHandle> {
   const file = projectRunLockFilePath(projectPath);
   await fs.mkdir(path.dirname(file), { recursive: true });
+  // Housekeeping for the retirement tombstones (see tombstones.ts): first
+  // acquisition per project per process, and only while no lock exists.
+  await pruneRetiredTombstonesOnce(file);
   const body = currentLockBody(label);
 
   // Two attempts: first try, and if EEXIST + the holder is dead (or the

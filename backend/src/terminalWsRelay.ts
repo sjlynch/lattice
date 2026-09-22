@@ -19,6 +19,15 @@ const UPSTREAM_OPEN_TIMEOUT_MS = 10_000;
 // down well before this matters in practice.
 const MAX_PENDING_FRAMES = 1_000;
 
+// Unsent bytes queued on the BROWSER socket past which the client is dropped
+// rather than buffered further: a tab that stopped reading (throttled,
+// suspended, wedged) would otherwise grow this process's heap without bound
+// on the pty's behalf. The frontend reconnects and gets the disk-backed replay.
+// Mirrors the executor-side bound in terminal/broadcast.ts.
+const CLIENT_HIGH_WATER_BYTES = 8 * 1024 * 1024;
+
+export type EarlyFrame = { data: RawData; isBinary: boolean };
+
 // Proxies a terminal WebSocket from the UI through to the terminal server.
 // Bidirectional relay; either side closing tears down both ends.
 export type ProxyTerminalWsOptions = {
@@ -26,6 +35,10 @@ export type ProxyTerminalWsOptions = {
   // need not parse every output frame for OSC titles. Default false (parse):
   // a retained older executor lacks the field and the relay is its only source.
   nativeTerminalTitle?: boolean;
+  // Client frames that arrived BEFORE this relay was wired (the caller awaits
+  // `ensureTerminalServer()` between the upgrade and this call, and a fast
+  // typist's first keystrokes land in that window). Forwarded first, in order.
+  earlyFrames?: EarlyFrame[];
 };
 
 export function proxyTerminalWs(
@@ -71,8 +84,15 @@ export function proxyTerminalWs(
     ? null
     : createTerminalActivityRelayObserver();
 
-  // Buffer messages that arrive before the upstream connection is open.
-  const pending: Array<{ data: RawData; isBinary: boolean }> = [];
+  // Buffer messages that arrive before the upstream connection is open —
+  // seeded with whatever the caller captured before this relay existed.
+  const pending: EarlyFrame[] = (options.earlyFrames ?? []).slice(0, MAX_PENDING_FRAMES);
+  if (sessionId && pending.length > 0) noteTerminalClientInput(sessionId);
+  // Set once the browser side has gone away. Closing a still-CONNECTING
+  // upstream makes ws emit an 'error' ("WebSocket was closed before the
+  // connection was established") that is nothing but the teardown we asked
+  // for — not an upstream fault worth logging.
+  let clientGone = false;
 
   // Watchdog: if upstream never opens, drop the client so it reconnects.
   // clearTimeout is a no-op after the timer fires, so every teardown path can
@@ -142,15 +162,20 @@ export function proxyTerminalWs(
         sessionId = attachedSessionId(data);
       }
     }
-    if (clientWs.readyState === WebSocket.OPEN) {
-      clientWs.send(data, { binary: isBinary });
+    if (clientWs.readyState !== WebSocket.OPEN) return;
+    if (clientWs.bufferedAmount > CLIENT_HIGH_WATER_BYTES) {
+      // The browser isn't draining; drop it (its reconnect re-attaches and
+      // replays) instead of queueing the pty's output in our heap.
+      clientWs.terminate();
+      return;
     }
+    clientWs.send(data, { binary: isBinary });
   });
 
   targetWs.on('error', (err) => {
     activityObserver?.dispose();
     clearTimeout(openTimer);
-    console.error('[terminal-proxy] upstream error:', err.message);
+    if (!clientGone) console.error('[terminal-proxy] upstream error:', err.message);
     if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
   });
 
@@ -161,6 +186,7 @@ export function proxyTerminalWs(
   });
 
   clientWs.on('close', () => {
+    clientGone = true;
     activityObserver?.dispose();
     clearTimeout(openTimer);
     const s = targetWs.readyState;
@@ -168,6 +194,7 @@ export function proxyTerminalWs(
   });
 
   clientWs.on('error', () => {
+    clientGone = true;
     activityObserver?.dispose();
     clearTimeout(openTimer);
     const s = targetWs.readyState;

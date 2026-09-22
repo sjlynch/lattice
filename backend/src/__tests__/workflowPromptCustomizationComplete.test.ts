@@ -2,7 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import { completeWorkflowPromptCustomization } from '../workflowPromptCustomizations.js';
-import { storeWorkflowPromptCustomization } from '../workflowPromptCustomizations/registry.js';
+import {
+  getWorkflowPromptCustomization,
+  MAX_FINISHED_CUSTOMIZATIONS,
+  storeWorkflowPromptCustomization,
+} from '../workflowPromptCustomizations/registry.js';
+import { preSpawnCustomizationSession } from '../workflowPromptCustomizations/sessionStarter.js';
 import type { WorkflowPromptCustomization } from '../workflowPromptCustomizations/types.js';
 
 // Regression guard for the "completed customization flipped to errored" bug.
@@ -16,7 +21,7 @@ import type { WorkflowPromptCustomization } from '../workflowPromptCustomization
 // perfectly good customization. /complete must therefore be idempotent once the
 // request reaches a terminal status.
 
-function seedRunning(id: string): void {
+function seedRunning(id: string): WorkflowPromptCustomization {
   const request: WorkflowPromptCustomization = {
     id,
     projectPath: 'C:/dev/proj',
@@ -31,6 +36,7 @@ function seedRunning(id: string): void {
     cwd: os.tmpdir(),
   };
   storeWorkflowPromptCustomization(request);
+  return request;
 }
 
 test('complete: a good prompt then an empty backstop POST keeps the completed result', async () => {
@@ -67,4 +73,34 @@ test('complete: an empty first POST errors, and a later good POST does not resur
 test('complete: unknown id returns null', async () => {
   const result = await completeWorkflowPromptCustomization('wpc_never_seen', 'x');
   assert.equal(result, null);
+});
+
+// A non-CAP `{error}` from the queued spawn used to be only warned about; the
+// record stayed `running` with no serverId and the frontend polled it for its
+// whole budget.
+test('pre-spawn {error} marks the request errored', async () => {
+  const request = seedRunning('wpc_test_prespawn_error');
+  await preSpawnCustomizationSession(request, {
+    queuedCreateSession: async () => ({ error: 'terminal-server wedged' }),
+  });
+  assert.equal(request.status, 'errored');
+  assert.equal(request.error, 'terminal-server wedged');
+  assert.ok(typeof request.finishedAt === 'number');
+  assert.equal(request.serverId, undefined);
+  assert.equal(getWorkflowPromptCustomization(request.id)?.status, 'errored');
+});
+
+test('the registry prunes finished requests past MAX_FINISHED_CUSTOMIZATIONS and never a running one', () => {
+  const stillRunning = seedRunning('wpc_prune_running');
+  const ids: string[] = [];
+  for (let i = 0; i < MAX_FINISHED_CUSTOMIZATIONS + 5; i++) {
+    const done = seedRunning(`wpc_prune_${i}`);
+    done.status = 'completed';
+    done.finishedAt = 1_000 + i;
+    ids.push(done.id);
+    storeWorkflowPromptCustomization(done);
+  }
+  assert.equal(getWorkflowPromptCustomization(stillRunning.id)?.status, 'running');
+  assert.equal(getWorkflowPromptCustomization(ids[0]), null, 'the oldest finished record is gone');
+  assert.equal(getWorkflowPromptCustomization(ids[ids.length - 1])?.status, 'completed');
 });

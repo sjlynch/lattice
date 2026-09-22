@@ -72,10 +72,12 @@ export async function copyDirtyPathsToSnapshot(
   // uncommitted edits when the subsequent reset overwrote them.
   const copiedModified: string[] = [];
   const copiedUntracked: string[] = [];
+  const copiedAdded: string[] = [];
   const copyFailures: string[] = [];
   for (const [files, target] of [
     [dirty.modified, copiedModified] as const,
     [dirty.untracked, copiedUntracked] as const,
+    [dirty.added ?? [], copiedAdded] as const,
   ]) {
     for (const file of files) {
       if (await copySnapshotPath(repoRoot, snapshotDir, file)) {
@@ -85,7 +87,7 @@ export async function copyDirtyPathsToSnapshot(
       }
     }
   }
-  return { copiedModified, copiedUntracked, copyFailures };
+  return { copiedModified, copiedUntracked, copiedAdded, copyFailures };
 }
 
 export function logCopyFailures(copyFailures: string[]): void {
@@ -111,13 +113,90 @@ export async function resetTrackedSnapshotPaths(
   // snapshot, and the user's data is intact.
   resetTracked = await unchangedSinceCopy(repoRoot, resetTracked, snapshotDir);
   if (resetTracked.length === 0) return;
-  const co = await projectGit(repoRoot, ['checkout', 'HEAD', '--', ...resetTracked.map((file) => `:(literal)${file}`)]);
-  if (co.code !== 0) {
-    console.warn(
-      `[snapshot] git checkout HEAD -- (${resetTracked.length} files) ` +
-        `exit ${co.code}: ${co.stderr.trim() || co.stdout.trim()}`,
-    );
+  await runGitOnPathsResilient(repoRoot, ['checkout', 'HEAD', '--'], resetTracked);
+}
+
+// Run `git <prefix…> :(literal)<file>…` once for the whole set and, when that
+// exits non-zero, once more per path. Git validates every pathspec up front and
+// refuses the WHOLE command on one bad one (`error: pathspec ':(literal)x' did
+// not match any file(s) known to git`), so a single unexpected entry used to
+// leave every other path in the batch dirty — and the fast-forward that
+// followed failed with "local changes would be overwritten" for every task.
+// Both commands are idempotent per path, so re-running the ones the batch did
+// process is harmless. Returns the paths git accepted.
+async function runGitOnPathsResilient(
+  repoRoot: string,
+  prefix: string[],
+  files: string[],
+): Promise<{ ok: string[]; failed: string[] }> {
+  const literal = (file: string) => `:(literal)${file}`;
+  const label = `git ${prefix.join(' ')}`;
+  const batch = await projectGit(repoRoot, [...prefix, ...files.map(literal)]);
+  if (batch.code === 0) return { ok: [...files], failed: [] };
+  console.warn(
+    `[snapshot] ${label} (${files.length} files) exit ${batch.code}: ` +
+      `${batch.stderr.trim() || batch.stdout.trim()}` +
+      (files.length > 1 ? ' — retrying per path' : ''),
+  );
+  if (files.length === 1) return { ok: [], failed: [...files] };
+  const ok: string[] = [];
+  const failed: string[] = [];
+  for (const file of files) {
+    const one = await projectGit(repoRoot, [...prefix, literal(file)]);
+    if (one.code === 0) {
+      ok.push(file);
+    } else {
+      failed.push(file);
+      console.warn(
+        `[snapshot] ${label} ${file} exit ${one.code}: ${one.stderr.trim() || one.stdout.trim()}`,
+      );
+    }
   }
+  return { ok, failed };
+}
+
+// Staged-new paths (in the index, not in HEAD): de-index with
+// `git reset HEAD -- <path>` — `checkout HEAD` cannot reset a path HEAD
+// doesn't have — then delete the working copy the same way an untracked
+// capture is deleted (only after verifying the copy still matches). A path
+// whose reset failed keeps its working copy: deleting it would leave a
+// staged-add with no file behind it.
+export async function unstageAddedSnapshotPaths(
+  repoRoot: string,
+  unstageAdded: string[],
+  snapshotDir?: string,
+): Promise<void> {
+  unstageAdded = await unchangedSinceCopy(repoRoot, unstageAdded, snapshotDir);
+  if (unstageAdded.length === 0) return;
+  const { ok } = await runGitOnPathsResilient(repoRoot, ['reset', 'HEAD', '--'], unstageAdded);
+  await cleanupCapturedUntrackedPaths(repoRoot, ok, snapshotDir);
+}
+
+// Locally deleted tracked paths (in HEAD, absent on disk): bring HEAD's copy
+// back so the fast-forward sees a clean tree. Nothing is copied — the content
+// is HEAD's — and restore re-applies the deletion. A path that has reappeared
+// on disk since `git status` ran is left alone (the checkout would overwrite
+// whatever was just put there).
+export async function restoreDeletedSnapshotPaths(
+  repoRoot: string,
+  deleted: string[],
+): Promise<void> {
+  const absent: string[] = [];
+  for (const file of deleted) {
+    if (!isPathInsideRepo(repoRoot, file) || isSnapshotMetadataPath(file)) continue;
+    try {
+      await assertNoSymlinkParents(repoRoot, file);
+      if ((await pathVersion(path.join(repoRoot, file))) !== null) {
+        console.warn(`[snapshot] ${file} reappeared after capture; leaving it in place`);
+        continue;
+      }
+      absent.push(file);
+    } catch (err) {
+      console.warn(`[snapshot] cannot verify deleted path ${file}; leaving it: ${(err as Error).message}`);
+    }
+  }
+  if (absent.length === 0) return;
+  await runGitOnPathsResilient(repoRoot, ['checkout', 'HEAD', '--'], absent);
 }
 
 export async function cleanupCapturedUntrackedPaths(

@@ -20,6 +20,7 @@ export {
   beginPostMergeHookTrigger,
   finishPostMergeHook,
   getActiveHookForProject,
+  getActiveHookForServerId,
   getMostRecentHookForProject,
   getPostMergeHook,
   hasPendingPostMergeHookTrigger,
@@ -27,7 +28,11 @@ export {
   subscribePostMergeHookTriggers,
   waitForPostMergeHook,
 } from './postMergeHooks/registry.js';
-export { runPostMergeHookGate } from './postMergeHooks/session.js';
+export {
+  endPostMergeHook,
+  POST_MERGE_HOOK_MAX_WAIT_MS,
+  runPostMergeHookGate,
+} from './postMergeHooks/session.js';
 export { cleanupPostMergeHookSession } from './postMergeHooks/cleanup.js';
 export {
   triggerPostMergeHook,

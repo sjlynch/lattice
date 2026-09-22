@@ -52,8 +52,12 @@ parent itself rather than a tab — the terminal-default harness +
 skip-permissions, the Codex `--yolo` toggle (default ON — part of
 `terminalLaunchSettings`, so it's reseeded synchronously with the harness/skip
 drafts and feeds the sidebar's new-Codex-terminal command as well as being read
-by the backend for every Codex spawn), and the instrument-Claude /
-disable-memory / qa-auto-close toggles. Its async settings load updates fetched
+by the backend for every Codex spawn), the instrument-Claude /
+disable-memory / qa-auto-close toggles, and the three terminal-tab restore
+drafts (`restoreTerminalsOnOpen` — `always` / `ask` / `never` —,
+`restoreNudgeAgents`, `restoreNudgeUserTabs`; see the terminal-registry notes
+in the root `CLAUDE.md`). All of these ride the per-project `PATCH` in
+`saveSettings.ts` unconditionally. Its async settings load updates fetched
 baselines but seeds only untouched toggle drafts, so a late GET never overwrites
 edits made while the dialog was opening. `TerminalSettingsSections.tsx` renders
 those sections (the project-settings block atop the Terminals tab); it's a plain

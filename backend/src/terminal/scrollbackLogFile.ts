@@ -37,10 +37,18 @@ export function readTail(filePath: string, maxBytes: number): Buffer {
 
 // Async twin of readTail for the paths that must not block the terminal-server
 // event loop (compaction rewrites megabytes; every pty shares that loop).
-export async function readTailAsync(filePath: string, maxBytes: number): Promise<Buffer> {
+// `endOffset` caps the read at a byte length captured by the caller BEFORE
+// yielding, so bytes appended while the read was in flight are excluded (an
+// attach replay would otherwise duplicate output it also received live). A
+// file shorter than `endOffset` (compacted meanwhile) is read whole.
+export async function readTailAsync(
+  filePath: string,
+  maxBytes: number,
+  endOffset = Infinity,
+): Promise<Buffer> {
   const handle = await fsp.open(filePath, 'r');
   try {
-    const size = (await handle.stat()).size;
+    const size = Math.min((await handle.stat()).size, endOffset);
     const start = size > maxBytes ? size - maxBytes : 0;
     const len = size - start;
     if (len <= 0) return Buffer.alloc(0);

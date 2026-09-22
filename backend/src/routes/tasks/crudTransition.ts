@@ -10,6 +10,8 @@ import {
 } from '../../tasks.js';
 import {
   isValidTaskStatus,
+  partitionIdsByRequestedProject,
+  requireAbsoluteProject,
   resolveProject,
   respondJson,
   statusValidationError,
@@ -25,6 +27,7 @@ export async function handleTaskTransition(
     fromStatus?: unknown;
   };
   const project = resolveProject(req);
+  if (project && !requireAbsoluteProject(project, res)) return;
   const status = body.status;
   const fromStatus = body.fromStatus;
   if (!isValidTaskStatus(status)) {
@@ -34,8 +37,11 @@ export async function handleTaskTransition(
     return;
   }
   let ids: string[];
+  let foreign: string[] = [];
   if (Array.isArray(body.ids) && body.ids.length > 0) {
-    ids = body.ids;
+    // Explicit ids are a global lookup — honour the `?project=` pin (see
+    // partitionIdsByRequestedProject) so a foreign id is reported, not moved.
+    ({ own: ids, foreign } = await partitionIdsByRequestedProject(body.ids, req));
   } else if (fromStatus && project) {
     if (!isValidTaskStatus(fromStatus)) {
       res.status(400).json({ error: statusValidationError('fromStatus') });
@@ -50,7 +56,7 @@ export async function handleTaskTransition(
     return;
   }
   if (ids.length === 0) {
-    res.json({ updated: 0, missing: [], ids: [] });
+    res.json({ updated: 0, missing: [], foreign, ids: [] });
     return;
   }
   await respondJson(res, async () => {
@@ -58,7 +64,7 @@ export async function handleTaskTransition(
     const updated: string[] = [];
     const missing: string[] = [];
     results.forEach((r, i) => (r ? updated.push(r.id) : missing.push(ids[i])));
-    return { updated: updated.length, missing, ids: updated };
+    return { updated: updated.length, missing, foreign, ids: updated };
   });
 }
 
@@ -75,6 +81,7 @@ export async function handleTaskReorder(
     res.status(400).json({ error: 'project, status, ids required' });
     return;
   }
+  if (!requireAbsoluteProject(project, res)) return;
   if (!isValidTaskStatus(status)) {
     res.status(400).json({ error: statusValidationError('status') });
     return;

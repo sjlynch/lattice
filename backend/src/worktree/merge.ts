@@ -18,7 +18,7 @@ import {
   emptyBranchOutcome,
 } from './merge/branchState.js';
 import { handleMergeConflict } from './merge/conflict.js';
-import { preflightWorktreeMerge } from './merge/preflight.js';
+import { assertMainOnBranch, preflightWorktreeMerge } from './merge/preflight.js';
 import { runWorktreeMerge } from './merge/runWorktreeMerge.js';
 
 export type MergeConflictKind = 'merge' | 'stash-pop';
@@ -33,11 +33,11 @@ export type MergeOutcome =
     }
   | { status: 'error'; message: string };
 
-// Fast-forward main (in `repoRoot`) to the tip of `branchName`. Auto-
-// stashes a dirty working tree before the FF and pops it afterwards.
-// Used after the in-worktree merge succeeds so the resolved branch tip
-// becomes main's new tip without ever putting conflict markers in main's
-// working files.
+// Fast-forward main (in `repoRoot`) to the tip of `branchName`. A dirty
+// working tree is captured into a copy-based snapshot (snapshot.ts — never
+// `git stash`) before the FF and restored afterwards. Used after the
+// in-worktree merge succeeds so the resolved branch tip becomes main's new
+// tip without ever putting conflict markers in main's working files.
 //
 // Reads as three linear phases (see the private helpers below): preflight +
 // snapshot, perform the FF, restore the snapshot. None of the git commands,
@@ -87,6 +87,12 @@ async function prepareFastForward(
       },
     };
   }
+  // `merge --ff-only` merges into whatever HEAD is. On a detached HEAD the
+  // branch tip would land nowhere `main` can see, and cleanup then deletes
+  // the branch — so refuse here too, not only in the worktree-merge
+  // preflight (a resolver's /complete can reach the FF without it).
+  const onBranch = await assertMainOnBranch(repoRoot);
+  if (!onBranch.ok) return onBranch;
   const status = await projectGit(repoRoot, ['status', '--porcelain']);
   if (status.code !== 0) {
     return {
@@ -199,6 +205,7 @@ export async function mergeWorktreeInRepo(
     repoRoot,
     branchName,
     worktreePath,
+    { taskId, backendOrigin },
   );
   if (!preflight.ok) return preflight.outcome;
 

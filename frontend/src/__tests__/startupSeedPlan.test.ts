@@ -82,6 +82,26 @@ test('local specs: a live one blocks the spawn, a dead unregistered one is stale
   assert.deepEqual(deadRegistered.spawn, [dev]);
 });
 
+test('backend unreachable (both reads failed) spawns nothing, even with no local specs', () => {
+  // A fresh browser context during a backend restart: no local specs, and
+  // neither `GET /api/terminals` nor the registry answered. Live ptys survive
+  // the restart, so spawning here put a second `npm run dev` beside the
+  // still-alive one once the backend came back.
+  const plan = planStartupSeeding({
+    activeFolder: P, configs: [dev], existing: [], liveIds: null, records: null, inFlight: new Set(),
+  });
+  assert.deepEqual(plan, { staleIds: [], spawn: [] });
+  // One of the two answering is enough to plan from.
+  const registryOnly = planStartupSeeding({
+    activeFolder: P, configs: [dev], existing: [], liveIds: null, records: [], inFlight: new Set(),
+  });
+  assert.deepEqual(registryOnly.spawn, [dev]);
+  const liveOnly = planStartupSeeding({
+    activeFolder: P, configs: [dev], existing: [], liveIds: new Set(), records: null, inFlight: new Set(),
+  });
+  assert.deepEqual(liveOnly.spawn, [dev]);
+});
+
 test('an unreadable live set never drops anything and treats every pty as alive', () => {
   const plan = planStartupSeeding({
     activeFolder: P, configs: [dev], existing: [spec({ id: 'l', serverId: 'srv_maybe' })],

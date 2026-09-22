@@ -86,7 +86,9 @@ export class ScrollbackStore {
     if (this.pendingBytes >= this.flushThresholdBytes) this.flush();
   }
 
-  // The full replay window for a (re)attaching client.
+  // The full replay window for a (re)attaching client — synchronous. Kept for
+  // tests and as replayAsync's fallback; the attach path uses replayAsync so
+  // an up-to-2 MB read never blocks the event loop every pty shares.
   replay(): string {
     if (this.disposed) return '';
     this.flush();
@@ -102,6 +104,37 @@ export class ScrollbackStore {
     // Output held back during a compaction is not on disk yet; it is the
     // newest output, so it follows the tail.
     return this.pending.length > 0 ? tail + this.pending.join('') : tail;
+  }
+
+  // The replay window AS OF THE MOMENT OF THE CALL, read off the event loop.
+  // The snapshot (flushed length + held pending) is taken synchronously before
+  // the first await, so output appended while the read is in flight is NOT in
+  // the result: attachTerminal holds those bytes as live frames and delivers
+  // them right after the replay, so nothing is duplicated or reordered.
+  async replayAsync(): Promise<string> {
+    if (this.disposed) return '';
+    this.flush();
+    if (this.degraded) return this.pending.join('');
+    // A compaction already rewriting the log could land (rename + the flush of
+    // the held pending) between our snapshot and our open, in which case the
+    // file's tail would already contain the held output. Rare (once per
+    // ~4 MB of output per session) — take the synchronous path, which is
+    // consistent by construction.
+    if (this.compaction) return this.replay();
+    const heldTail = this.pending.join('');
+    const end = this.diskBytes;
+    // A compaction that starts AFTER this point cannot get ahead of the read:
+    // its open/stat/read/write/rename are queued on the same FIFO thread pool
+    // behind ours, and until our handle closes Windows refuses the rename
+    // (retried by compact()) while POSIX keeps our handle on the old inode.
+    let tail: string;
+    try {
+      tail = (await readTailAsync(this.filePath, this.replayWindowBytes, end)).toString('utf8');
+    } catch {
+      tail = '';
+    }
+    if (this.disposed) return '';
+    return heldTail.length > 0 ? tail + heldTail : tail;
   }
 
   // Resolves once no compaction is in flight (and its post-compaction flush has

@@ -190,14 +190,67 @@ export function finishPostMergeHook(
   return { ...e.run };
 }
 
+// The still-running hook whose pty is `serverId`, if any. Lets a terminal-tab
+// close (DELETE /api/terminals/:id) end the hook the pty belonged to, so the
+// merge run / workflow Merge step waiting on it isn't parked forever.
+export function getActiveHookForServerId(
+  serverId: string,
+): PostMergeHookRun | null {
+  for (const e of entries.values()) {
+    if (e.run.status === 'running' && e.run.serverId === serverId) {
+      return { ...e.run };
+    }
+  }
+  return null;
+}
+
 // Promise that resolves when the hook reaches a terminal status. Used by
 // callers (merge run finisher, per-task finalize) to block their own
 // completion until the harness reports done.
-export function waitForPostMergeHook(id: string): Promise<void> {
+//
+// Nothing observes the hook's pty: an agent that crashes, is killed, or whose
+// tab is closed without the abort route never calls back, and an unbounded
+// wait here kept the merge run `running` (run.lock held, a workflow Merge step
+// parked in `waitForMergeRunFinished`) forever. With `maxWaitMs` the wait
+// expires by finishing the hook `errored` — which resolves every waiter the
+// usual way — and reports `'expired'` so the caller can tear the session down.
+export function waitForPostMergeHook(
+  id: string,
+  maxWaitMs?: number,
+): Promise<'finished' | 'expired'> {
   const e = entries.get(id);
-  if (!e) return Promise.resolve();
-  if (e.run.status !== 'running') return Promise.resolve();
-  return new Promise<void>((resolve) => {
-    e.waiters.push({ resolve });
+  if (!e) return Promise.resolve('finished');
+  if (e.run.status !== 'running') return Promise.resolve('finished');
+  return new Promise<'finished' | 'expired'>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const waiter: Waiter = {
+      resolve: () => {
+        if (timer) clearTimeout(timer);
+        resolve('finished');
+      },
+    };
+    e.waiters.push(waiter);
+    if (maxWaitMs !== undefined && maxWaitMs > 0) {
+      timer = setTimeout(() => {
+        timer = null;
+        if (e.run.status !== 'running') return;
+        const within =
+          maxWaitMs >= 60_000 ? `${Math.round(maxWaitMs / 60_000)} minutes` : `${maxWaitMs} ms`;
+        console.warn(
+          `[post-merge-hook] ${id} did not call back within ${within} — finishing it errored`,
+        );
+        // Detach this waiter first: the finish below resolves the OTHER
+        // waiters 'finished'; this one reports 'expired'.
+        const idx = e.waiters.indexOf(waiter);
+        if (idx >= 0) e.waiters.splice(idx, 1);
+        finishPostMergeHook(
+          id,
+          'errored',
+          `post-merge hook did not call back within ${within}`,
+        );
+        resolve('expired');
+      }, maxWaitMs);
+      timer.unref?.();
+    }
   });
 }

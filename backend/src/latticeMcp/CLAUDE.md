@@ -1,7 +1,7 @@
 # backend/src/latticeMcp
 
 Lattice's **own** MCP server: eleven typed board tools over the task-board HTTP
-API (plus the two Opengrep tools, see the table), so a Lattice-spawned agent
+API (plus the three Opengrep tools, see the table), so a Lattice-spawned agent
 drives the board through tool calls instead of hand-written `curl`. It is the first-party entry in the MCP catalog
 (`../mcp/catalog.ts`, id `lattice`) and the one server that ships **on by
 default** — see `../mcp/CLAUDE.md` for why that exception exists and how to opt
@@ -78,7 +78,7 @@ that is already running.
 | write | `create_task`, `create_tasks`, `append_summary` | in every session |
 | manage | `update_task`, `transition_tasks`, `delete_task` | **not in a task-worktree session** — a worktree agent's brief is untrusted input; it reads, files follow-ups and reports, it does not re-lane or delete |
 | run | `run_task` | returns `{accepted, queued}` — admitted, **not started**. Also **not in a task-worktree session** |
-| tools | `opengrep_scan`, `opengrep_findings` | in every session. Both return the Opengrep **digest markdown** (never the JSON envelope): `opengrep_scan` runs a scan with the project's packs/filter (409 busy / not-installed / no-rules surfaces as an error the agent can act on); `opengrep_findings` re-reads a stored scan (`latest` by default) narrowed by `rule` / `file` / `severity` / `budgetKb` — the drill-down when a digest says rules were cut for the byte budget. Backed by `routes/opengrep.ts`; see `../opengrep/CLAUDE.md` |
+| tools | `opengrep_scan`, `opengrep_findings`, `opengrep_ignore` | in every session. The first two return the Opengrep **digest markdown** (never the JSON envelope): `opengrep_scan` runs a scan with the project's packs/filter (409 busy / not-installed / no-rules surfaces as an error the agent can act on); `opengrep_findings` re-reads a stored scan (`latest` by default) narrowed by `rule` / `file` / `severity` / `budgetKb` — the drill-down when a digest says rules were cut for the byte budget. `opengrep_ignore` appends rule ids / fingerprints to the project's ignore lists (`POST /api/opengrep/ignore`, additive) and echoes the agent's optional `reason` back in the result text (never stored). Backed by `routes/opengrep.ts`; see `../opengrep/CLAUDE.md` |
 
 ## Invariants
 

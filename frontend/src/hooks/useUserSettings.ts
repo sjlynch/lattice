@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchUserSettings, type UserSettings } from '../api';
+import { fetchUserSettingsStrict, type UserSettings } from '../api';
+import { retryDelay } from './scanRetry';
 
 // Stable identity for the no-project case so a consumer that keys an effect on
 // `settings` doesn't re-run on every render.
@@ -11,8 +12,8 @@ export type UserSettingsResult = {
   // never apply the previous folder's stale settings during a switch.
   settings: UserSettings | null;
   // True once we have a definitive answer for the current folder — the fetch
-  // settled (success, or `{}` since `fetchUserSettings` swallows failures), or
-  // there is no active folder.
+  // SUCCEEDED (a failure is retried, never stamped as loaded), or there is no
+  // active folder.
   loaded: boolean;
 };
 
@@ -47,20 +48,36 @@ export function useUserSettings(activeFolder: string): UserSettingsResult {
   useEffect(() => {
     if (!activeFolder) return;
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
-    fetchUserSettings(activeFolder)
-      .then((settings) => {
-        if (cancelled) return;
-        setFetched({ folder: activeFolder, settings });
-      })
-      .catch(() => {
-        // `fetchUserSettings` already swallows failures into `{}`; defensive only.
-        if (cancelled) return;
-        setFetched({ folder: activeFolder, settings: {} });
-      });
+    // The STRICT fetch, retried with the scan-style backoff. The lenient
+    // `fetchUserSettings` maps any failure to `{}` — and a 502 from the Vite
+    // proxy while the backend restarts (an F5 in that ~2 s window) is a
+    // failure. Stamping that `{}` as `loaded` put the whole page session on
+    // defaults with no refetch until the folder changed: startup terminals
+    // never spawned, `restoreTerminalsOnOpen` read as `always`, the sidebar
+    // width reset. A failure now keeps `loaded: false` and tries again; only
+    // a real answer is stamped.
+    const attempt = (n: number): void => {
+      fetchUserSettingsStrict(activeFolder)
+        .then((settings) => {
+          if (cancelled) return;
+          setFetched({ folder: activeFolder, settings });
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          if (n === 0) console.warn('[lattice] settings fetch failed, retrying:', err);
+          timer = setTimeout(() => {
+            timer = null;
+            if (!cancelled) attempt(n + 1);
+          }, retryDelay(n));
+        });
+    };
+    attempt(0);
 
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
     };
   }, [activeFolder]);
 

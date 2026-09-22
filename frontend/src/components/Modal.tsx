@@ -1,6 +1,7 @@
-import { useEffect, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { useEscapeToClose } from './shared/useEscapeToClose';
 
 type Props = {
   open: boolean;
@@ -12,14 +13,9 @@ type Props = {
 export function Modal({ open, onClose, children, width }: Props) {
   const dialogRef = useFocusTrap<HTMLDivElement>(open);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  // Innermost-wins: a Modal opened over an overlay/FloatingPanel (e.g. the
+  // delete ConfirmDialog over the task editor) takes the Escape alone.
+  useEscapeToClose(open, onClose);
 
   if (!open) return null;
 

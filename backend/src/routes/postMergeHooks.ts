@@ -12,13 +12,13 @@
 
 import { Router } from 'express';
 import {
+  endPostMergeHook,
   finishPostMergeHook,
   getActiveHookForProject,
   getMostRecentHookForProject,
   getPostMergeHook,
 } from '../postMergeHooks.js';
 import { canonicalProjectPath } from '../projectPath.js';
-import { proxyKillSession } from '../terminalProxy.js';
 import { postMergeHookAgentId } from '../postMergeHooks/stopHook.js';
 import {
   cancelPostMergeHookStopGate,
@@ -102,23 +102,13 @@ export function buildPostMergeHooksRouter(): Router {
     });
   });
 
+  // Gate + node + quiescence teardown, best-effort pty kill (immediate user
+  // feedback), finish, scratch cleanup — all in `endPostMergeHook`, shared with
+  // the terminal-tab close path and the gate's wait expiry. A hook still in its
+  // launch window (scratch setup / queued spawn) is caught by the trigger's
+  // post-await re-checks, which kill the late pty and skip the node.
   r.post('/api/post-merge-hooks/:id/abort', async (req, res) => {
-    const id = req.params.id;
-    cancelPostMergeHookStopGate(id);
-    forgetAgentQuiescence(postMergeHookAgentId(id));
-    unregisterAgentSession(postMergeHookAgentId(id));
-    const existing = getPostMergeHook(id);
-    if (!existing) return res.json({ ok: true });
-    // Best-effort kill the pty so the user gets immediate feedback.
-    if (existing.serverId) {
-      try {
-        await proxyKillSession(existing.serverId);
-      } catch {
-        /* ignore */
-      }
-    }
-    finishPostMergeHook(id, 'aborted', 'aborted by user');
-    void cleanupPostMergeHookSession(existing.projectPath, existing.id);
+    await endPostMergeHook(req.params.id, 'aborted', 'aborted by user');
     res.json({ ok: true });
   });
 

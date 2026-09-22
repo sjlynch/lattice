@@ -45,6 +45,11 @@ export class ScanPublication {
         cache: HealthCache,
         imports: Map<string, string[]>,
         metrics: Map<string, HealthMetrics>,
+        // The scan's freshly-resolved dead-code root inputs (package.json entry
+        // targets + the user's entry globs). Handed to the watcher so a
+        // watcher built against an empty on-disk cache does not keep an empty
+        // package-root set forever (see CrossFileAnalyzer.setRootInputs).
+        rootInputs?: { packageRoots: Set<string>; entryGlobs: readonly string[] },
       ): Promise<boolean> => {
         if (!current()) return false;
         if (slot) {
@@ -54,7 +59,8 @@ export class ScanPublication {
           proj.metrics.clear();
           for (const [file, value] of imports) proj.imports.set(file, value);
           for (const [file, value] of metrics) proj.metrics.set(file, value);
-          proj.crossFile.invalidateRoots();
+          if (rootInputs) proj.crossFile.setRootInputs(rootInputs);
+          else proj.crossFile.invalidateRoots();
           // There is one long-lived cache owner once a watcher exists. Seed
           // that owner, rather than letting a one-shot writer race its saves.
           const present = new Set<string>();

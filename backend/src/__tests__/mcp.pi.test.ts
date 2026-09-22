@@ -4,9 +4,12 @@
 // mcp.resolver.test.ts (Claude).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { resolvePiServers } from '../mcp/registry.js';
 import { toPiServerConfig } from '../mcp/piServerConfig.js';
-import { reconcilePiMcpDocument } from '../piMcp/config.js';
+import { reconcilePiMcpDocument, writePiMcpConfig } from '../piMcp/config.js';
+import { withTempDir } from './helpers/tempDir.js';
 import {
   BUILTIN_MCP_SERVERS,
   builtinMcpServerById,
@@ -95,7 +98,78 @@ test('toPiServerConfig: http with an unfilled secret header omits it (no empty r
   assert.deepEqual(env, {});
 });
 
+// ---- writePiMcpConfig ----
+
+const MANAGED_LATTICE = {
+  lattice: { command: 'node', args: ['server.js'], lifecycle: 'eager' as const, directTools: true },
+};
+
+test('writePiMcpConfig: an absent .pi/mcp.json is created with the managed set + marker', async () => {
+  await withTempDir('lattice-pimcp-', async (dir) => {
+    await writePiMcpConfig(dir, MANAGED_LATTICE);
+    const doc = JSON.parse(await fs.readFile(path.join(dir, '.pi', 'mcp.json'), 'utf8'));
+    assert.deepEqual(Object.keys(doc.mcpServers), ['lattice']);
+    assert.deepEqual(doc.__latticeManagedMcp, ['lattice']);
+  });
+});
+
+test('writePiMcpConfig: a hand-written file that does not parse is left untouched', async () => {
+  await withTempDir('lattice-pimcp-', async (dir) => {
+    const file = path.join(dir, '.pi', 'mcp.json');
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    // Mid-edit / commented — exactly what a user's project-root file looks
+    // like while they are typing in it. "Unparseable" used to be treated like
+    // "absent" and the file was replaced from scratch.
+    const midEdit = '{\n  // my servers\n  "mcpServers": { "mine": { "command": "x"';
+    await fs.writeFile(file, midEdit, 'utf8');
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(' '));
+    try {
+      await writePiMcpConfig(dir, MANAGED_LATTICE);
+    } finally {
+      console.warn = origWarn;
+    }
+    assert.equal(await fs.readFile(file, 'utf8'), midEdit);
+    assert.ok(warnings.some((w) => w.includes('refusing to overwrite')));
+    // No temp file left beside it either.
+    const siblings = await fs.readdir(path.dirname(file));
+    assert.deepEqual(siblings, ['mcp.json']);
+  });
+});
+
 // ---- resolvePiServers ----
+
+test('resolvePiServers: a second server whose secret env var folds onto a taken name is skipped', () => {
+  const mk = (id: string): McpServerEntry => ({
+    id,
+    label: id,
+    description: '',
+    transport: 'http',
+    url: `https://${id}.example/mcp`,
+    secretHeaders: ['Authorization'],
+    runtime: 'remote',
+    harnessSupport: { claude: true, codex: true, pi: true },
+  });
+  // `my-api` / `my_api` share LATTICE_MCP_MY_API_AUTHORIZATION; the second's
+  // secret used to overwrite the first's in the pty env while both `${VAR}`
+  // references pointed at it.
+  const catalog = [mk('my-api'), mk('my_api')];
+  const settings = { mcpHarnessOverrides: { pi: { 'my-api': true, my_api: true } } };
+  const secrets = {
+    'my-api': { Authorization: 'Bearer first' },
+    my_api: { Authorization: 'Bearer second' },
+  };
+  const origWarn = console.warn;
+  console.warn = () => {};
+  try {
+    const { mcpServers, env } = resolvePiServers(catalog, settings, secrets);
+    assert.deepEqual(Object.keys(mcpServers), ['my-api']);
+    assert.deepEqual(env, { LATTICE_MCP_MY_API_AUTHORIZATION: 'Bearer first' });
+  } finally {
+    console.warn = origWarn;
+  }
+});
 
 test('resolvePiServers: reads mcpHarnessOverrides.pi only, keyed by server id', () => {
   const settings = { mcpHarnessOverrides: { pi: { playwright: true, context7: true } } };

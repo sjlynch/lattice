@@ -6,8 +6,10 @@ import {
 } from '../../../api';
 import { useTerminals } from '../../../TerminalsContext';
 import { useStructuralScan } from '../../../hooks/useStructuralScan';
+import { useConfirm } from '../../shared/ConfirmDialog';
 import { fromWorkflow } from '../editorState';
 import type { QueueMode, QueueState } from '../queueScheduler';
+import { guardUnsavedSwitch } from '../unsavedSwitch';
 import { useCollapsedSteps } from './useCollapsedSteps';
 import { useWorkflowEditor } from './useWorkflowEditor';
 import { useWorkflowErrorHandler } from './useWorkflowErrorHandler';
@@ -68,7 +70,8 @@ function buildActions(parts: {
   harnessState: ReturnType<typeof useWorkflowHarnessOverrides>;
   runActions: ReturnType<typeof useWorkflowRunActions>;
   queueActions: ReturnType<typeof useWorkflowQueueActions>;
-  selectWorkflow: (wf: Workflow) => void;
+  selectWorkflow: (wf: Workflow) => Promise<void>;
+  newBlank: () => Promise<void>;
   updateEditorName: (name: string) => void;
   dismissRecent: (id: string) => void;
 }) {
@@ -79,12 +82,13 @@ function buildActions(parts: {
     runActions,
     queueActions,
     selectWorkflow,
+    newBlank,
     updateEditorName,
     dismissRecent,
   } = parts;
   return {
     setPickingTemplate: editorState.setPickingTemplate,
-    newBlank: editorState.newBlank,
+    newBlank,
     newFromTemplate: editorState.newFromTemplate,
     save: editorState.save,
     discardEdits: editorState.discardEdits,
@@ -232,9 +236,33 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     activeRuns,
   });
 
-  const selectWorkflow = useCallback((wf: Workflow) => {
+  // Replacing the editor (picking another saved workflow, starting a blank
+  // one) discards whatever is in it, so with unsaved edits ask Save / Discard /
+  // Cancel first — the same guard the panel-close path applies.
+  const { confirmUnsaved } = useConfirm();
+  const { save, discardEdits, newBlank: newBlankEditor } = editorState;
+  const guardUnsaved = useCallback(
+    () =>
+      guardUnsavedSwitch({
+        dirty: editor.dirty,
+        confirmUnsaved: () =>
+          confirmUnsaved({ message: 'You have unsaved changes to this workflow.' }),
+        save,
+        discardEdits,
+      }),
+    [editor.dirty, confirmUnsaved, save, discardEdits],
+  );
+
+  const selectWorkflow = useCallback(async (wf: Workflow) => {
+    // Re-selecting the workflow already being edited is a no-op for its edits.
+    if (editor.dirty && editor.workflowId !== wf.id && !(await guardUnsaved())) return;
     setEditor(fromWorkflow(wf));
-  }, [setEditor]);
+  }, [editor.dirty, editor.workflowId, guardUnsaved, setEditor]);
+
+  const newBlank = useCallback(async () => {
+    if (editor.dirty && !(await guardUnsaved())) return;
+    newBlankEditor();
+  }, [editor.dirty, guardUnsaved, newBlankEditor]);
 
   const updateEditorName = useCallback((name: string) => {
     setEditor((cur) => ({
@@ -280,6 +308,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
       runActions,
       queueActions,
       selectWorkflow,
+      newBlank,
       updateEditorName,
       dismissRecent,
     }),

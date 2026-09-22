@@ -78,6 +78,13 @@ export function useGraphOverlays({
     pinned.health,
   );
   const { deadMode, deadModeRef } = useDeadCodeOverlay(graphRef, pinned.dead);
+
+  // Keep the shared flag current for the timeline/filter effects that read it
+  // live. Assigning during render (rather than in an effect) means the value is
+  // already correct when those hooks' refresh-driven accessors next run.
+  const metricOverlayActive = healthMode || locMode || deadMode;
+  metricOverlayActiveRef.current = metricOverlayActive;
+
   const labels = useLabelsOverlay(
     graphRef,
     containerRef,
@@ -85,12 +92,8 @@ export function useGraphOverlays({
     settingsRef,
     selected,
     pinned.labels,
+    metricOverlayActive,
   );
-
-  // Keep the shared flag current for the timeline/filter effects that read it
-  // live. Assigning during render (rather than in an effect) means the value is
-  // already correct when those hooks' refresh-driven accessors next run.
-  metricOverlayActiveRef.current = healthMode || locMode || deadMode;
 
   useGraphFilter(
     graphRef,

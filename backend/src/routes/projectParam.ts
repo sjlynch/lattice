@@ -50,6 +50,32 @@ export function readProjectParam(
   return raw;
 }
 
+// The `?project=` / `?path=` convention of the read-only graph routes
+// (`/api/scan`, `/api/search`, `/api/health/dead-code`, `/api/git-history`,
+// `/api/git-branch`): an ABSENT value falls back to the backend's default root
+// (kept — the UI relies on it), while a present-but-relative one is refused
+// with the same 400 as everywhere else. Returns the folder to act on, or
+// `null` once it has sent the 400.
+export function readPathParam(
+  req: { query?: unknown },
+  res: Response,
+  defaultRoot: string,
+): string | null {
+  const q = req.query as Record<string, unknown> | undefined;
+  const raw =
+    typeof q?.project === 'string'
+      ? q.project.trim()
+      : typeof q?.path === 'string'
+        ? q.path.trim()
+        : '';
+  if (!raw) return defaultRoot;
+  if (!path.isAbsolute(raw)) {
+    res.status(400).json({ error: relativeProjectError(raw) });
+    return null;
+  }
+  return raw;
+}
+
 export function relativeProjectError(raw: string): string {
   return (
     `project must be an absolute path, got ${JSON.stringify(raw)}. ` +

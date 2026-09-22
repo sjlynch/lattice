@@ -12,6 +12,7 @@ import { baseSizeFor } from './mountedNodes';
 import { decideSpriteState } from './spriteDecision';
 import { spriteFor } from './sprites';
 import { isGhost } from './timelineDiff';
+import { normalizeWorktreePath, setNodeWorktreeRing } from './worktreeRing';
 
 // Refs the node-object factory reads to pick the right sprite for the
 // current overlay/selection state without forcing the parent hook to
@@ -41,6 +42,11 @@ export type NodeObjectRefs = {
   // non-ghost) sprite is hidden — recolor overlays keep their visible sprite
   // (the instanced mesh hides itself instead).
   batchedNodesRef: MutableRefObject<boolean>;
+  // The `W` worktree overlay's live normalized-path → task-color snapshot, or
+  // `null` while the view is inactive. The ring is the one per-node overlay
+  // whose state comes from a fetch rather than the refs above, so the factory
+  // re-attaches it from here on every full rebuild (see `worktreeRingSync`).
+  worktreeRingsRef: MutableRefObject<Map<string, string> | null>;
 };
 
 // Picks the THREE.Object3D that represents a node in the current frame.
@@ -142,6 +148,18 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
 
   if (d.selected) {
     setNodeHalo(root, true, baseSize);
+  }
+
+  // `W` worktree ring. Its state is a fetched path→color snapshot painted in
+  // place by `applyWorktreeRings`, not something `decideSpriteState` can derive
+  // — so re-attach it here or every full rebuild that runs while the view is
+  // active (metric-view toggle, size slider, batched-nodes flip, metrics-ignore
+  // edit, file-save rescan) silently drops every ring.
+  const ringColor = refs.worktreeRingsRef.current?.get(
+    normalizeWorktreePath(node.path),
+  );
+  if (ringColor) {
+    setNodeWorktreeRing(root, true, ringColor, baseSize);
   }
   return root;
 }

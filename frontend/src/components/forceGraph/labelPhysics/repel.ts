@@ -20,14 +20,17 @@ import {
   updateConnectorEndpoint,
 } from './integration';
 
-// Returns `true` when every label is at rest. Currently unused by the
-// overlay hooks (they leave the RAF running) but the test suite asserts
-// the integration math and the rest detection.
+// Returns `true` when every label is at rest — `labelRepulsionFrames.
+// startLabelRepulsion` gates the idle controller's `labelPhysics` reason on it,
+// releasing the hold the frame the labels settle. `onDetached` is the owning
+// overlay's per-entry release for labels whose node root left the scene (see
+// `cleanupStaleRegistryEntries`).
 export function repelLabels(
   registry: Set<RepulsionEntry>,
   minDist: number,
+  onDetached?: (entry: RepulsionEntry) => void,
 ): boolean {
-  cleanupStaleRegistryEntries(registry);
+  cleanupStaleRegistryEntries(registry, undefined, onDetached);
   const count = registry.size;
   if (count === 0) return true;
 

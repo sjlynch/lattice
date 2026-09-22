@@ -12,7 +12,7 @@
 // which is exactly the gate the instruction note wants.
 
 import path from 'node:path';
-import { scan } from './scanner.js';
+import { scanCoordinator } from './scanner/coordinator.js';
 import { canonicalProjectPath } from './projectPath.js';
 
 export type DeadCodeFile = {
@@ -42,7 +42,10 @@ function toRelForward(root: string, abs: string): string {
 }
 
 async function computeDeadCodeSummary(absRoot: string): Promise<DeadCodeSummary> {
-  const result = await scan(absRoot);
+  // Through the coordinator so a summary requested while the UI's `/api/scan`
+  // is already scanning the same project joins that scan instead of running a
+  // second full analysis whose publication would then lose the commit race.
+  const result = await scanCoordinator.request(absRoot);
   const files: DeadCodeFile[] = [];
   for (const node of result.nodes) {
     if (node.kind !== 'file') continue;

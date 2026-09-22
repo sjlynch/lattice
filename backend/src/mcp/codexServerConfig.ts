@@ -38,9 +38,12 @@ export type CodexServerConfig = {
   env: Record<string, string>;
 };
 
-// Map a catalog id (may contain dashes: `chrome-devtools`, `brave-search`) to a
-// collision-resistant, underscore-only Codex server key. Namespaced `lattice_`
-// so it never shadows a user's own server and is obviously Lattice-managed.
+// Map a catalog id (may contain dashes: `chrome-devtools`, `brave-search`) to an
+// underscore-only Codex server key. Namespaced `lattice_` so it never shadows a
+// user's own server and is obviously Lattice-managed. The fold is lossy — `-`,
+// `.`, space and case all become `_`, so `my-api` and `my_api` share a key; the
+// Codex resolver (`registry.ts` resolveCodexServers) detects that and skips the
+// second rather than letting one silently replace the other.
 export function safeCodexServerId(id: string): string {
   const cleaned = id.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
   return `lattice_${cleaned || 'server'}`;
@@ -63,8 +66,15 @@ export function safeCodexServerId(id: string): string {
 // contain a `'`; for free prose that commonly does, use a multi-line literal
 // instead so the `'`-fallback to a double-quoted string never fires.
 export function tomlString(s: string): string {
-  return s.includes("'") ? JSON.stringify(s) : `'${s}'`;
+  return NEEDS_BASIC_STRING.test(s) ? JSON.stringify(s) : `'${s}'`;
 }
+
+// What a TOML literal string cannot carry: the `'` that would close it, and
+// every control character except tab (a newline in a single-quoted literal is
+// invalid TOML — the whole `-c` override, and with it the Codex spawn, used to
+// fail on one such value). JSON escapes are valid TOML basic-string escapes, so
+// JSON.stringify is the right fallback for all of them.
+const NEEDS_BASIC_STRING = /['\x00-\x08\x0A-\x1F\x7F]/;
 
 function tomlStringArray(arr: string[]): string {
   return `[${arr.map(tomlString).join(', ')}]`;
@@ -74,7 +84,7 @@ function tomlStringArray(arr: string[]): string {
 // dot or space) is a quoted key — single-quoted for the same cmd reason.
 function tomlKey(k: string): string {
   if (/^[A-Za-z0-9_-]+$/.test(k)) return k;
-  return k.includes("'") ? JSON.stringify(k) : `'${k}'`;
+  return NEEDS_BASIC_STRING.test(k) ? JSON.stringify(k) : `'${k}'`;
 }
 
 // Inline table of string values: `{ K="v", "X-Y"="z" }`. Empty → `{}`.
@@ -147,10 +157,12 @@ export function toCodexServerConfig(
   return { configArg: `mcp_servers.${key}={${body}}`, env };
 }
 
-// Deterministic, collision-resistant env var name for a secret HTTP header
-// value. Uppercased server id + header, non-alnum → `_`. Exported so the Pi
-// shaper reuses the identical naming (a server enabled for both Codex and Pi
-// then carries the same secret env-var name in the pty).
+// Deterministic env var name for a secret HTTP header value. Uppercased server
+// id + header, non-alnum → `_`. Exported so the Pi shaper reuses the identical
+// naming (a server enabled for both Codex and Pi then carries the same secret
+// env-var name in the pty). Lossy like safeCodexServerId (`my-api` / `my_api`
+// collide) — the Codex and Pi resolvers refuse to let a second server's secret
+// overwrite a var name already claimed by another.
 export function secretHeaderEnvVar(serverId: string, headerName: string): string {
   const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
   return `LATTICE_MCP_${norm(serverId)}_${norm(headerName)}`;

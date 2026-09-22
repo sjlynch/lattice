@@ -117,8 +117,15 @@ label physics in `labelPhysics/CLAUDE.md`.
   brightens the node itself. The pulse animates both shared materials (ring tint
   brighter/whiter ⇄ base, glow opacity 0 ⇄ peak) in lock-step while any node is
   selected — O(1) per frame regardless of selection size; holds the idle
-  controller's slow-only `halo` reason only while selected. `worktreeRing`
-  (`W`), `changeRing` +
+  controller's slow-only `halo` reason only while selected. `worktreeRing` +
+  `worktreeRingSync` (`W`): the ring's state is a fetched path→color snapshot,
+  not something `decideSpriteState` can derive, so the sync publishes it on
+  `worktreeRingsRef` (a `NodeObjectRefs` member) and `buildNodeObject`
+  re-attaches the ring from it on every full rebuild — a metric-view toggle /
+  size slider / batched-nodes flip / file-save rescan while `W` was active used
+  to rebuild every root ring-less. `clearWorktreeRings` is a one-shot O(N)
+  scene walk (never a remembered id set, which a rebuild would orphan). Pinned
+  by `src/__tests__/worktreeRingRebuild.test.ts`. `changeRing` +
   `changeRingSync` + `changeRing{Materials,Textures}` (timeline git rings, two-part
   `W`-suppression). Each toggles a ring as a sibling child of the node root for
   only the changed ids — never `graph.refresh()`.

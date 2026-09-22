@@ -10,6 +10,12 @@ export function usePiModelMenuDraft(open: boolean, providers: PiProvider[]) {
   const [savedModels, setSavedModels] = useState<PiModelInfo[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [touched, setTouched] = useState(false);
+  // Clobber-guard (mirrors `useOverrideDraft`): `getPatch` returns the WHOLE
+  // curated list, so it must stay `undefined` until the saved menu has actually
+  // been read. Flips only on a successful `getPiModels()` — saving before it
+  // resolves (or after it failed) would otherwise persist just the auto-added
+  // endpoint patterns and drop every curated selection.
+  const [loaded, setLoaded] = useState(false);
   // Patterns we've already reflected into selected — so a newly-added endpoint
   // model defaults to shown, but a model the user later unchecks doesn't get
   // auto-re-added on the next render.
@@ -19,14 +25,16 @@ export function usePiModelMenuDraft(open: boolean, providers: PiProvider[]) {
     if (!open) return;
     let cancelled = false;
     setTouched(false);
+    setLoaded(false);
     getPiModels()
       .then((r) => {
         if (cancelled) return;
         setSavedModels(r.models);
         setSelected(new Set(r.menu.map((m) => m.pattern)));
         seenRef.current = new Set(r.models.map((m) => m.pattern));
+        setLoaded(true);
       })
-      .catch(() => { /* leave current draft */ });
+      .catch(() => { /* leave current draft; `loaded` stays false so Save never writes it */ });
     return () => {
       cancelled = true;
     };
@@ -69,10 +77,11 @@ export function usePiModelMenuDraft(open: boolean, providers: PiProvider[]) {
 
   const getPatch = useCallback(
     (includeProviderEdits: boolean): string[] | undefined => {
+      if (!loaded) return undefined;
       if (!includeProviderEdits && !touched) return undefined;
       return [...selected].filter((p) => universe.has(p));
     },
-    [selected, touched, universe],
+    [loaded, selected, touched, universe],
   );
 
   const patterns = useMemo(() => [...universe].sort(), [universe]);

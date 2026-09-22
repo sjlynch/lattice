@@ -289,6 +289,68 @@ test("toCodexServerConfig: a value containing ' falls back to a double-quoted ba
   assert.ok(configArg.includes(JSON.stringify(raw)));
 });
 
+test('toCodexServerConfig: a value with a newline / control char falls back to a basic string too', () => {
+  // A newline inside a single-quoted TOML literal is invalid TOML — the whole
+  // `-c` override (and the Codex spawn) used to fail on it. JSON escapes are
+  // valid TOML basic-string escapes, so JSON.stringify carries it correctly.
+  const withNewline = 'line one\nline two';
+  const withControl = 'bell\x07here';
+  const withTab = 'a\tb'; // tab IS allowed in a literal string — stays single-quoted
+  const entry: McpServerEntry = {
+    id: 'ctrl',
+    label: 'Ctrl',
+    description: '',
+    transport: 'stdio',
+    command: 'node',
+    args: [withNewline, withControl, withTab],
+    env: { 'X.Y\nZ': 'v' }, // a control char in a KEY takes the same fallback
+    runtime: 'node',
+    harnessSupport: { claude: true, codex: true, pi: false },
+  };
+  const { configArg } = toCodexServerConfig(entry, undefined, false);
+  assert.ok(configArg.includes(JSON.stringify(withNewline)));
+  assert.ok(configArg.includes(JSON.stringify(withControl)));
+  assert.ok(configArg.includes(`'${withTab}'`));
+  assert.ok(configArg.includes(`${JSON.stringify('X.Y\nZ')}='v'`));
+  // No raw newline anywhere in the rendered override.
+  assert.ok(!configArg.includes('\n'));
+});
+
+test('resolveCodexServers: ids that fold to the same Codex key / env var are not silently merged', () => {
+  const mk = (id: string): McpServerEntry => ({
+    id,
+    label: id,
+    description: '',
+    transport: 'http',
+    url: `https://${id}.example/mcp`,
+    secretHeaders: ['Authorization'],
+    runtime: 'remote',
+    harnessSupport: { claude: true, codex: true, pi: true },
+  });
+  // `my-api` and `my_api` both fold to `lattice_my_api` (and to the same
+  // LATTICE_MCP_MY_API_AUTHORIZATION secret var). Before: the second's `-c`
+  // override replaced the first's table entry and its secret overwrote the
+  // first's in the pty env. Now: the first wins, the second is skipped.
+  const catalog = [mk('my-api'), mk('my_api')];
+  const settings = { mcpHarnessOverrides: { codex: { 'my-api': true, my_api: true } } };
+  const secrets = {
+    'my-api': { Authorization: 'Bearer first' },
+    my_api: { Authorization: 'Bearer second' },
+  };
+  const warnings: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(' '));
+  try {
+    const { configArgs, env } = resolveCodexServers(catalog, settings, secrets);
+    assert.equal(configArgs.length, 1);
+    assert.ok(configArgs[0].includes("url='https://my-api.example/mcp'"));
+    assert.deepEqual(env, { LATTICE_MCP_MY_API_AUTHORIZATION: 'Bearer first' });
+    assert.ok(warnings.some((w) => w.includes('my_api') && w.includes('collides')));
+  } finally {
+    console.warn = origWarn;
+  }
+});
+
 // ---- resolveCodexServers: the full codex shaper over the catalog ----
 
 test('resolveCodexServers: aggregates config args + secret env for enabled codex servers', () => {

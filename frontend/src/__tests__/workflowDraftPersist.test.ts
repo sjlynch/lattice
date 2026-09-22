@@ -5,6 +5,9 @@ import {
   draftForFolder,
   reconcileDraftPersist,
 } from '../components/workflows/workflowDraftPersist.ts';
+import { loadWorkflowDraft } from '../components/workflows/workflowDraftStorage.ts';
+import { USER_INSTRUCTIONS_VAR } from '../components/workflows/promptVariables.ts';
+import { installGlobal } from './domDoubles.ts';
 
 const A = 'C:/proj-a';
 const B = 'C:/proj-b';
@@ -131,6 +134,51 @@ test('draftForFolder swaps a carried-over draft for the new project’s stored d
   assert.equal(cleared.workflowId, null);
   assert.equal(cleared.steps.length, 0);
   assert.equal(cleared.name, '');
+});
+
+// REGRESSION: a draft stashed before workflows had variables restores with
+// `variables: undefined`; `WorkflowEditorPanel` maps over `editor.variables`
+// unconditionally, so the restore threw and wedged the panel. The loader now
+// normalizes a missing/invalid list to the editor's shape (built-in included).
+test('loadWorkflowDraft normalizes a pre-variables draft to a valid variables list', () => {
+  const stored: Record<string, string> = {};
+  const restore = installGlobal('localStorage', {
+    getItem: (k: string) => stored[k] ?? null,
+    setItem: (k: string, v: string) => { stored[k] = v; },
+    removeItem: (k: string) => { delete stored[k]; },
+  });
+  try {
+    const legacy = { ...draft('old draft') } as Partial<EditorState>;
+    delete legacy.variables;
+    stored[`lattice.workflowEditorDraft.${A}`] = JSON.stringify(legacy);
+    const restored = loadWorkflowDraft(A);
+    assert.ok(restored, 'the draft still restores');
+    assert.ok(Array.isArray(restored.variables));
+    assert.deepEqual(
+      restored.variables.map((v) => v.name),
+      [USER_INSTRUCTIONS_VAR],
+    );
+    assert.equal(restored.dirty, true);
+
+    // A non-array `variables` is treated the same way.
+    stored[`lattice.workflowEditorDraft.${A}`] = JSON.stringify({ ...legacy, variables: 'nope' });
+    assert.deepEqual(
+      loadWorkflowDraft(A)?.variables.map((v) => v.name),
+      [USER_INSTRUCTIONS_VAR],
+    );
+
+    // A draft that already has custom variables keeps them (built-in prepended).
+    stored[`lattice.workflowEditorDraft.${A}`] = JSON.stringify({
+      ...legacy,
+      variables: [{ name: 'scope', value: 'backend' }],
+    });
+    assert.deepEqual(
+      loadWorkflowDraft(A)?.variables.map((v) => v.name),
+      [USER_INSTRUCTIONS_VAR, 'scope'],
+    );
+  } finally {
+    restore();
+  }
 });
 
 test('draftForFolder clears a loaded (saved) workflow on project switch', () => {

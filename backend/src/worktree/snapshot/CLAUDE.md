@@ -9,8 +9,19 @@ Safety-critical copy-based working-tree snapshots. Keep the capture order in
    destination field + a source field (no ` -> ` arrow). The default
    newline form mangles renames (`R  old -> new`) and quotes special-char
    names, which made those paths fail to copy and silently drop from the
-   snapshot. `parseStatus` snapshots the rename destination and discards
-   the source field.
+   snapshot. `parseStatus` sorts records into FOUR buckets, because each
+   needs a different cleanup: `untracked` (copy + delete), `modified` (copy +
+   `checkout HEAD --`), `added` (`A`/`R`/`C` — in the index but not in HEAD:
+   copy + `reset HEAD --` + delete; `checkout HEAD` cannot reset a path HEAD
+   lacks, and git refuses the WHOLE batched checkout on one bad pathspec, so
+   one staged-new file used to leave every modified file dirty and fail every
+   fast-forward) and `deleted` (` D`/`D ` and a rename's source — nothing to
+   copy: `checkout HEAD --` resurrects it so the FF sees a clean tree, the
+   manifest lists it under `deleted`, and restore re-deletes it only if the
+   on-disk file is still a clean tracked HEAD copy). `MD` stays `modified`
+   (index-only content must not be reset). Every batched `checkout`/`reset`
+   retries per path on a non-zero exit so one bad pathspec can't block the
+   rest.
 2. Drop any path that fails the repo-containment guard; dropped paths must not
    be copied, reset, or deleted.
 3. Create the snapshot dir and copy dirty paths, recording successes and

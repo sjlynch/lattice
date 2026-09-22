@@ -118,13 +118,25 @@ owns the node-pty processes.
   so no harness can read it. Don't "fix" agent discovery here — that lives in
   the system-prompt preamble.
 - `broadcast.ts` — `broadcastToSubscribers`: fan a message out to every OPEN
-  subscriber WS, best-effort.
+  subscriber WS, best-effort. **Backpressure:** a subscriber whose
+  `bufferedAmount` passes `SUBSCRIBER_HIGH_WATER_BYTES` (8 MB) is
+  `terminate()`d instead of buffered further — this process hosts every pty,
+  so one browser tab that stopped reading must not grow its heap (the client
+  reconnects and gets the replay). Also `holdSubscriber` / `releaseSubscriber`:
+  a socket on hold has its frames queued (same bound) for `attachTerminal` to
+  flush after the replay.
 - `attach.ts` — `attachTerminal`: resolve an existing session by id (or create a
-  fresh one when no id), add the WS as a subscriber, send `attached` + the
-  scrollback replay, then relay input/resize/kill messages. An unknown id sends
-  `session_lost` and does **not** silently respawn (that would be a reconnect
-  loop). A client disconnect drops the subscriber but leaves the pty alive
-  (refresh-recovery).
+  fresh one when no id), add the WS as a subscriber **on hold**, send
+  `attached`, wire the input/resize/kill handlers, then read the scrollback
+  replay asynchronously (`replayAsync`) and send it followed by the held live
+  frames in order — the replay was a synchronous up-to-2 MB read on the loop
+  every pty shares, and N re-attaches after a backend restart pushed the health
+  probe past its timeout. `kill` goes through `killSession` (the `killing`
+  guard + process-tree kill), never a bare `pty.kill()`. Sizes are validated
+  with `isPtyDimension` (positive integer) here and in the upgrade handler. An
+  unknown id sends `session_lost` and does **not** silently respawn (that would
+  be a reconnect loop). A client disconnect drops the subscriber but leaves the
+  pty alive (refresh-recovery).
 - `kill.ts` — `killSession` (idempotent via the `killing` flag; `pty.kill` +
   Windows process-tree kill + a deferred `ensureClaudeConfigValid`) and
   `killSessionsByCwd` (used by worktree teardown).
@@ -139,16 +151,22 @@ owns the node-pty processes.
   all of them in turn. While a compaction is in flight, flushes hold output in
   `pending` (bounded to the replay window) and land after the rename; `replay`
   appends that held tail. `settle()` awaits it (tests). The rename runs on a
-  worker thread, so on Windows it can collide with a concurrent `replay()`'s
-  synchronous `readTail` holding the log open (EPERM/EBUSY): it is retried a
+  worker thread, so on Windows it can collide with a concurrent replay's read
+  holding the log open (EPERM/EBUSY): it is retried a
   few times, and if it still fails the OLD log is kept (complete, merely over
   the cap) with a 5 s cooldown before the next crossing retries — never a drop
   to memory-only, which is reserved for a genuinely unavailable disk.
+  **`replayAsync` is what attach uses**: it snapshots the flushed length and
+  held pending synchronously, then reads the tail off the loop capped at that
+  length, so output appended meanwhile (which the attaching client receives
+  as held live frames) is never in the replay too. With a compaction already
+  in flight it takes the sync `replay()` path (consistent by construction).
 - `scrollbackLogFile.ts` — pure, stateless file-tail helpers `trimToLineStart`
   (drop a partial leading line so a windowed replay never begins mid-escape-
   sequence) and `readTail` (byte-level last-`maxBytes` read, trimmed to a line
-  boundary) plus its async twin `readTailAsync`. `ScrollbackStore` uses the
-  sync form for replay and the async one for compaction.
+  boundary) plus its async twin `readTailAsync(file, maxBytes, endOffset?)`.
+  `ScrollbackStore` uses the async form for both replay and compaction; the
+  sync form is the in-flight-compaction fallback and the test helper.
 - `scrollbackCleanup.ts` — `clearTerminalScrollback`: wipes the scrollback dir
   at boot (every in-memory session is gone after a restart, so its logs are
   orphans). Path-guarded to the home-scoped `~/.lattice/terminal-scrollback` so

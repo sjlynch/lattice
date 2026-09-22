@@ -1,8 +1,17 @@
 import type { Server } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { attachTerminal } from '../terminal.js';
+import { isPtyDimension } from '../terminal/attach.js';
 import { isAllowedOrigin } from '../wsOriginAllowlist.js';
 import { createTerminalAdmission, type TerminalAdmission } from './admission.js';
+
+// A query dimension that isn't a positive integer (absent, `NaN`, `0`, `80.5`,
+// `-1`) falls back to the default rather than reaching node-pty.
+function dimensionParam(url: URL, name: string, fallback: number): number {
+  const raw = url.searchParams.get(name);
+  const n = raw === null ? NaN : Number(raw);
+  return isPtyDimension(n) ? n : fallback;
+}
 
 export function createTerminalWebSocketServer(admission: TerminalAdmission = createTerminalAdmission()): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
@@ -10,8 +19,8 @@ export function createTerminalWebSocketServer(admission: TerminalAdmission = cre
     const url = new URL(req.url || '', 'http://localhost');
     const id = url.searchParams.get('id') || undefined;
     const cwd = url.searchParams.get('cwd') || undefined;
-    const cols = Number(url.searchParams.get('cols')) || 80;
-    const rows = Number(url.searchParams.get('rows')) || 24;
+    const cols = dimensionParam(url, 'cols', 80);
+    const rows = dimensionParam(url, 'rows', 24);
     const initialCommand = url.searchParams.get('initialCommand') || undefined;
     const projectPath = url.searchParams.get('projectPath') || undefined;
     const release = id ? () => {} : admission.begin();

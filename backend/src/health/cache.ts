@@ -61,8 +61,23 @@ export class HealthCache {
     try {
       const raw = await readCacheFile(this.projectRoot);
       const parsed = JSON.parse(raw) as CacheFile;
-      if (parsed && parsed.version === CACHE_VERSION && parsed.files) {
+      if (parsed && parsed.version === CACHE_VERSION && parsed.files && typeof parsed.files === 'object') {
+        // Drop any entry that does not have the shape the readers assume
+        // (`metrics.smells.slice()`, `imports.slice()`). A hand-edited or
+        // drifted file must cost a re-analysis of that file, not a 500 on
+        // every `/api/scan` until someone deletes the cache by hand.
+        let dropped = 0;
+        for (const [file, entry] of Object.entries(parsed.files)) {
+          const e = entry as Partial<Entry> | null;
+          const ok = e && typeof e.mtimeMs === 'number' && typeof e.size === 'number'
+            && Array.isArray(e.imports) && e.metrics && Array.isArray(e.metrics.smells);
+          if (!ok) {
+            delete parsed.files[file];
+            dropped += 1;
+          }
+        }
         this.data = parsed;
+        if (dropped > 0) this.dirty = true;
       }
     } catch {
       // Missing or unreadable cache — start fresh.

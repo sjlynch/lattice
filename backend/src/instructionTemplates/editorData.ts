@@ -32,8 +32,10 @@ export async function buildInstructionTemplateEditorData(
   }
   return INSTRUCTION_TEMPLATE_CATALOG.map((def) => {
     const override = overrides[def.id];
+    // Same test as resolve.ts: a whitespace-only override is ignored at spawn,
+    // so the editor must show the default for it too, not a blank box.
     const currentTemplate =
-      typeof override === 'string' && override.length > 0
+      typeof override === 'string' && override.trim().length > 0
         ? override
         : def.defaultTemplate;
     return {

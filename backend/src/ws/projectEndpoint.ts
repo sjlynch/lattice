@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { canonicalProjectPath } from '../projectPath.js';
 
@@ -19,10 +20,16 @@ export type ProjectWsOptions<TEvent> = {
   payloadFromEvent?: (event: TEvent) => unknown;
 };
 
+// A relative `project` is refused (empty ⇒ the connection handler closes the
+// socket), matching the HTTP routes' rule. Canonicalising it first defeated
+// the task cache's own read-path guard (`ensureProjectLoaded` only skips
+// indexing when the path it is HANDED is relative), so `?project=foo` used to
+// register `<backend cwd>/foo` in `~/.lattice/projects.json` and write a junk
+// identity binding for it.
 export function parseProject(reqUrl: string | undefined): string {
   const url = new URL(reqUrl || '', 'http://localhost');
   const raw = url.searchParams.get('project') || '';
-  return raw ? canonicalProjectPath(raw) : '';
+  return raw && path.isAbsolute(raw) ? canonicalProjectPath(raw) : '';
 }
 
 export function sendJson(ws: WebSocket, payload: unknown): void {

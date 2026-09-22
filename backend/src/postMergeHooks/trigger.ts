@@ -13,11 +13,13 @@ import {
   beginPostMergeHookTrigger,
   finishPostMergeHook,
   getActiveHookForProject,
+  getPostMergeHook,
   patchPostMergeHook,
   recordPostMergeHook,
 } from './registry.js';
 import { postMergeHookAgentId } from './stopHook.js';
 import { registerAgentSession } from '../agentSessions.js';
+import { proxyKillSession } from '../terminalProxy.js';
 import { setupPostMergeHookSession } from './sessionSetup.js';
 import { cleanupPostMergeHookSession } from './cleanup.js';
 import {
@@ -36,12 +38,16 @@ export type TriggerPostMergeHookOutcome =
   | { kind: 'skipped'; reason: 'no-prompt' }
   | { kind: 'skipped'; reason: 'disabled' }
   | { kind: 'skipped'; reason: 'already-running'; existing: PostMergeHookRun }
+  // The user aborted the hook while its scratch setup / queued pty spawn was
+  // still in flight: the run is already terminal, no session was kept.
+  | { kind: 'skipped'; reason: 'aborted'; run: PostMergeHookRun }
   | { kind: 'started'; run: PostMergeHookRun; serverId?: string }
   | { kind: 'error'; message: string };
 
 export type TriggerPostMergeHookDeps = {
   getUserSettings: (projectPath: string) => Promise<UserSettings>;
   getActiveHookForProject: (projectPath: string) => PostMergeHookRun | null;
+  getPostMergeHook: (id: string) => PostMergeHookRun | null;
   setupPostMergeHookSession: (args: {
     projectPath: string;
     backendOrigin: string;
@@ -64,11 +70,13 @@ export type TriggerPostMergeHookDeps = {
   ) => PostMergeHookRun | null;
   registerAgentSession: typeof registerAgentSession;
   cleanupPostMergeHookSession: (projectPath: string, id: string) => Promise<void>;
+  killSession: (serverId: string) => Promise<boolean>;
 };
 
 const defaultTriggerPostMergeHookDeps: TriggerPostMergeHookDeps = {
   getUserSettings,
   getActiveHookForProject,
+  getPostMergeHook,
   setupPostMergeHookSession,
   recordPostMergeHook,
   queuedCreateSession,
@@ -76,6 +84,7 @@ const defaultTriggerPostMergeHookDeps: TriggerPostMergeHookDeps = {
   patchPostMergeHook,
   registerAgentSession,
   cleanupPostMergeHookSession,
+  killSession: proxyKillSession,
 };
 
 // Triggers a post-merge hook and returns immediately with an outcome
@@ -198,6 +207,16 @@ async function spawnAndRegister(
   };
   deps.recordPostMergeHook(run);
 
+  // The run is recorded before either await below, so `/abort` can land while
+  // scratch setup or the queued spawn is still in flight. Re-check after each:
+  // without this the queued thunk created the pty anyway, `patch` emitted a
+  // `progress` for a finished run, and `registerAgentSession` re-added the
+  // orange node the abort had just removed.
+  const abortedDuringLaunch = (): PostMergeHookRun | null => {
+    const current = deps.getPostMergeHook(id);
+    return current && current.status !== 'running' ? current : null;
+  };
+
   try {
     const session = await deps.setupPostMergeHookSession({
       projectPath,
@@ -206,6 +225,13 @@ async function spawnAndRegister(
       harness,
       id,
     });
+
+    const abortedAfterSetup = abortedDuringLaunch();
+    if (abortedAfterSetup) {
+      // The abort's cleanup may have raced the scratch write; remove it again.
+      await deps.cleanupPostMergeHookSession(projectPath, id);
+      return { kind: 'skipped', reason: 'aborted', run: abortedAfterSetup };
+    }
 
     // The run is already visible before scratch setup and pty creation, so the
     // workflow Merge-step gate cannot observe a false idle window here. The
@@ -253,6 +279,19 @@ async function spawnAndRegister(
       deps.finishPostMergeHook(id, 'errored', sess.error);
       await deps.cleanupPostMergeHookSession(projectPath, id);
       return { kind: 'error', message: sess.error };
+    }
+
+    const abortedAfterSpawn = abortedDuringLaunch();
+    if (abortedAfterSpawn) {
+      // The pty was created for a hook the user already aborted: reclaim it,
+      // and neither record it (no `progress` event) nor register a node.
+      try {
+        await deps.killSession(sess.id);
+      } catch {
+        /* best-effort */
+      }
+      await deps.cleanupPostMergeHookSession(projectPath, id);
+      return { kind: 'skipped', reason: 'aborted', run: abortedAfterSpawn };
     }
 
     const updated = deps.patchPostMergeHook(id, { serverId: sess.id, terminalId: sess.terminalId });

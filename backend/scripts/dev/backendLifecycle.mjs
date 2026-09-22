@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -15,6 +16,33 @@ import { describeExitCode, isHardFault } from './exitStatus.mjs';
 import { clearLiveLog } from './liveLog.mjs';
 
 export const TERMINAL_PORT = Number(process.env.TERMINAL_PORT) || 5185;
+// Mirrors backend/src/server/config.ts — the port dist/index.js binds.
+export const BACKEND_PORT = Number(process.env.PORT) || 5184;
+// A backend that dies this soon after spawn died at boot, not mid-flight.
+export const BOOT_DEATH_WINDOW_MS = 30 * 1000;
+
+// Is something listening on the backend's port right now? The backend's
+// stdio is inherited (this runner never sees its output), and a startup
+// `EADDRINUSE` is caught in index.ts → `process.exit(1)`, which writes no
+// crash file and retracts the live-log mirror — so the port itself is the
+// only evidence this process can gather that another process holds it.
+export function probeBackendPort(port = BACKEND_PORT, timeoutMs = 1000) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: '127.0.0.1', port });
+    const done = (held) => {
+      socket.destroy();
+      resolve(held);
+    };
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.once('connect', () => done(true));
+    socket.once('error', () => done(false));
+  });
+}
+
+export function portHeldHint(port = BACKEND_PORT, platform = process.platform) {
+  const find = platform === 'win32' ? `netstat -ano | findstr :${port}` : `lsof -i :${port}`;
+  return `port ${port} is held by another process — find it with \`${find}\``;
+}
 
 export function createBackendLifecycle({
   copyAssetsBeforeRespawn,
@@ -25,6 +53,8 @@ export function createBackendLifecycle({
   canSpawnBackend = () => true,
   onBackendSpawned = () => {},
   captureBackendVersion = () => undefined,
+  probePort = probeBackendPort,
+  now = () => Date.now(),
 }) {
   let backendChild = null;
   let restartingBackend = false; // true between a restart kill and the respawn
@@ -35,6 +65,7 @@ export function createBackendLifecycle({
     const version = captureBackendVersion();
     restartingBackend = false;
     const c = spawnProcess(process.execPath, ['dist/index.js'], { stdio });
+    const spawnedAt = now();
     let finished = false;
     let spawned = false;
     c.once('spawn', () => { spawned = true; onBackendSpawned(version); });
@@ -68,20 +99,38 @@ export function createBackendLifecycle({
       // process at all — this handler, in a different process, is the only
       // thing that still gets to write the death down.
       const cause = spawnError ? `spawn failed: ${spawnError.message}` : describeExitCode(code, signal);
-      const log = recordExit('lattice-backend', code ?? 0, { detail: cause });
-      console.error(
-        `[lattice-backend] dist/index.js exited (${cause}) — ` +
-          `waiting for a dist/ change to retry...`,
-      );
-      if (isHardFault(code)) {
-        console.error(
-          '[lattice-backend] that was an OS-level fault, not a JS exception — the backend could not ' +
-            'log it from the inside. Its last console lines are in the newest ' +
-            '~/.lattice/logs/crash-*-nojs.log.',
-        );
-      }
-      if (log) console.error(`[lattice-backend] exit recorded to ${log}`);
       backendChild = null;
+      const record = (hint) => {
+        const detail = hint ? `${cause}; ${hint}` : cause;
+        const log = recordExit('lattice-backend', code ?? 0, { detail });
+        console.error(
+          `[lattice-backend] dist/index.js exited (${cause}) — ` +
+            `waiting for a dist/ change to retry...`,
+        );
+        if (hint) console.error(`[lattice-backend] ${hint}`);
+        if (isHardFault(code)) {
+          console.error(
+            '[lattice-backend] that was an OS-level fault, not a JS exception — the backend could not ' +
+              'log it from the inside. Its last console lines are in the newest ' +
+              '~/.lattice/logs/crash-*-nojs.log.',
+          );
+        }
+        if (log) console.error(`[lattice-backend] exit recorded to ${log}`);
+      };
+      // A non-zero death within seconds of spawn is a boot failure. The one
+      // boot failure this runner can diagnose from the outside is a port
+      // already in use — probe it (≤ 1 s) so the record names the cause,
+      // instead of reading exactly like a code crash. Skip the hint if a
+      // newer backend of ours was spawned meanwhile (it would answer the probe).
+      const bootDeath = !spawnError && code !== 0 && now() - spawnedAt < BOOT_DEATH_WINDOW_MS;
+      if (!bootDeath) {
+        record('');
+        return;
+      }
+      Promise.resolve()
+        .then(() => probePort(BACKEND_PORT))
+        .then((held) => record(held && backendChild === null ? portHeldHint(BACKEND_PORT) : ''))
+        .catch(() => record(''));
     }
     c.on('exit', (code, signal) => onChildExit(code, signal));
     c.on('error', (err) => {

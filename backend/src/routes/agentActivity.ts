@@ -8,7 +8,7 @@
 import path from 'node:path';
 import { Router } from 'express';
 import { canonicalProjectPath } from '../projectPath.js';
-import { cwdFromHookBody } from '../claudeHookBody.js';
+import { cwdFromHookBody, hookEventName } from '../claudeHookBody.js';
 import { decodeActivityHook } from '../activityHook.js';
 import { type AgentActivityEvent, notifyAgentActivity } from '../agentActivity.js';
 import { decodeAgentToken } from '../agentActivityTokens.js';
@@ -102,27 +102,27 @@ export function buildAgentActivityRouter(): Router {
     // no-op when the session is already gone (completed/swept): presence is
     // owned by the spawn + completion callbacks, so we never resurrect here.
     touchAgentSession(meta.agentId);
+    // Feed the Stop-hook quiescence tracker. Two consumers key on it: workflow
+    // steps (`wf:` — workflowRuns/stopHookGate.ts) and post-merge hooks
+    // (`pmh:` — postMergeHooks/stopHookGate.ts); both gate a Claude Stop-hook
+    // completion on the session going quiescent. EVERY hook is a "still alive"
+    // signal, whether or not it yields a graph event: a workflow-step agent
+    // spends much of its time on files the graph drops (its own
+    // `.lattice/workflow-steps/…` dir, scratch outside the project), and gating
+    // this on the graph event let the Stop-hook gate see a "quiet" session that
+    // was still working. SubagentStart/Stop additionally move the live-subagent
+    // count the gate uses to reject a Stop that fires while a subagent runs.
+    if (meta.agentId.startsWith('wf:') || meta.agentId.startsWith('pmh:')) {
+      const hookEvent = hookEventName(req.body);
+      if (hookEvent === 'SubagentStart') noteSubagentStart(meta.agentId);
+      else if (hookEvent === 'SubagentStop') noteSubagentStop(meta.agentId);
+      else noteAgentSignal(meta.agentId);
+    }
     const event = buildAgentActivityEvent(meta, req.body, {
       agentId: meta.agentId,
       cwd: cwdFromHookBody(req.body),
     });
-    if (event) {
-      notifyAgentActivity(event);
-      // Feed the Stop-hook quiescence tracker. Two consumers key on it: workflow
-      // steps (`wf:` — workflowRuns/stopHookGate.ts) and post-merge hooks
-      // (`pmh:` — postMergeHooks/stopHookGate.ts); both gate a Claude Stop-hook
-      // completion on the session going quiescent. Every hook is a "still alive"
-      // signal; SubagentStart/Stop additionally move the live-subagent count the
-      // gate uses to reject a Stop that fires while a subagent runs.
-      if (
-        meta.agentId.startsWith('wf:') ||
-        meta.agentId.startsWith('pmh:')
-      ) {
-        if (event.lifecycle === 'spawn') noteSubagentStart(meta.agentId);
-        else if (event.lifecycle === 'stop') noteSubagentStop(meta.agentId);
-        else noteAgentSignal(meta.agentId);
-      }
-    }
+    if (event) notifyAgentActivity(event);
     return ack();
   });
 

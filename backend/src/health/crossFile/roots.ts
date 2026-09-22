@@ -51,16 +51,22 @@ export function isConventionalRoot(filePath: string, projectRoot?: string): bool
   // entry points (a runner loads them; nothing imports them).
   if (/\.(test|spec)\.[^.]+$/.test(base)) return true;
   const norm = filePath.replace(/\\/g, '/');
-  if (/(^|\/)(__tests__|__mocks__|tests?|e2e|cypress)(\/|$)/.test(norm)) return true;
+  // Both directory heuristics below run against the PROJECT-RELATIVE path
+  // when the caller supplies the root. Matching the absolute path would let
+  // an ancestor directory decide for every file — a project checked out
+  // under `C:\Users\me\tests\app` would have its whole tree classified as
+  // test roots, and the dead-code view could never report anything.
+  const rel = projectRoot
+    ? path.relative(projectRoot, filePath).replace(/\\/g, '/')
+    : norm;
+  const inProject = Boolean(rel) && !rel.startsWith('..');
+  if (/(^|\/)(__tests__|__mocks__|tests?|e2e|cypress)(\/|$)/.test(inProject ? rel : norm)) return true;
   // Build/dev/CLI tooling under a project-level scripts|tools dir runs via
   // `node x.mjs`, never imported by the app. Treat the whole dir as roots
   // (their helpers then resolve live transitively). Scoped to the
   // project-relative path and excluding src/-nested tooling dirs — see
   // TOOLING_DIR_RE.
-  const rel = projectRoot
-    ? path.relative(projectRoot, filePath).replace(/\\/g, '/')
-    : norm;
-  if (rel && !rel.startsWith('..') && TOOLING_DIR_RE.test(rel)) return true;
+  if (inProject && TOOLING_DIR_RE.test(rel)) return true;
 
   const ext = path.extname(base);
   const stem = ext ? base.slice(0, base.length - ext.length) : base;

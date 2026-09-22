@@ -107,6 +107,14 @@ class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
   private timer: NodeJS.Timeout | null = null;
   private flushing = false;
   private closed = false;
+  // False until the initial walk has populated the snapshot; no flush runs
+  // before then (it would diff against a half-built snapshot).
+  private seeded = false;
+  // Paths whose OS event arrived while the seed walk was still running. The
+  // walk may have stat'ed them AFTER the write, so the snapshot already holds
+  // the new state and a plain diff would report nothing — these are reported
+  // as a `change` regardless.
+  private readonly preSeed = new Set<string>();
 
   private readonly opts: WatchTreeOptions;
 
@@ -143,10 +151,13 @@ class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
   }
 
   private async start(): Promise<void> {
-    // Seed the snapshot before watching so the first real event diffs against
-    // known state instead of reporting the whole tree as new.
-    await this.walk(this.root, false);
-    if (this.closed) return;
+    // Arm the OS watch FIRST, then seed the snapshot. Seeding a large tree
+    // takes seconds, and a write that lands on a path after the walk stat'ed
+    // it but before the watch existed would otherwise never be reported: the
+    // snapshot would hold the old (mtime,size) and no event would arrive, so
+    // the health cache stayed stale until the file changed again. Events
+    // that arrive during the seed are queued (flush waits for `seeded`) and
+    // force-reported once it completes — see `preSeed` in visit().
     try {
       this.watcher = fsWatch(
         this.root,
@@ -165,6 +176,10 @@ class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
     } catch (err) {
       this.emit('error', err);
     }
+    await this.walk(this.root, false);
+    if (this.closed) return;
+    this.seeded = true;
+    if (this.pending.size || this.rescanQueue.size) this.schedule();
   }
 
   // Cheap pre-filter + enqueue. Runs once per raw OS event, so it must stay
@@ -173,6 +188,7 @@ class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
     if (this.closed) return;
     if (this.opts.ignored(filePath)) return;
     this.pending.add(filePath);
+    if (!this.seeded) this.preSeed.add(filePath);
     this.schedule();
   }
 
@@ -183,7 +199,7 @@ class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
   }
 
   private schedule(): void {
-    if (this.timer || this.closed) return;
+    if (this.timer || this.closed || !this.seeded) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.flush();
@@ -214,6 +230,7 @@ class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
 
   // Diff one path against the snapshot and emit whatever actually changed.
   private async visit(filePath: string): Promise<void> {
+    const forced = this.preSeed.delete(filePath);
     let stats: Stats;
     try {
       stats = await fsp.lstat(filePath);
@@ -259,7 +276,7 @@ class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
     if (!prev) {
       this.snapshot.set(filePath, next);
       this.emit('add', filePath);
-    } else if (prev.mtimeMs !== next.mtimeMs || prev.size !== next.size) {
+    } else if (forced || prev.mtimeMs !== next.mtimeMs || prev.size !== next.size) {
       this.snapshot.set(filePath, next);
       this.emit('change', filePath);
     }

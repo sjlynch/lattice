@@ -101,5 +101,8 @@ test('applyThinkingLevels records extended levels, and marks ordinary ones done'
   assert.deepEqual(applyThinkingLevels({ id: 'm' }, ['none', 'low', 'high']), {
     id: 'm', thinkingLevels: [],
   });
+  // `[]` from the probe is ONLY the "2xx: server validates nothing" answer —
+  // a failed / unparseable probe is `null` and never reaches applyThinkingLevels
+  // (see autoDiscover.test.ts), so this [] → [] is a real answer, not a guess.
   assert.deepEqual(applyThinkingLevels({ id: 'm' }, []), { id: 'm', thinkingLevels: [] });
 });

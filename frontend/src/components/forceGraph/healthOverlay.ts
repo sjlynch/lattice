@@ -1,7 +1,8 @@
 // Code-health overlay (active while the user holds `h`). Each file node
 // becomes a tinted shape with a vertical connector + camera-scaled text
-// label showing its 0–100 health score. Labels are repulsed against
-// each other in the parent component's RAF loop via healthLabelRegistry.
+// label showing its 0–100 health score. Labels are repulsed against each
+// other by the scene-frame-driven repulsion step (`labelRepulsionFrames`)
+// via healthLabelRegistry.
 
 import type * as THREE from 'three';
 import type { GraphNode } from '../../api';

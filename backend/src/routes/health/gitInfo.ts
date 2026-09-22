@@ -7,13 +7,14 @@
 import { Router } from 'express';
 import { getGitHistory } from '../../gitHistory.js';
 import { getCurrentBranch } from '../../gitBranch.js';
+import { readPathParam } from '../projectParam.js';
 
 export function buildGitInfoRouter(defaultRoot: string): Router {
   const r = Router();
 
   r.get('/api/git-history', async (req, res) => {
-    const target =
-      typeof req.query.path === 'string' ? req.query.path : defaultRoot;
+    const target = readPathParam(req, res, defaultRoot);
+    if (target === null) return;
     const limit = Number(req.query.limit) || 10;
     try {
       const result = await getGitHistory(target, limit);
@@ -24,8 +25,8 @@ export function buildGitInfoRouter(defaultRoot: string): Router {
   });
 
   r.get('/api/git-branch', async (req, res) => {
-    const target =
-      typeof req.query.path === 'string' ? req.query.path : defaultRoot;
+    const target = readPathParam(req, res, defaultRoot);
+    if (target === null) return;
     try {
       const branch = await getCurrentBranch(target);
       res.json({ branch });

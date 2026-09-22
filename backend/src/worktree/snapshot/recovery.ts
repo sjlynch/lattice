@@ -77,6 +77,7 @@ export async function recoverPendingSnapshots(): Promise<void> {
       const allFiles = [
         ...(manifest.modifiedTracked ?? []),
         ...(manifest.untracked ?? []),
+        ...(manifest.deleted ?? []),
       ];
       const safeFiles = allFiles.filter((f) =>
         isPathInsideRepo(repoRoot, f),
@@ -123,6 +124,7 @@ export async function recoverPendingSnapshots(): Promise<void> {
               dir: snapDir,
               modifiedTracked: current.modifiedTracked,
               untracked: current.untracked,
+              deleted: current.deleted ?? [],
             },
             repoRoot,
             { guardStaleOverwrite: true },

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Lane } from './lanes';
+import { useEscapeToClose } from '../shared/useEscapeToClose';
 
 // Modal-ish overlay for creating a new task in a specific lane. Cmd/Ctrl+Enter
 // in the description submits; Enter in the title submits; Escape cancels.
@@ -23,13 +24,8 @@ export function NewTaskOverlay({
   useEffect(() => {
     titleRef.current?.focus();
   }, []);
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onCancel();
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onCancel]);
+  // Innermost-wins: Escape cancels just this overlay, not the board panel.
+  useEscapeToClose(true, onCancel);
 
   async function submit() {
     if (!title.trim() || submitting) return;

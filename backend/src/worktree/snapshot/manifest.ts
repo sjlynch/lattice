@@ -14,6 +14,10 @@ export type SnapshotHandle = {
   dir: string;
   modifiedTracked: string[];
   untracked: string[];
+  // Tracked paths that were locally deleted at capture (no copy exists — the
+  // content is HEAD's). Capture resurrects them so the FF sees a clean tree;
+  // restore deletes them again. Optional: older handles/manifests lack it.
+  deleted?: string[];
 };
 
 export type SnapshotManifest = {
@@ -23,6 +27,7 @@ export type SnapshotManifest = {
   createdAt: number;
   modifiedTracked: string[];
   untracked: string[];
+  deleted?: string[];
   owner?: LockBody;
 };
 
@@ -45,7 +50,9 @@ export function isSupportedSnapshotManifest(manifest: unknown): manifest is Snap
     && typeof value.label === 'string'
     && typeof value.createdAt === 'number' && Number.isFinite(value.createdAt)
     && Array.isArray(value.modifiedTracked) && value.modifiedTracked.every((file) => typeof file === 'string')
-    && Array.isArray(value.untracked) && value.untracked.every((file) => typeof file === 'string');
+    && Array.isArray(value.untracked) && value.untracked.every((file) => typeof file === 'string')
+    && (value.deleted === undefined
+      || (Array.isArray(value.deleted) && value.deleted.every((file) => typeof file === 'string')));
 }
 
 export async function readSnapshotManifest(manifestPath: string): Promise<SnapshotManifest | null> {

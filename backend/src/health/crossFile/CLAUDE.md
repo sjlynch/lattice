@@ -43,7 +43,9 @@ the watcher and the full scan both drive `computeCrossFile`.
   caller-supplied extra roots). Cheap enough for the watcher to recompute on
   every change.
 - `packageRoots.ts` — async, filesystem-walking package.json resolution used
-  only by the full scan: `readPackageJsonRoots` resolves every in-tree
+  by the full scan and at watcher creation (the scan's result is then handed
+  to the watcher on commit — see `crossFileAnalyzer.ts` `setRootInputs`):
+  `readPackageJsonRoots` resolves every in-tree
   package.json's `main`/`module`/`source`/`types`/`bin`/`exports` + `scripts`
   file refs to in-tree source files. Finds the package.jsons via the shared
   bounded walker (`../walkTree.js` `walkSourceTree`, canonical
