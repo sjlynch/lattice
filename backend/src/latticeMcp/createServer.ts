@@ -65,6 +65,24 @@ function toToolResult(outcome: LatticeCallOutcome): ToolResult {
   };
 }
 
+// `DELETE /api/tasks/:id` answers `{ok, keptBranch: {name, unmergedCommits,
+// hint}}` when the task's branch had unmerged work and was kept. Lead the
+// result with that hint as plain text so the agent reads it rather than
+// having to spot a field in the JSON (which still follows, unchanged).
+function withKeptBranchHint(outcome: LatticeCallOutcome): LatticeCallOutcome {
+  if (outcome.kind !== 'ok') return outcome;
+  try {
+    const parsed = JSON.parse(outcome.text) as { keptBranch?: { hint?: unknown } };
+    const hint = parsed?.keptBranch?.hint;
+    if (typeof hint === 'string' && hint) {
+      return { kind: 'ok', text: `${hint}\n${outcome.text}` };
+    }
+  } catch {
+    /* not JSON — leave it as is */
+  }
+  return outcome;
+}
+
 // Shared arg descriptions, so the same phrasing reaches the model from
 // `list_tasks` and `search_tasks` alike.
 const STATUS_DESC =
@@ -532,14 +550,18 @@ export function createLatticeMcpServer(
     {
       description:
         'PERMANENTLY remove a task: the record is erased (not moved to the ' +
-        'deleted lane) and any worktree + branch it has are torn down. Cannot ' +
-        'be undone. To bin it recoverably, move it to "deleted" with ' +
-        'update_task or transition_tasks; to retire finished work, move it to done.',
+        'deleted lane) and any worktree it has is torn down. Its branch is ' +
+        'deleted too UNLESS it has commits not on HEAD — then it is kept and ' +
+        'the result starts with a hint naming it. Cannot be undone. To bin it ' +
+        'recoverably, move it to "deleted" with update_task or ' +
+        'transition_tasks; to retire finished work, move it to done.',
       inputSchema: { id: z.string().describe('Task id.') },
     },
     async ({ id }) =>
       toToolResult(
-        await client.call(`/api/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+        withKeptBranchHint(
+          await client.call(`/api/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+        ),
       ),
   );
 

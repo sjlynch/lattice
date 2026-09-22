@@ -4,6 +4,7 @@
 import type { Response } from 'express';
 import { deleteTask, getTask } from '../../tasks.js';
 import { cleanupWorktreeForTask } from '../../worktree.js';
+import type { KeptBranchInfo } from '../../worktree/cleanup.js';
 import { cancelQueuedTaskSpawns, dequeueTaskRun } from './queuedSpawn.js';
 import { requireTaskInRequestedProject } from './requestUtils.js';
 import type { TaskIdRequest } from './crudTypes.js';
@@ -38,9 +39,16 @@ export async function handleTaskDelete(
   // Drop any still-pending queued run/resume so the spawn queue does not
   // later try to spawn a worktree for a task that no longer exists.
   cancelQueuedTaskSpawns(req.params.id);
+  // A holder object, not a `let`: TS would narrow a closure-assigned `let` to null.
+  const keptRef: { info: KeptBranchInfo | null } = { info: null };
   if (task && task.worktreePath && task.branch) {
     try {
-      await cleanupWorktreeForTask(task.projectPath, task.worktreePath, task.branch);
+      // The worktree goes (uncommitted edits archived as usual), but a branch
+      // with commits not in HEAD is the only copy of that work — keep it.
+      await cleanupWorktreeForTask(task.projectPath, task.worktreePath, task.branch, undefined, {
+        keepBranchIfUnmerged: true,
+        onBranchKept: (info) => { keptRef.info = info; },
+      });
     } catch {
       /* ignore — worktree may have already been removed manually */
     }
@@ -50,5 +58,17 @@ export async function handleTaskDelete(
     res.status(404).json({ error: 'not found' });
     return;
   }
-  res.json({ ok: true });
+  const kept = keptRef.info;
+  res.json(kept ? { ok: true, keptBranch: keptBranchPayload(kept) } : { ok: true });
+}
+
+export function keptBranchPayload(info: KeptBranchInfo): KeptBranchInfo & { hint: string } {
+  const what = info.unmergedCommits === null
+    ? 'its unmerged-commit count could not be determined'
+    : `${info.unmergedCommits} unmerged commit(s)`;
+  return {
+    ...info,
+    hint: `kept branch ${info.name}: ${what}. Merge it, or run ` +
+      `\`git branch -D ${info.name}\` to discard.`,
+  };
 }

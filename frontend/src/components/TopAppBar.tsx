@@ -147,7 +147,6 @@ export const TopAppBar = memo(function TopAppBar({
           onClick={() => setSettingsOpen(true)}
           title="Settings"
           aria-label="Settings"
-          disabled={!activeFolder}
           style={{ marginLeft: 4 }}
         >
           <Settings size={14} />

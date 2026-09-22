@@ -437,6 +437,34 @@ test('delete_task DELETEs /api/tasks/:id', async () => {
   }
 });
 
+test('delete_task leads its result with the kept-branch hint when the branch was kept', async () => {
+  const hint = 'kept branch lattice/foo-ab12: 3 unmerged commit(s). Merge it, or run ' +
+    '`git branch -D lattice/foo-ab12` to discard.';
+  const body = { ok: true, keptBranch: { name: 'lattice/foo-ab12', unmergedCommits: 3, hint } };
+  const calls: Recorded[] = [];
+  const { client, close } = await connect(calls, { body });
+  try {
+    const result = await client.callTool({ name: 'delete_task', arguments: { id: 't1' } });
+    assert.equal(isError(result), false);
+    const text = textOf(result);
+    assert.ok(text.startsWith(hint + '\n'), text);
+    assert.deepEqual(JSON.parse(text.slice(hint.length + 1)), body, 'the JSON still follows');
+  } finally {
+    await close();
+  }
+});
+
+test('delete_task result is plain JSON when no branch was kept', async () => {
+  const calls: Recorded[] = [];
+  const { client, close } = await connect(calls, { body: { ok: true } });
+  try {
+    const result = await client.callTool({ name: 'delete_task', arguments: { id: 't1' } });
+    assert.deepEqual(JSON.parse(textOf(result)), { ok: true });
+  } finally {
+    await close();
+  }
+});
+
 test('run_task POSTs /api/tasks/:id/run and carries harness + piModel', async () => {
   const calls: Recorded[] = [];
   const { client, close } = await connect(calls, {

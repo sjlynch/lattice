@@ -37,6 +37,14 @@ export type ProjectWsOptions<TEvent> = {
 // loaded snapshot is sent as-is (a busy project converges on its next event).
 export const MAX_INITIAL_SNAPSHOT_LOADS = 3;
 
+// Slow-client safety net. A browser that stops reading (a throttled background
+// tab, a closed laptop lid, a wedged renderer) makes `ws.send` queue in the
+// backend's heap, and whole-board snapshots (/ws/tasks, the snapshot WSSs)
+// are large — so past this much unsent data the connection is terminated
+// instead of queuing more. The frontend reconnects and gets a fresh snapshot,
+// so nothing is lost. Deliberately high: a healthy client never gets near it.
+export const PROJECT_WS_HIGH_WATER_BYTES = 16 * 1024 * 1024;
+
 // A relative `project` is refused (empty ⇒ the connection handler closes the
 // socket), matching the HTTP routes' rule. Canonicalising it first defeated
 // the task cache's own read-path guard (`ensureProjectLoaded` only skips
@@ -120,6 +128,20 @@ export function buildProjectWss<TEvent>(
 
     const forward = (event: TEvent) => {
       if (ws.readyState !== ws.OPEN) return;
+      if (ws.bufferedAmount > PROJECT_WS_HIGH_WATER_BYTES) {
+        // terminate() moves readyState off OPEN at once, so this logs once
+        // per connection; 'close' then tears the subscription down.
+        console.warn(
+          `[ws] dropping slow client for ${project}: ${ws.bufferedAmount} bytes unsent ` +
+            `(> ${PROJECT_WS_HIGH_WATER_BYTES}); it will reconnect for a fresh snapshot`,
+        );
+        try {
+          ws.terminate();
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       ws.send(serialize(event));
     };
 

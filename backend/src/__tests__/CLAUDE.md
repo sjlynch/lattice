@@ -150,6 +150,15 @@ under `helpers/`.
   `/merged` from an abandoned resolver no-ops (conflict-flag gate), AND a
   merge-run worker parked on the conflict waiter is released so the project
   run-lock is freed (Part A of the parked-waiter wedge fix).
+- `workflowProjectPin.test.ts` — `PATCH`/`DELETE /api/workflows/:id` and
+  `POST /api/workflow-runs/:runId/cancel` 404 a record from another project
+  when `?project=` is sent (nothing written/cancelled); absent/empty project
+  stays unpinned.
+- `worktreeCleanup.test.ts` also pins `keepBranchIfUnmerged` (task delete):
+  unmerged commits → worktree removed, branch kept + reported; no extra
+  commits → branch deleted; an undeterminable count keeps it; and the
+  `keptBranchPayload` hint text. `latticeMcp.test.ts` pins that `delete_task`
+  leads its result with that hint.
 - `mergeAbortedProjectPin.test.ts` — `/merge-aborted` 404s a task from another
   board (`?project=` pin) without aborting anything; an absent/empty project
   stays unpinned for the resolver agent's curl.
@@ -163,6 +172,10 @@ under `helpers/`.
   flushed after the snapshot; re-loads cap at `MAX_INITIAL_SNAPSHOT_LOADS` and
   send the latest load, never an older event; a socket closed mid-load
   unsubscribes and gets nothing.
+- `projectWsSlowClient.test.ts` — the `buildProjectWss` slow-client guard: a
+  socket over `PROJECT_WS_HIGH_WATER_BYTES` unsent is terminated (logged
+  once), gets no further frames, and is unsubscribed; one at the limit still
+  receives events.
 - `repoIntegrity.test.ts` — `checkRepoIntegrity`, the merge-run circuit breaker
   (`.git`-deletion defence #6). Both failure directions: it must fire on a
   vanished `.git`, an unreadable HEAD, and a HEAD moved *sideways* to a

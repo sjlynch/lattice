@@ -18,6 +18,7 @@ export type StripScanner = {
   lineCommentPrefixes: string[];
   blockOpen?: string;
   blockClose?: string;
+  quoteLifetimes: boolean;
 };
 
 function createScanner(content: string, syntax: CommentSyntax, options: StripOptions): StripScanner {
@@ -31,7 +32,23 @@ function createScanner(content: string, syntax: CommentSyntax, options: StripOpt
     lineCommentPrefixes: syntax.line ?? [],
     blockOpen: syntax.blockOpen,
     blockClose: syntax.blockClose,
+    quoteLifetimes: syntax.quoteLifetimes === true,
   };
+}
+
+const IDENT_START_RE = /^[\p{L}_]$/u;
+
+// Rust (`CommentSyntax.quoteLifetimes`): does the `'` at `i` open a lifetime or
+// loop label rather than a char literal? A char literal is `'\…'` (escape) or
+// exactly one code point closed by `'` (`'a'`, `'é'`, `'🦀'`); anything else
+// starting with an identifier character (`'a`, `'static`, `'outer:`) is a
+// lifetime/label. Everything else keeps the ordinary string handling.
+function opensRustLifetime(content: string, i: number): boolean {
+  if (i + 1 >= content.length || content[i + 1] === '\\') return false;
+  const cp = content.codePointAt(i + 1) as number;
+  const len = cp > 0xffff ? 2 : 1;
+  if (content[i + 1 + len] === "'") return false;
+  return IDENT_START_RE.test(String.fromCodePoint(cp));
 }
 
 function blankChar(scanner: StripScanner, ch: string): void {
@@ -155,6 +172,12 @@ function consumeNonCode(scanner: StripScanner): boolean {
       consumeLineComment(scanner);
       return true;
     }
+  }
+  if (ch === "'" && scanner.quoteLifetimes && opensRustLifetime(content, scanner.i)) {
+    // Emit the tick as code; the identifier after it is lexed as code too.
+    scanner.out.push(ch);
+    scanner.i++;
+    return true;
   }
   if (ch === '"' || ch === "'") {
     consumeSimpleString(scanner);

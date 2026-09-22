@@ -31,3 +31,18 @@ export const SETTINGS_TABS: {
   // same tab is the exception the tab's copy calls out.
   { id: 'tools', label: 'Tools', Icon: ShieldCheck, scope: 'global' },
 ];
+
+// With no project open only the machine-global tabs are shown: the
+// per-project ones have nowhere to load from or save to. (MCP is hidden too —
+// its enables are per-project; its custom servers / keys can be managed once a
+// project is open.)
+export function visibleSettingsTabs(hasProject: boolean): typeof SETTINGS_TABS {
+  return hasProject ? SETTINGS_TABS : SETTINGS_TABS.filter((t) => t.scope === 'global');
+}
+
+// The tab actually shown: the selected one if visible, else the first visible
+// one (e.g. the default 'terminals' when Settings opens with no project).
+export function resolveSettingsTab(tab: Tab, hasProject: boolean): Tab {
+  const visible = visibleSettingsTabs(hasProject);
+  return visible.some((t) => t.id === tab) ? tab : visible[0].id;
+}

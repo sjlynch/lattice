@@ -51,6 +51,20 @@ export type WorktreeCleanupOptions = {
   // The caller already archived the uncommitted changes (the boot sweep does,
   // before deciding to reclaim), so don't take a second, identical archive.
   skipArchive?: boolean;
+  // Remove the worktree but KEEP the `lattice/*` branch when it has commits
+  // not in the project HEAD (`rev-list --count HEAD..<branch>` > 0) — that
+  // branch is then the only copy of the work. Task delete sets this; a
+  // post-merge finalize does not (its branch is merged by construction). An
+  // undeterminable count keeps the branch (fail safe). The kept branch is
+  // reported through `onBranchKept`, and cleanup still returns `true`.
+  keepBranchIfUnmerged?: boolean;
+  onBranchKept?: (info: KeptBranchInfo) => void;
+};
+
+export type KeptBranchInfo = {
+  name: string;
+  // null when the count could not be determined (the branch is kept anyway).
+  unmergedCommits: number | null;
 };
 
 function normalizePath(value: string): string {
@@ -224,6 +238,22 @@ export async function cleanupWorktreeForTask(
     if (ref.code !== 0) {
       console.warn(`[worktree] cleanup deferred: cannot inspect branch ${branchName}: ${ref.stderr.trim()}`);
       return false;
+    }
+    if (opts.keepBranchIfUnmerged) {
+      const unmerged = await git(['rev-list', '--count', `HEAD..refs/heads/${branchName}`]);
+      const parsed = unmerged.code === 0 ? parseInt(unmerged.stdout.trim(), 10) : NaN;
+      const count = Number.isFinite(parsed) ? parsed : null;
+      if (count === null || count > 0) {
+        console.warn(
+          `[worktree] keeping branch ${branchName}: ` +
+            (count === null
+              ? `unmerged-commit count failed (exit ${unmerged.code}): ${unmerged.stderr.trim()}`
+              : `${count} unmerged commit(s)`) +
+            ' — merge it or delete it by hand if the work is no longer wanted.',
+        );
+        opts.onBranchKept?.({ name: branchName, unmergedCommits: count });
+        return true;
+      }
     }
     const del = await git(['branch', '-D', branchName]);
     if (del.code !== 0) {

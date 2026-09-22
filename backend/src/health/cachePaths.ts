@@ -15,7 +15,10 @@ import path from 'node:path';
 // v4: Python import extraction records every name of `import a, b as c` and
 // the `pkg.name` submodule candidates of `from pkg import name` (v3 kept only
 // the first name / the bare package), and bare Python specs now resolve.
-export const CACHE_VERSION = 4;
+// v5: the strip pass behind the universal smell counts treats a Rust lifetime /
+// loop label (`&'a str`, `'static`, `'outer:`) as code instead of a string
+// opener, so cached `.rs` todo/magic-number counts from v4 are wrong.
+export const CACHE_VERSION = 5;
 
 const CACHE_DIRNAME = '.lattice';
 const CACHE_FILENAME = 'health-cache.json';

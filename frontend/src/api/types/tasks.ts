@@ -60,6 +60,20 @@ export type RunTaskResult = {
   queued: boolean;
 };
 
+// `DELETE /api/tasks/:id`. `keptBranch` is present only when the task's
+// `lattice/*` branch still had unmerged commits and was kept rather than
+// deleted; `hint` is the user-facing recovery text (shown as a toast).
+export type KeptTaskBranch = {
+  name: string;
+  unmergedCommits: number;
+  hint: string;
+};
+
+export type DeleteTaskResult = {
+  ok?: boolean;
+  keptBranch?: KeptTaskBranch;
+};
+
 // Pushed on `/ws/tasks` when a queued task's pty spawns. The frontend
 // lazy-mounts the task's terminal from it (mirrors workflow `step-spawned`).
 export type TaskSpawnedEvent = {

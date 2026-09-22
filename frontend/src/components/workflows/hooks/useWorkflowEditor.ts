@@ -127,7 +127,7 @@ export function useWorkflowEditor({
     const variables = editor.variables;
     try {
       if (editor.workflowId) {
-        const w = await apiUpdateWorkflow(editor.workflowId, { name, steps, variables });
+        const w = await apiUpdateWorkflow(activeFolder, editor.workflowId, { name, steps, variables });
         setEditor((cur) => nextEditorAfterSave(atSaveStart, cur, w).editor);
         return w;
       } else {
@@ -168,12 +168,14 @@ export function useWorkflowEditor({
   const deleteCurrent = useCallback(async () => {
     if (!editor.workflowId) return;
     try {
-      await apiDeleteWorkflow(editor.workflowId);
+      // Pinned to the active project: the backend 404s a workflow from another
+      // project instead of deleting it.
+      await apiDeleteWorkflow(activeFolder, editor.workflowId);
       setEditor(emptyEditor());
     } catch (err) {
       onError(`Delete failed: ${(err as Error).message}`);
     }
-  }, [editor.workflowId, onError]);
+  }, [activeFolder, editor.workflowId, onError]);
 
   const mutations = useEditorMutationActions(setEditor, onStepsAdded);
 

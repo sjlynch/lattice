@@ -35,7 +35,7 @@ Before acting on any response, confirm its `canonicalProject` matches
 | POST   | /api/tasks/reorder                 | Persist one lane's card order `{project, status, ids}` |
 | PATCH  | /api/tasks/:id                     | Update title / description / status. Accepts JSON OR `text/markdown` body (replaces description; `# Heading` replaces title too) |
 | POST   | /api/tasks/:id/append-summary      | Append a summary section. JSON `{summary}` OR `text/markdown` body |
-| DELETE | /api/tasks/:id                     | PERMANENTLY remove a task (not a move to the `deleted` lane — PATCH `status` for that) and tear down its worktree + branch. Irreversible |
+| DELETE | /api/tasks/:id                     | PERMANENTLY remove a task (not a move to the `deleted` lane — PATCH `status` for that) and tear down its worktree + branch. A branch with commits not on HEAD is KEPT: the response then carries `keptBranch: {name, unmergedCommits, hint}`. Irreversible |
 | POST   | /api/tasks/:id/run                 | Run an Open task. Optional `{harness, piModel}`. Returns `{accepted, queued}` — see the async note below |
 | POST   | /api/tasks/:id/resume              | Re-spawn the agent in an existing in-progress worktree. Same body and `{accepted, queued}` shape as `/run` |
 | POST   | /api/tasks/:id/cancel-queued-run   | Drop a still-queued run, reverting the task to plain Open. Idempotent (no-op if it already started) |

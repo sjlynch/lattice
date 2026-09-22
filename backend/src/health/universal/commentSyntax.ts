@@ -2,6 +2,12 @@ export type CommentSyntax = {
   line?: string[];
   blockOpen?: string;
   blockClose?: string;
+  // Rust: a `'` that starts a lifetime or loop label (`&'a str`, `<'a>`,
+  // `'static`, `'outer: loop`) — i.e. `'` + identifier NOT closed as a char
+  // literal (`'a'`, `'\n'`) — is code, not a string opener. Without it the
+  // strip pass read `'a` as a string running to the next quote and blanked
+  // real code in between. Only consulted by `strip.ts`.
+  quoteLifetimes?: boolean;
 };
 
 export const COMMENT_BY_EXT: Record<string, CommentSyntax> = {
@@ -12,7 +18,7 @@ export const COMMENT_BY_EXT: Record<string, CommentSyntax> = {
   '.mjs': { line: ['//'], blockOpen: '/*', blockClose: '*/' },
   '.cjs': { line: ['//'], blockOpen: '/*', blockClose: '*/' },
   '.go': { line: ['//'], blockOpen: '/*', blockClose: '*/' },
-  '.rs': { line: ['//'], blockOpen: '/*', blockClose: '*/' },
+  '.rs': { line: ['//'], blockOpen: '/*', blockClose: '*/', quoteLifetimes: true },
   '.java': { line: ['//'], blockOpen: '/*', blockClose: '*/' },
   '.kt': { line: ['//'], blockOpen: '/*', blockClose: '*/' },
   '.kts': { line: ['//'], blockOpen: '/*', blockClose: '*/' },

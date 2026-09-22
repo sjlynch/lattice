@@ -171,7 +171,9 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   state + its load/get/set/delete/prune/save/flush transitions, debounced
   coalesced writes, save-chain serialization, dirty-bit rearm-on-failure.
   `cachePaths.ts` owns the location + `CACHE_VERSION` (bump it on any import-
-  extraction/resolver change — see the crossFile cache-coupling note above).
+  extraction/resolver change — see the crossFile cache-coupling note above —
+  and on any change to cached metric output, e.g. v5: Rust lifetimes in the
+  universal strip pass).
   `cacheFile.ts` owns the crash-safe I/O: raw read plus the same-dir temp
   write → atomic rename (transient-Windows-rename retry + temp cleanup).
   `tsconfig.ts` — tsconfig alias resolution

@@ -47,7 +47,15 @@ Pi providers + model menu, Opengrep pack enables), and finally fires the parent
 callbacks. With NO project open the controller calls `saveGlobalSettings` alone
 — the global tabs are editable without a folder, and a silent early return used
 to leave the dialog stuck on "Save" (the unsaved-changes prompt's Save did
-nothing). `useSettingsDrafts.ts` owns the handful of drafts that live on the
+nothing). The navbar Settings button is enabled with no project; the dialog
+then shows only the `scope: 'global'` tabs (Agents / Pi / Tools —
+`visibleSettingsTabs` / `resolveSettingsTab` in `settingsTabs.ts`, so the default
+`terminals` selection falls through to Agents) plus an "Open a project to edit
+project settings" scope note. MCP is hidden too (its enables are per-project).
+The hidden per-project tabs stay mounted but inactive; each skips its load on an
+empty folder (`useSettingsDrafts`, `useOverrideDraft`, `HarnessSystemPromptsTab`,
+Tools' scan-filter half), so their patches stay `undefined` and nothing reads
+dirty. Pinned by `__tests__/settingsTabsNoProject.test.ts`. `useSettingsDrafts.ts` owns the handful of drafts that live on the
 parent itself rather than a tab — the terminal-default harness +
 skip-permissions, the Codex `--yolo` toggle (default ON — part of
 `terminalLaunchSettings`, so it's reseeded synchronously with the harness/skip

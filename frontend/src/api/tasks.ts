@@ -5,6 +5,8 @@ import { subscribeWs, subscribeWsShared } from './ws';
 import type {
   AgentActivityEvent,
   AgentSession,
+  DeleteTaskResult,
+  KeptTaskBranch,
   MergeTaskResult,
   RunTaskResult,
   Task,
@@ -97,8 +99,33 @@ export async function reorderTasks(
   });
 }
 
-export async function deleteTask(projectPath: string, id: string): Promise<void> {
-  await deleteJson<{ ok: true }>(taskByIdUrl(projectPath, id));
+// Resolves the parsed response. `keptBranch` is kept only when well-formed
+// (older backends omit it; anything malformed is dropped rather than toasted).
+export async function deleteTask(projectPath: string, id: string): Promise<DeleteTaskResult> {
+  const body = await deleteJson<unknown>(taskByIdUrl(projectPath, id));
+  return parseDeleteTaskResult(body);
+}
+
+export function parseDeleteTaskResult(body: unknown): DeleteTaskResult {
+  if (!body || typeof body !== 'object') return {};
+  const raw = body as { ok?: unknown; keptBranch?: unknown };
+  const out: DeleteTaskResult = {};
+  if (typeof raw.ok === 'boolean') out.ok = raw.ok;
+  const kb = raw.keptBranch as Partial<KeptTaskBranch> | null | undefined;
+  if (
+    kb &&
+    typeof kb === 'object' &&
+    typeof kb.name === 'string' &&
+    typeof kb.hint === 'string' &&
+    kb.hint.trim() !== ''
+  ) {
+    out.keptBranch = {
+      name: kb.name,
+      unmergedCommits: typeof kb.unmergedCommits === 'number' ? kb.unmergedCommits : 0,
+      hint: kb.hint,
+    };
+  }
+  return out;
 }
 
 export async function runTask(

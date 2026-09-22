@@ -189,3 +189,82 @@ test('countLineKinds treats a trailing block comment after code as code', () => 
   assert.equal(counts.code, 1);
   assert.equal(counts.comment, 0);
 });
+
+// Rust lifetimes / labels (`CommentSyntax.quoteLifetimes`): a `'` opening a
+// lifetime used to start a "string" that ran to the next quote, blanking the
+// real code between (and hiding its TODOs / magic numbers).
+const RS_SYNTAX = COMMENT_BY_EXT['.rs'];
+
+test('Rust lifetimes are code, not string openers', () => {
+  const source = [
+    "fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {",
+    '    let limit = 4242;',
+    '    x',
+    '}',
+  ].join('\n');
+  const stripped = stripStringsAndComments(source, RS_SYNTAX);
+  assert.equal(stripped, source, 'nothing in this snippet is a string or comment');
+  assert.equal(countUniversalSmells(source, RS_SYNTAX).get('magic_number'), 1);
+});
+
+test("Rust 'static and loop labels are code", () => {
+  const source = [
+    "static NAME: &'static str = \"x\";",
+    "'outer: loop {",
+    "    break 'outer; // TODO: tidy 7777",
+    '}',
+    'let n = 9999;',
+  ].join('\n');
+  const stripped = stripStringsAndComments(source, RS_SYNTAX);
+  assert.equal(stripped.length, source.length);
+  assert.ok(stripped.includes("&'static str = "));
+  assert.ok(stripped.includes("'outer: loop {"));
+  assert.ok(stripped.includes("break 'outer;"));
+  assert.ok(stripped.includes('let n = 9999;'));
+  assert.equal(stripped.includes('TODO'), false, 'comment still blanked');
+  const smells = countUniversalSmells(source, RS_SYNTAX);
+  assert.equal(smells.get('todo_fixme'), 1);
+  assert.equal(smells.get('magic_number'), 1, 'only the code 9999, not the commented 7777');
+});
+
+test('Rust char literals are still blanked', () => {
+  const source = [
+    "let a = '5'; let b = '\\n'; let c = '\\''; let d = 'é'; let e = '🦀';",
+    "let f = b'7'; let g = 'x';",
+  ].join('\n');
+  const stripped = stripStringsAndComments(source, RS_SYNTAX);
+  assert.equal(stripped.length, source.length);
+  for (const lit of ["'5'", "'\\n'", "'\\''", "'é'", "'🦀'", "'7'", "'x'"]) {
+    assert.equal(stripped.includes(lit), false, `${lit} blanked`);
+  }
+  assert.ok(stripped.includes('let g = '));
+  assert.equal(countUniversalSmells(source, RS_SYNTAX).get('magic_number') ?? 0, 0);
+});
+
+test('a lifetime next to a char literal: both handled on one line', () => {
+  const source = "fn f<'a>(s: &'a str) -> char { if s.is_empty() { '9' } else { 'z' } }";
+  const stripped = stripStringsAndComments(source, RS_SYNTAX);
+  assert.ok(stripped.startsWith("fn f<'a>(s: &'a str) -> char {"));
+  assert.equal(stripped.includes("'9'"), false);
+  assert.equal(stripped.includes("'z'"), false);
+});
+
+test("non-Rust languages keep treating ' as a string opener (byte-identical)", () => {
+  const ts = "const t = x<'a>(y); const n = 4242; const s = 'b';";
+  // The TS lexer reads `'a>(y); const n = 4242; const s = '` as one string.
+  const tsStripped = stripStringsAndComments(ts, TS_SYNTAX);
+  assert.equal(tsStripped.includes('4242'), false);
+  // Pinned exactly: `'a, 77)\nz = '` is one string, then `q`, then an
+  // unterminated `'`.
+  const py = "f('a, 77)\nz = 'q'";
+  assert.equal(stripStringsAndComments(py, COMMENT_BY_EXT['.py']), 'f(       \n     q ');
+  // The same Rust-shaped source without the flag lexes exactly as before.
+  const rs = "fn f<'a>(x: &'a str) { let n = 4242; }";
+  const noFlag = { ...RS_SYNTAX, quoteLifetimes: undefined };
+  assert.equal(stripStringsAndComments(rs, noFlag), stripStringsAndComments(rs, TS_SYNTAX));
+  assert.notEqual(stripStringsAndComments(rs, noFlag), stripStringsAndComments(rs, RS_SYNTAX));
+  // No other extension opts in.
+  for (const [ext, syntax] of Object.entries(COMMENT_BY_EXT)) {
+    if (ext !== '.rs') assert.notEqual(syntax.quoteLifetimes, true, ext);
+  }
+});

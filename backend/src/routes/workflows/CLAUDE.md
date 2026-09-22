@@ -18,6 +18,16 @@ significant). Run state itself lives in `../../workflowRuns.ts` /
   `POST /api/workflow-prompt-customizations` (spawn the selected harness),
   `GET …/:id` (poll status/result), and `POST …/:id/complete` (harness callback).
 
+## Project pin
+
+`PATCH`/`DELETE /api/workflows/:id` and `POST /api/workflow-runs/:runId/cancel`
+look their record up globally, so they honour an optional `?project=` via
+`../projectParam.ts` `requireOwnedByRequestedProject` (the same canonical-path
+compare as the tasks routes' `requireTaskInRequestedProject`): a non-empty
+project that doesn't own the workflow/run is a 404 with a "different board"
+hint, before any write. Absent/empty → unpinned, as before. Pinned by
+`__tests__/workflowProjectPin.test.ts`.
+
 ## Stability
 
 The Stop-hook callback paths/shapes are part of the agent contract — don't change

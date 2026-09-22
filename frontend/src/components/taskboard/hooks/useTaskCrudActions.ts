@@ -86,7 +86,10 @@ export function useTaskCrudActions({ activeFolder, showError }: UseTaskCrudActio
   const deleteTask = useCallback(
     async (id: string): Promise<boolean> => {
       try {
-        await apiDeleteTask(activeFolder, id);
+        const res = await apiDeleteTask(activeFolder, id);
+        // The delete succeeded, but the task's branch had unmerged commits and
+        // was kept: surface the backend's recovery hint in the board toast.
+        if (res.keptBranch) showError(res.keptBranch.hint);
         return true;
       } catch (err) {
         showError((err as Error).message);

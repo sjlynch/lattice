@@ -181,7 +181,8 @@ export function useWorkflowRunActions({
 
   const stopRun = useCallback(async (runId: string) => {
     try {
-      await apiCancelWorkflowRun(runId);
+      // Pinned to the active project (404 for another project's run).
+      await apiCancelWorkflowRun(activeFolderRef.current, runId);
     } catch (err) {
       onError(`Stop failed: ${(err as Error).message}`);
     }

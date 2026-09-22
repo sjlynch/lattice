@@ -20,6 +20,7 @@
 
 import path from 'node:path';
 import type { Response } from 'express';
+import { canonicalProjectPath } from '../projectPath.js';
 
 type ProjectSource = 'query' | 'body' | 'both';
 
@@ -74,6 +75,33 @@ export function readPathParam(
     return null;
   }
   return raw;
+}
+
+// Optional `?project=` pin for a by-id route whose record is looked up
+// GLOBALLY (a workflow definition id, a workflow run id). Mirrors
+// `requireTaskInRequestedProject` (routes/tasks/requestUtils.ts): when the
+// caller sends a non-empty `?project=`, the record must belong to it
+// (canonical-path compare) or the request is a 404 with a "wrong board" hint;
+// with no project sent — Stop-hook callbacks, agents' curls, the UI — it
+// proceeds exactly as before. Returns true when the request may proceed;
+// false once it has sent the 404.
+export function requireOwnedByRequestedProject(
+  ownerProjectPath: string,
+  what: string,
+  req: { query?: unknown },
+  res: Response,
+): boolean {
+  const q = req.query as Record<string, unknown> | undefined;
+  const project = typeof q?.project === 'string' ? q.project.trim() : '';
+  if (!project) return true;
+  if (canonicalProjectPath(ownerProjectPath) === canonicalProjectPath(project)) return true;
+  res.status(404).json({
+    error: 'not found',
+    hint:
+      `${what} is not in project ${canonicalProjectPath(project)} — it belongs ` +
+      'to a different board. Check the project this session is pinned to before retrying.',
+  });
+  return false;
 }
 
 export function relativeProjectError(raw: string): string {

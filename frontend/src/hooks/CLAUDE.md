@@ -137,12 +137,17 @@ posts) has to be keyed so it can't fire on a mismatched pair. Pinned by
 - `useFocusTrap(open)` — shared modal/dialog focus management. Returns a ref for
   the dialog container; moves focus inside on open (respecting a child's
   `autoFocus`), wraps Tab/Shift+Tab within it, and restores focus to the opener
-  on close. Used by `Modal`, `FloatingPanel`, and `TaskDetailOverlay`;
-  Escape-to-close stays each wrapper's own concern. Traps form an
-  innermost-wins stack (like `shared/useEscapeToClose`): only the most recently
-  opened one handles Tab, since `Modal` and `FloatingPanel` portal as sibling
-  trees and two live traps pulled focus back and forth (a confirm's middle
-  button was unreachable). Pinned by `__tests__/focusTrapStack.test.ts`.
+  on close. Used by `Modal` and `TaskDetailOverlay` (trapping), and by
+  `FloatingPanel` with `{ trapTab: false }` — panels are non-modal (no
+  backdrop, several open side by side), so they get the focus-in + restore but
+  no Tab wrapping and never join the trap stack (the trap used to hijack Tab
+  from older panels and from the page). Escape-to-close stays each wrapper's
+  own concern. Trapping dialogs form an innermost-wins stack (like
+  `shared/useEscapeToClose`): only the most recently opened one handles Tab,
+  since portals are sibling trees and two live traps pulled focus back and
+  forth (a confirm's middle button was unreachable). The non-React core is
+  `activateFocusScope`. Pinned by `__tests__/focusTrapStack.test.ts` +
+  `__tests__/focusTrapNonModal.test.ts`.
 - `useDismissOnOutside(open, ref, onClose)` — shared popover/menu dismissal.
   While `open`, a document `pointerdown` outside `ref`'s element and a window
   Escape `keydown` both call `onClose` (read through a ref, so its identity never

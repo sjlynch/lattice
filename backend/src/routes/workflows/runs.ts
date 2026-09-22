@@ -18,7 +18,7 @@ import { waitForWorkflowRecovery } from '../../workflowRuns/recoveryReadiness.js
 import { requestStopHookStepComplete } from '../../workflowRuns/stopHookGate.js';
 import { unregisterAgentSession } from '../../agentSessions.js';
 import { forgetAgentQuiescence } from '../../agentQuiescence.js';
-import { readProjectParam } from '../projectParam.js';
+import { readProjectParam, requireOwnedByRequestedProject } from '../projectParam.js';
 
 export function buildWorkflowRunsRouter(backendOrigin: string): Router {
   const r = Router();
@@ -104,6 +104,11 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
   });
 
   r.post('/api/workflow-runs/:runId/cancel', (req, res) => {
+    // `?project=` pin (optional): a run id is global, so a caller that names
+    // its board can't cancel another board's run. Unknown ids fall through to
+    // the 404 below; no project sent → unpinned, as before.
+    const run = getRun(req.params.runId);
+    if (run && !requireOwnedByRequestedProject(run.projectPath, `workflow run ${run.id}`, req, res)) return;
     const ok = cancelWorkflowRun(req.params.runId);
     if (!ok) return res.status(404).json({ error: 'run not found or already finished' });
     res.json({ ok: true });

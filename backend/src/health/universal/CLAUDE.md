@@ -17,9 +17,17 @@ AST metrics need a text-level pass.
 - Keep the regex-vs-division heuristic conservative; false positives in JS/TS
   quickly distort universal smells.
 - `commentSyntax.ts` is the per-language marker table; update it before adding
-  ad-hoc comment regexes elsewhere.
+  ad-hoc comment regexes elsewhere. It also carries per-language lexing flags:
+  `quoteLifetimes` (set on `.rs` only) makes `strip.ts` treat a `'` that opens
+  a lifetime/label (`&'a str`, `<'a>`, `'static`, `'outer: loop` — `'` +
+  identifier not closed as a char literal) as code; char literals (`'a'`,
+  `'\n'`, `'é'`) are still blanked. Every other language lexes `'` exactly as
+  before. Any change to what the strip pass emits changes smell counts and
+  needs a `CACHE_VERSION` bump (`../cachePaths.ts`; v5 was this one).
 - `lineCounts.ts` counts blank/comment/code lines from source text and comment
   syntax, not AST nodes.
 - `smells.ts` should stay heuristic-only; AST-backed smells belong in
   `health/walker/`.
-- Universal coverage lives in `backend/src/__tests__/universal.test.ts`.
+- Universal coverage lives in `backend/src/__tests__/universal.test.ts`
+  (including the Rust lifetime / label / char-literal cases and a pin that
+  non-Rust lexing is unchanged).

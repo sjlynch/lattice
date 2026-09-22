@@ -16,7 +16,11 @@ import { InstructionTemplatesTab } from './settings/InstructionTemplatesTab';
 import { HarnessSystemPromptsTab } from './settings/HarnessSystemPromptsTab';
 import { useSettingsDrafts } from './settings/useSettingsDrafts';
 import { useSettingsController } from './settings/useSettingsController';
-import { SETTINGS_TABS, type Tab } from './settings/settingsTabs';
+import {
+  resolveSettingsTab,
+  visibleSettingsTabs,
+  type Tab,
+} from './settings/settingsTabs';
 
 type Props = {
   open: boolean;
@@ -41,7 +45,13 @@ export function SettingsDialog({
   metricsIgnoredExts,
   onMetricsIgnoredExtsChange,
 }: Props) {
-  const [tab, setTab] = useState<Tab>('terminals');
+  const [selectedTab, setTab] = useState<Tab>('terminals');
+  // No project open → only the machine-global tabs are shown (and the default
+  // 'terminals' falls through to the first of them). The per-project tabs stay
+  // mounted but inactive; each already skips its load without a folder, and
+  // Save runs `saveGlobalSettings` alone.
+  const hasProject = !!activeFolder;
+  const tab = resolveSettingsTab(selectedTab, hasProject);
   const drafts = useSettingsDrafts(open, activeFolder, terminalLaunchSettings);
   const { refs, saving, error, dirtyByTab, bumpDirty, save, requestClose } =
     useSettingsController({
@@ -65,12 +75,13 @@ export function SettingsDialog({
       storageKey="lattice.settings.window"
     >
       <div className="settings-scope-note">
-        Global settings apply to all projects on this machine; per-project
-        settings affect only the active folder.
+        {hasProject
+          ? 'Global settings apply to all projects on this machine; per-project settings affect only the active folder.'
+          : 'No project open — showing machine-global settings only. Open a project to edit project settings.'}
       </div>
       <div className="settings-body">
         <div className="settings-tabs">
-          {SETTINGS_TABS.map(({ id, label, Icon, scope }) => (
+          {visibleSettingsTabs(hasProject).map(({ id, label, Icon, scope }) => (
             <button
               key={id}
               className={`settings-tab ${tab === id ? 'active' : ''}`}

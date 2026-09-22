@@ -1,16 +1,27 @@
 // Workflow definition CRUD: list / create / update / delete the stored
 // workflow definitions (no run state — see runs.ts for that).
 
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import {
   createWorkflow,
   deleteWorkflow,
+  getWorkflow,
   listWorkflows,
   updateWorkflow,
   type WorkflowStep,
   type WorkflowVariable,
 } from '../../workflows.js';
-import { readProjectParam } from '../projectParam.js';
+import { readProjectParam, requireOwnedByRequestedProject } from '../projectParam.js';
+
+// `?project=` pin for the by-id routes: a workflow id is looked up across
+// every project, so when a project is sent the definition must belong to it
+// (404 otherwise, before any write). An unknown id falls through to the
+// route's own 404; no project sent → unpinned, as before.
+async function workflowInRequestedProject(req: Request<{ id: string }>, res: Response): Promise<boolean> {
+  const existing = await getWorkflow(req.params.id);
+  if (!existing) return true;
+  return requireOwnedByRequestedProject(existing.projectPath, `workflow ${existing.id}`, req, res);
+}
 
 export function buildWorkflowCrudRouter(): Router {
   const r = Router();
@@ -59,12 +70,14 @@ export function buildWorkflowCrudRouter(): Router {
     if (updates.variables !== undefined && !Array.isArray(updates.variables)) {
       return res.status(400).json({ error: 'variables must be an array' });
     }
+    if (!(await workflowInRequestedProject(req, res))) return;
     const w = await updateWorkflow(req.params.id, updates);
     if (!w) return res.status(404).json({ error: 'not found' });
     res.json(w);
   });
 
   r.delete('/api/workflows/:id', async (req, res) => {
+    if (!(await workflowInRequestedProject(req, res))) return;
     const ok = await deleteWorkflow(req.params.id);
     if (!ok) return res.status(404).json({ error: 'not found' });
     res.json({ ok: true });

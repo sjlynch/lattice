@@ -35,7 +35,10 @@ export function FloatingPanel({
     defaultSize,
     storageKey,
   );
-  const dialogRef = useFocusTrap<HTMLDivElement>(open);
+  // Non-modal: panels have no backdrop and can sit side by side, so Tab is left
+  // to the browser (a trap here hijacked Tab from older panels and from the page
+  // outside). Focus still moves in on open and back to the opener on close.
+  const dialogRef = useFocusTrap<HTMLDivElement>(open, { trapTab: false });
   useFloatingPanelEscape(open, onClose, dialogRef);
 
   const onTitleDown = usePanelDrag({ pos, size, setPos });
@@ -64,7 +67,6 @@ export function FloatingPanel({
       ref={dialogRef}
       className={maximized ? 'floating-panel maximized' : 'floating-panel'}
       role="dialog"
-      aria-modal="true"
       style={panelStyle}
       onMouseDown={(e) => e.stopPropagation()}
     >

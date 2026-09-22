@@ -6,6 +6,7 @@ import { cleanupWorktreeForTask, type WorktreeCleanupDeps } from '../worktree/cl
 import { projectGit } from '../worktree/projectGit.js';
 import { exec } from '../worktree/exec.js';
 import { withTempDir } from './helpers/tempDir.js';
+import { keptBranchPayload } from '../routes/tasks/crudDelete.js';
 
 async function fixture(fn: (f: {
   repo: string; worktree: string; branch: string; calls: string[][]; kills: string[];
@@ -215,4 +216,75 @@ test('permission errors inspecting an unregistered path never count as an absent
     await assert.rejects(cleanupWorktreeForTask(repo, worktree, branch, deps), { code: 'EACCES' });
     assert.ok((await git(['branch', '--list', branch])).includes(branch));
   });
+});
+
+// keepBranchIfUnmerged (task delete): the worktree goes, but a branch with
+// commits not in HEAD is the only copy of that work and is kept.
+async function commitInWorktree(worktree: string, n: number): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    const r = await exec('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+      'commit', '--allow-empty', '-qm', `work ${i}`], worktree);
+    assert.equal(r.code, 0, r.stderr);
+  }
+}
+
+test('keepBranchIfUnmerged removes the worktree but keeps a branch with unmerged commits', async (t) => {
+  t.mock.method(console, 'warn', () => undefined);
+  await fixture(async ({ repo, worktree, branch, deps, calls, git }) => {
+    await commitInWorktree(worktree, 3);
+    const kept: unknown[] = [];
+    assert.equal(await cleanupWorktreeForTask(repo, worktree, branch, deps, {
+      keepBranchIfUnmerged: true, onBranchKept: (info) => kept.push(info),
+    }), true);
+    await assert.rejects(fs.lstat(worktree), { code: 'ENOENT' });
+    assert.ok((await git(['branch', '--list', branch])).includes(branch));
+    assert.deepEqual(kept, [{ name: branch, unmergedCommits: 3 }]);
+    assert.ok(!calls.some((args) => args[0] === 'branch' && args[1] === '-D'));
+  });
+});
+
+test('keepBranchIfUnmerged still deletes a branch with no commits beyond HEAD', async () => {
+  await fixture(async ({ repo, worktree, branch, deps, git }) => {
+    const kept: unknown[] = [];
+    assert.equal(await cleanupWorktreeForTask(repo, worktree, branch, deps, {
+      keepBranchIfUnmerged: true, onBranchKept: (info) => kept.push(info),
+    }), true);
+    assert.equal((await git(['branch', '--list', branch])).trim(), '');
+    assert.deepEqual(kept, []);
+  });
+});
+
+test('keepBranchIfUnmerged keeps the branch when the unmerged count cannot be determined', async (t) => {
+  t.mock.method(console, 'warn', () => undefined);
+  await fixture(async ({ repo, worktree, branch, deps, git }) => {
+    const real = deps.projectGit;
+    deps.projectGit = async (...args) => args[1][0] === 'rev-list'
+      ? { code: 128, stdout: '', stderr: 'fatal: bad revision' }
+      : real(...args);
+    const kept: unknown[] = [];
+    assert.equal(await cleanupWorktreeForTask(repo, worktree, branch, deps, {
+      keepBranchIfUnmerged: true, onBranchKept: (info) => kept.push(info),
+    }), true);
+    assert.ok((await git(['branch', '--list', branch])).includes(branch));
+    assert.deepEqual(kept, [{ name: branch, unmergedCommits: null }]);
+  });
+});
+
+test('without keepBranchIfUnmerged a branch with unmerged commits is still deleted (finalize path)', async () => {
+  await fixture(async ({ repo, worktree, branch, deps, git }) => {
+    await commitInWorktree(worktree, 1);
+    assert.equal(await cleanupWorktreeForTask(repo, worktree, branch, deps), true);
+    assert.equal((await git(['branch', '--list', branch])).trim(), '');
+  });
+});
+
+test('task delete payload carries an actionable hint for a kept branch', () => {
+  const p = keptBranchPayload({ name: 'lattice/foo-ab12', unmergedCommits: 3 });
+  assert.equal(p.name, 'lattice/foo-ab12');
+  assert.equal(p.unmergedCommits, 3);
+  assert.equal(p.hint,
+    'kept branch lattice/foo-ab12: 3 unmerged commit(s). Merge it, or run ' +
+    '`git branch -D lattice/foo-ab12` to discard.');
+  assert.match(keptBranchPayload({ name: 'lattice/x-1', unmergedCommits: null }).hint,
+    /could not be determined.*git branch -D lattice\/x-1/);
 });

@@ -204,7 +204,7 @@ therefore stay safely re-runnable.
 | PATCH | `/api/tasks/:id` | Update `title` / `description` / `status`; accepts JSON or text/markdown description bodies |
 | POST | `/api/tasks/reorder` | Persist per-lane task order `{project, status, ids}` |
 | POST | `/api/tasks/:id/append-summary` | Append a markdown/plain-text summary beneath the task description |
-| DELETE | `/api/tasks/:id` | Remove |
+| DELETE | `/api/tasks/:id` | Remove (tears down the worktree; its `lattice/*` branch is deleted unless it has commits not on HEAD — then it is kept and the response is `{ok: true, keptBranch: {name, unmergedCommits, hint}}`, `unmergedCommits: null` when the count failed) |
 | POST | `/api/tasks/:id/cancel-queued-run` | Drop a queued run back to a plain Open task |
 | POST | `/api/tasks/:id/run` | Enqueue an Open task's run on the spawn queue; returns `{accepted, queued}` (pty delivered later via the `task-spawned` WS event) |
 | POST | `/api/tasks/:id/resume` | Enqueue a re-spawn in the existing worktree; returns `{accepted, queued}` |
@@ -225,14 +225,14 @@ therefore stay safely re-runnable.
 | POST | `/api/merge-runs/:id/stash-resolved` | Callback after a post-run stash/snapshot conflict resolver finishes |
 | GET | `/api/workflows?project=` | List workflow definitions for a project |
 | POST | `/api/workflows` | Create a workflow definition |
-| PATCH | `/api/workflows/:id` | Update a workflow definition |
-| DELETE | `/api/workflows/:id` | Delete a workflow definition |
+| PATCH | `/api/workflows/:id` | Update a workflow definition (optional `?project=` pin: 404 if the workflow belongs to another project) |
+| DELETE | `/api/workflows/:id` | Delete a workflow definition (optional `?project=` pin, as PATCH) |
 | POST | `/api/workflows/:id/run` | Start a workflow run (spawns step 0 terminal). `requireNoActiveRun:true` (sequential-queue dispatch) → **409** if a run is already active for the project, so the queue requeues instead of running two at once |
 | POST | `/api/workflow-prompt-customizations` | Spawn selected harness to tailor a workflow step prompt |
 | GET | `/api/workflow-prompt-customizations/:id` | Poll prompt-customization status/result |
 | POST | `/api/workflow-prompt-customizations/:id/complete` | Harness callback with customized prompt |
 | POST | `/api/workflow-runs/:runId/steps/:n/complete` | Stop-hook callback — advances to next step |
-| POST | `/api/workflow-runs/:runId/cancel` | Cancel an active workflow run |
+| POST | `/api/workflow-runs/:runId/cancel` | Cancel an active workflow run (optional `?project=` pin: 404 if the run belongs to another project) |
 | GET | `/api/workflow-runs/active?project=` | Active workflow runs for a project |
 | GET | `/api/git-check?path=` | Repo probe for the QA-lane Push button (`hasGit` = `fs.stat` of `<path>/.git`, unchanged), plus an additive `git: ProjectGitProbe` (walk-up state: `repo`/`nested`/`bare`/`none`/`unavailable`/`error`) that backs the navbar's Git Setup chip |
 | POST | `/api/push-runs` | Start a one-off Claude push session |

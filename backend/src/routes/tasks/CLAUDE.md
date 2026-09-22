@@ -61,7 +61,13 @@ the implementations live in focused modules:
 - `crudTransition.ts` — bulk status transition (by `ids` or `fromStatus`
   lane) + per-lane reorder.
 - `crudDelete.ts` — delete + cancel-queued-run; both clear spawn-queue state
-  so a removed/cancelled task can't later spawn a worktree.
+  so a removed/cancelled task can't later spawn a worktree. Delete removes the
+  worktree (uncommitted edits archived as always) but passes
+  `keepBranchIfUnmerged`, so a `lattice/*` branch with commits not on HEAD —
+  the only copy of that work — survives; the response then adds
+  `keptBranch: {name, unmergedCommits, hint}` (`keptBranchPayload`), otherwise
+  it stays `{ok: true}`. The MCP `delete_task` tool leads its result with the
+  hint.
 - `crudTypes.ts` — shared `TaskIdRequest` type.
 
 Keep the markdown/`text/plain` body handling intact — those routes use the

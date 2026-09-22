@@ -35,15 +35,29 @@ export async function createWorkflow(
   });
 }
 
+// By-id workflow calls carry the ACTIVE project as `?project=` (mirrors
+// `taskByIdUrl`): the backend 404s a workflow / run that belongs to another
+// project when the param is sent, and treats an absent one as unpinned. An
+// empty project omits it.
+export function withProjectParam(url: string, projectPath: string): string {
+  return projectPath ? `${url}?project=${encodeURIComponent(projectPath)}` : url;
+}
+
 export async function updateWorkflow(
+  projectPath: string,
   id: string,
   updates: { name?: string; steps?: WorkflowStep[]; variables?: WorkflowVariable[] },
 ): Promise<Workflow> {
-  return patchJson<Workflow>(`/api/workflows/${encodeURIComponent(id)}`, updates);
+  return patchJson<Workflow>(
+    withProjectParam(`/api/workflows/${encodeURIComponent(id)}`, projectPath),
+    updates,
+  );
 }
 
-export async function deleteWorkflow(id: string): Promise<void> {
-  await deleteJson<{ ok: true }>(`/api/workflows/${encodeURIComponent(id)}`);
+export async function deleteWorkflow(projectPath: string, id: string): Promise<void> {
+  await deleteJson<{ ok: true }>(
+    withProjectParam(`/api/workflows/${encodeURIComponent(id)}`, projectPath),
+  );
 }
 
 export async function startWorkflow(
@@ -88,9 +102,9 @@ export async function fetchActiveWorkflowRuns(
   );
 }
 
-export async function cancelWorkflowRun(runId: string): Promise<void> {
+export async function cancelWorkflowRun(projectPath: string, runId: string): Promise<void> {
   await postJson<{ ok: true }>(
-    `/api/workflow-runs/${encodeURIComponent(runId)}/cancel`,
+    withProjectParam(`/api/workflow-runs/${encodeURIComponent(runId)}/cancel`, projectPath),
   );
 }
 
