@@ -140,7 +140,9 @@ export async function recordWorktreeCheckoutSize(repoRoot: string, worktreePath:
   }
 }
 
-async function minFreeBytesFromSettings(): Promise<number> {
+// The free-space reserve every disk-consuming step keeps (globalSettings
+// minFreeDiskGb): worktree checkouts, pre-run bundles, working-tree snapshots.
+export async function minFreeDiskBytes(): Promise<number> {
   try {
     const gb = (await getGlobalSettings()).minFreeDiskGb;
     return (typeof gb === 'number' ? gb : DEFAULT_MIN_FREE_DISK_GB) * GiB;
@@ -152,7 +154,7 @@ async function minFreeBytesFromSettings(): Promise<number> {
 const defaultDeps: DiskSpaceDeps = {
   estimateCheckoutBytes,
   freeBytesAt,
-  minFreeBytes: minFreeBytesFromSettings,
+  minFreeBytes: minFreeDiskBytes,
 };
 
 export function formatBytes(bytes: number): string {

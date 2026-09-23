@@ -77,8 +77,12 @@ export async function assertSafeForStash(repoRoot: string): Promise<void> {
 }
 
 // Snapshot the working tree at the start of a merge run.
-// Throws on missing .git or unexcluded essentials.
-export async function snapshotForRun(repoRoot: string): Promise<SnapshotHandle> {
+// Throws on missing .git or unexcluded essentials. `onlyPaths` limits it to
+// the paths the run's fast-forwards can rewrite (see snapshotWorkingTree).
+export async function snapshotForRun(
+  repoRoot: string,
+  onlyPaths?: readonly string[],
+): Promise<SnapshotHandle> {
   await assertSafeForStash(repoRoot);
-  return snapshotWorkingTree(repoRoot, RUN_STASH_LABEL);
+  return snapshotWorkingTree(repoRoot, RUN_STASH_LABEL, onlyPaths ? { onlyPaths } : {});
 }

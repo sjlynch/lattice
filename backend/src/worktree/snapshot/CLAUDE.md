@@ -34,6 +34,27 @@ Safety-critical copy-based working-tree snapshots. Keep the capture order in
 
 Do not replace this with `git stash --include-untracked`.
 
+Scale limits (2026-09-23 — a user's ~1 GB of uncommitted art filled the disk):
+
+- **Scope.** `snapshotWorkingTree(repo, label, { onlyPaths })` captures only
+  dirty paths that collide with `onlyPaths` (equal, or one an ancestor
+  directory of the other). `fastForwardMain` passes `git diff --name-only
+  --no-renames HEAD <branch>` — a `merge --ff-only` rewrites nothing else, and
+  git refuses without writing if an unlisted dirty path would be clobbered —
+  and the merge-run stash passes the union of each Ready-to-Merge branch's
+  `HEAD...branch`. Nothing overlapping ⇒ no snapshot. A failed diff ⇒ the full
+  snapshot, as before. Unscoped, every fast-forward copied the whole dirty tree.
+- **Free space.** Before creating the dir, the bytes to copy are summed and the
+  capture is refused (tree untouched) if they would cross
+  `globalSettings.minFreeDiskGb` — instead of dying mid-copy on ENOSPC.
+- **Command-line length.** Path-list git calls are chunked
+  (`chunkPathsForArgv`, 8,000-char budget): one call with 1,610 paths hit
+  Windows' 32,767-char limit as `spawn ENAMETOOLONG` — an exception the per-path
+  retry never saw — failing every capture after its copy.
+- **Partial copies.** A capture that throws before its manifest is written
+  removes its directory (nothing in the tree was reset yet, and recovery
+  ignores manifest-less dirs), so a failed capture no longer strands its copy.
+
 Additional recovery invariants (2026-09 stability review):
 
 - Snapshot directories use `mkdtemp`, so same-label captures in one millisecond

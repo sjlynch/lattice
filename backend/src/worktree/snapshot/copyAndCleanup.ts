@@ -124,32 +124,80 @@ export async function resetTrackedSnapshotPaths(
 // followed failed with "local changes would be overwritten" for every task.
 // Both commands are idempotent per path, so re-running the ones the batch did
 // process is harmless. Returns the paths git accepted.
+//
+// The set is also split into chunks that fit the OS command line: Windows caps
+// a CreateProcess command line at 32,767 characters, and a large dirty tree
+// (1,610 paths on 2026-09-23) made the single call throw `spawn ENAMETOOLONG`
+// — an exception, not an exit code, so the per-path retry never ran, the
+// snapshot failed after copying ~1 GB, and every fast-forward repeated it
+// until the disk filled.
+export const GIT_ARGV_CHAR_BUDGET = 8_000;
+
+export function chunkPathsForArgv(files: string[], budget = GIT_ARGV_CHAR_BUDGET): string[][] {
+  const chunks: string[][] = [];
+  let current: string[] = [];
+  let size = 0;
+  for (const file of files) {
+    const cost = file.length + 12; // `:(literal)` + separator
+    if (current.length > 0 && size + cost > budget) {
+      chunks.push(current);
+      current = [];
+      size = 0;
+    }
+    current.push(file);
+    size += cost;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
 async function runGitOnPathsResilient(
+  repoRoot: string,
+  prefix: string[],
+  files: string[],
+): Promise<{ ok: string[]; failed: string[] }> {
+  const ok: string[] = [];
+  const failed: string[] = [];
+  for (const chunk of chunkPathsForArgv(files)) {
+    const result = await runGitOnChunk(repoRoot, prefix, chunk);
+    ok.push(...result.ok);
+    failed.push(...result.failed);
+  }
+  return { ok, failed };
+}
+
+async function runGitOnChunk(
   repoRoot: string,
   prefix: string[],
   files: string[],
 ): Promise<{ ok: string[]; failed: string[] }> {
   const literal = (file: string) => `:(literal)${file}`;
   const label = `git ${prefix.join(' ')}`;
-  const batch = await projectGit(repoRoot, [...prefix, ...files.map(literal)]);
+  const run = async (paths: string[]): Promise<{ code: number; detail: string }> => {
+    try {
+      const r = await projectGit(repoRoot, [...prefix, ...paths.map(literal)]);
+      return { code: r.code, detail: r.stderr.trim() || r.stdout.trim() };
+    } catch (err) {
+      // A spawn failure (ENAMETOOLONG, EMFILE, …) is a failed batch too.
+      return { code: -1, detail: (err as Error).message };
+    }
+  };
+  const batch = await run(files);
   if (batch.code === 0) return { ok: [...files], failed: [] };
   console.warn(
-    `[snapshot] ${label} (${files.length} files) exit ${batch.code}: ` +
-      `${batch.stderr.trim() || batch.stdout.trim()}` +
+    `[snapshot] ${label} (${files.length} files) exit ${batch.code}: ${batch.detail}` +
       (files.length > 1 ? ' — retrying per path' : ''),
   );
   if (files.length === 1) return { ok: [], failed: [...files] };
   const ok: string[] = [];
   const failed: string[] = [];
   for (const file of files) {
-    const one = await projectGit(repoRoot, [...prefix, literal(file)]);
+    const one = await run([file]);
     if (one.code === 0) {
       ok.push(file);
     } else {
       failed.push(file);
-      console.warn(
-        `[snapshot] ${label} ${file} exit ${one.code}: ${one.stderr.trim() || one.stdout.trim()}`,
-      );
+      console.warn(`[snapshot] ${label} ${file} exit ${one.code}: ${one.detail}`);
     }
   }
   return { ok, failed };

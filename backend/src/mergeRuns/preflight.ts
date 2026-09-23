@@ -7,13 +7,36 @@ import {
   untrackOwnedFilesInRepo,
   type SnapshotHandle,
 } from '../worktree.js';
-import { backupTasksFile } from '../tasks.js';
+import { backupTasksFile, listTasks } from '../tasks.js';
 import type { MergeRun } from './state.js';
 
 export type RunPreflightResult = {
   runSnapshot: SnapshotHandle;
   baselineHead: string | null;
 };
+
+// The paths this run's fast-forwards can rewrite: the union of each
+// Ready-to-Merge branch's own changes (`HEAD...branch`). A dirty path outside
+// it is never touched by the run, and copying the whole dirty tree (~1 GB of a
+// user's uncommitted art on 2026-09-23) on every run is what filled the disk.
+// Any failure returns undefined → the full snapshot, as before. Each
+// fast-forward also scopes its own snapshot, so this is not the only guard.
+async function runStashScope(projectPath: string): Promise<string[] | undefined> {
+  try {
+    const branches = (await listTasks(projectPath))
+      .filter((t) => t.status === 'ready_to_merge' && t.branch)
+      .map((t) => t.branch as string);
+    const union = new Set<string>();
+    for (const branch of branches) {
+      const r = await projectGit(projectPath, ['diff', '--name-only', '--no-renames', '-z', `HEAD...${branch}`]);
+      if (r.code !== 0) return undefined;
+      for (const p of r.stdout.split('\0')) if (p) union.add(p);
+    }
+    return [...union];
+  } catch {
+    return undefined;
+  }
+}
 
 export async function runPreflight(
   projectPath: string,
@@ -73,7 +96,7 @@ export async function runPreflight(
   // snapshot dirs from a crashed run and restores them automatically.
   let runSnapshot: SnapshotHandle = { dir: '', modifiedTracked: [], untracked: [] };
   try {
-    runSnapshot = await snapshotForRun(projectPath);
+    runSnapshot = await snapshotForRun(projectPath, await runStashScope(projectPath));
     if (runSnapshot.dir) {
       console.log(
         `[merge-run] snapshotted working-tree changes ` +

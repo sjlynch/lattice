@@ -120,8 +120,17 @@ async function prepareFastForward(
     };
   }
   try {
-    const snapshot = await snapshotWorkingTree(repoRoot, `fastfwd-${branchName}`);
-    return { ok: true, snapshot };
+    // Only the paths this fast-forward rewrites can be clobbered by it (git
+    // refuses, writing nothing, when an unlisted dirty path would be), so only
+    // those need protecting. A diff failure falls back to the full snapshot.
+    const changed = await projectGit(repoRoot, ['diff', '--name-only', '--no-renames', '-z', 'HEAD', branchName]);
+    const onlyPaths = changed.code === 0 ? changed.stdout.split('\0').filter(Boolean) : undefined;
+    const snapshot = await snapshotWorkingTree(
+      repoRoot,
+      `fastfwd-${branchName}`,
+      onlyPaths ? { onlyPaths } : {},
+    );
+    return { ok: true, snapshot: snapshot.dir ? snapshot : undefined };
   } catch (err) {
     return {
       ok: false,

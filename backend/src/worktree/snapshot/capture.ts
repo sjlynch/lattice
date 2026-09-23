@@ -3,6 +3,8 @@ import fs from 'node:fs/promises';
 import { projectGit } from '../projectGit.js';
 import { projectHash } from '../../projectPath.js';
 import { withProjectMutation } from '../../projectRunLock.js';
+import { formatBytes, freeBytesAt, minFreeDiskBytes } from '../diskSpace.js';
+import { assertNotReparsePoint } from '../cleanupSafety.js';
 import { currentProjectMutationOwner } from '../../projectRunLock/mutation.js';
 import {
   EMPTY_HANDLE,
@@ -118,24 +120,89 @@ export function buildSnapshotCleanupPlan(
   };
 }
 
-// Snapshot every dirty path in `repoRoot` and reset the working tree.
+export type SnapshotScope = {
+  // Capture only dirty paths that collide with these repo-relative paths
+  // (equal, or one an ancestor directory of the other). A fast-forward only
+  // rewrites the paths that differ between HEAD and its target, and git
+  // refuses — without writing — when anything else would be clobbered, so a
+  // dirty path outside that set is never at risk. Unscoped, a large dirty
+  // tree was copied in full for every fast-forward (~1 GB each, 2026-09-23).
+  onlyPaths?: readonly string[];
+};
+
+// Snapshot every dirty path in `repoRoot` (or, with `scope.onlyPaths`, only
+// the ones that collide with those paths) and reset them in the working tree.
 // `label` becomes part of the snapshot dir name — use 'run' for the
 // run-level snapshot, 'fastfwd-<branch>' for per-FF snapshots, etc.
 //
 // The capture ORDER is safety-critical (.git-deletion defences — see
 // snapshot/CLAUDE.md): parse status -> filter to repo-contained paths ->
-// create dir + copy (recording successes/failures) -> write manifest of the
-// copied paths -> reset tracked / delete untracked ONLY for successfully
-// copied paths. A failed copy stays dirty in the working tree so a later git
-// op fails safely rather than losing the user's uncommitted data.
+// scope -> free-space check -> create dir + copy (recording
+// successes/failures) -> write manifest of the copied paths -> reset tracked /
+// delete untracked ONLY for successfully copied paths. A failed copy stays
+// dirty in the working tree so a later git op fails safely rather than losing
+// the user's uncommitted data.
 export async function snapshotWorkingTree(
   repoRoot: string,
   label: string,
+  scope: SnapshotScope = {},
 ): Promise<SnapshotHandle> {
-  return withProjectMutation(repoRoot, () => captureWorkingTree(repoRoot, label));
+  return withProjectMutation(repoRoot, () => captureWorkingTree(repoRoot, label, scope));
 }
 
-async function captureWorkingTree(repoRoot: string, label: string): Promise<SnapshotHandle> {
+function scopePredicate(onlyPaths: readonly string[]): (p: string) => boolean {
+  const norm = (p: string) => {
+    const s = p.replace(/\\/g, '/').replace(/\/+$/, '');
+    return process.platform === 'win32' ? s.toLowerCase() : s;
+  };
+  const exact = new Set<string>();
+  const ancestors = new Set<string>();
+  for (const raw of onlyPaths) {
+    const p = norm(raw);
+    exact.add(p);
+    for (let i = p.indexOf('/'); i !== -1; i = p.indexOf('/', i + 1)) ancestors.add(p.slice(0, i));
+  }
+  return (raw) => {
+    const p = norm(raw);
+    if (exact.has(p) || ancestors.has(p)) return true;
+    for (let i = p.indexOf('/'); i !== -1; i = p.indexOf('/', i + 1)) {
+      if (exact.has(p.slice(0, i))) return true;
+    }
+    return false;
+  };
+}
+
+async function removePartialSnapshotDir(dir: string): Promise<void> {
+  const base = path.resolve(SNAPSHOTS_BASE);
+  const target = path.resolve(dir);
+  if (!target.startsWith(base + path.sep)) return;
+  try {
+    await assertNotReparsePoint(target);
+    await fs.rm(target, { recursive: true, force: true });
+  } catch (err) {
+    console.warn(`[snapshot] could not remove partial snapshot ${target}:`, err);
+  }
+}
+
+// Bytes the capture would copy. Symlinks and vanished paths count as zero.
+async function capturedBytes(repoRoot: string, paths: string[]): Promise<number> {
+  let total = 0;
+  for (const rel of paths) {
+    try {
+      const st = await fs.lstat(path.join(repoRoot, rel));
+      if (st.isFile()) total += st.size;
+    } catch {
+      /* gone — nothing to copy */
+    }
+  }
+  return total;
+}
+
+async function captureWorkingTree(
+  repoRoot: string,
+  label: string,
+  scope: SnapshotScope,
+): Promise<SnapshotHandle> {
   const status = await projectGit(repoRoot, [
     'status',
     '--porcelain=v1',
@@ -149,17 +216,52 @@ async function captureWorkingTree(repoRoot: string, label: string): Promise<Snap
     );
   }
 
-  const dirty = classifySafeDirtyPaths(repoRoot, status.stdout);
-  logDroppedPaths(repoRoot, dirty.dropped);
+  const all = classifySafeDirtyPaths(repoRoot, status.stdout);
+  logDroppedPaths(repoRoot, all.dropped);
+  const inScope = scope.onlyPaths ? scopePredicate(scope.onlyPaths) : () => true;
+  const dirty = {
+    ...all,
+    modified: all.modified.filter(inScope),
+    untracked: all.untracked.filter(inScope),
+    added: all.added.filter(inScope),
+    deleted: all.deleted.filter(inScope),
+  };
   if (
     dirty.modified.length === 0 && dirty.untracked.length === 0 &&
     dirty.added.length === 0 && dirty.deleted.length === 0
   ) return EMPTY_HANDLE;
 
+  // Refuse BEFORE copying anything when the copy would push the disk below
+  // the free-space reserve: nothing has been copied or reset yet, so the
+  // caller's operation fails with the user's tree untouched, instead of
+  // failing mid-copy on ENOSPC with half a snapshot on disk.
+  const bytes = await capturedBytes(repoRoot, [...dirty.modified, ...dirty.untracked, ...dirty.added]);
+  const snapshotsRoot = SNAPSHOTS_BASE;
+  const free = await freeBytesAt(snapshotsRoot);
+  const reserve = await minFreeDiskBytes();
+  if (free !== null && free - bytes < reserve) {
+    throw new Error(
+      `not enough disk space to snapshot ${formatBytes(bytes)} of uncommitted changes in ${repoRoot} ` +
+        `(${formatBytes(free)} free, ${formatBytes(reserve)} kept in reserve) — ` +
+        'nothing was changed; commit or clean up the working tree, or free disk space, then retry',
+    );
+  }
+
   const dir = await createSnapshotDirectory(repoRoot, label);
-  const copies = await copyDirtyPathsToSnapshot(repoRoot, dir, dirty);
-  logCopyFailures(copies.copyFailures);
-  await writeCapturedSnapshotManifest(repoRoot, label, dir, copies, dirty.deleted);
+  let copies: SnapshotCopyResult;
+  try {
+    copies = await copyDirtyPathsToSnapshot(repoRoot, dir, dirty);
+    logCopyFailures(copies.copyFailures);
+    await writeCapturedSnapshotManifest(repoRoot, label, dir, copies, dirty.deleted);
+  } catch (err) {
+    // No manifest means nothing in the working tree was reset or deleted yet
+    // (that happens only after it), and recovery ignores a manifest-less
+    // dir — so this partial copy is pure waste. Remove it rather than leave
+    // it orphaned (a failed capture under ENOSPC used to strand hundreds of
+    // MB each time). `dir` came from mkdtemp under SNAPSHOTS_BASE.
+    await removePartialSnapshotDir(dir);
+    throw err;
+  }
 
   const cleanupPlan = buildSnapshotCleanupPlan(copies);
   await resetTrackedSnapshotPaths(repoRoot, cleanupPlan.resetTracked, dir);
