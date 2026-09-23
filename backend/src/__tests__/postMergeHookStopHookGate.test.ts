@@ -55,8 +55,11 @@ test('a premature post-merge Stop while a subagent is live does not finish until
     await sleep(120);
     assert.equal(finished, 0, 'must not finish while a subagent is still running');
 
-    // Subagent finishes → after the settle window the hook finishes, once.
+    // Subagent finishes → the parent's next turn must end (a later Stop).
     noteSubagentStop(agentId);
+    await sleep(120);
+    assert.equal(finished, 0, 'a finished subagent wakes its parent: wait for its Stop');
+    requestPostMergeHookStopComplete(id, () => { finished += 1; }, { settleMs: 40, pollMs: 10 });
     await sleep(160);
     assert.equal(finished, 1, 'finishes once the session goes quiescent');
   } finally {

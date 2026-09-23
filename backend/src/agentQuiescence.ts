@@ -12,7 +12,13 @@
 //
 // This module keeps the minimal per-session state a completion gate needs:
 //   - liveSubagents — how many Task subagents are currently in flight. A Stop
-//     that arrives while this is > 0 is unambiguously premature.
+//     that arrives while this is > 0 is unambiguously premature. Tracked by
+//     Claude's `agent_id`, not as a bare counter: interactive Claude Code also
+//     fires SubagentStop for its own internal helper agents, which never had a
+//     SubagentStart (seen on 2.1.280, 2026-09-23). As a counter, each stray stop
+//     cancelled a real background subagent's start, the gate saw 0 live while
+//     two Explore agents were still working, and the workflow step advanced
+//     and was killed before its agent could file a single task.
 //   - lastSignalAt  — the last time we saw ANY signal for the session (a tool
 //     use, a subagent start/stop, or a Stop fire fed in by the gate). Quietness
 //     is measured from here: an agent that is genuinely finished stops emitting
@@ -22,8 +28,19 @@
 // so it stays trivially unit-testable and reusable by any Stop-hook consumer.
 
 type QuiescenceState = {
-  liveSubagents: number;
+  // Subagents started with an `agent_id`; only a stop carrying the same id
+  // removes one.
+  liveIds: Set<string>;
+  // Starts that carried no id (older Claude builds); matched by id-less stops.
+  anonymous: number;
   lastSignalAt: number;
+  // When the last tracked subagent finished, and when the session last fired
+  // Stop. A background subagent's result wakes the main agent for another
+  // turn, which can think and run untracked tools (Bash) for longer than any
+  // settle window — so after a subagent finishes, only a LATER Stop (the main
+  // agent ending that turn) means the step is done.
+  lastSubagentEndAt: number;
+  lastStopAt: number;
 };
 
 const states = new Map<string, QuiescenceState>();
@@ -31,28 +48,43 @@ const states = new Map<string, QuiescenceState>();
 function ensure(agentId: string, now: number): QuiescenceState {
   let s = states.get(agentId);
   if (!s) {
-    s = { liveSubagents: 0, lastSignalAt: now };
+    s = { liveIds: new Set(), anonymous: 0, lastSignalAt: now, lastSubagentEndAt: 0, lastStopAt: 0 };
     states.set(agentId, s);
   }
   return s;
 }
 
 // A subagent (Task/Agent) started — SubagentStart. Also a live signal.
-export function noteSubagentStart(agentId: string): void {
+// `subagentId` is the hook's `agent_id` when present.
+export function noteSubagentStart(agentId: string, subagentId?: string | null): void {
   const now = Date.now();
   const s = ensure(agentId, now);
-  s.liveSubagents += 1;
+  if (subagentId) s.liveIds.add(subagentId);
+  else s.anonymous += 1;
   s.lastSignalAt = now;
 }
 
-// A subagent finished — SubagentStop. Clamped at 0 so a missed/duplicate
-// SubagentStart can never drive the count negative (which would make the
-// session look permanently busy and strand the run).
-export function noteSubagentStop(agentId: string): void {
+// A subagent finished — SubagentStop. A stop for an id this session never
+// started (Claude Code's internal agents) changes nothing but the signal
+// time; an id-less stop is clamped at 0 so a missed/duplicate start can never
+// drive the count negative.
+export function noteSubagentStop(agentId: string, subagentId?: string | null): void {
   const now = Date.now();
   const s = ensure(agentId, now);
-  s.liveSubagents = Math.max(0, s.liveSubagents - 1);
+  if (subagentId ? s.liveIds.delete(subagentId) : s.anonymous > 0) {
+    if (!subagentId) s.anonymous -= 1;
+    s.lastSubagentEndAt = now;
+  }
   s.lastSignalAt = now;
+}
+
+// The session fired its Stop hook. Also a live signal (a later Stop pushes the
+// settle window out).
+export function noteAgentStop(agentId: string): void {
+  const now = Date.now();
+  const s = ensure(agentId, now);
+  s.lastSignalAt = now;
+  s.lastStopAt = now;
 }
 
 // Any other activity signal from the session (a tracked tool use, or a Stop
@@ -65,12 +97,25 @@ export function noteAgentSignal(agentId: string): void {
 // Snapshot for a completion gate. An unknown agent (never emitted a signal) is
 // reported as quiescent with no live subagents — the gate then advances after
 // its own settle delay, matching the pre-gate single-Stop behaviour.
+//
+// `awaitingTurnEnd`: a tracked subagent finished after the session's last
+// Stop — its parent has a turn left to take (and to end with another Stop).
 export function agentQuiescence(
   agentId: string,
-): { liveSubagents: number; quietForMs: number } {
+): { liveSubagents: number; quietForMs: number; awaitingTurnEnd: boolean } {
   const s = states.get(agentId);
-  if (!s) return { liveSubagents: 0, quietForMs: Number.POSITIVE_INFINITY };
-  return { liveSubagents: s.liveSubagents, quietForMs: Date.now() - s.lastSignalAt };
+  if (!s) return { liveSubagents: 0, quietForMs: Number.POSITIVE_INFINITY, awaitingTurnEnd: false };
+  return {
+    liveSubagents: s.liveIds.size + s.anonymous,
+    quietForMs: Date.now() - s.lastSignalAt,
+    awaitingTurnEnd: s.lastSubagentEndAt > s.lastStopAt,
+  };
+}
+
+// Whether a Stop-hook completion gate may advance now.
+export function isAgentQuiescent(agentId: string, settleMs: number): boolean {
+  const q = agentQuiescence(agentId);
+  return q.liveSubagents === 0 && !q.awaitingTurnEnd && q.quietForMs >= settleMs;
 }
 
 // Drop a session's state once its step has advanced (or the run ended). Safe to

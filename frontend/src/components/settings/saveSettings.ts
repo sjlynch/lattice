@@ -33,6 +33,7 @@ type SaveDrafts = {
   instrumentClaude?: boolean;
   disableMemory?: boolean;
   qaTerminalAutoClose?: boolean;
+  keepWorkflowStepTerminals?: boolean;
   restoreTerminalsOnOpen?: RestoreTerminalsMode;
   restoreNudgeAgents?: boolean;
   restoreNudgeUserTabs?: boolean;
@@ -124,6 +125,7 @@ export async function saveSettings({
     instrumentProjectClaudeSessions: drafts.instrumentClaude,
     disableClaudeMemory: drafts.disableMemory,
     qaTerminalAutoClose: drafts.qaTerminalAutoClose,
+    keepWorkflowStepTerminals: drafts.keepWorkflowStepTerminals,
     restoreTerminalsOnOpen: drafts.restoreTerminalsOnOpen,
     restoreNudgeAgents: drafts.restoreNudgeAgents,
     restoreNudgeUserTabs: drafts.restoreNudgeUserTabs,

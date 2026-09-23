@@ -28,7 +28,7 @@
 
 import { getPostMergeHook } from './registry.js';
 import { postMergeHookAgentId } from './stopHook.js';
-import { agentQuiescence, noteAgentSignal } from '../agentQuiescence.js';
+import { isAgentQuiescent, noteAgentStop } from '../agentQuiescence.js';
 
 // Finish only after the session has been fully quiet (no subagents live, no
 // signal) for this long. Long enough to bridge the gap between a premature Stop
@@ -74,7 +74,7 @@ export function requestPostMergeHookStopComplete(
   // Count this Stop as a signal so the settle window is measured from the most
   // recent Stop, not just from tool/subagent activity — repeated Stops keep
   // pushing the window out until they stop coming.
-  noteAgentSignal(agentId);
+  noteAgentStop(agentId);
 
   if (pending.has(id)) return; // poll already running
 
@@ -83,8 +83,7 @@ export function requestPostMergeHookStopComplete(
       clearGate(id);
       return;
     }
-    const q = agentQuiescence(agentId);
-    if (q.liveSubagents === 0 && q.quietForMs >= timing.settleMs) {
+    if (isAgentQuiescent(agentId, timing.settleMs)) {
       clearGate(id);
       finish();
       return;

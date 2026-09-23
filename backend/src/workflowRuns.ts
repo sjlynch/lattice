@@ -40,8 +40,10 @@ import { executeControlStep } from './workflowRuns/controlStep.js';
 import {
   cancelWorkflowStepSessions,
   killWorkflowStepSession,
+  releaseWorkflowStepSession,
   workflowStepAgentId,
 } from './workflowRuns/sessionSpawner.js';
+import { isKeepWorkflowStepTerminalsEnabled } from './userSettings.js';
 import { cancelStopHookGate } from './workflowRuns/stopHookGate.js';
 import { forgetAgentQuiescence } from './agentQuiescence.js';
 import { abortStepPreRun } from './workflowRuns/stepTools.js';
@@ -272,7 +274,7 @@ export async function completeWorkflowStep(
   runId: string,
   stepIndex: number,
   backendOrigin: string,
-  deps: { killStepSession?: typeof killWorkflowStepSession; dispatchStep?: typeof dispatchStep } = {},
+  deps: { killStepSession?: typeof killWorkflowStepSession; releaseStepSession?: typeof releaseWorkflowStepSession; dispatchStep?: typeof dispatchStep } = {},
 ): Promise<void> {
   const run = runs.get(runId);
   if (!run || run.status !== 'running') return;
@@ -289,7 +291,7 @@ export async function completeWorkflowStep(
 const completions = new Map<string, Promise<void>>();
 
 async function advanceCompletedStep(run: WorkflowRun, stepIndex: number, backendOrigin: string,
-  deps: { killStepSession?: typeof killWorkflowStepSession; dispatchStep?: typeof dispatchStep }): Promise<void> {
+  deps: { killStepSession?: typeof killWorkflowStepSession; releaseStepSession?: typeof releaseWorkflowStepSession; dispatchStep?: typeof dispatchStep }): Promise<void> {
   const claimedIndex = stepIndex + 1;
   // Keep the index on the finishing step until its completion and terminal
   // teardown are durable. The per-step promise deduplicates concurrent hooks
@@ -305,7 +307,13 @@ async function advanceCompletedStep(run: WorkflowRun, stepIndex: number, backend
     throw err;
   }
   try {
-    await (deps.killStepSession ?? killWorkflowStepSession)(run.id, stepIndex);
+    // Kill the finished step's pty (the leak/overlap guard) — unless the
+    // project keeps step terminals open for inspection, in which case only the
+    // bookkeeping is dropped and the idle session stays until its tab closes.
+    const keepOpen = await isKeepWorkflowStepTerminalsEnabled(run.projectPath).catch(() => false);
+    await (keepOpen
+      ? (deps.releaseStepSession ?? releaseWorkflowStepSession)
+      : (deps.killStepSession ?? killWorkflowStepSession))(run.id, stepIndex);
     if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return;
     const wf = run.definition ?? await getWorkflow(run.workflowId);
     if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return;

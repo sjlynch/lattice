@@ -23,7 +23,7 @@
 
 import { getRun, notify, runs, snapshot } from './state.js';
 import { workflowStepAgentId } from './sessionSpawner.js';
-import { agentQuiescence, noteAgentSignal } from '../agentQuiescence.js';
+import { isAgentQuiescent, noteAgentSignal, noteAgentStop } from '../agentQuiescence.js';
 
 // Advance only after the session has been fully quiet (no subagents live, no
 // signal) for this long. Long enough to bridge the gap between a premature Stop
@@ -73,7 +73,7 @@ export function requestStopHookStepComplete(
   // Count this Stop as a signal so the settle window is measured from the most
   // recent Stop, not just from tool/subagent activity — repeated Stops keep
   // pushing the window out until they stop coming.
-  noteAgentSignal(agentId);
+  noteAgentStop(agentId);
 
   const existing = pending.get(runId);
   if (existing && existing.stepIndex === stepIndex) return; // poll already running
@@ -85,8 +85,7 @@ export function requestStopHookStepComplete(
       clearGate(runId);
       return;
     }
-    const q = agentQuiescence(agentId);
-    if (q.liveSubagents === 0 && q.quietForMs >= timing.settleMs) {
+    if (isAgentQuiescent(agentId, timing.settleMs)) {
       const active = pending.get(runId);
       void Promise.resolve().then(advance).then(() => {
         if (pending.get(runId) === active) clearGate(runId);

@@ -253,3 +253,44 @@ test('a start whose setup fails after a cancel keeps `cancelled`', async (t) => 
     await fs.rm(project, { recursive: true, force: true });
   }
 });
+
+// UserSettings.keepWorkflowStepTerminals: a finished agent step's pty is left
+// running (its `wf:stepN` tab stays readable) instead of killed on advance;
+// the run advances exactly as before. Default: killed.
+test('keepWorkflowStepTerminals leaves the finished step session running; default kills it', async () => {
+  const { patchUserSettings } = await import('../userSettings.js');
+  const project = canonicalProjectPath(await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-wf-keep-open-')));
+  const steps = [
+    { id: 'a', title: 'A', prompt: 'a', mode: 'sequential' as const, harness: 'claude' as const },
+    { id: 'b', title: 'B', prompt: 'b', mode: 'sequential' as const, harness: 'claude' as const },
+  ];
+  const advanceOnce = async (label: string) => {
+    const run = makeRun(`wfrun_keep_open_${label}_${Date.now()}`, {
+      projectPath: project,
+      totalSteps: 2,
+      stepPhase: 'running',
+      definition: { id: 'wf', name: 'wf', projectPath: project, createdAt: 1, variables: [], steps },
+    });
+    runs.set(run.id, run);
+    const calls: string[] = [];
+    try {
+      await completeWorkflowStep(run.id, 0, 'http://127.0.0.1:1', {
+        killStepSession: async () => { calls.push('kill'); },
+        releaseStepSession: async () => { calls.push('release'); },
+        dispatchStep: async () => {},
+      });
+      assert.equal(run.currentStepIndex, 1, 'the run advances either way');
+      return calls;
+    } finally {
+      runs.delete(run.id);
+    }
+  };
+  try {
+    assert.deepEqual(await advanceOnce('default'), ['kill']);
+    await patchUserSettings(project, { keepWorkflowStepTerminals: true });
+    assert.deepEqual(await advanceOnce('keep'), ['release']);
+  } finally {
+    await settlePersistence();
+    await fs.rm(project, { recursive: true, force: true });
+  }
+});

@@ -97,6 +97,11 @@ export type UserSettings = {
   // unaffected. The backend resolves this at `/done` time; see backend
   // userSettings.ts / routes/qaRuns.ts.
   qaTerminalAutoClose?: boolean;
+  // When true, a workflow agent step's terminal tab (`wf:stepN`) stays open
+  // after the step finishes — the session is left idle instead of killed — so
+  // its output can be read. Default (absent/false) closes it on advance. Close
+  // the tab yourself to end the session. Backend: workflowRuns.ts.
+  keepWorkflowStepTerminals?: boolean;
   // Per-project overrides of the agent instruction templates (task brief,
   // conflict resolver, QA / push / post-merge / workflow briefs), keyed by
   // template id. Value = raw markdown with `{{token}}` placeholders; a missing

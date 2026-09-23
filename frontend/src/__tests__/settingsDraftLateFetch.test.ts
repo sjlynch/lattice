@@ -165,6 +165,7 @@ test('a successful settings GET makes every fetched toggle savable', async () =>
     instrumentClaude: true,
     disableMemory: true,
     qaTerminalAutoClose: true,
+    keepWorkflowStepTerminals: false,
     restoreTerminalsOnOpen: 'never',
     restoreNudgeAgents: true,
     restoreNudgeUserTabs: false,

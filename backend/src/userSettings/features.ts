@@ -36,6 +36,15 @@ export async function isCodexYoloEnabled(
   return settings.codexYolo !== false;
 }
 
+// Whether a finished workflow agent step's terminal stays open (its pty left
+// running) instead of being killed on advance. Default off.
+export async function isKeepWorkflowStepTerminalsEnabled(
+  projectPath: string,
+): Promise<boolean> {
+  const settings = await getUserSettings(projectPath);
+  return settings.keepWorkflowStepTerminals === true;
+}
+
 // Whether a QA-lane e2e (Playwright) terminal should AUTO-CLOSE when its run
 // finishes. Default is "stay open" (absent/false) so the user can read the
 // PASS/FAIL verdict and output; only an explicit `true` opts into auto-close.

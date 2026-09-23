@@ -21,6 +21,7 @@ export { getUserSettings, patchUserSettings, updateUserSettings } from './storag
 export {
   isClaudeMemoryDisabled,
   isQaTerminalAutoCloseEnabled,
+  isKeepWorkflowStepTerminalsEnabled,
   isPostMergeHookEnabled,
   isCodexYoloEnabled,
 } from './features.js';

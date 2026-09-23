@@ -147,6 +147,13 @@ export type UserSettings = {
   // dir, and closing the tab kills the pty). Only the terminal lifecycle — the
   // qa → done auto-advance is unaffected either way. See routes/qaRuns.ts.
   qaTerminalAutoClose?: boolean;
+  // When true, a workflow AGENT step's pty is left running (idle) when the step
+  // completes instead of being killed, so its `wf:stepN` tab stays open with
+  // the full session. Default (absent/false) kills it on advance — the
+  // leak/overlap guard in workflowRuns/sessionSpawner.ts. The run advances
+  // identically either way; closing the tab ends the session. Cancel/error
+  // still tear sessions down. See workflowRuns.ts advanceCompletedStep.
+  keepWorkflowStepTerminals?: boolean;
   // Per-project overrides of the agent instruction templates Lattice writes
   // (LATTICE_TASK.md, MERGE_INSTRUCTIONS.md, the QA/push/post-merge/workflow
   // briefs). Keyed by template id (see instructionTemplates/defs.ts). The

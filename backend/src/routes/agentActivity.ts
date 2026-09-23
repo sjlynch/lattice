@@ -8,7 +8,7 @@
 import path from 'node:path';
 import { Router } from 'express';
 import { canonicalProjectPath } from '../projectPath.js';
-import { cwdFromHookBody, hookEventName } from '../claudeHookBody.js';
+import { cwdFromHookBody, hookEventName, subagentIdFromHookBody } from '../claudeHookBody.js';
 import { decodeActivityHook } from '../activityHook.js';
 import { type AgentActivityEvent, notifyAgentActivity } from '../agentActivity.js';
 import { decodeAgentToken } from '../agentActivityTokens.js';
@@ -115,8 +115,8 @@ export function buildAgentActivityRouter(): Router {
     // count the gate uses to reject a Stop that fires while a subagent runs.
     if (meta.agentId.startsWith('wf:') || meta.agentId.startsWith('pmh:')) {
       const hookEvent = hookEventName(req.body);
-      if (hookEvent === 'SubagentStart') noteSubagentStart(meta.agentId);
-      else if (hookEvent === 'SubagentStop') noteSubagentStop(meta.agentId);
+      if (hookEvent === 'SubagentStart') noteSubagentStart(meta.agentId, subagentIdFromHookBody(req.body));
+      else if (hookEvent === 'SubagentStop') noteSubagentStop(meta.agentId, subagentIdFromHookBody(req.body));
       else noteAgentSignal(meta.agentId);
     }
     const event = buildAgentActivityEvent(meta, req.body, {

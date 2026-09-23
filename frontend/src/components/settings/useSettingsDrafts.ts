@@ -23,6 +23,8 @@ export type SettingsDrafts = {
   setDisableMemory: (value: boolean) => void;
   qaTerminalAutoClose: boolean;
   setQaTerminalAutoClose: (value: boolean) => void;
+  keepWorkflowStepTerminals: boolean;
+  setKeepWorkflowStepTerminals: (value: boolean) => void;
   // Terminal-tab restore (see api/types/terminalTabs.ts).
   restoreTerminalsOnOpen: RestoreTerminalsMode;
   setRestoreTerminalsOnOpen: (value: RestoreTerminalsMode) => void;
@@ -44,6 +46,7 @@ export type FetchedToggles = {
   instrumentClaude: boolean;
   disableMemory: boolean;
   qaTerminalAutoClose: boolean;
+  keepWorkflowStepTerminals: boolean;
   restoreTerminalsOnOpen: RestoreTerminalsMode;
   restoreNudgeAgents: boolean;
   restoreNudgeUserTabs: boolean;
@@ -91,6 +94,8 @@ export function useSettingsDrafts(
   const [disableMemory, setDisableMemory] = useState(true);
   // Default OFF (terminal stays open) — only an explicit `true` auto-closes.
   const [qaTerminalAutoClose, setQaTerminalAutoClose] = useState(false);
+  // Default OFF (a finished workflow step's tab closes) — only `true` keeps it.
+  const [keepWorkflowStepTerminals, setKeepWorkflowStepTerminals] = useState(false);
   // Terminal-tab restore: mode defaults to 'always', the agent nudge to ON,
   // the user-tab nudge to OFF (see backend userSettings/types.ts).
   const [restoreTerminalsOnOpen, setRestoreTerminalsOnOpen] =
@@ -102,6 +107,8 @@ export function useSettingsDrafts(
   const [loadedDisableMemory, setLoadedDisableMemory] = useState(true);
   const [loadedQaTerminalAutoClose, setLoadedQaTerminalAutoClose] =
     useState(false);
+  const [loadedKeepWorkflowStepTerminals, setLoadedKeepWorkflowStepTerminals] =
+    useState(false);
   const [loadedRestore, setLoadedRestore] = useState<{
     mode: RestoreTerminalsMode; agents: boolean; userTabs: boolean;
   }>({ mode: 'always', agents: true, userTabs: false });
@@ -112,6 +119,7 @@ export function useSettingsDrafts(
     instrumentClaude: false,
     disableMemory: false,
     qaTerminalAutoClose: false,
+    keepWorkflowStepTerminals: false,
     restoreTerminalsOnOpen: false,
     restoreNudgeAgents: false,
     restoreNudgeUserTabs: false,
@@ -145,6 +153,11 @@ export function useSettingsDrafts(
     setQaTerminalAutoClose(value);
   }, []);
 
+  const setKeepWorkflowStepTerminalsDraft = useCallback((value: boolean) => {
+    fetchedToggleTouchedRef.current.keepWorkflowStepTerminals = true;
+    setKeepWorkflowStepTerminals(value);
+  }, []);
+
   const setRestoreTerminalsOnOpenDraft = useCallback((value: RestoreTerminalsMode) => {
     fetchedToggleTouchedRef.current.restoreTerminalsOnOpen = true;
     setRestoreTerminalsOnOpen(value);
@@ -169,6 +182,7 @@ export function useSettingsDrafts(
       instrumentClaude: false,
       disableMemory: false,
       qaTerminalAutoClose: false,
+      keepWorkflowStepTerminals: false,
       restoreTerminalsOnOpen: false,
       restoreNudgeAgents: false,
       restoreNudgeUserTabs: false,
@@ -183,6 +197,7 @@ export function useSettingsDrafts(
           const instrument = s.instrumentProjectClaudeSessions !== false;
           const memory = s.disableClaudeMemory !== false;
           const qaAutoClose = s.qaTerminalAutoClose === true;
+          const keepStepTabs = s.keepWorkflowStepTerminals === true;
           const restoreMode = normalizeRestoreMode(s.restoreTerminalsOnOpen);
           const nudgeAgents = s.restoreNudgeAgents !== false;
           const nudgeUserTabs = s.restoreNudgeUserTabs === true;
@@ -193,6 +208,8 @@ export function useSettingsDrafts(
           if (!touched.disableMemory) setDisableMemory(memory);
           setLoadedQaTerminalAutoClose(qaAutoClose);
           if (!touched.qaTerminalAutoClose) setQaTerminalAutoClose(qaAutoClose);
+          setLoadedKeepWorkflowStepTerminals(keepStepTabs);
+          if (!touched.keepWorkflowStepTerminals) setKeepWorkflowStepTerminals(keepStepTabs);
           setLoadedRestore({ mode: restoreMode, agents: nudgeAgents, userTabs: nudgeUserTabs });
           if (!touched.restoreTerminalsOnOpen) setRestoreTerminalsOnOpen(restoreMode);
           if (!touched.restoreNudgeAgents) setRestoreNudgeAgents(nudgeAgents);
@@ -212,6 +229,7 @@ export function useSettingsDrafts(
     instrumentClaude !== loadedInstrumentClaude ||
     disableMemory !== loadedDisableMemory ||
     qaTerminalAutoClose !== loadedQaTerminalAutoClose ||
+    keepWorkflowStepTerminals !== loadedKeepWorkflowStepTerminals ||
     restoreTerminalsOnOpen !== loadedRestore.mode ||
     restoreNudgeAgents !== loadedRestore.agents ||
     restoreNudgeUserTabs !== loadedRestore.userTabs;
@@ -223,6 +241,7 @@ export function useSettingsDrafts(
           instrumentClaude,
           disableMemory,
           qaTerminalAutoClose,
+          keepWorkflowStepTerminals,
           restoreTerminalsOnOpen,
           restoreNudgeAgents,
           restoreNudgeUserTabs,
@@ -234,6 +253,7 @@ export function useSettingsDrafts(
       instrumentClaude,
       disableMemory,
       qaTerminalAutoClose,
+      keepWorkflowStepTerminals,
       restoreTerminalsOnOpen,
       restoreNudgeAgents,
       restoreNudgeUserTabs,
@@ -254,6 +274,8 @@ export function useSettingsDrafts(
     setDisableMemory: setDisableMemoryDraft,
     qaTerminalAutoClose,
     setQaTerminalAutoClose: setQaTerminalAutoCloseDraft,
+    keepWorkflowStepTerminals,
+    setKeepWorkflowStepTerminals: setKeepWorkflowStepTerminalsDraft,
     restoreTerminalsOnOpen,
     setRestoreTerminalsOnOpen: setRestoreTerminalsOnOpenDraft,
     restoreNudgeAgents,

@@ -74,6 +74,7 @@ test('a failed gated completion retries only after renewed quiescence', async ()
     await sleep(70);
     assert.equal(attempts, 1, 'retry must wait while a subagent is live');
     noteSubagentStop(agentId);
+    requestStopHookStepComplete(runId, 0, async () => { attempts++; }, { settleMs: 10, pollMs: 5 });
     await sleep(70);
     assert.equal(attempts, 2);
   } finally { cancelStopHookGate(runId); forgetAgentQuiescence(agentId); runs.delete(runId); }
@@ -106,8 +107,13 @@ test('a premature Stop while a subagent is live does not advance until quiescent
     await sleep(120);
     assert.equal(advanced, 0, 'must not advance while a subagent is still running');
 
-    // Subagent finishes → after the settle window the step advances, once.
+    // Subagent finishes → its parent takes another turn, so the step still
+    // waits for that turn's Stop …
     noteSubagentStop(agentId);
+    await sleep(120);
+    assert.equal(advanced, 0, 'a finished subagent wakes its parent: wait for its Stop');
+    // … and advances once after it, after the settle window.
+    requestStopHookStepComplete(runId, 0, () => { advanced += 1; }, { settleMs: 40, pollMs: 10 });
     await sleep(160);
     assert.equal(advanced, 1, 'advances once the session goes quiescent');
   } finally {
@@ -166,6 +172,58 @@ test('cancelStopHookGate stops a pending advance', async () => {
     cancelStopHookGate(runId);
     await sleep(120);
     assert.equal(advanced, 0, 'a cancelled gate never fires its advance');
+  } finally {
+    cancelStopHookGate(runId);
+    forgetAgentQuiescence(agentId);
+    runs.delete(runId);
+  }
+});
+
+// 2026-09-23 (ody "refactor" workflow): the step agent launched two background
+// Explore subagents and ended its turn to wait for them. Interactive Claude
+// Code also fires SubagentStop for its own internal agents, which never had a
+// SubagentStart; as a bare counter those stray stops cancelled the real starts,
+// the gate read 0 live, and the step advanced — killing the agent before it
+// filed a single task. Sequence replayed from a real interactive session.
+test('a SubagentStop for an agent that never started does not cancel a live one', () => {
+  const id = 'quiescence-stray-stop';
+  try {
+    noteSubagentStart(id, 'a1082aa7ca3cc1476');
+    noteSubagentStart(id, 'af74565ae07188ce1');
+    noteSubagentStop(id, 'aee830676cd146e12'); // internal agent, never started
+    noteSubagentStop(id, 'a537c58ee1c340b88'); // internal agent, never started
+    assert.equal(agentQuiescence(id).liveSubagents, 2);
+    noteSubagentStop(id, 'a1082aa7ca3cc1476');
+    noteSubagentStop(id, 'a1082aa7ca3cc1476'); // duplicate
+    assert.equal(agentQuiescence(id).liveSubagents, 1);
+  } finally {
+    forgetAgentQuiescence(id);
+  }
+});
+
+test('interactive background-subagent trace: the step advances only after the final Stop', async () => {
+  const runId = 'gate-background-trace';
+  const agentId = workflowStepAgentId(runId, 0);
+  const timing = { settleMs: 30, pollMs: 5 };
+  let advanced = 0;
+  const stop = () => requestStopHookStepComplete(runId, 0, () => { advanced += 1; }, timing);
+  try {
+    seedRun(runId, 0);
+    noteSubagentStart(agentId, 'real-1');
+    stop(); // premature: the agent ended its turn to wait for the subagent
+    await sleep(20);
+    noteSubagentStop(agentId, 'internal-1'); // stray
+    await sleep(80);
+    assert.equal(advanced, 0, 'the background subagent is still running');
+    noteSubagentStop(agentId, 'real-1');
+    // The parent now works on the result — thinking and Bash calls send no
+    // signal — for longer than the settle window.
+    await sleep(100);
+    assert.equal(advanced, 0, 'must not advance while the parent takes its follow-up turn');
+    stop(); // the parent ends the turn
+    noteSubagentStop(agentId, 'internal-2'); // a stray stop after the final Stop
+    await sleep(100);
+    assert.equal(advanced, 1);
   } finally {
     cancelStopHookGate(runId);
     forgetAgentQuiescence(agentId);

@@ -199,6 +199,38 @@ function QaTerminalSection({ autoClose, onChange }: QaTerminalSectionProps) {
   );
 }
 
+type WorkflowStepTerminalSectionProps = {
+  keepOpen: boolean;
+  onChange: (value: boolean) => void;
+};
+
+function WorkflowStepTerminalSection({ keepOpen, onChange }: WorkflowStepTerminalSectionProps) {
+  return (
+    <CheckboxSettingsSection
+      title="Workflow step terminals"
+      infoLabel="About workflow step terminals"
+      info={(
+        <>
+          <p>
+            By default a workflow agent step’s terminal (<code>wf:step1</code>, …)
+            closes as soon as the step finishes and the run moves on. Enable
+            this to keep it open with the agent’s full session, e.g. to see why
+            a step didn’t file the tasks you expected.
+          </p>
+          <p>
+            A kept tab is an idle agent session: it still counts toward the
+            concurrent-agent limit until you close the tab. The workflow
+            advances the same way either way.
+          </p>
+        </>
+      )}
+      checked={keepOpen}
+      onChange={onChange}
+      label="Keep workflow step terminals open after the step finishes"
+    />
+  );
+}
+
 const RESTORE_MODE_OPTIONS: { value: RestoreTerminalsMode; label: string }[] = [
   { value: 'always', label: 'Always restore silently' },
   { value: 'ask', label: 'Ask first' },
@@ -316,6 +348,10 @@ export function TerminalSettingsSections({ drafts }: { drafts: SettingsDrafts })
       <QaTerminalSection
         autoClose={drafts.qaTerminalAutoClose}
         onChange={drafts.setQaTerminalAutoClose}
+      />
+      <WorkflowStepTerminalSection
+        keepOpen={drafts.keepWorkflowStepTerminals}
+        onChange={drafts.setKeepWorkflowStepTerminals}
       />
     </>
   );

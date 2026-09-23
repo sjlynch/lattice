@@ -119,6 +119,17 @@ export async function killWorkflowStepSession(
   }
 }
 
+// The keep-open variant of killWorkflowStepSession (UserSettings
+// .keepWorkflowStepTerminals): forget the step's spawn record — after its
+// in-flight allocation settles — but leave the pty running, so its tab stays
+// open for the user to read. Closing the tab kills it.
+export async function releaseWorkflowStepSession(runId: string, stepIndex: number): Promise<void> {
+  const key = recordKey(runId, stepIndex);
+  const record = stepSpawnRecords.get(key);
+  if (record?.spawning) await record.spawning.catch(() => null);
+  stepSpawnRecords.delete(key);
+}
+
 // Re-attach a step's already-running pty to this process's bookkeeping after a
 // backend restart (boot recovery discovers it by cwd — see
 // recovery/workflowRunResume.ts). Without this the resumed run would advance

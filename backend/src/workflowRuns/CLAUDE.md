@@ -135,6 +135,15 @@ explicit-curl callbacks — never by polling task state.
   mid-work. `cancelStopHookGate` clears a pending gate on run cancel, and the
   terminal transitions (`cancelWorkflowRun` / `failWorkflowRun` / a failed step
   spawn) drop the current step's quiescence entry so the map doesn't grow.
+  **Background subagents (2026-09-23, Claude Code 2.1.280):** subagents are
+  tracked by `agent_id`, not counted — interactive Claude also fires
+  SubagentStop for its own internal agents that never had a SubagentStart,
+  and as a counter those stray stops zeroed two live Explore agents, so a step
+  that ended its turn to wait for them advanced (and was killed) before it
+  filed a task. And once a tracked subagent finishes, the gate also waits for
+  a Stop *after* that finish (`awaitingTurnEnd`): its result wakes the parent
+  for a follow-up turn — thinking and Bash, which send no signal — that easily
+  outlasts the settle window. Stops from untracked agents don't count.
   Failed asynchronous completion checkpoints rearm the quiescence gate up to
   three attempts. Each retry checks live subagents and renewed quiet time;
   exhaustion keeps the run and terminal intact with a visible error message.
@@ -143,7 +152,11 @@ explicit-curl callbacks — never by polling task state.
   each step's dedupe key / spawned `serverId` for cancellation, registers the
   orange agent-session presence node for a Claude step, and fans out
   `step-spawned`. Pre-spawning the pty is what lets the frontend lazy-mount
-  terminals so a multi-step run doesn't burn a WebGL context per pane. Also
+  terminals so a multi-step run doesn't burn a WebGL context per pane. With
+  `UserSettings.keepWorkflowStepTerminals` (Settings → Terminals, default off)
+  the advance calls `releaseWorkflowStepSession` instead: the record is
+  forgotten but the idle pty is left running, so the `wf:stepN` tab stays open
+  for the user to read (it counts toward the agent cap until closed). Also
   `killWorkflowStepSession(runId, stepIndex)` — kills + forgets a step's tracked
   pty on genuine advance (called from the `/complete` route's `advance()` before
   the next step spawns). Interactive `codex --yolo` never self-exits after its
