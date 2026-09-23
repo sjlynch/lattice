@@ -12,6 +12,8 @@ export type ParsedWorktree = {
   branch?: string;
   detached?: boolean;
   locked?: boolean;
+  // The lock's reason text, when git printed one (`locked <reason>`).
+  lockReason?: string;
 };
 
 // Prefer `git worktree list --porcelain -z`: NUL fields preserve whitespace,
@@ -43,6 +45,7 @@ export function parseWorktreesPorcelain(out: string): ParsedWorktree[] {
         entry.detached = true;
       } else if (field === 'locked' || field.startsWith('locked ')) {
         entry.locked = true;
+        if (field.length > 'locked '.length) entry.lockReason = field.slice('locked '.length);
       }
     }
   }

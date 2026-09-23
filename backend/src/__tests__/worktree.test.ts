@@ -58,14 +58,14 @@ test('parseWorktreesPorcelain preserves NUL-delimited unusual paths and lock rea
   ].join('\0');
   assert.deepEqual(parseWorktreesPorcelain(sample), [
     { path: '/tmp/main', branch: 'refs/heads/main' },
-    { path: unusualPath, branch: 'refs/heads/lattice/task', locked: true },
+    { path: unusualPath, branch: 'refs/heads/lattice/task', locked: true, lockReason: 'waiting for external drive\nwith a newline' },
     { path: '/tmp/detached', detached: true, locked: true },
   ]);
 });
 
 test('parseWorktreesPorcelain handles legacy locks and a final record without a separator', () => {
   assert.deepEqual(parseWorktreesPorcelain('worktree /tmp/a\r\nlocked reason\r\n\r\nworktree /tmp/b\r\nlocked'), [
-    { path: '/tmp/a', locked: true },
+    { path: '/tmp/a', locked: true, lockReason: 'reason' },
     { path: '/tmp/b', locked: true },
   ]);
   assert.deepEqual(parseWorktreesPorcelain('\0\0'), []);

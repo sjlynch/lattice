@@ -128,3 +128,35 @@ test('parent watch keeps polling while the caller declines to shut down (live ag
   });
   assert.ok(calls >= 3, 'did not shut down on the first parent-gone tick');
 });
+
+// An interrupted `git worktree add` leaves git's own "initializing" lock,
+// which every teardown path honoured as a user lock — stranding the
+// half-written (multi-GB) checkout forever.
+test('stale "initializing" locks are cleared; user locks and fresh adds are not', async () => {
+  const { parseWorktreesPorcelain } = await import('../worktree/state.js');
+  const { clearStaleInitializingLock } = await import('../worktree/staleInitLock.js');
+  const { homeWorktreesDir } = await import('../projectPath.js');
+  const path = await import('node:path');
+  const repo = 'C:\repo-stale-lock';
+  const wtPath = path.join(homeWorktreesDir(repo), 'task-abc');
+  const [wt] = parseWorktreesPorcelain(`worktree ${wtPath}\0HEAD 1\0branch refs/heads/lattice/task-abc\0locked initializing\0\0`);
+  assert.equal(wt.locked, true);
+  assert.equal(wt.lockReason, 'initializing');
+
+  const unlocked: string[] = [];
+  const deps = (ageMs: number) => ({
+    lockFileMtimeMs: async () => 1_000_000 - ageMs,
+    unlock: async (_r: string, p: string) => {
+      unlocked.push(p);
+      return true;
+    },
+    now: () => 1_000_000,
+  });
+  assert.equal(await clearStaleInitializingLock(repo, wt, deps(60_000)), false, 'an add still in progress keeps its lock');
+  assert.equal(await clearStaleInitializingLock(repo, { ...wt, lockReason: 'user: keep this' }, deps(3_600_000)), false);
+  assert.equal(await clearStaleInitializingLock(repo, { ...wt, path: 'C:\elsewhere\wt' }, deps(3_600_000)), false,
+    'never outside a Lattice-managed worktrees dir');
+  assert.deepEqual(unlocked, []);
+  assert.equal(await clearStaleInitializingLock(repo, wt, deps(3_600_000)), true);
+  assert.deepEqual(unlocked, [wtPath]);
+});

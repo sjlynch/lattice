@@ -34,6 +34,7 @@ import { assertGitDirIntact, parseWorktreesPorcelain } from './state.js';
 import { assertNotReparsePoint, assertSafeWorktreePath } from './cleanupSafety.js';
 import { pruneReparsePointsUnder } from './reparsePoints.js';
 import { archiveUncommittedWorktreeChanges } from './discardArchive.js';
+import { clearStaleInitializingLock } from './staleInitLock.js';
 
 const CLEANUP_GIT_TIMEOUT_MS = 15_000;
 
@@ -115,8 +116,15 @@ export async function cleanupWorktreeForTask(
     }
     return entries;
   };
-  const before = await readWorktrees();
+  let before = await readWorktrees();
   if (!before) return false;
+  // An interrupted `git worktree add` leaves git's own "initializing" lock;
+  // honouring it as a user lock stranded the half-written checkout for good.
+  const initLocked = before.find((wt) => normalizePath(wt.path) === normalizePath(worktreePath));
+  if (initLocked && await clearStaleInitializingLock(repoRoot, initLocked)) {
+    before = await readWorktrees();
+    if (!before) return false;
+  }
   const registration = before.find((wt) => normalizePath(wt.path) === normalizePath(worktreePath));
   const nested = before.find((wt) => normalizePath(wt.path).startsWith(normalizePath(worktreePath) + path.sep));
   if (nested) {

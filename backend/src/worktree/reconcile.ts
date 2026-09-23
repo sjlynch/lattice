@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { projectGit } from './projectGit.js';
+import { clearStaleInitializingLock } from './staleInitLock.js';
 import { parseWorktreesPorcelain, type ParsedWorktree } from './state.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
 import { pruneReparsePointsUnder } from './reparsePoints.js';
@@ -121,6 +122,10 @@ export async function reconcileStaleState(
   };
 
   let tracked = await readTracked();
+  // A previous run of this exact candidate killed mid-`git worktree add`
+  // leaves git's "initializing" lock; clear it rather than refusing forever.
+  const initLocked = tracked.find((entry) => pathKey(entry.path) === candidateKey);
+  if (initLocked && await clearStaleInitializingLock(repoRoot, initLocked)) tracked = await readTracked();
   if (!validateRegistrations(tracked)) return false;
   const registration = tracked.find((entry) => pathKey(entry.path) === candidateKey);
   const branch = await git(['rev-parse', '--verify', '--quiet', branchRef]);

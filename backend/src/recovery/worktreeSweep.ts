@@ -9,6 +9,7 @@ import {
 } from '../worktree.js';
 import { archiveUncommittedWorktreeChanges } from '../worktree/discardArchive.js';
 import { sweepWorktreeResidue } from './worktreeResidueSweep.js';
+import { clearStaleInitializingLock } from '../worktree/staleInitLock.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';
 import { collectLiveSessionCwds, hasLiveSessionAtOrUnder, normalizeCwd } from './liveSessions.js';
 
@@ -85,7 +86,9 @@ export async function sweepOrphanedWorktrees(deps: WorktreeSweepDeps = defaultDe
       const resolved = path.resolve(wt.path);
       if (normalizeCwd(resolved) === repoResolved) continue; // the main worktree
       if (!isUnderManagedWorktreesDir(resolved, repoRoot)) continue; // not ours
-      if (wt.locked) continue; // explicit Git lock preserves even an absent checkout
+      // An explicit Git lock preserves even an absent checkout — except git's
+      // own stale "initializing" lock from an interrupted `worktree add`.
+      if (wt.locked && !(await clearStaleInitializingLock(repoRoot, wt))) continue;
       if (activeWorktreePaths.has(normalizeCwd(resolved))) continue; // a live task owns it
       if (hasLiveSessionAtOrUnder(liveCwds, resolved)) continue;
 
