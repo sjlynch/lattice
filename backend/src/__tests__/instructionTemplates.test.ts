@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderTaskMarkdown } from '../worktree/instructions/taskPrompt.js';
+import { renderVerificationBlock } from '../taskVerification.js';
 import { renderQaInstructions } from '../qaRuns/instructions.js';
 import {
   applyTemplate,
@@ -142,6 +143,8 @@ test('safer default reporting does not rewrite a custom task instruction templat
     status: 'open' as const, createdAt: 0,
   };
   const custom = '# {{task_title}}\nMy reporting command for {{task_id}}';
+  // Only the verification rule is appended (a custom brief may predate its
+  // token — see taskVerification.test.ts); the custom text itself is untouched.
   assert.equal(renderTaskMarkdown(task, 'http://127.0.0.1:5199', 'claude', [], null, custom),
-    '# Custom\nMy reporting command for t_custom');
+    `# Custom\nMy reporting command for t_custom\n\n${renderVerificationBlock(false)}`);
 });

@@ -28,6 +28,12 @@ import {
   resolveLatticePreamble,
 } from './latticePreamble.js';
 
+// The Lattice preamble followed by a spawn-specific `extra` (either may be
+// absent). Null when there is neither, like a bare preamble would be.
+function withExtra(preamble: string | null, extra: string | undefined, separator: string): string | null {
+  return composeSystemPromptAppend(preamble, extra, separator) ?? null;
+}
+
 function systemPromptDir(projectPath: string): string {
   return homeProjectScratchDir(projectPath, 'system-prompts');
 }
@@ -58,12 +64,18 @@ export type ClaudeSystemPromptFiles = {
 // Claude: write the override side(s) to scratch files, return their paths. The
 // append side also carries the always-on Lattice preamble, so a project with no
 // override of its own still gets an `--append-system-prompt-file`.
+//
+// `extra` is a spawn-specific addition placed after the preamble (the task
+// verification rule for a task-worktree spawn). It gets its own file name: the
+// shared per-project path is only race-safe while every spawn writes the same
+// content.
 export async function prepareClaudeSystemPrompt(
   projectPath: string,
+  extra?: string,
 ): Promise<ClaudeSystemPromptFiles> {
   const override = await resolveHarnessSystemPrompt(projectPath, 'claude');
   const append = composeSystemPromptAppend(
-    resolveLatticePreamble(projectPath),
+    withExtra(resolveLatticePreamble(projectPath), extra, '\n\n'),
     override?.append,
   );
   if (!override?.replace && !append) return {};
@@ -73,7 +85,7 @@ export async function prepareClaudeSystemPrompt(
     out.replaceFile = await writePromptFile(dir, 'claude-system.md', override.replace);
   }
   if (append) {
-    out.appendFile = await writePromptFile(dir, 'claude-append.md', append);
+    out.appendFile = await writePromptFile(dir, extra ? 'claude-append-task.md' : 'claude-append.md', append);
   }
   return out;
 }
@@ -111,6 +123,7 @@ function tomlMultilineLiteral(text: string): string {
 // strips and splits on.
 export async function prepareCodexSystemPrompt(
   projectPath: string,
+  extra?: string,
 ): Promise<{ configArgs: string[] }> {
   const override = await resolveHarnessSystemPrompt(projectPath, 'codex');
   // Joined with a SPACE, not a blank line, unlike Claude/Pi. An inline `-c`
@@ -119,7 +132,7 @@ export async function prepareCodexSystemPrompt(
   // stay single-line after the preamble is folded in. A multi-line Append was
   // already subject to that limit and is unaffected either way.
   const append = composeSystemPromptAppend(
-    resolveLatticePreamble(projectPath),
+    withExtra(resolveLatticePreamble(projectPath), extra, ' '),
     override?.append,
     ' ',
   );
@@ -154,10 +167,11 @@ export async function prepareCodexSystemPrompt(
 export async function preparePiSystemPrompt(
   cwd: string,
   projectPath: string,
+  extra?: string,
 ): Promise<void> {
   const override = await resolveHarnessSystemPrompt(projectPath, 'pi');
   const append = composeSystemPromptAppend(
-    resolveLatticePreamble(projectPath),
+    withExtra(resolveLatticePreamble(projectPath), extra, '\n\n'),
     override?.append,
   );
   const resolved =

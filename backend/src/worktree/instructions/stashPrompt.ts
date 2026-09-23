@@ -43,6 +43,8 @@ ${filesList}
 
 ## Steps (complete autonomously — no need to confirm with the user)
 
+Don't run the test suite, builds or type-checks — only resolve the markers.
+
 1. For each conflicted file, resolve all ${CONFLICT_MARKERS}
    markers. Keep both the merged branch's changes AND the original working-tree
    changes wherever possible.
@@ -85,6 +87,8 @@ Resolve them so your working tree is clean again.
 ${filesList}
 
 ## Steps (complete autonomously — no need to confirm with the user)
+
+Don't run the test suite, builds or type-checks — only resolve the markers.
 
 1. Resolve all ${CONFLICT_MARKERS} markers in each file.
    Keep both sides where possible.

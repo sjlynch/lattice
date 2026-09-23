@@ -75,6 +75,7 @@ export function useSettingsDirty({
       prompts:
         refs.instructionTemplates.current?.getInstructionTemplateOverridesPatch() !==
           undefined ||
+        refs.instructionTemplates.current?.getTaskAgentTypecheckPatch() !== undefined ||
         refs.harnessSystemPrompts.current?.getHarnessSystemPromptsPatch() !==
           undefined ||
         refs.envNotes.current?.getWorktreeEnvNotesPatch() !== undefined,

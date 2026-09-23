@@ -17,11 +17,11 @@ export function defaultEnvNote(env: DetectedEnv): string {
   const dir = env.heavyDir.replace(/\\/g, '/');
   return (
     `**Heads up — fresh worktree (${env.label}).** This task runs in a throwaway git ` +
-    `worktree. \`${dir}/\` is gitignored, so it is **not** checked out here. Most tasks ` +
-    `(editing code, fixing a bug, refactoring) don't need installed dependencies — ` +
-    `**skip \`${env.installCmd}\` unless this task specifically requires running the test ` +
-    `suite, a build, or a type-check.** Don't spend reasoning deciding whether to install; ` +
-    `default to not. If you do need it, run that command once and move on.`
+    `worktree. \`${dir}/\` is gitignored, so it is **not** checked out here. Editing code ` +
+    `doesn't need installed dependencies, and you won't run tests, builds or type-checks ` +
+    `here (a separate Run tests step verifies merged work) — **skip \`${env.installCmd}\`.** ` +
+    `The one exception: if your instructions allow a type-check of what you edited, run ` +
+    `that command once first and move on.`
   );
 }
 

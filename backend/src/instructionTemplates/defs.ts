@@ -79,6 +79,11 @@ export const INSTRUCTION_TEMPLATE_CATALOG: InstructionTemplateDef[] = [
   {
     id: 'task',
     title: 'Task brief',
+  verification: {
+    name: 'verification',
+    description:
+      'The “don’t run tests, builds or type-checks” rule (or “type-check only”, per the checkbox on this tab). Appended if an override omits it; the same rule also rides the agent’s system prompt.',
+  },
     filename: 'LATTICE_TASK.md',
     description:
       "Written into a task's worktree when you run an Open task — the agent reads it as its instructions.",
@@ -97,6 +102,7 @@ export const INSTRUCTION_TEMPLATE_CATALOG: InstructionTemplateDef[] = [
         description:
           'Optional dead-code note — present only when the analyzer flags unreachable files.',
       },
+      COMMON.verification,
       {
         name: 'final_step',
         description:
@@ -122,6 +128,7 @@ export const INSTRUCTION_TEMPLATE_CATALOG: InstructionTemplateDef[] = [
         description: 'Bullet list of files in conflict (or a hint to run git diff).',
       },
       COMMON.backend_origin,
+      COMMON.verification,
     ],
   },
   {

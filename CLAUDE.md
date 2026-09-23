@@ -681,6 +681,14 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   environment into its context) and the dim terminal banner (kept, but it lands
   in the scrollback the browser replays, so the pty child never receives it —
   it informs the *user*, not the agent).
+- **Task agents don't run tests.** Task run/resume sessions and their worktree
+  merge resolvers are told — in the brief's `{{verification}}` block AND their
+  system prompt — to run no test suite, build or type-check, overriding repo
+  CLAUDE.md/AGENTS.md and the task description (`backend/src/taskVerification.ts`).
+  Eight agents each running a monorepo's full suite + a cold `tsc -b` was most of
+  the machine's CPU; a workflow's Run tests step verifies merged work once
+  instead. Per-project opt-in `taskAgentTypecheck` (Settings → Agent prompts)
+  allows a type-check of the edited package(s).
 
 ## Ports
 

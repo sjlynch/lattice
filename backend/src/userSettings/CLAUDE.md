@@ -23,7 +23,8 @@ keeps importing from `'../userSettings.js'` and the public surface is unchanged.
   `isPostMergeHookEnabled`, `isCodexYoloEnabled`, `isTaskAgentsLatticeMcpOnly`
   (+ its pure `taskAgentsLatticeMcpOnlyIn(settings)` for callers that already
   hold the settings) (all default ON — an absent field counts as `true`) and `isQaTerminalAutoCloseEnabled` (default
-  OFF/stay-open — only explicit `true` opts in). New "what does setting X mean
+  OFF/stay-open — only explicit `true` opts in), `isTaskAgentTypecheckEnabled`
+  / `taskAgentTypecheckIn` (default OFF — see `../taskVerification.ts`). New "what does setting X mean
   for feature Y" helpers go here.
 - `index.ts` — internal barrel re-exporting the public surface.
 

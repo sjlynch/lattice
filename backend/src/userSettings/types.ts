@@ -144,6 +144,13 @@ export type UserSettings = {
   // chokepoint only for a cwd under `~/.lattice/worktrees/` — see
   // `mcp/taskWorktreeScope.ts`. Settings → MCP tab, top checkbox.
   taskAgentsLatticeMcpOnly?: boolean;
+  // Task agents (task run/resume + worktree merge-conflict resolvers) run NO
+  // verification by default — no test suite, build or type-check; a workflow's
+  // Run tests step verifies merged work. `true` lets them type-check the
+  // package(s) they edited. Absent = off. Delivered in the brief's
+  // `{{verification}}` block AND the spawn's system-prompt append — see
+  // `taskVerification.ts`. Settings → Agent prompts.
+  taskAgentTypecheck?: boolean;
   // Backs the QA-lane Playwright buttons — QA e2e runs ONLY (not a global
   // enable; that's `mcpOverrides.playwright`). `enabled` injects the Playwright
   // MCP into QA-lane "run an e2e test" sessions; `headless` (the eye toggle, the

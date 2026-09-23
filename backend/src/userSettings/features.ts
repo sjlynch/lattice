@@ -52,6 +52,16 @@ export async function isTaskAgentsLatticeMcpOnly(
   return taskAgentsLatticeMcpOnlyIn(await getUserSettings(projectPath));
 }
 
+// Whether task agents may type-check the package(s) they edited. Default OFF:
+// they run no tests, builds or type-checks at all (see taskVerification.ts).
+export function taskAgentTypecheckIn(settings: UserSettings): boolean {
+  return settings.taskAgentTypecheck === true;
+}
+
+export async function isTaskAgentTypecheckEnabled(projectPath: string): Promise<boolean> {
+  return taskAgentTypecheckIn(await getUserSettings(projectPath));
+}
+
 // Whether a finished workflow agent step's terminal stays open (its pty left
 // running) instead of being killed on advance. Default off.
 export async function isKeepWorkflowStepTerminalsEnabled(

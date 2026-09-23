@@ -26,4 +26,6 @@ export {
   isCodexYoloEnabled,
   isTaskAgentsLatticeMcpOnly,
   taskAgentsLatticeMcpOnlyIn,
+  isTaskAgentTypecheckEnabled,
+  taskAgentTypecheckIn,
 } from './features.js';

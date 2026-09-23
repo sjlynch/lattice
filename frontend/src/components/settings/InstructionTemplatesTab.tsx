@@ -1,7 +1,8 @@
-import { forwardRef, useImperativeHandle, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import {
   fetchInstructionTemplates,
+  fetchUserSettingsStrict,
   type InstructionTemplate,
   type UserSettings,
 } from '../../api';
@@ -19,6 +20,8 @@ export type InstructionTemplatesTabHandle = {
   // one), or undefined until the fetch that seeds drafts has completed (so a
   // save before load can't clobber existing overrides).
   getInstructionTemplateOverridesPatch: () => Record<string, string> | undefined;
+  // `taskAgentTypecheck`, or undefined unless the user flipped the checkbox.
+  getTaskAgentTypecheckPatch: () => boolean | undefined;
 };
 
 // Stable (module-level) config for the shared override-draft engine. A draft
@@ -30,6 +33,33 @@ const currentOf = (t: InstructionTemplate) => t.currentTemplate;
 const readOverrides = (s: UserSettings) => s.instructionTemplateOverrides ?? {};
 const matchesDefault = (draft: string, t: InstructionTemplate) =>
   draft.trim().length === 0 || draft === t.defaultTemplate;
+
+// The "task agents may type-check" checkbox (`taskAgentTypecheck`, default
+// OFF). Seeded from the project settings on each open; only a user flip
+// produces a patch, so a slow or failed GET can never write the default over
+// a saved value.
+function useTaskAgentTypecheckDraft(open: boolean, activeFolder: string) {
+  const [typecheck, setTypecheck] = useState(false);
+  const [touched, setTouched] = useState(false);
+  useEffect(() => {
+    if (!open || !activeFolder) return;
+    let cancelled = false;
+    setTouched(false);
+    fetchUserSettingsStrict(activeFolder)
+      .then((s) => {
+        if (!cancelled) setTypecheck(s.taskAgentTypecheck === true);
+      })
+      .catch(() => { /* untouched → no patch */ });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, activeFolder]);
+  const set = (value: boolean) => {
+    setTouched(true);
+    setTypecheck(value);
+  };
+  return { typecheck, setTypecheck: set, patch: touched ? typecheck : undefined };
+}
 
 function useInstructionTemplatesDraft(open: boolean, active: boolean, activeFolder: string) {
   const {
@@ -78,11 +108,16 @@ export const InstructionTemplatesTab = forwardRef<InstructionTemplatesTabHandle,
       getInstructionTemplateOverridesPatch,
     } = useInstructionTemplatesDraft(open, active, activeFolder);
     const [expanded, setExpanded] = useState<string | null>(null);
+    const verification = useTaskAgentTypecheckDraft(open, activeFolder);
+    const typecheckPatch = verification.patch;
 
     useImperativeHandle(
       ref,
-      () => ({ getInstructionTemplateOverridesPatch }),
-      [getInstructionTemplateOverridesPatch],
+      () => ({
+        getInstructionTemplateOverridesPatch,
+        getTaskAgentTypecheckPatch: () => typecheckPatch,
+      }),
+      [getInstructionTemplateOverridesPatch, typecheckPatch],
     );
 
     if (!active) return null;
@@ -117,6 +152,24 @@ export const InstructionTemplatesTab = forwardRef<InstructionTemplatesTabHandle,
               Reset all
             </button>
           )}
+        </div>
+        <label className="settings-checkbox-row">
+          <input
+            type="checkbox"
+            checked={verification.typecheck}
+            onChange={(e) => verification.setTypecheck(e.target.checked)}
+          />
+          <span>Task agents may type-check what they edited</span>
+        </label>
+        <div className="settings-section-sub">
+          By default task agents (and their merge-conflict resolvers) run no
+          tests, builds or type-checks — a workflow's Run tests step verifies
+          the merged work once instead of every agent at once. On, an agent may
+          type-check the package(s) it edited; in a fresh worktree that costs a
+          dependency install plus a cold build per task. The rule rides the
+          Task brief's <code>{'{{verification}}'}</code> token (appended if a
+          custom brief drops it) and the agent's system prompt, so it applies
+          to resumed tasks and custom briefs too.
         </div>
         {loading ? (
           <div className="settings-empty">Loading…</div>

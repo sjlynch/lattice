@@ -61,9 +61,14 @@ export function latticeOnlyMcpApplies(
   spawn: { mcpScope?: McpSpawnScope; cwd?: string },
   settings: UserSettings,
 ): boolean {
-  if (spawn.mcpScope !== 'task-worktree') return false;
-  if (!taskAgentsLatticeMcpOnlyIn(settings)) return false;
-  return !!spawn.cwd && isPathStrictlyInside(worktreesRoot(), spawn.cwd);
+  return isTaskWorktreeSpawn(spawn) && taskAgentsLatticeMcpOnlyIn(settings);
+}
+
+// A task run/resume or worktree merge-conflict resolver, in a home-scoped task
+// worktree — conditions 1 and 3 above, without the MCP setting. Also what
+// decides the system-prompt verification rule (`../taskVerification.ts`).
+export function isTaskWorktreeSpawn(spawn: { mcpScope?: McpSpawnScope; cwd?: string }): boolean {
+  return spawn.mcpScope === 'task-worktree' && !!spawn.cwd && isPathStrictlyInside(worktreesRoot(), spawn.cwd);
 }
 
 // ---- Claude ------------------------------------------------------------

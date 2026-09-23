@@ -22,8 +22,7 @@ export const MENU_ITEMS: MenuItemDef[] = [
       'Constraints:\n' +
       '- Do not change public APIs, exported signatures, or wire formats unless explicitly requested.\n' +
       '- Do not introduce new abstractions, layers, or dependencies for hypothetical future reuse — three similar lines beat a premature abstraction.\n' +
-      '- Keep the diff focused; do not reformat untouched code.\n' +
-      '- Run the project\'s type-check (and tests, if quick) afterward and fix anything you broke.\n\n' +
+      '- Keep the diff focused; do not reformat untouched code.\n\n' +
       'Additional instructions: ',
   },
   {

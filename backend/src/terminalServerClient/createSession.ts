@@ -14,9 +14,11 @@ import {
   preparePiSystemPrompt,
   type ClaudeSystemPromptFiles,
 } from '../harnessSystemPrompts.js';
-import { getUserSettings, type UserSettings } from '../userSettings.js';
+import { getUserSettings, taskAgentTypecheckIn, type UserSettings } from '../userSettings.js';
+import { renderVerificationSystemPrompt } from '../taskVerification.js';
 import {
   codexUserServerDisableArgs,
+  isTaskWorktreeSpawn,
   latticeOnlyMcpApplies,
   withClaudeStrictMcpFlags,
   writeClaudeStrictMcpConfig,
@@ -140,6 +142,11 @@ export async function resolveHarnessSpawnBody(
     : {};
   const latticeOnly = latticeOnlyMcpApplies(opts, settings);
   const mcpCtx = { taskId: opts.taskId, ...(latticeOnly ? { latticeOnly: true } : {}) };
+  // A task-worktree agent's "don't run tests" rule rides its system prompt as
+  // well as its brief — see taskVerification.ts.
+  const promptExtra = isTaskWorktreeSpawn(opts)
+    ? renderVerificationSystemPrompt(taskAgentTypecheckIn(settings))
+    : undefined;
   if (isClaudeCommand(opts.initialCommand)) {
     // No projectPath → trust-only seed (managed: null) + Claude's default memory.
     const managedMcpServers = opts.projectPath
@@ -153,7 +160,7 @@ export async function resolveHarnessSpawnBody(
       ? settings.disableClaudeMemory !== false
       : false;
     const sysPrompt: ClaudeSystemPromptFiles = opts.projectPath
-      ? await prepareClaudeSystemPrompt(opts.projectPath).catch(() => ({}))
+      ? await prepareClaudeSystemPrompt(opts.projectPath, promptExtra).catch(() => ({}))
       : {};
     const initialCommand = latticeOnly && managedMcpServers && opts.projectPath
       ? await withStrictClaudeMcp(opts, opts.projectPath, managedMcpServers)
@@ -173,7 +180,7 @@ export async function resolveHarnessSpawnBody(
   }
   if (isCodexCommand(opts.initialCommand) && opts.projectPath) {
     const codex = await resolveManagedCodexServers(opts.projectPath, mcpCtx, settings);
-    const sysPrompt = await prepareCodexSystemPrompt(opts.projectPath).catch(
+    const sysPrompt = await prepareCodexSystemPrompt(opts.projectPath, promptExtra).catch(
       () => ({ configArgs: [] as string[] }),
     );
     // Scoped: switch off the user's own config.toml servers first, then add
@@ -202,7 +209,7 @@ export async function resolveHarnessSpawnBody(
     // Reconcile the Pi system-prompt extension in the cwd (installs it when
     // there's an override, strips a stale one otherwise). Cwd-local files, so
     // nothing rides the wire — like the MCP shim.
-    await preparePiSystemPrompt(opts.cwd, opts.projectPath).catch(() => {});
+    await preparePiSystemPrompt(opts.cwd, opts.projectPath, promptExtra).catch(() => {});
     if (Object.keys(env).length > 0) return { ...opts, managedMcpEnv: env };
     return opts;
   }

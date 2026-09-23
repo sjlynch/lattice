@@ -21,7 +21,7 @@ export const DEFAULT_TASK_TEMPLATE = `# {{task_title}}
 
 ## Instructions (please complete autonomously, no need to confirm with the user)
 
-{{autonomy_preamble}}{{env_notes_block}}{{dead_code_block}}1. **Check existing state first.** This task may have been started in a
+{{autonomy_preamble}}{{verification}}{{env_notes_block}}{{dead_code_block}}1. **Check existing state first.** This task may have been started in a
    prior session — Lattice can resume worktrees after a server restart or
    when Claude finishes without committing. Before doing anything, run:
 

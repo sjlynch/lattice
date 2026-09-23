@@ -92,6 +92,11 @@ export type UserSettings = {
   // explicit `false` gives them the full enabled set. Settings → MCP tab. See
   // backend mcp/taskWorktreeScope.ts.
   taskAgentsLatticeMcpOnly?: boolean;
+  // Task agents run no tests, builds or type-checks (a workflow's Run tests
+  // step verifies merged work). `true` lets them type-check the package(s)
+  // they edited. Default OFF. Settings → Agent prompts. See backend
+  // taskVerification.ts.
+  taskAgentTypecheck?: boolean;
   // Backs the QA-lane Playwright buttons — QA e2e runs ONLY (separate from the
   // global `mcpOverrides.playwright`). `enabled` injects Playwright into QA
   // "run an e2e test" sessions; `headless` (the eye toggle) appends --headless.

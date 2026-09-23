@@ -33,6 +33,8 @@ export const DEFAULT_WORKFLOW_STEP_TEMPLATE = [
   '- **Do not create, edit, or delete any file in the project.**',
   '- **Do not run `git commit`, `git add`, `git checkout`, or any other git',
   '  command that writes.** Reading history (`git log`, `git diff`) is fine.',
+  '- **Do not run the test suite, builds, installs or type-checks** — you are',
+  '  reading and planning; verification is a separate Run tests step.',
   '- The only writes you may perform are to the Lattice task board — creating',
   '  tasks, and updating or deleting them when this step explicitly asks for',
   '  that.',

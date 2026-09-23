@@ -8,7 +8,7 @@ export const DEFAULT_MERGE_TEMPLATE = `# Resolve merge conflict for task {{task_
 **Branch:** \`{{branch}}\`
 **Task:** {{task_title}}
 
-{{env_notes_block}}Lattice merged main into this branch and conflicts arose. Your job is to
+{{verification}}{{env_notes_block}}Lattice merged main into this branch and conflicts arose. Your job is to
 resolve them and commit. After you commit and the session ends, Lattice's
 existing Stop hook fires and the backend will fast-forward main and clean
 up automatically.

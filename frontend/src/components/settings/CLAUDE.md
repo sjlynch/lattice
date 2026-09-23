@@ -78,6 +78,11 @@ those sections (the project-settings block atop the Terminals tab); it's a plain
 those drafts — `SettingsDialog` just composes it ahead of the
 `StartupTerminalsTab` panel.
 
+`InstructionTemplatesTab` also owns the "Task agents may type-check what they
+edited" checkbox (`taskAgentTypecheck`, default OFF; backend
+`taskVerification.ts`): seeded per open from the strict settings GET, patched
+(`getTaskAgentTypecheckPatch`) only once the user flips it.
+
 `useOverrideDraft.ts` is the shared draft engine behind the two
 **override-merge** tabs (`InstructionTemplatesTab` + `EnvNotesTab`): both fetch
 a list of items + the saved override map (gated on `open && active`, and only

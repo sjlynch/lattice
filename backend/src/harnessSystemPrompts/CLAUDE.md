@@ -71,6 +71,14 @@ A project with no `.lattice/` dir gets no preamble at all — Lattice never seed
 that dir into a project it doesn't manage, so an unmanaged cwd spawns with a
 stock system prompt.
 
+A **task-worktree spawn** (task run/resume, worktree merge resolver — the
+spawn's `mcpScope`, see `mcp/taskWorktreeScope.ts` `isTaskWorktreeSpawn`) also
+gets the one-line task verification rule (`../taskVerification.ts`: "don't run
+tests, builds or type-checks") folded in right after the preamble — the
+`extra` argument of the three `prepare*` functions. Claude writes that variant
+to its own `claude-append-task.md`, since the shared `claude-append.md` is only
+race-safe while every spawn of the project writes identical content.
+
 ## Modules
 
 - `defs.ts` — **leaf catalog** (`HARNESS_SYSTEM_PROMPT_CATALOG`): per-harness

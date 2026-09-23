@@ -5,6 +5,8 @@ import { applyTemplate } from '../../instructionTemplates/apply.js';
 import { resolveInstructionTemplate } from '../../instructionTemplates/resolve.js';
 import { DEFAULT_MERGE_TEMPLATE } from '../../instructionTemplates/defs.js';
 import { ensureValidStopHook } from './stopHookRepair.js';
+import { isTaskAgentTypecheckEnabled } from '../../userSettings.js';
+import { renderVerificationBlock, templateWithVerification } from '../../taskVerification.js';
 import {
   MERGE_FILES_LIST_HINT,
   renderConflictedFilesList,
@@ -22,13 +24,14 @@ export function renderMergeInstructions(
   backendOrigin: string,
   envBlock: string,
   template: string = DEFAULT_MERGE_TEMPLATE,
+  typecheck = false,
 ): string {
   const desc = task.description?.trim() || '_(no description provided)_';
   const filesList = renderConflictedFilesList(
     conflictedFiles,
     MERGE_FILES_LIST_HINT,
   );
-  return applyTemplate(template, {
+  return applyTemplate(templateWithVerification(template), {
     task_id: task.id,
     branch,
     task_title: task.title,
@@ -36,6 +39,7 @@ export function renderMergeInstructions(
     env_notes_block: envBlock,
     conflicted_files: filesList,
     backend_origin: backendOrigin,
+    verification: renderVerificationBlock(typecheck),
   });
 }
 
@@ -56,6 +60,7 @@ export async function writeMergeInstructions(
   const file = path.join(worktreePath, fileName);
   const envBlock = await renderEnvBlockFor(task.projectPath);
   const template = await resolveInstructionTemplate(task.projectPath, 'merge');
+  const typecheck = await isTaskAgentTypecheckEnabled(task.projectPath).catch(() => false);
   const md = renderMergeInstructions(
     task,
     branch,
@@ -63,6 +68,7 @@ export async function writeMergeInstructions(
     backendOrigin,
     envBlock,
     template,
+    typecheck,
   );
   await fs.writeFile(file, md, 'utf8');
   return {
