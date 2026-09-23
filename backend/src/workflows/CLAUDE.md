@@ -51,7 +51,11 @@ imports from `'../workflows.js'`; this directory holds the implementation.
   contradiction by committing code straight from a workflow step. **Reword a
   built-in → append the old body to that entry's `legacy` and update `current`**;
   `__tests__/defaultPromptMigrations.test.ts` pins `current` against the frontend
-  markdown so the two copies can't drift.
+  markdown so the two copies can't drift. The tailoring block's guidance bullets
+  (frontend `projectStackDetection.ts`) sit in that verbatim-kept suffix, so a
+  reworded bullet gets an exact-line entry in `DEFAULT_PROMPT_LINE_MIGRATIONS`
+  instead (applies to any step's prompt; pinned by
+  `__tests__/defaultPromptLineMigrations.test.ts`).
 - `interpolate.ts` — `interpolateWorkflowVariables`: substitutes `{{name}}`
   refs in a step prompt with the workflow's variable values, called from
   `workflowRuns/stepMarkdown.ts` before the prompt reaches the agent. Unknown

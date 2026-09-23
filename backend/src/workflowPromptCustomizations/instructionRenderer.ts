@@ -63,6 +63,7 @@ export function renderCustomizationInstructions(
       ? 'Adhere to the template type above. Keep the prompt self-contained and suitable for future agents that will create Lattice tasks from it.'
       : 'Use the user customization instructions below as the source of truth for how this custom prompt should be tailored.',
     'The final prompt should be actionable, concise enough to live in the workflow editor, and specific about languages/frameworks/tests/docs that matter in this project.',
+    "Do not carry the project's \"run the tests / type-check before committing\" rules (from CLAUDE.md, AGENTS.md or similar docs) into the prompt or into the tasks it asks for: task agents are told not to run tests, and a separate Run tests workflow step verifies merged work.",
     '',
     ...(customInstructions
       ? [

@@ -79,7 +79,7 @@ const PROJECT_STACKS: readonly StackMetadata[] = [
     label: 'Node.js',
     guidance: [
       'For Node.js code, scrutinize filesystem/process/network boundaries, Express/API validation, async cleanup, long-running resources, and cross-platform path handling.',
-      'Keep package-manager scripts and server startup behavior intact; run the project type-check or targeted tests when appropriate.',
+      'Keep package-manager scripts and server startup behavior intact.',
     ],
     signals: [
       { fileNames: ['package.json'] },

@@ -350,6 +350,9 @@ curl -sG "{{API_URL}}/api/opengrep/scans/$scanId" \
 - Put concrete file paths and acceptance criteria in `description`.
   Each task spawns a fresh agent with no memory of the user's prior
   conversation.
+- Don't make "tests pass" or "type-check is clean" an acceptance
+  criterion, and don't tell the task agent to run the suite: task agents
+  don't run tests, a workflow's Run tests step verifies merged work.
 - Pass the project path above (or its forward-slash form) verbatim as the
   `project` field. Lattice canonicalizes drive-letter casing.
 - Read before you write: `GET /api/tasks/search?q=` is far cheaper than

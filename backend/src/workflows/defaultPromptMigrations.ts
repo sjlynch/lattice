@@ -39,6 +39,15 @@ export const DEFAULT_PROMPT_MIGRATIONS: DefaultPromptMigration[] = [
     id: "quick-add:refactor",
     // Told the agent to refactor + commit; the task-filing line came last.
     legacy: [
+      // Required every filed task to type-check before committing; task agents
+      // now run no verification (a workflow's Run tests step owns that).
+      [
+        "Analyze the codebase for opportunities to refactor the code so that it is easier for LLMs to navigate and understand, and file each opportunity as a task on the Lattice board for this active project. Do not refactor anything yourself and do not commit — the board entries are your output.",
+        "",
+        "Look for large source files that handle too many concerns and should be broken into focused clean submodules, tangled dependencies, long functions or classes that should be simplified, magic numbers that should become named variables, and duplication that should be removed. Also look for `CLAUDE.md` files that need updating, and subfolders where adding one would be crucially helpful to LLMs — while keeping every `CLAUDE.md` succinct.",
+        "",
+        "Every task you file must state that the refactor may not change the original code's observable behavior, must keep public APIs stable, must preserve existing tests, and must type-check before it is committed. Scope each task to one file or one module so it can land without conflicting with its siblings, name the exact paths involved, and do not file duplicates.",
+      ].join('\n'),
       [
         "Analyze the codebase and look for opportunities to refactor the code so that it is easier for LLMs to navigate and understand. Break down large source files that handle too many concerns into focused clean submodules, untangle dependencies, simplify long functions or classes, replace magic numbers with variables, remove duplication and also make sure that we update claude.md files as necessary, adding new ones within subfolders if context would be crucially helpful to LLMs, but keeping all claude.md files succinct. It is important that the refactored code does not change the original code's observable behavior.",
         "",
@@ -53,7 +62,7 @@ export const DEFAULT_PROMPT_MIGRATIONS: DefaultPromptMigration[] = [
       "",
       "Look for large source files that handle too many concerns and should be broken into focused clean submodules, tangled dependencies, long functions or classes that should be simplified, magic numbers that should become named variables, and duplication that should be removed. Also look for `CLAUDE.md` files that need updating, and subfolders where adding one would be crucially helpful to LLMs — while keeping every `CLAUDE.md` succinct.",
       "",
-      "Every task you file must state that the refactor may not change the original code's observable behavior, must keep public APIs stable, must preserve existing tests, and must type-check before it is committed. Scope each task to one file or one module so it can land without conflicting with its siblings, name the exact paths involved, and do not file duplicates.",
+      "Every task you file must state that the refactor may not change the original code's observable behavior, must keep public APIs stable, and must preserve existing tests. Scope each task to one file or one module so it can land without conflicting with its siblings, name the exact paths involved, and do not file duplicates.",
     ].join('\n'),
   },
   {
@@ -181,20 +190,53 @@ function normalizeEol(text: string): string {
   return text.replace(/\r\n?/g, '\n');
 }
 
-// Replace a stale built-in prompt body with its current wording, preserving
-// whatever the editor appended after it. Returns the prompt unchanged when it
-// is already current, was hand-edited, or was never a built-in.
-export function migrateDefaultPromptText(prompt: string): string {
-  if (!prompt) return prompt;
-  const text = normalizeEol(prompt);
+// Whole-line rewordings of the guidance bullets the editor appends in its
+// "## Active project tailoring" block (frontend `projectStackDetection.ts`).
+// That block is the suffix the prefix migrations above deliberately keep
+// verbatim, so a reworded bullet needs its own exact-line substitution. It
+// applies to any step's prompt: the line is specific enough that a hand-written
+// prompt carrying it byte for byte is a copy of ours.
+export const DEFAULT_PROMPT_LINE_MIGRATIONS: { legacy: string; current: string }[] = [
+  {
+    // Told planners to have tasks run the type-check / tests; task agents now
+    // run no verification (a workflow's Run tests step owns that).
+    legacy: '- Keep package-manager scripts and server startup behavior intact; run the project type-check or targeted tests when appropriate.',
+    current: '- Keep package-manager scripts and server startup behavior intact.',
+  },
+];
+
+function migrateBody(text: string): string {
   for (const migration of DEFAULT_PROMPT_MIGRATIONS) {
-    if (text.startsWith(migration.current)) return prompt;
+    if (text.startsWith(migration.current)) return text;
     for (const legacy of migration.legacy) {
       if (!text.startsWith(legacy)) continue;
       return migration.current + text.slice(legacy.length);
     }
   }
-  return prompt;
+  return text;
+}
+
+function migrateLines(text: string): string {
+  const lines = text.split('\n');
+  let changed = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const hit = DEFAULT_PROMPT_LINE_MIGRATIONS.find((m) => m.legacy === lines[i].trimEnd());
+    if (!hit) continue;
+    lines[i] = hit.current;
+    changed = true;
+  }
+  return changed ? lines.join('\n') : text;
+}
+
+// Replace a stale built-in prompt body with its current wording, preserving
+// whatever the editor appended after it, then reword any stale tailoring
+// bullet. Returns the prompt unchanged when it is already current, was
+// hand-edited, or was never a built-in.
+export function migrateDefaultPromptText(prompt: string): string {
+  if (!prompt) return prompt;
+  const text = normalizeEol(prompt);
+  const migrated = migrateLines(migrateBody(text));
+  return migrated === text ? prompt : migrated;
 }
 
 export function migrateWorkflowStepPrompts(steps: WorkflowStep[]): {
