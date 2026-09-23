@@ -120,8 +120,11 @@ export async function cleanupWorktreeForTask(
   if (!before) return false;
   // An interrupted `git worktree add` leaves git's own "initializing" lock;
   // honouring it as a user lock stranded the half-written checkout for good.
+  // Such a checkout never finished, so no agent ever ran in it: skip the
+  // archive (every file reads as "untracked" — it would copy the whole tree).
   const initLocked = before.find((wt) => normalizePath(wt.path) === normalizePath(worktreePath));
-  if (initLocked && await clearStaleInitializingLock(repoRoot, initLocked)) {
+  const interruptedAdd = !!initLocked && await clearStaleInitializingLock(repoRoot, initLocked);
+  if (interruptedAdd) {
     before = await readWorktrees();
     if (!before) return false;
   }
@@ -172,7 +175,7 @@ export async function cleanupWorktreeForTask(
     // PTY kill, so the agent can't still be writing. A normal finalize leaves
     // only Lattice-managed files behind, which aren't archived ('clean').
     // If the archive fails, keep the checkout rather than lose the work.
-    if (!opts.skipArchive) {
+    if (!opts.skipArchive && !interruptedAdd) {
       const archive = deps.archiveUncommitted ?? archiveUncommittedWorktreeChanges;
       const archived = await archive(repoRoot, worktreePath, branchName);
       if (archived.status === 'failed') {

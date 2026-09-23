@@ -125,7 +125,10 @@ export async function reconcileStaleState(
   // A previous run of this exact candidate killed mid-`git worktree add`
   // leaves git's "initializing" lock; clear it rather than refusing forever.
   const initLocked = tracked.find((entry) => pathKey(entry.path) === candidateKey);
-  if (initLocked && await clearStaleInitializingLock(repoRoot, initLocked)) tracked = await readTracked();
+  // That checkout never finished, so no agent ever ran in it: nothing to archive
+  // (its files all read as "untracked", so an archive would copy the whole tree).
+  const interruptedAdd = !!initLocked && await clearStaleInitializingLock(repoRoot, initLocked);
+  if (interruptedAdd) tracked = await readTracked();
   if (!validateRegistrations(tracked)) return false;
   const registration = tracked.find((entry) => pathKey(entry.path) === candidateKey);
   const branch = await git(['rev-parse', '--verify', '--quiet', branchRef]);
@@ -159,7 +162,9 @@ export async function reconcileStaleState(
       // are still the user's work (the unmerged-commit guard above only
       // covers commits). Archive them to ~/.lattice/snapshots/ first; if
       // that fails, keep the checkout and let setup take the -rN suffix.
-      const archived = await deps.archiveUncommitted(repoRoot, worktreePath, branchName);
+      const archived = interruptedAdd
+        ? { status: 'clean' as const }
+        : await deps.archiveUncommitted(repoRoot, worktreePath, branchName);
       if (archived.status === 'failed') {
         return refuse(`could not archive uncommitted changes (${archived.error}); keeping the checkout`);
       }

@@ -88,7 +88,8 @@ export async function sweepOrphanedWorktrees(deps: WorktreeSweepDeps = defaultDe
       if (!isUnderManagedWorktreesDir(resolved, repoRoot)) continue; // not ours
       // An explicit Git lock preserves even an absent checkout — except git's
       // own stale "initializing" lock from an interrupted `worktree add`.
-      if (wt.locked && !(await clearStaleInitializingLock(repoRoot, wt))) continue;
+      const interruptedAdd = !!wt.locked && await clearStaleInitializingLock(repoRoot, wt);
+      if (wt.locked && !interruptedAdd) continue;
       if (activeWorktreePaths.has(normalizeCwd(resolved))) continue; // a live task owns it
       if (hasLiveSessionAtOrUnder(liveCwds, resolved)) continue;
 
@@ -116,8 +117,12 @@ export async function sweepOrphanedWorktrees(deps: WorktreeSweepDeps = defaultDe
       // edits. Archive them to ~/.lattice/snapshots/ (a keep-for-the-user
       // copy that boot recovery never auto-restores); if that fails, the
       // orphan is left in place for the next boot or a human.
+      // An interrupted add never reached an agent; its files all read as
+      // untracked, so archiving would copy the whole checkout (6.4 GB once).
       const archive = deps.archiveUncommitted ?? archiveUncommittedWorktreeChanges;
-      const archived = await archive(repoRoot, resolved, branch);
+      const archived = interruptedAdd
+        ? { status: 'clean' as const }
+        : await archive(repoRoot, resolved, branch);
       if (archived.status === 'failed') {
         console.error(
           `[startup] sweep: NOT reclaiming ${resolved} — could not archive its uncommitted changes ` +
