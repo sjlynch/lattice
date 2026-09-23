@@ -73,17 +73,17 @@ const COMMON = {
     description:
       'Autonomy framing — empty for Claude; a “finish everything in this session” block for Pi/Codex.',
   },
+  verification: {
+    name: 'verification',
+    description:
+      'The “don’t run tests, builds or type-checks” rule (or “type-check only”, per the checkbox on this tab). Appended if an override omits it; the same rule also rides the agent’s system prompt.',
+  },
 } as const;
 
 export const INSTRUCTION_TEMPLATE_CATALOG: InstructionTemplateDef[] = [
   {
     id: 'task',
     title: 'Task brief',
-  verification: {
-    name: 'verification',
-    description:
-      'The “don’t run tests, builds or type-checks” rule (or “type-check only”, per the checkbox on this tab). Appended if an override omits it; the same rule also rides the agent’s system prompt.',
-  },
     filename: 'LATTICE_TASK.md',
     description:
       "Written into a task's worktree when you run an Open task — the agent reads it as its instructions.",
@@ -96,13 +96,13 @@ export const INSTRUCTION_TEMPLATE_CATALOG: InstructionTemplateDef[] = [
       { name: 'created_at', description: 'Task creation time (ISO).' },
       COMMON.backend_origin,
       COMMON.autonomy_preamble,
+      COMMON.verification,
       COMMON.env_notes_block,
       {
         name: 'dead_code_block',
         description:
           'Optional dead-code note — present only when the analyzer flags unreachable files.',
       },
-      COMMON.verification,
       {
         name: 'final_step',
         description:
@@ -122,13 +122,13 @@ export const INSTRUCTION_TEMPLATE_CATALOG: InstructionTemplateDef[] = [
       { name: 'branch', description: 'The branch being merged.' },
       COMMON.task_title,
       COMMON.task_description,
+      COMMON.verification,
       COMMON.env_notes_block,
       {
         name: 'conflicted_files',
         description: 'Bullet list of files in conflict (or a hint to run git diff).',
       },
       COMMON.backend_origin,
-      COMMON.verification,
     ],
   },
   {
