@@ -7,7 +7,7 @@
 import { listTasks } from '../../tasks.js';
 import { startTaskById } from '../../routes/tasks/startTask.js';
 import { enqueueTaskRun } from '../../routes/tasks/queuedSpawn.js';
-import { isSpawnCapacityError } from '../../spawnQueue.js';
+import { isSpawnDeferral, isSpawnDiskSpaceError } from '../../spawnQueue.js';
 import { normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
 import { normalizePiModel } from '../../piModels.js';
 import { getUserSettings } from '../../userSettings.js';
@@ -177,7 +177,7 @@ export async function runStartStep(
         `[workflow-run] ${run.id} start step: task ${task.id} ("${task.title.slice(0, 60)}") → in_progress`,
       );
     } catch (err) {
-      if (isSpawnCapacityError(err)) {
+      if (isSpawnDeferral(err)) {
         // Hard cap: startTaskById threw BEFORE flipping status, so the task is
         // still Open (no phantom in_progress, no orphan pty). Re-enqueue it on
         // the spawn queue — the same path Run All uses — so it starts when a
@@ -191,9 +191,13 @@ export async function runStartStep(
             enqErr,
           );
         }
+        // A disk-space deferral takes the same path: no worktree was created,
+        // the task is still Open, and the queue starts it once there is room.
         console.warn(
           `[workflow-run] ${run.id} start step: task ${task.id} ("${task.title.slice(0, 60)}") ` +
-            `hit the terminal-server hard cap — left Open and re-queued on the spawn queue`,
+            (isSpawnDiskSpaceError(err)
+              ? `is waiting for disk space (${err.message}) — left Open and re-queued on the spawn queue`
+              : 'hit the terminal-server hard cap — left Open and re-queued on the spawn queue'),
         );
       } else {
         failed += 1;

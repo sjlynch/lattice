@@ -1,4 +1,6 @@
+import path from 'node:path';
 import { projectGit } from '../projectGit.js';
+import { reserveWorktreeDiskSpace, type DiskReservation } from '../diskSpace.js';
 import {
   abortWorktreeMerge,
   assertGitDirIntact,
@@ -62,10 +64,23 @@ async function tryRecreateMissingWorktree(
   }
   const ref = await projectGit(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}`]);
   if (ref.code !== 0) return false;
+  // Same free-space rule as a fresh run: a re-created checkout is just as big.
+  let disk: DiskReservation;
+  try {
+    disk = await reserveWorktreeDiskSpace(repoRoot, path.dirname(worktreePath));
+  } catch (err) {
+    console.warn(`[merge] not re-creating ${worktreePath}: ${(err as Error).message}`);
+    return false;
+  }
   // Best-effort: a registration that still points at the missing dir blocks
   // `worktree add`; when there is none this fails harmlessly.
-  await projectGit(repoRoot, ['worktree', 'remove', '--force', worktreePath]);
-  const add = await projectGit(repoRoot, ['worktree', 'add', worktreePath, branchName]);
+  let add: Awaited<ReturnType<typeof projectGit>>;
+  try {
+    await projectGit(repoRoot, ['worktree', 'remove', '--force', worktreePath]);
+    add = await projectGit(repoRoot, ['worktree', 'add', worktreePath, branchName]);
+  } finally {
+    disk.release();
+  }
   if (add.code !== 0) {
     console.warn(
       `[merge] re-creating missing worktree ${worktreePath} on ${branchName} failed ` +

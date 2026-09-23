@@ -43,6 +43,19 @@ export function buildGlobalSettingsRouter(): Router {
     if (body.piModelMenu !== undefined) patch.piModelMenu = body.piModelMenu;
     if (body.piProviders !== undefined) patch.piProviders = body.piProviders;
     if (body.opengrep !== undefined) patch.opengrep = body.opengrep;
+    if (body.minFreeDiskGb !== undefined) {
+      const n = Number(body.minFreeDiskGb);
+      if (!Number.isFinite(n) || n < 0) {
+        return res.status(400).json({ error: 'minFreeDiskGb must be a non-negative number' });
+      }
+      patch.minFreeDiskGb = n;
+    }
+    if (body.autoMergeOnLowDisk !== undefined) {
+      if (typeof body.autoMergeOnLowDisk !== 'boolean') {
+        return res.status(400).json({ error: 'autoMergeOnLowDisk must be a boolean' });
+      }
+      patch.autoMergeOnLowDisk = body.autoMergeOnLowDisk;
+    }
 
     const updated = await updateGlobalSettings(patch);
     // Apply the new softCap to the live queue so it takes effect without a

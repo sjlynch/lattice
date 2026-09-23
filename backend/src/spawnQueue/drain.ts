@@ -5,7 +5,7 @@
 // drain itself never blocks on a thunk (admitted thunks run detached).
 
 import { queueState, type QueueRequest } from './state.js';
-import { isSpawnCapacityError } from './types.js';
+import { isSpawnCapacityError, isSpawnDiskSpaceError } from './types.js';
 
 export function drainQueue(): void {
   const s = queueState;
@@ -30,13 +30,20 @@ function admitWhilePossible(): void {
   const s = queueState;
   // Re-scan after every admission: a reservation shrinks headroom, so a
   // batch item can stop being admittable while a priority item still is.
+  const now = Date.now();
   for (;;) {
     const next = s
       .pendingSorted()
-      .find((r) => s.accounting.canAdmit(r.priority));
+      .find((r) => !isBackingOff(r, now) && s.accounting.canAdmit(r.priority));
     if (!next) break;
     admit(next);
   }
+}
+
+// A disk-deferred request sits out its backoff; the poll loop (which keeps
+// running while any request is queued) re-drains once `retryAt` passes.
+function isBackingOff(request: QueueRequest, now: number): boolean {
+  return !!request.waitingForDisk && request.waitingForDisk.retryAt > now;
 }
 
 function admit(request: QueueRequest): void {
@@ -55,13 +62,31 @@ async function runThunk(
   const s = queueState;
   try {
     const result = await request.thunk();
+    if (request.waitingForDisk) {
+      console.log(`[spawn-queue] ${request.kind} (${request.dedupeKey}) had enough disk space on retry — started`);
+    }
     s.accounting.markSpawned(reservationId, Date.now());
     s.remove(request.dedupeKey);
     request.resolve(result);
     // No slot freed (the reservation becomes a real session, reconciled by
     // a later poll), so no re-drain is needed here.
   } catch (err) {
-    if (isSpawnCapacityError(err) && !request.signal?.aborted) {
+    if (isSpawnDiskSpaceError(err) && !request.signal?.aborted) {
+      // Not enough disk for another worktree. Nothing was created: free the
+      // slot and back THIS request off. Unlike CAP, admissions are not frozen
+      // — a spawn that needs no new disk (resolver, resume) may still run.
+      s.accounting.release(reservationId);
+      const firstDeferral = !request.waitingForDisk;
+      request.state = 'pending';
+      request.reservationId = undefined;
+      request.waitingForDisk = { reason: err.message, retryAt: Date.now() + err.retryAfterMs };
+      if (firstDeferral) {
+        console.warn(
+          `[spawn-queue] ${request.kind} (${request.dedupeKey}) waiting for disk space — ${err.message}`,
+        );
+      }
+      drainQueue();
+    } else if (isSpawnCapacityError(err) && !request.signal?.aborted) {
       // The hard cap rejected the spawn — the queue over-admitted. No
       // session was created: free the reservation, freeze admissions until
       // the next poll corrects liveCount, and re-queue the request. Its

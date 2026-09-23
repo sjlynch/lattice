@@ -37,6 +37,8 @@ export type SpawnQueueSnapshotItem = {
   dedupeKey: string;
   enqueuedAt: number;
   state: 'pending' | 'in-flight';
+  // Set while the request is backing off after a disk-space deferral.
+  waitingForDisk?: { reason: string; retryAt: number };
 };
 
 export type SpawnQueueSnapshot = {
@@ -70,4 +72,34 @@ export function isSpawnCapacityError(err: unknown): err is SpawnCapacityError {
       err !== null &&
       (err as { isSpawnCapacityError?: unknown }).isSpawnCapacityError === true)
   );
+}
+
+// Thrown by a thunk when creating its worktree would push the disk below the
+// free-space reserve (worktree/diskSpace.ts). Like a CAP rejection it is NOT a
+// failure: the queue re-queues the request, but with a per-request backoff
+// (`retryAfterMs`) instead of freezing every admission — spawns that need no
+// new disk (merge resolvers, resumes) keep flowing. `notifyDiskSpaceFreed`
+// cuts the backoff short when a worktree cleanup frees space.
+export class SpawnDiskSpaceError extends Error {
+  readonly isSpawnDiskSpaceError = true;
+  constructor(message: string, readonly retryAfterMs: number) {
+    super(message);
+    this.name = 'SpawnDiskSpaceError';
+  }
+}
+
+export function isSpawnDiskSpaceError(err: unknown): err is SpawnDiskSpaceError {
+  return (
+    err instanceof SpawnDiskSpaceError ||
+    (typeof err === 'object' &&
+      err !== null &&
+      (err as { isSpawnDiskSpaceError?: unknown }).isSpawnDiskSpaceError === true)
+  );
+}
+
+// Either deferral: the spawn was not attempted for lack of a resource and the
+// queue will retry it. Callers outside the queue (runSpawnThunk, the workflow
+// Start step) must treat both as "deferred", never as a failed start.
+export function isSpawnDeferral(err: unknown): boolean {
+  return isSpawnCapacityError(err) || isSpawnDiskSpaceError(err);
 }

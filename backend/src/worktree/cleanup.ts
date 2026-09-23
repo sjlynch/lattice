@@ -29,7 +29,7 @@ import { projectGit } from './projectGit.js';
 // so this pre-check can't drift from the policy that would actually throw.
 import { LATTICE_BRANCH_RE } from './projectGit/policy.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
-import { notifySessionsFreed } from '../spawnQueue.js';
+import { notifyDiskSpaceFreed, notifySessionsFreed } from '../spawnQueue.js';
 import { assertGitDirIntact, parseWorktreesPorcelain } from './state.js';
 import { assertNotReparsePoint, assertSafeWorktreePath } from './cleanupSafety.js';
 import { pruneReparsePointsUnder } from './reparsePoints.js';
@@ -42,9 +42,11 @@ export type WorktreeCleanupDeps = {
   proxyKillSessionsByCwd: typeof proxyKillSessionsByCwd;
   notifySessionsFreed: typeof notifySessionsFreed;
   archiveUncommitted?: typeof archiveUncommittedWorktreeChanges;
+  // Optional so hand-built test deps keep compiling.
+  notifyDiskSpaceFreed?: typeof notifyDiskSpaceFreed;
 };
 const defaultDeps: WorktreeCleanupDeps = {
-  projectGit, proxyKillSessionsByCwd, notifySessionsFreed,
+  projectGit, proxyKillSessionsByCwd, notifySessionsFreed, notifyDiskSpaceFreed,
 };
 
 export type WorktreeCleanupOptions = {
@@ -206,6 +208,9 @@ export async function cleanupWorktreeForTask(
       // branch -D here only adds "branch used by worktree" to the actual error.
       return false;
     }
+    // The checkout's disk is back: runs deferred for space retry now instead
+    // of sitting out their backoff.
+    deps.notifyDiskSpaceFreed?.();
   }
   if (await pathExists(worktreePath)) {
     // git reported success but the dir is somehow still there. Don't fs.rm —

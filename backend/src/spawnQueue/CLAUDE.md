@@ -45,6 +45,18 @@ is now only a runaway backstop; the queue's `softCap` is the real governor.
   'CAP'`, surfaced as `SpawnCapacityError`) releases the reservation, freezes
   admissions until the next successful poll, and re-queues the request at the
   front of its band. `done` stays pending across CAP retries.
+- **Disk space is not a failure either.** A thunk whose worktree would cross
+  the free-space reserve throws `SpawnDiskSpaceError` (`worktree/diskSpace.ts`).
+  The queue releases the reservation and re-queues the request with a
+  per-request backoff (`waitingForDisk.retryAt`, 30 s) — admissions are NOT
+  frozen, so spawns that need no new disk (resolvers, resumes) keep flowing.
+  `notifyDiskSpaceFreed()` (called by `cleanupWorktreeForTask` after a
+  successful `git worktree remove`) cuts every backoff short. Outside the queue,
+  `isSpawnDeferral(err)` (CAP or disk) is what `runSpawnThunk` and the workflow
+  Start step check, so a disk wait never counts as a failed start. The first
+  disk deferral of a task run also asks `diskPressureMerge.ts` to merge the
+  project's parked Ready-to-Merge tasks (skipped while a workflow / merge run /
+  post-merge hook is active; opt-out `globalSettings.autoMergeOnLowDisk`).
 - **Poll failure freezes admissions.** `proxyCountSessions()` returns `null`
   (not `0`) when the terminal-server is unreachable; the queue keeps the last
   count and admits nothing until a poll succeeds.

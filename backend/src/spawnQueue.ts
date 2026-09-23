@@ -21,7 +21,10 @@ import type {
 
 export {
   SpawnCapacityError,
+  SpawnDiskSpaceError,
   isSpawnCapacityError,
+  isSpawnDeferral,
+  isSpawnDiskSpaceError,
 } from './spawnQueue/types.js';
 export type {
   SpawnPriority,
@@ -67,6 +70,21 @@ export function cancelSpawn(dedupeKey: string): boolean {
 export function notifySessionsFreed(): void {
   if (queueState.pendingCount() === 0) return;
   pokePoll();
+}
+
+// Hint that disk space was just freed (a worktree was removed, a merge
+// finalized). Cut every disk-deferred request's backoff short and drain, so a
+// run waiting on space starts as soon as a merge makes room rather than up to
+// one backoff later. A no-op when nothing is waiting on disk.
+export function notifyDiskSpaceFreed(): void {
+  let any = false;
+  for (const r of queueState.pendingSorted()) {
+    if (r.waitingForDisk) {
+      r.waitingForDisk = { ...r.waitingForDisk, retryAt: 0 };
+      any = true;
+    }
+  }
+  if (any) drainQueue();
 }
 
 export function getSpawnQueueSnapshot(): SpawnQueueSnapshot {

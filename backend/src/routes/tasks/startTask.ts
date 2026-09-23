@@ -8,7 +8,8 @@
 import { getTask, listTasks, updateTask, type Task } from '../../tasks.js';
 import { cleanupWorktreeForTask, setupTaskWorktree } from '../../worktree.js';
 import { proxyKillSession } from '../../terminalProxy.js';
-import { SpawnCapacityError } from '../../spawnQueue.js';
+import { SpawnCapacityError, isSpawnDiskSpaceError } from '../../spawnQueue.js';
+import { requestMergeToFreeDiskSpace } from '../../diskPressureMerge.js';
 import { normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
 import { normalizePiModel, resolvePiModel } from '../../piModels.js';
 import { isCodexYoloEnabled } from '../../userSettings.js';
@@ -88,12 +89,21 @@ export async function startTaskById(
     piModel,
     codexYolo,
   });
-  const result = await setupTaskWorktree(
-    task.projectPath,
-    task,
-    backendOrigin,
-    selectedHarness.harness,
-  );
+  let result: Awaited<ReturnType<typeof setupTaskWorktree>>;
+  try {
+    result = await setupTaskWorktree(
+      task.projectPath,
+      task,
+      backendOrigin,
+      selectedHarness.harness,
+    );
+  } catch (err) {
+    // No room for another checkout: the task stays Open and the spawn queue
+    // retries it. Ask for a merge run so parked Ready-to-Merge worktrees give
+    // their space back (gated + throttled — see diskPressureMerge.ts).
+    if (isSpawnDiskSpaceError(err)) requestMergeToFreeDiskSpace(task.projectPath, backendOrigin);
+    throw err;
+  }
   const spawn = await selectedHarness.createSession({
     taskFile: result.taskFile,
     cwd: result.worktreePath,

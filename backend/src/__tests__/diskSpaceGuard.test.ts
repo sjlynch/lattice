@@ -1,0 +1,221 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  reserveWorktreeDiskSpace,
+  resetDiskSpaceStateForTests,
+  type DiskSpaceDeps,
+} from '../worktree/diskSpace.js';
+import {
+  SpawnDiskSpaceError,
+  enqueueSpawn,
+  getSpawnQueueSnapshot,
+  isSpawnDeferral,
+  notifyDiskSpaceFreed,
+} from '../spawnQueue.js';
+import { queueState } from '../spawnQueue/state.js';
+import {
+  mergeToFreeDiskSpace,
+  resetDiskPressureMergeStateForTests,
+  type DiskPressureMergeDeps,
+} from '../diskPressureMerge.js';
+import { pruneBundles, type BundleFile } from '../worktree/gitBackup.js';
+import { sweepWorktreeResidue } from '../recovery/worktreeResidueSweep.js';
+import type { Task } from '../tasks.js';
+
+// Regression coverage for the 2026-09-22 disk-full incident: queued workflows
+// on a large repo (6.5 GB per worktree, 4.3 GB of it Git LFS) created
+// checkouts until the disk ran out. The guard defers — never fails — a run
+// whose checkout would cross the free-space reserve.
+
+const GB = 1024 ** 3;
+
+function diskDeps(free: number, estimate: number, minFree = 10 * GB): DiskSpaceDeps {
+  return {
+    estimateCheckoutBytes: async () => estimate,
+    freeBytesAt: async () => free,
+    minFreeBytes: async () => minFree,
+  };
+}
+
+test('admits a checkout that fits above the reserve', async () => {
+  resetDiskSpaceStateForTests();
+  const r = await reserveWorktreeDiskSpace('C:\\repo', 'C:\\wt', diskDeps(20 * GB, 6 * GB));
+  r.release();
+});
+
+test('defers (SpawnDiskSpaceError) a checkout that would cross the reserve', async () => {
+  resetDiskSpaceStateForTests();
+  await assert.rejects(
+    reserveWorktreeDiskSpace('C:\\repo', 'C:\\wt', diskDeps(15 * GB, 6 * GB)),
+    (err: unknown) => {
+      assert.ok(err instanceof SpawnDiskSpaceError);
+      assert.ok(isSpawnDeferral(err), 'a disk deferral is a deferral, not a failure');
+      assert.match((err as Error).message, /stays queued/);
+      return true;
+    },
+  );
+});
+
+test('concurrent setups reserve against each other until released', async () => {
+  resetDiskSpaceStateForTests();
+  const deps = diskDeps(25 * GB, 6 * GB);
+  const first = await reserveWorktreeDiskSpace('C:\\repo', 'C:\\wt', deps);
+  const second = await reserveWorktreeDiskSpace('C:\\repo', 'C:\\wt', deps);
+  // 25 − 12 reserved − 6 = 7 < 10 reserve.
+  await assert.rejects(reserveWorktreeDiskSpace('C:\\repo', 'C:\\wt', deps), SpawnDiskSpaceError);
+  first.release();
+  first.release(); // idempotent
+  const third = await reserveWorktreeDiskSpace('C:\\repo', 'C:\\wt', deps);
+  second.release();
+  third.release();
+});
+
+test('an unmeasurable disk never blocks work', async () => {
+  resetDiskSpaceStateForTests();
+  const r = await reserveWorktreeDiskSpace('C:\\repo', 'C:\\wt', {
+    estimateCheckoutBytes: async () => null,
+    freeBytesAt: async () => 1,
+    minFreeBytes: async () => 10 * GB,
+  });
+  r.release();
+});
+
+test('spawn queue: a disk deferral re-queues with a backoff and notifyDiskSpaceFreed retries it', async () => {
+  queueState.accounting.reconcile(0, Date.now());
+  let calls = 0;
+  const { done } = enqueueSpawn({
+    kind: 'task-run',
+    priority: 'batch',
+    dedupeKey: 'disk-test:1',
+    thunk: async () => {
+      calls += 1;
+      if (calls === 1) throw new SpawnDiskSpaceError('no room', 60_000);
+      return 'spawned';
+    },
+  });
+  // Let the first (failing) attempt settle.
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(calls, 1);
+  const item = getSpawnQueueSnapshot().items.find((i) => i.dedupeKey === 'disk-test:1');
+  assert.ok(item, 'the request is still queued, not dropped');
+  assert.equal(item.state, 'pending');
+  assert.equal(item.waitingForDisk?.reason, 'no room');
+  // The 60 s backoff would hold it; a freed worktree cuts it short.
+  notifyDiskSpaceFreed();
+  assert.equal(await done, 'spawned');
+  assert.equal(calls, 2);
+});
+
+function mergeDeps(over: Partial<DiskPressureMergeDeps> = {}): DiskPressureMergeDeps & { started: string[] } {
+  const started: string[] = [];
+  let t = 1_000_000;
+  return {
+    autoMergeEnabled: async () => true,
+    hasActiveMergeRun: () => false,
+    hasActiveWorkflowRun: () => false,
+    hasActivePostMergeHook: () => false,
+    countReadyToMerge: async () => 3,
+    startMergeRun: async (p) => {
+      started.push(p);
+    },
+    now: () => (t += 1),
+    started,
+    ...over,
+  };
+}
+
+test('disk pressure starts a merge run when Ready-to-Merge work is parked', async () => {
+  resetDiskPressureMergeStateForTests();
+  const deps = mergeDeps();
+  assert.equal(await mergeToFreeDiskSpace('C:\\proj', 'http://x', deps), 'started');
+  assert.equal(deps.started.length, 1);
+  // Throttled: a burst of deferred runs asks once.
+  assert.equal(await mergeToFreeDiskSpace('C:\\proj', 'http://x', deps), 'throttled');
+  assert.equal(deps.started.length, 1);
+});
+
+test('disk pressure never merges over an active workflow, merge run, or hook, or when disabled', async () => {
+  const cases: Array<[Partial<DiskPressureMergeDeps>, string]> = [
+    [{ hasActiveWorkflowRun: () => true }, 'workflow-active'],
+    [{ hasActiveMergeRun: () => true }, 'merge-run-active'],
+    [{ hasActivePostMergeHook: () => true }, 'hook-active'],
+    [{ countReadyToMerge: async () => 0 }, 'nothing-to-merge'],
+    [{ autoMergeEnabled: async () => false }, 'disabled'],
+  ];
+  for (const [over, expected] of cases) {
+    resetDiskPressureMergeStateForTests();
+    const deps = mergeDeps(over);
+    assert.equal(await mergeToFreeDiskSpace('C:\\proj', 'http://x', deps), expected);
+    assert.equal(deps.started.length, 0, expected);
+  }
+});
+
+test('bundle pruning honours count and byte budgets but always keeps the newest', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-bundles-'));
+  try {
+    const bundles: BundleFile[] = [];
+    for (let i = 1; i <= 5; i += 1) {
+      const name = `2026-09-1${i}T00-00-00-000Z.bundle`;
+      await fs.writeFile(path.join(dir, name), 'x');
+      bundles.push({ name, bytes: 3.5 * GB, mtimeMs: i });
+    }
+    // 8 GB budget with 3.5 GB bundles → the newest two survive.
+    await pruneBundles(dir, bundles, 5, 8 * GB);
+    assert.deepEqual((await fs.readdir(dir)).sort(), bundles.slice(3).map((b) => b.name));
+    // A budget smaller than one bundle still keeps the newest.
+    await pruneBundles(dir, bundles.slice(3), 4, 1 * GB);
+    assert.deepEqual(await fs.readdir(dir), [bundles[4].name]);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('residue sweep removes only old, unregistered, unowned, node_modules-only dirs', async () => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-residue-'));
+  try {
+    const mk = async (name: string, entries: string[]) => {
+      const dir = path.join(base, name);
+      await fs.mkdir(dir);
+      for (const e of entries) {
+        if (e.endsWith('/')) await fs.mkdir(path.join(dir, e));
+        else await fs.writeFile(path.join(dir, e), 'x');
+      }
+      return dir;
+    };
+    await mk('residue-a', ['node_modules/']);
+    await mk('empty-b', []);
+    await mk('has-source-c', ['node_modules/', 'index.ts']);
+    await mk('has-git-d', ['.git']);
+    const registered = await mk('registered-e', ['node_modules/']);
+    const owned = await mk('owned-f', ['node_modules/']);
+    const live = await mk('live-g', ['node_modules/']);
+
+    const removedDirs: string[] = [];
+    const tasks = [
+      { id: 'x', status: 'ready_to_merge', worktreePath: owned } as unknown as Task,
+    ];
+    const n = await sweepWorktreeResidue(
+      'C:\\repo',
+      tasks,
+      new Set([live.toLowerCase()]),
+      (async () => ({ code: 0, stdout: `worktree ${registered}\0\0`, stderr: '' })) as never,
+      {
+        projectGit: (async () => ({ code: 0, stdout: `worktree ${registered}\0\0`, stderr: '' })) as never,
+        removeDir: async (d) => {
+          removedDirs.push(path.basename(d));
+          return true;
+        },
+        now: () => Date.now() + 60 * 60_000,
+        worktreesDir: () => base,
+      },
+    );
+    assert.equal(n, 2);
+    assert.deepEqual(removedDirs.sort(), ['empty-b', 'residue-a']);
+  } finally {
+    await fs.rm(base, { recursive: true, force: true });
+  }
+});

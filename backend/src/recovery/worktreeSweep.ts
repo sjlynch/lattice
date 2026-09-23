@@ -8,6 +8,7 @@ import {
   projectGit,
 } from '../worktree.js';
 import { archiveUncommittedWorktreeChanges } from '../worktree/discardArchive.js';
+import { sweepWorktreeResidue } from './worktreeResidueSweep.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';
 import { collectLiveSessionCwds, hasLiveSessionAtOrUnder, normalizeCwd } from './liveSessions.js';
 
@@ -34,12 +35,15 @@ export type WorktreeSweepDeps = {
   collectLiveSessionCwds: typeof collectLiveSessionCwds;
   // Optional so hand-built test deps keep compiling; defaults to the real one.
   archiveUncommitted?: typeof archiveUncommittedWorktreeChanges;
+  // Optional for the same reason; absent → no residue sweep.
+  sweepResidue?: typeof sweepWorktreeResidue;
 };
 
 const defaultDeps: WorktreeSweepDeps = {
   forEachKnownProjectSafely, listTasks, gitDirExists, projectGit,
   cleanupWorktreeForTask, collectLiveSessionCwds,
   archiveUncommitted: archiveUncommittedWorktreeChanges,
+  sweepResidue: sweepWorktreeResidue,
 };
 
 export async function sweepOrphanedWorktrees(deps: WorktreeSweepDeps = defaultDeps): Promise<void> {
@@ -141,6 +145,15 @@ export async function sweepOrphanedWorktrees(deps: WorktreeSweepDeps = defaultDe
     // prune: active or user-managed checkouts may just be temporarily offline.
     if (removed > 0) {
       console.log(`[startup] sweep: reclaimed ${removed} orphaned worktree(s) in ${repoRoot}`);
+    }
+
+    // Unregistered leftovers of a part-failed `git worktree remove` (see
+    // worktreeResidueSweep.ts). Detached: hundreds of them may be locked, and
+    // boot must not wait on that.
+    if (deps.sweepResidue) {
+      void deps.sweepResidue(repoRoot, tasks, liveCwds, deps.projectGit).catch((err) => {
+        console.warn(`[startup] residue sweep failed for ${repoRoot}:`, err);
+      });
     }
   });
 }

@@ -7,7 +7,7 @@
 // and any other failure clears the run-queue state + emits `task-spawn-failed`.
 
 import { type Task } from '../../tasks.js';
-import { isSpawnCapacityError } from '../../spawnQueue.js';
+import { isSpawnDeferral } from '../../spawnQueue.js';
 import {
   notifyTaskSpawned,
   notifyTaskSpawnFailed,
@@ -149,10 +149,10 @@ export async function runSpawnThunk(
       });
     }
   } catch (err) {
-    // A CAP error is re-queued and retried — undo the attempt bump (a run) and
-    // leave all other state alone. Any other failure is terminal: surface it
-    // to the UI (and, for a run, clear the queue state).
-    if (isSpawnCapacityError(err)) {
+    // A CAP or disk-space deferral is re-queued and retried — undo the attempt
+    // bump (a run) and leave all other state alone. Any other failure is
+    // terminal: surface it to the UI (and, for a run, clear the queue state).
+    if (isSpawnDeferral(err)) {
       if (kind === 'run') await undoRunAttempt(taskId, deps);
     } else {
       await reportSpawnFailure(taskId, kind, err, deps);

@@ -22,6 +22,8 @@ export type QueueRequest = {
   // request naturally re-sorts to the front of its band.
   enqueuedAt: number;
   state: 'pending' | 'in-flight';
+  // Disk-space backoff: not admitted before `retryAt` (see drain.ts).
+  waitingForDisk?: { reason: string; retryAt: number };
   reservationId?: number;
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
@@ -120,6 +122,7 @@ export class SpawnQueueState {
       dedupeKey: r.dedupeKey,
       enqueuedAt: r.enqueuedAt,
       state: r.state,
+      ...(r.waitingForDisk ? { waitingForDisk: { ...r.waitingForDisk } } : {}),
     }));
     return {
       items,

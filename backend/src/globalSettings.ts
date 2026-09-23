@@ -64,6 +64,18 @@ export type GlobalSettings = {
   // opengrep/settings.ts (`packs: { [packId]: boolean }`, absent = the pack's
   // default).
   opengrep?: OpengrepGlobalSettings;
+  // Free disk space (GB) that creating a task worktree must leave on the
+  // volume holding `~/.lattice/worktrees/`. A run whose checkout would dip
+  // below it waits in the spawn queue instead of filling the disk (see
+  // worktree/diskSpace.ts). Absent → DEFAULT_MIN_FREE_DISK_GB. 0 still defers
+  // a checkout that cannot fit at all.
+  minFreeDiskGb?: number;
+  // When a task run is deferred for disk space and the project has
+  // Ready-to-Merge tasks (whose worktrees are what fills the disk), start a
+  // merge run to free them — unless a merge run, workflow run, or post-merge
+  // hook is already active there. Absent counts as true; false opts out. See
+  // diskPressureMerge.ts.
+  autoMergeOnLowDisk?: boolean;
 };
 
 // --- maxConcurrentAgents (the spawn queue's softCap) ---------------------
@@ -94,6 +106,14 @@ export const GLOBAL_SETTINGS_DEFAULTS: GlobalSettings = {
   maxConcurrentAgents: clampMaxConcurrentAgents(envDefaultMaxAgents()),
 };
 
+// --- minFreeDiskGb (the worktree free-space reserve) ---------------------
+export const DEFAULT_MIN_FREE_DISK_GB = 10;
+const MAX_MIN_FREE_DISK_GB = 10_000;
+
+export function clampMinFreeDiskGb(n: number): number {
+  return Math.min(MAX_MIN_FREE_DISK_GB, Math.max(0, n));
+}
+
 function globalSettingsFile(): string {
   return path.join(latticeHomeDir(), 'globalSettings.json');
 }
@@ -109,6 +129,16 @@ function sanitize(raw: Partial<GlobalSettings>): Partial<GlobalSettings> {
     raw.maxConcurrentAgents > 0
   ) {
     out.maxConcurrentAgents = clampMaxConcurrentAgents(raw.maxConcurrentAgents);
+  }
+  if (
+    typeof raw.minFreeDiskGb === 'number' &&
+    Number.isFinite(raw.minFreeDiskGb) &&
+    raw.minFreeDiskGb >= 0
+  ) {
+    out.minFreeDiskGb = clampMinFreeDiskGb(raw.minFreeDiskGb);
+  }
+  if (typeof raw.autoMergeOnLowDisk === 'boolean') {
+    out.autoMergeOnLowDisk = raw.autoMergeOnLowDisk;
   }
   if (raw.mcpCustomServers !== undefined) {
     out.mcpCustomServers = sanitizeCustomServers(raw.mcpCustomServers);

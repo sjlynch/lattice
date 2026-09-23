@@ -16,6 +16,7 @@ import {
   logFallbackWorktreeCandidate,
 } from './setupAdd.js';
 import { writePostAddWorktreeFiles } from './setupFiles.js';
+import { recordWorktreeCheckoutSize, reserveWorktreeDiskSpace } from './diskSpace.js';
 import { getDeadCodeSummarySafe } from '../deadCode.js';
 
 export type WorktreeResult = {
@@ -47,7 +48,16 @@ export async function setupTaskWorktree(
   const plan = buildWorktreeCandidatePlan(repoRoot, task);
   await fs.mkdir(plan.worktreesDir, { recursive: true });
 
-  const candidate = await addWorktreeWithRetries(repoRoot, plan, task.title);
+  // Throws SpawnDiskSpaceError (a spawn-queue deferral, not a failure) when
+  // the checkout would push the disk below the free-space reserve.
+  const disk = await reserveWorktreeDiskSpace(repoRoot, plan.worktreesDir);
+  let candidate: Awaited<ReturnType<typeof addWorktreeWithRetries>>;
+  try {
+    candidate = await addWorktreeWithRetries(repoRoot, plan, task.title);
+  } finally {
+    disk.release();
+  }
+  void recordWorktreeCheckoutSize(repoRoot, candidate.candidatePath);
   // Dead-code summary is derived from the *main checkout* (warm health cache),
   // not the fresh worktree. Best-effort + time-bounded so a slow scan never
   // blocks worktree creation; a null result just omits the note.
