@@ -87,7 +87,10 @@ here instead of bloating the parent file.
   (`runCtx.baselineHead`) advances after each passing check, so a rewind to
   the run-start HEAD trips too. On a violation it records a `(run)` error,
   sets `cancelRequested`, and halts so the remaining `ready_to_merge` tasks stay
-  put rather than piling onto a damaged repo.
+  put rather than piling onto a damaged repo. It also halts (`lock-halt`) when
+  a task errored on a git lock (`Unable to create '….lock': File exists`) that
+  is still there after the FF's retries and a `clearStaleGitLocks` sweep —
+  every later task would fail the same way (2026-09-23: 25 of 25 did).
 - `resolverSpawn.ts` + `resolverSpawn/` — conflict-resolver spawn subsystem
   (`resolverSpawn.ts` is the re-export facade; existing `./resolverSpawn.js`
   imports keep working). Split by concern so the spawn *mechanics* stay

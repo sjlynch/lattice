@@ -20,6 +20,11 @@ import {
 import { handleMergeConflict } from './merge/conflict.js';
 import { assertMainOnBranch, preflightWorktreeMerge } from './merge/preflight.js';
 import { runWorktreeMerge } from './merge/runWorktreeMerge.js';
+import { clearStaleGitLocks, gitLockPathFromError } from './staleGitLocks.js';
+
+// Back-off before re-trying a fast-forward that collided with another git
+// process's lock (an IDE's background `git status`, the user's own command).
+export const FF_LOCK_RETRY_DELAYS_MS = [2_000, 5_000, 10_000];
 
 export type MergeConflictKind = 'merge' | 'stash-pop';
 
@@ -93,6 +98,9 @@ async function prepareFastForward(
   // preflight (a resolver's /complete can reach the FF without it).
   const onBranch = await assertMainOnBranch(repoRoot);
   if (!onBranch.ok) return onBranch;
+  // A lock file a killed git left behind fails the snapshot's resets and the
+  // FF itself; clear it first when it is provably abandoned (staleGitLocks.ts).
+  await clearStaleGitLocks(repoRoot);
   const status = await projectGit(repoRoot, ['status', '--porcelain']);
   if (status.code !== 0) {
     return {
@@ -152,7 +160,17 @@ async function performFastForward(
   branchName: string,
   snapshot: SnapshotHandle | undefined,
 ): Promise<{ ok: true } | { ok: false; outcome: MergeOutcome }> {
-  const ff = await projectGit(repoRoot, ['merge', '--ff-only', branchName]);
+  let ff = await projectGit(repoRoot, ['merge', '--ff-only', branchName]);
+  // A lock collision is transient (another git process mid-command) or an
+  // abandoned lock that ages past the stale threshold — retry a few times,
+  // clearing a now-provably-stale lock in between, before giving up.
+  for (const delay of FF_LOCK_RETRY_DELAYS_MS) {
+    if (ff.code === 0 || !gitLockPathFromError(ff.stderr + ff.stdout)) break;
+    console.warn(`[fastForwardMain] ${branchName}: git lock busy — retrying in ${delay / 1000}s`);
+    await new Promise((r) => setTimeout(r, delay));
+    await clearStaleGitLocks(repoRoot);
+    ff = await projectGit(repoRoot, ['merge', '--ff-only', branchName]);
+  }
   if (ff.code !== 0) {
     // FF failed. Restore the snapshot so the user's mods come back, then
     // surface the FF error. We use restore (not discard) because the FF

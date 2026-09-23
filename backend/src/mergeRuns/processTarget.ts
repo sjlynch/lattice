@@ -29,7 +29,8 @@ export type ProcessOutcome =
   | { kind: 'spawned-resolver' }
   | { kind: 'awaiting-resolver' }
   | { kind: 'errored' }
-  | { kind: 'integrity-halt' };
+  | { kind: 'integrity-halt' }
+  | { kind: 'lock-halt' };
 
 function formatMergeResult(result: MergeOutcome): string {
   return `${result.status}${result.status === 'conflict' ? ` (${result.conflictedFiles?.join(', ')})` : result.status === 'error' ? `: ${result.message}` : ''}`;
@@ -72,6 +73,7 @@ function processTargetResultForOutcome(
 ): ProcessTargetResult {
   switch (outcome.kind) {
     case 'integrity-halt':
+    case 'lock-halt':
       return 'halt';
     case 'finalized':
     case 'spawned-resolver':

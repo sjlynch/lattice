@@ -3,6 +3,11 @@ import {
   projectGit,
 } from '../worktree.js';
 import {
+  clearStaleGitLocks,
+  describeBlockingLocks,
+  gitLockPathFromError,
+} from '../worktree/staleGitLocks.js';
+import {
   notify,
   snapshot,
   type MergeRun,
@@ -96,5 +101,38 @@ export async function finishTaskAndCheckIntegrity(
   // had silently lost its commits from main.
   if (integrity.head) runCtx.baselineHead = integrity.head;
 
+  if (outcome.kind === 'errored') {
+    const reason = await persistentLockReason(run, runCtx.projectPath, taskId);
+    if (reason) {
+      const left = run.total - run.processed;
+      console.error(`[merge-run] !!! ${reason}. HALTING RUN — ${left} task(s) left at ready_to_merge.`);
+      run.errored.push({
+        taskId: '(run)',
+        error:
+          `halted after ${taskId}: ${reason}. The remaining ${left} task(s) stay Ready to Merge — ` +
+          'start Merge All again once no git command is running in the project (delete the lock file if none is).',
+      });
+      run.cancelRequested = true;
+      return { kind: 'lock-halt' };
+    }
+  }
+
   return outcome;
+}
+
+// A task that failed on a git lock (`Unable to create '….lock': File exists`)
+// that is STILL there after the fast-forward's retries and a stale-lock sweep
+// will fail every remaining task the same way — on 2026-09-23 all 25 of a
+// run's tasks errored on one abandoned index.lock. Halt once with the reason
+// instead. Returns null when the failure was not a lock or the lock is gone.
+async function persistentLockReason(
+  run: MergeRun,
+  projectPath: string,
+  taskId: string,
+): Promise<string | null> {
+  const last = [...run.errored].reverse().find((e) => e.taskId === taskId);
+  if (!last || !gitLockPathFromError(last.error)) return null;
+  const { blocking } = await clearStaleGitLocks(projectPath);
+  if (blocking.length === 0) return null;
+  return `the project repo is locked by git: ${describeBlockingLocks(blocking)}`;
 }

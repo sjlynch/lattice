@@ -8,6 +8,7 @@ import {
   type SnapshotHandle,
 } from '../worktree.js';
 import { backupTasksFile, listTasks } from '../tasks.js';
+import { clearStaleGitLocks, describeBlockingLocks } from '../worktree/staleGitLocks.js';
 import type { MergeRun } from './state.js';
 
 export type RunPreflightResult = {
@@ -94,6 +95,12 @@ export async function runPreflight(
   // failure mode behind the 2026-05-08/09 .git deletion incidents).
   // recoverPendingSnapshots in startup recovery picks up any orphan
   // snapshot dirs from a crashed run and restores them automatically.
+  // An abandoned git lock (a git killed mid-command) would fail the
+  // snapshot's resets and every fast-forward; clear it when provably stale.
+  const locks = await clearStaleGitLocks(projectPath);
+  if (locks.blocking.length > 0) {
+    console.warn(`[merge-run] project repo has a git lock in place: ${describeBlockingLocks(locks.blocking)}`);
+  }
   let runSnapshot: SnapshotHandle = { dir: '', modifiedTracked: [], untracked: [] };
   try {
     runSnapshot = await snapshotForRun(projectPath, await runStashScope(projectPath));
