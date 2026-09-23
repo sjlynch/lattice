@@ -67,6 +67,7 @@ export class ResourceGovernor {
   private cpuEwma: number | null = null;
   private cpuHot = false;
   private reason: string | null = null;
+  private kind: 'cpu' | 'mem' | null = null;
 
   constructor(private readonly sampler: GovernorSampler = osSampler) {}
 
@@ -75,6 +76,7 @@ export class ResourceGovernor {
     if (!enabled) {
       this.cpuHot = false;
       this.reason = null;
+      this.kind = null;
     }
   }
 
@@ -103,20 +105,26 @@ export class ResourceGovernor {
   // effective live count (sessions + in-flight spawns).
   holdsBatch(liveSessions: number): boolean {
     let reason: string | null = null;
+    let kind: 'cpu' | 'mem' | null = null;
     if (this.enabled && liveSessions >= MIN_LIVE_AGENTS) {
       const free = this.sampler.freeMem();
       const floor = Math.max(MIN_FREE_MEM_BYTES, this.sampler.totalMem() * MIN_FREE_MEM_FRACTION);
       if (this.cpuHot) {
+        kind = 'cpu';
         reason = `CPU at ${Math.round(this.cpuEwma ?? 0)}% (holding new agents until it drops below ${CPU_RESUME_PCT}%)`;
       } else if (free < floor) {
+        kind = 'mem';
         reason = `only ${(free / 1024 ** 3).toFixed(1)} GB RAM free (holding new agents until ${(floor / 1024 ** 3).toFixed(1)} GB is free)`;
       }
     }
-    if (reason !== this.reason) {
+    // Log transitions only — the reason text carries a live number that
+    // changes every poll.
+    if (kind !== this.kind) {
       if (reason) console.warn(`[spawn-queue] resource governor: ${reason}`);
-      else if (this.reason) console.log('[spawn-queue] resource governor: load back to normal — admitting new agents');
-      this.reason = reason;
+      else console.log('[spawn-queue] resource governor: load back to normal — admitting new agents');
+      this.kind = kind;
     }
+    this.reason = reason;
     return reason !== null;
   }
 
