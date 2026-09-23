@@ -50,4 +50,5 @@ export const CLEARED_RUN_QUEUE_STATE = {
   runQueuedHarness: undefined,
   runQueuedPiModel: undefined,
   runFailureCount: undefined,
+  runWaitingForDisk: undefined,
 } as const;

@@ -39,6 +39,8 @@ export type Task = {
   // admitted and the task flips to in_progress.
   runQueued?: boolean;
   runQueuedAt?: number;
+  // Why a queued run is held: its worktree wouldn't fit above the disk reserve.
+  runWaitingForDisk?: string;
   // How many times a queued run has failed deterministically. Boot recovery
   // uses it as a retry ceiling; cleared once the run finally spawns.
   runFailureCount?: number;

@@ -175,6 +175,7 @@ export async function startTaskById(
     runQueuedHarness: undefined,
     runQueuedPiModel: undefined,
     runFailureCount: undefined,
+    runWaitingForDisk: undefined,
   });
   }
 }

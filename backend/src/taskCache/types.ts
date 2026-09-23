@@ -60,6 +60,11 @@ export type Task = {
   // queued run is resolved (started / cancelled / failed / given up).
   runQueuedHarness?: AgentHarness;
   runQueuedPiModel?: string;
+  // Set (once, on the first deferral) while a queued run is held back because
+  // its worktree checkout would push the disk below the free-space reserve —
+  // the message the card shows instead of a bare "queued". Cleared with the
+  // rest of the run-queue state. See worktree/diskSpace.ts.
+  runWaitingForDisk?: string;
   // How many times this task's queued run has been ADMITTED (attempted) without
   // succeeding. Bumped crash-safely at admission time — BEFORE the spawn — so a
   // run that deterministically crashes the whole process mid-spawn (never

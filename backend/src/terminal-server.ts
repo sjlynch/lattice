@@ -24,6 +24,7 @@ import {
 } from './terminalServer/websocket.js';
 import { watchParentProcess } from './terminalServer/parentWatch.js';
 import { createTerminalAdmission } from './terminalServer/admission.js';
+import { sessionCount } from './terminal/sessionStore.js';
 
 installTerminalProcessGuards();
 
@@ -50,11 +51,18 @@ const TERMINAL_FINGERPRINT = computeTerminalFingerprint();
 const app = express();
 const shutdown = createTerminalShutdown();
 const admission = createTerminalAdmission();
+// Last authenticated request from any backend — the parent watch's "is anyone
+// still using us?" signal (backends poll /sessions every few seconds).
+const ORPHAN_BACKEND_GRACE_MS = 60_000;
+let lastBackendContactAt = Date.now();
 registerTerminalRoutes(app, {
   fingerprint: TERMINAL_FINGERPRINT,
   shutdown,
   authToken: TERMINAL_AUTH_TOKEN,
   admission,
+  onAuthenticatedRequest: () => {
+    lastBackendContactAt = Date.now();
+  },
 });
 
 const server = http.createServer(app);
@@ -116,10 +124,27 @@ wireTerminalShutdownSignals(shutdown);
 // no one polling /shutdown and no fingerprint mismatch to trigger a
 // respawn — exactly the "stray node process" symptom that requires
 // killing all node processes by hand.
+//
+// Only when that is safe: never while sessions are live (they are running
+// agents), and never while some backend is still talking to us (a newer
+// backend adopts an existing server; BACKEND_PARENT_PID stays the old one).
 const parentPid = Number(process.env.BACKEND_PARENT_PID);
 if (parentPid) {
+  let deferralLogged = false;
   watchParentProcess(parentPid, () => {
+    if (Date.now() - lastBackendContactAt < ORPHAN_BACKEND_GRACE_MS) return false;
+    if (!admission.closeIfIdle(sessionCount())) {
+      if (!deferralLogged) {
+        deferralLogged = true;
+        console.warn(
+          `[lattice-terminal] orphaned with ${sessionCount()} live session(s) — keeping them running; ` +
+            'the next backend adopts this server, or it exits once they end',
+        );
+      }
+      return false;
+    }
     // Reuse the normal shutdown path so PTYs get reaped before exit.
     void shutdown();
+    return true;
   });
 }

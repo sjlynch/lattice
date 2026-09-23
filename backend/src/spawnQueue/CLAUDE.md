@@ -57,6 +57,16 @@ is now only a runaway backstop; the queue's `softCap` is the real governor.
   disk deferral of a task run also asks `diskPressureMerge.ts` to merge the
   project's parked Ready-to-Merge tasks (skipped while a workflow / merge run /
   post-merge hook is active; opt-out `globalSettings.autoMergeOnLowDisk`).
+- **The resource governor brakes fan-out under load** (`resourceGovernor.ts`).
+  `softCap` is a fixed ceiling; beneath it, `batch` spawns are held while
+  smoothed system CPU (≈20 s EWMA from `os.cpus()` deltas, sampled on every
+  drain) is ≥ 90% — released below 75% — or free RAM is under max(2 GB, 5%).
+  Never below `MIN_LIVE_AGENTS` (2) live sessions, so outside load can't
+  starve Lattice to zero; `priority` / `interactive` are never held. Held
+  requests just stay pending (the 1.5 s poll re-checks). State is on
+  `GET /api/spawn-queue` as `governor`; opt out with
+  `globalSettings.resourceGovernor: false`. Added after a 50-agent cap on a
+  large repo pinned the CPU at 100% and froze the desktop (2026-09-22).
 - **Poll failure freezes admissions.** `proxyCountSessions()` returns `null`
   (not `0`) when the terminal-server is unreachable; the queue keeps the last
   count and admits nothing until a poll succeeds.

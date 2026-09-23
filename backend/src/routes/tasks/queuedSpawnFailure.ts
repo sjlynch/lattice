@@ -7,7 +7,7 @@
 // and any other failure clears the run-queue state + emits `task-spawn-failed`.
 
 import { type Task } from '../../tasks.js';
-import { isSpawnDeferral } from '../../spawnQueue.js';
+import { isSpawnDeferral, isSpawnDiskSpaceError } from '../../spawnQueue.js';
 import {
   notifyTaskSpawned,
   notifyTaskSpawnFailed,
@@ -72,6 +72,23 @@ async function undoRunAttempt(
       `[task-run] failed to undo run attempt for ${taskId}:`,
       err,
     );
+  }
+}
+
+// Tell the card why a queued run isn't starting. Written once per waiting
+// episode (the message embeds live byte counts, and a deferred run retries
+// every 30 s — rewriting it each time would churn the task store + WS).
+async function noteWaitingForDisk(
+  taskId: string,
+  reason: string,
+  deps: SpawnFailureDeps,
+): Promise<void> {
+  const task = await deps.getTask(taskId).catch(() => undefined);
+  if (!task || task.runWaitingForDisk) return;
+  try {
+    await deps.updateTask(taskId, { runWaitingForDisk: reason });
+  } catch (err) {
+    console.error(`[task-run] failed to record disk wait for ${taskId}:`, err);
   }
 }
 
@@ -154,6 +171,7 @@ export async function runSpawnThunk(
     // terminal: surface it to the UI (and, for a run, clear the queue state).
     if (isSpawnDeferral(err)) {
       if (kind === 'run') await undoRunAttempt(taskId, deps);
+      if (kind === 'run' && isSpawnDiskSpaceError(err)) await noteWaitingForDisk(taskId, err.message, deps);
     } else {
       await reportSpawnFailure(taskId, kind, err, deps);
     }

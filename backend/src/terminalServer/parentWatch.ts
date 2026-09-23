@@ -1,4 +1,5 @@
-// Self-terminate when the backend that spawned us is gone.
+// Self-terminate when the backend that spawned us is gone — but only once
+// that is safe.
 //
 // The terminal-server runs detached so its PTYs (and the Claude agents
 // inside them) survive backend dev restarts. The cost: if the backend
@@ -6,32 +7,46 @@
 // a crash without /shutdown), nothing reaps the terminal-server — it
 // just keeps running with a dangling fingerprint that the *next* backend
 // boot will detect and shutdownStale, but the orphan eats RAM and a
-// port until then. Worse, if the user reuses the same checkout (same
-// fingerprint), the orphan is treated as healthy and reused — including
-// any wedged state it might have accumulated.
+// port until then.
 //
 // `BACKEND_PARENT_PID` is the PID of the long-lived dev orchestrator
 // (`scripts/dev.mjs` / `scripts/orchestrate.mjs` in dev, or `node
 // dist/index.js` in prod). It stays the same across backend dist
-// restarts, so we don't terminate during normal tsc-w respawns; only if
-// the orchestrator itself is gone do we shut down.
+// restarts, so we don't terminate during normal tsc-w respawns.
+//
+// Parent gone is NOT enough on its own (2026-09-22): stopping the dev runner
+// while a workflow was mid-flight made this watch shut the server down five
+// seconds later, killing every running agent mid-task — the one thing the
+// detached design exists to prevent. An idle orphan costs some RAM; a killed
+// agent costs its in-flight work. So once the parent is gone the watch keeps
+// polling and lets the caller decide each tick (`tryShutdown`): the server
+// only exits when no backend has contacted it recently (a newer backend
+// adopts an existing server without changing BACKEND_PARENT_PID) AND it has
+// no live or starting sessions.
 
 const POLL_INTERVAL_MS = 5_000;
 
 export function watchParentProcess(
   parentPid: number,
-  onParentGone: () => void,
+  // Called on every tick after the parent is gone. Return true once it has
+  // shut the server down (the watch then stops); false to keep watching.
+  tryShutdown: () => boolean,
+  pollIntervalMs = POLL_INTERVAL_MS,
+  isAlive: (pid: number) => boolean = isProcessAlive,
 ): void {
   if (!parentPid || !Number.isFinite(parentPid) || parentPid <= 0) return;
 
+  let reported = false;
   const timer = setInterval(() => {
-    if (isProcessAlive(parentPid)) return;
-    console.warn(
-      `[lattice-terminal] backend parent pid ${parentPid} is gone — self-terminating to avoid orphan accumulation`,
-    );
-    clearInterval(timer);
-    onParentGone();
-  }, POLL_INTERVAL_MS);
+    if (isAlive(parentPid)) return;
+    if (!reported) {
+      reported = true;
+      console.warn(
+        `[lattice-terminal] backend parent pid ${parentPid} is gone — will self-terminate once idle and unowned`,
+      );
+    }
+    if (tryShutdown()) clearInterval(timer);
+  }, pollIntervalMs);
   timer.unref();
 }
 
@@ -48,4 +63,3 @@ function isProcessAlive(pid: number): boolean {
     return false;
   }
 }
-

@@ -99,6 +99,12 @@ export function setSpawnQueueSoftCap(softCap: number): void {
   drainQueue();
 }
 
+// Toggle the CPU/RAM brake on batch admission (spawnQueue/resourceGovernor.ts).
+export function setSpawnQueueResourceGovernor(enabled: boolean): void {
+  queueState.governor.setEnabled(enabled);
+  drainQueue();
+}
+
 // Boot hook: apply the persisted softCap from global settings, then prime
 // the accounting with one /sessions poll so the first enqueue after startup
 // admits immediately instead of waiting a poll cycle. Best-effort — if the
@@ -108,6 +114,7 @@ export async function startSpawnQueue(): Promise<void> {
   try {
     const settings = await getGlobalSettings();
     queueState.accounting.setSoftCap(settings.maxConcurrentAgents);
+    queueState.governor.setEnabled(settings.resourceGovernor !== false);
   } catch (err) {
     console.error(
       '[spawn-queue] could not load global settings; using default softCap:',

@@ -67,9 +67,13 @@ export const TaskCardBody = memo(function TaskCardBody({
         {task.runQueued && (
           <span
             className="task-card-queued-pill"
-            title="Waiting for a free agent slot — runs automatically when one frees up"
+            title={
+              task.runWaitingForDisk
+                ? `Waiting for disk space — ${task.runWaitingForDisk}`
+                : 'Waiting for a free agent slot — runs automatically when one frees up'
+            }
           >
-            <Hourglass size={9} /> queued
+            <Hourglass size={9} /> {task.runWaitingForDisk ? 'waiting for disk' : 'queued'}
           </span>
         )}
         {task.title}

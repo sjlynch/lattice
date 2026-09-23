@@ -17,6 +17,7 @@ import {
 } from './setupAdd.js';
 import { writePostAddWorktreeFiles } from './setupFiles.js';
 import { recordWorktreeCheckoutSize, reserveWorktreeDiskSpace } from './diskSpace.js';
+import { withCheckoutSlot } from './checkoutGate.js';
 import { getDeadCodeSummarySafe } from '../deadCode.js';
 
 export type WorktreeResult = {
@@ -48,15 +49,18 @@ export async function setupTaskWorktree(
   const plan = buildWorktreeCandidatePlan(repoRoot, task);
   await fs.mkdir(plan.worktreesDir, { recursive: true });
 
-  // Throws SpawnDiskSpaceError (a spawn-queue deferral, not a failure) when
-  // the checkout would push the disk below the free-space reserve.
-  const disk = await reserveWorktreeDiskSpace(repoRoot, plan.worktreesDir);
-  let candidate: Awaited<ReturnType<typeof addWorktreeWithRetries>>;
-  try {
-    candidate = await addWorktreeWithRetries(repoRoot, plan, task.title);
-  } finally {
-    disk.release();
-  }
+  // Heavy checkouts run two at a time (checkoutGate.ts). Inside the gate, the
+  // disk guard throws SpawnDiskSpaceError (a spawn-queue deferral, not a
+  // failure) when the checkout would push the disk below the free-space
+  // reserve — checked there so setups waiting on the gate hold no reservation.
+  const candidate = await withCheckoutSlot(async () => {
+    const disk = await reserveWorktreeDiskSpace(repoRoot, plan.worktreesDir);
+    try {
+      return await addWorktreeWithRetries(repoRoot, plan, task.title);
+    } finally {
+      disk.release();
+    }
+  });
   void recordWorktreeCheckoutSize(repoRoot, candidate.candidatePath);
   // Dead-code summary is derived from the *main checkout* (warm health cache),
   // not the fresh worktree. Best-effort + time-bounded so a slow scan never

@@ -9,7 +9,7 @@ import {
   updateGlobalSettings,
   type GlobalSettings,
 } from '../globalSettings.js';
-import { setSpawnQueueSoftCap } from '../spawnQueue.js';
+import { setSpawnQueueResourceGovernor, setSpawnQueueSoftCap } from '../spawnQueue.js';
 import { reconcilePiModelsJson, refreshEndpointDiscovery } from '../piModels.js';
 import { PI_MODELS_CONFIG } from '../piModels/config.js';
 
@@ -56,11 +56,18 @@ export function buildGlobalSettingsRouter(): Router {
       }
       patch.autoMergeOnLowDisk = body.autoMergeOnLowDisk;
     }
+    if (body.resourceGovernor !== undefined) {
+      if (typeof body.resourceGovernor !== 'boolean') {
+        return res.status(400).json({ error: 'resourceGovernor must be a boolean' });
+      }
+      patch.resourceGovernor = body.resourceGovernor;
+    }
 
     const updated = await updateGlobalSettings(patch);
     // Apply the new softCap to the live queue so it takes effect without a
     // restart (raising it drains deferred spawns into the new headroom).
     setSpawnQueueSoftCap(updated.maxConcurrentAgents);
+    setSpawnQueueResourceGovernor(updated.resourceGovernor !== false);
     // When Pi providers changed, reconcile them into ~/.pi/agent/models.json
     // so the new endpoint's models are immediately discoverable, then probe the
     // auto-discover endpoints right away (bypassing the TTL) — that is what

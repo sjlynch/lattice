@@ -21,9 +21,12 @@ export type RegisterTerminalRoutesOptions = {
   admission?: TerminalAdmission;
   instanceId?: string;
   sessionCount?: () => number;
+  // Fired on every authenticated (backend) request — the parent watch's
+  // "a backend still owns this server" signal.
+  onAuthenticatedRequest?: () => void;
 };
 
-function requireTerminalAuth(authToken: string): RequestHandler {
+function requireTerminalAuth(authToken: string, onAuthenticated?: () => void): RequestHandler {
   return (req, res, next) => {
     // Browser requests carry an immutable Origin. Reject disallowed origins
     // before token validation so the detached HTTP API follows the same allowlist
@@ -39,6 +42,7 @@ function requireTerminalAuth(authToken: string): RequestHandler {
       res.status(401).json({ error: 'terminal-server: unauthorized' });
       return;
     }
+    onAuthenticated?.();
     next();
   };
 }
@@ -47,7 +51,7 @@ export function registerTerminalRoutes(
   app: Express,
   { fingerprint, shutdown, authToken, sessionHandler,
     admission = createTerminalAdmission(), instanceId = randomUUID(),
-    sessionCount = liveSessionCount }: RegisterTerminalRoutesOptions,
+    sessionCount = liveSessionCount, onAuthenticatedRequest }: RegisterTerminalRoutesOptions,
 ): void {
   app.use(express.json());
 
@@ -56,7 +60,7 @@ export function registerTerminalRoutes(
       capabilities: { idempotentCreate: true, shutdownIfIdle: true, nativeTerminalTitle: true } });
   });
 
-  const requireAuth = requireTerminalAuth(authToken);
+  const requireAuth = requireTerminalAuth(authToken, onAuthenticatedRequest);
 
   app.get('/sessions', requireAuth, (_req, res) => {
     res.json(listSessions());

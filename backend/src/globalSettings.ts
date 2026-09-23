@@ -76,6 +76,10 @@ export type GlobalSettings = {
   // hook is already active there. Absent counts as true; false opts out. See
   // diskPressureMerge.ts.
   autoMergeOnLowDisk?: boolean;
+  // Hold new fan-out spawns (task runs, workflow steps) while system CPU is
+  // saturated or RAM is low, beneath the `maxConcurrentAgents` ceiling. Absent
+  // counts as true; false opts out. See spawnQueue/resourceGovernor.ts.
+  resourceGovernor?: boolean;
 };
 
 // --- maxConcurrentAgents (the spawn queue's softCap) ---------------------
@@ -139,6 +143,9 @@ function sanitize(raw: Partial<GlobalSettings>): Partial<GlobalSettings> {
   }
   if (typeof raw.autoMergeOnLowDisk === 'boolean') {
     out.autoMergeOnLowDisk = raw.autoMergeOnLowDisk;
+  }
+  if (typeof raw.resourceGovernor === 'boolean') {
+    out.resourceGovernor = raw.resourceGovernor;
   }
   if (raw.mcpCustomServers !== undefined) {
     out.mcpCustomServers = sanitizeCustomServers(raw.mcpCustomServers);

@@ -31,10 +31,15 @@ function admitWhilePossible(): void {
   // Re-scan after every admission: a reservation shrinks headroom, so a
   // batch item can stop being admittable while a priority item still is.
   const now = Date.now();
+  s.governor.sample();
   for (;;) {
     const next = s
       .pendingSorted()
-      .find((r) => !isBackingOff(r, now) && s.accounting.canAdmit(r.priority));
+      .find((r) =>
+        !isBackingOff(r, now) &&
+        s.accounting.canAdmit(r.priority) &&
+        // Fan-out work waits while the machine is saturated (resourceGovernor.ts).
+        !(r.priority === 'batch' && s.governor.holdsBatch(s.accounting.effectiveLive())));
     if (!next) break;
     admit(next);
   }

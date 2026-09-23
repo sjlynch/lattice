@@ -4,6 +4,7 @@
 
 import { SpawnAccounting } from './accounting.js';
 import { SPAWN_QUEUE_CONFIG } from './config.js';
+import { ResourceGovernor } from './resourceGovernor.js';
 import type {
   EnqueueSpawnArgs,
   SpawnPriority,
@@ -41,6 +42,8 @@ export class SpawnQueueState {
     SPAWN_QUEUE_CONFIG.softCap,
     SPAWN_QUEUE_CONFIG.priorityReserve,
   );
+
+  readonly governor = new ResourceGovernor();
 
   isDraining = false;
   drainAgain = false;
@@ -133,6 +136,7 @@ export class SpawnQueueState {
       effectiveLive: this.accounting.effectiveLive(),
       pollHealthy: this.accounting.isPollHealthy(),
       softCap: this.accounting.getSoftCap(),
+      governor: this.governor.state(),
     };
   }
 }

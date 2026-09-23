@@ -50,6 +50,13 @@ export type SpawnQueueSnapshot = {
   effectiveLive: number;
   pollHealthy: boolean;
   softCap: number;
+  // The CPU/RAM brake on batch admission (resourceGovernor.ts).
+  governor: {
+    cpuPct: number | null;
+    freeMemBytes: number;
+    holdingBatch: boolean;
+    reason: string | null;
+  };
 };
 
 // Thrown by a thunk (or surfaced by the queue) when the terminal-server's

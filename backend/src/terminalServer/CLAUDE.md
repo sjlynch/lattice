@@ -85,10 +85,19 @@ close admission. Unknown/unhealthy listeners are never force-killed.
 - `shutdown.ts` — `createTerminalShutdown()` (idempotent: kill every session, wait
   ~500 ms for `taskkill /T` to walk the tree, then `process.exit(0)`) +
   `wireTerminalShutdownSignals` (SIGTERM/SIGINT).
-- `parentWatch.ts` — `watchParentProcess(parentPid, onGone)`: poll
+- `parentWatch.ts` — `watchParentProcess(parentPid, tryShutdown)`: poll
   `BACKEND_PARENT_PID` (the long-lived orchestrator's pid, stable across dev
-  restarts) and self-terminate if it disappears, so an ungracefully-killed
-  backend doesn't leave this detached process orphaned on the box.
+  restarts); once it is gone, ask `tryShutdown` every tick until it agrees.
+  `terminal-server.ts` agrees only when no backend has made an authenticated
+  request for 60 s (a newer backend adopts an existing server without changing
+  `BACKEND_PARENT_PID`) **and** `admission.closeIfIdle(sessionCount())` — so an
+  ungracefully-killed orchestrator (crash, `taskkill /F`, closed console) no
+  longer takes every running agent down with it five seconds later
+  (2026-09-22); the next backend adopts the busy server (a fingerprint
+  mismatch is already "update deferred" while sessions are live). An idle
+  orphan still exits. A graceful `npm run dev` stop is unchanged: `dev.mjs`
+  POSTs `/shutdown`, and terminal-tab restore relaunches the agents into their
+  conversations on the next start.
 
 ## Why detached / why no `&` kill
 
