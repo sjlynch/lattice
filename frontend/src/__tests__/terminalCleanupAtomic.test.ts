@@ -183,3 +183,20 @@ test('two closeTerminalsForTask calls batched in one update remove every task’
     for (const restore of restores.reverse()) restore();
   }
 });
+
+// With the board open, the registry's `upsert` for a freshly spawned task pty
+// mounts its tab (tagged with the taskId) BEFORE the `task-spawned` event
+// arrives. The spawn handler's "one tab per task" close then DELETEd that very
+// tab — killing every queued run and every Resume ~30 ms after it started
+// (2026-09-23). The delivered pty must survive the per-task close.
+test('terminalIdsForTask spares the tab the task-spawned event is delivering', () => {
+  const tabs = [
+    { id: 'old', taskId: 't1', serverId: 'srv-old' },
+    { id: 'new', taskId: 't1', serverId: 'srv-new' },
+    { id: 'other', taskId: 't2', serverId: 'srv-x' },
+  ] as unknown as Parameters<typeof terminalIdsForTask>[0];
+  assert.deepEqual(terminalIdsForTask(tabs, 't1'), ['old', 'new'], 'no keep: legacy behaviour');
+  assert.deepEqual(terminalIdsForTask(tabs, 't1', { id: 'new' }), ['old']);
+  assert.deepEqual(terminalIdsForTask(tabs, 't1', { serverId: 'srv-new' }), ['old'], 'matched by pty id too');
+  assert.deepEqual(terminalIdsForTask(tabs, 't1', { id: 'absent', serverId: 'absent' }), ['old', 'new']);
+});

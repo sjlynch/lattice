@@ -30,11 +30,19 @@ export function removeTerminalsFromList(
 // batched close can remove them all atomically — looping a single-close that
 // re-reads a stale snapshot per id drops all-but-one setState and "resurrects"
 // the siblings it already removed.
+// A pty that must survive a per-task close: the one a `task-spawned` event is
+// delivering. Matched by tab id or pty id.
+export type KeepTerminal = { id?: string; serverId?: string };
+
 export function terminalIdsForTask(
   terminals: TerminalSpec[],
   taskId: string,
+  keep?: KeepTerminal,
 ): string[] {
-  return terminals.filter((t) => t.taskId === taskId).map((t) => t.id);
+  return terminals
+    .filter((t) => t.taskId === taskId)
+    .filter((t) => !keep || !((keep.id && t.id === keep.id) || (keep.serverId && t.serverId === keep.serverId)))
+    .map((t) => t.id);
 }
 
 // Plan a batched close: which backend serverIds need a DELETE and what the

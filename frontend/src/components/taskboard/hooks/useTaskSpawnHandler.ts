@@ -4,7 +4,7 @@ import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
 import { shortLabel } from '../lanes';
 
 type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
-type CloseTerminalsForTask = (taskId: string) => void;
+type CloseTerminalsForTask = (taskId: string, keep?: { id?: string; serverId?: string }) => void;
 
 // Builds the `/ws/tasks` `task-spawned` handler. A queued task's run has no pty
 // at request time; when the spawn queue admits it the backend emits
@@ -37,8 +37,13 @@ export function useTaskSpawnHandler(
     (event: TaskSpawnedEvent) => {
       noteBulkSpawnedRef.current?.(event.taskId);
       // Replace, don't duplicate: drop any stale tab for this task (e.g. the
-      // ended pre-resume session) before mounting the fresh pty.
-      closeTerminalsForTask(event.taskId);
+      // ended pre-resume session) before mounting the fresh pty — but never the
+      // fresh pty's own tab. The registry's `upsert` for the new record usually
+      // lands BEFORE this event and has already mounted it (tagged with this
+      // taskId), so a plain per-task close DELETEd the agent that was just
+      // spawned: every queued run and every Resume killed itself ~30 ms after
+      // starting whenever the board was open (2026-09-23).
+      closeTerminalsForTask(event.taskId, { id: event.terminalId, serverId: event.serverId });
       addTerminal(
         {
           id: event.terminalId,

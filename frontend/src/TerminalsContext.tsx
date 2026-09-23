@@ -32,6 +32,7 @@ import {
   setServerIdInList,
   setStatusInList,
   terminalIdsForTask,
+  type KeepTerminal,
 } from './terminal/terminalState';
 import { deleteBackendSession, fetchLiveTerminalIds } from './terminal/terminalApi';
 import {
@@ -441,8 +442,8 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
   // at once — a Merge All, a multi-select delete) compose instead of the last
   // one clobbering the rest.
   const closeTerminalsForTask = useCallback(
-    (taskId: string) => {
-      const ids = terminalIdsForTask(terminalsRef.current, taskId);
+    (taskId: string, keep?: KeepTerminal) => {
+      const ids = terminalIdsForTask(terminalsRef.current, taskId, keep);
       if (ids.length > 0) closeTerminals(ids);
     },
     [closeTerminals],

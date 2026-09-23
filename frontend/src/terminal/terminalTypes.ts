@@ -62,7 +62,8 @@ export type Ctx = {
   addTerminal: (spec: AddTerminalSpec, focus?: boolean) => string;
   closeTerminal: (id: string) => void;
   closeTerminals: (ids: string[]) => void;
-  closeTerminalsForTask: (taskId: string) => void;
+  // `keep` spares one tab — the pty a `task-spawned` event is delivering.
+  closeTerminalsForTask: (taskId: string, keep?: { id?: string; serverId?: string }) => void;
   setServerId: (id: string, serverId: string) => void;
   setStatus: (id: string, status: TerminalStatus, exitCode?: number) => void;
   renameTerminal: (id: string, label: string) => void;

@@ -14,6 +14,7 @@ export {
   removeTerminalFromList,
   removeTerminalsFromList,
   terminalIdsForTask,
+  type KeepTerminal,
   planCloseTerminals,
   setServerIdInList,
   setStatusInList,
