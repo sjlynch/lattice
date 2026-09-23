@@ -1,4 +1,6 @@
+import os from 'node:os';
 import * as pty from 'node-pty';
+import { agentHarnessForCommand } from '../harnesses.js';
 import { createTerminalSessionId } from '../ids.js';
 import { ScrollbackStore } from './scrollbackStore.js';
 import { TerminalOutputFacts } from './outputFacts.js';
@@ -18,6 +20,26 @@ export { broadcastToSubscribers } from './broadcast.js';
 // opposed to a shell-spawn failure). The spawn queue keys its over-admit
 // back-off on this code, so it must round-trip backend ⇆ terminal-server.
 export type SessionErrorResult = { error: string; code?: 'CAP' };
+
+// Run agent ptys below normal priority. Agents fan out into test runners,
+// bundlers and type-checkers; a dozen of them on a large repo pinned every
+// core and froze the desktop — the user's UI, the browser, and Lattice's own
+// backend all competing at the same priority as the agents (2026-09-22). At
+// below-normal they still get every idle cycle, but yield to interactive work.
+// On Windows a child created by a BELOW_NORMAL process inherits BELOW_NORMAL,
+// so lowering the pty's shell before the agent command is typed covers the
+// whole tree the agent spawns later; on POSIX children inherit the nice value.
+// Agent sessions only (a user's own shell / dev server keeps normal priority).
+// Escape hatch: LATTICE_AGENT_PRIORITY=normal in the terminal-server's env.
+export function lowerAgentPriority(pid: number, initialCommand: string | undefined): void {
+  if (process.env.LATTICE_AGENT_PRIORITY === 'normal') return;
+  if (!agentHarnessForCommand(initialCommand)) return;
+  try {
+    os.setPriority(pid, os.constants.priority.PRIORITY_BELOW_NORMAL);
+  } catch (err) {
+    console.warn(`[terminal] could not lower priority of agent pty ${pid}: ${(err as Error).message}`);
+  }
+}
 
 export function createSession(
   opts: CreateOpts,
@@ -97,6 +119,8 @@ export function createSession(
 
   wireSessionPtyEvents(session);
   addLatticeBanner(session, context.docPath);
+  // Before the agent launches, so everything it spawns inherits the priority.
+  lowerAgentPriority(term.pid, opts.initialCommand);
   scheduleInitialCommand(term, context.initialCommand);
 
   return session;

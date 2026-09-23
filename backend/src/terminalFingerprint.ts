@@ -56,6 +56,8 @@ export const FINGERPRINT_FILES = [
   'terminal/scrollbackLogFile.js',
   'terminal/scrollbackCleanup.js',
   'terminal/createSession.js',
+  // agentHarnessForCommand — createSession lowers agent ptys' priority.
+  'harnesses.js',
   'terminal/launchContext.js',
   'terminal/codexTrust.js',
   'terminal/claudeSystemPrompt.js',

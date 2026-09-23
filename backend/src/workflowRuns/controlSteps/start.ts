@@ -7,7 +7,7 @@
 import { listTasks } from '../../tasks.js';
 import { startTaskById } from '../../routes/tasks/startTask.js';
 import { enqueueTaskRun } from '../../routes/tasks/queuedSpawn.js';
-import { isSpawnDeferral, isSpawnDiskSpaceError } from '../../spawnQueue.js';
+import { batchAdmissionHold, isSpawnDeferral, isSpawnDiskSpaceError } from '../../spawnQueue.js';
 import { normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
 import { normalizePiModel } from '../../piModels.js';
 import { getUserSettings } from '../../userSettings.js';
@@ -24,12 +24,16 @@ export type StartStepDeps = {
   listTasks: typeof listTasks;
   startTask: typeof startTaskById;
   enqueueRun: typeof enqueueTaskRun;
+  // Why a batch spawn would be held right now (agent cap / resource
+  // governor), or null. Optional so hand-built test deps keep compiling.
+  admissionHold?: () => Promise<string | null>;
 };
 
 const productionDeps: StartStepDeps = {
   listTasks,
   startTask: startTaskById,
   enqueueRun: enqueueTaskRun,
+  admissionHold: batchAdmissionHold,
 };
 
 // The Pi model the Start step's spawned task agents should use FOR A RUN-LEVEL
@@ -144,6 +148,33 @@ export async function runStartStep(
   for (const [index, task] of open.entries()) {
     if (run.status !== 'running') return;
     const { harness, piModel } = pickHarness(index);
+    // Starting directly bypasses the spawn queue, and with it the
+    // maxConcurrentAgents cap and the CPU/RAM governor: a 50-task Start step
+    // used to launch 50 agents at once. When the queue would hold a batch
+    // spawn right now, hand the task to it instead (the same deferral a cap
+    // rejection takes below) — it starts as soon as capacity returns.
+    const hold = await deps.admissionHold?.();
+    if (hold) {
+      deferred += 1;
+      try {
+        await deps.enqueueRun(task.id, backendOrigin, harness, piModel);
+      } catch (enqErr) {
+        console.error(`[workflow-run] ${run.id} start step: failed to queue task ${task.id}:`, enqErr);
+      }
+      console.warn(
+        `[workflow-run] ${run.id} start step: task ${task.id} ("${task.title.slice(0, 60)}") ` +
+          `queued instead of started — ${hold}`,
+      );
+      emitControlProgress(
+        run,
+        stepIndex,
+        'start',
+        started + failed + deferred,
+        open.length,
+        startProgressMessage(open.length, started, failed, deferred),
+      );
+      continue;
+    }
     try {
       // throwOnCapacity: a terminal-server hard-cap rejection must throw
       // (SpawnCapacityError) instead of being swallowed. Without it startTaskById

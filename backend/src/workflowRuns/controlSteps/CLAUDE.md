@@ -95,6 +95,14 @@ path), emitting one `workflow-task-spawned` terminal tab per task.
   stuck lane that hangs the Merge step. The "started 0 → throw" guard fires only
   when *nothing* started *and nothing* was cap-deferred. Covered by
   `__tests__/workflowStartStepCap.test.ts`.
+- **Queue admission (do not regress)**: the step starts tasks directly, which
+  bypasses the spawn queue — and with it `maxConcurrentAgents` and the CPU/RAM
+  resource governor (a 50-task Start step launched 50 agents at once). Before
+  each start it asks `batchAdmissionHold()` (fresh `/sessions` poll + governor
+  sample); when the queue would hold a batch spawn, the task is handed to
+  `enqueueTaskRun` and counted as deferred — the same path a cap rejection
+  takes — so it starts as soon as capacity returns. A disk-space deferral
+  (`SpawnDiskSpaceError`, `isSpawnDeferral`) is handled the same way.
 
 ## `merge.ts` — `runMergeStep`
 

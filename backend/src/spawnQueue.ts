@@ -87,6 +87,24 @@ export function notifyDiskSpaceFreed(): void {
   if (any) drainQueue();
 }
 
+// For code that starts task runs OUTSIDE the queue (the workflow Start step
+// calls startTaskById directly): would a `batch` spawn be admitted right now?
+// Returns why not — the agent cap or the resource governor — or null to go
+// ahead. Refreshes the live count first, since the poll loop idles while the
+// queue is empty. An unknown count (terminal-server unreachable) never blocks:
+// the caller's own spawn will surface that.
+export async function batchAdmissionHold(): Promise<string | null> {
+  await pollOnce();
+  const s = queueState;
+  s.governor.sample();
+  if (!s.accounting.isPollHealthy()) return null;
+  if (!s.accounting.canAdmit('batch')) {
+    return `the agent cap (maxConcurrentAgents=${s.accounting.getSoftCap()}) is reached`;
+  }
+  if (s.governor.holdsBatch(s.accounting.effectiveLive())) return s.governor.state().reason;
+  return null;
+}
+
 export function getSpawnQueueSnapshot(): SpawnQueueSnapshot {
   return queueState.snapshot();
 }

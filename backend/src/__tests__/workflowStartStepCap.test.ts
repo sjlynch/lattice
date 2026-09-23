@@ -159,3 +159,30 @@ test('Start step does not throw when the only non-starts were cap deferrals', as
   await runStartStep(makeWorkflow(), makeRun(), 0, 'http://localhost', deps);
   assert.equal(enqueuedCount, 1, 'the sole capped task was re-queued');
 });
+
+// The Start step starts tasks directly (not through the spawn queue), so it
+// bypassed maxConcurrentAgents and the CPU/RAM governor entirely — a 50-task
+// Start step launched 50 agents at once and pinned the CPU (2026-09-22). When
+// the queue would hold a batch spawn, the step now hands the task to the queue.
+test('Start step queues (never starts) a task while the queue would hold a batch spawn', async () => {
+  const tasks = [makeTask({ id: '1', createdAt: 1 }), makeTask({ id: '2', createdAt: 2 })];
+  const startCalls: string[] = [];
+  const enqueued: string[] = [];
+  let holds = [null, 'CPU at 99%'] as Array<string | null>;
+  const deps: StartStepDeps = {
+    listTasks: async () => tasks,
+    startTask: async (taskId) => {
+      startCalls.push(taskId);
+      return spawnResult(tasks.find((t) => t.id === taskId)!);
+    },
+    enqueueRun: async (taskId) => {
+      enqueued.push(taskId);
+      return { queued: true };
+    },
+    admissionHold: async () => holds.shift() ?? null,
+  };
+  await runStartStep(makeWorkflow(), makeRun(), 0, 'http://x', deps);
+  assert.deepEqual(startCalls, ['1'], 'the first task starts directly');
+  assert.deepEqual(enqueued, ['2'], 'the held task goes to the queue instead');
+  holds = [];
+});

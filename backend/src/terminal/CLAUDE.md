@@ -107,7 +107,13 @@ owns the node-pty processes.
   `harnessSystemPrompts/`.
 - `createSession.ts` — `createSession`: the spawn orchestrator (session-cap
   check → `buildSessionLaunchContext` → `pty.spawn` → build `Session` →
-  `addSession` → `wireSessionPtyEvents` + banner + initialCommand).
+  `addSession` → `wireSessionPtyEvents` + banner + `lowerAgentPriority` +
+  initialCommand). `lowerAgentPriority` sets an **agent** pty's shell
+  (`agentHarnessForCommand(initialCommand)`) to below-normal priority *before*
+  the agent command is typed, so everything the agent spawns (test runners,
+  bundlers) inherits it — a dozen agents on a large repo pinned every core and
+  froze the desktop at equal priority (2026-09-22). User shells / dev servers
+  keep normal priority; `LATTICE_AGENT_PRIORITY=normal` opts out.
   `precreateSession` is the no-subscriber variant route handlers use to return a
   `serverId` before any WS attaches.
 - `sessionLifecycle.ts` — `wireSessionPtyEvents` (pty `onData` → stamp
