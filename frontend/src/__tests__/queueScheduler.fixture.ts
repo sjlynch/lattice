@@ -9,10 +9,9 @@
 // Each entry travels: queued ──dispatch──▶ started{runId:null} (in-flight)
 //   ──workflowStarted──▶ started{runId} (active) ──runFinished──▶ retired.
 //
-//   • sequential mode dispatches one entry at a time and gates behind any
-//     in-flight/active entry AND any externalActiveCount (a manual ▶ Run the
-//     queue never tracked); parallel mode fires every queued entry at once and
-//     ignores the external gate.
+//   • the queue is sequential: it dispatches one entry at a time and gates
+//     behind any in-flight/active entry AND any externalActiveCount (a manual
+//     ▶ Run the queue never tracked).
 //   • `step()` = reduce + read pendingStarts + report autoStop in one shot; the
 //     `starts` it returns are the entries the caller must actually dispatch.
 //   • pre-finished race: a runFinished whose runId hasn't been attached yet is
@@ -25,7 +24,6 @@ import {
   reduceQueue,
   step,
   type QueueAction,
-  type QueueMode,
   type QueueState,
   type StartedEntry,
   type StepContext,
@@ -50,7 +48,6 @@ export function started(
 
 export function queueState(overrides: Partial<QueueState> = {}): QueueState {
   return {
-    mode: 'sequential',
     queued: [],
     running: false,
     started: [],
@@ -116,10 +113,6 @@ export class QueueScenario {
     harnessOverride: WorkflowRunHarnessOverride = null,
   ): this {
     return this.step({ type: 'enqueue', entry: queued(id, workflowId, harnessOverride) });
-  }
-
-  setMode(mode: QueueMode): this {
-    return this.reduce({ type: 'setMode', mode });
   }
 
   startQueue(): this {

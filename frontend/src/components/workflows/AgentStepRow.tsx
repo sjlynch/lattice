@@ -64,7 +64,6 @@ export const AgentStepRow = memo(function AgentStepRow({
           index={index}
           collapsed={collapsed}
           title={step.title}
-          mode={step.mode}
           harness={step.harness}
           piModel={step.piModel}
           frozen={frozen}

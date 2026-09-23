@@ -4,19 +4,16 @@ import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import type { Workflow, WorkflowQueueEntry, WorkflowRun } from '../api';
 import type { QueueAction } from '../components/workflows/queueScheduler.ts';
-import type {
-  StartOutcome,
-  StartRunOptions,
-} from '../components/workflows/hooks/useWorkflowRunActions.ts';
+import type { StartOutcome } from '../components/workflows/hooks/useWorkflowRunActions.ts';
 import { useWorkflowQueue } from '../components/workflows/hooks/useWorkflowQueue.ts';
 
 // Regression for the "sequential queue ran two workflows at once" bug. The
 // frontend gate reads only the client's activeRuns, so it can dispatch the next
 // entry during a run's startup window (run live server-side, not yet in
-// activeRuns). The backend now 409s that; the queue must:
-//   1. pass `requireNoActiveRun` for sequential dispatches, and
-//   2. treat the 409 (`{status:'busy'}`) as a REQUEUE (dispatchRejected), then
-//      retry — never a drop, never a silent second concurrent run.
+// activeRuns). The backend 409s any start while a run is active for the
+// project; the queue must treat that 409 (`{status:'busy'}`) as a REQUEUE
+// (dispatchRejected), then retry — never a drop, never a silent second
+// concurrent run.
 
 function workflow(id: string, projectPath: string): Workflow {
   return { id, name: `wf ${id}`, projectPath, steps: [], variables: [], createdAt: 0 };
@@ -39,7 +36,7 @@ function entry(id: string, workflowId: string): WorkflowQueueEntry {
   return { id, workflowId, harnessOverride: null };
 }
 
-type RunCall = { workflowId: string; entryId: string; opts?: StartRunOptions };
+type RunCall = { workflowId: string; entryId: string };
 
 let latestDispatch: (action: QueueAction) => void = () => {};
 let latestState: ReturnType<typeof useWorkflowQueue>['state'] | null = null;
@@ -49,11 +46,7 @@ type Props = {
   activeFolder: string;
   workflowsById: Map<string, Workflow>;
   activeRuns: Record<string, WorkflowRun>;
-  runWorkflow: (
-    wf: Workflow,
-    e: WorkflowQueueEntry,
-    opts?: StartRunOptions,
-  ) => Promise<StartOutcome>;
+  runWorkflow: (wf: Workflow, e: WorkflowQueueEntry) => Promise<StartOutcome>;
 };
 
 function Harness({ activeFolder, workflowsById, activeRuns, runWorkflow }: Props) {
@@ -84,18 +77,14 @@ afterEach(() => {
   else g.IS_REACT_ACT_ENVIRONMENT = savedActEnv;
 });
 
-test('a 409 (busy) requeues the entry and retries — sequential passes requireNoActiveRun', async () => {
+test('a 409 (busy) requeues the entry and retries', async () => {
   const folder = 'C:/p';
   const map = new Map<string, Workflow>([['wf1', workflow('wf1', folder)]]);
 
   // First dispatch: backend 409 (a run is already active server-side though not
   // in the client's activeRuns). Second: the slot freed, so it starts.
-  const runWorkflow = (
-    wf: Workflow,
-    e: WorkflowQueueEntry,
-    opts?: StartRunOptions,
-  ): Promise<StartOutcome> => {
-    runCalls.push({ workflowId: wf.id, entryId: e.id, opts });
+  const runWorkflow = (wf: Workflow, e: WorkflowQueueEntry): Promise<StartOutcome> => {
+    runCalls.push({ workflowId: wf.id, entryId: e.id });
     if (runCalls.length === 1) return Promise.resolve({ status: 'busy' });
     return Promise.resolve({ status: 'started', run: run(`run-${e.id}`, wf.id, wf.projectPath) });
   };
@@ -120,10 +109,10 @@ test('a 409 (busy) requeues the entry and retries — sequential passes requireN
   await act(async () => {});
 
   assert.equal(runCalls.length, 2, 'the entry is retried after the 409, not dropped');
-  assert.equal(
-    runCalls[0].opts?.requireNoActiveRun,
-    true,
-    'sequential dispatch asks the backend to reject on an active run',
+  assert.deepEqual(
+    runCalls.map((c) => c.entryId),
+    ['q1', 'q1'],
+    'the retry re-dispatches the same entry',
   );
   assert.deepEqual(
     latestState!.started.map((s) => ({ id: s.id, runId: s.runId })),
@@ -132,50 +121,6 @@ test('a 409 (busy) requeues the entry and retries — sequential passes requireN
   );
   assert.deepEqual(latestState!.queued, [], 'nothing left queued after a successful retry');
   assert.equal(latestState!.running, true, 'queue stays running while its run is active');
-
-  await act(async () => {
-    renderer!.unmount();
-  });
-});
-
-test('parallel dispatch does NOT set requireNoActiveRun (concurrency is intentional)', async () => {
-  const folder = 'C:/p';
-  const map = new Map<string, Workflow>([['wf1', workflow('wf1', folder)]]);
-
-  const runWorkflow = (
-    wf: Workflow,
-    e: WorkflowQueueEntry,
-    opts?: StartRunOptions,
-  ): Promise<StartOutcome> => {
-    runCalls.push({ workflowId: wf.id, entryId: e.id, opts });
-    return Promise.resolve({ status: 'started', run: run(`run-${e.id}`, wf.id, wf.projectPath) });
-  };
-
-  let renderer: ReturnType<typeof TestRenderer.create> | null = null;
-  await act(async () => {
-    renderer = TestRenderer.create(
-      React.createElement(Harness, {
-        activeFolder: folder,
-        workflowsById: map,
-        activeRuns: {},
-        runWorkflow,
-      }),
-    );
-  });
-
-  await act(async () => {
-    latestDispatch({ type: 'setMode', mode: 'parallel' });
-    latestDispatch({ type: 'enqueue', entry: entry('q1', 'wf1') });
-    latestDispatch({ type: 'startQueue' });
-  });
-  await act(async () => {});
-
-  assert.equal(runCalls.length, 1);
-  assert.equal(
-    runCalls[0].opts?.requireNoActiveRun,
-    false,
-    'parallel mode allows concurrent runs, so it must not send the guard flag',
-  );
 
   await act(async () => {
     renderer!.unmount();

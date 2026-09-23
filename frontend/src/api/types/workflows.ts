@@ -1,6 +1,5 @@
 import type { AgentHarness } from '../../harnesses';
 
-export type WorkflowStepMode = 'sequential' | 'parallel';
 export type WorkflowStepHarness = AgentHarness;
 
 // Null/undefined means "Default": use each step's stored harness. A concrete
@@ -17,7 +16,6 @@ export type WorkflowStep = {
   id: string;
   title: string;
   prompt: string;
-  mode: WorkflowStepMode;
   harness: WorkflowStepHarness;
   // Pi model ("provider/model") for this step; used only when harness is `pi`.
   piModel?: string;
@@ -74,10 +72,6 @@ export type WorkflowRunStartOptions = {
   modelOverride?: WorkflowRunModelOverride;
   // Pi model override for the run, applied when the override harness is `pi`.
   piModelOverride?: string;
-  // Sequential-queue dispatch: ask the backend to 409 if a run is already
-  // active for the project (the queue then requeues + retries when the slot
-  // frees). Manual ▶ Run and parallel-queue starts leave it unset.
-  requireNoActiveRun?: boolean;
 };
 
 export type WorkflowRunResult = {

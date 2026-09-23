@@ -2,17 +2,19 @@
 // it can be unit-tested without DOM mocks; the React layer feeds events in
 // (`reduceQueue`) and reads back what to start now (`pendingStarts`).
 //
+// The queue is strictly sequential: a project runs one workflow at a time (the
+// backend 409s a second start), so the next queued entry starts only once the
+// active run finishes.
+//
 // Why a separate module: the previous in-component effect mixed three
 // orthogonal concerns — closure of stale state, ref-based reentrancy guards,
-// and ordering of optimistic updates vs HTTP awaits. That made the
-// sequential-vs-parallel decision easy to subtly break (e.g. starting wf2
-// while wf1's HTTP was in flight if a setState boundary fell at the wrong
-// place). Pulling the decision into a pure reducer makes the invariants
-// explicit and the bugs reachable from tests.
+// and ordering of optimistic updates vs HTTP awaits. That made the one-at-a-
+// time decision easy to subtly break (e.g. starting wf2 while wf1's HTTP was
+// in flight if a setState boundary fell at the wrong place). Pulling the
+// decision into a pure reducer makes the invariants explicit and the bugs
+// reachable from tests.
 
 import type { WorkflowQueueEntry, WorkflowRunStatus } from '../../api';
-
-export type QueueMode = 'sequential' | 'parallel';
 
 // One queued entry the scheduler has dispatched a /run for. `runId` is null
 // while the HTTP request is in flight; once the backend responds with the run
@@ -23,7 +25,6 @@ export type StartedEntry = WorkflowQueueEntry & {
 };
 
 export type QueueState = {
-  mode: QueueMode;
   // Independent queued workflow entries waiting to be started, in FIFO order.
   // The same workflowId may appear multiple times with different overrides.
   queued: WorkflowQueueEntry[];
@@ -34,14 +35,13 @@ export type QueueState = {
   // automatically when the queue drains.
   running: boolean;
   // Queue entries the queue has dispatched /run for, that we still consider
-  // in-flight or active. Sequential mode keeps this at length <= 1; parallel
-  // fills it with the whole batch until each run dispatch is confirmed.
+  // in-flight or active. At most one at a time.
   started: StartedEntry[];
   // Run IDs whose `runFinished` action arrived before `workflowStarted` could
   // attach them to a started entry — i.e. the run finished server-side faster
   // than the /run HTTP response made it back. `workflowStarted` consumes
   // these to retire the entry immediately rather than attaching a runId that
-  // is already dead. Without this, sequential queues stall after the first
+  // is already dead. Without this, the queue stalls after the first
   // workflow when the run completes (or is cancelled) before /run resolves.
   preFinishedRunIds: string[];
 };
@@ -53,7 +53,6 @@ export type QueueState = {
 const PRE_FINISHED_CAP = 16;
 
 export const initialQueueState: QueueState = {
-  mode: 'sequential',
   queued: [],
   running: false,
   started: [],
@@ -61,7 +60,6 @@ export const initialQueueState: QueueState = {
 };
 
 export type QueueAction =
-  | { type: 'setMode'; mode: QueueMode }
   | { type: 'enqueue'; entry: WorkflowQueueEntry }
   | { type: 'removeFromQueue'; entryId: string }
   | { type: 'clearQueue' }
@@ -76,8 +74,8 @@ export type QueueAction =
   // The /run HTTP errored or threw client-side. The run never existed
   // server-side from the queue's perspective.
   | { type: 'dispatchFailed'; entryId: string }
-  // The /run HTTP returned 409 — the backend's authoritative sequential guard
-  // rejected the start because a run is already active for the project. Unlike
+  // The /run HTTP returned 409 — the backend's authoritative one-run-per-project
+  // guard rejected the start because a run is already active for the project. Unlike
   // dispatchFailed this is NOT a failure: put the entry back at the FRONT of
   // the queue so it retries once the active run frees the slot (the next
   // runFinished re-evaluates pendingStarts). Closes the startup-window /
@@ -85,7 +83,7 @@ export type QueueAction =
   | { type: 'dispatchRejected'; entryId: string }
   // A run finished server-side (WS completed/cancelled/errored). Matched by
   // runId because workflowId alone is ambiguous when the same workflow is
-  // queued multiple times. `status` lets sequential mode bail when a
+  // queued multiple times. `status` lets the queue bail when a
   // workflow errored or was cancelled instead of cascading into the next
   // queued workflow as if nothing went wrong. Optional for backward-compat
   // with callers (and tests) that don't track status; missing defaults to
@@ -96,7 +94,7 @@ type QueueMutationAction = Extract<
   QueueAction,
   { type: 'enqueue' | 'removeFromQueue' | 'clearQueue' }
 >;
-type RunningModeAction = Extract<QueueAction, { type: 'setMode' | 'startQueue' | 'stopQueue' }>;
+type RunningAction = Extract<QueueAction, { type: 'startQueue' | 'stopQueue' }>;
 type DispatchLifecycleAction = Extract<
   QueueAction,
   { type: 'dispatchStart' | 'workflowStarted' | 'dispatchFailed' | 'dispatchRejected' }
@@ -144,16 +142,8 @@ function reduceQueueMutation(state: QueueState, action: QueueMutationAction): Qu
   }
 }
 
-function reduceRunningMode(state: QueueState, action: RunningModeAction): QueueState {
+function reduceRunning(state: QueueState, action: RunningAction): QueueState {
   switch (action.type) {
-    case 'setMode':
-      // Disallow mid-flight mode changes — semantics would be murky
-      // (mid-parallel switching to sequential, or vice versa). The UI also
-      // disables the buttons while running, so this is a defensive check.
-      if (state.running || state.started.length > 0) return state;
-      if (state.mode === action.mode) return state;
-      return { ...state, mode: action.mode };
-
     case 'startQueue':
       if (state.running) return state;
       if (state.queued.length === 0) return state;
@@ -269,12 +259,12 @@ function reduceRunLifecycle(state: QueueState, action: RunLifecycleAction): Queu
     ...state,
     started: removeStartedEntry(state.started, idx),
   };
-  // Sequential queues must NOT cascade into the next queued workflow when a
-  // workflow errored or was cancelled — otherwise one bad run takes down the
-  // rest of the pipeline silently. Stop running; the remaining queued
-  // entries stay so the user can inspect and resume.
-  if (cleared.mode === 'sequential' && status !== 'completed' && cleared.running) {
-    return reduceRunningMode(cleared, { type: 'stopQueue' });
+  // The queue must NOT cascade into the next queued workflow when a workflow
+  // errored or was cancelled — otherwise one bad run takes down the rest of
+  // the pipeline silently. Stop running; the remaining queued entries stay so
+  // the user can inspect and resume.
+  if (status !== 'completed' && cleared.running) {
+    return reduceRunning(cleared, { type: 'stopQueue' });
   }
   return cleared;
 }
@@ -287,10 +277,9 @@ export function reduceQueue(state: QueueState, action: QueueAction): QueueState 
     case 'clearQueue':
       return reduceQueueMutation(state, action);
 
-    case 'setMode':
     case 'startQueue':
     case 'stopQueue':
-      return reduceRunningMode(state, action);
+      return reduceRunning(state, action);
 
     case 'dispatchStart':
     case 'workflowStarted':
@@ -306,74 +295,40 @@ export function reduceQueue(state: QueueState, action: QueueAction): QueueState 
 // Context the React layer feeds the scheduler each tick. `externalActiveCount`
 // is the number of workflow runs active server-side that the queue itself did
 // NOT dispatch — a manual ▶ Run click, or a run started from another browser
-// tab. Sequential mode admits one workflow at a time across the whole project,
-// so an external run occupies the slot exactly like a queue-owned run; and an
-// external run in flight is what makes an enqueue auto-start the queue.
+// tab. A project admits one workflow at a time, so an external run occupies
+// the slot exactly like a queue-owned run; and an external run in flight is
+// what makes an enqueue auto-start the queue.
 export type StepContext = {
   externalActiveCount: number;
 };
 
 const NO_EXTERNAL_RUNS: StepContext = { externalActiveCount: 0 };
 
-function pendingSequentialStarts(state: QueueState, ctx: StepContext): WorkflowQueueEntry[] {
-  // The slot is taken by either a queue-owned run (`started`) or an
-  // externally-started run (`ctx.externalActiveCount`). Either one makes the
-  // next queued entry wait.
-  if (state.started.length > 0 || ctx.externalActiveCount > 0) return [];
-  return [state.queued[0]];
-}
-
-function pendingParallelStarts(state: QueueState): WorkflowQueueEntry[] {
-  const startedIds = new Set(state.started.map((entry) => entry.id));
-  return state.queued.filter((entry) => !startedIds.has(entry.id));
-}
-
 // What the scheduler wants the React layer to start *now*. Pure — safe to
 // call after every action.
 //
-// Sequential: at most one queued entry may be in-flight or active at a time —
-// and it also waits behind any externally-started run (see StepContext).
-// Parallel: every queued entry not already in-flight should fire now.
+// At most one queued entry may be in-flight or active at a time: the slot is
+// taken by either a queue-owned run (`started`) or an externally-started run
+// (`ctx.externalActiveCount`, see StepContext), and either one makes the next
+// queued entry wait.
 export function pendingStarts(
   state: QueueState,
   ctx: StepContext = NO_EXTERNAL_RUNS,
 ): WorkflowQueueEntry[] {
   if (!state.running) return [];
   if (state.queued.length === 0) return [];
-  if (state.mode === 'sequential') return pendingSequentialStarts(state, ctx);
-  return pendingParallelStarts(state);
+  if (state.started.length > 0 || ctx.externalActiveCount > 0) return [];
+  return [state.queued[0]];
 }
 
-function sequentialQueueDrained(state: QueueState): boolean {
-  // Drained iff no workflow is in-flight or active.
-  return state.started.length === 0;
-}
-
-function parallelDispatchesSettled(state: QueueState): boolean {
-  // Parallel mode is fire-and-forget: as soon as every queued workflow has
-  // either dispatched successfully (runId attached) or failed-and-cleared,
-  // the queue's job is done. Outstanding runs continue independently.
-  return state.started.every((entry) => entry.runId !== null);
-}
-
-// True while the scheduler still holds dispatched entries — in-flight (runId
-// null) or attached to an active run. The queue panel disables the
-// Sequential/Parallel mode buttons on `running || startedActive` so they can't
-// look enabled while the reducer's `setMode` guard would still reject the
-// change: parallel mode clears `running` the moment every dispatch settles
-// (shouldAutoStop) but the runs linger in `started` until each runFinished.
-export function startedActive(state: QueueState): boolean {
-  return state.started.length > 0;
-}
-
-// Whether the queue has nothing left to do. Used by the runtime to flip
-// `running` back to false automatically — saves the user from having to
-// click Stop after a sequential queue finishes its last workflow.
+// Whether the queue has nothing left to do — nothing queued and no workflow
+// in-flight or active. Used by the runtime to flip `running` back to false
+// automatically, which saves the user from having to click Stop after the
+// queue finishes its last workflow.
 export function shouldAutoStop(state: QueueState): boolean {
   if (!state.running) return false;
   if (state.queued.length > 0) return false;
-  if (state.mode === 'sequential') return sequentialQueueDrained(state);
-  return parallelDispatchesSettled(state);
+  return state.started.length === 0;
 }
 
 // Convenience: apply one action and return both the new state and the
@@ -398,7 +353,7 @@ function reserveDispatches(state: QueueState, starts: WorkflowQueueEntry[]): Que
 function stopIfDrained(state: QueueState): Pick<Step, 'state' | 'autoStop'> {
   if (!shouldAutoStop(state)) return { state, autoStop: false };
   return {
-    state: reduceRunningMode(state, { type: 'stopQueue' }),
+    state: reduceRunning(state, { type: 'stopQueue' }),
     autoStop: true,
   };
 }
@@ -411,14 +366,13 @@ export function step(
   let reduced = reduceQueue(state, action);
   // Auto-start: queueing a workflow while another run is already in flight
   // behaves as if the user had pressed "Start queue" — the new entry runs as
-  // soon as the active run frees the slot (sequential) or immediately
-  // (parallel). Without this, an entry queued during a manual ▶ Run just sits
-  // idle because nothing flipped `running` on. Gated on an *external* active
+  // soon as the active run frees the slot. Without this, an entry queued
+  // during a manual ▶ Run just sits idle because nothing flipped `running` on. Gated on an *external* active
   // run (one the queue itself didn't dispatch): after an explicit Stop queue
   // the lingering run is still in `started`, so enqueueing then must NOT
   // silently resume the queue the user just stopped.
   if (action.type === 'enqueue' && !reduced.running && ctx.externalActiveCount > 0) {
-    reduced = reduceRunningMode(reduced, { type: 'startQueue' });
+    reduced = reduceRunning(reduced, { type: 'startQueue' });
   }
   const starts = pendingStarts(reduced, ctx);
   const reserved = reserveDispatches(reduced, starts);

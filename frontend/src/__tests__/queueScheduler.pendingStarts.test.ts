@@ -21,16 +21,16 @@ test('pendingStarts is empty when not running', () => {
   );
 });
 
-test('pendingStarts (sequential) returns just the head of the queue', () => {
+test('pendingStarts returns just the head of the queue, even with duplicates', () => {
   const state = queueState({
-    queued: [queued('q1', 'wf1'), queued('q2', 'wf2')],
+    queued: [queued('q1', 'wf1'), queued('q2', 'wf1'), queued('q3', 'wf2')],
     running: true,
   });
 
   assert.deepEqual(entryIds(pendingStarts(state)), ['q1']);
 });
 
-test('pendingStarts (sequential) waits while something is in flight or active', () => {
+test('pendingStarts waits while something is in flight or active', () => {
   const inFlight = queueState({
     queued: [queued('q2', 'wf2')],
     running: true,
@@ -43,27 +43,6 @@ test('pendingStarts (sequential) waits while something is in flight or active', 
     started: [started('q1', 'wf1', 'run1')],
   });
   assert.deepEqual(pendingStarts(active), []);
-});
-
-test('pendingStarts (parallel) returns every queued entry, including duplicates', () => {
-  const state = queueState({
-    mode: 'parallel',
-    queued: [queued('q1', 'wf1'), queued('q2', 'wf1'), queued('q3', 'wf2')],
-    running: true,
-  });
-
-  assert.deepEqual(entryIds(pendingStarts(state)), ['q1', 'q2', 'q3']);
-});
-
-test('pendingStarts (parallel) excludes only entries already in-flight', () => {
-  const state = queueState({
-    mode: 'parallel',
-    queued: [queued('q1', 'wf1'), queued('q2', 'wf1')],
-    running: true,
-    started: [started('q1', 'wf1', null)],
-  });
-
-  assert.deepEqual(entryIds(pendingStarts(state)), ['q2']);
 });
 
 // ---------- shouldAutoStop ----------

@@ -70,10 +70,9 @@ export async function startWorkflow(
     body.harnessOverride = harnessOverride;
     if (options.piModelOverride) body.piModelOverride = options.piModelOverride;
   }
-  // Sequential-queue dispatch asks the backend to 409 if a run is already
-  // active (see WorkflowRunStartOptions). asJson throws an HttpError(409) the
-  // caller branches on to requeue.
-  if (options.requireNoActiveRun) body.requireNoActiveRun = true;
+  // The backend 409s any start while a run is already active for the project
+  // (one workflow run per project). asJson throws an HttpError(409) the caller
+  // branches on to requeue.
   const url = `/api/workflows/${encodeURIComponent(id)}/run`;
   return Object.keys(body).length > 0
     ? postJson<WorkflowRunResult>(url, body)

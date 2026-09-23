@@ -8,8 +8,8 @@
 //                     when its condition is met (Start finishes spawning
 //                     tasks, Merge drains lanes, Push session reports done).
 //
-// 'parallel' is accepted in the schema but executed sequentially; the
-// fan-out executor is intentionally deferred.
+// Steps always run one after another, and a project runs one workflow at a
+// time (`assertNoActiveWorkflowRun`).
 //
 // Implementation lives in workflowRuns/:
 //   - state.ts         registry + WS event fan-out
@@ -64,19 +64,15 @@ export type StartWorkflowRunOptions = {
   harnessOverride?: WorkflowRunHarnessOverride;
   // Pi model override, applied to every step when harnessOverride is `pi`.
   piModelOverride?: string;
-  // Sequential-queue intent: refuse to start (throw WorkflowRunConflictError →
-  // HTTP 409) if a run is already active for this project. Manual ▶ Run and
-  // parallel-queue starts omit it — concurrency is intentional there. This is
-  // the authoritative backend guard behind the frontend's best-effort
-  // sequential gate, which reads only the frontend's `activeRuns` snapshot and
-  // therefore has a startup-window / multi-tab race a lone client can't close.
-  requireNoActiveRun?: boolean;
 };
 
-// Thrown by `startWorkflowRun` when `requireNoActiveRun` is set but a run is
-// already active for the project. `routes/workflows/runs.ts` maps it to a 409
-// (distinct from other 400s) so the frontend queue can requeue + retry rather
-// than dropping the entry.
+// Thrown by `startWorkflowRun` when a run is already active for the project —
+// one workflow run per project, always. `routes/workflows/runs.ts` maps it to
+// a 409 (distinct from other 400s) so the frontend queue can requeue + retry
+// (and a manual ▶ Run can enqueue) rather than dropping the start. This is the
+// authoritative guard behind the frontend's best-effort sequential gate, which
+// reads only the frontend's `activeRuns` snapshot and therefore has a
+// startup-window / multi-tab race a lone client can't close.
 export class WorkflowRunConflictError extends Error {
   constructor(message: string) {
     super(message);
@@ -144,10 +140,9 @@ export async function startWorkflowRun(
     throw new Error('every step in this workflow is frozen');
   }
 
-  // Authoritative sequential guard: when the caller demands an empty slot
-  // (sequential-queue dispatch), reject if a run is already active. Runs before
-  // any run record / notify / spawn so a rejected start is atomic.
-  if (options.requireNoActiveRun) assertNoActiveWorkflowRun(wf.projectPath);
+  // Authoritative one-run-per-project guard: reject if a run is already active.
+  // Runs before any run record / notify / spawn so a rejected start is atomic.
+  assertNoActiveWorkflowRun(wf.projectPath);
 
   const harnessOverride = normalizeWorkflowRunHarnessOverride(options.harnessOverride);
   // Only carry a model override when the run is overriding to Pi.

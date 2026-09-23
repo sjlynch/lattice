@@ -43,21 +43,32 @@ there.
   workflow.
 - `useWorkflowRunActions.ts` — the run-side callbacks:
   `startWorkflowDefinition`/`runWorkflow`/`runEditorWorkflow`/`stopRun`. Saves a
-  dirty editor before running and threads `harnessOverride`/`piModelOverride`/
-  `requireNoActiveRun` to `startWorkflow`. Returns a discriminated `StartOutcome`
-  (`started` / `finished` (completion WS beat the `/run` response) / `busy` (backend
-  409) / `failed`) and guards every await against a mid-flight project switch so a
-  result never lands on the wrong project's state.
+  dirty editor before running and threads `harnessOverride`/`piModelOverride` to
+  `startWorkflow`. Returns a discriminated `StartOutcome` (`started` / `finished`
+  (completion WS beat the `/run` response) / `busy` (backend 409: another run is
+  active for the project) / `failed`) — `runEditorWorkflow` pairs it with the
+  workflow it (possibly just) saved — and guards every await against a mid-flight
+  project switch so a result never lands on the wrong project's state.
+- `useWorkflowManualRun.ts` — the ▶ Run buttons (editor footer + saved-list row;
+  the manager exposes them as `actions.runWorkflow`/`runEditorWorkflow`). A
+  project runs one workflow at a time, so when a run is already active (known
+  from `activeRuns`, or learned from a `busy` 409) the workflow is enqueued
+  instead — by definition for a draft this click just saved, which may not be in
+  `workflowsById` yet — the queue is started (so the entry can't sit idle behind
+  a queue the user stopped), and the panel toast says "Queued behind <name>" (the
+  oldest active run, or "the active workflow" when the 409 beat the WS event).
+  Regression-covered in `src/__tests__/useWorkflowManualRun.test.ts`.
 - `useWorkflowQueue.ts` — React adapter around the pure `queueScheduler`; starts
   queued runs and advances from active-run diffs. Feeds the scheduler a
   `StepContext` each tick — the count of active runs the queue didn't dispatch
-  (a manual ▶ Run, or another tab). That external count makes the sequential
-  gate wait behind a manual run and makes an enqueue auto-start the queue when a
-  run is already in flight (so "queue it while one is playing" runs the new
-  entry without a second Start-queue click). The `externalActiveCount` gate is
-  best-effort (it only sees *this* tab's `activeRuns`, so a run's startup window
-  or a second tab can slip past it), so **sequential** dispatches also pass
-  `requireNoActiveRun` to the backend, which 409s if a run is already active.
+  (a manual ▶ Run, or another tab). The queue is sequential only — one workflow
+  run per project. That external count makes the gate wait behind a manual run
+  and makes an enqueue auto-start the queue when a run is already in flight (so
+  "queue it while one is playing" runs the new entry without a second
+  Start-queue click). The `externalActiveCount` gate is best-effort (it only
+  sees *this* tab's `activeRuns`, so a run's startup window or a second tab can
+  slip past it); the backend is authoritative and 409s any start while a run is
+  already active.
   The hook maps a start to one of four `StartOutcome`s: `started` (attach the
   runId), `finished` (the completion WS beat the `/run` response; buffer the
   finish then attach/consume the run id so the queue cannot stall), `busy` (the
@@ -66,25 +77,24 @@ there.
   `?? 'errored'` fallback (not `'completed'`): a run leaving `activeRuns` with no
   `recentRuns` entry never got a terminal WS event — it vanished from a `hello`
   full-replace, i.e. the backend lost the non-persisted run to a restart/crash.
-  Treating that as `'errored'` STOPS the sequential queue instead of cascading
+  Treating that as `'errored'` STOPS the queue instead of cascading
   the next workflow onto the killed run's still-pending tasks (the "second
-  workflow continues, leaving open + unmerged tasks" bug). Parallel dispatches omit
-  the flag — concurrency there is intentional. Queue state is **per-project**:
+  workflow continues, leaving open + unmerged tasks" bug). Queue state is **per-project**:
   WorkflowsLauncher isn't remounted on a project switch, so the hook resets to
   `initialQueueState` on an `activeFolder` change (mirroring `useWorkflowRuns`)
   and re-baselines its activeRuns diff — otherwise the new project would render
   the previous project's running/queued status and the diff would
   dispatchFail-drop the prior project's pending entry. Regression-covered in
   `src/__tests__/useWorkflowQueueProjectScope.test.ts`.
-- `useWorkflowQueueActions.ts` — enqueue/remove/clear/start/stop/setMode callbacks
+- `useWorkflowQueueActions.ts` — enqueue/remove/clear/start/stop callbacks
   dispatched into `useWorkflowQueue`. Each enqueue captures the workflow's current
-  harness/Pi-model override; `enqueueEditorWorkflow` saves a dirty editor first so
-  the queued entry reflects the latest steps.
+  harness/Pi-model override and reports whether an entry was queued;
+  `enqueueEditorWorkflow` saves a dirty editor first so the queued entry reflects
+  the latest steps.
 - `useWorkflowQueueSelectors.ts` — the queue panel's derived view of scheduler
   state: `queuedItems` (entries joined to their `Workflow`), `busy` (an in-flight
   `/run`, NOT "processing a long-running workflow" — so Clear/Remove stay live once
-  the start is acknowledged), `startedActive`, `disabled`, and the human status
-  string.
+  the start is acknowledged), `disabled`, and the human status string.
 - `useWorkflowRuns.ts` — composition layer for live workflow-run state: owns the
   `activeRuns` / `controlProgress` maps and exposes `addActiveRun` /
   `getRecentRun` / `dismissRecent`. The recent-run linger lives in
@@ -133,7 +143,8 @@ there.
   every existing workflow. The map resets on a project switch and loads via
   `fetchUserSettingsStrict`; nothing is PATCHed until that load succeeded (a
   failed GET read as `{}` would otherwise overwrite every saved collapse).
-- `useWorkflowErrorHandler.ts` — shared auto-dismissing error toast state.
+- `useWorkflowErrorHandler.ts` — shared auto-dismissing toast state (errors,
+  plus `useWorkflowManualRun`'s "Queued behind" notice).
 - `useWorkflowPromptCustomization.ts` — owns per-step customization state,
   custom-step instruction prompting, terminal creation, polling, editor patching,
   and prompt-customization errors.

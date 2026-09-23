@@ -63,7 +63,19 @@ export async function resumeInterruptedWorkflowRuns(
     const persisted = await loadPersistedWorkflowRuns(repoRoot);
     // Install every sibling before the first redispatch can checkpoint this
     // project's file. Otherwise the first run's write loses its unloaded peers.
-    recovered.push(...registerPersistedWorkflowRuns(persisted, sessions));
+    const registered = registerPersistedWorkflowRuns(persisted, sessions);
+    // A project runs one workflow at a time (`assertNoActiveWorkflowRun` 409s a
+    // second start), but runs persisted by a build that still allowed parallel
+    // workflows can come back as a pair. Resume them all — dropping one would
+    // strand its tasks mid-pipeline — and just say so; it's a one-time
+    // transition that the start gate prevents from recurring.
+    if (registered.length > 1) {
+      console.warn(
+        `[startup] ${registered.length} workflow runs resumed for ${repoRoot}; they were ` +
+          'started before one-run-per-project was enforced and will run concurrently until they finish.',
+      );
+    }
+    recovered.push(...registered);
   });
   // Completion hooks can proceed once all records and surviving terminals are
   // registered; do not hold them behind scratch setup or redispatched workers.

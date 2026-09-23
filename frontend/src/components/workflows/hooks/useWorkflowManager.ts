@@ -8,7 +8,7 @@ import { useTerminals } from '../../../TerminalsContext';
 import { useStructuralScan } from '../../../hooks/useStructuralScan';
 import { useConfirm } from '../../shared/ConfirmDialog';
 import { fromWorkflow } from '../editorState';
-import type { QueueMode, QueueState } from '../queueScheduler';
+import type { QueueState } from '../queueScheduler';
 import { guardUnsavedSwitch } from '../unsavedSwitch';
 import { useCollapsedSteps } from './useCollapsedSteps';
 import { useWorkflowEditor } from './useWorkflowEditor';
@@ -21,24 +21,21 @@ import {
   useWorkflowQueueSelectors,
   type WorkflowQueueSelectors,
 } from './useWorkflowQueueSelectors';
-import { useWorkflowRunActions, type StartOutcome, type StartRunOptions } from './useWorkflowRunActions';
+import { useWorkflowManualRun } from './useWorkflowManualRun';
+import { useWorkflowRunActions, type StartOutcome } from './useWorkflowRunActions';
 import { useWorkflowRuns } from './useWorkflowRuns';
 import { useWorkflowRunViews } from './useWorkflowRunViews';
 import { useWorkflowPromptCustomization } from './useWorkflowPromptCustomization';
 import { detectProjectPromptProfile } from '../projectPromptVariants';
 
-export type { QueueMode } from '../queueScheduler';
-
 // The queue slice the panels render: scheduler state joined with the derived
 // selectors. Assembled by `buildQueueView` so the hook body stays declarative.
 type QueueView = {
-  mode: QueueMode;
   queuedEntries: WorkflowQueueEntry[];
   queuedWorkflowIds: string[];
   queuedItems: WorkflowQueueSelectors['queuedItems'];
   running: boolean;
   busy: boolean;
-  startedActive: boolean;
   disabled: boolean;
   status: string;
 };
@@ -49,13 +46,11 @@ function buildQueueView(
   queuedWorkflowIds: string[],
 ): QueueView {
   return {
-    mode: queueState.mode,
     queuedEntries: queueState.queued,
     queuedWorkflowIds,
     queuedItems: selectors.queuedItems,
     running: queueState.running,
     busy: selectors.busy,
-    startedActive: selectors.startedActive,
     disabled: selectors.disabled,
     status: selectors.status,
   };
@@ -70,6 +65,7 @@ function buildActions(parts: {
   harnessState: ReturnType<typeof useWorkflowHarnessOverrides>;
   runActions: ReturnType<typeof useWorkflowRunActions>;
   queueActions: ReturnType<typeof useWorkflowQueueActions>;
+  manualRun: ReturnType<typeof useWorkflowManualRun>;
   selectWorkflow: (wf: Workflow) => Promise<void>;
   newBlank: () => Promise<void>;
   updateEditorName: (name: string) => void;
@@ -81,6 +77,7 @@ function buildActions(parts: {
     harnessState,
     runActions,
     queueActions,
+    manualRun,
     selectWorkflow,
     newBlank,
     updateEditorName,
@@ -106,13 +103,13 @@ function buildActions(parts: {
     updateEditorName,
     customizeStepPrompt: promptCustomization.customizeStepPrompt,
     setWorkflowHarnessOverride: harnessState.setWorkflowHarnessOverride,
-    runWorkflow: runActions.runWorkflow,
-    runEditorWorkflow: runActions.runEditorWorkflow,
+    // The ▶ Run buttons: start now, or queue behind the active run.
+    runWorkflow: manualRun.runWorkflowOrQueue,
+    runEditorWorkflow: manualRun.runEditorWorkflowOrQueue,
     enqueueWorkflow: queueActions.enqueueWorkflow,
     enqueueEditorWorkflow: queueActions.enqueueEditorWorkflow,
     removeQueuedWorkflow: queueActions.removeQueuedWorkflow,
     startQueuedWorkflows: queueActions.startQueuedWorkflows,
-    setQueueMode: queueActions.setQueueMode,
     stopQueue: queueActions.stopQueue,
     clearQueue: queueActions.clearQueue,
     stopRun: runActions.stopRun,
@@ -126,8 +123,9 @@ function buildActions(parts: {
 //
 // The composition order matters: harness overrides feed run/queue actions,
 // run actions feed the queue scheduler (queued entries fire through the same
-// runWorkflow callback), and the queue scheduler's state feeds the selectors
-// that render the queue panel. The derived run views and the queue/actions
+// runWorkflow callback), the queue scheduler's state feeds the selectors
+// that render the queue panel, and run + queue actions together feed the
+// manual ▶ Run wrappers (start now, or queue behind the active run). The derived run views and the queue/actions
 // object assembly are split into `useWorkflowRunViews` / `buildQueueView` /
 // `buildActions` so this body reads as wiring.
 export function useWorkflowManager(activeFolder: string, scanResult: ScanResult | null) {
@@ -201,15 +199,10 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
   });
 
   const runQueuedWorkflow = useCallback(
-    (
-      wf: Workflow,
-      entry: WorkflowQueueEntry,
-      opts?: StartRunOptions,
-    ): Promise<StartOutcome> =>
+    (wf: Workflow, entry: WorkflowQueueEntry): Promise<StartOutcome> =>
       // Each entry captured its own override at enqueue time — pass both fields
       // through so a queued "Pi — X" run uses the model it was queued with.
-      // `opts` carries the sequential requireNoActiveRun flag from the queue.
-      runActions.runWorkflow(wf.id, entry.harnessOverride, entry.piModelOverride, opts),
+      runActions.runWorkflow(wf.id, entry.harnessOverride, entry.piModelOverride),
     [runActions],
   );
 
@@ -234,6 +227,17 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     queueState,
     workflowsById,
     activeRuns,
+  });
+
+  const manualRun = useWorkflowManualRun({
+    activeRuns,
+    runWorkflow: runActions.runWorkflow,
+    runEditorWorkflow: runActions.runEditorWorkflow,
+    enqueueWorkflow: queueActions.enqueueWorkflow,
+    enqueueWorkflowDefinition: queueActions.enqueueWorkflowDefinition,
+    enqueueEditorWorkflow: queueActions.enqueueEditorWorkflow,
+    startQueuedWorkflows: queueActions.startQueuedWorkflows,
+    notify: showError,
   });
 
   // Replacing the editor (picking another saved workflow, starting a blank
@@ -307,6 +311,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
       harnessState,
       runActions,
       queueActions,
+      manualRun,
       selectWorkflow,
       newBlank,
       updateEditorName,

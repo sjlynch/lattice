@@ -9,7 +9,7 @@ import { queueState, scenario, started } from './queueScheduler.fixture.ts';
 // must remember the runId so the eventual workflowStarted retires the entry
 // instead of attaching a dead id.
 
-test('runFinished before workflowStarted (sequential) lets the next queued workflow start', () => {
+test('runFinished before workflowStarted lets the next queued workflow start', () => {
   const q = scenario()
     .enqueue('q1', 'wf1')
     .enqueue('q2', 'wf2')
@@ -31,25 +31,21 @@ test('runFinished before workflowStarted (sequential) lets the next queued workf
   assert.equal(q.state.started[0].id, 'q2');
 });
 
-test('runFinished before workflowStarted (parallel) retires the entry and lets autoStop fire', () => {
+test('runFinished before workflowStarted on the last entry lets autoStop fire', () => {
   const q = scenario()
-    .setMode('parallel')
     .enqueue('q1', 'wf1')
-    .enqueue('q2', 'wf2')
     .startQueue();
-  assert.deepEqual(q.startedIds().sort(), ['q1', 'q2']);
+  assert.deepEqual(q.startedIds(), ['q1']);
 
-  // q1's run finishes before /run resolves; q2 dispatches normally.
+  // q1's run finishes before /run resolves.
   q.runFinished('run1');
-  q.workflowStarted('q2', 'run2');
   assert.equal(q.autoStop, false, 'q1 still pending workflowStarted attachment');
 
   q.workflowStarted('q1', 'run1');
-  assert.equal(q.state.started.length, 1, 'q1 retired by pre-finished consume');
+  assert.equal(q.state.started.length, 0, 'q1 retired by pre-finished consume');
   assert.deepEqual(q.state.preFinishedRunIds, []);
-
-  q.runFinished('run2');
-  assert.equal(q.state.started.length, 0);
+  assert.equal(q.autoStop, true, 'the drained queue auto-stops');
+  assert.equal(q.state.running, false);
 });
 
 test('pre-finished runId is consumed only by a matching entryId', () => {

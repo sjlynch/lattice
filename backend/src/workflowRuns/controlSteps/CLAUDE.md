@@ -131,7 +131,7 @@ runs:
 
 The queue can't close this itself: its only sequential gate,
 `assertNoActiveWorkflowRun`, counts **workflow runs, not hooks**. Making
-`requireNoActiveRun` 409 on a live hook would also stall the queue — its 409
+a run start 409 on a live hook would also stall the queue — its 409
 retry is driven by `runFinished` (a workflow run leaving `activeRuns`), and a
 hook finishing emits no such event. So the wait belongs here, where the step
 already owns "all merging for this workflow is done" and the wait is bounded.

@@ -68,13 +68,15 @@ test('workflow normalization applies persisted fallbacks and harness defaults', 
   assert.equal(normalized[0].projectPath, project);
   assert.equal(normalized[0].name, 'Named flow');
   assert.equal(normalized[0].createdAt, 123);
-  assert.equal(normalized[0].steps[0].mode, 'parallel');
+  // The legacy per-step `mode` is stripped, whatever its value — nothing reads
+  // it, and the `...step` spread would otherwise carry it forward forever.
+  assert.equal('mode' in normalized[0].steps[0], false);
   assert.equal(normalized[0].steps[0].harness, 'pi');
   assert.equal((normalized[0].steps[0] as WorkflowStep & { extra?: string }).extra, 'kept');
   assert.match(normalized[0].steps[1].id, /^step_\d+_1_[a-z0-9]{3}$/);
   assert.equal(normalized[0].steps[1].title, '');
   assert.equal(normalized[0].steps[1].prompt, '');
-  assert.equal(normalized[0].steps[1].mode, 'sequential');
+  assert.equal('mode' in normalized[0].steps[1], false);
   assert.equal(normalized[0].steps[1].harness, 'claude');
 
   assert.match(normalized[1].id, /^wf_\d+_[a-z0-9]{5}$/);
@@ -174,7 +176,7 @@ test('WorkflowStore persists workflows under .lattice/workflows.json and reloads
     assert.equal(created.name, 'Test Flow');
     assert.match(created.id, /^wf_\d+_[a-z0-9]{5}$/);
     assert.match(created.steps[0].id, /^step_\d+_0_[a-z0-9]{3}$/);
-    assert.equal(created.steps[0].mode, 'parallel');
+    assert.equal('mode' in created.steps[0], false, 'legacy mode is not persisted');
     assert.equal(created.steps[0].harness, 'codex');
     assert.equal(created.steps[1].harness, 'pi');
 
@@ -194,6 +196,7 @@ test('WorkflowStore persists workflows under .lattice/workflows.json and reloads
     assert.equal(saved[0].projectPath, project);
     assert.equal(saved[0].steps[0].harness, 'codex');
     assert.equal(saved[0].steps[1].harness, 'pi');
+    assert.equal('mode' in saved[0].steps[0], false, 'legacy mode never reaches workflows.json');
 
     const reloaded = new WorkflowStore();
     const listed = await reloaded.listWorkflows(dir);
@@ -222,6 +225,7 @@ test('WorkflowStore persists workflows under .lattice/workflows.json and reloads
     const savedUpdated = JSON.parse(await fs.readFile(file, 'utf8')) as Workflow[];
     assert.equal(savedUpdated[0].name, 'Renamed');
     assert.equal(savedUpdated[0].steps[0].harness, 'pi');
+    assert.equal('mode' in savedUpdated[0].steps[0], false, 'an update carrying mode strips it');
 
     assert.equal(await reloaded.deleteWorkflow(created.id), true);
     await reloaded.flushPersist(dir);

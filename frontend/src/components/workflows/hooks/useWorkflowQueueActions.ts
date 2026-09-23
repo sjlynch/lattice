@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import type { Workflow, WorkflowRunHarnessOverride } from '../../../api';
 import type { EditorState } from '../editorState';
-import type { QueueAction, QueueMode } from '../queueScheduler';
+import type { QueueAction } from '../queueScheduler';
 
 type Args = {
   editor: EditorState;
@@ -18,7 +18,10 @@ function nextQueueEntryId(): string {
 
 // Queue-side callbacks. Enqueueing the editor's draft saves first so the
 // engine sees the latest steps; the queued list itself is owned by
-// `useWorkflowQueue` and reached through `dispatchQueue`.
+// `useWorkflowQueue` and reached through `dispatchQueue`. The enqueue callbacks
+// report whether an entry was actually queued (an empty workflow or a failed
+// save queues nothing), so a manual ▶ Run that falls back to the queue only
+// says "queued" when it was.
 export function useWorkflowQueueActions({
   editor,
   workflowsById,
@@ -31,8 +34,8 @@ export function useWorkflowQueueActions({
     wf: Workflow,
     harnessOverride: WorkflowRunHarnessOverride = getWorkflowHarnessOverride(wf.id),
     piModelOverride: string | undefined = getWorkflowPiModelOverride(wf.id),
-  ) => {
-    if (wf.steps.length === 0) return;
+  ): boolean => {
+    if (wf.steps.length === 0) return false;
     dispatchQueue({
       type: 'enqueue',
       entry: {
@@ -42,15 +45,16 @@ export function useWorkflowQueueActions({
         piModelOverride,
       },
     });
+    return true;
   }, [dispatchQueue, getWorkflowHarnessOverride, getWorkflowPiModelOverride]);
 
   const enqueueWorkflow = useCallback((
     workflowId: string,
     harnessOverride: WorkflowRunHarnessOverride = getWorkflowHarnessOverride(workflowId),
     piModelOverride: string | undefined = getWorkflowPiModelOverride(workflowId),
-  ) => {
+  ): boolean => {
     const wf = workflowsById.get(workflowId);
-    if (wf) enqueueWorkflowDefinition(wf, harnessOverride, piModelOverride);
+    return wf ? enqueueWorkflowDefinition(wf, harnessOverride, piModelOverride) : false;
   }, [enqueueWorkflowDefinition, getWorkflowHarnessOverride, getWorkflowPiModelOverride, workflowsById]);
 
   const removeQueuedWorkflow = useCallback((entryId: string) => {
@@ -69,11 +73,7 @@ export function useWorkflowQueueActions({
     dispatchQueue({ type: 'startQueue' });
   }, [dispatchQueue]);
 
-  const setQueueMode = useCallback((mode: QueueMode) => {
-    dispatchQueue({ type: 'setMode', mode });
-  }, [dispatchQueue]);
-
-  const enqueueEditorWorkflow = useCallback(async () => {
+  const enqueueEditorWorkflow = useCallback(async (): Promise<boolean> => {
     const harnessOverride = editor.workflowId
       ? getWorkflowHarnessOverride(editor.workflowId)
       : null;
@@ -82,10 +82,9 @@ export function useWorkflowQueueActions({
       : undefined;
     if (!editor.workflowId || editor.dirty) {
       const saved = await save();
-      if (saved) enqueueWorkflowDefinition(saved, harnessOverride, piModelOverride);
-      return;
+      return saved ? enqueueWorkflowDefinition(saved, harnessOverride, piModelOverride) : false;
     }
-    enqueueWorkflow(editor.workflowId, harnessOverride, piModelOverride);
+    return enqueueWorkflow(editor.workflowId, harnessOverride, piModelOverride);
   }, [
     editor.dirty,
     editor.workflowId,
@@ -97,12 +96,12 @@ export function useWorkflowQueueActions({
   ]);
 
   return {
+    enqueueWorkflowDefinition,
     enqueueWorkflow,
     enqueueEditorWorkflow,
     removeQueuedWorkflow,
     clearQueue,
     stopQueue,
     startQueuedWorkflows,
-    setQueueMode,
   };
 }

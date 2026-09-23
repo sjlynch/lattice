@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import express from 'express';
+import { once } from 'node:events';
 import {
   assertNoActiveWorkflowRun,
   startWorkflowRun,
@@ -11,13 +13,16 @@ import {
 import { runs, type WorkflowRun } from '../workflowRuns/state.js';
 import { createWorkflow } from '../workflows.js';
 import { canonicalProjectPath } from '../projectPath.js';
+import { buildWorkflowRunsRouter } from '../routes/workflows/runs.js';
 
 // Regression for: "sequential workflow queue let two runs play at once."
-// `startWorkflowRun({ requireNoActiveRun: true })` is the authoritative backend
-// guard behind the frontend's best-effort sequential gate — it must refuse
-// (WorkflowRunConflictError → HTTP 409) when a run is already active for the
-// project, so the queue requeues rather than starting a second run alongside
-// the first.
+// A project runs one workflow at a time: `startWorkflowRun` is the
+// authoritative backend guard behind the frontend's best-effort sequential
+// gate — it must refuse EVERY start (WorkflowRunConflictError → HTTP 409) while
+// a run is already active for the project, whether it came from the queue or a
+// manual ▶ Run, so the frontend queues it rather than starting a second run
+// alongside the first. (The body flag `requireNoActiveRun` that used to opt in
+// is still accepted and ignored.)
 
 function fakeRun(id: string, projectPath: string, status: WorkflowRun['status']): WorkflowRun {
   return {
@@ -61,12 +66,12 @@ test('assertNoActiveWorkflowRun throws only while a run is active for the projec
   }
 });
 
-test('startWorkflowRun rejects a requireNoActiveRun start while a run is active (before any spawn)', async () => {
+test('startWorkflowRun rejects any start while a run is active (before any spawn)', async () => {
   const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-wfguard-'));
   let wfProject = '';
   try {
     const wf = await createWorkflow(project, 'guarded', [
-      { id: 's1', title: 'Step 1', prompt: 'do it', mode: 'sequential', harness: 'claude' },
+      { id: 's1', title: 'Step 1', prompt: 'do it', harness: 'claude' },
     ]);
     wfProject = wf.projectPath;
 
@@ -76,7 +81,7 @@ test('startWorkflowRun rejects a requireNoActiveRun start while a run is active 
     // The guard fires before any run record / notify / terminal spawn, so this
     // rejects cleanly with no side effects (no new run enters the map).
     await assert.rejects(
-      startWorkflowRun(wf.id, 'http://127.0.0.1:5184', { requireNoActiveRun: true }),
+      startWorkflowRun(wf.id, 'http://127.0.0.1:5184'),
       WorkflowRunConflictError,
     );
 
@@ -86,13 +91,54 @@ test('startWorkflowRun rejects a requireNoActiveRun start while a run is active 
     assert.deepEqual(
       forProject.map((r) => r.id),
       ['r-active'],
-      'a rejected sequential start must not create a run record',
+      'a rejected start must not create a run record',
     );
   } finally {
     for (const [id, r] of [...runs.entries()]) {
       if (r.projectPath === wfProject) runs.delete(id);
     }
     // Let the workflow store's debounced persist flush before removing the dir.
+    await new Promise((r) => setTimeout(r, 200));
+    await fs.rm(project, { recursive: true, force: true });
+  }
+});
+
+test('POST /api/workflows/:id/run 409s a second start for the project even without requireNoActiveRun', async () => {
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-wfguard-route-'));
+  const app = express();
+  app.use(express.json());
+  app.use(buildWorkflowRunsRouter('http://127.0.0.1:1'));
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  let wfProject = '';
+  try {
+    const wf = await createWorkflow(project, 'guarded', [
+      { id: 's1', title: 'Step 1', prompt: 'do it', harness: 'claude' },
+    ]);
+    wfProject = wf.projectPath;
+    runs.set('r-active-route', fakeRun('r-active-route', wf.projectPath, 'running'));
+
+    // A manual ▶ Run sends no flag; an older client may send `false`. Both are
+    // refused with the same 409 envelope the frontend queue branches on.
+    for (const body of [{}, { requireNoActiveRun: false }]) {
+      const res = await fetch(`${base}/api/workflows/${wf.id}/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      assert.equal(res.status, 409, `body ${JSON.stringify(body)} must 409`);
+      const json = (await res.json()) as { error?: string; code?: string };
+      assert.equal(json.code, 'active-run-exists');
+      assert.match(json.error ?? '', /already active/);
+    }
+    const forProject = [...runs.values()].filter((r) => r.projectPath === wf.projectPath);
+    assert.deepEqual(forProject.map((r) => r.id), ['r-active-route']);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+    for (const [id, r] of [...runs.entries()]) {
+      if (r.projectPath === wfProject) runs.delete(id);
+    }
     await new Promise((r) => setTimeout(r, 200));
     await fs.rm(project, { recursive: true, force: true });
   }

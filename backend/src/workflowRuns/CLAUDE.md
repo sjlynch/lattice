@@ -327,18 +327,21 @@ explicit-curl callbacks — never by polling task state.
   cancel pending `wf-step:<runId>:<step>` queue entries, unregister the
   presence node, and kill any tracked `serverId`; queued thunks must re-check
   run status/current step before and after `proxyCreateSession`.
-- **One active run per project is enforceable, not automatic.** The backend
-  accepts concurrent runs by default — parallel queue mode and manual ▶ Run
-  are intentional. A caller that wants the single-slot guarantee passes
-  `requireNoActiveRun` to `startWorkflowRun`, which calls
-  `assertNoActiveWorkflowRun` and throws `WorkflowRunConflictError`
-  (`routes/workflows/runs.ts` → **HTTP 409**) if any run is `running` for the
-  project — *before* any run record / `started` notify / spawn, so a rejected
-  start is side-effect-free. The frontend **sequential** queue sets the flag so
-  its best-effort `activeRuns` gate can't be raced (a run's startup window, or a
-  second browser tab) into starting two runs at once; on the 409 the queue
-  requeues the entry and retries when the slot frees. Parallel/manual starts
-  omit the flag.
+- **One active run per project, always.** Every `startWorkflowRun` calls
+  `assertNoActiveWorkflowRun`, which throws `WorkflowRunConflictError`
+  (`routes/workflows/runs.ts` → **HTTP 409** `active-run-exists`) if any run is
+  `running` for the project — *before* any run record / `started` notify /
+  spawn, so a rejected start is side-effect-free. There is no opt-out: the
+  queue's Parallel mode and the per-step `mode` are gone, and the route still
+  accepts (and ignores) the old `requireNoActiveRun` body field. This is what
+  keeps the frontend's best-effort `activeRuns` gate from being raced (a run's
+  startup window, or a second browser tab) into starting two runs at once: on
+  the 409 the queue requeues the entry and retries when the slot frees, and a
+  manual ▶ Run adds the workflow to the queue ("Queued behind <name>").
+  **Exception:** boot recovery (`recovery/workflowRunResume.ts`) resumes every
+  persisted run, so two runs saved by a build that still allowed concurrency
+  come back together and finish concurrently — a one-time transition, logged
+  as `[startup] N workflow runs resumed for <project>`.
 - **The single slot counts workflow runs, not post-merge hooks.**
   `assertNoActiveWorkflowRun` deliberately ignores hooks, and adding them there
   would stall the queue: the 409 retry is re-evaluated only on `runFinished` (a

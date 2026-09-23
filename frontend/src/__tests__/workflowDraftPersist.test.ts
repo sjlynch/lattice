@@ -22,7 +22,6 @@ function draft(name: string): EditorState {
         id: 's1',
         title: 'Step 1',
         prompt: 'do the thing',
-        mode: 'sequential',
         harness: 'claude',
         kind: 'agent',
       },

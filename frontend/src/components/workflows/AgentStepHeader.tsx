@@ -4,7 +4,6 @@ import type {
   HarnessAvailability,
   PiMenuEntry,
   WorkflowStep,
-  WorkflowStepMode,
 } from '../../api';
 import {
   buildHarnessOptions,
@@ -66,7 +65,7 @@ function StepHarnessSelect({
 }
 
 // The top row of an agent step: collapse toggle, status badge, title input,
-// mode + harness selects, and the customize/remove actions. Memoized on its own
+// harness select, and the customize/remove actions. Memoized on its own
 // and fed only the header-relevant fields of the step (not the whole object) so
 // a keystroke in the prompt textarea — which lives in the sibling
 // `PromptHighlightTextarea` — doesn't re-render the header.
@@ -75,7 +74,6 @@ export const AgentStepHeader = memo(function AgentStepHeader({
   index,
   collapsed,
   title,
-  mode,
   harness,
   piModel,
   frozen,
@@ -93,7 +91,6 @@ export const AgentStepHeader = memo(function AgentStepHeader({
   index: number;
   collapsed: boolean;
   title: string;
-  mode: WorkflowStepMode;
   harness: WorkflowStep['harness'];
   piModel?: string;
   frozen: boolean;
@@ -127,15 +124,6 @@ export const AgentStepHeader = memo(function AgentStepHeader({
         value={title}
         onChange={(e) => onChange(index, { title: e.target.value })}
       />
-      <select
-        className="workflows-step-mode"
-        value={mode}
-        onChange={(e) => onChange(index, { mode: e.target.value as WorkflowStepMode })}
-        title="Sequential runs after the prior step finishes; parallel is reserved for the upcoming fan-out executor"
-      >
-        <option value="sequential">sequential</option>
-        <option value="parallel">parallel</option>
-      </select>
       <StepHarnessSelect
         harnessAvail={harnessAvail}
         piMenu={piMenu}

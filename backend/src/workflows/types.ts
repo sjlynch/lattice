@@ -1,6 +1,5 @@
 import type { AgentHarness } from '../harnesses.js';
 
-export type WorkflowStepMode = 'sequential' | 'parallel';
 export type WorkflowStepHarness = AgentHarness;
 export type WorkflowRunHarnessOverride = WorkflowStepHarness | null;
 
@@ -20,11 +19,11 @@ export type WorkflowStep = {
   id: string;
   title: string;
   prompt: string;
-  // 'parallel' is reserved for the future fan-out-per-file executor; the
-  // current run engine treats every step as sequential. Schema-only support
-  // is intentional — UI can author parallel steps so the data is ready when
-  // the executor lands.
-  mode: WorkflowStepMode;
+  // Legacy per-step 'sequential' | 'parallel' flag. Nothing ever read it (steps
+  // always run one after another); the editor no longer writes it and
+  // `normalizeSteps` strips it. Optional here only so data and fixtures written
+  // before its removal still type-check.
+  mode?: 'sequential' | 'parallel';
   harness: WorkflowStepHarness;
   // Pi model ("provider/model") for this step, used only when `harness` is
   // `pi`. Absent = Pi's configured default. See piModels.ts.

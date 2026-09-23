@@ -12,7 +12,6 @@ function step(over: Partial<WorkflowStep> = {}): WorkflowStep {
     id: 's1',
     title: 'Step 1',
     prompt: 'do the thing\n\n{{user_instructions}}',
-    mode: 'sequential',
     harness: 'claude',
     kind: 'agent',
     ...over,

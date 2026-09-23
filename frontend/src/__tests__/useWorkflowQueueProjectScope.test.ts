@@ -187,14 +187,12 @@ test('queue state does not leak across a project switch', async () => {
   // carried over from A, and the derived selectors are all default.
   assert.deepEqual(
     {
-      mode: latestState!.mode,
       running: latestState!.running,
       queued: latestState!.queued,
       started: latestState!.started,
       preFinishedRunIds: latestState!.preFinishedRunIds,
     },
     {
-      mode: 'sequential',
       running: false,
       queued: [],
       started: [],
@@ -206,7 +204,7 @@ test('queue state does not leak across a project switch', async () => {
   assert.equal(latestSelectors!.busy, false, 'B queue is not busy');
   assert.equal(
     latestSelectors!.status,
-    'Queue saved workflows, then choose sequential or parallel start.',
+    'Queue saved workflows to run one after another.',
     'B shows the empty-queue status',
   );
 

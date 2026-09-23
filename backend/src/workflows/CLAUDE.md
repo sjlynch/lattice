@@ -10,7 +10,10 @@ imports from `'../workflows.js'`; this directory holds the implementation.
 
 - `types.ts` — `Workflow` / `WorkflowStep` / `WorkflowVariable` /
   `WorkflowSubscriber` shapes and the `WorkflowStepKind` (`agent` | `start` |
-  `merge` | `push`) / `mode` / harness enums. The control-flow kinds
+  `merge` | `push`) / harness enums. The legacy per-step `mode`
+  (`sequential` | `parallel`) is gone — nothing ever read it; it stays optional
+  on the type only so pre-removal data type-checks, and `normalizeSteps` strips
+  it. The control-flow kinds
   (`start`/`merge`/`push`) ignore `prompt`/`harness` at run time and are
   executed directly against the task pipeline; only `agent` steps spawn a
   harness. The fields are retained on disk for schema uniformity. `frozen`

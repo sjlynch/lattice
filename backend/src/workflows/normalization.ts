@@ -62,13 +62,14 @@ export function normalizeWorkflowRunHarnessOverride(
 export function normalizeSteps(steps: unknown): WorkflowStep[] {
   if (!Array.isArray(steps)) return [];
   return steps.map((s, i) => {
-    const step = (s && typeof s === 'object' ? s : {}) as Partial<WorkflowStep>;
+    // The legacy per-step `mode` is dropped here — the spread below would
+    // otherwise carry it forward from disk or an old editor draft forever.
+    const { mode: _legacyMode, ...step } = (s && typeof s === 'object' ? s : {}) as Partial<WorkflowStep>;
     return {
       ...step,
       id: step.id || `step_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 5)}`,
       title: typeof step.title === 'string' ? step.title : '',
       prompt: typeof step.prompt === 'string' ? step.prompt : '',
-      mode: step.mode === 'parallel' ? 'parallel' : 'sequential',
       harness: normalizeWorkflowStepHarness(step.harness),
       piModel: normalizePiModel(step.piModel),
       kind: normalizeStepKind(step.kind),

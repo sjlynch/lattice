@@ -228,7 +228,7 @@ therefore stay safely re-runnable.
 | POST | `/api/workflows` | Create a workflow definition |
 | PATCH | `/api/workflows/:id` | Update a workflow definition (optional `?project=` pin: 404 if the workflow belongs to another project) |
 | DELETE | `/api/workflows/:id` | Delete a workflow definition (optional `?project=` pin, as PATCH) |
-| POST | `/api/workflows/:id/run` | Start a workflow run (spawns step 0 terminal). `requireNoActiveRun:true` (sequential-queue dispatch) → **409** if a run is already active for the project, so the queue requeues instead of running two at once |
+| POST | `/api/workflows/:id/run` | Start a workflow run (spawns step 0 terminal). One run per project: **409** (`active-run-exists`) if a run is already active, so the queue requeues and a manual ▶ Run queues behind it instead of running two at once. A legacy `requireNoActiveRun` body field is accepted and ignored |
 | POST | `/api/workflow-prompt-customizations` | Spawn selected harness to tailor a workflow step prompt |
 | GET | `/api/workflow-prompt-customizations/:id` | Poll prompt-customization status/result |
 | POST | `/api/workflow-prompt-customizations/:id/complete` | Harness callback with customized prompt |

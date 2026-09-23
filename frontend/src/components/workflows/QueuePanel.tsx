@@ -9,33 +9,10 @@ type Props = {
 export function QueuePanel({ manager }: Props) {
   const { queue, actions } = manager;
 
-  // The reducer rejects a mode change while the queue is running OR while it
-  // still holds dispatched runs (`startedActive`). Disable the buttons on the
-  // same condition so they can't appear enabled while a click is a silent
-  // no-op — parallel mode clears `running` as soon as every dispatch settles,
-  // long before its runs drain out of `started`.
-  const modeLocked = queue.running || queue.startedActive;
-
+  // The queue is sequential: a project runs one workflow at a time, so each
+  // queued workflow starts when the previous one finishes.
   return (
     <>
-      <div className="workflows-queue-mode" role="group" aria-label="Workflow queue mode">
-        <button
-          className={queue.mode === 'sequential' ? 'active' : ''}
-          onClick={() => actions.setQueueMode('sequential')}
-          disabled={modeLocked}
-          title="Run one queued workflow after the previous one finishes"
-        >
-          Sequential
-        </button>
-        <button
-          className={queue.mode === 'parallel' ? 'active' : ''}
-          onClick={() => actions.setQueueMode('parallel')}
-          disabled={modeLocked}
-          title="Start all queued workflows at once"
-        >
-          Parallel
-        </button>
-      </div>
       <div className="workflows-queue-controls">
         <button
           className="btn-primary"

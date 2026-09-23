@@ -41,8 +41,7 @@ export function localStepId(): string {
 // Single source of truth for a fresh agent step. The editor hand-wrote this
 // literal in four places (newBlank / addStep / addDefaultPromptStep, plus the
 // control variant) — callers pass only what differs (title + prompt); the
-// default mode/harness/kind live here. Output is byte-identical to the old
-// inline literals.
+// default harness/kind live here.
 //
 // `id` is injectable so a caller that must know the id *before* the step lands
 // in state (the add actions, which mark the new step collapsed) can mint it
@@ -65,7 +64,6 @@ export function makeAgentStep({
     id,
     title,
     prompt,
-    mode: 'sequential',
     harness: 'claude',
     kind: 'agent',
     ...(tools?.length ? { tools: [...tools] } : {}),
@@ -81,7 +79,6 @@ export function makeControlStep(
     id: localStepId(),
     title,
     prompt: '',
-    mode: 'sequential',
     harness: 'claude',
     kind,
   };

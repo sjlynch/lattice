@@ -10,16 +10,9 @@ import {
 import { sameProjectPath } from '../../../terminal/terminalScope';
 import type { EditorState } from '../editorState';
 
-// Options threaded from the sequential queue into a run start.
-export type StartRunOptions = {
-  // Ask the backend to 409 if a run is already active for the project. Set by
-  // the sequential queue; a resulting 409 surfaces as `{ status: 'busy' }` (the
-  // queue requeues), never an error toast.
-  requireNoActiveRun?: boolean;
-};
-
-// Outcome of a run-start attempt. `busy` (backend 409) is distinct from
-// `failed` so the queue can requeue-and-retry rather than drop the entry.
+// Outcome of a run-start attempt. `busy` (backend 409: another run is active
+// for the project) is distinct from `failed` so the queue can requeue-and-retry
+// — and a manual ▶ Run can enqueue — rather than drop the start.
 export type StartOutcome =
   | { status: 'started'; run: WorkflowRun }
   // WS completion beat the /run response. The queue must consume this as a
@@ -27,6 +20,11 @@ export type StartOutcome =
   | { status: 'finished'; run: WorkflowRun }
   | { status: 'busy' }
   | { status: 'failed' };
+
+// What `runEditorWorkflow` attempted: the (possibly just-saved) workflow and
+// the start outcome, or null when it bailed before any start (save failed,
+// project switched mid-save, workflow gone).
+export type EditorRunResult = { workflow: Workflow; outcome: StartOutcome } | null;
 
 type Args = {
   activeFolder: string;
@@ -42,7 +40,9 @@ type Args = {
 
 // Run-side callbacks: starting a workflow from its stored definition, running
 // a workflow (auto-saving dirty editor state first), running whatever's in
-// the editor, and cancelling an active run.
+// the editor, and cancelling an active run. A start while another run is
+// active comes back `busy`; the manual ▶ Run wrappers in
+// `useWorkflowManualRun` turn that into an enqueue.
 export function useWorkflowRunActions({
   activeFolder,
   editor,
@@ -65,17 +65,12 @@ export function useWorkflowRunActions({
     workflowId: string,
     harnessOverride: WorkflowRunHarnessOverride = null,
     piModelOverride?: string,
-    opts?: StartRunOptions,
   ): Promise<StartOutcome> => {
     const requestedProject = activeFolderRef.current;
     const requestedGeneration = activeFolderGenerationRef.current;
     if (!requestedProject) return { status: 'failed' };
     try {
-      const res = await apiStartWorkflow(workflowId, {
-        harnessOverride,
-        piModelOverride,
-        requireNoActiveRun: opts?.requireNoActiveRun,
-      });
+      const res = await apiStartWorkflow(workflowId, { harnessOverride, piModelOverride });
       if (
         activeFolderRef.current !== requestedProject ||
         activeFolderGenerationRef.current !== requestedGeneration ||
@@ -90,8 +85,9 @@ export function useWorkflowRunActions({
       addActiveRun(res.run);
       return { status: 'started', run: res.run };
     } catch (err) {
-      // 409 = the backend's sequential guard rejected this start because a run
-      // is already active. Not a user-facing error — the queue requeues.
+      // 409 = the backend's one-run-per-project guard rejected this start
+      // because a run is already active. Not a user-facing error — the queue
+      // requeues, a manual ▶ Run enqueues.
       if (err instanceof HttpError && err.status === 409) return { status: 'busy' };
       onError(`Run failed: ${(err as Error).message}`);
       return { status: 'failed' };
@@ -102,7 +98,6 @@ export function useWorkflowRunActions({
     workflowId: string,
     harnessOverride: WorkflowRunHarnessOverride = getWorkflowHarnessOverride(workflowId),
     piModelOverride: string | undefined = getWorkflowPiModelOverride(workflowId),
-    opts?: StartRunOptions,
   ): Promise<StartOutcome> => {
     const requestedProject = activeFolderRef.current;
     const requestedGeneration = activeFolderGenerationRef.current;
@@ -125,7 +120,7 @@ export function useWorkflowRunActions({
       }
       targetId = saved.id;
     }
-    return startWorkflowDefinition(targetId, harnessOverride, piModelOverride, opts);
+    return startWorkflowDefinition(targetId, harnessOverride, piModelOverride);
   }, [
     editor.dirty,
     editor.workflowId,
@@ -136,7 +131,7 @@ export function useWorkflowRunActions({
     workflowsById,
   ]);
 
-  const runEditorWorkflow = useCallback(async () => {
+  const runEditorWorkflow = useCallback(async (): Promise<EditorRunResult> => {
     const harnessOverride = editor.workflowId
       ? getWorkflowHarnessOverride(editor.workflowId)
       : null;
@@ -151,7 +146,7 @@ export function useWorkflowRunActions({
         editor.workflowId &&
         (!loadedWorkflow || !sameProjectPath(loadedWorkflow.projectPath, activeFolderRef.current))
       ) {
-        return;
+        return null;
       }
       const requestedProject = activeFolderRef.current;
       const requestedGeneration = activeFolderGenerationRef.current;
@@ -163,11 +158,19 @@ export function useWorkflowRunActions({
         activeFolderGenerationRef.current === requestedGeneration &&
         sameProjectPath(saved.projectPath, requestedProject)
       ) {
-        await startWorkflowDefinition(saved.id, harnessOverride, piModelOverride);
+        return {
+          workflow: saved,
+          outcome: await startWorkflowDefinition(saved.id, harnessOverride, piModelOverride),
+        };
       }
-      return;
+      return null;
     }
-    await runWorkflow(editor.workflowId, harnessOverride, piModelOverride);
+    const wf = workflowsById.get(editor.workflowId);
+    if (!wf) return null;
+    return {
+      workflow: wf,
+      outcome: await runWorkflow(editor.workflowId, harnessOverride, piModelOverride),
+    };
   }, [
     editor.dirty,
     editor.workflowId,

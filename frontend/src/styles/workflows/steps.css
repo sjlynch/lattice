@@ -100,7 +100,6 @@
   flex: 1;
   font-size: 12.5px;
 }
-.workflows-step-mode,
 .workflows-step-harness {
   font-size: 11px;
   background: rgba(255, 255, 255, 0.04);
@@ -108,8 +107,6 @@
   color: var(--text-secondary);
   border-radius: var(--radius-sm);
   padding: 3px 6px;
-}
-.workflows-step-harness {
   /* Size to content within a sane cap. A very long "Pi — <model>" label still
      ellipsis-clips on the closed control, but its full `provider/model` is in
      the select's (and each option's) title tooltip, and the open option list
@@ -120,24 +117,20 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.workflows-step-mode:hover,
 .workflows-step-harness:hover {
   border-color: var(--accent);
   color: var(--text-primary);
 }
-.workflows-step-mode:focus,
 .workflows-step-harness:focus {
   border-color: var(--accent);
   outline: none;
 }
 /* On-theme dropdown list: match the panel surface and use the app accent for
    the selected entry instead of the OS default highlight. */
-.workflows-step-mode option,
 .workflows-step-harness option {
   background: var(--bg-elev);
   color: var(--text-primary);
 }
-.workflows-step-mode option:checked,
 .workflows-step-harness option:checked {
   background: var(--accent-bg);
   color: var(--text-primary);

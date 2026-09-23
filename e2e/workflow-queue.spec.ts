@@ -57,7 +57,6 @@ function mergeStep(id: string) {
     id,
     title: 'Wait for the task lane, then merge',
     prompt: '',
-    mode: 'sequential',
     harness: 'claude',
     kind: 'merge',
   };
@@ -153,7 +152,7 @@ test.afterAll(async ({ request }) => {
   }
 });
 
-test('sequential queue never overlaps workflow runs and retries only after the slot frees', async ({
+test('workflow runs never overlap: manual Run queues behind the active run, which starts it after the slot frees', async ({
   context,
   page,
   request,
@@ -167,14 +166,11 @@ test('sequential queue never overlaps workflow runs and retries only after the s
     { key: ACTIVE_FOLDER_KEY, project: projectDir },
   );
 
-  const browserStarts: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const browserStarts: Array<{ url: string }> = [];
   const browserStartStatuses: number[] = [];
   page.on('request', (req) => {
     if (!runUrl.test(new URL(req.url()).pathname)) return;
-    browserStarts.push({
-      url: req.url(),
-      body: (req.postDataJSON() ?? {}) as Record<string, unknown>,
-    });
+    browserStarts.push({ url: req.url() });
   });
   page.on('response', (response) => {
     if (runUrl.test(new URL(response.url()).pathname)) {
@@ -190,24 +186,30 @@ test('sequential queue never overlaps workflow runs and retries only after the s
   await expect(firstRow).toBeVisible();
   await expect(secondRow).toBeVisible();
   await firstRow.getByRole('button', { name: 'Add workflow to queue' }).click();
-  await secondRow.getByRole('button', { name: 'Add workflow to queue' }).click();
 
-  await expect(page.locator('.workflows-queue-status')).toContainText('2 workflows queued');
-  await expect(page.getByRole('button', { name: 'Sequential' })).toHaveClass(/active/);
+  await expect(page.locator('.workflows-queue-status')).toContainText('1 workflow queued');
   await page.getByRole('button', { name: 'Start queue' }).click();
 
   await expect.poll(() => browserStarts.length).toBe(1);
   await expect(page.locator('.workflows-runs-section').filter({ hasText: 'Active' }))
     .toContainText(firstWorkflow!.name);
-  await expect(page.locator('.workflows-runs-section').filter({ hasText: 'Queued' }))
-    .toContainText(secondWorkflow!.name);
   await expect.poll(async () => (await activeRuns(request)).length).toBe(1);
   expect((await activeRuns(request))[0].workflowId).toBe(firstWorkflow!.id);
 
-  // The backend is the authoritative second line of defence. A guarded start
-  // from another tab/process is rejected and creates no second run.
+  // One workflow run per project: a manual ▶ Run while workflow 1 is active
+  // goes on the queue behind it (with a toast) instead of starting a second run.
+  await secondRow.getByRole('button', { name: 'Run workflow now' }).click();
+  await expect(page.locator('.task-error-toast')).toContainText(
+    `Queued behind "${firstWorkflow!.name}"`,
+  );
+  await expect(page.locator('.workflows-runs-section').filter({ hasText: 'Queued' }))
+    .toContainText(secondWorkflow!.name);
+
+  // The backend is the authoritative second line of defence. Any start from
+  // another tab/process — no opt-in flag needed — is rejected and creates no
+  // second run.
   const conflict = await request.post(`/api/workflows/${secondWorkflow!.id}/run`, {
-    data: { requireNoActiveRun: true },
+    data: {},
   });
   expect(conflict.status()).toBe(409);
   expect(await conflict.json()).toMatchObject({ code: 'active-run-exists' });
@@ -217,7 +219,7 @@ test('sequential queue never overlaps workflow runs and retries only after the s
   expect(browserStarts).toHaveLength(1);
 
   // Releasing the only in-progress task lets workflow 1's Merge step finish;
-  // only then may the queue issue workflow 2's guarded start.
+  // only then may the queue issue workflow 2's start.
   await json<Task>(
     await request.patch(`/api/tasks/${holdTask!.id}`, {
       data: { status: 'qa' },
@@ -231,5 +233,5 @@ test('sequential queue never overlaps workflow runs and retries only after the s
     'Queue saved workflows',
   );
 
-  expect(browserStarts.every(({ body }) => body.requireNoActiveRun === true)).toBe(true);
+  expect(browserStarts[browserStarts.length - 1].url).toContain(secondWorkflow!.id);
 });

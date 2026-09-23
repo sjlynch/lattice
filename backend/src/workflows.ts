@@ -20,7 +20,6 @@ export type {
   WorkflowStep,
   WorkflowStepHarness,
   WorkflowStepKind,
-  WorkflowStepMode,
   WorkflowSubscriber,
   WorkflowVariable,
 } from './workflows/types.js';

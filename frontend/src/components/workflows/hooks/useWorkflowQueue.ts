@@ -8,12 +8,12 @@ import {
   type StepContext,
 } from '../queueScheduler';
 import { sameProjectPath } from '../../../terminal/terminalScope';
-import type { StartOutcome, StartRunOptions } from './useWorkflowRunActions';
+import type { StartOutcome } from './useWorkflowRunActions';
 
 // Count the active runs the queue itself didn't dispatch (a manual ▶ Run, or a
 // run from another tab). Queue-owned runs are the ones whose runId is attached
 // to a `started` entry; everything else in `activeRuns` is external and feeds
-// the scheduler's sequential gate + enqueue-while-busy auto-start.
+// the scheduler's one-at-a-time gate + enqueue-while-busy auto-start.
 function externalActiveContext(
   state: QueueState,
   activeRuns: Record<string, WorkflowRun>,
@@ -41,13 +41,8 @@ type Args = {
   workflowsById: Map<string, Workflow>;
   // Triggers an HTTP /run for the given queued entry. Returns a discriminated
   // outcome: `started` (attach the runId), `busy` (backend 409 — requeue and
-  // retry when the slot frees), or `failed` (drop the entry). `opts` carries
-  // the sequential `requireNoActiveRun` flag.
-  runWorkflow: (
-    wf: Workflow,
-    entry: WorkflowQueueEntry,
-    opts?: StartRunOptions,
-  ) => Promise<StartOutcome>;
+  // retry when the slot frees), or `failed` (drop the entry).
+  runWorkflow: (wf: Workflow, entry: WorkflowQueueEntry) => Promise<StartOutcome>;
   // Current set of runs the backend considers active (driven by the
   // /ws/workflow-runs `hello`/`started`/`progress`/`completed` events).
   activeRuns: Record<string, WorkflowRun>;
@@ -109,13 +104,10 @@ export function useWorkflowQueue({
     stateRef.current = result.state;
     setState(result.state);
 
-    // Sequential dispatch demands an empty slot: ask the backend to 409 if a
-    // run is already active for the project. This is the authoritative guard
-    // that closes the startup-window / multi-tab race the frontend
-    // `externalActiveCount` gate can't see. Parallel intentionally allows
-    // concurrency, so it omits the flag.
-    const requireNoActiveRun = result.state.mode === 'sequential';
-
+    // The backend 409s a start while a run is already active for the project.
+    // That is the authoritative guard that closes the startup-window /
+    // multi-tab race the frontend `externalActiveCount` gate can't see; the
+    // `busy` outcome below requeues the entry.
     for (const entry of result.starts) {
       const startProject = activeFolderRef.current;
       const startGeneration = activeFolderGenerationRef.current;
@@ -127,7 +119,7 @@ export function useWorkflowQueue({
         continue;
       }
       void (async () => {
-        const outcome = await runWorkflowRef.current(wf, entry, { requireNoActiveRun });
+        const outcome = await runWorkflowRef.current(wf, entry);
         if (
           activeFolderRef.current !== startProject ||
           activeFolderGenerationRef.current !== startGeneration
@@ -146,7 +138,7 @@ export function useWorkflowQueue({
           // never appeared in activeRuns and the diff effect cannot emit
           // runFinished for it. Feed the scheduler both halves in order: buffer
           // the finish, then attach/consume the matching run id. This retires
-          // the entry and lets a sequential queue advance immediately.
+          // the entry and lets the queue advance immediately.
           dispatch({
             type: 'runFinished',
             runId: outcome.run.id,
@@ -165,7 +157,7 @@ export function useWorkflowQueue({
   }, []);
 
   // Reset per-project queue state when the active project changes. The queue
-  // (mode/running/queued/started/preFinishedRunIds) belongs to the project it
+  // (running/queued/started/preFinishedRunIds) belongs to the project it
   // was built in, and WorkflowsLauncher isn't remounted across a project
   // switch — so without this the new project would render the previous
   // project's queued/running status, and the activeRuns-diff below would fire
@@ -185,13 +177,13 @@ export function useWorkflowQueue({
 
   // Watch `activeRuns` for runs that disappeared since the last render —
   // that's the signal the workflow finished. Dispatch runFinished so the
-  // scheduler can pick up the next queued workflow (sequential) or auto-stop
-  // (parallel). runFinished against an id we never tracked is a no-op in the
+  // scheduler can pick up the next queued workflow or auto-stop once the queue
+  // is drained. runFinished against an id we never tracked is a no-op in the
   // reducer, so a manually-started run leaving activeRuns is harmless.
   //
   // Look up the run's final status in `recentRuns` (populated in the same WS
   // event that removed it from `activeRuns`) so the scheduler can decide
-  // whether to cascade into the next sequential workflow (only on
+  // whether to cascade into the next queued workflow (only on
   // 'completed') or stop the queue (on 'errored'/'cancelled').
   //
   // The `?? 'errored'` fallback is load-bearing. A real terminal WS event
@@ -201,7 +193,7 @@ export function useWorkflowQueue({
   // full-replace, which only happens when the backend lost the run (a restart
   // or crash wiped the in-memory, non-persisted workflow run). Such a run is
   // interrupted, NOT completed. Defaulting to 'completed' (the old behaviour)
-  // made the sequential queue cascade straight into the next workflow while the
+  // made the queue cascade straight into the next workflow while the
   // killed one's tasks were still mid-pipeline — the "the second workflow
   // continues even though the first isn't done, leaving open + unmerged tasks"
   // bug. Treating it as 'errored' stops the queue instead (the reducer cascades

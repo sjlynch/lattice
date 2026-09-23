@@ -159,7 +159,6 @@ function makeStep(): WorkflowStep {
     id: 'step_srv_1',
     title: 'Step 1',
     prompt: '', // empty => window.prompt path (no template inference)
-    mode: 'sequential',
     harness: 'claude',
     kind: 'agent',
   };
