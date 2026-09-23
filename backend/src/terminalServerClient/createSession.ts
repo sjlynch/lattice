@@ -14,7 +14,14 @@ import {
   preparePiSystemPrompt,
   type ClaudeSystemPromptFiles,
 } from '../harnessSystemPrompts.js';
-import { isClaudeMemoryDisabled } from '../userSettings.js';
+import { getUserSettings, type UserSettings } from '../userSettings.js';
+import {
+  codexUserServerDisableArgs,
+  latticeOnlyMcpApplies,
+  withClaudeStrictMcpFlags,
+  writeClaudeStrictMcpConfig,
+  type McpSpawnScope,
+} from '../mcp/taskWorktreeScope.js';
 import type { ClaudeMcpServerConfig } from '../mcp/claudeInject.js';
 import { terminalServerAuthHeaders } from '../terminalServerAuth.js';
 import { randomUUID } from 'node:crypto';
@@ -37,13 +44,21 @@ export type CreateSessionOptions = {
   // Playwright only via the global `mcpOverrides.playwright` toggle. Not consumed
   // by the terminal-server itself. See mcp/registry.ts.
   isQaRun?: boolean;
-  // Set only by the task run/resume spawns (`routes/tasks/harnessFactory.ts`):
-  // the task whose worktree this session is. Used HERE to bake `LATTICE_TASK_ID`
+  // Set only by the task run/resume spawns (`routes/tasks/harnessFactory.ts`)
+  // and the worktree merge-conflict resolvers (`routes/tasks/mergeResponses.ts`,
+  // `mergeRuns/resolverSpawn/spawn.ts`): the task whose worktree this session is. Used HERE to bake `LATTICE_TASK_ID`
   // into the first-party `lattice` MCP server's env, so the worktree agent gets
   // a `my_task` tool and an `append_summary` that defaults to its own task —
   // without having to read its id back out of LATTICE_TASK.md. Like `isQaRun`,
   // it rides the wire body but the terminal-server never reads it.
   taskId?: string;
+  // `'task-worktree'` marks a task run/resume or a WORKTREE merge-conflict
+  // resolver. With the project's `taskAgentsLatticeMcpOnly` setting on (the
+  // default) and a cwd under `~/.lattice/worktrees/`, such a session gets only
+  // the Lattice MCP server — see mcp/taskWorktreeScope.ts. Resolved HERE; the
+  // terminal-server never reads it. Persisted on the registry record so a
+  // relaunched tab keeps it.
+  mcpScope?: McpSpawnScope;
   // What the durable terminal registry should record about this pty (who owns
   // the tab, its label, …). Every Lattice spawn site passes one; a missing
   // hint is recorded as a plain user tab so the tab is still restorable. Not
@@ -111,27 +126,41 @@ function isPiCommand(initialCommand: string | undefined): boolean {
 //              is cwd-local files, not wire data), incl. the system-prompt
 //              extension; only the secret env rides the wire. See piMcp.ts.
 // Plain shells pass through untouched.
-async function resolveHarnessSpawnBody(
+//
+// A task-worktree spawn (`opts.mcpScope`) may be narrowed to the Lattice MCP
+// server alone — `latticeOnlyMcpApplies` decides, from the project settings
+// read ONCE here and handed to every resolver below.
+export async function resolveHarnessSpawnBody(
   opts: CreateSessionOptions,
 ): Promise<SessionWireBody> {
   opts = { ...opts, initialCommand: withCodexActivityTitle(opts.initialCommand) };
   if (!opts.cwd) return opts;
+  const settings: UserSettings = opts.projectPath
+    ? await getUserSettings(opts.projectPath).catch(() => ({}))
+    : {};
+  const latticeOnly = latticeOnlyMcpApplies(opts, settings);
+  const mcpCtx = { taskId: opts.taskId, ...(latticeOnly ? { latticeOnly: true } : {}) };
   if (isClaudeCommand(opts.initialCommand)) {
     // No projectPath → trust-only seed (managed: null) + Claude's default memory.
     const managedMcpServers = opts.projectPath
-      ? await resolveManagedClaudeServers(opts.projectPath, {
-          isQaRun: opts.isQaRun,
-          taskId: opts.taskId,
-        })
+      ? await resolveManagedClaudeServers(
+          opts.projectPath,
+          { ...mcpCtx, isQaRun: opts.isQaRun },
+          settings,
+        )
       : null;
     const disableClaudeMemory = opts.projectPath
-      ? await isClaudeMemoryDisabled(opts.projectPath).catch(() => false)
+      ? settings.disableClaudeMemory !== false
       : false;
     const sysPrompt: ClaudeSystemPromptFiles = opts.projectPath
       ? await prepareClaudeSystemPrompt(opts.projectPath).catch(() => ({}))
       : {};
+    const initialCommand = latticeOnly && managedMcpServers && opts.projectPath
+      ? await withStrictClaudeMcp(opts, opts.projectPath, managedMcpServers)
+      : opts.initialCommand;
     return {
       ...opts,
+      initialCommand,
       managedMcpServers,
       disableClaudeMemory,
       ...(sysPrompt.replaceFile
@@ -143,11 +172,19 @@ async function resolveHarnessSpawnBody(
     };
   }
   if (isCodexCommand(opts.initialCommand) && opts.projectPath) {
-    const codex = await resolveManagedCodexServers(opts.projectPath, { taskId: opts.taskId });
+    const codex = await resolveManagedCodexServers(opts.projectPath, mcpCtx, settings);
     const sysPrompt = await prepareCodexSystemPrompt(opts.projectPath).catch(
       () => ({ configArgs: [] as string[] }),
     );
-    const mcpArgs = codex?.configArgs ?? [];
+    // Scoped: switch off the user's own config.toml servers first, then add
+    // the lattice one (see taskWorktreeScope.ts for why not `mcp_servers={}`).
+    // Skipped when the resolve failed — that degrades to a plain spawn.
+    const disableArgs = latticeOnly && codex
+      ? await codexUserServerDisableArgs(opts.cwd, managedCodexKeys(codex.configArgs)).catch(
+          () => [] as string[],
+        )
+      : [];
+    const mcpArgs = [...disableArgs, ...(codex?.configArgs ?? [])];
     const env = codex?.env ?? {};
     // Nothing to inject → plain spawn.
     if (mcpArgs.length === 0 && sysPrompt.configArgs.length === 0) return opts;
@@ -161,7 +198,7 @@ async function resolveHarnessSpawnBody(
     };
   }
   if (isPiCommand(opts.initialCommand) && opts.projectPath) {
-    const env = await applyPiMcpForSpawn(opts.cwd, opts.projectPath, { taskId: opts.taskId });
+    const env = await applyPiMcpForSpawn(opts.cwd, opts.projectPath, mcpCtx, settings);
     // Reconcile the Pi system-prompt extension in the cwd (installs it when
     // there's an override, strips a stale one otherwise). Cwd-local files, so
     // nothing rides the wire — like the MCP shim.
@@ -170,6 +207,44 @@ async function resolveHarnessSpawnBody(
     return opts;
   }
   return opts;
+}
+
+// Add `--strict-mcp-config --mcp-config=<file>` to a scoped Claude command so
+// only the lattice-only set loads (user-scope and `.mcp.json` servers are
+// ignored). Best-effort: on any failure the command is returned unchanged —
+// the `projects[<cwd>]` reconcile still carries the lattice-only set.
+async function withStrictClaudeMcp(
+  opts: CreateSessionOptions,
+  projectPath: string,
+  servers: Record<string, ClaudeMcpServerConfig>,
+): Promise<string | undefined> {
+  const command = opts.initialCommand;
+  if (!command || !opts.cwd) return command;
+  try {
+    const file = await writeClaudeStrictMcpConfig(
+      projectPath, { taskId: opts.taskId, cwd: opts.cwd }, servers,
+    );
+    const scoped = withClaudeStrictMcpFlags(command, file);
+    if (scoped === null) {
+      console.warn(`[mcp] task-worktree scope: left ${opts.cwd} unscoped (flags present or unquotable path ${file})`);
+      return command;
+    }
+    return scoped;
+  } catch (err) {
+    console.warn(`[mcp] task-worktree scope: could not write the Claude MCP config: ${(err as Error).message}`);
+    return command;
+  }
+}
+
+// The `lattice_*` server keys a resolved Codex override list defines
+// (`mcp_servers.<key>={…}`), so the user-server disables never touch them.
+function managedCodexKeys(configArgs: string[]): Set<string> {
+  const keys = new Set<string>();
+  for (const arg of configArgs) {
+    const m = /^mcp_servers\.([A-Za-z0-9_-]+)=/.exec(arg);
+    if (m) keys.add(m[1]);
+  }
+  return keys;
 }
 
 // Hard timeout on a single POST /sessions. Generous on purpose: a normal pty
@@ -221,6 +296,7 @@ async function recordSpawnedTerminal(
     ...(hint.piModel ? { piModel: hint.piModel } : {}),
     ...(opts.isQaRun ? { isQaRun: true } : {}),
     ...(opts.taskId ? { taskId: opts.taskId } : {}),
+    ...(opts.mcpScope ? { mcpScope: opts.mcpScope } : {}),
   };
   const session = agentSession ?? hint.agentSession;
   try {

@@ -87,6 +87,11 @@ export type UserSettings = {
   // toggles). Absent/false = headless. QA-lane runs are unaffected — they keep
   // `qaPlaywright.headless`. See backend mcp/resolverPolicy.ts + registry.ts.
   mcpPlaywrightHeaded?: boolean;
+  // Task worktree sessions (task run/resume + worktree merge resolvers) get
+  // ONLY the Lattice MCP server. Default ON — absent counts as true; only an
+  // explicit `false` gives them the full enabled set. Settings → MCP tab. See
+  // backend mcp/taskWorktreeScope.ts.
+  taskAgentsLatticeMcpOnly?: boolean;
   // Backs the QA-lane Playwright buttons — QA e2e runs ONLY (separate from the
   // global `mcpOverrides.playwright`). `enabled` injects Playwright into QA
   // "run an e2e test" sessions; `headless` (the eye toggle) appends --headless.

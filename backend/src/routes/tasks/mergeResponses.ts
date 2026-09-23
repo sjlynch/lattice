@@ -30,6 +30,13 @@ export async function respondResolverSession(
       cwd: payload.cwd,
       initialCommand: payload.command,
       projectPath: task.projectPath,
+      // A merge-conflict resolver runs IN the task's worktree: it gets the
+      // task's reduced Lattice toolset (LATTICE_TASK_ID) and the task-worktree
+      // MCP scope. A stash/snapshot resolver runs at the project root and gets
+      // neither — the scope must never reach a project-root cwd.
+      ...(payload.stashConflict
+        ? {}
+        : { taskId: task.id, mcpScope: 'task-worktree' as const }),
       registry: {
         owner: 'merge',
         kind: 'merge',
@@ -40,6 +47,13 @@ export async function respondResolverSession(
   });
   const serverId = 'id' in sess ? sess.id : undefined;
   const terminalId = 'id' in sess ? sess.terminalId : undefined;
+  // No pty → the UI must say so rather than open a serverless terminal (which
+  // would bypass the spawn chokepoint: no MCP scope, no system prompt, no
+  // registry record). The conflict itself stands; a re-click retries.
+  const resolverError = 'error' in sess ? sess.error : undefined;
+  if (resolverError) {
+    console.warn(`[merge] task ${task.id}: resolver pre-spawn failed: ${resolverError}`);
+  }
   if (payload.stashConflict) {
     return res.json({
       merged: false,
@@ -49,6 +63,7 @@ export async function respondResolverSession(
       conflictedFiles: payload.conflictedFiles,
       serverId,
       terminalId,
+      ...(resolverError ? { resolverError } : {}),
     });
   }
   if (payload.conflictedFiles) {
@@ -60,6 +75,7 @@ export async function respondResolverSession(
       conflictedFiles: payload.conflictedFiles,
       serverId,
       terminalId,
+      ...(resolverError ? { resolverError } : {}),
     });
   }
   return res.json({

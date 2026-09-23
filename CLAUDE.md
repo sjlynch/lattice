@@ -371,11 +371,22 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   (`board_summary`, `list_tasks`, `get_task`, `search_tasks`, `create_task(s)`,
   `update_task`, `transition_tasks`, `append_summary`, `delete_task`,
   `run_task`). A **task worktree's session** gets a reduced set instead: the
-  run/resume spawn injects `LATTICE_TASK_ID`, which adds `my_task`, makes
+  run/resume spawn (and a worktree merge-conflict resolver) injects
+  `LATTICE_TASK_ID`, which adds `my_task`, makes
   `append_summary` default to the agent's own task, and drops the
   board-management tools (`update_task`, `transition_tasks`, `delete_task`,
   `run_task`) — a worktree agent's brief is untrusted input, and it reads,
-  files follow-ups and reports rather than re-laning or deleting. Every by-id
+  files follow-ups and reports rather than re-laning or deleting. **Task
+  worktree sessions get ONLY the Lattice MCP by default**: with the per-project
+  `taskAgentsLatticeMcpOnly` setting on (default; Settings → MCP tab checkbox),
+  a task run/resume or a worktree merge-conflict resolver (spawn option
+  `mcpScope: 'task-worktree'`, cwd under `~/.lattice/worktrees/` — never a
+  project root) gets just the `lattice` server — Claude via
+  `--strict-mcp-config --mcp-config=<home-scratch file>`, Codex by disabling the
+  user's config.toml servers by name, Pi via a lattice-only `.pi/mcp.json` (Pi's
+  adapter still merges its own global files). Saves the idle Playwright/Blender
+  processes every agent otherwise carried; every other session keeps the full
+  enabled set. See `backend/src/mcp/CLAUDE.md`. Every by-id
   call is project-pinned server-side: the routes 404 a task from another board
   when `?project=` is sent (`requireTaskInRequestedProject`). It is ON for all three harnesses unless
   the per-harness toggle is set to `false`, and the resolver injects

@@ -65,13 +65,13 @@ export function isUnsafeOverrideEnvName(name: string): boolean {
 //
 // The additive-args rule (settingsValidation.ts `mergeOverrideArgs`) stops an
 // override replacing the package spec, but an APPENDED flag can still re-point
-// what runs: Playwright MCP's `--executable-path` and chrome-devtools-mcp's
-// `--executablePath` launch whatever file they're given as "the browser". That
-// is "run an arbitrary command" with extra steps, so these flags are refused
-// outright. Matched on a normalized name (lower-cased, `-`/`_` dropped), so
-// `--executable-path`, `--executablePath`, `--EXECUTABLE_PATH` and the
-// `--flag=value` form are all one entry; yargs (chrome-devtools-mcp) accepts
-// both kebab and camel spellings, which is why normalizing beats listing.
+// what runs: Playwright MCP's `--executable-path` launches whatever file it is
+// given as "the browser". That is "run an arbitrary command" with extra steps,
+// so these flags are refused outright — for every built-in, not just the one
+// that has the flag today. Matched on a normalized name (lower-cased, `-`/`_`
+// dropped), so `--executable-path`, `--executablePath`, `--EXECUTABLE_PATH` and
+// the `--flag=value` form are all one entry; yargs-style CLIs accept both kebab
+// and camel spellings, which is why normalizing beats listing.
 // `--chrome-arg` is here too: it forwards raw Chrome switches, and Chrome's own
 // `--renderer-cmd-prefix` / `--utility-cmd-prefix` / `--browser-subprocess-path`
 // launch an arbitrary binary just the same.
@@ -84,13 +84,6 @@ const UNSAFE_OVERRIDE_ARG_FLAGS = new Set([
   'browserpath',
   'chromearg',
 ]);
-
-// chrome-devtools-mcp's short alias for `--executablePath` is `-e`. A single-dash
-// arg is a cluster of short flags (`-e`, `-e=/x`, `-e/x`, `-ie /x`), so any
-// cluster that contains an `e` is refused for that server.
-const UNSAFE_SHORT_FLAGS_BY_SERVER: Record<string, string> = {
-  'chrome-devtools': 'e',
-};
 
 // Long flags refused only for one server. Playwright MCP's `--config <file>`
 // loads a JSON config whose `browser.launchOptions.executablePath` launches any
@@ -108,20 +101,12 @@ function longFlagName(arg: string): string | null {
 
 // Is this appended override arg a binary-launching flag (either form: `--flag
 // value` is caught on the flag token, `--flag=value` on its name part)?
-// Case-insensitive. `serverId` scopes the short-alias check.
+// Case-insensitive. `serverId` scopes the per-server long-flag check.
 export function isUnsafeOverrideArg(arg: string, serverId?: string): boolean {
   const long = longFlagName(arg);
-  if (long !== null) {
-    if (UNSAFE_OVERRIDE_ARG_FLAGS.has(long)) return true;
-    return serverId ? UNSAFE_LONG_FLAGS_BY_SERVER[serverId]?.has(long) === true : false;
-  }
-  const shortBanned = serverId ? UNSAFE_SHORT_FLAGS_BY_SERVER[serverId] : undefined;
-  if (shortBanned && /^-[^-]/.test(arg)) {
-    // Only the flag letters before any `=` / value characters matter.
-    const cluster = /^-([A-Za-z]*)/.exec(arg)?.[1] ?? '';
-    return cluster.toLowerCase().includes(shortBanned);
-  }
-  return false;
+  if (long === null) return false;
+  if (UNSAFE_OVERRIDE_ARG_FLAGS.has(long)) return true;
+  return serverId ? UNSAFE_LONG_FLAGS_BY_SERVER[serverId]?.has(long) === true : false;
 }
 
 // Keep only string-valued env keys that can't inject code into / hijack the

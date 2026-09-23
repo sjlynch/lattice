@@ -105,7 +105,10 @@ here instead of bloating the parent file.
     `queuedCreateSession` on the `priority` band (headroom above softCap),
     conflict notification, `spawnAndRecord`/`recordAndSpawn` (which own the
     `run.conflicted` array update — successful spawn only), and
-    `respawnResolverForFlaggedConflict`.
+    `respawnResolverForFlaggedConflict`. `ResolverSpawnInput.inWorktree`
+    (set for merge-conflict resolvers, never stash ones) passes `taskId` +
+    `mcpScope: 'task-worktree'`, so a worktree resolver gets the task's
+    reduced Lattice toolset and only the Lattice MCP (`mcp/CLAUDE.md`).
   - `resolverSpawn/handleOutcome.ts` — `handleResyncOutcome`: the higher-level
     policy deciding, per `ResyncOutcome`, whether to finalize (push
     `run.merged`), park on a resolver, cancel the run after a stash conflict,

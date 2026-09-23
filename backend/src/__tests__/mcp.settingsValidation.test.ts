@@ -276,7 +276,7 @@ test('sanitizeCustomServers: a user-added server can never ship defaultEnabled',
 // ---- additive args: no flag may point a built-in at an arbitrary binary ----
 //
 // Appending keeps the package spec, but `--executable-path <x>` still makes
-// Playwright / chrome-devtools launch `<x>` as "the browser" — i.e. run an
+// Playwright launch `<x>` as "the browser" — i.e. run an
 // arbitrary command. Every spelling, both `--flag value` and `--flag=value`,
 // case-insensitive, rejects the whole override (the catalog args stand).
 
@@ -304,28 +304,25 @@ test('isUnsafeOverrideArg: binary-launching flags in every spelling and form', (
   }
 });
 
-test('isUnsafeOverrideArg: chrome-devtools short alias -e, only for that server', () => {
-  for (const a of ['-e', '-E', '-e=C:/evil.exe', '-eC:/evil.exe', '-ie']) {
-    assert.ok(isUnsafeOverrideArg(a, 'chrome-devtools'), a);
+test('isUnsafeOverrideArg: short flags are not binary-launching flags', () => {
+  for (const a of ['-e', '-y', '-e=C:/evil.exe']) {
+    assert.equal(isUnsafeOverrideArg(a, 'playwright'), false, a);
   }
-  assert.equal(isUnsafeOverrideArg('-y', 'chrome-devtools'), false);
-  assert.equal(isUnsafeOverrideArg('-e', 'playwright'), false);
 });
 
-test('applyBuiltinOverride: --executable-path (both forms) is refused for playwright + chrome-devtools', () => {
+test('applyBuiltinOverride: binary-launching flags (both forms) are refused for every built-in', () => {
   const pw = builtinMcpServerById('playwright');
-  const cd = builtinMcpServerById('chrome-devtools');
+  const cd = builtinMcpServerById('blender');
   assert.ok(pw && cd);
   const cases: Array<[typeof pw, string[]]> = [
     [pw, ['--executable-path', 'C:/evil.exe']],
     [pw, ['--Executable-Path=C:/evil.exe']],
     [pw, ['--browser', 'chrome', '--browser-executable', '/tmp/x']],
+    [pw, ['--chromeArg=--renderer-cmd-prefix=C:/evil.exe']],
     [cd, ['--executablePath', 'C:/evil.exe']],
     [cd, ['--EXECUTABLEPATH=C:/evil.exe']],
     [cd, ['--chrome-path=C:/evil.exe']],
     [cd, ['--browser-path', 'C:/evil.exe']],
-    [cd, ['--chromeArg=--renderer-cmd-prefix=C:/evil.exe']],
-    [cd, ['-e', 'C:/evil.exe']],
   ];
   for (const [entry, extra] of cases) {
     const overrides = sanitizeBuiltinOverrides({ [entry.id]: { args: [...(entry.args ?? []), ...extra] } });
@@ -342,7 +339,7 @@ test('isUnsafeOverrideArg: Playwright --config (a file that can set executablePa
     assert.ok(isUnsafeOverrideArg(arg, 'playwright'), arg);
   }
   // Other servers' own --config flags aren't this escape.
-  assert.equal(isUnsafeOverrideArg('--config', 'chrome-devtools'), false);
+  assert.equal(isUnsafeOverrideArg('--config', 'blender'), false);
   assert.equal(isUnsafeOverrideArg('--config'), false);
   // A near-miss is not caught.
   assert.equal(isUnsafeOverrideArg('--config-dir', 'playwright'), false);

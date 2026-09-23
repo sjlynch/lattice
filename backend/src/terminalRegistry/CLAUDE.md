@@ -14,8 +14,8 @@ from.
 - `types.ts` — `TerminalRecord`: one per tab the backend ever created a pty
   for. Carries the tab's decorations (`label`, `order`, `kind`, `taskId`,
   `startupId`), its `owner` (who decides when it disappears / whether restore
-  may relaunch it), the ORIGINAL `launch` (command + harness + Pi model, before
-  any Lattice injection), the pinned `agentSession`, the last pty
+  may relaunch it), the ORIGINAL `launch` (command + harness + Pi model +
+  `isQaRun` / `taskId` / `mcpScope`, before any Lattice injection), the pinned `agentSession`, the last pty
   (`serverId` + `serverInstanceId`), `lastBusy`, and `ended`.
 - `store.ts` — `TerminalRegistryStore` (a `ProjectStateManager` subclass) over
   `~/.lattice/per-project/<hash>/terminals.json` (versioned envelope, atomic
@@ -68,8 +68,10 @@ from.
   prompt. Pi: `--session-id <id>`. Codex: `resume <id>` or `resume --last`.
   Plain shell → no command; a non-harness command reruns verbatim. The
   `RESTORE_NUDGE` prompt tells a relaunched agent to check git and continue.
-  The Codex title config and harness system-prompt files are NOT here — the
-  spawn chokepoint re-injects them like on any launch. **A relaunch never
+  The Codex title config, harness system-prompt files and the task-worktree
+  `--strict-mcp-config --mcp-config=…` flags are NOT here — the spawn
+  chokepoint re-injects them like on any launch (the latter from the persisted
+  `launch.mcpScope`). **A relaunch never
   overwrites the record's `launch`** (else the next restore would try to
   resume a resume).
 - `interruption.ts` — "was the agent mid-turn when it died?" Two evidence

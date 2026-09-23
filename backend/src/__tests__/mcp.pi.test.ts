@@ -172,19 +172,19 @@ test('resolvePiServers: a second server whose secret env var folds onto a taken 
 });
 
 test('resolvePiServers: reads mcpHarnessOverrides.pi only, keyed by server id', () => {
-  const settings = { mcpHarnessOverrides: { pi: { playwright: true, context7: true } } };
+  const settings = { mcpHarnessOverrides: { pi: { playwright: true, blender: true } } };
   const { mcpServers, env } = resolvePiServers(BUILTIN_MCP_SERVERS, settings, {});
-  assert.deepEqual(Object.keys(mcpServers).sort(), ['context7', 'playwright']);
+  assert.deepEqual(Object.keys(mcpServers).sort(), ['blender', 'playwright']);
   assert.deepEqual(env, {});
   // Claude / Codex maps don't leak into Pi.
   assert.deepEqual(
-    resolvePiServers(BUILTIN_MCP_SERVERS, { mcpOverrides: { context7: true } }, {}),
+    resolvePiServers(BUILTIN_MCP_SERVERS, { mcpOverrides: { blender: true } }, {}),
     { mcpServers: {}, env: {} },
   );
   assert.deepEqual(
     resolvePiServers(
       BUILTIN_MCP_SERVERS,
-      { mcpHarnessOverrides: { codex: { context7: true } } },
+      { mcpHarnessOverrides: { codex: { blender: true } } },
       {},
     ),
     { mcpServers: {}, env: {} },

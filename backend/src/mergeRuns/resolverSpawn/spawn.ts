@@ -18,6 +18,11 @@ type ResolverSpawnInput = {
   cwd: string;
   command: string;
   conflictedFiles: string[];
+  // True for a merge-conflict resolver in the task's worktree; false/absent
+  // for a stash/snapshot resolver at the project root. Only a worktree
+  // resolver gets the task's reduced Lattice toolset (LATTICE_TASK_ID) and the
+  // task-worktree MCP scope.
+  inWorktree?: boolean;
 };
 
 export type ResolverSpawnResult =
@@ -31,6 +36,7 @@ async function spawnResolverAndNotifyConflict({
   cwd,
   command,
   conflictedFiles,
+  inWorktree,
   onBeforeNotify,
 }: ResolverSpawnInput & { onBeforeNotify?: () => void }): Promise<ResolverSpawnResult> {
   // Routed through the spawn queue on the `priority` band: a resolver may
@@ -48,6 +54,7 @@ async function spawnResolverAndNotifyConflict({
       cwd,
       initialCommand: command,
       projectPath: task.projectPath,
+      ...(inWorktree ? { taskId: task.id, mcpScope: 'task-worktree' as const } : {}),
       registry: {
         owner: 'merge',
         kind: 'merge',
@@ -167,5 +174,6 @@ export async function respawnResolverForFlaggedConflict(
     cwd: task.worktreePath!,
     command,
     conflictedFiles,
+    inWorktree: true,
   });
 }

@@ -170,6 +170,9 @@ export type MergeTaskResult =
       conflictedFiles?: string[];
       serverId?: string;
       terminalId?: string;
+      // Set when the backend could not pre-spawn the resolver pty (no
+      // `serverId`). The UI toasts it instead of opening a terminal itself.
+      resolverError?: string;
     }
   | {
       merged: false;
@@ -179,4 +182,7 @@ export type MergeTaskResult =
       conflictedFiles?: string[];
       serverId?: string;
       terminalId?: string;
+      // Set when the backend could not pre-spawn the resolver pty (no
+      // `serverId`). The UI toasts it instead of opening a terminal itself.
+      resolverError?: string;
     };

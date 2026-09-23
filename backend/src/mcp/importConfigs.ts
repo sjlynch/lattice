@@ -16,6 +16,7 @@
 import { mergeMcpSecrets, type McpSecrets } from './secrets.js';
 import { getGlobalSettings, updateGlobalSettingsWith } from '../globalSettings.js';
 import { BUILTIN_MCP_SERVERS, type McpServerEntry } from './catalog.js';
+import { RETIRED_BUILTIN_MCP_IDS } from './retiredServers.js';
 import { type Normalized } from './import/normalize.js';
 import {
   collectClaude,
@@ -67,12 +68,23 @@ async function collectAll(projectPath?: string): Promise<Normalized[]> {
   ]);
   const seen = new Set<string>();
   const out: Normalized[] = [];
-  for (const n of groups.flat()) {
+  for (const raw of groups.flat()) {
+    const n = withoutRetiredId(raw);
     if (seen.has(n.entry.id)) continue;
     seen.add(n.entry.id);
     out.push(n);
   }
   return out;
+}
+
+// An imported server named like a REMOVED built-in (`context7`, …) is moved to
+// `<id>-imported`: the settings layer strips those ids from every toggle map on
+// read (see retiredServers.ts), so under its own name it could never be
+// switched on. Renaming here — before scan and apply both see it — keeps the
+// scan's ids, the selection, and the stored secrets' key consistent.
+function withoutRetiredId(n: Normalized): Normalized {
+  if (!RETIRED_BUILTIN_MCP_IDS.has(n.entry.id)) return n;
+  return { ...n, entry: { ...n.entry, id: `${n.entry.id}-imported` } };
 }
 
 export async function scanImportableServers(projectPath?: string): Promise<ImportScanResult> {

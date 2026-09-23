@@ -123,16 +123,16 @@ test('lattice: a path containing an apostrophe falls back to a JSON-escaped TOML
 
 test('resolveMcpEntries: codex reads mcpHarnessOverrides.codex, not mcpOverrides', () => {
   // A Claude-map entry must NOT enable the server for codex.
-  const claudeMap = { mcpOverrides: { context7: true } };
+  const claudeMap = { mcpOverrides: { blender: true } };
   assert.deepEqual(resolveMcpEntries(BUILTIN_MCP_SERVERS, claudeMap, {}, 'codex'), []);
   // The codex map does.
-  const codexMap = { mcpHarnessOverrides: { codex: { context7: true } } };
-  assert.deepEqual(ids(resolveMcpEntries(BUILTIN_MCP_SERVERS, codexMap, {}, 'codex')), ['context7']);
+  const codexMap = { mcpHarnessOverrides: { codex: { blender: true } } };
+  assert.deepEqual(ids(resolveMcpEntries(BUILTIN_MCP_SERVERS, codexMap, {}, 'codex')), ['blender']);
 });
 
 test('resolveMcpEntries: per-harness independence — codex on, pi + claude stay off', () => {
-  const settings = { mcpHarnessOverrides: { codex: { context7: true } } };
-  assert.deepEqual(ids(resolveMcpEntries(BUILTIN_MCP_SERVERS, settings, {}, 'codex')), ['context7']);
+  const settings = { mcpHarnessOverrides: { codex: { blender: true } } };
+  assert.deepEqual(ids(resolveMcpEntries(BUILTIN_MCP_SERVERS, settings, {}, 'codex')), ['blender']);
   assert.deepEqual(resolveMcpEntries(BUILTIN_MCP_SERVERS, settings, {}, 'pi'), []);
   assert.deepEqual(resolveMcpEntries(BUILTIN_MCP_SERVERS, settings, {}, 'claude'), []);
 });
@@ -186,7 +186,7 @@ test('resolveMcpEntries: mcpPlaywrightHeaded flips codex + pi Playwright headed'
 
 test('safeCodexServerId: namespaced, underscore-only, dash-safe', () => {
   assert.equal(safeCodexServerId('playwright'), 'lattice_playwright');
-  assert.equal(safeCodexServerId('chrome-devtools'), 'lattice_chrome_devtools');
+  assert.equal(safeCodexServerId('my-server'), 'lattice_my_server');
   assert.equal(safeCodexServerId('brave-search'), 'lattice_brave_search');
   assert.equal(safeCodexServerId('a.b c'), 'lattice_a_b_c');
 });
@@ -374,13 +374,13 @@ test('resolveCodexServers: nothing enabled and no project → empty payload', ()
 });
 
 test('resolveCodexServers: does not read Claude mcpOverrides', () => {
-  const settings = { mcpOverrides: { playwright: true, context7: true } };
+  const settings = { mcpOverrides: { playwright: true, blender: true } };
   assert.deepEqual(resolveCodexServers(BUILTIN_MCP_SERVERS, settings, {}), {
     configArgs: [],
     env: {},
   });
   // And Claude still sees them (independence both ways).
-  assert.ok('context7' in resolveClaudeServers(BUILTIN_MCP_SERVERS, settings, {}));
+  assert.ok('blender' in resolveClaudeServers(BUILTIN_MCP_SERVERS, settings, {}));
 });
 
 // ---- blender: telemetry stays off on every harness ----

@@ -81,6 +81,58 @@ does not write a tracked `.codex/config.toml` / a proactive project-root
 `.pi/mcp.json` just to cover it. (Startup-configured harness terminals also stay
 serverless for now — see `frontend/src/components/sidebar/CLAUDE.md`.)
 
+## Task-worktree scope: task agents get only the Lattice MCP
+
+Per-project `UserSettings.taskAgentsLatticeMcpOnly` (**default ON** — absent,
+or a corrupt settings file read as `{}`, counts as on; Settings → MCP tab, top
+checkbox). A task agent (run/resume) or a merge-conflict resolver working in a
+task's worktree gets ONLY the `lattice` server — none at all when `lattice` is
+toggled off for that harness — whatever else the project enabled. Why: every
+idle stdio server is a `cmd /c` + conhost + node/uv tree (~100–180 MB), per
+agent, so "Run All" with Playwright + Blender on multiplied into dozens of idle
+processes. Every other session (sidebar, workflow step, push, QA, post-merge
+hook, the project-root reconcile) keeps the full enabled set.
+
+Decided once per spawn in `resolveHarnessSpawnBody` by `taskWorktreeScope.ts`
+`latticeOnlyMcpApplies`, which needs all three of: the explicit spawn option
+`CreateSessionOptions.mcpScope = 'task-worktree'` (set by
+`routes/tasks/harnessFactory.ts`, `routes/tasks/mergeResponses.ts` and
+`mergeRuns/resolverSpawn/spawn.ts` — for the worktree resolvers only, never the
+stash/snapshot resolvers, which run at the project root), the setting, and a
+cwd strictly under `~/.lattice/worktrees/`. That last guard is load-bearing: the
+Claude reconcile writes `projects[<cwd>].mcpServers`, and at a project root that
+entry is the user's own persisted set — restricting it would strip their
+Playwright/Blender. The resolver side is `McpResolveContext.latticeOnly`
+(`resolveMcpEntries` drops every non-`lattice` entry). The chokepoint reads the
+project settings ONCE and hands them to every resolver (`preloadedSettings`).
+The scope is persisted on the registry record (`TerminalLaunch.mcpScope`), so a
+relaunched tab re-enters the chokepoint with it.
+
+Per harness:
+- **Claude** — the lattice-only set goes through the usual `projects[<cwd>]`
+  reconcile AND the command gets `--strict-mcp-config --mcp-config="<file>"`
+  (user-scope `~/.claude.json` servers and a repo `.mcp.json` are ignored too).
+  Appended in the BACKEND, like `--session-id`, not in the terminal-server: a
+  stale executor would ignore a new wire field. The `=` form matters —
+  `--mcp-config` is variadic. The file is
+  `~/.lattice/per-project/<hash>/mcp-config/claude-task-<id>.json` (0600, atomic
+  write, rewritten on every spawn, files older than 30 days pruned); its path is
+  written with forward slashes and the flags are skipped (spawn left unscoped,
+  warned) if the home path holds a character no shell quotes portably. An empty
+  `{"mcpServers":{}}` is written when `lattice` is off. The registry keeps the
+  ORIGINAL command, so the flags never stack on a relaunch.
+- **Codex** — the `-c` overrides carry only `mcp_servers.lattice_lattice`,
+  preceded by `mcp_servers.<name>.enabled=false` for each server the user's own
+  `$CODEX_HOME/config.toml` (default `~/.codex`) and `<cwd>/.codex/config.toml`
+  define (bare-key names only). `-c 'mcp_servers={}'` does NOT work — Codex
+  merges the whole `-c` layer over config.toml, so an empty table removes
+  nothing (verified on codex-cli 0.155.1) — and disabling a name Codex doesn't
+  know fails startup ("invalid transport"), hence names read from the files.
+- **Pi** — `.pi/mcp.json` gets only the `lattice` server. `pi-mcp-adapter` also
+  merges `~/.config/mcp/mcp.json`, `~/.pi/agent/mcp.json`, a repo `.mcp.json`
+  and `imports`, with no switch to disable them, so Pi is restricted only for
+  Lattice-managed servers.
+
 ## The first-party exception: `lattice` is ON by default
 
 `catalog.ts`'s all-off invariant has exactly **one** exception, and
@@ -139,9 +191,11 @@ array) with `env` merged from the spawn context:
 - `LATTICE_API_URL` — `ctx.apiUrl`, this backend's own origin.
 - `LATTICE_PROJECT` — `canonicalProjectPath(ctx.projectPath)`, canonical so the
   server's own `canonicalProject` assertion compares like with like.
-- `LATTICE_TASK_ID` — `ctx.taskId`, present ONLY for a task run/resume spawn
-  (`routes/tasks/harnessFactory.ts` is the one site that passes it, via
-  `CreateSessionOptions.taskId`). The key is omitted otherwise, never set empty:
+- `LATTICE_TASK_ID` — `ctx.taskId`, present ONLY for a task-worktree spawn:
+  task run/resume (`routes/tasks/harnessFactory.ts`) and the WORKTREE
+  merge-conflict resolvers (`routes/tasks/mergeResponses.ts`,
+  `mergeRuns/resolverSpawn/spawn.ts`), via `CreateSessionOptions.taskId`. The
+  stash/snapshot resolvers run at the project root and never pass it. The key is omitted otherwise, never set empty:
   the server registers its `my_task` tool and defaults `append_summary`'s `id`
   exactly when the variable exists.
 
@@ -162,9 +216,14 @@ a space in it.
 
 ## Modules
 
-- `catalog.ts` — the built-in server catalog **in code** (6 servers: the
-  first-party `lattice` board server plus playwright, chrome-devtools, context7,
-  brave-search, blender) + the `McpServerEntry` type. Package names live here so
+- `catalog.ts` — the built-in server catalog **in code** (4 servers: the
+  first-party `lattice` board server plus playwright, brave-search, blender) +
+  the `McpServerEntry` type. `chrome-devtools` and `context7` were removed
+  2026-09; `retiredServers.ts` lists their ids so `userSettings/storage.ts`
+  strips stale toggles for them on read (else a `context7: true` left over from
+  the built-in would switch on a custom server imported under the same id) and
+  the importer renames an imported server that would land on one
+  (`<id>-imported`). Package names live here so
   churn is a code change, not a data migration. **Invariant: every THIRD-PARTY
   server is off** until the resolver is told otherwise, so a new project loads
   no foreign code. The one `defaultEnabled: true` entry is `lattice` — see "The
@@ -175,6 +234,10 @@ a space in it.
   already in use" — and Lattice injects Playwright into many concurrent sessions.
   `--isolated` gives each its own throwaway in-memory profile. The three shapers
   append `--headless` on top of this when the resolved `headless` is true.
+- `taskWorktreeScope.ts` — the task-worktree scope (see its section above):
+  `latticeOnlyMcpApplies`, the Claude `--mcp-config` file writer + flag builder,
+  and the Codex user-server disables.
+- `retiredServers.ts` — ids of removed built-ins (leaf module, no imports).
 - `registry.ts` — the resolver **facade**: `mergedCatalog()` (built-ins ⊕
   `mcpBuiltinOverrides` ⊕ `mcpCustomServers`) and **`effectiveMcpServers(projectPath,
   harness, ctx?)`** — the spawn-path resolver — plus the pure orchestration core
@@ -199,7 +262,7 @@ a space in it.
   at an arbitrary binary — `--executable-path` / `--executablePath` /
   `--browser-executable` / `--chrome-path` / `--browser-path` (+ `--chrome-arg`,
   whose Chrome switches like `--renderer-cmd-prefix` launch a binary too, and
-  chrome-devtools' `-e` alias, and Playwright's `--config <file>`, whose JSON can
+  Playwright's `--config <file>`, whose JSON can
   set `launchOptions.executablePath`) — in either `--flag value` or `--flag=value`
   form, matched case-/dash-/underscore-insensitively, rejects the whole override
   (catalog args stand). `overrideSecurity.ts` is also the env denylist

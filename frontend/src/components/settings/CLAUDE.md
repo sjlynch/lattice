@@ -100,7 +100,9 @@ clobber-guard logic.
 `InstructionTemplatesTab` + `HarnessSystemPromptsTab` + `EnvNotesTab` (all three
 on the Agent-prompts tab), `MetricsIgnoredExtsTab`, `StartupTerminalsTab`, the
 MCP per-project enables (`mcpOverrides` for Claude, `mcpHarnessOverrides` for
-Codex/Pi, plus `mcpPlaywrightHeaded`), plus the parent's terminal-default /
+Codex/Pi, plus `mcpPlaywrightHeaded` and the top-of-tab
+`taskAgentsLatticeMcpOnly` checkbox — default ON, its own touched flag), plus
+the parent's terminal-default /
 instrument / memory drafts.
 
 `HarnessSystemPromptsTab` edits `UserSettings.harnessSystemPrompts` (per-harness
@@ -220,4 +222,5 @@ MCP-tab-only UI, composed by `McpTab.tsx`:
 
 Within the MCP tab, secrets, custom-server defs, and imports each persist
 **immediately** via their own API calls; only the per-project enables
-(`mcpOverrides` / `mcpHarnessOverrides` / `mcpPlaywrightHeaded`) wait for Save.
+(`mcpOverrides` / `mcpHarnessOverrides` / `mcpPlaywrightHeaded` /
+`taskAgentsLatticeMcpOnly`) wait for Save, each behind its own touched flag.

@@ -78,16 +78,23 @@ export type McpResolveContext = {
   // its own; a hand-built ctx that omits it falls back to the same value.
   apiUrl?: string;
   // The task whose worktree this session is — set ONLY by the task run/resume
-  // spawns. Baked into the `lattice` server's env as `LATTICE_TASK_ID` so the
-  // worktree agent gets a `my_task` tool and an id-less `append_summary`.
-  // Absent for every other spawn (sidebar, workflow step, push, QA, hooks).
+  // spawns and the worktree merge-conflict resolvers (manual + merge-run).
+  // Baked into the `lattice` server's env as `LATTICE_TASK_ID` so the worktree
+  // agent gets a `my_task` tool and an id-less `append_summary` (and loses the
+  // board-management tools). Absent for every other spawn (sidebar, workflow
+  // step, push, QA, hooks, the project-root stash/snapshot resolvers).
   taskId?: string;
+  // Resolve ONLY the first-party `lattice` server (nothing at all when it is
+  // toggled off for the harness). Set by the spawn chokepoint for a task
+  // worktree session when `taskAgentsLatticeMcpOnly` is on — see
+  // `taskWorktreeScope.ts`. Never set for a project-root cwd.
+  latticeOnly?: boolean;
 };
 
 // The per-project settings the resolver reads. `mcpOverrides` is CLAUDE's map
 // (plus the Playwright global toggle); `mcpHarnessOverrides` is the nested
 // codex/pi map; `qaPlaywright` is the Claude-only QA scope.
-type ResolveSettings = Pick<
+export type ResolveSettings = Pick<
   UserSettings,
   'mcpOverrides' | 'qaPlaywright' | 'mcpHarnessOverrides' | 'mcpPlaywrightHeaded'
 >;
@@ -179,6 +186,9 @@ export function resolveMcpEntries(
   const out: ResolvedMcpEntry[] = [];
   for (const entry of catalog) {
     if (!harnessSupports(entry.harnessSupport, harness)) continue;
+    // Task-worktree scope: only Lattice's own server survives. Its own toggle
+    // still applies below, so an explicit `lattice = false` means zero servers.
+    if (ctx.latticeOnly && entry.id !== LATTICE_MCP_SERVER_ID) continue;
     let enabled = false;
     let headless = false;
     if (entry.id === 'playwright') {
@@ -383,6 +393,9 @@ export async function effectiveMcpServers(
   projectPath: string,
   harness: AgentHarness,
   ctx: McpResolveContext = {},
+  // The project's settings when the caller already read them (the spawn
+  // chokepoint reads them once per spawn); read here otherwise.
+  preloadedSettings?: ResolveSettings,
 ): Promise<Record<string, ClaudeMcpServerConfig>> {
   // This resolver returns CLAUDE's config shape; other harnesses shape
   // differently and go through their own resolver.
@@ -390,7 +403,7 @@ export async function effectiveMcpServers(
 
   const [catalog, settings, secrets] = await Promise.all([
     mergedCatalog(),
-    getUserSettings(projectPath),
+    preloadedSettings ?? getUserSettings(projectPath),
     readMcpSecrets(),
   ]);
   return resolveClaudeServers(catalog, settings, secrets, withSpawnContext(projectPath, ctx));
@@ -422,9 +435,10 @@ function withSpawnContext(
 export async function resolveManagedClaudeServers(
   projectPath: string,
   ctx: McpResolveContext = {},
+  preloadedSettings?: ResolveSettings,
 ): Promise<Record<string, ClaudeMcpServerConfig> | null> {
   try {
-    return await effectiveMcpServers(projectPath, 'claude', ctx);
+    return await effectiveMcpServers(projectPath, 'claude', ctx, preloadedSettings);
   } catch (err) {
     console.warn(
       `[mcp] resolve failed for ${projectPath}: ${(err as Error).message}`,
@@ -442,11 +456,12 @@ export async function resolveManagedClaudeServers(
 export async function resolveManagedCodexServers(
   projectPath: string,
   ctx: McpResolveContext = {},
+  preloadedSettings?: ResolveSettings,
 ): Promise<CodexMcpResolution | null> {
   try {
     const [catalog, settings, secrets] = await Promise.all([
       mergedCatalog(),
-      getUserSettings(projectPath),
+      preloadedSettings ?? getUserSettings(projectPath),
       readMcpSecrets(),
     ]);
     return resolveCodexServers(catalog, settings, secrets, withSpawnContext(projectPath, ctx));
@@ -466,11 +481,12 @@ export async function resolveManagedCodexServers(
 export async function resolveManagedPiServers(
   projectPath: string,
   ctx: McpResolveContext = {},
+  preloadedSettings?: ResolveSettings,
 ): Promise<PiMcpResolution | null> {
   try {
     const [catalog, settings, secrets] = await Promise.all([
       mergedCatalog(),
-      getUserSettings(projectPath),
+      preloadedSettings ?? getUserSettings(projectPath),
       readMcpSecrets(),
     ]);
     return resolvePiServers(catalog, settings, secrets, withSpawnContext(projectPath, ctx));

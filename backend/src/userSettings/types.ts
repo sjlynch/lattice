@@ -133,6 +133,17 @@ export type UserSettings = {
   // headed/headless eye switch (`qaPlaywright.headless`), which stays
   // authoritative for QA. See `mcp/resolverPolicy.ts` + `mcp/registry.ts`.
   mcpPlaywrightHeaded?: boolean;
+  // When true (the DEFAULT — absent counts as true), a TASK WORKTREE session —
+  // a task run/resume, or a merge-conflict resolver running in the task's
+  // worktree — gets ONLY Lattice's own `lattice` MCP server (none at all when
+  // that is switched off for the harness), whatever else `mcpOverrides` /
+  // `mcpHarnessOverrides` enable. Every other session (sidebar, workflow step,
+  // push, QA, post-merge hook, the project-root reconcile) still gets the full
+  // enabled set. Saves the ~3 idle server processes per agent (Playwright,
+  // Blender, …) that a "Run All" otherwise multiplies. Applied at the spawn
+  // chokepoint only for a cwd under `~/.lattice/worktrees/` — see
+  // `mcp/taskWorktreeScope.ts`. Settings → MCP tab, top checkbox.
+  taskAgentsLatticeMcpOnly?: boolean;
   // Backs the QA-lane Playwright buttons — QA e2e runs ONLY (not a global
   // enable; that's `mcpOverrides.playwright`). `enabled` injects the Playwright
   // MCP into QA-lane "run an e2e test" sessions; `headless` (the eye toggle, the

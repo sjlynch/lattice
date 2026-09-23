@@ -24,4 +24,6 @@ export {
   isKeepWorkflowStepTerminalsEnabled,
   isPostMergeHookEnabled,
   isCodexYoloEnabled,
+  isTaskAgentsLatticeMcpOnly,
+  taskAgentsLatticeMcpOnlyIn,
 } from './features.js';

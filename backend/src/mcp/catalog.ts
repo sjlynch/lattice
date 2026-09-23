@@ -22,6 +22,9 @@
 // `fetch`/`git`/`time` servers are PyPI/`uvx` (not npm); Brave moved to the
 // `@brave/` scope (the old `@modelcontextprotocol/server-brave-search` is
 // archived); GitHub has no npm package. None of those ship here.
+//
+// Removed 2026-09: `chrome-devtools` and `context7` (see retiredServers.ts for
+// why their ids are still special-cased). Add one back as a custom server.
 
 import { latticeMcpServerEntryPath } from '../latticeMcp/entryPath.js';
 
@@ -142,33 +145,6 @@ export const BUILTIN_MCP_SERVERS: McpServerEntry[] = [
     args: ['-y', '@playwright/mcp@latest', '--isolated'],
     runtime: 'node',
     runtimeNote: 'First run downloads browsers, so the first QA spawn is slow.',
-    harnessSupport: { claude: true, codex: true, pi: true },
-    builtin: true,
-  },
-  {
-    id: 'chrome-devtools',
-    label: 'Chrome DevTools',
-    description:
-      'Drive and inspect a real Chrome via the DevTools protocol (network, ' +
-      'performance traces, console).',
-    transport: 'stdio',
-    command: 'npx',
-    args: ['-y', 'chrome-devtools-mcp@latest'],
-    runtime: 'node',
-    runtimeNote: 'Needs Node 22+ and an installed Chrome.',
-    harnessSupport: { claude: true, codex: true, pi: true },
-    builtin: true,
-  },
-  {
-    id: 'context7',
-    label: 'Context7',
-    description:
-      'Up-to-date, version-specific library docs and code examples. Works on a ' +
-      'keyless free tier; an optional API key raises rate limits.',
-    transport: 'stdio',
-    command: 'npx',
-    args: ['-y', '@upstash/context7-mcp'],
-    runtime: 'node',
     harnessSupport: { claude: true, codex: true, pi: true },
     builtin: true,
   },

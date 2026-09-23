@@ -99,6 +99,9 @@ export function selectHarnessCommand(
         // LATTICE_TASK_ID into the `lattice` MCP server's env (see
         // terminalServerClient/createSession.ts) for both run and resume.
         taskId: task.id,
+        // A task agent in its worktree: only the Lattice MCP server, when the
+        // project's `taskAgentsLatticeMcpOnly` is on (mcp/taskWorktreeScope.ts).
+        mcpScope: 'task-worktree',
         registry: {
           owner: 'task',
           label: taskTerminalLabel(task.title),

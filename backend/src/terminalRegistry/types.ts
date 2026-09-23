@@ -1,3 +1,4 @@
+import type { McpSpawnScope } from '../mcp/taskWorktreeScope.js';
 import type { AgentHarness } from '../harnesses.js';
 
 // Who "owns" a terminal tab — i.e. which lifecycle decides when it should
@@ -63,6 +64,9 @@ export type TerminalLaunch = {
   piModel?: string;
   isQaRun?: boolean;
   taskId?: string;
+  // The spawn's MCP scope (`'task-worktree'` for a task agent / worktree
+  // resolver), so a relaunch re-enters the chokepoint with the same narrowing.
+  mcpScope?: McpSpawnScope;
 };
 
 export type TerminalRecord = {

@@ -65,6 +65,7 @@ export async function handleResyncOutcome(
       cwd: outcome.cwd,
       command: outcome.command,
       conflictedFiles: outcome.conflictedFiles,
+      inWorktree: true,
     });
     if (spawn.kind === 'spawn-error') {
       // No resolver Claude is running — registering a conflict waiter

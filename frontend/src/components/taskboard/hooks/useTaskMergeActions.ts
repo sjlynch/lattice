@@ -40,7 +40,17 @@ export function useTaskMergeActions({
         const res = await apiMergeTask(activeFolder, task.id);
         if (res.merged) return true;
         // Either a worktree merge conflict or a stash-pop conflict in main —
-        // both are handled by spawning a resolver Claude as a merge terminal.
+        // both are handled by a resolver Claude the BACKEND pre-spawned. With
+        // no `serverId` that spawn failed: say so. Opening the terminal here
+        // anyway would start the resolver over a serverless `/ws/terminal`,
+        // bypassing the spawn chokepoint (MCP scope, system prompt, registry).
+        if (!res.serverId) {
+          showError(
+            `Merge conflict in "${shortLabel(task.title)}", but its resolver could not be started` +
+              `${res.resolverError ? `: ${res.resolverError}` : ''}. Try Merge again.`,
+          );
+          return false;
+        }
         addTerminal({
           id: res.terminalId,
           label: `merge:${shortLabel(task.title)}`,

@@ -320,6 +320,7 @@ function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): Promise<voi
         projectPath: current.projectPath,
         isQaRun: current.launch.isQaRun,
         taskId: current.launch.taskId,
+        mcpScope: current.launch.mcpScope,
         registry: {
           owner: current.owner,
           label: current.label,

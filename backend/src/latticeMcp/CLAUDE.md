@@ -74,7 +74,7 @@ that is already running.
 | 0 orient | `board_summary` | counts + per-lane cost. Under 1 KB. |
 | 1 scan | `list_tasks` | compact / active lanes / newest 100 — **the API's defaults, not ours**; `confirm_large` is the only way past the 256 KB ceiling |
 | 2 expand | `get_task` | one full record |
-| 2 expand | `my_task` | **task worktree sessions only** — the live record of the task this agent is running. Registered iff `LATTICE_TASK_ID` is set (run/resume spawns); the same variable makes `append_summary`'s `id` optional |
+| 2 expand | `my_task` | **task worktree sessions only** — the live record of the task this agent is running. Registered iff `LATTICE_TASK_ID` is set (run/resume spawns and the worktree merge-conflict resolvers); the same variable makes `append_summary`'s `id` optional |
 | find | `search_tasks` | ranked, all lanes, snippets |
 | write | `create_task`, `create_tasks`, `append_summary` | in every session |
 | manage | `update_task`, `transition_tasks`, `delete_task` | **not in a task-worktree session** — a worktree agent's brief is untrusted input; it reads, files follow-ups and reports, it does not re-lane or delete. `delete_task` is `DELETE /api/tasks/:id` — a PERMANENT erase that also tears down the task's worktree + branch (a branch with commits not on HEAD is KEPT; the route then returns `keptBranch.hint`, which the tool puts on the first line of its result, before the JSON), not a move to the `deleted` lane (that is `update_task` / `transition_tasks` with `status: "deleted"`) |

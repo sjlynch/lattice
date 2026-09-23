@@ -70,6 +70,11 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
   // touched from this tab.
   const [overridesTouched, setOverridesTouched] = useState(false);
   const [harnessTouched, setHarnessTouched] = useState(false);
+  // `taskAgentsLatticeMcpOnly` (default ON — absent reads as true): task
+  // worktree sessions get only the Lattice server. Its own touched flag, like
+  // the maps above, so an unrelated save never writes it.
+  const [latticeOnly, setLatticeOnly] = useState(true);
+  const [latticeOnlyTouched, setLatticeOnlyTouched] = useState(false);
   // `loaded` flips only on a SUCCESSFUL load (same clobber-guard as Tools):
   // the enable patches are whole maps, so a lenient "settings → {}" load
   // followed by one toggle + Save would rewrite `mcpOverrides` as a one-key
@@ -98,6 +103,7 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
     setOverridesTouched(false);
     setHarnessTouched(false);
     setHeadedTouched(false);
+    setLatticeOnlyTouched(false);
     (async () => {
       const [{ servers }, settings, secrets, env] = await Promise.all([
         fetchMcpCatalog(),
@@ -112,6 +118,7 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
       setOverrides(settings.mcpOverrides ?? {});
       setHarnessOverrides(settings.mcpHarnessOverrides ?? {});
       setPlaywrightHeaded(settings.mcpPlaywrightHeaded === true);
+      setLatticeOnly(settings.taskAgentsLatticeMcpOnly !== false);
       setRedacted(secrets.redacted);
       setHints(secrets.hints);
       setEnvPresence(env.presence);
@@ -133,6 +140,7 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
         if (overridesTouched) patch.mcpOverrides = overrides;
         if (harnessTouched) patch.mcpHarnessOverrides = harnessOverrides;
         if (headedTouched) patch.mcpPlaywrightHeaded = playwrightHeaded;
+        if (latticeOnlyTouched) patch.taskAgentsLatticeMcpOnly = latticeOnly;
         return Object.keys(patch).length > 0 ? patch : undefined;
       },
     }),
@@ -143,6 +151,8 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
       harnessOverrides,
       headedTouched,
       playwrightHeaded,
+      latticeOnlyTouched,
+      latticeOnly,
     ],
   );
 
@@ -217,6 +227,27 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
 
       {loaded && (
         <>
+          <label className="settings-checkbox-row">
+            <input
+              type="checkbox"
+              checked={latticeOnly}
+              onChange={(e) => {
+                setLatticeOnlyTouched(true);
+                setLatticeOnly(e.target.checked);
+              }}
+            />
+            <span>Task agents get only the Lattice MCP</span>
+          </label>
+          <div className="settings-section-sub">
+            Applies to task worktree sessions — a task's run or resume, and a
+            merge-conflict resolver working in its worktree. They get just the
+            Lattice task-board server (nothing, if it is off for that harness
+            below), which saves a few idle server processes and their RAM per
+            agent. Every other session — sidebar terminals, workflow steps,
+            push, QA runs, the post-merge hook — still gets the servers enabled
+            below. For Pi this only covers servers Lattice manages.
+          </div>
+
           <div className="mcp-list">
             {catalog.map((s) => (
               <McpServerRow

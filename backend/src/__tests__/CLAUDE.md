@@ -311,6 +311,20 @@ under `helpers/`.
   since a worktree shares the project repo's config file), the
   `git log -1 --format="%an <%ae>"` that tells it where to FIND an identity,
   and the `git -c user.name=…` form that persists nothing.
+- `mcp.taskWorktreeScope.test.ts` — the task-worktree MCP scope
+  (`mcp/taskWorktreeScope.ts`): the three-way decision (spawn scope + setting +
+  a cwd under `~/.lattice/worktrees/` — never a project root or a legacy
+  in-repo worktree); `latticeOnly` resolving just `lattice` (nothing when it is
+  off); the Claude `--strict-mcp-config --mcp-config="…"` flags (`=` form,
+  forward slashes, never stacked, skipped for an unquotable path) and the
+  home-scratch config file, via the real `resolveHarnessSpawnBody`; the Codex
+  per-name `enabled=false` disables ordered before the lattice override; the Pi
+  `.pi/mcp.json` narrowing and its reconcile back; that task run/resume and the
+  worktree resolvers (manual + merge-run) carry `taskId` + the scope over the
+  wire while stash resolvers carry neither (fake terminal-server `fetch`); the
+  registry round-trip of `launch.mcpScope`; and the retired-built-in handling
+  (stale `context7` / `chrome-devtools` toggles stripped on read and patch, an
+  imported `context7` renamed `context7-imported`).
 - `startupTerminalsShape.test.ts` — the shape boundary in
   `userSettings/storage.ts`. `PATCH /api/settings` types its body as
   `Partial<UserSettings>` and agents write it directly, so the type guarantees

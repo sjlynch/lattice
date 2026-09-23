@@ -18,9 +18,11 @@
 //     in pty env.
 // Static (non-secret) env / headers are emitted inline in `env` / `http_headers`.
 //
-// The dotted `mcp_servers.<id>=…` form MERGES one key into the user's table
-// (vs `mcp_servers={…}` which would replace the whole table and drop the user's
-// own servers). Generated ids are namespaced `lattice_*` and underscore-only —
+// The dotted `mcp_servers.<id>=…` form MERGES one key into the user's table,
+// leaving the user's own servers alone. (A whole-table `mcp_servers={…}` does
+// not replace config.toml's table either — Codex merges the `-c` layer over it —
+// which is why the task-worktree scope disables user servers by name instead;
+// see taskWorktreeScope.ts.) Generated ids are namespaced `lattice_*` and underscore-only —
 // dashed / quoted dotted segments are unreliable through the Windows PowerShell
 // path (see the plan §4).
 
@@ -38,7 +40,7 @@ export type CodexServerConfig = {
   env: Record<string, string>;
 };
 
-// Map a catalog id (may contain dashes: `chrome-devtools`, `brave-search`) to an
+// Map a catalog id (may contain dashes: `brave-search`) to an
 // underscore-only Codex server key. Namespaced `lattice_` so it never shadows a
 // user's own server and is obviously Lattice-managed. The fold is lossy — `-`,
 // `.`, space and case all become `_`, so `my-api` and `my_api` share a key; the

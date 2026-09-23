@@ -209,11 +209,11 @@ test('resolve: a keyed server with no stored secret omits env (ambient path)', (
 test('resolve: an explicit false override stays off', () => {
   const out = resolveClaudeServers(
     BUILTIN_MCP_SERVERS,
-    { mcpOverrides: { 'brave-search': false, context7: true } },
+    { mcpOverrides: { 'brave-search': false, blender: true } },
     {},
   );
   assert.ok(!('brave-search' in out));
-  assert.ok('context7' in out);
+  assert.ok('blender' in out);
 });
 
 test('resolve: a server id naming an Object member never resolves an inherited secret map', () => {

@@ -1,4 +1,5 @@
 import { getUserSettings } from './storage.js';
+import type { UserSettings } from './types.js';
 
 // Whether Claude's auto-memory should be OFF for this project. Default is
 // disabled (memory off) — an absent setting counts as `true`, matching the
@@ -34,6 +35,21 @@ export async function isCodexYoloEnabled(
 ): Promise<boolean> {
   const settings = await getUserSettings(projectPath);
   return settings.codexYolo !== false;
+}
+
+// Whether task-worktree sessions (task run/resume + worktree merge resolvers)
+// get ONLY the Lattice MCP server. Default is ON — an absent setting counts as
+// `true` (and a corrupt settings file reads as `{}`, so it fails safe to ON);
+// only an explicit `false` gives them the project's full enabled set. The pure
+// form is for the spawn chokepoint, which already holds the settings it read.
+export function taskAgentsLatticeMcpOnlyIn(settings: UserSettings): boolean {
+  return settings.taskAgentsLatticeMcpOnly !== false;
+}
+
+export async function isTaskAgentsLatticeMcpOnly(
+  projectPath: string,
+): Promise<boolean> {
+  return taskAgentsLatticeMcpOnlyIn(await getUserSettings(projectPath));
 }
 
 // Whether a finished workflow agent step's terminal stays open (its pty left

@@ -20,8 +20,9 @@ keeps importing from `'../userSettings.js'` and the public surface is unchanged.
   its bytes; only ENOENT starts from empty settings.
 - `features.ts` — feature-specific accessors layered on `getUserSettings`, each
   encoding a field's default semantics: `isClaudeMemoryDisabled`,
-  `isPostMergeHookEnabled`, `isCodexYoloEnabled` (all default ON — an absent
-  field counts as `true`) and `isQaTerminalAutoCloseEnabled` (default
+  `isPostMergeHookEnabled`, `isCodexYoloEnabled`, `isTaskAgentsLatticeMcpOnly`
+  (+ its pure `taskAgentsLatticeMcpOnlyIn(settings)` for callers that already
+  hold the settings) (all default ON — an absent field counts as `true`) and `isQaTerminalAutoCloseEnabled` (default
   OFF/stay-open — only explicit `true` opts in). New "what does setting X mean
   for feature Y" helpers go here.
 - `index.ts` — internal barrel re-exporting the public surface.
@@ -48,6 +49,10 @@ keeps importing from `'../userSettings.js'` and the public surface is unchanged.
   frontend matches a live startup pty to its config by `id`, so an id that
   changed between reads would spawn a duplicate terminal on every reload. Pinned
   by `__tests__/startupTerminalsShape.test.ts`.
+- **Toggles for removed built-in MCP servers are stripped on read and on
+  write** (`mcpOverrides`, `mcpHarnessOverrides.{codex,pi}`; ids in
+  `mcp/retiredServers.ts`), so a stale `context7: true` can never switch on a
+  custom server that later takes that id.
 - **Default semantics live in the accessor, not the type.** A field being
   absent has a specific meaning per feature (memory-off-by-default,
   auto-close-off-by-default); encode that in `features.ts`, mirroring the

@@ -9,6 +9,8 @@ import { atomicWriteFile } from '../claudeTrust/configFile.js';
 import { PROJECT_DIR_NAME } from '../taskCache/paths.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { runExclusive } from '../serializeWrites.js';
+// Leaf module (no imports) — keeps the catalog out of userSettings' chain.
+import { RETIRED_BUILTIN_MCP_IDS } from '../mcp/retiredServers.js';
 import type { StartupTerminal, UserSettings } from './types.js';
 
 function settingsFile(projectPath: string): string {
@@ -81,7 +83,28 @@ function normalizeUserSettings<T extends Partial<UserSettings>>(settings: T): T 
       settings.startupTerminals,
     );
   }
+  if (settings.mcpOverrides && typeof settings.mcpOverrides === 'object') {
+    settings.mcpOverrides = withoutRetiredMcpIds(settings.mcpOverrides);
+  }
+  const harnessMaps = settings.mcpHarnessOverrides;
+  if (harnessMaps && typeof harnessMaps === 'object') {
+    const next: NonNullable<UserSettings['mcpHarnessOverrides']> = { ...harnessMaps };
+    for (const harness of ['codex', 'pi'] as const) {
+      const map = next[harness];
+      if (map && typeof map === 'object') next[harness] = withoutRetiredMcpIds(map);
+    }
+    settings.mcpHarnessOverrides = next;
+  }
   return settings;
+}
+
+// Drop toggles for built-in MCP servers that no longer exist, so a stale
+// `context7: true` can never switch on a custom server that later takes the same
+// id (see mcp/retiredServers.ts). A new object; the input is left alone.
+function withoutRetiredMcpIds(map: Record<string, boolean>): Record<string, boolean> {
+  return Object.fromEntries(
+    Object.entries(map).filter(([id]) => !RETIRED_BUILTIN_MCP_IDS.has(id)),
+  );
 }
 
 async function readUserSettings(

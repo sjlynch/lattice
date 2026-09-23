@@ -71,6 +71,7 @@ export function deserializeTerminalRecord(raw: unknown): TerminalRecord | null {
   if (str(launchRaw.piModel)) launch.piModel = launchRaw.piModel as string;
   if (launchRaw.isQaRun === true) launch.isQaRun = true;
   if (str(launchRaw.taskId)) launch.taskId = launchRaw.taskId as string;
+  if (launchRaw.mcpScope === 'task-worktree') launch.mcpScope = 'task-worktree';
   const record: TerminalRecord = {
     id,
     projectPath,

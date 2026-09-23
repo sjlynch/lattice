@@ -26,7 +26,7 @@ async function flush() {
   for (let i = 0; i < 8; i++) await Promise.resolve();
 }
 
-async function mount(t: TestContext, settingsOk: boolean) {
+async function mount(t: TestContext, settingsOk: boolean, extraSettings: object = {}) {
   const restore = [
     installGlobal('IS_REACT_ACT_ENVIRONMENT', true),
     installGlobal('React', React),
@@ -39,6 +39,7 @@ async function mount(t: TestContext, settingsOk: boolean) {
               ok: true,
               json: () => Promise.resolve({
                 mcpOverrides: { 'brave-search': true, playwright: true },
+                ...extraSettings,
               }),
             })
           : Promise.resolve({
@@ -95,4 +96,26 @@ test('a successful load keeps the other servers when one toggle is flipped', asy
   assert.deepEqual(ref.current?.getMcpUserPatch(), {
     mcpOverrides: { 'brave-search': true, playwright: true, lattice: false },
   });
+});
+
+// The "Task agents get only the Lattice MCP" checkbox (`taskAgentsLatticeMcpOnly`,
+// default ON): its own touched flag, so an unrelated save never writes it.
+function latticeOnlyBox(renderer: ReturnType<typeof TestRenderer.create>) {
+  const label = renderer.root.find((n) => n.type === 'label'
+    && n.findAllByType('span').some((sp) => String(sp.props.children).includes('only the Lattice MCP')));
+  return label.findByType('input');
+}
+
+test('lattice-only checkbox: absent reads as on, untouched yields no patch, a flip patches just it', async (t) => {
+  const { ref, renderer } = await mount(t, true);
+  const box = latticeOnlyBox(renderer);
+  assert.equal(box.props.checked, true);
+  assert.equal(ref.current?.getMcpUserPatch(), undefined);
+  act(() => box.props.onChange({ target: { checked: false } }));
+  assert.deepEqual(ref.current?.getMcpUserPatch(), { taskAgentsLatticeMcpOnly: false });
+});
+
+test('lattice-only checkbox: a saved false loads unchecked', async (t) => {
+  const { renderer } = await mount(t, true, { taskAgentsLatticeMcpOnly: false });
+  assert.equal(latticeOnlyBox(renderer).props.checked, false);
 });

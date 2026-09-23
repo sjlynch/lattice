@@ -53,6 +53,7 @@ export type TerminalRecord = {
     piModel?: string;
     isQaRun?: boolean;
     taskId?: string;
+    mcpScope?: 'task-worktree';
   };
   agentSession?: AgentSessionRef;
   serverId?: string;
