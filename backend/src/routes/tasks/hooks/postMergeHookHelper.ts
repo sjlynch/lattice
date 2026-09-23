@@ -1,5 +1,6 @@
 import { getActiveRunForProject } from '../../../mergeRuns.js';
 import { runPostMergeHookGate } from '../../../postMergeHooks.js';
+import { waitForExclusiveProjectHold } from '../../../projectRunLock.js';
 
 // Resolver-finished tasks transition to qa, which counts as a "merge" for
 // the purposes of the post-merge hook. Skip when a merge run is active: the
@@ -14,6 +15,10 @@ export async function awaitPostMergeHookOutsideRun(
 ): Promise<void> {
   if (getActiveRunForProject(projectPath)) return;
   try {
+    // A workflow Run tests step holds the project exclusively while its agent
+    // works on the main checkout; a hook agent started now would run alongside
+    // it on the same tree. Defer until the step releases (a no-op otherwise).
+    await waitForExclusiveProjectHold(projectPath);
     await runPostMergeHookGate({
       projectPath,
       backendOrigin,

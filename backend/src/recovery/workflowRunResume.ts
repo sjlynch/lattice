@@ -48,6 +48,10 @@ import type { WorkflowRun } from '../workflowRuns/state.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';
 import { claimRecoveryAttempt } from './retryBudget.js';
 import { listTasks } from '../tasks.js';
+import {
+  noteRunTestsStep,
+  resumeRunTestsStep,
+} from '../workflowRuns/testStep/runTestsStep.js';
 
 export async function resumeInterruptedWorkflowRuns(
   backendOrigin: string,
@@ -146,6 +150,20 @@ export async function resumePersistedRun(
     return;
   }
 
+  if (decision.action === 'advance') {
+    // A Run tests step whose agent is gone: note it on the step summary and
+    // move on — Run tests never stops the workflow.
+    console.warn(`[startup] workflow run ${label}: ${decision.reason}; recording that and moving on.`);
+    noteRunTestsStep(
+      run,
+      run.currentStepIndex,
+      `Interrupted: ${decision.reason}. Lattice moved on; whatever the agent committed before that stays committed.`,
+      'lost',
+    );
+    await completeWorkflowStep(run.id, run.currentStepIndex, backendOrigin);
+    return;
+  }
+
   if (decision.action === 'redispatch') {
     const recoveryStepIndex = run.currentStepIndex;
     const stillNeedsRedispatch = () => {
@@ -186,6 +204,11 @@ export async function resumePersistedRun(
   // reclaim it, and put its presence node back on the graph.
   console.log(`[startup] workflow run ${label} re-adopted — ${decision.reason}.`);
   if (serverId) adoptWorkflowStepSession(run.id, run.currentStepIndex, serverId);
+  if (step?.kind === 'test') {
+    // Take the project run lock back (the dead backend's is stale) and re-arm
+    // the step's timeout from its recorded spawn time.
+    await resumeRunTestsStep(wf ?? undefined, run, run.currentStepIndex, backendOrigin, completeWorkflowStep);
+  }
   if (wf && step && effectiveStepHarness(wf, run, run.currentStepIndex) === 'claude') {
     registerAgentSession({
       agentId: workflowStepAgentId(run.id, run.currentStepIndex),

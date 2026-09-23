@@ -5,6 +5,8 @@ import {
 } from '../harnesses.js';
 import { normalizePiModel } from '../worktree/commands.js';
 import {
+  RUN_TESTS_MAX_TIMEOUT_MINUTES,
+  RUN_TESTS_MIN_TIMEOUT_MINUTES,
   WORKFLOW_STEP_TOOLS,
   type Workflow,
   type WorkflowRunHarnessOverride,
@@ -15,7 +17,7 @@ import {
   type WorkflowVariable,
 } from './types.js';
 
-const STEP_KINDS = new Set<WorkflowStepKind>(['agent', 'start', 'merge', 'push']);
+const STEP_KINDS = new Set<WorkflowStepKind>(['agent', 'start', 'merge', 'push', 'test']);
 const STEP_TOOLS = new Set<string>(WORKFLOW_STEP_TOOLS);
 
 // Known tool ids only, deduplicated, in catalog order; `undefined` (never `[]`)
@@ -26,6 +28,19 @@ export function normalizeStepTools(value: unknown): WorkflowStepTool[] | undefin
   const wanted = new Set(value.filter((t): t is string => typeof t === 'string' && STEP_TOOLS.has(t)));
   const out = WORKFLOW_STEP_TOOLS.filter((t) => wanted.has(t));
   return out.length ? [...out] : undefined;
+}
+
+// A Run tests step's timeout: an integer number of minutes clamped to
+// [RUN_TESTS_MIN_TIMEOUT_MINUTES, RUN_TESTS_MAX_TIMEOUT_MINUTES]; `undefined`
+// (= the 60-minute default) for anything that isn't a finite number, so the
+// field stays out of the JSON unless the user set it.
+export function normalizeTestTimeoutMinutes(value: unknown): number | undefined {
+  const n = typeof value === 'string' && value.trim() ? Number(value) : value;
+  if (typeof n !== 'number' || !Number.isFinite(n)) return undefined;
+  return Math.min(
+    RUN_TESTS_MAX_TIMEOUT_MINUTES,
+    Math.max(RUN_TESTS_MIN_TIMEOUT_MINUTES, Math.round(n)),
+  );
 }
 
 // The built-in variable every workflow carries. Built-in workflow steps end
@@ -65,6 +80,7 @@ export function normalizeSteps(steps: unknown): WorkflowStep[] {
     // The legacy per-step `mode` is dropped here — the spread below would
     // otherwise carry it forward from disk or an old editor draft forever.
     const { mode: _legacyMode, ...step } = (s && typeof s === 'object' ? s : {}) as Partial<WorkflowStep>;
+    const kind = normalizeStepKind(step.kind);
     return {
       ...step,
       id: step.id || `step_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 5)}`,
@@ -72,12 +88,15 @@ export function normalizeSteps(steps: unknown): WorkflowStep[] {
       prompt: typeof step.prompt === 'string' ? step.prompt : '',
       harness: normalizeWorkflowStepHarness(step.harness),
       piModel: normalizePiModel(step.piModel),
-      kind: normalizeStepKind(step.kind),
+      kind,
       // Only a literal `true` freezes a step, and `undefined` (not `false`)
       // keeps the flag out of the JSON for the overwhelmingly common
       // not-frozen case — same shape convention as `piModel`.
       frozen: step.frozen === true ? true : undefined,
       tools: normalizeStepTools(step.tools),
+      // Only a Run tests step has a timeout; the spread above would otherwise
+      // carry a stray one on any other kind forever.
+      timeoutMinutes: kind === 'test' ? normalizeTestTimeoutMinutes(step.timeoutMinutes) : undefined,
     };
   });
 }

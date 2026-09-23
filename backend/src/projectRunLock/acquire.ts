@@ -12,9 +12,15 @@ import { pruneRetiredTombstonesOnce } from './tombstones.js';
 // Acquire the per-project run lock or throw. `label` is logged into the
 // lockfile so a developer inspecting `~/.lattice/per-project/<hash>/run.lock`
 // can tell what's holding it (e.g. `merge-run`, `manual-merge`).
+//
+// `lendable: false` makes the hold EXCLUSIVE within this process too:
+// `withProjectMutation` will not borrow it (resolver finalize / snapshot work
+// waits for the release instead). Used by the workflow Run tests step, whose
+// agent edits and commits on the main checkout for the whole hold.
 export async function acquireProjectRunLock(
   projectPath: string,
   label: string,
+  opts: { lendable?: boolean } = {},
 ): Promise<ProjectRunLockHandle> {
   const file = projectRunLockFilePath(projectPath);
   await fs.mkdir(path.dirname(file), { recursive: true });
@@ -30,7 +36,7 @@ export async function acquireProjectRunLock(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       await writeNewLockBody(file, body);
-      return registerProjectRunLock(projectPath, body, () => releaseLockFile(file, body));
+      return registerProjectRunLock(projectPath, body, () => releaseLockFile(file, body), opts);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
       await clearStaleLockOrThrow(file);

@@ -8,15 +8,68 @@ const CONTROL_KIND_LABEL: Record<ControlProgress['kind'], string> = {
   start: 'Start',
   merge: 'Merge',
   push: 'Push',
+  test: 'Run tests',
 };
+
+// Run tests steps report back as `run.stepSummaries[stepIndex]` (their
+// TEST_SUMMARY.md plus Lattice's notes — skipped, timed out, … — and the
+// commits they made). Shown as collapsed "Run tests summary" disclosures under
+// the strip, for the finished steps of the active run and for a finished run.
+// Exported for the unit test.
+export function runTestsSummaries(run: WorkflowRun | null): Array<{ stepIndex: number; text: string }> {
+  if (!run?.stepSummaries) return [];
+  return Object.entries(run.stepSummaries)
+    .map(([key, text]) => ({ stepIndex: Number(key), text }))
+    .filter((s) => Number.isInteger(s.stepIndex) && typeof s.text === 'string' && s.text.trim().length > 0)
+    .sort((a, b) => a.stepIndex - b.stepIndex);
+}
+
+function RunTestsSummaries({ run }: { run: WorkflowRun | null }) {
+  const summaries = runTestsSummaries(run);
+  if (summaries.length === 0) return null;
+  return (
+    <>
+      {summaries.map((s) => (
+        <details key={s.stepIndex} className="workflow-step-summary">
+          <summary>Run tests summary · step {s.stepIndex + 1}</summary>
+          <pre className="workflow-step-summary-text">{s.text}</pre>
+        </details>
+      ))}
+    </>
+  );
+}
 
 // Progress strip rendered above the editor while a run is in flight.
 // Switches to a dismissable summary on completion or error.
 //
 // When a control step (start/merge/push) is mid-execution, `controlProgress`
 // describes its kind-specific state and the strip surfaces that instead of
-// the generic "step N of M" line.
+// the generic "step N of M" line. Any Run tests step summaries on the run
+// render as collapsed disclosures beneath it.
 export function WorkflowRunStrip({
+  active,
+  controlProgress,
+  summary,
+  onDismiss,
+  onStop,
+}: {
+  active: WorkflowRun | null;
+  controlProgress?: ControlProgress | null;
+  summary: WorkflowRun | null;
+  onDismiss: () => void;
+  onStop?: () => void;
+}) {
+  const strip = renderStrip({ active, controlProgress, summary, onDismiss, onStop });
+  if (!strip) return null;
+  return (
+    <>
+      {strip}
+      <RunTestsSummaries run={active ?? summary} />
+    </>
+  );
+}
+
+function renderStrip({
   active,
   controlProgress,
   summary,

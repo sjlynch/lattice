@@ -24,6 +24,7 @@
 import { getRun, notify, runs, snapshot } from './state.js';
 import { workflowStepAgentId } from './sessionSpawner.js';
 import { isAgentQuiescent, noteAgentSignal, noteAgentStop } from '../agentQuiescence.js';
+import { isRunTestsStep, noteRunTestsStep } from './testStep/runTestsStep.js';
 
 // Advance only after the session has been fully quiet (no subagents live, no
 // signal) for this long. Long enough to bridge the gap between a premature Stop
@@ -31,8 +32,12 @@ import { isAgentQuiescent, noteAgentSignal, noteAgentStop } from '../agentQuiesc
 export const STOP_HOOK_SETTLE_MS = 4000;
 // How often to re-check quiescence while waiting.
 export const STOP_HOOK_POLL_MS = 1000;
+// A Run tests step never parks on a failed completion checkpoint (it must never
+// stop the workflow): after the usual three attempts it keeps retrying at this
+// slower cadence until the advance lands (or the step's own timeout does it).
+export const RUN_TESTS_GATE_RETRY_MS = 30_000;
 
-type GateTiming = { settleMs: number; pollMs: number };
+type GateTiming = { settleMs: number; pollMs: number; runTestsRetryMs?: number };
 
 type PendingGate = {
   stepIndex: number;
@@ -98,6 +103,18 @@ export function requestStopHookStepComplete(
         }
         failures += 1;
         console.error(`[workflow-run] ${runId} gated completion attempt ${failures} failed:`, err);
+        if (failures >= 3 && isRunTestsStep(current, stepIndex)) {
+          if (failures === 3) {
+            noteRunTestsStep(
+              current,
+              stepIndex,
+              `Lattice could not save this step's completion after 3 attempts (${err instanceof Error ? err.message : String(err)}) and kept retrying.`,
+            );
+          }
+          noteAgentSignal(agentId);
+          schedule(timing.runTestsRetryMs ?? RUN_TESTS_GATE_RETRY_MS);
+          return;
+        }
         if (failures >= 3) {
           current.error = 'Workflow completion could not be saved after 3 attempts; work was preserved. Retry the completion after fixing the persistence error.';
           notify({ type: 'progress', run: snapshot(current) });
@@ -114,8 +131,8 @@ export function requestStopHookStepComplete(
     schedule(); // still working (subagent live or recent signal) — keep waiting
   };
 
-  const schedule = (): void => {
-    const timer = setTimeout(tick, timing.pollMs);
+  const schedule = (delayMs: number = timing.pollMs): void => {
+    const timer = setTimeout(tick, delayMs);
     timer.unref?.();
     pending.set(runId, { stepIndex, timer });
   };

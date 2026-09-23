@@ -12,10 +12,14 @@ import {
 } from './StepRowShared';
 import type { StepRunStatus } from './stepRunStatus';
 
+// The headless kinds this row renders. `agent` and `test` (Run tests) spawn
+// an agent and have their own rows.
+export type ControlStepKind = Exclude<WorkflowStepKind, 'agent' | 'test'>;
+
 // Per-kind copy for the compact control-step row. Title is what shows in the
 // editor row label; hint is the tooltip explaining behavior.
 const CONTROL_STEP_META: Record<
-  Exclude<WorkflowStepKind, 'agent'>,
+  ControlStepKind,
   { icon: typeof Play; defaultTitle: string; hint: string }
 > = {
   start: {
@@ -34,7 +38,7 @@ const CONTROL_STEP_META: Record<
     icon: UploadCloud,
     defaultTitle: 'Push to remote',
     hint:
-      'Waits for Ready-to-Merge to drain, then spawns a push session — same as the cloud icon on the Task Board.',
+      'Waits for Ready-to-Merge to drain, then pushes the commits already on the branch. It never stages or commits — uncommitted files are left alone and listed in its report (unlike the Task Board cloud icon, which commits everything first).',
   },
 };
 
@@ -52,7 +56,7 @@ export const ControlStepRow = memo(function ControlStepRow({
 }: {
   step: WorkflowStep;
   index: number;
-  kind: Exclude<WorkflowStepKind, 'agent'>;
+  kind: ControlStepKind;
   runStatus?: StepRunStatus;
 } & Pick<StepRowCallbacks, 'onChange' | 'onRemove' | 'onReorder'>) {
   const rootRef = useRef<HTMLDivElement>(null);

@@ -235,6 +235,41 @@
   background: rgba(255, 180, 100, 0.18);
   color: rgba(255, 210, 150, 0.95);
 }
+.workflows-step-control-test .workflows-step-control-icon {
+  background: rgba(94, 234, 212, 0.16);
+  color: rgba(160, 240, 225, 0.95);
+}
+/* Run tests row: timeout field + the one-line hint under the header. */
+.workflows-step-timeout {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+.workflows-step-timeout-input {
+  width: 56px;
+  font-size: 11px;
+  padding: 2px 4px;
+}
+.workflows-step-control-test .workflows-step-body {
+  gap: 4px;
+}
+.workflows-step-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+.workflows-step-hint-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+}
 .workflows-step-control-tag {
   font-size: 10px;
   font-weight: 600;

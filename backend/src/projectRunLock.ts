@@ -14,9 +14,17 @@
 // run), we steal the lock — same behaviour as snapshot recovery: assume
 // a previous run died and the next one should proceed.
 
-export { ProjectRunLockedError } from './projectRunLock/errors.js';
+export {
+  ProjectRunLockedError,
+  RUN_TESTS_LOCK_LABEL_PREFIX,
+  describeProjectRunLockHolder,
+} from './projectRunLock/errors.js';
 export { inspectProjectRunLock } from './projectRunLock/inspect.js';
 export { acquireProjectRunLock } from './projectRunLock/acquire.js';
 export { withProjectRunLock } from './projectRunLock/withLock.js';
-export { withProjectMutation } from './projectRunLock/mutation.js';
+export {
+  withProjectMutation,
+  waitForExclusiveProjectHold,
+  localExclusiveProjectHold,
+} from './projectRunLock/mutation.js';
 export type { ProjectRunLockHandle } from './projectRunLock/types.js';

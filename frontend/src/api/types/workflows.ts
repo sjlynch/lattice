@@ -9,8 +9,15 @@ export type WorkflowRunModelOverride = WorkflowRunHarnessOverride;
 
 // Mirrors backend WorkflowStepKind. 'agent' is a normal AI-agent step;
 // 'start' / 'merge' / 'push' are headless control-flow steps the backend
-// executes against the task pipeline.
-export type WorkflowStepKind = 'agent' | 'start' | 'merge' | 'push';
+// executes against the task pipeline. 'test' ("Run tests") is an agent step
+// with a fixed brief: it runs the project's tests on the main checkout, commits
+// fixes, never stops the workflow, and reports into `WorkflowRun.stepSummaries`.
+export type WorkflowStepKind = 'agent' | 'start' | 'merge' | 'push' | 'test';
+
+// Run tests step timeout, minutes (mirrors backend workflows/types.ts).
+export const RUN_TESTS_DEFAULT_TIMEOUT_MINUTES = 60;
+export const RUN_TESTS_MIN_TIMEOUT_MINUTES = 5;
+export const RUN_TESTS_MAX_TIMEOUT_MINUTES = 720;
 
 export type WorkflowStep = {
   id: string;
@@ -28,6 +35,9 @@ export type WorkflowStep = {
   // runs before the harness spawns and its report lands beside
   // WORKFLOW_STEP.md. v1: `opengrep`. Mirrors backend `WorkflowStepTool`.
   tools?: WorkflowStepTool[];
+  // Run tests ('test') steps only: minutes the agent may run once its terminal
+  // has spawned (absent = 60). The backend clamps it to [5, 720].
+  timeoutMinutes?: number;
 };
 
 export type WorkflowStepTool = 'opengrep';
@@ -65,6 +75,9 @@ export type WorkflowRun = {
   // Pi model override, applied to every step when harnessOverride is `pi`.
   piModelOverride?: string;
   error?: string;
+  // Per-step result text keyed by step index — today only Run tests steps
+  // write one (TEST_SUMMARY.md + Lattice's notes + the commits post-check).
+  stepSummaries?: Record<number, string>;
 };
 
 export type WorkflowRunStartOptions = {

@@ -47,6 +47,23 @@ import { beginStepPreRun, endStepPreRun, runStepTools } from './stepTools.js';
 export { pruneOldWorkflowRuns, writeScratchReadme } from './scratchDirectory.js';
 export { killWorkflowStepSession, workflowStepAgentId } from './sessionSpawner.js';
 
+// A Run tests ('test') step reuses this whole path with three differences:
+// the brief (already rendered by testStep/, written as RUN_TESTS.md instead of
+// the planner's WORKFLOW_STEP.md — no dirty-state banner, pre-run tools or
+// task helper), `--add-dir <project>` for Claude, and a spawn failure that is
+// reported to `onSpawnError` (note + advance) instead of erroring the run.
+export type RunTestsSpawnOptions = {
+  brief: string;
+  addDir: string;
+  onSpawnError: (message: string) => void;
+};
+
+export type SpawnWorkflowStepOptions = {
+  runTests?: RunTestsSpawnOptions;
+};
+
+export const RUN_TESTS_STEP_FILENAME = 'RUN_TESTS.md';
+
 type PreparedStepScratch = {
   workflowStepsRoot: string;
   runDir: string;
@@ -58,6 +75,7 @@ async function prepareStepScratch(
   wf: Workflow,
   run: WorkflowRun,
   stepIndex: number,
+  stepFileName = 'WORKFLOW_STEP.md',
 ): Promise<PreparedStepScratch> {
   const workflowStepsRoot = workflowStepsRootDir(wf.projectPath);
   const runDir = workflowRunDir(wf.projectPath, run.id);
@@ -85,7 +103,7 @@ async function prepareStepScratch(
     workflowStepsRoot,
     runDir,
     stepDir,
-    stepFile: path.join(stepDir, 'WORKFLOW_STEP.md'),
+    stepFile: path.join(stepDir, stepFileName),
   };
 }
 
@@ -106,8 +124,15 @@ async function writeStepAssets(args: {
   backendOrigin: string;
   stepDir: string;
   stepFile: string;
+  runTests?: RunTestsSpawnOptions;
 }): Promise<boolean> {
   const { wf, run, stepIndex, backendOrigin, stepDir, stepFile } = args;
+  if (args.runTests) {
+    // Run tests: the brief is pre-rendered; it files no tasks, so no helper.
+    if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return false;
+    await fs.writeFile(stepFile, args.runTests.brief, 'utf8');
+    return true;
+  }
   // Best-effort working-tree-drift probe — if the project repo has
   // uncommitted changes, the rendered WORKFLOW_STEP.md gets a warning
   // banner so the planner doesn't synthesize tasks against paths that
@@ -230,13 +255,15 @@ function spawnStepSession(args: {
   stepFile: string;
   harness: WorkflowStepHarness;
   codexYolo?: boolean;
+  runTests?: RunTestsSpawnOptions;
 }): string {
-  const { wf, run, stepIndex, stepDir, stepFile, harness, codexYolo } = args;
+  const { wf, run, stepIndex, stepDir, stepFile, harness, codexYolo, runTests } = args;
   const command = buildWorkflowStepCommand(
     stepFile,
     harness,
     effectiveStepPiModel(wf, run, stepIndex),
     codexYolo,
+    runTests ? { claudeAddDir: runTests.addDir } : {},
   );
 
   if (run.status === 'running' && run.currentStepIndex === stepIndex) {
@@ -247,6 +274,7 @@ function spawnStepSession(args: {
       stepDir,
       command,
       harness,
+      ...(runTests ? { onSpawnError: runTests.onSpawnError } : {}),
     });
   }
 
@@ -258,11 +286,18 @@ export async function spawnWorkflowStep(
   run: WorkflowRun,
   stepIndex: number,
   backendOrigin: string,
+  opts: SpawnWorkflowStepOptions = {},
 ): Promise<{ command: string; cwd: string }> {
-  const { stepDir, stepFile } = await prepareStepScratch(wf, run, stepIndex);
+  const { runTests } = opts;
+  const { stepDir, stepFile } = await prepareStepScratch(
+    wf,
+    run,
+    stepIndex,
+    runTests ? RUN_TESTS_STEP_FILENAME : undefined,
+  );
   const harness = effectiveStepHarness(wf, run, stepIndex);
 
-  const live = await writeStepAssets({ wf, run, stepIndex, backendOrigin, stepDir, stepFile });
+  const live = await writeStepAssets({ wf, run, stepIndex, backendOrigin, stepDir, stepFile, runTests });
   if (!live) {
     // Cancelled during the pre-run: no callbacks, no pty, no progress event.
     return { command: '', cwd: stepDir };
@@ -279,6 +314,7 @@ export async function spawnWorkflowStep(
     stepFile,
     harness,
     codexYolo,
+    runTests,
   });
 
   // Emit progress now — the step is the run's current step whether its pty

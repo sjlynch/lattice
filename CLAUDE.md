@@ -167,7 +167,7 @@ therefore stay safely re-runnable.
 | POST | `/api/create-dir` | Folder picker create-directory helper `{parent, name}` |
 | GET | `/api/settings?project=` | Read per-project user settings |
 | PATCH | `/api/settings?project=` | Merge-update per-project user settings |
-| GET | `/api/instruction-templates?project=` | Editable agent instruction templates (task/merge/QA/push/post-merge/workflow): each template's `defaultTemplate`, the project's `currentTemplate` (override-or-default), and its `{{token}}` docs. Backs Settings → Agent prompts; edits save via PATCH `/api/settings` (`instructionTemplateOverrides`) |
+| GET | `/api/instruction-templates?project=` | Editable agent instruction templates (task/merge/QA/push/post-merge/workflow step/workflow Push/Run tests): each template's `defaultTemplate`, the project's `currentTemplate` (override-or-default), and its `{{token}}` docs. Backs Settings → Agent prompts; edits save via PATCH `/api/settings` (`instructionTemplateOverrides`) |
 | GET | `/api/harness-system-prompts?project=` | Per-harness (`claude`/`codex`/`pi`) **system-prompt** editor data: each harness's read-only default overview + the project's current Append/Replace override. Backs Settings → Agent prompts ("Harness system prompts"); edits save via PATCH `/api/settings` (`harnessSystemPrompts`), injected at every spawn of that harness. See `backend/src/harnessSystemPrompts/` |
 | GET | `/api/global-settings` | Read machine-global settings (`maxConcurrentAgents`, `mcpCustomServers`, `mcpBuiltinOverrides`, `piModelMenu`, `piProviders`) |
 | PATCH | `/api/global-settings` | Update machine-global settings (applies the spawn-queue softCap live; carries MCP custom-server defs / built-in overrides; `piModelMenu` curates the Pi-model dropdown; `piProviders` reconciles into `~/.pi/agent/models.json`) |
@@ -689,6 +689,25 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   the machine's CPU; a workflow's Run tests step verifies merged work once
   instead. Per-project opt-in `taskAgentTypecheck` (Settings → Agent prompts)
   allows a type-check of the edited package(s).
+- **Workflow "Run tests" step** (kind `test`, quick-add chip "Run tests",
+  usually `… → Merge → Run tests → Push`). An agent step with a fixed brief
+  (`RUN_TESTS.md`, template `run-tests`): from its step dir it `cd`s into the
+  project, runs the project's tests on the main checkout, fixes what it can and
+  commits with `git commit -- <paths>` (never `add -A`/stash/reset/push), leaves
+  the user's uncommitted files (listed in `USER_WIP.txt`) alone, and writes
+  `TEST_SUMMARY.md`, which lands on the run as `stepSummaries[i]` and in the
+  run strip. It **never stops the workflow**: skipped when HEAD hasn't moved
+  since the last Run tests (`~/.lattice/per-project/<hash>/run-tests.json`) or
+  the checkout is detached; a spawn failure, lost terminal, failing completion
+  checkpoint or its `timeoutMinutes` (default 60, counted from the pty spawn;
+  the session is killed, uncommitted leftovers listed, nothing reverted) all
+  become a note + advance. It holds the project `run.lock` as
+  `workflow-test:<runId>` **non-lendably**: manual Merge / Merge All get a 409
+  naming the step, and a resolver finalize, snapshot or out-of-run post-merge
+  hook waits for the release. The workflow **Push** step now has its own
+  push-only brief (`workflow-push`: no add/commit, uncommitted files reported);
+  the QA-lane Push button keeps its commit-then-push brief. See
+  `backend/src/workflowRuns/CLAUDE.md` (`testStep/`).
 
 ## Ports
 

@@ -10,7 +10,12 @@ imports from `'../workflows.js'`; this directory holds the implementation.
 
 - `types.ts` — `Workflow` / `WorkflowStep` / `WorkflowVariable` /
   `WorkflowSubscriber` shapes and the `WorkflowStepKind` (`agent` | `start` |
-  `merge` | `push`) / harness enums. The legacy per-step `mode`
+  `merge` | `push` | `test`) / harness enums. `test` is the **Run tests**
+  step: an agent step with a fixed brief (it ignores `prompt`, uses `harness` /
+  `piModel`) plus `timeoutMinutes` (default 60, normalized to an integer in
+  [5, 720], stripped from every other kind) — see `../workflowRuns/CLAUDE.md`
+  (`testStep/`). A kind missing from `STEP_KINDS` in `normalization.ts`
+  silently becomes `agent`, so a new kind must be added there too. The legacy per-step `mode`
   (`sequential` | `parallel`) is gone — nothing ever read it; it stays optional
   on the type only so pre-removal data type-checks, and `normalizeSteps` strips
   it. The control-flow kinds

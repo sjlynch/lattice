@@ -19,6 +19,8 @@ import { DEFAULT_QA_TEMPLATE } from './templates/qa.js';
 import { DEFAULT_PUSH_TEMPLATE } from './templates/push.js';
 import { DEFAULT_POST_MERGE_HOOK_TEMPLATE } from './templates/postMergeHook.js';
 import { DEFAULT_WORKFLOW_STEP_TEMPLATE } from './templates/workflowStep.js';
+import { DEFAULT_RUN_TESTS_TEMPLATE } from './templates/runTests.js';
+import { DEFAULT_WORKFLOW_PUSH_TEMPLATE } from './templates/workflowPush.js';
 
 export {
   DEFAULT_TASK_TEMPLATE,
@@ -27,6 +29,8 @@ export {
   DEFAULT_PUSH_TEMPLATE,
   DEFAULT_POST_MERGE_HOOK_TEMPLATE,
   DEFAULT_WORKFLOW_STEP_TEMPLATE,
+  DEFAULT_RUN_TESTS_TEMPLATE,
+  DEFAULT_WORKFLOW_PUSH_TEMPLATE,
 };
 
 export type InstructionTemplateId =
@@ -35,7 +39,9 @@ export type InstructionTemplateId =
   | 'qa'
   | 'push'
   | 'post-merge-hook'
-  | 'workflow-step';
+  | 'workflow-step'
+  | 'run-tests'
+  | 'workflow-push';
 
 export type InstructionTemplateToken = {
   name: string;
@@ -163,6 +169,15 @@ export const INSTRUCTION_TEMPLATE_CATALOG: InstructionTemplateDef[] = [
     tokens: [COMMON.project_path],
   },
   {
+    id: 'workflow-push',
+    title: 'Workflow Push step',
+    filename: 'PUSH_INSTRUCTIONS.md',
+    description:
+      "The brief for a workflow's Push step. A one-off Claude session pushes the commits already on the branch — it never stages or commits, and reports any uncommitted files it left alone. (The QA-lane Push button uses the “Push to remote” brief above.)",
+    defaultTemplate: DEFAULT_WORKFLOW_PUSH_TEMPLATE,
+    tokens: [COMMON.project_path],
+  },
+  {
     id: 'post-merge-hook',
     title: 'Post-merge hook',
     filename: 'POST_MERGE_HOOK.md',
@@ -219,6 +234,53 @@ export const INSTRUCTION_TEMPLATE_CATALOG: InstructionTemplateDef[] = [
       {
         name: 'harness_override_note',
         description: 'Note shown when the run forces one harness; empty otherwise.',
+      },
+      {
+        name: 'completion_instructions',
+        description:
+          'How to finish the step — Claude stops; Pi/Codex curl /complete.',
+      },
+    ],
+  },
+  {
+    id: 'run-tests',
+    title: 'Workflow Run tests step',
+    filename: 'RUN_TESTS.md',
+    description:
+      "The brief for a workflow's Run tests step. The agent runs the project's tests on the main checkout, fixes what it can, commits the fixes (only the files it changed), leaves the user's uncommitted work alone, and writes TEST_SUMMARY.md, which Lattice shows on the run.",
+    defaultTemplate: DEFAULT_RUN_TESTS_TEMPLATE,
+    tokens: [
+      { name: 'step_number', description: 'This step’s position (1-based).' },
+      { name: 'total_steps', description: 'Total number of steps in the workflow.' },
+      COMMON.autonomy_preamble,
+      COMMON.project_path,
+      {
+        name: 'step_dir',
+        description:
+          'The step’s scratch directory (the session cwd, holding the completion hooks, USER_WIP.txt and TEST_SUMMARY.md).',
+      },
+      {
+        name: 'timeout_minutes',
+        description:
+          'The step’s timeout — Lattice stops the session after this many minutes and moves on.',
+      },
+      {
+        name: 'recent_tasks',
+        description:
+          'Tasks moved to QA/Done since the last Run tests (else since this run started): title plus the first lines of each description, up to 30.',
+      },
+      {
+        name: 'user_wip_file',
+        description:
+          'Absolute path of USER_WIP.txt — every file modified, staged or untracked in the checkout when the step started.',
+      },
+      {
+        name: 'user_wip_summary',
+        description: 'A short count of that list (or “none — the checkout was clean”).',
+      },
+      {
+        name: 'test_summary_file',
+        description: 'Absolute path of the TEST_SUMMARY.md report the agent writes.',
       },
       {
         name: 'completion_instructions',

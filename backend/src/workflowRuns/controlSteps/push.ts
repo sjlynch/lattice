@@ -1,9 +1,11 @@
 // 'push' control step — drain Ready-to-Merge, then push.
 //
 // Waits for Ready-to-Merge to drain, then spawns a push session (same code
-// path as the Task Board cloud icon) and waits for its Stop hook, with a hard
-// timeout backstop and prompt cancellation handling so the project run-lock is
-// never held longer than necessary.
+// path as the Task Board cloud icon, but with the push-only WORKFLOW brief: it
+// pushes what is already committed and never stages or commits — see
+// instructionTemplates/templates/workflowPush.ts) and waits for its Stop hook,
+// with a hard timeout backstop and prompt cancellation handling so the project
+// run-lock is never held longer than necessary.
 
 import {
   cleanupPushSession,
@@ -190,7 +192,7 @@ export async function runPushStep(
   }, timeoutMs);
 
   try {
-    const session = await deps.startPushSession(wf.projectPath, backendOrigin);
+    const session = await deps.startPushSession(wf.projectPath, backendOrigin, { brief: 'workflow' });
     sessionId = session.id;
     sessionServerId = session.serverId;
 

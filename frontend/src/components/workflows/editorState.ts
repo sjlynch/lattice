@@ -71,6 +71,8 @@ export function makeAgentStep({
 }
 
 // A headless control-flow step (start/merge/push): no prompt, no real harness.
+// Also seeds a Run tests step (`test`): no prompt either (its brief is fixed),
+// and the `claude` harness here is a real default the row lets the user change.
 export function makeControlStep(
   kind: WorkflowStepKind,
   title: string,

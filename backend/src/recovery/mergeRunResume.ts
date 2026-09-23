@@ -36,7 +36,9 @@ import { readRecoveryAttempts } from './retryBudget.js';
 // A manual `/merge` (`manual-merge`) and a workflow `Start` (`workflow-start:*`)
 // are deliberately NOT resumed here: the former is a single-task op with its own
 // recovery, the latter dies before tasks reach `ready_to_merge` (its orphans are
-// in_progress and handled by the in-progress sweep). Everything here is
+// in_progress and handled by the in-progress sweep). Nor is a workflow Run tests
+// step (`workflow-test:*`): it merges nothing — its run is re-adopted by
+// `resumeInterruptedWorkflowRuns`, which re-takes that lock itself. Everything here is
 // additionally gated on `ready_to_merge` tasks actually existing, so a mismatch
 // is at worst a no-op.
 export function isResumableInterruptedRunLock(label: string): boolean {

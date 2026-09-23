@@ -212,6 +212,25 @@ under `helpers/`.
   deletes the file, `notify` keeps it current), and the headline pair: a
   `/complete` callback for an unknown run is a silent no-op, but after
   `restoreWorkflowRun` the very same callback advances the workflow.
+- `workflowRunTestsStep.test.ts` — the workflow Run tests step
+  (`workflowRuns/testStep/`). Drives real runs (`startWorkflowRun` /
+  `completeWorkflowStep` on a temp project) with the git/spawn/state IO faked
+  through `setRunTestsDepsForTest`: `'test'` survives normalization (and
+  `timeoutMinutes` is clamped, test-only), dispatch reaches the spawner with the
+  rendered brief under a `workflow-test:<runId>` lock, the HEAD-unchanged and
+  detached-HEAD skips advance with a note and no lock, a normal finish stores
+  TEST_SUMMARY.md + the commits post-check (incl. the USER_WIP warning) and
+  records `run-tests.json` at the FINISH head, a spawn failure and a timeout
+  (clock from the pty spawn; session killed; only non-WIP leftovers listed) note
+  + advance without recording, the resume policy (`readopt` / `advance` /
+  pending `redispatch`) and its IO half (lost terminal advanced; live one
+  re-adopted with its lock re-taken), the stop-hook gate retrying past three
+  failed checkpoints, the non-lendable lock (a resolver mutation waits for the
+  release; a merge's refusal names the step; `workflow-*` restart exemption; not
+  a resumable merge-run label), porcelain `-z` / log parsing against a real repo,
+  the brief per harness (no leftover `{{…}}`, explicit completion for Pi/Codex),
+  Claude's `--add-dir=` placement, and the workflow Push brief (no add/commit)
+  vs the unchanged QA-lane one.
 - `workflowFrozenSteps.test.ts` — the editor's freeze toggle end to end: the
   pure `nextRunnableStepIndex`/`isStepFrozen` policy (leading/middle/trailing
   frozen, all-frozen and empty → `null`, clamped negative `from`), the

@@ -81,13 +81,16 @@ export function useEditorMutationActions(
 
   // Append a headless control-flow step (Start/Merge/Push). These have no
   // prompt or harness — they drive Lattice's own task pipeline server-side
-  // and are the building blocks for highly autonomous workflows.
+  // and are the building blocks for highly autonomous workflows. The Run tests
+  // step (`test`) is added the same way: no prompt (its brief is fixed), the
+  // default harness, the default timeout.
   const addControlStep = useCallback((kind: WorkflowStepKind) => {
     const titleByKind: Record<WorkflowStepKind, string> = {
       agent: 'Step',
       start: 'Start all open tasks',
       merge: 'Merge all tasks',
       push: 'Push to remote',
+      test: 'Run tests',
     };
     setEditor((cur) => ({
       ...cur,

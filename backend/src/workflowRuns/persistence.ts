@@ -116,7 +116,34 @@ export function deserializeWorkflowRun(raw: unknown, owningProject?: string): Wo
   }
   const sessionId = str(r.stepSessionId);
   if (sessionId) run.stepSessionId = sessionId;
+  const summaries = readStepSummaries(r.stepSummaries);
+  if (summaries) run.stepSummaries = summaries;
+  const testStep = readTestStepCheckpoint(r.testStep);
+  if (testStep) run.testStep = testStep;
   return run;
+}
+
+// Per-step summaries (Run tests). Display text only — keep string values under
+// integer keys and drop anything else.
+function readStepSummaries(raw: unknown): Record<number, string> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const out: Record<number, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const index = Number(key);
+    if (Number.isInteger(index) && index >= 0 && typeof value === 'string') out[index] = value;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function readTestStepCheckpoint(raw: unknown): WorkflowRun['testStep'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const t = raw as Record<string, unknown>;
+  const stepIndex = num(t.stepIndex);
+  if (stepIndex === undefined || !Number.isInteger(stepIndex) || stepIndex < 0) return undefined;
+  // A HEAD sha later lands in a git revision range: accept hex only.
+  const startHead = typeof t.startHead === 'string' && /^[0-9a-f]{7,64}$/i.test(t.startHead) ? t.startHead : null;
+  const spawnedAt = num(t.spawnedAt);
+  return { stepIndex, startHead, ...(spawnedAt !== undefined ? { spawnedAt } : {}) };
 }
 
 export function deserializeWorkflowRuns(raw: unknown, owningProject?: string): WorkflowRun[] {

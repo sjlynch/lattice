@@ -143,6 +143,10 @@ there.
   every existing workflow. The map resets on a project switch and loads via
   `fetchUserSettingsStrict`; nothing is PATCHed until that load succeeded (a
   failed GET read as `{}` would otherwise overwrite every saved collapse).
+- `usePostMergeHookConfigured.ts` — one `fetchUserSettings` per project: does
+  it have a post-merge hook prompt? Feeds the Run tests row's "the tests may run
+  twice" note (informational only; answers are stamped with their folder so a
+  project switch never shows the previous project's).
 - `useWorkflowErrorHandler.ts` — shared auto-dismissing toast state (errors,
   plus `useWorkflowManualRun`'s "Queued behind" notice).
 - `useWorkflowPromptCustomization.ts` — owns per-step customization state,

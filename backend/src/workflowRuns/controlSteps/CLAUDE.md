@@ -12,7 +12,12 @@ easy-to-break timing/lock invariants; read this before touching them.
 |------|----------------------------|------------------|
 | `start` | — (reads the **Open** lane) | Open → In Progress (spawns each) |
 | `merge` | In Progress (Phase A), then Ready-to-Merge (Phase B loop), then the post-merge hook (Phase C) | Ready-to-Merge → QA (via inner merge runs) |
-| `push`  | Ready-to-Merge | pushes `main` to the remote (no lane change) |
+| `push`  | Ready-to-Merge | pushes `main`'s existing commits to the remote (no lane change, no commit) |
+
+The Run tests step (`test`) is NOT a control step — it spawns an agent through
+the agent-step path (`../testStep/`) — but it holds the same per-project
+run-lock, as `workflow-test:<runId>` (non-lendable), for its whole duration and
+releases it before the next step (typically Push) dispatches.
 
 ## Cross-process project run-lock (the load-bearing invariant)
 
@@ -141,6 +146,16 @@ Covered by `__tests__/workflowMergeStepPostMergeHook.test.ts`.
 
 Drains Ready-to-Merge, then spawns a push session (Task Board cloud-icon path)
 and waits for its Stop hook.
+
+- **Push-only brief (R2)**: the step calls
+  `startPushSession(project, origin, { brief: 'workflow' })`, which renders the
+  `workflow-push` instruction template instead of the QA-lane button's `push`
+  one: `cd`, `git status` (uncommitted / untracked files are left untouched and
+  listed in the report), `git push` (`git push -u origin HEAD` when there is no
+  upstream), a one-line report. No `git add` / `git commit` — a workflow runs
+  unattended on the main checkout, where uncommitted files are the user's own
+  work in progress. Everything a workflow produced is already committed (task
+  branches, the merge's fast-forward, Run tests' fix commits).
 
 - **Subscribe before spawn**: the push-run `done` and workflow-run
   `cancelled/errored` subscribers are attached *before* `startPushSession`, so a

@@ -52,14 +52,19 @@ export type WorkflowStepSessionDeps = {
 
 const productionDeps: WorkflowStepSessionDeps = { proxyCreateSession, proxyKillSession };
 
+// Drop everything a failed spawn left behind for the step.
+function forgetFailedStepSpawn(run: WorkflowRun, stepIndex: number): void {
+  unregisterAgentSession(workflowStepAgentId(run.id, stepIndex));
+  forgetAgentQuiescence(workflowStepAgentId(run.id, stepIndex));
+  stepSpawnRecords.delete(recordKey(run.id, stepIndex));
+}
+
 function markWorkflowStepSpawnErrored(
   run: WorkflowRun,
   stepIndex: number,
   error: string,
 ): void {
-  unregisterAgentSession(workflowStepAgentId(run.id, stepIndex));
-  forgetAgentQuiescence(workflowStepAgentId(run.id, stepIndex));
-  stepSpawnRecords.delete(recordKey(run.id, stepIndex));
+  forgetFailedStepSpawn(run, stepIndex);
   // A queued spawn may settle after cancellation or after a stale completion
   // callback advanced the run. In that case, do not overwrite the terminal
   // state; just make sure any speculative presence node is gone.
@@ -176,6 +181,10 @@ export function enqueueWorkflowStepSession(opts: {
   command: string;
   harness: Workflow['steps'][number]['harness'];
   deps?: Partial<WorkflowStepSessionDeps>;
+  // A Run tests step never errors the run: a failed spawn is handed here
+  // (note + advance) instead of `markWorkflowStepSpawnErrored`. Called only
+  // while the step is still the run's current one.
+  onSpawnError?: (message: string) => void;
 }): Promise<void> {
   const { run, stepIndex, projectPath, stepDir, command, harness } = opts;
   const deps = { ...productionDeps, ...(opts.deps ?? {}) };
@@ -279,7 +288,13 @@ export function enqueueWorkflowStepSession(opts: {
   // rejection here used to leave it permanently running without any PTY.
   // CAP never rejects `done`; the queue keeps it pending across retries.
   done.catch((err: unknown) => {
-    markWorkflowStepSpawnErrored(run, stepIndex, err instanceof Error ? err.message : String(err));
+    const message = err instanceof Error ? err.message : String(err);
+    if (opts.onSpawnError) {
+      forgetFailedStepSpawn(run, stepIndex);
+      if (isCurrentRunningStep(run, stepIndex)) opts.onSpawnError(message);
+      return;
+    }
+    markWorkflowStepSpawnErrored(run, stepIndex, message);
   });
   return done;
 }

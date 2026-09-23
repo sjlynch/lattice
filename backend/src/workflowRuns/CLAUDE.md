@@ -34,10 +34,12 @@ explicit-curl callbacks — never by polling task state.
   keep the policy here rather than inlining it a third time. Covered by
   `__tests__/workflowFrozenSteps.test.ts`.
 - `resumeDecision.ts` — the pure policy for re-adopting a persisted run:
-  `classifyWorkflowRunResume` → `readopt` (agent step whose pty survived in the
-  detached terminal-server) / `redispatch` (control step — those die with the
-  process and are re-runnable) / `error` (agent step whose pty is gone; its
-  callback can never arrive, so surface it instead of hanging) / `skip`. A
+  `classifyWorkflowRunResume` → `readopt` (agent **or Run tests** step whose pty
+  survived in the detached terminal-server) / `redispatch` (control step — those
+  die with the process and are re-runnable) / `error` (agent step whose pty is
+  gone; its callback can never arrive, so surface it instead of hanging) /
+  `advance` (a Run tests step whose pty is gone: noted on its summary and the
+  run moves on — Run tests never stops a workflow) / `skip`. A
   `stepSessionAlive: null` ("couldn't probe the terminal-server") re-adopts —
   "can't tell" is never treated as "gone" — EXCEPT for a `pending` step, which
   never requested a terminal (the phase flips to `spawning` first): that one is
@@ -97,7 +99,13 @@ explicit-curl callbacks — never by polling task state.
   hook (`../codexStopHook.ts`, `always` — the step cwd is fresh scratch under
   `.lattice/`) — all three always, defence-in-depth. The Codex Stop hook is what
   makes a Codex step advance on turn completion instead of relying on the model's
-  curl (so it can't linger/overlap the next step). It then
+  curl (so it can't linger/overlap the next step). A Run tests step passes
+  `opts.runTests` (`{brief, addDir, onSpawnError}`): the pre-rendered brief is
+  written as `RUN_TESTS.md` (no dirty banner / pre-run tools / task helper), the
+  Claude command gets `--add-dir="<project>"` (`commandBuilder.ts`, `=` form —
+  the flag is variadic and would swallow the prompt), and a failed queued spawn
+  goes to `onSpawnError` instead of erroring the run. Everything else — hooks,
+  queue, cwd, the `/complete` route and its gate — is shared unchanged. It then
   delegates command assembly and queued pty spawn to the modules below. It
   re-exports `writeScratchReadme` / `pruneOldWorkflowRuns` /
   `workflowStepAgentId` so existing importers keep resolving them here.
@@ -146,7 +154,9 @@ explicit-curl callbacks — never by polling task state.
   outlasts the settle window. Stops from untracked agents don't count.
   Failed asynchronous completion checkpoints rearm the quiescence gate up to
   three attempts. Each retry checks live subagents and renewed quiet time;
-  exhaustion keeps the run and terminal intact with a visible error message.
+  exhaustion keeps the run and terminal intact with a visible error message —
+  except on a Run tests step, which notes the failure on its summary and keeps
+  retrying every `RUN_TESTS_GATE_RETRY_MS` (30 s) so the workflow still moves on.
 - `sessionSpawner.ts` — `workflowStepAgentId` + `enqueueWorkflowStepSession`:
   routes the pty allocation through the spawn queue (fire-and-forget), tracks
   each step's dedupe key / spawned `serverId` for cancellation, registers the
@@ -212,7 +222,11 @@ explicit-curl callbacks — never by polling task state.
     by `awaitPostMergeHookOutsideRun`, which nothing else gates) so a queued
     workflow can't start on top of the previous one's hook.
   - `controlSteps/push.ts` — `runPushStep`: drain Ready-to-Merge, spawn a
-    push session, wait for its Stop hook with the `PUSH_STEP_TIMEOUT_MS`
+    push session with the push-only **workflow** brief
+    (`startPushSession(…, { brief: 'workflow' })` → template `workflow-push`:
+    no `git add`/`commit`, uncommitted files reported, `git push` / `-u origin
+    HEAD`; the QA-lane button keeps the commit-then-push `push` brief), wait
+    for its Stop hook with the `PUSH_STEP_TIMEOUT_MS`
     (15 min) backstop and prompt cancel/pty cleanup. A session the step kills
     (cancel / timeout) never reaches its own `/done`, so the step settles it
     the same way (`abandonPushRun`: mark the push run done, drop its graph
@@ -222,6 +236,61 @@ explicit-curl callbacks — never by polling task state.
   - `controlSteps/shared.ts` — `waitForLaneEmpty` (lane-drain subscription,
     subscribes before the initial read; resolves on cancellation) and
     `emitControlProgress` (the single `step-control-progress` WS shaper).
+
+## `testStep/` — the Run tests step (`kind: 'test'`)
+
+An **agent** step with a fixed brief that runs the project's tests on the main
+checkout, fixes what it can, commits the fixes and reports — and that **never
+stops the workflow** (decision D4). `dispatchStep` routes `'test'` to
+`dispatchRunTestsStep` (never to `executeControlStep`); the spawn, hooks,
+`/complete` route and Claude quiescence gate are the agent step's, unchanged.
+
+- `runTestsStep.ts` — the orchestration. `dispatchRunTestsStep` is
+  fire-and-forget (like `executeControlStep`) so a skip never advances
+  recursively inside the previous step's completion. The worker: skip when the
+  checkout is on a **detached HEAD** (merges fast-forward the checked-out branch,
+  `assertMainOnBranch`) or when **HEAD equals `lastHead`** in `run-tests.json`
+  (unborn / unreadable HEAD → run); take the project `run.lock` as
+  **`workflow-test:<runId>`, non-lendable** (retrying up to 10 min while a manual
+  merge holds it, then note + skip); capture the start HEAD + `USER_WIP.txt`
+  under the lock; checkpoint `run.testStep = {stepIndex, startHead}`; render the
+  brief; `spawnWorkflowStep(…, { runTests })`. The **timeout** (`timeoutMinutes`,
+  default 60) is armed on the step's `step-spawned` event — queue time behind the
+  spawn queue / resource governor doesn't count — and `spawnedAt` is persisted
+  so a re-adopting backend re-arms the remainder. On timeout: kill the session,
+  list `git status` minus `USER_WIP.txt` (never reverted), note, advance.
+  **Every D4 path is "note + advance"**: skip, setup throw, `onSpawnError`,
+  timeout, a lost terminal after restart (`resumeDecision` → `advance` →
+  `noteRunTestsStep`), and a completion checkpoint that keeps failing (the
+  stop-hook gate keeps retrying; the worker's own `advance` retries every 30 s).
+  `finalizeRunTestsStep` runs inside `advanceCompletedStep` for every `'test'`
+  step — before the next step dispatches — and stores `run.stepSummaries[i]`
+  (notes + `TEST_SUMMARY.md` ≤ 8 KB + the post-check), writes `run-tests.json`
+  with the HEAD **at the finish** (only after the agent's own completion — a
+  skipped / failed / timed-out / interrupted step verified nothing), and
+  releases the lock. `abortRunTestsStep` (cancel / fail) releases it too.
+  `resumeRunTestsStep` (boot readopt) re-takes the lock (the dead backend's is
+  stale → stealable) and re-arms the timer.
+- `brief.ts` — renders `RUN_TESTS.md` from the `run-tests` instruction template
+  (`../../instructionTemplates/templates/runTests.ts`); completion wording is the
+  shared `renderStepCompletionInstructions` from `../stepMarkdown.ts`.
+- `userWip.ts` — `git status --porcelain=v1 -z` parsing (renames/copies carry
+  both paths, no C-quoting under `-z`, untracked dirs as `dir/` covering what's
+  under them), `USER_WIP.txt` read/write, `wipCovers`.
+- `checkoutGit.ts` — the read-only `projectGit` probes (HEAD, detached, status,
+  `log -z --name-only` of the step's commits). Every failure reads as "unknown".
+- `runTestsState.ts` — `~/.lattice/per-project/<hash>/run-tests.json`
+  (`{lastHead, lastFinishedAt}`), atomic, home-scoped.
+- `recentTasks.ts` — the brief's "recently merged" list: tasks in `qa`/`done`
+  that landed since `lastFinishedAt` (else since the run started), newest
+  first, ≤ 30, title + first 3 description lines.
+- `summary.ts` — bounded `TEST_SUMMARY.md` read, the commits post-check (warns
+  when a step commit touched a `USER_WIP.txt` path), and the summary composer.
+
+Invariants: the lock is released on **every** exit (advance → finalize,
+cancel/fail → abort) and before the next step dispatches; nothing here reverts,
+stashes or resets the user's checkout; a Run tests step's own failures never
+error the run. Covered by `__tests__/workflowRunTestsStep.test.ts`.
 
 ## Adding a step-completion harness
 
@@ -264,7 +333,8 @@ explicit-curl callbacks — never by polling task state.
   in-memory, and the backend restarts routinely (`tsc -w` + the dev runner on
   any `backend/src` change, a crash, a processGuards fail-fast). `dev.mjs`
   defers a restart only while a per-project `run.lock` is held — i.e. during
-  **control** steps only — so the whole of every agent step is exposed. Losing
+  **control** steps and Run tests steps only — so the whole of every agent step
+  is exposed. Losing
   the run there is silent and total: `/api/workflow-runs/active` goes empty (the
   navbar chip vanishes), and the step's agent — whose pty lives in the detached
   terminal-server and *does* survive — later POSTs `/complete` into a backend

@@ -28,6 +28,13 @@
 //                the run errored so the UI surfaces a failed run they can act
 //                on instead of one that hangs forever.
 //
+//   advance    — a RUN TESTS ('test') step whose session is gone. Run tests is
+//                an agent step (readopt / pending-redispatch exactly like
+//                'agent'), but it never stops the workflow (D4): instead of
+//                erroring, the step is noted ("its terminal did not survive a
+//                restart") and the run moves on. Re-running it is the next
+//                workflow's job.
+//
 // `stepSessionAlive: null` means "the terminal-server could not be probed" —
 // deliberately treated as readopt, not error: a transient probe failure must
 // never kill a healthy run (same "can't tell ≠ empty" rule the spawn queue and
@@ -37,7 +44,7 @@ import path from 'node:path';
 import type { WorkflowStepKind } from '../workflows.js';
 import type { WorkflowRun, WorkflowRunStatus } from './state.js';
 
-export type WorkflowResumeAction = 'readopt' | 'redispatch' | 'complete' | 'error' | 'skip';
+export type WorkflowResumeAction = 'readopt' | 'redispatch' | 'complete' | 'error' | 'advance' | 'skip';
 
 export type WorkflowResumeDecision = {
   action: WorkflowResumeAction;
@@ -82,7 +89,9 @@ export function classifyWorkflowRunResume(
   if (input.stepPhase === 'completing') {
     return { action: 'complete', reason: 'completion was durably recorded before the restart' };
   }
-  if (kind !== 'agent') {
+  // A Run tests step is an agent step: its pty survives a restart just like
+  // one, so re-dispatching it would double-spawn the agent.
+  if (kind !== 'agent' && kind !== 'test') {
     return {
       action: 'redispatch',
       reason: `${kind} control step was killed by the restart and is re-runnable`,
@@ -100,6 +109,14 @@ export function classifyWorkflowRunResume(
     return { action: 'redispatch', reason: 'agent step was queued and never admitted (no terminal was requested)' };
   }
   if (input.stepSessionAlive === false) {
+    if (kind === 'test') {
+      return {
+        action: 'advance',
+        reason:
+          (input.stepPhase === 'spawning' ? 'its terminal creation was interrupted, and ' : '') +
+          "the Run tests agent's terminal did not survive the backend restart",
+      };
+    }
     return {
       action: 'error',
       reason:

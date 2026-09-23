@@ -25,6 +25,7 @@ export function WorkflowEditorPanel({ manager }: Props) {
     harnessAvail,
     piMenu,
     projectProfile,
+    postMergeHookConfigured,
     customizingSteps,
     actions,
   } = manager;
@@ -126,6 +127,7 @@ export function WorkflowEditorPanel({ manager }: Props) {
                   piMenu={piMenu}
                   definedNames={definedNames}
                   runStatus={stepRunStatus(index, statusRun, step.frozen === true)}
+                  postMergeHookConfigured={postMergeHookConfigured}
                   onChange={actions.patchStep}
                   onRemove={handleRemoveStep}
                   onReorder={actions.reorderSteps}

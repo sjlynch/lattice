@@ -27,6 +27,7 @@ import { useWorkflowRuns } from './useWorkflowRuns';
 import { useWorkflowRunViews } from './useWorkflowRunViews';
 import { useWorkflowPromptCustomization } from './useWorkflowPromptCustomization';
 import { detectProjectPromptProfile } from '../projectPromptVariants';
+import { usePostMergeHookConfigured } from './usePostMergeHookConfigured';
 
 // The queue slice the panels render: scheduler state joined with the derived
 // selectors. Assembled by `buildQueueView` so the hook body stays declarative.
@@ -146,6 +147,8 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
   );
 
   const collapsedSteps = useCollapsedSteps(activeFolder);
+  // For the Run tests row's "a post-merge hook may run the tests too" note.
+  const postMergeHookConfigured = usePostMergeHookConfigured(activeFolder);
   const { workflows, sortedWorkflows } = useWorkflowList(activeFolder);
   const {
     activeRuns,
@@ -302,6 +305,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     getWorkflowHarnessOverride: harnessState.getWorkflowHarnessOverride,
     getWorkflowPiModelOverride: harnessState.getWorkflowPiModelOverride,
     projectProfile,
+    postMergeHookConfigured,
     customizingSteps: promptCustomization.customizingSteps,
     queue: buildQueueView(queueState, queueSelectors, queuedWorkflowIds),
     collapsedSteps,

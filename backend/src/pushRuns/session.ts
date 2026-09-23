@@ -15,8 +15,15 @@ const PUSH_COMMAND = buildAgentCommand({
   prompt: 'Please read PUSH_INSTRUCTIONS.md in this directory and follow it.',
 });
 
-async function renderPush(projectPath: string): Promise<string> {
-  const template = await resolveInstructionTemplate(projectPath, 'push');
+// Which brief the session gets. `qa-lane` (the Task Board cloud icon) commits
+// any pending changes, then pushes. `workflow` (a workflow's Push step) only
+// pushes what is already committed and reports uncommitted files untouched —
+// a workflow runs unattended on the main checkout, where those files are the
+// user's own work in progress.
+export type PushBrief = 'qa-lane' | 'workflow';
+
+async function renderPush(projectPath: string, brief: PushBrief = 'qa-lane'): Promise<string> {
+  const template = await resolveInstructionTemplate(projectPath, brief === 'workflow' ? 'workflow-push' : 'push');
   return renderPushInstructions(projectPath, template);
 }
 
@@ -68,12 +75,13 @@ const startPushAgentSession = createHomeScratchAgentSession({
 export async function startPushSession(
   projectPath: string,
   backendOrigin: string,
+  opts: { brief?: PushBrief } = {},
 ): Promise<StartedPushSession> {
   const started = await startPushAgentSession({
     projectPath,
     installHooks: ({ cwd, id }) =>
       installPushStopHook(cwd, id, backendOrigin, projectPath),
-    renderInstructions: () => renderPush(projectPath),
+    renderInstructions: () => renderPush(projectPath, opts.brief),
     recordRun: ({ id, cwd }) =>
       recordPushRun({
         id,

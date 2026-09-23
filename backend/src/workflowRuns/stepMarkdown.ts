@@ -42,6 +42,41 @@ export function effectiveStepPiModel(
   return run.harnessOverride ? run.piModelOverride : wf.steps[stepIndex].piModel;
 }
 
+// The `{{completion_instructions}}` block of a workflow-step brief. Claude is
+// told to simply stop (`claudeLines` — its silent Stop hook reports
+// completion); Pi/Codex are told to POST the step's /complete URL as their
+// last action, with Pi's `session_shutdown` extension named as the backstop.
+// Shared by WORKFLOW_STEP.md and the Run tests brief (testStep/brief.ts) so
+// the two can't drift.
+export function renderStepCompletionInstructions(
+  harness: WorkflowStepHarness,
+  completeUrl: string,
+  claudeLines: string[],
+): string {
+  return (
+    harness === 'claude'
+      ? claudeLines
+      : [
+          '**Final step — tell Lattice this step is done (do not skip this).**',
+          'The workflow will not advance to the next step until this URL is POSTed.',
+          'Run this as your *last* action — do not end your turn before it succeeds:',
+          '',
+          '```bash',
+          `curl -s -m 5 -X POST "${completeUrl}?source=model-explicit-curl"`,
+          '```',
+          ...(harness === 'pi'
+            ? [
+                '',
+                'A `session_shutdown` extension (`.pi/extensions/lattice-complete.ts`)',
+                'in this directory will fire the same callback as a backstop if your',
+                "session exits without running the curl — but it's best-effort, so",
+                'always run the curl yourself.',
+              ]
+            : []),
+        ]
+  ).join('\n');
+}
+
 export function renderStepMarkdown(
   wf: Workflow,
   run: WorkflowRun,
@@ -68,33 +103,12 @@ export function renderStepMarkdown(
   // described above" any more: a step prompt that doesn't literally enumerate
   // tasks made that read as unfilled boilerplate, which is what let a planner
   // talk itself into implementing + committing the step instead (2026-08).
-  const completionInstructions = (
-    harness === 'claude'
-      ? [
-          "When this step's work is done — the tasks are filed, or you have",
-          'concluded that none are needed — simply stop. Your session will be',
-          'finalized automatically and the next workflow step (if any) will be',
-          'queued.',
-        ]
-      : [
-          '**Final step — tell Lattice this step is done (do not skip this).**',
-          'The workflow will not advance to the next step until this URL is POSTed.',
-          'Run this as your *last* action — do not end your turn before it succeeds:',
-          '',
-          '```bash',
-          `curl -s -m 5 -X POST "${completeUrl}?source=model-explicit-curl"`,
-          '```',
-          ...(harness === 'pi'
-            ? [
-                '',
-                'A `session_shutdown` extension (`.pi/extensions/lattice-complete.ts`)',
-                'in this directory will fire the same callback as a backstop if your',
-                "session exits without running the curl — but it's best-effort, so",
-                'always run the curl yourself.',
-              ]
-            : []),
-        ]
-  ).join('\n');
+  const completionInstructions = renderStepCompletionInstructions(harness, completeUrl, [
+    "When this step's work is done — the tasks are filed, or you have",
+    'concluded that none are needed — simply stop. Your session will be',
+    'finalized automatically and the next workflow step (if any) will be',
+    'queued.',
+  ]);
   // Trailing '\n\n' so the preamble sits on its own paragraph above the step
   // prompt; empty for Claude (no preamble).
   const autonomyPreamble =

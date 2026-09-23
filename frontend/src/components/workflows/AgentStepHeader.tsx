@@ -22,7 +22,9 @@ import {
 } from './StepRowShared';
 import type { StepRunStatus } from './stepRunStatus';
 
-function StepHarnessSelect({
+// Per-step harness select ("Pi — X" rows included). Shared by the agent header
+// and the Run tests row.
+export function StepHarnessSelect({
   harnessAvail,
   piMenu,
   selectedHarness,

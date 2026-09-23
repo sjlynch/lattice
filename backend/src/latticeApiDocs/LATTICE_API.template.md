@@ -21,7 +21,8 @@ Windows pty shell is `cmd.exe`, where `$VAR` is literal.
 - **Worktrees** — one per running task, outside the repo under
   `~/.lattice/worktrees/`; the in-project `.lattice/` is managed state only.
 - **Workflows** — saved step chains; agent steps file tasks (never implement),
-  control steps (`start`/`merge`/`push`) drive the board.
+  control steps (`start`/`merge`/`push`) drive the board, and a `test` (Run
+  tests) step runs the project's tests on main and commits fixes.
 - **Terminals** — sidebar tabs, one per agent session (`claude`/`codex`/`pi`);
   **Startup terminals** auto-run project commands on open.
 

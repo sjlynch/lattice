@@ -11,6 +11,7 @@ import { DEFAULT_TASK_TEMPLATE } from '../instructionTemplates/templates/task.js
 import { DEFAULT_MERGE_TEMPLATE } from '../instructionTemplates/templates/merge.js';
 import { DEFAULT_PUSH_TEMPLATE } from '../instructionTemplates/templates/push.js';
 import { DEFAULT_POST_MERGE_HOOK_TEMPLATE } from '../instructionTemplates/templates/postMergeHook.js';
+import { DEFAULT_RUN_TESTS_TEMPLATE } from '../instructionTemplates/templates/runTests.js';
 
 // Lattice must never write the HOST's git identity/config.
 //
@@ -113,6 +114,7 @@ test('every commit-instructing brief routes an identity error to a per-commit re
     ['merge', DEFAULT_MERGE_TEMPLATE],
     ['push', DEFAULT_PUSH_TEMPLATE],
     ['post-merge-hook', DEFAULT_POST_MERGE_HOOK_TEMPLATE],
+    ['run-tests', DEFAULT_RUN_TESTS_TEMPLATE],
   ];
   for (const [id, template] of briefs) {
     // A prohibition is only useful if it names the failure that provokes it —

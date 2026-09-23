@@ -139,3 +139,26 @@ earlier finds our own pid's lock on disk and is refused. Simultaneous standalone
 callbacks share their acquisition.
 
 The ownership tests are in `../__tests__/projectMutation.test.ts`.
+
+## Exclusive (non-lendable) holds
+
+`acquireProjectRunLock(project, label, { lendable: false })` registers an
+owner that `withProjectMutation` will **not** borrow. The one user is the
+workflow Run tests step (`workflow-test:<runId>`, `../workflowRuns/testStep/`),
+whose agent edits and commits on the main checkout for the whole hold — a
+manual-merge resolver's finalize (`routes/tasks/finalizeResolved.ts` → snapshot
++ fast-forward) or a snapshot capture/restore must not run under it. Such a
+mutation **defers**: `waitForExclusiveProjectHold` polls the local registry
+(500 ms) until the holder leaves, then the mutation proceeds as if no owner had
+been there (a leak backstop throws after `EXCLUSIVE_HOLD_WAIT_MAX_MS`, 13 h —
+the step's own timeout caps it at 12 h). The post-merge hook fired outside a
+merge run (`routes/tasks/hooks/postMergeHookHelper.ts`, reached from the
+resolver `/complete`, `/merged` and `/stash-resolved`) waits the same way, so no
+hook agent starts on the tree under the test agent. A **new** acquisition while
+the hold is live (manual `/merge`, Merge All) is refused as usual —
+`ProjectRunLockedError`'s message (`describeProjectRunLockHolder`) names the
+Run tests step for a same-process `workflow-test:` holder instead of "another
+process". `scripts/dev.mjs` treats every `workflow-*` label as exempt from its
+15-minute forced restart, and `recovery/mergeRunResume.ts` never resumes a
+merge run for a stale `workflow-test:` lock (the workflow resume re-takes it).
+Covered by `../__tests__/workflowRunTestsStep.test.ts`.

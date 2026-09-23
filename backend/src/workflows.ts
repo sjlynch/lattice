@@ -24,7 +24,13 @@ export type {
   WorkflowVariable,
 } from './workflows/types.js';
 export {
+  RUN_TESTS_DEFAULT_TIMEOUT_MINUTES,
+  RUN_TESTS_MAX_TIMEOUT_MINUTES,
+  RUN_TESTS_MIN_TIMEOUT_MINUTES,
+} from './workflows/types.js';
+export {
   ensureUserInstructions,
+  normalizeTestTimeoutMinutes,
   normalizeSteps,
   normalizeVariableName,
   normalizeVariables,

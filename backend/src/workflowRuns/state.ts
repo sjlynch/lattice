@@ -31,6 +31,23 @@ export type WorkflowRun = {
   definitionError?: string;
   stepPhase?: 'pending' | 'spawning' | 'running' | 'completing';
   stepSessionId?: string;
+  // Per-step result text, keyed by step index. Today only Run tests ('test')
+  // steps write one: their TEST_SUMMARY.md (bounded) plus any Lattice notes
+  // (skipped / timed out / could not start) and the post-check of the commits
+  // the step made. Persisted in the mirror and carried on every snapshot, so
+  // the run strip can show it. See testStep/summary.ts.
+  stepSummaries?: Record<number, string>;
+  // Checkpoint of the Run tests step in flight (absent otherwise): the HEAD it
+  // started from (null = unborn/unreadable) and when its terminal actually
+  // spawned — the timeout is measured from that, and a re-adopting backend
+  // re-arms it from here. See testStep/.
+  testStep?: RunTestsCheckpoint;
+};
+
+export type RunTestsCheckpoint = {
+  stepIndex: number;
+  startHead: string | null;
+  spawnedAt?: number;
 };
 
 export type WorkflowRunEvent =
@@ -89,7 +106,12 @@ export const runs = new Map<string, WorkflowRun>();
 const listeners = new Set<(ev: WorkflowRunEvent) => void>();
 
 export function snapshot(run: WorkflowRun): WorkflowRun {
-  return { ...run, ...(run.definition ? { definition: cloneWorkflowDefinition(run.definition) } : {}) };
+  return {
+    ...run,
+    ...(run.definition ? { definition: cloneWorkflowDefinition(run.definition) } : {}),
+    ...(run.stepSummaries ? { stepSummaries: { ...run.stepSummaries } } : {}),
+    ...(run.testStep ? { testStep: { ...run.testStep } } : {}),
+  };
 }
 
 // A transition checkpoint is required before external work starts. Unlike the

@@ -16,8 +16,13 @@ the built-in default. `../instructionTemplates.ts` is the public shim.
   verbatim so a typo stays visible.
 - `templates/` — one **leaf module per template** holding just that template's
   long `DEFAULT_*_TEMPLATE` markdown string (`task.ts`, `merge.ts`, `qa.ts`,
-  `push.ts`, `postMergeHook.ts`, `workflowStep.ts`). Each imports nothing; the
-  body is the only export.
+  `push.ts`, `postMergeHook.ts`, `workflowStep.ts`, `runTests.ts`,
+  `workflowPush.ts`). Each imports nothing; the body is the only export.
+  `runTests.ts` (`run-tests`, `RUN_TESTS.md`) is the workflow Run tests step's
+  brief, rendered by `../workflowRuns/testStep/brief.ts`; `workflowPush.ts`
+  (`workflow-push`, `PUSH_INSTRUCTIONS.md`) is the workflow Push step's
+  push-only brief — no `git add`/`commit`, uncommitted files reported — while
+  the QA-lane button keeps `push.ts`.
 - `defs.ts` — **leaf catalog**: re-exports the `DEFAULT_*_TEMPLATE` strings from
   `templates/` (so existing `defs.js` import paths still resolve) and assembles
   `INSTRUCTION_TEMPLATE_CATALOG` (id / title / filename / description /
@@ -43,7 +48,8 @@ tokens — and returns `applyTemplate(template, values)`. The renderers stay
 **synchronous**; the resolved template is passed in as the last (optional,
 default = the built-in) argument. The **spawn callers** (`setupFiles.ts`,
 `qaRuns/session.ts`, `pushRuns/session.ts`, `postMergeHooks/sessionSetup.ts`,
-`workflowRuns/stepSpawner.ts`, and `writeMergeInstructions` itself) do the
+`workflowRuns/stepSpawner.ts`, `workflowRuns/testStep/runTestsStep.ts`, and
+`writeMergeInstructions` itself) do the
 `await resolveInstructionTemplate(project, id)` and pass the result in.
 
 ## Adding / changing a template

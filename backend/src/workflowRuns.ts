@@ -16,6 +16,7 @@
 //   - stepMarkdown.ts  WORKFLOW_STEP.md rendering
 //   - stepSpawner.ts   per-agent-step disk setup + pty pre-spawn
 //   - controlStep.ts   start/merge/push executors
+//   - testStep/        the Run tests step (an agent step that never stops the run)
 // This file owns just the orchestration: start, cancel, advance, kind-dispatch.
 
 import {
@@ -48,6 +49,11 @@ import { cancelStopHookGate } from './workflowRuns/stopHookGate.js';
 import { forgetAgentQuiescence } from './agentQuiescence.js';
 import { abortStepPreRun } from './workflowRuns/stepTools.js';
 import { cloneWorkflowDefinition } from './workflowRuns/definition.js';
+import {
+  abortRunTestsStep,
+  dispatchRunTestsStep,
+  finalizeRunTestsStep,
+} from './workflowRuns/testStep/runTestsStep.js';
 
 export type {
   WorkflowRun,
@@ -107,6 +113,17 @@ async function dispatchStep(
   const kind = wf.steps[stepIndex].kind ?? 'agent';
   if (kind === 'agent') {
     await spawnWorkflowStep(wf, run, stepIndex, backendOrigin);
+    return;
+  }
+  if (kind === 'test') {
+    // Run tests is an agent step (it spawns through spawnWorkflowStep and
+    // completes through the /complete route), but its skip check, lock wait
+    // and USER_WIP capture run DETACHED — like a control step — so a skip
+    // doesn't advance recursively inside the previous step's completion.
+    // The phase stays `pending` until its pty is requested, which is what a
+    // restart re-dispatches.
+    notify({ type: 'progress', run: snapshot(run) });
+    dispatchRunTestsStep(wf, run, stepIndex, backendOrigin, completeWorkflowStep);
     return;
   }
   // Agent steps emit `progress` from stepSpawner once their pty is ready;
@@ -194,6 +211,8 @@ export function cancelWorkflowRun(runId: string): boolean {
   cancelWorkflowStepSessions(run.id);
   cancelStopHookGate(run.id);
   forgetAgentQuiescence(workflowStepAgentId(run.id, run.currentStepIndex));
+  // A Run tests step holds the project run lock + a timeout; release both.
+  void abortRunTestsStep(run.id);
   notify({ type: 'cancelled', run: snapshot(run) });
   // Durable now, not after the 100 ms debounce: a restart in that window left
   // the run `running` on disk and boot resume re-dispatched a cancelled control
@@ -257,6 +276,7 @@ export function failWorkflowRun(runId: string, error: string): boolean {
   cancelWorkflowStepSessions(run.id);
   cancelStopHookGate(run.id);
   forgetAgentQuiescence(workflowStepAgentId(run.id, run.currentStepIndex));
+  void abortRunTestsStep(run.id);
   notify({ type: 'errored', run: snapshot(run) });
   void checkpointWorkflowRun(run).catch(() => {});
   console.error(`[workflow-run] ${run.id} errored: ${error}`);
@@ -269,7 +289,7 @@ export async function completeWorkflowStep(
   runId: string,
   stepIndex: number,
   backendOrigin: string,
-  deps: { killStepSession?: typeof killWorkflowStepSession; releaseStepSession?: typeof releaseWorkflowStepSession; dispatchStep?: typeof dispatchStep } = {},
+  deps: AdvanceDeps = {},
 ): Promise<void> {
   const run = runs.get(runId);
   if (!run || run.status !== 'running') return;
@@ -285,8 +305,15 @@ export async function completeWorkflowStep(
 
 const completions = new Map<string, Promise<void>>();
 
+type AdvanceDeps = {
+  killStepSession?: typeof killWorkflowStepSession;
+  releaseStepSession?: typeof releaseWorkflowStepSession;
+  dispatchStep?: typeof dispatchStep;
+  finalizeTestStep?: typeof finalizeRunTestsStep;
+};
+
 async function advanceCompletedStep(run: WorkflowRun, stepIndex: number, backendOrigin: string,
-  deps: { killStepSession?: typeof killWorkflowStepSession; releaseStepSession?: typeof releaseWorkflowStepSession; dispatchStep?: typeof dispatchStep }): Promise<void> {
+  deps: AdvanceDeps): Promise<void> {
   const claimedIndex = stepIndex + 1;
   // Keep the index on the finishing step until its completion and terminal
   // teardown are durable. The per-step promise deduplicates concurrent hooks
@@ -315,6 +342,14 @@ async function advanceCompletedStep(run: WorkflowRun, stepIndex: number, backend
     if (!wf) {
       failWorkflowRun(run.id, 'workflow definition not found');
       return;
+    }
+    // A Run tests step settles here on every path (agent done, skipped, timed
+    // out, could not start): its summary lands on the run and its project run
+    // lock is released BEFORE the next step dispatches (often Push, a control
+    // step that takes the same lock).
+    if (wf.steps[stepIndex]?.kind === 'test') {
+      await (deps.finalizeTestStep ?? finalizeRunTestsStep)(run, stepIndex);
+      if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return;
     }
     // Walk past any frozen steps between here and the next runnable one; `null`
     // means nothing runnable is left (end of workflow, or only frozen steps).

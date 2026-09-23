@@ -1,12 +1,13 @@
 import { useMemo } from 'react';
-import { GitMerge, Play, UploadCloud } from 'lucide-react';
+import { FlaskConical, GitMerge, Play, UploadCloud } from 'lucide-react';
 import type { WorkflowStepKind } from '../../api';
 import { DEFAULT_PROMPTS, type DefaultPrompt } from './defaultPrompts';
 import { promptsWithProjectVariants } from './projectPromptVariants';
 import type { ProjectPromptProfile } from './projectStackDetection';
+import { RUN_TESTS_STEP_HINT } from './TestStepRow';
 
-// The quick-add bar at the bottom of the editor: the Start/Merge/Push control
-// chips plus one chip per project-tailored default prompt. Each click appends a
+// The quick-add bar at the bottom of the editor: the Start/Merge/Run tests/Push
+// step chips plus one chip per project-tailored default prompt. Each click appends a
 // new step seeded from that control/prompt.
 export function WorkflowQuickAddBar({
   projectProfile,
@@ -48,8 +49,17 @@ export function WorkflowQuickAddBar({
       <button
         type="button"
         className="workflows-prompt-chip workflows-prompt-chip-control"
+        onClick={() => onAddControlStep('test')}
+        title={RUN_TESTS_STEP_HINT}
+      >
+        <FlaskConical size={11} />
+        Run tests
+      </button>
+      <button
+        type="button"
+        className="workflows-prompt-chip workflows-prompt-chip-control"
         onClick={() => onAddControlStep('push')}
-        title="Waits for Ready-to-Merge to drain, then pushes to remote (same as the Task Board cloud icon)."
+        title="Waits for Ready-to-Merge to drain, then pushes the commits already on the branch — it never stages or commits your uncommitted files."
       >
         <UploadCloud size={11} />
         Push
