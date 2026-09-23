@@ -9,6 +9,7 @@ import {
   resumeInterruptedWorkflowRuns,
   resumeQueuedTaskRuns,
   startInProgressSweepLoop,
+  startWorktreeResidueSweepLoop,
 } from '../recovery.js';
 import { startSpawnQueue } from '../spawnQueue.js';
 import { ensureTerminalServer } from '../terminalProxy.js';
@@ -145,6 +146,10 @@ export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecov
   // which only catches `ready_to_merge` tasks with deleted branches.
   // See recovery/inProgressSweep.ts for the criteria.
   startInProgressSweepLoop();
+  // Every 30 min, reclaim residue a failed `git worktree remove` left under
+  // ~/.lattice/worktrees/ while the backend was up (the boot pass only sees
+  // what an earlier process left). See recovery/worktreeResidueSweep.ts.
+  startWorktreeResidueSweepLoop();
   // Keep the durable terminal-tab registry honest against the live executor
   // (exited ptys are ended so restore never relaunches them; busy transitions
   // are stamped for the interruption detector). See terminalRegistry/watch.ts.

@@ -7,7 +7,7 @@ Boot-time crash recovery for project/task state. `../recovery.ts` is only the st
 1. `restoreAllProjectsFromBackup` — repair task DB files before any task cache read.
 2. `recoverPendingSnapshots` — restore copy-based working-tree snapshots left by crashed merge/finalize work.
 3. `sweepOrphanedWorktrees` (`worktreeSweep.ts`) — remove only Lattice-managed worktrees that no active task owns. An orphan with uncommitted edits is first archived to `~/.lattice/snapshots/<hash>/…-discarded-worktree-<slug>-…/` (`worktree/discardArchive.ts`; never auto-restored by step 2); if the archive fails the orphan is left in place.
-   It then (detached — boot never waits) runs `sweepWorktreeResidue` (`worktreeResidueSweep.ts`): a `git worktree remove --force` that fails part-way on Windows (pnpm hard links to a *running* `esbuild.exe` / `rollup.*.node` are undeletable) still drops the registration, leaving a directory neither cleanup nor this sweep can see again. The residue sweep removes only direct children of `~/.lattice/worktrees/<hash>/` that are unregistered, unowned by an active/queued task, have no live pty, no `.git` marker, and contain nothing but `node_modules` — the same "verified unregistered home-scoped stray" carve-out `worktree/reconcile.ts` has for its `fs.rm`. One guarded attempt each (reparse checks first), one summary log line; locked leftovers wait for the next boot.
+   It then (detached — boot never waits) runs `sweepWorktreeResidue` (`worktreeResidueSweep.ts`): a `git worktree remove --force` that fails part-way on Windows (a locked file — pnpm hard links to a *running* `esbuild.exe` / `rollup.*.node`, or a dev server / vitest started from the worktree) still drops the registration and `.git`, leaving a directory (source dirs too, not just `node_modules`) neither cleanup nor this sweep can see again. The residue sweep removes only direct children of `~/.lattice/worktrees/<hash>/` of a known project that are unregistered, unowned by an active/queued task, have no live pty, no `.git` marker, are not a reparse point, and are older than 10 min — the same "verified unregistered home-scoped stray" carve-out `worktree/reconcile.ts` has for its `fs.rm`, including its re-check of `.git` + registration immediately before each delete. Guarded removal (reparse checks first); each removed dir's top-level entries are logged; a locked dir backs off in memory (30 min, doubling, capped at 8 h); one summary line per project only when the counts change; `notifyDiskSpaceFreed()` after any attempt. Unknown projects' hash dirs and legacy `<repo>/.lattice/worktrees` are never touched. The same sweep also runs periodically — see below.
 3a. `sweepOrphanedPushSessions` (`pushSessionSweep.ts`) / `sweepOrphanedQaSessions` (`qaSessionSweep.ts`) / `sweepOrphanedPostMergeHookSessions` (`postMergeHookSweep.ts`) — reclaim home-scoped push / QA-e2e / post-merge-hook scratch dirs whose `/done` cleanup lost its EBUSY race or never fired (the in-memory registries are empty at boot, so anything on disk is stale). All three use `homeScratch/sweep.ts`, preserve dirs with a live PTY cwd, and are bounded to `~/.lattice/per-project/<hash>/{push,qa,post-merge-hooks}/`.
 3b. `sweepStaleClaudeProjectEntries` (`claudeConfigSweep.ts`) — prune dead `projects[<cwd>]` entries from `~/.claude.json` whose key is a Lattice ephemeral worktree/scratch cwd (`~/.lattice/...` or a legacy `<repo>/.lattice/worktrees/...`) that no longer exists on disk. Each spawn pre-seeds one such entry (trust + managed MCP) and nothing else removes them, so the map grew unbounded; this is the analogue of the dir sweeps. Runs *after* them so entries for just-reclaimed dirs are caught too. GLOBAL (one shared file), serialized through `claudeTrust.ts`'s shared config mutex. A live session's cwd still exists, so it's left alone. (The long-lived terminal-server *also* runs this prune on a 5-min timer, since it outlives many main-backend boots and is what accumulates the entries.)
 3c. `sweepOrphanedClaudeConfigTempFiles` (`claudeConfigSweep.ts` → `claudeTrust.sweepOrphanedClaudeConfigTemps`) — delete orphaned `~/.claude.json.lattice-<pid>-<ts>.tmp` (and the analogous `mcpSecrets.json` temps) left when a writer was hard-killed between its temp write and the rename. Skips temps newer than 60s so a live terminal-server's in-flight write is never touched. The fixed atomic-write path now unlinks its temp on a failed rename, so this mostly reclaims legacy orphans (one real pile reached ~8MB). GLOBAL (one shared home dir).
@@ -53,6 +53,18 @@ Split by concern so the eligibility decision is auditable in isolation:
   Pi shutdown sentinel for the diagnostic log, then `updateTaskCrashSafe` to
   `ready_to_merge`.
 
+`worktreeResidueSweepLoop.ts` — the residue sweep's non-boot passes: every
+`WORKTREE_RESIDUE_SWEEP_INTERVAL_MS` (30 min, `startWorktreeResidueSweepLoop`,
+unref'd, started after listen in `server/startup.ts`) and on a disk wait
+(`requestWorktreeResidueSweep` from `diskPressureMerge.ts`'s
+`requestMergeToFreeDiskSpace`, coalesced to one pass per 2 min). Single-flight
+(a second request joins the running pass; a per-project guard inside
+`sweepWorktreeResidue` also keeps it off a project the boot pass is still on).
+Iterates `forEachKnownProjectSafely`, skips a project with no `.git` or zero
+task records, and skips the whole pass when the terminal-server is unreachable
+(the live-pty check can't be trusted). Logs with `[residue-sweep]`, not
+`[startup]`.
+
 ## Safety invariants
 
 - `retryBudget.ts` durably charges each automatic workflow redispatch and boot
@@ -71,7 +83,7 @@ Split by concern so the eligibility decision is auditable in isolation:
 
 - Keep recovery best-effort: log a failed phase/project and continue booting.
 - Project iteration must go through `forEachKnownProjectSafely` so one broken project cannot block others. It (and the per-task loops in `index.ts` / the in-progress sweep) fan out with `concurrency.ts`'s `forEachWithConcurrency` (8 wide) — items are independent, and a strictly serial walk of N projects × M tasks, one git spawn each, ran before `listen` and delayed the port by seconds. Keep per-item try/catch inside the callback; the helper does not swallow errors.
-- Do not add raw recursive deletes here; worktree removal goes through `cleanupWorktreeForTask` / `git worktree remove`.
+- Do not add raw recursive deletes here; worktree removal goes through `cleanupWorktreeForTask` / `git worktree remove`. The one exception is `worktreeResidueSweep.ts` (unregistered, `.git`-less direct children of a known project's home worktrees dir, re-checked right before the guarded `fs.rm`) — do not widen what it may delete.
 - Do not run stale merge-run resume before the server is listening.
 - Worktree reclamation requires a readable, nonempty task inventory and an
   authoritative terminal-session inventory. A corrupt task DB may load as an

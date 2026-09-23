@@ -22,8 +22,6 @@ import {
   type DiskPressureMergeDeps,
 } from '../diskPressureMerge.js';
 import { pruneBundles, type BundleFile } from '../worktree/gitBackup.js';
-import { sweepWorktreeResidue } from '../recovery/worktreeResidueSweep.js';
-import type { Task } from '../tasks.js';
 
 // Regression coverage for the 2026-09-22 disk-full incident: queued workflows
 // on a large repo (6.5 GB per worktree, 4.3 GB of it Git LFS) created
@@ -171,51 +169,5 @@ test('bundle pruning honours count and byte budgets but always keeps the newest'
     assert.deepEqual(await fs.readdir(dir), [bundles[4].name]);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
-  }
-});
-
-test('residue sweep removes only old, unregistered, unowned, node_modules-only dirs', async () => {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-residue-'));
-  try {
-    const mk = async (name: string, entries: string[]) => {
-      const dir = path.join(base, name);
-      await fs.mkdir(dir);
-      for (const e of entries) {
-        if (e.endsWith('/')) await fs.mkdir(path.join(dir, e));
-        else await fs.writeFile(path.join(dir, e), 'x');
-      }
-      return dir;
-    };
-    await mk('residue-a', ['node_modules/']);
-    await mk('empty-b', []);
-    await mk('has-source-c', ['node_modules/', 'index.ts']);
-    await mk('has-git-d', ['.git']);
-    const registered = await mk('registered-e', ['node_modules/']);
-    const owned = await mk('owned-f', ['node_modules/']);
-    const live = await mk('live-g', ['node_modules/']);
-
-    const removedDirs: string[] = [];
-    const tasks = [
-      { id: 'x', status: 'ready_to_merge', worktreePath: owned } as unknown as Task,
-    ];
-    const n = await sweepWorktreeResidue(
-      'C:\\repo',
-      tasks,
-      new Set([live.toLowerCase()]),
-      (async () => ({ code: 0, stdout: `worktree ${registered}\0\0`, stderr: '' })) as never,
-      {
-        projectGit: (async () => ({ code: 0, stdout: `worktree ${registered}\0\0`, stderr: '' })) as never,
-        removeDir: async (d) => {
-          removedDirs.push(path.basename(d));
-          return true;
-        },
-        now: () => Date.now() + 60 * 60_000,
-        worktreesDir: () => base,
-      },
-    );
-    assert.equal(n, 2);
-    assert.deepEqual(removedDirs.sort(), ['empty-b', 'residue-a']);
-  } finally {
-    await fs.rm(base, { recursive: true, force: true });
   }
 });

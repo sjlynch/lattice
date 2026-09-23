@@ -35,6 +35,13 @@ export {
   sweepOrphanedClaudeConfigTempFiles,
 } from './claudeConfigSweep.js';
 export {
+  startWorktreeResidueSweepLoop,
+  stopWorktreeResidueSweepLoop,
+  requestWorktreeResidueSweep,
+  runWorktreeResidueSweepPass,
+  WORKTREE_RESIDUE_SWEEP_INTERVAL_MS,
+} from './worktreeResidueSweepLoop.js';
+export {
   startInProgressSweepLoop,
   stopInProgressSweepLoop,
   sweepStuckInProgressTasks,

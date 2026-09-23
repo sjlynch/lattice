@@ -77,6 +77,51 @@ test('failed Git removal preserves registration and branch without attempting br
   });
 });
 
+// Windows' usual failure: git stops at the first locked file but has already
+// dropped the registration and `.git`. Simulated by letting the real removal
+// run and then recreating some of the tree as the "survivors".
+function residueLeavingRemove(deps: WorktreeCleanupDeps, worktree: string) {
+  const real = deps.projectGit;
+  deps.projectGit = async (...args) => {
+    if (args[1][0] !== 'worktree' || args[1][1] !== 'remove') return real(...args);
+    const removed = await real(...args);
+    assert.equal(removed.code, 0, removed.stderr);
+    await fs.mkdir(path.join(worktree, 'packages', 'app'), { recursive: true });
+    await fs.writeFile(path.join(worktree, 'packages', 'app', 'index.ts'), 'survivor');
+    return { code: 1, stdout: '', stderr: `error: failed to delete '${worktree}': Invalid argument` };
+  };
+}
+
+test('a failed removal whose registration git already dropped deletes the branch and leaves residue', async (t) => {
+  const warnings: string[] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => warnings.push(String(args[0])));
+  await fixture(async ({ repo, worktree, branch, deps, git }) => {
+    let freed = 0;
+    deps.notifyDiskSpaceFreed = () => { freed += 1; };
+    residueLeavingRemove(deps, worktree);
+    assert.equal(await cleanupWorktreeForTask(repo, worktree, branch, deps), true);
+    assert.equal((await git(['branch', '--list', branch])).trim(), '', 'branch must not leak');
+    assert.ok((await fs.lstat(path.join(worktree, 'packages'))).isDirectory(), 'residue is not fs.rm-ed here');
+    assert.equal(freed, 1);
+    assert.ok(warnings.some((w) => /left for the residue sweep/.test(w)), warnings.join('\n'));
+    assert.ok(!warnings.some((w) => /boot-time orphan sweep will retry/.test(w)));
+  });
+});
+
+test('a failed removal with the registration gone still honours keepBranchIfUnmerged', async (t) => {
+  t.mock.method(console, 'warn', () => undefined);
+  await fixture(async ({ repo, worktree, branch, deps, git }) => {
+    await commitInWorktree(worktree, 2);
+    residueLeavingRemove(deps, worktree);
+    const kept: unknown[] = [];
+    assert.equal(await cleanupWorktreeForTask(repo, worktree, branch, deps, {
+      keepBranchIfUnmerged: true, onBranchKept: (info) => kept.push(info),
+    }), true);
+    assert.ok((await git(['branch', '--list', branch])).includes(branch));
+    assert.deepEqual(kept, [{ name: branch, unmergedCommits: 2 }]);
+  });
+});
+
 test('explicitly locked worktrees preserve terminals, files and branch', async () => {
   await fixture(async ({ repo, worktree, branch, deps, calls, kills, git }) => {
     await git(['worktree', 'lock', '--reason', 'keep for recovery', worktree]);

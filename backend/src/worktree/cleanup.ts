@@ -10,8 +10,12 @@
 // to remove the main worktree, and doesn't follow symlinks out. If that
 // command fails (typically a Windows lock that outlived the PTY kill), we
 // LEAVE the directory in place — an orphan under `~/.lattice/worktrees/`
-// is inert — and the boot-time sweep (`sweepOrphanedWorktrees` in
-// recovery.ts) retries it later. Worktrees now live outside the project
+// is inert. If git still has it registered, the boot-time sweep
+// (`sweepOrphanedWorktrees` in recovery.ts) retries it later, branch and
+// all; if git already dropped the registration (its usual behaviour on a
+// part-failed remove), the files are residue for
+// `recovery/worktreeResidueSweep.ts` and the branch step runs now — nothing
+// would ever see that branch again otherwise. Worktrees now live outside the project
 // tree (`~/.lattice/worktrees/<hash>/…`), so even an orphan is structurally
 // incapable of affecting any project's `.git`.
 //
@@ -207,21 +211,40 @@ export async function cleanupWorktreeForTask(
     }
 
     const rm = await git(['worktree', 'remove', '--force', worktreePath]);
+    let leftAsResidue = false;
     if (rm.code !== 0) {
-      // Couldn't remove — leave the directory for the boot sweep to retry.
-      // It's an inert orphan; never escalate to a raw fs.rm here.
+      const detail = rm.stderr.trim() || rm.stdout.trim() || '(no output)';
+      // On Windows git stops at the first locked file ("Invalid argument") but
+      // has ALREADY dropped the registration and `.git` — so no sweep that
+      // walks registrations will ever see this checkout (or its branch) again.
+      const afterRm = await readWorktrees();
+      const stillRegistered = !afterRm ||
+        afterRm.some((wt) => normalizePath(wt.path) === normalizePath(worktreePath));
+      if (stillRegistered) {
+        // Couldn't remove and git still tracks it — leave the directory for the
+        // boot-time orphan sweep to retry. Never escalate to a raw fs.rm here.
+        console.warn(
+          `[worktree] 'git worktree remove --force ${worktreePath}' exit ${rm.code}: ${detail} — ` +
+            'leaving the checkout in place; the boot-time orphan sweep will retry it.',
+        );
+        // Keep the branch and registration together for a later retry. Attempting
+        // branch -D here only adds "branch used by worktree" to the actual error.
+        return false;
+      }
+      // Registration gone: what is left is inert residue (no `.git`, no
+      // registration), which the residue sweep (recovery/worktreeResidueSweep.ts)
+      // reclaims once it unlocks. The branch step below proceeds as normal —
+      // keeping it here would leak it forever.
       console.warn(
-        `[worktree] 'git worktree remove --force ${worktreePath}' exit ${rm.code}: ` +
-          `${rm.stderr.trim() || rm.stdout.trim() || '(no output)'} — leaving the ` +
-          `directory in place; the boot-time sweep will retry it.`,
+        `[worktree] 'git worktree remove --force ${worktreePath}' exit ${rm.code}: ${detail} — ` +
+          'git dropped the registration; the remaining files are left for the residue sweep.',
       );
-      // Keep the branch and registration together for a later retry. Attempting
-      // branch -D here only adds "branch used by worktree" to the actual error.
-      return false;
+      leftAsResidue = true;
     }
-    // The checkout's disk is back: runs deferred for space retry now instead
-    // of sitting out their backoff.
+    // The checkout's disk is back (most of it, for residue): runs deferred for
+    // space retry now instead of sitting out their backoff.
     deps.notifyDiskSpaceFreed?.();
+    if (leftAsResidue) return deleteTaskBranch(git, readWorktrees, branchName, opts);
   }
   if (await pathExists(worktreePath)) {
     // git reported success but the dir is somehow still there. Don't fs.rm —
@@ -236,10 +259,18 @@ export async function cleanupWorktreeForTask(
   // Exact worktree removal already removes its registration, even when its
   // folder was manually deleted. Global prune could discard an unrelated
   // temporarily offline checkout's registration, so it does not belong here.
+  return deleteTaskBranch(git, readWorktrees, branchName, opts);
+}
 
-  // Delete the task branch — but only `lattice/*` ones (projectGit enforces
-  // this too; pre-checking just turns a stray name into a skip+log instead
-  // of a throw that the caller would have to absorb).
+// Delete the task branch — but only `lattice/*` ones (projectGit enforces
+// this too; pre-checking just turns a stray name into a skip+log instead
+// of a throw that the caller would have to absorb).
+async function deleteTaskBranch(
+  git: (args: string[]) => ReturnType<typeof projectGit>,
+  readWorktrees: () => Promise<ReturnType<typeof parseWorktreesPorcelain> | null>,
+  branchName: string,
+  opts: WorktreeCleanupOptions,
+): Promise<boolean> {
   if (LATTICE_BRANCH_RE.test(branchName)) {
     const after = await readWorktrees();
     if (!after) return false;

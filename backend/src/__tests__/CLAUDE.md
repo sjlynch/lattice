@@ -158,7 +158,15 @@ under `helpers/`.
   unmerged commits → worktree removed, branch kept + reported; no extra
   commits → branch deleted; an undeterminable count keeps it; and the
   `keptBranchPayload` hint text. `latticeMcp.test.ts` pins that `delete_task`
-  leads its result with that hint.
+  leads its result with that hint. It also pins the branch-leak fix: a failed
+  `git worktree remove` whose registration git already dropped deletes the
+  branch (or keeps it under `keepBranchIfUnmerged`) and leaves the residue.
+- `worktreeResidueSweep.test.ts` — `recovery/worktreeResidueSweep.ts`: residue
+  with source files is removed, while `.git`, registered (incl. an aliased
+  home-dir spelling), task-owned, live-pty and fresh dirs are kept; the
+  registration + `.git` re-check right before each delete; the locked-dir
+  backoff; change-only summary logging; and the periodic pass's project /
+  terminal-server gating and single-flight.
 - `mergeAbortedProjectPin.test.ts` — `/merge-aborted` 404s a task from another
   board (`?project=` pin) without aborting anything; an absent/empty project
   stays unpinned for the resolver agent's curl.

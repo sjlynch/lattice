@@ -25,6 +25,7 @@ import { listTasks } from './tasks.js';
 import { getActiveRunForProject, startMergeRun } from './mergeRuns.js';
 import { getActiveRunsForProject as getActiveWorkflowRuns } from './workflowRuns.js';
 import { getActiveHookForProject } from './postMergeHooks.js';
+import { requestWorktreeResidueSweep } from './recovery/worktreeResidueSweepLoop.js';
 
 const THROTTLE_MS = 2 * 60_000;
 const lastAttemptAt = new Map<string, number>();
@@ -87,8 +88,11 @@ export async function mergeToFreeDiskSpace(
   }
 }
 
-// Fire-and-forget form for the spawn path; never rejects.
+// Fire-and-forget form for the spawn path; never rejects. Also asks for a
+// worktree residue pass (coalesced, all known projects): the leftovers of
+// failed `git worktree remove`s are often what the disk is full of.
 export function requestMergeToFreeDiskSpace(projectPath: string, backendOrigin: string): void {
+  requestWorktreeResidueSweep();
   void mergeToFreeDiskSpace(projectPath, backendOrigin).catch(() => {});
 }
 
