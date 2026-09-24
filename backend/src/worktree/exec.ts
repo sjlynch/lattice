@@ -9,15 +9,20 @@ export const EXEC_KILL_GRACE_MS = 2_000;
 // Spawn a command, capture stdout/stderr, and resolve with the exit code.
 // `timeoutMs` SIGKILLs the child if it runs too long — required for the
 // cleanup path on Windows, where a process holding a worktree dir open
-// could otherwise wedge `git worktree remove` indefinitely.
+// could otherwise wedge `git worktree remove` indefinitely. `env` is merged
+// over process.env for this child only (`GIT_LFS_SKIP_SMUDGE` for a
+// task-worktree checkout — see lfsMode.ts).
+export type ExecOptions = { timeoutMs?: number; env?: Record<string, string> };
+
 export function exec(
   cmd: string,
   args: string[],
   cwd: string,
-  opts?: { timeoutMs?: number },
+  opts?: ExecOptions,
 ): Promise<ExecResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd, shell: false, windowsHide: true });
+    const env = opts?.env ? { ...process.env, ...opts.env } : undefined;
+    const child = spawn(cmd, args, { cwd, shell: false, windowsHide: true, ...(env ? { env } : {}) });
     let stdout = '';
     let stderr = '';
     let timer: NodeJS.Timeout | undefined;

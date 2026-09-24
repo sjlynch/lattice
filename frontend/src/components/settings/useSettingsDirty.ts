@@ -78,7 +78,8 @@ export function useSettingsDirty({
         refs.instructionTemplates.current?.getTaskAgentTypecheckPatch() !== undefined ||
         refs.harnessSystemPrompts.current?.getHarnessSystemPromptsPatch() !==
           undefined ||
-        refs.envNotes.current?.getWorktreeEnvNotesPatch() !== undefined,
+        refs.envNotes.current?.getWorktreeEnvNotesPatch() !== undefined ||
+        refs.envNotes.current?.getTaskWorktreeLfsContentPatch() !== undefined,
       metrics:
         refs.metricsIgnoredExts.current?.getMetricsIgnoredExtsPatch() !== undefined,
       // The Agents getter throws on an edited-but-invalid value (so Save is

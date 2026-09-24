@@ -97,6 +97,11 @@ export type UserSettings = {
   // they edited. Default OFF. Settings → Agent prompts. See backend
   // taskVerification.ts.
   taskAgentTypecheck?: boolean;
+  // How task worktrees check out Git LFS files: 'pointers' (DEFAULT — absent
+  // counts as pointers) writes ~130-byte pointer stubs instead of the content
+  // (GIT_LFS_SKIP_SMUDGE), 'full' smudges everything. Settings → Agent prompts
+  // (worktree environment notes). See backend worktree/lfsMode.ts.
+  taskWorktreeLfsContent?: 'pointers' | 'full';
   // Backs the QA-lane Playwright buttons — QA e2e runs ONLY (separate from the
   // global `mcpOverrides.playwright`). `enabled` injects Playwright into QA
   // "run an e2e test" sessions; `headless` (the eye toggle) appends --headless.

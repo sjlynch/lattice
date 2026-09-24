@@ -28,4 +28,6 @@ export {
   taskAgentsLatticeMcpOnlyIn,
   isTaskAgentTypecheckEnabled,
   taskAgentTypecheckIn,
+  getTaskWorktreeLfsContent,
+  taskWorktreeLfsContentIn,
 } from './features.js';

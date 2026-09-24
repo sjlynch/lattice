@@ -18,14 +18,22 @@
 //   - nothing is ready_to_merge (In Progress checkouts can only be waited out).
 // Attempts are throttled per project, since every deferred run re-checks disk
 // on its backoff.
+//
+// Two triggers: a task run deferred for disk (the spawn path), and the
+// low-disk monitor below — free space under the reserve with nothing waiting.
+// The second exists because of 2026-09-24: 22 Ready-to-Merge worktrees sat on
+// a disk that other writers then filled to zero, and nothing merged them until
+// a merge run started with no space left and failed all 22.
 
-import { canonicalProjectPath } from './projectPath.js';
+import { canonicalProjectPath, homeWorktreesDir } from './projectPath.js';
 import { getGlobalSettings } from './globalSettings.js';
 import { listTasks } from './tasks.js';
 import { getActiveRunForProject, startMergeRun } from './mergeRuns.js';
 import { getActiveRunsForProject as getActiveWorkflowRuns } from './workflowRuns.js';
 import { getActiveHookForProject } from './postMergeHooks.js';
 import { requestWorktreeResidueSweep } from './recovery/worktreeResidueSweepLoop.js';
+import { forEachKnownProjectSafely } from './recovery/projectIteration.js';
+import { formatBytes, freeBytesAt, minFreeDiskBytes } from './worktree/diskSpace.js';
 
 const THROTTLE_MS = 2 * 60_000;
 const lastAttemptAt = new Map<string, number>();
@@ -64,6 +72,7 @@ export async function mergeToFreeDiskSpace(
   projectPath: string,
   backendOrigin: string,
   deps: DiskPressureMergeDeps = defaultDeps,
+  reason = 'task runs are waiting for disk space',
 ): Promise<DiskPressureMergeOutcome> {
   const project = canonicalProjectPath(projectPath);
   const now = deps.now();
@@ -77,7 +86,7 @@ export async function mergeToFreeDiskSpace(
     const ready = await deps.countReadyToMerge(project);
     if (ready === 0) return 'nothing-to-merge';
     console.warn(
-      `[disk] task runs in ${project} are waiting for disk space — starting a merge run of ` +
+      `[disk] ${project}: ${reason} — starting a merge run of ` +
         `${ready} Ready-to-Merge task(s) to free their worktrees (global setting autoMergeOnLowDisk)`,
     );
     await deps.startMergeRun(project, backendOrigin);
@@ -96,7 +105,73 @@ export function requestMergeToFreeDiskSpace(projectPath: string, backendOrigin: 
   void mergeToFreeDiskSpace(projectPath, backendOrigin).catch(() => {});
 }
 
+// ---------------------------------------------------------------------------
+// Low-disk monitor: once a minute, for every known project whose worktree
+// volume has less free space than the reserve (globalSettings minFreeDiskGb),
+// ask for a merge run of its Ready-to-Merge tasks — the same narrow rules as
+// above (opt-out, nothing else merging, no workflow, throttled). Cheap when the
+// disk is fine: one statfs per project and nothing else.
+// ---------------------------------------------------------------------------
+
+export const LOW_DISK_MONITOR_INTERVAL_MS = 60_000;
+
+export type LowDiskMonitorDeps = {
+  forEachProject: (fn: (projectPath: string) => Promise<void>) => Promise<void>;
+  freeBytesAt: (target: string) => Promise<number | null>;
+  minFreeBytes: () => Promise<number>;
+  requestMerge: (projectPath: string, reason: string) => Promise<DiskPressureMergeOutcome>;
+};
+
+const belowReserve = new Set<string>();
+
+export async function checkLowDiskOnce(deps: LowDiskMonitorDeps): Promise<void> {
+  const reserve = await deps.minFreeBytes();
+  await deps.forEachProject(async (projectPath) => {
+    const project = canonicalProjectPath(projectPath);
+    const free = await deps.freeBytesAt(homeWorktreesDir(project));
+    if (free === null || free >= reserve) {
+      belowReserve.delete(project);
+      return;
+    }
+    if (!belowReserve.has(project)) {
+      belowReserve.add(project);
+      console.warn(
+        `[disk] only ${formatBytes(free)} free for ${project}'s worktrees (reserve ${formatBytes(reserve)}) — ` +
+          'merging its Ready-to-Merge tasks to free their worktrees when nothing else is',
+      );
+    }
+    await deps.requestMerge(project, `only ${formatBytes(free)} free (reserve ${formatBytes(reserve)})`);
+  });
+}
+
+let monitorTimer: NodeJS.Timeout | null = null;
+let monitorInFlight = false;
+
+export function startLowDiskMonitor(backendOrigin: string, intervalMs = LOW_DISK_MONITOR_INTERVAL_MS): void {
+  if (monitorTimer) return;
+  const deps: LowDiskMonitorDeps = {
+    forEachProject: (fn) => forEachKnownProjectSafely('lowDiskMonitor', fn),
+    freeBytesAt,
+    minFreeBytes: minFreeDiskBytes,
+    requestMerge: (project, reason) => mergeToFreeDiskSpace(project, backendOrigin, defaultDeps, reason),
+  };
+  monitorTimer = setInterval(() => {
+    if (monitorInFlight) return;
+    monitorInFlight = true;
+    void checkLowDiskOnce(deps)
+      .catch((err) => console.warn('[disk] low-disk check failed:', err))
+      .finally(() => { monitorInFlight = false; });
+  }, intervalMs);
+  monitorTimer.unref?.();
+}
+
+export function stopLowDiskMonitor(): void {
+  if (monitorTimer) clearInterval(monitorTimer);
+  monitorTimer = null;
+}
+
 // Test seam.
 export function resetDiskPressureMergeStateForTests(): void {
   lastAttemptAt.clear();
+  belowReserve.clear();
 }

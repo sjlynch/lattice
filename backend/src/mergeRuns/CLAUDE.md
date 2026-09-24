@@ -90,7 +90,14 @@ here instead of bloating the parent file.
   put rather than piling onto a damaged repo. It also halts (`lock-halt`) when
   a task errored on a git lock (`Unable to create '….lock': File exists`) that
   is still there after the FF's retries and a `clearStaleGitLocks` sweep —
-  every later task would fail the same way (2026-09-23: 25 of 25 did).
+  every later task would fail the same way (2026-09-23: 25 of 25 did). And it
+  halts (`disk-halt`) when a task errored because the disk is (nearly) full
+  (`worktree/diskFull.ts` `isDiskFullMessage` — git's "No space left on
+  device" / "Out of diskspace", or the merge's own refusal under
+  `MERGE_MIN_FREE_BYTES`, 1 GB): 2026-09-24 a run started on a full disk and
+  failed 22 of 22, leaving half-merged worktrees and one fast-forwarded task
+  whose qa state could not be saved. The workflow Merge step's "made no
+  progress" error quotes the run's `(run)` halt reason.
 - `resolverSpawn.ts` + `resolverSpawn/` — conflict-resolver spawn subsystem
   (`resolverSpawn.ts` is the re-export facade; existing `./resolverSpawn.js`
   imports keep working). Split by concern so the spawn *mechanics* stay

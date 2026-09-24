@@ -137,6 +137,10 @@ export async function saveSettings({
   // overwrite the saved overrides with an empty map.
   const envNotesPatch = handles.envNotes?.getWorktreeEnvNotesPatch();
   if (envNotesPatch !== undefined) patch.worktreeEnvNotes = envNotesPatch;
+  // The LFS-pointers checkbox beside the env notes: only once the user flipped
+  // it (an unrelated save never writes it).
+  const lfsPatch = handles.envNotes?.getTaskWorktreeLfsContentPatch();
+  if (lfsPatch !== undefined) patch.taskWorktreeLfsContent = lfsPatch;
   // Only touch instructionTemplateOverrides once the editor has loaded — same
   // clobber-guard as env notes (the patch is the full desired override map).
   const templatesPatch =

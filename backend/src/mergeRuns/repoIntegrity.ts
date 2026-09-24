@@ -7,6 +7,7 @@ import {
   describeBlockingLocks,
   gitLockPathFromError,
 } from '../worktree/staleGitLocks.js';
+import { isDiskFullMessage } from '../worktree/diskFull.js';
 import {
   notify,
   snapshot,
@@ -101,6 +102,21 @@ export async function finishTaskAndCheckIntegrity(
   // had silently lost its commits from main.
   if (integrity.head) runCtx.baselineHead = integrity.head;
 
+  if (outcome.kind === 'errored' && lastErrorFor(run, taskId, isDiskFullMessage)) {
+    // Every remaining task would fail the same way — and a merge that runs out
+    // of disk part-way leaves its worktree half-merged, or main fast-forwarded
+    // with the task's state unsaved (2026-09-24: 22 of 22 tasks). Stop once.
+    const left = run.total - run.processed;
+    console.error(`[merge-run] !!! the disk is (nearly) full. HALTING RUN — ${left} task(s) left at ready_to_merge.`);
+    run.errored.push({
+      taskId: '(run)',
+      error:
+        `halted after ${taskId}: the disk is (nearly) full. The remaining ${left} task(s) stay Ready to Merge — ` +
+        'free disk space, then start Merge All again (each merged task frees its worktree).',
+    });
+    run.cancelRequested = true;
+    return { kind: 'disk-halt' };
+  }
   if (outcome.kind === 'errored') {
     const reason = await persistentLockReason(run, runCtx.projectPath, taskId);
     if (reason) {
@@ -118,6 +134,12 @@ export async function finishTaskAndCheckIntegrity(
   }
 
   return outcome;
+}
+
+// The newest error recorded for `taskId`, when it matches `test`.
+function lastErrorFor(run: MergeRun, taskId: string, test: (message: string) => boolean): boolean {
+  const last = [...run.errored].reverse().find((e) => e.taskId === taskId);
+  return !!last && test(last.error);
 }
 
 // A task that failed on a git lock (`Unable to create '….lock': File exists`)

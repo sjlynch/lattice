@@ -83,6 +83,12 @@ edited" checkbox (`taskAgentTypecheck`, default OFF; backend
 `taskVerification.ts`): seeded per open from the strict settings GET, patched
 (`getTaskAgentTypecheckPatch`) only once the user flips it.
 
+`EnvNotesTab` likewise owns the "Task worktrees check out Git LFS files as
+pointers (saves disk)" checkbox (`taskWorktreeLfsContent`, default
+`'pointers'`; backend `worktree/lfsMode.ts`), on the same pattern:
+seeded per open, patched (`getTaskWorktreeLfsContentPatch` → `'pointers'` /
+`'full'`) only after a user flip, and counted in the Agent-prompts dirty flag.
+
 `useOverrideDraft.ts` is the shared draft engine behind the two
 **override-merge** tabs (`InstructionTemplatesTab` + `EnvNotesTab`): both fetch
 a list of items + the saved override map (gated on `open && active`, and only

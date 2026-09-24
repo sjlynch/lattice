@@ -330,6 +330,17 @@ under `helpers/`.
   since a worktree shares the project repo's config file), the
   `git log -1 --format="%an <%ae>"` that tells it where to FIND an identity,
   and the `git -c user.name=…` form that persists nothing.
+- `taskWorktreeLfsPointers.test.ts` — task worktrees check Git LFS files out
+  as pointer stubs (`worktree/lfsMode.ts`). Drives a REAL LFS repo (skipped
+  when `git lfs` or the system `filter.lfs.*` config is missing — the latter
+  is what makes it work under the isolated HOME): the real `setupAdd` checkout
+  with `GIT_LFS_SKIP_SMUDGE` yields a pointer and a clean `git status`; the
+  real `runWorktreeMerge` of a main that changed the LFS file stays clean and
+  pointer-only; main's `--ff-only` (normal env) lands real content with a clean
+  status; `git lfs pull --include` restores content from the local store. Also
+  the setting's default, `projectGit`'s env allowlist, the mode-keyed disk
+  estimate (LFS path = `POINTER_FILE_BYTES`), the brief note's gating, and the
+  task-worktree pty's `GIT_LFS_SKIP_SMUDGE` via `resolveHarnessSpawnBody`.
 - `mcp.taskWorktreeScope.test.ts` — the task-worktree MCP scope
   (`mcp/taskWorktreeScope.ts`): the three-way decision (spawn scope + setting +
   a cwd under `~/.lattice/worktrees/` — never a project root or a legacy

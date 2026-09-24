@@ -14,7 +14,13 @@ import {
   preparePiSystemPrompt,
   type ClaudeSystemPromptFiles,
 } from '../harnessSystemPrompts.js';
-import { getUserSettings, taskAgentTypecheckIn, type UserSettings } from '../userSettings.js';
+import {
+  getUserSettings,
+  taskAgentTypecheckIn,
+  taskWorktreeLfsContentIn,
+  type UserSettings,
+} from '../userSettings.js';
+import { lfsCheckoutEnv } from '../worktree/lfsMode.js';
 import { renderVerificationSystemPrompt } from '../taskVerification.js';
 import {
   codexUserServerDisableArgs,
@@ -90,7 +96,9 @@ export type SessionWireBody = CreateSessionOptions & SessionRequestIdentity & {
   // (Codex `env_vars` / `env_http_headers` reference these by NAME; the value
   // never enters argv or config). Merged into the pty env in the terminal-server
   // (launchContext), never into the backend's own process env. Absent when there
-  // are no secret-bearing managed servers.
+  // are no secret-bearing managed servers. Despite the name, also the channel
+  // for a task-worktree pty's `GIT_LFS_SKIP_SMUDGE=1` (see resolveHarnessSpawnBody)
+  // — an existing field, so an older executor applies it too.
   managedMcpEnv?: Record<string, string>;
   // Per-project harness system-prompt override, resolved here and applied by the
   // terminal-server's launch context. Claude: absolute scratch-file paths for
@@ -140,6 +148,24 @@ export async function resolveHarnessSpawnBody(
   const settings: UserSettings = opts.projectPath
     ? await getUserSettings(opts.projectPath).catch(() => ({}))
     : {};
+  const body = await resolveHarnessConfig(opts, settings);
+  // A task-worktree pty in the default LFS pointer mode gets
+  // GIT_LFS_SKIP_SMUDGE=1, so the agent's own checkouts/merges/resets keep LFS
+  // files as pointer stubs (worktree/lfsMode.ts). Any harness, plain spawn or
+  // not. Rides the existing `managedMcpEnv` field — the terminal-server merges
+  // it into THIS pty's env whatever the harness — so an executor predating this
+  // change still applies it.
+  const lfsEnv = isTaskWorktreeSpawn(opts)
+    ? lfsCheckoutEnv(taskWorktreeLfsContentIn(settings))
+    : undefined;
+  return lfsEnv ? { ...body, managedMcpEnv: { ...(body.managedMcpEnv ?? {}), ...lfsEnv } } : body;
+}
+
+async function resolveHarnessConfig(
+  opts: CreateSessionOptions & { cwd?: string },
+  settings: UserSettings,
+): Promise<SessionWireBody> {
+  if (!opts.cwd) return opts;
   const latticeOnly = latticeOnlyMcpApplies(opts, settings);
   const mcpCtx = { taskId: opts.taskId, ...(latticeOnly ? { latticeOnly: true } : {}) };
   // A task-worktree agent's "don't run tests" rule rides its system prompt as

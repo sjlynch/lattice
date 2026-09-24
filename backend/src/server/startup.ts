@@ -12,6 +12,7 @@ import {
   startWorktreeResidueSweepLoop,
 } from '../recovery.js';
 import { startSpawnQueue } from '../spawnQueue.js';
+import { startLowDiskMonitor } from '../diskPressureMerge.js';
 import { ensureTerminalServer } from '../terminalProxy.js';
 import { createBackendApp } from './app.js';
 import {
@@ -150,6 +151,10 @@ export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecov
   // ~/.lattice/worktrees/ while the backend was up (the boot pass only sees
   // what an earlier process left). See recovery/worktreeResidueSweep.ts.
   startWorktreeResidueSweepLoop();
+  // Once a minute: if a project's worktree volume dips under the free-space
+  // reserve, merge its Ready-to-Merge tasks (their worktrees are what fills
+  // it). See diskPressureMerge.ts.
+  startLowDiskMonitor(backendOrigin);
   // Keep the durable terminal-tab registry honest against the live executor
   // (exited ptys are ended so restore never relaunches them; busy transitions
   // are stamped for the interruption detector). See terminalRegistry/watch.ts.

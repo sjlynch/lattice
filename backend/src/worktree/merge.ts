@@ -7,6 +7,13 @@ import { projectGit } from './projectGit.js';
 import { isMidMerge, gitDirExists } from './state.js';
 import { assertSafeForStash } from './stash.js';
 import {
+  clearMergeBlockingChanges,
+  dirtyPathSet,
+  readWorktreeDirtyPaths,
+  restoreFailedMergeWrites,
+} from './merge/mergeResidue.js';
+import { mergeDiskSpaceShortfall } from './diskFull.js';
+import {
   snapshotWorkingTree,
   restoreSnapshot,
   type SnapshotHandle,
@@ -237,6 +244,11 @@ export async function mergeWorktreeInRepo(
   );
   if (!preflight.ok) return preflight.outcome;
 
+  // A merge that runs out of disk dies part-way (diskFull.ts) — refuse up
+  // front instead.
+  const shortfall = await mergeDiskSpaceShortfall([repoRoot, worktreePath]);
+  if (shortfall) return { status: 'error', message: shortfall };
+
   const branchState = await checkBranchState(repoRoot, branchName);
   switch (branchState.kind) {
     case 'already-merged':
@@ -260,6 +272,13 @@ export async function mergeWorktreeInRepo(
   // to a known-good state.
   const mergeMessage =
     `Merge main → ${taskTitle}\n\nBranch: ${branchName}`;
+  // Uncommitted changes to files main changed would make git refuse the merge
+  // — typically residue of an earlier attempt that died part-way (a full
+  // disk). Archive them and clear just those paths first (mergeResidue.ts).
+  const blocking = await clearMergeBlockingChanges(repoRoot, worktreePath, branchName, preflight.mainHeadSha);
+  if (!blocking.ok) return { status: 'error', message: blocking.message };
+  // What was already dirty, so a failed attempt can undo exactly what IT wrote.
+  const dirtyBefore = await readWorktreeDirtyPaths(worktreePath);
   const merge = await runWorktreeMerge(
     worktreePath,
     branchName,
@@ -295,6 +314,14 @@ export async function mergeWorktreeInRepo(
     );
   }
 
+  // Failed with no merge in progress (not a conflict): git may still have
+  // written main's version of some files before dying — put them back so the
+  // worktree isn't left half-merged (mergeResidue.ts).
+  if (dirtyBefore) {
+    await restoreFailedMergeWrites(worktreePath, dirtyPathSet(dirtyBefore)).catch((err) =>
+      console.warn(`[merge] could not undo a failed merge's writes in ${worktreePath}:`, err),
+    );
+  }
   return {
     status: 'error',
     message: (merge.stderr.trim() || merge.stdout.trim() || 'git merge failed')

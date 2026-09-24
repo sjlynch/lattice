@@ -25,7 +25,7 @@
 // real `git merge` inside them, which this policy (correctly) forbids in
 // the project repo.
 
-import { exec, type ExecResult } from './exec.js';
+import { exec, type ExecOptions, type ExecResult } from './exec.js';
 import { assertGitDirIntact } from './state.js';
 import {
   DisallowedProjectGitError,
@@ -101,15 +101,33 @@ export function assertAllowedProjectGitArgs(args: string[]): void {
   );
 }
 
+// Env vars a project-git call may set. Deliberately tiny: `GIT_DIR`,
+// `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_CONFIG_*` … would redirect git (or
+// smuggle in `-c` config) past the argv whitelist above. Only
+// `GIT_LFS_SKIP_SMUDGE` — a task worktree's `worktree add` checks LFS files out
+// as pointer stubs (lfsMode.ts) — is needed.
+const ALLOWED_PROJECT_GIT_ENV = new Set(['GIT_LFS_SKIP_SMUDGE']);
+
+// Throws DisallowedProjectGitError for an env var projectGit won't pass.
+// Exported for unit testing.
+export function assertAllowedProjectGitEnv(env: Record<string, string> | undefined): void {
+  for (const key of Object.keys(env ?? {})) {
+    if (!ALLOWED_PROJECT_GIT_ENV.has(key)) {
+      throw new DisallowedProjectGitError(`env var "${key}" is not allowed for project git`);
+    }
+  }
+}
+
 // Run `git <args…>` in the project repo, after asserting `.git` is intact
 // and the argv is on the whitelist. Use this for *every* git call whose cwd
 // is the user's project root.
 export async function projectGit(
   repoRoot: string,
   args: string[],
-  opts?: { timeoutMs?: number },
+  opts?: ExecOptions,
 ): Promise<ExecResult> {
   await assertGitDirIntact(repoRoot);
   assertAllowedProjectGitArgs(args);
+  assertAllowedProjectGitEnv(opts?.env);
   return exec('git', args, repoRoot, opts);
 }

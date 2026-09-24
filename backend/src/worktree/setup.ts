@@ -18,6 +18,8 @@ import {
 import { writePostAddWorktreeFiles } from './setupFiles.js';
 import { recordWorktreeCheckoutSize, reserveWorktreeDiskSpace } from './diskSpace.js';
 import { withCheckoutSlot } from './checkoutGate.js';
+import { lfsCheckoutEnv, taskWorktreeLfsMode } from './lfsMode.js';
+import { lfsPointerNoteFor } from './lfsPaths.js';
 import { getDeadCodeSummarySafe } from '../deadCode.js';
 
 export type WorktreeResult = {
@@ -48,30 +50,36 @@ export async function setupTaskWorktree(
   const { repoRoot, envNotes } = await resolveRepoRootAndPrepareProject(repoPath);
   const plan = buildWorktreeCandidatePlan(repoRoot, task);
   await fs.mkdir(plan.worktreesDir, { recursive: true });
+  // Git LFS files as pointer stubs (the default) or full content — lfsMode.ts.
+  // The same mode sizes the disk reservation and is what the size observation
+  // is recorded under.
+  const lfsMode = await taskWorktreeLfsMode(repoPath);
 
   // Heavy checkouts run two at a time (checkoutGate.ts). Inside the gate, the
   // disk guard throws SpawnDiskSpaceError (a spawn-queue deferral, not a
   // failure) when the checkout would push the disk below the free-space
   // reserve — checked there so setups waiting on the gate hold no reservation.
   const candidate = await withCheckoutSlot(async () => {
-    const disk = await reserveWorktreeDiskSpace(repoRoot, plan.worktreesDir);
+    const disk = await reserveWorktreeDiskSpace(repoRoot, plan.worktreesDir, undefined, { lfsMode });
     try {
-      return await addWorktreeWithRetries(repoRoot, plan, task.title);
+      return await addWorktreeWithRetries(repoRoot, plan, task.title, lfsCheckoutEnv(lfsMode));
     } finally {
       disk.release();
     }
   });
-  void recordWorktreeCheckoutSize(repoRoot, candidate.candidatePath);
+  void recordWorktreeCheckoutSize(repoRoot, candidate.candidatePath, lfsMode);
   // Dead-code summary is derived from the *main checkout* (warm health cache),
   // not the fresh worktree. Best-effort + time-bounded so a slow scan never
   // blocks worktree creation; a null result just omits the note.
   const deadCode = await getDeadCodeSummarySafe(repoRoot);
+  // Pointer mode on a repo with LFS files: tell the agent how to get a real one.
+  const lfsNote = await lfsPointerNoteFor(repoRoot, lfsMode);
   const taskFile = await writePostAddWorktreeFiles(
     candidate.candidatePath,
     task,
     backendOrigin,
     harness,
-    envNotes,
+    [...envNotes, ...(lfsNote ? [lfsNote] : [])],
     deadCode,
   );
   logFallbackWorktreeCandidate(candidate, plan, task.id);

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { projectGit } from '../projectGit.js';
 import { reserveWorktreeDiskSpace, type DiskReservation } from '../diskSpace.js';
+import { taskWorktreeCheckoutEnv } from '../lfsMode.js';
 import {
   abortWorktreeMerge,
   assertGitDirIntact,
@@ -77,7 +78,9 @@ async function tryRecreateMissingWorktree(
   let add: Awaited<ReturnType<typeof projectGit>>;
   try {
     await projectGit(repoRoot, ['worktree', 'remove', '--force', worktreePath]);
-    add = await projectGit(repoRoot, ['worktree', 'add', worktreePath, branchName]);
+    // LFS pointer stubs in the default mode, like a fresh run's checkout (lfsMode.ts).
+    const env = await taskWorktreeCheckoutEnv(repoRoot);
+    add = await projectGit(repoRoot, ['worktree', 'add', worktreePath, branchName], env ? { env } : undefined);
   } finally {
     disk.release();
   }

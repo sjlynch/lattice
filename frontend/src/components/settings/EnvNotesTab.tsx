@@ -1,7 +1,8 @@
-import { forwardRef, useImperativeHandle } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import {
   fetchProjectEnv,
+  fetchUserSettingsStrict,
   type ProjectEnvInfo,
   type ProjectEnvResponse,
   type UserSettings,
@@ -16,7 +17,37 @@ type Props = {
 
 export type EnvNotesTabHandle = {
   getWorktreeEnvNotesPatch: () => Record<string, string> | undefined;
+  // `taskWorktreeLfsContent`, or undefined unless the user flipped the checkbox.
+  getTaskWorktreeLfsContentPatch: () => 'pointers' | 'full' | undefined;
 };
+
+// The "LFS files as pointers" checkbox (`taskWorktreeLfsContent`, default
+// 'pointers'). Seeded from the project settings on each open; only a user flip
+// produces a patch, so a slow or failed GET can never write the default over a
+// saved value.
+function useTaskWorktreeLfsDraft(open: boolean, activeFolder: string) {
+  const [pointers, setPointers] = useState(true);
+  const [touched, setTouched] = useState(false);
+  useEffect(() => {
+    if (!open || !activeFolder) return;
+    let cancelled = false;
+    setTouched(false);
+    fetchUserSettingsStrict(activeFolder)
+      .then((s) => {
+        if (!cancelled) setPointers(s.taskWorktreeLfsContent !== 'full');
+      })
+      .catch(() => { /* untouched → no patch */ });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, activeFolder]);
+  const set = (value: boolean) => {
+    setTouched(true);
+    setPointers(value);
+  };
+  const patch: 'pointers' | 'full' | undefined = touched ? (pointers ? 'pointers' : 'full') : undefined;
+  return { pointers, setPointers: set, patch };
+}
 
 type EnvNotesDraft = {
   envs: ProjectEnvInfo[];
@@ -128,11 +159,16 @@ export const EnvNotesTab = forwardRef<EnvNotesTabHandle, Props>(
       resetEnvDraft,
       updateEnvDraft,
     } = useEnvNotesDraft(open, active, activeFolder);
+    const lfs = useTaskWorktreeLfsDraft(open, activeFolder);
+    const lfsPatch = lfs.patch;
 
     useImperativeHandle(
       ref,
-      () => ({ getWorktreeEnvNotesPatch }),
-      [getWorktreeEnvNotesPatch],
+      () => ({
+        getWorktreeEnvNotesPatch,
+        getTaskWorktreeLfsContentPatch: () => lfsPatch,
+      }),
+      [getWorktreeEnvNotesPatch, lfsPatch],
     );
 
     if (!active) return null;
@@ -156,12 +192,28 @@ export const EnvNotesTab = forwardRef<EnvNotesTabHandle, Props>(
             </div>
           </div>
         </div>
+        <label className="settings-checkbox-row">
+          <input
+            type="checkbox"
+            checked={lfs.pointers}
+            onChange={(e) => lfs.setPointers(e.target.checked)}
+          />
+          <span>Task worktrees check out Git LFS files as pointers (saves disk)</span>
+        </label>
+        <div className="settings-section-sub">
+          On (the default), a task worktree gets each Git LFS file as a small
+          text pointer instead of its content — on an asset-heavy repo that is
+          most of every checkout. The agent is told to run{' '}
+          <code>git lfs pull --include="&lt;path&gt;"</code> for any file it
+          actually needs. Merged work lands in the main checkout with real
+          content as usual. Off, every worktree smudges its LFS files in full.
+        </div>
         {envLoading ? (
           <div className="settings-empty">Loading…</div>
         ) : envs.length === 0 ? (
           <div className="settings-empty">
             No package-manager environments detected at this project’s root —
-            Lattice doesn’t add anything to task instructions here.
+            Lattice adds no dependency note to task instructions here.
           </div>
         ) : (
           <div className="env-note-list">

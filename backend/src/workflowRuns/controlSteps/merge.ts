@@ -182,10 +182,14 @@ export async function runMergeStep(
       if (!someLeftLane) {
         const finishedRun = deps.getMergeRun(mergeRun.id);
         const errorCount = finishedRun?.errored.length ?? 0;
+        // A run that halted itself (full disk, a held git lock, an integrity
+        // violation) records why under '(run)' — that is the reason to show.
+        const halted = finishedRun?.errored.find((e) => e.taskId === '(run)');
         throw new Error(
           `merge step made no progress: ${readyIdsBefore.length} task(s) ` +
             `still ready-to-merge after a full merge run (${errorCount} ` +
-            `errored); aborting to avoid an infinite loop`,
+            `errored); aborting to avoid an infinite loop` +
+            (halted ? ` — the merge run ${halted.error}` : ''),
         );
       }
     }

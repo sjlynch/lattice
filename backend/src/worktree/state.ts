@@ -6,6 +6,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { exec } from './exec.js';
+import { worktreeCheckoutEnv } from './lfsMode.js';
 
 export type ParsedWorktree = {
   path: string;
@@ -134,7 +135,10 @@ export async function isMidMerge(dir: string): Promise<boolean> {
 export async function abortWorktreeMerge(
   worktreePath: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const r = await exec('git', ['merge', '--abort'], worktreePath);
+  // Restoring HEAD must not smudge LFS content into a pointer-mode worktree (or
+  // fail on an LFS object the local store lacks) — see lfsMode.ts.
+  const env = await worktreeCheckoutEnv(worktreePath);
+  const r = await exec('git', ['merge', '--abort'], worktreePath, env ? { env } : undefined);
   if (r.code !== 0) {
     return {
       ok: false,

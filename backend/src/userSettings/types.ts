@@ -151,6 +151,16 @@ export type UserSettings = {
   // `{{verification}}` block AND the spawn's system-prompt append — see
   // `taskVerification.ts`. Settings → Agent prompts.
   taskAgentTypecheck?: boolean;
+  // How a task worktree checks out Git LFS files. `'pointers'` (the DEFAULT —
+  // absent counts as pointers) runs the worktree's checkout / merge git with
+  // `GIT_LFS_SKIP_SMUDGE=1`, so LFS files land as ~130-byte pointer stubs
+  // instead of their content (a 7.4 GB worktree of an LFS-heavy repo was 4.8 GB
+  // of assets no code-editing agent reads); the agent's pty gets the same env
+  // and its brief says how to `git lfs pull --include` a file it needs.
+  // `'full'` smudges everything, as before. Main's checkout is never affected —
+  // its fast-forward smudges normally. See `worktree/lfsMode.ts`. Settings →
+  // Agent prompts.
+  taskWorktreeLfsContent?: 'pointers' | 'full';
   // Backs the QA-lane Playwright buttons — QA e2e runs ONLY (not a global
   // enable; that's `mcpOverrides.playwright`). `enabled` injects the Playwright
   // MCP into QA-lane "run an e2e test" sessions; `headless` (the eye toggle, the

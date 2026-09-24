@@ -16,6 +16,9 @@ export async function addWorktreeWithRetries(
   repoRoot: string,
   plan: WorktreeCandidatePlan,
   taskTitle: string,
+  // `GIT_LFS_SKIP_SMUDGE=1` in the default pointer mode (lfsMode.ts), so the
+  // checkout writes LFS pointer stubs instead of their content.
+  checkoutEnv?: Record<string, string>,
 ): Promise<AddedWorktreeCandidate> {
   // Try the canonical path first; if reconciliation can't free it (Windows
   // file lock from an Explorer window, editor, etc.), fall through to a
@@ -48,6 +51,7 @@ export async function addWorktreeWithRetries(
     const wt = await projectGit(
       repoRoot,
       ['worktree', 'add', candidate.candidatePath, '-b', candidate.candidateBranch],
+      checkoutEnv ? { env: checkoutEnv } : undefined,
     );
     if (wt.code !== 0) {
       const detail = wt.stderr.trim() || wt.stdout.trim() || '(no output)';

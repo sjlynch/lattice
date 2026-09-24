@@ -62,6 +62,16 @@ export async function isTaskAgentTypecheckEnabled(projectPath: string): Promise<
   return taskAgentTypecheckIn(await getUserSettings(projectPath));
 }
 
+// How task worktrees check out Git LFS files. Default 'pointers' — anything but
+// an explicit 'full' (absent, or a hand-edited junk value) is pointer mode.
+export function taskWorktreeLfsContentIn(settings: UserSettings): 'pointers' | 'full' {
+  return settings.taskWorktreeLfsContent === 'full' ? 'full' : 'pointers';
+}
+
+export async function getTaskWorktreeLfsContent(projectPath: string): Promise<'pointers' | 'full'> {
+  return taskWorktreeLfsContentIn(await getUserSettings(projectPath));
+}
+
 // Whether a finished workflow agent step's terminal stays open (its pty left
 // running) instead of being killed on advance. Default off.
 export async function isKeepWorkflowStepTerminalsEnabled(

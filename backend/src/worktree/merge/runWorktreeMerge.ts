@@ -1,4 +1,5 @@
 import { exec, type ExecResult } from '../exec.js';
+import { worktreeCheckoutEnv } from '../lfsMode.js';
 import { resetOwnedFileLocalChanges } from '../conflictResolve.js';
 import {
   restoreLatticeManagedFiles,
@@ -37,11 +38,18 @@ export async function runWorktreeMerge(
   // makes git auto-generate "Merge commit '<sha>' into <branch>" — useless
   // in `git log`. Supplying our own message puts the task title in the
   // subject so `git log --oneline` is actually readable.
+  // In the default LFS pointer mode (lfsMode.ts) the merge must not smudge the
+  // LFS files main changed into this pointer-stub worktree: GIT_LFS_SKIP_SMUDGE
+  // writes their new pointers instead, which is what the committed tree holds
+  // anyway (main's fast-forward smudges real content on its side). Read from
+  // the setting now, so a worktree created before a flip merges in the new mode.
+  const env = await worktreeCheckoutEnv(worktreePath);
   try {
     return await exec(
       'git',
       ['merge', '--no-ff', '-m', mergeMessage, mainHeadSha],
       worktreePath,
+      env ? { env } : undefined,
     );
   } finally {
     await restoreLatticeManagedFiles(worktreePath, shelved);
