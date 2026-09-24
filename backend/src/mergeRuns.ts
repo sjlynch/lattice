@@ -12,6 +12,7 @@
 // mergeLocks.ts, so a manual /merge call landing during a run can't race.
 
 import { listTasks } from './tasks.js';
+import { runRepoMaintenance } from './worktree/repoMaintenance.js';
 import { processTarget } from './mergeRuns/processTarget.js';
 import { runPreflight } from './mergeRuns/preflight.js';
 import {
@@ -46,6 +47,9 @@ import {
 //     the lock for the whole step (Phase A + Phase B) and passes through
 //     here so this call doesn't deadlock against itself.
 export type MergeRunLockMode = 'acquire' | 'inherit';
+
+// How long after a merge run ends before its git housekeeping (see finalize below).
+const REPO_MAINTENANCE_DELAY_MS = 60_000;
 
 export type StartMergeRunOptions = {
   lockMode?: MergeRunLockMode;
@@ -206,6 +210,14 @@ export async function startMergeRun(
     // Worker is gone (completed, cancelled, or crashed). Any `running` record
     // left behind is now reapable rather than a permanent block.
     runState.markRunSettled(run.id);
+    // Git housekeeping, once, now that the burst of merges is over — auto-gc
+    // is off for every git Lattice runs (worktree/gitAutoGc.ts). After a quiet
+    // minute (a workflow's Merge step often starts the next run right away,
+    // and then this skips), and never while the project is merging.
+    const maintenance = setTimeout(() => {
+      void runRepoMaintenance(canonicalPath, { isBusy: (p) => getActiveRunForProject(p) !== null });
+    }, REPO_MAINTENANCE_DELAY_MS);
+    maintenance.unref?.();
   });
 
   return snapshot(run);

@@ -28,6 +28,7 @@ export const SAFE_READ_OR_INDEX_ONLY = new Set([
   'add', // index only — never touches .git structure or deletes files
   'commit', // creates a commit; cannot delete .git
   'bundle', // read-only w.r.t. the repo (used by the backup)
+  'count-objects', // read-only (repoMaintenance.ts sizes a repack)
   'version',
   'help',
 ]);

@@ -90,6 +90,16 @@ export function assertAllowedProjectGitArgs(args: string[]): void {
     return;
   }
 
+  if (sub === 'gc') {
+    // Only the housekeeping form repoMaintenance.ts runs: `gc --auto
+    // [--quiet]` (packs loose objects, prunes only what git itself deems
+    // expired). No `--prune=now`, `--aggressive`, … .
+    if (rest.some((a) => a !== '--auto' && a !== '--quiet') || !rest.includes('--auto')) {
+      throw new DisallowedProjectGitError('only "gc --auto [--quiet]" is allowed');
+    }
+    return;
+  }
+
   if (sub === 'fetch') {
     // Network read into the object store; cannot delete `.git`. Allowed
     // even though Lattice doesn't currently use it — harmless and useful.

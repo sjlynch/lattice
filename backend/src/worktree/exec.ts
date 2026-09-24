@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { gitConfigEnv, isGitCommand, NO_AUTO_GC } from './gitAutoGc.js';
 
 export type ExecResult = { stdout: string; stderr: string; code: number };
 
@@ -12,7 +13,16 @@ export const EXEC_KILL_GRACE_MS = 2_000;
 // could otherwise wedge `git worktree remove` indefinitely. `env` is merged
 // over process.env for this child only (`GIT_LFS_SKIP_SMUDGE` for a
 // task-worktree checkout — see lfsMode.ts).
-export type ExecOptions = { timeoutMs?: number; env?: Record<string, string> };
+//
+// Every `git` child also gets `gc.auto=0` + `maintenance.auto=false` (see
+// gitAutoGc.ts — auto-gc repacks during merge bursts filled a disk with
+// undeletable pack copies). `autoGc: 'foreground'` is for the ONE deliberate
+// housekeeping run (repoMaintenance.ts): auto-gc allowed, but not detached.
+export type ExecOptions = {
+  timeoutMs?: number;
+  env?: Record<string, string>;
+  autoGc?: 'off' | 'foreground';
+};
 
 export function exec(
   cmd: string,
@@ -21,7 +31,10 @@ export function exec(
   opts?: ExecOptions,
 ): Promise<ExecResult> {
   return new Promise((resolve, reject) => {
-    const env = opts?.env ? { ...process.env, ...opts.env } : undefined;
+    const gitEnv = isGitCommand(cmd)
+      ? gitConfigEnv(opts?.autoGc === 'foreground' ? [['gc.autoDetach', 'false'], ['maintenance.autoDetach', 'false']] : NO_AUTO_GC)
+      : undefined;
+    const env = opts?.env || gitEnv ? { ...process.env, ...gitEnv, ...opts?.env } : undefined;
     const child = spawn(cmd, args, { cwd, shell: false, windowsHide: true, ...(env ? { env } : {}) });
     let stdout = '';
     let stderr = '';

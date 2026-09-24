@@ -21,6 +21,7 @@ import {
   type UserSettings,
 } from '../userSettings.js';
 import { lfsCheckoutEnv } from '../worktree/lfsMode.js';
+import { gitConfigEnv, NO_AUTO_GC } from '../worktree/gitAutoGc.js';
 import { renderVerificationSystemPrompt } from '../taskVerification.js';
 import {
   codexUserServerDisableArgs,
@@ -158,7 +159,17 @@ export async function resolveHarnessSpawnBody(
   const lfsEnv = isTaskWorktreeSpawn(opts)
     ? lfsCheckoutEnv(taskWorktreeLfsContentIn(settings))
     : undefined;
-  return lfsEnv ? { ...body, managedMcpEnv: { ...(body.managedMcpEnv ?? {}), ...lfsEnv } } : body;
+  // Every agent session (not a plain shell) runs its git with auto-gc off, the
+  // same as Lattice's own git (worktree/gitAutoGc.ts): an agent's commit would
+  // otherwise start a full repack in the shared object store while merges and
+  // other agents hold the packs open.
+  const gcEnv = isAgentCommand(opts.initialCommand) ? gitConfigEnv(NO_AUTO_GC) : undefined;
+  const extraEnv = lfsEnv || gcEnv ? { ...gcEnv, ...lfsEnv } : undefined;
+  return extraEnv ? { ...body, managedMcpEnv: { ...(body.managedMcpEnv ?? {}), ...extraEnv } } : body;
+}
+
+function isAgentCommand(initialCommand: string | undefined): boolean {
+  return isClaudeCommand(initialCommand) || isCodexCommand(initialCommand) || isPiCommand(initialCommand);
 }
 
 async function resolveHarnessConfig(
