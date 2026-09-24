@@ -11,11 +11,18 @@ import { archiveUncommittedWorktreeChanges } from '../worktree/discardArchive.js
 import { sweepWorktreeResidue } from './worktreeResidueSweep.js';
 import { clearStaleInitializingLock } from '../worktree/staleInitLock.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';
+import { forEachWithConcurrency } from './concurrency.js';
 import { collectLiveSessionCwds, hasLiveSessionAtOrUnder, normalizeCwd } from './liveSessions.js';
 
 // Tasks whose worktree we must not touch — they have a live (or
 // resumable) Claude session pointed at it.
 const ACTIVE_STATUSES = new Set(['in_progress', 'ready_to_merge']);
+// Tasks that may still be run or resumed: a checkout of theirs whose branch
+// holds unmerged commits is left completely alone.
+const RERUNNABLE_STATUSES = new Set(['open', 'backlog']);
+// Checkout removals in flight at once (each is a large recursive delete).
+const SWEEP_CONCURRENCY = 2;
+const LOGGED_BRANCHES_MAX = 5;
 
 // For every known project, reconcile `git worktree list` against the live
 // task set: any worktree git still tracks that (a) lives under a
@@ -80,73 +87,95 @@ export async function sweepOrphanedWorktrees(deps: WorktreeSweepDeps = defaultDe
     const worktrees = parseWorktreesPorcelain(wtList.stdout);
 
     const repoResolved = normalizeCwd(repoRoot);
+    const owners = worktreeOwners(tasks);
+    const unmergedRefs = await listUnmergedLatticeRefs(deps, repoRoot);
     let removed = 0;
+    const keptBranches: string[] = [];
+    const skippedRerunnable: string[] = [];
 
-    for (const wt of worktrees) {
+    const candidates = worktrees.filter((wt) => {
       const resolved = path.resolve(wt.path);
-      if (normalizeCwd(resolved) === repoResolved) continue; // the main worktree
-      if (!isUnderManagedWorktreesDir(resolved, repoRoot)) continue; // not ours
-      // An explicit Git lock preserves even an absent checkout — except git's
-      // own stale "initializing" lock from an interrupted `worktree add`.
-      const interruptedAdd = !!wt.locked && await clearStaleInitializingLock(repoRoot, wt);
-      if (wt.locked && !interruptedAdd) continue;
-      if (activeWorktreePaths.has(normalizeCwd(resolved))) continue; // a live task owns it
-      if (hasLiveSessionAtOrUnder(liveCwds, resolved)) continue;
+      if (normalizeCwd(resolved) === repoResolved) return false; // the main worktree
+      if (!isUnderManagedWorktreesDir(resolved, repoRoot)) return false; // not ours
+      if (activeWorktreePaths.has(normalizeCwd(resolved))) return false; // a live task owns it
+      return !hasLiveSessionAtOrUnder(liveCwds, resolved);
+    });
 
-      const branch = wt.branch ? wt.branch.replace(/^refs\/heads\//, '') : '';
-      // An orphan with real unmerged commits on its branch (a task moved back
-      // to Open from in_progress / ready_to_merge, a deleted task record) must
-      // not be reclaimed: cleanup deletes the branch, and that is the only
-      // copy of the work. Only a count of 0 (or a non-lattice branch, which
-      // cleanup never deletes) is safe to sweep.
-      if (branch.startsWith('lattice/')) {
-        const unmerged = await deps.projectGit(repoRoot, ['rev-list', '--count', `HEAD..${wt.branch}`]);
-        const count = unmerged.code === 0 ? parseInt(unmerged.stdout.trim(), 10) : NaN;
-        if (!Number.isFinite(count) || count > 0) {
-          console.error(
-            `[startup] sweep: NOT reclaiming ${resolved} — branch ${branch} ` +
-              (Number.isFinite(count)
-                ? `has ${count} unmerged commit(s)`
-                : `unmerged-commit count failed (exit ${unmerged.code}): ${unmerged.stderr.trim()}`) +
-              '; merge or delete the branch by hand if the work is no longer wanted',
-          );
-          continue;
-        }
-      }
-      // `worktree remove --force` would also silently discard uncommitted
-      // edits. Archive them to ~/.lattice/snapshots/ (a keep-for-the-user
-      // copy that boot recovery never auto-restores); if that fails, the
-      // orphan is left in place for the next boot or a human.
-      // An interrupted add never reached an agent; its files all read as
-      // untracked, so archiving would copy the whole checkout (6.4 GB once).
-      const archive = deps.archiveUncommitted ?? archiveUncommittedWorktreeChanges;
-      const archived = interruptedAdd
-        ? { status: 'clean' as const }
-        : await archive(repoRoot, resolved, branch);
-      if (archived.status === 'failed') {
-        console.error(
-          `[startup] sweep: NOT reclaiming ${resolved} — could not archive its uncommitted changes ` +
-            `(${archived.error}); leaving the checkout in place`,
-        );
-        continue;
-      }
-      if (archived.status === 'archived') {
-        console.warn(`[startup] sweep: archived ${archived.files} uncommitted change(s) from ${resolved} to ${archived.dir}`);
-      }
-      console.warn(
-        `[startup] sweep: removing orphaned worktree ${resolved} ` +
-          `(branch=${branch || 'detached'}) — no active task references it`,
-      );
+    await forEachWithConcurrency(candidates, SWEEP_CONCURRENCY, async (wt) => {
+      const resolved = path.resolve(wt.path);
       try {
+        // An explicit Git lock preserves even an absent checkout — except git's
+        // own stale "initializing" lock from an interrupted `worktree add`.
+        const interruptedAdd = !!wt.locked && await clearStaleInitializingLock(repoRoot, wt);
+        if (wt.locked && !interruptedAdd) return;
+
+        const branch = wt.branch ? wt.branch.replace(/^refs\/heads\//, '') : '';
+        // Unmerged commits on the branch are the only copy of that work, so the
+        // BRANCH is never deleted here (`keepBranchIfUnmerged`) — but the
+        // checkout is disposable once its uncommitted edits are archived, and it
+        // is what costs gigabytes. So an Open/Backlog task that may still be run
+        // keeps its whole checkout; anything else (a finished or deleted task,
+        // or no task record at all) loses the checkout and keeps the branch.
+        // 2026-09-24: a machine updated from an old version had 1000+ such
+        // checkouts, every one refused with an error line, one git call each,
+        // all before the backend could listen.
+        const unmerged = branch.startsWith('lattice/')
+          ? await isUnmerged(deps, repoRoot, wt.branch!, unmergedRefs)
+          : false;
+        if (unmerged) {
+          const owner = owners.get(normalizeCwd(resolved));
+          if (owner && RERUNNABLE_STATUSES.has(owner.status)) {
+            skippedRerunnable.push(branch);
+            return;
+          }
+        }
+        // `worktree remove --force` would also silently discard uncommitted
+        // edits. Archive them to ~/.lattice/snapshots/ (a keep-for-the-user
+        // copy that boot recovery never auto-restores); if that fails, the
+        // orphan is left in place for the next boot or a human.
+        // An interrupted add never reached an agent; its files all read as
+        // untracked, so archiving would copy the whole checkout (6.4 GB once).
+        const archive = deps.archiveUncommitted ?? archiveUncommittedWorktreeChanges;
+        const archived = interruptedAdd
+          ? { status: 'clean' as const }
+          : await archive(repoRoot, resolved, branch);
+        if (archived.status === 'failed') {
+          console.error(
+            `[startup] sweep: NOT reclaiming ${resolved} — could not archive its uncommitted changes ` +
+              `(${archived.error}); leaving the checkout in place`,
+          );
+          return;
+        }
+        if (archived.status === 'archived') {
+          console.warn(`[startup] sweep: archived ${archived.files} uncommitted change(s) from ${resolved} to ${archived.dir}`);
+        }
         // cleanupWorktreeForTask skips the branch delete for non-`lattice/`
-        // names, so passing '' (detached) or a stray branch is safe.
-        // Already archived above — don't take a second, identical archive.
-        if (await deps.cleanupWorktreeForTask(repoRoot, resolved, branch, undefined, { skipArchive: true })) {
+        // names, so passing '' (detached) or a stray branch is safe. Already
+        // archived above — don't take a second, identical archive.
+        if (await deps.cleanupWorktreeForTask(repoRoot, resolved, branch, undefined, {
+          skipArchive: true,
+          keepBranchIfUnmerged: true,
+          onBranchKept: (info) => keptBranches.push(info.name),
+        })) {
           removed += 1;
         }
       } catch (err) {
         console.error(`[startup] sweep: cleanup of ${resolved} failed:`, err);
       }
+    });
+
+    if (keptBranches.length > 0) {
+      console.warn(
+        `[startup] sweep: ${repoRoot}: removed the checkouts of ${keptBranches.length} orphaned worktree(s) but KEPT ` +
+          `their lattice/* branches, which hold commits not on HEAD (${describeBranches(keptBranches)}). ` +
+          'List them with: git branch --list "lattice/*" --no-merged — delete the ones you no longer want.',
+      );
+    }
+    if (skippedRerunnable.length > 0) {
+      console.warn(
+        `[startup] sweep: ${repoRoot}: left ${skippedRerunnable.length} worktree(s) of Open/Backlog tasks alone — ` +
+          `their branches hold unmerged commits (${describeBranches(skippedRerunnable)})`,
+      );
     }
 
     // Exact cleanup handles missing orphan directories too. Do not globally
@@ -164,6 +193,43 @@ export async function sweepOrphanedWorktrees(deps: WorktreeSweepDeps = defaultDe
       });
     }
   });
+}
+
+// Worktree path → the task that records it (any status).
+function worktreeOwners(tasks: Task[]): Map<string, Task> {
+  const out = new Map<string, Task>();
+  for (const t of tasks) if (t.worktreePath) out.set(normalizeCwd(t.worktreePath), t);
+  return out;
+}
+
+// Every `lattice/*` branch with commits not reachable from HEAD, in ONE git
+// call (a per-branch `rev-list --count` was 1000+ spawns on a big board).
+// null when the listing fails — callers then check branch by branch.
+async function listUnmergedLatticeRefs(deps: WorktreeSweepDeps, repoRoot: string): Promise<Set<string> | null> {
+  const r = await deps.projectGit(repoRoot, [
+    'for-each-ref', '--no-merged=HEAD', '--format=%(refname)', 'refs/heads/lattice/',
+  ]);
+  if (r.code !== 0) return null;
+  return new Set(r.stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith('refs/heads/lattice/')));
+}
+
+// Fails closed: a branch whose state can't be read counts as unmerged.
+async function isUnmerged(
+  deps: WorktreeSweepDeps,
+  repoRoot: string,
+  ref: string,
+  unmergedRefs: Set<string> | null,
+): Promise<boolean> {
+  const full = ref.startsWith('refs/') ? ref : `refs/heads/${ref}`;
+  if (unmergedRefs) return unmergedRefs.has(full);
+  const r = await deps.projectGit(repoRoot, ['rev-list', '--count', `HEAD..${full}`]);
+  const count = r.code === 0 ? parseInt(r.stdout.trim(), 10) : NaN;
+  return !Number.isFinite(count) || count > 0;
+}
+
+function describeBranches(names: string[]): string {
+  const shown = names.slice(0, LOGGED_BRANCHES_MAX).join(', ');
+  return names.length > LOGGED_BRANCHES_MAX ? `${shown}, … +${names.length - LOGGED_BRANCHES_MAX} more` : shown;
 }
 
 function getActiveWorktreePaths(tasks: Task[]): Set<string> {

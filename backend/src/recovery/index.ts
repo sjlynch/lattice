@@ -61,11 +61,9 @@ export async function recoverOrphanedTasks(): Promise<void> {
   // surviving across restarts — failure-prone, see snapshot.ts header).
   await runStartupRecoveryStep('recoverPendingSnapshots', () => recoverPendingSnapshots());
 
-  // Phase 1c: reclaim orphaned worktrees (failed background cleanups,
-  // crashed runs, legacy in-project worktrees). cleanup.ts deliberately
-  // leaves a worktree dir in place when `git worktree remove` fails
-  // mid-run; this is the retry that makes it converge.
-  await runStartupRecoveryStep('sweepOrphanedWorktrees', () => sweepOrphanedWorktrees());
+  // (Phase 1c, the orphaned-worktree sweep, runs AFTER listen — see
+  // `startBootWorktreeSweep`: with 1000+ leftover checkouts it held the port
+  // for many minutes.)
 
   // Phase 1d: reclaim orphaned push-session scratch dirs left behind by
   // a /done cleanup that lost its EBUSY race with the still-shutting-down
@@ -94,6 +92,19 @@ export async function recoverOrphanedTasks(): Promise<void> {
   await runStartupRecoveryStep('sweepOrphanedClaudeConfigTempFiles', () => sweepOrphanedClaudeConfigTempFiles());
 
   await runStartupRecoveryStep('recoverOrphanedTasks', () => recoverReadyTasksWithDeletedBranches());
+}
+
+// Reclaim orphaned worktrees (failed background cleanups, crashed runs,
+// legacy in-project worktrees). cleanup.ts deliberately leaves a worktree dir
+// in place when `git worktree remove` fails mid-run; this is the retry that
+// makes it converge. Started right after listen and NOT awaited by boot: each
+// orphan is a git call plus, when reclaimed, an archive and a recursive delete,
+// and a machine carrying 1000+ of them (an old version's leftovers) kept the
+// frontend on "Scanning…" for the whole sweep. The returned promise never
+// rejects; `resumeQueuedTaskRuns` waits for it, so a half-created worktree is
+// still reconciled by the re-run rather than reclaimed.
+export function startBootWorktreeSweep(): Promise<void> {
+  return runStartupRecoveryStep('sweepOrphanedWorktrees', () => sweepOrphanedWorktrees());
 }
 
 async function runStartupRecoveryStep(

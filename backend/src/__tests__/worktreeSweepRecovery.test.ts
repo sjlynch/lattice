@@ -14,6 +14,7 @@ const worktree = path.join(homeWorktreesDir(project), 'task-abc');
 function fixture(overrides: Partial<WorktreeSweepDeps> = {}) {
   const removed: string[] = [];
   const errors: unknown[] = [];
+  const cleanupOpts: Array<Record<string, unknown>> = [];
   const deps: WorktreeSweepDeps = {
     forEachKnownProjectSafely: async (_label, fn) => {
       try { await fn(project); } catch (err) { errors.push(err); }
@@ -22,15 +23,21 @@ function fixture(overrides: Partial<WorktreeSweepDeps> = {}) {
     gitDirExists: async () => true,
     projectGit: async (_project, args) => args[0] === 'rev-list'
       ? { code: 0, stderr: '', stdout: '0\n' } // the orphan's branch is fully merged
+      : args[0] === 'for-each-ref'
+      ? { code: 0, stderr: '', stdout: '' } // no lattice/* branch has unmerged commits
       : {
         code: 0, stderr: '',
         stdout: `worktree ${project}\nbranch refs/heads/main\n\nworktree ${worktree}\nbranch refs/heads/lattice/task-abc\n`,
       },
-    cleanupWorktreeForTask: async (_project, dir) => { removed.push(dir); return true; },
+    cleanupWorktreeForTask: async (_project, dir, _branch, _deps, opts) => {
+      removed.push(dir);
+      cleanupOpts.push(opts ?? {});
+      return true;
+    },
     collectLiveSessionCwds: async () => new Set(),
     ...overrides,
   };
-  return { deps, removed, errors };
+  return { deps, removed, errors, cleanupOpts };
 }
 
 test('orphan worktree sweep preserves every checkout when task inventory fails', async () => {
@@ -99,32 +106,79 @@ test('orphan worktree sweep still reclaims a checkout with no task or live PTY',
   assert.deepEqual(removed, [worktree]);
 });
 
-test('orphan worktree sweep never reclaims a checkout whose branch has unmerged commits', async (t) => {
-  // A task moved back to Open keeps its branch; at boot no active task
-  // references the worktree, but cleanup would `branch -D` the only copy of
-  // that work. Refuse loudly instead.
-  const errors: string[] = [];
-  t.mock.method(console, 'error', (...args: unknown[]) => errors.push(args.join(' ')));
-  const list = fixture().deps.projectGit;
-  const { deps, removed } = fixture({
-    projectGit: async (project, args, opts) => args[0] === 'rev-list'
-      ? { code: 0, stderr: '', stdout: '2\n' }
-      : list(project, args, opts),
-  });
+// Unmerged commits on a lattice/* branch are the only copy of that work, so the
+// branch is never deleted — but the checkout (gigabytes) is. A machine updated
+// from an old version had 1000+ such orphans, each refused with an error line
+// and a git call before the backend could listen (2026-09-24).
+function unmergedListing(list: WorktreeSweepDeps['projectGit']): WorktreeSweepDeps['projectGit'] {
+  return async (project, args, opts) => args[0] === 'for-each-ref'
+    ? { code: 0, stderr: '', stdout: 'refs/heads/lattice/task-abc\n' }
+    : list(project, args, opts);
+}
+
+test('an orphan whose branch has unmerged commits loses its checkout but keeps its branch', async (t) => {
+  const warnings: string[] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => warnings.push(args.join(' ')));
+  const base = fixture();
+  const { deps, removed, cleanupOpts } = fixture({ projectGit: unmergedListing(base.deps.projectGit) });
+  const real = deps.cleanupWorktreeForTask;
+  deps.cleanupWorktreeForTask = async (project, dir, branch, d, opts) => {
+    opts?.onBranchKept?.({ name: branch, unmergedCommits: 2 });
+    return real(project, dir, branch, d, opts);
+  };
   await sweepOrphanedWorktrees(deps);
-  assert.deepEqual(removed, []);
-  assert.ok(errors.some((e) => /lattice\/task-abc has 2 unmerged commit/.test(e)), errors.join('\n'));
+  assert.deepEqual(removed, [worktree]);
+  assert.equal(cleanupOpts[0]?.keepBranchIfUnmerged, true);
+  assert.ok(warnings.some((w) => /KEPT their lattice\/\* branches.*lattice\/task-abc/.test(w)), warnings.join('\n'));
 });
 
-test('orphan worktree sweep defers when the unmerged-commit count cannot be read', async () => {
-  const list = fixture().deps.projectGit;
+test('an Open task\'s checkout whose branch has unmerged commits is left alone', async () => {
+  const base = fixture();
   const { deps, removed } = fixture({
-    projectGit: async (project, args, opts) => args[0] === 'rev-list'
-      ? { code: 128, stderr: 'fatal: bad revision', stdout: '' }
-      : list(project, args, opts),
+    projectGit: unmergedListing(base.deps.projectGit),
+    listTasks: async () => [{ id: 't', status: 'open', worktreePath: worktree } as Task],
   });
   await sweepOrphanedWorktrees(deps);
   assert.deepEqual(removed, []);
+});
+
+test('the unmerged check is one git call for the whole project, not one per branch', async () => {
+  const many = Array.from({ length: 50 }, (_, i) => path.join(homeWorktreesDir(project), `task-${i}`));
+  const calls: string[] = [];
+  const { deps, removed } = fixture({
+    projectGit: async (_p, args) => {
+      calls.push(args[0]);
+      if (args[0] === 'for-each-ref') return { code: 0, stderr: '', stdout: '' };
+      return {
+        code: 0, stderr: '',
+        stdout: `worktree ${project}\nbranch refs/heads/main\n\n` +
+          many.map((w, i) => `worktree ${w}\nbranch refs/heads/lattice/task-${i}\n`).join('\n'),
+      };
+    },
+  });
+  await sweepOrphanedWorktrees(deps);
+  assert.equal(removed.length, 50);
+  assert.equal(calls.filter((c) => c === 'for-each-ref').length, 1);
+  assert.equal(calls.filter((c) => c === 'rev-list').length, 0);
+});
+
+test('a branch whose state cannot be read still keeps its branch (checked one by one, fails closed)', async () => {
+  const list = fixture().deps.projectGit;
+  const { deps, removed, cleanupOpts } = fixture({
+    projectGit: async (project, args, opts) => args[0] === 'rev-list' || args[0] === 'for-each-ref'
+      ? { code: 128, stderr: 'fatal: bad revision', stdout: '' }
+      : list(project, args, opts),
+    listTasks: async () => [{ id: 't', status: 'backlog', worktreePath: worktree } as Task],
+  });
+  await sweepOrphanedWorktrees(deps);
+  // Unknown counts as unmerged: a Backlog task's checkout is left alone …
+  assert.deepEqual(removed, []);
+  // … and an unowned one is reclaimed with the branch kept.
+  const unowned = fixture({ projectGit: deps.projectGit });
+  await sweepOrphanedWorktrees(unowned.deps);
+  assert.deepEqual(unowned.removed, [worktree]);
+  assert.equal(unowned.cleanupOpts[0]?.keepBranchIfUnmerged, true);
+  assert.equal(cleanupOpts.length, 0);
 });
 
 test('orphan worktree sweep honors an explicit Git worktree lock', async () => {

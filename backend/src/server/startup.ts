@@ -8,6 +8,7 @@ import {
   resumeInterruptedMergeRuns,
   resumeInterruptedWorkflowRuns,
   resumeQueuedTaskRuns,
+  startBootWorktreeSweep,
   startInProgressSweepLoop,
   startWorktreeResidueSweepLoop,
 } from '../recovery.js';
@@ -138,8 +139,13 @@ export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecov
   // backend stopped (their `runQueued` flag is persisted on the task).
   // Runs post-listen and after the pre-listen orphan-worktree sweep so a
   // half-created worktree is reconciled rather than reclaimed.
-  resumeQueuedTaskRuns(backendOrigin).catch((err) =>
-    console.error('[startup] resumeQueuedTaskRuns failed:', err),
+  // Runs after the orphan-worktree sweep (now post-listen, recovery/index.ts
+  // startBootWorktreeSweep) so a half-created worktree is reconciled rather
+  // than reclaimed.
+  void startBootWorktreeSweep().then(() =>
+    resumeQueuedTaskRuns(backendOrigin).catch((err) =>
+      console.error('[startup] resumeQueuedTaskRuns failed:', err),
+    ),
   );
   // Periodic staleness sweep for `in_progress` tasks whose PTY has died
   // and whose branch has commits (the Pi extension / model curl failed
