@@ -41,6 +41,11 @@ import { archiveUncommittedWorktreeChanges } from './discardArchive.js';
 import { clearStaleInitializingLock } from './staleInitLock.js';
 
 const CLEANUP_GIT_TIMEOUT_MS = 15_000;
+// `worktree remove` deletes a whole checkout — 20k files / 7 GB on an LFS
+// repo, well past 15 s on Windows (2026-09-24: killed part-way, leaving the
+// rest for the residue sweep). Still bounded: a process pinning the dir must
+// not wedge cleanup forever.
+const WORKTREE_REMOVE_TIMEOUT_MS = 5 * 60_000;
 
 export type WorktreeCleanupDeps = {
   projectGit: typeof projectGit;
@@ -108,7 +113,7 @@ export async function cleanupWorktreeForTask(
   await assertGitDirIntact(repoRoot);
 
   const git = (args: string[]) => deps.projectGit(repoRoot, args, {
-    timeoutMs: CLEANUP_GIT_TIMEOUT_MS,
+    timeoutMs: args[0] === 'worktree' && args[1] === 'remove' ? WORKTREE_REMOVE_TIMEOUT_MS : CLEANUP_GIT_TIMEOUT_MS,
   });
   const readWorktrees = async () => {
     const result = await git(['worktree', 'list', '--porcelain', '-z']);

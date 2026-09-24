@@ -76,7 +76,11 @@ export async function reconcileStaleState(
 
   const candidateKey = pathKey(worktreePath);
   const branchRef = `refs/heads/${branchName}`;
-  const git = (args: string[]) => deps.projectGit(repoRoot, args, { timeoutMs: GIT_TIMEOUT_MS });
+  // `worktree remove` deletes a whole checkout (7 GB on an LFS repo) — give it
+  // the same bounded-but-generous time cleanup.ts does.
+  const git = (args: string[]) => deps.projectGit(repoRoot, args, {
+    timeoutMs: args[0] === 'worktree' && args[1] === 'remove' ? 5 * 60_000 : GIT_TIMEOUT_MS,
+  });
   const readTracked = async (): Promise<ParsedWorktree[]> => {
     const listed = await git(['worktree', 'list', '--porcelain', '-z']);
     if (listed.code !== 0) {
