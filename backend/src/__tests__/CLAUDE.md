@@ -94,6 +94,12 @@ under `helpers/`.
   would hold port 5184 forever), the last line before a deliberate exit still
   reaches the console, and the dev orchestrator's parallel `.mjs` sink honours
   the same contract.
+- `createTaskHelper.test.ts` — the workflow-step `create-task.cjs` helper,
+  rendered via `renderHelperScript` and run as a child against an in-process
+  fake API that records every request. `--help`/`-h`/`help` exit 0 with usage
+  and make no request; unknown flags and surplus positionals exit 1 and make no
+  request (a guessed `--help` used to create a real task); `--` creates a
+  dash-leading title; a plain `"Title" "Desc"` still POSTs once.
 - `agentCommandBuilder.test.ts` — `buildAgentCommand()` harness framing
   (claude/pi/codex) + its private `shellDoubleQuoted()` prompt-quoting guard
   (double-quote/backslash/dollar/backtick each escaped once; injection prompts

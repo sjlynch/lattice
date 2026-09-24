@@ -25,6 +25,13 @@
  *   node create-task.cjs --find "legend" --limit 5 # cap the hits (default 20)
  *   node create-task.cjs --get t_abc123            # one task, full text
  *
+ *   node create-task.cjs --help                    # every command (also -h)
+ *
+ * Any other first argument starting with "-" is refused, never turned into a
+ * task title: an agent guessing `--help` used to file a task named "--help".
+ * A title that really starts with a dash goes after `--`:
+ *   node create-task.cjs -- "--weird title"
+ *
  * The API pages/clips by default (a real board is a megabyte of mostly-done
  * history), and every response carries a `hint` naming the next knob to turn.
  * This script prints that hint verbatim — follow it rather than guessing.
@@ -228,18 +235,39 @@ function parseReadOpts(args) {
   return { opts, rest };
 }
 
+const HELP = [
+  'create-task.cjs: Lattice task helper for ' + PROJECT + '. Only creates and reads.',
+  '',
+  'Read (cheapest first):',
+  '  --summary                                  counts + per-lane cost. Start here.',
+  '  --list [all|lane,lane] [--since 30d] [--limit N]   active lanes, compact',
+  '  --find "text" [lane,lane] [--limit N]      search instead of listing',
+  '  --get <id>                                 one task, full text',
+  'Create:',
+  '  "Title" ["Description"]                    one task (or: "Title" < desc.md)',
+  '  --batch tasks.json                         [{"title":"...","description":"..."}, ...]',
+  '  -- "--Title"                               a title that starts with a dash',
+  '',
+  'Lanes: backlog open in_progress ready_to_merge qa done deleted',
+  'Any other argument starting with "-" is an error; nothing is created.',
+  'To update or delete tasks, see WORKFLOW_STEP.md (API / lattice MCP).',
+].join('\n');
+
+const HELP_ARGS = new Set(['--help', '-h', 'help']);
+
+// Misuse: usage goes to stderr so it never mixes into parsed output.
 function usage() {
-  console.error('Usage: node create-task.cjs "Title" ["Description"]');
-  console.error('       node create-task.cjs "Title" < description.md');
-  console.error('       node create-task.cjs --batch tasks.json');
-  console.error('       node create-task.cjs --summary');
-  console.error('       node create-task.cjs --list [all|statuses] [--since 30d] [--limit N]');
-  console.error('       node create-task.cjs --find "text" [statuses] [--limit N]');
-  console.error('       node create-task.cjs --get <id>');
+  console.error(HELP);
 }
 
 async function main() {
   const args = process.argv.slice(2);
+
+  // Before anything touches the network, so it works with the backend down.
+  if (HELP_ARGS.has(args[0])) {
+    console.log(HELP);
+    return;
+  }
 
   if (args[0] === '--list') {
     const { opts, rest } = parseReadOpts(args.slice(1));
@@ -284,9 +312,28 @@ async function main() {
     return;
   }
 
-  const title = args[0];
+  // Everything below creates a task, so an unrecognised flag (a guessed
+  // `--version`, a typo'd `--summery`) must fail here rather than become a
+  // title. `--` is the escape for a title that genuinely starts with a dash.
+  let positional = args;
+  if (args[0] === '--') {
+    positional = args.slice(1);
+  } else if (args[0] !== undefined && args[0].startsWith('-')) {
+    console.error('Unknown option "' + args[0] + '". Nothing was created.\n');
+    usage();
+    process.exit(1);
+  }
+  const [title, descriptionArg, ...extra] = positional;
   if (!title) { usage(); process.exit(1); }
-  const description = args[1] !== undefined ? args[1] : await readStdin();
+  if (extra.length > 0) {
+    console.error(
+      'Too many arguments (got ' + positional.length + ', expected "Title" ["Description"]). ' +
+        'Nothing was created. Quote the description, or pipe it on stdin.\n',
+    );
+    usage();
+    process.exit(1);
+  }
+  const description = descriptionArg !== undefined ? descriptionArg : await readStdin();
   await createOne(title, description);
 }
 

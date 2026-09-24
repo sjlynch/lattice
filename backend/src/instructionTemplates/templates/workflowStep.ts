@@ -83,6 +83,7 @@ export const DEFAULT_WORKFLOW_STEP_TEMPLATE = [
   'node create-task.cjs --list                   # the active lanes, compact',
   'node create-task.cjs --find "graph legend"    # is a task about X already filed?',
   'node create-task.cjs --get <id>               # one task, full text',
+  'node create-task.cjs --help                   # every command',
   '```',
   '',
   '- `--list` returns only the **active** lanes (Backlog / Open / In Progress /',

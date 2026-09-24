@@ -195,6 +195,11 @@ explicit-curl callbacks — never by polling task state.
   `--get <id>` (one task's full text). Every read prints the envelope's
   `hint` verbatim — that string is how the agent learns the next knob — and
   a 413 is rendered as its hint + `suggestions` rather than a stack trace.
+  `--help` / `-h` print the usage (stdout, no network); any OTHER first
+  argument starting with `-` is refused, never used as a title — a scout
+  agent's guessed `--help` once filed an Open task named "--help". `--`
+  escapes a dash-leading title; more than two create positionals is an error.
+  Covered by `__tests__/createTaskHelper.test.ts`.
   The `.cjs` template is a runtime asset; `scripts/copy-assets.mjs` mirrors
   it into `dist/`.
 - `controlStep.ts` + `controlSteps/` — headless control-flow steps
