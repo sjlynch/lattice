@@ -105,6 +105,12 @@ async function prepareFastForward(
   // preflight (a resolver's /complete can reach the FF without it).
   const onBranch = await assertMainOnBranch(repoRoot);
   if (!onBranch.ok) return onBranch;
+  // A fast-forward on a full disk truncates the files it rewrites and then
+  // fails with HEAD unmoved — 2026-09-24 it left two of main's source files
+  // zero-byte, which then read as uncommitted edits. Every path (a resolver's
+  // finalize too, not only mergeWorktreeInRepo) refuses under the floor.
+  const shortfall = await mergeDiskSpaceShortfall([repoRoot]);
+  if (shortfall) return { ok: false, outcome: { status: 'error', message: shortfall } };
   // A lock file a killed git left behind fails the snapshot's resets and the
   // FF itself; clear it first when it is provably abandoned (staleGitLocks.ts).
   await clearStaleGitLocks(repoRoot);
