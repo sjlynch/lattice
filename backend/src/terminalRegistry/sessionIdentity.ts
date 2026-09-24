@@ -13,7 +13,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { agentHarnessForCommand, type AgentHarness } from '../harnesses.js';
-import { commandHasFlag } from './commandParse.js';
+import { commandHasFlag, parseAgentCommand, tokenizeCommand } from './commandParse.js';
 import type { AgentSessionRef } from './types.js';
 
 // Flags that already bind a command to a session. When any is present the
@@ -64,4 +64,53 @@ export function assignHarnessSessionId(
     };
   }
   return { command: initialCommand };
+}
+
+// The value of the first of `flags` in `command` (`--flag value` or
+// `--flag=value`), ignoring quoted tokens (a prompt that merely mentions it).
+function flagValue(command: string, flags: readonly string[]): string | undefined {
+  const tokens = tokenizeCommand(command);
+  for (let i = 0; i < tokens.length; i += 1) {
+    const t = tokens[i]!;
+    if (t.quoted) continue;
+    for (const flag of flags) {
+      if (t.value === flag) {
+        const next = tokens[i + 1];
+        if (next && !next.value.startsWith('-')) return next.value;
+      } else if (t.value.startsWith(`${flag}=`)) {
+        return t.value.slice(flag.length + 1) || undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
+// Which conversation a LIVE pty's command runs, read off the command itself —
+// the terminal-server reports the command as spawned, i.e. with Lattice's
+// `--session-id` already injected. Used when restore adopts an orphan pty onto
+// a record: the record's old id belongs to a pty that is gone, so keeping it
+// would resume the wrong conversation on the next restart.
+//   claude  `--session-id <id>` / `--resume <id>` / `-r <id>`
+//   pi      `--session-id <id>`
+//   codex   `resume <id>` (not `resume --last`, which names no id)
+export function agentSessionFromCommand(command: string | undefined): AgentSessionRef | undefined {
+  if (!command) return undefined;
+  const harness = agentHarnessForCommand(command);
+  if (harness === 'claude') {
+    const id = flagValue(command, ['--session-id', '--resume', '-r']);
+    return id ? { harness, id, source: 'command' } : undefined;
+  }
+  if (harness === 'pi') {
+    const id = flagValue(command, ['--session-id']);
+    return id ? { harness, id, source: 'command' } : undefined;
+  }
+  if (harness === 'codex') {
+    const parsed = parseAgentCommand(command, 'codex');
+    if (!parsed) return undefined;
+    const positionals = [...parsed.positionals, ...(parsed.prompt ? [parsed.prompt] : [])];
+    const [sub, id] = positionals;
+    if (sub?.value !== 'resume' || !id || id.quoted) return undefined;
+    return { harness, id: id.value, source: 'command' };
+  }
+  return undefined;
 }

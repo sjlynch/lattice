@@ -42,9 +42,10 @@ import { normalizeCwd } from './harnessPaths.js';
 import { detectInterruption, type InterruptionVerdict } from './interruption.js';
 import { buildRestoreCommand, RESTORE_NUDGE } from './restoreCommand.js';
 import { terminalRegistry } from './store.js';
-import type { RestoreDropped, RestoreSummary, TerminalRecord } from './types.js';
+import type { AgentSessionRef, RestoreDropped, RestoreSummary, TerminalRecord } from './types.js';
 import { isNewerThanLiveView, readLiveSessions, reconcileExitedTerminals, type LiveSessionsView } from './watch.js';
-import { scheduleCodexDiscovery } from './codexDiscovery.js';
+import { discoverCodexSessionFor, scheduleCodexDiscovery } from './codexDiscovery.js';
+import { agentSessionFromCommand } from './sessionIdentity.js';
 
 export type RestoreDeps = {
   readLiveSessions: () => Promise<LiveSessionsView | null>;
@@ -56,6 +57,8 @@ export type RestoreDeps = {
   getTask: typeof getTask;
   getUserSettings: typeof getUserSettings;
   detectInterruption: typeof detectInterruption;
+  // One Codex rollout-discovery attempt for a record (true once its id is known).
+  discoverCodexSession: (recordId: string, projectPath: string) => Promise<boolean>;
   dirExists: (p: string) => Promise<boolean>;
   now: () => number;
 };
@@ -83,6 +86,7 @@ const productionDeps: RestoreDeps = {
   getTask,
   getUserSettings,
   detectInterruption,
+  discoverCodexSession: discoverCodexSessionFor,
   dirExists,
   now: Date.now,
 };
@@ -127,7 +131,7 @@ async function checkOwner(record: TerminalRecord, deps: RestoreDeps): Promise<Ow
 async function planRelaunch(
   record: TerminalRecord,
   deps: RestoreDeps,
-): Promise<{ nudge?: string; transcriptExists: boolean }> {
+): Promise<{ nudge?: string; transcriptExists: boolean; agentSession?: AgentSessionRef }> {
   const settings: UserSettings = await deps.getUserSettings(record.projectPath).catch(() => ({}));
   const needsVerdict = record.agentSession?.harness === 'claude'
     || (record.owner === 'user' && settings.restoreNudgeUserTabs === true);
@@ -141,7 +145,11 @@ async function planRelaunch(
   } else if (record.owner === 'user' && settings.restoreNudgeUserTabs === true) {
     nudge = verdict?.interruption === 'interrupted' ? RESTORE_NUDGE : undefined;
   }
-  return { nudge, transcriptExists: verdict?.transcriptExists === true };
+  return {
+    nudge,
+    transcriptExists: verdict?.transcriptExists === true,
+    ...(verdict?.agentSession ? { agentSession: verdict.agentSession } : {}),
+  };
 }
 
 // Per project: the summary of the pass in progress plus a promise that settles
@@ -229,6 +237,7 @@ async function performRestore(
     if (isLive(record)) {
       adopted += 1;
       terminalRegistry.emitRestored(record, 'adopted');
+      scheduleDiscoveryIfUnknown(record);
       continue;
     }
     // 2. an unclaimed live AGENT pty in the same cwd running the same harness
@@ -243,11 +252,18 @@ async function performRestore(
         && agentHarnessForCommand(s.initialCommand) === harness);
       if (orphan) {
         claimed.add(orphan.id);
+        // The record's own id belonged to its dead pty; the adopted one runs
+        // whatever conversation ITS command names. Keeping the old id would
+        // resume the wrong conversation on the next restart.
+        const orphanSession = agentSessionFromCommand(orphan.initialCommand);
         const updated = await terminalRegistry.update(record.id, {
-          serverId: orphan.id, serverInstanceId: live.instanceId ?? undefined,
+          serverId: orphan.id,
+          serverInstanceId: live.instanceId ?? undefined,
+          ...(orphanSession ? { agentSession: orphanSession } : {}),
         }, record.projectPath);
         adopted += 1;
         terminalRegistry.emitRestored(updated ?? record, 'adopted');
+        scheduleDiscoveryIfUnknown(updated ?? record);
         continue;
       }
     }
@@ -282,6 +298,15 @@ async function performRestore(
   return { summary, relaunches };
 }
 
+// A live Codex tab whose thread id was never learned (its discovery poll died
+// with the previous backend process) keeps looking, so a later relaunch can
+// resume it by id instead of `resume --last`.
+function scheduleDiscoveryIfUnknown(record: TerminalRecord): void {
+  if (record.launch.harness === 'codex' && !record.agentSession) {
+    scheduleCodexDiscovery(record.id, record.projectPath);
+  }
+}
+
 function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): Promise<void> {
   // A retried failure keeps its FIRST failure time when it fails again, so the
   // retention prune counts from the original failure, not the latest retry.
@@ -307,10 +332,20 @@ function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): Promise<voi
         );
         terminalRegistry.emitRestoreFailed(current, reason);
       };
-      const plan = await planRelaunch(current, deps);
+      // A Codex tab that died before its discovery poll caught the rollout:
+      // one last look now, so the relaunch resumes the thread by id rather
+      // than `resume --last` (the newest thread in the folder — possibly
+      // another tab's).
+      if (current.launch.harness === 'codex' && !current.agentSession) {
+        await deps.discoverCodexSession(current.id, current.projectPath).catch(() => false);
+      }
+      const latest = await terminalRegistry.get(current.id, current.projectPath) ?? current;
+      const plan = await planRelaunch(latest, deps);
       const built = buildRestoreCommand({
         launch: current.launch,
-        agentSession: current.agentSession,
+        // A conversation the detector re-learned wins over the pinned id; the
+        // relaunch records it (registry.agentSession below) for next time.
+        agentSession: plan.agentSession ?? latest.agentSession,
         claudeTranscriptExists: plan.transcriptExists,
         nudge: plan.nudge,
       });
@@ -348,7 +383,7 @@ function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): Promise<voi
         return;
       }
       terminalRegistry.emitRestored(restored, 'relaunched');
-      if (current.launch.harness === 'codex' && !current.agentSession) {
+      if (current.launch.harness === 'codex' && !built.agentSession) {
         scheduleCodexDiscovery(current.id, current.projectPath);
       }
     },

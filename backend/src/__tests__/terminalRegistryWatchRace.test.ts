@@ -78,6 +78,7 @@ test('restore adopts (never relaunches) a record pointed at a pty after its live
     getTask: async () => null,
     getUserSettings: async () => ({}),
     detectInterruption: async () => ({ interruption: 'unknown', turn: 'unknown', busy: 'unknown', transcriptExists: false }),
+    discoverCodexSession: async () => false,
     dirExists: async () => true,
     now: Date.now,
   };

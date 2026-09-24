@@ -48,10 +48,18 @@ under `helpers/`.
   on-disk path encodings, Claude transcript present → `--resume` / absent →
   fresh `--session-id` / empty file → still `--resume`, Pi and Codex relaunch
   commands, and that no relaunch command gets a second id stacked on it by the
-  spawn chokepoint's `assignHarnessSessionId`. Two `todo` cases pin known gaps
-  (they fail without failing the suite): a conversation switched inside a
-  Claude tab (`/resume`) is not re-learned, and adopting an orphan pty by cwd
-  keeps the record's old `agentSession`.
+  spawn chokepoint's `assignHarnessSessionId`. Also the fixes for the
+  "claude! 2" tab: a conversation switched inside a Claude tab (`/resume`) is
+  re-learned from the transcripts' `session_id` (even several relaunches
+  later) and recorded; another process's newer transcript never hijacks a tab;
+  adopting an orphan pty takes that pty's id; Codex discovery finds a rollout
+  whose first turn came late, at relaunch, but never one started well after
+  the tab's launch (another tab's), and backs off instead of giving up.
+- `inheritedAgentEnv.test.ts` — the boot scrub of an outside Claude Code
+  session's identity (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`,
+  `CLAUDE_CODE_CHILD_SESSION`, its messaging socket/token, …) while user
+  configuration sharing the prefix (`CLAUDE_CODE_USE_BEDROCK`,
+  `CLAUDE_CONFIG_DIR`, …) survives.
 - `ignoredPathNamespace.test.ts` — `matchIgnoredSourcePath` against the
   `\\?\C:\…` extended-length paths the Windows recursive watcher reports when
   a watched ROOT is deleted or renamed. `path.relative` returned them

@@ -33,12 +33,24 @@ from.
 - `sessionIdentity.ts` — `assignHarnessSessionId`: pins the conversation id
   at launch. Claude `--session-id <uuid>`, Pi `--session-id lattice-<uuid>`
   (create-or-resume). Never stacks on a command that already names a session
-  (`--resume`, `-c`, …). Codex has no such flag (openai/codex#46672) —
+  (`--resume`, `-c`, …). `agentSessionFromCommand` is the reverse: the id a
+  live pty's spawned command carries (`--session-id` / `--resume` / Codex
+  `resume <id>`), used when restore ADOPTS an orphan pty onto a record — the
+  record's old id belonged to the dead pty, so it takes the adopted one's.
+  Codex has no such flag (openai/codex#46672) —
 - `codexDiscovery.ts` — learns a Codex thread id after the fact from
   `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl` line 1
   (`session_meta.payload.{id,cwd,timestamp}`): cwd match + started after our
   spawn + not claimed by another record, earliest first; `ambiguous` when two
-  Codex tabs share a cwd in the window. Polled for 2 min after each Codex spawn.
+  Codex tabs share a cwd in the window. Codex writes the rollout on the FIRST
+  TURN, not at launch (measured 2m42s for a tab typed into late), so discovery
+  polls until the id is known or the record ends — 2 s for 2 min, 15 s to
+  30 min, then 1/min, 24 h backstop — and restore makes one last attempt right
+  before relaunching an id-less Codex tab (else `resume --last`, the newest
+  thread in the folder, maybe another tab's). A fresh pick must have STARTED
+  within `CODEX_FRESH_START_WINDOW_MS` (2 min) of the tab's launch —
+  `session_meta.timestamp` is the process start — so an idle tab can't claim
+  the thread of a Codex tab opened later in the same folder.
   "Started after our spawn" is the record's `createdAt`, never the relaunch
   time: a `codex resume --last` relaunch reopens the ORIGINAL rollout, whose
   `session_meta` timestamp is the thread's creation. The cheap stat pre-filter
@@ -74,7 +86,19 @@ from.
   `launch.mcpScope`). **A relaunch never
   overwrites the record's `launch`** (else the next restore would try to
   resume a resume).
-- `interruption.ts` — "was the agent mid-turn when it died?" Two evidence
+- `interruption.ts` — also `findClaudeConversationId`: the pinned Claude id
+  names the PROCESS, not necessarily the conversation. Interactive transcripts
+  stamp each line with `sessionId` (conversation = file name) and `session_id`
+  (the process); after an in-tab `/resume` the process appends to the OTHER
+  conversation's file and its own may never exist, so a relaunch from the
+  pinned id alone opened a blank Claude (tab "claude! 2", 2026-09-24). The
+  detector scans the cwd's transcripts modified since the tab's CREATION
+  (not its last relaunch — the switch may be several fresh relaunches old),
+  newest first, for the last line whose `session_id` is the pinned id, and
+  returns that conversation as the verdict's `agentSession`
+  (`source: 'transcript-scan'`); the relaunch resumes it and records it (a
+  `--resume Y` process runs as Y, so it keeps working next time).
+  "Was the agent mid-turn when it died?" Two evidence
   sources: the transcript tail (claude dangling `tool_use` / trailing user
   prompt → open, the `[Request interrupted by user…]` marker → idle; pi
   `stopReason`; codex `task_started` without `task_complete`) and a
@@ -150,4 +174,6 @@ the worktree conversation when the harness matches.
 - Tests: `__tests__/terminalRestoreCommand.test.ts`,
   `terminalInterruption.test.ts`, `terminalRegistryStore.test.ts`,
   `terminalRestore.test.ts` (the decision matrix with injected deps),
+  `terminalRestoreTranscripts.test.ts` (the same flow over real on-disk
+  Claude / Pi / Codex files: re-learning, adopt, Codex discovery),
   `terminalRegistryWatchRace.test.ts` (live-view vs concurrent-spawn races).

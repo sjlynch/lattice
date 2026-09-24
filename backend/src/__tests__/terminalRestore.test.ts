@@ -66,6 +66,7 @@ async function harness(): Promise<Harness> {
     }) as unknown as RestoreDeps['enqueue'],
     getTask: async (id) => h.tasks.get(id) ?? null,
     getUserSettings: async () => h.settings,
+    discoverCodexSession: async () => false,
     detectInterruption: async () => ({
       interruption: h.interruption, turn: 'unknown', busy: 'unknown', transcriptExists: h.transcriptExists,
     }),

@@ -5,9 +5,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { terminalRegistry } from '../terminalRegistry/store.js';
 import { restoreProjectTerminals, type RestoreDeps } from '../terminalRegistry/restore.js';
-import { detectInterruption } from '../terminalRegistry/interruption.js';
+import { detectInterruption, lastConversationWrittenBy } from '../terminalRegistry/interruption.js';
+import {
+  CODEX_FRESH_START_WINDOW_MS,
+  discoverCodexSessionFor,
+  discoveryIntervalMs,
+  resetCodexDiscoveryCaches,
+} from '../terminalRegistry/codexDiscovery.js';
 import { buildRestoreCommand } from '../terminalRegistry/restoreCommand.js';
-import { assignHarnessSessionId } from '../terminalRegistry/sessionIdentity.js';
+import { agentSessionFromCommand, assignHarnessSessionId } from '../terminalRegistry/sessionIdentity.js';
 import {
   claudeProjectDirName,
   claudeTranscriptPath,
@@ -27,6 +33,10 @@ import type { AgentSessionRef, TerminalLaunch, TerminalRecord } from '../termina
 //   - Claude: ~/.claude/projects/<cwd, non-alnum → '-'>/<id>.jsonl, created on
 //     the first turn. In interactive transcripts `sessionId` is the
 //     conversation and `session_id` the process that wrote the line.
+//   - Claude `--resume Y` runs as process Y (its ~/.claude/sessions/<pid>.json
+//     carries sessionId Y), so a re-learned id keeps working after relaunch.
+//   - Codex: `session_meta.timestamp` is the process start; the rollout file
+//     itself appears only on the first turn.
 //   - Pi: `--session-id X` writes <sessions>/<ts>_X.jsonl and reuses it on the
 //     next launch with the same id (create-or-resume).
 
@@ -82,8 +92,9 @@ async function harness(): Promise<Harness> {
     enqueue: ((args: { thunk: () => Promise<unknown> }) => ({ queued: false, done: args.thunk() })) as unknown as RestoreDeps['enqueue'],
     getTask: async () => null,
     getUserSettings: async () => ({}),
-    // The production detector — the point of this file.
+    // The production detector + Codex discovery — the point of this file.
     detectInterruption,
+    discoverCodexSession: discoverCodexSessionFor,
     dirExists: async (p) => { try { return (await fs.stat(p)).isDirectory(); } catch { return false; } },
     now: Date.now,
   };
@@ -213,13 +224,9 @@ test('codex: a discovered thread id resumes by id; an undiscovered one falls bac
   assert.equal(h2.spawns[0].initialCommand, 'codex resume --last --yolo');
 });
 
-// ── Known gaps. These describe the behaviour we want and currently FAIL;
-// `todo` keeps them visible without failing the suite. Drop the flag when
-// the fix lands.
+// ── Conversation re-learning (the "claude! 2" tab, 2026-09-24) ──────────────
 
-test('claude: a conversation switched inside the tab (/resume) is resumed by the id it actually wrote to', {
-  todo: 'restore trusts the id pinned at launch; it never re-learns it (tab "claude! 2", 2026-09-24)',
-}, async () => {
+test('claude: a conversation switched inside the tab (/resume) is resumed by the id it actually wrote to', async () => {
   // The process launched as S, then /resume'd conversation Y: Claude appends
   // to Y.jsonl with session_id=S, and S.jsonl never exists.
   const h = await harness();
@@ -228,11 +235,12 @@ test('claude: a conversation switched inside the tab (/resume) is resumed by the
   await restoreProjectTerminals(h.project, h.deps);
   await settle();
   assert.equal(h.spawns[0].initialCommand, `claude --dangerously-skip-permissions --resume ${Y}`);
+  // …and the relaunch records the re-learned id, so the NEXT restart resumes
+  // it directly (the resumed process runs as Y).
+  assert.deepEqual(h.spawns[0].registry?.agentSession, { harness: 'claude', id: Y, source: 'transcript-scan' });
 });
 
-test('adopting an orphan pty by cwd takes over that pty\'s session id', {
-  todo: 'restore.ts step 2 re-points serverId but keeps the record\'s old agentSession',
-}, async () => {
+test('adopting an orphan pty by cwd takes over that pty\'s session id', async () => {
   const h = await harness();
   const r = await deadTab(h, CLAUDE_LAUNCH, { harness: 'claude', id: 'S1', source: 'minted' });
   await terminalRegistry.update(r.id, { serverId: undefined, serverInstanceId: undefined }, h.project);
@@ -243,5 +251,105 @@ test('adopting an orphan pty by cwd takes over that pty\'s session id', {
   await restoreProjectTerminals(h.project, h.deps);
   const after = (await terminalRegistry.get(r.id, h.project)) as TerminalRecord;
   assert.equal(after.serverId, 'tty_orphan');
-  assert.equal(after.agentSession?.id, S);
+  assert.deepEqual(after.agentSession, { harness: 'claude', id: S, source: 'command' });
+});
+
+test('claude: a switch made several relaunches ago is still found (floor is the tab\'s creation)', async () => {
+  // Every relaunch since the switch was a fresh `--session-id S` nobody typed
+  // into, so the conversation's file is OLDER than the last relaunch.
+  const h = await harness();
+  const r = await deadTab(h, CLAUDE_LAUNCH, { harness: 'claude', id: S, source: 'minted' });
+  await writeClaudeTranscript(h.project, Y, S);
+  await terminalRegistry.update(r.id, { restoredAt: Date.now() + 10 * 60_000, restoreCount: 3 }, h.project);
+  await restoreProjectTerminals(h.project, h.deps);
+  await settle();
+  assert.equal(h.spawns[0].initialCommand, `claude --dangerously-skip-permissions --resume ${Y}`);
+});
+
+test('claude: the conversation written LAST wins; another tab\'s newer transcript is ignored', async () => {
+  const past = new Date(Date.now() - 1000);
+  // Never switched: another process's newer transcript must not hijack it.
+  const h = await harness();
+  const own = await writeClaudeTranscript(h.project, S, S);
+  await fs.utimes(own, past, past);
+  await writeClaudeTranscript(h.project, Y, 'someone-else');
+  await deadTab(h, CLAUDE_LAUNCH, { harness: 'claude', id: S, source: 'minted' });
+  await restoreProjectTerminals(h.project, h.deps);
+  await settle();
+  assert.equal(h.spawns[0].initialCommand, `claude --dangerously-skip-permissions --resume ${S}`);
+  assert.equal(h.spawns[0].registry?.agentSession?.source, 'minted', 'no re-learn when it never switched');
+
+  // Switched to Y after writing its own file: Y is newer and carries S's lines.
+  const h2 = await harness();
+  const own2 = await writeClaudeTranscript(h2.project, S, S);
+  await fs.utimes(own2, past, past);
+  await writeClaudeTranscript(h2.project, Y, S);
+  await deadTab(h2, CLAUDE_LAUNCH, { harness: 'claude', id: S, source: 'minted' });
+  await restoreProjectTerminals(h2.project, h2.deps);
+  await settle();
+  assert.equal(h2.spawns[0].initialCommand, `claude --dangerously-skip-permissions --resume ${Y}`);
+});
+
+test('lastConversationWrittenBy reads the process id, not the conversation id', () => {
+  const text = claudeLines(Y, 'P1') + claudeLines(Y, S) + '{"partial":';
+  assert.equal(lastConversationWrittenBy(text, S), Y);
+  assert.equal(lastConversationWrittenBy(text, 'P2'), null);
+  // A prompt that merely MENTIONS the id is not a line written by it.
+  const mention = JSON.stringify({ sessionId: Y, session_id: 'P1', message: { content: `"session_id":"${S}"` } });
+  assert.equal(lastConversationWrittenBy(mention, S), null);
+});
+
+test('agentSessionFromCommand reads the id each harness\'s spawned command carries', () => {
+  assert.deepEqual(agentSessionFromCommand(`claude --dangerously-skip-permissions --session-id ${S}`), { harness: 'claude', id: S, source: 'command' });
+  assert.deepEqual(agentSessionFromCommand(`claude --resume ${Y} "continue"`), { harness: 'claude', id: Y, source: 'command' });
+  assert.deepEqual(agentSessionFromCommand(`claude --resume=${Y}`), { harness: 'claude', id: Y, source: 'command' });
+  assert.deepEqual(agentSessionFromCommand('pi --model "a/b" --session-id lattice-x'), { harness: 'pi', id: 'lattice-x', source: 'command' });
+  assert.deepEqual(agentSessionFromCommand('codex resume thread-9 --yolo -c tui.x=1'), { harness: 'codex', id: 'thread-9', source: 'command' });
+  assert.deepEqual(agentSessionFromCommand('codex resume thread-9'), { harness: 'codex', id: 'thread-9', source: 'command' });
+  assert.equal(agentSessionFromCommand('codex resume --last --yolo'), undefined);
+  assert.equal(agentSessionFromCommand('codex --yolo "fix --resume handling"'), undefined);
+  assert.equal(agentSessionFromCommand('claude "explain --session-id"'), undefined);
+  assert.equal(agentSessionFromCommand('npm run dev'), undefined);
+  assert.equal(agentSessionFromCommand(undefined), undefined);
+});
+
+// ── Codex discovery ─────────────────────────────────────────────────────────
+
+async function writeCodexRollout(cwd: string, id: string, startedAt: number): Promise<string> {
+  const d = new Date(startedAt);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const dir = path.join(process.env.CODEX_HOME!, 'sessions', String(d.getFullYear()), pad(d.getMonth() + 1), pad(d.getDate()));
+  await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, `rollout-${d.toISOString().replace(/[:.]/g, '-')}-${id}.jsonl`);
+  const meta = { timestamp: new Date().toISOString(), type: 'session_meta', payload: { id, cwd, timestamp: d.toISOString() } };
+  await fs.writeFile(file, JSON.stringify(meta) + '\n');
+  return file;
+}
+
+test('codex: a thread whose first turn landed after the old 2-minute poll is found at relaunch and resumed by id', async () => {
+  resetCodexDiscoveryCaches();
+  const h = await harness();
+  await deadTab(h, { initialCommand: 'codex --yolo', harness: 'codex' });
+  // The process started right after the tab; the file appeared minutes later.
+  await writeCodexRollout(h.project, 'thread-late', Date.now() + 1_000);
+  await restoreProjectTerminals(h.project, h.deps);
+  await settle();
+  assert.equal(h.spawns[0].initialCommand, 'codex resume thread-late --yolo');
+});
+
+test('codex: a thread started long after the tab launched belongs to another tab and is not claimed', async () => {
+  resetCodexDiscoveryCaches();
+  const h = await harness();
+  await deadTab(h, { initialCommand: 'codex --yolo', harness: 'codex' });
+  await writeCodexRollout(h.project, 'someone-elses', Date.now() + CODEX_FRESH_START_WINDOW_MS + 60_000);
+  await restoreProjectTerminals(h.project, h.deps);
+  await settle();
+  assert.equal(h.spawns[0].initialCommand, 'codex resume --last --yolo');
+});
+
+test('codex discovery backs off instead of giving up', () => {
+  assert.equal(discoveryIntervalMs(0), 2_000);
+  assert.equal(discoveryIntervalMs(119_000), 2_000);
+  assert.equal(discoveryIntervalMs(5 * 60_000), 15_000);
+  assert.equal(discoveryIntervalMs(3 * 60 * 60_000), 60_000);
 });

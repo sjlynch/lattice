@@ -25,7 +25,7 @@ import {
   codexSessionsDir,
   piSessionsDir,
 } from './harnessPaths.js';
-import type { TerminalRecord } from './types.js';
+import type { AgentSessionRef, TerminalRecord } from './types.js';
 
 export type TurnState = 'open' | 'idle' | 'unknown';
 export type BusyEvidence = 'busy' | 'idle' | 'unknown';
@@ -157,6 +157,63 @@ export async function claudeSessionStatus(sessionId: string): Promise<BusyEviden
   return best.status === 'busy' ? 'busy' : best.status === 'idle' ? 'idle' : 'unknown';
 }
 
+// Interactive Claude stamps every transcript line with two ids: `sessionId`,
+// the conversation (= the file name), and `session_id`, the PROCESS that wrote
+// it (= the id Lattice pinned with `--session-id`). They match until the user
+// switches conversation inside the tab (`/resume`): from then on the process
+// appends to the other conversation's file, and the pinned id's own file may
+// never exist at all — a relaunch built from the pinned id alone then opened a
+// blank conversation (tab "claude! 2", 2026-09-24).
+//
+// Pure: the conversation the LAST line written by `processId` belongs to.
+export function lastConversationWrittenBy(text: string, processId: string): string | null {
+  const needle = new RegExp(`"session_id"\\s*:\\s*"${processId.replace(/[^A-Za-z0-9-]/g, '')}"`);
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i]!;
+    if (!needle.test(line)) continue;
+    try {
+      const entry = JSON.parse(line) as Record<string, unknown>;
+      if (entry.session_id === processId && typeof entry.sessionId === 'string') return entry.sessionId;
+    } catch { /* partial first line of a tail read */ }
+  }
+  return null;
+}
+
+// Slack on the mtime floor below: a transcript written in the seconds around
+// the launch still counts.
+const CLAUDE_SCAN_SLACK_MS = 60_000;
+
+// Which conversation did the Claude process pinned as `processId` write to
+// last? Scans the cwd's transcripts modified since the process was launched
+// (`sinceMs`), newest first, and reads each tail for a line it wrote. Null when
+// none did (it never reached a turn, or wrote nothing since `sinceMs`).
+export async function findClaudeConversationId(
+  cwd: string,
+  processId: string,
+  sinceMs: number,
+): Promise<string | null> {
+  const dir = path.dirname(claudeTranscriptPath(cwd, processId));
+  let names: string[];
+  try { names = await fs.readdir(dir); } catch { return null; }
+  const candidates: Array<{ file: string; mtimeMs: number }> = [];
+  for (const name of names) {
+    if (!name.endsWith('.jsonl')) continue;
+    const file = path.join(dir, name);
+    try {
+      const st = await fs.stat(file);
+      if (st.isFile() && st.mtimeMs >= sinceMs - CLAUDE_SCAN_SLACK_MS) candidates.push({ file, mtimeMs: st.mtimeMs });
+    } catch { /* vanished mid-scan */ }
+  }
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  for (const c of candidates) {
+    const tail = await readTail(c.file);
+    const id = tail === null ? null : lastConversationWrittenBy(tail, processId);
+    if (id) return id;
+  }
+  return null;
+}
+
 export async function findPiSessionFile(cwd: string, sessionId: string): Promise<string | null> {
   const dir = piSessionsDir(cwd);
   const suffix = `_${encodeURIComponent(sessionId)}.jsonl`;
@@ -210,6 +267,9 @@ export type InterruptionVerdict = {
   busy: BusyEvidence;
   // Claude only: whether the transcript file exists (drives resume vs fresh).
   transcriptExists?: boolean;
+  // The conversation to relaunch into, when it is not the record's own
+  // `agentSession` (Claude: the process switched conversation in its tab).
+  agentSession?: AgentSessionRef;
 };
 
 function latticeBusyEvidence(record: TerminalRecord): BusyEvidence {
@@ -222,12 +282,27 @@ export async function detectInterruption(record: TerminalRecord): Promise<Interr
   const session = record.agentSession;
   if (!session) return { interruption: 'unknown', turn: 'unknown', busy: latticeBusyEvidence(record) };
   if (session.harness === 'claude') {
-    const file = claudeTranscriptPath(record.cwd, session.id);
+    // The pinned id names the PROCESS; the conversation it last wrote to may
+    // be another one. Everything below reads that conversation's transcript.
+    // Floor at the tab's CREATION, not its last relaunch: only this tab's
+    // processes ever carry its pinned id, and the switch may have happened
+    // several relaunches ago (each later one a fresh, never-used launch).
+    const conversation = await findClaudeConversationId(record.cwd, session.id, record.createdAt) ?? session.id;
+    const file = claudeTranscriptPath(record.cwd, conversation);
     const tail = await readTail(file);
     const turn = tail === null ? 'unknown' : classifyClaudeTranscriptTail(tail);
+    // `~/.claude/sessions/<pid>.json` is keyed by the process's id.
     const native = await claudeSessionStatus(session.id);
     const busy = native !== 'unknown' ? native : latticeBusyEvidence(record);
-    return { interruption: decideInterruption(turn, busy), turn, busy, transcriptExists: tail !== null };
+    return {
+      interruption: decideInterruption(turn, busy),
+      turn,
+      busy,
+      transcriptExists: tail !== null,
+      ...(conversation !== session.id
+        ? { agentSession: { harness: 'claude', id: conversation, source: 'transcript-scan' } }
+        : {}),
+    };
   }
   if (session.harness === 'pi') {
     const file = await findPiSessionFile(record.cwd, session.id);

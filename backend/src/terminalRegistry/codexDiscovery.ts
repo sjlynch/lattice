@@ -146,6 +146,14 @@ export function resetCodexDiscoveryCaches(): void {
 
 export type CodexDiscoveryResult = { id: string; ambiguous: boolean };
 
+// How long after the tab's launch its Codex process can have started. The
+// rollout's `session_meta.timestamp` is the PROCESS start, even though the file
+// itself is only written on the first turn — so it pins a fresh thread to the
+// launch that made it. Without this bound, a Codex tab left idle past the old
+// 2-minute poll could claim the thread of a Codex tab opened later in the same
+// folder that was typed into first. Generous for a slow cold start on Windows.
+export const CODEX_FRESH_START_WINDOW_MS = 2 * 60_000;
+
 // A fresh launch is the EARLIEST unclaimed thread started after the tab (Codex
 // created it for us). A relaunch via `codex resume --last` reopened the thread
 // most recently written in that cwd, so there the pick is the NEWEST by mtime
@@ -155,9 +163,13 @@ export function pickCodexSession(
   cwd: string,
   claimed: ReadonlySet<string>,
   mode: 'fresh' | 'resumed' = 'fresh',
+  // Fresh mode only: the tab's launch time; threads started more than
+  // CODEX_FRESH_START_WINDOW_MS after it belong to a later launch.
+  launchedAt?: number,
 ): CodexDiscoveryResult | null {
   const want = normalizeCwd(cwd);
-  const matches = candidates.filter((c) => normalizeCwd(c.cwd) === want && !claimed.has(c.id));
+  const matches = candidates.filter((c) => normalizeCwd(c.cwd) === want && !claimed.has(c.id)
+    && (mode !== 'fresh' || launchedAt === undefined || c.timestamp <= launchedAt + CODEX_FRESH_START_WINDOW_MS));
   if (matches.length === 0) return null;
   if (mode === 'resumed') {
     const newest = [...matches].sort((a, b) => (b.mtimeMs ?? b.timestamp) - (a.mtimeMs ?? a.timestamp))[0]!;
@@ -184,7 +196,9 @@ export async function discoverCodexSessionFor(recordId: string, projectPath: str
   // (but writes to it now, hence the mtime bound at the relaunch time).
   const resumed = record.restoredAt !== undefined;
   const candidates = await scanRecentCodexRollouts(record.createdAt, undefined, record.restoredAt ?? record.createdAt);
-  const pick = pickCodexSession(candidates, record.cwd, claimedCodexIds(), resumed ? 'resumed' : 'fresh');
+  const pick = pickCodexSession(
+    candidates, record.cwd, claimedCodexIds(), resumed ? 'resumed' : 'fresh', record.createdAt,
+  );
   if (!pick) return false;
   await terminalRegistry.update(record.id, {
     agentSession: {
@@ -197,12 +211,29 @@ export async function discoverCodexSessionFor(recordId: string, projectPath: str
   return true;
 }
 
-const DISCOVERY_INTERVAL_MS = 2_000;
-const DISCOVERY_WINDOW_MS = 120_000;
+// Codex writes its rollout on the FIRST TURN, not at launch — a tab you open
+// and type into three minutes later has no file for three minutes (measured:
+// session start 13:11:07, rollout written 13:13:49). A fixed 2-minute window
+// gave up on exactly those tabs, and their restore fell back to
+// `resume --last`. So poll until the id is known or the record ends
+// (`discoverCodexSessionFor` answers true for both), backing off as the tab
+// ages: every 2 s for the first 2 min, 15 s up to 30 min, then once a minute.
+// The listing each tick shares is cached (`listRolloutFilesShared`), so a slow
+// tail costs almost nothing.
+const DISCOVERY_BACKOFF: ReadonlyArray<{ untilMs: number; intervalMs: number }> = [
+  { untilMs: 2 * 60_000, intervalMs: 2_000 },
+  { untilMs: 30 * 60_000, intervalMs: 15_000 },
+  { untilMs: Infinity, intervalMs: 60_000 },
+];
+// Backstop for a record that is never ended (a leak elsewhere): stop after a day.
+const DISCOVERY_MAX_MS = 24 * 60 * 60_000;
 const inFlight = new Set<string>();
 
-// Poll for the rollout file until it appears (a Codex TUI writes it within a
-// second or two of starting; the window is generous for a slow first launch).
+export function discoveryIntervalMs(elapsedMs: number): number {
+  return DISCOVERY_BACKOFF.find((s) => elapsedMs < s.untilMs)!.intervalMs;
+}
+
+// Poll for the rollout file until it appears or the record ends.
 export function scheduleCodexDiscovery(
   recordId: string,
   projectPath: string,
@@ -210,8 +241,9 @@ export function scheduleCodexDiscovery(
 ): void {
   if (inFlight.has(recordId)) return;
   inFlight.add(recordId);
-  const interval = opts.intervalMs ?? DISCOVERY_INTERVAL_MS;
-  const deadline = Date.now() + (opts.windowMs ?? DISCOVERY_WINDOW_MS);
+  const startedAt = Date.now();
+  const nextInterval = () => opts.intervalMs ?? discoveryIntervalMs(Date.now() - startedAt);
+  const deadline = startedAt + (opts.windowMs ?? DISCOVERY_MAX_MS);
   const tick = async () => {
     let done = false;
     try { done = await discoverCodexSessionFor(recordId, projectPath); } catch { /* retry */ }
@@ -219,9 +251,9 @@ export function scheduleCodexDiscovery(
       inFlight.delete(recordId);
       return;
     }
-    const t = setTimeout(() => { void tick(); }, interval);
+    const t = setTimeout(() => { void tick(); }, nextInterval());
     t.unref?.();
   };
-  const first = setTimeout(() => { void tick(); }, interval);
+  const first = setTimeout(() => { void tick(); }, nextInterval());
   first.unref?.();
 }

@@ -22,6 +22,7 @@ import { homeProjectScratchDir } from '../projectPath.js';
 import { listKnownProjects as listKnownTaskProjects } from '../tasks.js';
 import { isAgentHarness } from '../harnesses.js';
 import type {
+  AgentSessionSource,
   RestoreSummary,
   TerminalEndReason,
   TerminalEnded,
@@ -33,6 +34,10 @@ import type {
 export const TERMINALS_FILENAME = 'terminals.json';
 const FILE_VERSION = 1;
 const ENDED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+const AGENT_SESSION_SOURCES: ReadonlySet<AgentSessionSource> = new Set<AgentSessionSource>([
+  'minted', 'rollout-scan', 'transcript-scan', 'command',
+]);
 
 const OWNERS: ReadonlySet<string> = new Set<TerminalOwner>([
   'user', 'task', 'merge', 'startup', 'workflow-step', 'push', 'qa',
@@ -98,7 +103,9 @@ export function deserializeTerminalRecord(raw: unknown): TerminalRecord | null {
     record.agentSession = {
       harness: as.harness,
       id: as.id as string,
-      source: as.source === 'rollout-scan' ? 'rollout-scan' : 'minted',
+      source: AGENT_SESSION_SOURCES.has(as.source as AgentSessionSource)
+        ? as.source as AgentSessionSource
+        : 'minted',
       ...(as.ambiguous === true ? { ambiguous: true } : {}),
     };
   }

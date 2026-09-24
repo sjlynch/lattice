@@ -43,7 +43,13 @@ export type TerminalEnded = {
 //   minted       — Lattice chose the id up front (Claude / Pi `--session-id`)
 //   rollout-scan — learned after the fact from the harness's own session
 //                  files (Codex, which has no way to pre-set an id)
-export type AgentSessionSource = 'minted' | 'rollout-scan';
+//   transcript-scan — re-learned at restore: the Claude process switched
+//                  conversation inside its tab (`/resume`), so its lines landed
+//                  in another transcript (see interruption.ts
+//                  `findClaudeConversationId`)
+//   command      — read off a live pty's own launch command when restore
+//                  adopted it (`--session-id` / `--resume` / `resume <id>`)
+export type AgentSessionSource = 'minted' | 'rollout-scan' | 'transcript-scan' | 'command';
 
 export type AgentSessionRef = {
   harness: AgentHarness;
