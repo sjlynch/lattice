@@ -101,6 +101,7 @@ export function useGraphOverlays({
     changeMapRef,
     metricsIgnoredExtsRef,
     metricOverlayActiveRef,
+    settings.showLinks,
   );
 
   return {

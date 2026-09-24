@@ -262,6 +262,7 @@ function ForceGraphViewCoordinator({
     hiddenExts,
     dataGeneration,
     metricOverlayActive,
+    settings.showLinks,
   );
 
   // Batched node rendering: draw the base node shapes as a few instanced meshes

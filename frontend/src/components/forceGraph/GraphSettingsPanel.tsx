@@ -21,6 +21,7 @@ import {
   type TabKey,
 } from './graphSettingsPanel/config';
 import {
+  CheckboxRow,
   SliderRowControl,
   SliderRows,
   ToggleGroupRow,
@@ -128,8 +129,14 @@ function RenderingTab({ settings, set }: TabProps) {
         value={settings.batchedLinks}
         onSelect={set('batchedLinks')}
       />
-      {/* Width is meaningless for batched links (always flat). */}
-      {!settings.batchedLinks && (
+      <CheckboxRow
+        label="Show links"
+        hint="Uncheck to hide every link and see just the file shapes — clearer on very large codebases"
+        checked={settings.showLinks}
+        onChange={set('showLinks')}
+      />
+      {/* Width is meaningless for batched links (always flat) or hidden ones. */}
+      {settings.showLinks && !settings.batchedLinks && (
         <SliderRowControl
           row={LINK_WIDTH_ROW}
           settings={settings}

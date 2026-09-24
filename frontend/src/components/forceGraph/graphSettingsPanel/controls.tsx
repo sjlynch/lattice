@@ -55,6 +55,30 @@ export function SliderRows({
   );
 }
 
+// A single on/off setting as a labeled checkbox.
+export function CheckboxRow({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="graph-settings-check" title={hint}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
+
 // A labeled segmented button group (the `.graph-settings-toggle` look), one
 // active option. Collapses structurally-identical mode rows (repulsion / link
 // rendering / node rendering / etc.) into a single component.

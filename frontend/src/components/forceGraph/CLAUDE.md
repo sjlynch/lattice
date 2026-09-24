@@ -186,6 +186,9 @@ label physics in `labelPhysics/CLAUDE.md`.
 - `graphSettings.ts` — `GraphSettings`/`DEFAULT_SETTINGS`/`loadSettings`; perf
   fields `chargeTheta`/`repulsionMode`/`linkWidth`/`batchedLinks`/`batchedNodes`/
   `pixelRatio` (layout CPU `forceManyBody` and orbit CPU draw-calls+fill differ);
+  `showLinks` (Rendering tab "Show links" checkbox, default on — off returns
+  `false` from `useGraphFilter`'s `linkVisibility` and re-captures the batched
+  buffer; render-only, the links still drive the layout);
   "Spread" tab fields `alphaDecay`/`warmupTicks`/`collideRadius` (neutral/off by
   default) + `tidyLayoutOnLoad`/`tidySpread` (the radial untangle below — **on by
   default**); "Rendering" tab selection-glow fields

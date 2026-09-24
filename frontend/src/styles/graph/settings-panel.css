@@ -108,6 +108,22 @@
   flex-direction: column;
   gap: 4px;
 }
+/* A single on/off setting (e.g. Rendering → "Show links"). */
+.graph-settings-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.graph-settings-check input {
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.graph-settings-check:hover { color: var(--text-primary); }
 .graph-settings-label {
   display: flex;
   justify-content: space-between;

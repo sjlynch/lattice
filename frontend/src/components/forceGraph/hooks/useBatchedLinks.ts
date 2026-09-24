@@ -24,6 +24,9 @@ export function useBatchedLinks(
   // fallback re-reads visibility on the toggle's refresh; the batched buffer
   // only re-reads on rebuild).
   metricOverlayActive: boolean,
+  // The "Show links" setting. useGraphFilter folds it into `linkVisibility`;
+  // the batched buffer only re-reads that on rebuild, so it's a rebuild dep.
+  showLinks: boolean,
 ) {
   const ctrlRef = useRef<InstancedLinks | null>(null);
 
@@ -54,5 +57,5 @@ export function useBatchedLinks(
   useEffect(() => {
     if (!enabled) return;
     ctrlRef.current?.rebuild();
-  }, [enabled, hiddenExts, dataGeneration, metricOverlayActive]);
+  }, [enabled, hiddenExts, dataGeneration, metricOverlayActive, showLinks]);
 }

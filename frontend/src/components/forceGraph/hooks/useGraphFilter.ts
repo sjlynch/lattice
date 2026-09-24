@@ -36,6 +36,9 @@ export function useGraphFilter(
   changeMapRef: MutableRefObject<Map<string, ChangeKind>>,
   metricsIgnoredExtsRef: MutableRefObject<Set<string>>,
   metricOverlayActiveRef: MutableRefObject<boolean>,
+  // Graph settings → Rendering → "Show links". Off hides every link; the
+  // links still exist for the simulation, only their drawing is filtered.
+  showLinks: boolean,
 ) {
   useEffect(() => {
     if (!graphRef.current) return;
@@ -60,6 +63,7 @@ export function useGraphFilter(
     graphRef.current
       .nodeVisibility((n: object) => isNodeVisible(n as GraphNode))
       .linkVisibility((l: object) => {
+        if (!showLinks) return false;
         const link = l as {
           source: GraphNode | string;
           target: GraphNode | string;
@@ -83,5 +87,6 @@ export function useGraphFilter(
     changeMapRef,
     metricsIgnoredExtsRef,
     metricOverlayActiveRef,
+    showLinks,
   ]);
 }

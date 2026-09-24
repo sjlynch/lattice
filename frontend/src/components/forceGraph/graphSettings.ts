@@ -44,6 +44,11 @@ export type GraphSettings = {
   // spike. Flat 1px lines. Default-on. See `instancedLinks.ts` and
   // `plans/graph-perf-plan.md`.
   batchedLinks: boolean;
+  // Draw the directory→file links at all. Off hides every link (both the
+  // batched and per-link renderers) via `linkVisibility`, leaving just the node
+  // shapes — on a very large codebase the web of lines hides the file-type
+  // colors. Render-only: the links still drive the layout forces. Default on.
+  showLinks: boolean;
   // Render the base node shapes via a handful of `THREE.InstancedMesh`es (one
   // per distinct style) instead of one Sprite-bearing Group per node. The other
   // half of the orbit-cost lever (links being the first half): collapses ~N
@@ -142,6 +147,7 @@ export const DEFAULT_SETTINGS: GraphSettings = {
   // per-node sprite (see nodeObjectFactory / instancedNodes).
   batchedLinks: true,
   batchedNodes: true,
+  showLinks: true,
   // Off by default — the LOC/health overlays start as pure recolors. In most
   // projects the per-node value labels overlap too much to read; opt in via the
   // graph settings panel when a sparser view makes them useful.
