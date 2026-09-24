@@ -41,6 +41,17 @@ under `helpers/`.
   settings deps: adopt, adopt-orphan-by-cwd, exited-not-relaunched, relaunch
   with `--resume` under the same tab id, nudge gating, owner rules, cwd
   missing, fresh Claude fallback, spawn failure, unreachable executor.
+- `terminalRestoreTranscripts.test.ts` — the restore flow against REAL harness
+  files (harness homes redirected to a temp dir via `CLAUDE_CONFIG_DIR` /
+  `PI_CODING_AGENT_DIR` / `CODEX_HOME`), with the production
+  `detectInterruption` instead of the stub `terminalRestore.test.ts` uses: the
+  on-disk path encodings, Claude transcript present → `--resume` / absent →
+  fresh `--session-id` / empty file → still `--resume`, Pi and Codex relaunch
+  commands, and that no relaunch command gets a second id stacked on it by the
+  spawn chokepoint's `assignHarnessSessionId`. Two `todo` cases pin known gaps
+  (they fail without failing the suite): a conversation switched inside a
+  Claude tab (`/resume`) is not re-learned, and adopting an orphan pty by cwd
+  keeps the record's old `agentSession`.
 - `ignoredPathNamespace.test.ts` — `matchIgnoredSourcePath` against the
   `\\?\C:\…` extended-length paths the Windows recursive watcher reports when
   a watched ROOT is deleted or renamed. `path.relative` returned them
