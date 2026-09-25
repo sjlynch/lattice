@@ -60,9 +60,16 @@ export type ImportedServerInfo = {
   summary: string;
   secretVars: ImportedSecretVar[];
   collides: boolean;
+  // Secrets found in the url/args (descriptions only; `summary` is redacted).
+  // Non-empty → the backend refuses to import the server.
+  embeddedSecrets?: string[];
 };
 export type ImportScanResult = { servers: ImportedServerInfo[] };
-export type ImportApplyResult = { imported: string[]; skipped: string[] };
+export type ImportApplyResult = {
+  imported: string[];
+  skipped: string[];
+  refused?: Array<{ id: string; reason: string }>;
+};
 
 export async function fetchMcpCatalog(): Promise<{ servers: McpServerEntry[] }> {
   try {

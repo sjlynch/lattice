@@ -32,12 +32,50 @@ export function codexSystemPromptOverrideEnv(index: number): string {
 
 const CODEX_COMMAND_RE = /^(\s*codex(?:\.(?:exe|cmd|ps1))?)(?=\s|$)/i;
 
+// Codex (verified against codex-cli 0.157) splits a `-c` override's KEY on
+// every `.` and does NOT unquote segments, so no dotted key can name a project
+// path: `projects."C:\x".trust_level` and `projects.'C:\x'.trust_level`
+// both miss (the quotes stay part of the key), and every Lattice worktree lives
+// under `~/.lattice/`, whose `.` would split even an unquoted key. The VALUE is
+// parsed as real TOML, though, and a table-valued `projects={…}` override is
+// MERGED over config.toml's `[projects]` (the user's own trusted folders stay
+// trusted). So the path goes in as an inline-table key.
+//
+// It is a single-quoted TOML literal because on Windows the value reaches Codex
+// through cmd's `"%VAR%"`, which strips inner double quotes (a JSON-quoted path
+// lost its quotes, kept its doubled backslashes, and a space split it into an
+// extra argument that broke the launch). `tomlString` falls back to a basic
+// string only for a path containing `'` — correct on PowerShell/POSIX,
+// degraded on cmd for that rare path.
 export function buildCodexTrustOverride(cwd: string): string {
-  // A JSON string is also a valid TOML basic string. In particular, this
-  // escapes Windows backslashes and any quote in the directory name while
-  // preserving the exact cwd Codex starts in.
-  return `projects.${JSON.stringify(cwd)}.trust_level="trusted"`;
+  return `projects={${tomlString(cwd)}={trust_level='trusted'}}`;
 }
+
+// CRITICAL (Windows cmd.exe): every Lattice `--config` override rides in a
+// child-env var the command references as `"%VAR%"`. cmd STRIPS inner
+// double-quotes out of a `"%VAR%"` expansion (verified: `command="cmd"` →
+// `command=cmd`, which Codex then rejects), but PRESERVES single-quotes. So we
+// render TOML **single-quoted literal strings** (`'…'`), which survive cmd,
+// PowerShell (`"$env:VAR"`), and POSIX (`"$VAR"`) identically. TOML literal
+// strings have no escapes and cannot contain a `'`; for the rare value that
+// does, we fall back to a double-quoted basic string (correct on
+// PowerShell/POSIX, degraded only on cmd for that one value).
+//
+// Lives here (not in mcp/codexServerConfig.ts, which re-exports it) so the
+// terminal-server's fingerprinted import graph stays free of the MCP modules.
+// Prefer this for controlled strings (commands/args/urls/paths) that
+// essentially never contain a `'`; for free prose that commonly does, use a
+// multi-line literal instead so the `'`-fallback never fires.
+export function tomlString(s: string): string {
+  return NEEDS_BASIC_STRING.test(s) ? JSON.stringify(s) : `'${s}'`;
+}
+
+// What a TOML literal string cannot carry: the `'` that would close it, and
+// every control character except tab (a newline in a single-quoted literal is
+// invalid TOML — the whole `-c` override, and with it the Codex spawn, used to
+// fail on one such value). JSON escapes are valid TOML basic-string escapes, so
+// JSON.stringify is the right fallback for all of them.
+const NEEDS_BASIC_STRING = /['\x00-\x08\x0A-\x1F\x7F]/;
 
 function shellName(shell: string): string {
   return shell.split(/[\\/]/).at(-1)?.toLowerCase() ?? '';
