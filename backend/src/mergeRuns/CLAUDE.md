@@ -66,6 +66,10 @@ here instead of bloating the parent file.
     instead of setting a flag nothing will ever read. This is the backstop for
     the whole class — whatever leaves a zombie record behind, it costs one
     reaped run, not every future merge for that project.
+- `cancellation.ts` — `mergeRunCancellation(run)`: a WeakMap-backed (keyed by
+  the live run object) `AbortSignal` handed to resolver spawns
+  (`resolverSpawn/spawn.ts`), pre-aborted if `cancelRequested` is already set;
+  `cancelMergeRunSpawns(run)` aborts it from `state.ts` `cancelRun`.
 - `preflight.ts` — per-run setup: task JSON backup, git bundle backup,
   Lattice-owned exclude/untrack repair, copy snapshot, and baseline HEAD for
   the circuit breaker.

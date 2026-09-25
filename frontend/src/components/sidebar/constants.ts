@@ -2,6 +2,10 @@ import type { TerminalSpec } from '../../TerminalsContext';
 import { isValidPiModel } from '../../harnesses';
 import type { ShellKind } from './NewTerminalDropdown';
 
+// Icon size for the sidebar header's small icon buttons (search, clear,
+// restart-startup, restore-tabs).
+export const HEADER_ICON_SIZE = 12;
+
 // `codex` defaults to `--yolo` (its permission bypass, the analogue of
 // claude-yolo); createTerminalSpec drops the flag when the codexYolo setting is
 // off. `pi` carries `--approve` (its project-trust flag) so official Pi ≥0.74

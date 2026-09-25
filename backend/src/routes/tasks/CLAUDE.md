@@ -19,7 +19,8 @@ Both are read-only against the disposable worktree (plain `exec`, never
   by an in_progress / ready_to_merge task, for the `W` highlight). Only wires the
   route; the git diff/status polling, per-project base-branch cache, and
   short-TTL result cache live in focused sibling modules (`worktreeModifiedService.ts`,
-  `…Git.ts`, `…Cache.ts`, `…Constants.ts`, `…Parsers.ts`). Preserves the response
+  `worktreeModifiedGit.ts`, `worktreeModifiedCache.ts`,
+  `worktreeModifiedConstants.ts`, `worktreeModifiedParsers.ts`). Preserves the response
   shape, TTL, and git timeout behavior. Loads are single-flighted per project
   and probe at most 8 worktrees at once (two git processes each).
 
@@ -88,6 +89,21 @@ headings are description text rather than silently dropped extra tasks.
 as structure (`# ` headings, a fence that never closes) and the parser strips
 one backslash outside fences, so GET `?format=markdown` → POST `/upsert` is a
 no-op; a `limit`-capped listing carries `truncated=N/M` in its frontmatter.
+
+## Run / merge routes (`run.ts` composes run → resume → merge)
+
+- `runRoute.ts` — `POST /:id/run`: pin + `isFreshlyRunnable`, `enqueueTaskRun` → `{accepted, queued}`.
+- `startTask.ts` — `startTaskById` (worktree → pty → in_progress flip), shared with the workflow Start step.
+- `colorSlot.ts` — `assignColorSlot` / `reserveColorSlot`: stable palette slot, reserved until the flip lands.
+- `harnessFactory.ts` — `selectHarnessCommand`: harness → run/resume command + pty `createSession`.
+- `mergeRoute.ts` — `POST /:id/merge`: 409 while a merge run / manual merge / post-merge hook is active.
+- `manualMergeService.ts` — `runManualMerge`: project `run.lock`, fresh vs. already-conflicted, hook gate.
+- `mergeResponses.ts` — outcome → `{merged:true}`, a queued resolver pty, or re-written `MERGE_INSTRUCTIONS.md`.
+- `manualMergeGuards.ts` / `manualMergeLocks.ts` — per-project in-flight set; per-task `mergeLocks` wrapper.
+- `manualMergeTypes.ts` — `MergeReadyTask` (a task with `branch` + `worktreePath`).
+- `_shared.ts` — `requireTaskStatus` (400 on the wrong lane) + `logTaskRouteError`.
+- `requestUtils.ts` — `respondJson`, project resolution/400s, `?project=` pins, status checks, `normalizeBody`.
+- `projectValidation.ts` — `validateProjectForCreate`: creating needs an absolute path to a git repo.
 
 ## Queued spawns (`queuedSpawn.ts` barrel; split by concern)
 
@@ -163,7 +179,7 @@ Idempotent Stop-hook / resolver callbacks. `hooks/index.ts`'s
 
 The resolver-finished `/complete` branch and `/merged` share the
 "re-sync with main, finalize, requeue on conflict" flow in
-`../finalizeResolved.ts`; each route only renders the discriminated result
+`routes/tasks/finalizeResolved.ts`; each route only renders the discriminated result
 into its own HTTP shape. `finalizeResolvedTask` takes the per-task
 `mergeLocks` lock around its git work, so it serializes against the merge-run
 worker (`mergeRuns/processTarget.ts` + `tryFinalizeAfterResolverFinished`,
