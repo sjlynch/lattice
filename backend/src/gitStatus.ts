@@ -25,12 +25,17 @@
 
 import type { Stats } from 'node:fs';
 import path from 'node:path';
+import type { Ignore } from 'ignore';
 import { watchTree, type TreeWatcher } from './watchTree.js';
-import { canonicalProjectPath } from './projectPath.js';
 import { computeStatusSignature } from './gitHistory/signature.js';
-import { resolveGitDir } from './gitBranch.js';
+import { resolveGitDir } from './gitDir.js';
 import { loadGitignore } from './scanner/ignore.js';
 import { matchIgnoredSourcePath } from './health/constants.js';
+import {
+  createProjectWatcherRegistry,
+  publishIfChanged,
+  type ProjectWatcherSlot,
+} from './gitWatcherRegistry.js';
 
 // Coalesce the burst of events a single git op emits (a `commit` touches index,
 // logs/HEAD, and a ref in quick succession; a save-all touches many files) into
@@ -39,45 +44,25 @@ const RECOMPUTE_DEBOUNCE_MS = 250;
 
 export type GitStatusListener = (signature: string) => void;
 
-type GitStatusWatcher = {
-  root: string;
+type GitStatusWatcher = ProjectWatcherSlot<string> & {
   watchers: TreeWatcher[];
-  subscribers: Set<GitStatusListener>;
-  current: string;
 };
 
-// Keyed by the in-flight (or settled) creation promise so concurrent first
-// subscriptions for one root share a single watcher (mirrors gitBranch.ts /
-// health/watcher.ts). Kept for the life of the process: a WS reconnect storm
-// would otherwise churn the chokidar watchers on every drop, and a couple of
-// watchers per opened project is cheap.
-const watchers = new Map<string, Promise<GitStatusWatcher>>();
+const LOG_LABEL = '[git-status watcher]';
 
-// Per-subscriber isolation (same as health/watcher/subscribers.ts): one
-// throwing subscriber used to abort the loop, so every client after it in the
-// set silently missed the change and its scrubber stayed stale.
-function fanOut(proj: GitStatusWatcher, sig: string): void {
-  for (const cb of [...proj.subscribers]) {
-    try {
-      cb(sig);
-    } catch (err) {
-      console.error('[git-status watcher] subscriber threw:', err);
-    }
-  }
-}
-
-function ensureGitStatusWatcher(root: string): Promise<GitStatusWatcher> {
-  const existing = watchers.get(root);
-  if (existing) return existing;
-  const creation = createGitStatusWatcher(root);
-  watchers.set(root, creation);
-  // A failed build must not poison the slot forever — drop it so the next
-  // subscriber retries from scratch.
-  creation.catch(() => {
-    if (watchers.get(root) === creation) watchers.delete(root);
-  });
-  return creation;
-}
+// The shared per-root registry (gitWatcherRegistry.ts, same as gitBranch.ts):
+// concurrent first subscriptions for one root share a single build, kept for
+// the life of the process — a WS reconnect storm would otherwise churn the
+// watchers on every drop, and a couple of watchers per opened project is cheap.
+const registry = createProjectWatcherRegistry<GitStatusWatcher, string>({
+  label: LOG_LABEL,
+  create: createGitStatusWatcher,
+  arm: armGitStatusWatchers,
+  compute: computeStatusSignature,
+  close: async (proj) => {
+    await Promise.all(proj.watchers.map((w) => w.close()));
+  },
+});
 
 async function createGitStatusWatcher(root: string): Promise<GitStatusWatcher> {
   const proj: GitStatusWatcher = {
@@ -90,31 +75,19 @@ async function createGitStatusWatcher(root: string): Promise<GitStatusWatcher> {
   return proj;
 }
 
-// Attach both trees. Split out of `createGitStatusWatcher` so
-// `rearmGitStatusWatcher` can run it a second time on a watcher that was built
-// before the folder had a `.git` at all.
-async function armGitStatusWatchers(proj: GitStatusWatcher): Promise<void> {
-  if (proj.watchers.length > 0) return;
-  const root = proj.root;
-
-  const gitDir = await resolveGitDir(root);
-  if (!gitDir) return; // not a git repo — nothing to watch
-
+// A debounced trigger that recomputes the signature and fans out only on a real
+// change. Serialized: a change arriving mid-recompute sets `pending` so we run
+// exactly once more afterward (never two overlapping `git status` calls, never
+// a missed change).
+function createDebouncedRecompute(proj: GitStatusWatcher): () => void {
   let timer: NodeJS.Timeout | null = null;
   let running = false;
   let pending = false;
 
-  // Recompute the signature and fan out only on a real change. Serialized: a
-  // change arriving mid-recompute sets `pending` so we run exactly once more
-  // afterward (never two overlapping `git status` calls, never a missed change).
   const runRecompute = async (): Promise<void> => {
     running = true;
     try {
-      const sig = await computeStatusSignature(root);
-      if (sig !== proj.current) {
-        proj.current = sig;
-        fanOut(proj, sig);
-      }
+      publishIfChanged(LOG_LABEL, proj, await computeStatusSignature(proj.root));
     } finally {
       running = false;
       if (pending) {
@@ -124,7 +97,7 @@ async function armGitStatusWatchers(proj: GitStatusWatcher): Promise<void> {
     }
   };
 
-  const recompute = () => {
+  return () => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
@@ -135,25 +108,63 @@ async function armGitStatusWatchers(proj: GitStatusWatcher): Promise<void> {
       void runRecompute().catch(() => {});
     }, RECOMPUTE_DEBOUNCE_MS);
   };
+}
 
-  // The working-tree filter's matcher. Reloaded when the ROOT `.gitignore`
-  // changes (see `onTreeEvent`): with a matcher frozen at subscribe time,
-  // un-ignoring a directory left every later edit under it filtered out, so
-  // the scrubber never lit up the files git had just started reporting.
+// The working-tree filter's matcher. Reloaded when the ROOT `.gitignore`
+// changes (see `armGitStatusWatchers`' `onTreeEvent`): with a matcher frozen at
+// subscribe time, un-ignoring a directory left every later edit under it
+// filtered out, so the scrubber never lit up the files git had just started
+// reporting. `onReloaded` runs once a reload has published its new rules.
+async function createGitignoreMatcher(
+  root: string,
+  onReloaded: () => void,
+): Promise<{ current: () => Ignore; reload: () => Promise<void> }> {
   let gitignore = await loadGitignore(root);
-  const rootGitignore = path.join(root, '.gitignore');
   let gitignoreRevision = 0;
-  const reloadGitignore = async (): Promise<void> => {
+  const reload = async (): Promise<void> => {
     const revision = ++gitignoreRevision;
     const next = await loadGitignore(root);
     // Only the newest reload may publish (two quick saves, reads out of order).
     if (revision !== gitignoreRevision) return;
     gitignore = next;
-    // Re-cover the tree under the new rules: chokidar never descended into a
-    // previously-ignored directory, and the recursive backend re-diffs it
-    // (diff-based, so only real differences are reported).
-    treeWatcher.add(root);
+    onReloaded();
   };
+  return { current: () => gitignore, reload };
+}
+
+// Route every change event of each watcher to its handler. Without an 'error'
+// listener the watcher re-emits into the void, which Node treats as an
+// unhandled exception and crashes the process. Log and swallow.
+function wireTreeWatchers(
+  pairs: ReadonlyArray<readonly [TreeWatcher, (p: string) => void]>,
+): void {
+  for (const [w, handler] of pairs) {
+    w.on('error', (err) => console.error(LOG_LABEL, err));
+    w.on('add', handler);
+    w.on('change', handler);
+    w.on('unlink', handler);
+    w.on('addDir', handler);
+    w.on('unlinkDir', handler);
+  }
+}
+
+// Attach both trees. Split out of `createGitStatusWatcher` so
+// `rearmGitStatusWatcher` can run it a second time on a watcher that was built
+// before the folder had a `.git` at all.
+async function armGitStatusWatchers(proj: GitStatusWatcher): Promise<void> {
+  if (proj.watchers.length > 0) return;
+  const root = proj.root;
+
+  const gitDir = await resolveGitDir(root);
+  if (!gitDir) return; // not a git repo — nothing to watch
+
+  const recompute = createDebouncedRecompute(proj);
+
+  // On a reload, re-cover the tree under the new rules: chokidar never
+  // descended into a previously-ignored directory, and the recursive backend
+  // re-diffs it (diff-based, so only real differences are reported).
+  const gitignore = await createGitignoreMatcher(root, () => treeWatcher.add(root));
+  const rootGitignore = path.join(root, '.gitignore');
 
   // 1. Git metadata: watch the whole git dir but prune the heavy content-object
   //    subtrees (a commit writes many loose objects we don't care about).
@@ -170,27 +181,18 @@ async function armGitStatusWatchers(proj: GitStatusWatcher): Promise<void> {
   //    inside matchIgnoredSourcePath, so this watcher never double-covers (1).
   const treeWatcher = watchTree(root, {
     ignored: (p: string, stats?: Stats) =>
-      matchIgnoredSourcePath(p, root, gitignore, stats?.isDirectory() ?? false),
+      matchIgnoredSourcePath(p, root, gitignore.current(), stats?.isDirectory() ?? false),
   });
 
   const onTreeEvent = (p: string) => {
-    if (path.resolve(p) === rootGitignore) void reloadGitignore().catch(() => {});
+    if (path.resolve(p) === rootGitignore) void gitignore.reload().catch(() => {});
     recompute();
   };
 
-  for (const [w, handler] of [
+  wireTreeWatchers([
     [metaWatcher, recompute],
     [treeWatcher, onTreeEvent],
-  ] as const) {
-    // Without an 'error' listener the watcher re-emits into the void, which Node
-    // treats as an unhandled exception and crashes the process. Log and swallow.
-    w.on('error', (err) => console.error('[git-status watcher]', err));
-    w.on('add', handler);
-    w.on('change', handler);
-    w.on('unlink', handler);
-    w.on('addDir', handler);
-    w.on('unlinkDir', handler);
-  }
+  ]);
   proj.watchers = [metaWatcher, treeWatcher];
 }
 
@@ -199,20 +201,7 @@ async function armGitStatusWatchers(proj: GitStatusWatcher): Promise<void> {
 // commit until a page reload. `initProjectGit` calls this on success.
 // Best-effort, exactly like `rearmGitBranchWatcher`.
 export async function rearmGitStatusWatcher(projectRoot: string): Promise<void> {
-  const root = canonicalProjectPath(projectRoot);
-  const pending = watchers.get(root);
-  if (!pending) return;
-  let proj: GitStatusWatcher;
-  try {
-    proj = await pending;
-  } catch {
-    return;
-  }
-  await armGitStatusWatchers(proj);
-  const sig = await computeStatusSignature(root);
-  if (sig === proj.current) return;
-  proj.current = sig;
-  fanOut(proj, sig);
+  await registry.rearm(projectRoot);
 }
 
 // Subscribe to the active project's git-status signature. The current value is
@@ -225,28 +214,11 @@ export async function subscribeGitStatus(
   projectRoot: string,
   cb: GitStatusListener,
 ): Promise<() => void> {
-  const root = canonicalProjectPath(projectRoot);
-  const proj = await ensureGitStatusWatcher(root);
-  proj.subscribers.add(cb);
-  cb(proj.current);
-  return () => {
-    proj.subscribers.delete(cb);
-  };
+  return registry.subscribe(projectRoot, cb);
 }
 
 // Test-only: close every watcher and clear the map so suites don't leak
 // persistent chokidar FSWatchers across tests.
 export async function _resetGitStatusWatchersForTest(): Promise<void> {
-  const pending = [...watchers.values()];
-  watchers.clear();
-  await Promise.all(
-    pending.map(async (p) => {
-      try {
-        const proj = await p;
-        await Promise.all(proj.watchers.map((w) => w.close()));
-      } catch {
-        /* build failed or already closed */
-      }
-    }),
-  );
+  await registry.resetForTest();
 }
