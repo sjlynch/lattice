@@ -18,9 +18,12 @@
 // project only narrows a machine-wide answer); a present-but-relative one is
 // still refused.
 
-import path from 'node:path';
 import type { Response } from 'express';
-import { canonicalProjectPath } from '../projectPath.js';
+import {
+  canonicalProjectPath,
+  isRealAbsoluteProjectPath,
+  msysToWindowsPath,
+} from '../projectPath.js';
 
 type ProjectSource = 'query' | 'body' | 'both';
 
@@ -44,7 +47,7 @@ export function readProjectParam(
     res.status(400).json({ error: 'project required' });
     return null;
   }
-  if (!path.isAbsolute(raw)) {
+  if (!isRealAbsoluteProjectPath(raw)) {
     res.status(400).json({ error: relativeProjectError(raw) });
     return null;
   }
@@ -70,7 +73,7 @@ export function readPathParam(
         ? q.path.trim()
         : '';
   if (!raw) return defaultRoot;
-  if (!path.isAbsolute(raw)) {
+  if (!isRealAbsoluteProjectPath(raw)) {
     res.status(400).json({ error: relativeProjectError(raw) });
     return null;
   }
@@ -104,7 +107,26 @@ export function requireOwnedByRequestedProject(
   return false;
 }
 
-export function relativeProjectError(raw: string): string {
+export function relativeProjectError(
+  raw: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  // Windows root-relative (`\foo`, MSYS `/c/development/proj`): path.isAbsolute
+  // accepts it, but path.resolve pins it to the backend's drive
+  // (`C:\c\development\proj`) — a phantom project with an empty board.
+  if (platform === 'win32' && /^[\\/](?![\\/])/.test(raw)) {
+    const suggestion = msysToWindowsPath(raw);
+    return (
+      `project must be an absolute path, got ${JSON.stringify(raw)}. ` +
+      `On Windows a path starting with a single slash is root-relative, not ` +
+      `absolute — it would resolve onto the backend's current drive. ` +
+      (suggestion
+        ? `This looks like an MSYS / Git-Bash path: pass ${JSON.stringify(suggestion)} instead. `
+        : '') +
+      `Pass a drive-absolute (C:\\...) or UNC (\\\\server\\share\\...) path, and ` +
+      `watch for backslashes stripped by shell escaping.`
+    );
+  }
   return (
     `project must be an absolute path, got ${JSON.stringify(raw)}. ` +
     `A relative or drive-relative path almost always means backslashes were ` +

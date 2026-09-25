@@ -533,6 +533,70 @@ test('markAgentReadopted counts a held Stop\'s quiet window from the Stop, and i
   q.forgetAgentQuiescence('wf:test-readopt:2');
 });
 
+// Regression: a gate holding a Stop for busy subagents, then a backend down for
+// longer than READOPTED_SETTLE_MS. No hook could be delivered while it was
+// down, so the downtime is not silence — the quiet window starts at boot, not
+// at the persisted `activeAt` (which would advance, and kill the pty, ~1 s
+// after boot while the subagents still work).
+test('markAgentReadopted starts a busy held Stop\'s quiet window at boot, not at activeAt', async () => {
+  const q = await import('../agentQuiescence.js');
+  const realNow = Date.now;
+  const T = realNow();
+  let now = T + 300_000;
+  Date.now = () => now;
+  try {
+    // A pre-`busy` record: an `activeAt` alone means the gate saw it active.
+    q.markAgentReadopted('wf:test-readopt-busy:0', { stopAt: T, activeAt: T + 10_000 });
+    // The explicit flag.
+    q.markAgentReadopted('wf:test-readopt-busy:1', { stopAt: T, activeAt: T + 10_000, busy: true });
+    // Not busy at the last checkpoint: counts from activeAt as before.
+    q.markAgentReadopted('wf:test-readopt-busy:2', { stopAt: T, activeAt: T + 10_000, busy: false });
+    for (const id of ['wf:test-readopt-busy:0', 'wf:test-readopt-busy:1']) {
+      assert.equal(q.isAgentQuiescent(id, 4_000), false, `${id}: busy at death → not quiescent at boot`);
+    }
+    assert.equal(q.isAgentQuiescent('wf:test-readopt-busy:2', 4_000), true, 'quiet at death → the downtime counts');
+
+    now = T + 300_000 + q.READOPTED_SETTLE_MS - 1;
+    assert.equal(q.isAgentQuiescent('wf:test-readopt-busy:1', 4_000), false, 'still inside the window from boot');
+    now = T + 300_000 + q.READOPTED_SETTLE_MS;
+    assert.equal(q.isAgentQuiescent('wf:test-readopt-busy:0', 4_000), true, 'quiescent once the window from boot elapses');
+    assert.equal(q.isAgentQuiescent('wf:test-readopt-busy:1', 4_000), true);
+  } finally {
+    Date.now = realNow;
+    for (let i = 0; i < 3; i++) q.forgetAgentQuiescence(`wf:test-readopt-busy:${i}`);
+  }
+});
+
+// The `busy` a holding gate persists: live subagents / a real recent signal
+// are busy; the placeholder signal a boot re-adoption sets is not — otherwise
+// every boot would re-persist "busy", and restarts closer together than the
+// settle window would hold a finished step forever.
+test('agentHeldActivity reports busy for real activity, never for the boot placeholder', async () => {
+  const q = await import('../agentQuiescence.js');
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  const id = 'wf:test-held-activity:0';
+  try {
+    q.markAgentReadopted(id, { stopAt: now - 400_000, activeAt: now - 390_000 });
+    const boot = now;
+    now += 1_000;
+    assert.deepEqual(q.agentHeldActivity(id, 15_000), { activeAt: boot, busy: false }, 'boot placeholder is not activity');
+
+    q.noteAgentSignal(id); // a surviving subagent's tool use
+    assert.deepEqual(q.agentHeldActivity(id, 15_000), { activeAt: now, busy: true }, 'a real signal within the throttle');
+    now += 15_000;
+    assert.equal(q.agentHeldActivity(id, 15_000).busy, false, 'and not once it is older than the throttle');
+
+    q.noteSubagentStart(id, 'explore-1');
+    now += 60_000;
+    assert.deepEqual(q.agentHeldActivity(id, 15_000), { activeAt: now, busy: true }, 'a live subagent is busy however quiet');
+  } finally {
+    Date.now = realNow;
+    q.forgetAgentQuiescence(id);
+  }
+});
+
 test('a gate holding a Stop for live subagents persists when it last saw them busy', async () => {
   const { recordStopReceived, requestStopHookStepComplete } = await import('../workflowRuns/stopHookGate.js');
   const q = await import('../agentQuiescence.js');
@@ -559,6 +623,8 @@ test('a gate holding a Stop for live subagents persists when it last saw them bu
     await flushWorkflowRunPersist(wf.projectPath);
     const [fromDisk] = await loadPersistedWorkflowRuns(wf.projectPath);
     assert.equal(fromDisk?.stopReceived?.activeAt, held.activeAt, 'and persisted for a restart');
+    assert.equal(held.busy, true, 'a live subagent marks the checkpoint busy');
+    assert.equal(fromDisk?.stopReceived?.busy, true, 'and the busy flag survives the mirror');
     q.forgetAgentQuiescence(agentId);
   } finally {
     for (const [id, r] of [...runs.entries()]) if (r.projectPath === canonical) runs.delete(id);

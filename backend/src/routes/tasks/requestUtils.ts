@@ -1,7 +1,7 @@
-import path from 'node:path';
 import type { Response } from 'express';
 import { getTask, type Task, type TaskStatus } from '../../tasks.js';
-import { canonicalProjectPath } from '../../projectPath.js';
+import { canonicalProjectPath, isRealAbsoluteProjectPath } from '../../projectPath.js';
+import { relativeProjectError } from '../projectParam.js';
 import { parseMarkdownDoc, type ParsedMarkdownDoc } from './markdownBatch.js';
 
 // Shared happy-path wrapper for the tasks CRUD handlers. `fn` runs the
@@ -62,21 +62,19 @@ export function resolveProject(req: { query: unknown; body: unknown }): string {
 // the mangling instead of a silently-empty result. Only call this once the
 // project is known non-empty (an omitted project has its own "required" 400).
 // Returns true when it's safe to proceed; otherwise it has already sent the 400.
+// On Windows a root-relative path (`\foo`, MSYS `/c/dev/proj`) passes
+// path.isAbsolute yet resolves onto the backend's drive (`C:\c\dev\proj`), so
+// the check is `isRealAbsoluteProjectPath`, not path.isAbsolute.
 export function requireAbsoluteProject(project: string, res: Response): boolean {
-  if (path.isAbsolute(project)) return true;
-  res.status(400).json({
-    error:
-      `project must be an absolute path, got ${JSON.stringify(project)}. ` +
-      `A relative or drive-relative path almost always means backslashes were ` +
-      `stripped by shell escaping (e.g. C:\\development\\proj arriving as ` +
-      `"C:developmentproj"). Pass the full absolute path.`,
-  });
+  if (isRealAbsoluteProjectPath(project)) return true;
+  res.status(400).json({ error: relativeProjectError(project) });
   return false;
 }
 
 // Optional project pinning for the by-id routes (`GET/PATCH/DELETE /api/tasks/
 // :id`, `/append-summary`, `/run`, `/resume`, `/merge`, `/cancel-queued-run`,
-// and the resolver callbacks `/merged`, `/merge-aborted`, `/stash-resolved`).
+// and the resolver callbacks `/complete`, `/merged`, `/merge-aborted`,
+// `/stash-resolved`).
 // `getTask(id)` is a GLOBAL lookup across every indexed project, so an id alone
 // reaches any board on the machine. When the caller sends `?project=` — the
 // `lattice` MCP server does on every call, and the generated docs' recipes do
@@ -104,20 +102,22 @@ export function requireTaskInRequestedProject(
   return false;
 }
 
-// The same `?project=` pin for the bulk by-id write routes (`/transition` with
+// The same project pin for the bulk by-id write routes (`/transition` with
 // explicit `ids`, `/bulk-update`), mirroring what `/upsert` does per block:
 // `updateTask(id)` is a global lookup, so without this the `lattice` MCP
 // `transition_tasks` tool (which always sends `project=`) could re-lane or
-// "delete" another board's task. Ids that belong to a different project land in
-// `foreign` (reported, never written); everything else — including ids that
-// exist nowhere, which the write path still reports as `missing` — stays in
-// `own`. With no project sent, every id is `own`, exactly as before.
+// "delete" another board's task. Callers pass `resolveProject(req)` — the
+// `?project=` query OR the body's `project` — so a project pinned in the body
+// scopes the ids just like one in the URL. Ids that belong to a different
+// project land in `foreign` (reported, never written); everything else —
+// including ids that exist nowhere, which the write path still reports as
+// `missing` — stays in `own`. With no project sent, every id is `own`, exactly
+// as before.
 export async function partitionIdsByRequestedProject(
   ids: string[],
-  req: { query: unknown },
+  requestedProject: string,
 ): Promise<{ own: string[]; foreign: string[] }> {
-  const q = req.query as Record<string, unknown> | undefined;
-  const project = typeof q?.project === 'string' ? q.project.trim() : '';
+  const project = requestedProject.trim();
   if (!project) return { own: ids, foreign: [] };
   const canonical = canonicalProjectPath(project);
   const existing = await Promise.all(ids.map((id) => getTask(id)));

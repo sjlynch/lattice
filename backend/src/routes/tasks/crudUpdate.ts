@@ -117,6 +117,7 @@ export async function handleTaskAppendSummary(
 // the batch. Like single PATCH, idempotent on no-op updates.
 type BulkUpdateRequest = Request<unknown, unknown, {
   updates?: BulkTaskUpdate[];
+  project?: string;
 }>;
 
 export async function handleTaskBulkUpdate(
@@ -131,11 +132,12 @@ export async function handleTaskBulkUpdate(
   const all = parsed.value;
 
   await respondJson(res, async () => {
-    // Honour the `?project=` pin like the single PATCH does: an id from another
-    // board is reported as `foreign`, never written (updateTask is global).
+    // Honour the project pin (query OR body) like the single PATCH does: an id
+    // from another board is reported as `foreign`, never written (updateTask
+    // is global).
     const { own, foreign } = await partitionIdsByRequestedProject(
       all.map((u) => u.id!),
-      req,
+      resolveProject(req),
     );
     const ownIds = new Set(own);
     const updates = all.filter((u) => ownIds.has(u.id!));

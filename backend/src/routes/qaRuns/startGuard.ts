@@ -4,8 +4,7 @@
 // an `ok:false` carries the exact status code + error string the route must
 // send; an `ok:true` carries the canonicalized project and the resolved task.
 
-import path from 'node:path';
-import { canonicalProjectPath } from '../../projectPath.js';
+import { canonicalProjectPath, isRealAbsoluteProjectPath } from '../../projectPath.js';
 import { relativeProjectError } from '../projectParam.js';
 import { getTask } from '../../tasks.js';
 import type { Task } from '../../tasks.js';
@@ -23,7 +22,7 @@ export async function resolveQaRunStart(
   if (!rawProject) return { ok: false, status: 400, error: 'project required' };
   // canonicalProjectPath is path.resolve underneath: a relative project would
   // resolve under the backend's cwd and never match the task's board anyway.
-  if (!path.isAbsolute(rawProject)) {
+  if (!isRealAbsoluteProjectPath(rawProject)) {
     return { ok: false, status: 400, error: relativeProjectError(rawProject) };
   }
   if (typeof b.taskId !== 'string' || !b.taskId) {

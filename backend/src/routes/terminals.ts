@@ -2,8 +2,8 @@
 // subprocess. Sessions are listed and killed via the proxy because the
 // terminal server is detached and lives in a separate process.
 
-import path from 'node:path';
 import { Router } from 'express';
+import { isRealAbsoluteProjectPath } from '../projectPath.js';
 import { relativeProjectError } from './projectParam.js';
 import { proxyCreateSession, proxyListSessions } from '../terminalProxy.js';
 // The RAW kill (no registry bookkeeping): this route ends the record itself,
@@ -66,13 +66,13 @@ export function buildTerminalsRouter(): Router {
         return res.status(400).json({ error: `${key} must be a string` });
       }
     }
-    if (typeof body.cwd === 'string' && body.cwd.trim() && !path.isAbsolute(body.cwd.trim())) {
+    if (typeof body.cwd === 'string' && body.cwd.trim() && !isRealAbsoluteProjectPath(body.cwd.trim())) {
       return res.status(400).json({ error: relativeProjectError(body.cwd.trim()).replace('project must', 'cwd must') });
     }
     // Same for projectPath: it keys the registry record and the MCP / system-
     // prompt resolution, so a relative one registered the tab (and read the
     // settings) of a phantom project under the backend's cwd.
-    if (typeof body.projectPath === 'string' && body.projectPath.trim() && !path.isAbsolute(body.projectPath.trim())) {
+    if (typeof body.projectPath === 'string' && body.projectPath.trim() && !isRealAbsoluteProjectPath(body.projectPath.trim())) {
       return res.status(400).json({ error: relativeProjectError(body.projectPath.trim()).replace('project must', 'projectPath must') });
     }
     // Positive integer within ConPTY's 16-bit limit — mirrors `isPtyDimension`.

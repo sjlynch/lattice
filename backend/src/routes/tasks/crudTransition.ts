@@ -46,9 +46,10 @@ export async function handleTaskTransition(
       res.status(400).json({ error: `ids[${bad}] must be a non-empty string` });
       return;
     }
-    // Explicit ids are a global lookup — honour the `?project=` pin (see
-    // partitionIdsByRequestedProject) so a foreign id is reported, not moved.
-    ({ own: ids, foreign } = await partitionIdsByRequestedProject(body.ids, req));
+    // Explicit ids are a global lookup — honour the project pin (query OR
+    // body, see partitionIdsByRequestedProject) so a foreign id is reported,
+    // not moved.
+    ({ own: ids, foreign } = await partitionIdsByRequestedProject(body.ids, project));
   } else if (fromStatus && project) {
     if (!isValidTaskStatus(fromStatus)) {
       res.status(400).json({ error: statusValidationError('fromStatus') });
