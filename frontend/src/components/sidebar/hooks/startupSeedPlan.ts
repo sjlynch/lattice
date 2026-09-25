@@ -38,6 +38,24 @@ export function settleInFlightStartups(
   }
 }
 
+// Which configured startups a "Restart startup terminals" click should spawn:
+// every non-blank command whose spawn is NOT already in flight for this
+// project. `spawnStartup` awaits its pre-create (spawn queue, can wait under
+// CPU/RAM pressure) before the tab exists, so a second click during that wait
+// found none of the first click's tabs to close and spawned a second full set
+// — two `npm run dev`s fighting over one port. The caller marks every returned
+// config in flight before spawning; `settleInFlightStartups` clears them.
+export function planRestart(
+  configs: readonly StartupTerminal[],
+  inFlight: ReadonlySet<string>,
+  activeFolder: string,
+): StartupTerminal[] {
+  return configs.filter(
+    (cfg) =>
+      !!cfg.command.trim() && !inFlight.has(startupInFlightKey(activeFolder, cfg.id)),
+  );
+}
+
 function ptyIsLive(serverId: string | undefined, liveIds: ReadonlySet<string> | null): boolean {
   // No serverId = a serverless spec that will spawn on attach; an unreadable
   // live set = "can't tell", so treat every pty as alive rather than respawn.

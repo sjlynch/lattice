@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { StartupTerminal } from '../../../api';
 import type { TerminalSpec } from '../../../TerminalsContext';
 import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
 import { createBackendSession, fetchLiveTerminalIds } from '../../../terminal/terminalApi';
 import { fetchTerminalTabs } from '../../../api';
-import { planStartupSeeding, settleInFlightStartups, startupInFlightKey } from './startupSeedPlan';
+import {
+  planRestart,
+  planStartupSeeding,
+  settleInFlightStartups,
+  startupInFlightKey,
+} from './startupSeedPlan';
 
 // Retry schedule for the seeding pass's two backend reads while the backend
 // is still booting. Mirrors REGISTRY_FETCH_ATTEMPTS / REGISTRY_FETCH_RETRY_MS
@@ -170,8 +175,17 @@ export function useStartupTerminals({
   // explicitly re-add here rather than waiting for the seeding effect: the
   // effect's deps (activeFolder, startupTerminals) haven't changed, so it
   // wouldn't fire again on its own.
+  //
+  // Each spawn goes through the same in-flight markers as the seeding pass:
+  // `spawnStartup` awaits its pre-create before the tab exists, so a second
+  // click during that wait found nothing to close and spawned a second full
+  // set (two `npm run dev`s fighting for the port). A config still in flight
+  // is skipped (planRestart). `restartPending` additionally disables the
+  // button until this click's spawns have been added.
+  const [restartPending, setRestartPending] = useState(false);
   const restartStartupTerminals = useCallback(() => {
     if (!activeFolder) return;
+    const toSpawn = planRestart(startupTerminals, inFlightStartupRef.current, activeFolder);
     // projectTerminals is already scoped to activeFolder (normalized). A strict
     // `projectPath === activeFolder` skipped a registry-restored startup tab
     // (backend realpath spelling), leaving its pty running beside the respawn.
@@ -179,11 +193,14 @@ export function useStartupTerminals({
       .filter((t) => t.kind === 'startup')
       .map((t) => t.id);
     if (ids.length > 0) closeTerminals(ids);
-    for (const cfg of startupTerminals) {
-      if (!cfg.command.trim()) continue;
-      void spawnStartup(cfg, activeFolder, addTerminal);
-    }
+    if (toSpawn.length === 0) return;
+    setRestartPending(true);
+    const spawns = toSpawn.map((cfg) => {
+      inFlightStartupRef.current.add(startupInFlightKey(activeFolder, cfg.id));
+      return spawnStartup(cfg, activeFolder, addTerminal);
+    });
+    void Promise.allSettled(spawns).then(() => setRestartPending(false));
   }, [activeFolder, closeTerminals, addTerminal, startupTerminals]);
 
-  return { restartStartupTerminals };
+  return { restartStartupTerminals, restartPending };
 }

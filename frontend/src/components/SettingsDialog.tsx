@@ -26,6 +26,9 @@ type Props = {
   open: boolean;
   onClose: () => void;
   activeFolder: string;
+  // App's `userSettings.loaded` — false while the project's settings (which
+  // seed the startup terminals + launch defaults) are still in flight.
+  settingsLoaded: boolean;
   startupTerminals: StartupTerminal[];
   onStartupTerminalsChange: (next: StartupTerminal[]) => void;
   terminalLaunchSettings: TerminalLaunchSettings;
@@ -38,6 +41,7 @@ export function SettingsDialog({
   open,
   onClose,
   activeFolder,
+  settingsLoaded,
   startupTerminals,
   onStartupTerminalsChange,
   terminalLaunchSettings,
@@ -57,6 +61,7 @@ export function SettingsDialog({
     useSettingsController({
       open,
       activeFolder,
+      settingsLoaded,
       drafts,
       startupTerminals,
       onClose,

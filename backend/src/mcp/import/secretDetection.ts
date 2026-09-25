@@ -80,3 +80,158 @@ export function looksSecretValue(value: string): boolean {
 export function isReference(value: string): boolean {
   return REFERENCE_RE.test(value.trim());
 }
+
+// ---- secrets embedded in a URL or command-line args -------------------------
+//
+// env / headers have a name→value slot the secrets file can take over; a `url`
+// or an `args` list does not. A key embedded there (`?api_key=sk-…`,
+// `https://user:token@host/…`, `--api-key sk-…`, mcp-remote's
+// `--header Authorization:Bearer sk-…`) would otherwise reach the import scan
+// response, the non-0600 globalSettings.json, and every spawned command line.
+// These scanners find such secrets, return a REDACTED copy of the value and a
+// description of each finding (names only — never the value). The importer
+// keeps only the redacted copy and refuses to apply a flagged server.
+
+export const REDACTED = '***';
+
+// A secret-named flag / query param / `NAME=` whose value is NOT itself the
+// secret (a path to a key file, an auth mode, an endpoint) — `--token-file`,
+// `auth_mode`, `KEY_PATH`.
+const BENIGN_NAME_SUFFIX_RE =
+  /(?:file|path|dir|env|var|mode|type|url|uri|endpoint|method|provider|scheme|header)$/i;
+
+const URL_SHAPE_RE = /^[a-z][a-z0-9+.\-]*:\/\//i;
+
+export type EmbeddedSecretScan<T> = { redacted: T; findings: string[] };
+
+function looksSecretParamName(name: string): boolean {
+  const n = name.replace(/^-+/, '');
+  return looksSecret(n) && !BENIGN_NAME_SUFFIX_RE.test(n);
+}
+
+// Also catches a secret after a scheme word (`Bearer sk-…`, `token ghp_…`).
+function valueLooksSecret(value: string): boolean {
+  return looksSecretValue(value) || value.trim().split(/\s+/).some(looksSecretValue);
+}
+
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s.replace(/\+/g, ' '));
+  } catch {
+    return s;
+  }
+}
+
+// `a=1&api_key=sk-…` (a query string or an `#access_token=…` fragment).
+function redactParams(params: string, where: string, findings: string[]): string {
+  return params
+    .split('&')
+    .map((pair) => {
+      const eq = pair.indexOf('=');
+      if (eq < 0) {
+        if (pair && !isReference(pair) && looksSecretValue(safeDecode(pair))) {
+          findings.push(`a secret-looking URL ${where} value`);
+          return REDACTED;
+        }
+        return pair;
+      }
+      const name = safeDecode(pair.slice(0, eq));
+      const value = safeDecode(pair.slice(eq + 1));
+      if (!value || isReference(value)) return pair;
+      if (looksSecretParamName(name) || valueLooksSecret(value)) {
+        findings.push(`URL ${where} parameter "${name}"`);
+        return `${pair.slice(0, eq)}=${REDACTED}`;
+      }
+      return pair;
+    })
+    .join('&');
+}
+
+// Credentialed userinfo, secret-named / secret-shaped query (and fragment)
+// params, and secret-shaped path segments (`https://host/mcp/sk-…/sse`).
+export function scanUrlForSecrets(url: string): EmbeddedSecretScan<string> {
+  const findings: string[] = [];
+  const m = /^([a-z][a-z0-9+.\-]*:\/\/)([^/?#]*)([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/is.exec(url.trim());
+  if (!m) {
+    return valueLooksSecret(url)
+      ? { redacted: REDACTED, findings: ['a secret-looking URL'] }
+      : { redacted: url, findings };
+  }
+  const [, scheme, rawAuthority, rawPath, query, fragment] = m;
+  let authority = rawAuthority;
+  const at = authority.lastIndexOf('@');
+  if (at >= 0) {
+    const userinfo = authority.slice(0, at);
+    if (userinfo && !userinfo.split(':').every((p) => !p || isReference(p))) {
+      findings.push('credentials in the URL (user:password@host)');
+      authority = `${REDACTED}${authority.slice(at)}`;
+    }
+  }
+  const path = rawPath
+    .split('/')
+    .map((seg) => {
+      if (!seg || isReference(seg) || !looksSecretValue(safeDecode(seg))) return seg;
+      findings.push('a secret-looking URL path segment');
+      return REDACTED;
+    })
+    .join('/');
+  let out = `${scheme}${authority}${path}`;
+  if (query !== undefined) out += `?${redactParams(query, 'query', findings)}`;
+  if (fragment !== undefined) out += `#${redactParams(fragment, 'fragment', findings)}`;
+  return findings.length > 0 ? { redacted: out, findings } : { redacted: url, findings };
+}
+
+// A single value (a flag's value, an arg): URL-aware, else whole-value shape.
+function scanValue(value: string): EmbeddedSecretScan<string> {
+  if (URL_SHAPE_RE.test(value.trim())) return scanUrlForSecrets(value);
+  return valueLooksSecret(value)
+    ? { redacted: REDACTED, findings: ['a secret-looking value'] }
+    : { redacted: value, findings: [] };
+}
+
+// `--api-key=sk-…`, `API_KEY=sk-…` (docker -e), `Authorization:Bearer sk-…`
+// (mcp-remote --header), `--api-key sk-…` (value in the NEXT arg), a URL arg,
+// or a bare secret-shaped arg.
+export function scanArgsForSecrets(args: string[]): EmbeddedSecretScan<string[]> {
+  const findings: string[] = [];
+  const redacted = args.map((arg, i) => {
+    if (isReference(arg)) return arg;
+    const prev = i > 0 ? args[i - 1] : undefined;
+    if (
+      prev !== undefined &&
+      /^-{1,2}[A-Za-z]/.test(prev) &&
+      !/[=:]/.test(prev) &&
+      looksSecretParamName(prev) &&
+      !arg.startsWith('-')
+    ) {
+      findings.push(`the value after argument "${prev}"`);
+      return REDACTED;
+    }
+    if (URL_SHAPE_RE.test(arg.trim())) {
+      const r = scanUrlForSecrets(arg);
+      for (const f of r.findings) findings.push(`${f} in argument ${i + 1}`);
+      return r.redacted;
+    }
+    const kv = /^(-{0,2}[A-Za-z_][\w.-]*)\s*([=:])\s*([\s\S]*)$/.exec(arg);
+    if (kv) {
+      const [, name, sep, value] = kv;
+      if (!value || isReference(value)) return arg;
+      if (looksSecretParamName(name)) {
+        findings.push(`the value of argument "${name}"`);
+        return `${name}${sep}${REDACTED}`;
+      }
+      const r = scanValue(value);
+      if (r.findings.length > 0) {
+        findings.push(`the value of argument "${name}"`);
+        return `${name}${sep}${r.redacted}`;
+      }
+      return arg;
+    }
+    if (valueLooksSecret(arg)) {
+      findings.push(`argument ${i + 1}`);
+      return REDACTED;
+    }
+    return arg;
+  });
+  return { redacted, findings };
+}

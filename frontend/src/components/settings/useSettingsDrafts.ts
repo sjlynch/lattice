@@ -15,6 +15,15 @@ import {
   type FetchedToggles,
   type FetchedTogglesTouched,
 } from './fetchedToggles';
+import { type TerminalLaunchTouched } from './saveSettings';
+
+function noLaunchFieldTouched(): TerminalLaunchTouched {
+  return {
+    terminalDefaultHarness: false,
+    terminalClaudeSkipPermissions: false,
+    codexYolo: false,
+  };
+}
 
 // Draft state owned directly by SettingsDialog (the terminal-default section
 // and the Claude-instrumentation toggle), plus the synchronization that
@@ -48,6 +57,10 @@ export type SettingsDrafts = {
   // The fetched toggles that are safe to write on Save — see
   // `pickSavableFetchedToggles`.
   getSavableFetchedToggles: () => Partial<FetchedToggles>;
+  // Which terminal-launch drafts the user edited since they were last seeded.
+  // Until the project's settings load, the seed is App's defaults, not the
+  // project's values — Save writes only these then (see saveSettings).
+  getTerminalLaunchTouched: () => TerminalLaunchTouched;
 };
 
 export { pickSavableFetchedToggles } from './fetchedToggles';
@@ -58,13 +71,32 @@ export function useSettingsDrafts(
   activeFolder: string,
   terminalLaunchSettings: TerminalLaunchSettings,
 ): SettingsDrafts {
-  const [terminalDefaultHarness, setTerminalDefaultHarness] =
+  const [terminalDefaultHarness, setTerminalDefaultHarnessState] =
     useState<TerminalDefaultHarness>(terminalLaunchSettings.terminalDefaultHarness);
-  const [terminalClaudeSkipPermissions, setTerminalClaudeSkipPermissions] =
+  const [terminalClaudeSkipPermissions, setTerminalClaudeSkipPermissionsState] =
     useState(terminalLaunchSettings.terminalClaudeSkipPermissions);
   // Codex `--yolo` toggle — default ON (part of terminalLaunchSettings, so it's
   // reseeded from the same synchronous slice as the harness/skip drafts).
-  const [codexYolo, setCodexYolo] = useState(terminalLaunchSettings.codexYolo);
+  const [codexYolo, setCodexYoloState] = useState(terminalLaunchSettings.codexYolo);
+  // Reset on every reseed; set by a user edit of the matching draft.
+  const terminalLaunchTouchedRef = useRef<TerminalLaunchTouched>(
+    noLaunchFieldTouched(),
+  );
+  const setTerminalDefaultHarness = useCallback(
+    (value: TerminalDefaultHarness) => {
+      terminalLaunchTouchedRef.current.terminalDefaultHarness = true;
+      setTerminalDefaultHarnessState(value);
+    },
+    [],
+  );
+  const setTerminalClaudeSkipPermissions = useCallback((value: boolean) => {
+    terminalLaunchTouchedRef.current.terminalClaudeSkipPermissions = true;
+    setTerminalClaudeSkipPermissionsState(value);
+  }, []);
+  const setCodexYolo = useCallback((value: boolean) => {
+    terminalLaunchTouchedRef.current.codexYolo = true;
+    setCodexYoloState(value);
+  }, []);
   // The fetched toggles (see fetchedToggles.ts): current drafts, and the
   // last-loaded baselines so we can tell "dirty".
   const [fetched, setFetchedValues] =
@@ -82,11 +114,12 @@ export function useSettingsDrafts(
   // time the dialog opens.
   useEffect(() => {
     if (!open) return;
-    setTerminalDefaultHarness(terminalLaunchSettings.terminalDefaultHarness);
-    setTerminalClaudeSkipPermissions(
+    setTerminalDefaultHarnessState(terminalLaunchSettings.terminalDefaultHarness);
+    setTerminalClaudeSkipPermissionsState(
       terminalLaunchSettings.terminalClaudeSkipPermissions,
     );
-    setCodexYolo(terminalLaunchSettings.codexYolo);
+    setCodexYoloState(terminalLaunchSettings.codexYolo);
+    terminalLaunchTouchedRef.current = noLaunchFieldTouched();
   }, [open, terminalLaunchSettings]);
 
   // User edit of one fetched toggle: mark it touched (so a late GET won't seed
@@ -187,6 +220,11 @@ export function useSettingsDrafts(
     [fetched, fetchedLoaded],
   );
 
+  const getTerminalLaunchTouched = useCallback(
+    () => ({ ...terminalLaunchTouchedRef.current }),
+    [],
+  );
+
   return {
     terminalDefaultHarness,
     setTerminalDefaultHarness,
@@ -210,5 +248,6 @@ export function useSettingsDrafts(
     setRestoreNudgeUserTabs: setRestoreNudgeUserTabsDraft,
     dirty,
     getSavableFetchedToggles,
+    getTerminalLaunchTouched,
   };
 }

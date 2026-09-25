@@ -37,6 +37,16 @@ policy (MCP plan §8) — don't duplicate it here.
   positive only routes plain config into the `0600` secrets file (still injected
   at resolve time), whereas a false negative leaks a key inline into the
   world-readable `globalSettings.json`.
+
+  **Secrets embedded in `url` / `args`** (`?api_key=…`, `https://user:tok@host`,
+  a secret-shaped path segment, `--api-key sk-…`, `--api-key=…`, `KEY=…`,
+  mcp-remote `--header Authorization:Bearer …`) have no env/header slot to move
+  into, so `scanUrlForSecrets` / `scanArgsForSecrets` return a **redacted** copy
+  plus name-only findings. `normalizeServer` keeps only the redacted url/args and
+  sets `Normalized.embeddedSecrets`; the scan surfaces it (the UI disables the
+  row) and `applyImport` **refuses** the server (`refused: [{id, reason}]`) —
+  never writes it to `globalSettings.json`. Secret-named flags/params ending in
+  `file|path|dir|mode|url|…` (`--token-file`) are not treated as secrets.
 - `codexToml.ts` — `parseCodexMcpServers`: a minimal hand-rolled reader for
   Codex's `[mcp_servers.*]` TOML tables only (no TOML dep added; best-effort).
 - `sources.ts` — the five per-tool `collect*` readers (Claude Code, Cursor,

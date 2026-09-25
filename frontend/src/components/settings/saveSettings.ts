@@ -22,14 +22,19 @@ import { type PiTabHandle } from './PiTab';
 import { type McpTabHandle } from './McpTab';
 import { type ToolsTabHandle } from './ToolsTab';
 
+export type TerminalLaunchTouched = Record<keyof TerminalLaunchSettings, boolean>;
+
 // The parent-owned draft values that participate in a save. The fetched
 // toggles are optional: an absent one is left untouched on the backend (its
 // settings GET never loaded and the user didn't edit it — see
-// `pickSavableFetchedToggles`).
+// `pickSavableFetchedToggles`). The terminal-launch drafts are always present
+// but gated by `settingsLoaded` / `terminalLaunchTouched` (see
+// `pickSavableTerminalLaunch`).
 type SaveDrafts = {
   terminalDefaultHarness: TerminalDefaultHarness;
   terminalClaudeSkipPermissions: boolean;
   codexYolo: boolean;
+  terminalLaunchTouched: TerminalLaunchTouched;
   instrumentClaude?: boolean;
   disableMemory?: boolean;
   qaTerminalAutoClose?: boolean;
@@ -55,6 +60,9 @@ type SaveHandles = {
 
 export type SaveSettingsParams = {
   activeFolder: string;
+  // App's `userSettings.loaded`: true once the project's settings — which seed
+  // `startupTerminals` and the terminal-launch drafts — have loaded.
+  settingsLoaded: boolean;
   startupTerminals: StartupTerminal[];
   drafts: SaveDrafts;
   handles: SaveHandles;
@@ -91,6 +99,26 @@ export async function saveGlobalSettings(
   }
 }
 
+// Which terminal-launch drafts a Save may write. Until the project's settings
+// load, App's launch settings are the hard-coded defaults (a project switch, or
+// a reload while the backend restarts), so an untouched draft holds a default,
+// not the project's value — writing it would silently reset a saved
+// `terminalDefaultHarness` / `terminalClaudeSkipPermissions` / `codexYolo`
+// whenever another tab was saved. Same rule as `pickSavableFetchedToggles`:
+// everything once loaded, otherwise only the fields the user edited.
+export function pickSavableTerminalLaunch(
+  values: TerminalLaunchSettings,
+  touched: TerminalLaunchTouched,
+  loaded: boolean,
+): Partial<TerminalLaunchSettings> {
+  if (loaded) return { ...values };
+  const out: Partial<TerminalLaunchSettings> = {};
+  for (const key of Object.keys(values) as (keyof TerminalLaunchSettings)[]) {
+    if (touched[key]) (out as Record<string, unknown>)[key] = values[key];
+  }
+  return out;
+}
+
 // Save orchestration for SettingsDialog, with the ordering made explicit:
 //  1. collect cleaned startup terminals (+ the other per-tab patches),
 //  2. patch project user settings,
@@ -101,6 +129,7 @@ export async function saveGlobalSettings(
 // Throws on failure so the caller can surface the error.
 export async function saveSettings({
   activeFolder,
+  settingsLoaded,
   startupTerminals,
   drafts,
   handles,
@@ -109,18 +138,28 @@ export async function saveSettings({
   onMetricsIgnoredExtsChange,
 }: SaveSettingsParams): Promise<void> {
   // 1. Collect the cleaned startup terminals and the optional per-tab patches.
-  const cleaned =
-    handles.startupTerminals?.getCleanedTerminals() ??
-    cleanStartupTerminals(startupTerminals);
-  const terminalLaunchPatch: TerminalLaunchSettings = {
+  // Startup terminals and the launch defaults are seeded from the project's
+  // userSettings; before those load the seed is `[]` / the defaults, so write
+  // them only once loaded or after the user actually edited them — otherwise
+  // an unrelated save (an MCP toggle) wiped the project's startup commands.
+  const writeStartupTerminals =
+    settingsLoaded || (handles.startupTerminals?.isTouched() ?? false);
+  const cleaned = writeStartupTerminals
+    ? (handles.startupTerminals?.getCleanedTerminals() ??
+      cleanStartupTerminals(startupTerminals))
+    : undefined;
+  const terminalLaunchDrafts: TerminalLaunchSettings = {
     terminalDefaultHarness: drafts.terminalDefaultHarness,
     terminalClaudeSkipPermissions: drafts.terminalClaudeSkipPermissions,
     codexYolo: drafts.codexYolo,
   };
-  const patch: Partial<UserSettings> = {
-    startupTerminals: cleaned,
-    ...terminalLaunchPatch,
-  };
+  const terminalLaunchPatch = pickSavableTerminalLaunch(
+    terminalLaunchDrafts,
+    drafts.terminalLaunchTouched,
+    settingsLoaded,
+  );
+  const patch: Partial<UserSettings> = { ...terminalLaunchPatch };
+  if (cleaned !== undefined) patch.startupTerminals = cleaned;
   const fetchedToggles: Partial<UserSettings> = {
     instrumentProjectClaudeSessions: drafts.instrumentClaude,
     disableClaudeMemory: drafts.disableMemory,
@@ -181,9 +220,13 @@ export async function saveSettings({
   // 4. Machine-global settings go to a separate endpoint, not userSettings.
   await saveGlobalSettings(handles);
 
-  // 5. Notify the parent callbacks.
-  onStartupTerminalsChange(cleaned);
-  onTerminalLaunchSettingsChange(terminalLaunchPatch);
+  // 5. Notify the parent callbacks — only for what was written. An untouched
+  // launch draft equals the parent's current value, so the full draft set is
+  // the parent's value with the written fields applied.
+  if (cleaned !== undefined) onStartupTerminalsChange(cleaned);
+  if (Object.keys(terminalLaunchPatch).length > 0) {
+    onTerminalLaunchSettingsChange(terminalLaunchDrafts);
+  }
   if (metricsExtsPatch !== undefined) {
     await onMetricsIgnoredExtsChange(metricsExtsPatch);
   }

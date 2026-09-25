@@ -40,12 +40,17 @@ export function useEditorDraftLifecycle({
   }, [activeFolder, setEditor]);
 
   // If the loaded workflow is edited from elsewhere (or deleted), refresh the
-  // editor — but never clobber an in-progress edit.
+  // editor — but never clobber an in-progress edit. "Deleted" means it was in
+  // the list and has left it: a workflow the editor just created may not have
+  // reached the list yet (the POST response can beat the `/ws/workflows`
+  // broadcast), and resetting then would drop an edit made during the create.
+  const seenWorkflowIds = useRef(new Set<string>());
   useEffect(() => {
+    for (const w of workflows) seenWorkflowIds.current.add(w.id);
     if (!editor.workflowId) return;
     const fresh = workflows.find((w) => w.id === editor.workflowId);
     if (!fresh) {
-      setEditor(emptyEditor());
+      if (seenWorkflowIds.current.has(editor.workflowId)) setEditor(emptyEditor());
       return;
     }
     if (!editor.dirty) {
