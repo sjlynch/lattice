@@ -81,6 +81,12 @@ const INHERITED_NPM_ENV_KEYS = new Set([
   'npm_config_user_agent',
   'npm_config_npm_version',
   'npm_config_node_gyp',
+  // Windows' `npm.cmd` shim `SET`s these (no SETLOCAL) to locate npm-cli.js, so
+  // they ride along into the node it launches and on to every pty. They name
+  // whichever npm install launched Lattice; npm.cmd re-sets them on every run.
+  'npm_cli_js',
+  'npm_prefix_js',
+  'npm_prefix_npm_cli_js',
 ]);
 
 const INHERITED_NPM_ENV_PREFIXES = ['npm_package_', 'npm_lifecycle_'];
