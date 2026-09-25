@@ -6,6 +6,7 @@ import { isTerminalSubmitFrame, noteTerminalPromptSubmit } from './callbackOutbo
 import { createTerminalActivityRelayObserver } from './terminalActivityRelay.js';
 import { withCodexActivityTitle } from './codexTerminalActivity.js';
 import { refreshLatticeApiDocs } from './latticeApiDocs.js';
+import { SUBSCRIBER_HIGH_WATER_BYTES } from './terminal/broadcast.js';
 
 // If the detached terminal-server doesn't accept the upstream connection within
 // this window, stop waiting. Leaving the browser holding an open-but-silent
@@ -26,7 +27,11 @@ const MAX_PENDING_FRAMES = 1_000;
 // suspended, wedged) would otherwise grow this process's heap without bound
 // on the pty's behalf. The frontend reconnects and gets the disk-backed replay.
 // Mirrors the executor-side bound in terminal/broadcast.ts.
-const CLIENT_HIGH_WATER_BYTES = 8 * 1024 * 1024;
+const CLIENT_HIGH_WATER_BYTES = SUBSCRIBER_HIGH_WATER_BYTES;
+
+// `new URL` needs an absolute base to parse the request's path-only URL; only
+// its query string is ever read, so the host is a placeholder.
+const REQUEST_URL_PARSE_BASE = 'http://localhost';
 
 export type EarlyFrame = { data: RawData; isBinary: boolean };
 
@@ -64,22 +69,13 @@ export function proxyTerminalWs(
     return;
   }
 
-  const params = new URL(reqUrl ?? '', 'http://localhost').searchParams;
-  if (!params.get('id') && params.has('initialCommand')) {
-    params.set('initialCommand', withCodexActivityTitle(params.get('initialCommand')!)!);
-  }
-  // A serverless connect makes the terminal-server create the pty itself; it
-  // only LOOKS UP the project's API doc for its banner, so generate it first
-  // (same as resolveHarnessSpawnBody does for a pre-spawned session).
-  if (!params.get('id')) refreshLatticeApiDocs(params.get('projectPath') || params.get('cwd') || undefined);
-  const targetWs = new WebSocket(
-    `ws://127.0.0.1:${TERMINAL_PORT}/ws/terminal?${params.toString()}`,
-  );
+  const upstream = buildUpstreamUrl(reqUrl);
+  const targetWs = new WebSocket(upstream.url);
 
   // Which pty this socket drives. Usually right there in the query; a
   // SERVERLESS connect (no id — a startup terminal, or a pre-spawn that failed)
   // learns it from the `attached` frame the terminal-server sends first.
-  let sessionId = params.get('id');
+  let sessionId = upstream.sessionId;
   // The title observer copies, JSON-parses and walks EVERY non-binary frame
   // character by character — ~1 MB/s of TUI redraws across ten working panes,
   // on the main backend's event loop — and its fact is only ever consulted
@@ -93,10 +89,7 @@ export function proxyTerminalWs(
   // Buffer messages that arrive before the upstream connection is open —
   // seeded with whatever the caller captured before this relay existed.
   const pending: EarlyFrame[] = (options.earlyFrames ?? []).slice(0, MAX_PENDING_FRAMES);
-  if (sessionId && pending.length > 0) {
-    noteTerminalClientInput(sessionId);
-    if (pending.some((f) => isTerminalSubmitFrame(f.data, f.isBinary))) noteTerminalPromptSubmit(sessionId);
-  }
+  if (sessionId && pending.length > 0) stampClientFrames(sessionId, pending);
   // Set once the browser side has gone away. Closing a still-CONNECTING
   // upstream makes ws emit an 'error' ("WebSocket was closed before the
   // connection was established") that is nothing but the teardown we asked
@@ -122,6 +115,12 @@ export function proxyTerminalWs(
   // Don't let the watchdog alone keep the process alive.
   openTimer.unref();
 
+  // Release this relay's own resources; shared by every teardown path.
+  const stopRelay = () => {
+    activityObserver?.dispose();
+    clearTimeout(openTimer);
+  };
+
   clientWs.on('message', (data: RawData, isBinary: boolean) => {
     // Every frame from the browser is something the user or the UI did —
     // a keystroke, a scroll's wheel escape, a focus report, a resize — and any
@@ -129,12 +128,7 @@ export function proxyTerminalWs(
     // spinner doesn't read the pty answering the user as the agent working.
     // See terminalActivity.ts; this relay is the only place the main backend
     // sees the input side of a pty.
-    if (sessionId) {
-      noteTerminalClientInput(sessionId);
-      // A submitted line starts a new agent turn; a completion callback the
-      // outbox replays later for the previous turn must not end this one.
-      if (isTerminalSubmitFrame(data, isBinary)) noteTerminalPromptSubmit(sessionId);
-    }
+    if (sessionId) stampClientFrames(sessionId, [{ data, isBinary }]);
     if (targetWs.readyState === WebSocket.OPEN) {
       targetWs.send(data, { binary: isBinary });
     } else if (pending.length < MAX_PENDING_FRAMES) {
@@ -149,9 +143,8 @@ export function proxyTerminalWs(
     // was registered). Don't keep a freshly-attached subscriber / spawned PTY
     // alive for a dead client — close the upstream and drop everything.
     if (clientWs.readyState !== WebSocket.OPEN) {
-      activityObserver?.dispose();
-      const s = targetWs.readyState;
-      if (s !== WebSocket.CLOSED && s !== WebSocket.CLOSING) targetWs.close();
+      stopRelay();
+      closeUpstream(targetWs);
       return;
     }
     for (const { data, isBinary } of pending) {
@@ -187,33 +180,57 @@ export function proxyTerminalWs(
   });
 
   targetWs.on('error', (err) => {
-    activityObserver?.dispose();
-    clearTimeout(openTimer);
+    stopRelay();
     if (!clientGone) console.error('[terminal-proxy] upstream error:', err.message);
     if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
   });
 
   targetWs.on('close', () => {
-    activityObserver?.dispose();
-    clearTimeout(openTimer);
+    stopRelay();
     if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
   });
 
-  clientWs.on('close', () => {
+  // The browser side went away (closed or errored): tear down the upstream.
+  const onClientGone = () => {
     clientGone = true;
-    activityObserver?.dispose();
-    clearTimeout(openTimer);
-    const s = targetWs.readyState;
-    if (s !== WebSocket.CLOSED && s !== WebSocket.CLOSING) targetWs.close();
-  });
+    stopRelay();
+    closeUpstream(targetWs);
+  };
+  clientWs.on('close', onClientGone);
+  clientWs.on('error', onClientGone);
+}
 
-  clientWs.on('error', () => {
-    clientGone = true;
-    activityObserver?.dispose();
-    clearTimeout(openTimer);
-    const s = targetWs.readyState;
-    if (s !== WebSocket.CLOSED && s !== WebSocket.CLOSING) targetWs.close();
-  });
+// The terminal-server URL for a browser `/ws/terminal` request, plus the pty
+// id it names (null for a serverless connect). A serverless connect's
+// `initialCommand` gets the Codex activity title, and its project's API doc
+// is refreshed first.
+function buildUpstreamUrl(reqUrl: string | undefined): { url: string; sessionId: string | null } {
+  const params = new URL(reqUrl ?? '', REQUEST_URL_PARSE_BASE).searchParams;
+  if (!params.get('id') && params.has('initialCommand')) {
+    params.set('initialCommand', withCodexActivityTitle(params.get('initialCommand')!)!);
+  }
+  // A serverless connect makes the terminal-server create the pty itself; it
+  // only LOOKS UP the project's API doc for its banner, so generate it first
+  // (same as resolveHarnessSpawnBody does for a pre-spawned session).
+  if (!params.get('id')) refreshLatticeApiDocs(params.get('projectPath') || params.get('cwd') || undefined);
+  return {
+    url: `ws://127.0.0.1:${TERMINAL_PORT}/ws/terminal?${params.toString()}`,
+    sessionId: params.get('id'),
+  };
+}
+
+// Close the upstream socket unless it is already closing or closed.
+function closeUpstream(ws: WebSocket): void {
+  const s = ws.readyState;
+  if (s !== WebSocket.CLOSED && s !== WebSocket.CLOSING) ws.close();
+}
+
+// Stamp browser frames bound for pty `sessionId` as user input (see
+// terminalActivity.ts). A submitted line starts a new agent turn; a completion
+// callback the outbox replays later for the previous turn must not end this one.
+function stampClientFrames(sessionId: string, frames: readonly EarlyFrame[]): void {
+  noteTerminalClientInput(sessionId);
+  if (frames.some((f) => isTerminalSubmitFrame(f.data, f.isBinary))) noteTerminalPromptSubmit(sessionId);
 }
 
 // The pty id from an executor `attached` handshake frame, or null for any
