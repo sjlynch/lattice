@@ -46,7 +46,10 @@ export function registerReadTools(
         ids: z
           .array(z.string())
           .optional()
-          .describe('Specific task ids. Bypasses lane filtering and returns full records.'),
+          .describe(
+            'Specific task ids. Bypasses lane filtering and the default limit, and returns ' +
+              'every found task as a full record, in the order requested.',
+          ),
         since: z
           .string()
           .optional()
@@ -56,7 +59,7 @@ export function registerReadTools(
           .int()
           .min(0)
           .optional()
-          .describe('Max tasks (default 100, max 1000, 0 = unlimited).'),
+          .describe('Max tasks (default 100 — unlimited with ids — max 1000, 0 = unlimited).'),
         fields: z
           .enum(['compact', 'full'])
           .optional()

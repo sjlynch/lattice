@@ -67,6 +67,12 @@ export function getQaRun(id: string): QaRun | undefined {
   return registry.get(id);
 }
 
+// Every still-running run (clones). The start guard reads it to refuse a second
+// session for a task that is already under test.
+export function listRunningQaRuns(): QaRun[] {
+  return registry.list().filter((r) => r.status === 'running');
+}
+
 export function recordQaRun(run: QaRun): void {
   registry.record(run);
 }

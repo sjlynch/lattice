@@ -59,3 +59,14 @@ export function applyTaskUpdate(
     updatedList: tasks.map((t, i) => (i === idx ? updated : t)),
   };
 }
+
+// Join a new summary onto whatever's already in the task's `summary` field.
+// Multiple appends (the worktree agent's change summary, then a QA verdict)
+// are stacked newest-last and separated by a horizontal rule so they stay
+// visually distinct. Pure + exported so it can be unit-tested in isolation;
+// `TaskCacheManager.appendTaskSummary` applies it under the write lock.
+export function appendSummaryText(existing: string | undefined, addition: string): string {
+  const prev = existing?.trim() || '';
+  const next = addition.trim();
+  return prev ? `${prev}\n\n---\n\n${next}` : next;
+}

@@ -47,7 +47,7 @@ function admitWhilePossible(): void {
         !isBackingOff(r, now) &&
         s.accounting.canAdmit(r.priority) &&
         // Fan-out work waits while the machine is saturated (resourceGovernor.ts).
-        !(r.priority === 'batch' && s.governor.holdsBatch(s.accounting.effectiveLive())));
+        !(r.priority === 'batch' && s.governor.holdsBatch(s.accounting.effectiveAgents())));
     if (!next) break;
     admit(next);
   }

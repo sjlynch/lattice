@@ -41,6 +41,7 @@ import { agentHarnessForCommand } from '../harnesses.js';
 import { terminalRegistry } from '../terminalRegistry/store.js';
 import { assignHarnessSessionId } from '../terminalRegistry/sessionIdentity.js';
 import { scheduleCodexDiscovery } from '../terminalRegistry/codexDiscovery.js';
+import { endSupersededStartupRecords } from '../terminalRegistry/startupSupersede.js';
 import type { AgentSessionRef, TerminalRecord, TerminalRegistryHint } from '../terminalRegistry/types.js';
 import { trackRestartTransition } from '../restartDrain/gate.js';
 import { refreshLatticeApiDocs } from '../latticeApiDocs.js';
@@ -377,7 +378,7 @@ async function recordSpawnedTerminal(
       }, projectPath);
     }
     const label = hint.label ?? defaultTerminalLabel(originalCommand, harness);
-    return await terminalRegistry.create({
+    const record = await terminalRegistry.create({
       projectPath,
       cwd: opts.cwd,
       label,
@@ -390,6 +391,12 @@ async function recordSpawnedTerminal(
       serverId,
       ...(serverInstanceId ? { serverInstanceId } : {}),
     });
+    // A re-seeded startup terminal replaces its dead predecessor's tab, whatever
+    // the restore mode (restore is otherwise the only thing that ends it).
+    await endSupersededStartupRecords(terminalRegistry, record, serverInstanceId).catch((err) => {
+      console.warn('[terminal-registry] could not end superseded startup terminal:', err);
+    });
+    return record;
   } catch (err) {
     console.warn('[terminal-registry] could not record spawned terminal:', err);
     return null;
