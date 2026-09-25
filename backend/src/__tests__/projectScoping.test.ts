@@ -112,7 +112,21 @@ test('classifyUpsertTarget: same project via case-different drive still updates'
 // `transition_tasks` tool (which always sends project=) could re-lane or
 // "delete" another board's task. Drives the real app with two projects.
 
-test('transition and bulk-update pinned to project A (query or body) report B\'s id as foreign and leave it untouched', async () => {
+type FetchResponse = Awaited<ReturnType<typeof fetch>>;
+
+interface TwoProjectApp {
+  base: string;
+  projectA: string;
+  projectB: string;
+  qA: string;
+  create: (project: string, title: string) => Promise<{ id: string }>;
+  get: (id: string) => Promise<{ title: string; status: string; summary?: string }>;
+  post: (url: string, body: unknown) => Promise<FetchResponse>;
+}
+
+// In-process backend app over a throwaway HOME holding two projects (A, B),
+// so a request pinned to A can be aimed at B's task ids.
+async function withTwoProjectApp(fn: (ctx: TwoProjectApp) => Promise<void>): Promise<void> {
   const tmpHome = await mkdtemp(path.join(os.tmpdir(), 'lattice-scoping-http-'));
   const originalEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   process.env.HOME = tmpHome;
@@ -131,7 +145,6 @@ test('transition and bulk-update pinned to project A (query or body) report B\'s
     await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const json = { 'Content-Type': 'application/json' };
-    const qA = `project=${encodeURIComponent(projectA)}`;
 
     const create = async (project: string, title: string) => {
       const res = await fetch(`${base}/api/tasks?project=${encodeURIComponent(project)}`, {
@@ -140,13 +153,35 @@ test('transition and bulk-update pinned to project A (query or body) report B\'s
       assert.equal(res.status, 200);
       return (await res.json()) as { id: string };
     };
-    const a = await create(projectA, 'task in A');
-    const b = await create(projectB, 'task in B');
     const get = async (id: string) => {
       const res = await fetch(`${base}/api/tasks/${id}`);
       assert.equal(res.status, 200);
-      return (await res.json()) as { title: string; status: string };
+      return (await res.json()) as { title: string; status: string; summary?: string };
     };
+    const post = (url: string, body: unknown) =>
+      fetch(`${base}${url}`, { method: 'POST', headers: json, body: JSON.stringify(body) });
+
+    await fn({
+      base, projectA, projectB, qA: `project=${encodeURIComponent(projectA)}`, create, get, post,
+    });
+
+    await flushPersist(projectA);
+    await flushPersist(projectB);
+  } finally {
+    if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+    if (originalEnv.HOME === undefined) delete process.env.HOME;
+    else process.env.HOME = originalEnv.HOME;
+    if (originalEnv.USERPROFILE === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = originalEnv.USERPROFILE;
+    await rm(tmpHome, { recursive: true, force: true });
+  }
+}
+
+test("transition and bulk-update pinned to project A (query or body) report B's id as foreign and leave it untouched", async () => {
+  await withTwoProjectApp(async ({ base, projectA, projectB, qA, create, get }) => {
+    const json = { 'Content-Type': 'application/json' };
+    const a = await create(projectA, 'task in A');
+    const b = await create(projectB, 'task in B');
 
     // transition by ids, pinned to A, carrying B's id.
     const trRes = await fetch(`${base}/api/tasks/transition?${qA}`, {
@@ -203,15 +238,123 @@ test('transition and bulk-update pinned to project A (query or body) report B\'s
     assert.equal(unpinned.status, 200);
     assert.deepEqual(await unpinned.json(), { updated: 1, missing: [], foreign: [], ids: [b.id] });
     assert.equal((await get(b.id)).status, 'backlog');
+  });
+});
 
-    await flushPersist(projectA);
-    await flushPersist(projectB);
-  } finally {
-    if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
-    if (originalEnv.HOME === undefined) delete process.env.HOME;
-    else process.env.HOME = originalEnv.HOME;
-    if (originalEnv.USERPROFILE === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = originalEnv.USERPROFILE;
-    await rm(tmpHome, { recursive: true, force: true });
-  }
+// ---------- PATCH / append-summary / DELETE honour the project pin ----------
+//
+// `getTask(id)` resolves across every board, so these by-id writes rely on
+// `requireTaskInRequestedProject` to refuse a foreign id when `?project=` is
+// sent — the `lattice` MCP `update_task` / `append_summary` / `delete_task`
+// tools always send it. A regression would let them silently rewrite or delete
+// another project's task.
+
+test("PATCH, append-summary and DELETE pinned to project A 404 on B's id and leave B untouched", async () => {
+  await withTwoProjectApp(async ({ base, projectA, projectB, qA, create, get, post }) => {
+    const a = await create(projectA, 'task in A');
+    const b = await create(projectB, 'task in B');
+    const patch = (id: string, body: unknown) => fetch(`${base}/api/tasks/${id}?${qA}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const assertDifferentBoard = async (res: FetchResponse, what: string) => {
+      assert.equal(res.status, 404, `${what} should 404`);
+      const body = (await res.json()) as { error: string; hint?: string };
+      assert.equal(body.error, 'not found');
+      assert.match(body.hint ?? '', /different board/, `${what} names the wrong board`);
+      assert.ok(body.hint?.includes(b.id), `${what} names the task`);
+    };
+
+    await assertDifferentBoard(await patch(b.id, { title: 'hijacked', status: 'done' }), 'PATCH');
+    const afterPatch = await get(b.id);
+    assert.equal(afterPatch.title, 'task in B', 'B was not renamed');
+    assert.equal(afterPatch.status, 'open', 'B was not re-laned');
+
+    const summary = await post(`/api/tasks/${b.id}/append-summary?${qA}`, { summary: 'hijacked summary' });
+    await assertDifferentBoard(summary, 'append-summary');
+    assert.equal((await get(b.id)).summary, undefined, 'no summary was appended to B');
+
+    const del = await fetch(`${base}/api/tasks/${b.id}?${qA}`, { method: 'DELETE' });
+    await assertDifferentBoard(del, 'DELETE');
+    assert.equal((await get(b.id)).title, 'task in B', 'B still exists');
+
+    // A blank summary is a 400 before any lookup.
+    const blank = await post(`/api/tasks/${a.id}/append-summary?${qA}`, { summary: '   ' });
+    assert.equal(blank.status, 400);
+    assert.deepEqual(await blank.json(), { error: 'summary required' });
+
+    // The same pinned calls against A's own task go through.
+    assert.equal((await patch(a.id, { title: 'renamed A' })).status, 200);
+    assert.equal((await get(a.id)).title, 'renamed A');
+    const ownSummary = await post(`/api/tasks/${a.id}/append-summary?${qA}`, { summary: 'did the thing' });
+    assert.equal(ownSummary.status, 200);
+    assert.match((await get(a.id)).summary ?? '', /did the thing/);
+    const ownDelete = await fetch(`${base}/api/tasks/${a.id}?${qA}`, { method: 'DELETE' });
+    assert.equal(ownDelete.status, 200);
+    assert.equal((await fetch(`${base}/api/tasks/${a.id}`)).status, 404, 'A was deleted');
+    assert.equal((await get(b.id)).title, 'task in B', "B survived A's delete");
+  });
+});
+
+// ---------- /transition {fromStatus, project} lane sweep ----------
+//
+// The lane sweep lists ONE project's tasks, so it must move exactly that
+// board's lane — `transition_tasks({fromStatus})` mass-moving the wrong board
+// is the failure mode this guards. Explicit `ids` win over `fromStatus`.
+
+test("transition {fromStatus, project} sweeps only that project's lane; ids take precedence; bad input is 400", async () => {
+  await withTwoProjectApp(async ({ projectA, projectB, create, get, post }) => {
+    const a1 = await create(projectA, 'A qa 1');
+    const a2 = await create(projectA, 'A qa 2');
+    const aOpen = await create(projectA, 'A open');
+    const b1 = await create(projectB, 'B qa 1');
+    const b2 = await create(projectB, 'B qa 2');
+    const toQa = await post('/api/tasks/transition', { ids: [a1.id, a2.id, b1.id, b2.id], status: 'qa' });
+    assert.equal(toQa.status, 200);
+    assert.equal(((await toQa.json()) as { updated: number }).updated, 4);
+
+    // ids given together with fromStatus: only the ids move.
+    const byIds = await post('/api/tasks/transition', {
+      ids: [a1.id], fromStatus: 'qa', project: projectA, status: 'done',
+    });
+    assert.equal(byIds.status, 200);
+    assert.deepEqual(await byIds.json(), { updated: 1, missing: [], foreign: [], ids: [a1.id] });
+    assert.equal((await get(a1.id)).status, 'done');
+    assert.equal((await get(a2.id)).status, 'qa', "the rest of A's qa lane stayed put");
+
+    // Lane sweep pinned to A: exactly A's qa tasks move, B's stay.
+    await post('/api/tasks/transition', { ids: [a1.id], status: 'qa' });
+    const sweep = await post('/api/tasks/transition', { fromStatus: 'qa', project: projectA, status: 'done' });
+    assert.equal(sweep.status, 200);
+    const swept = (await sweep.json()) as { updated: number; missing: string[]; foreign: string[]; ids: string[] };
+    assert.equal(swept.updated, 2);
+    assert.deepEqual(swept.missing, []);
+    assert.deepEqual(swept.foreign, []);
+    assert.deepEqual([...swept.ids].sort(), [a1.id, a2.id].sort());
+    assert.equal((await get(a1.id)).status, 'done');
+    assert.equal((await get(a2.id)).status, 'done');
+    assert.equal((await get(aOpen.id)).status, 'open', "A's other lanes untouched");
+    assert.equal((await get(b1.id)).status, 'qa', "B's qa lane untouched");
+    assert.equal((await get(b2.id)).status, 'qa', "B's qa lane untouched");
+
+    // An empty lane is a no-op, not an error.
+    const empty = await post('/api/tasks/transition', { fromStatus: 'qa', project: projectA, status: 'done' });
+    assert.equal(empty.status, 200);
+    assert.deepEqual(await empty.json(), { updated: 0, missing: [], foreign: [], ids: [] });
+
+    // Invalid fromStatus → 400.
+    const bad = await post('/api/tasks/transition', { fromStatus: 'bogus', project: projectB, status: 'done' });
+    assert.equal(bad.status, 400);
+    assert.match(((await bad.json()) as { error: string }).error, /^fromStatus must be one of/);
+
+    // Neither ids nor fromStatus+project → 400 (fromStatus alone is not enough).
+    const expected = { error: 'provide either { ids: [...] } or { fromStatus, project }' };
+    for (const body of [{ status: 'done' }, { fromStatus: 'qa', status: 'done' }, { ids: [], status: 'done' }]) {
+      const res = await post('/api/tasks/transition', body);
+      assert.equal(res.status, 400, JSON.stringify(body));
+      assert.deepEqual(await res.json(), expected);
+    }
+
+    assert.equal((await get(b1.id)).status, 'qa', 'no rejected request moved B');
+    assert.equal((await get(b2.id)).status, 'qa', 'no rejected request moved B');
+  });
 });
