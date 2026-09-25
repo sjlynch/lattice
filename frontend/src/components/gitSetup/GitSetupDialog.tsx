@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { GitBranch } from 'lucide-react';
 import { Modal } from '../Modal';
 import {
   HttpError,
   initProjectGit,
-  previewProjectInit,
   type ProjectGitProbe,
   type ProjectInitPreview,
 } from '../../api';
@@ -14,13 +13,13 @@ import {
   formatFileCount,
   hasLargeEntry,
 } from './gitSetupDerive';
+import { useInitPreview } from './useInitPreview';
 
-// Debounce for the re-preview an edit to the .gitignore triggers. Long enough
-// that a burst of typing is one request, short enough that the file count
-// visibly reacts to the line just added — that feedback loop is the entire
-// reason the textarea is editable, and the mitigation for committing a `.env`
-// or a 2GB node_modules.
-const PREVIEW_DEBOUNCE_MS = 400;
+// The blocker and empty-folder dialogs are short; the adopt path widens to fit
+// the counts, the largest-files list and the .gitignore textarea.
+const NARROW_DIALOG_WIDTH = 460;
+const WIDE_DIALOG_WIDTH = 620;
+const HEADER_ICON_SIZE = 13;
 
 type Props = {
   project: string;
@@ -50,9 +49,9 @@ function BlockerDialog({
 }) {
   const { title, lines } = describeProbeBlocker(probe);
   return (
-    <Modal open onClose={() => onDone(false)} width={460}>
+    <Modal open onClose={() => onDone(false)} width={NARROW_DIALOG_WIDTH}>
       <div className="modal-header git-setup-header">
-        <GitBranch size={13} />
+        <GitBranch size={HEADER_ICON_SIZE} />
         {title}
       </div>
       <div className="modal-body">
@@ -78,57 +77,10 @@ function InitDialog({
   project: string;
   onDone: (initialized: boolean) => void;
 }) {
-  const [preview, setPreview] = useState<ProjectInitPreview | null>(null);
-  // The .gitignore draft. Null until the first preview lands, so the textarea
-  // never flashes empty and an early re-preview can't post "".
-  const [gitignore, setGitignore] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const { preview, gitignore, editGitignore, loading, refreshing, error, setError } =
+    useInitPreview(project);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [identityDetail, setIdentityDetail] = useState<string | null>(null);
-  // Until the user touches the textarea there is nothing to re-preview — the
-  // draft is still byte-identical to what the backend just handed us.
-  const edited = useRef(false);
-  // Monotonic id so a slow re-preview can't land on top of a newer one and
-  // resurrect a stale count.
-  const previewSeq = useRef(0);
-
-  const loadPreview = useCallback(
-    async (draft: string | undefined, initial: boolean) => {
-      const seq = (previewSeq.current += 1);
-      if (initial) setLoading(true);
-      else setRefreshing(true);
-      try {
-        const next = await previewProjectInit(project, draft);
-        if (seq !== previewSeq.current) return;
-        setPreview(next);
-        setError(null);
-        if (initial) setGitignore(next.gitignore);
-      } catch (err) {
-        if (seq !== previewSeq.current) return;
-        setError((err as Error).message);
-      } finally {
-        if (seq === previewSeq.current) {
-          if (initial) setLoading(false);
-          else setRefreshing(false);
-        }
-      }
-    },
-    [project],
-  );
-
-  useEffect(() => {
-    void loadPreview(undefined, true);
-  }, [loadPreview]);
-
-  useEffect(() => {
-    if (gitignore === null || !edited.current) return;
-    const timer = window.setTimeout(() => {
-      void loadPreview(gitignore, false);
-    }, PREVIEW_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
-  }, [gitignore, loadPreview]);
 
   const runInit = useCallback(async () => {
     if (busy) return;
@@ -151,7 +103,7 @@ function InitDialog({
       }
       setBusy(false);
     }
-  }, [busy, gitignore, onDone, project]);
+  }, [busy, gitignore, onDone, project, setError]);
 
   const close = useCallback(() => {
     if (!busy) onDone(false);
@@ -162,9 +114,9 @@ function InitDialog({
   const isEmpty = preview?.isEmpty ?? true;
 
   return (
-    <Modal open onClose={close} width={isEmpty ? 460 : 620}>
+    <Modal open onClose={close} width={isEmpty ? NARROW_DIALOG_WIDTH : WIDE_DIALOG_WIDTH}>
       <div className="modal-header git-setup-header">
-        <GitBranch size={13} />
+        <GitBranch size={HEADER_ICON_SIZE} />
         Set up Git
       </div>
       <div className="modal-body">
@@ -189,10 +141,7 @@ function InitDialog({
                 preview={preview}
                 gitignore={gitignore ?? ''}
                 refreshing={refreshing}
-                onGitignoreChange={(next) => {
-                  edited.current = true;
-                  setGitignore(next);
-                }}
+                onGitignoreChange={editGitignore}
               />
             )}
           </>

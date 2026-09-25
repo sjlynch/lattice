@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { IGNORE_DIR_NAMES, SOURCE_EXTS } from './health/constants.js';
+import { CANCEL_POLL_MS } from './search/constants.js';
 
 // Candidate locations probed in order: explicit override, PATH, then the
 // common per-user install dirs (cargo/scoop/winget/choco on Windows; the usual
@@ -156,6 +157,42 @@ export class RgPathCollector {
   }
 }
 
+// rg exit codes: 0 = matches, 1 = no matches, 2 = error.
+const RG_EXIT_ERROR = 2;
+
+// The rg argv for one content search over `root` (pure — no spawn).
+export function buildRipgrepArgs(
+  root: string,
+  params: Pick<RipgrepSearchParams, 'regexSource' | 'maxFileBytes'>,
+): string[] {
+  // Restrict to the same file set the scanner uses: only SOURCE_EXTS, minus
+  // the always-ignored dirs, honoring .gitignore (rg's default). `--hidden`
+  // matches the scanner including dotfiles; .git etc. are excluded below.
+  const exts = Array.from(SOURCE_EXTS)
+    .map((e) => e.replace(/^\./, ''))
+    .join(',');
+  const args = [
+    '--no-config',
+    '--no-messages',
+    '--files-with-matches',
+    '--null',
+    '--ignore-case',
+    '--hidden',
+    // rg only honors .gitignore INSIDE a git repo by default, but the scanner
+    // (scanner/ignore.ts) applies the root .gitignore to any project — so in a
+    // not-yet-`git init`ed folder rg searched ignored build output too,
+    // returning non-graph paths that ate the match `limit`.
+    '--no-require-git',
+    '--max-filesize',
+    String(params.maxFileBytes),
+    '--glob',
+    `*.{${exts}}`,
+  ];
+  for (const dir of IGNORE_DIR_NAMES) args.push('--glob', `!${dir}`);
+  args.push('--regexp', params.regexSource, '--', root);
+  return args;
+}
+
 // Run rg over `root`, returning absolute paths of files whose contents match.
 // Rejects on an rg error (exit 2) — e.g. a pattern rg's regex engine can't
 // compile — so the caller can fall back to the JS path for that query.
@@ -165,31 +202,7 @@ export function searchWithRipgrep(
   params: RipgrepSearchParams,
 ): Promise<RipgrepSearchResult> {
   return new Promise((resolve, reject) => {
-    // Restrict to the same file set the scanner uses: only SOURCE_EXTS, minus
-    // the always-ignored dirs, honoring .gitignore (rg's default). `--hidden`
-    // matches the scanner including dotfiles; .git etc. are excluded below.
-    const exts = Array.from(SOURCE_EXTS)
-      .map((e) => e.replace(/^\./, ''))
-      .join(',');
-    const args = [
-      '--no-config',
-      '--no-messages',
-      '--files-with-matches',
-      '--null',
-      '--ignore-case',
-      '--hidden',
-      // rg only honors .gitignore INSIDE a git repo by default, but the scanner
-      // (scanner/ignore.ts) applies the root .gitignore to any project — so in a
-      // not-yet-`git init`ed folder rg searched ignored build output too,
-      // returning non-graph paths that ate the match `limit`.
-      '--no-require-git',
-      '--max-filesize',
-      String(params.maxFileBytes),
-      '--glob',
-      `*.{${exts}}`,
-    ];
-    for (const dir of IGNORE_DIR_NAMES) args.push('--glob', `!${dir}`);
-    args.push('--regexp', params.regexSource, '--', root);
+    const args = buildRipgrepArgs(root, params);
 
     const proc = spawn(rgCmd, args, { windowsHide: true });
     const collector = new RgPathCollector(root, params.limit);
@@ -216,7 +229,7 @@ export function searchWithRipgrep(
         cancelled = true;
         proc.kill();
       }
-    }, 100);
+    }, CANCEL_POLL_MS);
 
     proc.stdout.on('data', (d: Buffer) => {
       // Once cancelled/early-killed we don't decode further chunks — this is
@@ -246,8 +259,7 @@ export function searchWithRipgrep(
         finish({ matches: collector.matches, truncated: true });
         return;
       }
-      // rg exit codes: 0 = matches, 1 = no matches, 2 = error.
-      if (code === 2) {
+      if (code === RG_EXIT_ERROR) {
         fail(new Error(stderr.trim() || 'ripgrep error'));
         return;
       }
