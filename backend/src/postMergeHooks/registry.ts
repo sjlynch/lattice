@@ -84,6 +84,7 @@ export function deserializePostMergeHook(
   if (stopReceivedAt !== undefined) run.stopReceivedAt = stopReceivedAt;
   const stopActiveAt = readNumber(r.stopActiveAt);
   if (stopActiveAt !== undefined) run.stopActiveAt = stopActiveAt;
+  if (typeof r.stopBusy === 'boolean') run.stopBusy = r.stopBusy;
   return run;
 }
 
