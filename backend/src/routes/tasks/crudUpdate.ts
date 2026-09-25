@@ -3,7 +3,8 @@
 // share the "accept JSON or text/markdown body" convention.
 
 import type { Request, Response } from 'express';
-import { getTask, updateTask, type Task } from '../../tasks.js';
+import { appendTaskSummary, getTask, updateTask, type Task } from '../../tasks.js';
+import { appendSummaryText } from '../../taskCache/taskUpdate.js';
 import {
   partitionIdsByRequestedProject,
   requireTaskInRequestedProject,
@@ -27,7 +28,7 @@ import {
   classifyUpsertTarget,
 } from './crudUpdateUpsert.js';
 
-export { classifyUpsertTarget };
+export { appendSummaryText, classifyUpsertTarget };
 
 // Accepts EITHER a JSON body ({title?, description?, status?}) OR a
 // text/markdown / text/plain body. The body helper owns the markdown grammar:
@@ -62,16 +63,6 @@ export async function handleTaskUpdate(
   });
 }
 
-// Join a new summary onto whatever's already in the task's `summary` field.
-// Multiple appends (the worktree agent's change summary, then a QA verdict)
-// are stacked newest-last and separated by a horizontal rule so they stay
-// visually distinct. Pure + exported so it can be unit-tested in isolation.
-export function appendSummaryText(existing: string | undefined, addition: string): string {
-  const prev = existing?.trim() || '';
-  const next = addition.trim();
-  return prev ? `${prev}\n\n---\n\n${next}` : next;
-}
-
 // Accepts EITHER a JSON body ({summary}) OR a text/markdown / text/plain
 // body whose whole content becomes the summary. Markdown body lets agents
 // pipe long heredoc summaries through curl without any JSON escaping.
@@ -101,8 +92,10 @@ export async function handleTaskAppendSummary(
       return;
     }
     if (!requireTaskInRequestedProject(task, req, res)) return;
-    const appended = appendSummaryText(task.summary, summary);
-    const updated = await updateTask(req.params.id, { summary: appended });
+    // The read-modify-write of `summary` happens inside the task write lock:
+    // computing it from the unlocked `task` above let two concurrent appends
+    // read the same old summary, and the second write dropped the first.
+    const updated = await appendTaskSummary(req.params.id, summary);
     if (!updated) {
       res.status(404).json({ error: 'not found' });
       return;

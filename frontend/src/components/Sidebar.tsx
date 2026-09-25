@@ -1,40 +1,30 @@
-import { History, RefreshCw, Search, X } from 'lucide-react';
 import { RestoreNotice } from './sidebar/RestoreNotice';
 import { memo, useCallback, useEffect } from 'react';
 import type { StartupTerminal, TerminalLaunchSettings } from '../api';
 import { usePiModelMenu } from '../hooks/usePiModelMenu';
 import { useTerminals } from '../TerminalsContext';
-import type { TerminalStatus } from '../terminal/terminalTypes';
-import { createBackendSession } from '../terminal/terminalApi';
 import { TerminalPane } from './TerminalPane';
-import { createTerminalSpec } from './sidebar/constants';
-import { NewTerminalDropdown } from './sidebar/NewTerminalDropdown';
-import type { ShellKind } from './sidebar/NewTerminalDropdown';
+import { SidebarHeaderActions } from './sidebar/SidebarHeaderActions';
 import { SidebarPanelTabs } from './sidebar/SidebarPanelTabs';
 import { SidebarPanes } from './sidebar/SidebarPanes';
 import { SidebarTabsBar } from './sidebar/SidebarTabsBar';
 import { TabContextMenu } from './sidebar/TabContextMenu';
 import { useBusyAgentTerminals } from './sidebar/hooks/useBusyAgentTerminals';
 import { useMountedTerminalIds } from './sidebar/hooks/useMountedTerminalIds';
+import { useNewTerminal } from './sidebar/hooks/useNewTerminal';
 import { usePanelState } from './sidebar/hooks/usePanelState';
 import { useStartupTerminals } from './sidebar/hooks/useStartupTerminals';
 import { useTabContextMenu } from './sidebar/hooks/useTabContextMenu';
 import { useTabScrolling } from './sidebar/hooks/useTabScrolling';
 import { useTerminalGroups } from './sidebar/hooks/useTerminalGroups';
 import { useTerminalSearch } from './sidebar/hooks/useTerminalSearch';
+import { SidebarSearchBox } from './sidebar/SidebarSearchBox';
 
 export type Props = {
   activeFolder: string;
   startupTerminals: StartupTerminal[];
   terminalLaunchSettings: TerminalLaunchSettings;
 };
-
-function defaultShellKind(settings: TerminalLaunchSettings): ShellKind {
-  if (settings.terminalDefaultHarness === 'claude') {
-    return settings.terminalClaudeSkipPermissions ? 'claude-yolo' : 'claude';
-  }
-  return settings.terminalDefaultHarness;
-}
 
 // Memoized: Sidebar receives no scanResult — its props (activeFolder,
 // startupTerminals, terminalLaunchSettings) are all reference-stable across the
@@ -143,55 +133,16 @@ export const Sidebar = memo(function Sidebar({
     closeTerminals,
   });
 
-  const newTerminal = useCallback(
-    async (kind: ShellKind, piModel?: string) => {
-      const spec = createTerminalSpec(
-        kind,
-        activeFolder,
-        projectTerminals.length + 1,
-        piModel,
-        terminalLaunchSettings.codexYolo,
-      );
-      // A harness terminal (claude/pi/codex — anything with an initialCommand)
-      // must resolve its MCP config at the backend spawn chokepoint. Pre-create
-      // the pty via POST /api/terminals and attach by the returned serverId, so
-      // Codex `-c` MCP args + Pi `.pi/mcp.json` are applied before the shell
-      // starts. A serverless connect bypasses that (only Claude survives, via
-      // the persistent ~/.claude.json reconcile). A plain terminal (no
-      // initialCommand) or a pre-create failure falls back to the serverless
-      // connect, which addTerminal's WS wiring already handles.
-      // Every kind — plain shells included — pre-creates through the backend
-      // now, so the tab lands in the durable registry (and comes back after a
-      // restart / reboot). A pre-create failure still falls back to the
-      // serverless connect, which just isn't restorable.
-      const created = await createBackendSession({
-        cwd: spec.cwd,
-        initialCommand: spec.initialCommand,
-        projectPath: spec.projectPath,
-        label: spec.label,
-        owner: 'user',
-        ...(piModel && kind === 'pi' ? { piModel } : {}),
-      });
-      addTerminal({
-        ...spec,
-        id: created?.terminalId,
-        serverId: created?.serverId,
-        registered: !!created?.terminalId,
-      });
-    },
-    [addTerminal, activeFolder, projectTerminals.length, terminalLaunchSettings.codexYolo],
-  );
+  const { newTerminal, defaultKind } = useNewTerminal({
+    activeFolder,
+    projectTerminalCount: projectTerminals.length,
+    addTerminal,
+    terminalLaunchSettings,
+  });
 
-  const handleServerId = useCallback(
-    (localId: string, srv: string) => setServerId(localId, srv),
-    [setServerId],
-  );
-
-  const handleStatus = useCallback(
-    (localId: string, status: TerminalStatus, exitCode?: number) =>
-      setStatus(localId, status, exitCode),
-    [setStatus],
-  );
+  const restoreWithRetry = useCallback(() => {
+    void restoreTabs({ retry: true });
+  }, [restoreTabs]);
 
   const {
     tabsRef,
@@ -221,69 +172,30 @@ export const Sidebar = memo(function Sidebar({
         />
 
         {panelTerminals.length > 0 && (
-          <div className="sidebar-search">
-            <Search size={12} className="sidebar-search-icon" />
-            <input
-              ref={searchInputRef}
-              className="sidebar-search-input"
-              type="text"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              onKeyDown={onSearchKeyDown}
-              placeholder="Search terminals…"
-              aria-label="Search terminals"
-            />
-            {filter && (
-              <button
-                className="icon-btn sm sidebar-search-clear"
-                onClick={() => setFilter('')}
-                title="Clear search"
-                aria-label="Clear search"
-              >
-                <X size={12} />
-              </button>
-            )}
-          </div>
+          <SidebarSearchBox
+            filter={filter}
+            setFilter={setFilter}
+            searchInputRef={searchInputRef}
+            onKeyDown={onSearchKeyDown}
+          />
         )}
 
-        <div className="sidebar-header-actions">
-          {activePanel === 'startup' && (
-            <button
-              className="icon-btn sm sidebar-startup-refresh"
-              onClick={restartStartupTerminals}
-              title="Stop and restart all startup terminals"
-              aria-label="Stop and restart all startup terminals"
-              disabled={startupTerminalsList.length === 0}
-            >
-              <RefreshCw size={12} />
-            </button>
-          )}
-
-          {activePanel === 'terminals' && (
-            <>
-              <button
-                className="icon-btn sm sidebar-restore-btn"
-                onClick={() => { void restoreTabs({ retry: true }); }}
-                title="Restore terminal tabs (re-attach live sessions, relaunch dead ones, retry failed ones)"
-                aria-label="Restore terminal tabs"
-              >
-                <History size={12} />
-              </button>
-              <NewTerminalDropdown
-                defaultKind={defaultShellKind(terminalLaunchSettings)}
-                piMenu={piMenu}
-                onNewTerminal={newTerminal}
-              />
-            </>
-          )}
-        </div>
+        <SidebarHeaderActions
+          activePanel={activePanel}
+          startupCount={startupTerminalsList.length}
+          onRestartStartup={restartStartupTerminals}
+          onRestoreTabs={restoreWithRetry}
+          defaultKind={defaultKind}
+          piMenu={piMenu}
+          onNewTerminal={newTerminal}
+        />
       </div>
 
       <RestoreNotice
         activeFolder={activeFolder}
         prompt={restorePrompt}
         notice={lastRestore}
-        onRestore={() => { void restoreTabs({ retry: true }); }}
+        onRestore={restoreWithRetry}
         onDismiss={dismissRestoreNotice}
       />
 
@@ -328,8 +240,8 @@ export const Sidebar = memo(function Sidebar({
             initialCommand={t.initialCommand}
             serverId={t.serverId}
             projectPath={t.projectPath}
-            onServerId={(srv) => handleServerId(t.id, srv)}
-            onStatus={(status, exitCode) => handleStatus(t.id, status, exitCode)}
+            onServerId={(srv) => setServerId(t.id, srv)}
+            onStatus={(status, exitCode) => setStatus(t.id, status, exitCode)}
           />
         )}
       />

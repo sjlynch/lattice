@@ -140,7 +140,13 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
 `useGraphSettings` keeps its public `{ settings, setSettings, settingsRef }`
 shape but is internally split by concern: per-project persistence/ref mirroring,
 sprite/metric-label refresh, physics/repulsion application, layout-shape ("Spread"
-tab) forces, pixel ratio, and link width.
+tab) forces, pixel ratio, and link width. Files:
+- `usePerProjectGraphSettings.ts` — per-project persistence + `settingsRef` mirror.
+- `useGraphSettingsSprites.ts` — `useSpriteAndMetricLabelRefresh` (+ `SPRITE_REFRESH_DEBOUNCE_MS`).
+- `useGraphSettingsPhysics.ts` — `usePhysicsAndRepulsionSettings`.
+- `useGraphSettingsLayoutShape.ts` — `useLayoutShapeSettings`.
+- `useGraphSettingsRendering.ts` — `useRenderPixelRatioSetting` + `useLinkWidthSetting`.
+- `graphSettingsEffectUtils.ts` — shared `GraphRef` type + `hasMountedNodes` (the empty-graph guard).
 
 Settings effects skip work on the initial mount and on an empty/unmounted graph
 (`nodeThreeObject` reads `settingsRef` live, so the data-sync build already uses
