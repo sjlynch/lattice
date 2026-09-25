@@ -1,5 +1,6 @@
 import {
   finishPostMergeHook,
+  getActiveHookForServerId,
   getPostMergeHook,
   waitForPostMergeHook,
 } from './registry.js';
@@ -54,6 +55,22 @@ export async function endPostMergeHook(
   const finished = finishPostMergeHook(id, status, reason);
   void cleanupPostMergeHookSession(existing.projectPath, existing.id);
   return finished;
+}
+
+// A user closing the tab of a running hook's pty is giving up on it — through
+// either close route (DELETE /api/terminals/:id or /api/terminal-tabs/:id).
+// End the hook `aborted` so the merge run / workflow Merge step waiting on its
+// callback unblocks (and releases run.lock) instead of parking until
+// POST_MERGE_HOOK_MAX_WAIT_MS. Skips the hook's own kill: the caller kills the
+// pty right after. Returns the aborted run, or null when no hook owns it.
+export async function abortPostMergeHookForServerId(
+  serverId: string,
+): Promise<PostMergeHookRun | null> {
+  const hook = getActiveHookForServerId(serverId);
+  if (!hook) return null;
+  return endPostMergeHook(hook.id, 'aborted', 'terminal closed by user', {
+    killSession: false,
+  });
 }
 
 // Convenience: trigger + await. Returns the terminal run state. Used by the
