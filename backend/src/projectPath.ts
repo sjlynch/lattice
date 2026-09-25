@@ -11,6 +11,32 @@ export function canonicalProjectPath(input: string): string {
   return physicalProjectPath(input);
 }
 
+// The absolute-path guard every project-scoped route runs before
+// `canonicalProjectPath`. `path.isAbsolute` is not enough on Windows: it accepts
+// a ROOT-relative path (`\foo`, or the MSYS/Git-Bash spelling
+// `/c/development/lattice`), which `path.resolve` then pins to the backend's
+// current drive (`C:\c\development\lattice`) — a phantom project that reads as
+// a silently-empty board. On win32 only a drive-absolute (`C:\…`, `C:/…`) or
+// UNC (`\\server\share\…`, incl. `\\?\C:\…`) path names a real place. POSIX is
+// unchanged. `platform` is a test seam.
+export function isRealAbsoluteProjectPath(
+  input: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform !== 'win32') return path.posix.isAbsolute(input);
+  return /^[A-Za-z]:[\\/]/.test(input) || /^[\\/]{2}[^\\/]+[\\/]+[^\\/]/.test(input);
+}
+
+// For a path `isRealAbsoluteProjectPath` refused on win32: the `C:\…` spelling
+// an MSYS / Git-Bash path (`/c/development/lattice`) most likely meant, or
+// `null` when it isn't one. Forward slashes only: `\x` is root-relative, not a
+// drive letter.
+export function msysToWindowsPath(input: string): string | null {
+  const m = /^\/([A-Za-z])(?:\/(.*))?$/.exec(input);
+  if (!m) return null;
+  return `${m[1].toUpperCase()}:\\${(m[2] ?? '').replace(/\//g, '\\')}`;
+}
+
 // Stable per-project key for use as a directory name in shared global
 // state (`~/.lattice/per-project/<hash>/`, `~/.lattice/snapshots/<hash>/`,
 // `~/.lattice/worktrees/<hash>/`, `~/.lattice/git-backups/<hash>/`).

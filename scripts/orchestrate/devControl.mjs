@@ -38,9 +38,12 @@ export const DEPS_RECHECK = 'deps-recheck';
 export const RESTART_EXIT_CODE = 75;
 
 // How long the orchestrator waits for the dev runner to finish a soft stop
-// before force-killing its tree. The runner answers at once: its only slow
-// step is waiting for `dist/index.js` to exit after a TerminateProcess.
-export const SOFT_STOP_TIMEOUT_MS = 20_000;
+// before force-killing its tree. The runner first asks the backend to drain
+// (bounded by SOFT_STOP_PREPARE_TIMEOUT_MS in
+// backend/scripts/dev/restartHandshake.mjs, 15 s), then waits for
+// `dist/index.js` to exit after a TerminateProcess. Keep this comfortably
+// above that prepare ceiling.
+export const SOFT_STOP_TIMEOUT_MS = 30_000;
 
 export const CONSOLE_HINT =
   'type r + Enter to restart the dev stack keeping agent terminals running · ' +

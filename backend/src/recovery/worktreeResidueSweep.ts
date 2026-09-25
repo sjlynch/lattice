@@ -14,13 +14,20 @@
 // (which walks registrations) ever looks at it again: 573 such directories
 // piled up for one project by 2026-09-22.
 //
+// git deletes in directory order, so when the locked entry sorts BEFORE `.git`
+// (something under `.claude/` or `.codex/`) the `.git` FILE survives while the
+// admin dir `<commonDir>/worktrees/<id>` it points at is already gone. That
+// marker names nothing any more, so it counts as residue too (below).
+//
 // Deliberately narrow — the only thing removed is a direct child of the
 // project's home worktrees dir that
 //   - git has no registration for (re-read immediately before the delete),
 //   - no in_progress / ready_to_merge / queued task records as its worktree,
 //   - no live pty sits in,
-//   - is not a reparse point and has no `.git` marker (re-checked immediately
-//     before the delete), and
+//   - is not a reparse point and has no `.git` marker — or only a `.git` FILE
+//     whose `gitdir:` names a `<commonDir>/worktrees/<id>` of THIS repo that no
+//     longer exists, while the common dir itself is intact (re-checked
+//     immediately before the delete), and
 //   - has not been touched for RESIDUE_MIN_AGE_MS (git's failed remove touched
 //     it, so this measures time since the failure).
 // i.e. it is no checkout at all: git already gave it up, and cleanup archived
@@ -61,6 +68,9 @@ export type ResidueSweepDeps = {
   worktreesDir: (repoRoot: string) => string;
   // Optional so hand-built test deps keep compiling.
   notifyDiskSpaceFreed?: () => void;
+  // The repo's common gitdir (absolute), or null when unknown. Defaults to
+  // `git rev-parse --git-common-dir` through `projectGit`.
+  commonGitDir?: (repoRoot: string) => Promise<string | null>;
 };
 
 export type ResidueSweepOptions = {
@@ -89,6 +99,12 @@ async function removeResidueDir(dir: string): Promise<boolean> {
   }
 }
 
+async function commonGitDirVia(projectGit: typeof ProjectGit, repoRoot: string): Promise<string | null> {
+  const r = await projectGit(repoRoot, ['rev-parse', '--git-common-dir'], { timeoutMs: 15_000 });
+  const dir = r.code === 0 ? r.stdout.trim() : '';
+  return dir ? path.resolve(repoRoot, dir) : null;
+}
+
 const defaultDeps = (projectGit: typeof ProjectGit): ResidueSweepDeps => ({
   projectGit,
   removeDir: removeResidueDir,
@@ -105,6 +121,66 @@ async function entryExists(target: string): Promise<boolean> {
     // Anything but ENOENT is unknown state — treat it as present (keep the dir).
     return (err as NodeJS.ErrnoException).code !== 'ENOENT';
   }
+}
+
+async function isDirectory(target: string): Promise<boolean> {
+  try {
+    const st = await fs.lstat(target);
+    return st.isDirectory() && !st.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+async function isRegularFile(target: string): Promise<boolean> {
+  try {
+    return (await fs.lstat(target)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+// A git worktree `.git` file is one short `gitdir: <path>` line.
+const GIT_FILE_MAX_BYTES = 4096;
+
+// What a dir's `.git` marker says about deleting it:
+//   'none'     — no marker at all;
+//   'orphaned' — a `.git` FILE whose `gitdir:` names `<commonDir>/worktrees/<id>`
+//                of this repo, that admin dir is gone, and the common dir is
+//                intact (a `git worktree remove` that died after dropping the
+//                admin dir but before reaching `.git`);
+//   'keep'     — anything else: a `.git` dir (another repo / a real checkout),
+//                a pointer elsewhere, a live admin dir, or any unknown state.
+type GitMarker = 'none' | 'orphaned' | 'keep';
+
+async function classifyGitMarker(
+  dir: string,
+  entries: string[],
+  commonDir: () => Promise<string | null>,
+): Promise<GitMarker> {
+  // Case-folded: `.GIT` on a case-sensitive filesystem is still not ours to judge.
+  const names = entries.filter((e) => e.toLowerCase() === '.git');
+  if (names.length === 0) return (await entryExists(path.join(dir, '.git'))) ? 'keep' : 'none';
+  if (names.length > 1) return 'keep';
+  const marker = path.join(dir, names[0]);
+  let text: string;
+  try {
+    const st = await fs.lstat(marker);
+    if (!st.isFile() || st.size > GIT_FILE_MAX_BYTES) return 'keep';
+    text = await fs.readFile(marker, 'utf8');
+  } catch {
+    return 'keep';
+  }
+  const m = /^gitdir:[ \t]*(.+?)[ \t]*$/.exec(text.split(/\r?\n/, 1)[0] ?? '');
+  if (!m) return 'keep';
+  const common = await commonDir();
+  if (!common) return 'keep';
+  // A vanished/damaged `.git` would make EVERY admin dir read as missing.
+  if (!(await isDirectory(common)) || !(await isRegularFile(path.join(common, 'HEAD')))) return 'keep';
+  const adminDir = path.resolve(dir, m[1]);
+  if (normalizeCwd(path.dirname(adminDir)) !== normalizeCwd(path.join(common, 'worktrees'))) return 'keep';
+  // entryExists reads anything but ENOENT as present — unknown state keeps the dir.
+  return (await entryExists(adminDir)) ? 'keep' : 'orphaned';
 }
 
 type Registrations = { paths: Set<string>; names: Set<string> };
@@ -187,6 +263,11 @@ async function sweepProjectResidue(
       .map((t) => normalizeCwd(t.worktreePath as string)),
   );
 
+  // Resolved at most once per pass, and only if some dir carries a `.git`.
+  let commonDirPromise: Promise<string | null> | null = null;
+  const resolveCommonDir = deps.commonGitDir ?? ((r: string) => commonGitDirVia(deps.projectGit, r));
+  const commonDir = () => (commonDirPromise ??= resolveCommonDir(repoRoot).catch(() => null));
+
   let removed = 0;
   let lockedCount = 0;
   let waiting = 0;
@@ -220,8 +301,10 @@ async function sweepProjectResidue(
       continue;
     }
     // A `.git` marker may belong to a moved/repairable checkout or another
-    // repo entirely — never ours to recursively erase.
-    if (entries.some((e) => e.toLowerCase() === '.git')) continue;
+    // repo entirely — never ours to recursively erase, unless it is the
+    // dangling pointer a part-failed `git worktree remove` leaves behind.
+    const marker = await classifyGitMarker(dir, entries, commonDir);
+    if (marker === 'keep') continue;
 
     // Re-check immediately before the delete (same as worktree/reconcile.ts's
     // stray removal): a setup may have registered this path, or written its
@@ -229,14 +312,21 @@ async function sweepProjectResidue(
     const fresh = await readRegistrations(deps, repoRoot, base);
     if (!fresh) break; // lost the ability to prove "unregistered" — stop here
     if (isRegistered(fresh, dir)) continue;
-    if (await entryExists(path.join(dir, '.git'))) continue;
+    let freshEntries: string[];
+    try {
+      freshEntries = await fs.readdir(dir);
+    } catch {
+      continue;
+    }
+    if ((await classifyGitMarker(dir, freshEntries, commonDir)) === 'keep') continue;
 
     if (await deps.removeDir(dir)) {
       removed += 1;
       lockedBackoff.delete(dirKey);
       // Ignored files (`tmp/`, build output, …) are never in the
       // discarded-worktree archive, so say what went.
-      console.log(`${logPrefix} residue sweep: removed ${dir} (top-level: ${describeEntries(entries)})`);
+      const why = marker === 'orphaned' ? '; its .git pointed at a removed worktree admin dir' : '';
+      console.log(`${logPrefix} residue sweep: removed ${dir} (top-level: ${describeEntries(entries)}${why})`);
     } else {
       lockedCount += 1;
       const failures = (backoff?.failures ?? 0) + 1;

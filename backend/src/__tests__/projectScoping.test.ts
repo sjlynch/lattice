@@ -104,14 +104,15 @@ test('classifyUpsertTarget: same project via case-different drive still updates'
   assert.equal(classifyUpsertTarget(lowered, canonicalProjectPath(RC)), 'update');
 });
 
-// ---------- /transition (ids) + /bulk-update honour the ?project= pin ----------
+// ---------- /transition (ids) + /bulk-update honour the project pin ----------
 //
 // Both routes call `updateTask(id)`, a global by-id lookup, and used to ignore
-// the `?project=` the by-id routes and /upsert honour — so the `lattice` MCP
+// the `?project=` the by-id routes and /upsert honour (and, later, a project
+// sent in the body rather than the query) — so the `lattice` MCP
 // `transition_tasks` tool (which always sends project=) could re-lane or
 // "delete" another board's task. Drives the real app with two projects.
 
-test('transition and bulk-update with ?project=A report B\'s id as foreign and leave it untouched', async () => {
+test('transition and bulk-update pinned to project A (query or body) report B\'s id as foreign and leave it untouched', async () => {
   const tmpHome = await mkdtemp(path.join(os.tmpdir(), 'lattice-scoping-http-'));
   const originalEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   process.env.HOME = tmpHome;
@@ -171,6 +172,29 @@ test('transition and bulk-update with ?project=A report B\'s id as foreign and l
     assert.deepEqual(bu.tasks.map((t) => t.id), [a.id]);
     assert.equal((await get(b.id)).title, 'task in B', 'B was not renamed');
     assert.equal((await get(a.id)).title, 'renamed A');
+
+    // transition by ids, pinned to A in the BODY (no query), carrying B's id.
+    const bodyPinned = await fetch(`${base}/api/tasks/transition`, {
+      method: 'POST', headers: json,
+      body: JSON.stringify({ ids: [b.id], status: 'deleted', project: projectA }),
+    });
+    assert.equal(bodyPinned.status, 200);
+    assert.deepEqual(await bodyPinned.json(), { updated: 0, missing: [], foreign: [b.id], ids: [] });
+    assert.equal((await get(b.id)).status, 'open', 'B was not re-laned by a body-pinned transition');
+
+    // bulk-update pinned to A in the body, carrying B's id.
+    const buBody = await fetch(`${base}/api/tasks/bulk-update`, {
+      method: 'POST', headers: json,
+      body: JSON.stringify({ project: projectA, updates: [{ id: b.id, title: 'hijacked' }] }),
+    });
+    assert.equal(buBody.status, 200);
+    assert.deepEqual(((await buBody.json()) as { foreign: string[] }).foreign, [b.id]);
+    assert.equal((await get(b.id)).title, 'task in B', 'B was not renamed by a body-pinned bulk-update');
+
+    // /complete honours an explicit ?project= pin (hook callers send none).
+    const completeForeign = await fetch(`${base}/api/tasks/${b.id}/complete?${qA}`, { method: 'POST' });
+    assert.equal(completeForeign.status, 404);
+    assert.equal((await get(b.id)).status, 'open');
 
     // No project sent: unchanged global behaviour (B is reachable by id).
     const unpinned = await fetch(`${base}/api/tasks/transition`, {

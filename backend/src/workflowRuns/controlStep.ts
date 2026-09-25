@@ -38,6 +38,7 @@ import {
   type ProjectRunLockHandle,
 } from '../projectRunLock.js';
 import type { Workflow, WorkflowStepKind } from '../workflows.js';
+import { waitForRepoMaintenance } from '../worktree/repoMaintenance.js';
 import { beginRestartTransition } from '../restartDrain/gate.js';
 import { checkpointWorkflowRun, notify, snapshot, type WorkflowRun } from './state.js';
 import { runStartStep } from './controlSteps/start.js';
@@ -61,10 +62,14 @@ export type ControlStepWorkerDeps = {
   runStart: typeof runStartStep;
   runMerge: typeof runMergeStep;
   runPush: typeof runPushStep;
+  // Resolves once the project's post-merge-run `git gc --auto` housekeeping
+  // is done (bounded by the gc's own timeout). Defaults to the real one.
+  waitForRepoMaintenance?: (projectPath: string) => Promise<boolean>;
 };
 
 const productionWorkerDeps: ControlStepWorkerDeps = {
   acquireLock: acquireProjectRunLock,
+  waitForRepoMaintenance: (p) => waitForRepoMaintenance(p),
   runStart: runStartStep,
   runMerge: runMergeStep,
   runPush: runPushStep,
@@ -131,7 +136,17 @@ async function runControlStepWorkerLocked(
   let workerError: Error | null = null;
 
   try {
-    lock = await deps.acquireLock(wf.projectPath, lockLabel);
+    // A merge run's housekeeping gc may be repacking right now (it holds the
+    // run lock while it does). Wait for it rather than failing the step on the
+    // lock: the gc is bounded, and merging beside a repack is what leaves a
+    // full leftover pack copy on Windows. If it is somehow still running after
+    // the bound, the acquire below refuses with a message naming it.
+    const waitForMaintenance = deps.waitForRepoMaintenance ?? ((p: string) => waitForRepoMaintenance(p));
+    if (!(await waitForMaintenance(wf.projectPath))) {
+      console.warn(`[workflow-run] ${run.id} step ${stepIndex} (${kind}) git housekeeping still running after the wait bound`);
+    }
+    // Cancelled during that wait: take no lock; the not-running branch below returns.
+    if (run.status === 'running') lock = await deps.acquireLock(wf.projectPath, lockLabel);
   } catch (err) {
     if (err instanceof ProjectRunLockedError) {
       // Log loud — historically this is the most common reason a workflow

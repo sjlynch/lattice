@@ -1,6 +1,6 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { atomicWriteFile } from '../claudeTrust/configFile.js';
 import { callbackOutboxDir } from './paths.js';
 
 // Backend side of the completion-callback outbox (see script.ts for the hook
@@ -13,11 +13,13 @@ import { callbackOutboxDir } from './paths.js';
 // route, validation and idempotency guard as a live callback, and nothing
 // here needs to know which kind of callback it is.
 //
-// Is a late replay safe? The terminal WS is relayed THROUGH this backend, so
-// nobody can type into an agent's pty while the backend is down: an agent
-// whose Stop was lost is still sitting idle at the end of that turn when the
-// replay lands. (A newer Stop for the same URL overwrites the entry, and a
-// delivered one removes it.)
+// Is a late replay safe? Nobody can type into an agent's pty while the backend
+// is down (the terminal WS is relayed THROUGH it) — but the replay lands after
+// the backend is back, and by then the user may have started a new turn. So
+// every replay carries the entry's `createdAt` in `OUTBOX_REPLAY_HEADER`, and
+// a task `/complete` refuses one its session has since moved past
+// (`replayGuard.ts`). (A newer Stop for the same URL overwrites the entry, and
+// a delivered one removes it.)
 
 export type OutboxEntry = {
   v: 1;
@@ -43,6 +45,10 @@ export type DrainResult = {
 // Past this an entry is abandoned: whatever it was completing has long since
 // been resolved another way (the in-progress sweep, a user nudge, a cancel).
 export const OUTBOX_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+// Set on every replay: when the callback was queued (the entry's `createdAt`,
+// i.e. when the Stop fired). Marks the request as a replay for the ack
+// middleware, and lets a route tell a stale callback from a current one.
+export const OUTBOX_REPLAY_HEADER = 'x-lattice-outbox-created-at';
 const REPLAY_TIMEOUT_MS = 120_000;
 const MAX_BACKOFF_MS = 60_000;
 
@@ -59,19 +65,36 @@ export function isFinalStatus(status: number): boolean {
   return status < 500 && status !== 408 && status !== 429;
 }
 
-// Only our own API is ever replayed. The outbox is a plain directory under
-// the user's home; treating its contents as "POST wherever this says" would
-// turn any stray file into a request the backend makes on its own authority.
-export function isReplayableUrl(url: string, backendOrigin: string): boolean {
+// The completion-callback routes — the only thing an outbox entry may target
+// (also the ack middleware's filter).
+export const CALLBACK_PATH_RE =
+  /\/(?:complete|done|verdict|merged|merge-aborted|stash-resolved)$/;
+
+// Only our own completion callbacks are ever replayed. The outbox is a plain
+// directory under the user's home; treating its contents as "POST wherever
+// this says" would turn any stray file into a request the backend makes on its
+// own authority — `/api/merge-runs`, `/api/workflows/:id/run`, ….
+//   'replay'  — ours, a callback route: send it.
+//   'foreign' — another origin: not ours to send OR delete (see replayOne).
+//   'refuse'  — our origin but not a callback route (or unparseable): never
+//               sent, dropped.
+export function classifyReplayUrl(url: string, backendOrigin: string): 'replay' | 'foreign' | 'refuse' {
   let parsed: URL;
   let origin: URL;
   try {
     parsed = new URL(url);
     origin = new URL(backendOrigin);
   } catch {
-    return false;
+    return 'refuse';
   }
-  return parsed.origin === origin.origin && parsed.pathname.startsWith('/api/');
+  if (parsed.origin !== origin.origin) return 'foreign';
+  return parsed.pathname.startsWith('/api/') && CALLBACK_PATH_RE.test(parsed.pathname)
+    ? 'replay'
+    : 'refuse';
+}
+
+export function isReplayableUrl(url: string, backendOrigin: string): boolean {
+  return classifyReplayUrl(url, backendOrigin) === 'replay';
 }
 
 export function replayBackoffMs(attempts: number): number {
@@ -92,6 +115,40 @@ async function removeQuietly(file: string): Promise<void> {
   await fs.unlink(file).catch(() => {});
 }
 
+async function readEntryFile(file: string): Promise<OutboxEntry | null> {
+  return parseEntry(await fs.readFile(file, 'utf8').catch(() => ''));
+}
+
+// Is `file` still the entry we read (same `createdAt`)? A hook writes a newer
+// entry for the same URL on every Stop, and the ack middleware / the hook
+// itself remove a delivered one — neither may be undone by the drain.
+async function stillSameEntry(file: string, entry: OutboxEntry): Promise<boolean> {
+  const current = await readEntryFile(file);
+  return current !== null && current.createdAt === entry.createdAt;
+}
+
+// Remove the entry only if it is still the one we replayed.
+async function removeIfSame(file: string, entry: OutboxEntry): Promise<void> {
+  if (await stillSameEntry(file, entry)) await removeQuietly(file);
+}
+
+// Rewrite the entry's bookkeeping without resurrecting or clobbering it: write
+// the temp file first and re-check right before the rename, so the only window
+// in which a concurrent unlink / newer write could be lost is the rename
+// itself rather than a whole write.
+async function rewriteIfSame(file: string, entry: OutboxEntry, next: OutboxEntry): Promise<void> {
+  const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  try {
+    await fs.writeFile(tmp, JSON.stringify(next, null, 2));
+    if (!(await stillSameEntry(file, entry))) return;
+    await fs.rename(tmp, file);
+  } catch {
+    // Best-effort bookkeeping — the next pass re-reads whatever is there.
+  } finally {
+    await removeQuietly(tmp);
+  }
+}
+
 async function replayOne(
   file: string,
   entry: OutboxEntry,
@@ -100,15 +157,21 @@ async function replayOne(
   const { now } = opts;
   if (now - entry.createdAt > OUTBOX_MAX_AGE_MS) {
     console.warn(`[callback-outbox] dropping stale callback ${entry.url} (queued ${new Date(entry.createdAt).toISOString()})`);
-    await removeQuietly(file);
+    await removeIfSame(file, entry);
     return 'dropped';
   }
-  if (!isReplayableUrl(entry.url, opts.backendOrigin)) {
+  const kind = classifyReplayUrl(entry.url, opts.backendOrigin);
+  if (kind === 'foreign') {
     // Never ours to send — but not ours to delete either: another Lattice
     // instance sharing this home on a different port (an isolated test
     // instance, a second checkout) drains its own entries. The age cap above
     // is what eventually clears a genuinely orphaned one.
     return 'kept';
+  }
+  if (kind === 'refuse') {
+    console.warn(`[callback-outbox] dropping ${entry.url}: not a completion callback route`);
+    await removeIfSame(file, entry);
+    return 'dropped';
   }
   if (entry.holdUntil && entry.holdUntil > now) return 'kept';
   const attempts = entry.attempts ?? 0;
@@ -117,10 +180,11 @@ async function replayOne(
   let status: number | null = null;
   let error: string | undefined;
   try {
-    const init: RequestInit = { method: 'POST', signal: AbortSignal.timeout(REPLAY_TIMEOUT_MS) };
+    const headers: Record<string, string> = { [OUTBOX_REPLAY_HEADER]: String(entry.createdAt) };
+    const init: RequestInit = { method: 'POST', headers, signal: AbortSignal.timeout(REPLAY_TIMEOUT_MS) };
     if (entry.body !== undefined) {
       init.body = entry.body;
-      init.headers = { 'Content-Type': entry.contentType ?? 'application/json' };
+      headers['Content-Type'] = entry.contentType ?? 'application/json';
     }
     const res = await opts.fetchImpl(entry.url, init);
     status = res.status;
@@ -131,28 +195,21 @@ async function replayOne(
 
   if (status !== null && isFinalStatus(status)) {
     console.log(`[callback-outbox] replayed ${entry.url} → ${status} (queued ${Math.round((now - entry.createdAt) / 1000)}s ago)`);
-    await removeQuietly(file);
+    // A hook may have written a newer entry for the same URL (a newer Stop)
+    // while we were posting — that one still has to be delivered.
+    await removeIfSame(file, entry);
     return status < 300 ? 'delivered' : 'dropped';
   }
 
-  // Keep it for the next pass. Re-read first: a hook may have rewritten the
-  // entry (a newer Stop for the same URL) while we were posting, and that
-  // newer entry must win over our bookkeeping.
-  const current = parseEntry(await fs.readFile(file, 'utf8').catch(() => ''));
-  if (!current || current.createdAt !== entry.createdAt) return 'kept';
-  await atomicWriteFile(
-    file,
-    JSON.stringify(
-      {
-        ...entry,
-        attempts: attempts + 1,
-        lastAttemptAt: now,
-        lastError: status !== null ? `HTTP ${status}` : error,
-      },
-      null,
-      2,
-    ),
-  ).catch(() => {});
+  // Keep it for the next pass — unless, while we were posting, the entry was
+  // delivered and removed (it must stay gone) or replaced by a newer Stop
+  // (which must win over our bookkeeping).
+  await rewriteIfSame(file, entry, {
+    ...entry,
+    attempts: attempts + 1,
+    lastAttemptAt: now,
+    lastError: status !== null ? `HTTP ${status}` : error,
+  });
   return 'kept';
 }
 
