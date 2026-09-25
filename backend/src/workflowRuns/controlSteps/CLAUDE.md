@@ -162,7 +162,11 @@ Covered by `__tests__/workflowMergeStepPostMergeHook.test.ts`.
 ## `push.ts` — `runPushStep`
 
 Drains Ready-to-Merge, then spawns a push session (Task Board cloud-icon path)
-and waits for its Stop hook.
+and waits for its Stop hook. `runPushStep` is a short sequence over two local
+helpers: `adoptOrDrain` (the completed-run / live-session re-dispatch
+short-circuits, else the drain) and `createPushSessionWatch` (owns the session
+ids, the `cancelled` / `timedOut` flags, the `done` promise, both subscribers,
+the timeout and the single `killAndAbandon()`; disposed in the `finally`).
 
 - **Push-only brief (R2)**: the step calls
   `startPushSession(project, origin, { brief: 'workflow' })`, which renders the
@@ -176,8 +180,9 @@ and waits for its Stop hook.
 
 - **Subscribe before spawn**: the push-run `done` and workflow-run
   `cancelled/errored` subscribers are attached *before* `startPushSession`, so a
-  fast `done` / a cancel can't slip past. `sessionServerId` is unknown until
-  `startPushSession` resolves — the subscriber captures it by closure.
+  fast `done` / a cancel can't slip past (`createPushSessionWatch` runs before
+  the spawn). `sessionServerId` is unknown until `startPushSession` resolves —
+  the watch captures it by closure via `attach(session)`.
 - **`PUSH_STEP_TIMEOUT_MS` (15 min)** backstop: if Claude died before its Stop
   hook fired, the wait would otherwise hang forever — the timer kills the pty,
   settles the push run (`abandonPushRun`) and the step **throws**
