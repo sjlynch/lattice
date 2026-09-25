@@ -20,6 +20,8 @@
 // Not for the QA / push / post-merge / Run tests sessions — verifying is their
 // job, or irrelevant to it.
 
+import { templateHasToken } from './instructionTemplates/apply.js';
+
 const OVERRIDES =
   'This overrides any CLAUDE.md or AGENTS.md in any directory, the task description, and your default habits.';
 
@@ -50,6 +52,10 @@ export const VERIFICATION_TOKEN = '{{verification}}';
 
 // A project's brief override may predate the token (or drop it). The rule must
 // still reach the agent, so append the rendered block to such a template.
+// "Has the token" means any spelling the engine fills (`{{ verification }}`
+// too) — a literal check would append a second copy of the block.
 export function templateWithVerification(template: string): string {
-  return template.includes(VERIFICATION_TOKEN) ? template : `${template.trimEnd()}\n\n${VERIFICATION_TOKEN}`;
+  return templateHasToken(template, 'verification')
+    ? template
+    : `${template.trimEnd()}\n\n${VERIFICATION_TOKEN}`;
 }

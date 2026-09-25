@@ -18,3 +18,14 @@ export function applyTemplate(
     Object.prototype.hasOwnProperty.call(values, name) ? values[name] : match,
   );
 }
+
+// Whether `template` carries a `{{name}}` placeholder in any spelling the
+// engine substitutes (`{{ name }}` included). Scans with TEMPLATE_TOKEN_RE
+// itself so detection can't drift from `applyTemplate`; `matchAll` clones the
+// global regex, leaving the shared instance's `lastIndex` untouched.
+export function templateHasToken(template: string, name: string): boolean {
+  for (const match of template.matchAll(TEMPLATE_TOKEN_RE)) {
+    if (match[1] === name) return true;
+  }
+  return false;
+}

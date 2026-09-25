@@ -12,6 +12,7 @@ import { resolveHarnessSpawnBody } from '../terminalServerClient/createSession.j
 import {
   renderVerificationBlock,
   renderVerificationSystemPrompt,
+  templateWithVerification,
 } from '../taskVerification.js';
 
 assert.ok(process.env.LATTICE_TEST_HOME_ISOLATED, 'run with the isolateHome preload');
@@ -47,6 +48,24 @@ test('a custom brief without the token still gets the rule, once', () => {
   const merge = renderMergeInstructions(task, 'b', [], origin, '', 'Resolve {{task_id}}.');
   assert.ok(merge.startsWith('Resolve t_verify.'));
   assert.ok(merge.includes(renderVerificationBlock(false)));
+});
+
+test('a spaced `{{ verification }}` counts as the token: no second block is appended', () => {
+  assert.equal(templateWithVerification('x {{ verification }}'), 'x {{ verification }}');
+  assert.equal(templateWithVerification('x {{\tverification\n}}'), 'x {{\tverification\n}}');
+  assert.equal(templateWithVerification('x'), 'x\n\n{{verification}}');
+  // A different token that merely starts with the name is not the token.
+  assert.equal(
+    templateWithVerification('x {{verification_extra}}'),
+    'x {{verification_extra}}\n\n{{verification}}',
+  );
+
+  const brief = renderTaskMarkdown(task, origin, 'claude', [], null, '# {{task_title}}\n{{ verification }}end');
+  assert.equal(brief.split(renderVerificationBlock(false)).length, 2);
+  assert.ok(brief.endsWith('end'));
+  const merge = renderMergeInstructions(task, 'b', [], origin, '', 'Resolve {{task_id}}.\n{{ verification }}Done.');
+  assert.equal(merge.split(renderVerificationBlock(false)).length, 2);
+  assert.ok(merge.endsWith('Done.'));
 });
 
 test('the system-prompt form is one line with no double quotes (Codex -c over cmd.exe)', () => {
