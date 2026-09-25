@@ -1,6 +1,5 @@
-import path from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { canonicalProjectPath } from '../projectPath.js';
+import { canonicalProjectPath, isRealAbsoluteProjectPath } from '../projectPath.js';
 
 export type Unsubscribe = () => void;
 export type MaybePromise<T> = T | Promise<T>;
@@ -59,7 +58,7 @@ export function parseProject(reqUrl: string | undefined): string {
     // Malformed request target — same as no project (the socket is closed).
     return '';
   }
-  return raw && path.isAbsolute(raw) ? canonicalProjectPath(raw) : '';
+  return raw && isRealAbsoluteProjectPath(raw) ? canonicalProjectPath(raw) : '';
 }
 
 export function sendJson(ws: WebSocket, payload: unknown): void {

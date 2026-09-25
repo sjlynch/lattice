@@ -38,7 +38,13 @@ import {
 import { selfHealDeps } from './dev/deps.mjs';
 import { watchDist } from './dev/distWatcher.mjs';
 import { createRestartPolicy } from './dev/restartPolicy.mjs';
-import { createRestartHandshake } from './dev/restartHandshake.mjs';
+import {
+  createRestartHandshake,
+  SOFT_STOP_DRAIN_TTL_MS,
+  SOFT_STOP_PREPARE_TIMEOUT_MS,
+  SOFT_STOP_SETTLE_BUDGET_MS,
+} from './dev/restartHandshake.mjs';
+import { createDevShutdown } from './dev/devShutdown.mjs';
 import { createCompilerLifecycle } from './dev/compilerLifecycle.mjs';
 import { distContentSignature } from './dev/distSignature.mjs';
 import { createDepsWatcher, runNpmInstall } from '../../scripts/depsWatch.mjs';
@@ -112,7 +118,6 @@ await runInitialCopyAssets(copyAssetsScript);
 // On a crash of dist/index.js (not a deliberate restart) we respawn it after
 // a backoff (dev/backendLifecycle.mjs), or at once on the next dist/ change.
 
-let shuttingDown = false;
 let closeDistWatch = () => {};
 
 let backendLifecycle;
@@ -124,67 +129,65 @@ let backendDeps = null;
 // dep changes nothing in dist/ but everything the running process loaded).
 let depsRestartPending = false;
 
-// The one in-flight shutdown, shared by every trigger. On Windows Ctrl+C
-// reaches dist/index.js too, so it can exit while the terminal-server
-// `/shutdown` POST below is still in flight; its exit handler (onExit) must
-// wait for that POST rather than `process.exit` over it.
-let shutdownDone = null;
 // The terminal-server `/shutdown`, sent at most once — and only by a REAL stop.
 let terminalShutdown = null;
 const shutdownTerminalsOnce = () => (terminalShutdown ??= shutdownTerminalServer());
 
-// `keepTerminals`: the soft stop — everything goes except the terminal-server,
-// whose sessions the next backend re-adopts exactly as after a dist/ restart
-// (killing dist/index.js is a plain TerminateProcess, never a tree kill, so the
-// detached server it once spawned is not taken with it). A real stop arriving
-// during a soft one (Ctrl+C right after `r`) still sends the `/shutdown`.
-function shutdown(signal, { keepTerminals = false } = {}) {
-  if (!shutdownDone) {
-    shuttingDown = true;
-    shutdownDone = (async () => {
-      try {
-        closeDistWatch();
-      } catch {
-        /* ignore */
-      }
-      backendDeps?.close();
-      restartPolicy.stopDeferredPoll();
-      compilerLifecycle?.stop(signal);
-      if (!keepTerminals) await shutdownTerminalsOnce();
-      backendLifecycle.kill(signal);
-      // No backend to wait for (it crashed and is waiting for a dist/ change):
-      // nothing will call onExit, and the control pipe keeps this process up.
-      // Deferred a turn: this body can finish synchronously (a soft stop never
-      // awaits), before `shutdownDone` is even assigned.
-      if (backendLifecycle.needsStart()) setImmediate(() => void onExit(0));
-    })();
-  }
-  if (!keepTerminals) void shutdownTerminalsOnce();
-  return shutdownDone;
-}
+const restartHandshake = createRestartHandshake();
+// The soft stop's own drain client: same endpoint, a budget that fits inside
+// the orchestrator's soft-stop timeout (see restartHandshake.mjs).
+const softStopHandshake = createRestartHandshake({
+  prepareTimeoutMs: SOFT_STOP_PREPARE_TIMEOUT_MS,
+  settleBudgetMs: SOFT_STOP_SETTLE_BUDGET_MS,
+  drainTtlMs: SOFT_STOP_DRAIN_TTL_MS,
+});
+
+// The one in-flight shutdown, shared by every trigger (dev/devShutdown.mjs).
+// On Windows Ctrl+C reaches dist/index.js too, so it can exit while the
+// terminal-server `/shutdown` POST is still in flight; its exit handler
+// (onExit) must wait for that POST rather than `process.exit` over it.
+// `keepTerminals` is the soft stop: it drains the backend (fail open) and
+// kills it, but leaves the terminal-server and its agent ptys running.
+const devShutdown = createDevShutdown({
+  stopWatchers: () => {
+    try {
+      closeDistWatch();
+    } catch {
+      /* ignore */
+    }
+    backendDeps?.close();
+    restartPolicy.stopDeferredPoll();
+  },
+  stopCompiler: (signal) => compilerLifecycle?.stop(signal),
+  shutdownTerminals: shutdownTerminalsOnce,
+  prepareDrain: softStopHandshake.prepare,
+  killBackend: (signal) => backendLifecycle.kill(signal),
+  needsBackendStart: () => backendLifecycle.needsStart(),
+  onNoBackend: () => onExit(0),
+});
+const shutdown = devShutdown.shutdown;
+const isShuttingDown = devShutdown.isShuttingDown;
 
 async function onExit(code) {
   // Only ever called once a stop is under way. Never shutdown() here: its
   // default is a full stop, which would turn a soft stop into one.
-  await shutdownDone;
+  await devShutdown.done();
   if (terminalShutdown) await terminalShutdown;
   process.exit(code ?? 0);
 }
 
 backendLifecycle = createBackendLifecycle({
   copyAssetsBeforeRespawn: () => copyAssetsBeforeRespawn(copyAssetsScript),
-  isShuttingDown: () => shuttingDown,
+  isShuttingDown,
   onExitDuringShutdown: onExit,
   canSpawnBackend: () => !compilerLifecycle || compilerLifecycle.canRestartBackend(),
   captureBackendVersion: () => restartPolicy.captureDistBaseline(),
   onBackendSpawned: (candidate) => restartPolicy.onBackendSpawned(candidate),
 });
 
-const restartHandshake = createRestartHandshake();
-
 restartPolicy = createRestartPolicy({
   restartBackend: backendLifecycle.restartBackend,
-  canRestart: () => !shuttingDown && Boolean(compilerLifecycle?.canRestartBackend()),
+  canRestart: () => !isShuttingDown() && Boolean(compilerLifecycle?.canRestartBackend()),
   needsBackendStart: backendLifecycle.needsStart,
   readDistContentSignature: distContentSignature,
   deferBaselineUntilSpawn: true,
@@ -202,10 +205,10 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 onControlLine = (line) => {
   const command = line.trim();
   if (command === SOFT_STOP) {
-    if (shuttingDown) return;
+    if (isShuttingDown()) return;
     console.log(
-      '[lattice-backend] soft stop — stopping the backend and compiler; the terminal-server and its ' +
-        'agent terminals keep running.',
+      '[lattice-backend] soft stop — draining, then stopping the backend and compiler; the ' +
+        'terminal-server and its agent terminals keep running.',
     );
     void shutdown('SIGTERM', { keepTerminals: true });
   } else if (command === DEPS_RECHECK) {
@@ -222,7 +225,7 @@ compilerLifecycle = createCompilerLifecycle({
   tscBin,
   onCompileSucceeded: () => {
     restartPolicy.onCompileSucceeded();
-    if (depsRestartPending && !shuttingDown) {
+    if (depsRestartPending && !isShuttingDown()) {
       depsRestartPending = false;
       // Forced past the "did dist/ change?" check, never past run.lock deferral.
       restartPolicy.onDistChanged(true);
@@ -251,7 +254,7 @@ backendDeps = createDepsWatcher({
       forward: (line, stream) => process[stream].write(`[npm:backend] ${line}\n`),
     }),
   afterInstall: ({ ok }) => {
-    if (!ok || shuttingDown) return;
+    if (!ok || isShuttingDown()) return;
     depsRestartPending = true;
     console.log(
       '[lattice-backend] deps: recompiling against the new node_modules, then restarting the backend ' +
@@ -265,7 +268,7 @@ backendDeps = createDepsWatcher({
 // or repairs. Its zero-error completion is also an explicit catch-up signal,
 // so a missed native event cannot hide edits made during compiler downtime.
 const close = await watchDist(restartPolicy.scheduleDistChanged);
-if (shuttingDown) close();
+if (isShuttingDown()) close();
 else {
   closeDistWatch = close;
   restartPolicy.startDeferredPoll();

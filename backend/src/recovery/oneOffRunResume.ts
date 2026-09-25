@@ -175,7 +175,7 @@ const postMergeHookAdapter: Adapter<PostMergeHookRun> = {
       markAgentReadopted(
         agentId,
         run.stopReceivedAt !== undefined
-          ? { stopAt: run.stopReceivedAt, activeAt: run.stopActiveAt }
+          ? { stopAt: run.stopReceivedAt, activeAt: run.stopActiveAt, busy: run.stopBusy }
           : undefined,
       );
     }

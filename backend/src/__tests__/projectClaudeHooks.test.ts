@@ -173,3 +173,77 @@ test('memory: coexists with Lattice activity hooks, byte-stable on re-run', asyn
 
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+test('a user handler sharing a group with Lattice survives install and remove', async () => {
+  const dir = await mkProject();
+  const userConfig = {
+    hooks: {
+      SessionStart: [
+        {
+          hooks: [
+            {
+              type: 'command',
+              command: `curl -s -X POST ${ORIGIN}/api/project-activity/x`,
+            },
+            { type: 'command', command: 'echo mine' },
+          ],
+        },
+      ],
+      PreToolUse: [
+        {
+          matcher: 'Read|Edit|Write|MultiEdit|NotebookEdit',
+          hooks: [
+            {
+              type: 'command',
+              command: `curl -s -X POST ${ORIGIN}/api/project-activity/x`,
+            },
+            { type: 'command', command: 'echo mine-tool' },
+          ],
+        },
+      ],
+    },
+  };
+  await fs.writeFile(settingsPath(dir), JSON.stringify(userConfig, null, 2));
+
+  const userCommands = (hooks: Record<string, any[]>, event: string): string[] =>
+    (hooks[event] ?? []).flatMap((g: any) =>
+      g.hooks
+        .map((h: any) => h.command)
+        .filter((c: string) => !c.includes('/api/project-activity/')),
+    );
+
+  await installProjectClaudeHooks(dir, ORIGIN);
+  let after = await readSettings(dir);
+  assert.deepEqual(userCommands(after.hooks, 'SessionStart'), ['echo mine']);
+  assert.deepEqual(userCommands(after.hooks, 'PreToolUse'), ['echo mine-tool']);
+  assert.ok(
+    after.hooks.PreToolUse.some(
+      (g: any) =>
+        g.matcher === 'Read|Edit|Write|MultiEdit|NotebookEdit' &&
+        g.hooks.some((h: any) => h.command === 'echo mine-tool'),
+    ),
+    'user matcher kept',
+  );
+  // The stale Lattice handler was replaced, not duplicated.
+  assert.equal(latticeGroups(after.hooks, 'SessionStart').length, 1);
+
+  // Re-install is byte-stable.
+  const before = await fs.readFile(settingsPath(dir), 'utf8');
+  await installProjectClaudeHooks(dir, ORIGIN);
+  assert.equal(await fs.readFile(settingsPath(dir), 'utf8'), before);
+
+  await removeProjectClaudeHooks(dir);
+  after = await readSettings(dir);
+  assert.deepEqual(after.hooks.SessionStart, [
+    { hooks: [{ type: 'command', command: 'echo mine' }] },
+  ]);
+  assert.deepEqual(after.hooks.PreToolUse, [
+    {
+      matcher: 'Read|Edit|Write|MultiEdit|NotebookEdit',
+      hooks: [{ type: 'command', command: 'echo mine-tool' }],
+    },
+  ]);
+  assert.ok(!('SessionEnd' in after.hooks), 'lattice-only event removed');
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
