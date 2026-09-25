@@ -280,7 +280,7 @@ therefore stay safely re-runnable.
 | GET | `/api/push-runs/:id` | Push-run status poll |
 | POST | `/api/push-runs/:id/done` | Push-run Stop-hook callback |
 | DELETE | `/api/push-runs/:id` | Forget a completed push-run record |
-| POST | `/api/qa-runs` | Start a QA e2e Playwright-Claude session for a QA-lane task |
+| POST | `/api/qa-runs` | Start a QA e2e Playwright-Claude session for a QA-lane task (**409** while that task already has a run starting or running) |
 | GET | `/api/qa-runs/:id` | QA-run status/verdict poll |
 | POST | `/api/qa-runs/:id/verdict` | Structured QA verdict callback; confident PASS may promote qa → done |
 | POST | `/api/qa-runs/:id/done` | QA-run Stop-hook backstop/cleanup callback |

@@ -60,6 +60,8 @@ type Props = {
   qaPlaywright: QaPlaywrightControls;
   onQaRun: (task: Task) => void;
   onQaRunAll: (tasks: Task[]) => void;
+  // QA tasks with an e2e session already running (their ▶ focuses it instead).
+  runningQaTaskIds: ReadonlySet<string>;
 
   // Ready-to-Merge backend-run strip and Open/In Progress/QA bulk strips. The
   // merge strip wins where both could apply (`?? `).
@@ -106,6 +108,7 @@ export function TaskBoardLaneGrid({
   qaPlaywright,
   onQaRun,
   onQaRunAll,
+  runningQaTaskIds,
   mergeRun,
   recentRunSummary,
   onCancelActiveRun,
@@ -148,6 +151,7 @@ export function TaskBoardLaneGrid({
           onQaRun={
             lane.id === 'qa' && qaPlaywright.enabled ? onQaRun : undefined
           }
+          runningQaTaskIds={lane.id === 'qa' ? runningQaTaskIds : undefined}
           onQaRunAll={
             lane.id === 'qa' && qaPlaywright.enabled && !searchActive
               ? () => onQaRunAll(qaTasks)

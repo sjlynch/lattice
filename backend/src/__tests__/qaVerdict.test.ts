@@ -13,6 +13,7 @@ import {
   markQaRunDone,
   recordQaRun,
   recordQaVerdict,
+  type QaRun,
 } from '../qaRuns.js';
 import { createTask, getTask, updateTask } from '../tasks.js';
 import type { Task, TaskStatus } from '../tasks.js';
@@ -409,4 +410,126 @@ test('applyRecordedQaVerdict: a settled run never re-applies its verdict', async
   } finally {
     await rm(project, { recursive: true, force: true });
   }
+});
+
+// ---------- one QA session per task ----------
+//
+// The QA card's ▶ could start a second Playwright session for a task already
+// under test: both drove the browser against the same dev server and both
+// posted verdicts, so either one's confident PASS promoted the task. The route
+// now refuses a start while a QA run for the task is running (or starting).
+
+type DupHarness = {
+  post: () => Promise<{ status: number; body: { error?: string; runId?: string } }>;
+  startCalls: () => number;
+  runs: QaRun[];
+};
+
+// Mounts the real router with the registry + terminal-server probe injected.
+// The stubbed session records its run the way the real one does (only after
+// its pty "spawned", i.e. once `gate` resolves) and reports that pty live via
+// `sessions()` unless the test says otherwise.
+async function withDuplicateHarness(
+  opts: {
+    gate?: Promise<void>;
+    sessions?: (runs: QaRun[]) => unknown[] | null;
+  },
+  fn: (ctx: DupHarness) => Promise<void>,
+): Promise<void> {
+  const runs: QaRun[] = [];
+  let startCalls = 0;
+  const app = express();
+  app.use(express.json());
+  app.use(
+    buildQaRunsRouter('http://127.0.0.1:5184', {
+      getTask: async () => fixtureTask('qa'),
+      listRunningQaRuns: () => runs.filter((r) => r.status === 'running'),
+      listSessions: async () =>
+        opts.sessions ? opts.sessions(runs) : runs.map((r) => ({ id: `srv_${r.id}`, cwd: r.cwd })),
+      startQaSession: async (args) => {
+        startCalls += 1;
+        const id = `qa_dup_${startCalls}`;
+        const cwd = `C:/scratch/${id}`;
+        await opts.gate;
+        runs.push({
+          id,
+          taskId: args.taskId,
+          projectPath: args.projectPath,
+          cwd,
+          status: 'running',
+          createdAt: Date.now(),
+        });
+        return { id, taskId: args.taskId, cwd, command: 'claude', serverId: `srv_${id}` };
+      },
+    }),
+  );
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  const post = async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/qa-runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: 'C:/dev/proj', taskId: 't_qa_guard' }),
+    });
+    return { status: res.status, body: (await res.json()) as { error?: string; runId?: string } };
+  };
+  try {
+    await fn({ post, startCalls: () => startCalls, runs });
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+test('POST /api/qa-runs: a second start while the first run is running is 409 and spawns nothing', async () => {
+  await withDuplicateHarness({}, async ({ post, startCalls }) => {
+    const first = await post();
+    assert.equal(first.status, 200);
+    const second = await post();
+    assert.equal(second.status, 409);
+    assert.match(second.body.error ?? '', /already running/i);
+    assert.equal(second.body.runId, 'qa_dup_1');
+    assert.equal(startCalls(), 1, 'the duplicate must not start a second session');
+  });
+});
+
+test('POST /api/qa-runs: two simultaneous starts for one task spawn exactly one session', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await withDuplicateHarness({ gate }, async ({ post, startCalls }) => {
+    const firstP = post();
+    // Let the first request reach the (gated) spawn before the second lands.
+    while (startCalls() === 0) await new Promise((r) => setTimeout(r, 5));
+    const second = await post();
+    assert.equal(second.status, 409);
+    assert.match(second.body.error ?? '', /already starting/i);
+    release();
+    assert.equal((await firstP).status, 200);
+    assert.equal(startCalls(), 1);
+  });
+});
+
+test('POST /api/qa-runs: a settled run no longer blocks a re-test', async () => {
+  await withDuplicateHarness({}, async ({ post, startCalls, runs }) => {
+    assert.equal((await post()).status, 200);
+    runs[0].status = 'done';
+    assert.equal((await post()).status, 200);
+    assert.equal(startCalls(), 2);
+  });
+});
+
+test('POST /api/qa-runs: a run whose pty is gone (tab closed, no /done) does not block a re-test', async () => {
+  await withDuplicateHarness({ sessions: () => [] }, async ({ post, startCalls }) => {
+    assert.equal((await post()).status, 200);
+    assert.equal((await post()).status, 200);
+    assert.equal(startCalls(), 2);
+  });
+});
+
+test('POST /api/qa-runs: an unreachable terminal-server counts a tracked run as live (409)', async () => {
+  await withDuplicateHarness({ sessions: () => null }, async ({ post, startCalls }) => {
+    assert.equal((await post()).status, 200);
+    assert.equal((await post()).status, 409);
+    assert.equal(startCalls(), 1);
+  });
 });
