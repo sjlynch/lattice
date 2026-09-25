@@ -6,6 +6,10 @@ import {
   type ImportedServerInfo,
 } from '../../../api';
 
+// A server with a secret embedded in its url/args is refused by the backend
+// (it has no env/header slot to move the key into), so it can't be selected.
+const importable = (s: ImportedServerInfo) => !s.collides && !(s.embeddedSecrets?.length);
+
 type Props = {
   activeFolder: string;
   // Refresh the catalog after a successful import.
@@ -27,8 +31,8 @@ export function McpImportSection({ activeFolder, onImported }: Props) {
     try {
       const res = await scanMcpImport(activeFolder);
       setScanned(res.servers);
-      // Pre-check everything importable (non-colliding).
-      setSelected(new Set(res.servers.filter((s) => !s.collides).map((s) => s.id)));
+      // Pre-check everything importable (non-colliding, no embedded secret).
+      setSelected(new Set(res.servers.filter(importable).map((s) => s.id)));
       if (res.servers.length === 0) setMsg('No MCP servers found in other tools.');
     } catch (err) {
       // Surface the failure in the section's own message slot — an unhandled
@@ -49,6 +53,9 @@ export function McpImportSection({ activeFolder, onImported }: Props) {
       setMsg(
         `Imported ${res.imported.length} server${res.imported.length === 1 ? '' : 's'}` +
           (res.skipped.length ? `, skipped ${res.skipped.length} (already present).` : '.') +
+          (res.refused?.length
+            ? ` Refused ${res.refused.map((r) => r.id).join(', ')}: ${res.refused[0].reason}`
+            : '') +
           ' Enable them per-project above.',
       );
       setScanned(null);
@@ -76,15 +83,17 @@ export function McpImportSection({ activeFolder, onImported }: Props) {
         <div className="mcp-import-list">
           {scanned.map((s) => {
             const checked = selected.has(s.id);
+            const canImport = importable(s);
+            const embedded = s.embeddedSecrets ?? [];
             return (
               <label
                 key={`${s.source}:${s.id}`}
-                className={`mcp-import-row ${s.collides ? 'collides' : ''}`}
+                className={`mcp-import-row ${canImport ? '' : 'collides'}`}
               >
                 <input
                   type="checkbox"
-                  checked={checked && !s.collides}
-                  disabled={s.collides}
+                  checked={checked && canImport}
+                  disabled={!canImport}
                   onChange={(e) => {
                     setSelected((prev) => {
                       const next = new Set(prev);
@@ -99,6 +108,17 @@ export function McpImportSection({ activeFolder, onImported }: Props) {
                     {s.label}
                     <span className="mcp-import-source">{s.source}</span>
                     {s.collides && <span className="mcp-chip off">already in catalog</span>}
+                    {embedded.length > 0 && (
+                      <span
+                        className="mcp-chip warn"
+                        title={
+                          `Secret found (${embedded.join('; ')}). Move it into an ` +
+                          'env var or HTTP header in the source config, then re-scan.'
+                        }
+                      >
+                        secret in {s.transport === 'http' ? 'URL' : 'args'} — not importable
+                      </span>
+                    )}
                   </div>
                   <div className="mcp-import-row-summary">{s.summary}</div>
                   {s.secretVars.length > 0 && (

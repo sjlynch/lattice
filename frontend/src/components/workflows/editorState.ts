@@ -136,12 +136,20 @@ export function fromWorkflow(w: Workflow): EditorState {
 // the user typed during the in-flight request:
 //   - unchanged  → adopt the server echo (`fromWorkflow`), clearing `dirty`.
 //   - superseded → keep `current` so the mid-save edit (and its `dirty` flag)
-//     survives instead of being silently overwritten by the stale echo.
+//     survives instead of being silently overwritten by the stale echo. On the
+//     create path `current` still has `workflowId: null` although the server
+//     has already created `saved.id`: adopt that id (staying dirty) so the next
+//     save PATCHes it instead of POSTing a duplicate definition.
 export function nextEditorAfterSave(
   atSaveStart: EditorState,
   current: EditorState,
   saved: Workflow,
 ): { editor: EditorState; superseded: boolean } {
-  if (current !== atSaveStart) return { editor: current, superseded: true };
+  if (current !== atSaveStart) {
+    if (current.workflowId === null) {
+      return { editor: { ...current, workflowId: saved.id, dirty: true }, superseded: true };
+    }
+    return { editor: current, superseded: true };
+  }
   return { editor: fromWorkflow(saved), superseded: false };
 }

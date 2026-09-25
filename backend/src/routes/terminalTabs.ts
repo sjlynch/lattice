@@ -16,6 +16,7 @@ import { proxyKillSession } from '../terminalServerClient.js';
 import { notifySessionsFreed } from '../spawnQueue.js';
 import { terminalRegistry } from '../terminalRegistry/store.js';
 import { restoreProjectTerminals } from '../terminalRegistry/restore.js';
+import { abortPostMergeHookForServerId } from '../postMergeHooks.js';
 import { readProjectParam } from './projectParam.js';
 
 // The by-id routes take the project as a scoping hint only; an absent one
@@ -74,7 +75,11 @@ export function buildTerminalTabsRouter(): Router {
   });
 
   // Close a tab: end the record first (so the exit watcher / restore never
-  // resurrect it), then kill its pty if one is alive.
+  // resurrect it), then kill its pty if one is alive. A post-merge hook's tab is
+  // a registered record too, so closing it here must end the hook `aborted`
+  // before the kill, exactly as DELETE /api/terminals/:id does — otherwise the
+  // hook stays `running` with a dead pty and the merge run waiting on it parks
+  // for up to POST_MERGE_HOOK_MAX_WAIT_MS holding run.lock.
   r.delete('/api/terminal-tabs/:id', async (req, res) => {
     const project = optionalProject(req, res);
     if (project === null) return;
@@ -82,6 +87,7 @@ export function buildTerminalTabsRouter(): Router {
     if (!record) return res.status(404).json({ error: 'not found' });
     await terminalRegistry.end(record.id, { reason: 'closed' }, record.projectPath);
     if (record.serverId) {
+      await abortPostMergeHookForServerId(record.serverId);
       const killed = await proxyKillSession(record.serverId);
       if (killed) notifySessionsFreed();
     }
