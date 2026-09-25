@@ -146,7 +146,10 @@ The ownership tests are in `../__tests__/projectMutation.test.ts`.
 ## Exclusive (non-lendable) holds
 
 `acquireProjectRunLock(project, label, { lendable: false })` registers an
-owner that `withProjectMutation` will **not** borrow. The one user is the
+owner that `withProjectMutation` will **not** borrow. Two users: the
+post-merge-run housekeeping gc (`repo-maintenance`, `../worktree/repoMaintenance.ts`
+— merging beside a repack leaves a full leftover pack copy on Windows; the
+refusal message names it via `REPO_MAINTENANCE_BUSY_MESSAGE`), and the
 workflow Run tests step (`workflow-test:<runId>`, `../workflowRuns/testStep/`),
 whose agent edits and commits on the main checkout for the whole hold — a
 manual-merge resolver's finalize (`routes/tasks/finalizeResolved.ts` → snapshot

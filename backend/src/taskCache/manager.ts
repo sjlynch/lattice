@@ -7,7 +7,7 @@ import { TaskMigrations } from './migrations.js';
 import { projectTasksFile } from './paths.js';
 import { isStructurallyJunkPath } from './pruneIndex.js';
 import { ProjectsIndex } from './projectsIndex.js';
-import { applyTaskUpdate, type TaskLookup } from './taskUpdate.js';
+import { applyTaskUpdate, stampTimestamps, type TaskLookup } from './taskUpdate.js';
 import type { Task, TaskStatus, TaskSubscriber, TaskUpdates } from './types.js';
 
 export type TaskCacheManagerOptions = {
@@ -206,6 +206,10 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
   // in their new top-to-bottom order. Each listed task gets its status set to
   // `status` (handles cross-lane drops that pick a position) and its sortOrder
   // rewritten to its position in the array. Tasks not listed are not touched.
+  // A task whose status actually changes is stamped like a PATCH that sets
+  // `status` (updatedAt + the transition timestamp — doneAt, startedAt, …),
+  // so a dragged card surfaces in activity-ordered views; a pure same-lane
+  // reorder stamps nothing.
   public async reorderTasksInLane(
     projectPath: string,
     status: TaskStatus,
@@ -222,7 +226,8 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
         if (i === -1) return t;
         if (t.status === status && t.sortOrder === i) return t;
         changed = true;
-        return { ...t, status, sortOrder: i };
+        if (t.status === status) return { ...t, sortOrder: i };
+        return { ...t, ...stampTimestamps(t, { status }), sortOrder: i };
       });
       if (changed) {
         this.setCached(key, updatedList);
