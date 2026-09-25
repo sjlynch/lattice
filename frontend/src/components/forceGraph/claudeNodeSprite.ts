@@ -6,6 +6,7 @@
 // agents, and `colorIndex` slots are reused, so the cache stays tiny).
 
 import * as THREE from 'three';
+import { finishCanvasTexture, newTextureCanvas } from './canvasTexture';
 import { CLAUDE_NODE_RENDER_ORDER } from './renderOrders';
 
 const TEX_SIZE = 128;
@@ -18,10 +19,7 @@ function rgba(c: THREE.Color, a: number): string {
 }
 
 function buildDiscTexture(color: string): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = TEX_SIZE;
-  canvas.height = TEX_SIZE;
-  const ctx = canvas.getContext('2d')!;
+  const { canvas, ctx } = newTextureCanvas(TEX_SIZE);
   const cx = TEX_SIZE / 2;
   const cy = TEX_SIZE / 2;
   const col = new THREE.Color(color);
@@ -65,12 +63,7 @@ function buildDiscTexture(color: string): THREE.CanvasTexture {
   ctx.strokeStyle = rgba(col.clone().offsetHSL(0, 0, 0.12), 0.9);
   ctx.stroke();
 
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  return tex;
+  return finishCanvasTexture(canvas);
 }
 
 const materialCache = new Map<string, THREE.SpriteMaterial>();
@@ -104,10 +97,7 @@ export function makeClaudeNode(color: string, size: number): THREE.Sprite {
 // reads as a secondary "helper" of the parent's filled disc while sharing its
 // color (subagents belong to that Claude). Same per-color material cache idea.
 function buildSatelliteTexture(color: string): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = TEX_SIZE;
-  canvas.height = TEX_SIZE;
-  const ctx = canvas.getContext('2d')!;
+  const { canvas, ctx } = newTextureCanvas(TEX_SIZE);
   const cx = TEX_SIZE / 2;
   const cy = TEX_SIZE / 2;
   const col = new THREE.Color(color);
@@ -135,12 +125,7 @@ function buildSatelliteTexture(color: string): THREE.CanvasTexture {
   ctx.fillStyle = rgba(col.clone().offsetHSL(0, 0, 0.18), 0.95);
   ctx.fill();
 
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  return tex;
+  return finishCanvasTexture(canvas);
 }
 
 const satelliteMaterialCache = new Map<string, THREE.SpriteMaterial>();
