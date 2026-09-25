@@ -70,7 +70,8 @@
     that drain cuts it short. Tested in `backend/src/__tests__/devShutdown.test.ts`.
 - **Dependency changes after boot** (`depsWatch.mjs`, shared with
   `backend/scripts/dev.mjs`; typed in `depsWatch.d.mts`, unit-tested in
-  `backend/src/__tests__/depsWatch.test.ts`). Each workspace's `package.json` +
+  `backend/src/__tests__/depsWatch.test.ts`; the `npm install` runner lives in
+  `npmInstall.mjs`, re-exported from `depsWatch.mjs`). Each workspace's `package.json` +
   `package-lock.json` are watched (the directory, debounced 2 s — git and
   editors replace files by rename). The trigger is a `depsCheck.mjs` MISMATCH,
   never a file event alone (npm rewrites its own lockfile), and the fix is
