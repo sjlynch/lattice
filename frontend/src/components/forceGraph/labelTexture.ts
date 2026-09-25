@@ -1,4 +1,5 @@
-import * as THREE from 'three';
+import type * as THREE from 'three';
+import { finishCanvasTexture, newTextureCanvas } from './canvasTexture';
 import type { SpriteUvBounds } from './spritePicking';
 import { disposeLabelMaterial } from './labelSpriteResources';
 
@@ -117,11 +118,8 @@ export function buildMeasuredLabelTexture(
   const visualW = measured + options.strokeWidth + 2;
   const W = Math.max(options.minWidth, visualW + options.padX * 2);
 
-  const canvas = document.createElement('canvas');
-  canvas.width = W;
-  canvas.height = options.height;
+  const { canvas, ctx: drawCtx } = newTextureCanvas(W, options.height);
 
-  const drawCtx = canvas.getContext('2d')!;
   drawCtx.font = options.font;
   drawCtx.textAlign = 'center';
   drawCtx.textBaseline = 'middle';
@@ -132,11 +130,7 @@ export function buildMeasuredLabelTexture(
   drawCtx.fillStyle = color;
   drawCtx.fillText(text, W / 2, options.height / 2);
 
-  const tex = new THREE.CanvasTexture(canvas) as MeasuredLabelTexture;
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
+  const tex = finishCanvasTexture(canvas) as MeasuredLabelTexture;
   tex._aspect = W / options.height;
 
   const hitW = Math.min(W, visualW + options.padX);

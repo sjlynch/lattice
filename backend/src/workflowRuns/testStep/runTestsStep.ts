@@ -48,7 +48,6 @@ import {
 } from '../../workflows.js';
 import {
   checkpointWorkflowRun,
-  notify,
   subscribe,
   type WorkflowRun,
   type WorkflowRunEvent,
@@ -57,6 +56,7 @@ import { workflowStepDir } from '../scratchDirectory.js';
 import { effectiveStepHarness } from '../stepMarkdown.js';
 import { killWorkflowStepSession, workflowStepAgentId } from '../sessionSpawner.js';
 import { spawnWorkflowStep } from '../stepSpawner.js';
+import { emitControlProgress } from '../controlSteps/shared.js';
 import {
   isProjectHeadDetached,
   readCommitsSince,
@@ -173,16 +173,7 @@ function stepTimeoutMinutes(wf: Workflow | undefined, stepIndex: number): number
 }
 
 function progress(run: WorkflowRun, stepIndex: number, message: string): void {
-  notify({
-    type: 'step-control-progress',
-    runId: run.id,
-    projectPath: run.projectPath,
-    stepIndex,
-    kind: 'test',
-    current: 0,
-    total: 0,
-    message,
-  });
+  emitControlProgress(run, stepIndex, 'test', 0, 0, message);
 }
 
 function beginEntry(
