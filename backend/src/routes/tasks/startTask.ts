@@ -4,28 +4,45 @@
 // Start control step can drive the same code path the HTTP /run route uses
 // (setupTaskWorktree → pre-spawn pty → flip to in_progress) without going
 // through an HTTP hop or duplicating the logic.
+//
+// The withdrawal checks, teardown and checkout parking a start relies on live
+// in startWithdrawal.ts.
 
-import path from 'node:path';
 import { getTask, updateTaskWith, type Task, type TaskUpdates } from '../../tasks.js';
-import { cleanupWorktreeForTask, setupTaskWorktree } from '../../worktree.js';
-import { proxyKillSession } from '../../terminalProxy.js';
+import { setupTaskWorktree } from '../../worktree.js';
 import { SpawnCapacityError, isSpawnDiskSpaceError } from '../../spawnQueue.js';
 import { requestMergeToFreeDiskSpace } from '../../diskPressureMerge.js';
 import { normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
 import { normalizePiModel, resolvePiModel } from '../../piModels.js';
 import { isCodexYoloEnabled } from '../../userSettings.js';
-import { selectHarnessCommand } from './harnessFactory.js';
+import {
+  selectHarnessCommand,
+  type CreateSessionOutcome,
+  type SelectedHarnessCommand,
+} from './harnessFactory.js';
 import { reserveColorSlot, type ColorSlotReservation } from './colorSlot.js';
 import { CLEARED_RUN_QUEUE_STATE, TaskStartWithdrawnError } from './queuedSpawnAdmission.js';
+import {
+  checkWithdrawal,
+  defaultDiscardDeps,
+  discardWithdrawnStart,
+  isFreshlyRunnable,
+  parkCheckoutUntilRetry,
+  pendingStartTeardown,
+  unparkCheckout,
+  withdrawalOf,
+  withdrawalUpdates,
+  withdrawnError,
+  type DiscardOrphanedSpawnDeps,
+  type Withdrawal,
+  type Withdrawn,
+} from './startWithdrawal.js';
 
-// A task can be started from scratch (fresh worktree + agent) when it is
-// Open, or In Progress with no worktree on record — the latter happens when a
-// task is dragged into the In Progress lane manually without ever running. In
-// both cases there is no existing worktree, so setupTaskWorktree creates one.
-export function isFreshlyRunnable(task: Task): boolean {
-  if (task.status === 'open') return true;
-  return task.status === 'in_progress' && !task.worktreePath;
-}
+export {
+  discardOrphanedSpawn,
+  isFreshlyRunnable,
+  type DiscardOrphanedSpawnDeps,
+} from './startWithdrawal.js';
 
 export type StartTaskByIdResult = {
   task: Task;
@@ -62,151 +79,7 @@ export type StartTaskByIdOptions = {
   deps?: Partial<StartTaskDeps>;
 };
 
-// Why an in-flight start must not complete. `deleted`: the task is gone;
-// `cancelled`: its queued run was cancelled (signal aborted); `relaned`: the
-// task is no longer freshly runnable (dragged to Backlog / Deleted / …, or
-// another start already claimed it).
-type Withdrawal = 'deleted' | 'cancelled' | 'relaned';
-type Withdrawn = { withdrawal: Withdrawal; current: Task | null };
-
-function withdrawalOf(current: Task, signal: AbortSignal | undefined): Withdrawal | null {
-  if (signal?.aborted) return 'cancelled';
-  if (!isFreshlyRunnable(current)) return 'relaned';
-  return null;
-}
-
-function hasRunQueueState(task: Task): boolean {
-  return (Object.keys(CLEARED_RUN_QUEUE_STATE) as Array<keyof typeof CLEARED_RUN_QUEUE_STATE>)
-    .some((key) => task[key] !== undefined);
-}
-
-// The updates recording a withdrawal. A lane change drops the run's queue
-// state (the "Queued" pill, persisted harness, attempt counter) since the run
-// is not coming back; a cancel already cleared it, and a re-run may have set
-// it again since, so a cancel touches nothing.
-function withdrawalUpdates(withdrawal: Withdrawal, current: Task): TaskUpdates | undefined {
-  return withdrawal === 'relaned' && hasRunQueueState(current)
-    ? { ...CLEARED_RUN_QUEUE_STATE }
-    : undefined;
-}
-
-// Read the task under its project's write lock and report whether this start
-// has been withdrawn. Null means "carry on".
-async function checkWithdrawal(
-  taskId: string,
-  signal: AbortSignal | undefined,
-): Promise<Withdrawn | null> {
-  const outcome = await updateTaskWith<Withdrawal | null>(taskId, (current) => {
-    const withdrawal = withdrawalOf(current, signal);
-    return {
-      updates: withdrawal ? withdrawalUpdates(withdrawal, current) : undefined,
-      result: withdrawal,
-    };
-  });
-  if (!outcome) return { withdrawal: 'deleted', current: null };
-  return outcome.result ? { withdrawal: outcome.result, current: outcome.task } : null;
-}
-
-function withdrawnError(taskId: string, found: Withdrawn): Error {
-  // The task vanished between the queue admitting this run and the status
-  // flip (DELETE saw no `worktreePath` yet, so it had nothing to clean up).
-  // Kept a plain failure so the UI still hears about it.
-  if (found.withdrawal === 'deleted') {
-    return new Error(`task ${taskId} was deleted while its run was being started`);
-  }
-  return new TaskStartWithdrawnError(taskId, found.withdrawal, found.current?.status);
-}
-
-// Teardowns of withdrawn starts still running, per task. A new start of the
-// same task waits for them: the checkout path is deterministic per task, so a
-// `git worktree remove` still in progress would otherwise race the new start's
-// `git worktree add` of that same directory.
-const startTeardowns = new Map<string, Promise<void>>();
-
-function trackTeardown(taskId: string, work: Promise<void>): Promise<void> {
-  const prev = startTeardowns.get(taskId);
-  const tracked: Promise<void> = Promise.all([prev, work])
-    .then(() => undefined, () => undefined)
-    .finally(() => {
-      if (startTeardowns.get(taskId) === tracked) startTeardowns.delete(taskId);
-    });
-  startTeardowns.set(taskId, tracked);
-  return tracked;
-}
-
-function samePath(a: string, b: string): boolean {
-  const norm = (p: string) => {
-    const resolved = path.resolve(p);
-    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-  };
-  return norm(a) === norm(b);
-}
-
-// Tear down what a withdrawn start made. If another start of this task already
-// recorded this very checkout as its worktree, only our pty is surplus — the
-// checkout is theirs now and must survive.
-function discardWithdrawnStart(
-  task: Pick<Task, 'id' | 'projectPath'>,
-  current: Task | null,
-  worktree: { worktreePath: string; branch: string },
-  serverId: string | undefined,
-  deps: DiscardOrphanedSpawnDeps,
-): Promise<void> {
-  const claimed = !!current?.worktreePath && samePath(current.worktreePath, worktree.worktreePath);
-  return trackTeardown(
-    task.id,
-    claimed
-      ? killSurplusPty(task, serverId, deps)
-      : discardOrphanedSpawn(task, worktree, serverId, deps),
-  );
-}
-
-async function killSurplusPty(
-  task: Pick<Task, 'id'>,
-  serverId: string | undefined,
-  deps: DiscardOrphanedSpawnDeps,
-): Promise<void> {
-  if (!serverId) return;
-  await deps.killSession(serverId).catch((err) => {
-    console.warn(`[task-run] task ${task.id} start withdrawn; pty ${serverId} kill failed:`, err);
-  });
-}
-
-// A CAP-rejected pass leaves its checkout behind for the retry to reuse (the
-// queue re-runs the thunk; setupTaskWorktree's reconcile makes that
-// idempotent). If the queued run is cancelled — or the task deleted — before
-// that retry, nothing else would ever reclaim it (DELETE saw no
-// `worktreePath`), so the pass parks a teardown on the request's signal. The
-// retry detaches it on entry: from then on its own checkpoints own cleanup.
-const parkedCheckouts = new WeakMap<AbortSignal, () => void>();
-
-function parkCheckoutUntilRetry(
-  task: Pick<Task, 'id' | 'projectPath'>,
-  worktree: { worktreePath: string; branch: string },
-  signal: AbortSignal | undefined,
-  deps: DiscardOrphanedSpawnDeps,
-): void {
-  if (!signal) return;
-  const onAbort = () => {
-    parkedCheckouts.delete(signal);
-    void trackTeardown(task.id, (async () => {
-      const current = await getTask(task.id).catch(() => null);
-      await discardWithdrawnStart(task, current, worktree, undefined, deps);
-    })());
-  };
-  if (signal.aborted) {
-    onAbort();
-    return;
-  }
-  signal.addEventListener('abort', onAbort, { once: true });
-  parkedCheckouts.set(signal, () => signal.removeEventListener('abort', onAbort));
-}
-
-function unparkCheckout(signal: AbortSignal | undefined): void {
-  if (!signal) return;
-  parkedCheckouts.get(signal)?.();
-  parkedCheckouts.delete(signal);
-}
+type WorktreeSetup = Awaited<ReturnType<typeof setupTaskWorktree>>;
 
 // Run an Open task: set up the worktree, pre-spawn the harness pty, then flip
 // status to in_progress. Returns the spawn info so callers can either surface
@@ -237,7 +110,7 @@ export async function startTaskById(
   // A retry of a CAP-parked pass reuses that checkout — stop guarding it —
   // and a withdrawn earlier start of this task may still be removing it.
   unparkCheckout(signal);
-  await startTeardowns.get(taskId);
+  await pendingStartTeardown(taskId);
 
   const task = await getTask(taskId);
   if (!task) throw new Error(`task ${taskId} not found`);
@@ -248,24 +121,8 @@ export async function startTaskById(
   }
   if (signal?.aborted) throw new TaskStartWithdrawnError(taskId, 'cancelled');
 
-  // Resolve the Pi model only for a Pi run: explicit request body wins, else
-  // the per-project default. Avoids a settings read for Claude/Codex tasks.
-  const harness = normalizeAgentHarness(options.requestedHarness);
-  const piModel =
-    harness === 'pi'
-      ? normalizePiModel(options.requestedPiModel) ??
-        (await resolvePiModel(task.projectPath))
-      : undefined;
-  // Resolve the Codex `--yolo` toggle only for a Codex run (default ON).
-  const codexYolo =
-    harness === 'codex' ? await isCodexYoloEnabled(task.projectPath) : undefined;
-  const selectedHarness = deps.selectHarnessCommand(task, {
-    requestedHarness: options.requestedHarness,
-    mode: 'run',
-    piModel,
-    codexYolo,
-  });
-  let result: Awaited<ReturnType<typeof setupTaskWorktree>>;
+  const { selectedHarness, piModel } = await resolveStartHarness(task, options, deps);
+  let result: WorktreeSetup;
   try {
     result = await deps.setupTaskWorktree(
       task.projectPath,
@@ -309,19 +166,71 @@ export async function startTaskById(
     );
   }
 
-  // The flip, as a compare-and-set under the task lock: re-read the task and
-  // start it only if it is still freshly runnable and its run not cancelled.
-  //
-  // Palette slot: keep the task's stored index (a re-run, or a CAP-rejected
-  // first pass, must not jump colors) only while no other active task or
-  // in-flight reservation holds it — a task that went to QA/Done freed its
-  // slot, and a sibling may have taken it since. The reservation covers the
-  // sibling starts the spawn queue admits concurrently (up to `softCap`); it
-  // is released on every path once the flip has landed or been refused.
+  const outcome = await flipToInProgress(taskId, signal, result, spawn, selectedHarness, piModel);
+  if (!outcome) return backOut({ withdrawal: 'deleted', current: null }, spawn.serverId);
+  if (outcome.result) {
+    return backOut({ withdrawal: outcome.result, current: outcome.task }, spawn.serverId);
+  }
+
+  return {
+    task: outcome.task,
+    worktreePath: result.worktreePath,
+    branch: result.branch,
+    taskFile: result.taskFile,
+    command: spawn.command,
+    serverId: spawn.serverId,
+    terminalId: spawn.terminalId,
+  };
+}
+
+// Pick the harness command a run spawns with.
+async function resolveStartHarness(
+  task: Task,
+  options: StartTaskByIdOptions,
+  deps: StartTaskDeps,
+): Promise<{ selectedHarness: SelectedHarnessCommand; piModel: string | undefined }> {
+  // Resolve the Pi model only for a Pi run: explicit request body wins, else
+  // the per-project default. Avoids a settings read for Claude/Codex tasks.
+  const harness = normalizeAgentHarness(options.requestedHarness);
+  const piModel =
+    harness === 'pi'
+      ? normalizePiModel(options.requestedPiModel) ??
+        (await resolvePiModel(task.projectPath))
+      : undefined;
+  // Resolve the Codex `--yolo` toggle only for a Codex run (default ON).
+  const codexYolo =
+    harness === 'codex' ? await isCodexYoloEnabled(task.projectPath) : undefined;
+  const selectedHarness = deps.selectHarnessCommand(task, {
+    requestedHarness: options.requestedHarness,
+    mode: 'run',
+    piModel,
+    codexYolo,
+  });
+  return { selectedHarness, piModel };
+}
+
+// The flip, as a compare-and-set under the task lock: re-read the task and
+// start it only if it is still freshly runnable and its run not cancelled.
+// Null when the task is gone; otherwise `result` is the withdrawal that
+// refused the flip, or null when it landed.
+//
+// Palette slot: keep the task's stored index (a re-run, or a CAP-rejected
+// first pass, must not jump colors) only while no other active task or
+// in-flight reservation holds it — a task that went to QA/Done freed its
+// slot, and a sibling may have taken it since. The reservation covers the
+// sibling starts the spawn queue admits concurrently (up to `softCap`); it
+// is released on every path once the flip has landed or been refused.
+async function flipToInProgress(
+  taskId: string,
+  signal: AbortSignal | undefined,
+  result: WorktreeSetup,
+  spawn: CreateSessionOutcome,
+  selectedHarness: SelectedHarnessCommand,
+  piModel: string | undefined,
+): Promise<{ task: Task; result: Withdrawal | null } | null> {
   const reservationRef: { current: ColorSlotReservation | null } = { current: null };
-  let outcome: { task: Task; result: Withdrawal | null } | null;
   try {
-    outcome = await updateTaskWith<Withdrawal | null>(taskId, (current, tasks) => {
+    return await updateTaskWith<Withdrawal | null>(taskId, (current, tasks) => {
       const withdrawal = withdrawalOf(current, signal);
       if (withdrawal) {
         return { updates: withdrawalUpdates(withdrawal, current), result: withdrawal };
@@ -338,20 +247,6 @@ export async function startTaskById(
   } finally {
     reservationRef.current?.release();
   }
-  if (!outcome) return backOut({ withdrawal: 'deleted', current: null }, spawn.serverId);
-  if (outcome.result) {
-    return backOut({ withdrawal: outcome.result, current: outcome.task }, spawn.serverId);
-  }
-
-  return {
-    task: outcome.task,
-    worktreePath: result.worktreePath,
-    branch: result.branch,
-    taskFile: result.taskFile,
-    command: spawn.command,
-    serverId: spawn.serverId,
-    terminalId: spawn.terminalId,
-  };
 
   function startedUpdates(slot: number): TaskUpdates {
     return {
@@ -376,49 +271,11 @@ export async function startTaskById(
   }
 }
 
-// Injectable seam for the teardown above, so the regression test can prove the
-// pty kill + worktree cleanup fire without standing up git/terminal-server.
-export type DiscardOrphanedSpawnDeps = {
-  killSession: (serverId: string) => Promise<unknown>;
-  cleanupWorktree: typeof cleanupWorktreeForTask;
-};
-
-const defaultDiscardDeps: DiscardOrphanedSpawnDeps = {
-  killSession: proxyKillSession,
-  cleanupWorktree: cleanupWorktreeForTask,
-};
-
 const defaultStartDeps: StartTaskDeps = {
   setupTaskWorktree,
   selectHarnessCommand,
   discard: defaultDiscardDeps,
 };
-
-// Best-effort teardown of a worktree + pre-spawned pty whose start was
-// withdrawn (task deleted, run cancelled, task re-laned) before the
-// in_progress flip landed. Kill the pty first so Windows releases its file
-// locks, then let `git worktree remove` reclaim the checkout. Never throws —
-// the caller raises its own error naming the real cause.
-export async function discardOrphanedSpawn(
-  task: Pick<Task, 'id' | 'projectPath'>,
-  worktree: { worktreePath: string; branch: string },
-  serverId: string | undefined,
-  deps: DiscardOrphanedSpawnDeps = defaultDiscardDeps,
-): Promise<void> {
-  if (serverId) {
-    await deps.killSession(serverId).catch((err) => {
-      console.warn(`[task-run] task ${task.id} start withdrawn; pty ${serverId} kill failed:`, err);
-    });
-  }
-  await deps
-    .cleanupWorktree(task.projectPath, worktree.worktreePath, worktree.branch)
-    .catch((err) => {
-      console.warn(
-        `[task-run] task ${task.id} start withdrawn; worktree cleanup deferred to the boot sweep:`,
-        err,
-      );
-    });
-}
 
 // Convenience for callers that already have a harness string (e.g. workflow
 // runs that resolved the override at run start). Just a typed alias around

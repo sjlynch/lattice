@@ -94,6 +94,7 @@ no-op; a `limit`-capped listing carries `truncated=N/M` in its frontmatter.
 
 - `runRoute.ts` — `POST /:id/run`: pin + `isFreshlyRunnable`, `enqueueTaskRun` → `{accepted, queued}`.
 - `startTask.ts` — `startTaskById` (worktree → pty → in_progress flip), shared with the workflow Start step.
+- `startWithdrawal.ts` — `startTaskById`'s withdrawal checks, withdrawn-start teardown (`discardOrphanedSpawn`) and CAP-parked checkouts.
 - `colorSlot.ts` — `assignColorSlot` / `reserveColorSlot`: stable palette slot, reserved until the flip lands.
 - `harnessFactory.ts` — `selectHarnessCommand`: harness → run/resume command + pty `createSession`.
 - `mergeRoute.ts` — `POST /:id/merge`: 409 while a merge run / manual merge / post-merge hook is active.
