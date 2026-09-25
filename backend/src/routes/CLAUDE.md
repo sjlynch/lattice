@@ -16,9 +16,10 @@ qaRuns, workflows.
   `Retry-After`) new top-level starts while a drain is on. Must stay mounted
   FIRST so the gate runs before the routes it guards. See
   `../restartDrain/CLAUDE.md`.
-- `health.ts` — composes `routes/health/`: liveness/default-root/harnesses,
-  scan + agent-facing dead-code summary, git history/branch, and folder-picker
-  browse/create-dir endpoints.
+- `health.ts` — composes `routes/health/`: `liveness.ts` (liveness/
+  default-root/harnesses), `scan.ts` (scan + agent-facing dead-code summary),
+  `gitInfo.ts` (`/api/git-history` + `/api/git-branch`), and `browse.ts`
+  (folder-picker list-dir/create-dir).
   `health/scan.ts` shares scans across HTTP subscribers and observes unfinished
   response `close` for disconnects. Incoming request `close` is not a reliable
   disconnect signal: a fully consumed GET can emit it while its response waits.
@@ -116,9 +117,10 @@ route (and `/ws/tasks`) through the real app.
 
 ## Why factories?
 
-Routes need `BACKEND_ORIGIN` (for generated curl callbacks in hooks/prompts)
-which is computed by `server/config.ts` and passed from `server/app.ts`. Passing
-it in keeps routers testable and avoids hidden globals.
+Routes need `backendOrigin` (for generated curl callbacks in hooks/prompts),
+which `server/config.ts` computes and `server/app.ts` threads through
+`mountRouteFactories` into each `buildXRouter`. Passing it in keeps routers
+testable and avoids hidden globals.
 
 ## Adding a route
 

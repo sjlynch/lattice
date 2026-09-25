@@ -77,7 +77,14 @@ a `!==` filter would drop our own project's events; re-evaluate on every (rare)
 hook event and let the canonicalizing lookup decide.
 
 `emitControlProgress` is the single shaper for the `step-control-progress` WS
-event so every worker reports progress identically.
+event so every worker reports progress identically (agent steps' pre-run-tool
+note in `../stepSpawner.ts` and the Run tests step's `progress` use it too).
+
+`isRunEndedEvent(ev, runId)` — the "this workflow run was cancelled/errored"
+filter every wait resolves on. `subscribeOnce(install, onSettle)` — the
+subscribe-before-check, settle-once idiom (unsubscribes even when the listener
+fires synchronously during subscription); used by `raceWorkflowRunEnd` and
+`waitForMergeRunFinished`.
 
 ## `start.ts` — `runStartStep`
 
@@ -108,6 +115,15 @@ path), emitting one `workflow-task-spawned` terminal tab per task.
   `enqueueTaskRun` and counted as deferred — the same path a cap rejection
   takes — so it starts as soon as capacity returns. A disk-space deferral
   (`SpawnDiskSpaceError`, `isSpawnDeferral`) is handled the same way.
+- **Never start a task the queue is already starting (do not regress)**: a
+  queued run (Run All, a manual ▶, boot re-enqueue) keeps its task `open` until
+  the pty spawns — minutes on a big repo waiting on the checkout gate — so it
+  still passes `startTaskById`'s freshly-runnable check. Starting it again made
+  the second setup's reconcile kill the first run's pty and force-remove its
+  worktree, or (first agent already committed) take a `-r2` path with two live
+  agents on one task. A task with `runQueued` or a live `task-run:<id>` queue
+  request (`hasSpawnRequest`, checked after the admission-hold await) is skipped
+  and counted as deferred. Covered by `__tests__/workflowStartStepCap.test.ts`.
 
 ## `merge.ts` — `runMergeStep`
 
@@ -117,7 +133,8 @@ until Ready-to-Merge is empty, with an **id-set progress guard**: it aborts the
 moment a full merge run leaves the ready_to_merge id-set unchanged (a
 persistently-erroring task is left in the lane by `processTarget`, so comparing
 the lane before/after — not the error *count* — is what stops the infinite
-loop). Covered by `__tests__/workflowMergeStepLoop.test.ts`.
+loop). Covered by `__tests__/workflowMergeStepLoop.test.ts`. The loop is
+`drainReadyToMerge`; its abort message is built by `noProgressError`.
 
 **Phase C — the post-merge hook gate (do not regress).** The step must not
 report `merge complete` while a post-merge hook is running for the project, or
