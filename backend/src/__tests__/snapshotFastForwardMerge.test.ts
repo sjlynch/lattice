@@ -61,8 +61,7 @@ function snapshotsOf(repo: string): string[] {
 
 // Main gains a commit the task branch lacks, so `merge --ff-only` is refused.
 async function divergeMain(repo: string, git: (...args: string[]) => string) {
-  await fs.writeFile(path.join(repo, 'other.txt'), 'main moved on
-');
+  await fs.writeFile(path.join(repo, 'other.txt'), 'main moved on\n');
   git('add', '--', 'other.txt');
   git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'main moved on');
 }
@@ -182,16 +181,11 @@ test('run-level teardown reports an overlapping edit as a run error naming the c
 // silently vanishes from the working tree.
 
 // Byte-exact: CRLF, a lone LF and no trailing newline all have to survive.
-const USER_EDIT = Buffer.from('A
-B
-C user edit, no newline');
+const USER_EDIT = Buffer.from('A\r\nB\nC user edit, no newline');
 
-test('a refused fast-forward restores the user's snapshotted edit byte-for-byte and surfaces the git error', async (t) => {
+test('a refused fast-forward restores the user\'s snapshotted edit byte-for-byte and surfaces the git error', async (t) => {
   const { repo, git, taskBranch, tracked } = await repoFixture(t);
-  await taskBranch('lattice/edit-a', 'A task
-B
-C
-');
+  await taskBranch('lattice/edit-a', 'A task\nB\nC\n');
   await divergeMain(repo, git);
   const headBefore = git('rev-parse', 'HEAD');
   await fs.writeFile(tracked, USER_EDIT);
@@ -205,16 +199,13 @@ C
   );
   assert.doesNotMatch(outcome.message, /Snapshot/, 'a clean restore adds no warning');
   assert.equal(git('rev-parse', 'HEAD'), headBefore, 'main did not move');
-  assert.deepEqual(await fs.readFile(tracked), USER_EDIT, 'the user's edit is back on disk');
+  assert.deepEqual(await fs.readFile(tracked), USER_EDIT, 'the user\'s edit is back on disk');
   assert.deepEqual(snapshotsOf(repo), [], 'the fully restored snapshot is not left behind');
 });
 
 test('a refused fast-forward whose snapshot restore also throws names where the captured edits were kept', async (t) => {
   const { repo, git, taskBranch, tracked } = await repoFixture(t);
-  await taskBranch('lattice/edit-a', 'A task
-B
-C
-');
+  await taskBranch('lattice/edit-a', 'A task\nB\nC\n');
   await divergeMain(repo, git);
   await fs.writeFile(tracked, USER_EDIT);
 
@@ -254,10 +245,7 @@ C
 
 test('fastForwardMain bails on a missing .git before running any further git', async (t) => {
   const { repo, taskBranch, tracked } = await repoFixture(t);
-  await taskBranch('lattice/edit-a', 'A task
-B
-C
-');
+  await taskBranch('lattice/edit-a', 'A task\nB\nC\n');
   await fs.writeFile(tracked, USER_EDIT);
   await fs.rename(path.join(repo, '.git'), path.join(repo, '.git-moved'));
 
