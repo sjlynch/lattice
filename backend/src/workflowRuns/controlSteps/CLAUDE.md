@@ -92,7 +92,8 @@ Moves every Open task to In Progress and runs it (the Task Board **Run All**
 path), emitting one `workflow-task-spawned` terminal tab per task.
 
 - **Harness/Pi-model picker** mirrors Run All via
-  `resolveStartStepHarnessPicker`: a run-level `harnessOverride` pins every task
+  `resolveStartStepHarnessPicker` (`startHarness.ts`, re-exported from
+  `start.ts`): a run-level `harnessOverride` pins every task
   (Pi override carries its `piModelOverride`); with no override the per-project
   default applies (`interleave` expands to the same alternating claude/pi mix).
 - **Hard-cap handling (do not regress)**: each spawn passes
