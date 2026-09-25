@@ -40,7 +40,8 @@ import {
 import type { Workflow, WorkflowStepKind } from '../workflows.js';
 import { waitForRepoMaintenance } from '../worktree/repoMaintenance.js';
 import { beginRestartTransition } from '../restartDrain/gate.js';
-import { checkpointWorkflowRun, notify, snapshot, type WorkflowRun } from './state.js';
+import type { WorkflowRun } from './state.js';
+import { markRunErrored } from './runErrored.js';
 import { runStartStep } from './controlSteps/start.js';
 import { runMergeStep } from './controlSteps/merge.js';
 import { runPushStep } from './controlSteps/push.js';
@@ -130,11 +131,43 @@ async function runControlStepWorkerLocked(
 ): Promise<void> {
   const step = wf.steps[stepIndex];
   const kind: WorkflowStepKind = step.kind ?? 'agent';
+
+  const acquired = await acquireControlStepLock(wf, run, stepIndex, kind, deps);
+  let workerError: Error | null = 'error' in acquired ? acquired.error : null;
+  const lock = 'lock' in acquired ? acquired.lock : null;
+
+  if (!workerError && lock) {
+    console.log(
+      `[workflow-run] ${run.id} control step ${stepIndex} (${kind}) starting`,
+    );
+    try {
+      await runControlStepKind(kind, deps, wf, run, stepIndex, backendOrigin);
+    } catch (err) {
+      workerError = err as Error;
+    } finally {
+      // Release the lock BEFORE calling completeStep. The next step (often
+      // another control step) acquires its own lock; if we held this one
+      // across completeStep the acquire would race against our release.
+      handoff.end = beginRestartTransition(`workflow ${run.id} control step ${stepIndex} (${kind}) hand-off`);
+      await lock.release().catch(() => undefined);
+    }
+  }
+
+  await settleControlStep(run, stepIndex, kind, backendOrigin, completeStep, workerError);
+}
+
+// Phase 1: wait out repo maintenance, then take the per-project run lock.
+// `{ lock: null }` means the run was cancelled during the wait (no lock taken;
+// settleControlStep's not-running branch returns). `{ error }` carries the
+// failure into settleControlStep, same as a worker throw.
+async function acquireControlStepLock(
+  wf: Workflow,
+  run: WorkflowRun,
+  stepIndex: number,
+  kind: WorkflowStepKind,
+  deps: ControlStepWorkerDeps,
+): Promise<{ lock: ProjectRunLockHandle | null } | { error: Error }> {
   const lockLabel = `workflow-${kind}:${run.id}`;
-
-  let lock: ProjectRunLockHandle | null = null;
-  let workerError: Error | null = null;
-
   try {
     // A merge run's housekeeping gc may be repacking right now (it holds the
     // run lock while it does). Wait for it rather than failing the step on the
@@ -145,8 +178,10 @@ async function runControlStepWorkerLocked(
     if (!(await waitForMaintenance(wf.projectPath))) {
       console.warn(`[workflow-run] ${run.id} step ${stepIndex} (${kind}) git housekeeping still running after the wait bound`);
     }
-    // Cancelled during that wait: take no lock; the not-running branch below returns.
-    if (run.status === 'running') lock = await deps.acquireLock(wf.projectPath, lockLabel);
+    // Cancelled during that wait: take no lock; the not-running branch in
+    // settleControlStep returns.
+    if (run.status !== 'running') return { lock: null };
+    return { lock: await deps.acquireLock(wf.projectPath, lockLabel) };
   } catch (err) {
     if (err instanceof ProjectRunLockedError) {
       // Log loud — historically this is the most common reason a workflow
@@ -157,43 +192,48 @@ async function runControlStepWorkerLocked(
         `[workflow-run] ${run.id} step ${stepIndex} (${kind}) ` +
           `could not acquire project run lock: ${err.message}`,
       );
-      workerError = new Error(err.message);
-    } else {
-      console.error(
-        `[workflow-run] ${run.id} step ${stepIndex} (${kind}) ` +
-          `acquire threw:`,
-        err,
-      );
-      workerError = err as Error;
+      return { error: new Error(err.message) };
     }
-  }
-
-  if (!workerError && lock) {
-    console.log(
-      `[workflow-run] ${run.id} control step ${stepIndex} (${kind}) starting`,
+    console.error(
+      `[workflow-run] ${run.id} step ${stepIndex} (${kind}) ` +
+        `acquire threw:`,
+      err,
     );
-    try {
-      if (kind === 'start') {
-        await deps.runStart(wf, run, stepIndex, backendOrigin);
-      } else if (kind === 'merge') {
-        await deps.runMerge(wf, run, stepIndex, backendOrigin);
-      } else if (kind === 'push') {
-        await deps.runPush(wf, run, stepIndex, backendOrigin);
-      } else {
-        throw new Error(`unsupported control-step kind: ${kind}`);
-      }
-    } catch (err) {
-      workerError = err as Error;
-    } finally {
-      // Release the lock BEFORE calling completeStep. The next step (often
-      // another control step) acquires its own lock; if we held this one
-      // across completeStep the acquire would race against our release.
-      handoff.end = beginRestartTransition(`workflow ${run.id} control step ${stepIndex} (${kind}) hand-off`);
-      await lock.release().catch(() => undefined);
-      lock = null;
-    }
+    return { error: err as Error };
   }
+}
 
+// Phase 2: kind → per-kind worker. Looked up by deps key and called as a
+// method so an injected deps object sees the same call it always did.
+const CONTROL_STEP_RUNNERS: Partial<Record<WorkflowStepKind, 'runStart' | 'runMerge' | 'runPush'>> = {
+  start: 'runStart',
+  merge: 'runMerge',
+  push: 'runPush',
+};
+
+async function runControlStepKind(
+  kind: WorkflowStepKind,
+  deps: ControlStepWorkerDeps,
+  wf: Workflow,
+  run: WorkflowRun,
+  stepIndex: number,
+  backendOrigin: string,
+): Promise<void> {
+  const runner = CONTROL_STEP_RUNNERS[kind];
+  if (!runner) throw new Error(`unsupported control-step kind: ${kind}`);
+  await deps[runner](wf, run, stepIndex, backendOrigin);
+}
+
+// Phase 3 (the lock is already released): error the run on a worker failure,
+// stop on a cancelled run, otherwise advance.
+async function settleControlStep(
+  run: WorkflowRun,
+  stepIndex: number,
+  kind: WorkflowStepKind,
+  backendOrigin: string,
+  completeStep: CompleteStepCallback,
+  workerError: Error | null,
+): Promise<void> {
   if (workerError) {
     if (run.status !== 'running') {
       // The run was already cancelled (or otherwise finished) while the worker
@@ -206,14 +246,11 @@ async function runControlStepWorkerLocked(
       );
       return;
     }
-    run.status = 'errored';
-    run.finishedAt = Date.now();
-    run.error = workerError.message ?? 'control step failed';
-    notify({ type: 'errored', run: snapshot(run) });
-    // Make the terminal state durable NOW: `notify` only schedules the
-    // debounced mirror, and a restart inside that window left the run
-    // `running` on disk, so boot resume re-dispatched a finished control step.
-    void checkpointWorkflowRun(run).catch(() => {});
+    // markRunErrored checkpoints the terminal state NOW: `notify` only
+    // schedules the debounced mirror, and a restart inside that window left
+    // the run `running` on disk, so boot resume re-dispatched a finished
+    // control step.
+    markRunErrored(run, workerError.message ?? 'control step failed');
     console.error(
       `[workflow-run] ${run.id} control step ${stepIndex} (${kind}) failed:`,
       workerError,
@@ -250,11 +287,7 @@ async function runControlStepWorkerLocked(
       );
       return;
     }
-    run.status = 'errored';
-    run.finishedAt = Date.now();
-    run.error = error?.message ?? 'advancing past control step failed';
-    notify({ type: 'errored', run: snapshot(run) });
-    void checkpointWorkflowRun(run).catch(() => {});
+    markRunErrored(run, error?.message ?? 'advancing past control step failed');
     console.error(
       `[workflow-run] ${run.id} control step ${stepIndex} (${kind}) could not advance:`,
       err,
