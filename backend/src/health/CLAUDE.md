@@ -170,6 +170,11 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   (no compiled `analyze.js`) stays permanent, since retrying can never help. The
   worker is `unref()`'d and disposed on graceful shutdown (`watcher.ts`
   `flushThenExit`).
+- `analysisWorker.ts` — the eval-worker primitives shared by
+  `watcher/isolatedAnalyze.ts` and `../scanner/healthWorkerRunner.ts`
+  (`DEFAULT_ANALYSIS_STALL_MS`, `spawnEvalWorker`, `terminateQuietly`,
+  `createStallTimer`, `unref` chosen per call site); protocol and respawn policy
+  stay in each caller.
 - `cache.ts` + `cachePaths.ts` + `cacheFile.ts` — persistent per-file health
   cache at `<project>/.lattice/health-cache.json`, keyed by absolute path with
   `(mtime,size)` staleness. `cache.ts` is the `HealthCache` class: in-memory
