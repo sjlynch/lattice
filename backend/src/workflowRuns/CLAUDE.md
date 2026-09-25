@@ -1,336 +1,75 @@
 # backend/src/workflowRuns
 
 Workflow-step runner. The parent `workflowRuns.ts` is a thin orchestration
-facade (start / cancel / advance) over these modules. Sequential
-advancement is driven entirely by Stop-hook / `session_shutdown` /
+facade (start / cancel / advance / `dispatchStep`) over these modules.
+Sequential advancement is driven entirely by Stop-hook / `session_shutdown` /
 explicit-curl callbacks — never by polling task state.
 
 ## Modules
 
-- `state.ts` — `WorkflowRun` / `WorkflowRunEvent` types, the in-memory
-  `runs` map, the listener set, and `snapshot` / `notify` / `subscribe` /
-  `getRun` / `getActiveRunsForProject`. **The single source of truth for
-  every payload that flows over `/ws/workflow-runs`** — preserve
-  `WorkflowRunEvent` discriminants and field shapes (especially
-  `step-spawned`) since the WS dispatcher and frontend consume them
-  directly. Finished runs are pruned to the newest
-  `MAX_FINISHED_RUNS_PER_PROJECT` (20) per project on every terminal event
-  (`pruneFinishedRuns`, from `notify`); nothing reads a finished run by id
-  afterwards (the frontend keeps its own `recentRuns` from the WS event), so
-  this is a memory bound, not retention. Running runs are never pruned.
-- `persistence.ts` — the on-disk mirror of every **running** run, at
-  `~/.lattice/per-project/<hash>/workflow-runs.json` (home-scoped, atomic
-  temp→rename, debounced, never throws). Written from `state.ts`'s `notify` for
-  every run-carrying event plus an explicit call the moment
-  `completeWorkflowStep` claims the next step index. Finished runs are dropped,
-  so the file disappears when nothing is running. Exists because a run used to
-  live only in memory — see the invariant below.
-- `frozenSteps.ts` — the pure frozen-step policy: `isStepFrozen` +
-  `nextRunnableStepIndex(steps, from)` (the first non-frozen step at or after
-  `from`, or `null` when nothing runnable remains). The editor's snowflake
-  toggle sets `WorkflowStep.frozen`; the step keeps its place and prompt but no
-  run executes it. Consumed by the facade in exactly two places — the start
-  index in `startWorkflowRun` and the advance in `completeWorkflowStep` — so
-  keep the policy here rather than inlining it a third time. Covered by
-  `__tests__/workflowFrozenSteps.test.ts`.
-- `resumeDecision.ts` — the pure policy for re-adopting a persisted run:
-  `classifyWorkflowRunResume` → `readopt` (agent **or Run tests** step whose pty
-  survived in the detached terminal-server) / `redispatch` (control step — those
-  die with the process and are re-runnable) / `error` (agent step whose pty is
-  gone; its callback can never arrive, so surface it instead of hanging) /
-  `advance` (a Run tests step whose pty is gone: noted on its summary and the
-  run moves on — Run tests never stops a workflow) / `skip`. A
-  `stepSessionAlive: null` ("couldn't probe the terminal-server") re-adopts —
-  "can't tell" is never treated as "gone" — EXCEPT for a `pending` step, which
-  never requested a terminal (the phase flips to `spawning` first): that one is
-  re-dispatched whatever the probe said, since re-adopting nothing would park
-  the run forever. `findStepSessionId` matches a live pty to a step by cwd. The
-  IO wrapper is `../recovery/workflowRunResume.ts`.
-- `stepMarkdown.ts` — `renderStepMarkdown` (the WORKFLOW_STEP.md prompt)
-  and `effectiveStepHarness` (run override → step harness → `'claude'`).
-  Completion instructions branch on harness: Claude relies on its silent
-  Stop hook; Pi/codex are told to curl `/complete` explicitly (their
-  `session_shutdown` extension / Codex Stop hook is the backstop).
-  **Planner-only contract:** the brief's "you are planning, not implementing"
-  section sits *above* `{{step_prompt}}` and explicitly outranks it. It used to
-  be three lines buried mid-document, and Claude's completion line read "After
-  creating all the tasks described above, simply stop" — which a step whose
-  prompt named no tasks read as an unfilled template, dismissed, and then
-  implemented + committed the work itself (2026-08). Keep the rule above the
-  prompt, keep it unconditional, and don't reintroduce completion wording that
-  presupposes the step prompt enumerated tasks. The shipped step prompts
-  themselves are kept planner-only by
-  `../workflows/defaultPromptMigrations.ts`. Takes the rendered
-  `{{tool_reports}}` block as its last argument (see `stepTools.ts`), placed
-  between the step prompt and the "Active project" section.
-- `stepTools.ts` — pre-run tools for an agent step (`WorkflowStep.tools`,
-  v1: `opengrep`). `runStepTools` runs each BEFORE the harness spawns
-  (called from `writeStepAssets`), writes its report into the step dir
-  (`OPENGREP_FINDINGS.md` = the digest from `../opengrep/service.ts`) and
-  returns the `{{tool_reports}}` block that names the file, its counts and the
-  `opengrep:<fp>` task-marker rule. **A tool that cannot run never fails the
-  step**: engine missing / no rules / scan busy / scan failed become a
-  one-paragraph explanation in the brief and the step proceeds — a wedged run
-  helps nobody. Control steps ignore `tools`. The pre-run runs inside the
-  step materialization, so a `startWorkflowRun` response returns before it
-  (the first `step-spawned` lands after the scan). While it runs the spawner
-  emits one `step-control-progress` with `kind: 'agent'` + a message so the
-  run strip says what the wait is; the frontend drops it on that step's
-  `step-spawned` (`clearControlProgressForStep`). **A cancel during the
-  pre-run aborts it**: the spawner brackets `runStepTools` with
-  `beginStepPreRun(runId)` / `endStepPreRun(runId, signal)` (the signal
-  guard stops a superseded pre-run from deleting its successor's controller),
-  `cancelWorkflowRun` calls
-  `abortStepPreRun(runId)`, and the signal reaches `abortOpengrepScan` so the
-  engine is killed and the project's one-scan slot frees — otherwise the run
-  the user starts next would find the scan "busy" and get a findings-less
-  brief. After the pre-run `writeStepAssets` re-checks the run and writes no
-  brief / installs no callbacks for a cancelled one. While the pre-run runs
-  the step's checkpoint phase is `pending`, which the boot resume
-  (`resumeDecision.ts`) always re-dispatches — there is no session to
-  re-adopt, whatever the terminal-server probe says. Covered by
-  `__tests__/workflowStepTools.test.ts`.
-- `stepSpawner.ts` — `spawnWorkflowStep`: the coordinator, split into
-  named setup phases (`prepareStepScratch`, `writeStepAssets`,
-  `installStepCallbacks`, `spawnStepSession`). Creates
-  `<project>/.lattice/workflow-steps/<runId>/step-<N>/`, writes
-  `WORKFLOW_STEP.md` + `create-task.cjs`, installs the Claude Stop hook,
-  the Pi `session_shutdown` extension, AND the Codex `.codex/hooks.json` Stop
-  hook (`../codexStopHook.ts`, `always` — the step cwd is fresh scratch under
-  `.lattice/`) — all three always, defence-in-depth. The Codex Stop hook is what
-  makes a Codex step advance on turn completion instead of relying on the model's
-  curl (so it can't linger/overlap the next step). A Run tests step passes
-  `opts.runTests` (`{brief, addDir, onSpawnError}`): the pre-rendered brief is
-  written as `RUN_TESTS.md` (no dirty banner / pre-run tools / task helper), the
-  Claude command gets `--add-dir="<project>"` (`commandBuilder.ts`, `=` form —
-  the flag is variadic and would swallow the prompt), and a failed queued spawn
-  goes to `onSpawnError` instead of erroring the run. Everything else — hooks,
-  queue, cwd, the `/complete` route and its gate — is shared unchanged. It then
-  delegates command assembly and queued pty spawn to the modules below. It
-  re-exports `writeScratchReadme` / `pruneOldWorkflowRuns` /
-  `workflowStepAgentId` so existing importers keep resolving them here.
-- `scratchDirectory.ts` — scratch-dir lifecycle: `writeScratchReadme`
-  (tags the run dir as not-the-source-of-truth, idempotent) and
-  `pruneOldWorkflowRuns` (keeps the newest `WORKFLOW_RUN_RETENTION` runs,
-  and always preserves EVERY still-`running` run — the caller passes
-  `getRunningRunIds(project)` in, mirroring the homeScratch sweep's live-PTY
-  guard, so a concurrent run parked on a long step can't be pruned out from
-  under the backend; the recursive delete is path- and reparse-point-bounded
-  so it can't walk a junction loop into `.git`).
-- `commandBuilder.ts` — `buildWorkflowStepCommand`: workflow-step prompt
-  wording plus harness dispatch through the shared `agentCommandBuilder.ts`
-  utility (Claude permission flag, Pi model flag, Codex prompt quoting).
-- `stopHookGate.ts` — the **Claude Stop-hook quiescence gate**. Claude's `Stop`
-  hook is not a reliable "session fully done" signal when the step agent uses the
-  Task tool: it fires early and repeatedly (reproduced against Claude Code
-  2.1.218 — a `Stop` landing while a subagent was still running, ~8s before the
-  session truly ended). The first premature `Stop` used to advance the run and
-  spawn step N+1 while step N's agent kept working → steps ran in parallel
-  (intermittent — "sometimes the steps overlap"). So a Stop-hook-sourced
-  `/complete` (`source=claude-stop-hook-*`) no longer advances directly:
-  `requestStopHookStepComplete` waits until the step session is **quiescent** (no
-  subagents in flight AND no signal — tool use / subagent start-stop / a later
-  Stop — for `STOP_HOOK_SETTLE_MS`), then advances once. The model's own explicit
-  curl and Pi's `session_shutdown` extension are deliberate end-of-work signals
-  and still advance immediately; control steps never hit the route. Fed by
-  `../agentQuiescence.ts` (per-session `liveSubagents` / `lastSignalAt`), which
-  the agent-activity route (`routes/agentActivity.ts`) updates from the very
-  hooks that already drive the graph's satellites — and from **every** `wf:` /
-  `pmh:` hook event, not only the ones that yield a graph event: a tool use on a
-  managed path (the step's own `.lattice/workflow-steps/…` dir) or outside the
-  project draws no beam but is still a "still working" signal, and gating the
-  signal on the graph event once let the gate see a quiet session that was
-  mid-work. `cancelStopHookGate` clears a pending gate on run cancel, and the
-  terminal transitions (`cancelWorkflowRun` / `failWorkflowRun` / a failed step
-  spawn) drop the current step's quiescence entry so the map doesn't grow.
-  **Background subagents (2026-09-23, Claude Code 2.1.280):** subagents are
-  tracked by `agent_id`, not counted — interactive Claude also fires
-  SubagentStop for its own internal agents that never had a SubagentStart,
-  and as a counter those stray stops zeroed two live Explore agents, so a step
-  that ended its turn to wait for them advanced (and was killed) before it
-  filed a task. And once a tracked subagent finishes, the gate also waits for
-  a Stop *after* that finish (`awaitingTurnEnd`): its result wakes the parent
-  for a follow-up turn — thinking and Bash, which send no signal — that easily
-  outlasts the settle window. Stops from untracked agents don't count.
-  **Re-adopted after a restart:** that per-session tracking is in-memory, so a
-  step session boot recovery re-adopts has lost its subagent ids — a
-  background subagent started before the restart is invisible, and the main
-  agent's next Stop would pass the normal window while it still works.
-  `recovery/workflowRunResume.ts` therefore marks the session
-  `markAgentReadopted`, and `isAgentQuiescent` then requires
-  `READOPTED_SETTLE_MS` (2 min) of complete silence; any hook from the session
-  (a surviving subagent's tool use included) restarts it. Same for a
-  re-adopted post-merge hook.
-  **A Stop the gate is holding survives a restart:** the gate is an in-memory
-  timer, the hook stops retrying once it has its 200, and the agent is idle —
-  so a restart inside the settle window used to lose the completion outright
-  (a Run tests step then hung until its timeout, an agent step forever; found
-  by the self-hosting soak). The route therefore awaits `recordStopReceived`
-  (persists `WorkflowRun.stopReceived = {stepIndex, at}`) BEFORE answering, and
-  the re-adopting backend re-arms the gate with `{ rearm: true }` (not a new
-  Stop) while `markAgentReadopted(agentId, {stopAt, activeAt})` counts the
-  re-adopted quiet window from that Stop — not from boot, or restarts closer
-  together than `READOPTED_SETTLE_MS` would hold a finished step forever. A
-  gate that is HOLDING the Stop because the session is still busy (live
-  subagents, a follow-up turn owed) persists when it last saw it busy
-  (`stopReceived.activeAt`, throttled to every 15 s), and the window counts
-  from the later of the two — otherwise a restart would re-arm from the old
-  Stop and advance past subagents that were still working. The post-merge
-  hook has the same pair (`PostMergeHookRun.stopReceivedAt` / `stopActiveAt`,
-  `postMergeHookStopFinish`). The shared advance is
-  `workflowStepCompletionAdvance` (facade).
-  Failed asynchronous completion checkpoints rearm the quiescence gate up to
-  three attempts. Each retry checks live subagents and renewed quiet time;
-  exhaustion keeps the run and terminal intact with a visible error message —
-  except on a Run tests step, which notes the failure on its summary and keeps
-  retrying every `RUN_TESTS_GATE_RETRY_MS` (30 s) so the workflow still moves on.
-- `sessionSpawner.ts` — `workflowStepAgentId` + `enqueueWorkflowStepSession`:
-  routes the pty allocation through the spawn queue (fire-and-forget), tracks
-  each step's dedupe key / spawned `serverId` for cancellation, registers the
-  orange agent-session presence node for a Claude step, and fans out
-  `step-spawned`. Pre-spawning the pty is what lets the frontend lazy-mount
-  terminals so a multi-step run doesn't burn a WebGL context per pane. With
-  `UserSettings.keepWorkflowStepTerminals` (Settings → Terminals, default off)
-  the advance calls `releaseWorkflowStepSession` instead: the record is
-  forgotten but the idle pty is left running, so the `wf:stepN` tab stays open
-  for the user to read (it counts toward the agent cap until closed). Also
-  `killWorkflowStepSession(runId, stepIndex)` — kills + forgets a step's tracked
-  pty on genuine advance (called from the `/complete` route's `advance()` before
-  the next step spawns). Interactive `codex --yolo` never self-exits after its
-  turn, so without this the finished step's session leaks *and* stays live
-  alongside the next step; killing on advance reclaims it and closes that overlap
-  window. Harness-agnostic no-op for an already-exited session; `cancelWorkflow-
-  StepSessions` (run cancel) shares the same `killWorkflowStepServer` teardown.
-- `projectDirtyState.ts` — `getProjectDirtyState` (probe `git status
-  --porcelain` of the project repo) + `renderDirtyStateWarning` (render a
-  markdown banner listing the diverged paths). `stepSpawner` calls the
-  probe before rendering and passes the result to `renderStepMarkdown`,
-  which injects the banner at the very top of `WORKFLOW_STEP.md` when
-  non-empty. Reason: task worktrees check out from HEAD, so a planner that
-  inspects the dirty working tree and writes tasks against a WIP refactor
-  produces tasks whose paths the executors can't find — looks like
-  hallucinated codebase, is actually a working-tree mismatch. Probe is
-  best-effort: a non-git project / status failure resolves to `null` and
-  no banner is rendered.
-- `renderHelperScript.ts` + `create-task-template.cjs` — interpolated
-  Node CJS helper script copied into each step dir so the agent can
-  create tasks without shell-quoting headaches. It also fronts the
-  progressive-disclosure read path so a planner never has to hand-build a
-  URL: `--summary` (counts + per-lane token cost), `--list` (the API's own
-  default — active lanes, compact, newest 100; `all` / a lane CSV /
-  `--since` / `--limit` widen it), `--find` (search instead of listing),
-  `--get <id>` (one task's full text). Every read prints the envelope's
-  `hint` verbatim — that string is how the agent learns the next knob — and
-  a 413 is rendered as its hint + `suggestions` rather than a stack trace.
-  `--help` / `-h` print the usage (stdout, no network); any OTHER first
-  argument starting with `-` is refused, never used as a title — a scout
-  agent's guessed `--help` once filed an Open task named "--help". `--`
-  escapes a dash-leading title; more than two create positionals is an error.
-  Covered by `__tests__/createTaskHelper.test.ts`.
-  The `.cjs` template is a runtime asset; `scripts/copy-assets.mjs` mirrors
-  it into `dist/`.
-- `controlStep.ts` + `controlSteps/` — headless control-flow steps
-  (`start` / `merge` / `push`) that run server-side against Lattice's own
-  task pipeline instead of spawning an agent. `controlStep.ts` is the thin
-  dispatcher: it owns the per-project run-lock lifecycle (acquire →
-  kind→worker dispatch → **release BEFORE `completeStep`**), cancellation /
-  not-running guards, and the public surface (`executeControlStep`,
-  `CompleteStepCallback`). The release → `completeStep` hand-off is marked as
-  a restart-drain transition (`../restartDrain/`), begun just before the
-  release, so a dev-runner restart that sees the lock file vanish still waits
-  for the advance; holding the lock across `completeStep` instead would make
-  the next control step's own acquire collide with it. The worker is detached (`executeControlStep` is
-  fire-and-forget), so **every await it owns is guarded**: the `completeStep`
-  call is wrapped too — `completeWorkflowStep` can reject (a definition error,
-  or the run checkpoint's atomic write failing under an AV scanner / ENOSPC),
-  and an unobserved rejection there reached `processGuards`' fail-fast and
-  took the whole backend down. It errors the run like a failed worker instead,
-  and `executeControlStep` carries a `.catch` backstop. The per-kind workers
-  live under `controlSteps/`:
-  - `controlSteps/start.ts` — `runStartStep`: move every Open task to In
-    Progress and run it (one `workflow-task-spawned` terminal tab each);
-    throws if every task failed to start (nothing started or cap-deferred)
-    so a no-op run doesn't silently "succeed".
-  - `controlSteps/merge.ts` — `runMergeStep`: Phase A drains In Progress,
-    Phase B loops merge runs (`lockMode: 'inherit'`) until Ready-to-Merge
-    is empty, with the unchanged-lane error-loop guard, and Phase C waits
-    out any running post-merge hook (incl. ones fired *outside* a merge run
-    by `awaitPostMergeHookOutsideRun`, which nothing else gates) so a queued
-    workflow can't start on top of the previous one's hook.
-  - `controlSteps/push.ts` — `runPushStep`: drain Ready-to-Merge, spawn a
-    push session with the push-only **workflow** brief
-    (`startPushSession(…, { brief: 'workflow' })` → template `workflow-push`:
-    no `git add`/`commit`, uncommitted files reported, `git push` / `-u origin
-    HEAD`; the QA-lane button keeps the commit-then-push `push` brief), wait
-    for its Stop hook with the `PUSH_STEP_TIMEOUT_MS`
-    (15 min) backstop and prompt cancel/pty cleanup. A session the step kills
-    (cancel / timeout) never reaches its own `/done`, so the step settles it
-    the same way (`abandonPushRun`: mark the push run done, drop its graph
-    node, remove its scratch) — unless that `/done` already landed. A timeout
-    then **errors the run** ("push step timed out after 15 minutes") instead of
-    reporting `push complete`; a cancel stays cancelled. The push run records
-    its owning `{runId, stepIndex}` (persisted), so a Push step **re-dispatched
-    after a backend restart re-attaches** to the still-live session boot
-    recovery re-adopted (no second push, no re-drain) — and fails if that
-    session is later settled `lost`.
-  - `controlSteps/shared.ts` — `waitForLaneEmpty` (lane-drain subscription,
-    subscribes before the initial read; resolves on cancellation) and
-    `emitControlProgress` (the single `step-control-progress` WS shaper).
+**Run registry / state**
+- `state.ts` — `WorkflowRun` / `WorkflowRunEvent`, the in-memory `runs` map,
+  `notify` / `subscribe` / `getRun` / `getActiveRunsForProject`. The single
+  source of every `/ws/workflow-runs` payload — keep event discriminants and
+  field shapes (esp. `step-spawned`) stable. Finished runs are pruned to
+  `MAX_FINISHED_RUNS_PER_PROJECT` (a memory bound); running runs never are.
+- `definition.ts` — `cloneWorkflowDefinition` / `readWorkflowDefinition`: the
+  frozen per-run definition copy and its validated read-back.
+- `frozenSteps.ts` — pure frozen-step policy (`isStepFrozen`,
+  `nextRunnableStepIndex`); used only by `startWorkflowRun` and
+  `completeWorkflowStep` — keep it here, don't inline a third copy.
 
-## `testStep/` — the Run tests step (`kind: 'test'`)
+**Step dispatch / spawning** (agent steps)
+- `stepSpawner.ts` — `spawnWorkflowStep`, split into `prepareStepScratch` →
+  `writeStepAssets` → `installStepCallbacks` → `spawnStepSession`. Writes the
+  step dir (`<project>/.lattice/workflow-steps/<runId>/step-<N>/`) and installs
+  all three completion callbacks (Claude Stop hook, Pi extension, Codex
+  `hooks.json`). `opts.runTests` is the Run tests variant (see `testStep/`).
+  Re-exports `writeScratchReadme` / `pruneOldWorkflowRuns` / `workflowStepAgentId`.
+- `stepMarkdown.ts` — `renderStepMarkdown` (WORKFLOW_STEP.md),
+  `effectiveStepHarness`, `renderStepCompletionInstructions`.
+- `stepTools.ts` — pre-run tools (`WorkflowStep.tools`, v1 `opengrep`):
+  `runStepTools` writes `OPENGREP_FINDINGS.md` + the `{{tool_reports}}` block;
+  `beginStepPreRun` / `endStepPreRun` / `abortStepPreRun` make a cancel abort
+  the scan.
+- `projectDirtyState.ts` — `getProjectDirtyState` + `renderDirtyStateWarning`:
+  the dirty-checkout banner at the top of WORKFLOW_STEP.md (best-effort).
+- `commandBuilder.ts` — `buildWorkflowStepCommand` (harness dispatch via
+  `../agentCommandBuilder.ts`).
+- `sessionSpawner.ts` — `enqueueWorkflowStepSession` (spawn queue, presence
+  node, `step-spawned` fan-out), `killWorkflowStepSession` /
+  `releaseWorkflowStepSession` (advance; the latter with
+  `keepWorkflowStepTerminals`), `cancelWorkflowStepSessions`.
+- `renderHelperScript.ts` + `create-task-template.cjs` — the per-step
+  `create-task.cjs` helper (create + `--summary` / `--list` / `--find` /
+  `--get`; a dash-leading first arg is refused). The `.cjs` is a runtime asset
+  copied by `scripts/copy-assets.mjs`. Tests: `createTaskHelper.test.ts`.
+- `scratchDirectory.ts` — `writeScratchReadme`, `pruneOldWorkflowRuns` (keeps
+  `WORKFLOW_RUN_RETENTION` runs plus every running one; path- and
+  reparse-point-bounded delete).
 
-An **agent** step with a fixed brief that runs the project's tests on the main
-checkout, fixes what it can, commits the fixes and reports — and that **never
-stops the workflow** (decision D4). `dispatchStep` routes `'test'` to
-`dispatchRunTestsStep` (never to `executeControlStep`); the spawn, hooks,
-`/complete` route and Claude quiescence gate are the agent step's, unchanged.
+**Completion / advance**
+- `stopHookGate.ts` — the Claude Stop-hook **quiescence gate**
+  (`requestStopHookStepComplete`, `recordStopReceived`, `cancelStopHookGate`),
+  fed by `../agentQuiescence.ts`. See the invariant below.
+- The advance itself is the facade's `completeWorkflowStep` /
+  `workflowStepCompletionAdvance`; the route is `routes/workflows/`.
 
-- `runTestsStep.ts` — the orchestration. `dispatchRunTestsStep` is
-  fire-and-forget (like `executeControlStep`) so a skip never advances
-  recursively inside the previous step's completion. The worker: skip when the
-  checkout is on a **detached HEAD** (merges fast-forward the checked-out branch,
-  `assertMainOnBranch`) or when **HEAD equals `lastHead`** in `run-tests.json`
-  (unborn / unreadable HEAD → run); take the project `run.lock` as
-  **`workflow-test:<runId>`, non-lendable** (retrying up to 10 min while a manual
-  merge holds it, then note + skip); capture the start HEAD + `USER_WIP.txt`
-  under the lock; checkpoint `run.testStep = {stepIndex, startHead}`; render the
-  brief; `spawnWorkflowStep(…, { runTests })`. The **timeout** (`timeoutMinutes`,
-  default 60) is armed on the step's `step-spawned` event — queue time behind the
-  spawn queue / resource governor doesn't count — and `spawnedAt` is persisted
-  so a re-adopting backend re-arms the remainder. On timeout: kill the session,
-  list `git status` minus `USER_WIP.txt` (never reverted), note, advance.
-  **Every D4 path is "note + advance"**: skip, setup throw, `onSpawnError`,
-  timeout, a lost terminal after restart (`resumeDecision` → `advance` →
-  `noteRunTestsStep`), and a completion checkpoint that keeps failing (the
-  stop-hook gate keeps retrying; the worker's own `advance` retries every 30 s).
-  `finalizeRunTestsStep` runs inside `advanceCompletedStep` for every `'test'`
-  step — before the next step dispatches — and stores `run.stepSummaries[i]`
-  (notes + `TEST_SUMMARY.md` ≤ 8 KB + the post-check), writes `run-tests.json`
-  with the HEAD **at the finish** (only after the agent's own completion — a
-  skipped / failed / timed-out / interrupted step verified nothing), and
-  releases the lock. `abortRunTestsStep` (cancel / fail) releases it too.
-  `resumeRunTestsStep` (boot readopt) re-takes the lock (the dead backend's is
-  stale → stealable) and re-arms the timer.
-- `brief.ts` — renders `RUN_TESTS.md` from the `run-tests` instruction template
-  (`../../instructionTemplates/templates/runTests.ts`); completion wording is the
-  shared `renderStepCompletionInstructions` from `../stepMarkdown.ts`.
-- `userWip.ts` — `git status --porcelain=v1 -z` parsing (renames/copies carry
-  both paths, no C-quoting under `-z`, untracked dirs as `dir/` covering what's
-  under them), `USER_WIP.txt` read/write, `wipCovers`.
-- `checkoutGit.ts` — the read-only `projectGit` probes (HEAD, detached, status,
-  `log -z --name-only` of the step's commits). Every failure reads as "unknown".
-- `runTestsState.ts` — `~/.lattice/per-project/<hash>/run-tests.json`
-  (`{lastHead, lastFinishedAt}`), atomic, home-scoped.
-- `recentTasks.ts` — the brief's "recently merged" list: tasks in `qa`/`done`
-  that landed since `lastFinishedAt` (else since the run started), newest
-  first, ≤ 30, title + first 3 description lines.
-- `summary.ts` — bounded `TEST_SUMMARY.md` read, the commits post-check (warns
-  when a step commit touched a `USER_WIP.txt` path), and the summary composer.
+**Persistence / recovery**
+- `persistence.ts` — the `~/.lattice/per-project/<hash>/workflow-runs.json`
+  mirror of running runs (atomic, debounced, never throws; absent when idle).
+- `resumeDecision.ts` — pure boot policy `classifyWorkflowRunResume` →
+  `readopt` / `redispatch` / `error` / `advance` / `skip`, plus
+  `findStepSessionId`. The IO side is `../recovery/workflowRunResume.ts`.
+- `recoveryReadiness.ts` — gates HTTP lifecycle requests and the
+  `/ws/workflow-runs` hello until recovery has re-registered the runs
+  (`isWorkflowRecoveryDone` / `whenWorkflowRecoveryDone`).
 
-Invariants: the lock is released on **every** exit (advance → finalize,
-cancel/fail → abort) and before the next step dispatches; nothing here reverts,
-stashes or resets the user's checkout; a Run tests step's own failures never
-error the run. Covered by `__tests__/workflowRunTestsStep.test.ts`.
+**Control steps** (`start` / `merge` / `push`, headless)
+- `controlStep.ts` — `executeControlStep`: lock lifecycle + kind → worker.
+- `controlSteps/` — the workers; read [`controlSteps/CLAUDE.md`](./controlSteps/CLAUDE.md).
+
+**Run tests step** (`test`) — `testStep/`; read [`testStep/CLAUDE.md`](./testStep/CLAUDE.md).
 
 ## Adding a step-completion harness
 
@@ -350,124 +89,86 @@ error the run. Covered by `__tests__/workflowRunTestsStep.test.ts`.
 
 ## Invariants
 
-- New runs freeze their workflow definition (including variables) into the
-  version-2 mirror; editor changes never change an executing or recovered run.
-  Version-1 records without a definition use the legacy lookup for compatibility.
-- Execution checkpoints distinguish `pending`, `spawning`, `running`, and
-  `completing`. Required writes precede launch/teardown; a persistence failure
-  prevents an unrecorded launch. A `pending` step never requested a PTY, so it
-  is always safe to re-enqueue — even when the terminal-server could not be
-  probed (a step inside its pre-run scan sits in `pending` for minutes, and
-  "re-adopt nothing" would hang the run). `spawning` without a terminal is
-  ambiguous and errors; `spawning` with an unprobeable server re-adopts.
-  `completing` records are advanced without replaying the finished prompt.
-- Completion is claimed by an in-flight promise per run and a persisted
-  `completing` phase before ending the old terminal. Advancing awaits any
-  outstanding terminal-create response, then checkpoints the next pending step.
-  The index changes only after the old terminal has been reclaimed.
-- `recoveryReadiness.ts` gates HTTP workflow lifecycle requests while boot loads
-  the registry; timed-out requests receive 503 + Retry-After, unknown callbacks
-  receive 404. Do not acknowledge an unknown run during recovery.
-  `isWorkflowRecoveryDone()` / `whenWorkflowRecoveryDone()` serve the same
-  gate to `/ws/workflow-runs` (`ws/endpoints/workflowRuns.ts`): until the
-  registry is ready its `hello` carries `recovering: true` (the frontend merges
-  it additively and never reads a missing run as finished), and each such
-  connection gets a follow-up authoritative `hello` once recovery lands. An
-  empty authoritative hello during the restart window was what made a queued
-  workflow read its run as errored and stop.
+**Starting**
+- **One active run per project, always.** `startWorkflowRun` calls
+  `assertNoActiveWorkflowRun` → `WorkflowRunConflictError` → **HTTP 409**
+  `active-run-exists`, *before* any run record / notify / spawn (side-effect
+  free). No opt-out; the old `requireNoActiveRun` body field is ignored. The
+  frontend queue requeues on the 409. Only exception: boot recovery resumes
+  every persisted run. The slot counts workflow runs, **not** post-merge hooks
+  (the 409 retry only re-fires on a run finishing); hook exclusion is the merge
+  step's Phase C (`controlSteps/CLAUDE.md`).
+- New runs freeze their definition (incl. variables); editor changes never
+  alter an executing or recovered run. Version-1 records without one use the
+  legacy lookup.
+- A workflow whose steps are *all* frozen is refused before any run record.
 
-- **A run must survive the backend process.** The registry in `state.ts` is
-  in-memory, and the backend restarts routinely (`tsc -w` + the dev runner on
-  any `backend/src` change, a crash, a processGuards fail-fast). `dev.mjs`
-  defers a restart only while a per-project `run.lock` is held — i.e. during
-  **control** steps and Run tests steps only — so the whole of every agent step
-  is exposed. Losing
-  the run there is silent and total: `/api/workflow-runs/active` goes empty (the
-  navbar chip vanishes), and the step's agent — whose pty lives in the detached
-  terminal-server and *does* survive — later POSTs `/complete` into a backend
-  with no such run, where `completeWorkflowStep` returns silently. Every
-  remaining step never runs. `persistence.ts` + `../recovery/workflowRunResume.ts`
-  close that hole; keep the mirror current whenever run state changes, and keep
-  `restoreWorkflowRun` idempotent (a restore must never clobber a live run).
-  Every dev-runner restart is also preceded by a drain (`../restartDrain/`):
-  `startWorkflowRun` and each `completeWorkflowStep` advance are tracked
-  transitions it waits out, a step spawn waits in the (held) spawn queue with
-  its phase `pending`, a control step's lock acquire waits, and `POST
-  /api/workflows/:id/run` answers 503 `backend-restarting` meanwhile.
-- Mirror writes and deletions are serialized per project; atomic rename alone
-  does not prevent a delayed running-state write from resurrecting a finished
-  run after a newer deletion. Flushing must await writes already in flight.
-- **A terminal transition checkpoints immediately.** `notify` only schedules
-  the 100 ms debounced mirror; a restart inside that window left a cancelled /
-  errored run `running` on disk, and boot resume re-dispatched its control
-  step. So `cancelWorkflowRun`, `failWorkflowRun`, `markWorkflowStepSpawnErrored`
-  and the control-step error paths follow their `notify` with
-  `void checkpointWorkflowRun(run)` — the run is no longer active, so that write
-  is the mirror's deletion. `startWorkflowRun`'s setup failure and
-  `completeWorkflowStep`'s failed advance (definition missing, a dispatch that
-  threw) go through `failWorkflowRun` for the same reason — they used to flip
-  the run inline with only the debounced mirror. A control-step worker error
-  (or a `completeStep` rejection) that lands after the run already left
-  `running` (a cancel during a pending lock acquire / an in-flight advance), and
-  a start whose setup throws after a cancel, keep the existing terminal state
-  rather than clobbering it with `errored`.
-- Every rejected queued step spawn must error its still-current run, including
-  thrown setup/transport exceptions. CAP retries remain pending, and a late
-  spawn rejection must preserve cancellation or a newer step.
-- Step advancement is sequential and **idempotent**: `completeWorkflowStep`
-  claims `currentStepIndex` synchronously before any await so a duplicate
-  Stop-hook fire is a no-op. The frozen-step skip happens *after* that claim
-  (it needs the loaded definition): the claim moves to `stepIndex + 1` first,
-  then re-claims + re-mirrors at the step actually dispatched. Keep that order
-  — claiming the skipped-to index synchronously would need the definition
-  before the dedupe guard.
-- **Frozen steps are skipped, not removed.** `currentStepIndex` therefore jumps
-  over them, `totalSteps` still counts them, and a run whose remaining steps are
-  all frozen **completes** (index parked at `steps.length`) rather than hanging.
-  A workflow whose steps are *all* frozen is refused at `startWorkflowRun`
-  before any run record exists, so the rejection is side-effect-free.
-- **Advancing a step kills its session.** The `/complete` route's `advance()`
-  calls `killWorkflowStepSession` (await) *before* `completeWorkflowStep`
-  dispatches the next step. An interactive Codex step (`codex --yolo`) never
-  self-exits after curling `/complete`, so an eager advance would both leak the
-  session and let step N run alongside step N+1. Killing on advance is the fix;
-  it's a harmless no-op for a Claude/Pi session that already exited. Keep it
-  before the dispatch so the teardown wins the race with the next spawn. Covered
-  by `__tests__/workflowStepSpawnFailure.test.ts` ("advancing a spawned workflow
-  step kills its terminal session").
-- **Claude Stop-hook completions are quiescence-gated, not immediate** (see
-  `stopHookGate.ts`). This is the fix for "workflow steps sometimes run in
-  parallel": Claude's `Stop` hook fires early/repeatedly when the step agent
-  spawns subagents, and an eager advance overlapped step N with step N+1. Keep
-  the gate on the `claude-stop-hook-*` source only — the explicit-curl / Pi
-  sources are intentional and must stay immediate, and control steps call
-  `completeWorkflowStep` directly (never through the gated route).
-- The Claude Stop hook is installed for every step regardless of harness
-  — same reasoning as task worktrees: a stuck step may need Claude to
-  finish it manually.
-- Cancellation is authoritative for agent steps: `cancelWorkflowRun` must
-  cancel pending `wf-step:<runId>:<step>` queue entries, unregister the
-  presence node, and kill any tracked `serverId`; queued thunks must re-check
-  run status/current step before and after `proxyCreateSession`.
-- **One active run per project, always.** Every `startWorkflowRun` calls
-  `assertNoActiveWorkflowRun`, which throws `WorkflowRunConflictError`
-  (`routes/workflows/runs.ts` → **HTTP 409** `active-run-exists`) if any run is
-  `running` for the project — *before* any run record / `started` notify /
-  spawn, so a rejected start is side-effect-free. There is no opt-out: the
-  queue's Parallel mode and the per-step `mode` are gone, and the route still
-  accepts (and ignores) the old `requireNoActiveRun` body field. This is what
-  keeps the frontend's best-effort `activeRuns` gate from being raced (a run's
-  startup window, or a second browser tab) into starting two runs at once: on
-  the 409 the queue requeues the entry and retries when the slot frees, and a
-  manual ▶ Run adds the workflow to the queue ("Queued behind <name>").
-  **Exception:** boot recovery (`recovery/workflowRunResume.ts`) resumes every
-  persisted run, so two runs saved by a build that still allowed concurrency
-  come back together and finish concurrently — a one-time transition, logged
-  as `[startup] N workflow runs resumed for <project>`.
-- **The single slot counts workflow runs, not post-merge hooks.**
-  `assertNoActiveWorkflowRun` deliberately ignores hooks, and adding them there
-  would stall the queue: the 409 retry is re-evaluated only on `runFinished` (a
-  workflow run leaving the frontend's `activeRuns`), and a post-merge hook
-  finishing emits no such event — the requeued entry would wait for a signal
-  that never comes. Hook exclusion is enforced *upstream* instead, by the merge
-  control step's Phase C gate (see `controlSteps/CLAUDE.md`). Keep it there.
+**Advancing**
+- Advancement is sequential and **idempotent**: `completeWorkflowStep` claims
+  `currentStepIndex` synchronously before any await, so a duplicate callback is
+  a no-op. The frozen-step skip happens *after* that claim (claim `stepIndex+1`,
+  then re-claim + re-mirror at the step dispatched) — keep that order. Frozen
+  steps are skipped, not removed; a run whose remaining steps are all frozen
+  completes.
+- Completion is claimed by an in-flight promise per run and a persisted
+  `completing` phase before the old terminal ends; the advance awaits any
+  outstanding terminal-create, and the index changes only after the old
+  terminal is reclaimed.
+- **Advancing kills the step's session** (`killWorkflowStepSession`, awaited)
+  *before* the next step dispatches — `codex --yolo` never self-exits.
+  (`workflowStepSpawnFailure.test.ts`.)
+- **Claude Stop-hook completions are quiescence-gated**, never immediate: a
+  `Stop` fires early/repeatedly while subagents run, and advancing on it ran
+  steps in parallel. Only the `claude-stop-hook-*` source is gated; the explicit
+  curl / Pi / Codex sources advance immediately, and control steps call
+  `completeWorkflowStep` directly. The gate tracks subagents by `agent_id` (not
+  a count), waits for a Stop *after* a subagent finishes (`awaitingTurnEnd`),
+  counts **every** `wf:` / `pmh:` hook event as a signal, and requires
+  `READOPTED_SETTLE_MS` of silence for a re-adopted session. A held Stop must
+  survive a restart: the route awaits `recordStopReceived` before answering and
+  recovery re-arms with `{ rearm: true }`, counting from the later of
+  `stopReceived.at` / `.activeAt`. Failed completion checkpoints re-arm up to
+  three times, then leave the run + terminal with a visible error (a Run tests
+  step keeps retrying instead).
+- The Claude Stop hook is installed for every step regardless of harness.
+
+**Failure / cancellation**
+- Every rejected queued step spawn errors its still-current run (thrown setup /
+  transport included). CAP retries stay pending; a late rejection must preserve
+  a cancellation or a newer step.
+- Cancellation is authoritative: `cancelWorkflowRun` cancels pending
+  `wf-step:<runId>:<step>` queue entries, unregisters the presence node, kills
+  any tracked `serverId`, aborts a pre-run scan and a pending stop-hook gate;
+  queued thunks re-check run status / current step before and after
+  `proxyCreateSession`. A tool that cannot run never fails its step.
+- **A terminal transition checkpoints immediately** (`cancelWorkflowRun`,
+  `failWorkflowRun`, `markWorkflowStepSpawnErrored`, control-step errors follow
+  `notify` with `void checkpointWorkflowRun(run)`), since `notify` only
+  schedules the 100 ms debounced mirror. Setup failures and failed advances go
+  through `failWorkflowRun`. An error landing after the run already left
+  `running` keeps the existing terminal state.
+- Control steps: the lock is released **before** `completeStep`, inside a
+  restart-drain transition (`../restartDrain/`); the worker is detached, so
+  every await it owns — `completeStep` included — is guarded (an unobserved
+  rejection kills the backend via `processGuards`).
+
+**Surviving a restart**
+- **A run must survive the backend process.** `dev.mjs` defers restarts only
+  while a `run.lock` is held (control + Run tests steps), so every agent step is
+  exposed; a lost run silently drops its agent's later `/complete`. Keep the
+  `persistence.ts` mirror current on every run mutation and `restoreWorkflowRun`
+  idempotent (never clobber a live run). Restarts are also preceded by a drain:
+  start / advance are tracked transitions, spawns wait `pending` in the held
+  queue, and `POST /api/workflows/:id/run` answers 503 `backend-restarting`.
+- Mirror writes and deletions are serialized per project; flushing awaits
+  writes in flight (a late running-state write must not resurrect a finished
+  run).
+- Checkpoint phases `pending` / `spawning` / `running` / `completing`: required
+  writes precede launch/teardown. A `pending` step (incl. one in its pre-run
+  scan) is always re-dispatched; `spawning` with no terminal errors;
+  `stepSessionAlive: null` ("can't probe") re-adopts; `completing` advances
+  without replaying the prompt.
+- During recovery, lifecycle requests wait (then 503 + Retry-After), unknown
+  callbacks get 404 — never acknowledge an unknown run — and
+  `/ws/workflow-runs` hellos carry `recovering: true` until an authoritative
+  one follows.

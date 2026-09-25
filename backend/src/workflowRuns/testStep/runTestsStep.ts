@@ -129,6 +129,8 @@ export type RunTestsDeps = {
   advanceRetryMs: number;
 };
 
+const MINUTE_MS = 60_000;
+
 const productionDeps: RunTestsDeps = {
   acquireLock: acquireProjectRunLock,
   readHead: readProjectHead,
@@ -143,9 +145,9 @@ const productionDeps: RunTestsDeps = {
   killStepSession: (runId, stepIndex) => killWorkflowStepSession(runId, stepIndex),
   subscribeRuns: subscribe,
   checkpoint: checkpointWorkflowRun,
-  minuteMs: 60_000,
+  minuteMs: MINUTE_MS,
   lockRetryMs: 5_000,
-  lockWaitMs: 10 * 60_000,
+  lockWaitMs: 10 * MINUTE_MS,
   advanceRetryMs: 30_000,
 };
 
@@ -329,6 +331,113 @@ async function onTimeout(entry: ActiveRunTestsStep): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Worker phases — `runRunTestsWorker` runs them in order and re-checks
+// `isCurrent` between them.
+// ---------------------------------------------------------------------------
+
+// Phase 1: the skip rule — a detached HEAD, or HEAD unchanged since the last
+// Run tests. `head` is read by the worker (it re-checks the run after). Returns
+// the skip note, or the run-tests.json state the brief needs.
+async function preflightSkipNote(
+  project: string,
+  head: string | null,
+): Promise<{ skip: string } | { state: RunTestsState | null }> {
+  if (await deps.isDetached(project)) {
+    return {
+      skip: 'Skipped: the project checkout is on a detached HEAD. Merges fast-forward the checked-out branch, so there is no branch to test and commit fixes on — check out a branch.',
+    };
+  }
+  const state: RunTestsState | null = await deps.readState(project);
+  if (head && state?.lastHead === head) {
+    return {
+      skip: `Skipped: nothing merged since the last Run tests (HEAD ${shortSha(head)}, tested ${new Date(state.lastFinishedAt).toLocaleString()}).`,
+    };
+  }
+  return { state };
+}
+
+// Phase 2's give-up note. Real minutes — not `deps.minuteMs`, the timeout unit
+// tests shrink.
+function lockGaveUpNote(reason: string): string {
+  return `Skipped: the project stayed busy for ${Math.round(deps.lockWaitMs / MINUTE_MS)} minutes — ${reason}`;
+}
+
+type RunTestsStartState = {
+  stepDir: string;
+  wip: string[] | null;
+  userWipFile: string;
+};
+
+// Phase 3a: start state, captured under the lock (a merge may have landed
+// while we waited for it) — USER_WIP.txt and the `run.testStep` checkpoint.
+async function captureStartState(run: WorkflowRun, stepIndex: number): Promise<RunTestsStartState> {
+  const project = run.projectPath;
+  const startHead = await deps.readHead(project);
+  const wip = await deps.readStatus(project);
+  const stepDir = workflowStepDir(project, run.id, stepIndex);
+  await fs.mkdir(stepDir, { recursive: true });
+  const userWipFile = await writeUserWipFile(stepDir, wip ?? []);
+  run.testStep = { stepIndex, startHead };
+  await deps.checkpoint(run);
+  return { stepDir, wip, userWipFile };
+}
+
+// Phase 3b: RUN_TESTS.md — the recently-merged-tasks block and the project's
+// `run-tests` template.
+async function buildRunTestsBrief(
+  wf: Workflow,
+  entry: ActiveRunTestsStep,
+  state: RunTestsState | null,
+  start: RunTestsStartState,
+): Promise<string> {
+  const { run, stepIndex, backendOrigin } = entry;
+  const project = run.projectPath;
+  const since = state?.lastFinishedAt ?? run.startedAt;
+  const tasks = await deps.listTasks(project).catch(() => []);
+  const recentTasksBlock = renderRecentTasksBlock(
+    selectRecentlyMergedTasks(tasks, since),
+    state ? `since the last Run tests finished (${new Date(since).toLocaleString()})` : 'since this workflow run started',
+  );
+  const harness = effectiveStepHarness(wf, run, stepIndex);
+  const template = await deps.resolveTemplate(project, 'run-tests');
+  return renderRunTestsBrief(
+    {
+      harness,
+      projectPath: project,
+      stepDir: start.stepDir,
+      stepIndex,
+      totalSteps: wf.steps.length,
+      completeUrl: `${backendOrigin}/api/workflow-runs/${run.id}/steps/${stepIndex}/complete`,
+      timeoutMinutes: Math.round(entry.timeoutMs / deps.minuteMs),
+      userWipFile: start.userWipFile,
+      userWipCount: start.wip ? start.wip.length : null,
+      recentTasksBlock,
+    },
+    template,
+  );
+}
+
+// Phase 4 (before the spawn): the timeout runs from the moment the pty exists,
+// not from now — the spawn may sit in the spawn queue behind the resource
+// governor for a while. The step's `step-spawned` records `spawnedAt` (so a
+// re-adopting backend re-arms the remainder) and arms the timer.
+function armTimeoutOnSpawn(entry: ActiveRunTestsStep): void {
+  const { run, stepIndex } = entry;
+  entry.unsubscribe = deps.subscribeRuns((ev: WorkflowRunEvent) => {
+    if (ev.type !== 'step-spawned' || ev.runId !== run.id || ev.stepIndex !== stepIndex) return;
+    entry.unsubscribe?.();
+    entry.unsubscribe = undefined;
+    if (entry.finalized) return;
+    const spawnedAt = Date.now();
+    if (run.testStep?.stepIndex === stepIndex) {
+      run.testStep.spawnedAt = spawnedAt;
+      void deps.checkpoint(run).catch(() => {});
+    }
+    armTimeout(entry, spawnedAt);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Public surface
 // ---------------------------------------------------------------------------
 
@@ -360,84 +469,29 @@ export async function runRunTestsWorker(
   const project = run.projectPath;
   const entry = beginEntry(run, stepIndex, backendOrigin, completeStep, stepTimeoutMinutes(wf, stepIndex) * deps.minuteMs);
   try {
+    // 1. Preflight: the skip rule (D16).
     progress(run, stepIndex, 'checking whether anything was merged since the last Run tests…');
     const head = await deps.readHead(project);
     if (!isCurrent(run, stepIndex)) return void (await teardownEntry(entry));
-    if (await deps.isDetached(project)) {
-      return void (await noteAndAdvance(
-        entry,
-        'Skipped: the project checkout is on a detached HEAD. Merges fast-forward the checked-out branch, so there is no branch to test and commit fixes on — check out a branch.',
-        'skipped',
-      ));
-    }
-    const state: RunTestsState | null = await deps.readState(project);
-    if (head && state?.lastHead === head) {
-      return void (await noteAndAdvance(
-        entry,
-        `Skipped: nothing merged since the last Run tests (HEAD ${shortSha(head)}, tested ${new Date(state.lastFinishedAt).toLocaleString()}).`,
-        'skipped',
-      ));
-    }
+    const preflight = await preflightSkipNote(project, head);
+    if ('skip' in preflight) return void (await noteAndAdvance(entry, preflight.skip, 'skipped'));
+    const { state } = preflight;
 
+    // 2. The project run lock (non-lendable), waiting while something holds it.
     const lock = await acquireWithWait(entry);
     if (lock === null) return void (await teardownEntry(entry));
-    if ('gaveUp' in lock) {
-      return void (await noteAndAdvance(entry, `Skipped: the project stayed busy for ${Math.round(deps.lockWaitMs / 60_000)} minutes — ${lock.gaveUp}`, 'skipped'));
-    }
+    if ('gaveUp' in lock) return void (await noteAndAdvance(entry, lockGaveUpNote(lock.gaveUp), 'skipped'));
     entry.lock = lock;
     if (!isCurrent(run, stepIndex)) return void (await teardownEntry(entry));
 
-    // Start state, captured under the lock (a merge may have landed while we
-    // waited for it).
-    const startHead = await deps.readHead(project);
-    const wip = await deps.readStatus(project);
-    const stepDir = workflowStepDir(project, run.id, stepIndex);
-    await fs.mkdir(stepDir, { recursive: true });
-    const userWipFile = await writeUserWipFile(stepDir, wip ?? []);
-    run.testStep = { stepIndex, startHead };
-    await deps.checkpoint(run);
+    // 3. Start state under the lock, then the brief.
+    const start = await captureStartState(run, stepIndex);
     if (!isCurrent(run, stepIndex)) return void (await teardownEntry(entry));
+    const brief = await buildRunTestsBrief(wf, entry, state, start);
 
-    const since = state?.lastFinishedAt ?? run.startedAt;
-    const tasks = await deps.listTasks(project).catch(() => []);
-    const recentTasksBlock = renderRecentTasksBlock(
-      selectRecentlyMergedTasks(tasks, since),
-      state ? `since the last Run tests finished (${new Date(since).toLocaleString()})` : 'since this workflow run started',
-    );
-    const harness = effectiveStepHarness(wf, run, stepIndex);
-    const template = await deps.resolveTemplate(project, 'run-tests');
-    const brief = renderRunTestsBrief(
-      {
-        harness,
-        projectPath: project,
-        stepDir,
-        stepIndex,
-        totalSteps: wf.steps.length,
-        completeUrl: `${backendOrigin}/api/workflow-runs/${run.id}/steps/${stepIndex}/complete`,
-        timeoutMinutes: Math.round(entry.timeoutMs / deps.minuteMs),
-        userWipFile,
-        userWipCount: wip ? wip.length : null,
-        recentTasksBlock,
-      },
-      template,
-    );
-
+    // 4. Arm the timeout on the pty's spawn, then spawn.
     progress(run, stepIndex, 'starting the test agent (it may wait for a free agent slot)…');
-    // The timeout runs from the moment the pty exists, not from now: the spawn
-    // may sit in the spawn queue behind the resource governor for a while.
-    entry.unsubscribe = deps.subscribeRuns((ev: WorkflowRunEvent) => {
-      if (ev.type !== 'step-spawned' || ev.runId !== run.id || ev.stepIndex !== stepIndex) return;
-      entry.unsubscribe?.();
-      entry.unsubscribe = undefined;
-      if (entry.finalized) return;
-      const spawnedAt = Date.now();
-      if (run.testStep?.stepIndex === stepIndex) {
-        run.testStep.spawnedAt = spawnedAt;
-        void deps.checkpoint(run).catch(() => {});
-      }
-      armTimeout(entry, spawnedAt);
-    });
-
+    armTimeoutOnSpawn(entry);
     await deps.spawnStep(wf, run, stepIndex, backendOrigin, {
       runTests: {
         brief,
