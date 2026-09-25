@@ -86,6 +86,15 @@ export async function updateTask(
   return taskCache.updateTask(id, updates);
 }
 
+// Compare-and-set update under the project write lock (see
+// TaskCacheManager.updateTaskWith). Null when the task no longer exists.
+export async function updateTaskWith<R>(
+  id: string,
+  decide: (task: Task, tasks: readonly Task[]) => { updates?: TaskUpdates; result: R },
+): Promise<{ task: Task; result: R } | null> {
+  return taskCache.updateTaskWith(id, decide);
+}
+
 export async function reorderTasksInLane(
   projectPath: string,
   status: TaskStatus,

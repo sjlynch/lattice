@@ -202,6 +202,33 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
     );
   }
 
+  // Compare-and-set update. `decide` runs under the project's write lock
+  // against the LIVE task (and its project's live list) and returns the
+  // updates to apply — or none, to leave the task untouched — plus a result
+  // for the caller. Nothing can change the task between that read and the
+  // write, so a caller can refuse a transition whose precondition no longer
+  // holds (startTaskById's final in_progress flip). Returns null when the task
+  // no longer exists.
+  public async updateTaskWith<R>(
+    id: string,
+    decide: (task: Task, tasks: readonly Task[]) => { updates?: TaskUpdates; result: R },
+  ): Promise<{ task: Task; result: R } | null> {
+    return this.withLockedItemAcrossProjects<Task, { task: Task; result: R }>(
+      id,
+      (t) => t.id,
+      () => this.loadAllKnown(),
+      ({ project, list, idx }) => {
+        const { updates, result } = decide(list[idx], list);
+        if (!updates) return { task: list[idx], result };
+        const { updated, updatedList } = applyTaskUpdate(list, idx, updates);
+        this.setCached(project, updatedList);
+        this.schedulePersist(project);
+        this.notifyProject(project);
+        return { task: updated, result };
+      },
+    );
+  }
+
   // Rewrite the order of tasks inside a single lane. `ids` lists the task IDs
   // in their new top-to-bottom order. Each listed task gets its status set to
   // `status` (handles cross-lane drops that pick a position) and its sortOrder

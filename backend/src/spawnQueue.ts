@@ -58,15 +58,26 @@ export function enqueueSpawn<T>(
   };
 }
 
-// Cancel a still-pending spawn (e.g. its task was deleted). An already
-// in-flight spawn cannot be cancelled — it completes and is cleaned up by
-// the normal task-delete path. Returns true if a pending request was removed.
-export function cancelSpawn(dedupeKey: string): boolean {
+// Cancel a spawn. A still-pending request is removed and its `done` rejected
+// — it never runs. An already in-flight request (admitted, thunk running)
+// can't be pulled back, so its signal is aborted instead: the queue won't
+// re-queue it after a CAP / disk deferral, and a thunk that watches its
+// signal (task runs: startTaskById) backs out before its final state change.
+// Returns which of the two happened, or null when nothing was queued.
+export type CancelSpawnResult = 'pending' | 'in-flight' | null;
+
+export function cancelSpawn(dedupeKey: string): CancelSpawnResult {
   const request = queueState.get(dedupeKey);
-  if (!request || request.state !== 'pending') return false;
-  queueState.remove(dedupeKey);
-  request.reject(new Error(`spawn cancelled (${dedupeKey})`));
-  return true;
+  if (!request) return null;
+  const reason = new Error(`spawn cancelled (${dedupeKey})`);
+  if (request.state === 'pending') {
+    queueState.settle(request);
+    request.controller.abort(reason);
+    request.reject(reason);
+    return 'pending';
+  }
+  if (!request.signal.aborted) request.controller.abort(reason);
+  return 'in-flight';
 }
 
 // Hint that backend-owned kills just freed pty slots. If the queue has

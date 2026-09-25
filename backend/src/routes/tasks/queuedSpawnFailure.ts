@@ -15,6 +15,7 @@ import {
 import {
   CLEARED_RUN_QUEUE_STATE,
   defaultFailureDeps,
+  isTaskStartWithdrawn,
   type SpawnFailureDeps,
 } from './queuedSpawnAdmission.js';
 
@@ -167,9 +168,14 @@ export async function runSpawnThunk(
     }
   } catch (err) {
     // A CAP or disk-space deferral is re-queued and retried — undo the attempt
-    // bump (a run) and leave all other state alone. Any other failure is
-    // terminal: surface it to the UI (and, for a run, clear the queue state).
-    if (isSpawnDeferral(err)) {
+    // bump (a run) and leave all other state alone. A start withdrawn by the
+    // user (run cancelled / task re-laned mid-start) is their own doing: no
+    // toast, and no state change — a cancel already cleared the queue state
+    // and a re-run may have set it again. Any other failure is terminal:
+    // surface it to the UI (and, for a run, clear the queue state).
+    if (isTaskStartWithdrawn(err)) {
+      console.log(`[task-run] ${err.message} — not started`);
+    } else if (isSpawnDeferral(err)) {
       if (kind === 'run') await undoRunAttempt(taskId, deps);
       if (kind === 'run' && isSpawnDiskSpaceError(err)) await noteWaitingForDisk(taskId, err.message, deps);
     } else {

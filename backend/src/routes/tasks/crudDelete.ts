@@ -11,7 +11,9 @@ import type { TaskIdRequest } from './crudTypes.js';
 
 // Cancel a queued task run: drop it from the spawn queue and clear the
 // runQueued flag so it reverts to a plain Open task. Idempotent — a no-op
-// for a task that is not queued.
+// for a task that is not queued. A run the queue had already admitted is
+// aborted rather than dropped (it backs out before starting its agent); the
+// response then carries `inFlight: true`.
 export async function handleTaskCancelQueuedRun(
   req: TaskIdRequest,
   res: Response,
@@ -22,9 +24,10 @@ export async function handleTaskCancelQueuedRun(
     return;
   }
   if (!requireTaskInRequestedProject(task, req, res)) return;
-  await dequeueTaskRun(req.params.id);
+  const { inFlight } = await dequeueTaskRun(req.params.id);
   const updated = await getTask(req.params.id);
-  res.json(updated ?? { ok: true });
+  const inFlightField = inFlight ? { inFlight: true } : {};
+  res.json(updated ? { ...updated, ...inFlightField } : { ok: true, ...inFlightField });
 }
 
 export async function handleTaskDelete(
@@ -36,8 +39,8 @@ export async function handleTaskDelete(
   // so the project pin is checked before ANY side effect (the queue cancel
   // below included).
   if (task && !requireTaskInRequestedProject(task, req, res)) return;
-  // Drop any still-pending queued run/resume so the spawn queue does not
-  // later try to spawn a worktree for a task that no longer exists.
+  // Drop any queued run/resume (aborting one already in flight) so the spawn
+  // queue does not spawn a worktree for a task that no longer exists.
   cancelQueuedTaskSpawns(req.params.id);
   // A holder object, not a `let`: TS would narrow a closure-assigned `let` to null.
   const keptRef: { info: KeptBranchInfo | null } = { info: null };

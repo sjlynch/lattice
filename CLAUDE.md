@@ -245,7 +245,7 @@ therefore stay safely re-runnable.
 | POST | `/api/tasks/reorder` | Persist per-lane task order `{project, status, ids}` |
 | POST | `/api/tasks/:id/append-summary` | Append a markdown/plain-text summary beneath the task description |
 | DELETE | `/api/tasks/:id` | Remove (tears down the worktree; its `lattice/*` branch is deleted unless it has commits not on HEAD — then it is kept and the response is `{ok: true, keptBranch: {name, unmergedCommits, hint}}`, `unmergedCommits: null` when the count failed) |
-| POST | `/api/tasks/:id/cancel-queued-run` | Drop a queued run back to a plain Open task |
+| POST | `/api/tasks/:id/cancel-queued-run` | Drop a queued run back to a plain Open task. A run already admitted (checking out) is aborted instead — it backs out before starting its agent — and the response adds `inFlight: true` |
 | POST | `/api/tasks/:id/run` | Enqueue an Open task's run on the spawn queue; returns `{accepted, queued}` (pty delivered later via the `task-spawned` WS event) |
 | POST | `/api/tasks/:id/resume` | Enqueue a re-spawn in the existing worktree; returns `{accepted, queued}` |
 | POST | `/api/tasks/:id/complete` | Stop-hook callback (in_progress → ready_to_merge) |
@@ -343,7 +343,8 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   the moment a start picks its slot until its status flip lands, since the
   spawn queue admits up to `softCap` starts concurrently and overlapping
   "Run All" siblings otherwise computed the same lowest free slot) mapped
-  through a golden-angle palette, so
+  through a golden-angle palette — a re-run keeps its stored slot only while
+  no other active task holds it — so
   30–80 concurrent agents stay maximally distinct and colors never
   reshuffle when a sibling finishes.
 - **Graph overlays (hold-key, or pin).** Momentary recolors of the file graph,

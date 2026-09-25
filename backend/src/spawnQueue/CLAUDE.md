@@ -67,6 +67,17 @@ is now only a runaway backstop; the queue's `softCap` is the real governor.
   `GET /api/spawn-queue` as `governor`; opt out with
   `globalSettings.resourceGovernor: false`. Added after a 50-agent cap on a
   large repo pinned the CPU at 100% and froze the desktop (2026-09-22).
+- **Cancellation reaches in-flight requests.** Every request owns an
+  `AbortController` (an `EnqueueSpawnArgs.signal` is forwarded into it) and the
+  thunk receives its signal. `cancelSpawn` drops a pending request (returns
+  `'pending'`) or aborts an in-flight one (`'in-flight'`); an aborted request
+  is never re-queued by a CAP / disk deferral, so a cancelled run cannot come
+  back later. A new enqueue for the key of an aborted in-flight request does
+  NOT dedupe onto it: the new request takes the key but is not admitted until
+  the old thunk settles (`predecessor`), so two thunks for one key never run
+  at once; settling is identity-checked (`settle`) so the late one can't
+  evict its successor. Task runs pass the signal to `startTaskById`, which
+  backs out (worktree + pty torn down) instead of starting a cancelled run.
 - **Poll failure freezes admissions.** `proxyCountSessions()` returns `null`
   (not `0`) when the terminal-server is unreachable; the queue keeps the last
   count and admits nothing until a poll succeeds.

@@ -118,7 +118,21 @@ undoes that bump, and any other failure clears the run-queue state:
   body-less resume to Claude, silently moving Pi/Codex tasks onto Claude.)
 - `queuedSpawnEnqueue.ts` — the run/resume enqueue wrappers (`enqueueTaskRun` /
   `enqueueTaskResume`) plus cancellation (`cancelQueuedTaskSpawns` /
-  `dequeueTaskRun`).
+  `dequeueTaskRun`). Cancellation also reaches a run the queue already
+  admitted: its request signal is aborted (`cancel-queued-run` then answers
+  `inFlight: true`).
+- `startTask.ts` — the run spawn itself. **A cancel / delete / lane change
+  made while a start is in flight wins**: `startTaskById` re-checks after the
+  checkout, before a CAP re-queue, and at the final `in_progress` flip — that
+  one a compare-and-set under the task lock (`updateTaskWith`). A withdrawn
+  start tears down its worktree + pty (keeping a checkout another start of the
+  task already claimed) and throws `TaskStartWithdrawnError`
+  (`queuedSpawnAdmission.ts`; `runSpawnThunk` neither toasts it nor touches the
+  run-queue state) or, for a deleted task, a plain Error. A CAP-rejected
+  pass parks a teardown on the request signal, so a cancel before the retry
+  still reclaims its checkout. The palette slot is picked inside that same
+  flip: the stored `colorIndex` is kept only while no other active task or
+  reservation holds it (`colorSlot.ts` `reserveColorSlot(…, preferred)`).
 
 ## Worktree lifecycle hooks (`hooks/`)
 
