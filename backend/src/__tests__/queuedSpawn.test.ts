@@ -11,7 +11,8 @@ import {
   type TaskSpawnFailedEvent,
   type TaskSpawnedEvent,
 } from '../taskSpawnEvents.js';
-import { SpawnCapacityError } from '../spawnQueue.js';
+import { SpawnCapacityError, SpawnDiskSpaceError } from '../spawnQueue.js';
+import { TaskStartWithdrawnError } from '../routes/tasks/queuedSpawnAdmission.js';
 import type { Task } from '../tasks.js';
 
 // Regression coverage for the silently-swallowed spawn-failure bug AND the
@@ -303,4 +304,193 @@ test('reportSpawnFailure: tolerates a missing task (emits with empty routing fie
   assert.equal(store.updates.length, 1);
   assert.equal(store.updates[0].runFailureCount, undefined);
   assert.equal(store.updates[0].runQueued, undefined);
+});
+
+// A start the user withdrew mid-flight (run cancelled / task re-laned) is not a
+// failure. If this branch stopped matching, the cancel would fall through to
+// reportSpawnFailure — clearing the queue state of a re-run the user already
+// queued (badge vanishes, boot recovery drops it) and toasting a false failure.
+for (const [label, err] of [
+  ['cancelled', new TaskStartWithdrawnError('t1', 'cancelled')],
+  ['re-laned', new TaskStartWithdrawnError('t1', 'relaned', 'backlog')],
+] as const) {
+  test(`runSpawnThunk(run): a withdrawn start (${label}) is rethrown with no state change and no task-spawn-failed`, async () => {
+    // The task as a re-run left it: queued again with its own policy.
+    const store = makeStore(
+      makeTask({ runQueuedHarness: 'pi', runQueuedPiModel: 'q/q' }),
+    );
+    const { events, stop } = captureFailed();
+    try {
+      await assert.rejects(
+        runSpawnThunk(
+          't1',
+          'run',
+          async () => {
+            throw err;
+          },
+          store.deps,
+        ),
+        (thrown: unknown) => thrown === err,
+      );
+    } finally {
+      stop();
+    }
+    // Only the at-admission bump wrote anything — no clear, no undo.
+    assert.equal(store.crashSafeUpdates.length, 1);
+    assert.equal(store.updates.length, 0);
+    const after = store.current();
+    assert.equal(after?.runQueued, true);
+    assert.equal(after?.runQueuedAt, 1);
+    assert.equal(after?.runQueuedHarness, 'pi');
+    assert.equal(after?.runQueuedPiModel, 'q/q');
+    assert.equal(after?.runFailureCount, 1);
+    assert.equal(events.length, 0);
+  });
+}
+
+test('runSpawnThunk(run): a duck-typed withdrawn error (isTaskStartWithdrawn flag) is also silent', async () => {
+  const store = makeStore(makeTask());
+  const { events, stop } = captureFailed();
+  const err = Object.assign(new Error('withdrawn elsewhere'), {
+    isTaskStartWithdrawn: true,
+  });
+  try {
+    await assert.rejects(
+      runSpawnThunk(
+        't1',
+        'run',
+        async () => {
+          throw err;
+        },
+        store.deps,
+      ),
+      (thrown: unknown) => thrown === err,
+    );
+  } finally {
+    stop();
+  }
+  assert.equal(store.updates.length, 0);
+  assert.equal(store.current()?.runQueued, true);
+  assert.equal(events.length, 0);
+});
+
+test('runSpawnThunk(resume): a withdrawn start is rethrown silently with no writes', async () => {
+  const store = makeStore(
+    makeTask({ status: 'in_progress', runQueued: undefined }),
+  );
+  const { events, stop } = captureFailed();
+  const err = new TaskStartWithdrawnError('t1', 'cancelled');
+  try {
+    await assert.rejects(
+      runSpawnThunk(
+        't1',
+        'resume',
+        async () => {
+          throw err;
+        },
+        store.deps,
+      ),
+      (thrown: unknown) => thrown === err,
+    );
+  } finally {
+    stop();
+  }
+  assert.equal(store.crashSafeUpdates.length, 0);
+  assert.equal(store.updates.length, 0);
+  assert.equal(events.length, 0);
+});
+
+// A disk-space deferral is re-queued like CAP (attempt bump undone), and the
+// card is told why the run is waiting — once per waiting episode, since a
+// deferred run retries every 30 s and rewriting would churn the store + WS.
+test('runSpawnThunk(run): a disk-space deferral undoes the attempt bump and records runWaitingForDisk', async () => {
+  const store = makeStore(makeTask());
+  const { events, stop } = captureFailed();
+  const err = new SpawnDiskSpaceError('need 6.5 GB free, have 2.1 GB', 30_000);
+  try {
+    await assert.rejects(
+      runSpawnThunk(
+        't1',
+        'run',
+        async () => {
+          throw err;
+        },
+        store.deps,
+      ),
+      (thrown: unknown) => thrown === err,
+    );
+  } finally {
+    stop();
+  }
+  // 0 → 1 (admission) → undefined (deferral undo).
+  assert.equal(store.crashSafeUpdates.length, 1);
+  assert.equal(store.crashSafeUpdates[0].runFailureCount, 1);
+  assert.equal(store.updates.length, 2);
+  assert.deepEqual(store.updates[0], { runFailureCount: undefined });
+  assert.deepEqual(store.updates[1], {
+    runWaitingForDisk: 'need 6.5 GB free, have 2.1 GB',
+  });
+  const after = store.current();
+  assert.equal(after?.runFailureCount, undefined);
+  assert.equal(after?.runWaitingForDisk, 'need 6.5 GB free, have 2.1 GB');
+  // Still queued; not a failure.
+  assert.equal(after?.runQueued, true);
+  assert.equal(events.length, 0);
+});
+
+test('runSpawnThunk(run): a disk-space deferral while already waiting does not rewrite runWaitingForDisk', async () => {
+  const store = makeStore(
+    makeTask({ runWaitingForDisk: 'need 6.5 GB free, have 2.1 GB' }),
+  );
+  const { events, stop } = captureFailed();
+  try {
+    await assert.rejects(
+      runSpawnThunk(
+        't1',
+        'run',
+        async () => {
+          // Live byte counts moved — the stored message must still not churn.
+          throw new SpawnDiskSpaceError('need 6.5 GB free, have 2.0 GB', 30_000);
+        },
+        store.deps,
+      ),
+      (thrown: unknown) => thrown instanceof SpawnDiskSpaceError,
+    );
+  } finally {
+    stop();
+  }
+  // Only the attempt undo; no second disk-wait write.
+  assert.equal(store.updates.length, 1);
+  assert.deepEqual(store.updates[0], { runFailureCount: undefined });
+  assert.equal(
+    store.current()?.runWaitingForDisk,
+    'need 6.5 GB free, have 2.1 GB',
+  );
+  assert.equal(events.length, 0);
+});
+
+test('runSpawnThunk(resume): a disk-space deferral writes nothing (no runWaitingForDisk, no counter)', async () => {
+  const store = makeStore(
+    makeTask({ status: 'in_progress', runQueued: undefined }),
+  );
+  const { events, stop } = captureFailed();
+  try {
+    await assert.rejects(
+      runSpawnThunk(
+        't1',
+        'resume',
+        async () => {
+          throw new SpawnDiskSpaceError('disk full', 30_000);
+        },
+        store.deps,
+      ),
+      (thrown: unknown) => thrown instanceof SpawnDiskSpaceError,
+    );
+  } finally {
+    stop();
+  }
+  assert.equal(store.crashSafeUpdates.length, 0);
+  assert.equal(store.updates.length, 0);
+  assert.equal(store.current()?.runWaitingForDisk, undefined);
+  assert.equal(events.length, 0);
 });
