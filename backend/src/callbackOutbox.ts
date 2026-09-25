@@ -17,10 +17,13 @@ export {
   retryingCurl,
 } from './callbackOutbox/script.js';
 export {
+  CALLBACK_PATH_RE,
+  classifyReplayUrl,
   drainCallbackOutbox,
   isFinalStatus,
   isReplayableUrl,
   OUTBOX_MAX_AGE_MS,
+  OUTBOX_REPLAY_HEADER,
   replayBackoffMs,
   startCallbackOutboxLoop,
   type DrainResult,

@@ -16,6 +16,7 @@ import { LATTICE_OWNED_FILE_PATHS } from '../../worktree/managedFiles.js';
 import { decodeActivityHook } from '../../activityHook.js';
 import { notifyTaskActivity } from '../../taskActivityEvents.js';
 import { isExistingFile } from '../../hookFiles.js';
+import { noteTaskAgentActivity } from '../../callbackOutbox/replayGuard.js';
 
 // Repo-relative paths Lattice owns inside a worktree — never a real edit the
 // graph should beam to. Compared with forward-slash normalization.
@@ -79,6 +80,10 @@ export function buildTaskActivityRouter(): Router {
     }
     if (!task || !task.worktreePath) return ack();
     const t = task; // narrow for the mapFile closure below
+    // Any hook at all — even one the graph drops below — means the agent is
+    // mid-turn, which makes an older completion callback the outbox replays
+    // stale (callbackOutbox/replayGuard.ts).
+    noteTaskAgentActivity(t.id);
 
     // Shared decode (the SubagentStart/Stop satellite branch + phase/tool/
     // subagent extraction); only the worktree file-mapping is task-specific.

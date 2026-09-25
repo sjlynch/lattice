@@ -23,7 +23,7 @@
 
 import { checkpointWorkflowRun, getRun, notify, runs, snapshot } from './state.js';
 import { workflowStepAgentId } from './sessionSpawner.js';
-import { agentLastActiveAt, isAgentQuiescent, noteAgentSignal, noteAgentStop } from '../agentQuiescence.js';
+import { agentHeldActivity, isAgentQuiescent, noteAgentSignal, noteAgentStop } from '../agentQuiescence.js';
 import { isRunTestsStep, noteRunTestsStep } from './testStep/runTestsStep.js';
 
 // Advance only after the session has been fully quiet (no subagents live, no
@@ -179,10 +179,11 @@ function noteHeldStopActivity(runId: string, stepIndex: number, agentId: string)
   if (!run || !held || held.stepIndex !== stepIndex) return;
   const now = Date.now();
   if (now - (heldActivityPersistedAt.get(runId) ?? 0) < HELD_STOP_ACTIVITY_PERSIST_MS) return;
-  const activeAt = agentLastActiveAt(agentId);
+  const { activeAt, busy } = agentHeldActivity(agentId, HELD_STOP_ACTIVITY_PERSIST_MS);
   if (activeAt <= (held.activeAt ?? held.at)) return;
   heldActivityPersistedAt.set(runId, now);
   held.activeAt = activeAt;
+  held.busy = busy;
   void checkpointWorkflowRun(run).catch(() => {});
 }
 
