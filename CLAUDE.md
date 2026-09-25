@@ -254,7 +254,7 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | POST | `/api/terminal-tabs/restore?project=` | Rebuild sidebar tabs (adopt live, relaunch dead into their conversation) |
 | PATCH | `/api/terminal-tabs?project=` | Persist tab order `{order}` |
 | PATCH | `/api/terminal-tabs/:id?project=` | Rename a tab `{label}` |
-| DELETE | `/api/terminal-tabs/:id?project=` | Close a tab (never relaunched) and kill its pty |
+| DELETE | `/api/terminal-tabs/:id?project=` | Close a tab (never relaunched) and kill its pty (aborts an owning post-merge hook) |
 | GET | `/api/spawn-queue` | Debug: spawn-queue snapshot |
 | POST | `/api/internal/restart-drain/prepare` | Dev-runner restart drain (internal, token-guarded; see `backend/src/restartDrain/`) |
 | POST | `/api/internal/restart-drain/cancel` | End a drain not followed by a restart (internal) |
@@ -398,8 +398,10 @@ Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
   and return a `serverId`; the frontend lazy-mounts `<TerminalPane>` on first
   activation so "Run All" can't blow past Chrome's per-page WebGL context cap.
 - **Codex trust is per terminal, not global** — a one-shot
-  `projects.<cwd>.trust_level='trusted'` override via child-only env; never
-  writes `~/.codex/config.toml` (`backend/src/terminal/`).
+  `projects={'<cwd>'={trust_level='trusted'}}` override via child-only env;
+  never writes `~/.codex/config.toml` (`backend/src/terminal/`). Codex splits a
+  `-c` *key* on every `.` without unquoting, so a path can never be a dotted
+  key (`projects.'<cwd>'.trust_level` silently misses).
 - **Per-harness system-prompt overrides** (Append / Replace per harness,
   `UserSettings.harnessSystemPrompts`) are injected at the spawn chokepoint.
   Claude's built-in prompt is proprietary (the editor says so; the override

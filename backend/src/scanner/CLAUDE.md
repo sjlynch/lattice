@@ -36,7 +36,9 @@ the next:
      a big healthy scan) terminates a genuinely-hung file, marks it unanalyzable,
      respawns, and continues. The worker is side-effect-free (reads + posts
      only), so terminating it is safe. Injectable worker factory + `moduleUrls`
-     for testing (`__tests__/scannerHealthWorkerRunner.test.ts`).
+     for testing (`__tests__/scannerHealthWorkerRunner.test.ts`). Worker spawn,
+     quiet terminate and the stall timer are shared with the watcher via
+     `../health/analysisWorker.ts`.
 4. **`coupling.ts`** — `computeCoupling(metrics, aliases, roots)` feeds the
    per-file `imports` lists into `computeCrossFile` to produce the
    cross-file `CouplingMap` (fan-in/fan-out plus dead-code reachability from

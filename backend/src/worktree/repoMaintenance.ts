@@ -20,8 +20,9 @@
 //      it repacks: their git processes would map the old packs and, on Windows,
 //      the repack could not delete them — a full leftover copy of the packs
 //      per maintenance (9af5a47). startMergeRun refuses while maintenance is in
-//      flight (isRepoMaintenanceRunning) and the workflow control steps wait for
-//      it (waitForRepoMaintenance).
+//      flight (isRepoMaintenanceRunning, RepoMaintenanceBusyError), the workflow
+//      control steps wait for it (waitForRepoMaintenance), and callback-driven
+//      restarts wait and retry (startMergeRunAfterMaintenance).
 
 import fs from 'node:fs/promises';
 import path from 'node:path';

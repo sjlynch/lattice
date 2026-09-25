@@ -12,6 +12,8 @@
 // env (whose var name looks secret) is stored in ~/.lattice/mcpSecrets.json and
 // kept out of the entry; a REFERENCE (`${input:…}`, `${env:…}`, Codex
 // `bearer_token_env_var`) is recorded as a secret env var with NO stored value.
+// A secret embedded in a `url` or `args` (no env slot to move it to) is redacted
+// at normalize time and the server is REFUSED on apply (`embeddedSecrets`).
 
 import { mergeMcpSecrets, type McpSecrets } from './secrets.js';
 import { getGlobalSettings, updateGlobalSettingsWith } from '../globalSettings.js';
@@ -45,6 +47,9 @@ export type ImportedServerInfo = {
   summary: string; // e.g. "npx -y @scope/pkg" or the URL
   secretVars: ImportedSecretVar[];
   collides: boolean; // id already a built-in / existing custom — would be skipped
+  // Secrets found embedded in the url/args (descriptions, no values; `summary`
+  // shows them redacted). Non-empty → the server is refused on apply.
+  embeddedSecrets: string[];
 };
 
 export type ImportScanResult = { servers: ImportedServerInfo[] };
@@ -52,7 +57,17 @@ export type ImportScanResult = { servers: ImportedServerInfo[] };
 export type ImportApplyResult = {
   imported: string[];
   skipped: string[];
+  // Selected but not imported because a secret is embedded in its url/args.
+  refused: Array<{ id: string; reason: string }>;
 };
+
+function embeddedSecretRefusal(findings: string[]): string {
+  return (
+    `A secret is embedded in this server's URL or arguments (${findings.join('; ')}). Lattice won't ` +
+    'store it in globalSettings.json or put it on a command line — move it into an ' +
+    'env var or HTTP header in the source config and re-import, or add the server by hand.'
+  );
+}
 
 // ---- scan + apply -----------------------------------------------------------
 
@@ -116,6 +131,7 @@ export async function scanImportableServers(projectPath?: string): Promise<Impor
           : [n.entry.command, ...(n.entry.args ?? [])].join(' ').trim(),
       secretVars,
       collides: BUILTIN_IDS.has(n.entry.id) || existingCustom.has(n.entry.id),
+      embeddedSecrets: n.embeddedSecrets,
     };
   });
   return { servers };
@@ -137,11 +153,18 @@ export async function applyImport(
   const secrets: McpSecrets = {};
   const imported: string[] = [];
   const skipped: string[] = [];
+  const refused: ImportApplyResult['refused'] = [];
 
   for (const n of normalized) {
     if (!selected.has(n.entry.id)) continue;
     if (BUILTIN_IDS.has(n.entry.id) || existingIds.has(n.entry.id)) {
       skipped.push(n.entry.id);
+      continue;
+    }
+    // Never write an entry whose url/args carried a secret (even redacted — it
+    // would be a broken server), nor any of its other captured secrets.
+    if (n.embeddedSecrets.length > 0) {
+      refused.push({ id: n.entry.id, reason: embeddedSecretRefusal(n.embeddedSecrets) });
       continue;
     }
     toAdd.push(n.entry);
@@ -166,5 +189,5 @@ export async function applyImport(
     await mergeMcpSecrets(secrets);
   }
 
-  return { imported, skipped };
+  return { imported, skipped, refused };
 }

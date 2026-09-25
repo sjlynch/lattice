@@ -31,6 +31,7 @@ export {
   waitForPostMergeHook,
 } from './postMergeHooks/registry.js';
 export {
+  abortPostMergeHookForServerId,
   endPostMergeHook,
   POST_MERGE_HOOK_MAX_WAIT_MS,
   runPostMergeHookGate,
