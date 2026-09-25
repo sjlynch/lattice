@@ -1,5 +1,5 @@
 // Selection: filter a project's tasks by the parsed query, sort newest-first by
-// last activity, and cut the page — plus the `omitted` / `missing` accounting.
+// last activity (`ids=` keeps request order), and cut the page — plus the `omitted` / `missing` accounting.
 
 import type { Task } from '../../tasks.js';
 import { HISTORY_STATUSES, type ListQuery } from './listQueryTypes.js';
@@ -19,7 +19,7 @@ export function lastActivityAt(t: Task): number {
 }
 
 export interface ListSelection {
-  /** The page actually returned: newest first, after `limit`. */
+  /** The page actually returned: newest first (`ids=`: request order), after `limit`. */
   tasks: Task[];
   /** Every task in the project (after the foreign-task partition). */
   total: number;
@@ -60,7 +60,10 @@ export function selectTasks(safe: Task[], q: ListQuery): ListSelection {
     matched = matched.filter((t) => lastActivityAt(t) >= floor);
   }
 
-  matched.sort((a, b) => lastActivityAt(b) - lastActivityAt(a));
+  // An id lookup comes back in the order it was asked for (so a `limit` cuts
+  // the tail of the request, not the least-recently-active ids); every other
+  // listing is newest-first.
+  if (!q.ids) matched.sort((a, b) => lastActivityAt(b) - lastActivityAt(a));
   const page = q.limit > 0 ? matched.slice(0, q.limit) : matched;
 
   const selection: ListSelection = {

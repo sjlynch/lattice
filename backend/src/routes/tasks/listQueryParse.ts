@@ -20,6 +20,13 @@ function csv(raw: string | undefined): string[] | null {
   return parts.length > 0 ? parts : null;
 }
 
+// `ids=` in request order, first occurrence wins — a repeated id is one task,
+// not two copies of it in the response.
+function uniqueCsv(raw: string | undefined): string[] | null {
+  const parts = csv(raw);
+  return parts ? [...new Set(parts)] : null;
+}
+
 function parseNonNegativeInt(
   raw: string | undefined,
   fallback: number,
@@ -88,7 +95,7 @@ export function parseStatusParam(
 }
 
 export function parseListQuery(raw: RawListQuery, now = Date.now()): ParseResult<ListQuery> {
-  const ids = csv(raw.ids);
+  const ids = uniqueCsv(raw.ids);
 
   // `ids=` is the expand tier: it addresses specific tasks, so a lane filter
   // (or a `since` window, applied in selectTasks) could only ever surprise the
@@ -130,7 +137,11 @@ export function parseListQuery(raw: RawListQuery, now = Date.now()): ParseResult
   // full text, and `?ids=` would clip again: a loop.)
   const clip = parseNonNegativeInt(raw.clip, ids ? 0 : DEFAULT_CLIP_CHARS, 'clip');
   if (!clip.ok) return clip;
-  const limit = parseNonNegativeInt(raw.limit, DEFAULT_LIST_LIMIT, 'limit');
+  // Same reasoning for `limit`: an id lookup is exact — the caller treats the
+  // result as "these tasks", so a default page cap would silently drop some of
+  // them (a `truncated` flag is easy to miss). The 256 KB ceiling still guards
+  // the size; an explicit `limit=` is still honoured.
+  const limit = parseNonNegativeInt(raw.limit, ids ? 0 : DEFAULT_LIST_LIMIT, 'limit');
   if (!limit.ok) return limit;
 
   let since: number | null = null;
