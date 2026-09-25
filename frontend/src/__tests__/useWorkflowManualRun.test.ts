@@ -48,18 +48,30 @@ type Props = {
   activeRuns: Record<string, WorkflowRun>;
   outcome: StartOutcome;
   editorResult?: EditorRunResult;
+  editorWorkflowId?: string | null;
+  // Overrides the fixed `outcome` / `editorResult` (e.g. a deferred start).
+  startRun?: (id: string) => Promise<StartOutcome>;
+  startEditor?: () => Promise<EditorRunResult>;
 };
 
-function Harness({ activeRuns, outcome, editorResult = null }: Props) {
+function Harness({
+  activeRuns,
+  outcome,
+  editorResult = null,
+  editorWorkflowId = null,
+  startRun,
+  startEditor,
+}: Props) {
   latest = useWorkflowManualRun({
     activeRuns,
+    editorWorkflowId,
     runWorkflow: async (id) => {
       calls.run.push(id);
-      return outcome;
+      return startRun ? startRun(id) : outcome;
     },
     runEditorWorkflow: async () => {
       calls.runEditor += 1;
-      return editorResult;
+      return startEditor ? startEditor() : editorResult;
     },
     enqueueWorkflow: (id) => {
       calls.enqueue.push(id);
@@ -187,5 +199,75 @@ test('the editor ▶ Run queues the workflow it just saved when the start 409s',
   assert.deepEqual(calls.enqueueDefinition, ['fresh'], 'enqueued by definition, not by id lookup');
   assert.equal(calls.startQueue, 1);
   assert.equal(calls.notices.length, 1);
+  await unmount();
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+test('REGRESSION: a double-clicked ▶ Run starts once and never queues its own 409', async () => {
+  // The first start is still in flight (activeRuns hasn't learned of it yet);
+  // any further start would 409 against it and come back `busy`.
+  const first = deferred<StartOutcome>();
+  let starts = 0;
+  const unmount = await render({
+    activeRuns: {},
+    outcome: { status: 'failed' },
+    startRun: () => (++starts === 1 ? first.promise : Promise.resolve<StartOutcome>({ status: 'busy' })),
+  });
+  let p1!: Promise<void>;
+  let p2!: Promise<void>;
+  await act(async () => {
+    p1 = latest!.runWorkflowOrQueue('wf');
+    p2 = latest!.runWorkflowOrQueue('wf');
+    await p2;
+  });
+  assert.equal(latest!.startingWorkflowIds.has('wf'), true, 'the row ▶ is disabled while pending');
+  await act(async () => {
+    first.resolve({ status: 'started', run: run('r1', 'wf wf') });
+    await p1;
+  });
+  assert.deepEqual(calls.run, ['wf'], 'one start request');
+  assert.deepEqual(calls.enqueue, [], 'the second click never queues a second run');
+  assert.equal(calls.startQueue, 0);
+  assert.deepEqual(calls.notices, []);
+  assert.equal(latest!.startingWorkflowIds.has('wf'), false, 'released once the start settles');
+  // Once settled, a later click is honoured again.
+  await act(async () => {
+    await latest!.runWorkflowOrQueue('wf');
+  });
+  assert.deepEqual(calls.run, ['wf', 'wf']);
+  await unmount();
+});
+
+test("a pending editor ▶ Run holds the saved-list ▶ of the editor's workflow too", async () => {
+  const first = deferred<EditorRunResult>();
+  const unmount = await render({
+    activeRuns: {},
+    outcome: { status: 'busy' },
+    editorWorkflowId: 'wf',
+    startEditor: () => first.promise,
+  });
+  let pEditor!: Promise<void>;
+  await act(async () => {
+    pEditor = latest!.runEditorWorkflowOrQueue();
+    await latest!.runEditorWorkflowOrQueue();
+    await latest!.runWorkflowOrQueue('wf');
+  });
+  assert.equal(latest!.editorStarting, true);
+  assert.equal(calls.runEditor, 1);
+  assert.deepEqual(calls.run, [], 'the list ▶ of the same workflow is dropped');
+  await act(async () => {
+    first.resolve({ workflow: workflow('wf'), outcome: { status: 'started', run: run('r', 'wf wf') } });
+    await pEditor;
+  });
+  assert.equal(latest!.editorStarting, false);
+  assert.deepEqual(calls.enqueue, []);
+  assert.deepEqual(calls.enqueueDefinition, []);
   await unmount();
 });

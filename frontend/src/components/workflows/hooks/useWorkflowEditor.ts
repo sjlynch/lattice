@@ -47,6 +47,12 @@ export function useWorkflowEditor({
 }: Args) {
   const [editor, setEditor] = useState<EditorState>(emptyEditor);
   const [pickingTemplate, setPickingTemplate] = useState(false);
+  // The save in flight, handed to any caller that arrives before it settles. On
+  // a never-saved draft both clicks of a double-clicked Create (or Run / Queue,
+  // which save first) would otherwise see `workflowId: null` and each POST a
+  // new workflow — two identical definitions. `saving` disables the button.
+  const savingRef = useRef<Promise<Workflow | null> | null>(null);
+  const [saving, setSaving] = useState(false);
 
   // Render-tracked snapshot of the live editor. An awaited save needs to read
   // the *current* editor (to detect a mid-save edit) without depending on a
@@ -109,7 +115,7 @@ export function useWorkflowEditor({
     }
   }, [activeFolder, onError, onStepsAdded]);
 
-  const save = useCallback(async (): Promise<Workflow | null> => {
+  const saveNow = useCallback(async (): Promise<Workflow | null> => {
     if (!activeFolder) return null;
     // Snapshot the editor as it stands when the save begins. If the user edits
     // a step while the request is in flight, the committed state becomes a new
@@ -155,6 +161,17 @@ export function useWorkflowEditor({
     }
   }, [activeFolder, editor, onError]);
 
+  const save = useCallback((): Promise<Workflow | null> => {
+    if (savingRef.current) return savingRef.current;
+    const pending = saveNow().finally(() => {
+      if (savingRef.current === pending) savingRef.current = null;
+      setSaving(false);
+    });
+    savingRef.current = pending;
+    setSaving(true);
+    return pending;
+  }, [saveNow]);
+
   const discardEdits = useCallback(() => {
     clearWorkflowDraft(activeFolder);
     if (!editor.workflowId) {
@@ -187,6 +204,7 @@ export function useWorkflowEditor({
     newBlank,
     newFromTemplate,
     save,
+    saving,
     discardEdits,
     deleteCurrent,
     ...mutations,
