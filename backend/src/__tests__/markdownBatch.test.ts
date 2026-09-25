@@ -137,16 +137,17 @@ test('round-trip: an unclosed fence in the first task does not swallow the secon
 });
 
 test('round-trip: balanced fences stay raw and their contents untouched', () => {
-  const description = 'Run:\n```bash\n# install\n\# literal\nnpm i\n```\nafter\n# Heading';
+  const description = 'Run:\n```bash\n# install\n\\# literal\nnpm i\n```\nafter\n# Heading';
   const md = serializeTasksAsMarkdown([{ id: 't_a', title: 'T', status: 'open', description }]);
   assert.match(md, /^```bash$/m);
   assert.match(md, /^# install$/m, 'lines inside a closed fence are not escaped');
-  assert.match(md, /^\# Heading$/m, 'a heading outside a fence is escaped');
+  assert.match(md, /^\\# literal$/m, 'a backslash inside a closed fence is untouched');
+  assert.match(md, /^\\# Heading$/m, 'a heading outside a fence is escaped');
   assert.deepEqual(parseMarkdownDoc(md).tasks[0].description, description);
 });
 
 test('round-trip: lines that already start with backslashes survive exactly', () => {
-  const description = 'a\n\# one\n\\# two\n\```\nz';
+  const description = 'a\n\\# one\n\\\\# two\n\\```\nz';
   const doc = roundTrip([{ id: 't_a', title: 'T', status: 'open', description }]);
   assert.equal(doc.tasks[0].description, description);
 });
