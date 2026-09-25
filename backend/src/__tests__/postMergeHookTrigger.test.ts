@@ -402,7 +402,9 @@ test('the trigger settles an owed hook once it decides; a spawn error or an alre
     // A merge lands while that hook is still running: the next trigger reports
     // already-running, and the debt must SURVIVE it — that hook may predate the
     // merge (or be a dead record restored at boot). runPostMergeHookGate waits
-    // it out and fires a fresh one.
+    // it out and fires a fresh one. (The merge lands strictly AFTER the hook
+    // started — a hook that started at or after the debt covers it.)
+    await new Promise((r) => setTimeout(r, 5));
     await markPostMergeHookOwed(project);
     const again = await triggerPostMergeHookWithDeps(
       { projectPath: project, backendOrigin: ORIGIN, trigger: 'merge-run' },
@@ -411,6 +413,96 @@ test('the trigger settles an owed hook once it decides; a spawn error or an alre
     assert.equal(again.kind === 'skipped' && again.reason, 'already-running');
     assert.equal(await isPostMergeHookOwed(project), true);
   } finally {
+    await fs.rm(project, { recursive: true, force: true });
+  }
+});
+
+// A restart between the hook's pty spawn and the trigger clearing the owed
+// marker (or a clear that failed) left boot re-adopting the live hook with the
+// marker still set. The next gate got `already-running`, waited it out, saw the
+// marker and fired a SECOND hook for the same merges. The marker's `since`
+// settles it: a running hook that started at or after the debt IS its hook.
+test('the gate treats a re-adopted hook that started after the debt as covering it — exactly one hook', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { isPostMergeHookOwed, markPostMergeHookOwed, readPostMergeHookOwedSince, clearPostMergeHookOwed } =
+    await import('../postMergeHooks/owed.js');
+  const { patchUserSettings } = await import('../userSettings.js');
+  const { runPostMergeHookGate, restorePostMergeHook, finishPostMergeHook, subscribePostMergeHooks } =
+    await import('../postMergeHooks.js');
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-owed-readopt-'));
+  const started: string[] = [];
+  const unsub = subscribePostMergeHooks((ev) => {
+    if (ev.type === 'started') started.push(ev.run.id);
+  });
+  try {
+    await patchUserSettings(project, { postMergeHookPrompt: 'run the checks' });
+    await markPostMergeHookOwed(project); // t0
+    const since = await readPostMergeHookOwedSince(project);
+    assert.equal(typeof since, 'number');
+
+    // Boot re-adopts the hook that was spawned for that debt (after t0).
+    const hookId = `pmh_readopted_${Date.now()}`;
+    restorePostMergeHook({
+      id: hookId,
+      projectPath: project,
+      harness: 'claude',
+      prompt: 'run the checks',
+      cwd: path.join(os.tmpdir(), hookId),
+      status: 'running',
+      startedAt: (since as number) + 1,
+      trigger: 'merge-run',
+      serverId: 'srv_readopted',
+    });
+    started.length = 0;
+
+    const gate = runPostMergeHookGate({ projectPath: project, backendOrigin: ORIGIN, trigger: 'merge-run' }, 10_000);
+    setTimeout(() => finishPostMergeHook(hookId, 'completed'), 20);
+    const last = await gate;
+
+    assert.equal(last?.id, hookId, 'the gate waited out the re-adopted hook');
+    assert.deepEqual(started, [], 'no second hook was fired for the same merges');
+    assert.equal(await isPostMergeHookOwed(project), false, 'the debt is settled');
+  } finally {
+    unsub();
+    await clearPostMergeHookOwed(project);
+    await fs.rm(project, { recursive: true, force: true });
+  }
+});
+
+test('a running hook that started BEFORE the debt does not settle it', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { isPostMergeHookOwed, markPostMergeHookOwed, readPostMergeHookOwedSince, clearPostMergeHookOwed } =
+    await import('../postMergeHooks/owed.js');
+  const { patchUserSettings } = await import('../userSettings.js');
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-owed-older-'));
+  try {
+    await patchUserSettings(project, { postMergeHookPrompt: 'run the checks' });
+    await markPostMergeHookOwed(project);
+    const since = (await readPostMergeHookOwedSince(project)) as number;
+    const { deps } = makeDeps({ postMergeHookPrompt: 'run the checks' });
+    const older: PostMergeHookRun = {
+      id: 'pmh_older',
+      projectPath: project,
+      harness: 'claude',
+      prompt: 'run the checks',
+      cwd: '/tmp/pmh_older',
+      status: 'running',
+      startedAt: since - 1,
+      trigger: 'merge-run',
+    };
+    deps.getActiveHookForProject = () => older;
+    const outcome = await triggerPostMergeHookWithDeps(
+      { projectPath: project, backendOrigin: ORIGIN, trigger: 'merge-run' },
+      deps,
+    );
+    assert.equal(outcome.kind === 'skipped' && outcome.reason, 'already-running');
+    assert.equal(await isPostMergeHookOwed(project), true, 'the older hook may predate these merges');
+  } finally {
+    await clearPostMergeHookOwed(project);
     await fs.rm(project, { recursive: true, force: true });
   }
 });

@@ -10,9 +10,10 @@
 // silently. Found by the self-hosting soak.
 //
 // So a finalize that lands a task in QA while a hook is configured records the
-// debt here (`~/.lattice/per-project/<hash>/post-merge-hook-owed.json`), the
-// trigger clears it once it has actually decided (started / already running /
-// not configured), and everything that could have fired the hook also honours
+// debt here (`~/.lattice/per-project/<hash>/post-merge-hook-owed.json`, with
+// `since` = when), the trigger clears it once it has actually decided (started /
+// not configured / a hook already running that started at or after `since`),
+// and everything that could have fired the hook also honours
 // the marker: merge-run teardown, the workflow Merge step's Phase C, and boot
 // recovery (`recovery/owedPostMergeHooks.ts`) for a project with neither.
 
@@ -52,6 +53,23 @@ export async function isPostMergeHookOwed(projectPath: string): Promise<boolean>
   }
 }
 
+// When the debt was (last) recorded, or `null` when there is no marker — or a
+// legacy / unreadable one, which callers must treat as "not provably covered".
+// `markPostMergeHookOwed` rewrites `since` on every merge, so a hook that
+// started at or after it was started for every merge the marker stands for.
+export async function readPostMergeHookOwedSince(projectPath: string): Promise<number | null> {
+  try {
+    const parsed: unknown = JSON.parse(await fs.readFile(owedFile(projectPath), 'utf8'));
+    const since = (parsed as { since?: unknown } | null)?.since;
+    return typeof since === 'number' && Number.isFinite(since) ? since : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function clearPostMergeHookOwed(projectPath: string): Promise<void> {
-  await fs.rm(owedFile(projectPath), { force: true }).catch(() => {});
+  await fs.rm(owedFile(projectPath), { force: true }).catch((err: unknown) => {
+    // A marker left behind makes the next gate / boot fire the hook again.
+    console.warn(`[post-merge-hook] could not clear the owed-hook marker for ${projectPath}:`, err);
+  });
 }

@@ -22,7 +22,7 @@ import { registerAgentSession } from '../agentSessions.js';
 import { proxyKillSession } from '../terminalProxy.js';
 import { setupPostMergeHookSession } from './sessionSetup.js';
 import { cleanupPostMergeHookSession } from './cleanup.js';
-import { clearPostMergeHookOwed } from './owed.js';
+import { clearPostMergeHookOwed, readPostMergeHookOwedSince } from './owed.js';
 import {
   assertSafePostMergeHookPath,
   createPostMergeHookId,
@@ -124,12 +124,24 @@ export async function triggerPostMergeHookWithDeps(
       : await spawnAndRegister(options, deps, prepared);
     // The owed marker (owed.ts) is settled once a hook for these merges is
     // decided: one started, the user aborted it, or none is configured. Kept
-    // on a spawn error (the next merge / boot retries) and on
+    // on a spawn error (the next merge / boot retries) and, normally, on
     // `already-running`: that hook may predate these merges — or be a dead
     // record boot restored as running for its lost-grace window — so
     // `runPostMergeHookGate` waits it out and then fires a fresh one if the
     // debt is still there.
-    if (outcome.kind !== 'error' && !(outcome.kind === 'skipped' && outcome.reason === 'already-running')) {
+    //
+    // Unless the running hook provably started AFTER the debt was recorded:
+    // then it IS the hook for these merges. That is the backend dying between
+    // the pty spawn and the clear above (or the clear failing): boot re-adopts
+    // the live hook while the marker is still set, and without this the next
+    // gate waited it out, saw the marker and fired a second hook for the same
+    // merges.
+    if (outcome.kind === 'skipped' && outcome.reason === 'already-running') {
+      const since = await readPostMergeHookOwedSince(options.projectPath);
+      if (since !== null && outcome.existing.startedAt >= since) {
+        await clearPostMergeHookOwed(options.projectPath);
+      }
+    } else if (outcome.kind !== 'error') {
       await clearPostMergeHookOwed(options.projectPath);
     }
     return outcome;

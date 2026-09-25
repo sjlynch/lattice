@@ -4,8 +4,7 @@
 
 import { Router, type Response } from 'express';
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
-import { canonicalProjectPath } from '../projectPath.js';
+import { canonicalProjectPath, isRealAbsoluteProjectPath } from '../projectPath.js';
 import {
   initProjectGit,
   previewProjectInit,
@@ -35,7 +34,7 @@ function readProject(body: ProjectInitBody, res: Response): string | null {
     res.status(400).json({ error: 'project required' });
     return null;
   }
-  if (!path.isAbsolute(raw)) {
+  if (!isRealAbsoluteProjectPath(raw)) {
     // Same message as every other project-scoped route: it names the likely
     // cause (shell-stripped backslashes), which this one used to omit.
     res.status(400).json({ error: relativeProjectError(raw) });

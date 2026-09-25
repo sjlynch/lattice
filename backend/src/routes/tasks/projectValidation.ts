@@ -17,7 +17,8 @@
 
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
-import { canonicalProjectPath } from '../../projectPath.js';
+import { canonicalProjectPath, isRealAbsoluteProjectPath } from '../../projectPath.js';
+import { relativeProjectError } from '../projectParam.js';
 
 export type ProjectValidation =
   | { ok: true; canonical: string }
@@ -40,17 +41,16 @@ export async function validateProjectForCreate(
   if (!raw) return { ok: false, error: 'project is required' };
 
   // A relative or drive-relative path (`C:foo`, `foo\bar`) is almost always
-  // shell-escaping damage. path.resolve would happily invent an absolute path
-  // for it; refuse instead so the mistake is loud rather than silent.
-  if (!path.isAbsolute(raw)) {
+  // shell-escaping damage, and on Windows a root-relative one (`\foo`, MSYS
+  // `/c/dev/proj`) is a Git-Bash spelling. path.resolve would happily invent an
+  // absolute path for either; refuse instead so the mistake is loud.
+  if (!isRealAbsoluteProjectPath(raw)) {
     return {
       ok: false,
       error:
-        `project must be an absolute path, got ${JSON.stringify(raw)}. ` +
-        `A relative or drive-relative path here almost always means backslashes ` +
-        `were stripped by shell escaping (e.g. C:\\development\\proj arriving as ` +
-        `"C:developmentproj"). Pass the full absolute path — ideally from a script ` +
-        `file as a string literal rather than an inline shell argument.`,
+        relativeProjectError(raw) +
+        ` Ideally pass it from a script file as a string literal rather than an ` +
+        `inline shell argument.`,
     };
   }
 

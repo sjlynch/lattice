@@ -26,7 +26,6 @@
 // Path-safety bounds + reparse-point guard live in `cleanupSafety.ts`;
 // the in-worktree junction/symlink stripper lives in `reparsePoints.ts`.
 
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import { projectGit } from './projectGit.js';
 // Canonical source of the branch-delete guard — imported (not re-declared)
@@ -39,6 +38,7 @@ import { assertNotReparsePoint, assertSafeWorktreePath } from './cleanupSafety.j
 import { pruneReparsePointsUnder } from './reparsePoints.js';
 import { archiveUncommittedWorktreeChanges } from './discardArchive.js';
 import { clearStaleInitializingLock } from './staleInitLock.js';
+import { pathExistsStrict } from './pathProbe.js';
 
 const CLEANUP_GIT_TIMEOUT_MS = 15_000;
 // `worktree remove` deletes a whole checkout — 20k files / 7 GB on an LFS
@@ -82,17 +82,6 @@ export type KeptBranchInfo = {
 function normalizePath(value: string): string {
   const resolved = path.resolve(value);
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-}
-
-async function pathExists(target: string): Promise<boolean> {
-  try {
-    await fs.lstat(target);
-    return true;
-  } catch (err) {
-    // Permission failures are unknown state, never evidence of absence.
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
-    throw err;
-  }
 }
 
 // `LATTICE_BRANCH_RE` (imported above from projectGit's policy) is the
@@ -149,7 +138,7 @@ export async function cleanupWorktreeForTask(
       'the worktree is locked or its branch has changed; preserving the checkout and branch.');
     return false;
   }
-  if (!registration && await pathExists(worktreePath)) {
+  if (!registration && await pathExistsStrict(worktreePath)) {
     console.warn(`[worktree] cleanup deferred for ${worktreePath}: ` +
       'directory exists without a matching Git registration; preserving it for inspection.');
     return false;
@@ -251,7 +240,7 @@ export async function cleanupWorktreeForTask(
     deps.notifyDiskSpaceFreed?.();
     if (leftAsResidue) return deleteTaskBranch(git, readWorktrees, branchName, opts);
   }
-  if (await pathExists(worktreePath)) {
+  if (await pathExistsStrict(worktreePath)) {
     // git reported success but the dir is somehow still there. Don't fs.rm —
     // preserve it and the branch; an unregistered directory needs inspection.
     console.warn(

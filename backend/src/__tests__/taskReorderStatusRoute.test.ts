@@ -101,6 +101,64 @@ test('POST /api/tasks/reorder rejects an off-enum status and leaves the task unt
     assert.ok(afterOk, 'task should still be returned after a valid reorder');
     assert.equal(afterOk.status, 'in_progress');
 
+    // Regression: a cross-lane move via /reorder must stamp the same
+    // timestamps a status PATCH does (updatedAt + doneAt/startedAt/…); a pure
+    // same-lane reorder must stamp nothing.
+    type StampedTask = {
+      id: string;
+      status: string;
+      sortOrder?: number;
+      updatedAt?: number;
+      doneAt?: number;
+    };
+    const getTask = async (id: string): Promise<StampedTask> => {
+      const res = await fetch(`${base}/api/tasks/${id}?project=${projectParam}`);
+      assert.equal(res.status, 200);
+      return (await res.json()) as StampedTask;
+    };
+    const reorder = async (status: string, ids: string[]): Promise<void> => {
+      const res = await fetch(`${base}/api/tasks/reorder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project, status, ids }),
+      });
+      assert.equal(res.status, 200);
+    };
+    const createOpen = async (title: string): Promise<StampedTask> => {
+      const res = await fetch(`${base}/api/tasks?project=${projectParam}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      assert.equal(res.status, 200);
+      const task = (await res.json()) as StampedTask;
+      assert.equal(task.status, 'open');
+      return task;
+    };
+
+    const first = await createOpen('Reorder stamps doneAt (first)');
+    const second = await createOpen('Reorder stamps doneAt (second)');
+    const before = await getTask(first.id);
+    assert.equal(before.doneAt, undefined);
+
+    const beforeMove = Date.now();
+    await reorder('done', [first.id, second.id]);
+    const moved = await getTask(first.id);
+    assert.equal(moved.status, 'done');
+    assert.equal(typeof moved.doneAt, 'number');
+    assert.ok(moved.doneAt! >= beforeMove, 'doneAt stamped at the move');
+    assert.equal(typeof moved.updatedAt, 'number');
+    assert.ok(moved.updatedAt! >= beforeMove, 'updatedAt stamped at the move');
+
+    // Let the clock tick so an erroneous re-stamp would be observable.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await reorder('done', [second.id, first.id]);
+    const reordered = await getTask(first.id);
+    assert.equal(reordered.status, 'done');
+    assert.equal(reordered.sortOrder, 1, 'same-lane reorder still rewrites sortOrder');
+    assert.equal(reordered.updatedAt, moved.updatedAt, 'same-lane reorder leaves updatedAt');
+    assert.equal(reordered.doneAt, moved.doneAt, 'same-lane reorder leaves doneAt');
+
     await flushPersist(project);
   } finally {
     if (server) await close(server);
