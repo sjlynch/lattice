@@ -76,22 +76,28 @@ export function requireAbsoluteProject(project: string, res: Response): boolean 
 // and the resolver callbacks `/complete`, `/merged`, `/merge-aborted`,
 // `/stash-resolved`).
 // `getTask(id)` is a GLOBAL lookup across every indexed project, so an id alone
-// reaches any board on the machine. When the caller sends `?project=` — the
-// `lattice` MCP server does on every call, and the generated docs' recipes do
-// too — the task must belong to it, else a 404: an id copied from another
-// board's doc, or hallucinated, can neither read nor mutate a foreign task. The
-// 404 carries a hint (this is a single-user local tool; "wrong board" is more
-// useful to the agent than a poker face). Callers that send no project — the
-// worktree Stop-hook callbacks, the board UI — are exactly as before.
-// Returns true when the request may proceed; false once it has sent the 404.
+// reaches any board on the machine. When the caller sends a project — the
+// `?project=` query (the `lattice` MCP server does on every call, and the
+// generated docs' recipes do too) OR, like every other task route via
+// `resolveProject`, a JSON body's `project` — the task must belong to it, else
+// a 404: an id copied from another board's doc, or hallucinated, can neither
+// read nor mutate a foreign task. A body `project` used to be ignored here, so
+// a foreign id was written despite the caller naming its board. The 404
+// carries a hint (this is a single-user local tool; "wrong board" is more
+// useful to the agent than a poker face). A non-absolute pin (shell-stripped
+// backslashes: `C:developmentproj`) is a 400, never a misleading 404. Callers
+// that send no project — the worktree Stop-hook callbacks (their bodies are
+// harness hook JSON, which carries no `project`), a resolver's
+// `/merge-aborted {reason}` curl, the board UI — are exactly as before.
+// Returns true when the request may proceed; false once it has sent the 400/404.
 export function requireTaskInRequestedProject(
   task: Pick<Task, 'id' | 'projectPath'>,
-  req: { query: unknown },
+  req: { query: unknown; body?: unknown },
   res: Response,
 ): boolean {
-  const q = req.query as Record<string, unknown> | undefined;
-  const project = typeof q?.project === 'string' ? q.project.trim() : '';
+  const project = resolveProject({ query: req.query, body: req.body }).trim();
   if (!project) return true;
+  if (!requireAbsoluteProject(project, res)) return false;
   if (canonicalProjectPath(task.projectPath) === canonicalProjectPath(project)) return true;
   res.status(404).json({
     error: 'not found',
@@ -112,7 +118,10 @@ export function requireTaskInRequestedProject(
 // project land in `foreign` (reported, never written); everything else —
 // including ids that exist nowhere, which the write path still reports as
 // `missing` — stays in `own`. With no project sent, every id is `own`, exactly
-// as before.
+// as before. Callers must first 400 a non-absolute project
+// (`requireAbsoluteProject`): canonicalProjectPath would resolve a
+// drive-relative one under the backend's cwd, classing every id `foreign` and
+// silently writing nothing.
 export async function partitionIdsByRequestedProject(
   ids: string[],
   requestedProject: string,

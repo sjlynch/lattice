@@ -295,6 +295,71 @@ test("PATCH, append-summary and DELETE pinned to project A 404 on B's id and lea
   });
 });
 
+// ---------- a drive-relative project is a 400; a body project pins by-id routes ----------
+//
+// A shell that strips backslashes turns `C:\dev\proj` into `C:devproj`, which
+// canonicalProjectPath resolves under the backend's cwd. /bulk-update used to
+// class every id `foreign` against that bogus path and answer 200
+// {updated: 0} — writing nothing, silently. And the by-id routes read the pin
+// from the query only, so a body `{project}` there was ignored and a foreign
+// id was written.
+
+test('bulk-update 400s a drive-relative project; by-id routes honour a body project pin', async () => {
+  await withTwoProjectApp(async ({ base, projectA, qA, projectB, create, get, post }) => {
+    const a = await create(projectA, 'task in A');
+    const b = await create(projectB, 'task in B');
+
+    const relBody = await post('/api/tasks/bulk-update', {
+      project: 'C:foo', updates: [{ id: a.id, title: 'mangled' }],
+    });
+    assert.equal(relBody.status, 400);
+    assert.equal((await get(a.id)).title, 'task in A', 'nothing written for a drive-relative body project');
+
+    const relQuery = await post(`/api/tasks/bulk-update?project=${encodeURIComponent('C:foo')}`, {
+      updates: [{ id: a.id, title: 'mangled' }],
+    });
+    assert.equal(relQuery.status, 400);
+    assert.equal((await get(a.id)).title, 'task in A', 'nothing written for a drive-relative query project');
+
+    // PATCH / append-summary with B's id and A named in the BODY: a 404.
+    const patchForeign = await fetch(`${base}/api/tasks/${b.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: projectA, title: 'hijacked' }),
+    });
+    assert.equal(patchForeign.status, 404);
+    assert.equal((await get(b.id)).title, 'task in B', 'B was not renamed by a body-pinned PATCH');
+
+    const summaryForeign = await post(`/api/tasks/${b.id}/append-summary`, {
+      project: projectA, summary: 'hijacked summary',
+    });
+    assert.equal(summaryForeign.status, 404);
+    assert.equal((await get(b.id)).summary, undefined, 'no summary was appended to B');
+
+    // A drive-relative pin on a by-id route is a 400, not a "wrong board" 404.
+    const patchRel = await fetch(`${base}/api/tasks/${a.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: 'C:foo', title: 'mangled' }),
+    });
+    assert.equal(patchRel.status, 400);
+    assert.equal((await get(a.id)).title, 'task in A');
+
+    // The query still wins over the body, and a body pin naming the task's own
+    // board goes through.
+    const queryWins = await fetch(`${base}/api/tasks/${a.id}?${qA}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: projectB, title: 'renamed A' }),
+    });
+    assert.equal(queryWins.status, 200);
+    const ownBody = await fetch(`${base}/api/tasks/${b.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: projectB, title: 'renamed B' }),
+    });
+    assert.equal(ownBody.status, 200);
+    assert.equal((await get(a.id)).title, 'renamed A');
+    assert.equal((await get(b.id)).title, 'renamed B');
+  });
+});
+
 // ---------- /transition {fromStatus, project} lane sweep ----------
 //
 // The lane sweep lists ONE project's tasks, so it must move exactly that
