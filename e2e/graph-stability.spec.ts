@@ -40,6 +40,11 @@ async function openGraph(page: Page) {
     else if (/\/active$/.test(url.pathname)) json = [];
     else if (url.pathname === '/api/terminals') json = [];
     else if (url.pathname === '/api/pi-models') json = { menu: [], models: [] };
+    else if (url.pathname === '/api/workflows') json = [];
+    else if (url.pathname === '/api/terminal-tabs') json = { tabs: [] };
+    // Restore runs on open (restoreTerminalsOnOpen defaults to 'always'), and
+    // its notice reads the whole summary — a bare `{}` crashed the app.
+    else if (url.pathname === '/api/terminal-tabs/restore') json = { status: 'ok', adopted: 0, queued: 0, dropped: [] };
     await route.fulfill({ json });
   });
   await page.addInitScript((project) => {
