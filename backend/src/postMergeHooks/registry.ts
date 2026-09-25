@@ -235,7 +235,8 @@ export function finishPostMergeHook(
 }
 
 // The still-running hook whose pty is `serverId`, if any. Lets a terminal-tab
-// close (DELETE /api/terminals/:id) end the hook the pty belonged to, so the
+// close (DELETE /api/terminals/:id or /api/terminal-tabs/:id, via
+// `abortPostMergeHookForServerId`) end the hook the pty belonged to, so the
 // merge run / workflow Merge step waiting on it isn't parked forever.
 export function getActiveHookForServerId(
   serverId: string,

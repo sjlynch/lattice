@@ -122,6 +122,10 @@ Implementation pieces for `../Sidebar.tsx`.
   A spawn's in-flight marker (`startupInFlightKey`, normalized folder) is
   dropped only once its spec has COMMITTED (`settleInFlightStartups`); it used
   to be dropped by any unrelated list change during the pre-create await.
+  Restart-all (`restartStartupTerminals`) uses the same markers: the pure
+  `planRestart` skips a config still in flight, and the header button is
+  disabled (`restartPending`) until the click's spawns land — a double-click
+  used to find nothing to close yet and spawn every startup command twice.
 - `hooks/useMountedTerminalIds.ts` — owns `mountedIds`: lazy-mounts
   `TerminalPane` only after first activation (startup panes excepted), which
   prevents WebGL context exhaustion across many pre-spawned panes. A tab in a

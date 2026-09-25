@@ -172,3 +172,33 @@ test('a failed load that is already stale changes nothing', async () => {
   assert.deepEqual(rec.harness, []);
   assert.deepEqual(rec.piModel, []);
 });
+
+// User-pick regression: the user picks "Pi — X" while the settings GET is still
+// in flight. `selectHarness` claims the next load id, so when that GET (which
+// began before the pick's PATCH, and so returns the OLD harness) resolves, it is
+// stale and must not revert the dropdown — nor clear the picked Pi model.
+test('a load that turns stale while its fetch is pending (a user pick) applies nothing', async () => {
+  const seqRef = { current: 0 };
+  const rec = makeRecorder();
+  let resolveGet!: (s: UserSettings) => void;
+  const pending = new Promise<UserSettings>((res) => {
+    resolveGet = res;
+  });
+  const seq = ++seqRef.current;
+  const load = loadHarnessForFolder('proj', PI_ON, {
+    fetchUserSettings: () => pending,
+    patchUserSettings: rec.patchUserSettings,
+    isStale: () => seqRef.current !== seq,
+    setHarness: rec.setHarness,
+    setPiModel: rec.setPiModel,
+  });
+
+  // The user's pick bumps the sequence before the GET returns.
+  seqRef.current++;
+  resolveGet({ harness: 'claude' });
+  await load;
+
+  assert.deepEqual(rec.harness, [], 'the stale GET must not revert the picked harness');
+  assert.deepEqual(rec.piModel, [], 'the stale GET must not clear the picked Pi model');
+  assert.equal(rec.patches.length, 0);
+});

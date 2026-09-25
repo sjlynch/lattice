@@ -22,6 +22,8 @@ export type { Tab } from './settingsTabs';
 type SettingsControllerParams = {
   open: boolean;
   activeFolder: string;
+  // App's `userSettings.loaded` — gates the save of the fields seeded from it.
+  settingsLoaded: boolean;
   drafts: SettingsDrafts;
   startupTerminals: StartupTerminal[];
   onClose: () => void;
@@ -36,6 +38,7 @@ type SettingsControllerParams = {
 export function useSettingsController({
   open,
   activeFolder,
+  settingsLoaded,
   drafts,
   startupTerminals,
   onClose,
@@ -108,11 +111,13 @@ export function useSettingsController({
       }
       await saveSettings({
         activeFolder,
+        settingsLoaded,
         startupTerminals,
         drafts: {
           terminalDefaultHarness: drafts.terminalDefaultHarness,
           terminalClaudeSkipPermissions: drafts.terminalClaudeSkipPermissions,
           codexYolo: drafts.codexYolo,
+          terminalLaunchTouched: drafts.getTerminalLaunchTouched(),
           // Only the fetched toggles that loaded or were edited — an
           // unloaded, untouched one would write its default over the
           // project's saved value.

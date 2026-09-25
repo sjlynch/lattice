@@ -122,6 +122,11 @@ export function useWorkflowEditor({
     // object; reseeding from the server echo unconditionally would overwrite
     // that edit and clear `dirty`, silently losing the change (data-loss bug).
     // `nextEditorAfterSave` reseeds only when nothing changed mid-flight.
+    //
+    // Read from the ref, not the render closure: a follow-up save chained onto
+    // a pending one (see `save`) runs before React re-renders, and the ref is
+    // the one place the previous save's outcome is already visible.
+    const editor = editorRef.current;
     const atSaveStart = editor;
     const name = editor.name.trim() || 'Untitled workflow';
     const steps = editor.steps.map((s) => ({
@@ -135,34 +140,34 @@ export function useWorkflowEditor({
       if (editor.workflowId) {
         const w = await apiUpdateWorkflow(activeFolder, editor.workflowId, { name, steps, variables });
         setEditor((cur) => nextEditorAfterSave(atSaveStart, cur, w).editor);
+        // Mirror the outcome into the ref now so a chained save sees whether an
+        // edit is still unsaved without waiting for the re-render.
+        editorRef.current = nextEditorAfterSave(atSaveStart, editorRef.current, w).editor;
         return w;
       } else {
         const w = await apiCreateWorkflow(activeFolder, name, steps, variables);
         // Read the live editor from the ref — not from a flag mutated inside the
         // setEditor updater, which may not have run yet at this point (React
-        // batches it in this promise continuation). Deriving `superseded` from
-        // the ref keeps the editor we commit and the clear decision in sync with
-        // the actual current state.
-        const { editor: next, superseded } = nextEditorAfterSave(
-          atSaveStart,
-          editorRef.current,
-          w,
-        );
+        // batches it in this promise continuation). A superseded create still
+        // adopts the new workflow's id (and stays dirty), so the next save
+        // PATCHes it rather than POSTing a duplicate definition.
+        const { editor: next } = nextEditorAfterSave(atSaveStart, editorRef.current, w);
         setEditor(next);
-        // The never-saved draft is now persisted server-side; drop the stash —
-        // unless a mid-save edit superseded it, in which case that edit is still
-        // a live unsaved draft and the debounced persist must keep stashing it.
-        if (!superseded) clearWorkflowDraft(activeFolder);
+        editorRef.current = next;
+        // The workflow exists server-side now, so the never-saved stash is
+        // obsolete either way — a mid-save edit is carried by the editor (which
+        // now has a workflowId and is no longer stashed), and leaving the stash
+        // would restore it as a new draft after a reload and create a third copy.
+        clearWorkflowDraft(activeFolder);
         return w;
       }
     } catch (err) {
       onError(`Save failed: ${(err as Error).message}`);
       return null;
     }
-  }, [activeFolder, editor, onError]);
+  }, [activeFolder, onError]);
 
-  const save = useCallback((): Promise<Workflow | null> => {
-    if (savingRef.current) return savingRef.current;
+  const startSave = useCallback((): Promise<Workflow | null> => {
     const pending = saveNow().finally(() => {
       if (savingRef.current === pending) savingRef.current = null;
       setSaving(false);
@@ -171,6 +176,23 @@ export function useWorkflowEditor({
     setSaving(true);
     return pending;
   }, [saveNow]);
+  const startSaveRef = useRef(startSave);
+  startSaveRef.current = startSave;
+
+  // Single-flight: a call while a save is pending joins it instead of POSTing
+  // again. But the pending save carries the editor as it stood when it began —
+  // an edit made since then isn't in it. A caller that joined (▶ Run clicked
+  // after an edit during a pending Save) must act on what the editor shows, so
+  // once the pending save settles, save again if the editor is still dirty.
+  // The recursive call re-checks `savingRef`, so when several joiners resolve
+  // together the first starts the follow-up save and the rest join it.
+  const save = useCallback(function save(): Promise<Workflow | null> {
+    const inFlight = savingRef.current;
+    if (!inFlight) return startSaveRef.current();
+    return inFlight.then((result) =>
+      result && editorRef.current.dirty ? save() : result,
+    );
+  }, []);
 
   const discardEdits = useCallback(() => {
     clearWorkflowDraft(activeFolder);

@@ -150,7 +150,11 @@ const RECOVERY_CONCURRENCY = 8;
 // Only a CONFIRMED absence (git exit 0, no match) moves the task. A missing
 // `.git` (project moved/deleted) or a git failure (checkBranchExists throws)
 // is "can't tell" — the task is left alone rather than stripped of its branch.
-async function recoverTaskIfBranchWasDeleted(task: Task): Promise<void> {
+//
+// `mergedAt` is always re-stamped: this is a NEW landing in QA, and a stale
+// value (from an earlier merge the task was dragged back out of) would let a
+// QA verdict about that older build promote this one (qaRuns/verdict.ts).
+export async function recoverTaskIfBranchWasDeleted(task: Task): Promise<void> {
   if (!task.branch) return;
   if (!(await gitDirExists(task.projectPath))) return;
 
@@ -162,7 +166,7 @@ async function recoverTaskIfBranchWasDeleted(task: Task): Promise<void> {
   );
   await updateTaskCrashSafe(task.id, {
     status: 'qa',
-    mergedAt: task.mergedAt ?? Date.now(),
+    mergedAt: Date.now(),
     worktreePath: undefined,
     branch: undefined,
     conflict: undefined,

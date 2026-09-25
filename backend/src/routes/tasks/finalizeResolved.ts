@@ -5,7 +5,7 @@
 // route-friendly discriminated result and lets each caller render it.
 
 import { isMidMerge, resyncWithMainAndFinalize } from '../../worktree.js';
-import { signalConflictWaiter, startMergeRun } from '../../mergeRuns.js';
+import { signalConflictWaiter, startMergeRunAfterMaintenance } from '../../mergeRuns.js';
 import { release, tryAcquire } from '../../mergeLocks.js';
 import { getTask, type Task } from '../../tasks.js';
 import { withProjectMutation } from '../../projectRunLock.js';
@@ -24,9 +24,11 @@ export type FinalizeResolvedResult =
     }
   | { kind: 'error'; phase: 'merge' | 'finalize' | 'stash'; message: string };
 
+// The restart waits out a housekeeping gc (its pre-lock window included)
+// instead of swallowing that refusal as "a run is already active".
 function signalOrRestartMergeRun(task: Task, backendOrigin: string): void {
   if (!signalConflictWaiter(task.id)) {
-    startMergeRun(task.projectPath, backendOrigin).catch(() => {});
+    startMergeRunAfterMaintenance(task.projectPath, backendOrigin).catch(() => {});
   }
 }
 
