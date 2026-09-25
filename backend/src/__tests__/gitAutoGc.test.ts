@@ -30,7 +30,17 @@ test('gitConfigEnv appends to an existing GIT_CONFIG_COUNT instead of clobbering
   assert.ok(isGitCommand('git') && isGitCommand('C:\\Program Files\\Git\\cmd\\git.exe') && !isGitCommand('gitk'));
 });
 
-test('every git Lattice runs sees gc.auto=0; the housekeeping run sees foreground auto-gc', async () => {
+test('every git Lattice runs sees gc.auto=0; the housekeeping run sees foreground auto-gc', async (t) => {
+  // Run with no inherited git config env: a suite launched from a
+  // Lattice-spawned agent (e.g. a workflow's Run tests step) inherits
+  // gc.auto=0, which foreground mode rightly keeps — and the last assertion
+  // would then fail for a reason that isn't the code under test.
+  const inherited = Object.keys(process.env).filter((k) => /^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/.test(k));
+  const saved = inherited.map((k) => [k, process.env[k]] as const);
+  for (const k of inherited) delete process.env[k];
+  t.after(() => {
+    for (const [k, v] of saved) process.env[k] = v;
+  });
   await withTempDir(PREFIX, async (repo) => {
     execFileSync('git', ['init', '-q'], { cwd: repo });
     const plain = await exec('git', ['config', '--get', 'gc.auto'], repo);
