@@ -4,6 +4,7 @@ import { TERMINAL_PORT } from './terminalServerLifecycle.js';
 import { noteTerminalClientInput } from './terminalActivity.js';
 import { createTerminalActivityRelayObserver } from './terminalActivityRelay.js';
 import { withCodexActivityTitle } from './codexTerminalActivity.js';
+import { refreshLatticeApiDocs } from './latticeApiDocs.js';
 
 // If the detached terminal-server doesn't accept the upstream connection within
 // this window, stop waiting. Leaving the browser holding an open-but-silent
@@ -66,6 +67,10 @@ export function proxyTerminalWs(
   if (!params.get('id') && params.has('initialCommand')) {
     params.set('initialCommand', withCodexActivityTitle(params.get('initialCommand')!)!);
   }
+  // A serverless connect makes the terminal-server create the pty itself; it
+  // only LOOKS UP the project's API doc for its banner, so generate it first
+  // (same as resolveHarnessSpawnBody does for a pre-spawned session).
+  if (!params.get('id')) refreshLatticeApiDocs(params.get('projectPath') || params.get('cwd') || undefined);
   const targetWs = new WebSocket(
     `ws://127.0.0.1:${TERMINAL_PORT}/ws/terminal?${params.toString()}`,
   );

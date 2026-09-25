@@ -15,6 +15,8 @@ import {
   subscribe as subscribeMergeRuns,
 } from '../../mergeRuns.js';
 import type { Workflow } from '../../workflows.js';
+import { runPostMergeHookGate } from '../../postMergeHooks.js';
+import { isPostMergeHookOwed } from '../../postMergeHooks/owed.js';
 import { subscribe, type WorkflowRun } from '../state.js';
 import {
   emitControlProgress,
@@ -56,6 +58,9 @@ export type MergeStepDeps = {
   subscribeWorkflowRuns: typeof subscribe;
   waitForLaneEmpty: typeof waitForLaneEmpty;
   waitForPostMergeHookIdle: typeof waitForPostMergeHookIdle;
+  // Fire a post-merge hook a pre-restart merge still owes (postMergeHooks/
+  // owed.ts) and wait it out. Optional so test doubles can omit it.
+  fireOwedPostMergeHook?: (projectPath: string, backendOrigin: string) => Promise<void>;
 };
 
 const productionDeps: MergeStepDeps = {
@@ -67,7 +72,16 @@ const productionDeps: MergeStepDeps = {
   subscribeWorkflowRuns: subscribe,
   waitForLaneEmpty,
   waitForPostMergeHookIdle,
+  fireOwedPostMergeHook,
 };
+
+async function fireOwedPostMergeHook(projectPath: string, backendOrigin: string): Promise<void> {
+  if (!(await isPostMergeHookOwed(projectPath))) return;
+  console.log(`[workflow-run] post-merge hook owed by a merge before the restart — firing it for ${projectPath}`);
+  await runPostMergeHookGate({ projectPath, backendOrigin, trigger: 'merge-run' }).catch((err) =>
+    console.warn('[workflow-run] owed post-merge hook failed:', err),
+  );
+}
 
 export async function runMergeStep(
   wf: Workflow,
@@ -207,6 +221,12 @@ export async function runMergeStep(
     // gate (`assertNoActiveWorkflowRun`) counts workflow runs, not hooks — so it
     // would start the next queued workflow's step 1 on top of a still-running
     // post-merge agent, exactly the overlap this phase exists to prevent.
+    //
+    // First, though: a merge that landed before a backend restart may still
+    // OWE its hook — the restarted Phase B found Ready-to-Merge empty and ran
+    // no merge run, so nothing fired it. Fire it here (and wait it out).
+    await deps.fireOwedPostMergeHook?.(wf.projectPath, backendOrigin);
+    if (run.status !== 'running') return;
     await deps.waitForPostMergeHookIdle(
       wf.projectPath,
       run,

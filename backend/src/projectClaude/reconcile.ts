@@ -1,6 +1,6 @@
 import { canonicalProjectPath } from '../projectPath.js';
 import { getUserSettings } from '../userSettings.js';
-import { ensureLatticeGitignore } from '../worktree.js';
+import { ensureLatticeRepoExclude } from '../worktree.js';
 import {
   ensurePiSubagentsInstalled,
   getPiSubagentsEntry,
@@ -30,10 +30,12 @@ export async function reconcileProjectInstrumentation(
   const memoryDisabled = settings.disableClaudeMemory !== false;
   const root = canonicalProjectPath(project);
 
-  // Either feature writes <project>/.claude/settings.local.json; keep it
-  // gitignored so it never shows up in the user's `git status`.
+  // Either feature writes <project>/.claude/settings.local.json; keep it out
+  // of the user's `git status` via the repo-local, untracked
+  // `.git/info/exclude` — never by editing their tracked `.gitignore` (see
+  // worktree/setupProject.ts). Not a git repo / nested project → no-op.
   if (enabled || memoryDisabled) {
-    await ensureLatticeGitignore(root).catch(() => {});
+    await ensureLatticeRepoExclude(root).catch(() => {});
   }
 
   await reconcileProjectClaudeMcp(root, project);
@@ -87,7 +89,7 @@ function installProjectPiSubagentsShim(root: string): void {
   void ensurePiSubagentsInstalled()
     .then(async () => {
       if (!getPiSubagentsEntry()) return;
-      await ensureLatticeGitignore(root).catch(() => {});
+      await ensureLatticeRepoExclude(root).catch(() => {});
       await installPiSubagentsShim({ dir: root }).catch(() => {});
     })
     .catch(() => {});

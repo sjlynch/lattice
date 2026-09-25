@@ -1,7 +1,6 @@
 import { exec } from './exec.js';
 import { resolveEnvNotesForInstructions } from './envDetect.js';
 import {
-  ensureLatticeGitignore,
   ensureLatticeRepoExclude,
   untrackOwnedFilesInRepo,
 } from './projectGuards.js';
@@ -32,8 +31,14 @@ export async function resolveRepoRootAndPrepareProject(
   // Defend the project against the file-tracking pattern that produces
   // unresolvable merge conflicts in `.claude/settings.local.json`. Cheap,
   // idempotent, and runs before each worktree creation so newly-adopted
-  // projects self-heal on first task run.
-  await ensureLatticeGitignore(repoRoot);
+  // projects self-heal on first task run. Only the repo-local, UNTRACKED
+  // `.git/info/exclude` is written — it is shared by the main checkout and
+  // every worktree and covers the full managed set. This used to append to
+  // the tracked `.gitignore` too, which left an uncommitted `.gitignore` edit
+  // on main whenever the managed list grew (on Lattice's own repo: after any
+  // merge that added an entry) — dirtying the checkout merges fast-forward
+  // and colliding with a task that edits `.gitignore`. `git init` of a new
+  // project still writes its starter `.gitignore` (it gets committed).
   await ensureLatticeRepoExclude(repoRoot);
   await untrackOwnedFilesInRepo(repoRoot);
   // Env-specific "you're in a throwaway worktree, don't reinstall deps

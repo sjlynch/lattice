@@ -290,6 +290,10 @@ const sessionsBy = {};
 for (const e of starts) sessionsBy[e.kind] = (sessionsBy[e.kind] ?? 0) + 1;
 const pushSessions = starts.filter((e) => e.kind === 'session' && /[\\/]push[\\/]/.test(e.cwd)).length;
 check(pushSessions === 1, `${pushSessions} push session(s) spawned (want exactly 1)`);
+const hookSessions = starts.filter((e) => e.kind === 'session' && /[\\/]post-merge-hooks[\\/]/.test(e.cwd)).length;
+// The hook is on and merges landed: it must have run — even when a kill fell
+// between the last merge and the hook firing (postMergeHooks/owed.ts).
+check(hookSessions >= 1, 'the post-merge hook never ran');
 const failedWork = events.filter((e) => e.event === 'work-failed' || e.event === 'crashed');
 check(failedWork.length === 0, `${failedWork.length} fake-agent failure(s): ${failedWork.map((e) => e.error).join(' | ').slice(0, 400)}`);
 
@@ -303,6 +307,7 @@ const report = {
   mainCommits: mainLog.split('\n').length,
   sessionsByKind: sessionsBy,
   pushSessions,
+  hookSessions,
   stopHooks: events.filter((e) => e.event === 'stop-hook').length,
   root,
 };

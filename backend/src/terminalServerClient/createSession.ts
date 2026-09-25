@@ -42,6 +42,7 @@ import { assignHarnessSessionId } from '../terminalRegistry/sessionIdentity.js';
 import { scheduleCodexDiscovery } from '../terminalRegistry/codexDiscovery.js';
 import type { AgentSessionRef, TerminalRecord, TerminalRegistryHint } from '../terminalRegistry/types.js';
 import { trackRestartTransition } from '../restartDrain/gate.js';
+import { refreshLatticeApiDocs } from '../latticeApiDocs.js';
 
 export type CreateSessionOptions = {
   cwd?: string;
@@ -146,6 +147,11 @@ export async function resolveHarnessSpawnBody(
   opts: CreateSessionOptions,
 ): Promise<SessionWireBody> {
   opts = { ...opts, initialCommand: withCodexActivityTitle(opts.initialCommand) };
+  // (Re)generate the project's `.lattice/LATTICE_API*.md` before the pty
+  // exists: the terminal-server only looks the doc up for its banner, and the
+  // generator lives here in the always-fresh backend so API-doc edits never
+  // mark the detached executor stale (see latticeApiDocs/docPath.ts).
+  refreshLatticeApiDocs(opts.projectPath?.trim() || opts.cwd);
   if (!opts.cwd) return opts;
   const settings: UserSettings = opts.projectPath
     ? await getUserSettings(opts.projectPath).catch(() => ({}))

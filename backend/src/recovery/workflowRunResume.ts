@@ -33,6 +33,8 @@ import {
 } from '../workflowRuns.js';
 import { loadPersistedWorkflowRuns } from '../workflowRuns/persistence.js';
 import { requestStopHookStepComplete } from '../workflowRuns/stopHookGate.js';
+import { getActiveHookForProject } from '../postMergeHooks.js';
+import { findRunningPushRunForWorkflowStep } from '../pushRuns.js';
 import {
   classifyWorkflowRunResume,
   findStepSessionId,
@@ -191,14 +193,30 @@ export async function resumePersistedRun(
     // agent admission: a deterministic setup crash otherwise repeats forever.
     try {
       const tasks = await listTasks(run.projectPath);
-      const checkpoint = JSON.stringify([run.currentStepIndex, step?.id, tasks
-        .filter((t) => ['open', 'in_progress', 'ready_to_merge'].includes(t.status))
-        .map((t) => [t.id, t.status, !!t.runQueued]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))]);
-      const budget = await claimRecoveryAttempt(run.projectPath, `workflow:${run.id}`, checkpoint);
-      if (!stillNeedsRedispatch()) return;
-      if (budget.paused) {
-        failWorkflowRun(run.id, budget.paused);
-        return;
+      const pending = tasks.filter((t) => ['open', 'in_progress', 'ready_to_merge'].includes(t.status));
+      // Not a replay: the step's work is done and what it is re-run for is to
+      // wait on a LIVE session boot recovery just re-adopted — a Merge step
+      // whose merges all landed, waiting out its post-merge hook; a Push step
+      // re-attaching to its push session. The checkpoint (step + lanes) cannot
+      // move while that agent works, so charging these read "no progress" and
+      // paused a healthy run after three restarts (found by the soak). The
+      // budget's own rule: session adoption is not a replay attempt.
+      const waitingOnLiveSession =
+        (step?.kind === 'merge' &&
+          !pending.some((t) => t.status === 'in_progress' || t.status === 'ready_to_merge') &&
+          getActiveHookForProject(run.projectPath) !== null) ||
+        (step?.kind === 'push' &&
+          !pending.some((t) => t.status === 'ready_to_merge') &&
+          findRunningPushRunForWorkflowStep(run.id, run.currentStepIndex) !== undefined);
+      if (!waitingOnLiveSession) {
+        const checkpoint = JSON.stringify([run.currentStepIndex, step?.id, pending
+          .map((t) => [t.id, t.status, !!t.runQueued]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))]);
+        const budget = await claimRecoveryAttempt(run.projectPath, `workflow:${run.id}`, checkpoint);
+        if (!stillNeedsRedispatch()) return;
+        if (budget.paused) {
+          failWorkflowRun(run.id, budget.paused);
+          return;
+        }
       }
     } catch (err) {
       if (!stillNeedsRedispatch()) return;

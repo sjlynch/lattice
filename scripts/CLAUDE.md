@@ -120,6 +120,6 @@
   the exact Stop hook Lattice installed and idles like an interactive session.
   No tokens, deterministic. It checks: the run completed, every task reached
   QA, main holds every line with no conflict markers, no worktree left, the
-  callback outbox drained, exactly one push session. Exit 0 = all held; a
+  callback outbox drained, exactly one push session, the post-merge hook ran. Exit 0 = all held; a
   failing run keeps its dir (`backend-<n>.log` per incarnation,
   `fake-agents.jsonl`, `home/.lattice`).

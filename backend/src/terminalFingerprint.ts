@@ -85,15 +85,16 @@ export const FINGERPRINT_FILES = [
   'projectIdentity.js',
   'processTree.js',
   // What the terminal-server emits per pty: the human-facing banner (imported
-  // by sessionLifecycle) and the generated `.lattice/LATTICE_API*.md` pair. Their
-  // bytes affect runtime behavior, so a banner/doc-only edit must still
-  // invalidate a stale orphan. (The agent-facing system-prompt preamble is
-  // NOT here — it is resolved in the always-fresh main backend and shipped as
-  // wire data, so editing it never respawns a pty.)
+  // by sessionLifecycle), which names the project's `.lattice/LATTICE_API.md`
+  // (`latticeApiDocs/docPath.js` only LOOKS IT UP). The doc GENERATOR and its
+  // two templates are deliberately NOT here: they change with every API edit
+  // (the docs drift test holds them to the router), which marked the live
+  // terminal-server stale about a third of the time — they run in the
+  // always-fresh main backend before it asks for a session instead. Same for
+  // the agent-facing system-prompt preamble, resolved in the backend and
+  // shipped as wire data.
   'terminalBanner.js',
-  'latticeApiDocs.js',
-  'latticeApiDocs/LATTICE_API.template.md',
-  'latticeApiDocs/LATTICE_API_RECIPES.template.md',
+  'latticeApiDocs/docPath.js',
   'claudeConfigGuard.js',
   // The Claude-config WRITE mechanism the terminal-server runs at every spawn
   // (apply trust + reconcile the backend-resolved MCP set into ~/.claude.json).

@@ -24,6 +24,7 @@ import { createHttpServerWithWebSockets } from './http.js';
 import { beginWorkflowRecovery } from '../workflowRuns/recoveryReadiness.js';
 import { startTerminalRegistryWatch } from '../terminalRegistry/watch.js';
 import { ensureCallbackScript, startCallbackOutboxLoop } from '../callbackOutbox.js';
+import { fireOwedPostMergeHooks } from '../recovery/owedPostMergeHooks.js';
 
 export async function startBackend(
   config: BackendServerConfig = getBackendServerConfig(),
@@ -134,6 +135,13 @@ export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecov
       // the API listening to call back).
       resumeInterruptedMergeRuns(backendOrigin).catch((err) =>
         console.error('[startup] resumeInterruptedMergeRuns failed:', err),
+      ),
+    )
+    .then(() =>
+      // Last: a post-merge hook a pre-restart merge still owes, for a project
+      // that neither resume above took over (their own paths fire it).
+      fireOwedPostMergeHooks(backendOrigin).catch((err) =>
+        console.error('[startup] fireOwedPostMergeHooks failed:', err),
       ),
     );
   // Re-enqueue task runs that were waiting in the spawn queue when the

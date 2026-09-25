@@ -32,10 +32,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { canonicalProjectPath, projectHash } from './projectPath.js';
+import { getBackendServerConfig } from './server/config.js';
+import {
+  LATTICE_API_DOC_FILENAME,
+  LATTICE_API_RECIPES_DOC_FILENAME,
+  LATTICE_DIR,
+} from './latticeApiDocs/docPath.js';
 
-export const LATTICE_API_DOC_FILENAME = 'LATTICE_API.md';
-export const LATTICE_API_RECIPES_DOC_FILENAME = 'LATTICE_API_RECIPES.md';
-const LATTICE_DIR = '.lattice';
+export { LATTICE_API_DOC_FILENAME, LATTICE_API_RECIPES_DOC_FILENAME };
 const VERSION_PREFIX = '<!-- lattice-docs-version: ';
 const VERSION_SUFFIX = ' -->';
 
@@ -223,4 +227,17 @@ export function ensureLatticeApiDoc(
     path.join(latticeDir, LATTICE_API_DOC_FILENAME),
     vals,
   );
+}
+
+// Best-effort refresh against THIS backend's port, for the spawn paths
+// (`terminalServerClient/createSession.ts`, `terminalWsRelay.ts`): the
+// terminal-server no longer generates the docs itself, it only names an
+// existing one in its banner. Never throws — a doc write must not fail a spawn.
+export function refreshLatticeApiDocs(projectPath: string | undefined): void {
+  if (!projectPath) return;
+  try {
+    ensureLatticeApiDoc(projectPath, getBackendServerConfig().port);
+  } catch {
+    /* best-effort */
+  }
 }

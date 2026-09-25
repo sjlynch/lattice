@@ -115,7 +115,14 @@ function deadTab(h: Harness, launch: TerminalLaunch, agentSession?: AgentSession
   });
 }
 
-const settle = () => new Promise((r) => setTimeout(r, 20));
+// The relaunch spawn lands asynchronously after restoreProjectTerminals
+// resolves. Wait for it (bounded) rather than a fixed 20 ms, which lost the race
+// on a loaded machine (a full-suite run next to other work).
+const settle = async (spawns: unknown[]) => {
+  const deadline = Date.now() + 5_000;
+  do await new Promise((r) => setTimeout(r, 20));
+  while (spawns.length === 0 && Date.now() < deadline);
+};
 
 // Minimal interactive-Claude transcript lines: a finished turn.
 function claudeLines(conversationId: string, processId: string): string {
@@ -152,7 +159,7 @@ test('claude: a transcript at Claude\'s own path → relaunch resumes that conve
   await writeClaudeTranscript(h.project, S);
   await deadTab(h, CLAUDE_LAUNCH, { harness: 'claude', id: S, source: 'minted' });
   await restoreProjectTerminals(h.project, h.deps);
-  await settle();
+  await settle(h.spawns);
   assert.equal(h.spawns.length, 1);
   assert.equal(h.spawns[0].initialCommand, `claude --dangerously-skip-permissions --resume ${S}`);
 });
@@ -161,7 +168,7 @@ test('claude: no transcript (never reached a first turn) → relaunch under the 
   const h = await harness();
   await deadTab(h, CLAUDE_LAUNCH, { harness: 'claude', id: S, source: 'minted' });
   await restoreProjectTerminals(h.project, h.deps);
-  await settle();
+  await settle(h.spawns);
   assert.equal(h.spawns[0].initialCommand, `claude --dangerously-skip-permissions --session-id ${S}`);
 });
 
@@ -174,7 +181,7 @@ test('claude: an empty transcript file still counts as existing (resume, not a c
   await fs.writeFile(file, '');
   await deadTab(h, CLAUDE_LAUNCH, { harness: 'claude', id: S, source: 'minted' });
   await restoreProjectTerminals(h.project, h.deps);
-  await settle();
+  await settle(h.spawns);
   assert.equal(h.spawns[0].initialCommand, `claude --dangerously-skip-permissions --resume ${S}`);
 });
 
@@ -206,7 +213,7 @@ test('pi: the relaunch always targets the pinned id (Pi creates or resumes it)',
   const id = 'lattice-11111111-2222-4333-8444-555555555555';
   await deadTab(h, { initialCommand: 'pi', harness: 'pi' }, { harness: 'pi', id, source: 'minted' });
   await restoreProjectTerminals(h.project, h.deps);
-  await settle();
+  await settle(h.spawns);
   assert.equal(h.spawns[0].initialCommand, `pi --session-id ${id}`);
 });
 
@@ -214,13 +221,13 @@ test('codex: a discovered thread id resumes by id; an undiscovered one falls bac
   const h = await harness();
   await deadTab(h, { initialCommand: 'codex --yolo', harness: 'codex' }, { harness: 'codex', id: 'thread-1', source: 'rollout-scan' });
   await restoreProjectTerminals(h.project, h.deps);
-  await settle();
+  await settle(h.spawns);
   assert.equal(h.spawns[0].initialCommand, 'codex resume thread-1 --yolo');
 
   const h2 = await harness();
   await deadTab(h2, { initialCommand: 'codex --yolo', harness: 'codex' });
   await restoreProjectTerminals(h2.project, h2.deps);
-  await settle();
+  await settle(h2.spawns);
   assert.equal(h2.spawns[0].initialCommand, 'codex resume --last --yolo');
 });
 
@@ -233,7 +240,7 @@ test('claude: a conversation switched inside the tab (/resume) is resumed by the
   await writeClaudeTranscript(h.project, Y, S);
   await deadTab(h, CLAUDE_LAUNCH, { harness: 'claude', id: S, source: 'minted' });
   await restoreProjectTerminals(h.project, h.deps);
-  await settle();
+  await settle(h.spawns);
   assert.equal(h.spawns[0].initialCommand, `claude --dangerously-skip-permissions --resume ${Y}`);
   // …and the relaunch records the re-learned id, so the NEXT restart resumes
   // it directly (the resumed process runs as Y).
@@ -262,7 +269,7 @@ test('claude: a switch made several relaunches ago is still found (floor is the 
   await writeClaudeTranscript(h.project, Y, S);
   await terminalRegistry.update(r.id, { restoredAt: Date.now() + 10 * 60_000, restoreCount: 3 }, h.project);
   await restoreProjectTerminals(h.project, h.deps);
-  await settle();
+  await settle(h.spawns);
   assert.equal(h.spawns[0].initialCommand, `claude --dangerously-skip-permissions --resume ${Y}`);
 });
 
@@ -275,7 +282,7 @@ test('claude: the conversation written LAST wins; another tab\'s newer transcrip
   await writeClaudeTranscript(h.project, Y, 'someone-else');
   await deadTab(h, CLAUDE_LAUNCH, { harness: 'claude', id: S, source: 'minted' });
   await restoreProjectTerminals(h.project, h.deps);
-  await settle();
+  await settle(h.spawns);
   assert.equal(h.spawns[0].initialCommand, `claude --dangerously-skip-permissions --resume ${S}`);
   assert.equal(h.spawns[0].registry?.agentSession?.source, 'minted', 'no re-learn when it never switched');
 
@@ -286,7 +293,7 @@ test('claude: the conversation written LAST wins; another tab\'s newer transcrip
   await writeClaudeTranscript(h2.project, Y, S);
   await deadTab(h2, CLAUDE_LAUNCH, { harness: 'claude', id: S, source: 'minted' });
   await restoreProjectTerminals(h2.project, h2.deps);
-  await settle();
+  await settle(h2.spawns);
   assert.equal(h2.spawns[0].initialCommand, `claude --dangerously-skip-permissions --resume ${Y}`);
 });
 
@@ -333,7 +340,7 @@ test('codex: a thread whose first turn landed after the old 2-minute poll is fou
   // The process started right after the tab; the file appeared minutes later.
   await writeCodexRollout(h.project, 'thread-late', Date.now() + 1_000);
   await restoreProjectTerminals(h.project, h.deps);
-  await settle();
+  await settle(h.spawns);
   assert.equal(h.spawns[0].initialCommand, 'codex resume thread-late --yolo');
 });
 
@@ -343,7 +350,7 @@ test('codex: a thread started long after the tab launched belongs to another tab
   await deadTab(h, { initialCommand: 'codex --yolo', harness: 'codex' });
   await writeCodexRollout(h.project, 'someone-elses', Date.now() + CODEX_FRESH_START_WINDOW_MS + 60_000);
   await restoreProjectTerminals(h.project, h.deps);
-  await settle();
+  await settle(h.spawns);
   assert.equal(h.spawns[0].initialCommand, 'codex resume --last --yolo');
 });
 

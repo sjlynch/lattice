@@ -36,8 +36,13 @@ owns the node-pty processes.
   loop), size, projectPath, and the env; calls `windowsPath` + `envSetup` to
   shape PATH/overhead env, then routes the initial command through the
   per-harness command rewriters (`claudeSystemPrompt` + `codexTrust`). It also
-  regenerates `<project>/.lattice/LATTICE_API.md` and hands the path to the
-  banner. **It plants no `LATTICE_*` breadcrumb env vars** — it used to export
+  looks up `<project>/.lattice/LATTICE_API.md` (`../latticeApiDocs/docPath.ts`)
+  and hands the path to the banner — it does NOT generate it: the generator and
+  its templates change with every API edit, and in this process's fingerprinted
+  import graph they marked the live terminal-server stale each time. The main
+  backend regenerates the doc before it requests a session
+  (`resolveHarnessSpawnBody`, and `terminalWsRelay.ts` for a serverless
+  connect). **It plants no `LATTICE_*` breadcrumb env vars** — it used to export
   `LATTICE_API_URL`/`LATTICE_PROJECT`/`LATTICE_PROJECT_HASH`/`LATTICE_DOCS`
   "so agents could discover the API", but no harness reads the environment
   into its context, so nothing ever saw them. Agent-facing discovery is the

@@ -22,6 +22,7 @@ import { registerAgentSession } from '../agentSessions.js';
 import { proxyKillSession } from '../terminalProxy.js';
 import { setupPostMergeHookSession } from './sessionSetup.js';
 import { cleanupPostMergeHookSession } from './cleanup.js';
+import { clearPostMergeHookOwed } from './owed.js';
 import {
   assertSafePostMergeHookPath,
   createPostMergeHookId,
@@ -118,8 +119,15 @@ export async function triggerPostMergeHookWithDeps(
   const endPending = beginPostMergeHookTrigger(options.projectPath);
   try {
     const prepared = await validateAndPrepare(options, deps);
-    if (prepared.kind === 'skip') return prepared.outcome;
-    return await spawnAndRegister(options, deps, prepared);
+    const outcome = prepared.kind === 'skip'
+      ? prepared.outcome
+      : await spawnAndRegister(options, deps, prepared);
+    // The owed marker (owed.ts) is settled once the trigger has DECIDED: a
+    // hook started, one was already running (it covers these merges), it was
+    // aborted by the user, or none is configured. A spawn error keeps it, so
+    // the next merge / boot retries rather than silently dropping the hook.
+    if (outcome.kind !== 'error') await clearPostMergeHookOwed(options.projectPath);
+    return outcome;
   } finally {
     endPending();
   }

@@ -360,3 +360,45 @@ test('an abort while scratch setup is pending skips the spawn entirely', async (
   assert.equal(calls.registered.length, 0);
   assert.equal(calls.cleaned.length, 1);
 });
+
+// "A post-merge hook is owed" (postMergeHooks/owed.ts): a merge that landed
+// before a backend restart whose hook never fired must still get it. The
+// trigger settles the debt once it has decided — and only then.
+test('the trigger settles an owed hook once it decides, and keeps it after a spawn error', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { isPostMergeHookOwed, markPostMergeHookOwed } = await import('../postMergeHooks/owed.js');
+  const { patchUserSettings } = await import('../userSettings.js');
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-owed-'));
+  try {
+    // Unconfigured project: nothing to owe.
+    await markPostMergeHookOwed(project);
+    assert.equal(await isPostMergeHookOwed(project), false);
+
+    await patchUserSettings(project, { postMergeHookPrompt: 'run the checks' });
+    await markPostMergeHookOwed(project);
+    assert.equal(await isPostMergeHookOwed(project), true);
+
+    // A spawn error keeps the debt (retried by the next merge / boot)...
+    const failing = makeDeps({ postMergeHookPrompt: 'run the checks' });
+    failing.deps.queuedCreateSession = async () => ({ error: 'terminal-server down' });
+    const errored = await triggerPostMergeHookWithDeps(
+      { projectPath: project, backendOrigin: ORIGIN, trigger: 'merge-run' },
+      failing.deps,
+    );
+    assert.equal(errored.kind, 'error');
+    assert.equal(await isPostMergeHookOwed(project), true);
+
+    // ...a started hook settles it.
+    const ok = makeDeps({ postMergeHookPrompt: 'run the checks' });
+    const started = await triggerPostMergeHookWithDeps(
+      { projectPath: project, backendOrigin: ORIGIN, trigger: 'merge-run' },
+      ok.deps,
+    );
+    assert.equal(started.kind, 'started');
+    assert.equal(await isPostMergeHookOwed(project), false);
+  } finally {
+    await fs.rm(project, { recursive: true, force: true });
+  }
+});

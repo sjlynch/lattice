@@ -33,3 +33,21 @@ That second case is why the workflow Merge step has its own **Phase C** gate (`w
 ## Surviving a backend restart
 
 The hook's agent lives in the detached terminal-server and outlives a backend restart; the merge run that fired it is re-run by `resumeInterruptedMergeRuns`. With an in-memory-only registry that resumed run could not see the still-running hook, so it fired a **second** one — or, with nothing left to merge, the workflow Merge step's Phase C read "idle" while the orphan kept working — and the orphan's `/complete` 404'd. Now boot recovery (`recovery/oneOffRunResume.ts`, before listen) reads the mirror and `restorePostMergeHook`s every running hook: one whose pty is alive is **re-adopted** — `getActiveHookForProject` / `getActiveHookForServerId` see it again (so a resumed merge run's trigger reports `already-running` and awaits it, Phase C waits, `POST /api/merge-runs` 409s), its presence node is re-registered and its quiescence state marked re-adopted (Claude — `agentQuiescence.ts` `markAgentReadopted`, since its live-subagent count died with the old process), and the remainder of the merge's bounded wait is re-armed (≥ 5 min). One whose pty is gone is ended `errored` after a grace period (the callback outbox may still replay its `/complete`), and a re-adopted one whose pty dies later is caught by the same liveness watch.
+
+## An owed hook survives a restart (`owed.ts`)
+
+Both ways a hook fires are in-memory decisions made after the merge: merge-run
+teardown (only when THAT run merged something) and the outside-run finalize
+paths. A backend killed between a task landing in QA and the hook firing came
+back with nothing left to merge — the resumed merge run (merged: 0) and the
+workflow Merge step (Ready-to-Merge empty) both skipped the hook, silently
+(found by the self-hosting soak). So `worktree/finalize.ts` records a durable
+debt (`~/.lattice/per-project/<hash>/post-merge-hook-owed.json`, only when a
+hook is configured) the moment a task lands in QA; the trigger settles it once
+it has decided (started / already running / aborted / not configured — a spawn
+error keeps it); and every path that could have fired the hook honours it:
+merge-run teardown (`merged.length > 0 || owed`; a cancelled/halted run clears
+it instead, keeping "no hook on cancel"), the workflow Merge step's Phase C
+(`fireOwedPostMergeHook` before waiting), and boot
+(`recovery/owedPostMergeHooks.ts`, after the workflow + merge-run resumes, for a
+project with neither an active merge run nor an active workflow run).

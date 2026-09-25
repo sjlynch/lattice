@@ -10,6 +10,7 @@ import { writeStashResolveInstructions } from './instructions.js';
 import { prepareMergeConflictOutcome } from './mergeConflict.js';
 import { assertGitDirIntact } from './state.js';
 import { runSerializedFinalize, scheduleWorktreeCleanup } from './finalizeQueues.js';
+import { markPostMergeHookOwed } from '../postMergeHooks/owed.js';
 
 export type FinalizeOutcome =
   | { ok: true }
@@ -212,6 +213,10 @@ async function transitionTaskToQaOnDisk(ctx: FinalizeContext): Promise<boolean> 
   });
   if (!updated) return false;
   console.log(`[finalize] task ${ctx.task.id} → qa ✓`);
+  // A merge landed: the post-merge hook is now OWED until a trigger decides
+  // (postMergeHooks/owed.ts). Durable so a restart between here and the hook
+  // firing can't silently drop it.
+  await markPostMergeHookOwed(ctx.task.projectPath);
   return true;
 }
 

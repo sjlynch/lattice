@@ -10,6 +10,7 @@
 import { restoreSnapshot, type SnapshotHandle } from '../worktree.js';
 import { listTasks, type Task } from '../tasks.js';
 import { runPostMergeHookGate } from '../postMergeHooks.js';
+import { clearPostMergeHookOwed, isPostMergeHookOwed } from '../postMergeHooks/owed.js';
 import type { MergeRunLockMode } from '../mergeRuns.js';
 import type { MergeRun } from './state.js';
 
@@ -107,7 +108,10 @@ export async function runPostMergeHook(
   projectPath: string,
   backendOrigin: string,
 ): Promise<void> {
-  if (!run.cancelRequested && run.merged.length > 0) {
+  // `isPostMergeHookOwed`: a merge that landed before a restart whose hook
+  // never fired — the resumed run then merges nothing itself (see
+  // postMergeHooks/owed.ts).
+  if (!run.cancelRequested && (run.merged.length > 0 || await isPostMergeHookOwed(projectPath))) {
     try {
       await runPostMergeHookGate({
         projectPath,
@@ -120,5 +124,9 @@ export async function runPostMergeHook(
         err,
       );
     }
+  } else if (run.cancelRequested) {
+    // A cancelled / halted run deliberately fires no hook — settle the debt
+    // its merges recorded too, or the next boot would fire it after all.
+    await clearPostMergeHookOwed(projectPath);
   }
 }

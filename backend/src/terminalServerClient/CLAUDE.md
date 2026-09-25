@@ -37,6 +37,9 @@ process on `:5185`; see `terminalServer/CLAUDE.md` for that boundary).
   the per-launch status-title default (`../codexTerminalActivity.ts`) here,
   before allocation, so new launches on retained executors receive it too.
   Serverless WS creation applies the same helper in `../terminalWsRelay.ts`.
+  Both paths also regenerate the project's `.lattice/LATTICE_API*.md`
+  (`refreshLatticeApiDocs`) before the pty exists — the terminal-server only
+  looks the doc up for its banner, so API-doc edits never make it stale.
 - `shutdown.ts` — `POST /shutdown` (`proxyShutdown`), **2s**, fired by the dev
   orchestrator on Ctrl+C (the detached server gets no signal of its own).
 

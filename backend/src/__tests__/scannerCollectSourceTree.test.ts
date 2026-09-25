@@ -81,3 +81,29 @@ test('collectSourceTree skips a disappearing directory without failing the scan'
     assert.ok(tree.directories.some((dir) => toRel(root, dir.path) === 'vanish'));
   });
 });
+
+// Lattice records its managed files (the root `.pi/extensions/lattice-*.ts`
+// shims, …) in the repo-local, untracked `.git/info/exclude` instead of the
+// user's tracked `.gitignore` — so the graph scanner must honor that file too,
+// from a main checkout (`.git` dir) and a linked worktree (`.git` pointer file
+// → gitdir → `commondir`).
+test('loadGitignore honors the common gitdir info/exclude, from a checkout and a linked worktree', async () => {
+  await withTempDir('lattice-scan-exclude-', async (root) => {
+    const repo = path.join(root, 'repo');
+    await writeLayout(repo, {
+      '.git/info/exclude': '# lattice-managed (do not remove)\n.pi/extensions/lattice-subagents.ts\n',
+      '.pi/extensions/lattice-subagents.ts': 'export {};\n',
+      'src/index.ts': 'export {};\n',
+    });
+    const inRepo = await loadGitignore(repo);
+    assert.equal(inRepo.ignores('.pi/extensions/lattice-subagents.ts'), true);
+    assert.equal(inRepo.ignores('src/index.ts'), false);
+
+    const wt = path.join(root, 'wt');
+    const wtGitDir = path.join(repo, '.git', 'worktrees', 'wt');
+    await writeLayout(wtGitDir, { commondir: '../..\n' });
+    await writeLayout(wt, { '.git': `gitdir: ${wtGitDir}\n`, 'src/a.ts': '' });
+    const inWorktree = await loadGitignore(wt);
+    assert.equal(inWorktree.ignores('.pi/extensions/lattice-subagents.ts'), true);
+  });
+});

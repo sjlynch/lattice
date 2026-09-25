@@ -1,6 +1,6 @@
 import os from 'node:os';
 import fs from 'node:fs';
-import { ensureLatticeApiDoc } from '../latticeApiDocs.js';
+import { existingLatticeApiDocPath } from '../latticeApiDocs/docPath.js';
 import type { CreateOpts } from './sessionTypes.js';
 import { applyFreshWindowsPath, applyPtyPathPrepend } from './windowsPath.js';
 import { applyClaudeOverheadEnv, scrubInheritedNpmEnv } from './envSetup.js';
@@ -63,8 +63,12 @@ export function buildSessionLaunchContext(
   const cwdError = validateRequestedCwd(requestedCwd);
   if (cwdError) return cwdError;
 
-  // Generate/refresh this project's `.lattice/LATTICE_API.md` so the banner
-  // below has something to point at. NOTE: agents do NOT discover the API from
+  // Name this project's `.lattice/LATTICE_API.md` in the banner below, if it
+  // has one. Only LOOKED UP here: the main backend (re)generates it before it
+  // asks for this session (`resolveHarnessSpawnBody`, and `terminalWsRelay.ts`
+  // for a serverless connect). The generator and its templates change with
+  // every API edit and used to sit in this long-lived process's fingerprinted
+  // import graph, marking it stale each time. NOTE: agents do NOT discover the API from
   // the environment. Lattice used to export `LATTICE_API_URL` / `LATTICE_PROJECT`
   // / `LATTICE_PROJECT_HASH` / `LATTICE_DOCS` here as "breadcrumbs", but no
   // harness reads env vars into its context, so nothing ever saw them — and on
@@ -73,8 +77,7 @@ export function buildSessionLaunchContext(
   // backend injects at the spawn chokepoint instead (see
   // harnessSystemPrompts/latticePreamble.ts); the generated doc bakes in literal
   // values so no recipe in it depends on shell expansion.
-  const apiPort = Number(process.env.LATTICE_API_PORT) || 5184;
-  const docPath = ensureLatticeApiDoc(projectPath, apiPort);
+  const docPath = existingLatticeApiDocPath(projectPath);
 
   // Opt this project's Lattice-spawned Claude session out of auto-memory when
   // the per-project setting says so (resolved at the POST /sessions chokepoint).

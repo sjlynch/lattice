@@ -25,8 +25,9 @@ import { appendMissingExcludeEntries } from './projectGuards/repoExclude.js';
 // `.codex/hooks.json` got committed onto main in the first place, which then
 // aborted `git merge` in every other worktree with "untracked working tree
 // files would be overwritten by merge" — the failure this whole chain of
-// defences exists to prevent. `.claude/settings.local.json` looked fine only
-// because `ensureLatticeGitignore` lists it in the tracked `.gitignore` too.
+// defences exists to prevent. (`.claude/settings.local.json` only looked fine
+// because the tracked `.gitignore` happened to list it; Lattice no longer
+// edits that file — this common exclude is the one mechanism.)
 //
 // The common exclude is shared by every worktree AND the main checkout, so the
 // append must be idempotent (it is — appendMissingExcludeEntries skips entries
