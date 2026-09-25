@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { WebSocket, type WebSocketServer } from 'ws';
@@ -111,7 +112,7 @@ test('a socket error on a project WS connection does not surface as uncaughtExce
     const uncaught = await captureUncaught(async () => {
       const connected = h.nextConnection();
       const client = await openClient(
-        `ws://127.0.0.1:${h.port}/ws/tasks?project=${encodeURIComponent('/tmp/p')}`,
+        `ws://127.0.0.1:${h.port}/ws/tasks?project=${encodeURIComponent(path.resolve('/tmp/p'))}`,
       );
       const serverWs = await connected;
 
