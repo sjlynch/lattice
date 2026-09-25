@@ -384,8 +384,11 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   **Claude** — PreToolUse/PostToolUse/SubagentStart/SubagentStop hooks in
   `.claude/settings.local.json` (a subagent's tool use carries `agent_id`);
   **Codex** — the same four events in `.codex/hooks.json` (`codexStopHook.ts`),
-  where edits are `apply_patch` (every patch file header is a beam) and reads
-  are shell commands (candidate paths kept only if they exist); **Pi** — the
+  where edits are `apply_patch` (each patch file header is a beam while that
+  file exists — so a Move/Delete source drops at PostToolUse, an Add target at
+  PreToolUse) and reads are shell commands (candidate paths kept only if they
+  exist, resolved under the tool's `workdir` and a leading `cd <dir> &&`; any
+  other directory change drops them — a miss beats a wrong beam); **Pi** — the
   `.pi/extensions/lattice-activity.ts` extension (`backend/src/piActivity.ts`)
   posting Claude-shaped bodies from `tool_execution_start/end`, with a
   pi-subagents subagent (an in-memory session) reported as a satellite.

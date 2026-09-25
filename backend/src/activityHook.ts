@@ -21,7 +21,7 @@ import {
   subagentTypeFromHookBody,
   toolFromHookBody,
 } from './claudeHookBody.js';
-import { filesFromHookBody } from './hookFiles.js';
+import { filesFromHookBody, MAX_FILES_PER_TOOL_USE } from './hookFiles.js';
 
 // What an activity hook means for the graph, independent of which session it
 // came from:
@@ -55,9 +55,9 @@ export type ActivityHookResult =
 // turns the raw hook path into the project-absolute path the graph expects (or
 // null to drop) — worktree-relative for the task route, cwd/absolute for the
 // non-worktree routes — and is the only behaviour that varies between callers.
-// `mustExist` is set for paths guessed from a shell command: the caller keeps
-// one only if it names an existing file (a guess the graph can't find would
-// otherwise label a file that isn't there).
+// `mustExist` is set for paths guessed from a shell command and for apply_patch
+// headers: the caller keeps one only if it names an existing file right now (a
+// path the graph can't find would otherwise label a file that isn't there).
 export type ActivityFileMapper = (
   rawFile: string,
   opts: { mustExist: boolean },
@@ -85,10 +85,13 @@ export function decodeActivityHook(
 
   // Tool use → a focus beam per mapped file. A subagent's own tool-use carries
   // `subagentId`, which routes the beams to that satellite instead of the node.
-  const { files: raw, speculative } = filesFromHookBody(body);
+  // The per-tool-use cap counts MAPPED files, after the existence check —
+  // capping raw shell candidates let non-files crowd out the real one.
+  const { files: raw, mustExist } = filesFromHookBody(body);
   const files: string[] = [];
   for (const r of raw) {
-    const f = mapFile(r, { mustExist: speculative });
+    if (files.length >= MAX_FILES_PER_TOOL_USE) break;
+    const f = mapFile(r, { mustExist });
     if (f && !files.includes(f)) files.push(f);
   }
   if (files.length === 0) return null;

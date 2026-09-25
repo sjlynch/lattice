@@ -13,7 +13,8 @@ import { Router } from 'express';
 import { getTask, type Task } from '../../tasks.js';
 import { canonicalProjectPath } from '../../projectPath.js';
 import { LATTICE_OWNED_FILE_PATHS } from '../../worktree/managedFiles.js';
-import { decodeActivityHook } from '../../activityHook.js';
+import { type ActivityHookResult, decodeActivityHook } from '../../activityHook.js';
+import { cwdFromHookBody } from '../../claudeHookBody.js';
 import { notifyTaskActivity } from '../../taskActivityEvents.js';
 import { isExistingFile } from '../../hookFiles.js';
 
@@ -38,30 +39,52 @@ export function isManaged(rel: string): boolean {
   );
 }
 
+// `abs` relative to `root`, or null when it isn't strictly inside it. An
+// escape is exactly `..` or `../…` — a bare `startsWith('..')` also dropped a
+// real in-worktree file or dir named like `..foo`.
+function relInside(root: string, abs: string): string | null {
+  const rel = path.relative(root, abs);
+  if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
+  return rel;
+}
+
 // Map a worktree-absolute (or worktree-relative) file path to the matching
 // project-absolute path the scanner emits as `node.path`. Returns null if the
 // path escapes the worktree or is a Lattice-managed file. `mustExist` (a path
-// guessed from a shell command) additionally requires an existing file in the
-// worktree.
+// guessed from a shell command, or a patch header) additionally requires an
+// existing file in the worktree. A relative path resolves against `hookCwd`
+// (the hook body's `cwd` — a subagent or a `workdir` may sit in a subfolder)
+// when that is the worktree or inside it, else against the worktree root.
 // Exported for its regression test.
 export function mapWorktreeFileToProject(
   task: Pick<Task, 'worktreePath' | 'projectPath'>,
   rawFile: string,
   mustExist = false,
+  hookCwd: string | null = null,
 ): string | null {
   if (!task.worktreePath) return null;
-  const abs = path.isAbsolute(rawFile)
-    ? rawFile
-    : path.resolve(task.worktreePath, rawFile);
-  const rel = path.relative(task.worktreePath, abs);
-  // An escape is exactly `..` or `../…` — a bare `startsWith('..')` also
-  // dropped a real in-worktree file or dir named like `..foo`.
-  if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
+  const wt = task.worktreePath;
+  const base = hookCwd && path.isAbsolute(hookCwd) && relInside(wt, hookCwd) ? hookCwd : wt;
+  const abs = path.isAbsolute(rawFile) ? rawFile : path.resolve(base, rawFile);
+  const rel = relInside(wt, abs);
+  if (!rel) return null;
   if (isManaged(rel)) return null;
   if (mustExist && !isExistingFile(abs)) return null;
   // The scanner roots node paths at canonicalProjectPath(root); match that so
   // the frontend lookup hits.
   return path.join(canonicalProjectPath(task.projectPath), rel);
+}
+
+// Decode a task agent's hook body into graph activity, mapping each file into
+// the project. Exported for the route regression test.
+export function decodeTaskActivity(
+  task: Pick<Task, 'worktreePath' | 'projectPath'>,
+  body: unknown,
+): ActivityHookResult | null {
+  const hookCwd = cwdFromHookBody(body);
+  return decodeActivityHook(body, (raw, { mustExist }) =>
+    mapWorktreeFileToProject(task, raw, mustExist, hookCwd),
+  );
 }
 
 export function buildTaskActivityRouter(): Router {
@@ -78,13 +101,11 @@ export function buildTaskActivityRouter(): Router {
       return ack();
     }
     if (!task || !task.worktreePath) return ack();
-    const t = task; // narrow for the mapFile closure below
+    const t = task; // narrowed
 
     // Shared decode (the SubagentStart/Stop satellite branch + phase/tool/
     // subagent extraction); only the worktree file-mapping is task-specific.
-    const result = decodeActivityHook(req.body, (raw, { mustExist }) =>
-      mapWorktreeFileToProject(t, raw, mustExist),
-    );
+    const result = decodeTaskActivity(t, req.body);
     if (!result) return ack();
 
     if (result.kind === 'lifecycle') {
