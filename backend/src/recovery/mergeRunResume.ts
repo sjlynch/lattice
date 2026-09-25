@@ -67,7 +67,10 @@ export function isResumableInterruptedRunLock(label: string): boolean {
 // idempotent on a re-attempt, so resuming is just "run it again". Call
 // this AFTER the HTTP server is listening — the run worker spawns resolver
 // Claudes that curl back to the API.
-export async function resumeInterruptedMergeRuns(backendOrigin: string): Promise<void> {
+export async function resumeInterruptedMergeRuns(
+  backendOrigin: string,
+  deps: { startMergeRun: typeof startMergeRun } = { startMergeRun },
+): Promise<void> {
   await forEachKnownProjectSafely('resumeInterruptedMergeRuns', async (repoRoot) => {
     if (getActiveRunForProject(repoRoot)) return; // already running here
     // A workflow run resumed moments ago (resumeInterruptedWorkflowRuns runs
@@ -124,10 +127,21 @@ export async function resumeInterruptedMergeRuns(backendOrigin: string): Promise
       `[startup] an interrupted run ("${lock.holder.label}") for ${repoRoot} left work behind (owner pid=${lock.holder.pid} died, ` +
         `started ${startedIso}); ${pending.length} ready_to_merge task(s) remain — resuming a merge automatically.`,
     );
-    // Fire-and-forget; startMergeRun steals the dead lock itself.
-    startMergeRun(repoRoot, backendOrigin, { automaticRecovery: true }).catch((err) => {
+    // Awaited — but only up to registration: `startMergeRun` steals the dead
+    // lock itself, registers the run in `runState.runs`, and resolves; the
+    // worker body is fire-and-forget inside it. Awaiting matters because the
+    // boot step after this one, `fireOwedPostMergeHooks`, skips a project with
+    // an active merge run (that run's teardown fires the owed hook). Left
+    // un-awaited, its `getActiveRunForProject` check ran before the several
+    // awaits that precede registration had finished, so the owed hook started
+    // on the main checkout beside the resumed run — the run's preflight
+    // snapshot/reset raced the hook's edits, and its teardown fired a second
+    // hook for the same merges.
+    try {
+      await deps.startMergeRun(repoRoot, backendOrigin, { automaticRecovery: true });
+    } catch (err) {
       console.error(`[startup] resume of merge run for ${repoRoot} failed to start:`, err);
-    });
+    }
   });
 }
 

@@ -91,7 +91,8 @@ export function buildPostMergeHooksRouter(): Router {
       // Record the Stop durably BEFORE answering (see
       // PostMergeHookRun.stopReceivedAt): the hook won't send it again, and a
       // restart inside the settle window must re-arm the gate, not lose it.
-      patchPostMergeHook(id, { stopReceivedAt: Date.now() });
+      // A new Stop supersedes what the gate observed while holding an older one.
+      patchPostMergeHook(id, { stopReceivedAt: Date.now(), stopActiveAt: undefined, stopBusy: undefined });
       await postMergeHookStore.flush(existing.projectPath).catch(() => {});
       requestPostMergeHookStopComplete(id, postMergeHookStopFinish(existing.id, existing.projectPath));
       return res.json({ ok: true, gated: true });
