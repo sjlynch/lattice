@@ -109,69 +109,92 @@ const productionDeps: PushStepDeps = {
   findCompletedPushRun: findCompletedPushRunForWorkflowStep,
 };
 
-export async function runPushStep(
+// Re-dispatch after a backend restart (recovery/workflowRunResume.ts): the
+// Push step died with the old process, but the push session it spawned lives
+// in the detached terminal-server and may still be pushing. Boot recovery
+// re-adopted its persisted record, so wait for THAT session instead of
+// spawning a second push alongside it. (Its drain already happened.)
+// Its push may even have FINISHED already: the agent's `/done` can land (the
+// hook still retrying, or the callback outbox replaying it) after listen but
+// before this re-dispatch. Then the step is done — never push a second time.
+// Otherwise (nothing to adopt) wait for Ready-to-Merge to drain.
+async function adoptOrDrain(
   wf: Workflow,
   run: WorkflowRun,
   stepIndex: number,
-  backendOrigin: string,
-  deps: PushStepDeps = productionDeps,
-): Promise<void> {
-  // Re-dispatch after a backend restart (recovery/workflowRunResume.ts): the
-  // Push step died with the old process, but the push session it spawned lives
-  // in the detached terminal-server and may still be pushing. Boot recovery
-  // re-adopted its persisted record, so wait for THAT session instead of
-  // spawning a second push alongside it. (Its drain already happened.)
-  // Its push may even have FINISHED already: the agent's `/done` can land (the
-  // hook still retrying, or the callback outbox replaying it) after listen but
-  // before this re-dispatch. Then the step is done — never push a second time.
+  deps: PushStepDeps,
+): Promise<{ completed: true } | { adopted?: StartedPushSession }> {
   const completed = deps.findCompletedPushRun?.(run.id, stepIndex);
   if (completed) {
     console.log(`[workflow-run] ${run.id} push step: its push session ${completed.id} already finished before the restart — push complete`);
     deps.forgetPushRun?.(completed.id);
     emitControlProgress(run, stepIndex, 'push', 1, 1, 'push complete');
-    return;
+    return { completed: true };
   }
   const adopted = deps.findLivePushSession?.(run.id, stepIndex);
   if (adopted) {
     console.log(`[workflow-run] ${run.id} push step re-attached to live push session ${adopted.id}`);
-  } else {
-    emitControlProgress(
-      run,
-      stepIndex,
-      'push',
-      0,
-      1,
-      'waiting for Ready to Merge to drain',
-    );
-    await deps.waitForLaneEmpty(
-      wf.projectPath,
-      run,
-      'ready_to_merge',
-      (count, total) => {
-        emitControlProgress(
-          run,
-          stepIndex,
-          'push',
-          0,
-          1,
-          `Ready to Merge draining: ${count}/${total} remaining`,
-        );
-      },
-      PUSH_DRAIN_TIMEOUT_MS,
-    );
+    return { adopted };
   }
-  if (run.status !== 'running') return;
+  emitControlProgress(
+    run,
+    stepIndex,
+    'push',
+    0,
+    1,
+    'waiting for Ready to Merge to drain',
+  );
+  await deps.waitForLaneEmpty(
+    wf.projectPath,
+    run,
+    'ready_to_merge',
+    (count, total) => {
+      emitControlProgress(
+        run,
+        stepIndex,
+        'push',
+        0,
+        1,
+        `Ready to Merge draining: ${count}/${total} remaining`,
+      );
+    },
+    PUSH_DRAIN_TIMEOUT_MS,
+  );
+  return {};
+}
 
-  emitControlProgress(run, stepIndex, 'push', 0, 1, 'pushing to remote');
+type PushSessionWatch = {
+  // Resolves once the push run reports `done`, the workflow run is
+  // cancelled/errored, the timeout fires, or killAndAbandon() runs.
+  readonly done: Promise<void>;
+  readonly sessionId: string | null;
+  readonly cancelled: boolean;
+  readonly timedOut: boolean;
+  readonly timeoutMessage: string;
+  // Record the spawned (or adopted) session so the subscribers can match it.
+  attach(session: StartedPushSession): void;
+  // Kill the session's pty (if it has spawned), settle the push run and
+  // release `done`. With `awaitKill` the settle waits for the kill; otherwise
+  // the kill is fire-and-forget and the settle runs synchronously.
+  killAndAbandon(awaitKill?: boolean): Promise<void>;
+  resolveDone(): void;
+  dispose(): void;
+};
 
-  // Subscribe before spawning so we don't miss a fast 'done' event. The
-  // session id isn't known until startPushSession returns, so the listener
-  // captures it via closure once we have it.
+// Subscribe before spawning so we don't miss a fast 'done' event. The
+// session id isn't known until startPushSession returns, so the listener
+// captures it via closure once we have it (attach()).
+function createPushSessionWatch(
+  wf: Workflow,
+  run: WorkflowRun,
+  deps: PushStepDeps,
+): PushSessionWatch {
   let sessionId: string | null = null;
   let sessionServerId: string | undefined;
   // Set by the cancel handler. startPushSession's serverId isn't known until it
   // resolves, so a cancel that fires MID-spawn can't kill the pty yet — this
-  // flag lets the post-spawn re-check below kill it the moment it exists (Fix 3).
+  // flag lets the post-spawn re-check in runPushStep kill it the moment it
+  // exists (Fix 3).
   let cancelled = false;
   let resolveDone!: () => void;
   const done = new Promise<void>((resolve) => {
@@ -186,6 +209,14 @@ export async function runPushStep(
     abandoned = true;
     deps.abandonPushRun?.(wf.projectPath, sessionId);
   };
+  const killAndAbandon = async (awaitKill = false): Promise<void> => {
+    if (sessionServerId) {
+      const killing = deps.proxyKillSession(sessionServerId).catch(() => undefined);
+      if (awaitKill) await killing;
+    }
+    abandonSession();
+    resolveDone();
+  };
   const unsubPush = deps.subscribePushRuns((ev) => {
     if (ev.type !== 'done') return;
     if (sessionId && ev.run.id === sessionId) resolveDone();
@@ -199,20 +230,17 @@ export async function runPushStep(
     if (!('run' in ev) || ev.run.id !== run.id) return;
     cancelled = true;
     // If the session already spawned, kill it now. If startPushSession is still
-    // in flight (serverId not yet known), the post-spawn re-check below kills it
-    // once it resolves — otherwise the push would run to completion despite the
-    // cancel and only be reaped by its own Stop hook/timeout.
-    if (sessionServerId) {
-      deps.proxyKillSession(sessionServerId).catch(() => undefined);
-    }
-    abandonSession();
-    resolveDone();
+    // in flight (serverId not yet known), the post-spawn re-check in runPushStep
+    // kills it once it resolves — otherwise the push would run to completion
+    // despite the cancel and only be reaped by its own Stop hook/timeout.
+    void killAndAbandon();
   });
   // Hard timeout backstop. If Claude crashed before the Stop hook fired the
   // workflow would otherwise wait forever. A timeout is a FAILURE, not a
-  // completion: nothing confirmed the push landed, so the step throws below and
-  // controlStep.ts errors the run (it used to report 'push complete' and
-  // advance). A push whose own /done already landed is not a timeout.
+  // completion: nothing confirmed the push landed, so the step throws in
+  // runPushStep and controlStep.ts errors the run (it used to report
+  // 'push complete' and advance). A push whose own /done already landed is not
+  // a timeout.
   const timeoutMs = deps.pushTimeoutMs ?? PUSH_STEP_TIMEOUT_MS;
   const timeoutMessage = `push step timed out after ${describeTimeout(timeoutMs)}`;
   let timedOut = false;
@@ -223,12 +251,44 @@ export async function runPushStep(
     }
     timedOut = true;
     console.warn(`[workflow-run] ${run.id} ${timeoutMessage} — killing the push session`);
-    if (sessionServerId) {
-      deps.proxyKillSession(sessionServerId).catch(() => undefined);
-    }
-    abandonSession();
-    resolveDone();
+    void killAndAbandon();
   }, timeoutMs);
+
+  return {
+    done,
+    get sessionId() { return sessionId; },
+    get cancelled() { return cancelled; },
+    get timedOut() { return timedOut; },
+    timeoutMessage,
+    attach(session) {
+      sessionId = session.id;
+      sessionServerId = session.serverId;
+    },
+    killAndAbandon,
+    resolveDone: () => resolveDone(),
+    dispose() {
+      clearTimeout(timeout);
+      unsubPush();
+      unsubWf();
+    },
+  };
+}
+
+export async function runPushStep(
+  wf: Workflow,
+  run: WorkflowRun,
+  stepIndex: number,
+  backendOrigin: string,
+  deps: PushStepDeps = productionDeps,
+): Promise<void> {
+  const prior = await adoptOrDrain(wf, run, stepIndex, deps);
+  if ('completed' in prior) return;
+  const { adopted } = prior;
+  if (run.status !== 'running') return;
+
+  emitControlProgress(run, stepIndex, 'push', 0, 1, 'pushing to remote');
+
+  const watch = createPushSessionWatch(wf, run, deps);
 
   try {
     // The owning step is recorded on the push run (and persisted) so a
@@ -237,8 +297,7 @@ export async function runPushStep(
       brief: 'workflow',
       workflow: { runId: run.id, stepIndex },
     });
-    sessionId = session.id;
-    sessionServerId = session.serverId;
+    watch.attach(session);
 
     // Cancel/timeout race guard (Fix 3): if the run was cancelled (or otherwise
     // left 'running') WHILE startPushSession was in flight, the cancel handler
@@ -246,14 +305,10 @@ export async function runPushStep(
     // pty exists, kill it and bail — a cancelled push must NOT stay live and run
     // `git push` to completion. Mirrors the post-spawn 'already done' guard below.
     // A timeout that fired mid-spawn is handled the same way, then fails below.
-    if (cancelled || timedOut || run.status !== 'running') {
-      if (session.serverId) {
-        await deps.proxyKillSession(session.serverId).catch(() => undefined);
-      }
-      abandonSession();
-      resolveDone();
-      if (timedOut && !cancelled && run.status === 'running') {
-        throw new Error(timeoutMessage);
+    if (watch.cancelled || watch.timedOut || run.status !== 'running') {
+      await watch.killAndAbandon(true);
+      if (watch.timedOut && !watch.cancelled && run.status === 'running') {
+        throw new Error(watch.timeoutMessage);
       }
       return;
     }
@@ -274,12 +329,12 @@ export async function runPushStep(
     // startPushSession recording the run and our subscriber being attached
     // (subscriber is attached first; this is belt-and-suspenders).
     const current = deps.getPushRun(session.id);
-    if (current && current.status === 'done') resolveDone();
+    if (current && current.status === 'done') watch.resolveDone();
 
-    await done;
+    await watch.done;
     // A cancel wins over a timeout: the run keeps its cancelled state.
-    if (cancelled || run.status !== 'running') return;
-    if (timedOut) throw new Error(timeoutMessage);
+    if (watch.cancelled || run.status !== 'running') return;
+    if (watch.timedOut) throw new Error(watch.timeoutMessage);
     // Settled by boot recovery's liveness watch: the (re-adopted) session's
     // terminal died without calling `/done`, so nothing confirmed the push.
     if (deps.getPushRun(session.id)?.lost) {
@@ -287,9 +342,7 @@ export async function runPushStep(
     }
     emitControlProgress(run, stepIndex, 'push', 1, 1, 'push complete');
   } finally {
-    clearTimeout(timeout);
-    unsubPush();
-    unsubWf();
-    if (sessionId) deps.forgetPushRun?.(sessionId);
+    watch.dispose();
+    if (watch.sessionId) deps.forgetPushRun?.(watch.sessionId);
   }
 }
