@@ -4,10 +4,15 @@
 // Task Board "Run All" button), emitting one terminal tab per task so the
 // user can watch / intervene.
 
-import { listTasks } from '../../tasks.js';
+import { listTasks, type Task } from '../../tasks.js';
 import { startTaskById } from '../../routes/tasks/startTask.js';
-import { enqueueTaskRun } from '../../routes/tasks/queuedSpawn.js';
-import { batchAdmissionHold, isSpawnDeferral, isSpawnDiskSpaceError } from '../../spawnQueue.js';
+import { enqueueTaskRun, taskRunDedupeKey } from '../../routes/tasks/queuedSpawn.js';
+import {
+  batchAdmissionHold,
+  hasSpawnRequest,
+  isSpawnDeferral,
+  isSpawnDiskSpaceError,
+} from '../../spawnQueue.js';
 import { normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
 import { normalizePiModel } from '../../piModels.js';
 import { getUserSettings } from '../../userSettings.js';
@@ -27,6 +32,9 @@ export type StartStepDeps = {
   // Why a batch spawn would be held right now (agent cap / resource
   // governor), or null. Optional so hand-built test deps keep compiling.
   admissionHold?: () => Promise<string | null>;
+  // Does the spawn queue hold a run for this task (pending or in flight)?
+  // Optional so hand-built test deps keep compiling.
+  hasQueuedRun?: (taskId: string) => boolean;
 };
 
 const productionDeps: StartStepDeps = {
@@ -34,7 +42,21 @@ const productionDeps: StartStepDeps = {
   startTask: startTaskById,
   enqueueRun: enqueueTaskRun,
   admissionHold: batchAdmissionHold,
+  hasQueuedRun: (taskId) => hasSpawnRequest(taskRunDedupeKey(taskId)),
 };
+
+// A task whose run is already queued or being started (Run All, a manual ▶, a
+// boot re-enqueue) must not be started again here. A queued run keeps the task
+// `open` until its pty spawns — which on a big repo can be minutes of waiting
+// on the checkout gate — so it passes startTaskById's freshly-runnable check,
+// and the second setup's reconcile would kill the first run's pty and
+// force-remove its worktree (or, once the first agent had committed, leave two
+// live agents on one task). `runQueued` covers the persisted flag (incl. the
+// boot window before queuedRunResume re-enqueues it); the live queue lookup
+// covers a run enqueued after this step listed the tasks.
+function runAlreadyQueued(task: Task, deps: StartStepDeps): boolean {
+  return task.runQueued === true || deps.hasQueuedRun?.(task.id) === true;
+}
 
 // The Pi model the Start step's spawned task agents should use FOR A RUN-LEVEL
 // OVERRIDE. Mirrors the run-level harness resolution and `effectiveStepPiModel`
@@ -175,6 +197,27 @@ export async function runStartStep(
       );
       continue;
     }
+    // Already being started by the spawn queue: leave it to that run. Counted
+    // as deferred — it is queued forward progress, not a failure. Checked after
+    // the admission-hold await, which polls the terminal-server, so a run
+    // enqueued meanwhile is seen too. (A held task goes to enqueueRun above,
+    // which dedupes onto an existing queued run.)
+    if (runAlreadyQueued(task, deps)) {
+      deferred += 1;
+      console.log(
+        `[workflow-run] ${run.id} start step: task ${task.id} ("${task.title.slice(0, 60)}") ` +
+          'already has a queued run — leaving it to the spawn queue',
+      );
+      emitControlProgress(
+        run,
+        stepIndex,
+        'start',
+        started + failed + deferred,
+        open.length,
+        startProgressMessage(open.length, started, failed, deferred),
+      );
+      continue;
+    }
     try {
       // throwOnCapacity: a terminal-server hard-cap rejection must throw
       // (SpawnCapacityError) instead of being swallowed. Without it startTaskById
@@ -273,12 +316,13 @@ export async function runStartStep(
         `the ${failed} failed task(s) remain in the open lane`,
     );
   }
-  // Cap-deferred tasks are queued, not dropped — but note them so the overflow
+  // Deferred tasks are queued, not dropped — but note them so the overflow
   // isn't invisible either.
   if (deferred > 0) {
     console.warn(
-      `[workflow-run] ${run.id} start step: ${deferred} task(s) hit the terminal-server ` +
-        `hard cap and were re-queued on the spawn queue — they start as slots free`,
+      `[workflow-run] ${run.id} start step: ${deferred} task(s) were left to the spawn ` +
+        `queue (already queued, held by the agent cap / governor, or waiting on the ` +
+        `hard cap or disk space) — they start as slots free`,
     );
   }
 }

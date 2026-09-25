@@ -29,27 +29,29 @@
 // Relaunches go through the spawn queue at batch priority so 40 tabs come
 // back gradually under `maxConcurrentAgents`; the summary returns at once and
 // each outcome lands as a `restored` / `restore-failed` event on
-// `/ws/terminal-tabs`.
+// `/ws/terminal-tabs`. The relaunch itself lives in `restoreRelaunch.ts`.
 
 import fs from 'node:fs/promises';
 import { agentHarnessForCommand } from '../harnesses.js';
-import { enqueueSpawn, notifySessionsFreed, SpawnCapacityError } from '../spawnQueue.js';
+import { enqueueSpawn } from '../spawnQueue.js';
 import { getTask } from '../tasks.js';
-import { getUserSettings, type UserSettings } from '../userSettings.js';
+import { getUserSettings } from '../userSettings.js';
 import { proxyCreateSession } from '../terminalServerClient/createSession.js';
 import { proxyKillSession, proxyListSessionsOrNull } from '../terminalServerClient/sessions.js';
 import { normalizeCwd } from './harnessPaths.js';
-import { detectInterruption, type InterruptionVerdict } from './interruption.js';
-import { buildRestoreCommand, RESTORE_NUDGE } from './restoreCommand.js';
+import { detectInterruption } from './interruption.js';
 import { terminalRegistry } from './store.js';
-import type { AgentSessionRef, RestoreDropped, RestoreSummary, TerminalRecord } from './types.js';
+import type { RestoreDropped, RestoreSummary, TerminalRecord } from './types.js';
 import { isNewerThanLiveView, readLiveSessions, reconcileExitedTerminals, type LiveSessionsView } from './watch.js';
-import { discoverCodexSessionFor, scheduleCodexDiscovery } from './codexDiscovery.js';
+import { discoverCodexSessionFor } from './codexDiscovery.js';
 import { agentSessionFromCommand } from './sessionIdentity.js';
+import { enqueueRelaunch, scheduleDiscoveryIfUnknown } from './restoreRelaunch.js';
+
+type LiveSession = { id: string; cwd: string; initialCommand?: string };
 
 export type RestoreDeps = {
   readLiveSessions: () => Promise<LiveSessionsView | null>;
-  listLiveSessions: () => Promise<Array<{ id: string; cwd: string; initialCommand?: string }>>;
+  listLiveSessions: () => Promise<LiveSession[]>;
   createSession: typeof proxyCreateSession;
   // Reclaims a pty whose tab was closed while the relaunch was in flight.
   killSession: (id: string) => Promise<boolean>;
@@ -71,7 +73,7 @@ const productionDeps: RestoreDeps = {
   readLiveSessions,
   listLiveSessions: async () => {
     const raw = await proxyListSessionsOrNull();
-    const out: Array<{ id: string; cwd: string; initialCommand?: string }> = [];
+    const out: LiveSession[] = [];
     for (const s of raw ?? []) {
       const r = s as { id?: unknown; cwd?: unknown; initialCommand?: unknown };
       if (typeof r.id === 'string' && typeof r.cwd === 'string') {
@@ -126,36 +128,14 @@ async function checkOwner(record: TerminalRecord, deps: RestoreDeps): Promise<Ow
   }
 }
 
-// The nudge decision plus (for Claude) the transcript-exists fact, from ONE
-// read of the harness's files.
-async function planRelaunch(
-  record: TerminalRecord,
-  deps: RestoreDeps,
-): Promise<{ nudge?: string; transcriptExists: boolean; agentSession?: AgentSessionRef }> {
-  const settings: UserSettings = await deps.getUserSettings(record.projectPath).catch(() => ({}));
-  const needsVerdict = record.agentSession?.harness === 'claude'
-    || (record.owner === 'user' && settings.restoreNudgeUserTabs === true);
-  let verdict: InterruptionVerdict | null = null;
-  if (needsVerdict) {
-    try { verdict = await deps.detectInterruption(record); } catch { verdict = null; }
-  }
-  let nudge: string | undefined;
-  if (record.owner === 'task' || record.owner === 'merge') {
-    nudge = settings.restoreNudgeAgents === false ? undefined : RESTORE_NUDGE;
-  } else if (record.owner === 'user' && settings.restoreNudgeUserTabs === true) {
-    nudge = verdict?.interruption === 'interrupted' ? RESTORE_NUDGE : undefined;
-  }
-  return {
-    nudge,
-    transcriptExists: verdict?.transcriptExists === true,
-    ...(verdict?.agentSession ? { agentSession: verdict.agentSession } : {}),
-  };
-}
-
 // Per project: the summary of the pass in progress plus a promise that settles
 // once every relaunch it queued has finished. A second call while that is
 // pending answers `already-running` instead of racing the thunks.
 const inFlight = new Map<string, Promise<void>>();
+
+// The longest a pass's relaunches may hold the single-flight: a stuck thunk
+// must not block every later restore of the project forever.
+const RELAUNCH_LOCK_MAX_HOLD_MS = 10 * 60_000;
 
 export type RestoreOptions = {
   // Also retry records that ended as `cwd-missing` / `restore-failed`. Only the
@@ -185,7 +165,7 @@ export async function restoreProjectTerminals(
     const { summary, relaunches } = await performRestore(projectPath, deps, options);
     // Hold the single-flight until the relaunches are done — but never let a
     // stuck thunk hold it forever.
-    const guard = setTimeout(done, 10 * 60_000);
+    const guard = setTimeout(done, RELAUNCH_LOCK_MAX_HOLD_MS);
     guard.unref();
     void Promise.allSettled(relaunches).then(() => {
       clearTimeout(guard);
@@ -241,31 +221,10 @@ async function performRestore(
       continue;
     }
     // 2. an unclaimed live AGENT pty in the same cwd running the same harness
-    //    → adopt. Plain shells and startup commands never adopt: with no
-    //    harness to match on, a dead shell record would claim whatever
-    //    non-agent pty happened to open in that folder (a freshly re-seeded
-    //    `npm run dev`, say).
-    const harness = agentHarnessForCommand(record.launch.initialCommand);
-    if (harness) {
-      const orphan = liveSessions.find((s) =>
-        !claimed.has(s.id) && normalizeCwd(s.cwd) === normalizeCwd(record.cwd)
-        && agentHarnessForCommand(s.initialCommand) === harness);
-      if (orphan) {
-        claimed.add(orphan.id);
-        // The record's own id belonged to its dead pty; the adopted one runs
-        // whatever conversation ITS command names. Keeping the old id would
-        // resume the wrong conversation on the next restart.
-        const orphanSession = agentSessionFromCommand(orphan.initialCommand);
-        const updated = await terminalRegistry.update(record.id, {
-          serverId: orphan.id,
-          serverInstanceId: live.instanceId ?? undefined,
-          ...(orphanSession ? { agentSession: orphanSession } : {}),
-        }, record.projectPath);
-        adopted += 1;
-        terminalRegistry.emitRestored(updated ?? record, 'adopted');
-        scheduleDiscoveryIfUnknown(updated ?? record);
-        continue;
-      }
+    //    → adopt.
+    if (await tryAdoptOrphan(record, liveSessions, claimed, live)) {
+      adopted += 1;
+      continue;
     }
     // 3. (handled by reconcileExitedTerminals: exited records are gone by now)
     // 4. relaunch, if the owner allows.
@@ -298,104 +257,34 @@ async function performRestore(
   return { summary, relaunches };
 }
 
-// A live Codex tab whose thread id was never learned (its discovery poll died
-// with the previous backend process) keeps looking, so a later relaunch can
-// resume it by id instead of `resume --last`.
-function scheduleDiscoveryIfUnknown(record: TerminalRecord): void {
-  if (record.launch.harness === 'codex' && !record.agentSession) {
-    scheduleCodexDiscovery(record.id, record.projectPath);
-  }
-}
-
-function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): Promise<void> {
-  // A retried failure keeps its FIRST failure time when it fails again, so the
-  // retention prune counts from the original failure, not the latest retry.
-  const firstFailedAt = record.ended?.reason === 'restore-failed' ? record.ended.at : undefined;
-  const { done } = deps.enqueue<void>({
-    kind: 'terminal-restore',
-    priority: 'batch',
-    dedupeKey: `terminal-restore:${record.id}`,
-    thunk: async () => {
-      const current = await terminalRegistry.get(record.id, record.projectPath);
-      // Closed while queued, or already backed by a pty again (another pass
-      // adopted / relaunched it in the meantime): nothing to spawn.
-      if (!current || current.ended || current.serverId) {
-        if (current?.relaunching) {
-          await terminalRegistry.update(current.id, { relaunching: undefined }, current.projectPath).catch(() => null);
-        }
-        return;
-      }
-      const fail = async (reason: string) => {
-        await terminalRegistry.update(current.id, { relaunching: undefined }, current.projectPath);
-        await terminalRegistry.end(
-          current.id, { reason: 'restore-failed', detail: reason, at: firstFailedAt }, current.projectPath,
-        );
-        terminalRegistry.emitRestoreFailed(current, reason);
-      };
-      // A Codex tab that died before its discovery poll caught the rollout:
-      // one last look now, so the relaunch resumes the thread by id rather
-      // than `resume --last` (the newest thread in the folder — possibly
-      // another tab's).
-      if (current.launch.harness === 'codex' && !current.agentSession) {
-        await deps.discoverCodexSession(current.id, current.projectPath).catch(() => false);
-      }
-      const latest = await terminalRegistry.get(current.id, current.projectPath) ?? current;
-      const plan = await planRelaunch(latest, deps);
-      const built = buildRestoreCommand({
-        launch: current.launch,
-        // A conversation the detector re-learned wins over the pinned id; the
-        // relaunch records it (registry.agentSession below) for next time.
-        agentSession: plan.agentSession ?? latest.agentSession,
-        claudeTranscriptExists: plan.transcriptExists,
-        nudge: plan.nudge,
-      });
-      const sess = await deps.createSession({
-        cwd: current.cwd,
-        initialCommand: built.command,
-        projectPath: current.projectPath,
-        isQaRun: current.launch.isQaRun,
-        taskId: current.launch.taskId,
-        mcpScope: current.launch.mcpScope,
-        registry: {
-          owner: current.owner,
-          label: current.label,
-          kind: current.kind,
-          taskId: current.taskId,
-          startupId: current.startupId,
-          piModel: current.launch.piModel,
-          existingId: current.id,
-          agentSession: built.agentSession,
-        },
-      });
-      if ('error' in sess) {
-        if (sess.code === 'CAP') throw new SpawnCapacityError(`terminal-restore ${current.id}: hard cap`);
-        await fail(sess.error);
-        return;
-      }
-      const restored = await terminalRegistry.get(current.id, current.projectPath);
-      // The tab was closed (record ended / removed) while the spawn was in
-      // flight — recordSpawnedTerminal's update found nothing to attach the
-      // new pty to. Nothing owns that agent now: kill it rather than leave it
-      // running headless with no tab to ever find it again.
-      if (!restored || restored.ended || restored.serverId !== sess.id) {
-        await deps.killSession(sess.id).catch(() => false);
-        notifySessionsFreed();
-        return;
-      }
-      terminalRegistry.emitRestored(restored, 'relaunched');
-      if (current.launch.harness === 'codex' && !built.agentSession) {
-        scheduleCodexDiscovery(current.id, current.projectPath);
-      }
-    },
-  });
-  return done.catch(async (err: unknown) => {
-    const reason = err instanceof Error ? err.message : String(err);
-    const current = await terminalRegistry.get(record.id, record.projectPath).catch(() => null);
-    if (!current || current.ended) return;
-    await terminalRegistry.update(current.id, { relaunching: undefined }, current.projectPath).catch(() => null);
-    await terminalRegistry
-      .end(current.id, { reason: 'restore-failed', detail: reason, at: firstFailedAt }, current.projectPath)
-      .catch(() => {});
-    terminalRegistry.emitRestoreFailed(current, reason);
-  });
+// Step 2: adopt an unclaimed live AGENT pty in the record's cwd running the
+// record's harness (the record lost its pty id). Plain shells and startup
+// commands never adopt: with no harness to match on, a dead shell record would
+// claim whatever non-agent pty happened to open in that folder (a freshly
+// re-seeded `npm run dev`, say). True once adopted (the pty is then claimed).
+async function tryAdoptOrphan(
+  record: TerminalRecord,
+  liveSessions: LiveSession[],
+  claimed: Set<string>,
+  live: LiveSessionsView,
+): Promise<boolean> {
+  const harness = agentHarnessForCommand(record.launch.initialCommand);
+  if (!harness) return false;
+  const orphan = liveSessions.find((s) =>
+    !claimed.has(s.id) && normalizeCwd(s.cwd) === normalizeCwd(record.cwd)
+    && agentHarnessForCommand(s.initialCommand) === harness);
+  if (!orphan) return false;
+  claimed.add(orphan.id);
+  // The record's own id belonged to its dead pty; the adopted one runs
+  // whatever conversation ITS command names. Keeping the old id would
+  // resume the wrong conversation on the next restart.
+  const orphanSession = agentSessionFromCommand(orphan.initialCommand);
+  const updated = await terminalRegistry.update(record.id, {
+    serverId: orphan.id,
+    serverInstanceId: live.instanceId ?? undefined,
+    ...(orphanSession ? { agentSession: orphanSession } : {}),
+  }, record.projectPath);
+  terminalRegistry.emitRestored(updated ?? record, 'adopted');
+  scheduleDiscoveryIfUnknown(updated ?? record);
+  return true;
 }
