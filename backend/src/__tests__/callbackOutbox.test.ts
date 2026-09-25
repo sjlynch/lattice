@@ -20,6 +20,7 @@ import {
   drainCallbackOutbox,
   isReplayableUrl,
   OUTBOX_MAX_AGE_MS,
+  OUTBOX_REPLAY_HEADER,
   renderCallbackScript,
   type OutboxEntry,
 } from '../callbackOutbox.js';
@@ -250,8 +251,11 @@ test("drain never POSTs outside its own API, leaves other instances' entries, dr
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
-  assert.equal(isReplayableUrl('http://127.0.0.1:5184/api/x', 'http://127.0.0.1:5184'), true);
-  assert.equal(isReplayableUrl('http://127.0.0.1:5185/api/x', 'http://127.0.0.1:5184'), false);
+  assert.equal(isReplayableUrl('http://127.0.0.1:5184/api/tasks/x/complete', 'http://127.0.0.1:5184'), true);
+  assert.equal(isReplayableUrl('http://127.0.0.1:5185/api/tasks/x/complete', 'http://127.0.0.1:5184'), false);
+  // Our own API, but not a completion callback: never replayed.
+  assert.equal(isReplayableUrl('http://127.0.0.1:5184/api/x', 'http://127.0.0.1:5184'), false);
+  assert.equal(isReplayableUrl('http://127.0.0.1:5184/api/merge-runs', 'http://127.0.0.1:5184'), false);
 });
 
 test('hook commands: Claude falls back to a retrying curl; Codex stays shell-free', () => {
@@ -332,6 +336,166 @@ test('an answered callback clears its own outbox entry (the hook may be killed b
       assert.equal(await readEntry(callbackOutboxEntryPath(done, dir)), null, 'answered → cleared');
       assert.ok(await readEntry(callbackOutboxEntryPath(failing, dir)), '5xx → kept for retry');
       assert.ok(await readEntry(callbackOutboxEntryPath(activity, dir)), 'not a completion route → untouched');
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('hook script that gives up releases its hold at once, so the replay is not pushed past the moment it stopped', async () => {
+  const dir = await tmpDir();
+  try {
+    const outbox = path.join(dir, 'outbox');
+    const script = await writeScript(dir, outbox, 400);
+    const down = await deadOrigin();
+    const url = `${down}/api/tasks/t3/complete?source=claude-stop-hook-task-complete`;
+    assert.equal(await runScript(script, url), 0);
+    const exitedAt = Date.now();
+    const entry = await readEntry(callbackOutboxEntryPath(url, outbox));
+    assert.ok(entry, 'undelivered callback must be kept');
+    assert.ok(entry.holdUntil !== undefined);
+    // Not the up-front worst case (budget + attempt timeout + grace ≈ createdAt + 25 s).
+    assert.ok(entry.holdUntil <= exitedAt, `holdUntil ${entry.holdUntil} must be <= exit ${exitedAt}`);
+    assert.ok(entry.holdUntil >= entry.createdAt);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('drain stamps every replay with the entry createdAt (the route-side freshness guard reads it)', async () => {
+  const dir = await tmpDir();
+  try {
+    const origin = 'http://127.0.0.1:5184';
+    const url = `${origin}/api/tasks/t1/complete?source=claude-stop-hook-task-complete`;
+    await fs.writeFile(callbackOutboxEntryPath(url, dir), JSON.stringify({ v: 1, url, createdAt: 1234 }));
+    let seen: string | null = null;
+    await drainCallbackOutbox({
+      backendOrigin: origin,
+      dir,
+      now: () => 5_000,
+      fetchImpl: (async (_u: string | URL | Request, init?: RequestInit) => {
+        seen = new Headers(init?.headers).get(OUTBOX_REPLAY_HEADER);
+        return new Response('{}', { status: 200 });
+      }) as typeof fetch,
+    });
+    assert.equal(seen, '1234');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('drain drops an entry for a non-callback route of our own API without fetching it', async () => {
+  const dir = await tmpDir();
+  try {
+    const origin = 'http://127.0.0.1:5184';
+    const targets = [`${origin}/api/merge-runs`, `${origin}/api/workflows/w1/run`];
+    for (const url of targets) {
+      await fs.writeFile(
+        callbackOutboxEntryPath(url, dir),
+        JSON.stringify({ v: 1, url, createdAt: 1_000, body: JSON.stringify({ project: 'C:/x' }) }),
+      );
+    }
+    let hits = 0;
+    const res = await drainCallbackOutbox({
+      backendOrigin: origin,
+      dir,
+      now: () => 5_000,
+      fetchImpl: (async () => {
+        hits++;
+        return new Response('', { status: 200 });
+      }) as typeof fetch,
+    });
+    assert.equal(hits, 0);
+    assert.deepEqual(res, { delivered: 0, dropped: 2, kept: 0 });
+    assert.deepEqual(await fs.readdir(dir), []);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('drain bookkeeping never resurrects an entry removed while it was being rewritten', async (t) => {
+  const dir = await tmpDir();
+  try {
+    const origin = 'http://127.0.0.1:5184';
+    const url = `${origin}/api/tasks/t1/complete?source=claude-stop-hook-task-complete`;
+    const file = callbackOutboxEntryPath(url, dir);
+    await fs.writeFile(file, JSON.stringify({ v: 1, url, createdAt: 1_000 }));
+    // A live delivery succeeds (the hook / ack unlinks the entry) between the
+    // drain's bookkeeping read and its rename: simulate it on the temp write.
+    const realWriteFile = fs.writeFile.bind(fs);
+    const writeMock = t.mock.method(fs, 'writeFile', (async (...args: Parameters<typeof fs.writeFile>) => {
+      await realWriteFile(...args);
+      const target = String(args[0]);
+      if (target.startsWith(file) && target !== file) await fs.unlink(file).catch(() => {});
+    }) as typeof fs.writeFile);
+    let res;
+    try {
+      res = await drainCallbackOutbox({
+        backendOrigin: origin,
+        dir,
+        now: () => 5_000,
+        fetchImpl: (async () => new Response('', { status: 503 })) as typeof fetch,
+      });
+    } finally {
+      writeMock.mock.restore();
+    }
+    assert.deepEqual(res, { delivered: 0, dropped: 0, kept: 1 });
+    assert.equal(await readEntry(file), null, 'the delivered entry must stay gone');
+    assert.deepEqual((await fs.readdir(dir)).filter((n) => n.endsWith('.tmp')), [], 'no temp file left behind');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('drain never removes or overwrites a newer entry a hook wrote while it was posting', async () => {
+  const dir = await tmpDir();
+  try {
+    const origin = 'http://127.0.0.1:5184';
+    const url = `${origin}/api/tasks/t1/complete?source=claude-stop-hook-task-complete`;
+    const file = callbackOutboxEntryPath(url, dir);
+    for (const status of [200, 503]) {
+      await fs.writeFile(file, JSON.stringify({ v: 1, url, createdAt: 1_000 }));
+      await drainCallbackOutbox({
+        backendOrigin: origin,
+        dir,
+        now: () => 5_000,
+        fetchImpl: (async () => {
+          // A newer Stop for the same URL lands mid-request.
+          await fs.writeFile(file, JSON.stringify({ v: 1, url, createdAt: 2_000, holdUntil: 99_000 }));
+          return new Response('', { status });
+        }) as typeof fetch,
+      });
+      const kept = await readEntry(file);
+      assert.equal(kept?.createdAt, 2_000, `HTTP ${status}: the newer entry survives`);
+      assert.equal(kept?.holdUntil, 99_000, `HTTP ${status}: and is not rewritten`);
+      assert.equal(kept?.attempts, undefined);
+    }
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('the ack middleware leaves a replay alone (the drain owns that entry)', async () => {
+  const express = (await import('express')).default;
+  const { buildCallbackOutboxAck } = await import('../callbackOutbox/ack.js');
+  const dir = await tmpDir();
+  try {
+    const app = express();
+    let origin = '';
+    app.use((req, res, next) => buildCallbackOutboxAck(origin, dir)(req, res, next));
+    app.post('/api/tasks/:id/complete', (_req, res) => res.json({ ok: true }));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((r) => server.once('listening', () => r()));
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const url = `${origin}/api/tasks/t1/complete?source=claude-stop-hook-task-complete`;
+      // A newer Stop's entry, written while an older one was being replayed.
+      await fs.writeFile(callbackOutboxEntryPath(url, dir), JSON.stringify({ v: 1, url, createdAt: 2_000 }));
+      await fetch(url, { method: 'POST', headers: { [OUTBOX_REPLAY_HEADER]: '1000' } });
+      await new Promise((r) => setTimeout(r, 50));
+      assert.equal((await readEntry(callbackOutboxEntryPath(url, dir)))?.createdAt, 2_000);
     } finally {
       await new Promise<void>((r) => server.close(() => r()));
     }
