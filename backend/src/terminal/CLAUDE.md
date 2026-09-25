@@ -98,8 +98,14 @@ owns the node-pty processes.
   poisoned `process.env` — it fails if the call is removed, reordered after
   `applyFreshWindowsPath`, or if a new leak of the same shape appears.
 - `codexTrust.ts` — recognizes Lattice-started `codex` initial commands and
-  injects Codex's one-shot `--config projects.<cwd>.trust_level='trusted'`
-  override. The dynamic TOML value rides in the child PTY environment with
+  injects Codex's one-shot `--config projects={'<cwd>'={trust_level='trusted'}}`
+  override. The path is an inline-table key in the VALUE because Codex splits a
+  `-c` KEY on every `.` and keeps quotes in the segment (every worktree path
+  has `.lattice` in it); it is a single-quoted literal (`tomlString`, which
+  lives here and is re-exported by `mcp/codexServerConfig.ts`) because cmd's
+  `"%VAR%"` strips inner double quotes. A table-valued `projects` override is
+  merged over the user's `[projects]`, not a replacement. The dynamic TOML
+  value rides in the child PTY environment with
   shell-specific expansion syntax, so paths are not interpolated into shell
   source. This trusts the cwd only for that Codex process and never writes the
   user's `~/.codex/config.toml`. Also home to the shared `--config`-injection
