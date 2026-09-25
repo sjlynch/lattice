@@ -21,8 +21,15 @@
 // with no chance to log it. So falling back is deliberately temporary — see
 // UNAVAILABLE_COOLDOWN_MS.
 
-import { Worker } from 'node:worker_threads';
 import type { HealthMetrics } from '../types.js';
+import {
+  DEFAULT_ANALYSIS_STALL_MS,
+  createStallTimer,
+  spawnEvalWorker,
+  terminateQuietly,
+  type AnalysisWorkerHandle,
+  type StallTimer,
+} from '../analysisWorker.js';
 
 export type IsolatedAnalysis = { metrics: HealthMetrics; imports: string[] };
 
@@ -39,16 +46,15 @@ export class WorkerUnavailableError extends Error {
 }
 
 // Minimal structural worker view so tests can inject a fake without a real thread.
-export type WorkerHandle = {
-  on(event: 'message' | 'error' | 'exit', cb: (arg: any) => void): unknown;
+// The shared base (`on` / `terminate`, ../analysisWorker.ts) plus the job channel.
+export type WorkerHandle = AnalysisWorkerHandle & {
   postMessage(value: unknown): void;
-  terminate(): unknown;
   unref?(): unknown;
 };
 export type WorkerData = { analyzeUrl: string };
 export type WorkerFactory = (data: WorkerData) => WorkerHandle;
 
-const DEFAULT_STALL_MS = 10_000;
+const DEFAULT_STALL_MS = DEFAULT_ANALYSIS_STALL_MS;
 const MAX_SPAWN_FAILURES = 3;
 // How long the worker stays written off after the failure ceiling is hit.
 //
@@ -88,11 +94,10 @@ parentPort.on('message', async (msg) => {
 `;
 
 function defaultCreateWorker(data: WorkerData): WorkerHandle {
-  // execArgv: [] so the worker never inherits a TS loader (see dev.mjs). unref()
-  // so a warm idle worker never keeps the process from exiting.
-  const w = new Worker(WORKER_SRC, { eval: true, workerData: data, execArgv: [] });
-  w.unref();
-  return w;
+  // spawnEvalWorker pins execArgv: [] so the worker never inherits a TS loader
+  // (see dev.mjs). unref() so a warm idle worker never keeps the process from
+  // exiting.
+  return spawnEvalWorker(WORKER_SRC, data, { unref: true });
 }
 
 function defaultAnalyzeUrl(): string {
@@ -128,7 +133,7 @@ export class IsolatedAnalyzer {
   private worker: WorkerHandle | null = null;
   private inFlight: Pending | null = null;
   private readonly queue: Pending[] = [];
-  private stallTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly stall: StallTimer;
   private spawnFailures = 0;
   // Init failure means the compiled analyze.js isn't loadable at all (src under
   // tsx, a broken build) — retrying can never help, so this one is for good.
@@ -142,6 +147,10 @@ export class IsolatedAnalyzer {
     this.createWorker = opts.createWorker ?? defaultCreateWorker;
     this.analyzeUrl = opts.analyzeUrl ?? defaultAnalyzeUrl();
     this.cooldownMs = opts.cooldownMs ?? UNAVAILABLE_COOLDOWN_MS;
+    // unref: a pending watchdog must not hold the event loop open at shutdown
+    // (every other timer in the codebase is unref'd; this one kept the process
+    // alive for up to stallMs after the last handle closed).
+    this.stall = createStallTimer(this.stallMs, () => this.onStall(), { unref: true });
   }
 
   // True while the worker is written off: permanently after an init failure,
@@ -170,7 +179,7 @@ export class IsolatedAnalyzer {
   }
 
   dispose(): void {
-    this.clearStall();
+    this.stall.clear();
     this.killWorker();
     const err = new WorkerUnavailableError();
     if (this.inFlight) {
@@ -204,7 +213,7 @@ export class IsolatedAnalyzer {
       this.onWorkerDeath(item);
       return;
     }
-    this.armStall();
+    this.stall.arm();
   }
 
   // Returns false only when spawning failed AND the failure ceiling was hit.
@@ -243,7 +252,7 @@ export class IsolatedAnalyzer {
         console.error('[health] isolated analyzer init failed:', msg.error);
       }
       this.permanentlyUnavailable = true;
-      this.clearStall();
+      this.stall.clear();
       this.killWorker();
       const inFlight = this.inFlight;
       this.inFlight = null;
@@ -253,7 +262,7 @@ export class IsolatedAnalyzer {
       return;
     }
     if (msg.type === 'result') {
-      this.clearStall();
+      this.stall.clear();
       const item = this.inFlight;
       this.inFlight = null;
       // A successful spawn+run resets the failure counter.
@@ -285,7 +294,7 @@ export class IsolatedAnalyzer {
   // onStall and null out inFlight first). The interrupted job, if any, is retried
   // in-thread (reject); queued jobs continue on a respawn unless we give up.
   private onWorkerDeath(interrupted?: Pending): void {
-    this.clearStall();
+    this.stall.clear();
     this.killWorker();
     this.spawnFailures += 1;
     if (this.spawnFailures >= MAX_SPAWN_FAILURES) this.giveUpForNow();
@@ -295,29 +304,9 @@ export class IsolatedAnalyzer {
     this.pump();
   }
 
-  private armStall(): void {
-    this.clearStall();
-    this.stallTimer = setTimeout(() => this.onStall(), this.stallMs);
-    // A pending watchdog must not hold the event loop open at shutdown (every
-    // other timer in the codebase is unref'd; this one kept the process alive
-    // for up to stallMs after the last handle closed).
-    this.stallTimer.unref?.();
-  }
-
-  private clearStall(): void {
-    if (this.stallTimer) {
-      clearTimeout(this.stallTimer);
-      this.stallTimer = null;
-    }
-  }
-
   private killWorker(): void {
     if (this.worker) {
-      try {
-        this.worker.terminate();
-      } catch {
-        /* ignore */
-      }
+      terminateQuietly(this.worker);
       this.worker = null;
     }
   }

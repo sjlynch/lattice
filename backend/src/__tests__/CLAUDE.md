@@ -53,3 +53,4 @@ importing them by relative path.
 - `latticeApiDocsDrift` — the API doc templates and the root `CLAUDE.md` HTTP table vs the live router; a new route fails until documented or added to `UNDOCUMENTED_ROUTES`.
 - `latticeApiDocs` — the generated `LATTICE_API.md` index (read whole on every Lattice question) must stay under 5 KB, even for a long project path.
 - `defaultPromptMigrations` — backend built-in step prompts must match the frontend `prompts/*.md` bytes.
+- `regExpTemplateEscapes` — no ``new RegExp(`…`)`` template in `backend/src`/`frontend/src` may use a single-backslash escape (`\.` is lost to `.` in a template literal).

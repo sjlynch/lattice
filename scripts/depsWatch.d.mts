@@ -1,9 +1,10 @@
-import type { spawn } from 'node:child_process';
 import type { StaleDep } from './depsCheck.mjs';
+import type { InstallHandle } from './npmInstall.mjs';
 
 // Hand-written declarations for the post-boot dependency watcher, so TS
 // consumers (the backend __tests__ suite) get types for it.
-// Keep in sync with depsWatch.mjs.
+// Keep in sync with depsWatch.mjs; the install runner's types live in
+// npmInstall.d.mts.
 
 export const DEPS_MANIFEST_FILES: string[];
 export const DEPS_WATCH_DEBOUNCE_MS: number;
@@ -21,27 +22,8 @@ export function planDepsAction(args: {
   force?: boolean;
   failures?: number;
 }): 'in-step' | 'install' | 'skip-failed';
-export function classifyInstallFailure(output: string | null | undefined): { locked: boolean; nodePty: boolean };
-export function installFailureHint(
-  failure: { locked: boolean; nodePty: boolean },
-  platform?: NodeJS.Platform,
-): string;
-
-export interface InstallResult {
-  code: number;
-  output: string;
-}
-export interface InstallHandle {
-  done: Promise<InstallResult>;
-  kill(): void;
-}
-export function runNpmInstall(args: {
-  cwd: string;
-  recordLabel: string;
-  forward?: (line: string, stream: 'stdout' | 'stderr') => void;
-  spawnProcess?: typeof spawn;
-  platform?: NodeJS.Platform;
-}): InstallHandle;
+export { classifyInstallFailure, installFailureHint, runNpmInstall } from './npmInstall.mjs';
+export type { InstallHandle, InstallResult } from './npmInstall.mjs';
 
 export interface WatcherLike {
   close(): void;

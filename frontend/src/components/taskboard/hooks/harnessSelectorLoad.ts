@@ -24,10 +24,12 @@ export type HarnessSettingsLoadDeps = {
     folder: string,
     partial: Partial<UserSettings>,
   ) => Promise<unknown>;
-  // True once a newer load has superseded this one. Evaluated AFTER the fetch
-  // resolves: on a fast project switch a slow project-A response must not
-  // overwrite the just-selected project B's harness/Pi state, nor persist a
-  // coerced `harness: claude` patch under the wrong (now-inactive) folder.
+  // True once a newer load — or a user pick in the dropdown — has superseded
+  // this one. Evaluated AFTER the fetch resolves: on a fast project switch a
+  // slow project-A response must not overwrite the just-selected project B's
+  // harness/Pi state, nor persist a coerced `harness: claude` patch under the
+  // wrong (now-inactive) folder; and a GET that began before the user's PATCH
+  // must not revert the harness they just picked.
   isStale: () => boolean;
   setHarness: (harness: HarnessChoice) => void;
   setPiModel: (piModel: string | undefined) => void;
