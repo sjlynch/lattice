@@ -8,6 +8,7 @@ import { projectGit } from '../worktree/projectGit.js';
 import { reconcileStaleState } from '../worktree/reconcile.js';
 import { cleanupWorktreeForTask, type WorktreeCleanupDeps } from '../worktree/cleanup.js';
 import {
+  DISCARDED_WORKTREE_ARCHIVE_MIN_AGE_MS,
   DISCARDED_WORKTREE_MANIFEST_FILENAME,
   archiveUncommittedWorktreeChanges,
   pruneDiscardedWorktreeArchives,
@@ -204,6 +205,33 @@ test('archive retention keeps the newest N and never touches pending merge snaps
       '2026-01-04-discarded-worktree-t3-x',
       '2026-01-05-discarded-worktree-t4-x',
     ]);
+  });
+});
+
+test('archive retention never prunes an archive younger than the minimum age', async () => {
+  await withRepo(async (repo) => {
+    const root = path.join(SNAPSHOTS_BASE, projectHash(repo));
+    await fs.mkdir(root, { recursive: true });
+    const now = Date.now();
+    const archiveDir = (i: number) => path.join(root, `2026-09-25-discarded-worktree-t${String(i).padStart(2, '0')}-x`);
+    const writeArchive = async (i: number, createdAt: number) => {
+      await fs.mkdir(path.join(archiveDir(i), 'files'), { recursive: true });
+      await fs.writeFile(path.join(archiveDir(i), DISCARDED_WORKTREE_MANIFEST_FILENAME), JSON.stringify({
+        kind: 'discarded-worktree', version: 1, createdAt,
+      }));
+    };
+    // A burst: 25 archives all written seconds ago — far past KEEP, none old.
+    for (let i = 0; i < 25; i++) await writeArchive(i, now - 25_000 + i * 1000);
+    assert.equal(await pruneDiscardedWorktreeArchives(repo), 0);
+    assert.equal((await archivesFor(repo)).length, 25);
+
+    // Backdate the 5 oldest past the window: exactly those are removed.
+    const old = now - DISCARDED_WORKTREE_ARCHIVE_MIN_AGE_MS - 60_000;
+    for (let i = 0; i < 5; i++) await writeArchive(i, old + i);
+    assert.equal(await pruneDiscardedWorktreeArchives(repo), 5);
+    const left = (await archivesFor(repo)).map((d) => path.basename(d)).sort();
+    assert.equal(left.length, 20);
+    for (let i = 0; i < 5; i++) assert.ok(!left.includes(path.basename(archiveDir(i))));
   });
 });
 

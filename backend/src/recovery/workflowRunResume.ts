@@ -33,6 +33,7 @@ import {
 } from '../workflowRuns.js';
 import { loadPersistedWorkflowRuns } from '../workflowRuns/persistence.js';
 import { requestStopHookStepComplete } from '../workflowRuns/stopHookGate.js';
+import { waitForStepPreRunBegin } from '../workflowRuns/stepTools.js';
 import { getActiveHookForProject } from '../postMergeHooks.js';
 import { findCompletedPushRunForWorkflowStep, findRunningPushRunForWorkflowStep } from '../pushRuns.js';
 import {
@@ -89,8 +90,20 @@ export async function resumeInterruptedWorkflowRuns(
   // registered; do not hold them behind scratch setup or redispatched workers.
   onRegistryReady();
   for (const run of recovered) {
-    await resumePersistedRun(run, sessions, backendOrigin, true).catch((err) =>
+    // Resolve once the run's dispatch decision is made and applied, not when
+    // its re-dispatched agent step finishes its pre-run: a redispatch (or a
+    // `complete` that dispatches the next step) awaits the step's pre-run tools
+    // — an Opengrep scan, minutes — before it spawns, and the boot chain behind
+    // this (outbox replay for EVERY project, merge-run resume, owed post-merge
+    // hooks) must not wait on that. The resume keeps running detached.
+    const preRun = waitForStepPreRunBegin(run.id);
+    const resumed = resumePersistedRun(run, sessions, backendOrigin, true).catch((err) =>
       console.error(`[startup] workflow run ${run.id}: resume failed:`, err));
+    try {
+      await Promise.race([resumed, preRun.begun]);
+    } finally {
+      preRun.dispose();
+    }
   }
 }
 
@@ -273,7 +286,7 @@ export async function resumePersistedRun(
 
 // The Stop the gate was holding for the run's CURRENT step when the previous
 // process went down (WorkflowRun.stopReceived), else undefined.
-function heldStop(run: WorkflowRun): { stopAt: number; activeAt?: number } | undefined {
+function heldStop(run: WorkflowRun): { stopAt: number; activeAt?: number; busy?: boolean } | undefined {
   const s = run.stopReceived;
-  return s && s.stepIndex === run.currentStepIndex ? { stopAt: s.at, activeAt: s.activeAt } : undefined;
+  return s && s.stepIndex === run.currentStepIndex ? { stopAt: s.at, activeAt: s.activeAt, busy: s.busy } : undefined;
 }

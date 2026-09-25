@@ -9,7 +9,7 @@ import {
 import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
 
 type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
-type CloseTerminalsForTask = (taskId: string) => void;
+type CloseTerminalsForTask = (taskId: string, keep?: { id?: string; serverId?: string }) => void;
 type ShowError = (msg: string) => void;
 
 // Build a user-facing label for a per-task merge-run error. Resolves just the
@@ -137,8 +137,13 @@ export function useMergeRunSync(
         // Drop any stale tab for this task first (a resolver abort → re-merge
         // re-emits `conflict` with a fresh serverId) so one task never owns two
         // merge-kind tabs — the same replace-don't-duplicate rule the
-        // `task-spawned` handler applies.
-        closeTerminalsForTask(ev.taskId);
+        // `task-spawned` handler applies. And the same exemption: never the
+        // fresh resolver's own tab. The registry's `upsert` for it usually
+        // lands BEFORE this event and has already mounted it (tagged with
+        // this taskId), so a plain per-task close DELETEd the resolver ~20 ms
+        // after it spawned — the run then saw it dead, stopped, and a workflow
+        // Merge step failed with "made no progress" (2026-09-25).
+        closeTerminalsForTask(ev.taskId, { id: ev.terminalId, serverId: ev.serverId });
         addTerminal({
           id: ev.terminalId,
           label: `merge:${ev.taskId.slice(-6)}`,

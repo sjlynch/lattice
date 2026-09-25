@@ -52,8 +52,14 @@ that is already running.
   eight-tool read / `my_task` / file / report set with the board-management
   tools (`update_task`, `transition_tasks`, `delete_task`, `run_task`) left
   out. Both sets also carry the three Opengrep tools (14 / 11 tools in
-  total). Registered via `registerTool` + zod input schemas. Also owns
-  `toToolResult`, the outcome → MCP-result mapping.
+  total). A short composition: builds the client + `McpServer`, calls the
+  `tools/` registrars in order (tool order is what the model sees), and keeps
+  the `taskId` board-management gate visible.
+- `toolResult.ts` — `ToolResult`, `toToolResult` (outcome → MCP-result mapping), `withKeptBranchHint`, `STATUS_DESC`.
+- `tools/readTools.ts` — `board_summary`, `list_tasks`, `get_task`, `my_task` (worktree only), `search_tasks`.
+- `tools/writeTools.ts` — `create_task`, `create_tasks`, `append_summary`.
+- `tools/opengrepTools.ts` — `opengrep_scan`, `opengrep_findings`, `opengrep_ignore` (+ the digest unwrap).
+- `tools/boardManagementTools.ts` — `update_task`, `transition_tasks`, `delete_task`, `run_task` (not in a worktree session).
 - `client.ts` — the HTTP layer. Builds URLs with `project` pinned (sent on
   EVERY call, so the by-id routes can 404 a foreign task), sends/parses JSON,
   asserts the response's `canonicalProject` (envelopes) or `projectPath` (a

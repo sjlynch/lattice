@@ -14,17 +14,33 @@
 //      git Lattice runs), so the loose objects a run of merges produces still
 //      get packed — but only when the disk can hold another full copy of the
 //      packs above the free-space reserve, and never while the project is
-//      merging.
+//      merging. The gc holds the project run lock (non-lendable, label
+//      REPO_MAINTENANCE_LOCK_LABEL) for its whole duration, so no merge run,
+//      manual /merge, workflow Merge step or resolver finalize can start while
+//      it repacks: their git processes would map the old packs and, on Windows,
+//      the repack could not delete them — a full leftover copy of the packs
+//      per maintenance (9af5a47). startMergeRun refuses while maintenance is in
+//      flight (isRepoMaintenanceRunning) and the workflow control steps wait for
+//      it (waitForRepoMaintenance).
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { projectGit } from './projectGit.js';
 import { freeBytesAt, formatBytes, minFreeDiskBytes } from './diskSpace.js';
+import {
+  acquireProjectRunLock,
+  ProjectRunLockedError,
+  REPO_MAINTENANCE_LOCK_LABEL,
+  type ProjectRunLockHandle,
+} from '../projectRunLock.js';
 
 export const PACK_DEBRIS_MIN_AGE_MS = 6 * 60 * 60_000;
 // git treats a gc.pid older than 12 h as stale.
 const GC_PID_STALE_MS = 12 * 60 * 60_000;
 const GC_TIMEOUT_MS = 60 * 60_000;
+// Upper bound for a waiter: the gc's own timeout plus slack for the sweep /
+// count-objects around it. The in-flight promise always settles before this.
+export const REPO_MAINTENANCE_MAX_WAIT_MS = GC_TIMEOUT_MS + 5 * 60_000;
 
 export type RepoMaintenanceDeps = {
   now: () => number;
@@ -32,6 +48,8 @@ export type RepoMaintenanceDeps = {
   minFreeBytes: () => Promise<number>;
   // true while something else is merging in the project (skip entirely).
   isBusy: (repoRoot: string) => boolean;
+  acquireLock: (repoRoot: string) => Promise<ProjectRunLockHandle>;
+  runGc: (repoRoot: string) => Promise<{ code: number; stdout: string; stderr: string }>;
 };
 
 const defaultDeps: RepoMaintenanceDeps = {
@@ -39,6 +57,8 @@ const defaultDeps: RepoMaintenanceDeps = {
   freeBytesAt,
   minFreeBytes: minFreeDiskBytes,
   isBusy: () => false,
+  acquireLock: (repoRoot) => acquireProjectRunLock(repoRoot, REPO_MAINTENANCE_LOCK_LABEL, { lendable: false }),
+  runGc: (repoRoot) => projectGit(repoRoot, ['gc', '--auto', '--quiet'], { timeoutMs: GC_TIMEOUT_MS, autoGc: 'foreground' }),
 };
 
 async function commonGitDir(repoRoot: string): Promise<string | null> {
@@ -117,10 +137,42 @@ async function packedBytes(repoRoot: string): Promise<number | null> {
 
 const inFlight = new Map<string, Promise<void>>();
 
+const maintenanceKey = (repoRoot: string): string => path.resolve(repoRoot).toLowerCase();
+
+// True while this process's housekeeping for `repoRoot` is in flight.
+export function isRepoMaintenanceRunning(repoRoot: string): boolean {
+  return inFlight.has(maintenanceKey(repoRoot));
+}
+
+// Resolves once no housekeeping for `repoRoot` is in flight: true when idle,
+// false if still running after `maxWaitMs`. Never rejects.
+export async function waitForRepoMaintenance(
+  repoRoot: string,
+  maxWaitMs: number = REPO_MAINTENANCE_MAX_WAIT_MS,
+): Promise<boolean> {
+  const deadline = Date.now() + maxWaitMs;
+  for (;;) {
+    const running = inFlight.get(maintenanceKey(repoRoot));
+    if (!running) return true;
+    const left = deadline - Date.now();
+    if (left <= 0) return false;
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = await Promise.race([
+      running.then(() => false),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(true), left);
+        timer.unref?.();
+      }),
+    ]);
+    clearTimeout(timer);
+    if (timedOut) return false;
+  }
+}
+
 // Run the housekeeping for `repoRoot`; single-flight per repo; never throws.
 export function runRepoMaintenance(repoRoot: string, overrides: Partial<RepoMaintenanceDeps> = {}): Promise<void> {
   const deps = { ...defaultDeps, ...overrides };
-  const key = path.resolve(repoRoot).toLowerCase();
+  const key = maintenanceKey(repoRoot);
   const running = inFlight.get(key);
   if (running) return running;
   const p = maintain(repoRoot, deps)
@@ -154,8 +206,23 @@ async function maintain(repoRoot: string, deps: RepoMaintenanceDeps): Promise<vo
     return;
   }
   if (deps.isBusy(repoRoot)) return;
-  const gc = await projectGit(repoRoot, ['gc', '--auto', '--quiet'], { timeoutMs: GC_TIMEOUT_MS, autoGc: 'foreground' });
-  if (gc.code !== 0) {
-    console.warn(`[git-maintenance] ${repoRoot}: git gc --auto exited ${gc.code}: ${gc.stderr.trim() || gc.stdout.trim()}`);
+  // Hold the project run lock across the gc: a merge that started after the
+  // isBusy check above would otherwise run alongside a multi-GB repack. If
+  // anything holds it (a merge, a workflow step, another process), skip.
+  let lock: ProjectRunLockHandle;
+  try {
+    lock = await deps.acquireLock(repoRoot);
+  } catch (err) {
+    if (err instanceof ProjectRunLockedError) return;
+    throw err;
+  }
+  try {
+    if (deps.isBusy(repoRoot)) return;
+    const gc = await deps.runGc(repoRoot);
+    if (gc.code !== 0) {
+      console.warn(`[git-maintenance] ${repoRoot}: git gc --auto exited ${gc.code}: ${gc.stderr.trim() || gc.stdout.trim()}`);
+    }
+  } finally {
+    await lock.release().catch(() => undefined);
   }
 }

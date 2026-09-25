@@ -12,7 +12,8 @@
 // mergeLocks.ts, so a manual /merge call landing during a run can't race.
 
 import { listTasks } from './tasks.js';
-import { runRepoMaintenance } from './worktree/repoMaintenance.js';
+import { isRepoMaintenanceRunning, runRepoMaintenance } from './worktree/repoMaintenance.js';
+import { REPO_MAINTENANCE_BUSY_MESSAGE } from './projectRunLock.js';
 import { processTarget } from './mergeRuns/processTarget.js';
 import { runPreflight } from './mergeRuns/preflight.js';
 import {
@@ -114,6 +115,16 @@ export async function startMergeRun(
   deps = { listTasks, runPreflight, processTarget },
 ): Promise<MergeRun> {
   const lockMode = options.lockMode ?? 'acquire';
+
+  // Never start merging alongside the post-run `git gc --auto`: this run's git
+  // processes would map the packs a repack is replacing, and on Windows the old
+  // ones then can't be deleted (a full leftover copy per maintenance). The gc
+  // also holds the run lock, which catches the window before it takes it; this
+  // refuses for the whole housekeeping with a message that says why. 'inherit'
+  // callers (the workflow Merge step) already waited for it before their lock.
+  if (lockMode === 'acquire' && isRepoMaintenanceRunning(projectPath)) {
+    throw new Error(REPO_MAINTENANCE_BUSY_MESSAGE);
+  }
 
   // Lock acquisition + active-run (409) detection. Throws before any run
   // record exists if a run is already in progress (in- or cross-process).

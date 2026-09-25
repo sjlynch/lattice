@@ -132,7 +132,12 @@ function readStopReceived(raw: unknown): WorkflowRun['stopReceived'] {
   const at = num(s.at);
   if (stepIndex === undefined || !Number.isInteger(stepIndex) || stepIndex < 0 || at === undefined) return undefined;
   const activeAt = num(s.activeAt);
-  return { stepIndex, at, ...(activeAt !== undefined ? { activeAt } : {}) };
+  return {
+    stepIndex,
+    at,
+    ...(activeAt !== undefined ? { activeAt } : {}),
+    ...(typeof s.busy === 'boolean' ? { busy: s.busy } : {}),
+  };
 }
 
 // Per-step summaries (Run tests). Display text only — keep string values under
