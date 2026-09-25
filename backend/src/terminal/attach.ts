@@ -120,12 +120,17 @@ export function attachTerminal(ws: WebSocket, opts: AttachOpts) {
   }
 
   ws.on('message', (raw) => {
-    let msg: { type: string; data?: string; cols?: unknown; rows?: unknown };
+    let msg: { type?: unknown; data?: unknown; cols?: unknown; rows?: unknown } | null;
     try {
       msg = JSON.parse(raw.toString());
     } catch {
       return;
     }
+    // `null`, a number, a string or an array parses fine but is not a frame:
+    // reading `.type` off `null` would throw outside the try, inside a ws
+    // listener — an uncaughtException that takes down the detached
+    // terminal-server and every live pty with it.
+    if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return;
     if (msg.type === 'input' && typeof msg.data === 'string') {
       try {
         session.pty.write(msg.data);
