@@ -35,7 +35,7 @@ export function useTaskBoardRunControllers(
     showError,
   );
   const harness = useHarnessSelector(activeFolder);
-  const qaPlaywright = useQaPlaywright(activeFolder);
+  const qaPlaywright = useQaPlaywright(activeFolder, showError);
   const qaRuns = useQaRuns(
     activeFolder,
     addTerminal,

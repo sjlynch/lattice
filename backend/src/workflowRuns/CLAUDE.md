@@ -66,7 +66,9 @@ explicit-curl callbacks — never by polling task state.
   (`isWorkflowRecoveryDone` / `whenWorkflowRecoveryDone`).
 
 **Control steps** (`start` / `merge` / `push`, headless)
-- `controlStep.ts` — `executeControlStep`: lock lifecycle + kind → worker.
+- `controlStep.ts` — `executeControlStep`: lock lifecycle + kind → worker
+  (`acquireControlStepLock` → kind runner → release → `settleControlStep`).
+- `runErrored.ts` — `markRunErrored`: shared "error a running run" (status, finishedAt, error, notify, checkpoint); not `failWorkflowRun`.
 - `controlSteps/` — the workers; read [`controlSteps/CLAUDE.md`](./controlSteps/CLAUDE.md).
 
 **Run tests step** (`test`) — `testStep/`; read [`testStep/CLAUDE.md`](./testStep/CLAUDE.md).

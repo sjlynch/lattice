@@ -8,6 +8,8 @@ import type { Panel } from './hooks/usePanelState';
 type Props = {
   activePanel: Panel;
   startupCount: number;
+  // A restart's spawns are still awaiting their pre-create.
+  restartPending: boolean;
   onRestartStartup: () => void;
   onRestoreTabs: () => void;
   defaultKind: ShellKind;
@@ -20,6 +22,7 @@ type Props = {
 export function SidebarHeaderActions({
   activePanel,
   startupCount,
+  restartPending,
   onRestartStartup,
   onRestoreTabs,
   defaultKind,
@@ -34,7 +37,7 @@ export function SidebarHeaderActions({
           onClick={onRestartStartup}
           title="Stop and restart all startup terminals"
           aria-label="Stop and restart all startup terminals"
-          disabled={startupCount === 0}
+          disabled={startupCount === 0 || restartPending}
         >
           <RefreshCw size={HEADER_ICON_SIZE} />
         </button>

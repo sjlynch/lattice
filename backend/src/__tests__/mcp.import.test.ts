@@ -2,10 +2,20 @@
 // secret-classification (security-relevant — a literal key must land in the
 // secrets file, not inline in globalSettings.json; a reference stays unstored).
 // Split out of the original monolithic mcp.test.ts; adds HTTP-header secret
-// coverage for the import header-leak fix.
+// coverage for the import header-leak fix, and the url/args embedded-secret fix
+// (scan redacts, apply refuses — never written to globalSettings.json).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCodexMcpServers, normalizeServer } from '../mcp/importConfigs.js';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  applyImport,
+  normalizeServer,
+  parseCodexMcpServers,
+  scanImportableServers,
+} from '../mcp/importConfigs.js';
+import { latticeHomeDir } from '../projectPath.js';
 
 // ---- parseCodexMcpServers: minimal TOML reader for [mcp_servers.*] ----
 
@@ -201,4 +211,124 @@ test('normalize: a ${reference} HTTP header is recorded but not stored', () => {
   assert.ok(n.entry.secretHeaders?.includes('X-Api-Key'));
   assert.equal(n.secrets['X-Api-Key'], undefined); // placeholder, nothing stored
   assert.equal(n.entry.headers?.['X-Api-Key'], undefined); // useless placeholder dropped
+});
+
+// ---- secrets embedded in url / args (no env/header slot to move them to) ----
+
+test('normalize: a secret embedded in a url is redacted and flagged', () => {
+  const cases: Array<[string, string]> = [
+    ['https://host.example/mcp?api_key=sk-queryleak123', 'sk-queryleak123'],
+    ['https://host.example/mcp?format=json&token=opaqueleak', 'opaqueleak'],
+    ['https://alice:tokenleak456@host.example/mcp', 'tokenleak456'],
+    ['https://actions.example.com/mcp/sk-ak-pathleak999/sse', 'sk-ak-pathleak999'],
+  ];
+  for (const [url, secret] of cases) {
+    const n = normalizeServer('remote', { url }, 't');
+    assert.ok(n, url);
+    assert.ok(!n.entry.url?.includes(secret), `${url} → ${n.entry.url}`);
+    assert.ok(n.embeddedSecrets.length > 0, `${url} flagged`);
+    assert.ok(!JSON.stringify(n.embeddedSecrets).includes(secret), 'findings never carry the value');
+  }
+  // The non-secret parts survive for display.
+  const q = normalizeServer('remote', { url: 'https://host.example/mcp?format=json&token=x1' }, 't');
+  assert.equal(q?.entry.url, 'https://host.example/mcp?format=json&token=***');
+});
+
+test('normalize: a secret embedded in args is redacted and flagged', () => {
+  const cases: Array<[string[], string]> = [
+    [['-y', 'some-mcp', '--api-key', 'sk-argleak789'], 'sk-argleak789'],
+    [['-y', 'some-mcp', '--api-key=plainleak'], 'plainleak'],
+    [['run', '-e', 'API_KEY=dockerleak', 'img'], 'dockerleak'],
+    [['-y', 'mcp-remote', 'https://h/sse', '--header', 'Authorization:Bearer hdrleakABC123'], 'hdrleakABC123'],
+    [['-y', 'mcp-remote', 'https://bob:urlargleak@h/sse'], 'urlargleak'],
+    [['-y', 'svc', 'ghp_0123456789abcdefABCDEF0123456789ab'], 'ghp_0123456789abcdefABCDEF0123456789ab'],
+  ];
+  for (const [args, secret] of cases) {
+    const n = normalizeServer('svc', { command: 'npx', args }, 't');
+    assert.ok(n, args.join(' '));
+    assert.ok(!n.entry.args?.join(' ').includes(secret), `${args.join(' ')} → ${n.entry.args?.join(' ')}`);
+    assert.ok(n.embeddedSecrets.length > 0, `${args.join(' ')} flagged`);
+  }
+});
+
+test('normalize: plain urls / args and references are not flagged', () => {
+  const plainArgs = [
+    '-y', '@modelcontextprotocol/server-filesystem', '/home/u/projects',
+    '--port', '8080', '--token-file', '/etc/svc/token', '--api-key', '${env:SVC_KEY}',
+    'https://api.example.com/mcp',
+  ];
+  const a = normalizeServer('svc', { command: 'npx', args: plainArgs }, 't');
+  assert.deepEqual(a?.entry.args, plainArgs);
+  assert.deepEqual(a?.embeddedSecrets, []);
+  for (const url of [
+    'https://api.example.com/mcp?format=json',
+    'https://api.example.com/mcp?api_key=${env:SVC_KEY}',
+    'http://localhost:3000/sse',
+  ]) {
+    const n = normalizeServer('remote', { url }, 't');
+    assert.equal(n?.entry.url, url);
+    assert.deepEqual(n?.embeddedSecrets, []);
+  }
+});
+
+// Scan + apply end to end over a real ~/.claude.json (under the isolated home).
+const EMBEDDED_SECRETS = {
+  query: 'sk-queryleak123',
+  userinfo: 'tokenleak456',
+  args: 'sk-argleak789',
+};
+
+async function withClaudeJson(servers: object, fn: () => Promise<void>): Promise<void> {
+  assert.ok(process.env.LATTICE_TEST_HOME_ISOLATED, 'run with the isolateHome preload');
+  const claudeJson = path.join(os.homedir(), '.claude.json');
+  const prev = await fs.readFile(claudeJson, 'utf8').catch(() => null);
+  await fs.writeFile(claudeJson, JSON.stringify({ mcpServers: servers }));
+  try {
+    await fn();
+  } finally {
+    if (prev === null) await fs.rm(claudeJson, { force: true });
+    else await fs.writeFile(claudeJson, prev);
+  }
+}
+
+const EMBEDDED_SERVERS = {
+  'emb-query': { type: 'http', url: `https://host.example/mcp?api_key=${EMBEDDED_SECRETS.query}` },
+  'emb-userinfo': { type: 'http', url: `https://user:${EMBEDDED_SECRETS.userinfo}@host.example/mcp` },
+  'emb-args': { command: 'npx', args: ['-y', 'some-mcp', '--api-key', EMBEDDED_SECRETS.args] },
+  'emb-plain': { command: 'npx', args: ['-y', 'plain-mcp'] },
+};
+
+test('import scan: secrets embedded in url / args are absent from the response', async () => {
+  await withClaudeJson(EMBEDDED_SERVERS, async () => {
+    const res = await scanImportableServers();
+    const body = JSON.stringify(res);
+    for (const secret of Object.values(EMBEDDED_SECRETS)) {
+      assert.ok(!body.includes(secret), `scan response leaked ${secret}`);
+    }
+    const byId = new Map(res.servers.map((s) => [s.id, s]));
+    for (const id of ['emb-query', 'emb-userinfo', 'emb-args']) {
+      assert.ok((byId.get(id)?.embeddedSecrets.length ?? 0) > 0, `${id} flagged`);
+    }
+    assert.deepEqual(byId.get('emb-plain')?.embeddedSecrets, []);
+  });
+});
+
+test('import apply: servers with embedded secrets are refused, never written to globalSettings.json', async () => {
+  await withClaudeJson(EMBEDDED_SERVERS, async () => {
+    const res = await applyImport(Object.keys(EMBEDDED_SERVERS));
+    assert.deepEqual(res.imported, ['emb-plain']);
+    assert.deepEqual(
+      res.refused.map((r) => r.id).sort(),
+      ['emb-args', 'emb-query', 'emb-userinfo'],
+    );
+    for (const r of res.refused) assert.match(r.reason, /env var or HTTP header/);
+    const settings = await fs.readFile(path.join(latticeHomeDir(), 'globalSettings.json'), 'utf8');
+    assert.ok(settings.includes('emb-plain'), 'the plain server was written');
+    for (const secret of Object.values(EMBEDDED_SECRETS)) {
+      assert.ok(!settings.includes(secret), `globalSettings.json leaked ${secret}`);
+    }
+    for (const id of ['emb-query', 'emb-userinfo', 'emb-args']) {
+      assert.ok(!settings.includes(`"${id}"`), `${id} must not be written`);
+    }
+  });
 });

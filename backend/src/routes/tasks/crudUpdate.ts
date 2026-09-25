@@ -7,6 +7,7 @@ import { appendTaskSummary, getTask, updateTask, type Task } from '../../tasks.j
 import { appendSummaryText } from '../../taskCache/taskUpdate.js';
 import {
   partitionIdsByRequestedProject,
+  requireAbsoluteProject,
   requireTaskInRequestedProject,
   resolveProject,
   respondJson,
@@ -46,7 +47,7 @@ export async function handleTaskUpdate(
   }
 
   await respondJson(res, async () => {
-    // Look the task up before writing so the optional `?project=` pin can
+    // Look the task up before writing so the optional project pin can
     // refuse a foreign id BEFORE the patch lands (see requestUtils).
     const existing = await getTask(req.params.id);
     if (!existing) {
@@ -123,6 +124,11 @@ export async function handleTaskBulkUpdate(
     return;
   }
   const all = parsed.value;
+  // A non-absolute project (shell-stripped backslashes: `C:developmentproj`)
+  // is a 400 like /transition's: canonicalProjectPath would resolve it under
+  // the backend's cwd, class every id `foreign`, and answer 200 {updated: 0}.
+  const project = resolveProject(req);
+  if (project && !requireAbsoluteProject(project, res)) return;
 
   await respondJson(res, async () => {
     // Honour the project pin (query OR body) like the single PATCH does: an id
@@ -130,7 +136,7 @@ export async function handleTaskBulkUpdate(
     // is global).
     const { own, foreign } = await partitionIdsByRequestedProject(
       all.map((u) => u.id!),
-      resolveProject(req),
+      project,
     );
     const ownIds = new Set(own);
     const updates = all.filter((u) => ownIds.has(u.id!));

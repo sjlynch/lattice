@@ -8,6 +8,7 @@ import {
 } from '../../../api';
 import { normalizeAgentHarness, type AgentHarness } from '../../../harnesses';
 import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
+import { saveOptimistic } from './optimisticSave';
 import { loadUserSettingsWithRetry } from './strictSettingsLoad';
 
 type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
@@ -37,12 +38,21 @@ export function usePostMergeHook(
   });
   const [active, setActive] = useState<PostMergeHookRun | null>(null);
   const [recent, setRecent] = useState<PostMergeHookRun | null>(null);
-  const [saving, setSaving] = useState(false);
+  // In-flight save count, not a boolean: with one shared flag the first PATCH
+  // to settle cleared it while another was still in flight.
+  const [pendingSaves, setPendingSaves] = useState(0);
   // The folder whose saved form `form` holds, or null while loading. The row
   // disables its controls until then, and the save callbacks check the ref
   // (not a render closure) so none can write over a form we haven't read.
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const loadedForRef = useRef<string | null>(null);
+  // The form the backend last loaded or acknowledged — what a failed toggle /
+  // harness save reverts to. A fresh object per load, so a save settling after
+  // a project switch (even back to the same project) can't revert the new form.
+  const confirmedRef = useRef<PostMergeHookFormState | null>(null);
+  // Latest save per field: an earlier save that fails after a later one was
+  // issued leaves the UI to the later save's outcome.
+  const saveSeqRef = useRef({ enabled: 0, harness: 0 });
   // Track which hook ids we've already spawned a terminal tab for, so the
   // WS firing multiple progress events (or a reconnect re-sending 'started')
   // doesn't open a new terminal each time. A ref instead of state because the
@@ -59,6 +69,7 @@ export function usePostMergeHook(
     // no save can patch project A's form onto project B meanwhile.
     setForm({ prompt: '', enabled: true, harness: 'claude' });
     loadedForRef.current = null;
+    confirmedRef.current = null;
     setLoadedFor(null);
     if (!activeFolder) return;
     // Strict + retried: the lenient GET mapped a failure (a 502 mid backend
@@ -67,13 +78,15 @@ export function usePostMergeHook(
     return loadUserSettingsWithRetry(
       activeFolder,
       (s) => {
-        setForm({
+        const loaded: PostMergeHookFormState = {
           prompt: typeof s.postMergeHookPrompt === 'string' ? s.postMergeHookPrompt : '',
           // Absent counts as enabled — mirrors the backend default.
           enabled: s.postMergeHookEnabled !== false,
           harness: normalizeAgentHarness(s.postMergeHookHarness),
           piModel: s.postMergeHookPiModel || undefined,
-        });
+        };
+        setForm(loaded);
+        confirmedRef.current = { ...loaded };
         loadedForRef.current = activeFolder;
         setLoadedFor(activeFolder);
       },
@@ -148,44 +161,81 @@ export function usePostMergeHook(
     };
   }, [activeFolder, addTerminal]);
 
+  const beginSave = useCallback(() => setPendingSaves((n) => n + 1), []);
+  const endSave = useCallback(() => setPendingSaves((n) => n - 1), []);
+
+  // The prompt is saved but never reverted on failure: that would throw away
+  // what the user typed. The error toast says it didn't land.
   const savePrompt = useCallback(
     (next: string) => {
       if (!activeFolder || loadedForRef.current !== activeFolder) return;
+      const confirmed = confirmedRef.current;
       setForm((prev) => ({ ...prev, prompt: next }));
-      setSaving(true);
+      beginSave();
       patchUserSettings(activeFolder, { postMergeHookPrompt: next })
+        .then(() => {
+          if (confirmed) confirmed.prompt = next;
+        })
         .catch((err) => showError(`Saving hook prompt failed: ${(err as Error).message}`))
-        .finally(() => setSaving(false));
+        .finally(endSave);
     },
-    [activeFolder, showError],
+    [activeFolder, showError, beginSave, endSave],
   );
 
   const saveEnabled = useCallback(
     (next: boolean) => {
-      if (!activeFolder || loadedForRef.current !== activeFolder) return;
-      setForm((prev) => ({ ...prev, enabled: next }));
-      setSaving(true);
-      patchUserSettings(activeFolder, { postMergeHookEnabled: next })
-        .catch((err) => showError(`Saving hook toggle failed: ${(err as Error).message}`))
-        .finally(() => setSaving(false));
+      const confirmed = confirmedRef.current;
+      if (!activeFolder || loadedForRef.current !== activeFolder || !confirmed) return;
+      const folder = activeFolder;
+      const seq = ++saveSeqRef.current.enabled;
+      beginSave();
+      void saveOptimistic(next, {
+        persist: (value) => patchUserSettings(folder, { postMergeHookEnabled: value }),
+        apply: (value) => setForm((prev) => ({ ...prev, enabled: value })),
+        isCurrent: () =>
+          confirmedRef.current === confirmed && saveSeqRef.current.enabled === seq,
+        previous: () => confirmed.enabled,
+        onSaved: (value) => {
+          confirmed.enabled = value;
+        },
+        onError: (err) => showError(`Saving hook toggle failed: ${(err as Error).message}`),
+        onSettled: endSave,
+      });
     },
-    [activeFolder, showError],
+    [activeFolder, showError, beginSave, endSave],
   );
 
   const saveHarness = useCallback(
     (next: AgentHarness, piModel?: string) => {
-      if (!activeFolder || loadedForRef.current !== activeFolder) return;
-      setForm((prev) => ({ ...prev, harness: next, piModel }));
-      setSaving(true);
-      patchUserSettings(activeFolder, {
-        postMergeHookHarness: next,
-        // '' clears the stored model (→ Pi default) for bare Pi / non-Pi.
-        postMergeHookPiModel: next === 'pi' ? piModel ?? '' : '',
-      })
-        .catch((err) => showError(`Saving hook harness failed: ${(err as Error).message}`))
-        .finally(() => setSaving(false));
+      const confirmed = confirmedRef.current;
+      if (!activeFolder || loadedForRef.current !== activeFolder || !confirmed) return;
+      const folder = activeFolder;
+      const seq = ++saveSeqRef.current.harness;
+      beginSave();
+      void saveOptimistic(
+        { harness: next, piModel },
+        {
+          persist: (value) =>
+            patchUserSettings(folder, {
+              postMergeHookHarness: value.harness,
+              // '' clears the stored model (→ Pi default) for bare Pi / non-Pi.
+              postMergeHookPiModel: value.harness === 'pi' ? value.piModel ?? '' : '',
+            }),
+          apply: (value) =>
+            setForm((prev) => ({ ...prev, harness: value.harness, piModel: value.piModel })),
+          isCurrent: () =>
+            confirmedRef.current === confirmed && saveSeqRef.current.harness === seq,
+          previous: () => ({ harness: confirmed.harness, piModel: confirmed.piModel }),
+          onSaved: (value) => {
+            confirmed.harness = value.harness;
+            confirmed.piModel = value.piModel;
+          },
+          onError: (err) => showError(`Saving hook harness failed: ${(err as Error).message}`),
+          onSettled: endSave,
+        },
+      );
     },
-    [activeFolder, showError],
+    [activeFolder, showError, beginSave, endSave],
   );
 
   const abort = useCallback(async () => {
@@ -202,7 +252,7 @@ export function usePostMergeHook(
     loaded: !!activeFolder && loadedFor === activeFolder,
     active,
     recent,
-    saving,
+    saving: pendingSaves > 0,
     savePrompt,
     saveEnabled,
     saveHarness,
