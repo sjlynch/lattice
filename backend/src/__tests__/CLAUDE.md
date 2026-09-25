@@ -46,6 +46,17 @@ under `helpers/`.
   backoff on 503 then delivery, a JSON body forwarded (Pi prompt-file mode),
   foreign-origin / non-`/api/` / >24 h entries dropped without a request, and
   the hook command shapes (Claude's `|| curl` fallback, Codex shell-free).
+  Also: a hook that gives up releases its hold (`holdUntil <= exit`), every
+  replay carries `OUTBOX_REPLAY_HEADER`, a same-origin non-callback route
+  (`/api/merge-runs`) is dropped unsent, the drain's rewrite never resurrects
+  an entry unlinked mid-rewrite (fs `writeFile` mocked) nor removes/overwrites
+  a newer entry a hook wrote mid-request, and the ack middleware skips
+  replays. `callbackOutboxReplayGuard.test.ts` — the `/complete` freshness
+  guard: a replay whose task showed activity after the Stop is refused (409,
+  task stays in_progress), a replay without later activity and a live
+  callback still complete, a prompt submitted into the task's own worktree pty
+  counts (another pty's doesn't, an unlistable terminal-server never blocks),
+  and the submit-frame / header parsers.
 - `terminalRestoreCommand.test.ts`, `terminalInterruption.test.ts`,
   `terminalRegistryStore.test.ts`, `terminalRestore.test.ts` — the durable
   terminal-tab registry (`terminalRegistry/`). Command parsing round-trips the
