@@ -173,11 +173,16 @@ explicit-curl callbacks — never by polling task state.
   together than `READOPTED_SETTLE_MS` would hold a finished step forever. A
   gate that is HOLDING the Stop because the session is still busy (live
   subagents, a follow-up turn owed) persists when it last saw it busy
-  (`stopReceived.activeAt`, throttled to every 15 s), and the window counts
-  from the later of the two — otherwise a restart would re-arm from the old
-  Stop and advance past subagents that were still working. The post-merge
-  hook has the same pair (`PostMergeHookRun.stopReceivedAt` / `stopActiveAt`,
-  `postMergeHookStopFinish`). The shared advance is
+  (`stopReceived.activeAt`, throttled to every 15 s) and whether it was busy
+  at that checkpoint (`stopReceived.busy`: live subagents, a turn owed, or a
+  real signal within the throttle). Busy → the re-adopted window starts at
+  BOOT (a dead backend receives no hooks, so downtime is not silence — a
+  restart longer than the window used to advance and kill the pty a second
+  after boot); otherwise it counts from the later of the Stop and `activeAt`.
+  The boot re-adoption's own placeholder signal never counts as busy, so
+  frequent restarts can't hold a finished step forever. The post-merge hook
+  has the same trio (`PostMergeHookRun.stopReceivedAt` / `stopActiveAt` /
+  `stopBusy`, `postMergeHookStopFinish`). The shared advance is
   `workflowStepCompletionAdvance` (facade).
   Failed asynchronous completion checkpoints rearm the quiescence gate up to
   three attempts. Each retry checks live subagents and renewed quiet time;
