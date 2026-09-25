@@ -22,6 +22,7 @@ import { useNodeContextMenu } from './hooks/useNodeContextMenu';
 import { useWorktreeHighlight } from './hooks/useWorktreeHighlight';
 import { useHoverNodeDebounce } from './hooks/useHoverNodeDebounce';
 import { useCanvasDragTracking } from './hooks/useCanvasDragTracking';
+import { usePointerLeaveTooltipDismiss } from './hooks/usePointerLeaveTooltipDismiss';
 import { useRefMirror } from './hooks/useRefMirror';
 import { useSelectionHaloSync } from './hooks/useSelectionHaloSync';
 import { useSelectionHaloPulse } from './hooks/useSelectionHaloPulse';
@@ -117,12 +118,23 @@ function ForceGraphViewCoordinator({
   // gated off while a pointer is dragging the canvas: the shared
   // `pointerDraggingRef` is read by the debounce and driven by the drag tracker,
   // which also calls `cancelPendingHoverClear` at drag start to hide the tooltip.
+  // Likewise gated off while the cursor is outside the canvas (navbar, terminal
+  // panel, a HUD panel): `pointerOutsideRef` is driven by the pointer-leave
+  // dismiss, which hides any open tooltip on the way out.
   const pointerDraggingRef = useRef(false);
+  const pointerOutsideRef = useRef(false);
   const { hoverNode, debouncedSetHoverNode, cancelPendingHoverClear } =
-    useHoverNodeDebounce(pointerDraggingRef);
+    useHoverNodeDebounce(pointerDraggingRef, pointerOutsideRef);
   useCanvasDragTracking(
     containerRef,
     graphRef,
+    pointerDraggingRef,
+    cancelPendingHoverClear,
+  );
+  usePointerLeaveTooltipDismiss(
+    containerRef,
+    graphRef,
+    pointerOutsideRef,
     pointerDraggingRef,
     cancelPendingHoverClear,
   );
@@ -209,6 +221,7 @@ function ForceGraphViewCoordinator({
     metricsIgnoredExtsRef,
     batchedNodesRef,
     worktreeRingsRef,
+    pointerOutsideRef,
     onHoverNodeChange: debouncedSetHoverNode,
     onRendererFailure,
     onContextLost,

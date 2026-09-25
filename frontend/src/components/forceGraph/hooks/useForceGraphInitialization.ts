@@ -18,6 +18,9 @@ import {
 } from '../sceneSetup';
 
 export type ForceGraphInitializationSettings = NodeObjectRefs & {
+  // True while the cursor is outside the canvas; the native hover label is
+  // suppressed then (see ./usePointerLeaveTooltipDismiss).
+  pointerOutsideRef: MutableRefObject<boolean>;
   onHoverNodeChange: (node: GraphNode | null) => void;
   // Renderer lifecycle, reported to the coordinator so it can show a
   // recoverable notice (see ../rendererStatus + ../GraphRendererNotice).
@@ -37,6 +40,7 @@ export function useForceGraphInitialization(
   settings: ForceGraphInitializationSettings,
 ) {
   const {
+    pointerOutsideRef,
     onHoverNodeChange,
     onRendererFailure,
     onContextLost,
@@ -59,7 +63,9 @@ export function useForceGraphInitialization(
       created = new ForceGraph3D(container, { controlType: 'orbit' })
         .backgroundColor('#1a1d22')
         .nodeId('id')
-        .nodeLabel((n: object) => nativeNodeLabel(n as GraphNode))
+        .nodeLabel((n: object) =>
+          pointerOutsideRef.current ? '' : nativeNodeLabel(n as GraphNode),
+        )
         .nodeThreeObject((n: object) => buildNodeObject(n as GraphNode, nodeRefs))
         .nodeRelSize(1)
         .linkColor(() => 'rgba(220,228,240,0.55)')

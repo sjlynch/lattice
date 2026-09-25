@@ -106,6 +106,10 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
   interaction during a drag. `useHoverNodeDebounce` — hover tooltip state + the
   null-transition debounce + the `flushSync` hover-in; ignores hover mid-drag.
   `useOverlayTooltipDismiss` — clears a stale tooltip when an LOC/health view ends.
+  `usePointerLeaveTooltipDismiss` — hides the React + native node tooltips when
+  the cursor leaves the canvas (navbar, terminal panel, HUD panels) and suspends
+  library hover until it re-enters; `pointerOutsideRef` also gates the hover
+  setter and the native-label accessor against a stale on-canvas raycast.
 - `useNodeDragBehavior` — physics-active drag (lifts `d3AlphaMin` so neighbours
   follow) + DAG-Y lock (re-pin `fy` so a drag slides only in the node's plane).
 

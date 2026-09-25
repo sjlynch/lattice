@@ -17,9 +17,13 @@ const NULL_HOVER_DEBOUNCE_MS = 220;
 // `pointerDraggingRef` is read (not owned) so hover is ignored entirely
 // while a canvas drag is in progress; the drag tracker drives that ref
 // and calls `cancelPendingHoverClear` at drag start to hide any open
-// tooltip. Returns the debounced setter wired into the graph's `onHover`.
+// tooltip. `pointerOutsideRef` (driven by `usePointerLeaveTooltipDismiss`) is
+// read the same way: while the cursor is off the canvas the library can still
+// raycast its last on-canvas position, so a hover-in then is stale and dropped.
+// Returns the debounced setter wired into the graph's `onHover`.
 export function useHoverNodeDebounce(
   pointerDraggingRef: MutableRefObject<boolean>,
+  pointerOutsideRef: MutableRefObject<boolean>,
 ) {
   const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);
   const nullClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -30,6 +34,7 @@ export function useHoverNodeDebounce(
       // start and the library re-fires hover on the first move after release.
       if (pointerDraggingRef.current) return;
       if (node !== null) {
+        if (pointerOutsideRef.current) return;
         if (nullClearTimerRef.current) {
           clearTimeout(nullClearTimerRef.current);
           nullClearTimerRef.current = null;
@@ -49,7 +54,7 @@ export function useHoverNodeDebounce(
         setHoverNode(null);
       }, NULL_HOVER_DEBOUNCE_MS);
     },
-    [pointerDraggingRef],
+    [pointerDraggingRef, pointerOutsideRef],
   );
 
   // Cancel a pending hover-clear and hide any open tooltip. Called at drag
