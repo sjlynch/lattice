@@ -254,7 +254,7 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | POST | `/api/terminal-tabs/restore?project=` | Rebuild sidebar tabs (adopt live, relaunch dead into their conversation) |
 | PATCH | `/api/terminal-tabs?project=` | Persist tab order `{order}` |
 | PATCH | `/api/terminal-tabs/:id?project=` | Rename a tab `{label}` |
-| DELETE | `/api/terminal-tabs/:id?project=` | Close a tab (never relaunched) and kill its pty |
+| DELETE | `/api/terminal-tabs/:id?project=` | Close a tab (never relaunched) and kill its pty (aborts an owning post-merge hook) |
 | GET | `/api/spawn-queue` | Debug: spawn-queue snapshot |
 | POST | `/api/internal/restart-drain/prepare` | Dev-runner restart drain (internal, token-guarded; see `backend/src/restartDrain/`) |
 | POST | `/api/internal/restart-drain/cancel` | End a drain not followed by a restart (internal) |
