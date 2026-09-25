@@ -5,7 +5,7 @@ Implementation pieces for `../Sidebar.tsx`.
 - `NewTerminalDropdown.tsx` — plus/chevron menu for Claude, dangerous Claude,
   Pi, Codex, and plain terminal sessions; command defaults live in `constants.ts`.
   **Sidebar harness launches pre-create their pty through the backend.**
-  `Sidebar.tsx`'s `newTerminal` calls `createBackendSession` (`terminal/terminalApi.ts`
+  `hooks/useNewTerminal.ts`'s `newTerminal` calls `createBackendSession` (`terminal/terminalApi.ts`
   → `POST /api/terminals`) for any spec with an `initialCommand`, then `addTerminal`s
   with the returned `serverId` so the pane attaches to the already-configured pty
   by id. This is what routes a Codex/Pi terminal through the spawn chokepoint
@@ -32,6 +32,16 @@ Implementation pieces for `../Sidebar.tsx`.
   `--dangerously-skip-permissions`); `createTerminalSpec` drops the flag to plain
   `codex` when the `codexYolo` setting (Settings → Terminals) is off — the flag
   is passed down from `terminalLaunchSettings.codexYolo`.
+- `hooks/useNewTerminal.ts` — `{ newTerminal, defaultKind }` for the dropdown:
+  `newTerminal` is the pre-create-then-`addTerminal` launch described above;
+  `defaultKind` maps `terminalDefaultHarness` (+ `terminalClaudeSkipPermissions`
+  → `claude-yolo`) to the plus button's kind.
+- `SidebarSearchBox.tsx` — the inline search field + clear button (state from
+  `hooks/useTerminalSearch`); `Sidebar.tsx` renders it only when the viewed
+  panel has tabs.
+- `SidebarHeaderActions.tsx` — the header's right-hand buttons: restart-all
+  (Startup panel), restore-tabs + `NewTerminalDropdown` (Terminals panel).
+  Header icon size is `HEADER_ICON_SIZE` in `constants.ts`.
 - `RestoreNotice.tsx` — the strip under the header for the registry restore:
   the 'ask'-mode prompt ("N tabs from your last session can be restored") and
   the last pass's summary (`describeRestoreSummary`: re-attached / relaunching /

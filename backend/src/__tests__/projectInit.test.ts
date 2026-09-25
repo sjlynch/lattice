@@ -21,11 +21,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildStarterGitignore } from '../projectInit/gitignoreTemplate.js';
 import { refuseInitReason } from '../projectInit/guards.js';
-import { initProjectGit, isMissingIdentityFailure } from '../projectInit/init.js';
+import {
+  GIT_SLOW_TIMEOUT_MS,
+  initProjectGit,
+  isMissingIdentityFailure,
+  type InitProjectGitDeps,
+} from '../projectInit/init.js';
 import { previewProjectInit } from '../projectInit/preview.js';
 import { probeProjectGit } from '../projectInit/probe.js';
 import { ProjectInitError } from '../projectInit/types.js';
 import { canonicalProjectPath } from '../projectPath.js';
+import { projectGit } from '../worktree.js';
+import { clearStaleGitLocks } from '../worktree/staleGitLocks.js';
 import { withTempDir, writeLayout } from './helpers/tempDir.js';
 
 const execFileAsync = promisify(execFile);
@@ -408,6 +415,53 @@ test('initProjectGit finishes an unborn repo with its first commit (no second gi
       const after = await probeProjectGit(dir);
       assert.equal(after.unborn, undefined);
       assert.equal(after.initable, false);
+    });
+  });
+});
+
+// Regression: `add -A` / `commit` ran under the 30 s quick-call timeout, so a
+// large folder's first commit was SIGKILLed, and the kill left `.git/index.lock`
+// behind. The retry (now the unborn "finish setup" path) then failed at once
+// with "index.lock: File exists" — the folder could never be initialized.
+test('a timed-out `git add` removes the index.lock it left, and the retry reaches the commit', async () => {
+  await withGitIdentity(async () => {
+    await withTempDir(PREFIX, async (dir) => {
+      await writeLayout(dir, { 'src/app.ts': 'export {};\n' });
+      const calls: string[][] = [];
+      let killNextAdd = true;
+      const deps: InitProjectGitDeps = {
+        clearStaleGitLocks: (root) => clearStaleGitLocks(root),
+        projectGit: async (root, args, opts) => {
+          calls.push(args);
+          if (args[0] === 'add' || args[0] === 'commit') {
+            assert.equal(opts?.timeoutMs, GIT_SLOW_TIMEOUT_MS, `git ${args[0]} gets the long bound`);
+          }
+          if (args[0] === 'add' && killNextAdd) {
+            killNextAdd = false;
+            // What a SIGKILLed `git add` leaves: its lock, and exec's 124.
+            await fs.writeFile(path.join(root, '.git', 'index.lock'), '');
+            return { stdout: '', stderr: '\n[exec] killed after 1200000ms timeout', code: 124 };
+          }
+          return projectGit(root, args, opts);
+        },
+      };
+
+      await assert.rejects(
+        () => initProjectGit(dir, {}, deps),
+        (err: unknown) =>
+          err instanceof ProjectInitError &&
+          err.code === 'git-failed' &&
+          /took longer than \d+ minutes/.test(err.message) &&
+          !err.message.includes('[exec]'),
+      );
+      await assert.rejects(fs.stat(path.join(dir, '.git', 'index.lock')), { code: 'ENOENT' });
+      assert.equal(calls.some((a) => a[0] === 'commit'), false);
+      assert.equal((await probeProjectGit(dir)).unborn, true, 'left as a finishable unborn repo');
+
+      const result = await initProjectGit(dir, {}, deps);
+      assert.equal(calls.some((a) => a[0] === 'commit'), true, 'the retry reached the commit');
+      assert.ok(result.commit, 'the first commit landed');
+      assert.equal((await git(dir, ['rev-list', '--count', 'HEAD'])).trim(), '1');
     });
   });
 });
