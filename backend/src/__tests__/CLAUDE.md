@@ -208,8 +208,12 @@ under `helpers/`.
   branch (or keeps it under `keepBranchIfUnmerged`) and leaves the residue.
 - `worktreeResidueSweep.test.ts` — `recovery/worktreeResidueSweep.ts`: residue
   with source files is removed, while `.git`, registered (incl. an aliased
-  home-dir spelling), task-owned, live-pty and fresh dirs are kept; the
-  registration + `.git` re-check right before each delete; the locked-dir
+  home-dir spelling), task-owned, live-pty and fresh dirs are kept; a `.git`
+  FILE pointing at a removed `<commonDir>/worktrees/<id>` (absolute or
+  relative) is residue, but not when the admin dir exists, the pointer names
+  another repo / a non-worktree path, the common dir lacks `HEAD`, or the
+  common dir can't be resolved; the registration + `.git` re-check right
+  before each delete (incl. an admin dir that reappears); the locked-dir
   backoff; change-only summary logging; and the periodic pass's project /
   terminal-server gating and single-flight.
 - `mergeAbortedProjectPin.test.ts` — `/merge-aborted` 404s a task from another
