@@ -170,6 +170,27 @@ test('ids mode still honors an explicit fields=compact', () => {
   assert.equal((body.tasks[0] as { description?: string }).description, undefined);
 });
 
+test('ids mode is uncapped and keeps request order — 150 ids come back, as asked', () => {
+  // Activity order is t0 (oldest) … t149 (newest); request a shuffle of it that
+  // is neither, so a newest-first sort or a 100-task default would both show.
+  const tasks = Array.from({ length: 150 }, (_, i) => task(`t${i}`, { createdAt: i }));
+  const requested = tasks.map((t) => t.id).sort((a, b) => (a.length - b.length) || b.localeCompare(a));
+  const body = listJson(tasks, { ids: requested.join(',') });
+  assert.equal(body.count, 150);
+  assert.equal(body.truncated, false);
+  assert.deepEqual(body.tasks.map((t) => t.id), requested);
+  assert.equal(parse({ ids: 'a' }).limit, 0);
+});
+
+test('ids mode: an explicit limit cuts the tail of the request, and duplicates collapse', () => {
+  const tasks = [task('a', { createdAt: 1 }), task('b', { createdAt: 2 }), task('c', { createdAt: 3 })];
+  const body = listJson(tasks, { ids: 'a,c,a,b', limit: '2' });
+  assert.deepEqual(body.tasks.map((t) => t.id), ['a', 'c']);
+  assert.equal(body.matched, 3);
+  assert.equal(body.truncated, true);
+  assert.match(body.hint ?? '', /first 2 of 3 requested tasks \(request order\)/);
+});
+
 // ------------------------------------------------------------- projection --
 
 test('compact projection carries the scan fields and byte counts', () => {

@@ -59,13 +59,23 @@ and neither reaches a model:
 
 Composition rules (`composeSystemPromptAppend`): the preamble comes first, the
 project's own Append second (the user's text reads as the more specific
-instruction when it comes last). Claude and Pi join with a blank line; **Codex
-joins with a single space** because its inline `-c developer_instructions`
-value transits cmd.exe as `"%VAR%"`, which cannot carry a newline — folding the
-preamble in must not turn a working single-line Append into a broken two-line
-one. For the same reason the preamble text itself is one line with no double
-quotes, and `resolveLatticePreamble` drops it entirely if the project path
-somehow contains a `"` or a TOML `'''`.
+instruction when it comes last). All three join with a blank line.
+
+**Codex on cmd.exe** is the one lossy channel: its inline
+`-c developer_instructions='''…'''` value transits cmd.exe (the Windows pty
+default) as `"%VAR%"`, which strips inner double quotes (re-splitting the value
+on spaces) and ends the command at an expanded linefeed — a multi-line or
+quote-bearing Append used to break every Codex spawn in the project. So
+`prepareCodexSystemPrompt(project, extra, shell)` normalizes the composed append
+(`normalizeCodexAppendForCmd`) when the shell is cmd.exe **or unknown**: line
+breaks → one space, `"` → typographic “ ”. The caller
+(`resolveHarnessSpawnBody`) passes `resolveDefaultShell()` — the same resolution
+the terminal-server's `launchContext` uses, inherited env and all. A known
+POSIX / PowerShell shell gets the text verbatim (`"$VAR"` / `"$env:VAR"` carry
+both). On every shell a run of 3+ `'` is spaced out (`' ' '`) so it can't close
+the TOML multi-line literal early. The Settings Codex card says so in its Append
+description (`defs.ts`). The preamble text itself stays one line with no double
+quotes, so it reaches Codex byte-identical to what Claude and Pi see.
 
 A project with no `.lattice/` dir gets no preamble at all — Lattice never seeds
 that dir into a project it doesn't manage, so an unmanaged cwd spawns with a

@@ -11,6 +11,8 @@ export function WorkflowEditorActions({
   hasActiveFolder,
   runId,
   deleting,
+  saving,
+  starting,
   onDelete,
   onDiscard,
   onSave,
@@ -27,6 +29,10 @@ export function WorkflowEditorActions({
   hasActiveFolder: boolean;
   runId: string | null;
   deleting: boolean;
+  // A save / ▶ Run start is in flight: the button stays disabled until it
+  // settles so a double-click can't create or start the workflow twice.
+  saving: boolean;
+  starting: boolean;
   onDelete: () => void;
   onDiscard: () => void;
   onSave: () => void;
@@ -69,11 +75,11 @@ export function WorkflowEditorActions({
       <button
         className="btn-ghost"
         onClick={() => void onSave()}
-        disabled={noSteps}
+        disabled={noSteps || saving}
         title={saveBlockedReason}
         aria-label={saveBlockedReason}
       >
-        {workflowId ? 'Save' : 'Create'}
+        {saving ? 'Saving…' : workflowId ? 'Save' : 'Create'}
       </button>
       <button
         className="btn-ghost"
@@ -96,11 +102,11 @@ export function WorkflowEditorActions({
         <button
           className="btn-primary"
           onClick={() => void onRun()}
-          disabled={runBlocked}
+          disabled={runBlocked || starting}
           title={runBlockedReason}
           aria-label={runBlockedReason}
         >
-          <Play size={11} fill="currentColor" /> Run
+          <Play size={11} fill="currentColor" /> {starting ? 'Starting…' : 'Run'}
         </button>
       )}
     </div>

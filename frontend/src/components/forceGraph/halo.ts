@@ -9,6 +9,8 @@
 // animating the whole selection is O(1) per frame regardless of selection size.
 
 import * as THREE from 'three';
+import { finishCanvasTexture, newTextureCanvas } from './canvasTexture';
+import { DEFAULT_SETTINGS } from './graphSettings';
 import { RING_RENDER_ORDER, SELECTION_GLOW_RENDER_ORDER } from './renderOrders';
 
 const RING_COLOR = '#7ad0ff';
@@ -30,12 +32,14 @@ const PULSE_PEAK = 0.85; // max ring lerp toward white (1 = fully white)
 
 // The two glow knobs surfaced on the Rendering tab (`selectionGlowStrength` /
 // `selectionGlowScale` in GraphSettings). Live-mutable via `configureSelectionGlow`;
-// initialized to the same values as DEFAULT_SETTINGS so a halo built before
-// settings load still looks right. `_glowPeakOpacity` is read live each frame by
+// initialized from DEFAULT_SETTINGS so a halo built before settings load still
+// looks right. `_glowPeakOpacity` is read live each frame by
 // `updateHaloPulse`; `_glowScale` is read when a halo is built (`buildHaloGroup`),
 // so a change to it rebuilds the current selection's halos (see selectionHaloSync).
-let _glowPeakOpacity = 0.5; // max additive-white strength over the node body
-let _glowScale = 1.5; // bloom radius as a multiple of node base size
+// max additive-white strength over the node body
+let _glowPeakOpacity = DEFAULT_SETTINGS.selectionGlowStrength;
+// bloom radius as a multiple of node base size
+let _glowScale = DEFAULT_SETTINGS.selectionGlowScale;
 
 // Push the Rendering-tab glow knobs into this module. Called on settings load
 // and whenever the sliders move (see hooks/useSelectionGlowSettings).
@@ -63,6 +67,15 @@ const RING_WIDTH = SIZE * 0.08;
 const RING_GLOW_SPREAD = RING_WIDTH * 1.5;
 const RING_GRADIENT_INNER_STOP = 0.45;
 const RING_GRADIENT_OUTER_STOP = 0.55;
+// Suffix appended to the ring texture color to give the soft glow band ~67% alpha.
+const RING_GLOW_ALPHA = 'aa';
+
+// Glow disc radial gradient: white alpha at the center, the midpoint stop and
+// the edge.
+const GLOW_CENTER_ALPHA = 0.9;
+const GLOW_MID_STOP = 0.5;
+const GLOW_MID_ALPHA = 0.35;
+const GLOW_EDGE_ALPHA = 0;
 
 // Ring scale, as a multiple of the node's base size. Larger than the change
 // ring (1.6×) so a changed+selected node shows both concentrically. (The glow's
@@ -72,10 +85,7 @@ const RING_SCALE = 1.8;
 let _ringTexture: THREE.CanvasTexture | null = null;
 function ringTexture(): THREE.CanvasTexture {
   if (_ringTexture) return _ringTexture;
-  const canvas = document.createElement('canvas');
-  canvas.width = SIZE;
-  canvas.height = SIZE;
-  const ctx = canvas.getContext('2d')!;
+  const { canvas, ctx } = newTextureCanvas(SIZE);
   const cx = SIZE / 2;
   const cy = SIZE / 2;
 
@@ -89,8 +99,8 @@ function ringTexture(): THREE.CanvasTexture {
     RING_RADIUS + RING_GLOW_SPREAD,
   );
   grad.addColorStop(0, 'rgba(0,0,0,0)');
-  grad.addColorStop(RING_GRADIENT_INNER_STOP, RING_TEXTURE_COLOR + 'aa');
-  grad.addColorStop(RING_GRADIENT_OUTER_STOP, RING_TEXTURE_COLOR + 'aa');
+  grad.addColorStop(RING_GRADIENT_INNER_STOP, RING_TEXTURE_COLOR + RING_GLOW_ALPHA);
+  grad.addColorStop(RING_GRADIENT_OUTER_STOP, RING_TEXTURE_COLOR + RING_GLOW_ALPHA);
   grad.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, SIZE, SIZE);
@@ -102,11 +112,7 @@ function ringTexture(): THREE.CanvasTexture {
   ctx.lineWidth = RING_WIDTH;
   ctx.stroke();
 
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
+  const tex = finishCanvasTexture(canvas);
   _ringTexture = tex;
   return tex;
 }
@@ -131,24 +137,17 @@ function ringMaterial(): THREE.SpriteMaterial {
 let _glowTexture: THREE.CanvasTexture | null = null;
 function glowTexture(): THREE.CanvasTexture {
   if (_glowTexture) return _glowTexture;
-  const canvas = document.createElement('canvas');
-  canvas.width = SIZE;
-  canvas.height = SIZE;
-  const ctx = canvas.getContext('2d')!;
+  const { canvas, ctx } = newTextureCanvas(SIZE);
   const cx = SIZE / 2;
   const cy = SIZE / 2;
   const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, SIZE / 2);
-  grad.addColorStop(0, 'rgba(255,255,255,0.9)');
-  grad.addColorStop(0.5, 'rgba(255,255,255,0.35)');
-  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  grad.addColorStop(0, `rgba(255,255,255,${GLOW_CENTER_ALPHA})`);
+  grad.addColorStop(GLOW_MID_STOP, `rgba(255,255,255,${GLOW_MID_ALPHA})`);
+  grad.addColorStop(1, `rgba(255,255,255,${GLOW_EDGE_ALPHA})`);
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, SIZE, SIZE);
 
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
+  const tex = finishCanvasTexture(canvas);
   _glowTexture = tex;
   return tex;
 }

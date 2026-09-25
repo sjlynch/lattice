@@ -29,7 +29,7 @@ losing tasks.
 - `index.ts` — module entry point. Constructs the singleton
   `ProjectsIndex`, `TaskMigrations`, and `TaskCacheManager` and re-exports
   the public functions consumed via `tasks.ts` (`listTasks`, `createTask`,
-  `updateTask`, `updateTaskCrashSafe`, `deleteTask`, `reorderTasksInLane`,
+  `updateTask`, `updateTaskCrashSafe`, `appendTaskSummary`, `deleteTask`, `reorderTasksInLane`,
   `flushPersist`, `backupTasksFile`, `restoreAllProjectsFromBackup`,
   `listReadyToMergeTasks`, `listKnownProjects`, …). Add a new public verb
   here, not on the manager directly.

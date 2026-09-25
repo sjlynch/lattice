@@ -33,10 +33,16 @@ export type HarnessSettingsLoadDeps = {
   setPiModel: (piModel: string | undefined) => void;
 };
 
+// The harness a project uses when it has none saved (or it can't be loaded).
+export const DEFAULT_HARNESS: HarnessChoice = 'claude';
+
 // Load the persisted harness + Pi model for `folder` and apply it through the
 // provided setters — unless a newer load won the race, in which case the whole
-// stale response is dropped. Mirrors the prior inline effect body exactly aside
-// from the `isStale()` guard.
+// stale response is dropped. Every non-stale outcome sets the harness: a project
+// with no (or an invalid) saved harness gets `claude`, and so does a failed load
+// (`fetchUserSettings` should be the strict fetch so a failure throws rather
+// than reading as `{}`). Leaving it untouched would keep the PREVIOUS project's
+// choice, so Run All would spawn that project's harness here.
 export async function loadHarnessForFolder(
   folder: string,
   harnessAvail: HarnessAvailability,
@@ -45,15 +51,22 @@ export async function loadHarnessForFolder(
   let settings: UserSettings;
   try {
     settings = await deps.fetchUserSettings(folder);
-  } catch {
-    return; // keep current defaults
+  } catch (err) {
+    if (deps.isStale()) return;
+    console.warn(`[harness] could not load settings for ${folder}; using ${DEFAULT_HARNESS}`, err);
+    deps.setPiModel(undefined);
+    deps.setHarness(DEFAULT_HARNESS);
+    return;
   }
   if (deps.isStale()) return; // a newer folder load superseded this one
   deps.setPiModel(settings.piModel || undefined);
-  if (!isHarnessChoice(settings.harness)) return;
+  if (!isHarnessChoice(settings.harness)) {
+    deps.setHarness(DEFAULT_HARNESS);
+    return;
+  }
   if (harnessUnavailable(settings.harness, harnessAvail)) {
-    deps.setHarness('claude');
-    deps.patchUserSettings(folder, { harness: 'claude' }).catch(() => {});
+    deps.setHarness(DEFAULT_HARNESS);
+    deps.patchUserSettings(folder, { harness: DEFAULT_HARNESS }).catch(() => {});
   } else {
     deps.setHarness(settings.harness);
   }

@@ -27,7 +27,10 @@ there.
   (`newBlank`, `newFromTemplate`, and the add actions) reports their ids through
   the `onStepsAdded` arg — the manager points it at
   `useCollapsedSteps.collapseSteps`, which is what makes a new step land
-  collapsed.
+  collapsed. `save()` is single-flight: a call while a save is pending gets
+  that same promise (and `saving` disables Save), so a double-clicked Create on
+  a never-saved draft — or a Run / Queue, which save first — can't POST two
+  identical workflows.
 - `useEditorDraftLifecycle.ts` — the editor's draft side effects: keep a loaded
   workflow reconciled against the live list, restore/persist the per-project
   never-saved draft, and guard one project's draft from leaking onto another's
@@ -62,6 +65,11 @@ there.
   `workflowsById` yet — the queue is started (so the entry can't sit idle behind
   a queue the user stopped), and the panel toast says "Queued behind <name>" (the
   oldest active run, or "the active workflow" when the 409 beat the WS event).
+  An in-flight guard (per workflow id, plus an editor key that also claims the
+  editor's loaded workflow id) drops a click while that start is still pending —
+  `activeRuns` is empty until the first POST/WS lands, so a double-click would
+  otherwise read its own 409 as "busy" and queue a second full run.
+  `startingWorkflowIds` / `editorStarting` disable the ▶ buttons meanwhile.
   Regression-covered in `src/__tests__/useWorkflowManualRun.test.ts`.
 - `useWorkflowQueue.ts` — React adapter around the pure `queueScheduler`; starts
   queued runs and advances from active-run diffs. Feeds the scheduler a
