@@ -1,30 +1,12 @@
-import {
-  forwardRef,
-  useEffect,
-  useImperativeHandle,
-  useState,
-} from 'react';
-import {
-  fetchGlobalSettings,
-  fetchMcpCatalog,
-  fetchMcpEnvPresence,
-  fetchMcpSecrets,
-  fetchUserSettingsStrict,
-  patchGlobalSettings,
-  type McpEnvPresence,
-  type McpSecretHints,
-  type McpServerEntry,
-  type RedactedMcpSecrets,
-  type UserSettings,
-} from '../../api';
-import type { AgentHarness } from '../../harnesses';
+import { forwardRef, useImperativeHandle } from 'react';
+import type { McpServerEntry, UserSettings } from '../../api';
 import { useHarnessAvailability } from '../../hooks/useHarnessAvailability';
 import { McpServerRow } from './mcp/McpServerRow';
 import { McpImportSection } from './mcp/McpImportSection';
 import { McpAddCustom } from './mcp/McpAddCustom';
-
-// Codex/Pi per-harness toggle map. Claude keeps the legacy `mcpOverrides`.
-type HarnessOverrides = NonNullable<UserSettings['mcpHarnessOverrides']>;
+import { PLAYWRIGHT_SERVER_ID, useMcpTabDraft } from './mcp/useMcpTabDraft';
+import { hasEnv, hasSecret, secretHint } from './mcp/mcpSecretStatus';
+import { removeCustomServer, upsertCustomServer } from './mcp/mcpCustomServers';
 
 type Props = {
   active: boolean;
@@ -51,150 +33,38 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
   { active, open, activeFolder },
   ref,
 ) {
-  const [catalog, setCatalog] = useState<McpServerEntry[]>([]);
-  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
-  const [harnessOverrides, setHarnessOverrides] = useState<HarnessOverrides>({});
-  // MCP-tab Playwright headed/headless (default headless). Cross-harness — one
-  // switch for the whole Playwright row, mirroring the QA lane's eye toggle.
-  const [playwrightHeaded, setPlaywrightHeaded] = useState(false);
-  const [headedTouched, setHeadedTouched] = useState(false);
-  const [redacted, setRedacted] = useState<RedactedMcpSecrets>({});
-  const [hints, setHints] = useState<McpSecretHints>({});
-  const [envPresence, setEnvPresence] = useState<McpEnvPresence>({});
+  const {
+    catalog,
+    playwrightHeaded,
+    latticeOnly,
+    redacted,
+    hints,
+    envPresence,
+    loaded,
+    error,
+    setError,
+    reloadCatalog,
+    reloadSecrets,
+    isEnabledFor,
+    toggle,
+    setPlaywrightHeaded,
+    setLatticeOnly,
+    getPatch,
+  } = useMcpTabDraft(open, activeFolder);
   const { harnessAvail } = useHarnessAvailability();
-  // Only patch each map when the user actually flipped one of its toggles, so
-  // an unrelated save doesn't rewrite the file. `overridesTouched` guards the
-  // Claude map (`mcpOverrides`, incl. the GLOBAL Playwright toggle);
-  // `harnessTouched` guards the Codex/Pi map (`mcpHarnessOverrides`). The QA
-  // lane's separate QA-only `qaPlaywright` toggle lives elsewhere and is never
-  // touched from this tab.
-  const [overridesTouched, setOverridesTouched] = useState(false);
-  const [harnessTouched, setHarnessTouched] = useState(false);
-  // `taskAgentsLatticeMcpOnly` (default ON — absent reads as true): task
-  // worktree sessions get only the Lattice server. Its own touched flag, like
-  // the maps above, so an unrelated save never writes it.
-  const [latticeOnly, setLatticeOnly] = useState(true);
-  const [latticeOnlyTouched, setLatticeOnlyTouched] = useState(false);
-  // `loaded` flips only on a SUCCESSFUL load (same clobber-guard as Tools):
-  // the enable patches are whole maps, so a lenient "settings → {}" load
-  // followed by one toggle + Save would rewrite `mcpOverrides` as a one-key
-  // map and silently turn every other server off. A failed load shows
-  // `error` and leaves the toggles unmounted, so no patch can be produced.
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  const reloadCatalog = async () => {
-    const { servers } = await fetchMcpCatalog();
-    setCatalog(servers);
-  };
-  const reloadSecrets = async () => {
-    const [s, e] = await Promise.all([fetchMcpSecrets(), fetchMcpEnvPresence()]);
-    setRedacted(s.redacted);
-    setHints(s.hints);
-    setEnvPresence(e.presence);
-  };
-
-  // (Re)load everything each time the dialog opens.
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    setLoaded(false);
-    setError(null);
-    setOverridesTouched(false);
-    setHarnessTouched(false);
-    setHeadedTouched(false);
-    setLatticeOnlyTouched(false);
-    (async () => {
-      const [{ servers }, settings, secrets, env] = await Promise.all([
-        fetchMcpCatalog(),
-        activeFolder
-          ? fetchUserSettingsStrict(activeFolder)
-          : Promise.resolve({} as UserSettings),
-        fetchMcpSecrets(),
-        fetchMcpEnvPresence(),
-      ]);
-      if (cancelled) return;
-      setCatalog(servers);
-      setOverrides(settings.mcpOverrides ?? {});
-      setHarnessOverrides(settings.mcpHarnessOverrides ?? {});
-      setPlaywrightHeaded(settings.mcpPlaywrightHeaded === true);
-      setLatticeOnly(settings.taskAgentsLatticeMcpOnly !== false);
-      setRedacted(secrets.redacted);
-      setHints(secrets.hints);
-      setEnvPresence(env.presence);
-      setLoaded(true);
-    })().catch((err) => {
-      // Keep `loaded` false: no toggles, no patch, nothing to clobber.
-      if (!cancelled) setError(`Could not load MCP settings: ${(err as Error).message}`);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, activeFolder]);
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      getMcpUserPatch: () => {
-        const patch: Partial<UserSettings> = {};
-        if (overridesTouched) patch.mcpOverrides = overrides;
-        if (harnessTouched) patch.mcpHarnessOverrides = harnessOverrides;
-        if (headedTouched) patch.mcpPlaywrightHeaded = playwrightHeaded;
-        if (latticeOnlyTouched) patch.taskAgentsLatticeMcpOnly = latticeOnly;
-        return Object.keys(patch).length > 0 ? patch : undefined;
-      },
-    }),
-    [
-      overridesTouched,
-      overrides,
-      harnessTouched,
-      harnessOverrides,
-      headedTouched,
-      playwrightHeaded,
-      latticeOnlyTouched,
-      latticeOnly,
-    ],
-  );
-
-  // Per-harness enable state: Claude reads the legacy `mcpOverrides` map;
-  // Codex/Pi read the nested `mcpHarnessOverrides` map. Default OFF everywhere.
-  // An explicit override wins; with none, the entry's own default applies.
-  // That is off for every third-party server and ON for Lattice's own
-  // first-party board server (`defaultEnabled`) — so its switches must read
-  // as on until the user actually turns them off. Mirrors the backend's
-  // `harnessToggleOn` (mcp/registry.ts).
-  const isEnabledFor = (s: McpServerEntry, harness: AgentHarness): boolean =>
-    harness === 'claude'
-      ? (overrides[s.id] ?? !!s.defaultEnabled)
-      : (harnessOverrides[harness]?.[s.id] ?? !!s.defaultEnabled);
-
-  const toggle = (s: McpServerEntry, harness: AgentHarness, next: boolean) => {
-    if (harness === 'claude') {
-      setOverridesTouched(true);
-      setOverrides((prev) => ({ ...prev, [s.id]: next }));
-      return;
-    }
-    setHarnessTouched(true);
-    setHarnessOverrides((prev) => ({
-      ...prev,
-      [harness]: { ...(prev[harness] ?? {}), [s.id]: next },
-    }));
-  };
+  useImperativeHandle(ref, () => ({ getMcpUserPatch: getPatch }), [getPatch]);
 
   const existingIds = new Set(catalog.map((s) => s.id));
 
   const addCustom = async (entry: McpServerEntry) => {
-    const global = await fetchGlobalSettings();
-    const customs = (global.mcpCustomServers ?? []).filter((c) => c.id !== entry.id);
-    await patchGlobalSettings({ mcpCustomServers: [...customs, entry] });
+    await upsertCustomServer(entry);
     await reloadCatalog();
   };
 
   const removeCustom = async (id: string) => {
     try {
-      const global = await fetchGlobalSettings();
-      const customs = (global.mcpCustomServers ?? []).filter((c) => c.id !== id);
-      await patchGlobalSettings({ mcpCustomServers: customs });
+      await removeCustomServer(id);
       await reloadCatalog();
     } catch (err) {
       setError(`Could not remove "${id}": ${(err as Error).message}`);
@@ -231,10 +101,7 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
             <input
               type="checkbox"
               checked={latticeOnly}
-              onChange={(e) => {
-                setLatticeOnlyTouched(true);
-                setLatticeOnly(e.target.checked);
-              }}
+              onChange={(e) => setLatticeOnly(e.target.checked)}
             />
             <span>Task agents get only the Lattice MCP</span>
           </label>
@@ -256,15 +123,10 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
                 enabledFor={(h) => isEnabledFor(s, h)}
                 onToggle={(h, next) => toggle(s, h, next)}
                 harnessAvail={harnessAvail}
-                playwrightHint={s.id === 'playwright'}
-                headed={s.id === 'playwright' ? playwrightHeaded : undefined}
+                playwrightHint={s.id === PLAYWRIGHT_SERVER_ID}
+                headed={s.id === PLAYWRIGHT_SERVER_ID ? playwrightHeaded : undefined}
                 onHeadedChange={
-                  s.id === 'playwright'
-                    ? (next) => {
-                        setHeadedTouched(true);
-                        setPlaywrightHeaded(next);
-                      }
-                    : undefined
+                  s.id === PLAYWRIGHT_SERVER_ID ? setPlaywrightHeaded : undefined
                 }
                 stored={hasSecret(redacted, s)}
                 hint={secretHint(hints, s)}
@@ -284,27 +146,10 @@ export const McpTab = forwardRef<McpTabHandle, Props>(function McpTab(
   );
 });
 
+// Not gitSetupDerive's `basename`: that returns '' for a root-only path ('/'),
+// where this falls back to the path itself.
 function folderName(folder: string): string {
   if (!folder) return 'this project';
   const parts = folder.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] || folder;
-}
-
-// A server's declared secret env var (the built-in key). Custom servers may
-// have several; the row's chip reflects the first/required one.
-function primaryEnvVar(s: McpServerEntry): string | undefined {
-  return s.requiresSecret?.envVar ?? s.secretEnvVars?.[0];
-}
-
-function hasSecret(redacted: RedactedMcpSecrets, s: McpServerEntry): boolean {
-  const v = primaryEnvVar(s);
-  return !!v && redacted[s.id]?.[v] === true;
-}
-function secretHint(hints: McpSecretHints, s: McpServerEntry): string | undefined {
-  const v = primaryEnvVar(s);
-  return v ? hints[s.id]?.[v] : undefined;
-}
-function hasEnv(presence: McpEnvPresence, s: McpServerEntry): boolean {
-  const v = primaryEnvVar(s);
-  return !!v && presence[s.id]?.[v] === true;
 }
