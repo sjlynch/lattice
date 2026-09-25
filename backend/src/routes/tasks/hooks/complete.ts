@@ -12,6 +12,7 @@ import { proxyKillSessionsByCwd } from '../../../terminalProxy.js';
 import { notifySessionsFreed } from '../../../spawnQueue.js';
 import { finalizeResolvedTask } from '../finalizeResolved.js';
 import { awaitPostMergeHookOutsideRun } from './postMergeHookHelper.js';
+import { requireTaskInRequestedProject } from '../requestUtils.js';
 
 // Decide the in_progress → ready_to_merge transition from a commit-count
 // probe. Reserve `awaiting-commit` (don't flip) for a *real, observed* zero —
@@ -52,6 +53,9 @@ export function handleTaskComplete(backendOrigin: string) {
       );
       return res.status(404).json({ error: 'not found' });
     }
+    // Honour an explicit `?project=` pin like every other by-id write. The
+    // hook callers never send one, so their behaviour is unchanged.
+    if (!requireTaskInRequestedProject(task, req, res)) return;
     console.log(
       `[complete] task ${task.id} (status=${task.status}, conflict=${!!task.conflict}, source=${source})`,
     );

@@ -76,7 +76,8 @@ export function requireAbsoluteProject(project: string, res: Response): boolean 
 
 // Optional project pinning for the by-id routes (`GET/PATCH/DELETE /api/tasks/
 // :id`, `/append-summary`, `/run`, `/resume`, `/merge`, `/cancel-queued-run`,
-// and the resolver callbacks `/merged`, `/merge-aborted`, `/stash-resolved`).
+// and the resolver callbacks `/complete`, `/merged`, `/merge-aborted`,
+// `/stash-resolved`).
 // `getTask(id)` is a GLOBAL lookup across every indexed project, so an id alone
 // reaches any board on the machine. When the caller sends `?project=` — the
 // `lattice` MCP server does on every call, and the generated docs' recipes do
@@ -104,20 +105,22 @@ export function requireTaskInRequestedProject(
   return false;
 }
 
-// The same `?project=` pin for the bulk by-id write routes (`/transition` with
+// The same project pin for the bulk by-id write routes (`/transition` with
 // explicit `ids`, `/bulk-update`), mirroring what `/upsert` does per block:
 // `updateTask(id)` is a global lookup, so without this the `lattice` MCP
 // `transition_tasks` tool (which always sends `project=`) could re-lane or
-// "delete" another board's task. Ids that belong to a different project land in
-// `foreign` (reported, never written); everything else — including ids that
-// exist nowhere, which the write path still reports as `missing` — stays in
-// `own`. With no project sent, every id is `own`, exactly as before.
+// "delete" another board's task. Callers pass `resolveProject(req)` — the
+// `?project=` query OR the body's `project` — so a project pinned in the body
+// scopes the ids just like one in the URL. Ids that belong to a different
+// project land in `foreign` (reported, never written); everything else —
+// including ids that exist nowhere, which the write path still reports as
+// `missing` — stays in `own`. With no project sent, every id is `own`, exactly
+// as before.
 export async function partitionIdsByRequestedProject(
   ids: string[],
-  req: { query: unknown },
+  requestedProject: string,
 ): Promise<{ own: string[]; foreign: string[] }> {
-  const q = req.query as Record<string, unknown> | undefined;
-  const project = typeof q?.project === 'string' ? q.project.trim() : '';
+  const project = requestedProject.trim();
   if (!project) return { own: ids, foreign: [] };
   const canonical = canonicalProjectPath(project);
   const existing = await Promise.all(ids.map((id) => getTask(id)));
