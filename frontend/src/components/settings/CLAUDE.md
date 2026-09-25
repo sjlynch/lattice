@@ -72,7 +72,16 @@ open's GET (`fetchUserSettingsStrict`) succeeded, otherwise only the ones the
 user edited — an unloaded, untouched draft still holds its default and would
 reset the saved value. Its async settings load updates fetched
 baselines but seeds only untouched toggle drafts, so a late GET never overwrites
-edits made while the dialog was opening. `TerminalSettingsSections.tsx` renders
+edits made while the dialog was opening. Those seven fetched toggles are
+data-driven from `fetchedToggles.ts`: the `FetchedToggles` shape,
+`FETCHED_TOGGLE_DEFAULTS` (the absent-setting defaults, in save-payload order),
+`readFetchedToggles(userSettings)`, `normalizeRestoreMode`, `noneTouched()` and
+`pickSavableFetchedToggles` (both re-exported from `useSettingsDrafts.ts`). The
+hook holds them as one values object + one loaded baseline + one touched ref,
+behind a generic `setFetched(key, value)`, while `SettingsDrafts` stays flat
+(`setInstrumentClaude` etc. are stable wrappers). Adding a toggle = a key +
+default + read in `fetchedToggles.ts`, plus its value/setter pair on
+`SettingsDrafts`. `TerminalSettingsSections.tsx` renders
 those sections (the project-settings block atop the Terminals tab); it's a plain
 `drafts`-driven component with no ref handle, since the controller persists
 those drafts — `SettingsDialog` just composes it ahead of the
@@ -104,6 +113,16 @@ parameterized by `fetchItems` and `matchesDefault` (the one real divergence:
 instruction templates drop on blank-or-exact-default, env notes on trimmed
 equality). Keep these tabs on the shared hook rather than re-copying the
 clobber-guard logic.
+
+`InstructionTemplatesTab` renders one `TemplateCard.tsx` per template: a
+collapsible card (title / Modified badge / filename / reset-to-default) with the
+editable textarea and the click-to-insert `{{token}}` list. The insertion is
+`useTokenInsertion.ts` — drops the token at the caret (or over the selection),
+then refocuses and puts the caret after it; appends when the textarea isn't
+mounted. `HarnessSystemPromptsTab` renders one `HarnessSystemPromptCard.tsx` per
+harness: the same collapsible card chrome over the read-only built-in default
+overview plus the Append and Replace textareas (Replace carries its per-harness
+warning); the card keeps only its own expanded state, drafts stay in the tab.
 
 ## Where each setting persists
 

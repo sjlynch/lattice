@@ -36,10 +36,12 @@ import { terminalServerAuthHeaders } from '../terminalServerAuth.js';
 import { randomUUID } from 'node:crypto';
 import type { SessionRequestIdentity, TerminalServerInfo } from '../terminalProtocol.js';
 import { withCodexActivityTitle } from '../codexTerminalActivity.js';
+import { resolveDefaultShell } from '../terminal/launchContext.js';
 import { agentHarnessForCommand } from '../harnesses.js';
 import { terminalRegistry } from '../terminalRegistry/store.js';
 import { assignHarnessSessionId } from '../terminalRegistry/sessionIdentity.js';
 import { scheduleCodexDiscovery } from '../terminalRegistry/codexDiscovery.js';
+import { endSupersededStartupRecords } from '../terminalRegistry/startupSupersede.js';
 import type { AgentSessionRef, TerminalRecord, TerminalRegistryHint } from '../terminalRegistry/types.js';
 import { trackRestartTransition } from '../restartDrain/gate.js';
 import { refreshLatticeApiDocs } from '../latticeApiDocs.js';
@@ -224,7 +226,14 @@ async function resolveHarnessConfig(
   }
   if (isCodexCommand(opts.initialCommand) && opts.projectPath) {
     const codex = await resolveManagedCodexServers(opts.projectPath, mcpCtx, settings);
-    const sysPrompt = await prepareCodexSystemPrompt(opts.projectPath, promptExtra).catch(
+    // The pty shell the terminal-server will pick (no per-spawn shell rides
+    // this body, and it inherits this process's LATTICE_DEFAULT_SHELL/COMSPEC),
+    // so the Append is flattened only where cmd.exe's `"%VAR%"` needs it.
+    const sysPrompt = await prepareCodexSystemPrompt(
+      opts.projectPath,
+      promptExtra,
+      resolveDefaultShell(),
+    ).catch(
       () => ({ configArgs: [] as string[] }),
     );
     // Scoped: switch off the user's own config.toml servers first, then add
@@ -369,7 +378,7 @@ async function recordSpawnedTerminal(
       }, projectPath);
     }
     const label = hint.label ?? defaultTerminalLabel(originalCommand, harness);
-    return await terminalRegistry.create({
+    const record = await terminalRegistry.create({
       projectPath,
       cwd: opts.cwd,
       label,
@@ -382,6 +391,12 @@ async function recordSpawnedTerminal(
       serverId,
       ...(serverInstanceId ? { serverInstanceId } : {}),
     });
+    // A re-seeded startup terminal replaces its dead predecessor's tab, whatever
+    // the restore mode (restore is otherwise the only thing that ends it).
+    await endSupersededStartupRecords(terminalRegistry, record, serverInstanceId).catch((err) => {
+      console.warn('[terminal-registry] could not end superseded startup terminal:', err);
+    });
+    return record;
   } catch (err) {
     console.warn('[terminal-registry] could not record spawned terminal:', err);
     return null;

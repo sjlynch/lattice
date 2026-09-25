@@ -7,7 +7,7 @@ import { TaskMigrations } from './migrations.js';
 import { projectTasksFile } from './paths.js';
 import { isStructurallyJunkPath } from './pruneIndex.js';
 import { ProjectsIndex } from './projectsIndex.js';
-import { applyTaskUpdate, stampTimestamps, type TaskLookup } from './taskUpdate.js';
+import { appendSummaryText, applyTaskUpdate, stampTimestamps, type TaskLookup } from './taskUpdate.js';
 import type { Task, TaskStatus, TaskSubscriber, TaskUpdates } from './types.js';
 
 export type TaskCacheManagerOptions = {
@@ -194,6 +194,27 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
       () => this.loadAllKnown(),
       ({ project, list, idx }) => {
         const { updated, updatedList } = applyTaskUpdate(list, idx, updates);
+        this.setCached(project, updatedList);
+        this.schedulePersist(project);
+        this.notifyProject(project);
+        return updated;
+      },
+    );
+  }
+
+  // Append `text` to a task's `summary`, reading the current summary INSIDE the
+  // per-project write lock (like createTask) so concurrent appends — two
+  // append_summary calls, a QA verdict racing a review note — each land, in
+  // arrival order. A caller that read the task first and passed the joined
+  // text to updateTask raced on that unlocked read and lost appends.
+  public async appendTaskSummary(id: string, text: string): Promise<Task | null> {
+    return this.withLockedItemAcrossProjects<Task, Task>(
+      id,
+      (t) => t.id,
+      () => this.loadAllKnown(),
+      ({ project, list, idx }) => {
+        const summary = appendSummaryText(list[idx].summary, text);
+        const { updated, updatedList } = applyTaskUpdate(list, idx, { summary });
         this.setCached(project, updatedList);
         this.schedulePersist(project);
         this.notifyProject(project);

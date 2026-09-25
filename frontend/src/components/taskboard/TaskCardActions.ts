@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Ban,
   GitMerge,
+  LoaderCircle,
   Play,
   TerminalSquare,
   Trash2,
@@ -31,6 +32,9 @@ export type TaskCardActionHandlers = {
   // QA lane only, and only when the Playwright MCP is on for the project:
   // launch a full end-to-end test of this merged task.
   onQaRun?: () => void;
+  // Replaces onQaRun while this task's e2e session is running: focuses it
+  // rather than starting a second one.
+  onFocusQaRun?: () => void;
   onFocusTerminal?: () => void;
 };
 
@@ -119,6 +123,17 @@ const TASK_CARD_ACTION_SPECS: readonly TaskCardActionSpec[] = [
       title: 'Run an end-to-end test with Playwright',
       ariaLabel: 'Run end-to-end test',
       icon: createElement(Play, { size: 11, fill: 'currentColor' }),
+    }),
+  },
+  {
+    handler: 'onFocusQaRun',
+    build: (onClick) => ({
+      key: 'qa-running',
+      className: 'task-card-iconbtn qa-run running',
+      onClick,
+      title: 'End-to-end test running — click to focus its terminal',
+      ariaLabel: 'Testing… focus end-to-end test terminal',
+      icon: createElement(LoaderCircle, { size: 12 }),
     }),
   },
   {

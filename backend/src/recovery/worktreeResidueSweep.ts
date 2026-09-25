@@ -52,6 +52,7 @@ import { pruneReparsePointsUnder } from '../worktree/reparsePoints.js';
 import { isPathStrictlyInside } from '../worktree/paths.js';
 import { notifyDiskSpaceFreed } from '../spawnQueue.js';
 import { hasLiveSessionAtOrUnder, normalizeCwd } from './liveSessions.js';
+import { classifyGitMarker, commonGitDirVia } from './worktreeResidueGitMarker.js';
 import type { projectGit as ProjectGit } from '../worktree/projectGit.js';
 
 const RESIDUE_MIN_AGE_MS = 10 * 60_000;
@@ -60,6 +61,11 @@ const LOCKED_BACKOFF_BASE_MS = 30 * 60_000;
 const LOCKED_BACKOFF_MAX_MS = 8 * 60 * 60_000;
 const LOGGED_ENTRIES_MAX = 20;
 const ACTIVE_STATUSES = new Set(['in_progress', 'ready_to_merge']);
+// `removed|locked|waiting` of a pass that did nothing — a project's first pass
+// logs no summary when it is this.
+const QUIET_SUMMARY = '0|0|0';
+
+type LockedBackoff = { failures: number; retryAt: number };
 
 export type ResidueSweepDeps = {
   projectGit: typeof ProjectGit;
@@ -79,7 +85,7 @@ export type ResidueSweepOptions = {
 };
 
 // In-memory only: a restart retries everything once, which is what we want.
-const lockedBackoff = new Map<string, { failures: number; retryAt: number }>();
+const lockedBackoff = new Map<string, LockedBackoff>();
 // Last logged per-project summary, so a pass logs only when its counts change.
 const lastSummary = new Map<string, string>();
 // Per-project single-flight shared by the boot, periodic and disk-wait passes.
@@ -99,12 +105,6 @@ async function removeResidueDir(dir: string): Promise<boolean> {
   }
 }
 
-async function commonGitDirVia(projectGit: typeof ProjectGit, repoRoot: string): Promise<string | null> {
-  const r = await projectGit(repoRoot, ['rev-parse', '--git-common-dir'], { timeoutMs: 15_000 });
-  const dir = r.code === 0 ? r.stdout.trim() : '';
-  return dir ? path.resolve(repoRoot, dir) : null;
-}
-
 const defaultDeps = (projectGit: typeof ProjectGit): ResidueSweepDeps => ({
   projectGit,
   removeDir: removeResidueDir,
@@ -112,76 +112,6 @@ const defaultDeps = (projectGit: typeof ProjectGit): ResidueSweepDeps => ({
   worktreesDir: homeWorktreesDir,
   notifyDiskSpaceFreed,
 });
-
-async function entryExists(target: string): Promise<boolean> {
-  try {
-    await fs.lstat(target);
-    return true;
-  } catch (err) {
-    // Anything but ENOENT is unknown state — treat it as present (keep the dir).
-    return (err as NodeJS.ErrnoException).code !== 'ENOENT';
-  }
-}
-
-async function isDirectory(target: string): Promise<boolean> {
-  try {
-    const st = await fs.lstat(target);
-    return st.isDirectory() && !st.isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
-async function isRegularFile(target: string): Promise<boolean> {
-  try {
-    return (await fs.lstat(target)).isFile();
-  } catch {
-    return false;
-  }
-}
-
-// A git worktree `.git` file is one short `gitdir: <path>` line.
-const GIT_FILE_MAX_BYTES = 4096;
-
-// What a dir's `.git` marker says about deleting it:
-//   'none'     — no marker at all;
-//   'orphaned' — a `.git` FILE whose `gitdir:` names `<commonDir>/worktrees/<id>`
-//                of this repo, that admin dir is gone, and the common dir is
-//                intact (a `git worktree remove` that died after dropping the
-//                admin dir but before reaching `.git`);
-//   'keep'     — anything else: a `.git` dir (another repo / a real checkout),
-//                a pointer elsewhere, a live admin dir, or any unknown state.
-type GitMarker = 'none' | 'orphaned' | 'keep';
-
-async function classifyGitMarker(
-  dir: string,
-  entries: string[],
-  commonDir: () => Promise<string | null>,
-): Promise<GitMarker> {
-  // Case-folded: `.GIT` on a case-sensitive filesystem is still not ours to judge.
-  const names = entries.filter((e) => e.toLowerCase() === '.git');
-  if (names.length === 0) return (await entryExists(path.join(dir, '.git'))) ? 'keep' : 'none';
-  if (names.length > 1) return 'keep';
-  const marker = path.join(dir, names[0]);
-  let text: string;
-  try {
-    const st = await fs.lstat(marker);
-    if (!st.isFile() || st.size > GIT_FILE_MAX_BYTES) return 'keep';
-    text = await fs.readFile(marker, 'utf8');
-  } catch {
-    return 'keep';
-  }
-  const m = /^gitdir:[ \t]*(.+?)[ \t]*$/.exec(text.split(/\r?\n/, 1)[0] ?? '');
-  if (!m) return 'keep';
-  const common = await commonDir();
-  if (!common) return 'keep';
-  // A vanished/damaged `.git` would make EVERY admin dir read as missing.
-  if (!(await isDirectory(common)) || !(await isRegularFile(path.join(common, 'HEAD')))) return 'keep';
-  const adminDir = path.resolve(dir, m[1]);
-  if (normalizeCwd(path.dirname(adminDir)) !== normalizeCwd(path.join(common, 'worktrees'))) return 'keep';
-  // entryExists reads anything but ENOENT as present — unknown state keeps the dir.
-  return (await entryExists(adminDir)) ? 'keep' : 'orphaned';
-}
 
 type Registrations = { paths: Set<string>; names: Set<string> };
 
@@ -329,9 +259,7 @@ async function sweepProjectResidue(
       console.log(`${logPrefix} residue sweep: removed ${dir} (top-level: ${describeEntries(entries)}${why})`);
     } else {
       lockedCount += 1;
-      const failures = (backoff?.failures ?? 0) + 1;
-      const delay = Math.min(LOCKED_BACKOFF_BASE_MS * 2 ** (failures - 1), LOCKED_BACKOFF_MAX_MS);
-      lockedBackoff.set(dirKey, { failures, retryAt: deps.now() + delay });
+      lockedBackoff.set(dirKey, nextBackoff(backoff, deps.now()));
     }
   }
   // Forget backoff state for dirs that are gone (removed by hand, or by git).
@@ -343,10 +271,23 @@ async function sweepProjectResidue(
   // attempt of either kind freed disk: wake runs waiting on it.
   if (removed + lockedCount > 0) deps.notifyDiskSpaceFreed?.();
 
+  logSweepSummary(base, logPrefix, removed, lockedCount, waiting);
+  return removed;
+}
+
+// Backoff after one more failed (locked) delete: 30 min, 1 h, 2 h, … capped.
+function nextBackoff(previous: LockedBackoff | undefined, now: number): LockedBackoff {
+  const failures = (previous?.failures ?? 0) + 1;
+  const delay = Math.min(LOCKED_BACKOFF_BASE_MS * 2 ** (failures - 1), LOCKED_BACKOFF_MAX_MS);
+  return { failures, retryAt: now + delay };
+}
+
+// One line per project, only when the counts changed since its last pass.
+function logSweepSummary(base: string, logPrefix: string, removed: number, lockedCount: number, waiting: number): void {
   const summaryKey = normalizeCwd(base);
   const summary = `${removed}|${lockedCount}|${waiting}`;
   const previous = lastSummary.get(summaryKey);
-  if (summary !== previous && !(previous === undefined && summary === '0|0|0')) {
+  if (summary !== previous && !(previous === undefined && summary === QUIET_SUMMARY)) {
     console.log(
       `${logPrefix} residue sweep: ${base}: removed ${removed} leftover dir(s); ` +
         `${lockedCount} still locked (usually a running esbuild/vite/dev server holding a file) — ` +
@@ -354,7 +295,6 @@ async function sweepProjectResidue(
     );
   }
   lastSummary.set(summaryKey, summary);
-  return removed;
 }
 
 // Test seam.

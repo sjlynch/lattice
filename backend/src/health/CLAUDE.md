@@ -10,7 +10,12 @@ Halstead token counts and a Maintainability Index, and folded into a composite
 - `parser.ts` — grammar load/cache; `grammarKeyForExt` maps extensions to grammars
 - `nodeKinds/` — per-language node-kind sets (function/branch/loop/etc.):
   `index.ts` (`nodeKindsFor`) + `base.ts` plus one file per language
-  (`typescript.ts`, `python.ts`, `go.ts`, …). Import from `./nodeKinds/index.js`.
+  (`typescript.ts`, `python.ts`, `go.ts`, `csharp.ts`, `java.ts`, `ruby.ts`,
+  `rust.ts`). Import from `./nodeKinds/index.js`.
+- `decodeSource.ts` — `decodeSourceText(buf)`: BOM-aware byte → text decode
+  (UTF-16LE/BE BOM → UTF-16, else UTF-8) run before analysis, so a UTF-16
+  `.ps1`/`.cs` isn't analysed as NUL-interleaved garbage. Used by
+  `watcher/fileAnalysis.ts` and `../scanner/readForAnalysis.ts`.
 - `walker.ts` + `walker/` — shim plus the single AST pass producing a
   `FileAnalysis`; see `walker/CLAUDE.md`. `walker/index.ts` orchestrates the
   walk via a `context.ts` `WalkerContext` plus visitor helpers in

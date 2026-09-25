@@ -12,8 +12,13 @@
 //     os.cpus() deltas. Batch admission stops at ≥ CPU_BLOCK_PCT and resumes
 //     below CPU_RESUME_PCT (hysteresis, so it doesn't flap per poll).
 //   - Memory: batch admission stops while free RAM is under the floor.
-//   - Floor: with fewer than MIN_LIVE_AGENTS sessions live the brake never
-//     applies — load from something outside Lattice can't starve it to zero.
+//   - Floor: with fewer than MIN_LIVE_AGENTS Lattice agents live the brake
+//     never applies — load from something outside Lattice can't starve it to
+//     zero. It counts AGENT sessions (`countAgentSessions` below, plus the
+//     queue's own in-flight reservations), never raw ptys: counting sidebar
+//     shells, a `npm run dev` startup terminal or another project's tabs let
+//     two open tabs on a low-RAM machine hold every Run All forever with no
+//     agent running — and nothing Lattice does would ever free that RAM.
 //   - `priority` / `interactive` spawns (merge resolvers, push, user one-offs)
 //     are never held: they unblock work in flight or are explicit clicks.
 //
@@ -31,6 +36,28 @@ const MIN_FREE_MEM_FRACTION = 0.05;
 export const MIN_LIVE_AGENTS = 2;
 
 type CpuTimes = { idle: number; total: number };
+
+// Is this terminal-server session a Lattice agent? Every agent Lattice spawns
+// runs in a `.lattice` directory — a task worktree / merge resolver under
+// `~/.lattice/worktrees/` (legacy `<repo>/.lattice/worktrees/`), a workflow
+// step under `<repo>/.lattice/workflow-steps/`, a push / QA / post-merge run
+// in `~/.lattice/per-project/…` scratch. Sidebar shells, startup terminals and
+// the user's own harness tabs run in the project (or elsewhere) and are not
+// agents. Read off the cwd rather than the per-project terminal registry so it
+// holds for sessions a restarted backend re-adopted, across every project.
+export function isAgentSessionCwd(cwd: unknown): boolean {
+  if (typeof cwd !== 'string' || !cwd) return false;
+  return cwd.split(/[\\/]+/).some((seg) => seg.toLowerCase() === '.lattice');
+}
+
+// How many sessions of a GET /sessions listing are Lattice agents.
+export function countAgentSessions(sessions: readonly unknown[]): number {
+  let n = 0;
+  for (const s of sessions) {
+    if (s && typeof s === 'object' && isAgentSessionCwd((s as { cwd?: unknown }).cwd)) n++;
+  }
+  return n;
+}
 
 export type GovernorSampler = {
   cpuTimes: () => CpuTimes;
@@ -101,12 +128,13 @@ export class ResourceGovernor {
     }
   }
 
-  // Should a batch spawn be held right now? `liveSessions` is the queue's
-  // effective live count (sessions + in-flight spawns).
-  holdsBatch(liveSessions: number): boolean {
+  // Should a batch spawn be held right now? `liveAgents` is the queue's
+  // effective AGENT count (`SpawnAccounting.effectiveAgents`: agent sessions +
+  // in-flight spawns) — not every pty, see the floor note above.
+  holdsBatch(liveAgents: number): boolean {
     let reason: string | null = null;
     let kind: 'cpu' | 'mem' | null = null;
-    if (this.enabled && liveSessions >= MIN_LIVE_AGENTS) {
+    if (this.enabled && liveAgents >= MIN_LIVE_AGENTS) {
       const free = this.sampler.freeMem();
       const floor = Math.max(MIN_FREE_MEM_BYTES, this.sampler.totalMem() * MIN_FREE_MEM_FRACTION);
       if (this.cpuHot) {

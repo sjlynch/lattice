@@ -25,7 +25,9 @@ import { getBackendServerConfig } from '../server/config.js';
 // ONE line, and no double quotes. For Codex this text rides a
 // `-c developer_instructions='''…'''` override through a `"%VAR%"` expansion,
 // and cmd.exe (the Windows pty default) strips inner double quotes and breaks
-// on an embedded newline. See inject.ts's tomlMultilineLiteral.
+// on an embedded newline. inject.ts normalizes both away on cmd
+// (normalizeCodexAppendForCmd) — keeping the text free of them just means the
+// preamble reaches Codex byte-identical to what Claude and Pi see.
 export function buildLatticePreamble(docPath: string): string {
   return (
     'This session runs inside Lattice, a local orchestrator that runs coding ' +
@@ -52,13 +54,10 @@ export function resolveLatticePreamble(projectPath: string): string | null {
   try {
     const docPath = ensureLatticeApiDoc(projectPath, getBackendServerConfig().port);
     if (!docPath) return null;
-    const text = buildLatticePreamble(docPath);
-    // Defensive: a `"` or a TOML `'''` inside the project path would break the
-    // Codex `-c` transit described above. Both are essentially impossible in a
-    // real path (a `"` is illegal in Windows filenames), but dropping the
-    // preamble is strictly better than emitting a command that fails to parse.
-    if (text.includes('"') || text.includes("'''")) return null;
-    return text;
+    // A `"` or a TOML `'''` inside the project path no longer needs special
+    // handling here: the Codex path normalizes both before the `-c` transit
+    // (inject.ts), and neither harms the Claude/Pi file/extension channels.
+    return buildLatticePreamble(docPath);
   } catch {
     return null;
   }
