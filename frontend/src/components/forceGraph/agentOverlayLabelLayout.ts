@@ -57,6 +57,9 @@ export type LabelRectOutput = { cx: number; cy: number };
 // against every placed label until it is clear. Horizontal position never
 // changes — labels only slide along their node's side, so each stays next to
 // its own orb. `padX`/`padY` are the minimum clearances. Pure — unit-tested.
+// Relative slack in the overlap test (fraction of the two labels' heights).
+const SEPARATION_TOLERANCE = 1e-6;
+
 export function spreadLabelRects(
   items: readonly LabelRectInput[],
   padX: number,
@@ -80,9 +83,16 @@ export function spreadLabelRects(
       for (const j of placed) {
         const p = out[j];
         const q = items[j];
+        // The tolerance matters: a label just pushed below `p` sits exactly on
+        // the separation boundary, and float rounding (0.3 - 2 - 0.2) can read
+        // that as still overlapping — every retry then re-pushed it to the same
+        // spot under `p`, the guard ran out, and it was never checked against
+        // the label already sitting there, so the two were drawn on top of
+        // each other.
+        const tol = SEPARATION_TOLERANCE * (it.h + q.h);
         if (
-          Math.abs(o.cx - p.cx) < (it.w + q.w) / 2 + padX &&
-          Math.abs(o.cy - p.cy) < (it.h + q.h) / 2 + padY
+          Math.abs(o.cx - p.cx) < (it.w + q.w) / 2 + padX - tol &&
+          Math.abs(o.cy - p.cy) < (it.h + q.h) / 2 + padY - tol
         ) {
           hit = j;
           break;

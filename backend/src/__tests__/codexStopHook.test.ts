@@ -159,9 +159,12 @@ test('renderCodexStopHookJson adds tool-use + subagent activity hooks when given
   }
   for (const event of ['PreToolUse', 'PostToolUse', 'SubagentStart', 'SubagentStop']) {
     const entry = parsed.hooks[event][0].hooks[0];
-    // Posts the hook's stdin JSON, unquoted (no shell), cmd /c on Windows.
+    // Posts the hook's stdin JSON, unquoted, cmd /c on Windows. `-d@-`, never
+    // `--data-binary @-`: Codex 0.157 runs hooks through PowerShell, which
+    // rejects a bare `@-` (splatting) before curl starts.
     assert.ok(entry.command.startsWith('curl '), entry.command);
-    assert.ok(entry.command.includes('--data-binary @-'));
+    assert.ok(entry.command.includes(' -d@- '));
+    assert.ok(!/\s@/.test(entry.command), 'no token may start with @ (PowerShell splatting)');
     assert.ok(entry.command.endsWith(` ${ACTIVITY}`));
     assert.ok(!entry.command.includes('"'), 'no quotes — Codex spawns the argv directly');
     assert.equal(entry.commandWindows, `cmd /c ${entry.command}`);

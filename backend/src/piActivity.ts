@@ -24,6 +24,16 @@
 //
 // Every POST is fire-and-forget with a short timeout: a handler never delays a
 // tool call, and a backend that is down or restarting just loses a beam.
+//
+// Project mode (`projectSession`): the same extension at the PROJECT ROOT, for
+// a `pi` the user runs in a sidebar tab — the Pi analogue of the project's
+// `.claude/settings.local.json` hooks (projectClaudeHooks.ts). It posts to
+// `/api/project-activity/:token`, which keys the node by the body's
+// `session_id` and creates it only on `SessionStart`, so every body carries the
+// top-level session's id and its start/shutdown post SessionStart/SessionEnd.
+// Pi loads extensions with `moduleCache: false`, so a pi-subagents subagent
+// re-evaluates this module: the parent's id is handed over on `globalThis`
+// (same process) rather than a module variable.
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -31,13 +41,20 @@ import { atomicWriteFile } from './claudeTrust/configFile.js';
 
 export const PI_ACTIVITY_EXTENSION_FILE = 'lattice-activity.ts';
 
-export function renderPiActivityExtension(activityUrl: string): string {
+export function renderPiActivityExtension(
+  activityUrl: string,
+  opts: { projectSession?: boolean } = {},
+): string {
   return `// Lattice-managed — do not commit. Reports which files this Pi session (and
 // any pi-subagents subagent it spawns) reads or edits to Lattice, which draws
 // the agent's node, focus beams and file labels on its graph. Fire-and-forget:
 // a handler never delays a tool call.
 
 const ACTIVITY_URL = ${JSON.stringify(activityUrl)};
+// Project mode, for a pi the user runs at the project root: bodies carry the top-level
+// session's id, and its start/shutdown post SessionStart/SessionEnd.
+const PROJECT_SESSION = ${opts.projectSession === true};
+const MAIN_SESSION_KEY = "__latticePiProjectSessionId";
 const POST_TIMEOUT_MS = 1500;
 // Pi tool name -> the Claude tool name the activity route understands.
 const TOOLS = { read: "Read", edit: "Edit", write: "Write", bash: "Bash" };
@@ -73,6 +90,23 @@ function subagentFields(ctx) {
   }
 }
 
+function ownSessionId(ctx) {
+  try {
+    const sm = ctx && ctx.sessionManager;
+    return sm && typeof sm.getSessionId === "function" ? sm.getSessionId() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Project mode: the session the graph node belongs to — this one, or for a
+// subagent the top-level session that spawned it.
+function sessionFields(ctx) {
+  if (!PROJECT_SESSION) return {};
+  const id = subagentFields(ctx).agent_id ? globalThis[MAIN_SESSION_KEY] : ownSessionId(ctx);
+  return id ? { session_id: id } : {};
+}
+
 function cwdOf(ctx) {
   return (ctx && typeof ctx.cwd === "string" && ctx.cwd) || process.cwd();
 }
@@ -97,6 +131,7 @@ function report(phase, toolName, args, ctx) {
     tool_name: tool,
     tool_input: input,
     cwd: cwdOf(ctx),
+    ...sessionFields(ctx),
     ...subagentFields(ctx),
   });
 }
@@ -120,13 +155,41 @@ export default function (pi) {
 
   pi.on("session_start", (_event, ctx) => {
     const sub = subagentFields(ctx);
-    if (sub.agent_id) post({ hook_event_name: "SubagentStart", cwd: cwdOf(ctx), ...sub });
+    if (sub.agent_id) {
+      post({ hook_event_name: "SubagentStart", cwd: cwdOf(ctx), ...sessionFields(ctx), ...sub });
+    } else if (PROJECT_SESSION) {
+      const id = ownSessionId(ctx);
+      if (!id) return;
+      globalThis[MAIN_SESSION_KEY] = id;
+      post({ hook_event_name: "SessionStart", session_id: id, cwd: cwdOf(ctx) });
+    }
   });
 
-  pi.on("session_shutdown", (_event, ctx) => {
+  // Project mode: a turn's start/end, so the node shows only while the agent
+  // works (the route maps these like Claude's UserPromptSubmit / Stop).
+  // agent_settled, not agent_end: it waits out retries, compaction and queued
+  // follow-ups. Top-level session only — a subagent's own run is a satellite.
+  if (PROJECT_SESSION) {
+    const turn = (phase) => (_event, ctx) => {
+      if (subagentFields(ctx).agent_id) return;
+      const id = ownSessionId(ctx);
+      if (id) post({ hook_event_name: phase, session_id: id, cwd: cwdOf(ctx) });
+    };
+    pi.on("agent_start", turn("UserPromptSubmit"));
+    pi.on("agent_settled", turn("Stop"));
+  }
+
+  pi.on("session_shutdown", (event, ctx) => {
     argsByCall.clear();
     const sub = subagentFields(ctx);
-    if (sub.agent_id) post({ hook_event_name: "SubagentStop", cwd: cwdOf(ctx), ...sub });
+    if (sub.agent_id) {
+      post({ hook_event_name: "SubagentStop", cwd: cwdOf(ctx), ...sessionFields(ctx), ...sub });
+    } else if (PROJECT_SESSION && !(event && event.reason === "reload")) {
+      // A /reload keeps the same session id; its SessionEnd would make the
+      // route drop the SessionStart that follows (the recently-ended guard).
+      const id = ownSessionId(ctx);
+      if (id) post({ hook_event_name: "SessionEnd", session_id: id, cwd: cwdOf(ctx) });
+    }
   });
 }
 `;
@@ -140,9 +203,12 @@ export default function (pi) {
 export async function installPiActivityExtension(args: {
   dir: string;
   activityUrl: string;
+  projectSession?: boolean;
 }): Promise<void> {
-  const file = path.join(args.dir, '.pi', 'extensions', PI_ACTIVITY_EXTENSION_FILE);
-  const expected = renderPiActivityExtension(args.activityUrl);
+  const file = piActivityExtensionPath(args.dir);
+  const expected = renderPiActivityExtension(args.activityUrl, {
+    projectSession: args.projectSession,
+  });
   try {
     try {
       if ((await fs.readFile(file, 'utf8')) === expected) return;
@@ -153,5 +219,22 @@ export async function installPiActivityExtension(args: {
     await atomicWriteFile(file, expected);
   } catch (err) {
     console.warn(`[pi-activity] could not install ${file}:`, err);
+  }
+}
+
+function piActivityExtensionPath(dir: string): string {
+  return path.join(dir, '.pi', 'extensions', PI_ACTIVITY_EXTENSION_FILE);
+}
+
+// Remove a project-mode extension from `<dir>` (the instrumentation opt-out).
+// Only a file that targets the project-activity route is deleted, so nothing
+// else by that name is ever touched. Best-effort.
+export async function removeProjectPiActivityExtension(dir: string): Promise<void> {
+  const file = piActivityExtensionPath(dir);
+  try {
+    if (!(await fs.readFile(file, 'utf8')).includes('/api/project-activity/')) return;
+    await fs.unlink(file);
+  } catch {
+    /* absent or unreadable — nothing to remove */
   }
 }

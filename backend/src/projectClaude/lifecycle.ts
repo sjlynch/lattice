@@ -3,19 +3,44 @@ import {
   touchAgentSession,
   unregisterAgentSession,
 } from '../agentSessions.js';
+import type { AgentHarness } from '../harnesses.js';
+
+// Presence for a project session (an agent in a terminal the user opened —
+// Claude via the project's `.claude/settings.local.json` hooks, Codex via its
+// per-launch hook overrides, Pi via the project-root activity extension).
+//
+// The node means "this agent is WORKING", not "this terminal is open": it
+// appears on the first sign of a turn (UserPromptSubmit, a tool use, a
+// subagent event) and is removed shortly after the turn ends (Stop). A session
+// merely sitting at its prompt draws nothing. That is what fixes the two
+// "stuck node" symptoms: an agent that finished its turn used to keep its node
+// and its last-file label on screen for as long as the terminal stayed open,
+// and SessionStart put a bare dot on the graph the moment a tab was opened,
+// before the agent had done anything.
+
+// The graph node key for a project session. One namespace for every harness:
+// the session id alone is unique (a Claude/Pi pinned id, a Codex thread id).
+export function projectSessionAgentId(sessionId: string): string {
+  return `claude:${sessionId}`;
+}
 
 // A project session that goes quiet for this long is dropped — a safety net
-// for a session that exits without firing SessionEnd (hard-killed terminal).
-// SessionEnd is the primary, prompt removal signal; this is generous so a
-// merely-idle (but alive) session doesn't flicker out.
+// for a session that dies mid-turn without firing Stop or SessionEnd (a
+// hard-killed terminal the registry didn't see end). Generous, since a single
+// long reasoning step can go minutes without a hook.
 export const PROJECT_SESSION_IDLE_TTL_MS = 5 * 60 * 1000;
 
+// How long after a turn's Stop the node lingers before it is removed. Claude
+// fires Stop early (and repeatedly) around subagents, whose tool use keeps
+// arriving afterwards; any activity inside the window cancels the removal, so
+// those turns don't flicker. Long enough to read the final file label.
+export const TURN_END_GRACE_MS = 15 * 1000;
+
 // After a session's SessionEnd we briefly remember its session_id so a hook
-// that arrives AFTER SessionEnd can't resurrect the node. Each Claude hook is
-// an independent `curl -m 2` with no ordering guarantee, so a final PostToolUse
-// (or a reordered SessionStart) can land after SessionEnd; the curl gives up
-// after 2s, so any straggler arrives well within this window. Generous so a
-// late hook never slips past it.
+// that arrives AFTER SessionEnd can't resurrect the node. Each hook is an
+// independent `curl -m 2` with no ordering guarantee, so a final PostToolUse
+// can land after SessionEnd; the curl gives up after 2s, so any straggler
+// arrives well within this window.
 const RECENTLY_ENDED_TTL_MS = 30 * 1000;
 const recentlyEndedAt = new Map<string, number>();
 
@@ -38,53 +63,91 @@ function recentlyEnded(sessionId: string): boolean {
   return true;
 }
 
-// Apply one project-instrumented session's lifecycle/activity event to the
-// presence registry and report whether the caller should emit a focus-beam
-// activity event for it. Presence is owned by SessionStart (create) and
-// SessionEnd (remove) ONLY; tool-use / subagent events are refresh-only via
-// touchAgentSession — a no-op once the session is gone. This mirrors
-// routes/agentActivity.ts ('presence is owned by the spawn + completion
-// callbacks, so we never resurrect here') and fixes the asymmetry where this
-// route used to registerAgentSession (which CREATES) on every non-SessionEnd
-// event: a late PostToolUse after SessionEnd resurrected a ghost node that then
-// lingered for the full PROJECT_SESSION_IDLE_TTL_MS. The recentlyEnded guard
-// additionally drops a reordered SessionStart for an already-ended session,
-// which touch-only alone wouldn't catch. Exported for the regression test.
+// Pending post-Stop removals, keyed by agent id.
+const turnEndTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function cancelTurnEnd(agentId: string): void {
+  const timer = turnEndTimers.get(agentId);
+  if (timer === undefined) return;
+  clearTimeout(timer);
+  turnEndTimers.delete(agentId);
+}
+
+function scheduleTurnEnd(agentId: string, graceMs: number): void {
+  cancelTurnEnd(agentId);
+  const timer = setTimeout(() => {
+    turnEndTimers.delete(agentId);
+    // Not remembered as ended: the session is alive, and its next turn must
+    // bring the node back.
+    unregisterAgentSession(agentId);
+  }, graceMs);
+  timer.unref?.();
+  turnEndTimers.set(agentId, timer);
+}
+
+// The session is gone (SessionEnd, or its terminal exited): drop the node now
+// and hold the id in the recently-ended guard.
+export function endProjectSession(sessionId: string): void {
+  const agentId = projectSessionAgentId(sessionId);
+  cancelTurnEnd(agentId);
+  unregisterAgentSession(agentId);
+  rememberEndedSession(sessionId);
+}
+
+// Apply one project session's hook event to the presence registry and report
+// whether the caller should emit graph activity (a focus beam / satellite) for
+// it:
+//   - SessionEnd         → remove now; late stragglers are dropped (guard).
+//   - SessionStart       → nothing: an idle session draws no node.
+//   - Stop               → remove after TURN_END_GRACE_MS unless the session
+//                          does something first.
+//   - anything else      → the agent is working: create the node if absent
+//     (UserPromptSubmit,   (this is also what brings a node back after the
+//      tool use, subagent  idle TTL or a backend restart dropped it) and
+//      events)             cancel any pending post-Stop removal.
+// Exported for the regression test.
 export function applyProjectActivityEvent(args: {
   event: string;
   sessionId: string;
   agentId: string;
   projectPath: string;
   label: string;
+  harness?: AgentHarness;
+  turnEndGraceMs?: number;
 }): { emitActivity: boolean } {
   const { event, sessionId, agentId } = args;
 
   if (event === 'SessionEnd') {
-    unregisterAgentSession(agentId);
-    rememberEndedSession(sessionId);
+    endProjectSession(sessionId);
     return { emitActivity: false };
   }
 
   // A hook reordered after this session's SessionEnd must not bring the node
-  // back — drop every event for a just-ended session_id, SessionStart included.
+  // back.
   if (recentlyEnded(sessionId)) return { emitActivity: false };
 
   if (event === 'SessionStart') {
-    // SessionStart is the only event that may CREATE the node (no matcher, so
-    // it fires reliably at session start). registerAgentSession is idempotent.
-    registerAgentSession({
-      agentId,
-      projectPath: args.projectPath,
-      label: args.label,
-      idleTtlMs: PROJECT_SESSION_IDLE_TTL_MS,
-    });
+    // Keep a live node alive (Claude also fires SessionStart after /compact,
+    // mid-session) but never create one.
+    touchAgentSession(agentId);
     return { emitActivity: false };
   }
 
-  // PreToolUse / PostToolUse / SubagentStart / SubagentStop → refresh liveness
-  // only. touchAgentSession returns false (and creates nothing) when the
-  // session is gone, so a stray post-SessionEnd hook is a no-op; with no node
-  // to anchor it we also skip the focus-beam emit.
-  if (!touchAgentSession(agentId)) return { emitActivity: false };
+  if (event === 'Stop') {
+    if (touchAgentSession(agentId)) {
+      scheduleTurnEnd(agentId, args.turnEndGraceMs ?? TURN_END_GRACE_MS);
+    }
+    return { emitActivity: false };
+  }
+
+  cancelTurnEnd(agentId);
+  // Idempotent: refreshes liveness when the node already exists.
+  registerAgentSession({
+    agentId,
+    projectPath: args.projectPath,
+    label: args.label,
+    ...(args.harness ? { harness: args.harness } : {}),
+    idleTtlMs: PROJECT_SESSION_IDLE_TTL_MS,
+  });
   return { emitActivity: true };
 }

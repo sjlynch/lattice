@@ -57,6 +57,7 @@ import { reconcileAgents, removeAgent } from './agentOverlayReconcile';
 import {
   createSatellite,
   disposeSatellite,
+  shouldReapSatellite,
 } from './agentOverlaySatellites';
 import { tickOverlay } from './agentOverlayTick';
 import type { AgentDescriptor } from './agentOverlayTypes';
@@ -178,6 +179,21 @@ export class AgentOverlay {
   // agentOverlayTick for the full contract.
   tick(now: number, graph: ForceGraph3DInstance, engineHot: boolean): boolean {
     return tickOverlay(this.ctx, now, graph, engineHot);
+  }
+
+  // Whether any satellite is past its idle TTL (reaped on the next tick).
+  hasReapableSatellites(now: number): boolean {
+    for (const agent of this.ctx.agents.values()) {
+      for (const sat of agent.satellites.values()) {
+        if (shouldReapSatellite(sat, now)) return true;
+      }
+    }
+    return false;
+  }
+
+  // Whether `taskId`'s node is on screen (activity for it can land).
+  hasAgent(taskId: string): boolean {
+    return this.ctx.agents.has(taskId);
   }
 
   // True while any agent node is on screen. `useAgentOverlay` uses this only as

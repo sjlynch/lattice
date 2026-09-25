@@ -14,6 +14,7 @@
 // net for a session that dies abnormally without firing any callback.
 
 import { canonicalProjectPath } from './projectPath.js';
+import type { AgentHarness } from './harnesses.js';
 
 export type AgentSession = {
   // Namespaced session id (`push:<id>`, `wf:<runId>:<step>`, `pmh:<id>`, or
@@ -23,6 +24,10 @@ export type AgentSession = {
   projectPath: string;
   label: string;
   startedAt: number;
+  // Set only for a project session (an agent in a terminal the user opened),
+  // so the graph can color it by harness. Lattice-run sessions (push /
+  // workflow step / post-merge hook) leave it unset and keep the fixed orange.
+  harness?: AgentHarness;
 };
 
 // Internal record carries liveness metadata not sent to the frontend.
@@ -57,6 +62,7 @@ function publicView(r: SessionRecord): AgentSession {
     projectPath: r.projectPath,
     label: r.label,
     startedAt: r.startedAt,
+    ...(r.harness ? { harness: r.harness } : {}),
   };
 }
 
@@ -87,6 +93,7 @@ export function registerAgentSession(input: {
   agentId: string;
   projectPath: string;
   label: string;
+  harness?: AgentHarness;
   idleTtlMs?: number;
 }): void {
   const now = Date.now();
@@ -103,6 +110,7 @@ export function registerAgentSession(input: {
     agentId: input.agentId,
     projectPath,
     label: input.label,
+    ...(input.harness ? { harness: input.harness } : {}),
     startedAt: now,
     lastSeen: now,
     idleTtlMs: input.idleTtlMs,

@@ -30,22 +30,28 @@ function settingsLocalFile(projectRoot: string): string {
   return path.join(projectRoot, '.claude', 'settings.local.json');
 }
 
+// The project-activity hook URL. The token carries the project + a label (the
+// graph node's name); the per-session identity comes from the hook body's
+// `session_id`, so a single project-wide token is enough. `agentId` is unused
+// by the project-activity route but the token shape is shared with
+// agentActivity — pass a stable placeholder. Also used for sidebar Codex
+// sessions (projectCodexHooks.ts), with label 'codex'.
+export function projectActivityUrl(
+  backendOrigin: string,
+  projectRoot: string,
+  label = 'claude',
+): string {
+  const token = encodeAgentToken({ agentId: 'project', projectPath: projectRoot, label });
+  return `${backendOrigin}${URL_MARKER}${token}`;
+}
+
 function activityCommand(backendOrigin: string, projectRoot: string): string {
-  // The token carries the project + a label; the per-session identity comes
-  // from the hook body's `session_id`, so a single project-wide token is
-  // enough. `agentId` is unused by the project-activity route but the token
-  // shape is shared with agentActivity — pass a stable placeholder.
-  const token = encodeAgentToken({
-    agentId: 'project',
-    projectPath: projectRoot,
-    label: 'claude',
-  });
   // -d @- forwards the hook JSON (stdin); 204 + -s keeps the agent transcript
   // clean; -m 2 bounds the worst case if the backend is down (never blocks —
   // curl exits 7/28, not 2).
   return (
     `curl -s -m 2 -X POST -H "Content-Type: application/json" -d @- ` +
-    `${backendOrigin}${URL_MARKER}${token}`
+    projectActivityUrl(backendOrigin, projectRoot)
   );
 }
 
@@ -57,7 +63,11 @@ function latticeHookGroups(backendOrigin: string, projectRoot: string): HooksMap
     // tagged with `agent_id`, so the backend routes the beam to its satellite.
     PreToolUse: [{ matcher: FILE_TOOL_MATCHER, hooks: command }],
     PostToolUse: [{ matcher: FILE_TOOL_MATCHER, hooks: command }],
-    // Session lifecycle → orange node appears/disappears (no matcher).
+    // Turn + session lifecycle (no matcher): the node shows while a turn runs
+    // — UserPromptSubmit brings it up, Stop takes it down after a grace — and
+    // SessionEnd removes it for good (projectClaude/lifecycle.ts).
+    UserPromptSubmit: [{ hooks: command }],
+    Stop: [{ hooks: command }],
     SessionStart: [{ hooks: command }],
     SessionEnd: [{ hooks: command }],
     // Subagent lifecycle → satellite nodes around the session's node (no
@@ -67,29 +77,22 @@ function latticeHookGroups(backendOrigin: string, projectRoot: string): HooksMap
   };
 }
 
-function isLatticeHandler(handler: HookHandler): boolean {
-  return typeof handler?.command === 'string' && handler.command.includes(URL_MARKER);
+function isLatticeGroup(group: HookGroup): boolean {
+  return (
+    Array.isArray(group?.hooks) &&
+    group.hooks.some(
+      (h) => typeof h?.command === 'string' && h.command.includes(URL_MARKER),
+    )
+  );
 }
 
-// Remove Lattice's hook handlers from a hooks map in place. Filters per
-// HANDLER, not per group: a group can hold the user's own handler beside ours
-// (hand-edited, or a tool that files hooks by event + matcher), and dropping
-// the whole group silently deleted theirs. A group is dropped only once its
-// `hooks` array is empty, and an event only once it has no groups left.
-// Returns the same object.
+// Remove Lattice's hook groups from a hooks map in place; drop now-empty
+// event arrays. Returns the same object.
 function stripLatticeEntries(hooks: HooksMap): HooksMap {
   for (const event of Object.keys(hooks)) {
     const groups = hooks[event];
     if (!Array.isArray(groups)) continue;
-    const kept: HookGroup[] = [];
-    for (const group of groups) {
-      if (!Array.isArray(group?.hooks) || !group.hooks.some(isLatticeHandler)) {
-        kept.push(group);
-        continue;
-      }
-      const handlers = group.hooks.filter((h) => !isLatticeHandler(h));
-      if (handlers.length > 0) kept.push({ ...group, hooks: handlers });
-    }
+    const kept = groups.filter((g) => !isLatticeGroup(g));
     if (kept.length === 0) delete hooks[event];
     else hooks[event] = kept;
   }

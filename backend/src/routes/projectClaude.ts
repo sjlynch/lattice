@@ -16,12 +16,27 @@ import { Router } from 'express';
 import { canonicalProjectPath } from '../projectPath.js';
 import { applyProjectActivityHook } from '../projectClaude/activity.js';
 import { reconcileProjectInstrumentation } from '../projectClaude/reconcile.js';
+import { endProjectSession } from '../projectClaude/lifecycle.js';
+import { subscribeTerminalRegistry } from '../terminalRegistry/store.js';
 import { readProjectParam } from './projectParam.js';
 
 export { applyProjectActivityEvent } from '../projectClaude/lifecycle.js';
 
+// One process-wide subscription, however many times the router is built.
+let unsubscribeTabEnds: (() => void) | null = null;
+
 export function buildProjectClaudeRouter(backendOrigin: string): Router {
   const r = Router();
+
+  // A terminal that exits or is closed takes its agent's node with it. Without
+  // this a tab killed mid-turn (no Stop, no SessionEnd) kept a node on the
+  // graph until the 5-minute idle TTL. No-op for a tab whose conversation
+  // never reached the project route.
+  if (!unsubscribeTabEnds) {
+    unsubscribeTabEnds = subscribeTerminalRegistry((event) => {
+      if (event.type === 'ended' && event.agentSessionId) endProjectSession(event.agentSessionId);
+    });
+  }
 
   // Writes `<project>/.claude/settings.local.json`, so a relative project is
   // refused before it can resolve under the backend's cwd.

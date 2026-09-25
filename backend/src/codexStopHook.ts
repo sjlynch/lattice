@@ -35,20 +35,27 @@ export const CODEX_ACTIVITY_TOOL_MATCHER = 'Bash|apply_patch|shell|exec_command'
 
 // Seconds Codex may wait on one activity hook. The curl itself gives up after
 // 2 s; a PreToolUse hook runs before the tool does, so it must stay short.
-const CODEX_ACTIVITY_HOOK_TIMEOUT_S = 5;
+export const CODEX_ACTIVITY_HOOK_TIMEOUT_S = 5;
 
 // The activity hook command: forward the hook JSON Codex writes to the hook's
-// stdin as the POST body (`--data-binary @-`), exactly like the Claude
-// activity hook. Same no-shell rules as the Stop hook below — no quotes (the
-// header is one whitespace-free token), and `cmd /c` on Windows so curl.exe
-// resolves. The endpoint answers 204 with no body and `-s` silences errors, so
-// the hook prints nothing: Codex parses a PreToolUse hook's stdout as a
-// decision, and empty output is "no opinion". curl never exits 2 (Codex's
-// "block the tool" code) on a failed POST, so a down backend never blocks a
-// tool call.
+// stdin as the POST body (`-d@-`), like the Claude activity hook. It must parse
+// identically however Codex runs it: 0.144 spawned the whitespace-split argv
+// directly (the Stop hook notes below), but 0.157 runs a hook command through
+// Windows PowerShell 5.1 — verified: a `$PSVersionTable` hook resolves and `>`
+// writes UTF-16. So no quotes (the header is one whitespace-free token), and
+// NOT `--data-binary @-`: PowerShell rejects a bare `@-` as a splatting parse
+// error, the hook "Failed" before curl ever started, and no Codex session drew
+// a single beam. `-d@-` is one plain token to PowerShell, cmd, sh and a direct
+// spawn alike (`-d` drops CR/LF, which JSON only has between tokens). `cmd /c`
+// on Windows so curl.exe resolves — under PowerShell 5.1 a bare `curl` is the
+// Invoke-WebRequest alias. The endpoint answers 204 with no body and `-s`
+// silences errors, so the hook prints nothing: Codex parses a PreToolUse
+// hook's stdout as a decision, and empty output is "no opinion". curl never
+// exits 2 (Codex's "block the tool" code) on a failed POST, so a down backend
+// never blocks a tool call.
 export function codexActivityCommands(activityUrl: string): { posix: string; windows: string } {
   const posix =
-    `curl -s -m 2 -X POST -H Content-Type:application/json --data-binary @- ${activityUrl}`;
+    `curl -s -m 2 -X POST -H Content-Type:application/json -d@- ${activityUrl}`;
   return { posix, windows: `cmd /c ${posix}` };
 }
 

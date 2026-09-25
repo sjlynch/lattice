@@ -134,7 +134,9 @@ export type TerminalRegistryHint = {
 
 export type TerminalRegistryEvent =
   | { type: 'upsert'; projectPath: string; record: TerminalRecord }
-  | { type: 'ended'; projectPath: string; id: string; ended: TerminalEnded }
+  // `agentSessionId`: the harness conversation the tab was running, if known —
+  // lets the graph drop that session's node the moment its terminal goes away.
+  | { type: 'ended'; projectPath: string; id: string; ended: TerminalEnded; agentSessionId?: string }
   | { type: 'removed'; projectPath: string; id: string }
   | { type: 'restored'; projectPath: string; record: TerminalRecord; mode: 'adopted' | 'relaunched' }
   | { type: 'restore-failed'; projectPath: string; id: string; reason: string }

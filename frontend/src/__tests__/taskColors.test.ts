@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { colorForIndex, taskColorIndex, taskColor } from '../taskColors.ts';
+import {
+  CLAUDE_ORANGE,
+  CODEX_WHITE,
+  PI_BLUE,
+  colorForIndex,
+  sessionColor,
+  taskColorIndex,
+  taskColor,
+} from '../taskColors.ts';
 
 // taskColors is the single source of truth for the per-task accent colour shared
 // by the task-board card stripe, the 3D graph's Claude agent node, and the `W`
@@ -74,4 +82,12 @@ test('taskColor equals colorForIndex(taskColorIndex(task))', () => {
 
   const fallback = { id: 'task-gamma' };
   assert.equal(taskColor(fallback), colorForIndex(taskColorIndex(fallback)));
+});
+
+test('sessionColor: terminal Codex is white, terminal Pi is blue, everything else Claude orange', () => {
+  assert.equal(sessionColor({ harness: 'codex' }), CODEX_WHITE);
+  assert.equal(sessionColor({ harness: 'pi' }), PI_BLUE);
+  assert.equal(sessionColor({ harness: 'claude' }), CLAUDE_ORANGE);
+  // Lattice-run sessions (workflow step / push / post-merge hook) carry no harness.
+  assert.equal(sessionColor({}), CLAUDE_ORANGE);
 });

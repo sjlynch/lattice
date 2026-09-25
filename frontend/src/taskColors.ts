@@ -9,13 +9,30 @@
 // finishes. Tasks with no slot (legacy, or never run) fall back to a hash of
 // the id so they still get a stable color.
 
-import type { Task } from './api';
+import type { AgentSession, Task } from './api';
 
 // Claude's brand coral/orange. Used for the free-floating node of a Claude
 // session that runs OUTSIDE a task worktree (push / workflow step / post-
 // merge hook) — those have no task color, so they're all the same Claude
 // color by design.
 export const CLAUDE_ORANGE = '#d97757';
+
+// A Codex / Pi agent running in a terminal the user opened (sidebar `+` or a
+// startup terminal) — white and blue, so the harnesses read apart at a glance.
+// Lattice-run sessions (workflow steps, push, post-merge hooks) keep
+// CLAUDE_ORANGE whatever their harness, and task agents keep their task color.
+export const CODEX_WHITE = '#f1f3f7';
+export const PI_BLUE = '#4d8dff';
+
+// The graph color of a non-task agent session: a terminal Codex / Pi session
+// (the backend tags project sessions with their harness) gets its harness
+// color; every other session — a terminal Claude, or any Lattice-run session —
+// stays Claude orange.
+export function sessionColor(session: Pick<AgentSession, 'harness'>): string {
+  if (session.harness === 'codex') return CODEX_WHITE;
+  if (session.harness === 'pi') return PI_BLUE;
+  return CLAUDE_ORANGE;
+}
 
 // 137.508° — the golden angle. Successive multiples land far apart on the
 // hue wheel and never tightly cluster, so even 80 slots stay separable.

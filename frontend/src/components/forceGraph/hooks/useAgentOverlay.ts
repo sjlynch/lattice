@@ -6,11 +6,15 @@ import {
   type AgentSession,
   type Task,
 } from '../../../api';
-import { CLAUDE_ORANGE, taskColor } from '../../../taskColors';
+import { sessionColor, taskColor } from '../../../taskColors';
 import type { GraphSettings } from '../graphSettings';
 import { getIdleController } from '../idleController';
 import { onFrame } from '../sceneFrameDriver';
 import { AgentOverlay, type AgentDescriptor } from '../agentOverlay';
+import { PendingActivityBuffer } from '../agentActivityBuffer';
+
+// How often a settled scene is checked for a satellite past its idle TTL.
+const SATELLITE_REAP_CHECK_MS = 30_000;
 
 // Hook half of the **Agent Presence Layer (APL)** — the scene overlay that
 // shows where live agents (Claude, Codex, Pi) are working (a hovering
@@ -30,7 +34,10 @@ import { AgentOverlay, type AgentDescriptor } from '../agentOverlay';
 //   - in-progress tasks → a task-colored node (id = taskId).
 //   - agent sessions OUTSIDE a worktree (push / workflow step / post-merge
 //     hook) → an orange node (id = agentId), from the `/ws/agent-sessions`
-//     presence snapshot.
+//     presence snapshot. An agent in a terminal the user opened is one of
+//     these too: orange for Claude, white for Codex, blue for Pi (see
+//     sessionColor). The backend shows such a node only while the agent is
+//     mid-turn (backend projectClaude/lifecycle.ts).
 // Focus beams for both arrive as `task-activity` (taskId) / `agent-activity`
 // (agentId) events on `/ws/tasks` and just attach to the matching node.
 //
@@ -46,7 +53,7 @@ function taskDescriptors(tasks: Task[]): AgentDescriptor[] {
 }
 
 function sessionDescriptors(sessions: AgentSession[]): AgentDescriptor[] {
-  return sessions.map((s) => ({ taskId: s.agentId, color: CLAUDE_ORANGE }));
+  return sessions.map((s) => ({ taskId: s.agentId, color: sessionColor(s) }));
 }
 
 // Cheap equality on a descriptor set: `/ws/tasks` re-pushes a full snapshot for
@@ -89,6 +96,8 @@ export function useAgentOverlay(
   // the overlay settles. Kept in sync by `kick` (acquire) and the frame handler
   // (release on rest), so it can never leak a permanent hold.
   const idleHeldRef = useRef(false);
+  // Activity frames for agents whose node hasn't appeared yet.
+  const pendingRef = useRef(new PendingActivityBuffer<ActivityLike>());
 
   // Wake the render loop so a pending change paints: a new/removed agent, a new
   // beam, or ongoing easing. The per-frame handler below releases the hold again
@@ -122,6 +131,13 @@ export function useAgentOverlay(
       const ov = overlayRef.current;
       if (!ov) return;
       const now = performance.now();
+      // No node yet: hold the frame until the presence snapshot that creates
+      // it arrives (a different socket — see agentActivityBuffer). Replayed by
+      // applyMerged.
+      if (!ov.hasAgent(parentId)) {
+        pendingRef.current.add(parentId, event, now);
+        return;
+      }
       if (event.lifecycle === 'spawn') {
         // The new satellite eases out from the parent — kick() animates it.
         if (
@@ -139,8 +155,6 @@ export function useAgentOverlay(
         return;
       }
       if (!event.file) return;
-      // Activity for an agent that isn't on screen (e.g. a not-yet-reconciled
-      // session) changes nothing — don't wake a settled scene for it.
       const applied = event.subagentId
         ? ov.addSubagentActivity(
             parentId,
@@ -164,6 +178,13 @@ export function useAgentOverlay(
       [...taskDescRef.current, ...sessionDescRef.current],
       graph,
     );
+    // Replay activity that arrived before its agent's node existed.
+    const pending = pendingRef.current;
+    const now = performance.now();
+    for (const id of pending.agentIds()) {
+      if (!overlay.hasAgent(id)) continue;
+      for (const event of pending.take(id, now)) routeActivity(id, event);
+    }
     kick();
     // A removal (agent stopped) takes effect by deleting the node/label from the
     // scene — but the render loop may be idle, so nothing would repaint it away.
@@ -172,7 +193,7 @@ export function useAgentOverlay(
     // one-shot scene mutator uses (selection halo, worktree ring, labels), so a
     // stopped agent's node reliably disappears even from a fully settled scene.
     if (changed) getIdleController(graph)?.wakeForRefresh();
-  }, [graphRef, kick]);
+  }, [graphRef, kick, routeActivity]);
 
   // Create the overlay once the graph instance exists, and drive its per-frame
   // tick from the graph's OWN render frames via the shared scene frame driver
@@ -219,8 +240,17 @@ export function useAgentOverlay(
       else release();
     });
 
+    // A satellite whose SubagentStop was missed is reaped inside `tick`, which
+    // only runs while the loop renders — on a settled, paused scene the dead
+    // satellite (and its lit beam) stayed painted until something else woke
+    // the graph. Check on a slow timer and wake the loop only when one is due.
+    const reapTimer = setInterval(() => {
+      if (overlay.hasReapableSatellites(performance.now())) kick();
+    }, SATELLITE_REAP_CHECK_MS);
+
     applyMerged(); // apply anything that arrived before the overlay existed
     return () => {
+      clearInterval(reapTimer);
       release();
       offFrame();
       overlay.destroy(graph);
@@ -246,6 +276,7 @@ export function useAgentOverlay(
     return () => {
       unsub();
       taskDescRef.current = [];
+      pendingRef.current.clear();
       applyMerged();
     };
   }, [activeFolder, applyMerged, routeActivity]);

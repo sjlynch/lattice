@@ -301,7 +301,13 @@ export class TerminalRegistryStore extends ProjectStateManager<TerminalRecord[],
       }
       this.setCached(loc.key, list);
       this.schedulePersist(loc.key);
-      this.emit({ type: 'ended', projectPath: record.projectPath, id, ended: full });
+      this.emit({
+        type: 'ended',
+        projectPath: record.projectPath,
+        id,
+        ended: full,
+        ...(record.agentSession?.id ? { agentSessionId: record.agentSession.id } : {}),
+      });
       if (!keep) this.emit({ type: 'removed', projectPath: record.projectPath, id });
       return true;
     });

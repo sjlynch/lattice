@@ -6,7 +6,8 @@ import {
 import { notifyAgentActivity } from '../agentActivity.js';
 import { decodeAgentToken } from '../agentActivityTokens.js';
 import { buildAgentActivityEvents } from '../routes/agentActivity.js';
-import { applyProjectActivityEvent } from './lifecycle.js';
+import { applyProjectActivityEvent, projectSessionAgentId } from './lifecycle.js';
+import { normalizeAgentHarness } from '../harnesses.js';
 import { isLatticeManagedCwd } from './managedCwd.js';
 
 export function applyProjectActivityHook(token: string, body: unknown): void {
@@ -18,17 +19,21 @@ export function applyProjectActivityHook(token: string, body: unknown): void {
   // Dedup: a worktree/scratch session is already tracked elsewhere.
   if (cwd && isLatticeManagedCwd(cwd)) return;
 
-  const agentId = `claude:${sessionId}`;
+  const agentId = projectSessionAgentId(sessionId);
   const event = hookEventName(body);
 
-  // Presence (create on SessionStart, remove on SessionEnd, refresh-only
-  // otherwise). A late hook after SessionEnd never resurrects the node.
+  // Presence follows the agent's turns (see lifecycle.ts). A late hook after
+  // SessionEnd never resurrects the node.
   const { emitActivity } = applyProjectActivityEvent({
     event,
     sessionId,
     agentId,
     projectPath: meta.projectPath,
     label: meta.label,
+    // The token label names the harness that installed the hook ('claude' for
+    // the project's settings.local.json hooks, 'codex' / 'pi' for terminal
+    // launches); the graph colors the node by it.
+    harness: normalizeAgentHarness(meta.label),
   });
   if (!emitActivity) return;
 

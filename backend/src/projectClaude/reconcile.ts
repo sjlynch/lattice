@@ -11,9 +11,12 @@ import { applyClaudeProjectConfig } from '../claudeTrust.js';
 import { resolveManagedClaudeServers } from '../mcp/registry.js';
 import {
   installProjectClaudeHooks,
+  projectActivityUrl,
   removeProjectClaudeHooks,
   setProjectClaudeMemoryDisabled,
 } from '../projectClaudeHooks.js';
+import { installPiActivityExtension, removeProjectPiActivityExtension } from '../piActivity.js';
+import { detectHarnesses } from '../harnessDetect.js';
 
 export type ProjectInstrumentationResult = {
   enabled: boolean;
@@ -42,6 +45,7 @@ export async function reconcileProjectInstrumentation(
   await reconcileProjectClaudeHooks(project, backendOrigin, enabled);
   await setProjectClaudeMemoryDisabled(project, memoryDisabled);
   installProjectPiSubagentsShim(root);
+  reconcileProjectPiActivity(root, backendOrigin, enabled);
 
   return { enabled, memoryDisabled };
 }
@@ -77,6 +81,31 @@ async function reconcileProjectClaudeHooks(
   } else {
     await removeProjectClaudeHooks(project);
   }
+}
+
+// The Pi analogue of the project Claude hooks: `.pi/extensions/lattice-activity.ts`
+// at the project ROOT in project mode (piActivity.ts), so a `pi` the user runs
+// in a sidebar tab (cwd = project root; Pi extension discovery is cwd-exact)
+// gets a graph node + beams. (Codex tabs get theirs per launch instead — see
+// projectCodexHooks.ts.) Written only when `pi` is installed, so a project
+// never grows a `.pi/` dir for a harness nobody uses; the file is in the repo
+// exclude list (worktree/managedFiles.ts). Best-effort and backgrounded.
+function reconcileProjectPiActivity(root: string, backendOrigin: string, enabled: boolean): void {
+  if (!enabled) {
+    void removeProjectPiActivityExtension(root);
+    return;
+  }
+  void detectHarnesses()
+    .then(async (available) => {
+      if (!available.pi) return;
+      await ensureLatticeRepoExclude(root).catch(() => {});
+      await installPiActivityExtension({
+        dir: root,
+        activityUrl: projectActivityUrl(backendOrigin, root, 'pi'),
+        projectSession: true,
+      });
+    })
+    .catch(() => {});
 }
 
 function installProjectPiSubagentsShim(root: string): void {
