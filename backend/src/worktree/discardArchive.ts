@@ -45,6 +45,7 @@ import { LATTICE_EXCLUDE_PATTERNS, LATTICE_OWNED_FILE_PATHS } from './managedFil
 import { isPathStrictlyInside } from './paths.js';
 import { assertNotReparsePoint } from './cleanupSafety.js';
 import { pruneReparsePointsUnder } from './reparsePoints.js';
+import { pathExistsStrict } from './pathProbe.js';
 
 export const DISCARDED_WORKTREE_MANIFEST_FILENAME = '_lattice-discarded-worktree.json';
 export const DISCARDED_WORKTREE_LABEL_PREFIX = 'discarded-worktree-';
@@ -128,16 +129,6 @@ export function isManagedTrackedPath(file: string): boolean {
   return OWNED.has(normalizeRel(file));
 }
 
-async function pathExists(target: string): Promise<boolean> {
-  try {
-    await fs.lstat(target);
-    return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
-    throw err;
-  }
-}
-
 function projectArchivesRoot(repoRoot: string): string {
   return path.join(SNAPSHOTS_BASE, projectHash(repoRoot));
 }
@@ -217,8 +208,8 @@ export async function archiveUncommittedWorktreeChanges(
   branch: string,
 ): Promise<WorktreeArchiveResult> {
   try {
-    if (!(await pathExists(worktreePath))) return { status: 'absent' };
-    if (!(await pathExists(path.join(worktreePath, '.git')))) {
+    if (!(await pathExistsStrict(worktreePath))) return { status: 'absent' };
+    if (!(await pathExistsStrict(path.join(worktreePath, '.git')))) {
       return { status: 'failed', error: 'worktree has no .git marker; cannot enumerate its changes' };
     }
     // `git` walks up from cwd when the checkout is broken. Only trust status

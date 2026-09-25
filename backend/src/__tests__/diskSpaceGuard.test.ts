@@ -116,7 +116,8 @@ function mergeDeps(over: Partial<DiskPressureMergeDeps> = {}): DiskPressureMerge
     hasActiveMergeRun: () => false,
     hasActiveWorkflowRun: () => false,
     hasActivePostMergeHook: () => false,
-    countReadyToMerge: async () => 3,
+    readyToMergeIds: async () => ['t1', 't2', 't3'],
+    mergeShortfall: async () => null,
     startMergeRun: async (p) => {
       started.push(p);
     },
@@ -141,7 +142,8 @@ test('disk pressure never merges over an active workflow, merge run, or hook, or
     [{ hasActiveWorkflowRun: () => true }, 'workflow-active'],
     [{ hasActiveMergeRun: () => true }, 'merge-run-active'],
     [{ hasActivePostMergeHook: () => true }, 'hook-active'],
-    [{ countReadyToMerge: async () => 0 }, 'nothing-to-merge'],
+    [{ readyToMergeIds: async () => [] }, 'nothing-to-merge'],
+    [{ mergeShortfall: async () => 'only 12 MB free' }, 'disk-full'],
     [{ autoMergeEnabled: async () => false }, 'disabled'],
   ];
   for (const [over, expected] of cases) {
@@ -150,6 +152,61 @@ test('disk pressure never merges over an active workflow, merge run, or hook, or
     assert.equal(await mergeToFreeDiskSpace('C:\\proj', 'http://x', deps), expected);
     assert.equal(deps.started.length, 0, expected);
   }
+});
+
+// A run that moves nothing out of ready_to_merge (disk-halted on its first
+// task, or every task errored) must not be restarted every throttle window
+// forever — the low-disk monitor asks once a minute.
+test('disk pressure does not restart a merge run that made no progress', async () => {
+  resetDiskPressureMergeStateForTests();
+  const MIN = 60_000;
+  let t = 1_000_000;
+  let ready = ['t1', 't2', 't3'];
+  let shortfall: string | null = null;
+  const deps = mergeDeps({
+    now: () => t,
+    readyToMergeIds: async () => ready,
+    mergeShortfall: async () => shortfall,
+  });
+  const ask = () => mergeToFreeDiskSpace('C:\\proj', 'http://x', deps);
+
+  assert.equal(await ask(), 'started');
+  // The run finished with every task still ready (same ids, any order).
+  ready = ['t3', 't1', 't2'];
+  for (let i = 0; i < 5; i++) {
+    t += 3 * MIN; // past the throttle every time
+    assert.equal(await ask(), 'no-progress');
+  }
+  assert.equal(deps.started.length, 1);
+
+  // The set changing (a task merged, or a new one became ready) retries.
+  ready = ['t1', 't2', 't3', 't4'];
+  t += 3 * MIN;
+  assert.equal(await ask(), 'started');
+  assert.equal(deps.started.length, 2);
+  t += 3 * MIN;
+  assert.equal(await ask(), 'no-progress');
+
+  // Under the merge floor nothing starts at all; once space comes back above
+  // it, the disk-halted tasks get another try.
+  shortfall = 'only 12 MB free';
+  t += 3 * MIN;
+  assert.equal(await ask(), 'disk-full');
+  shortfall = null;
+  t += 3 * MIN;
+  assert.equal(await ask(), 'started');
+  assert.equal(deps.started.length, 3);
+
+  // Otherwise an unchanged set is retried only on a doubling backoff.
+  t += 14 * MIN;
+  assert.equal(await ask(), 'no-progress');
+  t += 2 * MIN; // 16 min after the last start: past the first 15-min backoff
+  assert.equal(await ask(), 'started');
+  t += 20 * MIN; // second backoff is 30 min
+  assert.equal(await ask(), 'no-progress');
+  t += 11 * MIN;
+  assert.equal(await ask(), 'started');
+  assert.equal(deps.started.length, 5);
 });
 
 test('bundle pruning honours count and byte budgets but always keeps the newest', async () => {

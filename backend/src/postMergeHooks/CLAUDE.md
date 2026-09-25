@@ -48,9 +48,20 @@ it has decided (started / aborted / not configured — a spawn error keeps it).
 **`already-running` keeps it too**: that hook may predate these merges, or be a
 dead record boot restored as running for its lost-grace window — so
 `runPostMergeHookGate` waits it out and, if the debt is still there, fires a
-fresh hook (at most 3 rounds). Every path that could have fired the hook honours it:
+fresh hook (at most 3 rounds). **Except** when the running hook started at or
+after the marker's `since` (rewritten on every merge): then it IS the hook for
+those merges and the trigger settles the debt. That is the backend dying between
+the pty spawn and the clear (or the clear failing) — boot re-adopts the live
+hook with the marker still set, and the next gate used to wait it out and fire a
+second hook for the same merges. Every path that could have fired the hook honours it:
 merge-run teardown (`merged.length > 0 || owed`; a cancelled/halted run clears
 it instead, keeping "no hook on cancel"), the workflow Merge step's Phase C
-(`fireOwedPostMergeHook` before waiting), and boot
-(`recovery/owedPostMergeHooks.ts`, after the workflow + merge-run resumes, for a
-project with neither an active merge run nor an active workflow run).
+(`fireOwedPostMergeHook` before waiting — raced against the workflow run's
+cancel/error so a cancel frees the step's `workflow-merge:*` run.lock at once,
+with a `shouldStop` predicate that keeps the gate from firing anything further),
+and boot (`recovery/owedPostMergeHooks.ts`, after the workflow + merge-run
+resumes, for a project with neither an active merge run nor an active workflow
+run, **nor a run.lock that is held or stale-resumable**). The merge-run resume
+awaits `startMergeRun` up to the run's registration so that boot check sees the
+run; un-awaited, the owed hook started on the main checkout beside the resumed
+run, and the run's teardown then fired a second one.

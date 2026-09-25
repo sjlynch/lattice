@@ -12,6 +12,10 @@ import { proxyKillSessionsByCwd } from '../../../terminalProxy.js';
 import { notifySessionsFreed } from '../../../spawnQueue.js';
 import { finalizeResolvedTask } from '../finalizeResolved.js';
 import { awaitPostMergeHookOutsideRun } from './postMergeHookHelper.js';
+import {
+  outboxReplayQueuedAt,
+  taskSessionActiveSince,
+} from '../../../callbackOutbox/replayGuard.js';
 
 // Decide the in_progress → ready_to_merge transition from a commit-count
 // probe. Reserve `awaiting-commit` (don't flip) for a *real, observed* zero —
@@ -52,9 +56,30 @@ export function handleTaskComplete(backendOrigin: string) {
       );
       return res.status(404).json({ error: 'not found' });
     }
+    const replayQueuedAt = outboxReplayQueuedAt(req);
     console.log(
-      `[complete] task ${task.id} (status=${task.status}, conflict=${!!task.conflict}, source=${source})`,
+      `[complete] task ${task.id} (status=${task.status}, conflict=${!!task.conflict}, source=${source}` +
+        `${replayQueuedAt !== null ? `, outbox replay queued ${new Date(replayQueuedAt).toISOString()}` : ''})`,
     );
+
+    // A callback the outbox replays arrives late by design — after the
+    // backend came back, when the user may already have typed a new
+    // instruction into the idle agent. Acting on it then would flip the task
+    // (or finalize a resolver) and kill the pty in the middle of that new
+    // turn. The new turn ends in its own Stop, so a stale replay is simply
+    // refused; 409 is final, so the drain drops it.
+    const actsOnSession =
+      task.status === 'in_progress' || (task.status === 'ready_to_merge' && !!task.conflict);
+    if (replayQueuedAt !== null && actsOnSession) {
+      const stale = await taskSessionActiveSince(task, replayQueuedAt);
+      if (stale) {
+        console.warn(
+          `[complete] task ${task.id}: ignoring outbox replay queued ` +
+            `${new Date(replayQueuedAt).toISOString()} — the session has moved on (${stale})`,
+        );
+        return res.status(409).json({ ok: false, error: 'stale-replay', reason: stale });
+      }
+    }
 
     // Resolver-Claude finished. The merge in the worktree is committed;
     // fast-forward main and clean up.
