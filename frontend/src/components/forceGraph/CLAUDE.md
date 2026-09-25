@@ -225,7 +225,7 @@ label physics in `labelPhysics/CLAUDE.md`.
   `hooks/useCameraPersistence`).
   `depthMap` + `useNodeDepthCache` — Alt-label depth bands; `menu.ts` /
   `renderOrders.ts` — right-click items / z-layer constants.
-  `searchMatcher.ts` — `buildSearchRegExp` for the search bar's filename pass
+  `searchMatcher.ts` — `buildSearchRegExp` for the search bar's file/folder-name pass
   (wildcard/regex, kept in sync with the backend `search.ts` rules).
 
 ## Hooks

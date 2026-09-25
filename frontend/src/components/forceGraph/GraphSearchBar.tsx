@@ -17,7 +17,7 @@ type Props = {
 };
 
 // Inline search field shown bottom-left of the graph, to the left of the
-// file/dir counts. Matches (filename + contents) are rendered as the standard
+// file/dir counts. Matches (file/folder name + file contents) are rendered as the standard
 // selection ring via the shared `selected` set. The `.*` button toggles
 // raw-regex vs wildcard interpretation.
 export const GraphSearchBar = memo(function GraphSearchBar({
@@ -58,11 +58,11 @@ export const GraphSearchBar = memo(function GraphSearchBar({
           className="graph-search-input"
           type="text"
           value={query}
-          placeholder="Search files…"
+          placeholder="Search files & folders…"
           spellCheck={false}
           autoComplete="off"
-          aria-label="Search files by name or contents"
-          title={`${syntax} search — file names${
+          aria-label="Search files and folders by name, or file contents"
+          title={`${syntax} search — file & folder names${
             contents ? ' + contents' : ' (names only; toggle the file icon for contents)'
           }`}
           onChange={(e) => onQueryChange(e.target.value)}
