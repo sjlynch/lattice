@@ -19,6 +19,7 @@ import { useGitSetup, useGitSetupNonce } from './gitSetup/GitSetupProvider';
 type Props = {
   activeFolder: string;
   onSelectFolder: (path: string) => void;
+  settingsLoaded: boolean;
   startupTerminals: StartupTerminal[];
   onStartupTerminalsChange: (next: StartupTerminal[]) => void;
   terminalLaunchSettings: TerminalLaunchSettings;
@@ -35,6 +36,7 @@ type Props = {
 export const TopAppBar = memo(function TopAppBar({
   activeFolder,
   onSelectFolder,
+  settingsLoaded,
   startupTerminals,
   onStartupTerminalsChange,
   terminalLaunchSettings,
@@ -169,6 +171,7 @@ export const TopAppBar = memo(function TopAppBar({
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         activeFolder={activeFolder}
+        settingsLoaded={settingsLoaded}
         startupTerminals={startupTerminals}
         onStartupTerminalsChange={onStartupTerminalsChange}
         terminalLaunchSettings={terminalLaunchSettings}

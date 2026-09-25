@@ -1,4 +1,4 @@
-import type { Task, TaskUpdates } from './types.js';
+import type { Task, TaskStatus, TaskUpdates } from './types.js';
 
 export type AppliedTaskUpdate = {
   updated: Task;
@@ -11,6 +11,13 @@ export type TaskLookup = {
   idx: number;
   task: Task;
 };
+
+const PRE_MERGE_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
+  'backlog',
+  'open',
+  'in_progress',
+  'ready_to_merge',
+]);
 
 // Stamp a task update with `updatedAt` and any status-transition timestamp the
 // caller didn't provide explicitly. Keeps the timestamps aligned regardless of
@@ -32,6 +39,13 @@ export function stampTimestamps(prev: Task, updates: TaskUpdates): TaskUpdates {
     }
     if (newStatus === 'qa' && updates.mergedAt === undefined && !prev.mergedAt) {
       out.mergedAt = now;
+    }
+    // Back in a pre-merge lane (dragged out of QA/Done for rework, re-run):
+    // the old merge no longer describes the task's code. Clear it so the next
+    // merge into QA re-stamps it — the QA verdict guard compares a run's start
+    // against `mergedAt` (qaRuns/verdict.ts).
+    if (PRE_MERGE_STATUSES.has(newStatus) && updates.mergedAt === undefined && prev.mergedAt !== undefined) {
+      out.mergedAt = undefined;
     }
     if (newStatus === 'done' && updates.doneAt === undefined && !prev.doneAt) {
       out.doneAt = now;

@@ -125,7 +125,7 @@ export const Sidebar = memo(function Sidebar({
     resetSearch();
   }, [activePanel, resetSearch]);
 
-  const { restartStartupTerminals } = useStartupTerminals({
+  const { restartStartupTerminals, restartPending } = useStartupTerminals({
     activeFolder,
     startupTerminals,
     projectTerminals,
@@ -183,6 +183,7 @@ export const Sidebar = memo(function Sidebar({
         <SidebarHeaderActions
           activePanel={activePanel}
           startupCount={startupTerminalsList.length}
+          restartPending={restartPending}
           onRestartStartup={restartStartupTerminals}
           onRestoreTabs={restoreWithRetry}
           defaultKind={defaultKind}

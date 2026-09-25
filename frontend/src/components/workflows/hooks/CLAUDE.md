@@ -30,7 +30,11 @@ there.
   collapsed. `save()` is single-flight: a call while a save is pending gets
   that same promise (and `saving` disables Save), so a double-clicked Create on
   a never-saved draft — or a Run / Queue, which save first — can't POST two
-  identical workflows.
+  identical workflows. A caller that joined a pending save saves again once it
+  settles if the editor is still dirty (an edit landed mid-save), so ▶ Run acts
+  on what the editor shows, not the pre-edit steps. The reconcile effect only
+  resets the editor for a workflow that was in the list and left it — a
+  just-created one may reach the list after the POST response.
 - `useEditorDraftLifecycle.ts` — the editor's draft side effects: keep a loaded
   workflow reconciled against the live list, restore/persist the per-project
   never-saved draft, and guard one project's draft from leaking onto another's

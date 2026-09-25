@@ -34,6 +34,7 @@ export function useHarnessSelector(activeFolder: string) {
   const piMenu = usePiModelMenu();
   // Monotonic load id: each folder-change load claims the next id; a resolved
   // fetch only applies if it's still the latest (the fast-project-switch guard).
+  // `selectHarness` claims one too, so a user pick wins over an in-flight load.
   const loadSeqRef = useRef(0);
 
   // A folder switch starts from the defaults, so nothing from the previous
@@ -68,6 +69,11 @@ export function useHarnessSelector(activeFolder: string) {
   // (for a "Pi — X" row) the model; we decode, update state, and persist.
   const selectHarness = useCallback(
     (value: string) => {
+      // A user choice supersedes any settings load already in flight: that GET
+      // began before this PATCH, so it would return the OLD harness and revert
+      // the dropdown while the new value stays saved (Run All then spawns the
+      // reverted harness). Claiming the next load id makes it read as stale.
+      loadSeqRef.current++;
       const sel = decodeHarnessValue(value);
       setHarnessState(sel.harness);
       interleaveNextRef.current = 'claude';

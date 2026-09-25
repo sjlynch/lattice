@@ -64,8 +64,16 @@ by the backend for every Codex spawn), the instrument-Claude /
 disable-memory / qa-auto-close toggles, and the three terminal-tab restore
 drafts (`restoreTerminalsOnOpen` — `always` / `ask` / `never` —,
 `restoreNudgeAgents`, `restoreNudgeUserTabs`; see the terminal-registry notes
-in the root `CLAUDE.md`). The terminal-default drafts ride the per-project
-`PATCH` in `saveSettings.ts` unconditionally; the fetched toggles (instrument /
+in the root `CLAUDE.md`). The terminal-default drafts and `startupTerminals`
+are seeded from App's shared `userSettings`, so they ride the per-project
+`PATCH` only once it has loaded (`settingsLoaded`, threaded App → TopAppBar →
+SettingsDialog → controller) or when the user edited them
+(`getTerminalLaunchTouched()` per field → `pickSavableTerminalLaunch`; the
+Startup tab handle's `isTouched()`). Before the load their seed is `[]` / App's
+defaults (App resets `terminalLaunchSettings` while unloaded rather than keeping
+the previous project's), and an unrelated save used to wipe the project's
+startup commands — pinned by `__tests__/saveSettingsUnloaded.test.ts`. The
+fetched toggles (instrument /
 memory / qa-auto-close / the three restore drafts) ride it only via
 `getSavableFetchedToggles()` (`pickSavableFetchedToggles`): all of them once this
 open's GET (`fetchUserSettingsStrict`) succeeded, otherwise only the ones the

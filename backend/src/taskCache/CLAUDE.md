@@ -100,7 +100,9 @@ losing tasks.
   - `listKnownProjects(projectsIndex)`: the full project list, for the
     boot-time orphaned-worktree sweep.
 - `taskUpdate.ts` — small pure helpers shared by `manager.ts`:
-  `stampTimestamps` (status-transition timestamp inference) and
+  `stampTimestamps` (status-transition timestamp inference; also clears
+  `mergedAt` on a move back to a pre-merge lane so the next merge re-stamps
+  it — the QA verdict guard depends on that) and
   `applyTaskUpdate` (immutable list-with-one-item-replaced). The cross-project
   by-id scan + cache-miss fallback now live in the shared base class
   (`ProjectStateManager.findInCacheById` / `withItemAcrossProjects`).

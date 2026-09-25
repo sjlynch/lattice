@@ -19,6 +19,8 @@ export {
   RUN_TESTS_LOCK_LABEL_PREFIX,
   REPO_MAINTENANCE_LOCK_LABEL,
   REPO_MAINTENANCE_BUSY_MESSAGE,
+  RepoMaintenanceBusyError,
+  isLocalRepoMaintenanceHold,
   describeProjectRunLockHolder,
 } from './projectRunLock/errors.js';
 export { inspectProjectRunLock } from './projectRunLock/inspect.js';

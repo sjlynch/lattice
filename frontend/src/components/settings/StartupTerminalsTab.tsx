@@ -1,4 +1,11 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { StartupTerminal } from '../../api';
 
@@ -10,6 +17,11 @@ type Props = {
 
 export type StartupTerminalsTabHandle = {
   getCleanedTerminals: () => StartupTerminal[];
+  // True once the user edited the list since the draft was last seeded. Save
+  // writes `startupTerminals` only when this is set or the project's settings
+  // have loaded — an untouched draft seeded before the load holds `[]`, not
+  // the project's list.
+  isTouched: () => boolean;
 };
 
 function makeId(): string {
@@ -38,6 +50,7 @@ type StartupTerminalsDraft = {
   addRow: () => void;
   draft: StartupTerminal[];
   getCleanedTerminals: () => StartupTerminal[];
+  isTouched: () => boolean;
   removeRow: (id: string) => void;
   updateRow: (id: string, patch: Partial<StartupTerminal>) => void;
 };
@@ -47,14 +60,18 @@ function useStartupTerminalsDraft(
   startupTerminals: StartupTerminal[],
 ): StartupTerminalsDraft {
   const [draft, setDraft] = useState<StartupTerminal[]>(startupTerminals);
+  const touchedRef = useRef(false);
 
   // Reset the local edit buffer whenever the dialog opens or the upstream
   // list changes (e.g. user just hit Restart and the list was re-saved).
   useEffect(() => {
-    if (open) setDraft(startupTerminals);
+    if (!open) return;
+    setDraft(startupTerminals);
+    touchedRef.current = false;
   }, [open, startupTerminals]);
 
   const addRow = useCallback(() => {
+    touchedRef.current = true;
     setDraft((current) => [
       ...current,
       { id: makeId(), label: `startup ${current.length + 1}`, command: '' },
@@ -62,10 +79,12 @@ function useStartupTerminalsDraft(
   }, []);
 
   const removeRow = useCallback((id: string) => {
+    touchedRef.current = true;
     setDraft((current) => current.filter((t) => t.id !== id));
   }, []);
 
   const updateRow = useCallback((id: string, patch: Partial<StartupTerminal>) => {
+    touchedRef.current = true;
     setDraft((current) => current.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   }, []);
 
@@ -74,10 +93,13 @@ function useStartupTerminalsDraft(
     [draft],
   );
 
+  const isTouched = useCallback(() => touchedRef.current, []);
+
   return {
     addRow,
     draft,
     getCleanedTerminals,
+    isTouched,
     removeRow,
     updateRow,
   };
@@ -120,13 +142,13 @@ function StartupTerminalRow({ terminal, onRemove, onUpdate }: StartupTerminalRow
 
 export const StartupTerminalsTab = forwardRef<StartupTerminalsTabHandle, Props>(
   function StartupTerminalsTab({ active, open, startupTerminals }, ref) {
-    const { addRow, draft, getCleanedTerminals, removeRow, updateRow } =
+    const { addRow, draft, getCleanedTerminals, isTouched, removeRow, updateRow } =
       useStartupTerminalsDraft(open, startupTerminals);
 
     useImperativeHandle(
       ref,
-      () => ({ getCleanedTerminals }),
-      [getCleanedTerminals],
+      () => ({ getCleanedTerminals, isTouched }),
+      [getCleanedTerminals, isTouched],
     );
 
     if (!active) return null;

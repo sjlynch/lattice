@@ -9,7 +9,7 @@ import { exists } from './fsProbe.js';
 
 export const BINDING_VERSION = 1;
 const BINDINGS_DIR = 'project-identities';
-const BINDING_FILE_RE = new RegExp(`^[a-f0-9]{${STORAGE_HASH_LEN}}\.json$`);
+const BINDING_FILE_RE = new RegExp(`^[a-f0-9]{${STORAGE_HASH_LEN}}\\.json$`);
 
 export type Binding = { version: typeof BINDING_VERSION; physicalPath: string; storageHash: string; legacyPath: string };
 
