@@ -253,11 +253,15 @@ export async function runMergeStep(
         // A run that halted itself (full disk, a held git lock, an integrity
         // violation) records why under '(run)' — that is the reason to show.
         const halted = finishedRun?.errored.find((e) => e.taskId === '(run)');
+        // Otherwise name the first per-task error — "1 errored" alone left
+        // the user no way to tell a dead resolver from a git failure.
+        const taskError = halted ? undefined : finishedRun?.errored[0];
         throw new Error(
           `merge step made no progress: ${readyIdsBefore.length} task(s) ` +
             `still ready-to-merge after a full merge run (${errorCount} ` +
             `errored); aborting to avoid an infinite loop` +
-            (halted ? ` — the merge run ${halted.error}` : ''),
+            (halted ? ` — the merge run ${halted.error}` : '') +
+            (taskError ? ` — task ${taskError.taskId}: ${taskError.error}` : ''),
         );
       }
     }
