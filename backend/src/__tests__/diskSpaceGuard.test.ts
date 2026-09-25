@@ -173,7 +173,9 @@ test('disk pressure does not restart a merge run that made no progress', async (
   assert.equal(await ask(), 'started');
   // The run finished with every task still ready (same ids, any order).
   ready = ['t3', 't1', 't2'];
-  for (let i = 0; i < 5; i++) {
+  // Four asks, 3 min apart: each past the 2-min throttle, all inside the
+  // first 15-min no-progress backoff (a fifth would land exactly on it).
+  for (let i = 0; i < 4; i++) {
     t += 3 * MIN; // past the throttle every time
     assert.equal(await ask(), 'no-progress');
   }
