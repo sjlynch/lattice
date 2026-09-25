@@ -398,8 +398,10 @@ Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
   and return a `serverId`; the frontend lazy-mounts `<TerminalPane>` on first
   activation so "Run All" can't blow past Chrome's per-page WebGL context cap.
 - **Codex trust is per terminal, not global** — a one-shot
-  `projects.<cwd>.trust_level='trusted'` override via child-only env; never
-  writes `~/.codex/config.toml` (`backend/src/terminal/`).
+  `projects={'<cwd>'={trust_level='trusted'}}` override via child-only env;
+  never writes `~/.codex/config.toml` (`backend/src/terminal/`). Codex splits a
+  `-c` *key* on every `.` without unquoting, so a path can never be a dotted
+  key (`projects.'<cwd>'.trust_level` silently misses).
 - **Per-harness system-prompt overrides** (Append / Replace per harness,
   `UserSettings.harnessSystemPrompts`) are injected at the spawn chokepoint.
   Claude's built-in prompt is proprietary (the editor says so; the override

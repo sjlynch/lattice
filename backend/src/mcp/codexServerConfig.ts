@@ -29,6 +29,7 @@
 import type { McpServerEntry } from './catalog.js';
 import { platformizeCommand } from './claudeInject.js';
 import { secretEnvVarsFor } from './claudeServerConfig.js';
+import { tomlString } from '../terminal/codexTrust.js';
 
 // Result of shaping one entry: the `-c` override string (sans the `--config`
 // flag — the terminal-server adds that with shell-correct env-var referencing)
@@ -52,31 +53,12 @@ export function safeCodexServerId(id: string): string {
 }
 
 // --- Minimal TOML value rendering (the shapes we emit only) ------------------
-// CRITICAL (Windows cmd.exe): the whole override rides in a child-env var the
-// command references as `"%VAR%"`. cmd STRIPS inner double-quotes out of a
-// `"%VAR%"` expansion (verified: `command="cmd"` → `command=cmd`, which Codex
-// then rejects), but PRESERVES single-quotes. So we render TOML **single-quoted
-// literal strings** (`'…'`), which survive cmd, PowerShell (`"$env:VAR"`), and
-// POSIX (`"$VAR"`) identically. TOML literal strings have no escapes and cannot
-// contain a `'`; for the rare value that does, we fall back to a double-quoted
-// basic string (correct on PowerShell/POSIX, degraded only on cmd for that one
-// value — still strictly better than no Codex MCP).
-
-// Exported so the Codex system-prompt injector (harnessSystemPrompts/inject.ts)
-// renders its file-path value with the identical cmd-safe quoting. Prefer this
-// for controlled strings (commands/args/urls/paths) that essentially never
-// contain a `'`; for free prose that commonly does, use a multi-line literal
-// instead so the `'`-fallback to a double-quoted string never fires.
-export function tomlString(s: string): string {
-  return NEEDS_BASIC_STRING.test(s) ? JSON.stringify(s) : `'${s}'`;
-}
-
-// What a TOML literal string cannot carry: the `'` that would close it, and
-// every control character except tab (a newline in a single-quoted literal is
-// invalid TOML — the whole `-c` override, and with it the Codex spawn, used to
-// fail on one such value). JSON escapes are valid TOML basic-string escapes, so
-// JSON.stringify is the right fallback for all of them.
-const NEEDS_BASIC_STRING = /['\x00-\x08\x0A-\x1F\x7F]/;
+// Strings are single-quoted TOML literals so they survive Windows cmd's
+// `"%VAR%"` expansion, which strips inner double quotes. `tomlString` (and
+// the full rationale) lives in terminal/codexTrust.ts, beside the trust
+// override that needs the same quoting; re-exported here so the Codex
+// system-prompt injector (harnessSystemPrompts/inject.ts) keeps its import.
+export { tomlString };
 
 function tomlStringArray(arr: string[]): string {
   return `[${arr.map(tomlString).join(', ')}]`;
@@ -86,7 +68,7 @@ function tomlStringArray(arr: string[]): string {
 // dot or space) is a quoted key — single-quoted for the same cmd reason.
 function tomlKey(k: string): string {
   if (/^[A-Za-z0-9_-]+$/.test(k)) return k;
-  return NEEDS_BASIC_STRING.test(k) ? JSON.stringify(k) : `'${k}'`;
+  return tomlString(k);
 }
 
 // Inline table of string values: `{ K="v", "X-Y"="z" }`. Empty → `{}`.
