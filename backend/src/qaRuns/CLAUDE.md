@@ -63,6 +63,19 @@ Differences from pushRuns:
   never re-applies a run already `done` — so a second Stop from a stay-open QA
   terminal, a replayed `/done`, or boot recovery can't ship reworked code on a
   stale PASS.
+- **One QA session per task.** `POST /api/qa-runs` returns **409** while the
+  task already has a run starting (the route's in-flight set, since a run is
+  only recorded once its pty spawned) or `running` with a live pty
+  (`routes/qaRuns/startGuard.ts` `findActiveQaRunForTask`, via
+  `listRunningQaRuns` + the terminal-server probe). Two sessions would drive
+  the same dev server and either one's confident PASS promotes the task. A run
+  whose pty is gone (tab closed, so no `/done`) doesn't block a re-test; an
+  unreachable terminal-server counts a tracked run as live. The frontend
+  mirrors it (`useQaRuns`): a task with a run whose tab is still open shows a
+  spinning "testing…" button that focuses that tab instead of starting another.
+- **Never set `taskId` on a QA run's terminal.** The task is already in the `qa`
+  lane, and the frontend's `useTaskTerminalCleanup` closes every terminal tagged
+  with a qa/done/deleted task — it would kill the session it just spawned.
 - **Spawn sets `isQaRun: true`** so the MCP injection chokepoint adds the
   QA-scoped Playwright (with the lane's headed/headless choice); ordinary task
   spawns never set it.

@@ -18,6 +18,8 @@ export function WorkflowEditorPanel({ manager }: Props) {
   const {
     activeFolder,
     editor,
+    savingEditor,
+    editorRunStarting,
     runForEditor,
     controlProgressForEditor,
     recentForEditor,
@@ -154,6 +156,8 @@ export function WorkflowEditorPanel({ manager }: Props) {
             hasActiveFolder={Boolean(activeFolder)}
             runId={runForEditor?.id ?? null}
             deleting={deletingWorkflow}
+            saving={savingEditor}
+            starting={editorRunStarting}
             onDelete={handleDeleteWorkflow}
             onDiscard={actions.discardEdits}
             onSave={actions.save}

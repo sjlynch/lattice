@@ -57,6 +57,9 @@ export type TaskCardProps = {
   // Present only for QA-lane cards when the Playwright MCP is on; launches a
   // full end-to-end test of this merged task.
   onQaRun?: (task: Task) => void;
+  // An e2e session for this task is already running: the ▶ becomes a
+  // "testing…" button that focuses it (useQaRuns.startQaRun does the focusing).
+  qaRunning?: boolean;
   onView: (task: Task) => void;
   onToggleSelect: (id: string) => void;
   onRangeSelect: (id: string) => void;
@@ -83,6 +86,7 @@ export const TaskCard = memo(function TaskCard({
   onResume,
   onMerge,
   onQaRun,
+  qaRunning = false,
   onView,
   onToggleSelect,
   onRangeSelect,
@@ -174,7 +178,8 @@ export const TaskCard = memo(function TaskCard({
             : undefined
         }
         onMerge={laneId === 'ready_to_merge' ? handleMerge : undefined}
-        onQaRun={onQaRun ? handleQaRun : undefined}
+        onQaRun={onQaRun && !qaRunning ? handleQaRun : undefined}
+        onFocusQaRun={onQaRun && qaRunning ? handleQaRun : undefined}
         onFocusTerminal={focusTerminal}
       />
     </div>

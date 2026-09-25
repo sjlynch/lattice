@@ -262,3 +262,47 @@ test('flushPersist waits for a crash-safe write and reads the cache after its lo
 
   assert.deepEqual(store.diskWrites.map((tasks) => tasks[0].status), ['qa', 'qa']);
 });
+
+test('concurrent appendTaskSummary calls queued behind a busy write lock all land, in order', async () => {
+  const store = newStore();
+  const project = 'C:/append-summary-concurrent';
+  store.seed(project, [mkTask('t', project, { summary: 'agent summary' })]);
+  let enter!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve) => { enter = resolve; });
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let first = true;
+  store.beforeWrite = async () => {
+    if (!first) return;
+    first = false;
+    enter();
+    await held;
+  };
+
+  // A crash-safe write (a /complete or merge transition) holds the project lock.
+  const busy = store.updateTaskCrashSafe('t', { status: 'ready_to_merge' });
+  await entered;
+  // Two appends arrive while it is held — the old route read the (same) old
+  // summary for both outside the lock, so the second write dropped the first.
+  const a = store.appendTaskSummary('t', 'QA verdict: PASS');
+  const b = store.appendTaskSummary('t', 'review note');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  release();
+  await Promise.all([busy, a, b]);
+
+  const task = store.peek(project).find((t) => t.id === 't');
+  assert.equal(
+    task?.summary,
+    'agent summary\n\n---\n\nQA verdict: PASS\n\n---\n\nreview note',
+  );
+  assert.equal(task?.status, 'ready_to_merge', 'the crash-safe transition survives too');
+
+  store.cancelPersist(project);
+});
+
+test('appendTaskSummary returns null for an unknown id', async () => {
+  const store = newStore();
+  const project = 'C:/append-summary-missing';
+  store.seed(project, [mkTask('t', project)]);
+  assert.equal(await store.appendTaskSummary('nope', 'text'), null);
+});
