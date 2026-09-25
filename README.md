@@ -29,10 +29,16 @@ compares every dependency each workspace declares (and the version its
 npm run dev
 ```
 
-This runs `scripts/preflight.mjs` (a fast install sanity check that self-heals
-a partial or out-of-date install) then `scripts/orchestrate.mjs`, which boots the backend on
-`127.0.0.1:5184`, waits for `/api/health`, and then starts the frontend on
-`http://localhost:5183`. Open http://localhost:5183.
+This runs `scripts/devLoop.mjs`: `scripts/preflight.mjs` (a fast install
+sanity check that self-heals a partial or out-of-date install), then
+`scripts/orchestrate.mjs`, which boots the backend on `127.0.0.1:5184`, waits
+for `/api/health`, and then starts the frontend on `http://localhost:5183`.
+Open http://localhost:5183.
+
+The dev console takes line commands: `r` soft restart (relaunches preflight +
+orchestrator from current scripts/deps; running agents are re-adopted), `d`
+exit but keep agents running, `i` re-check/install deps, `h` help. Ctrl+C is
+the full stop that ends every agent.
 
 Ports are offset +10 from the typical Vite default (5173) to avoid collisions
 with other local dev servers.
@@ -53,21 +59,26 @@ npm --prefix backend test
 npm --prefix frontend test
 ```
 
-End-to-end (Playwright) — requires the dev server already running:
+End-to-end (Playwright):
 
 ```
 npm run test:e2e
 ```
 
-The browser suite drives a disposable temporary git project; it does not create
-Lattice tasks or workflows in this repository. Set `LATTICE_E2E_BASE_URL` to
-target a non-default frontend URL.
+It boots its own isolated backend + vite + terminal-server (`:5384`/`:5383`/`:5385`,
+HOME at `<tmp>/lattice-e2e-home`, override with `LATTICE_E2E_HOME`) from the
+already-built `backend/dist`, so it needs a built backend
+(`npm --prefix backend run build`, or a running `npm run dev`, whose `tsc -w`
+keeps `dist` current) and errors if `backend/dist/index.js` is missing. Specs
+that create real tasks/workflows write only into that isolated home, never your
+`~/.lattice`. `LATTICE_E2E_BASE_URL` targets an existing server instead;
+pointing it at the live `:5183`/`:5184` also needs `LATTICE_E2E_ALLOW_LIVE=1`.
 
 ## Layout
 
 - `backend/` — TypeScript Node/Express server (`:5184`)
 - `frontend/` — Vite + React + TS + xterm + 3d-force-graph (`:5183`)
-- `scripts/` — dev orchestration (`orchestrate.mjs`) and preflight
+- `scripts/` — the `npm run dev` loop (`devLoop.mjs` → `preflight.mjs` → `orchestrate.mjs` + `orchestrate/`), dependency checks/watch (`depsCheck.mjs`, `depsWatch.mjs`), and the self-hosting soak (`soak/`); see `scripts/CLAUDE.md`
 - `e2e/` — Playwright specs
 - `docs/` and the root `plan-*.md` files — design notes
 - `.lattice/` — per-project scratch (gitignored)
