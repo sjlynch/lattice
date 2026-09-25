@@ -63,6 +63,9 @@ Differences from pushRuns:
   never re-applies a run already `done` — so a second Stop from a stay-open QA
   terminal, a replayed `/done`, or boot recovery can't ship reworked code on a
   stale PASS.
+- **Never set `taskId` on a QA run's terminal.** The task is already in the `qa`
+  lane, and the frontend's `useTaskTerminalCleanup` closes every terminal tagged
+  with a qa/done/deleted task — it would kill the session it just spawned.
 - **Spawn sets `isQaRun: true`** so the MCP injection chokepoint adds the
   QA-scoped Playwright (with the lane's headed/headless choice); ordinary task
   spawns never set it.

@@ -10,6 +10,11 @@
 //
 // `reconcile` folds an authoritative poll back in without double-counting a
 // session that landed mid-poll (see the dropping rule below).
+//
+// The poll also reports how many of those sessions are Lattice AGENTS (see
+// `countAgentSessions` in resourceGovernor.ts) — the resource governor's
+// "never starve Lattice to zero" floor counts agents, not every pty
+// (`effectiveAgents`).
 
 import type { SpawnPriority } from './types.js';
 
@@ -29,6 +34,10 @@ export type Reservation = {
 
 export class SpawnAccounting {
   private liveCount = 0;
+  // The subset of `liveCount` that are Lattice agent sessions (task worktree
+  // agents, resolvers, workflow steps, one-off runs) — not sidebar shells,
+  // startup terminals or the user's own harness tabs.
+  private liveAgentCount = 0;
   // false until the first successful poll: the queue never admits on an
   // unprimed/stale count.
   private pollHealthy = false;
@@ -81,8 +90,12 @@ export class SpawnAccounting {
   // Still-`spawning` reservations, and ones that resolved after `requestedAt`
   // (poll may or may not have seen them), stay reserved: the safe direction
   // is a one-cycle under-admit, never an over-admit.
-  reconcile(polledCount: number, requestedAt: number): void {
+  //
+  // `polledAgents` is how many of the polled sessions are Lattice agents;
+  // omitted, every session counts as one.
+  reconcile(polledCount: number, requestedAt: number, polledAgents: number = polledCount): void {
     this.liveCount = Math.max(0, Math.floor(polledCount));
+    this.liveAgentCount = Math.min(this.liveCount, Math.max(0, Math.floor(polledAgents)));
     this.pollHealthy = true;
     this.reservations = this.reservations.filter(
       (r) =>
@@ -109,6 +122,18 @@ export class SpawnAccounting {
 
   effectiveLive(): number {
     return this.liveCount + this.reservations.length;
+  }
+
+  // Lattice agents live or on their way: polled agent sessions plus every
+  // reservation (each is a spawn the queue itself admitted). What the
+  // resource governor's floor counts — a pile of sidebar shells or a
+  // `npm run dev` terminal must not look like "Lattice already has agents".
+  effectiveAgents(): number {
+    return this.liveAgentCount + this.reservations.length;
+  }
+
+  getLiveAgentCount(): number {
+    return this.liveAgentCount;
   }
 
   reservedCount(): number {

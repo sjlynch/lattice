@@ -86,6 +86,15 @@ export async function updateTask(
   return taskCache.updateTask(id, updates);
 }
 
+// Append to a task's `summary` with the read-modify-write under the project
+// write lock, so concurrent appends never overwrite one another.
+export async function appendTaskSummary(
+  id: string,
+  text: string,
+): Promise<Task | null> {
+  return taskCache.appendTaskSummary(id, text);
+}
+
 export async function reorderTasksInLane(
   projectPath: string,
   status: TaskStatus,

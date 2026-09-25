@@ -12,11 +12,15 @@
 // irrelevant to the `.git`-deletion defences documented across the worktree
 // subsystem.
 
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
 import { exec } from './worktree/exec.js';
-import { canonicalProjectPath } from './projectPath.js';
+import { resolveGitDir } from './gitDir.js';
+import {
+  createProjectWatcherRegistry,
+  publishIfChanged,
+  type ProjectWatcherSlot,
+} from './gitWatcherRegistry.js';
 
 const GIT_BRANCH_TIMEOUT_MS = 4000;
 // Coalesce the burst of filesystem events a single checkout can emit (git
@@ -55,87 +59,36 @@ export async function getCurrentBranch(repoRoot: string): Promise<string | null>
 
 export type BranchListener = (branch: string | null) => void;
 
-type BranchWatcher = {
-  root: string;
+type BranchWatcher = ProjectWatcherSlot<string | null> & {
   watcher: FSWatcher | null;
-  subscribers: Set<BranchListener>;
-  current: string | null;
 };
 
-// Keyed by the in-flight (or settled) creation promise so concurrent first
-// subscriptions for one root share a single watcher (mirrors health/watcher.ts).
-// Watchers are kept for the life of the process: a WS reconnect storm would
-// otherwise churn (close+recreate) the chokidar watcher on every drop, and a
-// single-file watcher per opened project is cheap. Bounded by the number of
-// distinct project roots opened in a session.
-const watchers = new Map<string, Promise<BranchWatcher>>();
+const LOG_LABEL = '[git-branch watcher]';
 
-// Resolve the git metadata directory for a project folder. For a normal repo
-// that's `<repo>/.git`; for a linked worktree / submodule `.git` is a FILE
-// (`gitdir: <path>`, relative to the folder holding it) pointing at the real
-// git dir, whose own HEAD/index/logs track that checkout. The search walks UP
-// from the project folder the way git itself does, so a project opened on a
-// subfolder of a repo (the `nested` probe state) still gets live branch and
-// status updates — probing only `<project>/.git` left those with no watcher at
-// all, while `getCurrentBranch` (plain git, which walks up) still showed the
-// branch it could then never update. Returns null when no repo encloses it.
-// Shared by gitStatus.ts.
-export async function resolveGitDir(projectRoot: string): Promise<string | null> {
-  let dir = path.resolve(projectRoot);
-  for (;;) {
-    const dotGit = path.join(dir, '.git');
-    let isDir: boolean | null = null;
-    try {
-      isDir = (await fs.stat(dotGit)).isDirectory();
-    } catch {
-      isDir = null;
-    }
-    if (isDir === true) return dotGit;
-    if (isDir === false) {
-      try {
-        const content = await fs.readFile(dotGit, 'utf8');
-        const m = content.match(/^gitdir:\s*(.+)\s*$/m);
-        if (!m) return null;
-        const raw = m[1].trim();
-        return path.isAbsolute(raw) ? raw : path.resolve(dir, raw);
-      } catch {
-        return null;
-      }
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-}
+// Chokidar holds an event until HEAD's size has been stable this long (git
+// writes HEAD.lock then renames it over HEAD), polling at this interval.
+const HEAD_WRITE_STABILITY_THRESHOLD_MS = 100;
+const HEAD_WRITE_POLL_INTERVAL_MS = 50;
+
+// The shared per-root registry (gitWatcherRegistry.ts): one watcher per opened
+// project, lazily built on first subscription and kept for the life of the
+// process.
+const registry = createProjectWatcherRegistry<BranchWatcher, string | null>({
+  label: LOG_LABEL,
+  create: createBranchWatcher,
+  arm: armBranchWatcher,
+  compute: getCurrentBranch,
+  close: async (proj) => {
+    await proj.watcher?.close();
+  },
+});
+
+// Kept here for existing importers; lives in gitDir.ts.
+export { resolveGitDir };
 
 async function resolveHeadFile(repoRoot: string): Promise<string | null> {
   const gitDir = await resolveGitDir(repoRoot);
   return gitDir ? path.join(gitDir, 'HEAD') : null;
-}
-
-// Per-subscriber isolation: one throwing subscriber used to abort the loop, so
-// every client after it missed the branch change (see gitStatus.ts).
-function fanOut(proj: BranchWatcher, branch: string | null): void {
-  for (const cb of [...proj.subscribers]) {
-    try {
-      cb(branch);
-    } catch (err) {
-      console.error('[git-branch watcher] subscriber threw:', err);
-    }
-  }
-}
-
-function ensureBranchWatcher(root: string): Promise<BranchWatcher> {
-  const existing = watchers.get(root);
-  if (existing) return existing;
-  const creation = createBranchWatcher(root);
-  watchers.set(root, creation);
-  // A failed build must not poison the slot forever — drop it so the next
-  // subscriber retries from scratch.
-  creation.catch(() => {
-    if (watchers.get(root) === creation) watchers.delete(root);
-  });
-  return creation;
 }
 
 async function createBranchWatcher(root: string): Promise<BranchWatcher> {
@@ -164,14 +117,12 @@ async function armBranchWatcher(proj: BranchWatcher): Promise<void> {
     timer = setTimeout(() => {
       timer = null;
       void (async () => {
-        const branch = await getCurrentBranch(root);
-        if (branch === proj.current) return; // unchanged — don't wake clients
-        proj.current = branch;
-        fanOut(proj, branch);
+        // Wakes clients only when the branch actually changed.
+        publishIfChanged(LOG_LABEL, proj, await getCurrentBranch(root));
       })().catch((err) => {
         // A throwing subscriber must not surface as an unhandled rejection —
         // the process guards fail fast on those (gitStatus.ts does the same).
-        console.error('[git-branch watcher]', err);
+        console.error(LOG_LABEL, err);
       });
     }, RECOMPUTE_DEBOUNCE_MS);
   };
@@ -179,11 +130,14 @@ async function armBranchWatcher(proj: BranchWatcher): Promise<void> {
   const watcher = chokidar.watch(headFile, {
     persistent: true,
     ignoreInitial: true,
-    awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
+    awaitWriteFinish: {
+      stabilityThreshold: HEAD_WRITE_STABILITY_THRESHOLD_MS,
+      pollInterval: HEAD_WRITE_POLL_INTERVAL_MS,
+    },
   });
   // Without an 'error' listener chokidar re-emits into the void, which Node
   // treats as an unhandled exception and crashes the process. Log and swallow.
-  watcher.on('error', (err) => console.error('[git-branch watcher]', err));
+  watcher.on('error', (err) => console.error(LOG_LABEL, err));
   watcher.on('add', recompute);
   watcher.on('change', recompute);
   watcher.on('unlink', recompute);
@@ -197,20 +151,7 @@ async function armBranchWatcher(proj: BranchWatcher): Promise<void> {
 // subscriber will build one against the new repo), and a failed build is left
 // for the next subscriber to retry.
 export async function rearmGitBranchWatcher(projectRoot: string): Promise<void> {
-  const root = canonicalProjectPath(projectRoot);
-  const pending = watchers.get(root);
-  if (!pending) return;
-  let proj: BranchWatcher;
-  try {
-    proj = await pending;
-  } catch {
-    return;
-  }
-  await armBranchWatcher(proj);
-  const branch = await getCurrentBranch(root);
-  if (branch === proj.current) return;
-  proj.current = branch;
-  fanOut(proj, branch);
+  await registry.rearm(projectRoot);
 }
 
 // Subscribe to the active project's current git branch. The current value is
@@ -222,28 +163,11 @@ export async function subscribeGitBranch(
   projectRoot: string,
   cb: BranchListener,
 ): Promise<() => void> {
-  const root = canonicalProjectPath(projectRoot);
-  const proj = await ensureBranchWatcher(root);
-  proj.subscribers.add(cb);
-  cb(proj.current);
-  return () => {
-    proj.subscribers.delete(cb);
-  };
+  return registry.subscribe(projectRoot, cb);
 }
 
 // Test-only: close every watcher and clear the map so suites don't leak
 // persistent chokidar FSWatchers across tests.
 export async function _resetBranchWatchersForTest(): Promise<void> {
-  const pending = [...watchers.values()];
-  watchers.clear();
-  await Promise.all(
-    pending.map(async (p) => {
-      try {
-        const proj = await p;
-        await proj.watcher?.close();
-      } catch {
-        /* build failed or already closed */
-      }
-    }),
-  );
+  await registry.resetForTest();
 }
