@@ -69,6 +69,14 @@ export function cancelSpawn(dedupeKey: string): boolean {
   return true;
 }
 
+// Is a spawn with this dedupeKey queued or already running (pending or
+// in-flight)? For code that starts task runs OUTSIDE the queue (the workflow
+// Start step): a task whose run the queue holds must not be started a second
+// time beside it.
+export function hasSpawnRequest(dedupeKey: string): boolean {
+  return queueState.get(dedupeKey) !== undefined;
+}
+
 // Hint that backend-owned kills just freed pty slots. If the queue has
 // deferred work, run an out-of-band poll so the freed capacity is picked up
 // immediately rather than up to one poll interval later. A no-op when nothing

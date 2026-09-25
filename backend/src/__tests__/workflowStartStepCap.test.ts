@@ -186,3 +186,51 @@ test('Start step queues (never starts) a task while the queue would hold a batch
   assert.deepEqual(enqueued, ['2'], 'the held task goes to the queue instead');
   holds = [];
 });
+
+// A queued run keeps its task `open` until the pty spawns (on a big repo the
+// admitted thunk can wait minutes on the checkout gate), so the Start step saw
+// it as a plain Open task and started it a second time: that setup's reconcile
+// killed the first run's pty and force-removed its worktree, or left two live
+// agents on one task. A task the queue is already starting must be left to it.
+test('Start step never starts a task whose run is already queued or in flight', async () => {
+  const tasks = [
+    makeTask({ id: 'flagged', createdAt: 1, runQueued: true }),
+    makeTask({ id: 'inflight', createdAt: 2 }),
+    makeTask({ id: 'free', createdAt: 3 }),
+  ];
+  // 'inflight' has a live task-run request whose thunk is still blocked (e.g.
+  // on the checkout gate) — no runQueued on this listing snapshot.
+  const liveRequests = new Set(['inflight']);
+  const startCalls: string[] = [];
+  const enqueued: string[] = [];
+  const deps: StartStepDeps = {
+    listTasks: async () => tasks,
+    startTask: async (taskId) => {
+      startCalls.push(taskId);
+      return spawnResult(tasks.find((t) => t.id === taskId)!);
+    },
+    enqueueRun: async (taskId) => {
+      enqueued.push(taskId);
+      return { queued: true };
+    },
+    admissionHold: async () => null,
+    hasQueuedRun: (taskId) => liveRequests.has(taskId),
+  };
+  await runStartStep(makeWorkflow(), makeRun(), 0, 'http://x', deps);
+  assert.deepEqual(startCalls, ['free'], 'only the task with no queued run starts directly');
+  assert.deepEqual(enqueued, [], 'already-queued tasks are not re-queued either');
+});
+
+test('Start step does not throw when every open task is already queued', async () => {
+  const tasks = [makeTask({ id: 'q', createdAt: 1, runQueued: true })];
+  const deps: StartStepDeps = {
+    listTasks: async () => tasks,
+    startTask: async () => {
+      throw new Error('must not be called');
+    },
+    enqueueRun: async () => ({ queued: true }),
+    admissionHold: async () => null,
+  };
+  // Counted as deferred (queued forward progress), not failed.
+  await runStartStep(makeWorkflow(), makeRun(), 0, 'http://x', deps);
+});

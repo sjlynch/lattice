@@ -108,6 +108,15 @@ path), emitting one `workflow-task-spawned` terminal tab per task.
   `enqueueTaskRun` and counted as deferred — the same path a cap rejection
   takes — so it starts as soon as capacity returns. A disk-space deferral
   (`SpawnDiskSpaceError`, `isSpawnDeferral`) is handled the same way.
+- **Never start a task the queue is already starting (do not regress)**: a
+  queued run (Run All, a manual ▶, boot re-enqueue) keeps its task `open` until
+  the pty spawns — minutes on a big repo waiting on the checkout gate — so it
+  still passes `startTaskById`'s freshly-runnable check. Starting it again made
+  the second setup's reconcile kill the first run's pty and force-remove its
+  worktree, or (first agent already committed) take a `-r2` path with two live
+  agents on one task. A task with `runQueued` or a live `task-run:<id>` queue
+  request (`hasSpawnRequest`, checked after the admission-hold await) is skipped
+  and counted as deferred. Covered by `__tests__/workflowStartStepCap.test.ts`.
 
 ## `merge.ts` — `runMergeStep`
 
