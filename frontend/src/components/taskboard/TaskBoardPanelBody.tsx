@@ -75,6 +75,7 @@ export function TaskBoardPanelBody({ board }: Props) {
               qaPlaywright={board.qaPlaywright}
               onQaRun={board.startQaRun}
               onQaRunAll={board.startAllQaRuns}
+              runningQaTaskIds={board.runningQaTaskIds}
               mergeRun={board.mergeRun}
               recentRunSummary={board.recentRunSummary}
               onCancelActiveRun={board.cancelActiveRun}
@@ -86,6 +87,7 @@ export function TaskBoardPanelBody({ board }: Props) {
           )}
         </div>
         <PostMergeHookRow
+          loaded={board.postMergeHook.loaded}
           prompt={board.postMergeHook.form.prompt}
           enabled={board.postMergeHook.form.enabled}
           harness={board.postMergeHook.form.harness}

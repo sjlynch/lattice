@@ -91,51 +91,81 @@ export async function prepareClaudeSystemPrompt(
 }
 
 // Render prose (the `append` developer instructions) as a TOML *multi-line
-// literal* ('''…'''). Like tomlString this emits NO raw double-quote, which is
-// the whole point: each `-c key=value` rides in a child-env var the Codex
-// command references as `"%VAR%"`, and Windows cmd.exe STRIPS inner double-quotes
-// out of that expansion — re-tokenizing the value on its own spaces (verified:
-// `developer_instructions="Be terse."` → argv `developer_instructions=Be`,
-// `terse.`), which rejects the override and leaks stray positional args. The
-// outer `"…"` from the command template groups the whole (double-quote-free)
-// value into one argument, so spaces survive; single-quotes are literal to cmd
-// and are exactly the TOML literal delimiters Codex needs. See
-// codexServerConfig.tomlString for the same constraint on the MCP side.
+// literal* ('''…'''). Like tomlString this emits NO raw double-quote of its own,
+// which matters because each `-c key=value` rides in a child-env var the Codex
+// command references as `"%VAR%"`, and Windows cmd.exe STRIPS inner
+// double-quotes out of that expansion — re-tokenizing the value on its own
+// spaces (verified: `developer_instructions="Be terse."` → argv
+// `developer_instructions=Be`, `terse.`), which rejects the override and leaks
+// stray positional args. The outer `"…"` from the command template groups the
+// whole (double-quote-free) value into one argument, so spaces survive;
+// single-quotes are literal to cmd and are exactly the TOML literal delimiters
+// Codex needs. See codexServerConfig.tomlString for the same constraint on the
+// MCP side.
 //
 // A multi-line literal (vs the single-line one tomlString emits) is used because
 // prose routinely contains apostrophes ("don't", "you're"), which a single-line
 // literal can't hold — and tomlString's `'`-fallback would emit a cmd-breaking
-// double-quoted string. Newlines ride verbatim in a multi-line literal, so a
-// multi-paragraph prompt stays intact on POSIX/PowerShell. Residual inherent
-// limits of an inline `-c` value on cmd (shared with the MCP overrides, not
-// fixable here since Codex has no `developer_instructions_file` key): an embedded
-// double-quote or newline can't transit `"%VAR%"` on cmd, and a literal '''
-// sequence can't appear inside a multi-line literal — all exotic in a
-// system-prompt append.
+// double-quoted string. A multi-line literal can hold at most two consecutive
+// `'`, so any longer run is spaced out (`'''` → `' ' '`) on every shell — it
+// would otherwise close the literal early and leave the value unparseable.
 function tomlMultilineLiteral(text: string): string {
-  return `'''${text}'''`;
+  return `'''${text.replace(/'{3,}/g, (run) => run.split('').join(' '))}'''`;
+}
+
+// Same shell-name test as terminal/codexTrust.ts `shellEnvRef` (which picks
+// `"%VAR%"` for exactly these), kept here rather than exported from there:
+// codexTrust.ts is in the terminal-server fingerprint, and a prompt change must
+// stay backend-only.
+function isCmdShell(shell: string): boolean {
+  const name = shell.split(/[\\/]/).at(-1)?.toLowerCase() ?? '';
+  return name === 'cmd' || name === 'cmd.exe';
+}
+
+// cmd.exe can't carry the user's own `"` or a newline through `"%VAR%"`: an
+// inner quote is stripped and the value re-split on spaces, and an expanded
+// linefeed ends the command — so Codex gets stray positional args or a
+// truncated command line and the task prompt after it is lost. Codex has no
+// `developer_instructions_file` key to sidestep that, so on cmd the prose is
+// normalized instead: line breaks (and the blank lines between paragraphs)
+// collapse to one space, and straight double quotes become typographic ones
+// (“ ” — opening after a line start / whitespace / bracket, closing elsewhere),
+// which the model reads the same way. Non-ASCII already transits this path (the
+// Lattice preamble carries em dashes).
+function normalizeCodexAppendForCmd(text: string): string {
+  return text
+    .replace(/[ \t]*(?:\r\n|\r|\n)+[ \t]*/g, ' ')
+    .replace(/(^|[\s([{])"/g, '$1“')
+    .replace(/"/g, '”');
 }
 
 // Codex: build the `-c` override strings (inline TOML `key=value`), rendered so
-// the value survives cmd.exe's `"%VAR%"` expansion (no raw double-quote — see
-// tomlMultilineLiteral / codexServerConfig.tomlString). Mirrors the proven MCP
-// TOML-quoting approach rather than JSON.stringify, whose double quotes cmd
-// strips and splits on.
+// the value survives the pty shell's `"$VAR"`-style expansion (no raw
+// double-quote of Lattice's own — see tomlMultilineLiteral /
+// codexServerConfig.tomlString). Mirrors the proven MCP TOML-quoting approach
+// rather than JSON.stringify, whose double quotes cmd strips and splits on.
+//
+// `shell` is the pty shell the terminal-server will launch in (resolved by the
+// caller the same way launchContext does). On cmd.exe — or when it's unknown,
+// the safe default — the append is flattened by normalizeCodexAppendForCmd; on
+// a known POSIX / PowerShell shell it rides verbatim (newlines and quotes are
+// intact inside `"$VAR"` / `"$env:VAR"`).
 export async function prepareCodexSystemPrompt(
   projectPath: string,
   extra?: string,
+  shell?: string,
 ): Promise<{ configArgs: string[] }> {
   const override = await resolveHarnessSystemPrompt(projectPath, 'codex');
-  // Joined with a SPACE, not a blank line, unlike Claude/Pi. An inline `-c`
-  // value transits cmd.exe as `"%VAR%"`, which can't carry a newline (see
-  // tomlMultilineLiteral) — so a project whose Append is a single line must
-  // stay single-line after the preamble is folded in. A multi-line Append was
-  // already subject to that limit and is unaffected either way.
-  const append = composeSystemPromptAppend(
-    withExtra(resolveLatticePreamble(projectPath), extra, ' '),
+  // Joined with a blank line like Claude/Pi; on cmd the normalization below
+  // turns every line break (these separators included) into a single space.
+  const composed = composeSystemPromptAppend(
+    withExtra(resolveLatticePreamble(projectPath), extra, '\n\n'),
     override?.append,
-    ' ',
   );
+  const append =
+    composed && (shell === undefined || isCmdShell(shell))
+      ? normalizeCodexAppendForCmd(composed)
+      : composed;
   if (!override?.replace && !append) return { configArgs: [] };
   const configArgs: string[] = [];
   if (override?.replace) {
@@ -154,7 +184,7 @@ export async function prepareCodexSystemPrompt(
   }
   if (append) {
     // Additive developer-role message layered on top of the base instructions.
-    // Inline-only (Codex has no file variant), so render it double-quote-free.
+    // Inline-only (Codex has no file variant), so render it as a literal.
     configArgs.push(`developer_instructions=${tomlMultilineLiteral(append)}`);
   }
   return { configArgs };

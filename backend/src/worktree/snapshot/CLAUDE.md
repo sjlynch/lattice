@@ -91,6 +91,38 @@ Ownership and edit preservation (2026-09 follow-up):
   changes before cleanup, but a write racing the final comparison and Git/file
   replacement is not an OS-level compare-and-swap; that residual window remains.
 
+Restoring over a change that landed after capture (2026-09-25):
+
+- A capture records the HEAD it sat on (`baseCommit`, handle + manifest). An
+  in-session restore of a tracked destination that is clean against the NEW
+  HEAD compares `baseCommit:<path>` with `HEAD:<path>` (`threeWay.ts`): the
+  same object → the captured copy overlays it as before; different (the
+  fast-forward rewrote the file) → `git merge-file -p` of base / captured copy
+  / current file. Before this, the copy of the user's pre-merge file overlaid
+  the task's version: HEAD had the task's change, the working tree silently
+  reverted it, reported `restored` (and the QA-lane Push's `git add -A`
+  committed the revert). A clean merge writes the combined file; overlapping
+  hunks, binary/non-UTF-8 content or > 8 MB keep HEAD's version and save the
+  captured copy as `<file>.lattice-conflict` → `'partial'`, which the FF
+  finalize and the merge-run teardown surface (`describePartialRestore` names
+  the conflict copies). Conflict markers are never written into the main
+  checkout. A modified file the merge DELETED is also a conflict copy, not
+  resurrected at its path. Boot recovery (`guardStaleOverwrite: true`) is
+  unchanged: it never merges. `merge-file` is whitelisted in `projectGit` only
+  in its print form (`-p`), fed temp copies of the checked bytes.
+- A partial restore narrows the manifest (`retireSettledEntries`): restored
+  paths, conflict-copied paths, deliberately-kept paths (a captured deletion of
+  a file edited since) and unsafe entries move to `retired`; only paths whose
+  failure a retry could fix stay listed. Nothing left → `archived: true`: the
+  payload stays for the user and `recovery.ts` skips it. Before, every boot
+  re-applied the whole manifest — resurrecting files the user had deleted and
+  re-creating reviewed `.lattice-conflict` copies, indefinitely.
+- Boot recovery takes the project run lock and so steals an interrupted Merge
+  All's dead `merge-run` lock (or a workflow Merge/Push step's). Before
+  stealing it records `interrupted-run.json` (`../../projectRunLock/interruptedRun.ts`)
+  so `resumeInterruptedMergeRuns` still resumes the run and the owed post-merge
+  hook check still defers; the resume clears it once it has acted.
+
 Discarded-worktree archives (`../discardArchive.ts`) share this directory tree
 and the copy routine but are NOT pending snapshots: their manifest is
 `_lattice-discarded-worktree.json` and the payload sits under `files/`.

@@ -9,6 +9,7 @@ import { currentProjectMutationOwner } from '../../projectRunLock/mutation.js';
 import {
   EMPTY_HANDLE,
   SNAPSHOTS_BASE,
+  isCommitId,
   writeSnapshotManifest,
   type SnapshotHandle,
 } from './manifest.js';
@@ -87,6 +88,7 @@ export async function writeCapturedSnapshotManifest(
   snapshotDir: string,
   copies: SnapshotCopyResult,
   deleted: string[] = [],
+  baseCommit?: string,
 ): Promise<void> {
   // Manifest written AFTER copies so it reflects what was actually
   // captured. recoverPendingSnapshots reads this on boot — if a file isn't
@@ -106,6 +108,7 @@ export async function writeCapturedSnapshotManifest(
     modifiedTracked: copies.copiedModified,
     untracked: [...copies.copiedUntracked, ...copies.copiedAdded],
     ...(deleted.length > 0 ? { deleted: [...deleted] } : {}),
+    ...(baseCommit ? { baseCommit } : {}),
     owner: currentProjectMutationOwner(repoRoot),
   });
 }
@@ -247,12 +250,16 @@ async function captureWorkingTree(
     );
   }
 
+  // The commit the captured edits sit on: restore three-way merges a path a
+  // later fast-forward rewrote against it instead of overlaying the captured
+  // copy over the merged change (restore.ts). Unknown on an unborn HEAD.
+  const baseCommit = await readHeadCommit(repoRoot);
   const dir = await createSnapshotDirectory(repoRoot, label);
   let copies: SnapshotCopyResult;
   try {
     copies = await copyDirtyPathsToSnapshot(repoRoot, dir, dirty);
     logCopyFailures(copies.copyFailures);
-    await writeCapturedSnapshotManifest(repoRoot, label, dir, copies, dirty.deleted);
+    await writeCapturedSnapshotManifest(repoRoot, label, dir, copies, dirty.deleted, baseCommit);
   } catch (err) {
     // No manifest means nothing in the working tree was reset or deleted yet
     // (that happens only after it), and recovery ignores a manifest-less
@@ -274,5 +281,12 @@ async function captureWorkingTree(
     modifiedTracked: cleanupPlan.resetTracked,
     untracked: [...cleanupPlan.deleteUntracked, ...cleanupPlan.unstageAdded],
     deleted: [...dirty.deleted],
+    ...(baseCommit ? { baseCommit } : {}),
   };
+}
+
+async function readHeadCommit(repoRoot: string): Promise<string | undefined> {
+  const head = await projectGit(repoRoot, ['rev-parse', '--verify', '--quiet', 'HEAD']);
+  const sha = head.stdout.trim();
+  return head.code === 0 && isCommitId(sha) ? sha : undefined;
 }

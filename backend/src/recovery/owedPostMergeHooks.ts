@@ -16,7 +16,10 @@
 // registered under a path variant) or still stale-resumable (the resume
 // skipped or failed to start it) is mid-merge by definition: a hook agent
 // started now would edit the main checkout under that merge's snapshot/reset,
-// and the merge's own teardown fires the hook once it lands.
+// and the merge's own teardown fires the hook once it lands. So is one whose
+// dead run lock boot snapshot recovery retired and recorded as an
+// interrupted-run marker (projectRunLock/interruptedRun.ts) that the resume
+// did not clear.
 
 import { getActiveRunForProject } from '../mergeRuns.js';
 import { inspectProjectRunLock } from '../projectRunLock.js';
@@ -24,18 +27,22 @@ import { getActiveRunsForProject as getActiveWorkflowRunsForProject } from '../w
 import { runPostMergeHookGate } from '../postMergeHooks.js';
 import { isPostMergeHookOwed } from '../postMergeHooks/owed.js';
 import { isResumableInterruptedRunLock } from './mergeRunResume.js';
+import { readInterruptedRun } from '../projectRunLock/interruptedRun.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';
 
 export type FireOwedPostMergeHooksDeps = {
   getActiveRunForProject: typeof getActiveRunForProject;
   inspectProjectRunLock: typeof inspectProjectRunLock;
   runPostMergeHookGate: typeof runPostMergeHookGate;
+  // Optional so existing callers keep compiling; defaults to the real reader.
+  readInterruptedRun?: typeof readInterruptedRun;
 };
 
 const productionDeps: FireOwedPostMergeHooksDeps = {
   getActiveRunForProject,
   inspectProjectRunLock,
   runPostMergeHookGate,
+  readInterruptedRun,
 };
 
 export async function fireOwedPostMergeHooks(
@@ -51,6 +58,14 @@ export async function fireOwedPostMergeHooks(
       console.log(
         `[startup] owed post-merge hook for ${projectPath} deferred — its run lock ("${lock.holder.label}", ` +
           `${lock.alive ? 'held' : 'stale, resumable'}) says a merge is in flight; that merge fires it.`,
+      );
+      return;
+    }
+    const interrupted = await (deps.readInterruptedRun ?? readInterruptedRun)(projectPath);
+    if (interrupted) {
+      console.log(
+        `[startup] owed post-merge hook for ${projectPath} deferred — an interrupted "${interrupted.label}" run ` +
+          'still has to resume; that merge fires it.',
       );
       return;
     }

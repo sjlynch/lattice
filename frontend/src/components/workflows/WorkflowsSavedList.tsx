@@ -19,6 +19,7 @@ export function WorkflowsSavedList({ manager }: Props) {
     harnessAvail,
     piMenu,
     queue,
+    startingWorkflowIds,
     getWorkflowHarnessOverride,
     getWorkflowPiModelOverride,
     actions,
@@ -119,6 +120,7 @@ export function WorkflowsSavedList({ manager }: Props) {
                 workflow={workflow}
                 isSelected={isSelected}
                 run={run}
+                starting={startingWorkflowIds.has(workflow.id)}
                 queuedCount={queuedCount}
                 harnessOverride={harnessOverride}
                 piModelOverride={piModelOverride}

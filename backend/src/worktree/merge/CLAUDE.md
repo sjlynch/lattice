@@ -25,3 +25,5 @@ Helper steps for a **single-task merge attempt**, factored out of the sibling
    auto-resolves Lattice-owned files; if they were the *only* conflicts it
    commits and returns `clean`, else returns `conflict` with the remaining
    files (caller spawns a resolver Claude). Re-installs the Stop hook either way.
+
+- `fastForward.ts` — `fastForwardMain` (+ `FF_LOCK_RETRY_DELAYS_MS`), moved out of the FILE and re-exported from it: preflight + scoped snapshot → `projectGit merge --ff-only` (lock-retry) → snapshot restore; the shared `MergeOutcome`/`MergeConflictKind` live in `types.ts`.

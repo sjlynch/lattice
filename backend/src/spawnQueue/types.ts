@@ -53,6 +53,9 @@ export type SpawnQueueSnapshot = {
   inFlight: number;
   reserved: number;
   liveCount: number;
+  // The subset of `liveCount` that are Lattice agents — what the resource
+  // governor's floor counts (resourceGovernor.ts `countAgentSessions`).
+  liveAgents: number;
   effectiveLive: number;
   pollHealthy: boolean;
   softCap: number;

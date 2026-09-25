@@ -1,3 +1,15 @@
+// A cancel / delete / lane change made while a task's admitted run is in
+// flight wins. Queue half: an in-flight task run cancelled via
+// `dequeueTaskRun` and then thrown a `SpawnDiskSpaceError` is not re-queued
+// (snapshot empty, never run again after `notifyDiskSpaceFreed`), and a re-run
+// enqueued meanwhile waits for the cancelled thunk rather than deduping onto it
+// or running beside it. `startTaskById` half (fake checkout / pty via its deps
+// seam, real task store): a drag to Backlog during the checkout or the pty
+// spawn stays in Backlog with no agent left running, an aborted signal backs
+// out, a delete during a CAP-rejected pass reclaims the checkout, and a
+// CAP-parked checkout is reclaimed when the run is cancelled before its retry.
+// Plus the stale `colorIndex`: kept only while no active sibling or
+// reservation holds it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';

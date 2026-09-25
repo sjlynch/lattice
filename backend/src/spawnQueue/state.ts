@@ -194,6 +194,7 @@ export class SpawnQueueState {
       inFlight: this.inFlightCount(),
       reserved: this.accounting.reservedCount(),
       liveCount: this.accounting.getLiveCount(),
+      liveAgents: this.accounting.getLiveAgentCount(),
       effectiveLive: this.accounting.effectiveLive(),
       pollHealthy: this.accounting.isPollHealthy(),
       softCap: this.accounting.getSoftCap(),

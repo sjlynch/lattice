@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   abortPostMergeHook,
-  fetchUserSettings,
   getActivePostMergeHook,
   patchUserSettings,
   subscribePostMergeHooks,
@@ -9,6 +8,7 @@ import {
 } from '../../../api';
 import { normalizeAgentHarness, type AgentHarness } from '../../../harnesses';
 import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
+import { loadUserSettingsWithRetry } from './strictSettingsLoad';
 
 type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
 
@@ -38,6 +38,11 @@ export function usePostMergeHook(
   const [active, setActive] = useState<PostMergeHookRun | null>(null);
   const [recent, setRecent] = useState<PostMergeHookRun | null>(null);
   const [saving, setSaving] = useState(false);
+  // The folder whose saved form `form` holds, or null while loading. The row
+  // disables its controls until then, and the save callbacks check the ref
+  // (not a render closure) so none can write over a form we haven't read.
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const loadedForRef = useRef<string | null>(null);
   // Track which hook ids we've already spawned a terminal tab for, so the
   // WS firing multiple progress events (or a reconnect re-sending 'started')
   // doesn't open a new terminal each time. A ref instead of state because the
@@ -47,18 +52,21 @@ export function usePostMergeHook(
 
   // Load saved prompt + harness on folder change.
   useEffect(() => {
-    let cancelled = false;
     // Reset to defaults synchronously BEFORE the fetch resolves — mirrors the
     // sibling hydrate effect's active/recent reset. Without this, a project
     // switch leaves the PREVIOUS project's prompt in the form until the new
-    // fetch lands (a transient flash), and if that fetch rejects the catch
-    // below "keeps defaults" that are actually the old project's — so a later
-    // savePrompt/saveHarness would patch project A's prompt onto project B.
+    // fetch lands (a transient flash). The loaded gate is dropped with it, so
+    // no save can patch project A's form onto project B meanwhile.
     setForm({ prompt: '', enabled: true, harness: 'claude' });
+    loadedForRef.current = null;
+    setLoadedFor(null);
     if (!activeFolder) return;
-    fetchUserSettings(activeFolder)
-      .then((s) => {
-        if (cancelled) return;
+    // Strict + retried: the lenient GET mapped a failure (a 502 mid backend
+    // restart) to `{}`, so the row read "Off" with an empty prompt while the
+    // backend still fired the saved hook after every merge.
+    return loadUserSettingsWithRetry(
+      activeFolder,
+      (s) => {
         setForm({
           prompt: typeof s.postMergeHookPrompt === 'string' ? s.postMergeHookPrompt : '',
           // Absent counts as enabled — mirrors the backend default.
@@ -66,13 +74,11 @@ export function usePostMergeHook(
           harness: normalizeAgentHarness(s.postMergeHookHarness),
           piModel: s.postMergeHookPiModel || undefined,
         });
-      })
-      .catch(() => {
-        /* keep the defaults reset above — never retain the prior project's form */
-      });
-    return () => {
-      cancelled = true;
-    };
+        loadedForRef.current = activeFolder;
+        setLoadedFor(activeFolder);
+      },
+      'post-merge hook',
+    );
   }, [activeFolder]);
 
   // Hydrate + subscribe to live updates.
@@ -144,8 +150,8 @@ export function usePostMergeHook(
 
   const savePrompt = useCallback(
     (next: string) => {
+      if (!activeFolder || loadedForRef.current !== activeFolder) return;
       setForm((prev) => ({ ...prev, prompt: next }));
-      if (!activeFolder) return;
       setSaving(true);
       patchUserSettings(activeFolder, { postMergeHookPrompt: next })
         .catch((err) => showError(`Saving hook prompt failed: ${(err as Error).message}`))
@@ -156,8 +162,8 @@ export function usePostMergeHook(
 
   const saveEnabled = useCallback(
     (next: boolean) => {
+      if (!activeFolder || loadedForRef.current !== activeFolder) return;
       setForm((prev) => ({ ...prev, enabled: next }));
-      if (!activeFolder) return;
       setSaving(true);
       patchUserSettings(activeFolder, { postMergeHookEnabled: next })
         .catch((err) => showError(`Saving hook toggle failed: ${(err as Error).message}`))
@@ -168,8 +174,8 @@ export function usePostMergeHook(
 
   const saveHarness = useCallback(
     (next: AgentHarness, piModel?: string) => {
+      if (!activeFolder || loadedForRef.current !== activeFolder) return;
       setForm((prev) => ({ ...prev, harness: next, piModel }));
-      if (!activeFolder) return;
       setSaving(true);
       patchUserSettings(activeFolder, {
         postMergeHookHarness: next,
@@ -193,6 +199,7 @@ export function usePostMergeHook(
 
   return {
     form,
+    loaded: !!activeFolder && loadedFor === activeFolder,
     active,
     recent,
     saving,

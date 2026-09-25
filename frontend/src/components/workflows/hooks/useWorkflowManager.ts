@@ -234,6 +234,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
 
   const manualRun = useWorkflowManualRun({
     activeRuns,
+    editorWorkflowId: editor.workflowId,
     runWorkflow: runActions.runWorkflow,
     runEditorWorkflow: runActions.runEditorWorkflow,
     enqueueWorkflow: queueActions.enqueueWorkflow,
@@ -298,6 +299,11 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     controlProgressForEditor: runViews.controlProgressForEditor,
     recentForEditor: runViews.recentForEditor,
     editor,
+    // In-flight flags that disable Save / Run so a double-click can't create
+    // two definitions or start (then queue) the same workflow twice.
+    savingEditor: editorState.saving,
+    editorRunStarting: manualRun.editorStarting,
+    startingWorkflowIds: manualRun.startingWorkflowIds,
     pickingTemplate: editorState.pickingTemplate,
     harnessAvail: harnessState.harnessAvail,
     piMenu: harnessState.piMenu,

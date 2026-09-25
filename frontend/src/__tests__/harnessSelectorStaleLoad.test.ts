@@ -116,3 +116,59 @@ test('a current load with an unavailable saved harness coerces to claude and pat
   assert.deepEqual(rec.harness, ['claude']);
   assert.deepEqual(rec.patches, [{ folder: 'proj', partial: { harness: 'claude' } }]);
 });
+
+// Project switch regression: project A had `codex` selected; project B has no
+// saved harness. B's load must select `claude` rather than leave A's choice in
+// place (which made Run All in B spawn Codex).
+test('a project with no saved harness selects claude', async () => {
+  const rec = makeRecorder();
+  await loadHarnessForFolder('B', PI_ON, {
+    fetchUserSettings: () => Promise.resolve({}),
+    patchUserSettings: rec.patchUserSettings,
+    isStale: () => false,
+    setHarness: rec.setHarness,
+    setPiModel: rec.setPiModel,
+  });
+  assert.deepEqual(rec.harness, ['claude']);
+  assert.deepEqual(rec.piModel, [undefined]);
+  assert.equal(rec.patches.length, 0, 'an absent harness is not written back');
+});
+
+test('an invalid saved harness selects claude', async () => {
+  const rec = makeRecorder();
+  await loadHarnessForFolder('B', PI_ON, {
+    fetchUserSettings: () => Promise.resolve({ harness: 'bogus' } as unknown as UserSettings),
+    patchUserSettings: rec.patchUserSettings,
+    isStale: () => false,
+    setHarness: rec.setHarness,
+    setPiModel: rec.setPiModel,
+  });
+  assert.deepEqual(rec.harness, ['claude']);
+});
+
+test('a failed settings load resets to claude and clears the Pi model', async () => {
+  const rec = makeRecorder();
+  await loadHarnessForFolder('B', PI_ON, {
+    fetchUserSettings: () => Promise.reject(new Error('HTTP 503')),
+    patchUserSettings: rec.patchUserSettings,
+    isStale: () => false,
+    setHarness: rec.setHarness,
+    setPiModel: rec.setPiModel,
+  });
+  assert.deepEqual(rec.harness, ['claude']);
+  assert.deepEqual(rec.piModel, [undefined]);
+  assert.equal(rec.patches.length, 0, 'a failed load must not persist anything');
+});
+
+test('a failed load that is already stale changes nothing', async () => {
+  const rec = makeRecorder();
+  await loadHarnessForFolder('A', PI_ON, {
+    fetchUserSettings: () => Promise.reject(new Error('HTTP 503')),
+    patchUserSettings: rec.patchUserSettings,
+    isStale: () => true,
+    setHarness: rec.setHarness,
+    setPiModel: rec.setPiModel,
+  });
+  assert.deepEqual(rec.harness, []);
+  assert.deepEqual(rec.piModel, []);
+});

@@ -130,6 +130,8 @@
    Playwright MCP toggle) so it reads as a QA-scoped action, not a worktree run. */
 .task-card-iconbtn.qa-run { color: #c89cff; opacity: 1; background: rgba(200, 156, 255, 0.10); }
 .task-card-iconbtn.qa-run:hover { background: rgba(200, 156, 255, 0.24); color: #d8b4ff; }
+/* This task is already under test: the button spins and focuses that session. */
+.task-card-iconbtn.qa-run.running svg { animation: spin 1s linear infinite; }
 .task-card-iconbtn.danger { opacity: 1; }
 .task-card-iconbtn.danger:hover { color: var(--danger); }
 

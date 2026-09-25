@@ -8,6 +8,7 @@
 // something actually landed in qa.
 
 import { restoreSnapshot, type SnapshotHandle } from '../worktree.js';
+import { describePartialRestore } from '../worktree/snapshot/restore.js';
 import { listTasks, type Task } from '../tasks.js';
 import { runPostMergeHookGate } from '../postMergeHooks.js';
 import { clearPostMergeHookOwed, isPostMergeHookOwed } from '../postMergeHooks/owed.js';
@@ -36,6 +37,9 @@ export async function runTeardown(
   // clobbers the redo. Restoring here, in-session, closes that window — the
   // current tree may include newer edits. Restore checks the current version,
   // preserves divergent dirty work, and retains captured conflict copies.
+  // A captured edit to a file one of the run's fast-forwards changed is
+  // three-way merged against the snapshot's base commit, so the merged task's
+  // change is not reverted in the working tree (snapshot/threeWay.ts).
   // Partial restores and failures become visible run errors.
   if (runSnapshot.dir) {
     const kind = run.cancelRequested ? 'cancelled run ' : 'run ';
@@ -43,7 +47,7 @@ export async function runTeardown(
     try {
       const restored = await restoreSnapshot(runSnapshot, projectPath);
       if (restored.status === 'partial') {
-        run.errored.push({ taskId: '(snapshot)', error: `Snapshot only partly restored; newer edits preserved and captured copies retained at ${runSnapshot.dir}` });
+        run.errored.push({ taskId: '(snapshot)', error: describePartialRestore(restored, runSnapshot.dir) });
         console.warn(`[merge-run] snapshot partly restored; retained at ${runSnapshot.dir}`);
       } else {
         console.log(`[merge-run] snapshot restored`);

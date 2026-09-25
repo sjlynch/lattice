@@ -4,7 +4,8 @@
 // and push steps; `waitForPostMergeHookIdle` is the merge step's post-merge
 // hook gate; `emitControlProgress` is the single place that shapes the
 // `step-control-progress` WS payload so every worker reports progress the
-// same way.
+// same way. `subscribeOnce` / `isRunEndedEvent` are the small subscription
+// primitives the waits share.
 
 import { listTasks, subscribe as subscribeTasks } from '../../tasks.js';
 import type { Task, TaskStatus } from '../../tasks.js';
@@ -16,7 +17,45 @@ import {
   type PostMergeHookRun,
 } from '../../postMergeHooks.js';
 import type { WorkflowStepKind } from '../../workflows.js';
-import { notify, subscribe, type WorkflowRun } from '../state.js';
+import {
+  notify,
+  subscribe,
+  type WorkflowRun,
+  type WorkflowRunEvent,
+} from '../state.js';
+
+// True for the event that ends workflow run `runId` early — it was cancelled
+// or errored. Every control-step wait resolves on it so the worker can exit
+// (and release the project run-lock) promptly.
+export function isRunEndedEvent(ev: WorkflowRunEvent, runId: string): boolean {
+  if (!('run' in ev) || ev.run.id !== runId) return false;
+  return ev.type === 'cancelled' || ev.type === 'errored';
+}
+
+// Subscribe-before-check wait that settles exactly once. `install` subscribes
+// a listener that calls `settle` and returns its unsubscribe; the returned
+// function is that same `settle`, for the caller's own checks. Settling
+// unsubscribes, then calls `onSettle` — even when the listener fires
+// synchronously inside `install`, before its unsubscribe exists (it is then
+// called right after assignment).
+export function subscribeOnce(
+  install: (settle: () => void) => () => void,
+  onSettle: () => void,
+): () => void {
+  let settled = false;
+  let unsub: (() => void) | null = null;
+  let unsubscribeAfterAssign = false;
+  const settle = () => {
+    if (settled) return;
+    settled = true;
+    if (unsub) unsub();
+    else unsubscribeAfterAssign = true;
+    onSettle();
+  };
+  unsub = install(settle);
+  if (unsubscribeAfterAssign) unsub();
+  return settle;
+}
 
 // The task-store / workflow-run subscriptions `waitForLaneEmpty` leans on,
 // injectable so the timeout behaviour can be unit-tested against a lane that
@@ -150,8 +189,7 @@ export function waitForLaneEmpty(
     // Workflow-run cancellation: resolve the wait so the worker can exit
     // the control step (and release the project run-lock) promptly.
     unsubRun = deps.subscribeRun((ev) => {
-      if (!('run' in ev) || ev.run.id !== run.id) return;
-      if (ev.type === 'cancelled' || ev.type === 'errored') finish();
+      if (isRunEndedEvent(ev, run.id)) finish();
     });
 
     // Bound the initial read too. In particular, a rejected task-store read
@@ -310,8 +348,7 @@ export function waitForPostMergeHookIdle(
       reevaluate();
     }) ?? null;
     unsubRun = deps.subscribeRun((ev) => {
-      if (!('run' in ev) || ev.run.id !== run.id) return;
-      if (ev.type === 'cancelled' || ev.type === 'errored') finish();
+      if (isRunEndedEvent(ev, run.id)) finish();
     });
 
     reevaluate();

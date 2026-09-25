@@ -11,8 +11,9 @@
 // The shape geometry itself comes from `spriteShapes.ts`; this module owns
 // the rendering constants (shadow, fill darkening, outline, opacity).
 
-import * as THREE from 'three';
+import type * as THREE from 'three';
 import type { ExtStyle } from '../../extensionStyles';
+import { finishCanvasTexture, newTextureCanvas } from './canvasTexture';
 import { TEX_SIZE, traceShape } from './spriteShapes';
 
 // Phase 1 — soft drop-shadow underlay.
@@ -46,10 +47,7 @@ function darkenHex(hex: string, f: number): string {
 }
 
 export function buildShapeTexture(style: ExtStyle): THREE.Texture {
-  const canvas = document.createElement('canvas');
-  canvas.width = TEX_SIZE;
-  canvas.height = TEX_SIZE;
-  const ctx = canvas.getContext('2d')!;
+  const { canvas, ctx } = newTextureCanvas(TEX_SIZE);
 
   const fill1 = darkenHex(style.color1, DARKEN);
   const fill2 = style.color2 ? darkenHex(style.color2, DARKEN) : null;
@@ -93,14 +91,9 @@ export function buildShapeTexture(style: ExtStyle): THREE.Texture {
   ctx.stroke();
   ctx.restore();
 
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.anisotropy = TEX_ANISOTROPY;
-  // The canvas paints sRGB byte values. Without this hint three.js treats
-  // them as linear, double-encodes on output, and the result is washed out
-  // and brighter than the legend SVG (which goes straight to the DOM).
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  return tex;
+  // finishCanvasTexture sets SRGBColorSpace: the canvas paints sRGB byte
+  // values, and without that hint three.js treats them as linear,
+  // double-encodes on output, and the result is washed out and brighter than
+  // the legend SVG (which goes straight to the DOM).
+  return finishCanvasTexture(canvas, { anisotropy: TEX_ANISOTROPY });
 }
