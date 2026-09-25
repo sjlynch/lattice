@@ -90,6 +90,20 @@ async function promoteTask(run: QaRun): Promise<QaVerdictOutcome> {
     };
   }
 
+  // Only promote the code state the run actually tested. A task merged into QA
+  // again after this run started (dragged out, reworked, re-merged) is a
+  // different build: a verdict about the old one must not ship the new one.
+  // `mergedAt` is re-stamped by every real merge (finalize / stash-resolved);
+  // a legacy task without one is judged on its lane alone.
+  if (task.mergedAt !== undefined && task.mergedAt > run.createdAt) {
+    return {
+      ok: true,
+      tracked: true,
+      moved: false,
+      reason: 'task re-merged after the QA run started',
+    };
+  }
+
   const updated = await updateTask(run.taskId, { status: 'done' });
   if (!updated) {
     return { ok: true, tracked: true, moved: false, reason: 'task update failed' };
@@ -133,13 +147,21 @@ export async function applyQaVerdict(
 // explicit curl already promoted the task this is an idempotent no-op; if its
 // move was missed (a transient updateTask failure, or a verdict/`done` race)
 // this finalizes it. No recorded verdict ⇒ nothing to apply, and the task is
-// left in QA for a human — the same outcome as a fail or an unsure pass.
+// left in QA for a human — the same outcome as a fail or an unsure pass. A run
+// already `done` is never re-applied: it was settled once, when it closed.
 export async function applyRecordedQaVerdict(
   runId: string,
 ): Promise<QaVerdictOutcome> {
   const run = getQaRun(runId);
   if (!run) {
     return { ok: true, tracked: false, moved: false, reason: 'run not tracked' };
+  }
+  // A settled run already had its verdict applied when it closed. Re-applying
+  // it later (a second Stop from a stay-open QA terminal, a replayed callback,
+  // boot recovery) would judge whatever the task has become since — possibly a
+  // reworked build back in QA — by a verdict about the old code.
+  if (run.status === 'done') {
+    return { ok: true, tracked: true, moved: false, reason: 'run already settled' };
   }
   if (!run.verdict) {
     return { ok: true, tracked: true, moved: false, reason: 'no verdict recorded' };

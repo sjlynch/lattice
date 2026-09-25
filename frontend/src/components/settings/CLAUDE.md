@@ -147,7 +147,13 @@ controls disabled, because "empty draft, then Save" would erase the project's
 ignore lists — including every fingerprint agents appended through
 `opengrep_ignore`. A status reply for a folder that is no longer the active one
 is dropped (`folderRef`). "Run scan" runs against the active
-project and shows the record + digest counts with a link to the markdown. Styles
+project and shows the record + digest counts with a link to the markdown.
+`ToolsTab.tsx` is just the orchestrator (the `ToolsTabHandle` + `!active`
+gate); `tools/` holds `useOpengrepToolsState` (all state, the load/poll effects
+and the stale-folder guards), `toolsTabUtils.ts` (pure draft/format helpers,
+tested in `__tests__/toolsTabUtils.test.ts`) and one presentational component
+per section (`OpengrepEngineSection` / `OpengrepPacksSection` /
+`OpengrepScanFilterSection` / `OpengrepScanNowSection`). Styles
 in `styles/settings/tools.css`. Backend: `backend/src/opengrep/`. (These tabs read/write the global file
 directly, not `userSettings` — don't assume "a tab ⇒ per-project".) `PiTab` manages OpenAI-compatible Pi endpoints (id / baseUrl /
 apiKey / models, with a "Detect models" probe via `POST /api/pi-endpoints/probe`

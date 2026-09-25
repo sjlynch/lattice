@@ -7,6 +7,9 @@ export const HANDSHAKE_AUTH_HEADER: string;
 export const PREPARE_SETTLE_BUDGET_MS: number;
 export const PREPARE_TIMEOUT_MS: number;
 export const DRAIN_TTL_MS: number;
+export const SOFT_STOP_SETTLE_BUDGET_MS: number;
+export const SOFT_STOP_PREPARE_TIMEOUT_MS: number;
+export const SOFT_STOP_DRAIN_TTL_MS: number;
 export const CANCEL_TIMEOUT_MS: number;
 export const LOCK_HOLDERS_TIMEOUT_MS: number;
 

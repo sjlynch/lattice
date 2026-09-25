@@ -60,7 +60,14 @@
     (`SOFT_STOP_TIMEOUT_MS`) rather than `taskkill /T`-ing a tree that, while the
     backend that spawned the terminal-server is alive, still contains it (a
     `detached` child keeps its parent pid). Only a runner that ignores the
-    request for 20 s is tree-killed.
+    request for 30 s is tree-killed.
+  - The soft stop drains the backend before that kill, like every automatic
+    restart: `dev.mjs` → `dev/devShutdown.mjs` calls the restart-drain
+    `prepare` (`dev/restartHandshake.mjs`, fail open) so debounced task /
+    run-mirror writes are flushed and an in-flight transition lands. Its budget
+    (`SOFT_STOP_PREPARE_TIMEOUT_MS`, 15 s) is deliberately far shorter than the
+    automatic path's and must stay below `SOFT_STOP_TIMEOUT_MS`. A Ctrl+C during
+    that drain cuts it short. Tested in `backend/src/__tests__/devShutdown.test.ts`.
 - **Dependency changes after boot** (`depsWatch.mjs`, shared with
   `backend/scripts/dev.mjs`; typed in `depsWatch.d.mts`, unit-tested in
   `backend/src/__tests__/depsWatch.test.ts`). Each workspace's `package.json` +

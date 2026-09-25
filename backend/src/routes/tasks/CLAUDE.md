@@ -35,17 +35,24 @@ the implementations live in focused modules:
   filter every project-scoped read runs; everything else here is an HTTP
   adapter over the two pure modules below.
 - `listQuery.ts` — the pure progressive-disclosure pipeline behind
-  `GET /api/tasks` and `/summary`: query parsing (`status` CSV/`all` with the
-  ACTIVE-lanes default, `ids`, `fields`, `clip`, `since` incl. `30d`/`12h`/`45m`
-  durations, `limit`, `confirm_large`), `lastActivityAt`, filter + newest-first
-  sort, the compact projection, text clipping, the teaching `hint`,
-  `bytes`/`approxTokens` self-pricing, the per-lane summary costing, and the
-  `LIST_RESPONSE_CEILING_BYTES` (256 KB) check that turns an oversized list into
-  a 413 carrying the summary. **The defaults are the point** — the endpoint used
-  to return every task, full text, uncapped (~320k tokens on a mature board),
-  which is what every agent hit. `format=markdown` shares the whole pipeline
-  except clipping: that doc round-trips through `/upsert`, which REPLACES
-  descriptions, so a clipped round-trip would destroy task text.
+  `GET /api/tasks` and `/summary`. Holds `buildListOutcome` (the
+  `LIST_RESPONSE_CEILING_BYTES` (256 KB) check that turns an oversized list
+  into a 413 carrying the summary) and re-exports the stages, which live in
+  flat siblings (deps: types ← parse/select/sizing ← envelope/summary ← outcome):
+  - `listQueryTypes.ts` — shared constants (`ACTIVE_STATUSES`, limits, clip
+    default) + `ParseResult` / `ListQuery` / `ListEnvelopeMeta`.
+  - `listQueryParse.ts` — `status` CSV/`all` (ACTIVE-lanes default), `ids`,
+    `fields`, `clip`, `since` (incl. `30d`/`12h`/`45m`), `limit`, `confirm_large`.
+  - `listQuerySelect.ts` — `lastActivityAt`, filter + newest-first sort + page.
+  - `listQuerySizing.ts` — `bytes`/`approxTokens`, compact projection, clipping.
+  - `listQueryEnvelope.ts` — the teaching `hint` + self-pricing envelope.
+  - `listQuerySummary.ts` — per-lane summary costing.
+
+  **The defaults are the point** — the endpoint used to return every task, full
+  text, uncapped (~320k tokens on a mature board), which is what every agent
+  hit. `format=markdown` shares the whole pipeline except clipping: that doc
+  round-trips through `/upsert`, which REPLACES descriptions, so a clipped
+  round-trip would destroy task text.
 - `taskSearch.ts` — the pure search behind `GET /api/tasks/search`: AND-of-terms
   substring match, title×3 scoring, the `…`-ellipsed snippet window, and its
   envelope. Defaults to EVERY lane (unlike the list) because history is where
@@ -77,6 +84,10 @@ EMPTY title, which means "keep the title" on an update (PATCH / an id-bearing
 upsert block) and is a 400 on a create. A markdown PATCH parses in
 `singleTask` mode — only the first `#` heading is the title; later level-1
 headings are description text rather than silently dropped extra tasks.
+`serializeTasksAsMarkdown` backslash-escapes description lines that would read
+as structure (`# ` headings, a fence that never closes) and the parser strips
+one backslash outside fences, so GET `?format=markdown` → POST `/upsert` is a
+no-op; a `limit`-capped listing carries `truncated=N/M` in its frontmatter.
 
 ## Queued spawns (`queuedSpawn.ts` barrel; split by concern)
 

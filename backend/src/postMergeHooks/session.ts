@@ -65,9 +65,16 @@ export async function endPostMergeHook(
 // itself delegating the scratch-dir + installation work to
 // `setupPostMergeHookSession` (sessionSetup.ts) — and this gate then blocks on
 // the run finishing so the merge isn't considered complete until it does.
+//
+// `shouldStop` lets a caller that gave up on the gate (the workflow Merge
+// step's Phase C, on a workflow cancel) keep it from firing anything further:
+// it is checked before each round, so the gate never starts a hook — or a
+// second one after waiting out an `already-running` one — for a caller that
+// is no longer there.
 export async function runPostMergeHookGate(
   options: TriggerPostMergeHookOptions,
   maxWaitMs: number = POST_MERGE_HOOK_MAX_WAIT_MS,
+  shouldStop?: () => boolean,
 ): Promise<PostMergeHookRun | null> {
   // An `already-running` hook may predate the merges this call is for (or be a
   // dead record boot restored as running for its lost-grace window), so the
@@ -76,6 +83,7 @@ export async function runPostMergeHookGate(
   // project whose hooks keep overlapping new merges must not loop forever.
   let last: PostMergeHookRun | null = null;
   for (let round = 0; round < 3; round++) {
+    if (shouldStop?.()) break;
     const { run, waitedOnExisting } = await runPostMergeHookGateOnce(options, maxWaitMs);
     last = run ?? last;
     if (!waitedOnExisting || !(await isPostMergeHookOwed(options.projectPath))) break;

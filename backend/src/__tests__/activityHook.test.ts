@@ -205,8 +205,9 @@ test('decodeActivityHook maps every file on a Codex apply_patch', () => {
       subagentType: 'worker',
     },
   );
-  // Patch headers are authoritative — no existence check.
-  assert.ok(seen.every(([, mustExist]) => mustExist === false));
+  // Every patch path is existence-checked: an Add target doesn't exist yet at
+  // PreToolUse, a Delete target no longer exists at PostToolUse.
+  assert.ok(seen.every(([, mustExist]) => mustExist === true));
 });
 
 test('decodeActivityHook keeps only confirmed files from a Codex shell command', () => {

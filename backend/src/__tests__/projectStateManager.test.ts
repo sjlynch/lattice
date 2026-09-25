@@ -264,3 +264,113 @@ test('runProjectWrite serializes same-project writers but lets different project
 
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+// ---------- exit flush covers a write already in flight ----------
+//
+// The exit hook used to write only keys whose debounce timer was still
+// pending. A fired timer deletes its key from persistTimers BEFORE its async
+// write finishes (lock wait, stringify, a Windows rename retry), so a
+// `process.exit()` landing in that window saw nothing to flush and the
+// mutation never reached disk.
+
+class InFlightStore extends ProjectStateManager<number[]> {
+  public writesStarted = 0;
+  // Resolvers for writes parked in writeStateNow; a test releases them (or
+  // never does, simulating the process exiting mid-write).
+  public readonly parked: Array<() => void> = [];
+
+  constructor(file: string) {
+    super({
+      name: 'test-inflight',
+      fileForProject: () => file,
+      defaultState: () => [],
+      deserialize: (raw) => (Array.isArray(raw) ? (raw as number[]) : []),
+    });
+  }
+
+  protected override async writeStateNow(projectPath: string, state: number[]): Promise<void> {
+    this.writesStarted += 1;
+    await new Promise<void>((resolve) => this.parked.push(resolve));
+    await super.writeStateNow(projectPath, state);
+  }
+
+  async read(projectPath: string): Promise<number[]> {
+    const key = await this.loadIfNeeded(projectPath);
+    return [...(this.getCached(key) ?? [])];
+  }
+
+  locked<T>(projectPath: string, fn: () => T | Promise<T>): Promise<T> {
+    return this.runProjectWrite(projectPath, fn);
+  }
+
+  async mutate(projectPath: string, state: number[]): Promise<void> {
+    const key = await this.loadIfNeeded(projectPath);
+    this.setCached(key, state);
+    this.schedulePersist(key);
+  }
+
+  timerPending(projectPath: string): boolean {
+    return this.persistTimers.has(this.canonicalize(projectPath));
+  }
+}
+
+async function readJson(file: string): Promise<unknown> {
+  return JSON.parse(await fs.readFile(file, 'utf8'));
+}
+
+async function waitFor(cond: () => boolean): Promise<void> {
+  for (let i = 0; i < 100 && !cond(); i += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(cond(), 'condition never became true');
+}
+
+test('flushPendingPersistsSync writes a mutation whose debounced write is still in flight', async (t) => {
+  const file = await tmpFile(JSON.stringify([1]));
+  const store = new InFlightStore(file);
+  const project = path.join(path.dirname(file), 'project-inflight');
+  await store.read(project);
+
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await store.mutate(project, [1, 2]);
+  t.mock.timers.tick(100);
+  // The timer has fired and handed the write to the disk; it never finishes.
+  await waitFor(() => store.writesStarted === 1);
+  assert.equal(store.timerPending(project), false);
+  assert.deepEqual(await readJson(file), [1], 'the in-flight write has not landed');
+
+  store.flushPendingPersistsSync();
+  assert.deepEqual(await readJson(file), [1, 2]);
+
+  t.mock.timers.reset();
+  await fs.rm(path.dirname(file), { recursive: true, force: true });
+});
+
+test('a mutation landing mid-write keeps the key dirty after that write completes', async (t) => {
+  const file = await tmpFile(JSON.stringify([1]));
+  const store = new InFlightStore(file);
+  const project = path.join(path.dirname(file), 'project-midwrite');
+  await store.read(project);
+
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await store.mutate(project, [1, 2]);
+  t.mock.timers.tick(100);
+  await waitFor(() => store.writesStarted === 1);
+  // Mutated after the in-flight write took its snapshot: that write completing
+  // must not mark the key clean.
+  await store.mutate(project, [1, 2, 3]);
+  store.parked[0]!();
+  await store.locked(project, () => undefined);
+  assert.deepEqual(await readJson(file), [1, 2]);
+
+  // The follow-up debounce fires and its write is in flight too when the
+  // process exits — the key must still be dirty for the exit flush.
+  t.mock.timers.tick(100);
+  await waitFor(() => store.writesStarted === 2);
+  assert.equal(store.timerPending(project), false);
+  store.flushPendingPersistsSync();
+  assert.deepEqual(await readJson(file), [1, 2, 3]);
+
+  t.mock.timers.reset();
+  await fs.rm(path.dirname(file), { recursive: true, force: true });
+});

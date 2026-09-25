@@ -126,8 +126,11 @@ explicit-curl callbacks — never by polling task state.
   counts **every** `wf:` / `pmh:` hook event as a signal, and requires
   `READOPTED_SETTLE_MS` of silence for a re-adopted session. A held Stop must
   survive a restart: the route awaits `recordStopReceived` before answering and
-  recovery re-arms with `{ rearm: true }`, counting from the later of
-  `stopReceived.at` / `.activeAt`. Failed completion checkpoints re-arm up to
+  recovery re-arms with `{ rearm: true }`: if the gate was busy at its last
+  checkpoint (`stopReceived.busy`) the window counts from BOOT (downtime is not
+  silence), else from the later of `stopReceived.at` / `.activeAt`; the boot
+  placeholder signal never counts as busy. The post-merge hook mirrors this
+  (`stopReceivedAt` / `stopActiveAt` / `stopBusy`). Failed completion checkpoints re-arm up to
   three times, then leave the run + terminal with a visible error (a Run tests
   step keeps retrying instead).
 - The Claude Stop hook is installed for every step regardless of harness.

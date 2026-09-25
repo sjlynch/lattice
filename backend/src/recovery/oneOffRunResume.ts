@@ -142,7 +142,9 @@ const qaAdapter: Adapter<QaRun> = {
     unregisterAgentSession(qaAgentId(run.id));
     // What `/done` would have done: apply whatever verdict the agent reported
     // before its terminal went away (a confident PASS still promotes the
-    // task), then close the run. No verdict ⇒ the task stays in QA.
+    // task), then close the run. No verdict ⇒ the task stays in QA. A run
+    // already settled is never re-applied (`applyRecordedQaVerdict` refuses a
+    // `done` run), so a stale PASS can't promote a since-reworked task.
     try {
       await applyRecordedQaVerdict(run.id);
     } catch (err) {
@@ -173,7 +175,7 @@ const postMergeHookAdapter: Adapter<PostMergeHookRun> = {
       markAgentReadopted(
         agentId,
         run.stopReceivedAt !== undefined
-          ? { stopAt: run.stopReceivedAt, activeAt: run.stopActiveAt }
+          ? { stopAt: run.stopReceivedAt, activeAt: run.stopActiveAt, busy: run.stopBusy }
           : undefined,
       );
     }

@@ -41,6 +41,15 @@ export type StepToolsDeps = {
   scan?: typeof scanProjectWithDigest;
 };
 
+// Test seam for callers that reach runStepTools through the spawner (which
+// passes no deps): swap the scan for a fake; returns a restore function.
+let depsForTest: StepToolsDeps = {};
+export function setStepToolsDepsForTest(overrides: StepToolsDeps): () => void {
+  const previous = depsForTest;
+  depsForTest = { ...previous, ...overrides };
+  return () => { depsForTest = previous; };
+}
+
 // One AbortController per run whose current step is inside its pre-run, so a
 // cancelled run kills its scan instead of leaving the project "busy" (one scan
 // per project) for the run the user starts next. `cancelWorkflowRun` calls
@@ -51,7 +60,37 @@ export function beginStepPreRun(runId: string): AbortSignal {
   preRuns.get(runId)?.abort();
   const controller = new AbortController();
   preRuns.set(runId, controller);
+  const listeners = preRunBeginListeners.get(runId);
+  if (listeners) {
+    preRunBeginListeners.delete(runId);
+    for (const listener of listeners) listener();
+  }
   return controller.signal;
+}
+
+// Boot recovery re-dispatches a run's step and must then let the rest of the
+// boot chain (callback-outbox replay, merge-run resume, owed post-merge hooks)
+// proceed. It waits for the dispatch to reach the step's pre-run — by then the
+// run is registered and the dispatch decision is made — but NOT for the pre-run
+// itself: an Opengrep scan can take minutes. See recovery/workflowRunResume.ts.
+const preRunBeginListeners = new Map<string, Set<() => void>>();
+
+export function waitForStepPreRunBegin(runId: string): { begun: Promise<void>; dispose: () => void } {
+  let listener!: () => void;
+  const begun = new Promise<void>((resolve) => { listener = resolve; });
+  let listeners = preRunBeginListeners.get(runId);
+  if (!listeners) {
+    listeners = new Set();
+    preRunBeginListeners.set(runId, listeners);
+  }
+  listeners.add(listener);
+  const dispose = () => {
+    const current = preRunBeginListeners.get(runId);
+    if (!current) return;
+    current.delete(listener);
+    if (current.size === 0) preRunBeginListeners.delete(runId);
+  };
+  return { begun, dispose };
 }
 
 // Pass the signal `beginStepPreRun` returned: a superseded pre-run (a newer
@@ -78,7 +117,7 @@ async function runOpengrepTool(
 ): Promise<StepToolReport> {
   const file = path.join(stepDir, OPENGREP_REPORT_FILENAME);
   try {
-    const result = await (deps.scan ?? scanProjectWithDigest)(projectPath, {
+    const result = await (deps.scan ?? depsForTest.scan ?? scanProjectWithDigest)(projectPath, {
       timeoutMs: OPENGREP_STEP_TIMEOUT_MS,
       signal,
       render: {

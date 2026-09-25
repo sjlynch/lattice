@@ -1,6 +1,5 @@
-import path from 'node:path';
 import { generateTaskId } from '../ids.js';
-import { canonicalProjectPath } from '../projectPath.js';
+import { canonicalProjectPath, isRealAbsoluteProjectPath } from '../projectPath.js';
 import { ProjectIdentityConflictError, matchesStoredProjectIdentity } from '../projectIdentity.js';
 import { ProjectStateManager } from '../projectStateManager.js';
 import { applyCrashSafeTaskUpdate } from './crashSafeUpdate.js';
@@ -8,7 +7,7 @@ import { TaskMigrations } from './migrations.js';
 import { projectTasksFile } from './paths.js';
 import { isStructurallyJunkPath } from './pruneIndex.js';
 import { ProjectsIndex } from './projectsIndex.js';
-import { applyTaskUpdate, type TaskLookup } from './taskUpdate.js';
+import { applyTaskUpdate, stampTimestamps, type TaskLookup } from './taskUpdate.js';
 import type { Task, TaskStatus, TaskSubscriber, TaskUpdates } from './types.js';
 
 export type TaskCacheManagerOptions = {
@@ -49,14 +48,15 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
     await this.projectsIndex.loadKnownProjects();
     await this.migrations.runLegacyOnce();
     // Read-path pollution guard: only REGISTER a project in the persistent
-    // index when the caller's path was absolute. A relative/drive-relative
-    // input is shell-escaping damage that canonicalProjectPath just resolved
+    // index when the caller's path was really absolute. A relative/drive-relative
+    // input (or, on Windows, a root-relative / MSYS `/c/dev/proj` one) is
+    // shell-escaping damage that canonicalProjectPath just resolved
     // into a plausible-but-bogus absolute path; registering it would leak a
     // phantom entry (the create routes reject these outright, but a bare read
     // still reaches here). Tasks for the resolved key still load, so an
     // already-known project is unaffected — we simply never index a new one
     // that only ever arrived via a mangled read.
-    if (!this.projectsIndex.has(key) && path.isAbsolute(projectPath)) {
+    if (!this.projectsIndex.has(key) && isRealAbsoluteProjectPath(projectPath)) {
       this.projectsIndex.add(key);
       await this.projectsIndex.persistKnownProjects();
     }
@@ -206,6 +206,10 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
   // in their new top-to-bottom order. Each listed task gets its status set to
   // `status` (handles cross-lane drops that pick a position) and its sortOrder
   // rewritten to its position in the array. Tasks not listed are not touched.
+  // A task whose status actually changes is stamped like a PATCH that sets
+  // `status` (updatedAt + the transition timestamp — doneAt, startedAt, …),
+  // so a dragged card surfaces in activity-ordered views; a pure same-lane
+  // reorder stamps nothing.
   public async reorderTasksInLane(
     projectPath: string,
     status: TaskStatus,
@@ -222,7 +226,8 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
         if (i === -1) return t;
         if (t.status === status && t.sortOrder === i) return t;
         changed = true;
-        return { ...t, status, sortOrder: i };
+        if (t.status === status) return { ...t, sortOrder: i };
+        return { ...t, ...stampTimestamps(t, { status }), sortOrder: i };
       });
       if (changed) {
         this.setCached(key, updatedList);

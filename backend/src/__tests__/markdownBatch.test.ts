@@ -100,3 +100,66 @@ test('serializeTasksAsMarkdown: empty list still emits frontmatter', () => {
   assert.match(md, /<!-- lattice: project=X, hash=h -->/);
   assert.match(md, /<!-- no tasks -->/);
 });
+
+// ----------------------------------------------------- round-trip escaping --
+// GET ?format=markdown → POST /upsert unchanged must be a no-op. A description
+// line that reads as structure used to split the task (`# Plan` became a NEW
+// task) or, for an unclosed fence, fold every later task into this one.
+
+function roundTrip(tasks: Array<{ id: string; title: string; status: string; description?: string }>) {
+  return parseMarkdownDoc(serializeTasksAsMarkdown(tasks, { canonicalProject: 'C:/p', hash: 'h' }));
+}
+
+test('round-trip: a level-1 heading inside a description stays in that description', () => {
+  const description = 'Intro\n\n# Plan\nx';
+  const doc = parseMarkdownDoc(
+    serializeTasksAsMarkdown([{ id: 't_a', title: 'T', status: 'open', description }]),
+  );
+  assert.deepEqual(doc.tasks, [{ id: 't_a', status: 'open', title: 'T', description }]);
+});
+
+test('round-trip: a description with an unclosed fence is preserved', () => {
+  const description = 'Intro\n```js\nconst x = 1;\n# not a heading';
+  const doc = roundTrip([{ id: 't_a', title: 'T', status: 'open', description }]);
+  assert.deepEqual(doc.tasks, [{ id: 't_a', status: 'open', title: 'T', description }]);
+});
+
+test('round-trip: an unclosed fence in the first task does not swallow the second', () => {
+  const tasks = [
+    { id: 't_a', title: 'A', status: 'open', description: 'see:\n~~~\n# still A' },
+    { id: 't_b', title: 'B', status: 'qa', description: 'body of B\n# Section\nmore' },
+  ];
+  const doc = roundTrip(tasks);
+  assert.deepEqual(
+    doc.tasks,
+    tasks.map((t) => ({ id: t.id, status: t.status, title: t.title, description: t.description })),
+  );
+});
+
+test('round-trip: balanced fences stay raw and their contents untouched', () => {
+  const description = 'Run:\n```bash\n# install\n\# literal\nnpm i\n```\nafter\n# Heading';
+  const md = serializeTasksAsMarkdown([{ id: 't_a', title: 'T', status: 'open', description }]);
+  assert.match(md, /^```bash$/m);
+  assert.match(md, /^# install$/m, 'lines inside a closed fence are not escaped');
+  assert.match(md, /^\# Heading$/m, 'a heading outside a fence is escaped');
+  assert.deepEqual(parseMarkdownDoc(md).tasks[0].description, description);
+});
+
+test('round-trip: lines that already start with backslashes survive exactly', () => {
+  const description = 'a\n\# one\n\\# two\n\```\nz';
+  const doc = roundTrip([{ id: 't_a', title: 'T', status: 'open', description }]);
+  assert.equal(doc.tasks[0].description, description);
+});
+
+test('serializeTasksAsMarkdown: a truncated listing says so in-band, and the parser ignores it', () => {
+  const md = serializeTasksAsMarkdown([{ id: 't_a', title: 'T', status: 'open' }], {
+    canonicalProject: 'C:/p',
+    hash: 'h',
+    truncated: { shown: 1, matched: 3 },
+  });
+  assert.match(md, /<!-- lattice: project=C:\/p, hash=h, truncated=1\/3 -->/);
+  assert.match(md, /<!-- showing 1 of 3 matching tasks .*limit=0/);
+  const doc = parseMarkdownDoc(md);
+  assert.equal(doc.project, 'C:/p');
+  assert.deepEqual(doc.tasks, [{ id: 't_a', status: 'open', title: 'T' }]);
+});

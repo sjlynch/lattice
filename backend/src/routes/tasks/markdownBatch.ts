@@ -16,6 +16,15 @@
 // like headings. Lines before the first heading (after the optional
 // frontmatter) are ignored.
 //
+// Escaping: a description line that would otherwise read as structure — a
+// `# ` heading (a new task) or a fence marker that never closes (it would
+// swallow every later task) — is serialized with ONE leading backslash
+// (`\# Plan`, `\```js`), and the parser strips one backslash from any line
+// outside a fence that matches `\*(# |```|~~~)`. Lines already starting with
+// backslashes before such a marker get one more, so the mapping is exact and
+// GET ?format=markdown → POST /upsert is a no-op. Documents without escapes
+// parse exactly as before.
+//
 // Why this exists: building a JSON array of tasks with multi-line
 // descriptions in a shell is brutal — every backslash, quote, and newline
 // needs escaping. A heredoc with single-quoted EOF passes markdown through
@@ -47,6 +56,41 @@ const FRONTMATTER_RE = /^<!--\s*lattice:\s*(.+?)\s*-->\s*$/;
 // to it. A heading with neither metadata nor title (`#   `) is still body.
 const HEADING_RE = /^#\s+(?:\{([^}]*)\}\s*)?(.*?)\s*$/;
 const FENCE_RE = /^(?:```|~~~)/;
+// A line the parser could read as structure, with any number of leading
+// backslashes: escaping adds exactly one `\`, unescaping removes exactly one.
+const ESCAPABLE_RE = /^\\*(?:#\s|```|~~~)/;
+const ESCAPED_RE = /^\\(?=\\*(?:#\s|```|~~~))/;
+
+function unescapeLine(line: string): string {
+  return line.replace(ESCAPED_RE, '');
+}
+
+// Mirrors the parser's fence tracking over one description: headings outside
+// a fence are escaped, and so is a fence opener with no later fence line to
+// close it — left raw it would keep the parser in fence mode past this task's
+// end, folding every later task into this description. Balanced fences stay
+// raw (and their contents untouched), so code blocks read naturally.
+function escapeDescription(description: string): string {
+  const lines = description.split(/\r?\n/);
+  let lastFence = -1;
+  lines.forEach((line, i) => {
+    if (FENCE_RE.test(line)) lastFence = i;
+  });
+  let inFence = false;
+  return lines
+    .map((line, i) => {
+      if (inFence) {
+        if (FENCE_RE.test(line)) inFence = false;
+        return line;
+      }
+      if (FENCE_RE.test(line) && i < lastFence) {
+        inFence = true;
+        return line;
+      }
+      return ESCAPABLE_RE.test(line) ? `\\${line}` : line;
+    })
+    .join('\n');
+}
 
 function parseMetadataBlock(raw: string): Record<string, string> {
   // Accept `,` or whitespace as separator: `id=t_abc, status=open` or `id=t_abc status=open`.
@@ -109,7 +153,7 @@ export function parseMarkdownDoc(md: string, options: ParseMarkdownOptions = {})
         continue;
       }
     }
-    if (current) current.body.push(line);
+    if (current) current.body.push(inFence ? line : unescapeLine(line));
     // pre-first-heading lines are dropped intentionally
   }
   if (current) doc.tasks.push(finalizeBlock(current));
@@ -149,6 +193,12 @@ export interface SerializeMeta {
   hash?: string;
   /** Comma-joined status filter the caller passed (echoed in frontmatter). */
   statusFilter?: string;
+  /**
+   * Set when `limit` cut the listing short: `shown` of `matched` tasks. Emitted
+   * in-band (frontmatter field + comment, both ignored by the parser) so a
+   * reader of the doc can't mistake a page for the whole lane.
+   */
+  truncated?: { shown: number; matched: number };
 }
 
 export function serializeTasksAsMarkdown(
@@ -160,9 +210,17 @@ export function serializeTasksAsMarkdown(
   if (meta?.canonicalProject) fmFields.push(`project=${meta.canonicalProject}`);
   if (meta?.hash) fmFields.push(`hash=${meta.hash}`);
   if (meta?.statusFilter) fmFields.push(`status=${meta.statusFilter}`);
+  const truncated = meta?.truncated;
+  if (truncated) fmFields.push(`truncated=${truncated.shown}/${truncated.matched}`);
   if (fmFields.length > 0) {
     parts.push(`<!-- lattice: ${fmFields.join(', ')} -->`);
     parts.push('');
+    if (truncated) {
+      parts.push(
+        `<!-- showing ${truncated.shown} of ${truncated.matched} matching tasks (newest first) — ` +
+          'pass limit=0 (or since=) for the rest -->',
+      );
+    }
     parts.push(
       '<!-- Edit titles/descriptions freely, then POST back to /api/tasks/upsert -->',
     );
@@ -180,7 +238,7 @@ export function serializeTasksAsMarkdown(
     parts.push(`# ${metaBlock} ${t.title}`);
     if (t.description && t.description.trim()) {
       parts.push('');
-      parts.push(t.description.trimEnd());
+      parts.push(escapeDescription(t.description.trimEnd()));
     }
     parts.push('');
   }

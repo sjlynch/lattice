@@ -88,7 +88,14 @@ ONE way a non-task route reads the project it acts on (`?project=` first, then
 the body; the tasks routes have their own `requireAbsoluteProject` /
 `validateProjectForCreate` with the same rule). It refuses a relative or
 drive-relative value with a 400 that names the likely cause (shell-stripped
-backslashes: `C:developmentproj`). This matters because every per-project
+backslashes: `C:developmentproj`). On Windows it also refuses a ROOT-relative
+value (`\foo`, or the MSYS / Git-Bash `/c/development/proj`, whose 400 suggests
+the `C:\development\proj` spelling): `path.isAbsolute` accepts those, but
+`path.resolve` pins them to the backend's drive, which read as a silently-empty
+board. Every guard (these routes, `ws/projectEndpoint.ts` `parseProject`, and
+the task cache's index registration in `ensureProjectLoaded`) uses the one
+`isRealAbsoluteProjectPath` helper in `../projectPath.ts`, never bare
+`path.isAbsolute`. This matters because every per-project
 store resolves its path through `canonicalProjectPath` == `path.resolve`, so a
 relative project silently landed under the BACKEND's own cwd —
 `PATCH /api/settings?project=foo` created `backend/foo/.lattice/
