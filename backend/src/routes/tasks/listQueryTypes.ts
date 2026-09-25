@@ -43,7 +43,7 @@ export interface ListQuery {
   clip: number;
   /** Epoch-ms floor on `lastActivityAt`, or null. Ignored in `ids=` mode. */
   since: number | null;
-  /** Max tasks returned; 0 = unlimited. */
+  /** Max tasks returned; 0 = unlimited. Defaults to 0 in `ids=` mode. */
   limit: number;
   format: 'json' | 'markdown';
   confirmLarge: boolean;

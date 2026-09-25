@@ -175,10 +175,11 @@ test('prepareCodexSystemPrompt renders cmd-safe TOML (no double-quote) for space
       dev!.endsWith("Always write tests. Don't be terse.'''"),
       `project append must come last: ${dev}`,
     );
-    // Joined with a SPACE, never a blank line: an inline `-c` value transits
-    // cmd.exe as `"%VAR%"`, which cannot carry a newline. Folding the preamble
-    // in must not turn a working single-line append into a broken two-line one.
+    // No shell given → the cmd-safe default: an inline `-c` value transits
+    // cmd.exe as `"%VAR%"`, which cannot carry a newline, so the blank line
+    // folding the preamble in is flattened to a single space.
     assert.ok(!dev!.includes("\n"), `no newline in the -c value: ${dev}`);
+    assert.ok(dev!.includes("them instead of curl. Always write tests."), dev);
     // The replace path is a single-quoted TOML literal (absolute scratch path).
     assert.match(model!, /^model_instructions_file='.*codex-instructions\.md'$/);
   } finally {
@@ -188,6 +189,68 @@ test('prepareCodexSystemPrompt renders cmd-safe TOML (no double-quote) for space
       recursive: true,
       force: true,
     });
+    await fs.rm(project, { recursive: true, force: true });
+  }
+});
+
+// Regression: a multi-line Append or one quoting a phrase is the NORMAL use of
+// the Settings textarea, and on cmd.exe (the Windows pty default) either broke
+// every Codex spawn in the project — cmd strips the inner `"` and re-splits the
+// value on its spaces, and an expanded linefeed ends the command, so Codex got
+// stray positional args / a truncated command line and lost the task prompt.
+test('a Codex Append with a newline and a quoted phrase survives cmd.exe', async () => {
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-hsp-cmd-'));
+  try {
+    await patchUserSettings(project, {
+      harnessSystemPrompts: { codex: { append: 'a\nb "c d"' } },
+    });
+    const { configArgs } = await prepareCodexSystemPrompt(project, undefined, 'cmd.exe');
+    const env: Record<string, string> = {};
+    const out = configureCodexSystemPrompt('codex --yolo "x"', configArgs, 'cmd.exe', env);
+    assert.equal(out, 'codex --config "%LATTICE_CODEX_SYS_0%" --yolo "x"');
+    const value = env[codexSystemPromptOverrideEnv(0)];
+    assert.ok(value, 'developer_instructions rides the env var');
+    assert.ok(!value.includes('"'), `no double quote for cmd to strip: ${value}`);
+    assert.ok(!/[\r\n]/.test(value), `no line break to end the command: ${value}`);
+    // Semantically intact: the line breaks (the preamble's blank-line join
+    // included) are spaces, the quotes are curly.
+    assert.match(value, /^developer_instructions='''This session runs inside Lattice/);
+    assert.ok(value.endsWith(" them instead of curl. a b “c d”'''"), value);
+  } finally {
+    await fs.rm(project, { recursive: true, force: true });
+  }
+});
+
+test('a Codex Append rides verbatim on a known POSIX / PowerShell shell', async () => {
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-hsp-posix-'));
+  try {
+    await patchUserSettings(project, {
+      harnessSystemPrompts: { codex: { append: 'a\nb "c d"' } },
+    });
+    for (const shell of ['bash', '/usr/bin/zsh', 'pwsh.exe', 'powershell']) {
+      const { configArgs } = await prepareCodexSystemPrompt(project, undefined, shell);
+      assert.equal(configArgs.length, 1, shell);
+      assert.match(configArgs[0], /^developer_instructions='''This session runs inside Lattice/);
+      // Joined with a blank line like Claude/Pi; the user's text untouched.
+      assert.ok(configArgs[0].endsWith(`them instead of curl.\n\na\nb "c d"'''`), shell);
+    }
+  } finally {
+    await fs.rm(project, { recursive: true, force: true });
+  }
+});
+
+test("a Codex Append containing ''' cannot close the TOML literal early", async () => {
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-hsp-lit-'));
+  try {
+    await patchUserSettings(project, {
+      harnessSystemPrompts: { codex: { append: "x ''' y '''' z" } },
+    });
+    const { configArgs } = await prepareCodexSystemPrompt(project, undefined, 'bash');
+    assert.equal(configArgs.length, 1);
+    assert.ok(configArgs[0].endsWith("x ' ' ' y ' ' ' ' z'''"), configArgs[0]);
+    const inner = configArgs[0].slice("developer_instructions='''".length, -3);
+    assert.ok(!inner.includes("'''"), inner);
+  } finally {
     await fs.rm(project, { recursive: true, force: true });
   }
 });

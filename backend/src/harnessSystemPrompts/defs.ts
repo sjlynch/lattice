@@ -121,7 +121,7 @@ export const HARNESS_SYSTEM_PROMPT_CATALOG: HarnessSystemPromptDef[] = [
     defaultPrompt: CODEX_DEFAULT_PROMPT,
     defaultViewable: true,
     appendDescription:
-      'Added as Codex `developer_instructions` (a developer-role message layered on top of the base instructions) for every Codex session Lattice spawns in this project. Additive and safe — the recommended way to customize Codex.',
+      'Added as Codex `developer_instructions` (a developer-role message layered on top of the base instructions) for every Codex session Lattice spawns in this project. Additive and safe — the recommended way to customize Codex. On Windows (cmd.exe) newlines and double quotes are normalized for Codex: line breaks become spaces and "straight quotes" become “curly” ones, since the text rides the command line.',
     replaceDescription:
       'REPLACES Codex’s built-in base instructions via `model_instructions_file` (a per-invocation `-c` override; needs a recent Codex build).',
     replaceWarning:

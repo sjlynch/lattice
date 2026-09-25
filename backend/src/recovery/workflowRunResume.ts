@@ -22,7 +22,7 @@
 // the HTTP server is listening — a redispatched control step spawns agents that
 // curl back into the API.
 
-import { getWorkflow } from '../workflows.js';
+import { getWorkflow, type Workflow, type WorkflowStep } from '../workflows.js';
 import {
   failWorkflowRun,
   getRun,
@@ -52,7 +52,7 @@ import { proxyListSessionsOrNull } from '../terminalServerClient.js';
 import type { WorkflowRun } from '../workflowRuns/state.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';
 import { claimRecoveryAttempt } from './retryBudget.js';
-import { listTasks } from '../tasks.js';
+import { listTasks, type Task, type TaskStatus } from '../tasks.js';
 import {
   noteRunTestsStep,
   resumeRunTestsStep,
@@ -126,6 +126,10 @@ export function registerPersistedWorkflowRuns(persisted: WorkflowRun[], sessions
   return registered;
 }
 
+// Board lanes whose tasks a re-dispatched step may still act on — what the
+// recovery checkpoint records and what a Merge/Push step can be waiting for.
+const PENDING_TASK_STATUSES: readonly TaskStatus[] = ['open', 'in_progress', 'ready_to_merge'];
+
 export async function resumePersistedRun(
   run: WorkflowRun,
   sessions: ProbedSession[] | null,
@@ -163,93 +167,136 @@ export async function resumePersistedRun(
   if (decision.action === 'skip') return;
 
   if (decision.action === 'error') {
-    // Restore first so the errored run actually reaches the UI (a run that was
-    // never restored has nothing to mark errored, and the user would just see
-    // it silently gone again).
-    restoreWorkflowRun(run);
-    console.warn(`[startup] workflow run ${label} cannot be resumed: ${decision.reason}`);
-    failWorkflowRun(run.id, `interrupted by a backend restart — ${run.definitionError ?? decision.reason}`);
+    failUnresumableRun(run, label, decision.reason);
     return;
   }
 
   restoreWorkflowRun(run);
   if (serverId) adoptWorkflowStepSession(run.id, run.currentStepIndex, serverId);
 
-  if (decision.action === 'complete') {
-    await completeWorkflowStep(run.id, run.currentStepIndex, backendOrigin);
-    return;
-  }
-
-  if (decision.action === 'advance') {
-    // A Run tests step whose agent is gone: note it on the step summary and
-    // move on — Run tests never stops the workflow.
-    console.warn(`[startup] workflow run ${label}: ${decision.reason}; recording that and moving on.`);
-    noteRunTestsStep(
-      run,
-      run.currentStepIndex,
-      `Interrupted: ${decision.reason}. Lattice moved on; whatever the agent committed before that stays committed.`,
-      'lost',
-    );
-    await completeWorkflowStep(run.id, run.currentStepIndex, backendOrigin);
-    return;
-  }
-
-  if (decision.action === 'redispatch') {
-    const recoveryStepIndex = run.currentStepIndex;
-    const stillNeedsRedispatch = () => {
-      const latest = getRun(run.id);
-      return latest?.status === 'running' && latest.currentStepIndex === recoveryStepIndex
-        && latest.stepPhase !== 'completing';
-    };
-    // Charge all automatic redispatch, including scratch preparation before
-    // agent admission: a deterministic setup crash otherwise repeats forever.
-    try {
-      const tasks = await listTasks(run.projectPath);
-      const pending = tasks.filter((t) => ['open', 'in_progress', 'ready_to_merge'].includes(t.status));
-      // Not a replay: the step's work is done and what it is re-run for is to
-      // wait on a LIVE session boot recovery just re-adopted — a Merge step
-      // whose merges all landed, waiting out its post-merge hook; a Push step
-      // re-attaching to its push session. The checkpoint (step + lanes) cannot
-      // move while that agent works, so charging these read "no progress" and
-      // paused a healthy run after three restarts (found by the soak). The
-      // budget's own rule: session adoption is not a replay attempt.
-      const waitingOnLiveSession =
-        (step?.kind === 'merge' &&
-          !pending.some((t) => t.status === 'in_progress' || t.status === 'ready_to_merge') &&
-          getActiveHookForProject(run.projectPath) !== null) ||
-        (step?.kind === 'push' &&
-          !pending.some((t) => t.status === 'ready_to_merge') &&
-          (findRunningPushRunForWorkflowStep(run.id, run.currentStepIndex) !== undefined ||
-            findCompletedPushRunForWorkflowStep(run.id, run.currentStepIndex) !== undefined));
-      if (!waitingOnLiveSession) {
-        const checkpoint = JSON.stringify([run.currentStepIndex, step?.id, pending
-          .map((t) => [t.id, t.status, !!t.runQueued]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))]);
-        const budget = await claimRecoveryAttempt(run.projectPath, `workflow:${run.id}`, checkpoint);
-        if (!stillNeedsRedispatch()) return;
-        if (budget.paused) {
-          failWorkflowRun(run.id, budget.paused);
-          return;
-        }
-      }
-    } catch (err) {
-      if (!stillNeedsRedispatch()) return;
-      failWorkflowRun(run.id, `Automatic recovery could not record its attempt; work was preserved: ${err instanceof Error ? err.message : String(err)}`);
+  switch (decision.action) {
+    case 'complete':
+      await completeWorkflowStep(run.id, run.currentStepIndex, backendOrigin);
       return;
+    case 'advance':
+      await advancePastLostTestStep(run, label, decision.reason, backendOrigin);
+      return;
+    case 'redispatch':
+      await redispatchWithBudget(run, step, label, decision.reason, backendOrigin);
+      return;
+    case 'readopt':
+      await readoptRun(run, wf, step, serverId, label, decision.reason, backendOrigin);
+      return;
+  }
+}
+
+function failUnresumableRun(run: WorkflowRun, label: string, reason: string): void {
+  // Restore first so the errored run actually reaches the UI (a run that was
+  // never restored has nothing to mark errored, and the user would just see
+  // it silently gone again).
+  restoreWorkflowRun(run);
+  console.warn(`[startup] workflow run ${label} cannot be resumed: ${reason}`);
+  failWorkflowRun(run.id, `interrupted by a backend restart — ${run.definitionError ?? reason}`);
+}
+
+// A Run tests step whose agent is gone: note it on the step summary and move
+// on — Run tests never stops the workflow.
+async function advancePastLostTestStep(
+  run: WorkflowRun,
+  label: string,
+  reason: string,
+  backendOrigin: string,
+): Promise<void> {
+  console.warn(`[startup] workflow run ${label}: ${reason}; recording that and moving on.`);
+  noteRunTestsStep(
+    run,
+    run.currentStepIndex,
+    `Interrupted: ${reason}. Lattice moved on; whatever the agent committed before that stays committed.`,
+    'lost',
+  );
+  await completeWorkflowStep(run.id, run.currentStepIndex, backendOrigin);
+}
+
+// Re-run the step that died with the old process, after charging the attempt
+// to the recovery budget (unless it only waits on a live session).
+async function redispatchWithBudget(
+  run: WorkflowRun,
+  step: WorkflowStep | null,
+  label: string,
+  reason: string,
+  backendOrigin: string,
+): Promise<void> {
+  const recoveryStepIndex = run.currentStepIndex;
+  const stillNeedsRedispatch = () => {
+    const latest = getRun(run.id);
+    return latest?.status === 'running' && latest.currentStepIndex === recoveryStepIndex
+      && latest.stepPhase !== 'completing';
+  };
+  // Charge all automatic redispatch, including scratch preparation before
+  // agent admission: a deterministic setup crash otherwise repeats forever.
+  try {
+    const tasks = await listTasks(run.projectPath);
+    const pending = tasks.filter((t) => PENDING_TASK_STATUSES.includes(t.status));
+    if (!isWaitingOnLiveSession(run, step, pending)) {
+      const checkpoint = recoveryCheckpoint(run, step, pending);
+      const budget = await claimRecoveryAttempt(run.projectPath, `workflow:${run.id}`, checkpoint);
+      if (!stillNeedsRedispatch()) return;
+      if (budget.paused) {
+        failWorkflowRun(run.id, budget.paused);
+        return;
+      }
     }
-    // Readiness has been released, so a surviving hook may have completed this
-    // step while the journal was being written. Never redispatch its successor
-    // (or a completing step) using this stale recovery observation.
+  } catch (err) {
     if (!stillNeedsRedispatch()) return;
-    console.warn(`[startup] workflow run ${label} interrupted — ${decision.reason}; re-running it.`);
-    await redispatchCurrentWorkflowStep(run.id, backendOrigin).catch((err) =>
-      console.error(`[startup] workflow run ${run.id}: redispatch failed:`, err),
-    );
+    failWorkflowRun(run.id, `Automatic recovery could not record its attempt; work was preserved: ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
+  // Readiness has been released, so a surviving hook may have completed this
+  // step while the journal was being written. Never redispatch its successor
+  // (or a completing step) using this stale recovery observation.
+  if (!stillNeedsRedispatch()) return;
+  console.warn(`[startup] workflow run ${label} interrupted — ${reason}; re-running it.`);
+  await redispatchCurrentWorkflowStep(run.id, backendOrigin).catch((err) =>
+    console.error(`[startup] workflow run ${run.id}: redispatch failed:`, err),
+  );
+}
 
-  // readopt: the agent is still working. Re-attach its pty so the advance can
-  // reclaim it, and put its presence node back on the graph.
-  console.log(`[startup] workflow run ${label} re-adopted — ${decision.reason}.`);
+// Not a replay: the step's work is done and what it is re-run for is to wait
+// on a LIVE session boot recovery just re-adopted — a Merge step whose merges
+// all landed, waiting out its post-merge hook; a Push step re-attaching to its
+// push session. The checkpoint (step + lanes) cannot move while that agent
+// works, so charging these read "no progress" and paused a healthy run after
+// three restarts (found by the soak). The budget's own rule: session adoption
+// is not a replay attempt.
+function isWaitingOnLiveSession(run: WorkflowRun, step: WorkflowStep | null, pending: Task[]): boolean {
+  return (step?.kind === 'merge' &&
+      !pending.some((t) => t.status === 'in_progress' || t.status === 'ready_to_merge') &&
+      getActiveHookForProject(run.projectPath) !== null) ||
+    (step?.kind === 'push' &&
+      !pending.some((t) => t.status === 'ready_to_merge') &&
+      (findRunningPushRunForWorkflowStep(run.id, run.currentStepIndex) !== undefined ||
+        findCompletedPushRunForWorkflowStep(run.id, run.currentStepIndex) !== undefined));
+}
+
+// The recovery budget's notion of progress: the step, plus each pending task's
+// lane and queued flag (sorted by id so board order doesn't count as a change).
+function recoveryCheckpoint(run: WorkflowRun, step: WorkflowStep | null, pending: Task[]): string {
+  return JSON.stringify([run.currentStepIndex, step?.id, pending
+    .map((t) => [t.id, t.status, !!t.runQueued]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))]);
+}
+
+// readopt: the agent is still working. Re-attach its pty so the advance can
+// reclaim it, and put its presence node back on the graph.
+async function readoptRun(
+  run: WorkflowRun,
+  wf: Workflow | null,
+  step: WorkflowStep | null,
+  serverId: string | null,
+  label: string,
+  reason: string,
+  backendOrigin: string,
+): Promise<void> {
+  console.log(`[startup] workflow run ${label} re-adopted — ${reason}.`);
   if (serverId) adoptWorkflowStepSession(run.id, run.currentStepIndex, serverId);
   // Its subagents' state is unknown to this process: gate a Stop-hook advance
   // on the longer re-adopted settle window (idempotent with registration's).

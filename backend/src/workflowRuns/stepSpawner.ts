@@ -42,6 +42,7 @@ import {
 import { buildWorkflowStepCommand } from './commandBuilder.js';
 import { enqueueWorkflowStepSession, workflowStepAgentId } from './sessionSpawner.js';
 import { beginStepPreRun, endStepPreRun, runStepTools } from './stepTools.js';
+import { emitControlProgress } from './controlSteps/shared.js';
 
 // Re-export the public surface so existing importers (routes/workflows/runs.ts,
 // the workflowScratchPrune test) keep resolving these from stepSpawner.
@@ -153,16 +154,14 @@ async function writeStepAssets(args: {
     // An Opengrep scan can take minutes, during which the run has no terminal
     // yet and the strip would just say "Step N of M". Surface the wait the
     // same way control steps do; the frontend drops it on `step-spawned`.
-    notify({
-      type: 'step-control-progress',
-      runId: run.id,
-      projectPath: run.projectPath,
+    emitControlProgress(
+      run,
       stepIndex,
-      kind: 'agent',
-      current: 0,
-      total: 0,
-      message: `running ${step.tools.map((t) => (t === 'opengrep' ? 'the Opengrep scan' : t)).join(', ')} before the agent starts…`,
-    });
+      'agent',
+      0,
+      0,
+      `running ${step.tools.map((t) => (t === 'opengrep' ? 'the Opengrep scan' : t)).join(', ')} before the agent starts…`,
+    );
   }
   const signal = beginStepPreRun(run.id);
   let tools: Awaited<ReturnType<typeof runStepTools>>;

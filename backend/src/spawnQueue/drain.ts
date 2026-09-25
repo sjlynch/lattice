@@ -45,9 +45,11 @@ function admitWhilePossible(): void {
       .pendingSorted()
       .find((r) =>
         !isBackingOff(r, now) &&
+        // A cancelled request for the same key is still running its thunk.
+        !s.isWaitingOnPredecessor(r) &&
         s.accounting.canAdmit(r.priority) &&
         // Fan-out work waits while the machine is saturated (resourceGovernor.ts).
-        !(r.priority === 'batch' && s.governor.holdsBatch(s.accounting.effectiveLive())));
+        !(r.priority === 'batch' && s.governor.holdsBatch(s.accounting.effectiveAgents())));
     if (!next) break;
     admit(next);
   }
@@ -74,17 +76,22 @@ async function runThunk(
 ): Promise<void> {
   const s = queueState;
   try {
-    const result = await request.thunk();
+    const result = await request.thunk(request.signal);
     if (request.waitingForDisk) {
       console.log(`[spawn-queue] ${request.kind} (${request.dedupeKey}) had enough disk space on retry — started`);
     }
     s.accounting.markSpawned(reservationId, Date.now());
-    s.remove(request.dedupeKey);
+    const hadSuccessor = s.settle(request);
     request.resolve(result);
     // No slot freed (the reservation becomes a real session, reconciled by
-    // a later poll), so no re-drain is needed here.
+    // a later poll), so no re-drain is needed here — unless a newer request
+    // for the same key was waiting on this one to settle.
+    if (hadSuccessor) drainQueue();
   } catch (err) {
-    if (isSpawnDiskSpaceError(err) && !request.signal?.aborted) {
+    // A cancelled request (`cancelSpawn` / its external signal) is never
+    // re-queued by a deferral below: it falls through to the failure branch,
+    // so a run the user cancelled mid-flight can't come back later.
+    if (isSpawnDiskSpaceError(err) && !request.signal.aborted) {
       // Not enough disk for another worktree. Nothing was created: free the
       // slot and back THIS request off. Unlike CAP, admissions are not frozen
       // — a spawn that needs no new disk (resolver, resume) may still run.
@@ -99,7 +106,7 @@ async function runThunk(
         );
       }
       drainQueue();
-    } else if (isSpawnCapacityError(err) && !request.signal?.aborted) {
+    } else if (isSpawnCapacityError(err) && !request.signal.aborted) {
       // The hard cap rejected the spawn — the queue over-admitted. No
       // session was created: free the reservation, freeze admissions until
       // the next poll corrects liveCount, and re-queue the request. Its
@@ -115,15 +122,20 @@ async function runThunk(
       // next successful poll, which will unfreeze and drain.
     } else {
       // A genuine failure (worktree setup threw, terminal-server wedged,
-      // task no longer 'open', …). No session was created — free the slot,
-      // settle `done` as a rejection, and let the next item use the slot.
+      // task no longer 'open', …) or a cancelled request backing out. No
+      // session was created — free the slot, settle `done` as a rejection,
+      // and let the next item use the slot.
       s.accounting.release(reservationId);
-      s.remove(request.dedupeKey);
+      s.settle(request);
       request.reject(err);
-      console.error(
-        `[spawn-queue] ${request.kind} (${request.dedupeKey}) thunk failed:`,
-        err,
-      );
+      if (request.signal.aborted) {
+        console.log(`[spawn-queue] ${request.kind} (${request.dedupeKey}) cancelled in flight — not started`);
+      } else {
+        console.error(
+          `[spawn-queue] ${request.kind} (${request.dedupeKey}) thunk failed:`,
+          err,
+        );
+      }
       drainQueue();
     }
   }

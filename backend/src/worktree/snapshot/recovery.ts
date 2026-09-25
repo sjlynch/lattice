@@ -8,7 +8,8 @@ import {
   snapshotManifestPath,
 } from './manifest.js';
 import { restoreSnapshot } from './restore.js';
-import { withProjectRunLock } from '../../projectRunLock.js';
+import { inspectProjectRunLock, withProjectRunLock } from '../../projectRunLock.js';
+import { isResumableInterruptedRunLock, recordInterruptedRun } from '../../projectRunLock/interruptedRun.js';
 import { storedProjectRoot } from '../../projectIdentity.js';
 
 // Boot-time recovery: scan ~/.lattice/snapshots/ for any leftover
@@ -51,6 +52,11 @@ export async function recoverPendingSnapshots(): Promise<void> {
         // restore into the project tree.
         continue;
       }
+      // A partial restore settled every path it could (restored, or backed
+      // up as a `.lattice-conflict` copy) and kept the dir only as an archive
+      // for the user (restore.ts retireSettledEntries). Re-applying it would
+      // resurrect files the user deleted and re-create reviewed conflicts.
+      if (manifest.archived) continue;
       // Defence in depth: a tampered manifest could claim repoRoot is
       // anywhere on disk (`C:\Windows\System32`, the user's home, another
       // project). The directory hash is computed from the canonical path,
@@ -117,6 +123,7 @@ export async function recoverPendingSnapshots(): Promise<void> {
       // content diverged from the capture is preserved and the snapshot's
       // version is dropped beside it for manual review.
       try {
+        await noteInterruptedRunBeforeSteal(repoRoot);
         // Do NOT borrow an in-process owner here: this snapshot might belong
         // to its live merge. A fresh exclusive acquire refuses all live runs.
         await withProjectRunLock(repoRoot, 'snapshot-recovery', async () => {
@@ -129,6 +136,7 @@ export async function recoverPendingSnapshots(): Promise<void> {
               modifiedTracked: current.modifiedTracked,
               untracked: current.untracked,
               deleted: current.deleted ?? [],
+              ...(current.baseCommit ? { baseCommit: current.baseCommit } : {}),
             },
             repoRoot,
             { guardStaleOverwrite: true },
@@ -138,5 +146,26 @@ export async function recoverPendingSnapshots(): Promise<void> {
         console.warn(`[snapshot] recovery deferred for ${snapDir}: ${(err as Error).message}`);
       }
     }
+  }
+}
+
+// recoverPendingSnapshots' `withProjectRunLock` steals and retires a dead
+// holder's lock. When that holder
+// was an interrupted Merge All / workflow Merge or Push step, the lock is how
+// the later boot steps (`resumeInterruptedMergeRuns`, the owed post-merge hook
+// check) learn a merge was cut short — so record it for them first
+// (projectRunLock/interruptedRun.ts). Best-effort: a failure here must not
+// block restoring the user's work.
+async function noteInterruptedRunBeforeSteal(repoRoot: string): Promise<void> {
+  try {
+    const lock = await inspectProjectRunLock(repoRoot);
+    if (!lock || lock.alive || !isResumableInterruptedRunLock(lock.holder.label)) return;
+    await recordInterruptedRun(repoRoot, lock.holder);
+    console.warn(
+      `[snapshot] recovery will retire the dead "${lock.holder.label}" run lock for ${repoRoot}; ` +
+        'recorded it so the interrupted merge still resumes',
+    );
+  } catch (err) {
+    console.warn(`[snapshot] could not record the interrupted run for ${repoRoot}: ${(err as Error).message}`);
   }
 }

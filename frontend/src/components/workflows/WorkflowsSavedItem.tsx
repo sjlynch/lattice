@@ -11,6 +11,8 @@ type Props = {
   workflow: Workflow;
   isSelected: boolean;
   run?: WorkflowRun;
+  // Its ▶ Run start is in flight — the button stays disabled until it settles.
+  starting: boolean;
   queuedCount: number;
   harnessOverride: WorkflowRunHarnessOverride;
   piModelOverride?: string;
@@ -33,6 +35,7 @@ export const WorkflowsSavedItem = memo(function WorkflowsSavedItem({
   workflow,
   isSelected,
   run,
+  starting,
   queuedCount,
   harnessOverride,
   piModelOverride,
@@ -151,8 +154,8 @@ export const WorkflowsSavedItem = memo(function WorkflowsSavedItem({
               event.stopPropagation();
               void onRun(workflow.id);
             }}
-            disabled={Boolean(blockedReason)}
-            title={blockedReason ?? 'Run workflow now'}
+            disabled={Boolean(blockedReason) || starting}
+            title={blockedReason ?? (starting ? 'Starting…' : 'Run workflow now')}
             aria-label="Run workflow now"
           >
             <Play size={11} fill="currentColor" />

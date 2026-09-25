@@ -52,3 +52,34 @@ export const CLEARED_RUN_QUEUE_STATE = {
   runFailureCount: undefined,
   runWaitingForDisk: undefined,
 } as const;
+
+// Thrown by startTaskById when the start was withdrawn while it ran: its
+// queued run was cancelled (`cancel-queued-run` / delete aborted the spawn's
+// signal) or the task left the runnable lanes (dragged to Backlog, …). The
+// worktree + pty it had made are already torn down and the user's change
+// stands. Not a failure: runSpawnThunk neither toasts it nor touches the
+// run-queue state (a re-run may already have re-queued the task).
+export class TaskStartWithdrawnError extends Error {
+  readonly isTaskStartWithdrawn = true;
+  constructor(
+    taskId: string,
+    readonly reason: 'cancelled' | 'relaned',
+    status?: string,
+  ) {
+    super(
+      reason === 'cancelled'
+        ? `task ${taskId}: run was cancelled while it was being started`
+        : `task ${taskId}: moved to "${status ?? 'another lane'}" while its run was being started`,
+    );
+    this.name = 'TaskStartWithdrawnError';
+  }
+}
+
+export function isTaskStartWithdrawn(err: unknown): err is TaskStartWithdrawnError {
+  return (
+    err instanceof TaskStartWithdrawnError ||
+    (typeof err === 'object' &&
+      err !== null &&
+      (err as { isTaskStartWithdrawn?: unknown }).isTaskStartWithdrawn === true)
+  );
+}

@@ -75,7 +75,9 @@ default = the built-in) argument. The **spawn callers** (`setupFiles.ts`,
 - The task + merge briefs carry `{{verification}}` (the "don't run tests,
   builds or type-checks" rule, `../taskVerification.ts`). A project override
   without the token gets the block appended (`templateWithVerification`), so an
-  old custom brief can't silently drop the rule; it also rides the system
+  old custom brief can't silently drop the rule. "Has the token" is judged by
+  `templateHasToken` (`apply.ts`, scans with `TEMPLATE_TOKEN_RE` itself), so
+  `{{ verification }}` counts and never gets a second copy. It also rides the system
   prompt of task-worktree spawns.
 - Task summaries prefer the typed `append_summary` MCP tool. The HTTP fallback
   (and QA reporting) sends a temporary UTF-8 file with `--data-binary @file`;

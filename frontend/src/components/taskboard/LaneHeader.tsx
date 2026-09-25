@@ -115,8 +115,11 @@ export function LaneHeader({
             <button
               className={`icon-btn sm mcp-pw-btn ${qaPlaywright.enabled ? 'on' : ''}`}
               onClick={qaPlaywright.onToggleEnabled}
+              disabled={!qaPlaywright.loaded}
               title={
-                qaPlaywright.enabled
+                !qaPlaywright.loaded
+                  ? 'Loading this project’s saved Playwright setting…'
+                  : qaPlaywright.enabled
                   ? 'Playwright MCP ON — injected into Claude sessions Lattice spawns for this project (takes effect on the next launch). Click to turn off.'
                   : 'Turn ON the Playwright MCP for this project’s Claude sessions (browser testing). Applies to the next launch.'
               }
@@ -129,6 +132,7 @@ export function LaneHeader({
               <button
                 className="icon-btn sm mcp-pw-btn"
                 onClick={qaPlaywright.onToggleHeadless}
+                disabled={!qaPlaywright.loaded}
                 title={
                   qaPlaywright.headless
                     ? 'Playwright runs HEADLESS (no visible browser). Click for headed. Takes effect on the next QA run, not one already started.'

@@ -7,7 +7,7 @@ import { TaskMigrations } from './migrations.js';
 import { projectTasksFile } from './paths.js';
 import { isStructurallyJunkPath } from './pruneIndex.js';
 import { ProjectsIndex } from './projectsIndex.js';
-import { applyTaskUpdate, stampTimestamps, type TaskLookup } from './taskUpdate.js';
+import { appendSummaryText, applyTaskUpdate, stampTimestamps, type TaskLookup } from './taskUpdate.js';
 import type { Task, TaskStatus, TaskSubscriber, TaskUpdates } from './types.js';
 
 export type TaskCacheManagerOptions = {
@@ -194,6 +194,54 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
       () => this.loadAllKnown(),
       ({ project, list, idx }) => {
         const { updated, updatedList } = applyTaskUpdate(list, idx, updates);
+        this.setCached(project, updatedList);
+        this.schedulePersist(project);
+        this.notifyProject(project);
+        return updated;
+      },
+    );
+  }
+
+  // Compare-and-set update. `decide` runs under the project's write lock
+  // against the LIVE task (and its project's live list) and returns the
+  // updates to apply — or none, to leave the task untouched — plus a result
+  // for the caller. Nothing can change the task between that read and the
+  // write, so a caller can refuse a transition whose precondition no longer
+  // holds (startTaskById's final in_progress flip). Returns null when the task
+  // no longer exists.
+  public async updateTaskWith<R>(
+    id: string,
+    decide: (task: Task, tasks: readonly Task[]) => { updates?: TaskUpdates; result: R },
+  ): Promise<{ task: Task; result: R } | null> {
+    return this.withLockedItemAcrossProjects<Task, { task: Task; result: R }>(
+      id,
+      (t) => t.id,
+      () => this.loadAllKnown(),
+      ({ project, list, idx }) => {
+        const { updates, result } = decide(list[idx], list);
+        if (!updates) return { task: list[idx], result };
+        const { updated, updatedList } = applyTaskUpdate(list, idx, updates);
+        this.setCached(project, updatedList);
+        this.schedulePersist(project);
+        this.notifyProject(project);
+        return { task: updated, result };
+      },
+    );
+  }
+
+  // Append `text` to a task's `summary`, reading the current summary INSIDE the
+  // per-project write lock (like createTask) so concurrent appends — two
+  // append_summary calls, a QA verdict racing a review note — each land, in
+  // arrival order. A caller that read the task first and passed the joined
+  // text to updateTask raced on that unlocked read and lost appends.
+  public async appendTaskSummary(id: string, text: string): Promise<Task | null> {
+    return this.withLockedItemAcrossProjects<Task, Task>(
+      id,
+      (t) => t.id,
+      () => this.loadAllKnown(),
+      ({ project, list, idx }) => {
+        const summary = appendSummaryText(list[idx].summary, text);
+        const { updated, updatedList } = applyTaskUpdate(list, idx, { summary });
         this.setCached(project, updatedList);
         this.schedulePersist(project);
         this.notifyProject(project);
