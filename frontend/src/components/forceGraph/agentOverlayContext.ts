@@ -34,10 +34,10 @@ export interface AgentOverlayCtx {
   // (same as the Alt-label overlay) so agent labels read at the same scale as
   // file labels. Default mirrors graphSettings until the first tick sets it.
   labelSize: number;
-  // Whether to draw the per-subagent type label next to each satellite orb.
-  // Off by default (the orbs alone convey presence); kept in sync with the
-  // graph's `showSubagentLabels` setting each frame via setSizes. The orbs
-  // themselves are always drawn — this only gates their text labels.
+  // Whether to prefix each satellite's file label with its subagent type (and
+  // show the bare type before its first file). Off by default; kept in sync
+  // with the graph's `showSubagentLabels` setting each frame via setSizes. The
+  // orbs and their current-file labels are always drawn.
   showSubagentLabels: boolean;
   // Monotonic spawn counter — feeds each fresh agent's parked-spiral slot.
   spawnCount: number;

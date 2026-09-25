@@ -136,13 +136,16 @@ export function updateSatellites(
     }
     // Tether parent → satellite (constant opacity; geometry only).
     updateBeamEndpoints(sat.tether, agent.pos, sat.pos);
-    // The type label is opt-in (off by default — the orb alone shows presence).
-    // When toggled off at runtime, drop any label this satellite already has.
-    if (ctx.showSubagentLabels) {
-      updateSatelliteLabel(ctx.group, sat, ctx.labelSize, ctx.nodeSize);
-    } else if (sat.label) {
-      removeFloatingLabel(ctx.group, sat);
-    }
+    // File label (the subagent's current file, with its type prefixed when
+    // the opt-in "Subagent labels" setting is on). Placed by the label
+    // spreader after every host has updated (see agentOverlayLabelLayout).
+    updateSatelliteLabel(
+      ctx.group,
+      sat,
+      ctx.labelSize,
+      ctx.nodeSize,
+      ctx.showSubagentLabels,
+    );
     updateBeamGeometries(ctx, sat.beams, sat.pos, now, SATELLITE_BEAM_OPACITY_FACTOR);
   }
   return moving;

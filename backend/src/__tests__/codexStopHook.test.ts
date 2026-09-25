@@ -143,3 +143,29 @@ test("installCodexStopHook('if-absent') replaces a STALE Lattice-generated file"
   assert.equal(wrote, true, 'a stale Lattice file must be rewritten, not preserved');
   assert.equal(await fs.readFile(file, 'utf8'), renderCodexStopHookJson(URL));
 });
+
+test('renderCodexStopHookJson adds tool-use + subagent activity hooks when given an activity URL', () => {
+  const ACTIVITY = 'http://127.0.0.1:5184/api/tasks/abc/activity?source=codex-tool-hook';
+  type Entry = { type: string; command: string; commandWindows: string; timeout: number };
+  const parsed = JSON.parse(renderCodexStopHookJson(URL, ACTIVITY)) as {
+    hooks: Record<string, { matcher?: string; hooks: Entry[] }[]>;
+  };
+  // The Stop hook is unchanged.
+  assert.equal(parsed.hooks.Stop[0].hooks[0].commandWindows, `cmd /c ${parsed.hooks.Stop[0].hooks[0].command}`);
+  for (const event of ['PreToolUse', 'PostToolUse']) {
+    const block = parsed.hooks[event][0];
+    assert.match(block.matcher ?? '', /apply_patch/);
+    assert.match(block.matcher ?? '', /Bash/);
+  }
+  for (const event of ['PreToolUse', 'PostToolUse', 'SubagentStart', 'SubagentStop']) {
+    const entry = parsed.hooks[event][0].hooks[0];
+    // Posts the hook's stdin JSON, unquoted (no shell), cmd /c on Windows.
+    assert.ok(entry.command.startsWith('curl '), entry.command);
+    assert.ok(entry.command.includes('--data-binary @-'));
+    assert.ok(entry.command.endsWith(` ${ACTIVITY}`));
+    assert.ok(!entry.command.includes('"'), 'no quotes — Codex spawns the argv directly');
+    assert.equal(entry.commandWindows, `cmd /c ${entry.command}`);
+  }
+  // Without an activity URL only the Stop hook is written (the old shape).
+  assert.deepEqual(Object.keys(JSON.parse(renderCodexStopHookJson(URL)).hooks), ['Stop']);
+});

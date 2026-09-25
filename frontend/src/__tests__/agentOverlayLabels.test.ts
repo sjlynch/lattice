@@ -116,3 +116,28 @@ test('satellite type label is gated on showSubagentLabels and toggles live', () 
   updateSatellites(ctx, agent, now);
   assert.equal(sat.label, undefined, 'label removed when toggled off again');
 });
+
+test('satellite with a current file always labels the file; type prefixes it when enabled', async () => {
+  const { satelliteLabelText } = await import(
+    '../components/forceGraph/agentOverlayLabels.ts'
+  );
+  const sat = { currentFile: 'src/a/api.ts', currentFileBase: 'api.ts', subagentType: 'Explore' };
+  assert.equal(satelliteLabelText(sat, false), 'api.ts');
+  assert.equal(satelliteLabelText(sat, true), 'Explore: api.ts');
+  // No file yet: nothing by default, the bare type when the setting is on.
+  assert.equal(satelliteLabelText({ subagentType: 'Explore' }, false), null);
+  assert.equal(satelliteLabelText({ subagentType: 'Explore' }, true), 'Explore');
+  assert.equal(satelliteLabelText({}, true), 'subagent');
+});
+
+test('satellite label appears once its subagent touches a file, labels off', () => {
+  const ctx = makeCtx(false);
+  const agent = makeSatAgent();
+  const now = 1000;
+  const sat = createSatellite(ctx, agent, 'sub-2', 'Explore', now);
+  sat.currentFile = 'src/api.ts';
+  sat.currentFileBase = 'api.ts';
+  updateSatellites(ctx, agent, now);
+  assert.ok(sat.label, 'file label shown even with showSubagentLabels off');
+  assert.equal(sat.labelText, 'api.ts');
+});

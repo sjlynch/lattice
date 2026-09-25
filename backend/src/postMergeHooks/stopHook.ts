@@ -2,6 +2,7 @@ import { installClaudeHooks } from '../claudeStopHook.js';
 import type { AgentHarness } from '../harnesses.js';
 import { installPiCompletionExtension } from '../piExtension.js';
 import { installCodexStopHook } from '../codexStopHook.js';
+import { installPiActivityExtension } from '../piActivity.js';
 import { installPiSubagentsShim } from '../piSubagents.js';
 import { buildAgentActivityUrl } from '../agentActivityTokens.js';
 
@@ -52,13 +53,14 @@ export async function installPostMergeHookStopHook(args: {
   // the firing mechanism (Stop hook curl vs Pi extension fetch vs model
   // explicit curl). Pi extension does the same via piExtension.ts. The
   // activity hooks feed the graph's orange node + focus beams.
+  const activityUrl = buildAgentActivityUrl(backendOrigin, {
+    agentId: postMergeHookAgentId(id),
+    projectPath,
+    label: 'post-merge hook',
+  });
   await installClaudeHooks(scratchDir, {
     completeUrl: `${callbackUrl}?source=claude-stop-hook-post-merge-hook-complete`,
-    activityUrl: buildAgentActivityUrl(backendOrigin, {
-      agentId: postMergeHookAgentId(id),
-      projectPath,
-      label: 'post-merge hook',
-    }),
+    activityUrl,
   });
   await installPiCompletionExtension({
     dir: scratchDir,
@@ -66,6 +68,7 @@ export async function installPostMergeHookStopHook(args: {
     site: 'post-merge-hook-complete',
     respectQuitGate: false,
   });
+  await installPiActivityExtension({ dir: scratchDir, activityUrl });
   // Codex Stop hook (the Codex analogue). Home-scoped scratch is fresh, so
   // 'always'. Advances the merge gate on turn completion even if the model
   // forgets the explicit curl.
@@ -73,6 +76,7 @@ export async function installPostMergeHookStopHook(args: {
     scratchDir,
     `${callbackUrl}?source=codex-stop-hook-post-merge-hook-complete`,
     'always',
+    activityUrl,
   );
   // pi-subagents loader shim alongside the completion extension (no-op until
   // the shared install resolves). Scratch is home-scoped (outside the repo).

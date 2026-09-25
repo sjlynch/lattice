@@ -18,6 +18,7 @@ import fs from 'node:fs/promises';
 import { installClaudeHooks } from '../claudeStopHook.js';
 import { installPiCompletionExtension } from '../piExtension.js';
 import { installCodexStopHook } from '../codexStopHook.js';
+import { installPiActivityExtension } from '../piActivity.js';
 import { installPiSubagentsShim } from '../piSubagents.js';
 import { buildAgentActivityUrl } from '../agentActivityTokens.js';
 import type { Workflow, WorkflowStepHarness } from '../workflows.js';
@@ -213,13 +214,16 @@ async function installStepCallbacks(args: {
   // The Claude Stop hook URL carries `?source=` so the /complete log line
   // can identify the firing mechanism; the Pi extension does the same via
   // piExtension.ts.
+  // One activity URL for all three harnesses' graph hooks (Claude's
+  // settings.local.json, Codex's hooks.json, Pi's activity extension).
+  const activityUrl = buildAgentActivityUrl(backendOrigin, {
+    agentId: workflowStepAgentId(run.id, stepIndex),
+    projectPath: wf.projectPath,
+    label: `workflow step ${stepIndex + 1}`,
+  });
   await installClaudeHooks(stepDir, {
     completeUrl: `${completionUrl}?source=claude-stop-hook-workflow-step-complete`,
-    activityUrl: buildAgentActivityUrl(backendOrigin, {
-      agentId: workflowStepAgentId(run.id, stepIndex),
-      projectPath: wf.projectPath,
-      label: `workflow step ${stepIndex + 1}`,
-    }),
+    activityUrl,
   });
   await installPiCompletionExtension({
     dir: stepDir,
@@ -227,6 +231,7 @@ async function installStepCallbacks(args: {
     site: 'workflow-step-complete',
     respectQuitGate: false,
   });
+  await installPiActivityExtension({ dir: stepDir, activityUrl });
   // Codex Stop hook (the Codex analogue). Fires once at turn completion and
   // advances the step even if the model forgets to curl — this is what stops a
   // Codex workflow step from lingering/overlapping the next one. The step cwd is
@@ -236,6 +241,7 @@ async function installStepCallbacks(args: {
     stepDir,
     `${completionUrl}?source=codex-stop-hook-workflow-step-complete`,
     'always',
+    activityUrl,
   );
   // pi-subagents loader shim alongside the completion extension (no-op until
   // the shared install resolves). Step dir is under <project>/.lattice/, which

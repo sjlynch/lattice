@@ -160,9 +160,12 @@ const postMergeHookAdapter: Adapter<PostMergeHookRun> = {
   restore: (run) => restorePostMergeHook(run),
   isRunning: (id) => getPostMergeHook(id)?.status === 'running',
   onReadopted: (run) => {
+    const agentId = postMergeHookAgentId(run.id);
+    // Graph presence for any harness (each reports activity through its own
+    // hooks); the quiescence re-adoption below only matters to Claude, whose
+    // Stop hook is the one gated on it.
+    registerAgentSession({ agentId, projectPath: run.projectPath, label: 'post-merge hook' });
     if (run.harness === 'claude') {
-      const agentId = postMergeHookAgentId(run.id);
-      registerAgentSession({ agentId, projectPath: run.projectPath, label: 'post-merge hook' });
       // Its live-subagent state died with the old process: a premature Stop
       // must not finish the hook while a pre-restart subagent still works.
       // A Stop the old process was already holding starts the quiet window

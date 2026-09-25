@@ -26,7 +26,7 @@ export type SearchStatus = {
 
 export type SearchResult = {
   status: SearchStatus;
-  // Ordered match ids (== file-node ids) for prev/next navigation. Sorted so
+  // Ordered match ids (== file/folder node ids) for prev/next navigation. Sorted so
   // stepping follows a stable, predictable order across re-renders; a fresh
   // array reference whenever the match set changes (so consumers can reset
   // their "current match" cursor off its identity).
@@ -54,8 +54,8 @@ function scopeIsCurrent(
   return scope.project === project && scope.query === query && scope.regex === regex;
 }
 
-// Drives the graph's search bar. Filename matches are computed client-side off
-// the loaded graph (instant); file-contents matches come from a debounced,
+// Drives the graph's search bar. File- and folder-name matches are computed
+// client-side off the loaded graph (instant); file-contents matches come from a debounced,
 // cancelable backend call. Both feed the shared `selected` set so they reuse
 // the existing selection ring (halo.ts) — one source of truth for the ring.
 //
@@ -89,7 +89,9 @@ export function useGraphSearch(params: {
   const invalidRegex = regex && trimmed.length > 0 && matcher === null;
 
   // Filename pass — pure and instant, recomputed when the structure or query
-  // change (so renamed/added/removed files re-match live). Keyed off the
+  // change (so renamed/added/removed files re-match live). Folder nodes are
+  // matched by name too, so a folder hit gets the same selection ring as a file
+  // hit (the contents pass is file-only by nature). Keyed off the
   // structure-stable scan reference (names/ids only — structural), so a
   // metric-only file save no longer re-runs the O(N) scan while a query is
   // active. Empty query → empty Set (matcher is null), so there's no scan when
@@ -99,7 +101,7 @@ export function useGraphSearch(params: {
     const ids = new Set<string>();
     if (!structuralData || !matcher) return ids;
     for (const n of structuralData.nodes) {
-      if (n.kind !== 'file') continue;
+      if (n.kind !== 'file' && n.kind !== 'dir') continue;
       if (matcher.test(n.name)) ids.add(n.id);
     }
     return ids;

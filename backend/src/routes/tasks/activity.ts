@@ -1,5 +1,6 @@
-// POST /api/tasks/:id/activity — the Claude PreToolUse/PostToolUse hook
-// callback for the 3D graph's focus beam. Maps the worktree file the agent is
+// POST /api/tasks/:id/activity — the PreToolUse/PostToolUse hook callback for
+// the 3D graph's focus beam: Claude's hooks, Codex's `.codex/hooks.json` hooks
+// and the Pi activity extension all post here. Maps the worktree file the agent is
 // touching back to a project-absolute path and emits a `task-activity` event.
 //
 // Read-only against the disposable worktree, so nothing here can touch the
@@ -14,6 +15,7 @@ import { canonicalProjectPath } from '../../projectPath.js';
 import { LATTICE_OWNED_FILE_PATHS } from '../../worktree/managedFiles.js';
 import { decodeActivityHook } from '../../activityHook.js';
 import { notifyTaskActivity } from '../../taskActivityEvents.js';
+import { isExistingFile } from '../../hookFiles.js';
 
 // Repo-relative paths Lattice owns inside a worktree — never a real edit the
 // graph should beam to. Compared with forward-slash normalization.
@@ -38,11 +40,14 @@ export function isManaged(rel: string): boolean {
 
 // Map a worktree-absolute (or worktree-relative) file path to the matching
 // project-absolute path the scanner emits as `node.path`. Returns null if the
-// path escapes the worktree or is a Lattice-managed file.
+// path escapes the worktree or is a Lattice-managed file. `mustExist` (a path
+// guessed from a shell command) additionally requires an existing file in the
+// worktree.
 // Exported for its regression test.
 export function mapWorktreeFileToProject(
   task: Pick<Task, 'worktreePath' | 'projectPath'>,
   rawFile: string,
+  mustExist = false,
 ): string | null {
   if (!task.worktreePath) return null;
   const abs = path.isAbsolute(rawFile)
@@ -53,6 +58,7 @@ export function mapWorktreeFileToProject(
   // dropped a real in-worktree file or dir named like `..foo`.
   if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
   if (isManaged(rel)) return null;
+  if (mustExist && !isExistingFile(abs)) return null;
   // The scanner roots node paths at canonicalProjectPath(root); match that so
   // the frontend lookup hits.
   return path.join(canonicalProjectPath(task.projectPath), rel);
@@ -76,8 +82,8 @@ export function buildTaskActivityRouter(): Router {
 
     // Shared decode (the SubagentStart/Stop satellite branch + phase/tool/
     // subagent extraction); only the worktree file-mapping is task-specific.
-    const result = decodeActivityHook(req.body, (raw) =>
-      mapWorktreeFileToProject(t, raw),
+    const result = decodeActivityHook(req.body, (raw, { mustExist }) =>
+      mapWorktreeFileToProject(t, raw, mustExist),
     );
     if (!result) return ack();
 
@@ -97,17 +103,20 @@ export function buildTaskActivityRouter(): Router {
     }
 
     // A subagent's own tool-use carries `subagentId`; tagging the event routes
-    // the focus beam to that satellite instead of the main Claude node.
-    notifyTaskActivity({
-      projectPath: t.projectPath,
-      taskId: t.id,
-      file: result.file,
-      phase: result.phase,
-      tool: result.tool,
-      ts: Date.now(),
-      subagentId: result.subagentId,
-      subagentType: result.subagentType,
-    });
+    // the focus beam to that satellite instead of the main agent node. One
+    // event per file (a Codex patch or shell command can name several).
+    for (const file of result.files) {
+      notifyTaskActivity({
+        projectPath: t.projectPath,
+        taskId: t.id,
+        file,
+        phase: result.phase,
+        tool: result.tool,
+        ts: Date.now(),
+        subagentId: result.subagentId,
+        subagentType: result.subagentType,
+      });
+    }
     return ack();
   });
 
