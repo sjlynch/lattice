@@ -118,7 +118,7 @@ test('project mode: session lifecycle + session_id on every body; a subagent rep
   assert.deepEqual(posted[2].tool_input, { file_path: 'a.ts' });
 });
 
-test('posts are serialized: a slow PostToolUse settles before the turn's Stop is sent', async () => {
+test("posts are serialized: a slow PostToolUse settles before the turn's Stop is sent", async () => {
   const src = renderPiActivityExtension('http://127.0.0.1:5184/api/project-activity/T', { projectSession: true });
   const main = ctxFor('main-3', true);
   const log: string[] = [];
