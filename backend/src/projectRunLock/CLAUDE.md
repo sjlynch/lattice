@@ -150,7 +150,7 @@ The ownership tests are in `../__tests__/projectMutation.test.ts`.
 owner that `withProjectMutation` will **not** borrow. Two users: the
 post-merge-run housekeeping gc (`repo-maintenance`, `../worktree/repoMaintenance.ts`
 — merging beside a repack leaves a full leftover pack copy on Windows; the
-refusal message names it via `REPO_MAINTENANCE_BUSY_MESSAGE`), and the
+refusal message names it via `REPO_MAINTENANCE_BUSY_MESSAGE`; `startMergeRun` throws it as a typed `RepoMaintenanceBusyError`, also when it loses the lock race to this process's gc — `isLocalRepoMaintenanceHold`), and the
 workflow Run tests step (`workflow-test:<runId>`, `../workflowRuns/testStep/`),
 whose agent edits and commits on the main checkout for the whole hold — a
 manual-merge resolver's finalize (`routes/tasks/finalizeResolved.ts` → snapshot

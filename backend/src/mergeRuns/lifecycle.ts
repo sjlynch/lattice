@@ -10,6 +10,8 @@ import { canonicalProjectPath } from '../projectPath.js';
 import {
   acquireProjectRunLock,
   ProjectRunLockedError,
+  RepoMaintenanceBusyError,
+  isLocalRepoMaintenanceHold,
   type ProjectRunLockHandle,
 } from '../projectRunLock.js';
 import { generateMergeRunId } from '../ids.js';
@@ -65,6 +67,9 @@ export async function initializeRunState(
       projectLock = await acquireProjectRunLock(projectPath, 'merge-run');
     } catch (err) {
       if (err instanceof ProjectRunLockedError) {
+        // The housekeeping gc took the lock after startMergeRun's in-flight
+        // check: keep the refusal typed so callers can wait and retry.
+        if (isLocalRepoMaintenanceHold(err.holder)) throw new RepoMaintenanceBusyError(err.message);
         throw new Error(err.message);
       }
       throw err;
