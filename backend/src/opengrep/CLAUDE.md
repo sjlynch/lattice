@@ -139,7 +139,16 @@ licence text + a source pointer) — keep it a runtime download.
   Rules under `<project>/.opengrep/rules/` and `extraRulePaths` are passed as
   ABSOLUTE `-f` paths, so their check ids (and fingerprints) embed the local
   path — stable on one machine, not across machines; only the packs get the
-  machine-stable relative ids.
+  machine-stable relative ids. `scan.ts` keeps the single-flight, execution and
+  error classes, and re-exports the two modules below so every `./scan.js`
+  import keeps working.
+- `scanArgs.ts` — what a scan runs with: `resolveScanTargets` (+
+  `OpengrepBadTargetError`), `defaultScanJobs` (`RESERVED_CORES`),
+  `resolveRuleConfigs`, `buildScanArgs` (the `PER_FILE_*` / `MAX_TARGET_BYTES`
+  engine limits), `defaultExcludeGlobs`.
+- `scanRecords.ts` — the stored scans: `OpengrepScanRecord`,
+  `listOpengrepScans` / `readOpengrepScan` / `latestOpengrepScan` and the
+  prune to `MAX_SCANS_PER_PROJECT`, over one shared `readAllMetas(dir)`.
 - `digest.ts` — pure. `parseOpengrepJson` (project-relative forward-slash
   paths, severity normalization, `PartialParsing` errors split out) →
   `buildDigest` (severity floor + `ignoreRuleIds` (full id or dot-suffix) +
