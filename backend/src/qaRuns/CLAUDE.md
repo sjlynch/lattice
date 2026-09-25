@@ -57,6 +57,12 @@ Differences from pushRuns:
   promotes a confident PASS, and boot recovery settling a run whose pty died
   applies the recorded verdict exactly as `/done` would
   (`applyRecordedQaVerdict` → done).
+- **A verdict only promotes the build it tested.** `promoteTask` skips a task
+  whose `mergedAt` is newer than the run's `createdAt` (dragged out, reworked,
+  merged back into QA while the run went on), and `applyRecordedQaVerdict`
+  never re-applies a run already `done` — so a second Stop from a stay-open QA
+  terminal, a replayed `/done`, or boot recovery can't ship reworked code on a
+  stale PASS.
 - **Spawn sets `isQaRun: true`** so the MCP injection chokepoint adds the
   QA-scoped Playwright (with the lane's headed/headless choice); ordinary task
   spawns never set it.

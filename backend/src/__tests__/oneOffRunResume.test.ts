@@ -213,7 +213,8 @@ test('boot re-adopts live push / QA / post-merge sessions and settles dead ones 
     projectPath: project,
     cwd: qaPaths.sessionDir(project, qaDead),
     status: 'running',
-    createdAt: 1,
+    // Started after the task landed in QA (its `mergedAt`), like a real run.
+    createdAt: Date.now(),
     // Reported before the backend went down; the Stop hook's /done never came.
     verdict: { passed: true, confident: true, receivedAt: 1 },
   };
