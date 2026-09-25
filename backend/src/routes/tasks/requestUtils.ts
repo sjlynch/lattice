@@ -1,7 +1,7 @@
-import path from 'node:path';
 import type { Response } from 'express';
 import { getTask, type Task, type TaskStatus } from '../../tasks.js';
-import { canonicalProjectPath } from '../../projectPath.js';
+import { canonicalProjectPath, isRealAbsoluteProjectPath } from '../../projectPath.js';
+import { relativeProjectError } from '../projectParam.js';
 import { parseMarkdownDoc, type ParsedMarkdownDoc } from './markdownBatch.js';
 
 // Shared happy-path wrapper for the tasks CRUD handlers. `fn` runs the
@@ -62,15 +62,12 @@ export function resolveProject(req: { query: unknown; body: unknown }): string {
 // the mangling instead of a silently-empty result. Only call this once the
 // project is known non-empty (an omitted project has its own "required" 400).
 // Returns true when it's safe to proceed; otherwise it has already sent the 400.
+// On Windows a root-relative path (`\foo`, MSYS `/c/dev/proj`) passes
+// path.isAbsolute yet resolves onto the backend's drive (`C:\c\dev\proj`), so
+// the check is `isRealAbsoluteProjectPath`, not path.isAbsolute.
 export function requireAbsoluteProject(project: string, res: Response): boolean {
-  if (path.isAbsolute(project)) return true;
-  res.status(400).json({
-    error:
-      `project must be an absolute path, got ${JSON.stringify(project)}. ` +
-      `A relative or drive-relative path almost always means backslashes were ` +
-      `stripped by shell escaping (e.g. C:\\development\\proj arriving as ` +
-      `"C:developmentproj"). Pass the full absolute path.`,
-  });
+  if (isRealAbsoluteProjectPath(project)) return true;
+  res.status(400).json({ error: relativeProjectError(project) });
   return false;
 }
 

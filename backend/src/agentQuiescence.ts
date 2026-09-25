@@ -34,6 +34,12 @@ type QuiescenceState = {
   // Starts that carried no id (older Claude builds); matched by id-less stops.
   anonymous: number;
   lastSignalAt: number;
+  // Whether `lastSignalAt` is a signal this process actually received, not the
+  // placeholder `markAgentReadopted` sets at boot. Only a real one may mark
+  // the session busy for a held Stop (`agentHeldActivity`): counting the
+  // placeholder would re-persist "busy" at every boot, and restarts closer
+  // together than READOPTED_SETTLE_MS would then hold a finished step forever.
+  signalSeen: boolean;
   // When the last tracked subagent finished, and when the session last fired
   // Stop. A background subagent's result wakes the main agent for another
   // turn, which can think and run untracked tools (Bash) for longer than any
@@ -67,7 +73,15 @@ const states = new Map<string, QuiescenceState>();
 function ensure(agentId: string, now: number): QuiescenceState {
   let s = states.get(agentId);
   if (!s) {
-    s = { liveIds: new Set(), anonymous: 0, lastSignalAt: now, lastSubagentEndAt: 0, lastStopAt: 0, readopted: false };
+    s = {
+      liveIds: new Set(),
+      anonymous: 0,
+      lastSignalAt: now,
+      signalSeen: false,
+      lastSubagentEndAt: 0,
+      lastStopAt: 0,
+      readopted: false,
+    };
     states.set(agentId, s);
   }
   return s;
@@ -81,6 +95,7 @@ export function noteSubagentStart(agentId: string, subagentId?: string | null): 
   if (subagentId) s.liveIds.add(subagentId);
   else s.anonymous += 1;
   s.lastSignalAt = now;
+  s.signalSeen = true;
 }
 
 // A subagent finished — SubagentStop. A stop for an id this session never
@@ -95,6 +110,7 @@ export function noteSubagentStop(agentId: string, subagentId?: string | null): v
     s.lastSubagentEndAt = now;
   }
   s.lastSignalAt = now;
+  s.signalSeen = true;
 }
 
 // The session fired its Stop hook. Also a live signal (a later Stop pushes the
@@ -103,6 +119,7 @@ export function noteAgentStop(agentId: string): void {
   const now = Date.now();
   const s = ensure(agentId, now);
   s.lastSignalAt = now;
+  s.signalSeen = true;
   s.lastStopAt = now;
 }
 
@@ -110,7 +127,9 @@ export function noteAgentStop(agentId: string): void {
 // fire the gate wants to count as "still alive so it can extend its window").
 export function noteAgentSignal(agentId: string): void {
   const now = Date.now();
-  ensure(agentId, now).lastSignalAt = now;
+  const s = ensure(agentId, now);
+  s.lastSignalAt = now;
+  s.signalSeen = true;
 }
 
 // Boot recovery re-adopted this session from a previous backend process (a
@@ -132,36 +151,47 @@ export function noteAgentSignal(agentId: string): void {
 // and the later resume pass marks it again — the second call must not reset the
 // clock the first one set.
 //
-// `held.activeAt`: the last moment the previous process's gate saw the session
-// BUSY while holding that Stop (live subagents, a turn still owed, or recent
-// signals — persisted, throttled, by the gate). The window counts from the
-// later of the two: a gate that was holding for two background subagents when
-// the backend died must NOT treat the time since the Stop as silence, or the
-// step would advance (and its pty be killed) a second after boot while the
-// subagents still work.
+// `held.activeAt` / `held.busy`: what the previous process's gate last
+// persisted (throttled) about the session while holding that Stop — see
+// `agentHeldActivity`. If it was BUSY (live subagents, a turn still owed, or a
+// signal within the persist throttle), the quiet window starts at THIS boot:
+// no hook can reach a dead backend, so the downtime is not silence, and a gate
+// holding for two background subagents must not advance (and kill the pty) a
+// second after a long restart while they still work. Otherwise the window
+// counts from the later of the Stop and `activeAt`. A record written before
+// `busy` existed carries `activeAt` only when the gate saw activity after the
+// Stop, so a missing `busy` next to an `activeAt` reads as busy.
 export function markAgentReadopted(
   agentId: string,
-  held?: { stopAt: number; activeAt?: number },
+  held?: { stopAt: number; activeAt?: number; busy?: boolean },
 ): void {
   const now = Date.now();
   const s = ensure(agentId, now);
   if (s.readopted) return;
   s.readopted = true;
+  s.signalSeen = false;
   if (held) {
-    s.lastSignalAt = Math.min(now, Math.max(held.stopAt, held.activeAt ?? 0));
+    const busy = held.busy ?? held.activeAt !== undefined;
+    s.lastSignalAt = busy ? now : Math.min(now, Math.max(held.stopAt, held.activeAt ?? 0));
     s.lastStopAt = Math.min(now, held.stopAt);
   } else {
     s.lastSignalAt = now;
   }
 }
 
-// When the session was last seen busy, for a gate holding a Stop to persist:
-// "now" while subagents are live or a turn is still owed, else its last signal.
-export function agentLastActiveAt(agentId: string): number {
+// What a gate holding a Stop persists for a restart. `activeAt`: when the
+// session was last seen busy ("now" while subagents are live or a turn is
+// still owed, else its last signal). `busy`: whether it is busy now, or had a
+// real signal within `recentMs` (the gate's persist throttle — activity since
+// the previous checkpoint must not read as a quiet session). The placeholder
+// `markAgentReadopted` sets at boot is not a signal here.
+export function agentHeldActivity(agentId: string, recentMs: number): { activeAt: number; busy: boolean } {
   const q = agentQuiescence(agentId);
   const now = Date.now();
-  if (q.liveSubagents > 0 || q.awaitingTurnEnd) return now;
-  return Number.isFinite(q.quietForMs) ? now - q.quietForMs : 0;
+  if (q.liveSubagents > 0 || q.awaitingTurnEnd) return { activeAt: now, busy: true };
+  if (!Number.isFinite(q.quietForMs)) return { activeAt: 0, busy: false };
+  const signalSeen = states.get(agentId)?.signalSeen ?? false;
+  return { activeAt: now - q.quietForMs, busy: signalSeen && q.quietForMs < recentMs };
 }
 
 // Snapshot for a completion gate. An unknown agent (never emitted a signal) is

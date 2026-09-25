@@ -37,7 +37,12 @@ export const CALLBACK_HOOK_TIMEOUT_S = 75;
 const ATTEMPT_TIMEOUT_MS = 20_000;
 const RETRY_DELAY_MS = 1_500;
 // The drain leaves an entry alone until the hook that wrote it has given up,
-// so the two never deliver the same callback concurrently.
+// so the two never deliver the same callback concurrently. The hold written up
+// front covers the worst case (the last attempt starting just inside the
+// budget and running its full timeout) for a hook that is killed mid-retry;
+// a hook that gives up normally releases it at once (below), so its replay
+// isn't pushed ~25 s past the moment the hook stopped trying — a window in
+// which the backend is back and the user can already be typing into the agent.
 const HOLD_GRACE_MS = 5_000;
 
 // `timing` exists for tests (a 45 s budget is no fun to wait out).
@@ -73,6 +78,36 @@ function writeEntry(entry) {
     fs.renameSync(tmp, file);
   } catch {
     // Best-effort — the POST below still runs.
+  }
+}
+
+function readEntry() {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+// Giving up: hand the entry to the drain NOW. Only our own entry — a newer
+// Stop for the same URL may have replaced it (that hook still holds it), and
+// the drain or the backend's ack may already have removed it. The temp file
+// is written before the re-check so the rename is all that follows it.
+function releaseHold(createdAt) {
+  try {
+    const current = readEntry();
+    if (!current || current.createdAt !== createdAt) return;
+    current.holdUntil = Date.now();
+    const tmp = file + '.' + process.pid + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(current, null, 2));
+    const again = readEntry();
+    if (!again || again.createdAt !== createdAt) {
+      fs.unlinkSync(tmp);
+      return;
+    }
+    fs.renameSync(tmp, file);
+  } catch {
+    // Best-effort — the original hold still expires on its own.
   }
 }
 
@@ -134,7 +169,10 @@ async function main() {
       removeEntry();
       return;
     }
-    if (Date.now() - startedAt + RETRY_DELAY_MS >= BUDGET_MS) return;
+    if (Date.now() - startedAt + RETRY_DELAY_MS >= BUDGET_MS) {
+      releaseHold(startedAt);
+      return;
+    }
     await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
   }
 }
