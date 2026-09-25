@@ -27,6 +27,15 @@ from.
   marker) for `cwd-missing` / `restore-failed` so the UI can show why.
   `endWhere()` is what the kill paths (`terminalProxy.ts` wrappers, the
   `/api/terminals/:id` DELETE) and the exit watcher use.
+- `startupSupersede.ts` — `endSupersededStartupRecords`: when
+  `recordSpawnedTerminal` creates a new `startup` record, every older record of
+  the same `startupId` whose pty is definitely dead (no `serverId`, or a
+  different executor instance) is ended `owner-finished`. Restore is otherwise
+  the only thing that ends a dead startup record, and it doesn't run under
+  `restoreTerminalsOnOpen: 'never'` / a declined `ask` — the exit watcher skips
+  a replaced executor's records — so each restart used to leave another dead
+  "session lost" startup tab. Same-instance records are left to the exit
+  watcher (their pty may be alive).
 
 ## Session identity
 
@@ -176,4 +185,5 @@ the worktree conversation when the harness matches.
   `terminalRestore.test.ts` (the decision matrix with injected deps),
   `terminalRestoreTranscripts.test.ts` (the same flow over real on-disk
   Claude / Pi / Codex files: re-learning, adopt, Codex discovery),
-  `terminalRegistryWatchRace.test.ts` (live-view vs concurrent-spawn races).
+  `terminalRegistryWatchRace.test.ts` (live-view vs concurrent-spawn races),
+  `terminalStartupSupersede.test.ts` (a re-seeded startup ends its dead predecessor).
