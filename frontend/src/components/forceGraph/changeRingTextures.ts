@@ -3,7 +3,8 @@
 // (`changeRingMaterials.ts`). All the geometry/opacity magic numbers that
 // used to be scattered inline now live here as named constants.
 
-import * as THREE from 'three';
+import type * as THREE from 'three';
+import { finishCanvasTexture, newTextureCanvas } from './canvasTexture';
 
 export type ChangeKind = 'added' | 'modified' | 'deleted';
 
@@ -33,27 +34,11 @@ const GHOST_FILL = 'rgba(110, 116, 125, 0.55)';
 const GHOST_STROKE = 'rgba(0,0,0,0.4)';
 const GHOST_STROKE_WIDTH = 1.5;
 
-function newTextureCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
-  const canvas = document.createElement('canvas');
-  canvas.width = TEX_SIZE;
-  canvas.height = TEX_SIZE;
-  return { canvas, ctx: canvas.getContext('2d')! };
-}
-
-function finishTexture(canvas: HTMLCanvasElement): THREE.CanvasTexture {
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  return tex;
-}
-
 // Colored ring with a soft outer glow so it reads against a similarly-
 // colored sprite, plus a crisp solid stroke so the outline stays sharp at
 // all zooms.
 export function buildRingTexture(kind: ChangeKind): THREE.CanvasTexture {
-  const { canvas, ctx } = newTextureCanvas();
+  const { canvas, ctx } = newTextureCanvas(TEX_SIZE);
   const cx = TEX_SIZE / 2;
   const cy = TEX_SIZE / 2;
 
@@ -78,13 +63,13 @@ export function buildRingTexture(kind: ChangeKind): THREE.CanvasTexture {
   ctx.lineWidth = RING_WIDTH;
   ctx.stroke();
 
-  return finishTexture(canvas);
+  return finishCanvasTexture(canvas);
 }
 
 // Small grey disc drawn in place of a normal file node so deleted files
 // read as "ghosts" at a glance.
 export function buildGhostTexture(): THREE.CanvasTexture {
-  const { canvas, ctx } = newTextureCanvas();
+  const { canvas, ctx } = newTextureCanvas(TEX_SIZE);
   const cx = TEX_SIZE / 2;
   const cy = TEX_SIZE / 2;
   ctx.beginPath();
@@ -95,5 +80,5 @@ export function buildGhostTexture(): THREE.CanvasTexture {
   ctx.strokeStyle = GHOST_STROKE;
   ctx.stroke();
 
-  return finishTexture(canvas);
+  return finishCanvasTexture(canvas);
 }
