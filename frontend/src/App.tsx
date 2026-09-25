@@ -21,6 +21,9 @@ import {
   type TerminalLaunchSettings,
 } from './api';
 
+// Stable identity: SettingsDialog's drafts reseed on a new launch-settings ref.
+const DEFAULT_TERMINAL_LAUNCH_SETTINGS = normalizeTerminalLaunchSettings(null);
+
 function App() {
   const [activeFolder, setActiveFolder] = useActiveFolder();
   const { scanResult, loading } = useProjectScan(activeFolder);
@@ -49,18 +52,20 @@ function App() {
   const [startupTerminals, setStartupTerminals] =
     useStartupTerminalSync(activeFolder, userSettings);
   const [terminalLaunchSettings, setTerminalLaunchSettings] =
-    useState<TerminalLaunchSettings>(normalizeTerminalLaunchSettings(null));
+    useState<TerminalLaunchSettings>(DEFAULT_TERMINAL_LAUNCH_SETTINGS);
   const [metricsIgnoredExts, saveMetricsIgnoredExts] =
     useMetricsIgnoredExts(activeFolder, userSettings);
 
   // Terminal-launch defaults read the same shared userSettings; kept as local
-  // state so SettingsDialog can update them in place.
+  // state so SettingsDialog can update them in place. Reset to the defaults
+  // while a folder's settings are in flight (a switch, or a reload during a
+  // backend restart) rather than holding the previous project's values — the
+  // Settings dialog seeds its drafts from here, and Sidebar launches with it.
   useEffect(() => {
-    if (!activeFolder) {
-      setTerminalLaunchSettings(normalizeTerminalLaunchSettings(null));
+    if (!activeFolder || !userSettings.loaded || !userSettings.settings) {
+      setTerminalLaunchSettings(DEFAULT_TERMINAL_LAUNCH_SETTINGS);
       return;
     }
-    if (!userSettings.loaded || !userSettings.settings) return;
     setTerminalLaunchSettings(
       normalizeTerminalLaunchSettings(userSettings.settings),
     );
@@ -90,6 +95,7 @@ function App() {
         <TopAppBar
           activeFolder={activeFolder}
           onSelectFolder={setActiveFolder}
+          settingsLoaded={userSettings.loaded}
           startupTerminals={startupTerminals}
           onStartupTerminalsChange={setStartupTerminals}
           terminalLaunchSettings={terminalLaunchSettings}

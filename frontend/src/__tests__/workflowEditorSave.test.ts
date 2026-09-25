@@ -83,7 +83,7 @@ test('a fresh server echo replaces an unedited editor by value', () => {
   assert.equal(editor.dirty, false);
 });
 
-test('a mid-save NAME edit supersedes (so the create branch keeps the stash)', () => {
+test('a mid-save NAME edit supersedes (the mid-save edit is kept)', () => {
   const w = workflow();
   const atSaveStart = editorFor(w);
   // Renaming the workflow mid-flight also produces a fresh editor object.
@@ -92,7 +92,7 @@ test('a mid-save NAME edit supersedes (so the create branch keeps the stash)', (
   assert.equal(superseded, true);
 });
 
-test('a mid-save VARIABLE edit supersedes (so the create branch keeps the stash)', () => {
+test('a mid-save VARIABLE edit supersedes (the mid-save edit is kept)', () => {
   const w = workflow();
   const atSaveStart = editorFor(w);
   const current: EditorState = {
@@ -104,36 +104,33 @@ test('a mid-save VARIABLE edit supersedes (so the create branch keeps the stash)
   assert.equal(superseded, true);
 });
 
-// The create branch of save() drops the never-saved stash only when the save
-// was NOT superseded. The hook now reads `superseded` from the live editor ref
-// (never a setEditor-updater side effect that may not have run yet), so the
-// clear decision tracks the real current state. These two cases pin that gate:
-// a superseded save must keep the stash; a clean save must drop it.
-function shouldClearStash(superseded: boolean): boolean {
-  return !superseded;
-}
-
-test('clear decision: a superseded create save keeps the draft stash', () => {
-  const w = workflow();
-  const atSaveStart = editorFor(w, { workflowId: null });
-  const current: EditorState = {
+// REGRESSION: a create (POST) superseded by a mid-save edit used to keep
+// `current` verbatim — `workflowId: null` — although the server had already
+// created the workflow. The editor still read as an unsaved draft labelled
+// "Create", so the next Save / ▶ Run POSTed a duplicate definition (and the
+// stash restored after a reload made a third).
+test('REGRESSION: a superseded create adopts the created id and stays dirty', () => {
+  const atSaveStart = editorFor(workflow(), { workflowId: null });
+  const edited: EditorState = {
     ...atSaveStart,
     steps: atSaveStart.steps.map((s, i) =>
       i === 0 ? { ...s, prompt: 'typed during the create POST' } : s,
     ),
     dirty: true,
   };
-  const { superseded } = nextEditorAfterSave(atSaveStart, current, w);
+  const { editor, superseded } = nextEditorAfterSave(atSaveStart, edited, workflow({ id: 'wf9' }));
   assert.equal(superseded, true);
-  // The live draft must survive — the debounced persist keeps stashing it.
-  assert.equal(shouldClearStash(superseded), false);
+  // Points at the created workflow, so the next save is a PATCH…
+  assert.equal(editor.workflowId, 'wf9');
+  // …and still carries (and flags) the unsaved mid-save edit.
+  assert.equal(editor.dirty, true);
+  assert.equal(editor.steps[0].prompt, 'typed during the create POST');
 });
 
-test('clear decision: a clean create save drops the draft stash', () => {
-  const w = workflow();
-  const atSaveStart = editorFor(w, { workflowId: null });
-  const { superseded } = nextEditorAfterSave(atSaveStart, atSaveStart, w);
+test('a clean create adopts the server echo', () => {
+  const atSaveStart = editorFor(workflow(), { workflowId: null });
+  const { editor, superseded } = nextEditorAfterSave(atSaveStart, atSaveStart, workflow({ id: 'wf9' }));
   assert.equal(superseded, false);
-  // Nothing changed mid-flight — the workflow is server-side now, so clear it.
-  assert.equal(shouldClearStash(superseded), true);
+  assert.equal(editor.workflowId, 'wf9');
+  assert.equal(editor.dirty, false);
 });

@@ -24,8 +24,15 @@
 // to in-thread analysis — i.e. this can never be WORSE than the previous
 // all-on-the-main-thread behaviour.
 
-import { Worker } from 'node:worker_threads';
 import type { HealthMetrics } from '../health/index.js';
+import {
+  DEFAULT_ANALYSIS_STALL_MS,
+  createStallTimer,
+  spawnEvalWorker,
+  terminateQuietly,
+  type AnalysisWorkerHandle,
+  type StallTimer,
+} from '../health/analysisWorker.js';
 
 export type AnalysisJob = {
   // Position in the caller's file list, echoed back verbatim so results can be
@@ -47,11 +54,9 @@ export type AnalysisOutcome = {
 };
 
 // Minimal structural view of a worker so tests can inject a fake without a real
-// thread. `node:worker_threads`' Worker satisfies this.
-export type WorkerHandle = {
-  on(event: 'message' | 'error' | 'exit', cb: (arg: any) => void): unknown;
-  terminate(): unknown;
-};
+// thread. `node:worker_threads`' Worker satisfies this. This runner needs
+// nothing beyond the shared base type (`health/analysisWorker.ts`).
+export type WorkerHandle = AnalysisWorkerHandle;
 
 export type WorkerData = { analyzeUrl: string; readUrl: string; jobs: AnalysisJob[] };
 export type WorkerFactory = (data: WorkerData) => WorkerHandle;
@@ -74,7 +79,7 @@ export type RunHealthAnalysisResult = {
   unhandled: AnalysisJob[];
 };
 
-const DEFAULT_STALL_MS = 10_000;
+const DEFAULT_STALL_MS = DEFAULT_ANALYSIS_STALL_MS;
 // Ceiling on respawns per run so a scan with many independently-hanging files
 // can't loop forever; the leftover tail is handed back for in-thread fallback.
 const MAX_RESPAWNS = 10;
@@ -128,10 +133,10 @@ parentPort.on('message', () => {});
 `;
 
 function defaultCreateWorker(data: WorkerData): WorkerHandle {
-  // execArgv: [] so the worker never inherits a TS-loader (`--import tsx`, …)
-  // from the parent's exec args. The repo has repeatedly been bitten by loader
-  // injection propagating into child processes (see backend/scripts/dev.mjs).
-  return new Worker(WORKER_SRC, { eval: true, workerData: data, execArgv: [] });
+  // spawnEvalWorker pins execArgv: [] (never inherit a TS loader). Not unref'd,
+  // unlike the watcher's warm worker: a scan awaits this worker's results, and
+  // it is terminated as soon as the run settles.
+  return spawnEvalWorker(WORKER_SRC, data);
 }
 
 function defaultModuleUrls(): { analyzeUrl: string; readUrl: string } {
@@ -147,6 +152,162 @@ type WorkerMessage =
   | { type: 'done' }
   | { type: 'result'; index: number; loc?: number; ok: boolean; metrics?: HealthMetrics; imports?: string[] };
 
+// One runHealthAnalysis call: owns the current worker, the slice it is
+// processing, the stall watchdog and the respawn budget, and resolves the
+// caller's promise exactly once via finish().
+class HealthAnalysisRun {
+  private settled = false;
+  private worker: WorkerHandle | null = null;
+  // Not unref'd on the scan path (the watcher's warm analyzer unrefs its own).
+  private readonly stall: StallTimer;
+  private cancelTimer: ReturnType<typeof setInterval> | null = null;
+  private respawns = 0;
+
+  // The slice of jobs the current worker is processing, and how many results
+  // it has already returned. Results arrive in slice order, so slice[slicePos]
+  // is always the job we're currently waiting for — i.e. the culprit on stall.
+  private slice: AnalysisJob[] = [];
+  private slicePos = 0;
+
+  constructor(
+    private readonly opts: RunHealthAnalysisOptions,
+    private readonly stallMs: number,
+    private readonly createWorker: WorkerFactory,
+    private readonly urls: { analyzeUrl: string; readUrl: string },
+    private readonly resolve: (result: RunHealthAnalysisResult) => void,
+  ) {
+    this.stall = createStallTimer(stallMs, () => this.onStall());
+  }
+
+  start(jobs: AnalysisJob[]): void {
+    if (this.opts.isCancelled) {
+      this.cancelTimer = setInterval(() => {
+        if (this.opts.isCancelled?.()) this.finish(this.slice.slice(this.slicePos));
+      }, 100);
+    }
+    this.spawn(jobs);
+  }
+
+  private killWorker(): void {
+    if (this.worker) {
+      terminateQuietly(this.worker);
+      this.worker = null;
+    }
+  }
+
+  private finish(unhandled: AnalysisJob[]): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.stall.clear();
+    if (this.cancelTimer) {
+      clearInterval(this.cancelTimer);
+      this.cancelTimer = null;
+    }
+    this.killWorker();
+    this.resolve({ unhandled });
+  }
+
+  private onMessage(msg: WorkerMessage): void {
+    if (this.settled) return;
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'init-failed') {
+      // Worker couldn't load the analysis modules — only happens on the first
+      // spawn (before any results), so `slice` is the full job set. Hand all
+      // back for in-thread fallback.
+      if (process.env.LATTICE_HEALTH_DEBUG) {
+        console.error('[health] analysis worker init failed:', msg.error);
+      }
+      this.finish(this.slice);
+      return;
+    }
+    if (msg.type === 'ready') {
+      this.stall.arm();
+      return;
+    }
+    if (msg.type === 'done') {
+      this.finish([]);
+      return;
+    }
+    if (msg.type === 'result') {
+      this.stall.arm();
+      this.slicePos += 1;
+      this.opts.onResult({
+        index: msg.index,
+        loc: msg.loc,
+        analysis: msg.ok ? { metrics: msg.metrics as HealthMetrics, imports: msg.imports ?? [] } : null,
+      });
+    }
+  }
+
+  private onStall(): void {
+    if (this.settled) return;
+    const culprit = this.slice[this.slicePos];
+    this.killWorker();
+    console.warn(
+      `[health] analysis worker exceeded ${this.stallMs}ms on ` +
+        `${culprit ? culprit.filePath : '<unknown>'} — terminating and skipping ` +
+        `that file (likely pathological input); the scan continues.`,
+    );
+    // The hung file is skipped (never retried — retrying would just hang again).
+    if (culprit) this.opts.onResult({ index: culprit.index, loc: undefined, analysis: null });
+
+    const rest = this.slice.slice(this.slicePos + 1);
+    if (rest.length === 0) {
+      this.finish([]);
+      return;
+    }
+    this.respawns += 1;
+    if (this.respawns > MAX_RESPAWNS) {
+      console.warn(
+        `[health] analysis worker respawn limit reached; ` +
+          `handing ${rest.length} remaining file(s) to in-thread fallback.`,
+      );
+      this.finish(rest);
+      return;
+    }
+    this.spawn(rest);
+  }
+
+  private onWorkerDeath(): void {
+    if (this.settled) return;
+    // Worker errored / exited before 'done'. Hand back everything it hadn't
+    // yet returned so the caller finishes those in-thread. (The culprit of a
+    // watchdog kill is already emitted + skipped in onStall before respawn, so
+    // this path only sees genuinely-unprocessed jobs.)
+    this.killWorker();
+    this.finish(this.slice.slice(this.slicePos));
+  }
+
+  private spawn(sliceJobs: AnalysisJob[]): void {
+    this.slice = sliceJobs;
+    this.slicePos = 0;
+    let w: WorkerHandle;
+    try {
+      w = this.createWorker({ analyzeUrl: this.urls.analyzeUrl, readUrl: this.urls.readUrl, jobs: sliceJobs });
+    } catch (err) {
+      if (process.env.LATTICE_HEALTH_DEBUG) {
+        console.error('[health] analysis worker spawn failed:', err);
+      }
+      this.finish(sliceJobs);
+      return;
+    }
+    this.worker = w;
+    // Guard every listener so a terminated/stale worker's late events (a
+    // respawned worker's predecessor still emits 'exit' after terminate())
+    // can't corrupt the current slice bookkeeping.
+    const guard =
+      <A>(fn: (a: A) => void) =>
+      (a: A): void => {
+        if (this.settled || w !== this.worker) return;
+        fn(a);
+      };
+    w.on('message', guard((m: WorkerMessage) => this.onMessage(m)));
+    w.on('error', guard(() => this.onWorkerDeath()));
+    w.on('exit', guard(() => this.onWorkerDeath()));
+    this.stall.arm();
+  }
+}
+
 export function runHealthAnalysis(
   jobs: AnalysisJob[],
   opts: RunHealthAnalysisOptions,
@@ -158,156 +319,7 @@ export function runHealthAnalysis(
   const urls = opts.moduleUrls ?? defaultModuleUrls();
 
   return new Promise<RunHealthAnalysisResult>((resolve) => {
-    let settled = false;
-    let worker: WorkerHandle | null = null;
-    let stallTimer: ReturnType<typeof setTimeout> | null = null;
-    let cancelTimer: ReturnType<typeof setInterval> | null = null;
-    let respawns = 0;
-
-    // The slice of jobs the current worker is processing, and how many results
-    // it has already returned. Results arrive in slice order, so slice[slicePos]
-    // is always the job we're currently waiting for — i.e. the culprit on stall.
-    let slice: AnalysisJob[] = [];
-    let slicePos = 0;
-
-    const clearStall = (): void => {
-      if (stallTimer) {
-        clearTimeout(stallTimer);
-        stallTimer = null;
-      }
-    };
-    const armStall = (): void => {
-      clearStall();
-      stallTimer = setTimeout(onStall, stallMs);
-    };
-    const killWorker = (): void => {
-      if (worker) {
-        try {
-          worker.terminate();
-        } catch {
-          /* ignore */
-        }
-        worker = null;
-      }
-    };
-    const finish = (unhandled: AnalysisJob[]): void => {
-      if (settled) return;
-      settled = true;
-      clearStall();
-      if (cancelTimer) {
-        clearInterval(cancelTimer);
-        cancelTimer = null;
-      }
-      killWorker();
-      resolve({ unhandled });
-    };
-
-    const onMessage = (msg: WorkerMessage): void => {
-      if (settled) return;
-      if (!msg || typeof msg !== 'object') return;
-      if (msg.type === 'init-failed') {
-        // Worker couldn't load the analysis modules — only happens on the first
-        // spawn (before any results), so `slice` is the full job set. Hand all
-        // back for in-thread fallback.
-        if (process.env.LATTICE_HEALTH_DEBUG) {
-          console.error('[health] analysis worker init failed:', msg.error);
-        }
-        finish(slice);
-        return;
-      }
-      if (msg.type === 'ready') {
-        armStall();
-        return;
-      }
-      if (msg.type === 'done') {
-        finish([]);
-        return;
-      }
-      if (msg.type === 'result') {
-        armStall();
-        slicePos += 1;
-        opts.onResult({
-          index: msg.index,
-          loc: msg.loc,
-          analysis: msg.ok ? { metrics: msg.metrics as HealthMetrics, imports: msg.imports ?? [] } : null,
-        });
-      }
-    };
-
-    const onStall = (): void => {
-      if (settled) return;
-      const culprit = slice[slicePos];
-      killWorker();
-      console.warn(
-        `[health] analysis worker exceeded ${stallMs}ms on ` +
-          `${culprit ? culprit.filePath : '<unknown>'} — terminating and skipping ` +
-          `that file (likely pathological input); the scan continues.`,
-      );
-      // The hung file is skipped (never retried — retrying would just hang again).
-      if (culprit) opts.onResult({ index: culprit.index, loc: undefined, analysis: null });
-
-      const rest = slice.slice(slicePos + 1);
-      if (rest.length === 0) {
-        finish([]);
-        return;
-      }
-      respawns += 1;
-      if (respawns > MAX_RESPAWNS) {
-        console.warn(
-          `[health] analysis worker respawn limit reached; ` +
-            `handing ${rest.length} remaining file(s) to in-thread fallback.`,
-        );
-        finish(rest);
-        return;
-      }
-      spawn(rest);
-    };
-
-    const onWorkerDeath = (): void => {
-      if (settled) return;
-      // Worker errored / exited before 'done'. Hand back everything it hadn't
-      // yet returned so the caller finishes those in-thread. (The culprit of a
-      // watchdog kill is already emitted + skipped in onStall before respawn, so
-      // this path only sees genuinely-unprocessed jobs.)
-      killWorker();
-      finish(slice.slice(slicePos));
-    };
-
-    const spawn = (sliceJobs: AnalysisJob[]): void => {
-      slice = sliceJobs;
-      slicePos = 0;
-      let w: WorkerHandle;
-      try {
-        w = createWorker({ analyzeUrl: urls.analyzeUrl, readUrl: urls.readUrl, jobs: sliceJobs });
-      } catch (err) {
-        if (process.env.LATTICE_HEALTH_DEBUG) {
-          console.error('[health] analysis worker spawn failed:', err);
-        }
-        finish(sliceJobs);
-        return;
-      }
-      worker = w;
-      // Guard every listener so a terminated/stale worker's late events (a
-      // respawned worker's predecessor still emits 'exit' after terminate())
-      // can't corrupt the current slice bookkeeping.
-      const guard =
-        <A>(fn: (a: A) => void) =>
-        (a: A): void => {
-          if (settled || w !== worker) return;
-          fn(a);
-        };
-      w.on('message', guard(onMessage));
-      w.on('error', guard(onWorkerDeath));
-      w.on('exit', guard(onWorkerDeath));
-      armStall();
-    };
-
-    if (opts.isCancelled) {
-      cancelTimer = setInterval(() => {
-        if (opts.isCancelled?.()) finish(slice.slice(slicePos));
-      }, 100);
-    }
-
-    spawn(jobs);
+    new HealthAnalysisRun(opts, stallMs, createWorker, urls, resolve).start(jobs);
   });
 }
+

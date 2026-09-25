@@ -199,3 +199,20 @@ test('a valid attach size that differs from the session is applied on attach', a
   assert.deepEqual(pty.resizes, [[132, 50]]);
   await cleanup(session, dir);
 });
+
+test('a frame that parses to a non-object (null, number, array, string) is ignored, not thrown', async () => {
+  const { session, pty, dir } = await makeSession();
+  const c = fakeWs();
+  attachTerminal(c.ws, { id: session.id });
+  for (const frame of ['null', '42', '[]', '"x"', 'true']) {
+    assert.doesNotThrow(() => c.emitter.emit('message', Buffer.from(frame)), `frame ${frame}`);
+  }
+  assert.deepEqual(pty.written, []);
+  assert.deepEqual(pty.resizes, []);
+  assert.equal(pty.kills(), 0);
+  assert.equal(getSession(session.id), session, 'the session is untouched');
+  // The socket still works afterwards.
+  c.message({ type: 'input', data: 'ok' });
+  assert.deepEqual(pty.written, ['ok']);
+  await cleanup(session, dir);
+});
