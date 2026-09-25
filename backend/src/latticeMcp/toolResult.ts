@@ -12,13 +12,16 @@ export type ToolResult = {
   isError?: boolean;
 };
 
-// The MCP-facing rendering of a client outcome. Only two of the five kinds are
+// The MCP-facing rendering of a client outcome. Only two of the six kinds are
 // NOT errors: a normal 2xx, and the 413 teaching response the agent must read
 // (flagging that one `isError` would make the model retry the same oversized
-// call instead of narrowing it).
+// call instead of narrowing it). A response `timeout` is an error for a generic
+// tool (there is no result), but its text says the backend is up; a tool whose
+// request is a long job (`opengrep_scan`) renders it itself.
 export function toToolResult(outcome: LatticeCallOutcome): ToolResult {
   const isError =
     outcome.kind === 'unreachable' ||
+    outcome.kind === 'timeout' ||
     outcome.kind === 'httpError' ||
     outcome.kind === 'projectMismatch';
   return {

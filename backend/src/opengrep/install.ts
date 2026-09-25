@@ -114,6 +114,22 @@ export async function downloadToFile(
   return { sha256: hash.digest('hex'), bytes };
 }
 
+// Delete every `*.part` in downloads/ except `keep` (the current job's file).
+// Best-effort: a file another process still holds open just stays.
+async function sweepStaleDownloads(keep: string): Promise<void> {
+  const dir = path.dirname(keep);
+  let names: string[];
+  try {
+    names = await fsp.readdir(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.endsWith('.part') || name === path.basename(keep)) continue;
+    await fsp.rm(path.join(dir, name), { force: true }).catch(() => {});
+  }
+}
+
 async function performInstall(job: OpengrepInstallJob, deps: InstallDeps): Promise<void> {
   const assetName = job.asset as OpengrepAssetName;
   const pin = (deps.assets ?? OPENGREP_ASSETS)[assetName];
@@ -125,6 +141,9 @@ async function performInstall(job: OpengrepInstallJob, deps: InstallDeps): Promi
   const url = `${deps.releaseBaseUrl ?? OPENGREP_RELEASE_BASE_URL}/${assetName}`;
   const tmp = path.join(downloadsDir(), `${assetName}.${process.pid}.${Date.now()}.part`);
   job.totalBytes = pin.bytes;
+  // Installs are single-flight, so any other `.part` here is a leftover of a
+  // transfer this backend never finished (killed mid-download by a restart).
+  await sweepStaleDownloads(tmp);
 
   const { sha256, bytes } = await downloadToFile(url, tmp, {
     fetchImpl: deps.fetchImpl,
@@ -154,11 +173,19 @@ async function performInstall(job: OpengrepInstallJob, deps: InstallDeps): Promi
   }
 
   const target = deps.targetPath ?? managedBinaryPath(job.version);
-  await fsp.mkdir(path.dirname(target), { recursive: true });
-  // Replace any previous copy of the same version (a re-install after a
-  // quarantine); rename is atomic on the same volume.
-  await fsp.rm(target, { force: true }).catch(() => {});
-  await fsp.rename(tmp, target);
+  try {
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    // Replace any previous copy of the same version (a re-install after a
+    // quarantine); rename is atomic on the same volume.
+    await fsp.rm(target, { force: true }).catch(() => {});
+    await fsp.rename(tmp, target);
+  } catch (err) {
+    // EPERM / EBUSY on Windows (antivirus, a running opengrep.exe holding the
+    // old target): the verified ~50 MB download would otherwise stay in
+    // downloads/ forever — only a successful rename removes it.
+    await fsp.rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
   if (process.platform !== 'win32') await fsp.chmod(target, 0o755);
 
   job.phase = 'checking';
@@ -189,10 +216,24 @@ async function performInstall(job: OpengrepInstallJob, deps: InstallDeps): Promi
   resetOpengrepCache();
 }
 
+// The start in progress (choosing the asset, before `currentJob` exists). Set
+// synchronously so a second POST arriving during that await joins it instead
+// of passing the `currentJob` check too and racing a parallel download.
+let starting: Promise<OpengrepInstallJob> | null = null;
+
 // Starts the install (or returns the running job). The returned snapshot is
 // live: poll `getOpengrepInstallJob()` for progress.
-export async function startOpengrepInstall(deps: InstallDeps = {}): Promise<OpengrepInstallJob> {
-  if (currentJob && currentJob.status === 'running') return currentJob;
+export function startOpengrepInstall(deps: InstallDeps = {}): Promise<OpengrepInstallJob> {
+  if (currentJob && currentJob.status === 'running') return Promise.resolve(currentJob);
+  if (starting) return starting;
+  const p = beginInstall(deps).finally(() => {
+    if (starting === p) starting = null;
+  });
+  starting = p;
+  return p;
+}
+
+async function beginInstall(deps: InstallDeps): Promise<OpengrepInstallJob> {
   const choice = await (deps.chooseAsset ?? chooseAssetForThisMachine)();
   if (!choice) {
     throw new OpengrepInstallError(
@@ -231,6 +272,7 @@ export async function startOpengrepInstall(deps: InstallDeps = {}): Promise<Open
 
 // Test/route helper: wait for the running install (if any) to settle.
 export async function awaitOpengrepInstall(): Promise<OpengrepInstallJob | null> {
+  if (starting) await starting.catch(() => {});
   if (inFlight) await inFlight;
   return currentJob;
 }

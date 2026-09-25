@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useTerminals } from '../../../TerminalsContext';
 import { type TaskStatus } from '../../../api';
 import { useLaneBulkActions } from './useLaneBulkActions';
@@ -62,12 +62,19 @@ export function useTaskBoardController(activeFolder: string) {
     handleDragEnd,
   } = data;
 
+  // The QA-run hook reads the open tabs to tell a run still under test from
+  // one whose tab was closed, and focuses the existing tab on a repeat ▶.
+  const qaRunTerminals = useMemo(
+    () => ({ terminals, focusTerminal: setActiveId }),
+    [terminals, setActiveId],
+  );
   const runs = useTaskBoardRunControllers(
     activeFolder,
     addTerminal,
     closeTerminal,
     closeTerminalsForTask,
     showError,
+    qaRunTerminals,
   );
   const {
     mergeRun,
@@ -85,6 +92,7 @@ export function useTaskBoardController(activeFolder: string) {
     qaPlaywright,
     startQaRun,
     startAllQaRuns,
+    runningTaskIds: runningQaTaskIds,
     postMergeHook,
   } = runs;
 
@@ -227,6 +235,7 @@ export function useTaskBoardController(activeFolder: string) {
     startPush,
     startQaRun,
     startAllQaRuns,
+    runningQaTaskIds,
     submitNewTask: detail.submitNewTask,
     taskSearch,
     tasks,

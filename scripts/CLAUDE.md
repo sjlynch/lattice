@@ -62,8 +62,8 @@
     `detached` child keeps its parent pid). Only a runner that ignores the
     request for 30 s is tree-killed.
   - The soft stop drains the backend before that kill, like every automatic
-    restart: `dev.mjs` → `dev/devShutdown.mjs` calls the restart-drain
-    `prepare` (`dev/restartHandshake.mjs`, fail open) so debounced task /
+    restart: `dev.mjs` → `backend/scripts/dev/devShutdown.mjs` calls the
+    restart-drain `prepare` (`backend/scripts/dev/restartHandshake.mjs`, fail open) so debounced task /
     run-mirror writes are flushed and an in-flight transition lands. Its budget
     (`SOFT_STOP_PREPARE_TIMEOUT_MS`, 15 s) is deliberately far shorter than the
     automatic path's and must stay below `SOFT_STOP_TIMEOUT_MS`. A Ctrl+C during

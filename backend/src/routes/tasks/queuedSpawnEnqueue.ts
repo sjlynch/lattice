@@ -48,12 +48,16 @@ export async function enqueueTaskRun(
     kind: 'task-run',
     priority: 'batch',
     dedupeKey: taskRunDedupeKey(taskId),
-    thunk: () =>
+    // The request's signal is aborted by `dequeueTaskRun` / a task delete even
+    // once the run is in flight; startTaskById then backs out instead of
+    // spawning an agent the user already cancelled.
+    thunk: (signal) =>
       runSpawnThunk(taskId, 'run', () =>
         startTaskById(taskId, backendOrigin, {
           requestedHarness,
           requestedPiModel,
           throwOnCapacity: true,
+          signal,
         }),
       ),
   });
@@ -90,21 +94,26 @@ export async function enqueueTaskResume(
   return { queued };
 }
 
-// Cancel any still-pending run/resume spawn for a task — called when the
-// task is deleted. An already in-flight spawn is left to complete; the
-// normal task-delete worktree cleanup handles it.
+// Cancel any queued run/resume spawn for a task — called when the task is
+// deleted. A pending spawn is dropped; an in-flight one has its signal
+// aborted, so a run backs out (tearing down its worktree + pty) instead of
+// finishing for a task that no longer exists.
 export function cancelQueuedTaskSpawns(taskId: string): void {
   cancelSpawn(taskRunDedupeKey(taskId));
   cancelSpawn(taskResumeDedupeKey(taskId));
 }
 
-// Remove a task's queued run: drop the still-pending spawn (if it has not
-// been admitted yet) and clear the persisted runQueued flag so the card
-// stops showing the badge and boot recovery won't re-enqueue it. Also clears
-// the failure counter so an explicit re-run starts from a clean slate.
-// Best-effort — if the run was already admitted the spawn proceeds and the
-// thunk clears the flag itself on completion.
-export async function dequeueTaskRun(taskId: string): Promise<void> {
-  cancelSpawn(taskRunDedupeKey(taskId));
+// Remove a task's queued run: drop the still-pending spawn, or — if it was
+// already admitted — abort it, and clear the persisted runQueued flag so the
+// card stops showing the badge and boot recovery won't re-enqueue it. Also
+// clears the failure counter so an explicit re-run starts from a clean slate.
+// An aborted in-flight run never spawns its agent: startTaskById checks the
+// signal after its checkout and again (under the task lock) at the status
+// flip, and the queue won't re-queue it after a CAP / disk deferral.
+// `inFlight` tells the caller the run had already been admitted (its
+// worktree may exist briefly until that start backs out).
+export async function dequeueTaskRun(taskId: string): Promise<{ inFlight: boolean }> {
+  const cancelled = cancelSpawn(taskRunDedupeKey(taskId));
   await updateTask(taskId, { ...CLEARED_RUN_QUEUE_STATE });
+  return { inFlight: cancelled === 'in-flight' };
 }

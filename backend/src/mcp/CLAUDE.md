@@ -81,7 +81,10 @@ serverless for now — see `frontend/src/components/sidebar/CLAUDE.md`.)
   check compares like with like), and `LATTICE_TASK_ID` (`ctx.taskId`, only for
   task run/resume and the WORKTREE merge resolvers — never stash/snapshot
   resolvers; **omitted, never set empty**: the server registers `my_task` and
-  defaults `append_summary`'s id exactly when it exists). An override's `env` IS
+  defaults `append_summary`'s id exactly when it exists, and leaves out the
+  board-management tools and `opengrep_ignore` — a permanent write to the
+  project's Opengrep ignore lists that an untrusted worktree brief must not be
+  able to trigger). An override's `env` IS
   tunable, so `shapeLatticeEntry` strips every `LATTICE_*` key from it first.
   `command` is **`process.execPath`**, not bare `node` (no shell, and the
   harness's PATH isn't ours); it is an absolute `.exe`, so `platformizeCommand`
@@ -212,7 +215,8 @@ serverless for now — see `frontend/src/components/sidebar/CLAUDE.md`.)
   `secretHeaders`, re-injected at spawn); references (`${input:…}`, Codex
   `bearer_token_env_var`) are recorded with no value.
 - `../latticeMcp/` — the other half of `lattice`: the stdio server (board tools
-  + Opengrep tools) and `entryPath.ts`, which `catalog.ts` calls to bake the
+  + Opengrep tools; `opengrep_ignore` outside task worktrees only) and
+  `entryPath.ts`, which `catalog.ts` calls to bake the
   compiled entry into the entry's `args`. See its `CLAUDE.md`.
 
 ## Injection sites — resolve in the backend, apply in the terminal-server

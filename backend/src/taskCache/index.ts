@@ -86,6 +86,24 @@ export async function updateTask(
   return taskCache.updateTask(id, updates);
 }
 
+// Compare-and-set update under the project write lock (see
+// TaskCacheManager.updateTaskWith). Null when the task no longer exists.
+export async function updateTaskWith<R>(
+  id: string,
+  decide: (task: Task, tasks: readonly Task[]) => { updates?: TaskUpdates; result: R },
+): Promise<{ task: Task; result: R } | null> {
+  return taskCache.updateTaskWith(id, decide);
+}
+
+// Append to a task's `summary` with the read-modify-write under the project
+// write lock, so concurrent appends never overwrite one another.
+export async function appendTaskSummary(
+  id: string,
+  text: string,
+): Promise<Task | null> {
+  return taskCache.appendTaskSummary(id, text);
+}
+
 export async function reorderTasksInLane(
   projectPath: string,
   status: TaskStatus,

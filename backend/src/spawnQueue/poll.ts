@@ -2,24 +2,27 @@
 // count; this folds it into the accounting and re-drains. The loop runs
 // ONLY while the queue has pending or reserved work — zero cost when idle.
 
-import { proxyCountSessions } from '../terminalProxy.js';
+import { proxyListSessionsOrNull } from '../terminalProxy.js';
 import { SPAWN_QUEUE_CONFIG } from './config.js';
 import { drainQueue } from './drain.js';
+import { countAgentSessions } from './resourceGovernor.js';
 import { queueState } from './state.js';
 
 let pollTimer: NodeJS.Timeout | null = null;
 let pollInProgress = false;
 
 // One poll: snapshot the time, ask the terminal-server, reconcile, drain.
+// The listing (not just a count) is fetched so the resource governor's floor
+// can count Lattice agent sessions apart from shells / startup terminals.
 export async function pollOnce(): Promise<void> {
   const requestedAt = Date.now();
-  const count = await proxyCountSessions();
-  if (count === null) {
+  const sessions = await proxyListSessionsOrNull();
+  if (sessions === null) {
     // terminal-server unreachable — freeze admissions, keep the last count.
     queueState.accounting.notePollFailure();
     return;
   }
-  queueState.accounting.reconcile(count, requestedAt);
+  queueState.accounting.reconcile(sessions.length, requestedAt, countAgentSessions(sessions));
   drainQueue();
 }
 

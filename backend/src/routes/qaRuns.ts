@@ -16,6 +16,7 @@ import {
   cleanupQaSession,
   forgetQaRun,
   getQaRun,
+  listRunningQaRuns,
   markQaRunDone,
   qaAgentId,
   recordQaRunAutoClose,
@@ -28,7 +29,8 @@ import {
   finishHomeScratchDoneResponse,
 } from '../homeScratch/routes.js';
 import { parseVerdictBody } from './qaRuns/verdictBody.js';
-import { resolveQaRunStart } from './qaRuns/startGuard.js';
+import { findActiveQaRunForTask, resolveQaRunStart } from './qaRuns/startGuard.js';
+import { proxyListSessionsOrNull } from '../terminalServerClient.js';
 import { polledQaRunResponse, startedQaRunResponse } from './qaRuns/responses.js';
 
 // Re-exported for the route-level regression tests, which assert the verdict
@@ -37,10 +39,13 @@ export { parseVerdictBody };
 
 // Injectable seams for the route-level regression test, so it can exercise the
 // real guards without touching the task DB or spawning a Claude session.
-// Production passes nothing and gets the real `getTask` / `startQaSession`.
+// Production passes nothing and gets the real `getTask` / `startQaSession` /
+// run registry / terminal-server session probe.
 export type QaRunsRouterDeps = {
   getTask?: typeof getTask;
   startQaSession?: typeof startQaSession;
+  listRunningQaRuns?: typeof listRunningQaRuns;
+  listSessions?: () => Promise<readonly unknown[] | null>;
 };
 
 export function buildQaRunsRouter(
@@ -50,6 +55,15 @@ export function buildQaRunsRouter(
   const r = Router();
   const lookupTask = deps.getTask ?? getTask;
   const startSession = deps.startQaSession ?? startQaSession;
+  const activeRunDeps = {
+    listRunningRuns: deps.listRunningQaRuns ?? listRunningQaRuns,
+    listSessions: deps.listSessions ?? proxyListSessionsOrNull,
+  };
+  // Starts past the guards whose run isn't in the registry yet (it is recorded
+  // only once its pty has spawned), keyed project + task. Without this, two
+  // near-simultaneous POSTs for one task both find no running run and both
+  // spawn.
+  const starting = new Set<string>();
 
   r.post('/api/qa-runs', async (req, res) => {
     const resolved = await resolveQaRunStart(req.body, lookupTask);
@@ -57,7 +71,26 @@ export function buildQaRunsRouter(
       return res.status(resolved.status).json({ error: resolved.error });
     }
 
+    // One QA session per task at a time: a second would drive the browser
+    // against the same dev server beside the first and post its own verdict,
+    // and either one's confident PASS promotes the task.
+    const startKey = `${resolved.project}\0${resolved.task.id}`;
+    if (starting.has(startKey)) {
+      return res.status(409).json({ error: 'a QA run is already starting for this task' });
+    }
+    starting.add(startKey);
     try {
+      const active = await findActiveQaRunForTask(
+        resolved.project,
+        resolved.task.id,
+        activeRunDeps,
+      );
+      if (active) {
+        return res.status(409).json({
+          error: 'a QA run is already running for this task',
+          runId: active.id,
+        });
+      }
       const started = await startSession({
         projectPath: resolved.project,
         taskId: resolved.task.id,
@@ -68,6 +101,8 @@ export function buildQaRunsRouter(
       res.json(startedQaRunResponse(started));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
+    } finally {
+      starting.delete(startKey);
     }
   });
 

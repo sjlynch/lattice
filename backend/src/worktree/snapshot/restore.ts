@@ -3,10 +3,19 @@ import fs from 'node:fs/promises';
 import { withProjectMutation } from '../../projectRunLock.js';
 import { constants, type Stats } from 'node:fs';
 import { isPathInsideRepo } from '../paths.js';
-import { isSnapshotMetadataPath, type SnapshotHandle } from './manifest.js';
+import {
+  isCommitId,
+  isSnapshotMetadataPath,
+  readSnapshotManifest,
+  snapshotManifestPath,
+  writeSnapshotManifest,
+  type RetiredSnapshotPath,
+  type SnapshotHandle,
+} from './manifest.js';
 import { assertNotReparsePoint } from '../cleanupSafety.js';
 import { projectGit } from '../projectGit.js';
 import { pathVersion } from './versions.js';
+import { deletedSinceCapture, reconcileWithCommittedChange } from './threeWay.js';
 
 // Suffix for the copy we leave beside a path whose on-disk content diverged
 // from the snapshot when the stale-overwrite guard is engaged (boot recovery).
@@ -14,8 +23,9 @@ import { pathVersion } from './versions.js';
 // version at `<path><this suffix>` and keep the original in place.
 export const SNAPSHOT_CONFLICT_SUFFIX = '.lattice-conflict';
 
-// Thrown by restoreSnapshotPath (only under the stale-overwrite guard) when a
-// path's on-disk content differs from what the snapshot captured. It is NOT a
+// Thrown by restoreSnapshotPath when a path's on-disk content differs from
+// what the snapshot captured and cannot take the captured copy (a newer edit,
+// or a fast-forward change that won't merge with it). It is NOT a
 // failure to write — the captured version has already been backed up beside
 // the on-disk file — but restoreSnapshot treats it like one so the snapshot
 // dir is retained for the user to reconcile.
@@ -23,16 +33,32 @@ export class StaleSnapshotConflict extends Error {
   constructor(
     readonly file: string,
     readonly backupPath: string,
+    // Why the captured copy could not be put back; default: the file changed
+    // on disk after capture.
+    reason?: string,
   ) {
-    super(`on-disk ${file} changed since capture; kept it, backed up snapshot copy to ${backupPath}`);
+    super(
+      reason
+        ? `${file}: ${reason}; kept the working-tree version, backed up snapshot copy to ${backupPath}`
+        : `on-disk ${file} changed since capture; kept it, backed up snapshot copy to ${backupPath}`,
+    );
     this.name = 'StaleSnapshotConflict';
   }
 }
 
+// A path restore deliberately left alone because the working tree holds newer
+// work (e.g. a captured deletion whose file was edited since). Reported as a
+// failure, but retrying it on a later boot can only undo that decision, so a
+// partial restore does not keep it pending (see retireSettledEntries).
+class SnapshotPathKept extends Error {}
+
 // Options controlling how the snapshot is written back into the working tree.
 export type RestoreSnapshotOptions = {
-  // Default: preserve differing dirty/untracked destinations; overlay only a
-  // tracked destination verified clean against HEAD. True (boot recovery):
+  // Default: preserve differing dirty/untracked destinations; a tracked
+  // destination verified clean against HEAD is overlaid when HEAD's version of
+  // it is still the capture base, and three-way merged with the captured copy
+  // when a commit since capture (the fast-forward) changed it — a conflict
+  // keeps HEAD's version and backs the copy up. True (boot recovery):
   // preserve ANY differing destination. False explicitly opts into overwrite
   // for callers that independently own and verified the destination.
   guardStaleOverwrite?: boolean;
@@ -171,6 +197,8 @@ async function restoreSnapshotPath(
   repoRoot: string,
   file: string,
   opts: RestoreSnapshotOptions,
+  // Capture's HEAD, and whether the path was a modified TRACKED file there.
+  base: { commit?: string; tracked: boolean },
 ): Promise<void> {
   const src = path.join(snapshotDir, file);
   const dst = path.join(repoRoot, file);
@@ -184,6 +212,16 @@ async function restoreSnapshotPath(
   const destinationExists = destinationVersion !== null;
   const diverged = destinationExists && sourceVersion !== destinationVersion;
   if (!diverged && destinationExists) return; // Already restored; avoid watcher churn.
+  // In-session restore only (boot recovery keeps its stricter rules below):
+  // the capture's HEAD lets a path be checked against what landed since.
+  const reconcileBase = opts.guardStaleOverwrite === undefined && isCommitId(base.commit) ? base.commit : undefined;
+  if (!destinationExists && reconcileBase && base.tracked && (await deletedSinceCapture(repoRoot, reconcileBase, file))) {
+    // The merge deleted a file the user had modified. Putting the copy back
+    // at its path would silently undo that deletion in the working tree (and
+    // a later `git add -A` would commit it), so surface it as a conflict.
+    const backup = await backupCapturedVersionBesideDst(src, dst, stat);
+    throw new StaleSnapshotConflict(file, backup, 'deleted by the merge, but you had uncommitted edits to it');
+  }
   if (opts.guardStaleOverwrite !== false && diverged &&
       (opts.guardStaleOverwrite === true || !(await cleanTrackedVersion(repoRoot, file, dst)))) {
     // The working tree changed since capture. We cannot tell an intended FF
@@ -192,6 +230,21 @@ async function restoreSnapshotPath(
     const backup = await backupCapturedVersionBesideDst(src, dst, stat);
     throw new StaleSnapshotConflict(file, backup);
   }
+  if (diverged && reconcileBase && stat.isFile()) {
+    // `dst` is clean committed HEAD content. If a commit since capture (the
+    // fast-forward) changed this path, overlaying the captured copy would
+    // silently revert that change: merge the two instead (threeWay.ts).
+    const outcome = await reconcileWithCommittedChange(repoRoot, reconcileBase, file, src, dst);
+    if (outcome.kind === 'conflict') {
+      const backup = await backupCapturedVersionBesideDst(src, dst, stat);
+      throw new StaleSnapshotConflict(file, backup, outcome.reason);
+    }
+    if (outcome.kind === 'merged') {
+      if (await writeMergedVersion(dst, destinationVersion, outcome.content)) return;
+      const backup = await backupCapturedVersionBesideDst(src, dst, stat);
+      throw new StaleSnapshotConflict(file, backup, 'changed on disk while it was being merged');
+    }
+  }
   if (destinationExists) await removeExistingPathNoFollow(dst);
   if (stat.isSymbolicLink()) {
     const target = await fs.readlink(src);
@@ -199,6 +252,17 @@ async function restoreSnapshotPath(
   } else {
     await fs.copyFile(src, dst, constants.COPYFILE_EXCL);
   }
+}
+
+// Write a three-way merge result over `dst`, only if `dst` is still the
+// version the merge read (and a regular file: writing through a link would
+// land outside the path). In place, so the file keeps its mode. False when
+// `dst` changed meanwhile and was left as is.
+async function writeMergedVersion(dst: string, expectedVersion: string | null, content: string): Promise<boolean> {
+  const stat = await fs.lstat(dst);
+  if (!stat.isFile() || (await pathVersion(dst)) !== expectedVersion) return false;
+  await fs.writeFile(dst, content, 'utf8');
+  return true;
 }
 
 // Re-apply a deletion the snapshot captured (the path was locally deleted; the
@@ -219,10 +283,10 @@ async function reapplySnapshotDeletion(repoRoot: string, file: string): Promise<
     throw err;
   }
   if (stat.isDirectory()) {
-    throw new Error('a directory now exists at the captured deletion; keeping it');
+    throw new SnapshotPathKept('a directory now exists at the captured deletion; keeping it');
   }
   if (!(await cleanTrackedVersion(repoRoot, file, dst))) {
-    throw new Error('on-disk content differs from HEAD; keeping it instead of re-deleting');
+    throw new SnapshotPathKept('on-disk content differs from HEAD; keeping it instead of re-deleting');
   }
   await fs.rm(dst, { force: true, recursive: false });
 }
@@ -248,6 +312,7 @@ async function restoreOwnedSnapshot(handle: SnapshotHandle, repoRoot: string, op
   // A path with a captured copy is restored from it; only a path that has NO
   // copy is treated as a captured deletion.
   const copiedSet = new Set(copied);
+  const trackedSet = new Set(handle.modifiedTracked);
   const deletions = new Set((handle.deleted ?? []).filter((f) => !copiedSet.has(f)));
   const all = [...copied, ...deletions];
   // Path safety gate: the manifest is JSON on disk that may have been
@@ -274,13 +339,18 @@ async function restoreOwnedSnapshot(handle: SnapshotHandle, repoRoot: string, op
   let failed = unsafe.length;
   result.failed.push(...unsafe.map((file) => ({ file, message: 'unsafe snapshot path' })));
   let staleConflicts = 0;
+  // Paths whose failure a later attempt might fix (an I/O error, a busy
+  // file). Everything else is settled: restored, backed up as a conflict
+  // copy, kept on purpose, or never restorable (unsafe).
+  const retryable = new Set<string>();
   for (const file of safe) {
     try {
       if (deletions.has(file)) await reapplySnapshotDeletion(repoRoot, file);
-      else await restoreSnapshotPath(handle.dir, repoRoot, file, opts);
+      else await restoreSnapshotPath(handle.dir, repoRoot, file, opts, { commit: handle.baseCommit, tracked: trackedSet.has(file) });
       result.restored.push(file);
     } catch (err) {
       failed += 1;
+      if (!(err instanceof StaleSnapshotConflict) && !(err instanceof SnapshotPathKept)) retryable.add(file);
       if (err instanceof StaleSnapshotConflict) {
         staleConflicts += 1;
         result.conflicts.push({ file, backupPath: err.backupPath });
@@ -311,8 +381,72 @@ async function restoreOwnedSnapshot(handle: SnapshotHandle, repoRoot: string, op
           : '') +
         `; snapshot kept at ${handle.dir} for manual recovery`,
     );
+    await retireSettledEntries(handle.dir, result, retryable);
   }
   return result;
+}
+
+// After a partial restore, narrow the on-disk manifest to the paths still
+// worth retrying. Left whole, every later boot re-applied the entire manifest:
+// files the user had since deleted came back with stale content, and each
+// file edited since got a fresh `.lattice-conflict` copy, forever, since the
+// snapshot never cleared while any path still differed. Restored and
+// backed-up paths are recorded under `retired`; when nothing is left the
+// snapshot is `archived`: its payload kept for the user, never auto-restored.
+async function retireSettledEntries(
+  snapshotDir: string,
+  result: SnapshotRestoreResult,
+  retryable: ReadonlySet<string>,
+): Promise<void> {
+  try {
+    const manifest = await readSnapshotManifest(snapshotManifestPath(snapshotDir));
+    if (!manifest) return; // a hand-built handle, or unreadable: nothing to narrow
+    const keep = (files: string[]) => files.filter((file) => retryable.has(file));
+    const at = Date.now();
+    const retired: RetiredSnapshotPath[] = [
+      ...result.restored.map((file) => ({ file, outcome: 'restored' as const, at })),
+      ...result.conflicts.map(({ file, backupPath }) => ({ file, outcome: 'conflict' as const, backupPath, at })),
+      ...result.failed
+        .filter(({ file }) => !retryable.has(file))
+        .map(({ file, message }) => ({ file, outcome: 'failed' as const, message, at })),
+    ];
+    const modifiedTracked = keep(manifest.modifiedTracked);
+    const untracked = keep(manifest.untracked);
+    const deleted = keep(manifest.deleted ?? []);
+    const archived = modifiedTracked.length + untracked.length + deleted.length === 0;
+    await writeSnapshotManifest(snapshotDir, {
+      ...manifest,
+      modifiedTracked,
+      untracked,
+      ...(manifest.deleted ? { deleted } : {}),
+      retired: [...(manifest.retired ?? []), ...retired],
+      ...(archived ? { archived: true } : {}),
+    });
+    console.warn(
+      archived
+        ? `[snapshot] ${snapshotDir}: nothing left to retry; kept as an archive, not restored again on boot`
+        : `[snapshot] ${snapshotDir}: ${retryable.size} path(s) still pending for boot recovery`,
+    );
+  } catch (err) {
+    console.warn(`[snapshot] could not narrow the manifest of ${snapshotDir}: ${(err as Error).message}`);
+  }
+}
+
+// One-line user-facing summary of a partial restore, naming the conflict
+// copies so the user knows where their captured edits went.
+export function describePartialRestore(result: SnapshotRestoreResult, snapshotDir: string): string {
+  const list = (files: string[]) => files.slice(0, 5).join(', ') + (files.length > 5 ? ` (+${files.length - 5} more)` : '');
+  const parts: string[] = [];
+  if (result.conflicts.length > 0) {
+    parts.push(
+      `${result.conflicts.length} file(s) kept their working-tree version and your captured copy was saved beside ` +
+        `each as ${SNAPSHOT_CONFLICT_SUFFIX}: ${list(result.conflicts.map((c) => c.file))}`,
+    );
+  }
+  if (result.failed.length > 0) {
+    parts.push(`${result.failed.length} file(s) not restored: ${list(result.failed.map((f) => f.file))}`);
+  }
+  return `Snapshot partly restored; ${parts.join('; ') || 'newer edits preserved'}; captured versions retained at ${snapshotDir}`;
 }
 
 async function assertSnapshotRemovalSafe(snapshotDir: string, repoRoot: string): Promise<void> {

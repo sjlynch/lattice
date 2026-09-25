@@ -152,7 +152,6 @@ const WORKTREE_TOOLS = [
   'list_tasks',
   'my_task',
   'opengrep_findings',
-  'opengrep_ignore',
   'opengrep_scan',
   'search_tasks',
 ];
@@ -163,7 +162,7 @@ test('a task-worktree session gets my_task and the read/file/report set — no b
   try {
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map((t) => t.name).sort(), WORKTREE_TOOLS);
-    for (const absent of ['update_task', 'transition_tasks', 'delete_task', 'run_task']) {
+    for (const absent of ['update_task', 'transition_tasks', 'delete_task', 'run_task', 'opengrep_ignore']) {
       assert.ok(!tools.some((t) => t.name === absent), `${absent} must not reach a worktree agent`);
     }
     // …and `append_summary` drops `id` from its required list in this mode only
@@ -184,6 +183,24 @@ test('a task-worktree session gets my_task and the read/file/report set — no b
   } finally {
     await close();
   }
+});
+
+// `opengrep_ignore` writes the project's ignore lists permanently; a worktree
+// brief is untrusted input, so only the read-only Opengrep tools reach a task
+// agent (a poisoned brief could otherwise hide the findings its own change
+// introduced from every later security review).
+test('opengrep_ignore is offered outside a task worktree only; scan / findings are offered in both', async () => {
+  const opengrepTools = async (taskId?: string) => {
+    const { client, close } = await connect([], undefined, { taskId });
+    try {
+      const { tools } = await client.listTools();
+      return tools.map((t) => t.name).filter((n) => n.startsWith('opengrep_')).sort();
+    } finally {
+      await close();
+    }
+  };
+  assert.deepEqual(await opengrepTools('t_mine'), ['opengrep_findings', 'opengrep_scan']);
+  assert.deepEqual(await opengrepTools(undefined), ['opengrep_findings', 'opengrep_ignore', 'opengrep_scan']);
 });
 
 test('append_summary without an id targets the session task when there is one, and errors when there is not', async () => {

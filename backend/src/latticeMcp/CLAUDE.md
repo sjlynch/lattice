@@ -51,21 +51,27 @@ that is already running.
   user session, or — when `taskId` is set (a task worktree's agent) — the
   eight-tool read / `my_task` / file / report set with the board-management
   tools (`update_task`, `transition_tasks`, `delete_task`, `run_task`) left
-  out. Both sets also carry the three Opengrep tools (14 / 11 tools in
-  total). A short composition: builds the client + `McpServer`, calls the
-  `tools/` registrars in order (tool order is what the model sees), and keeps
-  the `taskId` board-management gate visible.
+  out. Both sets carry the read-only `opengrep_scan` / `opengrep_findings`;
+  `opengrep_ignore` sits behind the same `taskId` cut as board management
+  (14 / 10 tools in total). A short composition: builds the client +
+  `McpServer`, calls the `tools/` registrars in order (tool order is what the
+  model sees), and keeps the `taskId` gate visible.
 - `toolResult.ts` — `ToolResult`, `toToolResult` (outcome → MCP-result mapping), `withKeptBranchHint`, `STATUS_DESC`.
 - `tools/readTools.ts` — `board_summary`, `list_tasks`, `get_task`, `my_task` (worktree only), `search_tasks`.
 - `tools/writeTools.ts` — `create_task`, `create_tasks`, `append_summary`.
-- `tools/opengrepTools.ts` — `opengrep_scan`, `opengrep_findings`, `opengrep_ignore` (+ the digest unwrap).
+- `tools/opengrepTools.ts` — `registerOpengrepTools` (`opengrep_scan` with its start-then-poll loop, `opengrep_findings`, the digest unwrap) and `registerOpengrepIgnoreTool` (`opengrep_ignore`, not in a worktree session).
 - `tools/boardManagementTools.ts` — `update_task`, `transition_tasks`, `delete_task`, `run_task` (not in a worktree session).
 - `client.ts` — the HTTP layer. Builds URLs with `project` pinned (sent on
   EVERY call, so the by-id routes can 404 a foreign task), sends/parses JSON,
   asserts the response's `canonicalProject` (envelopes) or `projectPath` (a
-  bare `Task`), and classifies each round trip into the five-way
-  `LatticeCallOutcome`. Imports no MCP types, so it is testable (and
-  reasonable) without a transport.
+  bare `Task`), and classifies each round trip into the six-way
+  `LatticeCallOutcome`. A **`timeout`** (undici's `UND_ERR_HEADERS_TIMEOUT` /
+  `UND_ERR_BODY_TIMEOUT` — Node's fetch gives up on a response after 300 s) is
+  its own kind, NOT `unreachable`: the backend answered the connection and is
+  most likely still working, so "Is Lattice running?" was the wrong thing to
+  tell the agent. `httpError` carries the `status`. `pause(ms)` exposes the
+  injectable sleep for tools that poll. Imports no MCP types, so it is testable
+  (and reasonable) without a transport.
 - `server.ts` — the stdio entry point. Reads `LATTICE_API_URL` +
   `LATTICE_PROJECT` (exit 1 on either missing), builds the server, connects a
   `StdioServerTransport`.
@@ -85,7 +91,8 @@ that is already running.
 | write | `create_task`, `create_tasks`, `append_summary` | in every session |
 | manage | `update_task`, `transition_tasks`, `delete_task` | **not in a task-worktree session** — a worktree agent's brief is untrusted input; it reads, files follow-ups and reports, it does not re-lane or delete. `delete_task` is `DELETE /api/tasks/:id` — a PERMANENT erase that also tears down the task's worktree + branch (a branch with commits not on HEAD is KEPT; the route then returns `keptBranch.hint`, which the tool puts on the first line of its result, before the JSON), not a move to the `deleted` lane (that is `update_task` / `transition_tasks` with `status: "deleted"`) |
 | run | `run_task` | returns `{accepted, queued}` — admitted, **not started**. Also **not in a task-worktree session** |
-| tools | `opengrep_scan`, `opengrep_findings`, `opengrep_ignore` | in every session. The first two return the Opengrep **digest markdown** (never the JSON envelope): `opengrep_scan` runs a scan with the project's packs/filter (409 busy / not-installed / no-rules surfaces as an error the agent can act on); `opengrep_findings` re-reads a stored scan (`latest` by default) narrowed by `rule` / `file` / `severity` / `budgetKb` — the drill-down when a digest says rules were cut for the byte budget. `opengrep_ignore` appends rule ids / fingerprints to the project's ignore lists (`POST /api/opengrep/ignore`, additive) and echoes the agent's optional `reason` back in the result text (never stored). Backed by `routes/opengrep.ts`; see `../opengrep/CLAUDE.md` |
+| tools | `opengrep_scan`, `opengrep_findings` | in every session. Both return the Opengrep **digest markdown** (never the JSON envelope): `opengrep_scan` runs a scan with the project's packs/filter (409 busy / not-installed / no-rules surfaces as an error the agent can act on); `opengrep_findings` re-reads a stored scan (`latest` by default) narrowed by `rule` / `file` / `severity` / `budgetKb` — the drill-down when a digest says rules were cut for the byte budget. **A scan never holds one request open**: the tool POSTs with `async: true`, a scan done within the backend's 15 s accept window answers at once, a longer one answers `202 {scanId, status: 'running'}` and the tool polls `GET /api/opengrep/scans/<id>` every 5 s (budget 12 min, above the 10 min scan cap). A failed scan comes back as its own 409/500 error; an id the backend no longer knows (restarted mid-scan) says to scan again; running out of budget — or a response timeout on the POST — is a NON-error "still running, don't start another (busy), fetch it with `opengrep_findings`" result. Before this, a >300 s scan hit undici's headers timeout and the agent was told Lattice was down |
+| tools | `opengrep_ignore` | **not in a task-worktree session** (same cut as board management): it appends rule ids / fingerprints to the project's ignore lists PERMANENTLY (`POST /api/opengrep/ignore`, additive), and a poisoned or careless brief could otherwise have a task agent hide the findings its own change introduced from every later security-review digest. Echoes the agent's optional `reason` back in the result text (never stored). Backed by `routes/opengrep.ts`; see `../opengrep/CLAUDE.md` |
 
 ## Invariants
 

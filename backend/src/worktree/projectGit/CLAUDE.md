@@ -14,4 +14,7 @@ for the user's main project repo.
   non-ff merge, or deleting non-`lattice/*` branches.
 - Path-form `checkout`/`reset` must stay path-only (`-- <paths>`), never branch
   movement.
+- `merge-file` only in its print form (`-p`/`--stdout`, no `--object-id`):
+  snapshot restore's three-way merge (`../snapshot/threeWay.ts`) reads the
+  result from stdout; without `-p` git rewrites its first file argument.
 - Tests for guard drift live in `backend/src/__tests__/projectGit.test.ts`.

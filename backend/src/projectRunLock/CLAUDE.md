@@ -107,6 +107,7 @@ and silently aborts every later run on that project.
 | `withLock.ts` | `withProjectRunLock` — acquire/run/release wrapper. |
 | `inspect.ts` | `inspectProjectRunLock` — read `{holder, alive}`, no acquire. |
 | `errors.ts` | `ProjectRunLockedError` (carries the contended `holder`). |
+| `interruptedRun.ts` | `isResumableInterruptedRunLock` (which dead labels mean a Merge All / workflow Merge-Push step to resume) + the `interrupted-run.json` marker boot snapshot recovery writes before it steals such a lock, so `recovery/mergeRunResume.ts` still resumes the run and the owed post-merge hook still defers. Cleared by the resume once it has acted. |
 
 ## Invariants to preserve
 

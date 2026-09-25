@@ -14,6 +14,10 @@ import type { PiMenuEntry, PostMergeHookRun } from '../../api';
 import { isPostMergeHookConfigured, postMergeHookStatusLabel } from './postMergeHookStatus';
 
 type Props = {
+  // False until the project's saved hook settings have loaded: the controls
+  // stay disabled and the chip reads "Loading…" rather than the defaults'
+  // "Off" (the backend fires the SAVED hook regardless of what we show).
+  loaded: boolean;
   prompt: string;
   enabled: boolean;
   harness: AgentHarness;
@@ -31,6 +35,7 @@ type Props = {
 };
 
 export function PostMergeHookRow({
+  loaded,
   prompt,
   enabled,
   harness,
@@ -72,7 +77,12 @@ export function PostMergeHookRow({
   }, [draftPrompt, prompt, onSavePrompt]);
 
   const configured = isPostMergeHookConfigured(prompt);
-  const status = postMergeHookStatusLabel(active, recent, configured, enabled);
+  // A live/recent run is known independently of the form; only the
+  // configured/enabled fallback needs the loaded settings.
+  const status =
+    loaded || active || recent
+      ? postMergeHookStatusLabel(active, recent, configured, enabled)
+      : { text: 'Loading…', tone: 'idle' as const };
   const harnessOptions = buildHarnessOptions({
     harnessAvail,
     piMenu,
@@ -107,7 +117,7 @@ export function PostMergeHookRow({
           <span className={`post-merge-hook-chip post-merge-hook-chip-${status.tone}`}>
             {status.text}
           </span>
-          {configured && !active && (
+          {loaded && configured && !active && (
             <span className="post-merge-hook-preview" title={prompt}>
               {prompt.length > 60 ? `${prompt.slice(0, 60)}…` : prompt}
             </span>
@@ -125,6 +135,7 @@ export function PostMergeHookRow({
           <input
             type="checkbox"
             checked={enabled}
+            disabled={!loaded}
             onChange={(e) => onToggleEnabled(e.target.checked)}
           />
           <span>Enabled</span>
@@ -167,6 +178,7 @@ export function PostMergeHookRow({
             }
             value={draftPrompt}
             onChange={onPromptChange}
+            disabled={!loaded}
             rows={4}
             spellCheck={false}
           />
@@ -175,6 +187,7 @@ export function PostMergeHookRow({
               <span>Harness</span>
               <select
                 value={encodeHarnessValue(harness, piModel)}
+                disabled={!loaded}
                 onChange={(e) => {
                   const sel = decodeHarnessValue(e.target.value);
                   onSaveHarness(normalizeAgentHarness(sel.harness), sel.piModel);

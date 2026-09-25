@@ -19,6 +19,21 @@ type CloseTerminal = (id: string) => void;
 
 type ActiveQaRun = { runId: string; taskId: string; terminalId: string };
 
+// The open terminal tabs (only their ids matter) + a way to focus one. Used to
+// tell a run the user can still watch from one whose tab was closed.
+type QaRunTerminals = {
+  terminals: readonly { id: string }[];
+  focusTerminal: (id: string) => void;
+};
+
+// A run whose tab the user closed killed its pty, so it will never report
+// `done`: it must not keep the card in "testing…" or block a re-test (the
+// backend likewise ignores a run whose pty is gone). Without a terminal list
+// every tracked run counts as open.
+function isTabOpen(run: ActiveQaRun, terminals: readonly { id: string }[] | undefined): boolean {
+  return !terminals || terminals.some((t) => t.id === run.terminalId);
+}
+
 // Owns the QA-lane "run end-to-end test" buttons. Each run spawns a
 // Playwright-enabled Claude session (backend `/api/qa-runs`) in its own
 // terminal tab, then polls until the backend's Stop hook flips the run to
@@ -29,17 +44,33 @@ type ActiveQaRun = { runId: string; taskId: string; terminalId: string };
 // `qa` lane, and `useTaskTerminalCleanup` closes every terminal tagged with a
 // qa/done/deleted task's id — which would kill this terminal the instant it
 // spawned. Like push runs, these are tracked here by terminal id instead.
+//
+// One session per task: while a task's run is active (and its tab still open)
+// the card's ▶ focuses that terminal instead of starting a second Claude +
+// Playwright beside it — both would drive the same dev server and either
+// one's confident PASS would promote the task. The backend refuses a duplicate
+// start too (409); this just keeps the click from getting that far.
 export function useQaRuns(
   activeFolder: string,
   addTerminal: AddTerminal,
   closeTerminal: CloseTerminal,
   showError: (msg: string) => void,
+  tabs?: QaRunTerminals,
 ) {
   const [activeRuns, setActiveRuns] = useState<ActiveQaRun[]>([]);
+  // Read by startQaRun, which must see a run recorded moments ago even when the
+  // caller's closure predates that render ("run all" loops in one tick).
+  const activeRunsRef = useRef<ActiveQaRun[]>(activeRuns);
+  activeRunsRef.current = activeRuns;
   // Tasks with an in-flight start request, so a double-click (or "run all"
   // overlapping a single run) doesn't spawn two sessions for one task before
   // the first lands in `activeRuns`.
   const startingRef = useRef<Set<string>>(new Set());
+
+  const terminals = tabs?.terminals;
+  const focusTerminal = tabs?.focusTerminal;
+  const terminalsRef = useRef(terminals);
+  terminalsRef.current = terminals;
 
   // Drop everything when the project changes — the runs belong to the old
   // project's tasks and their terminals are scoped out by project anyway.
@@ -97,6 +128,19 @@ export function useQaRuns(
     async (task: Task) => {
       if (!activeFolder) return;
       if (startingRef.current.has(task.id)) return;
+      const tracked = activeRunsRef.current.filter((r) => r.taskId === task.id);
+      const live = tracked.find((r) => isTabOpen(r, terminalsRef.current));
+      if (live) {
+        focusTerminal?.(live.terminalId);
+        return;
+      }
+      if (tracked.length > 0) {
+        // Only closed-tab runs: stop showing them as running and let the
+        // backend (which probes the pty) decide whether a new run may start.
+        const stale = new Set(tracked.map((r) => r.runId));
+        activeRunsRef.current = activeRunsRef.current.filter((r) => !stale.has(r.runId));
+        setActiveRuns((prev) => prev.filter((r) => !stale.has(r.runId)));
+      }
       startingRef.current.add(task.id);
       try {
         // As a push start: ride out a restart, never risk a second session.
@@ -114,22 +158,25 @@ export function useQaRuns(
           },
           true,
         );
-        setActiveRuns((prev) => [
-          ...prev,
-          { runId: res.id, taskId: task.id, terminalId },
-        ]);
+        const run = { runId: res.id, taskId: task.id, terminalId };
+        activeRunsRef.current = [...activeRunsRef.current, run];
+        setActiveRuns((prev) => [...prev, run]);
       } catch (err) {
         showError(`QA test failed to start: ${(err as Error).message}`);
       } finally {
         startingRef.current.delete(task.id);
       }
     },
-    [activeFolder, addTerminal, showError],
+    [activeFolder, addTerminal, showError, focusTerminal],
   );
 
+  // Tasks under test right now — drives the card's "testing…" button.
   const runningTaskIds = useMemo(
-    () => new Set(activeRuns.map((r) => r.taskId)),
-    [activeRuns],
+    () =>
+      new Set(
+        activeRuns.filter((r) => isTabOpen(r, terminals)).map((r) => r.taskId),
+      ),
+    [activeRuns, terminals],
   );
 
   const startAllQaRuns = useCallback(

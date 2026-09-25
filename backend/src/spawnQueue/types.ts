@@ -9,7 +9,12 @@ export type SpawnPriority = 'batch' | 'priority' | 'interactive';
 // A spawn unit. Doing the *whole* spawn (worktree setup + exactly one
 // proxyCreateSession) inside the thunk is deliberate: it lets the queue
 // pace the heavy git/file work, not just the pty allocation.
-export type SpawnThunk<T = unknown> = () => Promise<T>;
+//
+// `signal` is the request's own cancellation signal: `cancelSpawn` aborts it
+// even once the request is in flight (admitted, thunk running), so a long
+// thunk can notice it was withdrawn and back out instead of finishing a spawn
+// nobody wants any more. A thunk that ignores it simply runs to completion.
+export type SpawnThunk<T = unknown> = (signal: AbortSignal) => Promise<T>;
 
 export type EnqueueSpawnArgs<T = unknown> = {
   // Human-readable category for logs/snapshots ('task-run', 'task-resume', …).
@@ -19,6 +24,7 @@ export type EnqueueSpawnArgs<T = unknown> = {
   // returns the existing request's handle.
   dedupeKey: string;
   thunk: SpawnThunk<T>;
+  // Optional external cancellation, forwarded into the request's own signal.
   signal?: AbortSignal;
 };
 
@@ -47,6 +53,9 @@ export type SpawnQueueSnapshot = {
   inFlight: number;
   reserved: number;
   liveCount: number;
+  // The subset of `liveCount` that are Lattice agents — what the resource
+  // governor's floor counts (resourceGovernor.ts `countAgentSessions`).
+  liveAgents: number;
   effectiveLive: number;
   pollHealthy: boolean;
   softCap: number;

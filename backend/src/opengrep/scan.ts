@@ -15,24 +15,45 @@
 // or the MCP tool.
 
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
-import { IGNORE_DIR_NAMES } from '../health/constants.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { spawnWithTimeout } from '../spawnWithTimeout.js';
 import { resetOpengrepCache, resolveOpengrep, type OpengrepResolution } from './detect.js';
-import { parseOpengrepJson, type OpengrepSeverity, type ParsedOpengrepOutput } from './digest.js';
-import { projectRulesDir, projectScansDir, rulePackDir, rulesRootDir } from './paths.js';
-import { readOpengrepState } from './state.js';
-import { findRulePackDef } from './versions.js';
+import { parseOpengrepJson, type OpengrepSeverity } from './digest.js';
+import { projectScansDir, rulesRootDir } from './paths.js';
+import { acquireRulesRead } from './rulesGate.js';
+import {
+  buildScanArgs,
+  defaultExcludeGlobs,
+  defaultScanJobs,
+  resolveRuleConfigs,
+  resolveScanTargets,
+} from './scanArgs.js';
+import { MAX_SCANS_PER_PROJECT, pruneOldScans, type OpengrepScanRecord } from './scanRecords.js';
 
-export const MAX_SCANS_PER_PROJECT = 10;
+// Target + argument building and stored-record access live in their own
+// modules; re-exported so every existing `./scan.js` import keeps working.
+export {
+  OpengrepBadTargetError,
+  buildScanArgs,
+  defaultExcludeGlobs,
+  defaultScanJobs,
+  resolveRuleConfigs,
+  resolveScanTargets,
+} from './scanArgs.js';
+export {
+  MAX_SCANS_PER_PROJECT,
+  latestOpengrepScan,
+  listOpengrepScans,
+  readOpengrepScan,
+  type OpengrepScanRecord,
+} from './scanRecords.js';
+
 export const DEFAULT_SCAN_TIMEOUT_MS = 10 * 60_000;
-// Per-file rule timeout (seconds) handed to the engine, and how many timeouts
-// on one file before the engine gives up on it.
-const PER_FILE_TIMEOUT_S = 30;
-const PER_FILE_TIMEOUT_THRESHOLD = 3;
-const MAX_TARGET_BYTES = 1_000_000;
+// Random base-36 characters after the timestamp in a scan id (`og_<ts>_<rand>`).
+const SCAN_ID_SUFFIX_LENGTH = 6;
+// How much of the engine's stderr a "no readable JSON report" error quotes.
+const STDERR_EXCERPT_MAX_CHARS = 800;
 
 export class OpengrepNotInstalledError extends Error {
   constructor() {
@@ -80,35 +101,46 @@ export type OpengrepScanRequest = {
   signal?: AbortSignal;
 };
 
-export type OpengrepScanRecord = {
-  id: string;
-  project: string;
-  startedAt: number;
-  finishedAt: number;
-  durationMs: number;
-  engine: { version: string; source: OpengrepResolution['source'] };
-  packIds: string[];
-  rulePaths: string[];
-  targets: string[];
-  exitCode: number | null;
-  // RAW (unfiltered) counts, so the Settings summary and the digest agree on
-  // what the engine saw regardless of the project's filter.
-  findings: number;
-  bySeverity: Record<OpengrepSeverity, number>;
-  scannedFiles: number;
-  errors: number;
-  partiallyParsed: number;
-  jsonFile: string;
-};
-
 export type ScanDeps = {
   resolve?: () => Promise<OpengrepResolution | null>;
   spawn?: typeof spawnWithTimeout;
   cpuCount?: number;
 };
 
-type RunningScan = { promise: Promise<OpengrepScanRecord>; abort: AbortController };
+type RunningScan = { id: string; startedAt: number; promise: Promise<OpengrepScanRecord>; abort: AbortController };
 const running = new Map<string, RunningScan>();
+
+// The last few scans that FAILED, by id, so a caller that started one with
+// `startOpengrepScan` and polls for it (the MCP tool, via `GET
+// /api/opengrep/scans/:id`) learns why instead of seeing an unknown id. A
+// successful scan needs no entry: its record is on disk.
+const RECENT_FAILURES_KEPT = 20;
+const recentFailures = new Map<string, { project: string; error: Error }>();
+
+function rememberFailure(id: string, project: string, err: unknown): void {
+  recentFailures.set(id, { project, error: err instanceof Error ? err : new Error(String(err)) });
+  while (recentFailures.size > RECENT_FAILURES_KEPT) {
+    const oldest = recentFailures.keys().next().value;
+    if (oldest === undefined) break;
+    recentFailures.delete(oldest);
+  }
+}
+
+export type OpengrepScanRunState =
+  | { state: 'running'; id: string; startedAt: number }
+  | { state: 'failed'; id: string; error: Error };
+
+// Is scan `id` of `project` still running, or did it fail? `null` when this
+// backend knows nothing about it in memory (finished and stored — read it with
+// readOpengrepScan — or never started here, e.g. before a restart).
+export function opengrepScanRunState(project: string, id: string): OpengrepScanRunState | null {
+  const canonical = canonicalProjectPath(project);
+  const entry = running.get(canonical);
+  if (entry && entry.id === id) return { state: 'running', id, startedAt: entry.startedAt };
+  const failed = recentFailures.get(id);
+  if (failed && failed.project === canonical) return { state: 'failed', id, error: failed.error };
+  return null;
+}
 
 export function isOpengrepScanRunning(project: string): boolean {
   return running.has(canonicalProjectPath(project));
@@ -138,122 +170,20 @@ process.once('exit', () => {
   for (const entry of running.values()) entry.abort.abort();
 });
 
-export class OpengrepBadTargetError extends Error {}
-
-// The `targets` an API / MCP caller passes are project-relative sub-paths. They
-// are resolved against the project and must stay inside it: a `../../etc` (or
-// an absolute path elsewhere) would scan — and put into the stored record —
-// files outside the project the caller is scoped to. Duplicates and `.` /
-// empty entries collapse to the project root.
-export function resolveScanTargets(project: string, targets: string[] | undefined): { abs: string[]; rel: string[] } {
-  const cleaned = (targets ?? []).map((t) => t.trim()).filter(Boolean);
-  if (cleaned.length === 0) return { abs: [project], rel: ['.'] };
-  const abs: string[] = [];
-  const rel: string[] = [];
-  const seen = new Set<string>();
-  for (const t of cleaned) {
-    const resolved = path.resolve(project, t);
-    const relative = path.relative(project, resolved);
-    // `..` itself or a `../…` prefix escapes; a subdirectory literally named
-    // `..foo` does not (hence the separator check), and a different drive
-    // comes back absolute.
-    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-      throw new OpengrepBadTargetError(`target ${JSON.stringify(t)} is outside the project`);
-    }
-    const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    abs.push(resolved);
-    rel.push(relative ? relative.replace(/\\/g, '/') : '.');
-  }
-  // The whole project subsumes every other target.
-  if (rel.includes('.')) return { abs: [project], rel: ['.'] };
-  return { abs, rel };
-}
-
-export function defaultScanJobs(cpuCount = os.cpus().length): number {
-  return Math.max(1, cpuCount - 2);
+// The engine's `-o` file of a scan that will not be recorded (cancelled,
+// failed to start, timed out, unreadable). Best-effort, like every cleanup here.
+async function discardRawOutput(jsonFile: string): Promise<void> {
+  await fs.rm(jsonFile, { force: true }).catch(() => {});
 }
 
 function scanId(): string {
-  return `og_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-async function isDir(p: string): Promise<boolean> {
-  try {
-    return (await fs.stat(p)).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-async function exists(p: string): Promise<boolean> {
-  try {
-    await fs.access(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// The `-f` arguments: installed packs as RELATIVE ids (cwd is the rules root),
-// the project's own rules dir, and any configured extra paths, as absolutes.
-export async function resolveRuleConfigs(
-  project: string,
-  packIds: string[],
-  extraRulePaths: string[] = [],
-): Promise<{ rulePaths: string[]; packIds: string[] }> {
-  const state = await readOpengrepState();
-  const rulePaths: string[] = [];
-  const used: string[] = [];
-  for (const id of packIds) {
-    if (!findRulePackDef(id) || !state.packs[id]) continue;
-    if (!(await isDir(rulePackDir(id)))) continue;
-    rulePaths.push(id);
-    used.push(id);
-  }
-  const own = projectRulesDir(project);
-  if (await isDir(own)) rulePaths.push(own);
-  for (const p of extraRulePaths) {
-    const abs = path.isAbsolute(p) ? p : path.join(project, p);
-    if (await exists(abs)) rulePaths.push(abs);
-  }
-  return { rulePaths, packIds: used };
-}
-
-export function buildScanArgs(opts: {
-  rulePaths: string[];
-  excludeGlobs: string[];
-  jobs: number;
-  outFile: string;
-  targets: string[];
-}): string[] {
-  const args = [
-    'scan',
-    '--json',
-    '--quiet',
-    `--jobs=${opts.jobs}`,
-    `--timeout=${PER_FILE_TIMEOUT_S}`,
-    `--timeout-threshold=${PER_FILE_TIMEOUT_THRESHOLD}`,
-    `--max-target-bytes=${MAX_TARGET_BYTES}`,
-  ];
-  for (const g of opts.excludeGlobs) args.push(`--exclude=${g}`);
-  for (const r of opts.rulePaths) args.push('-f', r);
-  args.push('-o', opts.outFile);
-  args.push(...opts.targets);
-  return args;
-}
-
-// Exclude globs sent on every scan: the directories the graph scan skips too
-// (build output, caches, `.lattice/`), so an un-gitignored `dist/` is not
-// scanned as if it were source. `.git` is never a target anyway.
-export function defaultExcludeGlobs(): string[] {
-  return [...IGNORE_DIR_NAMES].filter((d) => d !== '.git');
+  return `og_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 2 + SCAN_ID_SUFFIX_LENGTH)}`;
 }
 
 async function performScan(
   req: OpengrepScanRequest,
   project: string,
+  id: string,
   deps: ScanDeps,
   signal: AbortSignal,
 ): Promise<OpengrepScanRecord> {
@@ -263,13 +193,39 @@ async function performScan(
   if (signal.aborted) throw new OpengrepScanAbortedError();
   const resolved = await (deps.resolve ?? resolveOpengrep)();
   if (!resolved) throw new OpengrepNotInstalledError();
+
+  // Hold a read slot on the rules tree from resolving the packs until the scan
+  // is stored, so a pack install cannot swap (or a removal delete) a tree this
+  // scan's engine is reading — the scan waits out a swap in progress instead
+  // (rulesGate.ts). Waiting is abortable like the rest of the scan.
+  let releaseRules: () => void;
+  try {
+    releaseRules = await acquireRulesRead(signal);
+  } catch {
+    throw new OpengrepScanAbortedError();
+  }
+  try {
+    return await scanWithRules(req, project, id, deps, signal, targets, resolved);
+  } finally {
+    releaseRules();
+  }
+}
+
+async function scanWithRules(
+  req: OpengrepScanRequest,
+  project: string,
+  id: string,
+  deps: ScanDeps,
+  signal: AbortSignal,
+  targets: { abs: string[]; rel: string[] },
+  resolved: OpengrepResolution,
+): Promise<OpengrepScanRecord> {
   const { rulePaths, packIds } = await resolveRuleConfigs(project, req.packIds, req.extraRulePaths ?? []);
   if (rulePaths.length === 0) throw new OpengrepNoRulesError();
 
   const dir = projectScansDir(project);
   await fs.mkdir(dir, { recursive: true });
   await fs.mkdir(rulesRootDir(), { recursive: true });
-  const id = scanId();
   const jsonFile = path.join(dir, `${id}.json`);
   const excludeGlobs = [...new Set([...defaultExcludeGlobs(), ...(req.excludeGlobs ?? [])])];
   const jobs = req.jobs && req.jobs > 0 ? Math.floor(req.jobs) : defaultScanJobs(deps.cpuCount);
@@ -285,12 +241,12 @@ async function performScan(
   });
   const finishedAt = Date.now();
   if (r.aborted) {
-    await fs.rm(jsonFile, { force: true }).catch(() => {});
+    await discardRawOutput(jsonFile);
     console.log(`[opengrep] scan ${id} cancelled after ${finishedAt - startedAt}ms`);
     throw new OpengrepScanAbortedError();
   }
   if (r.error) {
-    await fs.rm(jsonFile, { force: true }).catch(() => {});
+    await discardRawOutput(jsonFile);
     // A binary that was there at resolve time and is gone now (uninstalled,
     // quarantined): drop the memoized resolution so the next status call
     // reports "not installed" instead of repeating this failure.
@@ -298,7 +254,7 @@ async function performScan(
     throw new OpengrepScanFailedError(`opengrep failed to start: ${r.error.message}`);
   }
   if (r.timedOut) {
-    await fs.rm(jsonFile, { force: true }).catch(() => {});
+    await discardRawOutput(jsonFile);
     throw new OpengrepScanFailedError(
       `opengrep scan timed out after ${Math.round(timeoutMs / 1000)}s and was killed. Narrow the targets or exclude large directories.`,
     );
@@ -307,9 +263,9 @@ async function performScan(
   try {
     raw = JSON.parse(await fs.readFile(jsonFile, 'utf8'));
   } catch (err) {
-    await fs.rm(jsonFile, { force: true }).catch(() => {});
+    await discardRawOutput(jsonFile);
     throw new OpengrepScanFailedError(
-      `opengrep exited ${r.code} without a readable JSON report${r.stderr.trim() ? `: ${r.stderr.trim().slice(0, 800)}` : ''}` +
+      `opengrep exited ${r.code} without a readable JSON report${r.stderr.trim() ? `: ${r.stderr.trim().slice(0, STDERR_EXCERPT_MAX_CHARS)}` : ''}` +
         (`${err}`.includes('ENOENT') ? '' : ` (${(err as Error).message})`),
     );
   }
@@ -343,78 +299,46 @@ async function performScan(
   return record;
 }
 
-export function runOpengrepScan(req: OpengrepScanRequest, deps: ScanDeps = {}): Promise<OpengrepScanRecord> {
+// Start a scan and return its id at once, with the promise of its record. The
+// id is what the stored record will carry, so a caller can hand it out before
+// the scan finishes and poll `opengrepScanRunState` / `readOpengrepScan`.
+// Throws OpengrepScanBusyError synchronously when the project already has one.
+export function startOpengrepScan(
+  req: OpengrepScanRequest,
+  deps: ScanDeps = {},
+): { id: string; promise: Promise<OpengrepScanRecord> } {
   const project = canonicalProjectPath(req.project);
-  if (running.has(project)) return Promise.reject(new OpengrepScanBusyError(project));
+  if (running.has(project)) throw new OpengrepScanBusyError(project);
   const abort = new AbortController();
   if (req.signal) {
     if (req.signal.aborted) abort.abort();
     else req.signal.addEventListener('abort', () => abort.abort(), { once: true });
   }
-  const entry: RunningScan = { promise: undefined as unknown as Promise<OpengrepScanRecord>, abort };
-  entry.promise = performScan(req, project, deps, abort.signal).finally(() => {
-    // Only clear our own entry: a caller that raced in after this scan's
-    // rejection settled must not have its fresh entry removed.
-    if (running.get(project) === entry) running.delete(project);
-  });
+  const id = scanId();
+  const entry: RunningScan = {
+    id,
+    startedAt: Date.now(),
+    promise: undefined as unknown as Promise<OpengrepScanRecord>,
+    abort,
+  };
+  entry.promise = performScan(req, project, id, deps, abort.signal)
+    .catch((err: unknown) => {
+      rememberFailure(id, project, err);
+      throw err;
+    })
+    .finally(() => {
+      // Only clear our own entry: a caller that raced in after this scan's
+      // rejection settled must not have its fresh entry removed.
+      if (running.get(project) === entry) running.delete(project);
+    });
   running.set(project, entry);
-  return entry.promise;
+  return { id, promise: entry.promise };
 }
 
-async function readMeta(file: string): Promise<OpengrepScanRecord | null> {
+export function runOpengrepScan(req: OpengrepScanRequest, deps: ScanDeps = {}): Promise<OpengrepScanRecord> {
   try {
-    const rec = JSON.parse(await fs.readFile(file, 'utf8')) as OpengrepScanRecord;
-    return rec && typeof rec.id === 'string' ? rec : null;
-  } catch {
-    return null;
-  }
-}
-
-export async function listOpengrepScans(project: string): Promise<OpengrepScanRecord[]> {
-  const dir = projectScansDir(canonicalProjectPath(project));
-  let names: string[];
-  try {
-    names = await fs.readdir(dir);
-  } catch {
-    return [];
-  }
-  const metas = await Promise.all(
-    names.filter((n) => n.endsWith('.meta.json')).map((n) => readMeta(path.join(dir, n))),
-  );
-  return metas
-    .filter((m): m is OpengrepScanRecord => !!m)
-    .sort((a, b) => b.startedAt - a.startedAt);
-}
-
-export async function readOpengrepScan(
-  project: string,
-  id: string,
-): Promise<{ record: OpengrepScanRecord; parsed: ParsedOpengrepOutput } | null> {
-  if (!/^og_[a-z0-9_]+$/i.test(id)) return null;
-  const canonical = canonicalProjectPath(project);
-  const dir = projectScansDir(canonical);
-  const record = await readMeta(path.join(dir, `${id}.meta.json`));
-  if (!record) return null;
-  try {
-    const raw = JSON.parse(await fs.readFile(path.join(dir, `${id}.json`), 'utf8'));
-    return { record, parsed: parseOpengrepJson(raw, canonical) };
-  } catch {
-    return null;
-  }
-}
-
-export async function latestOpengrepScan(project: string): Promise<OpengrepScanRecord | null> {
-  return (await listOpengrepScans(project))[0] ?? null;
-}
-
-async function pruneOldScans(dir: string, keep: number): Promise<void> {
-  const names = await fs.readdir(dir);
-  const metas = (
-    await Promise.all(names.filter((n) => n.endsWith('.meta.json')).map((n) => readMeta(path.join(dir, n))))
-  ).filter((m): m is OpengrepScanRecord => !!m);
-  metas.sort((a, b) => b.startedAt - a.startedAt);
-  for (const old of metas.slice(keep)) {
-    await fs.rm(path.join(dir, `${old.id}.meta.json`), { force: true });
-    await fs.rm(path.join(dir, `${old.id}.json`), { force: true });
+    return startOpengrepScan(req, deps).promise;
+  } catch (err) {
+    return Promise.reject(err);
   }
 }

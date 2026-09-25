@@ -37,5 +37,5 @@ export {
   type SnapshotManifest,
 } from './snapshot/manifest.js';
 export { parseStatus, snapshotWorkingTree } from './snapshot/capture.js';
-export { restoreSnapshot, type SnapshotRestoreResult } from './snapshot/restore.js';
+export { describePartialRestore, restoreSnapshot, type SnapshotRestoreResult } from './snapshot/restore.js';
 export { recoverPendingSnapshots } from './snapshot/recovery.js';

@@ -1,6 +1,7 @@
 // The Lattice task-board MCP server: 11 typed board tools over the HTTP API in
 // `routes/tasks/` (plus the three Opengrep tools — scan / findings / ignore —
-// over `routes/opengrep.ts`), pinned to ONE project.
+// over `routes/opengrep.ts`; ignore outside task worktrees only), pinned to ONE
+// project.
 //
 // Why a server and not just the HTTP docs: an agent reading LATTICE_API.md has
 // to remember to pass `project=`, to check the echoed `canonicalProject`, and —
@@ -36,7 +37,7 @@ import {
   type LatticeClientOptions,
 } from './client.js';
 import { registerBoardManagementTools } from './tools/boardManagementTools.js';
-import { registerOpengrepTools } from './tools/opengrepTools.js';
+import { registerOpengrepIgnoreTool, registerOpengrepTools } from './tools/opengrepTools.js';
 import { registerReadTools } from './tools/readTools.js';
 import { registerWriteTools } from './tools/writeTools.js';
 
@@ -73,7 +74,8 @@ export function createLatticeMcpServer(
           ? ` This session is running task ${opts.taskId}: my_task returns it, and ` +
             'append_summary with no id reports on it. Board management (update, ' +
             'transition, delete, run) is not offered here — file follow-ups with ' +
-            'create_task instead.'
+            'create_task instead. Nor is opengrep_ignore: name Opengrep findings you ' +
+            'judge to be rule noise in your summary instead.'
           : ''),
     },
   );
@@ -83,7 +85,7 @@ export function createLatticeMcpServer(
   registerReadTools(server, client, opts);
   // create_task, create_tasks, append_summary — in every session.
   registerWriteTools(server, client, opts);
-  // opengrep_scan, opengrep_findings, opengrep_ignore — in every session.
+  // opengrep_scan, opengrep_findings — read-only, in every session.
   registerOpengrepTools(server, client);
 
   // ---- Board management: NOT registered in a task-worktree session ----------
@@ -97,8 +99,17 @@ export function createLatticeMcpServer(
   // sidebar sessions and the user's own `claude` get the full set. Leaving them
   // out also trims the per-spawn tool-definition cost for the most numerous
   // session type.
+  //
+  // `opengrep_ignore` sits behind the same cut, for the same reason: it
+  // appends to the project's Opengrep ignore lists PERMANENTLY, so a bad brief
+  // could have a task agent suppress the very findings its own change
+  // introduced — hidden from every later security-review digest until a human
+  // happened to spot the entries in Settings → Tools. It is the settings write
+  // a planning agent makes; a worktree agent keeps the read-only scan/findings.
   if (opts.taskId) return server;
 
+  // opengrep_ignore.
+  registerOpengrepIgnoreTool(server, client);
   // update_task, transition_tasks, delete_task, run_task.
   registerBoardManagementTools(server, client);
 

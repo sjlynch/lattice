@@ -27,7 +27,8 @@ is now only a runaway backstop; the queue's `softCap` is the real governor.
 - `drain.ts` — `drainQueue()`: admit pending spawns while there is headroom,
   run each thunk, fold the outcome back into the accounting.
 - `poll.ts` — the `GET /sessions` loop; runs only while the queue has
-  pending/reserved work.
+  pending/reserved work. Reconciles the total session count and the agent
+  subset (`countAgentSessions`).
 
 ## Contract / invariants
 
@@ -61,13 +62,29 @@ is now only a runaway backstop; the queue's `softCap` is the real governor.
   `softCap` is a fixed ceiling; beneath it, `batch` spawns are held while
   smoothed system CPU (≈20 s EWMA from `os.cpus()` deltas, sampled on every
   drain) is ≥ 90% — released below 75% — or free RAM is under max(2 GB, 5%).
-  Never below `MIN_LIVE_AGENTS` (2) live sessions, so outside load can't
-  starve Lattice to zero; `priority` / `interactive` are never held. Held
-  requests just stay pending (the 1.5 s poll re-checks). State is on
+  Never below `MIN_LIVE_AGENTS` (2) live **agents**, so outside load can't
+  starve Lattice to zero. The floor counts `accounting.effectiveAgents()` —
+  sessions whose cwd is under a `.lattice` dir (task worktrees / resolvers,
+  workflow steps, push / QA / post-merge scratch; `countAgentSessions`) plus
+  the queue's reservations — never raw ptys: sidebar shells, a `npm run dev`
+  startup terminal or another project's tabs once held every Run All forever
+  on a low-RAM machine with zero agents running. `priority` / `interactive`
+  are never held. Held requests just stay pending (the 1.5 s poll re-checks). State is on
   `GET /api/spawn-queue` as `governor`; opt out with
   `globalSettings.resourceGovernor: false`. Added after a 50-agent cap on a
   large repo pinned the CPU at 100% and froze the desktop (2026-09-22).
-- **Poll failure freezes admissions.** `proxyCountSessions()` returns `null`
+- **Cancellation reaches in-flight requests.** Every request owns an
+  `AbortController` (an `EnqueueSpawnArgs.signal` is forwarded into it) and the
+  thunk receives its signal. `cancelSpawn` drops a pending request (returns
+  `'pending'`) or aborts an in-flight one (`'in-flight'`); an aborted request
+  is never re-queued by a CAP / disk deferral, so a cancelled run cannot come
+  back later. A new enqueue for the key of an aborted in-flight request does
+  NOT dedupe onto it: the new request takes the key but is not admitted until
+  the old thunk settles (`predecessor`), so two thunks for one key never run
+  at once; settling is identity-checked (`settle`) so the late one can't
+  evict its successor. Task runs pass the signal to `startTaskById`, which
+  backs out (worktree + pty torn down) instead of starting a cancelled run.
+- **Poll failure freezes admissions.** `proxyListSessionsOrNull()` returns `null`
   (not `0`) when the terminal-server is unreachable; the queue keeps the last
   count and admits nothing until a poll succeeds.
 - `drainQueue()` is non-reentrant (`isDraining` / `drainAgain`).

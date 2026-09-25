@@ -10,6 +10,7 @@ import {
   OpengrepInstallError,
   OpengrepNoRulesError,
   OpengrepNotInstalledError,
+  OpengrepRulesBusyError,
   OpengrepScanBusyError,
   OpengrepScanFailedError,
   RulePackError,
@@ -19,16 +20,24 @@ import {
   getOpengrepStatus,
   installRulePack,
   isAnyOpengrepScanRunning,
+  isRulePackInstalling,
   listOpengrepScans,
   listRulePacks,
+  opengrepScanRunState,
   removeRulePack,
   scanProjectWithDigest,
   startOpengrepInstall,
+  startProjectScanWithDigest,
   type DigestRenderContext,
   type OpengrepSeverity,
   type ScanWithDigestResult,
 } from '../opengrep/index.js';
 import { readProjectParam } from './projectParam.js';
+
+// How long `POST /api/opengrep/scan {async: true}` waits for the scan before
+// answering 202 with its id: short enough to stay far under any HTTP client's
+// response timeout, long enough that a small scan comes back in one round trip.
+export const ASYNC_SCAN_ACCEPT_WINDOW_MS = 15_000;
 
 function str(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
@@ -74,6 +83,7 @@ function scanEnvelope(r: ScanWithDigestResult, includeMarkdown: boolean) {
 function statusFor(err: unknown): { status: number; code: string } | null {
   if (err instanceof OpengrepBadTargetError) return { status: 400, code: 'bad-target' };
   if (err instanceof OpengrepScanBusyError) return { status: 409, code: 'busy' };
+  if (err instanceof OpengrepRulesBusyError) return { status: 409, code: 'busy' };
   if (err instanceof OpengrepNotInstalledError) return { status: 409, code: 'not-installed' };
   if (err instanceof OpengrepNoRulesError) return { status: 409, code: 'no-rules' };
   if (err instanceof OpengrepScanFailedError) return { status: 500, code: 'scan-failed' };
@@ -106,7 +116,10 @@ export function buildOpengrepRouter(): Router {
   // A pack install swaps the pack directory into place and a removal deletes
   // it; both while an engine process may be reading that tree (one scan per
   // project, but several projects can scan at once). Refuse until it is idle
-  // rather than hand the user a half-swapped pack or a Windows EBUSY.
+  // rather than hand the user a half-swapped pack or a Windows EBUSY. This is
+  // the request-time fast path only: the install re-checks right before its
+  // swap (waiting for running scans), and scans wait out a swap in progress
+  // (`opengrep/rulesGate.ts`).
   const PACKS_BUSY = {
     error: 'An Opengrep scan is running; wait for it to finish before changing rule packs.',
     code: 'busy',
@@ -128,34 +141,93 @@ export function buildOpengrepRouter(): Router {
     const packId = String(req.params.packId);
     if (!findRulePackDef(packId)) return res.status(404).json({ error: 'unknown rule pack' });
     if (isAnyOpengrepScanRunning()) return res.status(409).json(PACKS_BUSY);
-    await removeRulePack(packId);
+    // Removing mid-install used to be undone a moment later, when the install
+    // renamed its fetched tree into place and rewrote the state entry.
+    if (isRulePackInstalling(packId)) {
+      return res.status(409).json({
+        error: `Rule pack ${packId} is being installed; wait for the install to finish before removing it.`,
+        code: 'installing',
+      });
+    }
+    try {
+      await removeRulePack(packId);
+    } catch (err) {
+      const m = statusFor(err);
+      if (!m) throw err;
+      return res.status(m.status).json({ error: (err as Error).message, code: m.code });
+    }
     res.json({ packs: await listRulePacks() });
   });
 
   // Run a scan now with the project's configured packs + filter. Body:
-  // `{project, targets?: string[], includeMarkdown?: boolean}`.
+  // `{project, targets?: string[], includeMarkdown?: boolean, async?: boolean}`.
+  //
+  // By default the response waits for the scan (the Settings button). With
+  // `async: true` it waits at most ASYNC_SCAN_ACCEPT_WINDOW_MS: a scan done by
+  // then answers exactly as the synchronous form does; a longer one answers
+  // `202 {scanId, status: 'running'}` and is polled with GET
+  // /api/opengrep/scans/:id. The MCP tool uses it — its HTTP client (undici)
+  // gives up on a response after 300 s, far short of the 10 min scan cap, and
+  // then told the agent Lattice was down while the scan ran on. One scan per
+  // project still applies (409 `busy`) either way.
   r.post('/api/opengrep/scan', async (req, res) => {
     const project = readProjectParam(req, res);
     if (project === null) return;
-    const body = (req.body ?? {}) as { targets?: unknown; includeMarkdown?: unknown };
+    const body = (req.body ?? {}) as { targets?: unknown; includeMarkdown?: unknown; async?: unknown };
     const targets = Array.isArray(body.targets)
       ? body.targets.filter((t): t is string => typeof t === 'string' && !!t.trim())
       : undefined;
-    try {
-      const result = await scanProjectWithDigest(project, {
-        targets,
-        render: {
-          drillDownHint:
-            'Drill down with GET /api/opengrep/scans/<id>?project=&format=md&rule=<ruleId> (or the ' +
-            '`opengrep_findings` MCP tool) — rule=, file= and severity= narrow the digest.',
-        },
-      });
-      res.json(scanEnvelope(result, body.includeMarkdown === true));
-    } catch (err) {
+    const includeMarkdown = body.includeMarkdown === true;
+    const opts = {
+      targets,
+      render: {
+        drillDownHint:
+          'Drill down with GET /api/opengrep/scans/<id>?project=&format=md&rule=<ruleId> (or the ' +
+          '`opengrep_findings` MCP tool) — rule=, file= and severity= narrow the digest.',
+      },
+    };
+    const fail = (err: unknown) => {
       const m = statusFor(err);
       if (!m) throw err;
       res.status(m.status).json({ error: (err as Error).message, code: m.code });
+    };
+    if (body.async !== true) {
+      try {
+        res.json(scanEnvelope(await scanProjectWithDigest(project, opts), includeMarkdown));
+      } catch (err) {
+        fail(err);
+      }
+      return;
     }
+
+    const started = await startProjectScanWithDigest(project, opts).catch((err: unknown) => {
+      fail(err);
+      return null;
+    });
+    if (!started) return;
+    // Settle-or-timeout. `done` is always observed here, so a scan that fails
+    // after the 202 is never an unhandled rejection; the poll reports it.
+    let timer: NodeJS.Timeout | undefined;
+    const settled = await Promise.race([
+      started.done.then(
+        (result) => ({ result }),
+        (error: unknown) => ({ error }),
+      ),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), ASYNC_SCAN_ACCEPT_WINDOW_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (settled === null) {
+      return res.status(202).json({
+        canonicalProject: canonicalProjectPath(project),
+        scanId: started.id,
+        status: 'running',
+        poll: `/api/opengrep/scans/${started.id}`,
+      });
+    }
+    if ('error' in settled) return fail(settled.error);
+    res.json(scanEnvelope(settled.result, includeMarkdown));
   });
 
   r.get('/api/opengrep/scans', async (req, res) => {
@@ -167,11 +239,29 @@ export function buildOpengrepRouter(): Router {
 
   // One stored scan (`latest` allowed). `format=md` returns the digest as
   // text/markdown; the default JSON envelope carries the digest counts and,
-  // with `include=markdown`, the digest text too.
+  // with `include=markdown`, the digest text too. The id of a scan started with
+  // `async: true` that is still running answers `202 {status: 'running'}`; one
+  // that failed answers the status/code its POST would have (409 `no-rules`,
+  // 500 `scan-failed`, …) — both from memory, so after a backend restart the
+  // id is simply unknown (404; the restart killed the engine).
   r.get('/api/opengrep/scans/:id', async (req, res) => {
     const project = readProjectParam(req, res, { source: 'query' });
     if (project === null) return;
     const id = String(req.params.id);
+    const run = id === 'latest' ? null : opengrepScanRunState(project, id);
+    if (run?.state === 'running') {
+      return res.status(202).json({
+        canonicalProject: canonicalProjectPath(project),
+        scanId: id,
+        status: 'running',
+        startedAt: run.startedAt,
+        elapsedMs: Date.now() - run.startedAt,
+      });
+    }
+    if (run?.state === 'failed') {
+      const m = statusFor(run.error) ?? { status: 500, code: 'scan-failed' };
+      return res.status(m.status).json({ error: run.error.message, code: m.code, scanId: id });
+    }
     const ctx = renderContextFromQuery(req.query as Record<string, unknown>);
     ctx.drillDownHint ??=
       'Narrow this digest with rule=<ruleId>, file=<path>, severity=INFO|WARNING|ERROR or budgetKb=<n> on the same URL.';

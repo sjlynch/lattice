@@ -68,10 +68,21 @@ const RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 5000];
 //   - any other network error (reset, abort): the request may have been acted
 //     on, so only an idempotent GET is sent again.
 function isRetryableError(method: string, error: unknown): boolean {
-  const err = error as { code?: string; cause?: { code?: string } } | undefined;
-  const code = err?.code ?? err?.cause?.code;
+  const code = errorCode(error);
   return code === 'ECONNREFUSED' || method === 'GET';
 }
+
+function errorCode(error: unknown): string | undefined {
+  const err = error as { code?: string; cause?: { code?: string } } | undefined;
+  return err?.code ?? err?.cause?.code;
+}
+
+// undici (Node's global fetch) gives up on a response after 300 s without
+// headers (or between body chunks). The backend DID answer the connection —
+// it is up and most likely still working on the request — so reporting it as
+// "unreachable / is Lattice running?" sent agents off believing Lattice was
+// down while, e.g., their Opengrep scan ran on.
+const RESPONSE_TIMEOUT_CODES = new Set(['UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT']);
 
 // What one HTTP round trip produced, in the four shapes the MCP layer renders
 // differently. `text` is always the exact string to hand the model.
@@ -82,8 +93,11 @@ export type LatticeCallOutcome =
   | { kind: 'oversize'; text: string }
   // The backend never answered (ECONNREFUSED, DNS, abort).
   | { kind: 'unreachable'; text: string }
+  // The backend accepted the request but sent no response within the HTTP
+  // client's timeout — it is up; the request may still be running there.
+  | { kind: 'timeout'; text: string }
   // Any other non-2xx.
-  | { kind: 'httpError'; text: string }
+  | { kind: 'httpError'; text: string; status: number }
   // The envelope came back for a different project than we pinned.
   | { kind: 'projectMismatch'; text: string };
 
@@ -115,6 +129,12 @@ export class LatticeClient {
       ((input, init) => fetch(input, init as RequestInit) as unknown as ReturnType<FetchLike>);
     this.retryBudgetMs = opts.retry?.budgetMs ?? RETRY_BUDGET_MS;
     this.sleep = opts.retry?.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  }
+
+  // Wait between polls of a long-running backend job (the Opengrep scan). Uses
+  // the same injectable sleep as the restart retry, so tests stay instant.
+  pause(ms: number): Promise<void> {
+    return this.sleep(ms);
   }
 
   // One request, re-sent while the backend is restarting (isRetryableFailure)
@@ -167,6 +187,16 @@ export class LatticeClient {
         ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
       });
     } catch (err) {
+      const code = errorCode(err);
+      if (code && RESPONSE_TIMEOUT_CODES.has(code)) {
+        return {
+          kind: 'timeout',
+          text:
+            `The Lattice backend at ${this.apiUrl} accepted ${method} ${path} but sent no response ` +
+            `before the HTTP client gave up (${code}). The backend is running; the request may still ` +
+            'be in progress there, so do not assume it failed or that Lattice is down.',
+        };
+      }
       // The one failure the agent cannot fix by changing its arguments.
       return {
         kind: 'unreachable',
@@ -188,6 +218,7 @@ export class LatticeClient {
       return {
         kind: 'httpError',
         text: `Lattice API ${method} ${path} failed with HTTP ${res.status}: ${raw || '(empty body)'}`,
+        status: res.status,
       };
     }
 
