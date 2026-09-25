@@ -374,14 +374,19 @@ under `helpers/`.
 - `latticePreamble.test.ts` — the always-on Lattice discovery preamble folded
   into every harness system prompt. Pins the properties that make it safe to
   ship on EVERY spawn: it names Lattice + its trigger words + the literal doc
-  path; it is one line with no double quote and no `'''` (both would break the
-  Codex `-c developer_instructions` value transiting cmd.exe as `"%VAR%"`); it
+  path; it is one line with no double quote and no `'''` (so it reaches Codex
+  unaltered by the cmd.exe normalization of its `-c developer_instructions`
+  value); it
   stays under 600 chars; it resolves to `null` for a project with no
   `.lattice/` dir (so an unmanaged cwd spawns stock) and generates the
   reference for one that has it; and `composeSystemPromptAppend` orders the
   preamble before the project's own Append while tolerating a blank/absent
   side. Its integration half lives in `harnessSystemPrompts.test.ts` ("a
-  project with no override still gets the Lattice preamble").
+  project with no override still gets the Lattice preamble"), next to the
+  Codex cmd.exe regression: an Append of `a\nb "c d"` rendered for `cmd.exe`
+  and fed through `configureCodexSystemPrompt` leaves no `"` and no line break
+  in the env value (curly quotes, spaces instead), while bash / zsh / pwsh keep
+  it verbatim and a `'''` run never closes the TOML literal on any shell.
 - `latticeApiDocs.test.ts` — the generated agent docs. `ensureLatticeApiDoc`
   writes TWO files into `<project>/.lattice/`: the SHORT index the system-prompt
   preamble names (`LATTICE_API.md`) and the recipes file it points at
