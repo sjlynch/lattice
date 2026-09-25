@@ -286,7 +286,7 @@ export async function resumePersistedRun(
 
 // The Stop the gate was holding for the run's CURRENT step when the previous
 // process went down (WorkflowRun.stopReceived), else undefined.
-function heldStop(run: WorkflowRun): { stopAt: number; activeAt?: number } | undefined {
+function heldStop(run: WorkflowRun): { stopAt: number; activeAt?: number; busy?: boolean } | undefined {
   const s = run.stopReceived;
-  return s && s.stepIndex === run.currentStepIndex ? { stopAt: s.at, activeAt: s.activeAt } : undefined;
+  return s && s.stepIndex === run.currentStepIndex ? { stopAt: s.at, activeAt: s.activeAt, busy: s.busy } : undefined;
 }

@@ -333,3 +333,52 @@ test('waitForPostMergeHookIdle re-checks after subscribing so a fast finish is n
     subscribeRun: () => () => undefined,
   });
 });
+
+// --- Phase C's owed-hook fire honours a workflow cancel ----------------------
+//
+// `fireOwedPostMergeHook` → `runPostMergeHookGate` has no cancel signal: it
+// waits on the hook agent (up to 30 min, 3 rounds on repeated already-running).
+// A cancel during that wait left the step's worker parked with the
+// `workflow-merge:*` run.lock held — Merge All 409ing, the dev runner deferring
+// restarts — until the hook finished.
+
+test('a workflow cancel during the owed-hook fire returns the step at once', async () => {
+  let idleGateCalls = 0;
+  const deps = makeMergeDeps(async () => {
+    idleGateCalls += 1;
+  });
+  const listeners = new Set<(ev: WorkflowRunEvent) => void>();
+  deps.subscribeWorkflowRuns = (fn) => {
+    listeners.add(fn);
+    return () => listeners.delete(fn);
+  };
+  let fired = 0;
+  const seen: { shouldStop?: () => boolean } = {};
+  deps.fireOwedPostMergeHook = (_project, _origin, stop) => {
+    fired += 1;
+    seen.shouldStop = stop;
+    return new Promise<void>(() => undefined); // the hook never finishes
+  };
+
+  const run = makeRun();
+  let settled = false;
+  const stepPromise = runMergeStep(makeWorkflow(), run, 0, 'http://x', deps).then(() => {
+    settled = true;
+  });
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(fired, 1, 'Phase C fired the owed hook');
+  assert.equal(settled, false, 'the step waits on it while the run is live');
+  assert.equal(seen.shouldStop?.(), false);
+
+  run.status = 'cancelled';
+  for (const fn of [...listeners]) fn({ type: 'cancelled', run });
+
+  await Promise.race([
+    stepPromise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('step still parked after cancel')), 500)),
+  ]);
+  assert.equal(settled, true, 'the step returned, so its worker releases the run lock');
+  assert.equal(seen.shouldStop?.(), true, 'the gate is told to fire nothing further');
+  assert.equal(idleGateCalls, 0, 'a cancelled step does not go on to the idle wait');
+  assert.equal(listeners.size, 0, 'every workflow-run subscription was dropped');
+});
