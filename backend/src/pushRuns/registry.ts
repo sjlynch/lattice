@@ -6,9 +6,9 @@ import {
 import {
   createOneOffRunStore,
   readNumber,
+  readRunningRecordIdentity,
   readString,
 } from '../homeScratch/persistence.js';
-import { canonicalProjectPath } from '../projectPath.js';
 import { pushPaths } from './paths.js';
 import type { PushRun } from './types.js';
 
@@ -22,18 +22,9 @@ export const PUSH_RUNS_FILENAME = 'push-runs.json';
 // (regex-checked) id rather than trusted from disk: boot recovery matches the
 // live pty by it and cleanup deletes it.
 export function deserializePushRun(raw: unknown, owningProject: string): PushRun | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const r = raw as Record<string, unknown>;
-  const id = readString(r.id);
-  if (!id || r.status !== 'running') return null;
-  let cwd: string;
-  let projectPath: string;
-  try {
-    projectPath = canonicalProjectPath(owningProject);
-    cwd = pushPaths.assertSafeSessionPath(projectPath, id);
-  } catch {
-    return null;
-  }
+  const identity = readRunningRecordIdentity(raw, owningProject, pushPaths);
+  if (!identity) return null;
+  const { record: r, id, projectPath, cwd } = identity;
   const run: PushRun = {
     id,
     projectPath,

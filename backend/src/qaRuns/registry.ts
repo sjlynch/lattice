@@ -2,9 +2,9 @@ import { createOneOffRunRegistry } from '../homeScratch/registry.js';
 import {
   createOneOffRunStore,
   readNumber,
+  readRunningRecordIdentity,
   readString,
 } from '../homeScratch/persistence.js';
-import { canonicalProjectPath } from '../projectPath.js';
 import { qaPaths } from './paths.js';
 import type { QaRun, QaVerdict } from './types.js';
 
@@ -16,19 +16,11 @@ export const QA_RUNS_FILENAME = 'qa-runs.json';
 // recorded verdict survives, so a `/done` (or boot recovery settling a dead
 // session) after a restart can still promote a confident PASS qa → done.
 export function deserializeQaRun(raw: unknown, owningProject: string): QaRun | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const r = raw as Record<string, unknown>;
-  const id = readString(r.id);
+  const identity = readRunningRecordIdentity(raw, owningProject, qaPaths);
+  if (!identity) return null;
+  const { record: r, id, projectPath, cwd } = identity;
   const taskId = readString(r.taskId);
-  if (!id || !taskId || r.status !== 'running') return null;
-  let cwd: string;
-  let projectPath: string;
-  try {
-    projectPath = canonicalProjectPath(owningProject);
-    cwd = qaPaths.assertSafeSessionPath(projectPath, id);
-  } catch {
-    return null;
-  }
+  if (!taskId) return null;
   const run: QaRun = {
     id,
     taskId,

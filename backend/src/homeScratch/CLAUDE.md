@@ -68,6 +68,10 @@ single source of truth for all three.
   its `assertSafeSessionPath`** from the id — never trusts a path from disk,
   since recovery matches the live pty by it and cleanup deletes it. Re-adopted
   on boot by `../recovery/oneOffRunResume.ts`.
+  `readRunningRecordIdentity(raw, owningProject, paths)` is that shared
+  deserializer prologue (object → non-empty `id` → `status: 'running'` →
+  canonical project → `cwd` via `paths.assertSafeSessionPath`, null on any
+  failure); push, QA and post-merge deserializers all start with it.
 - `routes.ts` — small idempotent `{ok:true}` response shells for scratch-backed
   `/done` and frontend-acknowledgement `DELETE` routes. Route-specific behavior
   stays in the route files.

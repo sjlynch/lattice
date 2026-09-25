@@ -3,10 +3,17 @@ import { normalizeAgentHarness } from '../harnesses.js';
 import {
   createOneOffRunStore,
   readNumber,
+  readRunningRecordIdentity,
   readString,
 } from '../homeScratch/persistence.js';
 import { postMergeHookPaths } from './paths.js';
 import type { PostMergeHookRun, PostMergeHookStatus } from './types.js';
+
+export {
+  beginPostMergeHookTrigger,
+  hasPendingPostMergeHookTrigger,
+  subscribePostMergeHookTriggers,
+} from './pendingTriggers.js';
 
 // In-memory registry of post-merge hook runs (the running ones are also
 // mirrored to disk for restart recovery — see "Durable mirror" below).
@@ -22,6 +29,9 @@ import type { PostMergeHookRun, PostMergeHookStatus } from './types.js';
 // done. The promise is resolved by the /complete and /abort routes.
 
 const MAX_HISTORY_PER_PROJECT = 5;
+// `waitForPostMergeHook`'s expiry message states a wait this long or longer in
+// minutes, a shorter one in ms.
+const FORMAT_AS_MINUTES_MS = 60_000;
 
 type Waiter = {
   resolve: () => void;
@@ -52,20 +62,11 @@ export function deserializePostMergeHook(
   raw: unknown,
   owningProject: string,
 ): PostMergeHookRun | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const r = raw as Record<string, unknown>;
-  const id = readString(r.id);
-  if (!id || r.status !== 'running') return null;
-  let cwd: string;
-  let projectPath: string;
-  try {
-    projectPath = canonicalProjectPath(owningProject);
-    // Re-derived through the scratch path guard from the regex-checked id —
-    // recovery matches the live pty by it and cleanup deletes it.
-    cwd = postMergeHookPaths.assertSafeSessionPath(projectPath, id);
-  } catch {
-    return null;
-  }
+  // `cwd` is re-derived through the scratch path guard from the regex-checked
+  // id — recovery matches the live pty by it and cleanup deletes it.
+  const identity = readRunningRecordIdentity(raw, owningProject, postMergeHookPaths);
+  if (!identity) return null;
+  const { record: r, id, projectPath, cwd } = identity;
   const run: PostMergeHookRun = {
     id,
     projectPath,
@@ -118,13 +119,6 @@ export function restorePostMergeHook(run: PostMergeHookRun): boolean {
   return true;
 }
 
-// A trigger must read settings before it can construct the full run record.
-// Keep that pre-record launch window visible to the workflow Merge-step gate;
-// otherwise Phase C can observe "idle" while a hook is already starting.
-const pendingTriggerCounts = new Map<string, number>();
-type TriggerListener = (projectPath: string) => void;
-const triggerListeners = new Set<TriggerListener>();
-
 export type PostMergeHookEvent =
   | { type: 'started'; run: PostMergeHookRun }
   | { type: 'progress'; run: PostMergeHookRun }
@@ -150,45 +144,6 @@ export function subscribePostMergeHooks(fn: Listener): () => void {
   };
 }
 
-export function beginPostMergeHookTrigger(projectPath: string): () => void {
-  const key = canonicalProjectPath(projectPath);
-  pendingTriggerCounts.set(key, (pendingTriggerCounts.get(key) ?? 0) + 1);
-  for (const fn of triggerListeners) {
-    try {
-      fn(key);
-    } catch (err) {
-      console.error('[post-merge-hook] trigger listener threw:', err);
-    }
-  }
-
-  let ended = false;
-  return () => {
-    if (ended) return;
-    ended = true;
-    const remaining = (pendingTriggerCounts.get(key) ?? 1) - 1;
-    if (remaining > 0) pendingTriggerCounts.set(key, remaining);
-    else pendingTriggerCounts.delete(key);
-    for (const fn of triggerListeners) {
-      try {
-        fn(key);
-      } catch (err) {
-        console.error('[post-merge-hook] trigger listener threw:', err);
-      }
-    }
-  };
-}
-
-export function hasPendingPostMergeHookTrigger(projectPath: string): boolean {
-  return (pendingTriggerCounts.get(canonicalProjectPath(projectPath)) ?? 0) > 0;
-}
-
-export function subscribePostMergeHookTriggers(fn: TriggerListener): () => void {
-  triggerListeners.add(fn);
-  return () => {
-    triggerListeners.delete(fn);
-  };
-}
-
 export function recordPostMergeHook(run: PostMergeHookRun): void {
   // Lookups canonicalize their query, so the stored side must do the same or
   // a path variant (notably a lower-case Windows drive) makes a live hook
@@ -208,19 +163,11 @@ function pruneHistoryFor(projectPath: string, keepId: string): void {
   const forProject = [...entries.entries()]
     .filter(([, e]) => e.run.projectPath === key)
     .sort((a, b) => (b[1].run.startedAt - a[1].run.startedAt));
-  let kept = 0;
-  for (const [id, e] of forProject) {
-    if (id === keepId) {
-      kept += 1;
-      continue;
-    }
-    if (e.run.status === 'running') {
-      kept += 1;
-      continue;
-    }
-    kept += 1;
-    if (kept > MAX_HISTORY_PER_PROJECT) entries.delete(id);
-  }
+  // Newest first; everything past the first MAX_HISTORY_PER_PROJECT goes,
+  // except the just-recorded run and any still-running one.
+  forProject.slice(MAX_HISTORY_PER_PROJECT).forEach(([id, e]) => {
+    if (id !== keepId && e.run.status !== 'running') entries.delete(id);
+  });
 }
 
 export function getPostMergeHook(id: string): PostMergeHookRun | null {
@@ -332,7 +279,9 @@ export function waitForPostMergeHook(
         timer = null;
         if (e.run.status !== 'running') return;
         const within =
-          maxWaitMs >= 60_000 ? `${Math.round(maxWaitMs / 60_000)} minutes` : `${maxWaitMs} ms`;
+          maxWaitMs >= FORMAT_AS_MINUTES_MS
+            ? `${Math.round(maxWaitMs / FORMAT_AS_MINUTES_MS)} minutes`
+            : `${maxWaitMs} ms`;
         console.warn(
           `[post-merge-hook] ${id} did not call back within ${within} — finishing it errored`,
         );

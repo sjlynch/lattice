@@ -30,6 +30,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWriteFile } from '../claudeTrust/configFile.js';
 import { canonicalProjectPath, homeProjectScratchDir } from '../projectPath.js';
+import type { HomeScratchPaths } from './paths.js';
 
 export const ONE_OFF_RUNS_FILE_VERSION = 1;
 
@@ -169,4 +170,35 @@ export function readString(v: unknown): string | undefined {
 
 export function readNumber(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+
+// The shared prologue of every per-feature deserializer: an object with a
+// non-empty `id` and `status: 'running'` (only running records are resumable),
+// keyed to the canonical owning project, with `cwd` re-derived through the
+// feature's scratch path guard from the (regex-checked) id rather than trusted
+// from disk — boot recovery matches the live pty by it and cleanup deletes it.
+// Null (drop the record) on any failure, including a guard refusal.
+export type RunningRecordIdentity = {
+  record: Record<string, unknown>;
+  id: string;
+  projectPath: string;
+  cwd: string;
+};
+
+export function readRunningRecordIdentity(
+  raw: unknown,
+  owningProject: string,
+  paths: Pick<HomeScratchPaths, 'assertSafeSessionPath'>,
+): RunningRecordIdentity | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const record = raw as Record<string, unknown>;
+  const id = readString(record.id);
+  if (!id || record.status !== 'running') return null;
+  try {
+    const projectPath = canonicalProjectPath(owningProject);
+    const cwd = paths.assertSafeSessionPath(projectPath, id);
+    return { record, id, projectPath, cwd };
+  } catch {
+    return null;
+  }
 }
