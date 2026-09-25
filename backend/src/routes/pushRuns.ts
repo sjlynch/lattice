@@ -6,7 +6,7 @@
 import { Router } from 'express';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { canonicalProjectPath } from '../projectPath.js';
+import { canonicalProjectPath, isRealAbsoluteProjectPath } from '../projectPath.js';
 import { probeProjectGit } from '../projectInit/index.js';
 import {
   cleanupPushSession,
@@ -40,7 +40,7 @@ export function buildPushRunsRouter(backendOrigin: string): Router {
     if (!raw) return res.status(400).json({ error: 'path required' });
     // A relative path would probe (and the Git Setup chip would offer to
     // initialise) a folder under the backend's own cwd.
-    if (!path.isAbsolute(raw)) return res.status(400).json({ error: relativeProjectError(raw) });
+    if (!isRealAbsoluteProjectPath(raw)) return res.status(400).json({ error: relativeProjectError(raw) });
     const project = canonicalProjectPath(raw);
     let hasGit = false;
     try {

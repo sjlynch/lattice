@@ -60,7 +60,14 @@ export type MergeStepDeps = {
   waitForPostMergeHookIdle: typeof waitForPostMergeHookIdle;
   // Fire a post-merge hook a pre-restart merge still owes (postMergeHooks/
   // owed.ts) and wait it out. Optional so test doubles can omit it.
-  fireOwedPostMergeHook?: (projectPath: string, backendOrigin: string) => Promise<void>;
+  // `shouldStop` turns true once the workflow run leaves 'running'; the step
+  // stops waiting at that point regardless (see raceWorkflowRunEnd), and the
+  // gate uses it not to fire anything further for a cancelled run.
+  fireOwedPostMergeHook?: (
+    projectPath: string,
+    backendOrigin: string,
+    shouldStop: () => boolean,
+  ) => Promise<void>;
 };
 
 const productionDeps: MergeStepDeps = {
@@ -75,12 +82,59 @@ const productionDeps: MergeStepDeps = {
   fireOwedPostMergeHook,
 };
 
-async function fireOwedPostMergeHook(projectPath: string, backendOrigin: string): Promise<void> {
+async function fireOwedPostMergeHook(
+  projectPath: string,
+  backendOrigin: string,
+  shouldStop: () => boolean,
+): Promise<void> {
   if (!(await isPostMergeHookOwed(projectPath))) return;
+  if (shouldStop()) return;
   console.log(`[workflow-run] post-merge hook owed by a merge before the restart — firing it for ${projectPath}`);
-  await runPostMergeHookGate({ projectPath, backendOrigin, trigger: 'merge-run' }).catch((err) =>
-    console.warn('[workflow-run] owed post-merge hook failed:', err),
-  );
+  await runPostMergeHookGate(
+    { projectPath, backendOrigin, trigger: 'merge-run' },
+    undefined,
+    shouldStop,
+  ).catch((err) => console.warn('[workflow-run] owed post-merge hook failed:', err));
+}
+
+// Resolve when `work` settles OR the workflow run leaves 'running' (a
+// cancelled / errored event for it), whichever comes first. The owed-hook gate
+// has no cancel signal of its own — it waits on the hook agent for up to
+// 30 min, 3 rounds on repeated `already-running` — and the Merge step's worker
+// holds the `workflow-merge:*` run.lock the whole time: a cancel during Phase C
+// kept Merge All 409ing and the dev runner deferring restarts until the hook
+// finished. Same reason `waitForPostMergeHookIdle` resolves on cancel. The
+// gate itself keeps waiting on its hook in the background (the hook agent is
+// not killed — a cancel never killed one in Phase C's idle wait either); its
+// `shouldStop` keeps it from firing another.
+export function raceWorkflowRunEnd(
+  run: WorkflowRun,
+  subscribeWorkflowRuns: typeof subscribe,
+  work: Promise<void>,
+): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    let unsub: (() => void) | null = null;
+    let unsubscribeAfterAssign = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (unsub) unsub();
+      else unsubscribeAfterAssign = true;
+      resolve();
+    };
+    // Subscribe BEFORE the status check so a cancel in between isn't missed.
+    unsub = subscribeWorkflowRuns((ev) => {
+      if (!('run' in ev) || ev.run.id !== run.id) return;
+      if (ev.type === 'cancelled' || ev.type === 'errored') finish();
+    });
+    if (unsubscribeAfterAssign) unsub();
+    if (run.status !== 'running') finish();
+    work.then(finish, (err: unknown) => {
+      console.warn('[workflow-run] owed post-merge hook failed:', err);
+      finish();
+    });
+  });
 }
 
 export async function runMergeStep(
@@ -199,11 +253,15 @@ export async function runMergeStep(
         // A run that halted itself (full disk, a held git lock, an integrity
         // violation) records why under '(run)' — that is the reason to show.
         const halted = finishedRun?.errored.find((e) => e.taskId === '(run)');
+        // Otherwise name the first per-task error — "1 errored" alone left
+        // the user no way to tell a dead resolver from a git failure.
+        const taskError = halted ? undefined : finishedRun?.errored[0];
         throw new Error(
           `merge step made no progress: ${readyIdsBefore.length} task(s) ` +
             `still ready-to-merge after a full merge run (${errorCount} ` +
             `errored); aborting to avoid an infinite loop` +
-            (halted ? ` — the merge run ${halted.error}` : ''),
+            (halted ? ` — the merge run ${halted.error}` : '') +
+            (taskError ? ` — task ${taskError.taskId}: ${taskError.error}` : ''),
         );
       }
     }
@@ -225,7 +283,18 @@ export async function runMergeStep(
     // First, though: a merge that landed before a backend restart may still
     // OWE its hook — the restarted Phase B found Ready-to-Merge empty and ran
     // no merge run, so nothing fired it. Fire it here (and wait it out).
-    await deps.fireOwedPostMergeHook?.(wf.projectPath, backendOrigin);
+    //
+    // Raced against the workflow run ending: a cancel during this wait must
+    // free the worker (and its run.lock) now, not when the hook finishes.
+    if (run.status !== 'running') return;
+    if (deps.fireOwedPostMergeHook) {
+      const isStopped = () => run.status !== 'running';
+      await raceWorkflowRunEnd(
+        run,
+        deps.subscribeWorkflowRuns,
+        deps.fireOwedPostMergeHook(wf.projectPath, backendOrigin, isStopped),
+      );
+    }
     if (run.status !== 'running') return;
     await deps.waitForPostMergeHookIdle(
       wf.projectPath,

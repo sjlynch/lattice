@@ -30,7 +30,7 @@ import { finishPostMergeHook, getPostMergeHook, patchPostMergeHook } from './reg
 import { postMergeHookAgentId } from './stopHook.js';
 import { cleanupPostMergeHookSession } from './cleanup.js';
 import {
-  agentLastActiveAt,
+  agentHeldActivity,
   forgetAgentQuiescence,
   isAgentQuiescent,
   noteAgentStop,
@@ -127,10 +127,10 @@ function noteHeldStopActivity(id: string, agentId: string): void {
   if (!run || run.stopReceivedAt === undefined) return;
   const now = Date.now();
   if (now - (heldActivityPersistedAt.get(id) ?? 0) < HELD_ACTIVITY_PERSIST_MS) return;
-  const activeAt = agentLastActiveAt(agentId);
+  const { activeAt, busy } = agentHeldActivity(agentId, HELD_ACTIVITY_PERSIST_MS);
   if (activeAt <= (run.stopActiveAt ?? run.stopReceivedAt)) return;
   heldActivityPersistedAt.set(id, now);
-  patchPostMergeHook(id, { stopActiveAt: activeAt });
+  patchPostMergeHook(id, { stopActiveAt: activeAt, stopBusy: busy });
 }
 
 // The finish a gated (Stop-sourced, non-error) completion performs: drop the

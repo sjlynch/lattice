@@ -40,8 +40,8 @@
 const http = require('http');
 const fs   = require('fs');
 
-const PROJECT  = '__LATTICE_PROJECT__';
-const API_BASE = '__LATTICE_API_BASE__';
+const PROJECT  = __LATTICE_PROJECT__;
+const API_BASE = __LATTICE_API_BASE__;
 
 function request(method, urlStr, body) {
   return new Promise((resolve, reject) => {

@@ -15,7 +15,14 @@
 //   - a workflow run is active for the project — its own Merge control step
 //     merges, and a second merge run would contend for the project run-lock;
 //   - a post-merge hook is still running (same 409 the Merge All route gives);
-//   - nothing is ready_to_merge (In Progress checkouts can only be waited out).
+//   - nothing is ready_to_merge (In Progress checkouts can only be waited out);
+//   - free space is under the merge floor (`MERGE_MIN_FREE_BYTES`) — such a run
+//     can only halt on its first task, while writing to a nearly full disk;
+//   - the Ready-to-Merge set is unchanged since the last run it started, i.e.
+//     that run moved nothing (disk-halted, or every task errored/conflicted).
+//     Re-running would do the same thing every throttle window forever, so it
+//     holds until the set changes, free space drops under the floor and comes
+//     back, or a backoff (15 min doubling to 2 h) expires.
 // Attempts are throttled per project, since every deferred run re-checks disk
 // on its backoff.
 //
@@ -34,9 +41,18 @@ import { getActiveHookForProject } from './postMergeHooks.js';
 import { requestWorktreeResidueSweep } from './recovery/worktreeResidueSweepLoop.js';
 import { forEachKnownProjectSafely } from './recovery/projectIteration.js';
 import { formatBytes, freeBytesAt, minFreeDiskBytes } from './worktree/diskSpace.js';
+import { mergeDiskSpaceShortfall } from './worktree/diskFull.js';
 
 const THROTTLE_MS = 2 * 60_000;
+const NO_PROGRESS_RETRY_MS = 15 * 60_000;
+const NO_PROGRESS_RETRY_MAX_MS = 2 * 60 * 60_000;
 const lastAttemptAt = new Map<string, number>();
+
+// The last run this module started per project: the Ready-to-Merge set it was
+// started for, when, and how many times in a row it was re-started for that
+// same set (the backoff exponent).
+type LastStartedRun = { readyKey: string; startedAt: number; retries: number; holdLogged: boolean };
+const lastStartedRun = new Map<string, LastStartedRun>();
 
 export type DiskPressureMergeOutcome =
   | 'started'
@@ -46,6 +62,8 @@ export type DiskPressureMergeOutcome =
   | 'workflow-active'
   | 'hook-active'
   | 'nothing-to-merge'
+  | 'disk-full'
+  | 'no-progress'
   | 'failed';
 
 export type DiskPressureMergeDeps = {
@@ -53,7 +71,9 @@ export type DiskPressureMergeDeps = {
   hasActiveMergeRun: (project: string) => boolean;
   hasActiveWorkflowRun: (project: string) => boolean;
   hasActivePostMergeHook: (project: string) => boolean;
-  countReadyToMerge: (project: string) => Promise<number>;
+  readyToMergeIds: (project: string) => Promise<string[]>;
+  // Why a merge must not start now (under the merge floor), or null.
+  mergeShortfall: (project: string) => Promise<string | null>;
   startMergeRun: (project: string, backendOrigin: string) => Promise<unknown>;
   now: () => number;
 };
@@ -63,7 +83,8 @@ const defaultDeps: DiskPressureMergeDeps = {
   hasActiveMergeRun: (p) => getActiveRunForProject(p) !== null,
   hasActiveWorkflowRun: (p) => getActiveWorkflowRuns(p).length > 0,
   hasActivePostMergeHook: (p) => !!getActiveHookForProject(p),
-  countReadyToMerge: async (p) => (await listTasks(p)).filter((t) => t.status === 'ready_to_merge').length,
+  readyToMergeIds: async (p) => (await listTasks(p)).filter((t) => t.status === 'ready_to_merge').map((t) => t.id),
+  mergeShortfall: (p) => mergeDiskSpaceShortfall([p, homeWorktreesDir(p)]),
   startMergeRun: (p, origin) => startMergeRun(p, origin),
   now: () => Date.now(),
 };
@@ -83,13 +104,37 @@ export async function mergeToFreeDiskSpace(
     if (deps.hasActiveMergeRun(project)) return 'merge-run-active';
     if (deps.hasActiveWorkflowRun(project)) return 'workflow-active';
     if (deps.hasActivePostMergeHook(project)) return 'hook-active';
-    const ready = await deps.countReadyToMerge(project);
-    if (ready === 0) return 'nothing-to-merge';
+    const ready = await deps.readyToMergeIds(project);
+    if (ready.length === 0) return 'nothing-to-merge';
+    if (await deps.mergeShortfall(project)) {
+      // Forget the last run: once space comes back above the floor, the tasks
+      // a disk-halted run left behind are worth another try.
+      lastStartedRun.delete(project);
+      return 'disk-full';
+    }
+    const readyKey = [...ready].sort().join('\n');
+    const prev = lastStartedRun.get(project);
+    let retries = 0;
+    if (prev && prev.readyKey === readyKey) {
+      const backoff = Math.min(NO_PROGRESS_RETRY_MS * 2 ** prev.retries, NO_PROGRESS_RETRY_MAX_MS);
+      if (now - prev.startedAt < backoff) {
+        if (!prev.holdLogged) {
+          prev.holdLogged = true;
+          console.warn(
+            `[disk] ${project}: the last merge run moved none of its ${ready.length} Ready-to-Merge task(s) — ` +
+              `not starting another until they change, or in ${Math.round(backoff / 60_000)} min`,
+          );
+        }
+        return 'no-progress';
+      }
+      retries = prev.retries + 1;
+    }
     console.warn(
       `[disk] ${project}: ${reason} — starting a merge run of ` +
-        `${ready} Ready-to-Merge task(s) to free their worktrees (global setting autoMergeOnLowDisk)`,
+        `${ready.length} Ready-to-Merge task(s) to free their worktrees (global setting autoMergeOnLowDisk)`,
     );
     await deps.startMergeRun(project, backendOrigin);
+    lastStartedRun.set(project, { readyKey, startedAt: now, retries, holdLogged: false });
     return 'started';
   } catch (err) {
     console.warn(`[disk] could not start a merge run to free disk space in ${project}:`, err);
@@ -109,7 +154,8 @@ export function requestMergeToFreeDiskSpace(projectPath: string, backendOrigin: 
 // Low-disk monitor: once a minute, for every known project whose worktree
 // volume has less free space than the reserve (globalSettings minFreeDiskGb),
 // ask for a merge run of its Ready-to-Merge tasks — the same narrow rules as
-// above (opt-out, nothing else merging, no workflow, throttled). Cheap when the
+// above (opt-out, nothing else merging, no workflow, throttled, never under
+// the merge floor, no re-run of a run that moved nothing). Cheap when the
 // disk is fine: one statfs per project and nothing else.
 // ---------------------------------------------------------------------------
 
@@ -173,5 +219,6 @@ export function stopLowDiskMonitor(): void {
 // Test seam.
 export function resetDiskPressureMergeStateForTests(): void {
   lastAttemptAt.clear();
+  lastStartedRun.clear();
   belowReserve.clear();
 }

@@ -126,7 +126,12 @@ licence text + a source pointer) — keep it a runtime download.
   **short fingerprint** (first 16 hex + `_N`) is what the digest prints and
   what the built-in template asks agents to put in tasks as `opengrep:<fp>`;
   every matcher accepts the full or short form, case-insensitively, with or
-  without the `opengrep:` prefix.
+  without the `opengrep:` prefix. `digest.ts` itself holds the filter/build
+  step and re-exports the two modules below, so callers import only it.
+- `parseOutput.ts` — pure parse step: `parseOpengrepJson`, the finding/error
+  types, and the `shortFingerprint` / `fingerprintMatches` / `ruleMatches` matchers.
+- `renderDigest.ts` — pure markdown step: `renderDigestMarkdown` (header →
+  budgeted sections → tail) with its budget knobs as named constants.
 - `settings.ts` — `globalSettings.opengrep.packs` (per-pack enable, machine-
   global because packs are installed once per machine) and
   `userSettings.opengrep` (`extraRulePaths`, `excludeGlobs`, `severityFloor`

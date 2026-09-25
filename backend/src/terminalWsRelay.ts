@@ -2,6 +2,7 @@ import { WebSocket } from 'ws';
 import type { RawData } from 'ws';
 import { TERMINAL_PORT } from './terminalServerLifecycle.js';
 import { noteTerminalClientInput } from './terminalActivity.js';
+import { isTerminalSubmitFrame, noteTerminalPromptSubmit } from './callbackOutbox/replayGuard.js';
 import { createTerminalActivityRelayObserver } from './terminalActivityRelay.js';
 import { withCodexActivityTitle } from './codexTerminalActivity.js';
 import { refreshLatticeApiDocs } from './latticeApiDocs.js';
@@ -92,7 +93,10 @@ export function proxyTerminalWs(
   // Buffer messages that arrive before the upstream connection is open —
   // seeded with whatever the caller captured before this relay existed.
   const pending: EarlyFrame[] = (options.earlyFrames ?? []).slice(0, MAX_PENDING_FRAMES);
-  if (sessionId && pending.length > 0) noteTerminalClientInput(sessionId);
+  if (sessionId && pending.length > 0) {
+    noteTerminalClientInput(sessionId);
+    if (pending.some((f) => isTerminalSubmitFrame(f.data, f.isBinary))) noteTerminalPromptSubmit(sessionId);
+  }
   // Set once the browser side has gone away. Closing a still-CONNECTING
   // upstream makes ws emit an 'error' ("WebSocket was closed before the
   // connection was established") that is nothing but the teardown we asked
@@ -125,7 +129,12 @@ export function proxyTerminalWs(
     // spinner doesn't read the pty answering the user as the agent working.
     // See terminalActivity.ts; this relay is the only place the main backend
     // sees the input side of a pty.
-    if (sessionId) noteTerminalClientInput(sessionId);
+    if (sessionId) {
+      noteTerminalClientInput(sessionId);
+      // A submitted line starts a new agent turn; a completion callback the
+      // outbox replays later for the previous turn must not end this one.
+      if (isTerminalSubmitFrame(data, isBinary)) noteTerminalPromptSubmit(sessionId);
+    }
     if (targetWs.readyState === WebSocket.OPEN) {
       targetWs.send(data, { binary: isBinary });
     } else if (pending.length < MAX_PENDING_FRAMES) {
