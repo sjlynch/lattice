@@ -8,6 +8,7 @@ import { clearStaleLockOrThrow } from './steal.js';
 import type { ProjectRunLockHandle } from './types.js';
 import { registerProjectRunLock } from './mutation.js';
 import { pruneRetiredTombstonesOnce } from './tombstones.js';
+import { waitWhileRestartDraining } from '../restartDrain/gate.js';
 
 // Acquire the per-project run lock or throw. `label` is logged into the
 // lockfile so a developer inspecting `~/.lattice/per-project/<hash>/run.lock`
@@ -22,6 +23,13 @@ export async function acquireProjectRunLock(
   label: string,
   opts: { lendable?: boolean } = {},
 ): Promise<ProjectRunLockHandle> {
+  // A backend restart is being prepared (../restartDrain/): don't START a
+  // run-lock operation it would kill a second later. Waiting here — rather
+  // than failing — is safe for every caller: the drain ends by TTL if no
+  // restart follows, and if one does, the caller's own durable state (a
+  // workflow step's checkpoint, a ready_to_merge task, the frontend's retry)
+  // re-runs it on the next boot.
+  await waitWhileRestartDraining();
   const file = projectRunLockFilePath(projectPath);
   await fs.mkdir(path.dirname(file), { recursive: true });
   // Housekeeping for the retirement tombstones (see tombstones.ts): first

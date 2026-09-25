@@ -91,6 +91,27 @@ export function applyFreshWindowsPath(env: { [key: string]: string }): void {
   env.Path = out.join(';');
 }
 
+// `LATTICE_PTY_PATH_PREPEND` — directories (platform path-list syntax) that go
+// FIRST on every Lattice terminal's PATH, ahead of the registry PATH above.
+// Operator escape hatch for wrapping a harness CLI (a `claude` shim that sets
+// extra env, a pinned build), and what the self-hosting soak uses to put its
+// fake `claude` in front of the real one: after the first spawn the registry
+// PATH wins over anything merely inherited, so an inherited prepend alone
+// only reaches the very first terminal. Env-based because the detached
+// terminal-server reads no settings files. Unset = no change.
+export function applyPtyPathPrepend(
+  env: { [key: string]: string },
+  delimiter = isWindows ? ';' : ':',
+): void {
+  const prepend = env.LATTICE_PTY_PATH_PREPEND?.split(delimiter).filter(Boolean) ?? [];
+  if (prepend.length === 0) return;
+  const key = Object.keys(env).find((k) => k.toLowerCase() === 'path') ?? 'PATH';
+  const fold = (p: string) => (isWindows ? p.toLowerCase() : p);
+  const first = new Set(prepend.map(fold));
+  const rest = (env[key] ?? '').split(delimiter).filter((p) => p && !first.has(fold(p)));
+  env[key] = [...prepend, ...rest].join(delimiter);
+}
+
 async function readWindowsRegistryPathAsync(): Promise<string> {
   const [machine, user] = await Promise.all([
     queryRegPathAsync(

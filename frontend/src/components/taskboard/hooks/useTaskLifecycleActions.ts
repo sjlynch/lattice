@@ -1,7 +1,10 @@
 import { useCallback } from 'react';
 import {
   cancelQueuedRun as apiCancelQueuedRun,
+  HttpError,
+  mayHaveBeenApplied,
   resumeTask as apiResumeTask,
+  retryTransient,
   runTask as apiRunTask,
   type Task,
 } from '../../../api';
@@ -14,6 +17,13 @@ type UseTaskLifecycleActionsArgs = {
   pickRunHarness: () => RunHarnessSelection;
   showError: (message: string) => void;
 };
+
+// The run/resume routes answer a request that no longer fits the task's state
+// with 400 (or 409): after an attempt whose response was lost, that is the
+// signature of the lost attempt having gone through.
+function isStateConflict(err: unknown): boolean {
+  return err instanceof HttpError && (err.status === 400 || err.status === 409);
+}
 
 // Task lifecycle: run/resume a single task and the lane-level "run all"
 // variants. Run/resume go through the backend spawn queue — the request is
@@ -35,10 +45,19 @@ export function useTaskLifecycleActions({
       // provider coalesces concurrent calls per project, so a "run all" over N
       // tasks still asks once rather than opening N dialogs.
       if (!(await ensureGitRepo(activeFolder))) return;
+      let possiblyApplied = false;
       try {
         const sel = pickRunHarness();
-        await apiRunTask(activeFolder, task.id, sel.harness, sel.piModel);
+        // Waits out a backend restart instead of failing the click. The
+        // backend dedupes a task's queued run, so a retry never double-runs.
+        await retryTransient(
+          () => apiRunTask(activeFolder, task.id, sel.harness, sel.piModel),
+          { onRetry: (err) => { if (mayHaveBeenApplied(err)) possiblyApplied = true; } },
+        );
       } catch (err) {
+        // A lost-response attempt that DID enqueue makes the retry 400 ("task
+        // is in_progress…") — that's our own run, not an error.
+        if (possiblyApplied && isStateConflict(err)) return;
         showError(`Run failed: ${(err as Error).message}`);
       }
     },
@@ -72,10 +91,15 @@ export function useTaskLifecycleActions({
 
   const resumeTaskAction = useCallback(
     async (task: Task) => {
+      let possiblyApplied = false;
       try {
         const sel = pickRunHarness();
-        await apiResumeTask(activeFolder, task.id, sel.harness, sel.piModel);
+        await retryTransient(
+          () => apiResumeTask(activeFolder, task.id, sel.harness, sel.piModel),
+          { onRetry: (err) => { if (mayHaveBeenApplied(err)) possiblyApplied = true; } },
+        );
       } catch (err) {
+        if (possiblyApplied && isStateConflict(err)) return;
         showError(`Resume failed: ${(err as Error).message}`);
       }
     },

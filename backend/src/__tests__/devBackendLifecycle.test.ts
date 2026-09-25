@@ -196,3 +196,116 @@ test('a failing port probe still records the exit', async (t) => {
   await settle();
   assert.equal(errors.filter((e) => e.includes('dist/index.js exited')).length, 1);
 });
+
+// ---- crash auto-respawn ------------------------------------------------------
+//
+// A backend that exits on its own used to stay down until the next dist/
+// change. It now respawns on a backoff (2 s, 5 s, 10 s, 30 s, then every
+// 60 s), reset by five minutes of stable uptime; a dist/ change still retries
+// at once, and shutdown always wins.
+
+function crashFixture(opts: { canSpawn?: () => boolean } = {}) {
+  let clock = 1_000_000;
+  let shuttingDown = false;
+  const timers: { fn: () => void; ms: number; cleared: boolean }[] = [];
+  const children: (EventEmitter & { pid: number; kill(): boolean })[] = [];
+  const lifecycle = createBackendLifecycle({
+    copyAssetsBeforeRespawn() {},
+    isShuttingDown: () => shuttingDown,
+    onExitDuringShutdown: () => {},
+    canSpawnBackend: opts.canSpawn,
+    spawnProcess: (() => {
+      const child = Object.assign(new EventEmitter(), { pid: 777000 + children.length, kill: () => true });
+      children.push(child);
+      return child;
+    }) as unknown as typeof spawn,
+    probePort: async () => false,
+    now: () => clock,
+    setTimer: (fn, ms) => {
+      const handle = { fn, ms, cleared: false };
+      timers.push(handle);
+      return handle;
+    },
+    clearTimer: (handle) => { (handle as { cleared: boolean }).cleared = true; },
+  });
+  const live = () => timers.filter((h) => !h.cleared);
+  const fire = () => {
+    const handle = live().at(-1)!;
+    handle.cleared = true;
+    handle.fn();
+  };
+  return {
+    lifecycle, children, timers, live, fire,
+    advance: (ms: number) => { clock += ms; },
+    shutdown: () => { shuttingDown = true; },
+  };
+}
+
+test('a crashed backend is respawned on a backoff that resets after stable uptime', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  t.mock.method(console, 'log', () => {});
+  const f = crashFixture();
+  f.lifecycle.start();
+  const delays: number[] = [];
+  for (let i = 0; i < 7; i++) {
+    f.advance(1_000);
+    f.children.at(-1)!.emit('exit', 1, null);
+    assert.equal(f.lifecycle.crashRespawnPending(), true);
+    delays.push(f.live().at(-1)!.ms);
+    f.fire();
+    assert.equal(f.children.length, i + 2, 'the timer spawned a fresh backend');
+  }
+  assert.deepEqual(delays, [2_000, 5_000, 10_000, 30_000, 60_000, 60_000, 60_000]);
+
+  // Five minutes up, then a crash: back to the first delay.
+  f.advance(5 * 60 * 1000);
+  f.children.at(-1)!.emit('exit', 3221225477, null);
+  assert.equal(f.live().at(-1)!.ms, 2_000);
+  await settle();
+});
+
+test('a dist/ change during the backoff spawns at once and cancels the pending respawn', (t) => {
+  t.mock.method(console, 'error', () => {});
+  t.mock.method(console, 'log', () => {});
+  const f = crashFixture();
+  f.lifecycle.start();
+  f.children[0].emit('exit', 1, null);
+  assert.equal(f.lifecycle.crashRespawnPending(), true);
+  assert.equal(f.lifecycle.restartBackend('dist/ changed'), true);
+  assert.equal(f.children.length, 2);
+  assert.equal(f.lifecycle.crashRespawnPending(), false, 'no second backend from the stale timer');
+});
+
+test('shutdown beats a pending crash respawn', (t) => {
+  t.mock.method(console, 'error', () => {});
+  const f = crashFixture();
+  f.lifecycle.start();
+  f.children[0].emit('exit', 1, null);
+  const pending = f.live().at(-1)!;
+  // A Ctrl+C whose backend exit was observed before the runner's own handler:
+  // the timer fires after the shutdown flag and spawns nothing.
+  f.shutdown();
+  pending.fn();
+  assert.equal(f.children.length, 1);
+  // And kill() (the real shutdown path) cancels it outright.
+  const g = crashFixture();
+  g.lifecycle.start();
+  g.children[0].emit('exit', 1, null);
+  g.lifecycle.kill();
+  assert.equal(g.lifecycle.crashRespawnPending(), false);
+});
+
+test('a crash respawn waits for the compiler instead of spawning onto half-written output', async (t) => {
+  const errors: string[] = [];
+  t.mock.method(console, 'error', (msg: unknown) => { errors.push(String(msg)); });
+  let canSpawn = true;
+  const f = crashFixture({ canSpawn: () => canSpawn });
+  f.lifecycle.start();
+  f.children[0].emit('exit', 1, null);
+  canSpawn = false;
+  f.fire();
+  assert.equal(f.children.length, 1);
+  assert.ok(errors.some((e) => e.includes('the next successful compile starts it')), errors.join(' | '));
+  await settle(); // the exit line follows the boot-death port probe
+  assert.ok(errors.some((e) => e.includes('retrying in 2 s')), 'the exit line says when it retries');
+});

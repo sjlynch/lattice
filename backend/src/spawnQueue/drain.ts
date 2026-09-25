@@ -4,6 +4,7 @@
 // Non-reentrant — a thunk completing can trigger another drain, and the
 // drain itself never blocks on a thunk (admitted thunks run detached).
 
+import { isRestartDraining } from '../restartDrain/gate.js';
 import { queueState, type QueueRequest } from './state.js';
 import { isSpawnCapacityError, isSpawnDiskSpaceError } from './types.js';
 
@@ -28,6 +29,13 @@ export function drainQueue(): void {
 
 function admitWhilePossible(): void {
   const s = queueState;
+  // A backend restart is imminent (../restartDrain/): admit nothing, in any
+  // band. A request admitted now would be killed half-way through its thunk
+  // (a worktree half checked out, a pty the next process never hears about);
+  // left pending, it is carried across by its own durable record instead (a
+  // task's `runQueued`, a workflow step's `pending` phase). A drain always
+  // ends — restart or TTL — and its end re-drains the queue (spawnQueue.ts).
+  if (isRestartDraining()) return;
   // Re-scan after every admission: a reservation shrinks headroom, so a
   // batch item can stop being admittable while a priority item still is.
   const now = Date.now();

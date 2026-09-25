@@ -20,6 +20,14 @@ export type PostMergeHookRun = {
   terminalId?: string;
   // What triggered this hook — surfaced for telemetry / debugging.
   trigger: 'merge-run' | 'manual-merge';
+  // A Claude Stop-hook completion the quiescence gate (stopHookGate.ts) is
+  // still holding — the time of the most recent such Stop. Persisted for the
+  // same reason as WorkflowRun.stopReceived: the gate is an in-memory timer, the
+  // hook got its 200 and won't retry, and the agent is idle, so a restart
+  // inside the settle window used to lose the completion (the hook then sat
+  // "running" until its bounded wait expired and errored it). A re-adopting
+  // backend re-arms the gate from here (recovery/oneOffRunResume.ts).
+  stopReceivedAt?: number;
 };
 
 export type PostMergeHookSession = {

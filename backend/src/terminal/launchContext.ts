@@ -2,7 +2,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import { ensureLatticeApiDoc } from '../latticeApiDocs.js';
 import type { CreateOpts } from './sessionTypes.js';
-import { applyFreshWindowsPath } from './windowsPath.js';
+import { applyFreshWindowsPath, applyPtyPathPrepend } from './windowsPath.js';
 import { applyClaudeOverheadEnv, scrubInheritedNpmEnv } from './envSetup.js';
 import {
   configureCodexProjectMcp,
@@ -94,6 +94,7 @@ export function buildSessionLaunchContext(
   // Windows the registry PATH is still merged over whatever is left.
   scrubInheritedNpmEnv(baseEnv);
   applyFreshWindowsPath(baseEnv);
+  applyPtyPathPrepend(baseEnv);
   applyClaudeOverheadEnv(baseEnv);
 
   // Secret env for managed MCP servers (Codex `env_vars`/`env_http_headers`

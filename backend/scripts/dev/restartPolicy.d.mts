@@ -9,6 +9,9 @@ export const MAX_DEFER_MS: number;
 export const HOLD_LOG_THROTTLE_MS: number;
 export const PROCESS_START_FUZZ_MS: number;
 export const WORKFLOW_DEFER_RELOG_MS: number;
+export const LOCK_SETTLE_MS: number;
+export const PARKED_PROBE_TTL_MS: number;
+export const PARKED_HOLD_RELOG_MS: number;
 export const IGNORED_EVENT_LOG_THROTTLE_MS: number;
 
 export interface RunLockScanOptions {
@@ -39,7 +42,14 @@ export function describeRunLocks(locks: RunLock[] | null | undefined): string;
 export function repoOperationInFlight(opts?: RunLockScanOptions): boolean;
 export function workflowRunInFlight(opts?: RunLockScanOptions): boolean;
 
-export type DeferAction = 'idle' | 'apply' | 'hold-workflow' | 'force' | 'hold';
+export type DeferAction =
+  | 'idle'
+  | 'settle'
+  | 'apply'
+  | 'hold-workflow'
+  | 'hold-parked'
+  | 'force'
+  | 'hold';
 
 export function classifyDeferAction(args: {
   deferredSince: number;
@@ -47,7 +57,23 @@ export function classifyDeferAction(args: {
   operationInFlight: boolean;
   workflowInFlight: boolean;
   maxDeferMs?: number;
+  // Last time a scan saw any live run.lock (0 = never) and how long to wait
+  // after the last one cleared before applying. Omitted → apply at once.
+  lastLockSeenAt?: number;
+  settleMs?: number;
+  // The backend reports every held lock parked on a live agent.
+  parkedOnLiveAgent?: boolean;
 }): DeferAction;
+
+// GET /api/internal/restart-drain/lock-holders, as restartHandshake.mjs returns it.
+export type LockHoldersReport =
+  | { ok: true; pid: number; holders: Array<{ hash: string; parkedOn: string | null; detail?: string }> }
+  | { ok: false; why: string };
+
+export function locksParkedOnLiveAgents(
+  locks: RunLock[],
+  report: LockHoldersReport | null | undefined,
+): boolean;
 
 export function createRestartPolicy(args?: {
   restartBackend: (reason: string) => boolean;
@@ -64,6 +90,16 @@ export function createRestartPolicy(args?: {
   needsBackendStart?: () => boolean;
   deferBaselineUntilSpawn?: boolean;
   now?: () => number;
+  // Restart handshake (restartHandshake.mjs). Without prepareRestart a
+  // restart is applied synchronously.
+  prepareRestart?: (reason: string) => Promise<
+    | { ok: true; ready: boolean; pending: string[]; waitedMs: number }
+    | { ok: false; why: string }
+  >;
+  cancelRestartDrain?: (why: string) => Promise<unknown>;
+  queryLockHolders?: () => Promise<LockHoldersReport>;
+  // Wait this long after the last run.lock cleared before restarting.
+  lockSettleMs?: number;
 }): {
   // `force` skips the metadata-only check (a verified compile completion).
   onDistChanged(force?: boolean): void;

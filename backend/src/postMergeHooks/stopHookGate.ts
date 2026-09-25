@@ -26,9 +26,11 @@
 // lastSignalAt this reads; the agent-activity route feeds it from the same
 // hooks that already drive the graph (extended to the `pmh:` agent id).
 
-import { getPostMergeHook } from './registry.js';
+import { finishPostMergeHook, getPostMergeHook } from './registry.js';
 import { postMergeHookAgentId } from './stopHook.js';
-import { isAgentQuiescent, noteAgentStop } from '../agentQuiescence.js';
+import { cleanupPostMergeHookSession } from './cleanup.js';
+import { forgetAgentQuiescence, isAgentQuiescent, noteAgentStop } from '../agentQuiescence.js';
+import { unregisterAgentSession } from '../agentSessions.js';
 
 // Finish only after the session has been fully quiet (no subagents live, no
 // signal) for this long. Long enough to bridge the gap between a premature Stop
@@ -67,6 +69,10 @@ export function requestPostMergeHookStopComplete(
     settleMs: PMH_STOP_HOOK_SETTLE_MS,
     pollMs: PMH_STOP_HOOK_POLL_MS,
   },
+  // `rearm`: boot recovery restarting the gate for a Stop the previous process
+  // had received (PostMergeHookRun.stopReceivedAt) — not a new Stop, so it must
+  // not restart the quiet window at "now".
+  opts: { rearm?: boolean } = {},
 ): void {
   if (!stillPending(id)) return;
 
@@ -74,7 +80,7 @@ export function requestPostMergeHookStopComplete(
   // Count this Stop as a signal so the settle window is measured from the most
   // recent Stop, not just from tool/subagent activity — repeated Stops keep
   // pushing the window out until they stop coming.
-  noteAgentStop(agentId);
+  if (!opts.rearm) noteAgentStop(agentId);
 
   if (pending.has(id)) return; // poll already running
 
@@ -100,6 +106,20 @@ export function requestPostMergeHookStopComplete(
   // Replace any stale gate (defensive) and start the poll loop.
   clearGate(id);
   schedule();
+}
+
+// The finish a gated (Stop-sourced, non-error) completion performs: drop the
+// graph node + quiescence state, finalize the hook (resolving the merge-run /
+// Phase C waiters), then clean up scratch off the response path. Shared by the
+// `/complete` route and by boot recovery re-arming a held Stop.
+export function postMergeHookStopFinish(id: string, projectPath: string): () => void {
+  const agentId = postMergeHookAgentId(id);
+  return () => {
+    unregisterAgentSession(agentId);
+    forgetAgentQuiescence(agentId);
+    finishPostMergeHook(id, 'completed');
+    void cleanupPostMergeHookSession(projectPath, id);
+  };
 }
 
 // Cancel a pending gate (hook finished by another path / aborted). No-op if

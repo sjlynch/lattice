@@ -53,7 +53,7 @@ Don't run the test suite, builds or type-checks — only resolve the markers.
 ${renderStashDropSteps(stashLabel)}
 4. Notify Lattice:
    \`\`\`
-   curl -s -m 5 -X POST ${backendOrigin}/api/tasks/${task.id}/stash-resolved
+   curl -s -m 20 --retry 15 --retry-delay 3 --retry-connrefused -X POST ${backendOrigin}/api/tasks/${task.id}/stash-resolved
    \`\`\`
 5. Delete this file: \`del ${fileName}\` (Windows) or \`rm ${fileName}\`
 
@@ -97,7 +97,7 @@ Don't run the test suite, builds or type-checks — only resolve the markers.
 ${renderStashDropSteps(stashLabel)}
 4. Notify Lattice that the conflict is resolved:
    \`\`\`
-   curl -s -m 5 -X POST ${backendOrigin}/api/merge-runs/${runId}/stash-resolved
+   curl -s -m 20 --retry 15 --retry-delay 3 --retry-connrefused -X POST ${backendOrigin}/api/merge-runs/${runId}/stash-resolved
    \`\`\`
 5. Delete this file: \`del ${fileName}\` (Windows) or \`rm ${fileName}\`
 

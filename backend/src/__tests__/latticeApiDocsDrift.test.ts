@@ -158,6 +158,11 @@ const UNDOCUMENTED_ROUTES: Record<string, string> = {
   'POST /api/workflow-prompt-customizations/:id/complete': 'prompt-customization callback',
   'POST /api/post-merge-hooks/:id/complete': 'post-merge hook Stop-hook callback',
   'POST /api/push-runs/:id/done': 'push-run Stop-hook callback',
+  // The dev runner's restart handshake (routes/restartDrain.ts): token-guarded,
+  // refuses any browser Origin, and draining freezes every spawn on the backend.
+  'POST /api/internal/restart-drain/prepare': 'dev-runner restart handshake (internal, token-guarded)',
+  'POST /api/internal/restart-drain/cancel': 'dev-runner restart handshake (internal, token-guarded)',
+  'GET /api/internal/restart-drain/lock-holders': 'dev-runner restart handshake (internal, token-guarded)',
   'POST /api/qa-runs/:id/done': 'QA-run Stop-hook backstop',
   'POST /api/qa-runs/:id/verdict': 'QA-run structured verdict callback',
   'POST /api/agent-activity/:token': 'HMAC-token activity hook (non-worktree session)',
@@ -235,6 +240,7 @@ const UNDOCUMENTED_ROUTES: Record<string, string> = {
   'POST /api/terminals': 'pty pre-spawn for the sidebar terminal',
   'DELETE /api/terminals/:id': 'debug: kill a pty session',
   'GET /api/spawn-queue': 'debug: spawn-queue snapshot',
+  'GET /api/terminal-server/status': 'navbar chip: terminal-server update pending',
 
   // Opengrep engine / rule-pack management (Settings → Tools). Downloading a
   // 50 MB binary or a rule pack is the user's explicit click, never an agent's;

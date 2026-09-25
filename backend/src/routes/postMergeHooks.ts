@@ -17,11 +17,14 @@ import {
   getActiveHookForProject,
   getMostRecentHookForProject,
   getPostMergeHook,
+  postMergeHookStore,
 } from '../postMergeHooks.js';
+import { patchPostMergeHook } from '../postMergeHooks/registry.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { postMergeHookAgentId } from '../postMergeHooks/stopHook.js';
 import {
   cancelPostMergeHookStopGate,
+  postMergeHookStopFinish,
   requestPostMergeHookStopComplete,
 } from '../postMergeHooks/stopHookGate.js';
 import { unregisterAgentSession } from '../agentSessions.js';
@@ -85,9 +88,12 @@ export function buildPostMergeHooksRouter(): Router {
       !errParam &&
       source.startsWith('claude-stop-hook')
     ) {
-      requestPostMergeHookStopComplete(id, () =>
-        finish({ projectPath: existing.projectPath, id: existing.id }),
-      );
+      // Record the Stop durably BEFORE answering (see
+      // PostMergeHookRun.stopReceivedAt): the hook won't send it again, and a
+      // restart inside the settle window must re-arm the gate, not lose it.
+      patchPostMergeHook(id, { stopReceivedAt: Date.now() });
+      await postMergeHookStore.flush(existing.projectPath).catch(() => {});
+      requestPostMergeHookStopComplete(id, postMergeHookStopFinish(existing.id, existing.projectPath));
       return res.json({ ok: true, gated: true });
     }
 

@@ -50,15 +50,32 @@ single source of truth for all three.
   post-merge hook cleanup wrappers.
 - `registry.ts` — `createOneOffRunRegistry(...)`: the tiny shared in-memory
   lifecycle for push + QA (`record`, guarded `forget` that preserves running
-  runs, `markDone` stamping `doneAt`, optional event fan-out). QA-specific
-  verdict fields and push-specific subscriptions remain in their feature
-  registries.
+  runs, `markDone` stamping `doneAt`, `update` for feature fields, `restore` /
+  `list` for boot recovery, optional event fan-out). With a `store` every
+  change re-mirrors the project's RUNNING runs to disk. QA-specific verdict
+  fields and push-specific subscriptions remain in their feature registries.
+- `persistence.ts` — `createOneOffRunStore({fileName, logLabel, deserialize})`:
+  the on-disk mirror of a run-type's **running** records at
+  `~/.lattice/per-project/<hash>/<fileName>` (`push-runs.json`, `qa-runs.json`,
+  `post-merge-hooks.json`; the post-merge registry uses the store directly).
+  Exists because the agents' ptys survive a backend restart in the detached
+  terminal-server while the registries did not: a restart orphaned the session
+  (its callback 404'd). Home-scoped, atomic temp→rename, writes serialized per
+  project and coalesced (collected when the write starts), **not debounced**
+  (a restart inside a debounce window would resurrect a finished run as
+  running), file removed when nothing runs, never throws. Each feature's
+  `deserialize` re-validates the untrusted JSON and **re-derives `cwd` through
+  its `assertSafeSessionPath`** from the id — never trusts a path from disk,
+  since recovery matches the live pty by it and cleanup deletes it. Re-adopted
+  on boot by `../recovery/oneOffRunResume.ts`.
 - `routes.ts` — small idempotent `{ok:true}` response shells for scratch-backed
   `/done` and frontend-acknowledgement `DELETE` routes. Route-specific behavior
   stays in the route files.
 - `sweep.ts` — shared boot sweep for scratch roots: collect live terminal cwd
   roots once, iterate known projects' scratch dirs, skip dirs with live PTYs,
   and delegate id/root validation + deletion to the feature cleanup wrapper.
+  Runs right after the boot re-adoption, so a re-adopted run's dir (live pty)
+  is kept and a dead one's is reclaimed.
 
 ## Per-feature config
 
@@ -76,5 +93,7 @@ its methods under the legacy names, so all existing import paths keep working:
 Call `createHomeScratchPaths(...)` in a feature `paths.ts`, drive setup/spawn
 through `startHomeScratchAgentSession` (or `setupHomeScratchSession` if you need
 a bespoke spawn flow), and add a boot sweep that reclaims orphans under your
-scratch root (`recovery/`). Do **not** hand-roll the path guard or the recursive
+scratch root (`recovery/`). If its agent can outlive a backend restart and
+calls back, give its registry a `createOneOffRunStore` mirror and an adapter
+in `recovery/oneOffRunResume.ts`, or its callback will 404 after a restart. Do **not** hand-roll the path guard or the recursive
 delete — they are the `.git`-deletion defence and must stay centralized here.

@@ -131,8 +131,9 @@ export function handleTaskComplete(backendOrigin: string) {
     // Kill it so terminal-server resources are released and the worktree's
     // dir lock is dropped on Windows. Deferred so the curl that called us
     // (running inside the very pty we're killing) gets to read this response
-    // before the connection is torn down. The Stop hook's `curl -s -m 5`
-    // exits in well under that, so 1s is plenty of slack.
+    // before the connection is torn down. The Stop hook's callback script
+    // (callbackOutbox/script.ts) exits in well under that once it has the
+    // response, so 1s is plenty of slack.
     const wt = task.worktreePath;
     if (wt) {
       setTimeout(() => {

@@ -19,7 +19,7 @@ here.**
 ## Mirror contract
 
 `qaRuns/` is a near-clone of this directory — same skeleton, same
-in-memory-registry / home-scoped-scratch / path-guard / Stop-hook / boot-sweep
+persisted-registry / home-scoped-scratch / path-guard / Stop-hook / boot-sweep
 contract (now backed by the shared `../homeScratch/` builder).
 **Edit one and the other almost always changes in lockstep.** The
 only structural divergence is qaRuns' extra `verdict.ts` (qa → done
@@ -56,14 +56,23 @@ guard, which is part of the repo's `.git`-deletion defence layer (see the root
   activity hook; defines the stable `pushAgentId`.
 - `instructions.ts` — renders `PUSH_INSTRUCTIONS.md` from the editable `push`
   instruction template.
-- `registry.ts` — the **in-memory, non-persisted** run map (+ lifecycle event
-  fan-out). At boot it's empty, so any scratch dir still on disk is by
-  definition stale and is reclaimed by `recovery/pushSessionSweep.ts`
-  (`sweepOrphanedPushSessions`). `forgetPushRun` evicts a finished run.
+- `registry.ts` — the in-memory run map (+ lifecycle event fan-out) whose
+  **running** runs are mirrored to `~/.lattice/per-project/<hash>/push-runs.json`
+  (`pushRunStore`, `../homeScratch/persistence.ts`). The push agent's pty
+  survives a backend restart in the detached terminal-server, so boot recovery
+  (`recovery/oneOffRunResume.ts`) puts back a run whose pty is still alive —
+  its `/done` then lands normally instead of 404ing — and settles one whose pty
+  is gone (`markPushRunLost`: `lost` + done) after a grace for the callback
+  outbox. A run records its `serverId` and, when a workflow Push step spawned
+  it, `workflowRunId` + `workflowStepIndex`: `findRunningPushRunForWorkflowStep`
+  is how a Push step re-dispatched after a restart attaches to that session
+  instead of pushing a second time (a `lost` run is never attachable).
+  `forgetPushRun` evicts a finished run.
 - `types.ts` — `PushRun` / `PushSession`.
 
 ## Scratch
 
 `~/.lattice/per-project/<sha1(path)[:12]>/push/<id>/` — home-scoped,
 **outside** the repo on purpose so the recursive cleanup can never reach the
-project tree. Non-persisted registry ⇒ stale-at-boot ⇒ swept.
+project tree. At boot, a dir whose pty did not survive is swept
+(`recovery/pushSessionSweep.ts`); a live one belongs to a re-adopted run.

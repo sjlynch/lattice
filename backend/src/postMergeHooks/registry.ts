@@ -1,7 +1,15 @@
 import { canonicalProjectPath } from '../projectPath.js';
+import { normalizeAgentHarness } from '../harnesses.js';
+import {
+  createOneOffRunStore,
+  readNumber,
+  readString,
+} from '../homeScratch/persistence.js';
+import { postMergeHookPaths } from './paths.js';
 import type { PostMergeHookRun, PostMergeHookStatus } from './types.js';
 
-// In-memory registry of post-merge hook runs.
+// In-memory registry of post-merge hook runs (the running ones are also
+// mirrored to disk for restart recovery — see "Durable mirror" below).
 //
 // Only one running hook per project is allowed (enforced by callers via
 // `getActiveHookForProject`). A handful of finished hooks are kept around so
@@ -25,6 +33,87 @@ type Entry = {
 };
 
 const entries = new Map<string, Entry>();
+
+// ---------------------------------------------------------------------------
+// Durable mirror of the RUNNING hooks (`~/.lattice/per-project/<hash>/
+// post-merge-hooks.json`, see ../homeScratch/persistence.ts). The hook's agent
+// lives in the detached terminal-server and survives a backend restart; the
+// merge run that fired it is re-run by boot recovery. Without the mirror the
+// resumed run could not see the still-running hook — it fired a SECOND one, or
+// (its merges already done) the workflow Merge step's Phase C read "idle" while
+// the orphan kept working, and the orphan's `/complete` 404'd. Boot recovery
+// (`recovery/oneOffRunResume.ts`) restores a hook whose pty is alive, so the
+// one-running-per-project gate, the waiters and the UI all see it again.
+// ---------------------------------------------------------------------------
+
+export const POST_MERGE_HOOKS_FILENAME = 'post-merge-hooks.json';
+
+export function deserializePostMergeHook(
+  raw: unknown,
+  owningProject: string,
+): PostMergeHookRun | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const id = readString(r.id);
+  if (!id || r.status !== 'running') return null;
+  let cwd: string;
+  let projectPath: string;
+  try {
+    projectPath = canonicalProjectPath(owningProject);
+    // Re-derived through the scratch path guard from the regex-checked id —
+    // recovery matches the live pty by it and cleanup deletes it.
+    cwd = postMergeHookPaths.assertSafeSessionPath(projectPath, id);
+  } catch {
+    return null;
+  }
+  const run: PostMergeHookRun = {
+    id,
+    projectPath,
+    harness: normalizeAgentHarness(r.harness),
+    prompt: typeof r.prompt === 'string' ? r.prompt : '',
+    cwd,
+    status: 'running',
+    startedAt: readNumber(r.startedAt) ?? 0,
+    trigger: r.trigger === 'manual-merge' ? 'manual-merge' : 'merge-run',
+  };
+  const serverId = readString(r.serverId);
+  if (serverId) run.serverId = serverId;
+  const terminalId = readString(r.terminalId);
+  if (terminalId) run.terminalId = terminalId;
+  const stopReceivedAt = readNumber(r.stopReceivedAt);
+  if (stopReceivedAt !== undefined) run.stopReceivedAt = stopReceivedAt;
+  return run;
+}
+
+export const postMergeHookStore = createOneOffRunStore<PostMergeHookRun>({
+  fileName: POST_MERGE_HOOKS_FILENAME,
+  logLabel: '[post-merge-hook]',
+  deserialize: deserializePostMergeHook,
+});
+
+function persistProject(projectPath: string): void {
+  const key = canonicalProjectPath(projectPath);
+  postMergeHookStore.persist(key, () =>
+    [...entries.values()]
+      .filter((e) => e.run.projectPath === key && e.run.status === 'running')
+      .map((e) => ({ ...e.run })),
+  );
+}
+
+// Boot recovery: put a persisted still-running hook back (no-op if the id is
+// already tracked). Emits `started` so a subscriber already watching the
+// project (the Merge step's Phase C, the WS endpoint) re-evaluates.
+export function restorePostMergeHook(run: PostMergeHookRun): boolean {
+  if (entries.has(run.id)) return false;
+  const canonicalRun = {
+    ...run,
+    status: 'running' as const,
+    projectPath: canonicalProjectPath(run.projectPath),
+  };
+  entries.set(canonicalRun.id, { run: canonicalRun, waiters: [] });
+  notify({ type: 'started', run: { ...canonicalRun } });
+  return true;
+}
 
 // A trigger must read settings before it can construct the full run record.
 // Keep that pre-record launch window visible to the workflow Merge-step gate;
@@ -107,6 +196,7 @@ export function recordPostMergeHook(run: PostMergeHookRun): void {
   };
   entries.set(canonicalRun.id, { run: canonicalRun, waiters: [] });
   pruneHistoryFor(canonicalRun.projectPath, canonicalRun.id);
+  persistProject(canonicalRun.projectPath);
   notify({ type: 'started', run: { ...canonicalRun } });
 }
 
@@ -166,6 +256,7 @@ export function patchPostMergeHook(
   const e = entries.get(id);
   if (!e) return null;
   e.run = { ...e.run, ...patch };
+  persistProject(e.run.projectPath);
   notify({ type: 'progress', run: { ...e.run } });
   return { ...e.run };
 }
@@ -184,6 +275,9 @@ export function finishPostMergeHook(
   e.run.status = status;
   e.run.finishedAt = Date.now();
   if (error) e.run.error = error;
+  // Drops it from the mirror straight away: a restart that re-read it as
+  // running would re-adopt a hook whose `/complete` has already been spent.
+  persistProject(e.run.projectPath);
   const waiters = e.waiters.splice(0);
   for (const w of waiters) w.resolve();
   notify({ type: 'finished', run: { ...e.run } });

@@ -182,3 +182,15 @@ and waits for its Stop hook.
   `step-spawned` / `'push complete'` — otherwise a cancelled push still runs
   `git push` to completion and orphans the pty. Mirrors the existing post-spawn
   "already `done`" guard. Covered by `__tests__/workflowPushStepCancel.test.ts`.
+- **Re-dispatch attaches, never double-pushes.** A backend restart kills the
+  step (it is re-dispatched by `recovery/workflowRunResume.ts`) but not its
+  push session, which lives in the detached terminal-server. The session is
+  spawned with `workflow: {runId, stepIndex}`, recorded on the persisted push
+  run; boot recovery re-adopts it, and the re-dispatched step's
+  `findLivePushSession` (→ `findRunningPushRunForWorkflowStep`) returns it, so
+  the step skips the drain, surfaces that pty in `step-spawned`, and waits for
+  ITS `/done` (fresh timeout) instead of starting a second push. A push whose
+  pty boot recovery already found gone is flagged `lost` and never attached
+  (the step pushes afresh); an attached one settled `lost` later fails the
+  step ("push session terminal exited without reporting completion"). Covered
+  by `__tests__/oneOffRunResume.test.ts`.

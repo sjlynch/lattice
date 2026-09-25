@@ -10,6 +10,7 @@
 // mergeRuns/ convention). See spawnQueue/CLAUDE.md for the contract.
 
 import { getGlobalSettings } from './globalSettings.js';
+import { isRestartDraining, onRestartDrainEnded } from './restartDrain/gate.js';
 import { drainQueue } from './spawnQueue/drain.js';
 import { ensurePolling, pokePoll, pollOnce } from './spawnQueue/poll.js';
 import { queueState } from './spawnQueue/state.js';
@@ -33,6 +34,11 @@ export type {
   EnqueueSpawnResult,
   SpawnQueueSnapshot,
 } from './spawnQueue/types.js';
+
+// Admission is paused while a restart drain is active (spawnQueue/drain.ts).
+// When the drain ends without a restart (the dev runner cancelled it, or its
+// TTL ran out) admit what it held right away rather than on the next poll.
+onRestartDrainEnded(() => drainQueue());
 
 // Enqueue a spawn. The thunk does the FULL spawn unit (setup + exactly one
 // proxyCreateSession) and runs only when the queue has headroom. `done`
@@ -94,6 +100,7 @@ export function notifyDiskSpaceFreed(): void {
 // queue is empty. An unknown count (terminal-server unreachable) never blocks:
 // the caller's own spawn will surface that.
 export async function batchAdmissionHold(): Promise<string | null> {
+  if (isRestartDraining()) return 'a backend restart is being prepared';
   await pollOnce();
   const s = queueState;
   s.governor.sample();

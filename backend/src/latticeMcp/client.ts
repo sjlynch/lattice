@@ -17,7 +17,10 @@
 //     oversized call instead.
 //   - A connection failure is an error whose only useful content is "this URL
 //     didn't answer; Lattice may not be running" — the agent should stop
-//     calling board tools, not narrow its query.
+//     calling board tools, not narrow its query. It is only reported after a
+//     bounded retry (see RETRY_BUDGET_MS): when Lattice works on its own repo
+//     the backend restarts after merges, and a board call landing in that
+//     window used to fail outright and tell the agent to give up.
 //   - Any other non-2xx is an error carrying the status + body so the agent can
 //     tell a 400 (its own bad argument) from a 404/500.
 //
@@ -47,7 +50,28 @@ export type LatticeClientOptions = {
   // The canonical project path this server is pinned to.
   project: string;
   fetchImpl?: FetchLike;
+  // How long to keep retrying a backend that is restarting (connection
+  // refused / 503). Tests pass 0; `sleep` is injectable for the same reason.
+  retry?: { budgetMs?: number; sleep?: (ms: number) => Promise<void> };
 };
+
+// A dev-runner restart (compile → drain → kill → boot → recovery) is usually
+// 5-20 s; 45 s covers a slow boot without leaving a tool call hanging for long.
+export const RETRY_BUDGET_MS = 45_000;
+const RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 5000];
+
+// What `send` re-sends while the backend is restarting:
+//   - HTTP 503: the restart-drain gate / workflow-recovery gate refused the
+//     request WITHOUT acting on it — safe for every method.
+//   - ECONNREFUSED: nothing was listening, so the request never arrived — safe
+//     for every method.
+//   - any other network error (reset, abort): the request may have been acted
+//     on, so only an idempotent GET is sent again.
+function isRetryableError(method: string, error: unknown): boolean {
+  const err = error as { code?: string; cause?: { code?: string } } | undefined;
+  const code = err?.code ?? err?.cause?.code;
+  return code === 'ECONNREFUSED' || method === 'GET';
+}
 
 // What one HTTP round trip produced, in the four shapes the MCP layer renders
 // differently. `text` is always the exact string to hand the model.
@@ -76,6 +100,8 @@ export class LatticeClient {
   private readonly apiUrl: string;
   readonly project: string;
   private readonly fetchImpl: FetchLike;
+  private readonly retryBudgetMs: number;
+  private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(opts: LatticeClientOptions) {
     // Strip trailing slashes once so path joins stay single-slashed.
@@ -87,6 +113,32 @@ export class LatticeClient {
     this.fetchImpl =
       opts.fetchImpl ??
       ((input, init) => fetch(input, init as RequestInit) as unknown as ReturnType<FetchLike>);
+    this.retryBudgetMs = opts.retry?.budgetMs ?? RETRY_BUDGET_MS;
+    this.sleep = opts.retry?.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  }
+
+  // One request, re-sent while the backend is restarting (isRetryableFailure)
+  // until the budget is spent. The budget is counted in slept time so an
+  // injected sleep keeps tests instant.
+  private async send(
+    url: string,
+    init: Parameters<FetchLike>[1] & { method: string },
+  ): Promise<Awaited<ReturnType<FetchLike>>> {
+    let slept = 0;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const res = await this.fetchImpl(url, init);
+        if (res.status !== 503 || slept >= this.retryBudgetMs) return res;
+      } catch (error) {
+        if (slept >= this.retryBudgetMs || !isRetryableError(init.method, error)) throw error;
+      }
+      const delay = Math.min(
+        RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)],
+        this.retryBudgetMs - slept,
+      );
+      await this.sleep(delay);
+      slept += delay;
+    }
   }
 
   // `path` is the API path only (`/api/tasks`); `project` is appended here so
@@ -106,7 +158,7 @@ export class LatticeClient {
     const method = init.method ?? 'GET';
     let res: Awaited<ReturnType<FetchLike>>;
     try {
-      res = await this.fetchImpl(url, {
+      res = await this.send(url, {
         method,
         headers: {
           accept: 'application/json',

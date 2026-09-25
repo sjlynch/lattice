@@ -62,7 +62,7 @@ export function renderStepCompletionInstructions(
           'Run this as your *last* action — do not end your turn before it succeeds:',
           '',
           '```bash',
-          `curl -s -m 5 -X POST "${completeUrl}?source=model-explicit-curl"`,
+          `curl -s -m 20 --retry 15 --retry-delay 3 --retry-connrefused -X POST "${completeUrl}?source=model-explicit-curl"`,
           '```',
           ...(harness === 'pi'
             ? [

@@ -2,7 +2,10 @@ import { useCallback } from 'react';
 import {
   abortTaskMerge as apiAbortTaskMerge,
   cancelMergeRun as apiCancelMergeRun,
+  HttpError,
+  mayHaveBeenApplied,
   mergeTask as apiMergeTask,
+  retryTransient,
   startMergeRun as apiStartMergeRun,
   type MergeRun,
   type Task,
@@ -72,11 +75,22 @@ export function useTaskMergeActions({
 
   const mergeAllReady = useCallback(async () => {
     if (!activeFolder) return;
+    // Set when an attempt failed in a way that may still have started the run
+    // (response lost mid-restart): a later 409 "already running" is then
+    // most likely that run, not a reason to toast.
+    let possiblyApplied = false;
     try {
-      await apiStartMergeRun(activeFolder);
+      // Retries through a backend restart (502/503/504/network) instead of
+      // toasting — a self-merge restarts the backend routinely.
+      await retryTransient(() => apiStartMergeRun(activeFolder), {
+        onRetry: (err) => {
+          if (mayHaveBeenApplied(err)) possiblyApplied = true;
+        },
+      });
       // Run is now backend-driven; UI subscribes to /ws/merge-runs for
       // progress and conflict events. Closing the panel/tab won't stop it.
     } catch (err) {
+      if (possiblyApplied && err instanceof HttpError && err.status === 409) return;
       showError(`Merge all failed to start: ${(err as Error).message}`);
     }
   }, [activeFolder, showError]);

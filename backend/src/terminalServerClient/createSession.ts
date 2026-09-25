@@ -41,6 +41,7 @@ import { terminalRegistry } from '../terminalRegistry/store.js';
 import { assignHarnessSessionId } from '../terminalRegistry/sessionIdentity.js';
 import { scheduleCodexDiscovery } from '../terminalRegistry/codexDiscovery.js';
 import type { AgentSessionRef, TerminalRecord, TerminalRegistryHint } from '../terminalRegistry/types.js';
+import { trackRestartTransition } from '../restartDrain/gate.js';
 
 export type CreateSessionOptions = {
   cwd?: string;
@@ -400,7 +401,17 @@ type CreateOnce =
 // Retry only when the same executor advertises request deduplication. A lost
 // response can mean the PTY already exists; replaying into a legacy/replacement
 // server could start the agent twice. A broken request never tears down peers.
-export async function proxyCreateSession(
+//
+// Every create is a restart-drain transition (../restartDrain/): a restart
+// landing between the executor spawning the pty and the registry record /
+// caller bookkeeping being written would leave a live agent nobody tracks.
+export function proxyCreateSession(
+  opts: CreateSessionOptions,
+): Promise<CreateSessionResult> {
+  return trackRestartTransition('terminal create', createSessionTracked(opts));
+}
+
+async function createSessionTracked(
   opts: CreateSessionOptions,
 ): Promise<CreateSessionResult> {
   let server: TerminalServerInfo;

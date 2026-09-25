@@ -21,7 +21,7 @@
 // per-session liveSubagents / lastSignalAt this reads; the activity route feeds
 // it from the very hooks that already drive the graph.
 
-import { getRun, notify, runs, snapshot } from './state.js';
+import { checkpointWorkflowRun, getRun, notify, runs, snapshot } from './state.js';
 import { workflowStepAgentId } from './sessionSpawner.js';
 import { isAgentQuiescent, noteAgentSignal, noteAgentStop } from '../agentQuiescence.js';
 import { isRunTestsStep, noteRunTestsStep } from './testStep/runTestsStep.js';
@@ -67,6 +67,10 @@ export function requestStopHookStepComplete(
   stepIndex: number,
   advance: () => void | Promise<void>,
   timing: GateTiming = { settleMs: STOP_HOOK_SETTLE_MS, pollMs: STOP_HOOK_POLL_MS },
+  // `rearm`: a re-adopting backend restarting the gate for a Stop the previous
+  // process had received (WorkflowRun.stopReceived) — not a new Stop, so it
+  // must not restart the quiet window at "now".
+  opts: { rearm?: boolean } = {},
 ): void {
   const run = getRun(runId);
   // Same idempotency guard as completeWorkflowStep: ignore a Stop for a run
@@ -78,7 +82,7 @@ export function requestStopHookStepComplete(
   // Count this Stop as a signal so the settle window is measured from the most
   // recent Stop, not just from tool/subagent activity — repeated Stops keep
   // pushing the window out until they stop coming.
-  noteAgentStop(agentId);
+  if (!opts.rearm) noteAgentStop(agentId);
 
   const existing = pending.get(runId);
   if (existing && existing.stepIndex === stepIndex) return; // poll already running
@@ -141,6 +145,22 @@ export function requestStopHookStepComplete(
   // have cleared itself on its guard) and start the poll loop.
   clearGate(runId);
   schedule();
+}
+
+// Durably note that a Stop for (runId, stepIndex) is now held by the gate, so a
+// restart before the gate fires re-arms it instead of losing the completion
+// (see WorkflowRun.stopReceived). Awaited BEFORE the hook gets its 200: once
+// the hook has an answer nothing will ever send this Stop again. A failed
+// write is logged, not thrown — the in-memory gate still runs; only its
+// survival across a restart is lost.
+export async function recordStopReceived(runId: string, stepIndex: number): Promise<void> {
+  // The live record, not `getRun` (which hands out a snapshot copy).
+  const run = runs.get(runId);
+  if (!run || run.status !== 'running' || run.currentStepIndex !== stepIndex) return;
+  run.stopReceived = { stepIndex, at: Date.now() };
+  await checkpointWorkflowRun(run).catch((err) =>
+    console.warn(`[workflow-run] ${runId} could not record the Stop for step ${stepIndex}:`, err),
+  );
 }
 
 // Cancel a pending gate (run cancelled). No-op if none is pending.

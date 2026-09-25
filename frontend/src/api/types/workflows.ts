@@ -142,7 +142,10 @@ export type StartWorkflowPromptCustomizationInput = {
 };
 
 export type WorkflowRunEvent =
-  | { type: 'hello'; runs: WorkflowRun[] }
+  // `recovering: true` = sent while the backend is still re-registering
+  // persisted runs after a restart: a PARTIAL view, merged additively (a run
+  // missing from it is not finished). An authoritative hello follows.
+  | { type: 'hello'; runs: WorkflowRun[]; recovering?: boolean }
   | { type: 'started'; run: WorkflowRun }
   | { type: 'progress'; run: WorkflowRun }
   | { type: 'completed'; run: WorkflowRun }

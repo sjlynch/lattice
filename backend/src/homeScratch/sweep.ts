@@ -4,10 +4,10 @@ import { forEachKnownProjectSafely } from '../recovery/projectIteration.js';
 import { collectLiveSessionCwds, hasLiveSessionAtOrUnder } from '../recovery/liveSessions.js';
 import type { HomeScratchPaths } from './paths.js';
 
-// Shared boot-time convergence for home-scoped scratch dirs. The in-memory
-// registries for push / QA / post-merge hooks are intentionally not persisted;
-// after a backend restart, any on-disk session dir whose PTY is no longer live
-// is therefore stale. This helper iterates only known projects, only directory
+// Shared boot-time convergence for home-scoped scratch dirs. The push / QA /
+// post-merge-hook registries persist only their RUNNING records, and boot
+// recovery (recovery/oneOffRunResume.ts) re-adopts the ones whose PTY survived;
+// any on-disk session dir whose PTY is no longer live is therefore stale. This helper iterates only known projects, only directory
 // entries under the feature's home scratch root, skips dirs with a live PTY cwd,
 // and delegates the actual guarded recursive removal to the feature cleanup
 // wrapper (which validates the id and root before deleting).

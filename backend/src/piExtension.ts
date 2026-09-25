@@ -33,6 +33,7 @@
 // `./piExtension.js`.
 
 import { appendSourceParam, renderExtensionSource } from './piExtension/template.js';
+import { callbackOutboxEntryPath } from './callbackOutbox/paths.js';
 
 export type PiExtensionSite =
   | 'task-complete'
@@ -78,8 +79,7 @@ export function defaultPiExtensionFileName(): string {
 
 // Render the extension source. The per-call inputs (source-tagged URL, the
 // `null`-or-JSON prompt-file literal) are derived here, then handed to the
-// section-assembly in `piExtension/template.ts`. The generated text is
-// byte-identical to the original single-template-literal renderer.
+// section-assembly in `piExtension/template.ts`.
 export function renderPiCompletionExtension(
   opts: PiCompletionExtensionOptions,
 ): string {
@@ -90,6 +90,7 @@ export function renderPiCompletionExtension(
   return renderExtensionSource({
     urlWithSource,
     sentinelFile,
+    outboxFile: callbackOutboxEntryPath(urlWithSource),
     promptFileLiteral,
     site,
     respectQuitGate,

@@ -8,7 +8,7 @@ export function startChild(
   label,
   color,
   args,
-  { filterViteProxy = false, cwd = ROOT } = {},
+  { filterViteProxy = false, cwd = ROOT, stdin = 'inherit', env = process.env } = {},
 ) {
   // On Windows npm is a .cmd shim that only a shell can launch. Hand the shell
   // ONE command string instead of args + shell:true — that combination trips
@@ -21,9 +21,13 @@ export function startChild(
   }
   const child = spawn(win ? `${npmCmd} ${args.join(' ')}` : npmCmd, win ? [] : args, {
     cwd,
-    stdio: ['inherit', 'pipe', 'pipe'],
+    // `stdin`: the orchestrator reads dev-console commands itself, so it
+    // gives the backend runner a control pipe and vite an unwritten pipe (a
+    // second reader of the same console would steal typed lines). See
+    // devControl.mjs.
+    stdio: [stdin, 'pipe', 'pipe'],
     shell: win,
-    env: process.env,
+    env,
   });
 
   // Sinks, not process.stdout/stderr: a blocking console write here would stop

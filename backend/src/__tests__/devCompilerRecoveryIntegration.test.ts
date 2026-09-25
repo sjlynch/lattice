@@ -86,6 +86,9 @@ test('a real compiler exit -1 preserves the backend and recovers through workflo
       workflowInFlight: () => workflowLock,
       readNewestDistMtime: () => mtime,
       readDistContentSignature: () => signature,
+      // Compiler recovery is under test here, not the post-lock settle (which
+      // has its own tests); without this the lock release adds a 5 s wait.
+      lockSettleMs: 0,
     });
     policy.resetDistBaseline();
     backend.start();

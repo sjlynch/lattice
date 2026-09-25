@@ -123,3 +123,30 @@ test('cancelPostMergeHookStopGate stops a pending finish', async () => {
     finishPostMergeHook(id, 'aborted', 'test cleanup');
   }
 });
+
+// Regression (self-hosting soak, 2026-09-25): a Stop the gate was holding when
+// the backend restarted used to be lost — the hook had its 200, so nothing
+// retried, and the idle agent never Stops again. The Stop's time is now on the
+// record, survives the mirror, and boot recovery re-arms the gate from it.
+test('a held Stop survives the mirror and a re-armed gate finishes the re-adopted hook', async () => {
+  const { deserializePostMergeHook } = await import('../postMergeHooks/registry.js');
+  const { markAgentReadopted, READOPTED_SETTLE_MS } = await import('../agentQuiescence.js');
+  const id = 'pmh_1700000000000_abcdef';
+  const project = path.join(os.tmpdir(), 'pmh-rearm-project');
+  const stopAt = Date.now() - READOPTED_SETTLE_MS - 5_000;
+  const back = deserializePostMergeHook(
+    { id, status: 'running', harness: 'claude', prompt: 'p', startedAt: 1, trigger: 'merge-run', stopReceivedAt: stopAt },
+    project,
+  );
+  assert.equal(back?.stopReceivedAt, stopAt, 'stopReceivedAt round-trips through the mirror');
+
+  seedRunningHook(id);
+  // What boot recovery does for a re-adopted Claude hook with a held Stop.
+  markAgentReadopted(postMergeHookAgentId(id), stopAt);
+  let finished = 0;
+  requestPostMergeHookStopComplete(id, () => void finished++, { settleMs: 4000, pollMs: 10 }, { rearm: true });
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(finished, 1, 'no second Stop needed — the re-armed gate finishes it');
+  forgetAgentQuiescence(postMergeHookAgentId(id));
+  finishPostMergeHook(id, 'completed');
+});

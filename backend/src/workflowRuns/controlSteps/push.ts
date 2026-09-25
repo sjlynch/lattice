@@ -8,12 +8,15 @@
 // run-lock is never held longer than necessary.
 
 import {
+  attachedPushSession,
   cleanupPushSession,
+  findRunningPushRunForWorkflowStep,
   forgetPushRun,
   getPushRun,
   markPushRunDone,
   startPushSession,
   subscribePushRuns,
+  type StartedPushSession,
 } from '../../pushRuns.js';
 import { pushAgentId } from '../../pushRuns/stopHook.js';
 import { unregisterAgentSession } from '../../agentSessions.js';
@@ -25,8 +28,9 @@ import { emitControlProgress, waitForLaneEmpty } from './shared.js';
 // Upper bound on how long the push step will wait for Claude's Stop hook. The
 // session is "trust Claude to stop" (mirrors the Task Board cloud icon), but
 // if Claude crashed before its Stop hook fired we'd otherwise hang the whole
-// workflow forever. 15 minutes is generous for a normal git push, and dev
-// restarts during the wait clear it anyway.
+// workflow forever. 15 minutes is generous for a normal git push. A backend
+// restart during the wait re-dispatches the step, which re-attaches to the
+// still-live session and starts a fresh timeout.
 const PUSH_STEP_TIMEOUT_MS = 15 * 60 * 1000;
 
 // Backstop for the Ready-to-Merge drain. Push runs after the Merge step, so the
@@ -59,6 +63,9 @@ export type PushStepDeps = {
   forgetPushRun?: (id: string) => void;
   // Override for PUSH_STEP_TIMEOUT_MS so the timeout path is testable.
   pushTimeoutMs?: number;
+  // The still-live push session this step already spawned, if any (see the
+  // re-dispatch note in runPushStep). Optional so test doubles can omit it.
+  findLivePushSession?: (runId: string, stepIndex: number) => StartedPushSession | undefined;
 };
 
 function describeTimeout(ms: number): string {
@@ -79,6 +86,11 @@ function abandonPushRun(projectPath: string, id: string): void {
   void cleanupPushSession(projectPath, id);
 }
 
+function findLivePushSession(runId: string, stepIndex: number): StartedPushSession | undefined {
+  const run = findRunningPushRunForWorkflowStep(runId, stepIndex);
+  return run ? attachedPushSession(run) : undefined;
+}
+
 const productionDeps: PushStepDeps = {
   startPushSession,
   getPushRun,
@@ -88,6 +100,7 @@ const productionDeps: PushStepDeps = {
   waitForLaneEmpty,
   abandonPushRun,
   forgetPushRun,
+  findLivePushSession,
 };
 
 export async function runPushStep(
@@ -97,30 +110,40 @@ export async function runPushStep(
   backendOrigin: string,
   deps: PushStepDeps = productionDeps,
 ): Promise<void> {
-  emitControlProgress(
-    run,
-    stepIndex,
-    'push',
-    0,
-    1,
-    'waiting for Ready to Merge to drain',
-  );
-  await deps.waitForLaneEmpty(
-    wf.projectPath,
-    run,
-    'ready_to_merge',
-    (count, total) => {
-      emitControlProgress(
-        run,
-        stepIndex,
-        'push',
-        0,
-        1,
-        `Ready to Merge draining: ${count}/${total} remaining`,
-      );
-    },
-    PUSH_DRAIN_TIMEOUT_MS,
-  );
+  // Re-dispatch after a backend restart (recovery/workflowRunResume.ts): the
+  // Push step died with the old process, but the push session it spawned lives
+  // in the detached terminal-server and may still be pushing. Boot recovery
+  // re-adopted its persisted record, so wait for THAT session instead of
+  // spawning a second push alongside it. (Its drain already happened.)
+  const adopted = deps.findLivePushSession?.(run.id, stepIndex);
+  if (adopted) {
+    console.log(`[workflow-run] ${run.id} push step re-attached to live push session ${adopted.id}`);
+  } else {
+    emitControlProgress(
+      run,
+      stepIndex,
+      'push',
+      0,
+      1,
+      'waiting for Ready to Merge to drain',
+    );
+    await deps.waitForLaneEmpty(
+      wf.projectPath,
+      run,
+      'ready_to_merge',
+      (count, total) => {
+        emitControlProgress(
+          run,
+          stepIndex,
+          'push',
+          0,
+          1,
+          `Ready to Merge draining: ${count}/${total} remaining`,
+        );
+      },
+      PUSH_DRAIN_TIMEOUT_MS,
+    );
+  }
   if (run.status !== 'running') return;
 
   emitControlProgress(run, stepIndex, 'push', 0, 1, 'pushing to remote');
@@ -192,7 +215,12 @@ export async function runPushStep(
   }, timeoutMs);
 
   try {
-    const session = await deps.startPushSession(wf.projectPath, backendOrigin, { brief: 'workflow' });
+    // The owning step is recorded on the push run (and persisted) so a
+    // re-dispatch after a restart can find it — see `adopted` above.
+    const session = adopted ?? await deps.startPushSession(wf.projectPath, backendOrigin, {
+      brief: 'workflow',
+      workflow: { runId: run.id, stepIndex },
+    });
     sessionId = session.id;
     sessionServerId = session.serverId;
 
@@ -236,6 +264,11 @@ export async function runPushStep(
     // A cancel wins over a timeout: the run keeps its cancelled state.
     if (cancelled || run.status !== 'running') return;
     if (timedOut) throw new Error(timeoutMessage);
+    // Settled by boot recovery's liveness watch: the (re-adopted) session's
+    // terminal died without calling `/done`, so nothing confirmed the push.
+    if (deps.getPushRun(session.id)?.lost) {
+      throw new Error('push session terminal exited without reporting completion');
+    }
     emitControlProgress(run, stepIndex, 'push', 1, 1, 'push complete');
   } finally {
     clearTimeout(timeout);

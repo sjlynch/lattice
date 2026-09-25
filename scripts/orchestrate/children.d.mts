@@ -9,7 +9,12 @@ export function startChild(
   label: string,
   color: string,
   args: string[],
-  options?: { filterViteProxy?: boolean; cwd?: string },
+  options?: {
+    filterViteProxy?: boolean;
+    cwd?: string;
+    stdin?: 'inherit' | 'pipe' | 'ignore';
+    env?: NodeJS.ProcessEnv;
+  },
 ): ChildProcess;
 
 // Resolves once the child has exited or the force-kill was issued. On win32

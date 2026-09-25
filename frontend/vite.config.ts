@@ -54,15 +54,23 @@ const logger = {
   },
 };
 
+// Ports default to Lattice's own (frontend 5183 → backend 5184). The
+// Playwright e2e webServer overrides both to run an ISOLATED instance next to
+// the user's live one (see playwright.config.ts); `LATTICE_VITE_CACHE_DIR`
+// keeps that second vite off the live one's `node_modules/.vite` dep cache.
+const FRONTEND_PORT = Number(process.env.LATTICE_FRONTEND_PORT) || 5183;
+const BACKEND_PORT = Number(process.env.LATTICE_BACKEND_PORT) || 5184;
+
 export default defineConfig({
   plugins: [react()],
   customLogger: logger,
+  ...(process.env.LATTICE_VITE_CACHE_DIR ? { cacheDir: process.env.LATTICE_VITE_CACHE_DIR } : {}),
   server: {
-    port: 5183,
+    port: FRONTEND_PORT,
     strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:5184',
+        target: `http://127.0.0.1:${BACKEND_PORT}`,
         changeOrigin: false,
         configure: (proxy) => {
           proxy.on('error', (err, _req, res) => {
@@ -75,7 +83,7 @@ export default defineConfig({
         },
       },
       '/ws': {
-        target: 'ws://127.0.0.1:5184',
+        target: `ws://127.0.0.1:${BACKEND_PORT}`,
         ws: true,
         configure: (proxy) => {
           proxy.on('error', (err) => {

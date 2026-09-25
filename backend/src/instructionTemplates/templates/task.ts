@@ -77,7 +77,7 @@ export const DEFAULT_TASK_TEMPLATE = `# {{task_title}}
    Windows use \`curl.exe\` to avoid PowerShell's \`curl\` alias:
 
    \`\`\`
-   curl --fail-with-body --silent --show-error -X POST "{{backend_origin}}/api/tasks/{{task_id}}/append-summary" -H "Content-Type: text/markdown; charset=utf-8" --data-binary "@<absolute-path-to-summary.md>"
+   curl --fail-with-body --silent --show-error --retry 15 --retry-delay 3 --retry-connrefused -X POST "{{backend_origin}}/api/tasks/{{task_id}}/append-summary" -H "Content-Type: text/markdown; charset=utf-8" --data-binary "@<absolute-path-to-summary.md>"
    \`\`\`
 
    Keep it concise (1-3 bullet points). The file contains only your summary,

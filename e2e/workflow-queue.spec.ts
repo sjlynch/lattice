@@ -88,7 +88,10 @@ async function activeRuns(request: APIRequestContext): Promise<WorkflowRun[]> {
 async function removeLatticeProjectState(project: string): Promise<void> {
   const canonical = path.resolve(project);
   const hash = crypto.createHash('sha1').update(canonical).digest('hex').slice(0, 12);
-  const stateRoot = path.resolve(os.homedir(), '.lattice', 'per-project');
+  // The isolated e2e backend (playwright.config.ts) runs with HOME at
+  // LATTICE_E2E_HOME; only an explicit external target uses the real home.
+  const home = process.env.LATTICE_E2E_HOME ?? os.homedir();
+  const stateRoot = path.resolve(home, '.lattice', 'per-project');
   const stateDir = path.resolve(stateRoot, hash);
   if (path.dirname(stateDir) !== stateRoot) {
     throw new Error(`refusing unsafe e2e state cleanup path: ${stateDir}`);

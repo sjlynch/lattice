@@ -24,6 +24,8 @@ export {
   getMostRecentHookForProject,
   getPostMergeHook,
   hasPendingPostMergeHookTrigger,
+  postMergeHookStore,
+  restorePostMergeHook,
   subscribePostMergeHooks,
   subscribePostMergeHookTriggers,
   waitForPostMergeHook,

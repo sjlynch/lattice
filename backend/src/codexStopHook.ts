@@ -1,6 +1,11 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { atomicWriteFile } from './claudeTrust/configFile.js';
+import {
+  CALLBACK_HOOK_TIMEOUT_S,
+  codexCallbackCommands,
+  ensureCallbackScript,
+} from './callbackOutbox/script.js';
 
 // Codex Stop hook — the Codex analogue of the Claude Stop hook
 // (claudeStopHook.ts) and the Pi `session_shutdown` completion extension
@@ -37,9 +42,13 @@ export function renderCodexStopHookJson(callbackUrl: string): string {
   //      a bare `curl` direct-spawn works. `commandWindows` is the JSON key
   //      (camelCase; the TOML equivalent is `command_windows`), and Codex prefers
   //      it on win32 — verified end-to-end (the POST reaches the endpoint).
-  // curl ships with Windows 10+ and every POSIX box, and the /complete endpoints
-  // reply fast with a tiny body (`-s -m 5`, mirroring the Claude Stop hook).
-  const posix = `curl -s -m 5 -X POST ${callbackUrl}`;
+  // The command runs the durable callback script (outbox + retries, see
+  // callbackOutbox/script.ts) — the same delivery the Claude Stop hook uses,
+  // so a Stop that lands while the backend is restarting is replayed rather
+  // than lost. `node` is resolved the same way `curl` was (bare on POSIX,
+  // through `cmd /c` on Windows); a script path containing whitespace can't
+  // survive the whitespace split, so that case falls back to a retrying curl.
+  const { posix, windows } = codexCallbackCommands(callbackUrl);
   const config = {
     hooks: {
       Stop: [
@@ -48,8 +57,8 @@ export function renderCodexStopHookJson(callbackUrl: string): string {
             {
               type: 'command',
               command: posix,
-              commandWindows: `cmd /c ${posix}`,
-              timeout: 30,
+              commandWindows: windows,
+              timeout: CALLBACK_HOOK_TIMEOUT_S,
             },
           ],
         },
@@ -108,6 +117,7 @@ export async function installCodexStopHook(
 ): Promise<boolean> {
   const file = codexHooksJsonPath(dir);
   const expected = renderCodexStopHookJson(callbackUrl);
+  ensureCallbackScript();
   try {
     const existing = await fs.readFile(file, 'utf8');
     if (existing === expected) return true; // already ours — no-op

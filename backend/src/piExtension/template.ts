@@ -6,8 +6,9 @@
 //
 // The generated text is byte-for-byte significant: the Pi runtime loads it
 // verbatim and the on-disk up-to-date check compares it character for
-// character. Reorganize the *assembly* freely, but never change the produced
-// string. The template is split into clear sections —
+// character. Reorganize the *assembly* freely, but don't change the produced
+// string by accident (a deliberate change just rewrites every installed copy
+// on its next install). The template is split into clear sections —
 //
 //   - `renderHeaderComment`     the banner comment (varies by site + gate)
 //   - `buildExtensionConstants` the `const` declaration block
@@ -44,6 +45,8 @@ export function renderHeaderComment(opts: {
 //     during process shutdown doesn't lose the callback;
 //   - a per-attempt timeout so a wedged backend doesn't strand shutdown;
 //   - a sentinel audit log so 'did the extension fire?' is visible on disk;
+//   - a durable outbox entry (written before posting, removed once the
+//     backend answers) that the backend replays if it was restarting;
 //   - shutdown-reason gate is ${respectQuitGate ? 'enabled' : 'disabled'}
 //     for this site (${site}).`;
 }
@@ -53,20 +56,23 @@ export function renderHeaderComment(opts: {
 export function buildExtensionConstants(opts: {
   urlWithSource: string;
   sentinelFile: string;
+  outboxFile: string;
   promptFileLiteral: string;
   site: string;
   respectQuitGate: boolean;
 }): string {
-  const { urlWithSource, sentinelFile, promptFileLiteral, site, respectQuitGate } =
+  const { urlWithSource, sentinelFile, outboxFile, promptFileLiteral, site, respectQuitGate } =
     opts;
   return `const CALLBACK_URL = ${JSON.stringify(urlWithSource)};
 const SENTINEL_FILE = ${JSON.stringify(sentinelFile)};
+const OUTBOX_FILE = ${JSON.stringify(outboxFile)};
 const PROMPT_FILE = ${promptFileLiteral};
 const SITE = ${JSON.stringify(site)};
 const RESPECT_QUIT_GATE = ${respectQuitGate ? 'true' : 'false'};
 const ATTEMPT_TIMEOUT_MS = 4000;
 const MAX_ATTEMPTS = 3;
-const BACKOFF_MS = 400;`;
+const BACKOFF_MS = 400;
+const OUTBOX_HOLD_MS = 20000;`;
 }
 
 // The helper functions, fully static (they reference the constants above by
@@ -87,6 +93,47 @@ function readPromptIfNeeded() {
   } catch (err) {
     return { prompt: "", promptError: String(err && err.message ? err.message : err) };
   }
+}
+
+// Durable outbox (see backend/src/callbackOutbox/): record the callback
+// before posting so a backend that is restarting right now replays it once it
+// is back; the entry is removed as soon as the backend gives a definitive
+// answer. Same file format + key as the Claude/Codex callback script.
+function writeOutbox(prompt) {
+  try {
+    const now = Date.now();
+    const entry = {
+      v: 1,
+      url: CALLBACK_URL,
+      createdAt: now,
+      holdUntil: now + OUTBOX_HOLD_MS,
+      attempts: 0,
+      writer: "pi-extension",
+    };
+    if (prompt !== undefined) {
+      entry.body = JSON.stringify({ prompt });
+      entry.contentType = "application/json";
+    }
+    fs.mkdirSync(path.dirname(OUTBOX_FILE), { recursive: true });
+    const tmp = OUTBOX_FILE + "." + process.pid + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(entry, null, 2));
+    fs.renameSync(tmp, OUTBOX_FILE);
+  } catch {
+    // Best-effort — the POST still runs.
+  }
+}
+
+function removeOutbox() {
+  try {
+    fs.unlinkSync(OUTBOX_FILE);
+  } catch {
+    // Already replayed / never written.
+  }
+}
+
+// 2xx, or a 4xx other than 408/429: an answer a retry can't change.
+function isFinalStatus(status) {
+  return typeof status === "number" && status < 500 && status !== 408 && status !== 429;
 }
 
 async function attemptPost(prompt) {
@@ -141,7 +188,10 @@ export const EXTENSION_DEFAULT_HANDLER = `export default function (pi) {
     }
 
     const { prompt, promptError } = readPromptIfNeeded();
+    writeOutbox(prompt);
     const { success, attempts } = await postWithRetries(prompt);
+    const last = attempts[attempts.length - 1];
+    if (success || (last && isFinalStatus(last.status))) removeOutbox();
 
     writeSentinel({
       site: SITE,
@@ -164,18 +214,20 @@ export const EXTENSION_DEFAULT_HANDLER = `export default function (pi) {
 export function renderExtensionSource(opts: {
   urlWithSource: string;
   sentinelFile: string;
+  outboxFile: string;
   promptFileLiteral: string;
   site: string;
   respectQuitGate: boolean;
 }): string {
-  const { urlWithSource, sentinelFile, promptFileLiteral, site, respectQuitGate } =
+  const { urlWithSource, sentinelFile, outboxFile, promptFileLiteral, site, respectQuitGate } =
     opts;
   const sections = [
     renderHeaderComment({ site, respectQuitGate }),
-    'import fs from "node:fs";',
+    'import fs from "node:fs";\nimport path from "node:path";',
     buildExtensionConstants({
       urlWithSource,
       sentinelFile,
+      outboxFile,
       promptFileLiteral,
       site,
       respectQuitGate,

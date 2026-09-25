@@ -20,6 +20,24 @@ export const TERMINAL_PORT = Number(process.env.TERMINAL_PORT) || 5185;
 export const BACKEND_PORT = Number(process.env.PORT) || 5184;
 // A backend that dies this soon after spawn died at boot, not mid-flight.
 export const BOOT_DEATH_WINDOW_MS = 30 * 1000;
+// Respawn delays after the backend exits ON ITS OWN (a crash, a fatal startup
+// error, an external kill). It used to wait for the next dist/ change, so one
+// transient crash — or a boot that lost a race for port 5184 with a backend
+// still shutting down — left Lattice down until someone saved a file. The
+// first delay is deliberately not zero: on Windows Ctrl+C reaches dist/index.js
+// too, and its exit can be observed a moment BEFORE this runner's own signal
+// handler marks the shutdown; 2 s is ample for that to land (the timer then
+// sees the shutdown and spawns nothing). Past the list, keep retrying at the
+// last delay. A dist/ change still retries immediately.
+export const CRASH_RESPAWN_DELAYS_MS = [2_000, 5_000, 10_000, 30_000, 60_000];
+// A backend that stayed up this long before dying was healthy: its death
+// starts the backoff over from the first delay.
+export const CRASH_STABLE_UPTIME_MS = 5 * 60 * 1000;
+
+export function crashRespawnDelayMs(attempt, delays = CRASH_RESPAWN_DELAYS_MS) {
+  const i = Math.max(0, Math.min(attempt, delays.length - 1));
+  return delays[i];
+}
 
 // Is something listening on the backend's port right now? The backend's
 // stdio is inherited (this runner never sees its output), and a startup
@@ -55,12 +73,55 @@ export function createBackendLifecycle({
   captureBackendVersion = () => undefined,
   probePort = probeBackendPort,
   now = () => Date.now(),
+  crashRespawnDelaysMs = CRASH_RESPAWN_DELAYS_MS,
+  crashStableUptimeMs = CRASH_STABLE_UPTIME_MS,
+  setTimer = (fn, ms) => {
+    const t = setTimeout(fn, ms);
+    // Never keep the runner alive just to retry a dead backend.
+    t.unref?.();
+    return t;
+  },
+  clearTimer = (t) => clearTimeout(t),
 }) {
   let backendChild = null;
   let restartingBackend = false; // true between a restart kill and the respawn
+  let crashRespawnTimer = null; // pending automatic respawn after a crash
+  let crashAttempt = 0; // consecutive crashes without a stable uptime between
+
+  function cancelCrashRespawn() {
+    if (crashRespawnTimer === null) return;
+    clearTimer(crashRespawnTimer);
+    crashRespawnTimer = null;
+  }
+
+  function scheduleCrashRespawn(uptimeMs) {
+    if (isShuttingDown()) return null;
+    if (uptimeMs >= crashStableUptimeMs) crashAttempt = 0;
+    const delay = crashRespawnDelayMs(crashAttempt, crashRespawnDelaysMs);
+    crashAttempt += 1;
+    const attempt = crashAttempt;
+    cancelCrashRespawn();
+    crashRespawnTimer = setTimer(() => {
+      crashRespawnTimer = null;
+      // Shutdown wins; a dist/ change (restartBackend) may already have
+      // started a backend while we waited.
+      if (isShuttingDown() || backendChild) return;
+      if (!canSpawnBackend()) {
+        console.error(
+          '[lattice-backend] not respawning dist/index.js yet — TypeScript is compiling or has errors; ' +
+            'the next successful compile starts it',
+        );
+        return;
+      }
+      console.log(`[lattice-backend] respawning dist/index.js after it exited (attempt ${attempt})`);
+      backendChild = spawnBackend();
+    }, delay);
+    return delay;
+  }
 
   function spawnBackend() {
     if (isShuttingDown() || !canSpawnBackend()) return null;
+    cancelCrashRespawn();
     copyAssetsBeforeRespawn();
     const version = captureBackendVersion();
     restartingBackend = false;
@@ -90,8 +151,11 @@ export function createBackendLifecycle({
         backendChild = spawnBackend();
         return;
       }
-      // Exited on its own (a crash, or a fatal startup error) — mirror
-      // `node --watch`: stay up and wait for the next dist/ change to retry.
+      // Exited on its own (a crash, or a fatal startup error) — respawn it
+      // after a backoff (CRASH_RESPAWN_DELAYS_MS); a dist/ change still
+      // retries at once. A boot failure that repeats (EADDRINUSE while another
+      // backend holds the port, a broken build) just walks the backoff out to
+      // one attempt a minute rather than spinning.
       //
       // Record it before anything else. The backend writes its own crash file
       // for faults it is alive to observe (backend/src/crashLog.ts), but a hard
@@ -100,12 +164,15 @@ export function createBackendLifecycle({
       // thing that still gets to write the death down.
       const cause = spawnError ? `spawn failed: ${spawnError.message}` : describeExitCode(code, signal);
       backendChild = null;
+      const respawnInMs = scheduleCrashRespawn(now() - spawnedAt);
       const record = (hint) => {
         const detail = hint ? `${cause}; ${hint}` : cause;
         const log = recordExit('lattice-backend', code ?? 0, { detail });
         console.error(
           `[lattice-backend] dist/index.js exited (${cause}) — ` +
-            `waiting for a dist/ change to retry...`,
+            (respawnInMs === null
+              ? 'waiting for a dist/ change to retry...'
+              : `retrying in ${Math.round(respawnInMs / 1000)} s (sooner on a dist/ change)...`),
         );
         if (hint) console.error(`[lattice-backend] ${hint}`);
         if (isHardFault(code)) {
@@ -170,6 +237,8 @@ export function createBackendLifecycle({
   }
 
   function kill(signal) {
+    // Real shutdown: a pending crash respawn must not bring a backend back.
+    cancelCrashRespawn();
     if (!backendChild) return;
     try {
       backendChild.kill(signal);
@@ -183,6 +252,7 @@ export function createBackendLifecycle({
     restartBackend,
     kill,
     needsStart: () => !backendChild,
+    crashRespawnPending: () => crashRespawnTimer !== null,
   };
 }
 

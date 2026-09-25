@@ -9,6 +9,7 @@ import {
   activeRunsFromHello,
   clearControlProgressForStep,
   clearStaleControlProgress,
+  mergeRecoveringHello,
   removeKey,
   setControlProgress as applyControlProgress,
   upsertRun,
@@ -48,12 +49,18 @@ export function handleWorkflowRunEvent(
   if (ev.type === 'hello') {
     // Authoritative server snapshot — replace activeRuns entirely. The hello is
     // emitted on initial connect and reconnect, so this is the recovery path
-    // after socket drops.
+    // after socket drops. EXCEPT a `recovering` hello: the backend just
+    // restarted and hasn't re-registered its persisted runs yet, so the list is
+    // partial — merge it in and remove nothing (a removal would read as "the
+    // run finished" and stop the workflow queue). The authoritative hello
+    // follows once recovery lands.
     console.log(
-      `[useWorkflowRuns] hello: ${ev.runs.length} active run(s) ` +
-        `(project=${projectPath})`,
+      `[useWorkflowRuns] hello${ev.recovering ? ' (recovering)' : ''}: ` +
+        `${ev.runs.length} active run(s) (project=${projectPath})`,
     );
-    setActiveRuns(activeRunsFromHello(ev.runs));
+    setActiveRuns((cur) =>
+      ev.recovering ? mergeRecoveringHello(cur, ev.runs) : activeRunsFromHello(ev.runs),
+    );
   } else if (ev.type === 'started' || ev.type === 'progress') {
     setActiveRuns((cur) => upsertRun(cur, ev.run));
     setControlProgress((cur) =>

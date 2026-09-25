@@ -7,7 +7,7 @@ import { pushPaths } from './paths.js';
 import { recordPushRun } from './registry.js';
 import { installPushStopHook, pushAgentId } from './stopHook.js';
 import { cleanupPushSession } from './cleanup.js';
-import type { PushSession } from './types.js';
+import type { PushRun, PushSession } from './types.js';
 
 const PUSH_INSTRUCTIONS_FILE = 'PUSH_INSTRUCTIONS.md';
 const PUSH_COMMAND = buildAgentCommand({
@@ -75,20 +75,29 @@ const startPushAgentSession = createHomeScratchAgentSession({
 export async function startPushSession(
   projectPath: string,
   backendOrigin: string,
-  opts: { brief?: PushBrief } = {},
+  opts: {
+    brief?: PushBrief;
+    // The workflow Push step that owns this session, recorded (and persisted)
+    // so a re-dispatched step can attach to it after a backend restart.
+    workflow?: { runId: string; stepIndex: number };
+  } = {},
 ): Promise<StartedPushSession> {
   const started = await startPushAgentSession({
     projectPath,
     installHooks: ({ cwd, id }) =>
       installPushStopHook(cwd, id, backendOrigin, projectPath),
     renderInstructions: () => renderPush(projectPath, opts.brief),
-    recordRun: ({ id, cwd }) =>
+    recordRun: ({ id, cwd, serverId }) =>
       recordPushRun({
         id,
         projectPath,
         cwd,
         status: 'running',
         createdAt: Date.now(),
+        serverId,
+        ...(opts.workflow
+          ? { workflowRunId: opts.workflow.runId, workflowStepIndex: opts.workflow.stepIndex }
+          : {}),
       }),
   });
   return {
@@ -97,5 +106,17 @@ export async function startPushSession(
     command: started.command,
     serverId: started.serverId,
     terminalId: started.terminalId,
+  };
+}
+
+// The `StartedPushSession` shape for a push run that is ALREADY live: a
+// workflow Push step re-dispatched after a backend restart attaches to the
+// session boot recovery re-adopted instead of spawning a second push.
+export function attachedPushSession(run: PushRun): StartedPushSession {
+  return {
+    id: run.id,
+    cwd: run.cwd,
+    command: PUSH_COMMAND,
+    ...(run.serverId ? { serverId: run.serverId } : {}),
   };
 }

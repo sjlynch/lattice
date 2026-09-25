@@ -83,6 +83,12 @@ export function cancelRun(id: string): boolean {
   return cancelRunInState(runState, id);
 }
 
+// Live merge runs in this process and the conflict resolvers each is parked
+// on. Read by the restart drain's lock-holder report (restartDrain/lockHolders.ts).
+export function listLiveMergeRunResolverWaits(): Array<{ run: MergeRun; resolverTaskIds: string[] }> {
+  return runState.liveRunsWithResolverWaits();
+}
+
 // Called by /complete (and /merged) after a resolver Claude finalizes a
 // conflict task. Unblocks the in-process merge run that spawned the resolver
 // so it can continue to the next task with an up-to-date main HEAD.

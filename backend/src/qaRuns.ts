@@ -10,9 +10,11 @@ export {
   getQaRun,
   markQaRunDone,
   markQaRunMovedToDone,
+  qaRunStore,
   recordQaRun,
   recordQaRunAutoClose,
   recordQaVerdict,
+  restoreQaRun,
 } from './qaRuns/registry.js';
 export { startQaSession } from './qaRuns/session.js';
 export type { StartedQaSession, StartQaSessionArgs } from './qaRuns/session.js';

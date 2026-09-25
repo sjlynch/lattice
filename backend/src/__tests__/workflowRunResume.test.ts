@@ -449,3 +449,80 @@ test('failWorkflowRun surfaces an unresumable run instead of leaving it hanging'
     runs.delete(run.id);
   }
 });
+
+// Regression (self-hosting soak, 2026-09-25): a Claude step's Stop arrived and
+// was ACCEPTED (200, `gated: true`) while the quiescence gate waited out its
+// settle window — then the backend restarted. The gate is an in-memory timer,
+// the hook never retries an answered callback, and the agent sat idle, so the
+// step never advanced (a Run tests step until its 60-min timeout, an agent step
+// forever). The Stop is now recorded on the run and a re-adopting backend
+// re-arms the gate, counting the quiet window from the Stop itself.
+test('a Stop the gate was holding when the backend died still advances the re-adopted run', async () => {
+  const { recordStopReceived } = await import('../workflowRuns/stopHookGate.js');
+  const { registerPersistedWorkflowRuns, resumePersistedRun } = await import('../recovery/workflowRunResume.js');
+  const { READOPTED_SETTLE_MS } = await import('../agentQuiescence.js');
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-wfstop-'));
+  let canonical = '';
+  try {
+    const wf = await createWorkflow(project, 'Refactor', [
+      { id: 's1', title: 'Plan', prompt: 'a', mode: 'sequential', harness: 'claude' },
+      { id: 's2', title: 'Review', prompt: 'b', mode: 'sequential', harness: 'claude' },
+    ]);
+    canonical = wf.projectPath;
+    const live = fakeRun({
+      id: 'wfrun_stop_held',
+      workflowId: wf.id,
+      workflowName: wf.name,
+      projectPath: wf.projectPath,
+      totalSteps: 2,
+      currentStepIndex: 1,
+      stepPhase: 'running',
+    });
+    assert.equal(restoreWorkflowRun(live), true);
+
+    // The Stop lands: recorded durably before the hook gets its answer.
+    await recordStopReceived(live.id, 1);
+    await flushWorkflowRunPersist(wf.projectPath);
+
+    // The backend dies inside the settle window (the in-memory gate with it).
+    runs.delete(live.id);
+    const [fromDisk] = await loadPersistedWorkflowRuns(wf.projectPath);
+    assert.equal(fromDisk?.stopReceived?.stepIndex, 1, 'the held Stop must survive on disk');
+    // Pretend the Stop was long enough ago that even the re-adopted window has
+    // passed, so the test needn't wait two minutes.
+    fromDisk.stopReceived!.at = Date.now() - READOPTED_SETTLE_MS - 5_000;
+
+    // Boot: the step's pty survived in the terminal-server.
+    const sessions = [{ id: 'tty_step1', cwd: workflowStepDir(wf.projectPath, live.id, 1) }];
+    registerPersistedWorkflowRuns([fromDisk], sessions);
+    await resumePersistedRun(fromDisk, sessions, 'http://127.0.0.1:1', true);
+
+    // No second Stop is coming — the re-armed gate alone must finish the step.
+    const deadline = Date.now() + 8_000;
+    while (runs.get(live.id)?.status === 'running' && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.equal(runs.get(live.id)?.status, 'completed');
+  } finally {
+    for (const [id, r] of [...runs.entries()]) {
+      if (r.projectPath === canonical) runs.delete(id);
+    }
+    await new Promise((r) => setTimeout(r, 200));
+    await fs.rm(project, { recursive: true, force: true });
+  }
+});
+
+test('markAgentReadopted counts a held Stop\'s quiet window from the Stop, and is idempotent', async () => {
+  const q = await import('../agentQuiescence.js');
+  const old = Date.now() - q.READOPTED_SETTLE_MS - 1_000;
+  q.markAgentReadopted('wf:test-readopt:0', old);
+  assert.equal(q.isAgentQuiescent('wf:test-readopt:0', 4_000), true, 'quiet since the Stop, long enough');
+  // The resume pass marks again without a time — it must not reset the clock.
+  q.markAgentReadopted('wf:test-readopt:0');
+  assert.equal(q.isAgentQuiescent('wf:test-readopt:0', 4_000), true);
+  // A fresh re-adopt with no held Stop starts the long window now.
+  q.markAgentReadopted('wf:test-readopt:1');
+  assert.equal(q.isAgentQuiescent('wf:test-readopt:1', 4_000), false);
+  q.forgetAgentQuiescence('wf:test-readopt:0');
+  q.forgetAgentQuiescence('wf:test-readopt:1');
+});

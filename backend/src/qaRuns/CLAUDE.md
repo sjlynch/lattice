@@ -22,9 +22,12 @@ into those builders. `session.ts` specifically goes through the
 presence-node / cleanup wiring); only the QA brief, hook install, and
 `recordQaRun` write stay here, and the `spec` carries `isQaRun: true`. **See
 `pushRuns/CLAUDE.md` and `homeScratch/CLAUDE.md` for
-that shared shape** — including that the registry is non-persisted (stale-at-boot
-⇒ swept) and that `assertSafeQaSessionPath` is part of the repo's
-`.git`-deletion defence layer. **Edit one, check the other.**
+that shared shape** — including that the registry's running runs are mirrored
+to `~/.lattice/per-project/<hash>/qa-runs.json` (`qaRunStore`) and re-adopted
+by `recovery/oneOffRunResume.ts` when their pty survives a backend restart
+(else settled after a grace and their scratch swept), and that
+`assertSafeQaSessionPath` is part of the repo's `.git`-deletion defence layer.
+**Edit one, check the other.**
 
 Differences from pushRuns:
 
@@ -48,6 +51,12 @@ Differences from pushRuns:
   verdict is left in QA for a human (the Stop hook can't synthesize a pass/fail),
   same as a fail or an unsure pass. So `/done` is no longer pure cleanup; it is
   the QA analogue of the Claude Stop hook / Pi extension that closes the lane.
+- **The verdict survives a restart.** `recordQaVerdict` / `markQaRunMovedToDone`
+  go through the registry's `update`, so the mirror carries them: a `/done`
+  after a backend restart (or a replay from the callback outbox) still
+  promotes a confident PASS, and boot recovery settling a run whose pty died
+  applies the recorded verdict exactly as `/done` would
+  (`applyRecordedQaVerdict` → done).
 - **Spawn sets `isQaRun: true`** so the MCP injection chokepoint adds the
   QA-scoped Playwright (with the lane's headed/headless choice); ordinary task
   spawns never set it.

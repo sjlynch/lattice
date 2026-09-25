@@ -21,6 +21,17 @@ export class ConflictWaiterRegistry {
     return true;
   }
 
+  // Task ids whose resolver this run is parked on right now (read-only; the
+  // restart drain reports it so the dev runner's force-restart backstop can
+  // tell a run waiting on a live resolver from a wedged one).
+  public taskIdsForRun(runId: string): string[] {
+    const out: string[] = [];
+    for (const [taskId, entry] of this.waiters) {
+      if (entry.runId === runId) out.push(taskId);
+    }
+    return out;
+  }
+
   public unblockRun(runId: string): boolean {
     for (const [taskId, entry] of this.waiters) {
       if (entry.runId === runId) {

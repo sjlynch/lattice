@@ -69,6 +69,9 @@ async function connect(
     project: PROJECT,
     taskId: opts.taskId,
     fetchImpl: fakeFetch(calls, canned),
+    // No restart retry here: these tests pin single-round-trip outcomes (the
+    // retry has its own tests below).
+    retry: { budgetMs: 0 },
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test', version: '1.0.0' });
@@ -613,4 +616,58 @@ test('any other non-2xx is an error carrying the status and the body', async () 
   } finally {
     await close();
   }
+});
+
+// Restart retry (LatticeClient.send): when Lattice works on its own repo the
+// backend restarts after merges, and a board call in that window used to fail
+// with "Is Lattice running?" — which tells the agent to stop using the board.
+test('a backend that is restarting (connection refused, then 503) is retried until it answers', async () => {
+  const { LatticeClient } = await import('../latticeMcp/client.js');
+  const answers: (() => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>)[] = [
+    () => Promise.reject(Object.assign(new Error('fetch failed'), { cause: { code: 'ECONNREFUSED' } })),
+    () => Promise.resolve({ ok: false, status: 503, text: async () => '{"code":"backend-restarting"}' }),
+    () => Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({ canonicalProject: PROJECT, id: 't1' }) }),
+  ];
+  const methods: string[] = [];
+  const slept: number[] = [];
+  const client = new LatticeClient({
+    apiUrl: API,
+    project: PROJECT,
+    fetchImpl: (_url, init) => {
+      methods.push(init?.method ?? 'GET');
+      return answers.shift()!();
+    },
+    retry: { budgetMs: 10_000, sleep: async (ms) => void slept.push(ms) },
+  });
+  // A POST: ECONNREFUSED and 503 both mean "never acted on", so it is safe to resend.
+  const outcome = await client.call('/api/tasks', { method: 'POST', body: { title: 'x' } });
+  assert.equal(outcome.kind, 'ok');
+  assert.deepEqual(methods, ['POST', 'POST', 'POST']);
+  assert.equal(slept.length, 2);
+});
+
+test('a POST is not re-sent after an ambiguous network error, and the budget bounds the wait', async () => {
+  const { LatticeClient } = await import('../latticeMcp/client.js');
+  let calls = 0;
+  const reset = new LatticeClient({
+    apiUrl: API,
+    project: PROJECT,
+    fetchImpl: () => {
+      calls++;
+      return Promise.reject(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }));
+    },
+    retry: { budgetMs: 10_000, sleep: async () => {} },
+  });
+  assert.equal((await reset.call('/api/tasks', { method: 'POST', body: {} })).kind, 'unreachable');
+  assert.equal(calls, 1, 'the request may have been acted on — never duplicate a create');
+
+  let slept = 0;
+  const down = new LatticeClient({
+    apiUrl: API,
+    project: PROJECT,
+    fetchImpl: () => Promise.reject(Object.assign(new Error('fetch failed'), { cause: { code: 'ECONNREFUSED' } })),
+    retry: { budgetMs: 3_000, sleep: async (ms) => void (slept += ms) },
+  });
+  assert.equal((await down.call('/api/tasks/summary')).kind, 'unreachable');
+  assert.equal(slept, 3_000, 'gives up exactly at the budget');
 });

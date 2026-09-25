@@ -1,13 +1,21 @@
 # backend/src/routes
 
 One Express `Router` per domain. Every module exports a `buildXRouter(...)`
-factory and `server/app.ts` mounts them in this order: health, search,
+factory and `server/app.ts` mounts them in this order: restartDrain
+(admission gate, then the internal handshake), health, search,
 settings, globalSettings, mcp, opengrep, projectInit, terminals, terminalTabs,
 tasks, agentActivity, projectClaude, mergeRuns, postMergeHooks, pushRuns,
 qaRuns, workflows.
 
 ## Route map
 
+- `restartDrain.ts` — the dev runner's restart handshake
+  (`/api/internal/restart-drain/{prepare,cancel,lock-holders}`; refuses any
+  `Origin`, requires `x-lattice-terminal-token`) and
+  `buildRestartDrainAdmissionGate`, which 503s (`backend-restarting`,
+  `Retry-After`) new top-level starts while a drain is on. Must stay mounted
+  FIRST so the gate runs before the routes it guards. See
+  `../restartDrain/CLAUDE.md`.
 - `health.ts` — composes `routes/health/`: liveness/default-root/harnesses,
   scan + agent-facing dead-code summary, git history/branch, and folder-picker
   browse/create-dir endpoints.

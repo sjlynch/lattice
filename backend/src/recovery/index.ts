@@ -18,11 +18,13 @@ import { sweepOrphanedWorktrees } from './worktreeSweep.js';
 import { sweepOrphanedPushSessions } from './pushSessionSweep.js';
 import { sweepOrphanedQaSessions } from './qaSessionSweep.js';
 import { sweepOrphanedPostMergeHookSessions } from './postMergeHookSweep.js';
+import { resumeInterruptedOneOffRuns } from './oneOffRunResume.js';
 import {
   sweepStaleClaudeProjectEntries,
   sweepOrphanedClaudeConfigTempFiles,
 } from './claudeConfigSweep.js';
 
+export { resumeInterruptedOneOffRuns } from './oneOffRunResume.js';
 export { resumeInterruptedMergeRuns } from './mergeRunResume.js';
 export { resumeInterruptedWorkflowRuns } from './workflowRunResume.js';
 export { resumeQueuedTaskRuns } from './queuedRunResume.js';
@@ -65,10 +67,18 @@ export async function recoverOrphanedTasks(): Promise<void> {
   // `startBootWorktreeSweep`: with 1000+ leftover checkouts it held the port
   // for many minutes.)
 
+  // Phase 1c': re-adopt push / QA / post-merge-hook runs whose agent survived
+  // the restart in the detached terminal-server (their running records are
+  // mirrored to disk). Before listen, so their first callback — or the
+  // callback outbox's replay — finds the record instead of a 404; and before
+  // the scratch sweeps below, which keep only live-pty dirs. See
+  // recovery/oneOffRunResume.ts.
+  await runStartupRecoveryStep('resumeInterruptedOneOffRuns', () => resumeInterruptedOneOffRuns());
+
   // Phase 1d: reclaim orphaned push-session scratch dirs left behind by
   // a /done cleanup that lost its EBUSY race with the still-shutting-down
-  // PTY (the in-memory registry is empty at boot, so anything still on
-  // disk is by definition stale). Mirrors sweepOrphanedWorktrees.
+  // PTY, or whose session did not survive the restart (anything with no
+  // live PTY is stale). Mirrors sweepOrphanedWorktrees.
   await runStartupRecoveryStep('sweepOrphanedPushSessions', () => sweepOrphanedPushSessions());
 
   // Phase 1e: same convergence layer for QA e2e-run scratch dirs.

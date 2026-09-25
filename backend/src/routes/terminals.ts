@@ -11,6 +11,7 @@ import { proxyCreateSession, proxyListSessions } from '../terminalProxy.js';
 import { proxyKillSession as rawProxyKillSession } from '../terminalServerClient.js';
 import { getSpawnQueueSnapshot, notifySessionsFreed } from '../spawnQueue.js';
 import { terminalRegistry } from '../terminalRegistry/store.js';
+import { getTerminalServerStatus } from '../terminalServerStatus.js';
 import { endPostMergeHook, getActiveHookForServerId } from '../postMergeHooks.js';
 
 export function buildTerminalsRouter(): Router {
@@ -18,6 +19,12 @@ export function buildTerminalsRouter(): Router {
 
   r.get('/api/terminals', async (_req, res) => {
     res.json(await proxyListSessions());
+  });
+
+  // Executor build status for the navbar's "terminal server update pending"
+  // chip. Read-only: see terminalServerStatus.ts.
+  r.get('/api/terminal-server/status', async (_req, res) => {
+    res.json(await getTerminalServerStatus());
   });
 
   // Pre-create a pty session for a sidebar-launched terminal and return its

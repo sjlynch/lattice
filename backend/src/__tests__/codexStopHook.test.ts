@@ -9,6 +9,7 @@ import {
   codexHooksJsonPath,
   isLatticeGeneratedCodexHooks,
 } from '../codexStopHook.js';
+import { CALLBACK_HOOK_TIMEOUT_S, callbackScriptPath } from '../callbackOutbox.js';
 
 // The Codex Stop hook is the Codex analogue of the Claude Stop hook / Pi
 // completion extension: a `<cwd>/.codex/hooks.json` whose `Stop` hook POSTs
@@ -18,7 +19,7 @@ import {
 
 const URL = 'http://127.0.0.1:5184/api/tasks/abc/complete?source=codex-stop-hook-task-complete';
 
-test('renderCodexStopHookJson emits a valid Stop hook with an unquoted curl POST (cmd /c on Windows)', () => {
+test('renderCodexStopHookJson emits a valid Stop hook running the callback script unquoted (cmd /c on Windows)', () => {
   const json = renderCodexStopHookJson(URL);
   const parsed = JSON.parse(json) as {
     hooks: {
@@ -28,11 +29,13 @@ test('renderCodexStopHookJson emits a valid Stop hook with an unquoted curl POST
   const entry = parsed.hooks.Stop[0].hooks[0];
   assert.equal(entry.type, 'command');
   // Codex spawns the hook argv directly (no shell): the URL must be UNQUOTED, and
-  // Windows needs `cmd /c` to spawn curl. camelCase `commandWindows` (JSON key).
-  assert.equal(entry.command, `curl -s -m 5 -X POST ${URL}`);
-  assert.equal(entry.commandWindows, `cmd /c curl -s -m 5 -X POST ${URL}`);
+  // Windows needs `cmd /c` to spawn node. camelCase `commandWindows` (JSON key).
+  // The isolated test HOME has no whitespace, so this is the script form (the
+  // retrying-curl fallback is only for a home path with a space in it).
+  assert.equal(entry.command, `node ${callbackScriptPath().replace(/\\/g, '/')} ${URL}`);
+  assert.equal(entry.commandWindows, `cmd /c ${entry.command}`);
   assert.ok(!entry.command.includes('"'), 'the URL must not be quoted (no shell to strip it)');
-  assert.equal(entry.timeout, 30);
+  assert.equal(entry.timeout, CALLBACK_HOOK_TIMEOUT_S);
 });
 
 async function tmpDir(): Promise<string> {

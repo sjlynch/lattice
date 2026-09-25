@@ -23,6 +23,7 @@ import {
 import { createHttpServerWithWebSockets } from './http.js';
 import { beginWorkflowRecovery } from '../workflowRuns/recoveryReadiness.js';
 import { startTerminalRegistryWatch } from '../terminalRegistry/watch.js';
+import { ensureCallbackScript, startCallbackOutboxLoop } from '../callbackOutbox.js';
 
 export async function startBackend(
   config: BackendServerConfig = getBackendServerConfig(),
@@ -165,4 +166,10 @@ export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecov
   // (exited ptys are ended so restore never relaunches them; busy transitions
   // are stamped for the interruption detector). See terminalRegistry/watch.ts.
   startTerminalRegistryWatch();
+  // Replay completion callbacks a Stop hook / Pi extension couldn't deliver
+  // while this backend was down (restarting after a merge, say). Rewrite the
+  // hook's delivery script first so every hook installed from here on runs
+  // the current one. See callbackOutbox/.
+  ensureCallbackScript();
+  startCallbackOutboxLoop(backendOrigin);
 }

@@ -101,6 +101,21 @@ export async function fetchActiveWorkflowRuns(
   );
 }
 
+// One run by id (incl. a recently finished one), pinned to `projectPath`.
+// Resolves `null` on 404 — the backend doesn't know the run (finished long
+// ago, or lost in a restart). Throws on anything else (e.g. 502 while the
+// backend is down), so a caller can tell "unknown" from "couldn't ask".
+export async function fetchWorkflowRun(
+  projectPath: string,
+  runId: string,
+): Promise<WorkflowRun | null> {
+  const r = await fetch(
+    `/api/workflow-runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(projectPath)}`,
+  );
+  if (r.status === 404) return null;
+  return (await asJson<{ run: WorkflowRun }>(r)).run;
+}
+
 export async function cancelWorkflowRun(projectPath: string, runId: string): Promise<void> {
   await postJson<{ ok: true }>(
     withProjectParam(`/api/workflow-runs/${encodeURIComponent(runId)}/cancel`, projectPath),

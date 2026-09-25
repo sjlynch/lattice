@@ -24,6 +24,9 @@ export function createCompilerLifecycle({
   let ready = false;
   let failures = 0;
   let polling = false;
+  // A deliberate restart (restart() below) is in flight: the old compiler's
+  // exit is expected and relaunches at once, without spending a retry.
+  let restartRequested = false;
 
   function scheduleRepair() {
     if (stopped) return;
@@ -59,8 +62,10 @@ export function createCompilerLifecycle({
       ready = false;
       if (child === c) child = null;
       const cause = error ? `spawn failed: ${error.message}` : describeExitCode(code, signal);
+      const deliberate = restartRequested;
+      restartRequested = false;
       const diagnostic = {
-        expected: stopped,
+        expected: stopped || deliberate,
         detail: `${cause}; pid=${c?.pid ?? 'unspawned'}; node=${process.version}; ` +
           `${process.platform}/${process.arch}; uptimeMs=${now() - startedAt}; sourceFilePolling=${polling}`,
       };
@@ -82,6 +87,10 @@ export function createCompilerLifecycle({
         diagnosticTimer.unref?.();
       } else writeDiagnostic();
       if (stopped) return;
+      if (deliberate) {
+        launch();
+        return;
+      }
       console.error(`[lattice-backend] TypeScript watcher exited (${cause}); the backend remains running.`);
       // A process that settles and immediately crashes is still a crash loop.
       // Only a genuinely sustained healthy interval replenishes the budget.
@@ -132,5 +141,29 @@ export function createCompilerLifecycle({
     }
   }
 
-  return { start: launch, stop, canRestartBackend: () => ready && !stopped && Boolean(child) };
+  // Start a fresh compiler now — after a dependency install, whose new/changed
+  // node_modules an already-running `tsc -w` may never re-resolve (it failed
+  // "Cannot find module" and noEmitOnError kept the old dist/). Also resumes a
+  // compiler paused after exhausting its retries, with a fresh retry budget.
+  // The backend restart that follows still goes through the restart policy.
+  function restart(reason) {
+    if (stopped) return false;
+    console.log(`[lattice-backend] restarting the TypeScript watcher — ${reason}`);
+    failures = 0;
+    if (timer) { unschedule(timer); timer = null; }
+    ready = false;
+    if (child) {
+      restartRequested = true;
+      try { child.kill(); } catch (error) {
+        restartRequested = false;
+        console.warn('[lattice-backend] could not stop TypeScript watcher for restart:', error);
+        return false;
+      }
+      return true;
+    }
+    launch();
+    return true;
+  }
+
+  return { start: launch, stop, restart, canRestartBackend: () => ready && !stopped && Boolean(child) };
 }

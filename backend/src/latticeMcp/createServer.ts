@@ -27,7 +27,12 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { LatticeClient, type FetchLike, type LatticeCallOutcome } from './client.js';
+import {
+  LatticeClient,
+  type FetchLike,
+  type LatticeCallOutcome,
+  type LatticeClientOptions,
+} from './client.js';
 
 export type CreateLatticeMcpServerOptions = {
   // Backend origin, e.g. `http://127.0.0.1:5184`.
@@ -41,6 +46,8 @@ export type CreateLatticeMcpServerOptions = {
   taskId?: string;
   // Injectable for tests; defaults to the global `fetch`.
   fetchImpl?: FetchLike;
+  // Restart-retry tuning, passed through to LatticeClient (tests use 0).
+  retry?: LatticeClientOptions['retry'];
 };
 
 // The shape `registerTool` handlers return. Declared locally so this module

@@ -45,6 +45,16 @@ export function activeRunsFromHello(runs: WorkflowRun[]): RunMap {
   return map;
 }
 
+// A `recovering` hello (backend restarted, persisted runs not re-registered
+// yet) is a PARTIAL snapshot: upsert what it carries, remove nothing. Same
+// reference when it adds nothing new, so React can skip the re-render.
+export function mergeRecoveringHello(cur: RunMap, runs: WorkflowRun[]): RunMap {
+  if (runs.length === 0) return cur;
+  const next = { ...cur };
+  for (const r of runs) next[r.id] = r;
+  return next;
+}
+
 // `started` / `progress` upsert the freshest run snapshot.
 export function upsertRun(cur: RunMap, run: WorkflowRun): RunMap {
   return { ...cur, [run.id]: run };

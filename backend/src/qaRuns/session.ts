@@ -80,7 +80,7 @@ export async function startQaSession(
       installQaStopHook(cwd, id, args.backendOrigin, args.projectPath),
     renderInstructions: ({ id }) => renderQa(args, id),
     registryLabel: `qa:${shortLabel(args.taskTitle)}`,
-    recordRun: ({ id, cwd }) =>
+    recordRun: ({ id, cwd, serverId }) =>
       recordQaRun({
         id,
         taskId: args.taskId,
@@ -88,6 +88,7 @@ export async function startQaSession(
         cwd,
         status: 'running',
         createdAt: Date.now(),
+        serverId,
       }),
   });
   return {

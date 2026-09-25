@@ -19,5 +19,14 @@ attaches them to HTTP upgrades.
   session's `projectPath` can legitimately be a worktree rather than the project
   root — filtering on it would silently drop the task tabs the spinner exists
   for. Don't "fix" it by adding a project filter.
+- `/ws/workflow-runs`' `hello` is the client's authoritative active-runs
+  snapshot, but after a restart the runs are only back once post-listen
+  recovery registers them. Until `isWorkflowRecoveryDone()` it therefore sends
+  `{type:'hello', runs, recovering: true}` (merged additively by the client)
+  and follows up per connection with an authoritative hello when recovery
+  lands. `/ws/tasks` needs no such flag (tasks load from disk on demand);
+  `/ws/merge-runs` / `/ws/post-merge-hooks` send `idle` until a resumed run
+  re-announces itself, which only blanks a display strip — no client state
+  machine reads it as "finished".
 - Add a new endpoint by adding a builder here and a route tuple in
   `wsServer.ts`.

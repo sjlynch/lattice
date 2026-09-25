@@ -28,6 +28,39 @@ export function wsReconnectDelay(attempt: number): number {
 
 export type WsSubscription<T> = (event: T) => void;
 
+// ---------------------------------------------------------------------------
+// Backend connection health, derived from every `subscribeWs` socket. A socket
+// is "down" from its first close until it opens again; torn-down subscriptions
+// never count. During a backend restart every live channel drops together, so
+// "any socket down" is the signal behind the navbar's "Backend restarting —
+// reconnecting…" pill (`components/BackendConnectionIndicator.tsx`, which
+// debounces it so a single blip never shows). Never gates behaviour.
+const downSockets = new Set<object>();
+const connectionListeners = new Set<(down: boolean) => void>();
+
+function markSocketDown(token: object, down: boolean): void {
+  const wasDown = downSockets.size > 0;
+  if (down) downSockets.add(token);
+  else downSockets.delete(token);
+  const isDown = downSockets.size > 0;
+  if (wasDown === isDown) return;
+  for (const listener of [...connectionListeners]) {
+    try { listener(isDown); } catch { /* isolate listeners */ }
+  }
+}
+
+export function isBackendConnectionDown(): boolean {
+  return downSockets.size > 0;
+}
+
+/** Notified with `true` when the first live channel drops, `false` once all are back. */
+export function subscribeBackendConnection(listener: (down: boolean) => void): () => void {
+  connectionListeners.add(listener);
+  return () => {
+    connectionListeners.delete(listener);
+  };
+}
+
 export function subscribeWs<T>(
   pathWithQuery: string,
   onMessage: WsSubscription<T>,
@@ -42,6 +75,8 @@ export function subscribeWs<T>(
   // resets the backoff. Cleared on close so an accept-then-immediate-close
   // never reaches it.
   let stableTimer: ReturnType<typeof setTimeout> | null = null;
+  // Identity of this subscription in the connection-health set.
+  const healthToken = {};
 
   function clearStableTimer() {
     if (stableTimer) {
@@ -58,6 +93,7 @@ export function subscribeWs<T>(
     ws = socket;
     socket.onopen = () => {
       if (cancelled || ws !== socket) return;
+      markSocketDown(healthToken, false);
       // Don't reset the backoff yet — wait for the connection to prove stable.
       clearStableTimer();
       stableTimer = setTimeout(() => {
@@ -91,6 +127,7 @@ export function subscribeWs<T>(
       if (cancelled || ws !== socket) return;
       ws = null;
       clearStableTimer();
+      markSocketDown(healthToken, true);
       try {
         onDisconnect?.();
       } catch {
@@ -106,6 +143,7 @@ export function subscribeWs<T>(
   connect();
   return () => {
     cancelled = true;
+    markSocketDown(healthToken, false);
     clearStableTimer();
     if (timer) clearTimeout(timer);
     try {

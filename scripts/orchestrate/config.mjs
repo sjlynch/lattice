@@ -21,7 +21,10 @@ export const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 export const BACKEND_DIR = path.join(ROOT, 'backend');
 export const FRONTEND_DIR = path.join(ROOT, 'frontend');
 
-export const HEALTH_URL = 'http://127.0.0.1:5184/api/health';
+// `PORT` is the backend's own override (backend/src/server/config.ts); the dev
+// runner's lifecycle + restart handshake read it too, so a stack started on
+// alternate ports (an isolated test stack) waits on its own backend.
+export const HEALTH_URL = `http://127.0.0.1:${Number(process.env.PORT) || 5184}/api/health`;
 export const HEALTH_TIMEOUT_MS = 30_000;
 export const HEALTH_POLL_INTERVAL_MS = 200;
 

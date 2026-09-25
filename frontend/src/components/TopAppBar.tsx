@@ -4,6 +4,8 @@ import { FolderPicker } from './FolderPicker';
 import { TaskBoardLauncher } from './TaskBoard';
 import { WorkflowsLauncher } from './Workflows';
 import { SettingsDialog } from './SettingsDialog';
+import { BackendConnectionIndicator } from './BackendConnectionIndicator';
+import { TerminalServerChip } from './TerminalServerChip';
 import { checkGit, subscribeGitBranch } from '../api';
 import type {
   ProjectGitProbe,
@@ -140,6 +142,8 @@ export const TopAppBar = memo(function TopAppBar({
             </span>
           ) : null}
         </div>
+        <BackendConnectionIndicator />
+        <TerminalServerChip />
         <WorkflowsLauncher activeFolder={activeFolder} scanResult={scanResult} />
         <TaskBoardLauncher activeFolder={activeFolder} />
         <button

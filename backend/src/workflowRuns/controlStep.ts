@@ -22,7 +22,10 @@
 // worker so dev.mjs defers backend restarts while it's waiting, and a manual
 // merge run can't race against the workflow. The lock is released BEFORE we
 // call completeStep so the next step (often another control step) can
-// acquire its own lock without racing the previous step's release.
+// acquire its own lock without racing the previous step's release. The
+// release → advance hand-off is covered by a restart-drain transition instead
+// (see runControlStepWorker and ../restartDrain/), so a dev-runner restart
+// that sees the lock vanish still waits for the advance to land.
 //
 // The orchestrator (workflowRuns.ts) dispatches to executeControlStep for
 // non-agent steps. We take a `completeStep` callback rather than importing
@@ -35,6 +38,7 @@ import {
   type ProjectRunLockHandle,
 } from '../projectRunLock.js';
 import type { Workflow, WorkflowStepKind } from '../workflows.js';
+import { beginRestartTransition } from '../restartDrain/gate.js';
 import { checkpointWorkflowRun, notify, snapshot, type WorkflowRun } from './state.js';
 import { runStartStep } from './controlSteps/start.js';
 import { runMergeStep } from './controlSteps/merge.js';
@@ -95,6 +99,30 @@ export async function runControlStepWorker(
   completeStep: CompleteStepCallback,
   deps: ControlStepWorkerDeps = productionWorkerDeps,
 ): Promise<void> {
+  // The lock hand-off (release → completeStep) is marked as a restart-drain
+  // transition from just BEFORE the release until the advance returns. The dev
+  // runner defers restarts on the run.lock file, which disappears at the
+  // release; without this there would be an instant where neither the lock
+  // nor anything else said "mid-transition" and a restart could land in the
+  // advance. (Holding the lock across completeStep instead is not an option:
+  // the next control step acquires its own lock from inside that call.)
+  const handoff = { end: () => {} };
+  try {
+    await runControlStepWorkerLocked(wf, run, stepIndex, backendOrigin, completeStep, deps, handoff);
+  } finally {
+    handoff.end();
+  }
+}
+
+async function runControlStepWorkerLocked(
+  wf: Workflow,
+  run: WorkflowRun,
+  stepIndex: number,
+  backendOrigin: string,
+  completeStep: CompleteStepCallback,
+  deps: ControlStepWorkerDeps,
+  handoff: { end: () => void },
+): Promise<void> {
   const step = wf.steps[stepIndex];
   const kind: WorkflowStepKind = step.kind ?? 'agent';
   const lockLabel = `workflow-${kind}:${run.id}`;
@@ -145,6 +173,7 @@ export async function runControlStepWorker(
       // Release the lock BEFORE calling completeStep. The next step (often
       // another control step) acquires its own lock; if we held this one
       // across completeStep the acquire would race against our release.
+      handoff.end = beginRestartTransition(`workflow ${run.id} control step ${stepIndex} (${kind}) hand-off`);
       await lock.release().catch(() => undefined);
       lock = null;
     }

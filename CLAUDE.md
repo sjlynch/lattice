@@ -8,7 +8,7 @@ force-directed DAG.
 
 - `backend/` — TypeScript Node.js Express server (`:5184`)
 - `frontend/` — Vite + React + TS + xterm + 3d-force-graph (`:5183`)
-- `package.json` (root) — `scripts/orchestrate.mjs` supervises both via `npm run dev`
+- `package.json` (root) — `npm run dev` runs `scripts/devLoop.mjs` (preflight → `scripts/orchestrate.mjs`, which supervises both; relaunched on a dev-console soft restart)
 - `<project>/.lattice/` — per-project scratch (gitignored): `workflow-steps/`, `workflows.json`, `userSettings.json`, `health-cache.json`. **No longer holds `worktrees/` or push-run scratch** — those moved to home-scoped locations (see below). Tasks live in `~/.lattice/per-project/<hash>/tasks.json`.
 - `~/.lattice/projects.json` — global index of projects with Lattice tasks
 - `~/.lattice/per-project/<sha1(path)[:12]>/tasks.json` — task DB per project. Moved out of `<project>/.lattice/tasks.json` after the 2026-05-09 catastrophic-deletion incident; legacy in-project files auto-migrate on first read. `run.lock` here is the cross-process per-project merge lock.
@@ -39,8 +39,10 @@ force-directed DAG.
     codes are decoded here, so `3221225477` reads as
     `0xC0000005 STATUS_ACCESS_VIOLATION`.
 - `~/.lattice/per-project/<sha1(path)[:12]>/terminals.json` — the durable **terminal-tab registry** (`backend/src/terminalRegistry/`): one record per sidebar tab with its owner, original launch command, pinned harness conversation id and last pty. What "restore tabs on project open" rebuilds from after a backend restart / closed browser / `Ctrl+C` / reboot.
+- `~/.lattice/per-project/<sha1(path)[:12]>/{workflow-runs,push-runs,qa-runs,post-merge-hooks}.json` — on-disk mirrors of the RUNNING workflow runs / push runs / QA e2e runs / post-merge hooks (file absent when nothing runs). Their agents' ptys survive a backend restart in the detached terminal-server; boot recovery re-adopts the records so the agents' callbacks keep working (`recovery/workflowRunResume.ts`, `recovery/oneOffRunResume.ts`).
 - `~/.lattice/globalSettings.json` — machine-global settings (`maxConcurrentAgents`, MCP defs/overrides, `piModelMenu`, `piProviders`).
 - `~/.lattice/piManagedProviders.json` — sidecar listing the Pi provider ids Lattice manages in `~/.pi/agent/models.json`, so a UI removal deletes precisely those (hand-written providers are never touched). See `backend/src/piModels.ts` `reconcilePiModelsJson`.
+- `~/.lattice/bin/lattice-callback.cjs` + `~/.lattice/callback-outbox/` — durable completion callbacks. Every Claude/Codex Stop hook runs the script (the Pi extension does the same inline): it records the callback in the outbox, POSTs it with retries, and whatever is still undelivered — the backend was restarting after a merge — is replayed by the backend once it is back. See `backend/src/callbackOutbox/CLAUDE.md`.
 - `~/.lattice/opengrep/` — the Lattice-managed Opengrep (SAST) engine (`bin/<version>/opengrep[.exe]`, downloaded at the user's click and verified against the pinned SHA-256), the fetched rule packs (`rules/<packId>/`, pinned commits, pruned to rule files; also the cwd every scan runs from so finding fingerprints are machine-stable), `downloads/` for in-flight transfers, and `state.json`. Never committed, never bundled — see `backend/src/opengrep/CLAUDE.md`.
 - `~/.lattice/per-project/<sha1(path)[:12]>/opengrep/` — the project's stored scans: `<scanId>.json` (raw engine output) + `<scanId>.meta.json` (record); last 10 kept.
 
@@ -60,9 +62,35 @@ inside Claude steals their console, drops their HMR/WS connections, and
 hides errors they were already debugging. Type-check via `tsc` to validate
 your changes — the user will reload the running server when they're ready.
 
+The user's dev console takes line commands (hint printed at boot): `r` =
+**soft restart** (whole stack restarts from current scripts/deps; the detached
+terminal-server is kept, so running agents are re-adopted, not killed), `d` =
+exit keeping agents running, `i` = re-check/install deps. Ctrl+C is still the
+full stop that ends every agent. A `package.json` / `package-lock.json` change
+after boot (e.g. a merge) is `npm install`ed automatically per workspace
+(`scripts/depsWatch.mjs`); vite restarts, the backend restarts through its
+normal run.lock-deferred path. See `scripts/CLAUDE.md`.
+
 Type-check:
 - backend: `cd backend && npx tsc --noEmit`
 - frontend: `cd frontend && npx tsc -b`
+
+The backend also refuses to boot (before touching `~/.lattice`) when its code
+or cwd is inside a `.lattice/worktrees/` task worktree, or when another
+backend already holds its port (`backend/src/server/bootGuards.ts`; override
+the worktree check with `LATTICE_ALLOW_WORKTREE_BACKEND=1` only for an instance
+with its own HOME and ports).
+
+E2E (Playwright): `npm run test:e2e` from the repo root. It never touches the
+live instance: `playwright.config.ts` boots an **isolated** backend + vite +
+terminal-server on `:5384`/`:5383`/`:5385` with HOME at `<tmp>/lattice-e2e-home`
+(overrides: `LATTICE_E2E_{BACKEND,FRONTEND,TERMINAL}_PORT`, `LATTICE_E2E_HOME`),
+from the already-built `backend/dist` (kept current by the user's `npm run dev`,
+or `npm --prefix backend run build`). `LATTICE_E2E_BASE_URL` targets an existing
+server instead; pointing it at the live `:5183`/`:5184` also needs
+`LATTICE_E2E_ALLOW_LIVE=1`. The port overrides behind it: backend `PORT`,
+`TERMINAL_PORT`, `LATTICE_FRONTEND_PORT` (origin allowlists), `LATTICE_DEFAULT_ROOT`;
+vite `LATTICE_FRONTEND_PORT`, `LATTICE_BACKEND_PORT`, `LATTICE_VITE_CACHE_DIR`.
 
 ## Git discipline
 
@@ -70,6 +98,13 @@ Type-check:
 and push on `main` by default; only switch to (or create) another branch when
 the user explicitly asks for it, and switch back to `main` when that work is
 done.
+
+**Exception — Lattice-spawned agents.** A task agent working in a
+`~/.lattice/worktrees/…` checkout commits on its own `lattice/<slug>-<id>`
+branch and never checks out, merges into, or pushes `main` — Lattice merges it.
+Nor does it start the backend / `npm run dev` there. A merge-resolver or
+workflow-step agent follows its brief (`MERGE_INSTRUCTIONS.md`,
+`WORKFLOW_STEP.md`, …) over this section.
 
 ## Task pipeline
 
@@ -106,7 +141,9 @@ Backlog ──▶── Open ──▶── In Progress ──▶── Ready t
 - `In Progress → Ready to Merge`: the in-worktree agent finishes; the Stop
   hook (Claude) / completion extension (Pi) / Codex `Stop` hook / explicit curl
   in `LATTICE_TASK.md` hits `POST /api/tasks/:id/complete` (idempotent — only
-  flips on first call, and only when the branch has a commit).
+  flips on first call, and only when the branch has a commit). The hooks
+  deliver through the callback outbox, so a Stop that fires while the backend
+  is restarting is replayed instead of lost (`backend/src/callbackOutbox/`).
 - `Ready to Merge → QA`: ▶ button calls `POST /api/tasks/:id/merge`.
   Backend merges main INTO the branch *inside the worktree* (so main's
   working tree never has conflict markers and vite stays alive), then
@@ -143,8 +180,10 @@ fast-forwards `main` with a `backend/src` change — which would kill the
 run. Two layers keep "merge all" a one-click operation anyway: (1)
 `backend/scripts/dev.mjs` doesn't restart the backend while a per-project
 `run.lock` is held (it defers until the run finishes, with a 15-minute
-force backstop that WILL interrupt a merge run parked on a conflict
-resolver); (2) if a restart
+force backstop for a wedged holder — skipped while the backend reports the
+run parked on a live conflict resolver / post-merge hook — and it drains the
+backend before every restart, see `backend/src/restartDrain/CLAUDE.md`);
+(2) if a restart
 happens regardless (a crash, or `dev.mjs` isn't the one running it), the
 next boot's `resumeInterruptedMergeRuns` spots the stale `merge-run`
 `run.lock` and starts a fresh run for whatever's still `ready_to_merge`
@@ -233,6 +272,7 @@ therefore stay safely re-runnable.
 | GET | `/api/workflow-prompt-customizations/:id` | Poll prompt-customization status/result |
 | POST | `/api/workflow-prompt-customizations/:id/complete` | Harness callback with customized prompt |
 | POST | `/api/workflow-runs/:runId/steps/:n/complete` | Stop-hook callback — advances to next step |
+| GET | `/api/workflow-runs/:runId?project=` | One run by id, incl. a recently finished one (`{run}`; 404 once forgotten / after a restart). The workflow queue asks it when a run leaves its active set with no terminal WS event, to tell "finished while disconnected" from "lost" |
 | POST | `/api/workflow-runs/:runId/cancel` | Cancel an active workflow run (optional `?project=` pin: 404 if the run belongs to another project) |
 | GET | `/api/workflow-runs/active?project=` | Active workflow runs for a project |
 | GET | `/api/git-check?path=` | Repo probe for the QA-lane Push button (`hasGit` = `fs.stat` of `<path>/.git`, unchanged), plus an additive `git: ProjectGitProbe` (walk-up state: `repo`/`nested`/`bare`/`none`/`unavailable`/`error`) that backs the navbar's Git Setup chip |
@@ -257,6 +297,10 @@ therefore stay safely re-runnable.
 | PATCH | `/api/terminal-tabs/:id?project=` | Rename a tab `{label}` |
 | DELETE | `/api/terminal-tabs/:id?project=` | Close a tab: end its record (never relaunched) and kill its pty |
 | GET | `/api/spawn-queue` | Debug: spawn-queue snapshot (pending/in-flight/reserved, softCap) |
+| POST | `/api/internal/restart-drain/prepare` | Dev-runner restart handshake (internal: `x-lattice-terminal-token` required, any browser `Origin` refused). `{reason, ttlMs, budgetMs}` → enter the TTL-bounded drain (no new spawns / run-lock acquisitions; workflow / merge / task / push / QA starts 503 `backend-restarting`), wait for in-flight transitions, flush state → `{ready, pending, waitedMs, pid}`. See `backend/src/restartDrain/CLAUDE.md` |
+| POST | `/api/internal/restart-drain/cancel` | End a drain the dev runner won't follow with a restart (internal, token-guarded) |
+| GET | `/api/internal/restart-drain/lock-holders` | Per project hash: is the run.lock holder parked on a live conflict resolver / post-merge hook? Feeds the dev runner's 15-min force-restart exemption (internal, token-guarded) |
+| GET | `/api/terminal-server/status` | `{state: current\|stale\|absent\|unavailable, sessions}` — whether the detached terminal-server runs this backend's build. `stale` = an update is deferred until the executor has zero ptys; backs the navbar's "terminal server update pending" chip (`backend/src/terminalServerStatus.ts`) |
 | WS | `/ws/terminal?id=&cwd=&cols=&rows=&initialCommand=` | xterm proxy via node-pty (with replay) |
 | WS | `/ws/terminal-activity?project=` | Which pty sessions are running a harness that's *still working* (sustained printable output seen recently). Pushed on connect + on every change; backs the sidebar's per-tab spinner. Payload is machine-wide (`{busy: serverId[]}`), not project-filtered |
 | WS | `/ws/terminal-tabs?project=` | The durable terminal-tab registry, live: `hello` snapshot, then `upsert` / `ended` / `removed` / `restored` / `restore-failed` / `restore-summary` |

@@ -8,7 +8,9 @@ import {
   type StepContext,
 } from '../queueScheduler';
 import { sameProjectPath } from '../../../terminal/terminalScope';
+import { fetchWorkflowRun } from '../../../api';
 import type { StartOutcome } from './useWorkflowRunActions';
+import { resolveVanishedRun, type VanishedRunDeps } from './vanishedRunResolver';
 
 // Count the active runs the queue itself didn't dispatch (a manual ▶ Run, or a
 // run from another tab). Queue-owned runs are the ones whose runId is attached
@@ -51,6 +53,11 @@ type Args = {
   // tell the scheduler whether to cascade into the next workflow (only on
   // success) or stop (on errored/cancelled).
   recentRuns: Record<string, WorkflowRun>;
+  // GET one run by id (`null` = 404). Injectable for tests; defaults to
+  // `fetchWorkflowRun`. See the vanished-run note on the diff effect below.
+  fetchRun?: (projectPath: string, runId: string) => Promise<WorkflowRun | null>;
+  // Test seam for the resolver's timers.
+  vanishedRunTiming?: Pick<VanishedRunDeps, 'sleep' | 'now'>;
 };
 
 // React adapter for the pure `queueScheduler`. The hook owns the reducer
@@ -67,6 +74,8 @@ export function useWorkflowQueue({
   runWorkflow,
   activeRuns,
   recentRuns,
+  fetchRun = fetchWorkflowRun,
+  vanishedRunTiming,
 }: Args): { state: QueueState; dispatch: (action: QueueAction) => void } {
   const [state, setState] = useState<QueueState>(initialQueueState);
 
@@ -80,7 +89,15 @@ export function useWorkflowQueue({
   const runWorkflowRef = useRef(runWorkflow);
   const recentRunsRef = useRef(recentRuns);
   const activeRunsRef = useRef(activeRuns);
+  const fetchRunRef = useRef(fetchRun);
+  const vanishedRunTimingRef = useRef(vanishedRunTiming);
+  // Run ids whose vanish is being resolved (see the diff effect), so a second
+  // re-render never starts a second resolution for the same run.
+  const resolvingVanishedRef = useRef(new Set<string>());
+  const unmountedRef = useRef(false);
   stateRef.current = state;
+  fetchRunRef.current = fetchRun;
+  vanishedRunTimingRef.current = vanishedRunTiming;
   if (activeFolderRef.current !== activeFolder) {
     activeFolderRef.current = activeFolder;
     activeFolderGenerationRef.current += 1;
@@ -173,7 +190,17 @@ export function useWorkflowQueue({
     // Re-baseline the diff so the new project's `hello` replacing activeRuns
     // doesn't read as "the previous project's runs finished".
     prevActiveRef.current = activeRunsRef.current;
+    // In-flight vanished-run resolutions belong to the previous project; they
+    // see the generation change and stop on their own.
+    resolvingVanishedRef.current = new Set();
   }, [activeFolder]);
+
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
 
   // Watch `activeRuns` for runs that disappeared since the last render —
   // that's the signal the workflow finished. Dispatch runFinished so the
@@ -186,27 +213,51 @@ export function useWorkflowQueue({
   // whether to cascade into the next queued workflow (only on
   // 'completed') or stop the queue (on 'errored'/'cancelled').
   //
-  // The `?? 'errored'` fallback is load-bearing. A real terminal WS event
-  // (completed/errored/cancelled) ALWAYS records the run in `recentRuns` before
-  // removing it from `activeRuns`, so a run that left `activeRuns` with NO
-  // `recentRuns` entry did not finish normally — it vanished from a `hello`
-  // full-replace, which only happens when the backend lost the run (a restart
-  // or crash wiped the in-memory, non-persisted workflow run). Such a run is
-  // interrupted, NOT completed. Defaulting to 'completed' (the old behaviour)
-  // made the queue cascade straight into the next workflow while the
-  // killed one's tasks were still mid-pipeline — the "the second workflow
-  // continues even though the first isn't done, leaving open + unmerged tasks"
-  // bug. Treating it as 'errored' stops the queue instead (the reducer cascades
-  // only on 'completed'), so the user decides how to proceed; boot recovery
-  // separately drains the interrupted run's orphaned ready_to_merge tasks.
+  // A run that left `activeRuns` with NO `recentRuns` entry never got a
+  // terminal WS event (one always records the run in `recentRuns` before
+  // removing it) — it vanished from a `hello` full-replace. It must NOT be
+  // read as 'completed': cascading the next workflow onto an interrupted run's
+  // still-pending tasks was the "second workflow continues, leaving open +
+  // unmerged tasks" bug. But reading it as 'errored' on the spot stopped the
+  // queue on every backend restart too, since a tab reconnecting mid-recovery
+  // can see a hello without the (persisted, about-to-be-restored) run, or the
+  // run may simply have finished while the socket was down. So for a run THIS
+  // queue owns, `resolveVanishedRun` waits a short grace and then asks the
+  // backend for the run by id: back in `activeRuns` → nothing happened;
+  // recorded final status → report it; unknown (404) → 'errored', which stops
+  // the queue (the reducer cascades only on 'completed') so the user decides.
+  // Runs the queue doesn't own are reported immediately — runFinished for an
+  // untracked id is a no-op in the reducer.
   useEffect(() => {
     const prev = prevActiveRef.current;
     if (prev !== activeRuns) {
       for (const id of Object.keys(prev)) {
-        if (!activeRuns[id]) {
-          const status = recentRunsRef.current[id]?.status ?? 'errored';
-          dispatch({ type: 'runFinished', runId: id, status });
+        if (activeRuns[id]) continue;
+        const recentStatus = recentRunsRef.current[id]?.status;
+        const owned = stateRef.current.started.some((entry) => entry.runId === id);
+        if (recentStatus || !owned) {
+          dispatch({ type: 'runFinished', runId: id, status: recentStatus ?? 'errored' });
+          continue;
         }
+        const resolving = resolvingVanishedRef.current;
+        if (resolving.has(id)) continue;
+        resolving.add(id);
+        const project = activeFolderRef.current;
+        const generation = activeFolderGenerationRef.current;
+        const cancelled = () =>
+          unmountedRef.current ||
+          activeFolderRef.current !== project ||
+          activeFolderGenerationRef.current !== generation;
+        void resolveVanishedRun({
+          isActive: () => !!activeRunsRef.current[id],
+          recentStatus: () => recentRunsRef.current[id]?.status,
+          fetchRun: () => fetchRunRef.current(project, id),
+          isCancelled: cancelled,
+          ...vanishedRunTimingRef.current,
+        }).then((status) => {
+          resolving.delete(id);
+          if (status && !cancelled()) dispatch({ type: 'runFinished', runId: id, status });
+        });
       }
       prevActiveRef.current = activeRuns;
     }

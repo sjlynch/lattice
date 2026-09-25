@@ -42,6 +42,15 @@ export type WorkflowRun = {
   // spawned — the timeout is measured from that, and a re-adopting backend
   // re-arms it from here. See testStep/.
   testStep?: RunTestsCheckpoint;
+  // A Claude Stop-hook completion for this step that the quiescence gate is
+  // still holding (stopHookGate.ts) — `at` is the most recent such Stop.
+  // Persisted because the gate itself is an in-memory timer: a restart inside
+  // its settle window used to lose the completion outright (the hook got its
+  // 200, so nothing retries, and the agent is idle and won't Stop again), and
+  // the step hung until its timeout — or forever for an agent step. A
+  // re-adopting backend re-arms the gate from here. Only meaningful while
+  // `stepIndex === currentStepIndex`.
+  stopReceived?: { stepIndex: number; at: number };
 };
 
 export type RunTestsCheckpoint = {
@@ -111,6 +120,7 @@ export function snapshot(run: WorkflowRun): WorkflowRun {
     ...(run.definition ? { definition: cloneWorkflowDefinition(run.definition) } : {}),
     ...(run.stepSummaries ? { stepSummaries: { ...run.stepSummaries } } : {}),
     ...(run.testStep ? { testStep: { ...run.testStep } } : {}),
+    ...(run.stopReceived ? { stopReceived: { ...run.stopReceived } } : {}),
   };
 }
 

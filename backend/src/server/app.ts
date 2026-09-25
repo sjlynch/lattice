@@ -8,6 +8,7 @@ import express, {
 // non-JSON 500 — the toast always has a real message to show.
 import 'express-async-errors';
 import cors from 'cors';
+import { allowedFrontendOrigins } from '../wsOriginAllowlist.js';
 import { buildAgentActivityRouter } from '../routes/agentActivity.js';
 import { buildProjectClaudeRouter } from '../routes/projectClaude.js';
 import { buildGlobalSettingsRouter } from '../routes/globalSettings.js';
@@ -25,6 +26,8 @@ import { buildTasksRouter } from '../routes/tasks.js';
 import { buildTerminalsRouter } from '../routes/terminals.js';
 import { buildTerminalTabsRouter } from '../routes/terminalTabs.js';
 import { buildWorkflowsRouter } from '../routes/workflows.js';
+import { buildRestartDrainAdmissionGate, buildRestartDrainRouter } from '../routes/restartDrain.js';
+import { buildCallbackOutboxAck } from '../callbackOutbox/ack.js';
 
 export type BackendAppOptions = {
   defaultRoot: string;
@@ -43,11 +46,9 @@ export function createBackendApp(options: BackendAppOptions): Express {
 // CORS response headers, so a strict allowlist is invisible to the app while
 // blocking cross-origin attackers. Only the vite dev origin (both loopback
 // spellings) is permitted. curl/agent task-seeding is unaffected because those
-// requests send no Origin header.
-const ALLOWED_ORIGINS = new Set([
-  'http://localhost:5183',
-  'http://127.0.0.1:5183',
-]);
+// requests send no Origin header. Shared with the WS allowlist, which also
+// honours `LATTICE_FRONTEND_PORT` (default 5183).
+const ALLOWED_ORIGINS = new Set(allowedFrontendOrigins());
 
 function isAllowedOrigin(origin: string | undefined): boolean {
   return !origin || ALLOWED_ORIGINS.has(origin);
@@ -108,6 +109,15 @@ export function mountRouteFactories(
   app: Express,
   options: BackendAppOptions,
 ): void {
+  // First: while a dev-runner restart is being prepared, refuse new top-level
+  // runs (503 + Retry-After) before any route below can start one. Then the
+  // token-guarded handshake itself (static `/api/internal/…` paths).
+  app.use(buildRestartDrainAdmissionGate());
+  app.use(buildRestartDrainRouter());
+  // Answered completion callbacks clear their own outbox entry (the hook that
+  // sent one may be killed by the very cleanup it triggers). See
+  // callbackOutbox/ack.ts.
+  app.use(buildCallbackOutboxAck(options.backendOrigin));
   app.use(buildHealthRouter(options.defaultRoot));
   app.use(buildSearchRouter(options.defaultRoot));
   app.use(buildSettingsRouter());

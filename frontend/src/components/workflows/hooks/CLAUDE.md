@@ -44,7 +44,12 @@ there.
 - `useWorkflowRunActions.ts` — the run-side callbacks:
   `startWorkflowDefinition`/`runWorkflow`/`runEditorWorkflow`/`stopRun`. Saves a
   dirty editor before running and threads `harnessOverride`/`piModelOverride` to
-  `startWorkflow`. Returns a discriminated `StartOutcome` (`started` / `finished`
+  `startWorkflow`. The start POST goes through `retryTransient` (`api/retry.ts`),
+  so a backend restart / its 503 `workflow-recovering` window is waited out with
+  backoff — the queue entry stays dispatched instead of being dropped as
+  `failed`; a 409 after an attempt whose response was lost adopts the matching
+  active run (same workflow, started since the first attempt) as `started`
+  rather than requeuing behind what is really its own run. Returns a discriminated `StartOutcome` (`started` / `finished`
   (completion WS beat the `/run` response) / `busy` (backend 409: another run is
   active for the project) / `failed`) — `runEditorWorkflow` pairs it with the
   workflow it (possibly just) saved — and guards every await against a mid-flight
@@ -73,13 +78,18 @@ there.
   runId), `finished` (the completion WS beat the `/run` response; buffer the
   finish then attach/consume the run id so the queue cannot stall), `busy` (the
   409 — `dispatchRejected` requeues the entry to retry when the slot frees, no
-  error toast), or `failed` (drop). The activeRuns-diff `runFinished` uses a
-  `?? 'errored'` fallback (not `'completed'`): a run leaving `activeRuns` with no
+  error toast), or `failed` (drop). A run leaving `activeRuns` with no
   `recentRuns` entry never got a terminal WS event — it vanished from a `hello`
-  full-replace, i.e. the backend lost the non-persisted run to a restart/crash.
-  Treating that as `'errored'` STOPS the queue instead of cascading
-  the next workflow onto the killed run's still-pending tasks (the "second
-  workflow continues, leaving open + unmerged tasks" bug). Queue state is **per-project**:
+  full-replace. It is never read as `'completed'` (cascading the next workflow
+  onto a killed run's still-pending tasks was the "second workflow continues,
+  leaving open + unmerged tasks" bug), but no longer as `'errored'` on the spot
+  either — that stopped the queue on every backend restart. For a run the queue
+  owns, `vanishedRunResolver.ts` waits a grace (3 s), then asks
+  `GET /api/workflow-runs/:id`: back in `activeRuns` → nothing; a recorded final
+  status (it finished while the socket was down) → reported; 404 → `'errored'`,
+  which STOPS the queue; unreachable → re-asked, `'errored'` after 3 min.
+  `fetchRun` / `vanishedRunTiming` are test seams. Covered by
+  `src/__tests__/backendRestartResilience.test.ts`. Queue state is **per-project**:
   WorkflowsLauncher isn't remounted on a project switch, so the hook resets to
   `initialQueueState` on an `activeFolder` change (mirroring `useWorkflowRuns`)
   and re-baselines its activeRuns diff — otherwise the new project would render
@@ -120,8 +130,12 @@ there.
   "running the Opengrep scan before the agent starts…" wait the backend reports
   for a step with pre-run tools, which nothing else would end since the run
   index only moves on completion.
+- `vanishedRunResolver.ts` — `resolveVanishedRun(deps)`: the grace → lookup →
+  retry policy above, as a pure async function with injectable sleep/clock.
 - `workflowRunSync.ts` — pure, side-effect-free state transitions + linger
   constants for the active/recent/control-progress maps (`activeRunsFromHello`,
+  `mergeRecoveringHello` (a `recovering: true` hello — backend still
+  re-registering persisted runs after a restart — is upserted, never removes),
   `upsertRun`, `removeKey`, `clearStaleControlProgress`,
   `clearControlProgressForStep`, `setControlProgress`,
   `mergeFetchedActiveRuns` additive reconcile, `recentDismissalDelayMs`). Also

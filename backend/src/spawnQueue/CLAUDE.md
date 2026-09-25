@@ -71,6 +71,14 @@ is now only a runaway backstop; the queue's `softCap` is the real governor.
   (not `0`) when the terminal-server is unreachable; the queue keeps the last
   count and admits nothing until a poll succeeds.
 - `drainQueue()` is non-reentrant (`isDraining` / `drainAgain`).
+- **A restart drain pauses ALL admission** (`../restartDrain/`, checked at
+  the top of `admitWhilePossible`): the dev runner is about to kill the
+  process, and a thunk admitted now would die half-way. Pending requests stay
+  pending (task runs / workflow steps are durable across the restart; the
+  awaited kinds fail with the process like any restart). `batchAdmissionHold`
+  reports the hold too. The drain's end (cancel / TTL) re-drains via
+  `onRestartDrainEnded` in `../spawnQueue.ts`. The restart handshake's settle
+  waits for the in-flight count to reach zero.
 - The queue is in-memory. Task-run durability across a backend restart comes
   from the persisted `Task.runQueued` flag + `recovery/queuedRunResume.ts`.
 

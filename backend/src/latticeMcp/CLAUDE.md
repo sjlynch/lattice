@@ -105,6 +105,13 @@ that is already running.
 - **A connection failure and a project mismatch ARE errors**, and each says
   which it is — one means "Lattice isn't running", the other means "stop, you
   are pointed at the wrong board".
+- **A restarting backend is retried first** (`client.ts` `send`, up to
+  `RETRY_BUDGET_MS` = 45 s): when Lattice works on its own repo the backend
+  restarts after merges, and a call landing in that window used to come back
+  "Is Lattice running?", telling the agent to abandon the board. Only failures
+  that provably did nothing are re-sent for a write — connection refused, or a
+  503 from the restart-drain / workflow-recovery gates; any other network error
+  re-sends a GET only, so a `create_task` is never duplicated.
 - **Results are compact JSON in one text block.** Agents parse it; indentation
   would cost tokens for nothing.
 

@@ -47,6 +47,27 @@ function ensureExitFlushHook(): void {
   });
 }
 
+// Every store instance (weakly held — tests construct many). Backs
+// `flushAllProjectStatePersists`, which the restart drain calls right before
+// the dev runner kills this process: on Windows that kill is TerminateProcess,
+// so neither the `exit` hook above nor a signal handler ever runs, and a
+// debounced write still inside its timer (a task status flip, a merge-run
+// record) would simply be lost.
+const allStores = new Set<WeakRef<{ flushAllPendingPersists(): Promise<void> }>>();
+
+export async function flushAllProjectStatePersists(): Promise<void> {
+  const flushes: Promise<void>[] = [];
+  for (const ref of [...allStores]) {
+    const store = ref.deref();
+    if (!store) {
+      allStores.delete(ref);
+      continue;
+    }
+    flushes.push(store.flushAllPendingPersists());
+  }
+  await Promise.all(flushes);
+}
+
 // Where a cross-project by-id lookup found an item: the project key whose
 // cached list holds it, the list, the index within it, and the item itself.
 // Used by list-backed subclasses (tasks, workflows) whose TState is an item
@@ -92,6 +113,7 @@ export class ProjectStateManager<
     this.snapshot = options.snapshot ?? ((state) => state);
     this.persistDelayMs = options.persistDelayMs ?? 100;
     this.flushOnExit = options.flushOnExit ?? false;
+    allStores.add(new WeakRef(this));
   }
 
   protected canonicalize(projectPath: string): string {
@@ -317,6 +339,18 @@ export class ProjectStateManager<
     } catch (e) {
       console.error(`[${this.name}] flushPersist failed for`, key, e);
     }
+  }
+
+  // Write every project whose debounced persist hasn't fired yet, and wait out
+  // any write a timer already handed to the disk (every write runs under the
+  // per-project write lock, so a no-op pass through it is that barrier).
+  // Never rejects: flushPersist logs its own failures.
+  public async flushAllPendingPersists(): Promise<void> {
+    const pending = new Set(this.persistTimers.keys());
+    const keys = new Set([...this.cache.keys(), ...pending]);
+    await Promise.all([...keys].map((key) => (pending.has(key)
+      ? this.flushPersist(key)
+      : this.runProjectWrite(key, () => undefined).catch(() => undefined))));
   }
 
   public subscribe(fn: TSubscriber): () => void {

@@ -161,6 +161,9 @@ test('compiler repair fences pending deferred restarts and applies downtime edit
     operationInFlight: () => locked, workflowInFlight: () => locked,
     readDistContentSignature: () => signature, readNewestDistMtime: () => mtime,
     now: () => 1000,
+    // The clock is frozen, so the post-lock settle would never elapse; this
+    // test is about compiler fencing (the settle has its own tests).
+    lockSettleMs: 0,
   });
   policy.resetDistBaseline();
   policy.startDeferredPoll();

@@ -26,6 +26,15 @@ under `helpers/`.
 
 ## Suite index
 
+- `callbackOutbox.test.ts` — durable completion callbacks
+  (`callbackOutbox/`). Runs the REAL generated `lattice-callback.cjs` as a
+  child and the REAL generated Pi extension (imported via tsx) against a local
+  HTTP server: delivered → no outbox entry; 404 is final, 503 retries then
+  keeps the entry; backend down → the hook still exits 0 and leaves the entry,
+  which the drain holds until `holdUntil` and then replays. Around it: drain
+  backoff on 503 then delivery, a JSON body forwarded (Pi prompt-file mode),
+  foreign-origin / non-`/api/` / >24 h entries dropped without a request, and
+  the hook command shapes (Claude's `|| curl` fallback, Codex shell-free).
 - `terminalRestoreCommand.test.ts`, `terminalInterruption.test.ts`,
   `terminalRegistryStore.test.ts`, `terminalRestore.test.ts` — the durable
   terminal-tab registry (`terminalRegistry/`). Command parsing round-trips the
@@ -227,6 +236,35 @@ under `helpers/`.
   suppress every restart), `describeDistEvent`, and the policy wiring: a
   metadata-only event neither restarts nor arms a deferral the poll could later
   apply, while a real write restarts once and names the event that fired.
+- `restartDrain.test.ts`, `devRestartHandshake.test.ts` — the dev-runner
+  restart handshake, both halves. Backend (`restartDrain/`): the drain's TTL
+  and idempotent extend, waiters/listeners woken on end, the transition
+  tracker, `settleForRestart` (waits for quiet across a flicker, flushes, fails
+  open at the budget), the spawn queue admitting nothing until the drain ends,
+  `acquireProjectRunLock` waiting it out, a control step's lock hand-off being
+  a transition until its advance returns, the lock-holder report (live resolver
+  / hook → parked, dead pty → not, "can't tell" → parked), and the HTTP route
+  (401 without the token, 403 for any `Origin`, 503 `backend-restarting` gate).
+  Runner (`restartPolicy.mjs` + `restartHandshake.mjs`): `'settle'` /
+  `'hold-parked'` decisions, restart only after prepare answers, fail-open on
+  every handshake failure, re-defer + cancel when a lock appears while
+  draining, cancel when the restart isn't applied or a spawn straddles the
+  handshake, the parked-holder exemption vs a wedged or unaskable one, and the
+  client's auth/URL/error mapping. Crash auto-respawn backoff lives in
+  `devBackendLifecycle.test.ts`.
+- `devControl.test.ts`, `depsWatch.test.ts`, `devCompilerRestart.test.ts`,
+  `terminalServerParentWatch.test.ts` — the dev console's soft restart and the
+  post-boot dependency watch. Console command parsing (`r`/`d`/`i`, the `!`
+  run.lock override), the devLoop's relaunch/preflight decisions, a child's own
+  exit 75 never read as a restart request, and the control-pipe line reader. The
+  deps watcher against fakes: one install per burst, a lockfile rewrite with deps
+  in step installs nothing, a failed install is recorded with the node-pty /
+  locked-file hint and not retried for the same files (retried when they change,
+  forced by `i`, capped after 3 failures in a row), exit 0 with deps still stale
+  is a failure, a merge landing mid-install is re-evaluated, `close()` kills the
+  install. `compilerLifecycle.restart()` relaunches at once without spending the
+  retry budget and revives a paused compiler. The terminal-server's parent watch
+  stays "gone" once it has seen the (replaced) runner's pid die.
 - `workflowRunResume.test.ts` — workflow-run durability across a backend
   restart (the "run vanished from the navbar mid-step" incident). Covers
   `classifyWorkflowRunResume`'s full decision table (live agent pty → readopt;
@@ -237,6 +275,28 @@ under `helpers/`.
   deletes the file, `notify` keeps it current), and the headline pair: a
   `/complete` callback for an unknown run is a silent no-op, but after
   `restoreWorkflowRun` the very same callback advances the workflow.
+- `oneOffRunResume.test.ts` — push / QA / post-merge-hook durability across a
+  backend restart (`homeScratch/persistence.ts` + `recovery/oneOffRunResume.ts`).
+  The three mirrors (running record persisted with its workflow owner / QA
+  verdict, dropped once done; untrusted records re-validated, `cwd` re-derived
+  through the path guard), then boot re-adoption driven through the real
+  registries with a fake session list: a live push is found again and is what
+  a re-dispatched Push step attaches to, a dead one is tracked but never
+  attachable, a live post-merge hook restores the one-running-per-project
+  state (pointed at the pty actually found, quiescence marked re-adopted),
+  nothing settles inside the grace window, and after it the dead push is
+  `lost` and the dead QA run applies its pre-restart confident PASS (task →
+  done). An unprobeable terminal-server re-adopts and never settles. The Push
+  step's attach path (no spawn, no drain, adopted pty surfaced; a `lost`
+  session fails the step) and the re-adopted quiescence window (mocked clock).
+- `workflowRunsWsRecoveryHello.test.ts` — `/ws/workflow-runs` across the
+  post-restart recovery window: a connect before recovery gets
+  `hello {recovering: true}` then an authoritative hello carrying the restored
+  run (an empty authoritative hello there made the frontend queue read its run
+  as errored and stop); a connect after recovery gets exactly one plain hello;
+  a stale recovery finisher can't mark a newer recovery done. Also
+  `GET /api/workflow-runs/:runId` (finished run readable, project-pinned,
+  `/active` not shadowed).
 - `workflowRunTestsStep.test.ts` — the workflow Run tests step
   (`workflowRuns/testStep/`). Drives real runs (`startWorkflowRun` /
   `completeWorkflowStep` on a temp project) with the git/spawn/state IO faked

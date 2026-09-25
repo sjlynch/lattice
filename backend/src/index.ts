@@ -4,6 +4,20 @@
 
 import { installProcessGuards } from './processGuards.js';
 import { scrubInheritedAgentSessionEnv } from './inheritedAgentEnv.js';
+import { BootRefusedError, runBootGuards } from './server/bootGuards.js';
+import { backendPort } from './server/config.js';
+
+// First of all — before crash logging adopts ~/.lattice/logs, before Pi setup,
+// the terminal-server handshake or startup recovery: refuse to boot from a task
+// worktree, or next to a backend that already holds our port. Either would
+// otherwise mutate the live instance's ~/.lattice state. See server/bootGuards.ts.
+try {
+  await runBootGuards({ port: backendPort() });
+} catch (err) {
+  if (!(err instanceof BootRefusedError)) throw err;
+  console.error(`[lattice-backend] ${err.message}`);
+  process.exit(1);
+}
 
 installProcessGuards();
 

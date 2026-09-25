@@ -241,6 +241,8 @@ test('the deferred-restart poll reads no run.lock while nothing is deferred, and
     readHeldRunLocks: () => { scans += 1; return locks; },
     readNewestDistMtime: () => 100,
     now: () => clock,
+    // This test counts scans; the post-release settle has its own test below.
+    lockSettleMs: 0,
   });
   policy.resetDistBaseline();
   policy.startDeferredPoll();

@@ -56,6 +56,11 @@ owns the node-pty processes.
   with a registry-read one (HKLM+HKCU) so tools installed after the long-lived
   terminal-server booted are visible. Read off the spawn path (cached, 30 s TTL,
   background refresh) — a synchronous `reg.exe` here once produced empty panes.
+  Also `applyPtyPathPrepend`: `LATTICE_PTY_PATH_PREPEND` dirs go first on every
+  terminal's PATH, ahead of the registry PATH (which otherwise outranks anything
+  merely inherited from the second spawn on). An operator escape hatch for
+  wrapping a harness CLI; the self-hosting soak (`scripts/soak/`) uses it to put
+  its fake `claude` first.
 - `envSetup.ts` — `applyClaudeOverheadEnv`: default-in the
   `DISABLE_AUTOUPDATER`/`DISABLE_TELEMETRY`/… vars so each spawned Claude skips
   per-launch overhead (multiplied under fan-out). Defaults only — never

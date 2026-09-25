@@ -47,8 +47,10 @@ import {
 import { isKeepWorkflowStepTerminalsEnabled } from './userSettings.js';
 import { cancelStopHookGate } from './workflowRuns/stopHookGate.js';
 import { forgetAgentQuiescence } from './agentQuiescence.js';
+import { unregisterAgentSession } from './agentSessions.js';
 import { abortStepPreRun } from './workflowRuns/stepTools.js';
 import { cloneWorkflowDefinition } from './workflowRuns/definition.js';
+import { beginRestartTransition, trackRestartTransition } from './restartDrain/gate.js';
 import {
   abortRunTestsStep,
   dispatchRunTestsStep,
@@ -185,6 +187,9 @@ export async function startWorkflowRun(
     `[workflow-run] ${run.id} started (workflow=${wf.id} "${wf.name}", ${wf.steps.length} step(s), override=${harnessOverride ?? 'default'})`,
   );
 
+  // Restart-drain transition: the run exists in memory from here, but only on
+  // disk once the checkpoint lands (see ./restartDrain/).
+  const endStart = beginRestartTransition(`workflow ${run.id} start`);
   try {
     await checkpointWorkflowRun(run);
     await dispatchStep(run.definition!, run, firstIndex, backendOrigin);
@@ -197,6 +202,8 @@ export async function startWorkflowRun(
     // terminal state immediately instead of via the 100 ms debounce.
     failWorkflowRun(run.id, (err as Error).message ?? 'spawn failed');
     throw err;
+  } finally {
+    endStart();
   }
 }
 
@@ -283,6 +290,24 @@ export function failWorkflowRun(runId: string, error: string): boolean {
   return true;
 }
 
+// The advance a step-completion callback performs: drop the step's graph node
+// + quiescence state, then advance the run (which kills the finishing step's
+// pty before dispatching the next one). Shared by the `/complete` route and by
+// boot recovery re-arming a Stop the previous process had received but not yet
+// acted on (WorkflowRun.stopReceived).
+export function workflowStepCompletionAdvance(
+  runId: string,
+  stepIndex: number,
+  backendOrigin: string,
+): () => Promise<void> {
+  const agentId = workflowStepAgentId(runId, stepIndex);
+  return async () => {
+    await completeWorkflowStep(runId, stepIndex, backendOrigin);
+    unregisterAgentSession(agentId);
+    forgetAgentQuiescence(agentId);
+  };
+}
+
 // Called by the Stop-hook callback. Idempotent: stale hooks (same stepIndex
 // re-firing) are silently ignored via the currentStepIndex check.
 export async function completeWorkflowStep(
@@ -298,7 +323,13 @@ export async function completeWorkflowStep(
 
   const key = `${runId}:${stepIndex}`;
   if (completions.has(key)) return completions.get(key);
-  const completing = advanceCompletedStep(run, stepIndex, backendOrigin, deps);
+  // Tracked for the restart drain: its settle waits for an in-flight advance
+  // (checkpoint → teardown → next dispatch) before telling the dev runner the
+  // backend may be killed.
+  const completing = trackRestartTransition(
+    `workflow ${runId} advance from step ${stepIndex}`,
+    advanceCompletedStep(run, stepIndex, backendOrigin, deps),
+  );
   completions.set(key, completing);
   try { await completing; } finally { if (completions.get(key) === completing) completions.delete(key); }
 }

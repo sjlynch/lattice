@@ -85,6 +85,60 @@
   color: #e0af68;
 }
 
+/* "Backend restarting — reconnecting…" pill (BackendConnectionIndicator):
+   shown only while the live WS channels are down. Deliberately quiet — it is
+   informational, everything re-syncs by itself. */
+.appbar-conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 1;
+  min-width: 0;
+  margin-left: 8px;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.appbar-conn-spinner {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-width: 1.5px;
+}
+
+/* "Terminal server update pending" (TerminalServerChip): the detached
+   executor runs an older build, kept alive so open terminals survive.
+   Informational and quiet — muted amber, no action. */
+.appbar-term-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 1;
+  min-width: 0;
+  margin-left: 8px;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(224, 175, 104, 0.3);
+  background: rgba(224, 175, 104, 0.06);
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: help;
+}
+.appbar-term-update-icon {
+  flex: 0 0 auto;
+  color: #e0af68;
+}
+.appbar-term-update-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Task board launcher (in the appbar) */
 .fab {
   display: inline-flex;

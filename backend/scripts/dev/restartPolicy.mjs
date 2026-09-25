@@ -18,15 +18,32 @@ export const DEFERRED_RESTART_POLL_MS = 3000;
 export const IGNORED_EVENT_LOG_THROTTLE_MS = 60 * 1000;
 // Don't defer a restart forever for a re-runnable operation (a merge run or a
 // manual /merge) that holds the lock — after this long, restart anyway (the
-// run is interrupted, then auto-resumed on the next boot). NOTE: "re-runnable"
-// is not "short": a merge run that is waiting on a conflict-resolver Claude
-// can legitimately hold the lock well past 15 min, and this backstop WILL
-// interrupt that wait — the resumed run re-attempts the task, but the resolver
-// session it was waiting on is orphaned (no exemption is implemented; the
-// defer/force lines name the holder so such a restart is attributable).
-// A workflow control step is deliberately exempt from this (see
+// run is interrupted, then auto-resumed on the next boot). This is the
+// backstop for a WEDGED holder. "Re-runnable" is not "short", though: a merge
+// run parked on a conflict-resolver agent or the post-merge-hook agent holds
+// the lock for as long as that agent works. Such a run is EXEMPT while the
+// backend reports it parked on a LIVE agent (`queryLockHolders` →
+// GET /api/internal/restart-drain/lock-holders, see
+// backend/src/restartDrain/lockHolders.ts): forcing then would interrupt a
+// working agent for nothing. (The resolver's pty lives in the detached
+// terminal-server and would survive, and the resumed run re-attaches it — but
+// the interruption is still friction.) A backend that can't be asked gets the
+// old behaviour: force. A workflow control step is exempt outright (see
 // `workflowRunInFlight` / `classifyDeferAction`).
 export const MAX_DEFER_MS = 15 * 60 * 1000;
+// Once the last run.lock clears, wait this long before even starting the
+// restart handshake. A workflow control step releases its lock BEFORE its
+// advance dispatches the next step (backend/src/workflowRuns/controlStep.ts),
+// and the frontend's workflow queue starts the next workflow the moment one
+// finishes — a restart applied on the first lock-free poll landed in exactly
+// those hand-offs. Belt and braces: the backend's drain (restartHandshake.mjs)
+// also waits out every in-flight transition it knows about.
+export const LOCK_SETTLE_MS = 5 * 1000;
+// A "parked on a live agent" answer is trusted for this long before the
+// backend is asked again (the force decision re-evaluates every poll).
+export const PARKED_PROBE_TTL_MS = 60 * 1000;
+// Re-log an ongoing parked-holder hold at most this often.
+export const PARKED_HOLD_RELOG_MS = 5 * 60 * 1000;
 // While a non-workflow op holds a deferred restart inside the window, re-log
 // WHICH lock is holding it at most this often (the 3 s poll otherwise says
 // nothing at all between the defer line and the force line).
@@ -202,15 +219,18 @@ export function repoOperationInFlight(opts) {
 }
 
 // True if a live WORKFLOW control step (start/merge/push — the lock label is
-// `workflow-<kind>:<runId>`, see backend/src/workflowRuns/controlStep.ts) holds
-// a run.lock. These are EXEMPT from the MAX_DEFER_MS force-restart backstop:
-// unlike a short, re-runnable merge run, a workflow's Merge step holds the lock
-// for the ENTIRE time its tasks take to commit (routinely far longer than 15
-// min), and a workflow run is in-memory only — force-killing it wipes the run,
-// strands the completed-but-unmerged tasks, and cascades the queue onto the next
-// workflow (the exact "the second workflow continues" incident). So we keep
-// deferring the restart until the workflow itself releases the lock. The user
-// can cancel the workflow if they need the restart sooner.
+// `workflow-<kind>:<runId>`, see backend/src/workflowRuns/controlStep.ts — or a
+// Run tests step, `workflow-test:<runId>`) holds a run.lock. These are EXEMPT
+// from the MAX_DEFER_MS force-restart backstop: a workflow's Merge step holds
+// the lock for the ENTIRE time its tasks take to commit (routinely far longer
+// than 15 min). The run record itself survives a restart (mirrored to
+// ~/.lattice/per-project/<hash>/workflow-runs.json and re-adopted at boot, see
+// backend/src/recovery/workflowRunResume.ts), but a control step executes
+// in-process: the kill aborts it mid-flight and boot can only RE-RUN it from
+// the top (re-draining lanes, re-starting merge runs, re-spawning a push) —
+// churn and a visible hiccup rather than lost work. So we keep deferring the
+// restart until the workflow itself releases the lock. The user can cancel the
+// workflow if they need the restart sooner.
 export function workflowRunInFlight(opts) {
   return heldRunLockLabels(opts).some(isWorkflowLockLabel);
 }
@@ -218,25 +238,59 @@ export function workflowRunInFlight(opts) {
 // Pure decision for the deferred-restart poll, extracted so the timing/label
 // policy is unit-testable without real timers or filesystem. Actions:
 //   'idle'          — nothing is deferred.
+//   'settle'        — the locks cleared less than `settleMs` ago (the last scan
+//                     that saw one was at `lastLockSeenAt`) → wait a little
+//                     longer before applying (see LOCK_SETTLE_MS).
 //   'apply'         — no operation holds a lock anymore → apply the deferred restart.
 //   'hold-workflow' — a live workflow control step holds the lock → never force
 //                     it; keep deferring (the poll logs this, throttled).
+//   'hold-parked'   — a non-workflow op is past MAX_DEFER_MS but the backend
+//                     reports it parked on a live agent (a conflict resolver /
+//                     the post-merge hook) → keep deferring.
 //   'force'         — a non-workflow op (merge-run/manual-merge) has held the
-//                     lock past MAX_DEFER_MS → force the restart (it re-runs and
+//                     lock past MAX_DEFER_MS and is not known to be parked on
+//                     a live agent → force the restart (it re-runs and
 //                     auto-resumes on the next boot).
 //   'hold'          — an op holds the lock but is still within the window.
+// `lastLockSeenAt` / `settleMs` / `parkedOnLiveAgent` are optional: without
+// them the decision is the original one (apply at once, force at the window).
 export function classifyDeferAction({
   deferredSince,
   now,
   operationInFlight,
   workflowInFlight,
   maxDeferMs = MAX_DEFER_MS,
+  lastLockSeenAt = 0,
+  settleMs = 0,
+  parkedOnLiveAgent = false,
 }) {
   if (!deferredSince) return 'idle';
-  if (!operationInFlight) return 'apply';
+  if (!operationInFlight) {
+    return settleMs > 0 && lastLockSeenAt > 0 && now - lastLockSeenAt < settleMs ? 'settle' : 'apply';
+  }
   if (workflowInFlight) return 'hold-workflow';
-  if (now - deferredSince > maxDeferMs) return 'force';
+  if (now - deferredSince > maxDeferMs) return parkedOnLiveAgent ? 'hold-parked' : 'force';
   return 'hold';
+}
+
+// Did the backend's lock-holder report say EVERY held lock belongs to this
+// backend (pid match) and is parked on a live agent? Pure; the report shape is
+// GET /api/internal/restart-drain/lock-holders.
+export function locksParkedOnLiveAgents(locks, report) {
+  if (!report || !report.ok || !Array.isArray(report.holders) || locks.length === 0) return false;
+  return locks.every((lock) =>
+    lock.pid === report.pid &&
+    report.holders.some((h) => h && h.hash === lock.hash && typeof h.parkedOn === 'string' && h.parkedOn));
+}
+
+function parkedDetail(locks, report) {
+  if (!report) return 'no answer';
+  if (!report.ok) return report.why;
+  const details = locks
+    .map((lock) => report.holders.find((h) => h && h.hash === lock.hash))
+    .filter(Boolean)
+    .map((h) => `${h.hash}: ${h.detail || h.parkedOn || 'not parked'}`);
+  return details.length ? details.join('; ') : 'the backend reports no agent the lock holder is waiting on';
 }
 
 export function createRestartPolicy({
@@ -253,6 +307,15 @@ export function createRestartPolicy({
   needsBackendStart = () => false,
   deferBaselineUntilSpawn = false,
   now = () => Date.now(),
+  // The restart handshake (restartHandshake.mjs). All optional: without
+  // `prepareRestart` a restart is applied synchronously, exactly as before.
+  //   prepareRestart(reason)  → Promise<{ok, ready, pending, waitedMs} | {ok:false, why}>
+  //   cancelRestartDrain(why) → release a drain we won't follow with a restart
+  //   queryLockHolders()      → Promise<{ok, pid, holders} | {ok:false, why}>
+  prepareRestart,
+  cancelRestartDrain,
+  queryLockHolders,
+  lockSettleMs = LOCK_SETTLE_MS,
 } = {}) {
   const scanRunLocks =
     readHeldRunLocks ??
@@ -281,6 +344,20 @@ export function createRestartPolicy({
   let stopped = false;
   let completedCompileSequence = 0;
   let lastCompletedContent = null;
+  // Last time a scan saw ANY live run.lock (0 = never) — the settle clock.
+  let lastLockSeenAt = 0;
+  // A restart handshake is in flight; further triggers coalesce into it (the
+  // respawn loads whatever dist/ holds by then).
+  let preparing = false;
+  // Cached "are the lock holders parked on live agents?" answer, keyed by the
+  // exact set of locks it was asked about.
+  let parkedProbe = null; // { key, at, report }
+  let parkedProbeInFlight = false;
+  let parkedHoldLoggedAt = 0;
+  // Bumped on every backend spawn. A handshake that straddles a spawn (the
+  // poll can start one in the instant between a kill and the respawn) must not
+  // then restart the NEW backend on the old decision.
+  let spawnGeneration = 0;
 
   function captureDistBaseline() {
     return { mtime: readNewestDistMtime(), content: readDistContentSignature(), compileSequence: completedCompileSequence };
@@ -294,18 +371,132 @@ export function createRestartPolicy({
     contentBaseline = readDistContentSignature();
   }
 
-  function applyRestart(reason, newestSeen) {
-    if (stopped || !canRestart()) return;
+  function commitRestart(reason, newestSeen) {
     const accepted = restartBackend(reason);
     if (accepted && !deferBaselineUntilSpawn) {
       deferredSince = 0;
       workflowDeferLoggedAt = 0;
       holdLoggedAt = 0;
+      parkedHoldLoggedAt = 0;
       distBaseline =
         typeof newestSeen === 'number' ? newestSeen : readNewestDistMtime();
       deferredDistMtime = null;
       contentBaseline = readDistContentSignature();
     }
+    return accepted;
+  }
+
+  function releaseDrain(why) {
+    if (!cancelRestartDrain) return;
+    Promise.resolve()
+      .then(() => cancelRestartDrain(why))
+      .catch(() => { /* best-effort: the backend's drain TTL covers a lost cancel */ });
+  }
+
+  // Apply a restart. With a handshake configured and a backend running, first
+  // ask it to drain (stop admitting new work, let in-flight transitions land,
+  // flush state) and restart once it answers — or fails to (fail open).
+  function applyRestart(reason, newestSeen, { forced = false } = {}) {
+    if (stopped || !canRestart()) return;
+    // No backend running (crashed, or never started): nothing to drain.
+    if (!prepareRestart || needsBackendStart()) {
+      commitRestart(reason, newestSeen);
+      return;
+    }
+    if (preparing) return;
+    preparing = true;
+    const generation = spawnGeneration;
+    Promise.resolve()
+      .then(() => prepareRestart(reason))
+      .then(
+        (result) => result,
+        (err) => ({ ok: false, why: `handshake threw: ${err?.message ?? err}` }),
+      )
+      .then((result) => {
+        preparing = false;
+        onPrepared(result, reason, newestSeen, forced, generation);
+      });
+  }
+
+  function onPrepared(result, reason, newestSeen, forced, generation) {
+    if (stopped) return; // shutting down — that kills the backend anyway
+    if (generation !== spawnGeneration) {
+      // A backend was (re)spawned while we asked; this decision was about the
+      // one before it. Anything still pending re-triggers on its own.
+      releaseDrain('a new backend spawned during the handshake');
+      return;
+    }
+    if (!canRestart()) {
+      // A compile started while the backend drained; its successful completion
+      // re-triggers the restart (onCompileSucceeded). Don't leave it frozen.
+      console.log('[lattice-backend] restart postponed — a TypeScript compile started while the backend drained');
+      releaseDrain('a compile started; restart postponed');
+      return;
+    }
+    if (!forced) {
+      // The drain stops NEW run-lock acquisitions, but one taken between our
+      // lock scan and the drain starting is still a run we'd interrupt.
+      const locks = scanRunLocks();
+      if (locks.length > 0) {
+        lastLockSeenAt = now();
+        if (!deferredSince) {
+          deferredSince = now();
+          holdLoggedAt = deferredSince;
+        }
+        console.log(
+          '[lattice-backend] a run.lock was taken while the backend drained — releasing the drain and ' +
+            `deferring the restart until it clears. Held by: ${describeRunLocks(locks)}`,
+        );
+        releaseDrain('a run.lock was taken; restart deferred');
+        return;
+      }
+    }
+    if (!result || !result.ok) {
+      console.warn(
+        `[lattice-backend] restart handshake unavailable (${result?.why ?? 'no answer'}) — ` +
+          'restarting without draining the backend',
+      );
+    } else if (!result.ready) {
+      console.warn(
+        `[lattice-backend] backend did not settle within ${Math.round(result.waitedMs / 1000)} s ` +
+          `(still in flight: ${result.pending.join('; ') || 'unknown'}) — restarting anyway`,
+      );
+    } else {
+      console.log(`[lattice-backend] backend drained for restart in ${result.waitedMs} ms`);
+    }
+    const seen = [newestSeen, deferredDistMtime].filter((v) => typeof v === 'number');
+    const accepted = commitRestart(reason, seen.length ? Math.max(...seen) : newestSeen);
+    // Nothing is going to kill the drained backend after all — un-drain it
+    // now rather than leave it refusing work until the TTL.
+    if (!accepted) releaseDrain('restart was not applied');
+  }
+
+  function lockSetKey(locks) {
+    return locks.map((lock) => `${lock.hash}:${lock.pid}:${lock.startedAt}`).sort().join('|');
+  }
+
+  // The cached parked answer for exactly this lock set, if fresh; else null.
+  function freshParkedReport(locks) {
+    if (!parkedProbe) return null;
+    if (parkedProbe.key !== lockSetKey(locks)) return null;
+    if (now() - parkedProbe.at >= PARKED_PROBE_TTL_MS) return null;
+    return parkedProbe.report;
+  }
+
+  function startParkedProbe(locks) {
+    if (parkedProbeInFlight || !queryLockHolders) return;
+    parkedProbeInFlight = true;
+    const key = lockSetKey(locks);
+    Promise.resolve()
+      .then(() => queryLockHolders())
+      .then(
+        (report) => report,
+        (err) => ({ ok: false, why: `lock-holder query threw: ${err?.message ?? err}` }),
+      )
+      .then((report) => {
+        parkedProbeInFlight = false;
+        parkedProbe = { key, at: now(), report: report ?? { ok: false, why: 'no answer' } };
+      });
   }
 
   function onBackendSpawned(candidate) {
@@ -315,6 +506,8 @@ export function createRestartPolicy({
     // A newer compile can start before the async 'spawn' event; its partial
     // output must not become the version we claim this backend is running.
     if (stopped) return;
+    // Any handshake started before this spawn was about the PREVIOUS backend.
+    spawnGeneration += 1;
     if (!candidate && !canRestart()) return;
     const applied = candidate ?? captureDistBaseline();
     distBaseline = applied.mtime;
@@ -323,6 +516,7 @@ export function createRestartPolicy({
     deferredDistMtime = null;
     workflowDeferLoggedAt = 0;
     holdLoggedAt = 0;
+    parkedHoldLoggedAt = 0;
     if (
       canRestart() && applied.compileSequence < completedCompileSequence &&
       !(lastCompletedContent !== null && lastCompletedContent === contentBaseline)
@@ -362,6 +556,7 @@ export function createRestartPolicy({
 
     const locks = scanRunLocks();
     if (locks.length > 0) {
+      lastLockSeenAt = now();
       if (!deferredSince) {
         deferredSince = now();
         holdLoggedAt = deferredSince;
@@ -372,6 +567,19 @@ export function createRestartPolicy({
         );
       }
       return; // the poll below handles "run finished" and the long-defer backstop
+    }
+    if (lockSettleMs > 0 && lastLockSeenAt > 0 && now() - lastLockSeenAt < lockSettleMs) {
+      // A lock cleared moments ago — its run may still be handing off (see
+      // LOCK_SETTLE_MS). Arm the deferral; the poll applies it once settled.
+      if (!deferredSince) {
+        deferredSince = now();
+        holdLoggedAt = deferredSince;
+        console.log(
+          `[lattice-backend] dist/ changed (${lastEvent}) just after a run.lock cleared — ` +
+            `letting the run settle for ${Math.round(lockSettleMs / 1000)} s before restarting`,
+        );
+      }
+      return;
     }
     applyRestart(
       deferredSince ? 'run finished — applying deferred restart' : `dist/ changed (${lastEvent})`,
@@ -402,22 +610,51 @@ export function createRestartPolicy({
       // Idle: nothing deferred → nothing to decide. Scanning here anyway cost
       // two full per-project readdir/readFile/kill(0) sweeps every 3 s forever.
       if (!deferredSince) return;
+      // A handshake is already in flight; it decides (and re-defers if needed).
+      if (preparing) return;
       const locks = scanRunLocks();
+      if (locks.length > 0) lastLockSeenAt = now();
+      const parkedReport = locks.length > 0 ? freshParkedReport(locks) : null;
       const action = classifyDeferAction({
         deferredSince,
         now: now(),
         operationInFlight: locks.length > 0,
         workflowInFlight: locks.some((lock) => isWorkflowLockLabel(lock.label)),
+        lastLockSeenAt,
+        settleMs: lockSettleMs,
+        parkedOnLiveAgent: locksParkedOnLiveAgents(locks, parkedReport),
       });
-      if (action === 'apply') {
+      if (action === 'settle') {
+        // Lock just cleared — give the run's hand-off a few seconds.
+      } else if (action === 'apply') {
         applyRestart('run finished — applying deferred restart', deferredDistMtime);
       } else if (action === 'force') {
+        // Before forcing, ask the backend whether the holder is merely parked
+        // on a live agent (then it's not wedged). The answer arrives async;
+        // decide on the next tick.
+        if (queryLockHolders && !parkedReport) {
+          startParkedProbe(locks);
+          return;
+        }
         console.warn(
           `[lattice-backend] restart deferred for ${Math.round((now() - deferredSince) / 60000)} min — ` +
-            `forcing it (an in-flight run will be interrupted and auto-resumed on the next boot; a merge run ` +
-            `waiting on a conflict resolver loses that resolver session). Held by: ${describeRunLocks(locks)}`,
+            'forcing it (an in-flight run will be interrupted and auto-resumed on the next boot). ' +
+            `Held by: ${describeRunLocks(locks)}` +
+            (queryLockHolders ? ` — not parked on a live agent: ${parkedDetail(locks, parkedReport)}` : ''),
         );
-        applyRestart('forced after a long defer', deferredDistMtime);
+        applyRestart('forced after a long defer', deferredDistMtime, { forced: true });
+      } else if (action === 'hold-parked') {
+        const at = now();
+        if (!parkedHoldLoggedAt || at - parkedHoldLoggedAt >= PARKED_HOLD_RELOG_MS) {
+          parkedHoldLoggedAt = at;
+          console.log(
+            `[lattice-backend] restart held ${Math.round((at - deferredSince) / 60000)} min — the run.lock ` +
+              'holder is parked on a live agent, not wedged; not force-restarting (that would interrupt it). ' +
+              `${parkedDetail(locks, parkedReport)}. Held by: ${describeRunLocks(locks)}`,
+          );
+        }
+        // Keep the answer current: re-ask once it goes stale.
+        if (now() - (parkedProbe?.at ?? 0) >= PARKED_PROBE_TTL_MS / 2) startParkedProbe(locks);
       } else if (action === 'hold-workflow') {
         const at = now();
         // Only surface this once the wait is long enough to be surprising, then
@@ -474,6 +711,7 @@ export function createRestartPolicy({
       deferredDistMtime = null;
       workflowDeferLoggedAt = 0;
       holdLoggedAt = 0;
+      parkedHoldLoggedAt = 0;
       return;
     }
     lastEvent = 'successful TypeScript compilation';

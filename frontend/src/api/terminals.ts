@@ -1,3 +1,4 @@
+import { asJson } from './http';
 import { subscribeWsShared } from './ws';
 
 export type TerminalActivityMessage = {
@@ -33,4 +34,18 @@ export function subscribeTerminalActivity(
     (msg) => msg?.type === 'terminal-activity' && Array.isArray(msg.busy),
     { onDisconnect: () => onBusy([]), resetReplayOnDisconnect: true },
   );
+}
+
+export type TerminalServerStatus = {
+  // `stale`: the detached terminal-server runs an older build than the backend
+  // and is kept alive to preserve its terminals — the update applies once it
+  // has no sessions. See backend/src/terminalServerStatus.ts.
+  state: 'current' | 'stale' | 'absent' | 'unavailable';
+  // Live pty sessions on a stale executor; null when not counted.
+  sessions: number | null;
+};
+
+/** Executor build status behind the navbar's "update pending" chip. */
+export async function fetchTerminalServerStatus(): Promise<TerminalServerStatus> {
+  return asJson<TerminalServerStatus>(await fetch('/api/terminal-server/status'));
 }

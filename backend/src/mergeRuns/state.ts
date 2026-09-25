@@ -185,6 +185,17 @@ export class MergeRunStateManager extends ProjectStateManager<
     return this.conflictWaiters.signal(taskId);
   }
 
+  // Every `running` run this process is executing, with the conflict-resolver
+  // tasks it is currently parked on (empty = not parked on a resolver).
+  public liveRunsWithResolverWaits(): Array<{ run: MergeRun; resolverTaskIds: string[] }> {
+    const out: Array<{ run: MergeRun; resolverTaskIds: string[] }> = [];
+    for (const run of this.runs.values()) {
+      if (run.status !== 'running' || !this.liveRunIds.has(run.id)) continue;
+      out.push({ run: snapshotRun(run), resolverTaskIds: this.conflictWaiters.taskIdsForRun(run.id) });
+    }
+    return out;
+  }
+
   public abandonConflictWaiter(taskId: string, runId: string): boolean {
     return this.conflictWaiters.abandon(taskId, runId);
   }

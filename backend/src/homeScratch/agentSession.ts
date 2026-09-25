@@ -52,7 +52,8 @@ export type StartHomeScratchAgentSessionArgs = {
   // after a successful spawn, before presence registration (matching the
   // pre-refactor ordering). projectPath + any feature fields (taskId, status,
   // createdAt) are supplied by the closure.
-  recordRun: (ctx: { id: string; cwd: string }) => void;
+  // `serverId` is the pty, kept on the run so boot recovery can re-attach it.
+  recordRun: (ctx: { id: string; cwd: string; serverId: string }) => void;
   // Label for the durable terminal-registry tab record; defaults to the
   // presence label ('push' / 'qa').
   registryLabel?: string;
@@ -86,8 +87,8 @@ export function createHomeScratchAgentSession(
       ...(spec.isQaRun ? { isQaRun: true } : {}),
       registryOwner: 'push',
       registryLabel: args.registryLabel ?? spec.presenceLabel,
-      onSpawned: ({ id, cwd }) => {
-        args.recordRun({ id, cwd });
+      onSpawned: ({ id, cwd, serverId }) => {
+        args.recordRun({ id, cwd, serverId });
         // Presence: show an orange Claude node for this non-worktree session.
         registerAgentSession({
           agentId: spec.agentId(id),

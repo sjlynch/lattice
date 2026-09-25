@@ -29,8 +29,10 @@ import {
   redispatchCurrentWorkflowStep,
   restoreWorkflowRun,
   completeWorkflowStep,
+  workflowStepCompletionAdvance,
 } from '../workflowRuns.js';
 import { loadPersistedWorkflowRuns } from '../workflowRuns/persistence.js';
+import { requestStopHookStepComplete } from '../workflowRuns/stopHookGate.js';
 import {
   classifyWorkflowRunResume,
   findStepSessionId,
@@ -43,6 +45,7 @@ import {
 } from '../workflowRuns/sessionSpawner.js';
 import { effectiveStepHarness } from '../workflowRuns/stepMarkdown.js';
 import { registerAgentSession } from '../agentSessions.js';
+import { forgetAgentQuiescence, markAgentReadopted } from '../agentQuiescence.js';
 import { proxyListSessionsOrNull } from '../terminalServerClient.js';
 import type { WorkflowRun } from '../workflowRuns/state.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';
@@ -98,6 +101,13 @@ export function registerPersistedWorkflowRuns(persisted: WorkflowRun[], sessions
     const stepDir = workflowStepDir(run.projectPath, run.id, run.currentStepIndex);
     const id = sessions ? findStepSessionId(sessions, stepDir, run.stepSessionId) : null;
     if (id) adoptWorkflowStepSession(run.id, run.currentStepIndex, id);
+    // A surviving (or unprobeable) step session lost its live-subagent state
+    // with the old process. Mark it before callbacks are released, so a Stop
+    // arriving right after the registry is ready is already gated
+    // conservatively (see agentQuiescence.ts `markAgentReadopted`).
+    if (id || (sessions === null && run.stepPhase !== 'pending')) {
+      markAgentReadopted(workflowStepAgentId(run.id, run.currentStepIndex), pendingStopAt(run));
+    }
   }
   return registered;
 }
@@ -130,6 +140,12 @@ export async function resumePersistedRun(
   });
 
   const label = `${run.id} "${run.workflowName}" step ${run.currentStepIndex + 1}/${run.totalSteps}`;
+  // Only a re-adopted session keeps the "re-adopted" quiescence mark
+  // registration may have put on it; a re-dispatched step gets a FRESH session
+  // (no old subagents to wait for) and the other outcomes leave the step.
+  if (decision.action !== 'readopt') {
+    forgetAgentQuiescence(workflowStepAgentId(run.id, run.currentStepIndex));
+  }
   if (decision.action === 'skip') return;
 
   if (decision.action === 'error') {
@@ -204,6 +220,9 @@ export async function resumePersistedRun(
   // reclaim it, and put its presence node back on the graph.
   console.log(`[startup] workflow run ${label} re-adopted — ${decision.reason}.`);
   if (serverId) adoptWorkflowStepSession(run.id, run.currentStepIndex, serverId);
+  // Its subagents' state is unknown to this process: gate a Stop-hook advance
+  // on the longer re-adopted settle window (idempotent with registration's).
+  markAgentReadopted(workflowStepAgentId(run.id, run.currentStepIndex));
   if (step?.kind === 'test') {
     // Take the project run lock back (the dead backend's is stale) and re-arm
     // the step's timeout from its recorded spawn time.
@@ -216,4 +235,26 @@ export async function resumePersistedRun(
       label: `workflow step ${run.currentStepIndex + 1}`,
     });
   }
+  // The previous process had already received this step's Stop and was only
+  // waiting out the quiescence gate when it died. The hook got its answer and
+  // the agent is idle, so no second Stop is coming: re-arm the gate here or
+  // the step never advances. Its quiet window counts from that Stop
+  // (registration passed its time to markAgentReadopted).
+  if (pendingStopAt(run) !== undefined) {
+    console.log(`[startup] workflow run ${label}: re-arming the completion gate for the Stop received before the restart.`);
+    requestStopHookStepComplete(
+      run.id,
+      run.currentStepIndex,
+      workflowStepCompletionAdvance(run.id, run.currentStepIndex, backendOrigin),
+      undefined,
+      { rearm: true },
+    );
+  }
+}
+
+// The time of a Stop the gate was holding for the run's CURRENT step when the
+// previous process went down (WorkflowRun.stopReceived), else undefined.
+function pendingStopAt(run: WorkflowRun): number | undefined {
+  const s = run.stopReceived;
+  return s && s.stepIndex === run.currentStepIndex ? s.at : undefined;
 }

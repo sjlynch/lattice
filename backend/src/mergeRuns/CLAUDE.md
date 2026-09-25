@@ -17,7 +17,10 @@ here instead of bloating the parent file.
   releases: `signal(taskId)` (a real completion — /complete/merged/merge-aborted),
   `unblockRun(runId)` (cancelRun), and `abandon(taskId, runId)` (the liveness
   backstop — NOT a real completion; runId-guarded so a re-queued task's fresh
-  waiter isn't dropped).
+  waiter isn't dropped). `taskIdsForRun(runId)` is a read-only view
+  (surfaced as `listLiveMergeRunResolverWaits()` in `../mergeRuns.ts`) that
+  the restart drain's lock-holder report uses to tell the dev runner a run is
+  parked on a live resolver rather than wedged (`../restartDrain/`).
 - `waiterLiveness.ts` — `awaitResolverWaiter`: the bounded-lifetime wrapper the
   park sites await instead of the raw untimed `registerConflictWaiter`. It
   registers the waiter **synchronously** (preserving the register-then-release-

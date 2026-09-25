@@ -17,10 +17,16 @@
 // is loopback-bound anyway. Both the `localhost` and `127.0.0.1` forms are
 // listed because the user may load the app from either; dropping one breaks
 // terminals + all live WS updates.
-const ALLOWED_WS_ORIGINS: ReadonlySet<string> = new Set([
-  'http://localhost:5183',
-  'http://127.0.0.1:5183',
-]);
+//
+// The port is the vite dev server's: 5183, or `LATTICE_FRONTEND_PORT` for an
+// isolated instance on alternate ports (the Playwright e2e webServer). The main
+// backend's HTTP CORS/origin allowlist (`server/app.ts`) reads the same list.
+export function allowedFrontendOrigins(env: NodeJS.ProcessEnv = process.env): string[] {
+  const port = Number(env.LATTICE_FRONTEND_PORT) || 5183;
+  return [`http://localhost:${port}`, `http://127.0.0.1:${port}`];
+}
+
+const ALLOWED_WS_ORIGINS: ReadonlySet<string> = new Set(allowedFrontendOrigins());
 
 export function isAllowedOrigin(origin: string | undefined): boolean {
   // Absent Origin = non-browser client (relay/curl), not the CSWSH threat.

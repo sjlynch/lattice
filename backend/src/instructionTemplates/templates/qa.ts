@@ -52,7 +52,7 @@ Project: \`{{project_path}}\`
    use \`curl.exe\` to avoid PowerShell's \`curl\` alias:
 
    \`\`\`
-   curl --fail-with-body --silent --show-error -X POST "{{summary_url}}" -H "Content-Type: text/markdown; charset=utf-8" --data-binary "@<absolute-path-to-summary.md>"
+   curl --fail-with-body --silent --show-error --retry 15 --retry-delay 3 --retry-connrefused -X POST "{{summary_url}}" -H "Content-Type: text/markdown; charset=utf-8" --data-binary "@<absolute-path-to-summary.md>"
    \`\`\`
 
    The file contains only the verdict markdown, with ordinary quotes,
@@ -72,7 +72,7 @@ Project: \`{{project_path}}\`
    \`\`\`
 
    \`\`\`
-   curl --fail-with-body --silent --show-error -X POST "{{verdict_url}}" -H "Content-Type: application/json" --data-binary "@<absolute-path-to-verdict.json>"
+   curl --fail-with-body --silent --show-error --retry 15 --retry-delay 3 --retry-connrefused -X POST "{{verdict_url}}" -H "Content-Type: application/json" --data-binary "@<absolute-path-to-verdict.json>"
    \`\`\`
 
    Use \`"verdict":"fail"\` if it didn't work, or \`"confidence":"low"\` if you

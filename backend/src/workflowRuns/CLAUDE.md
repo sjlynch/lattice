@@ -152,6 +152,28 @@ explicit-curl callbacks — never by polling task state.
   a Stop *after* that finish (`awaitingTurnEnd`): its result wakes the parent
   for a follow-up turn — thinking and Bash, which send no signal — that easily
   outlasts the settle window. Stops from untracked agents don't count.
+  **Re-adopted after a restart:** that per-session tracking is in-memory, so a
+  step session boot recovery re-adopts has lost its subagent ids — a
+  background subagent started before the restart is invisible, and the main
+  agent's next Stop would pass the normal window while it still works.
+  `recovery/workflowRunResume.ts` therefore marks the session
+  `markAgentReadopted`, and `isAgentQuiescent` then requires
+  `READOPTED_SETTLE_MS` (2 min) of complete silence; any hook from the session
+  (a surviving subagent's tool use included) restarts it. Same for a
+  re-adopted post-merge hook.
+  **A Stop the gate is holding survives a restart:** the gate is an in-memory
+  timer, the hook stops retrying once it has its 200, and the agent is idle —
+  so a restart inside the settle window used to lose the completion outright
+  (a Run tests step then hung until its timeout, an agent step forever; found
+  by the self-hosting soak). The route therefore awaits `recordStopReceived`
+  (persists `WorkflowRun.stopReceived = {stepIndex, at}`) BEFORE answering, and
+  the re-adopting backend re-arms the gate with `{ rearm: true }` (not a new
+  Stop) while `markAgentReadopted(agentId, at)` counts the re-adopted quiet
+  window from that Stop — not from boot, or restarts closer together than
+  `READOPTED_SETTLE_MS` would hold a finished step forever. The post-merge
+  hook has the same pair (`PostMergeHookRun.stopReceivedAt`,
+  `postMergeHookStopFinish`). The shared advance is
+  `workflowStepCompletionAdvance` (facade).
   Failed asynchronous completion checkpoints rearm the quiescence gate up to
   three attempts. Each retry checks live subagents and renewed quiet time;
   exhaustion keeps the run and terminal intact with a visible error message —
@@ -208,7 +230,11 @@ explicit-curl callbacks — never by polling task state.
   dispatcher: it owns the per-project run-lock lifecycle (acquire →
   kind→worker dispatch → **release BEFORE `completeStep`**), cancellation /
   not-running guards, and the public surface (`executeControlStep`,
-  `CompleteStepCallback`). The worker is detached (`executeControlStep` is
+  `CompleteStepCallback`). The release → `completeStep` hand-off is marked as
+  a restart-drain transition (`../restartDrain/`), begun just before the
+  release, so a dev-runner restart that sees the lock file vanish still waits
+  for the advance; holding the lock across `completeStep` instead would make
+  the next control step's own acquire collide with it. The worker is detached (`executeControlStep` is
   fire-and-forget), so **every await it owns is guarded**: the `completeStep`
   call is wrapped too — `completeWorkflowStep` can reject (a definition error,
   or the run checkpoint's atomic write failing under an AV scanner / ENOSPC),
@@ -237,7 +263,11 @@ explicit-curl callbacks — never by polling task state.
     the same way (`abandonPushRun`: mark the push run done, drop its graph
     node, remove its scratch) — unless that `/done` already landed. A timeout
     then **errors the run** ("push step timed out after 15 minutes") instead of
-    reporting `push complete`; a cancel stays cancelled.
+    reporting `push complete`; a cancel stays cancelled. The push run records
+    its owning `{runId, stepIndex}` (persisted), so a Push step **re-dispatched
+    after a backend restart re-attaches** to the still-live session boot
+    recovery re-adopted (no second push, no re-drain) — and fails if that
+    session is later settled `lost`.
   - `controlSteps/shared.ts` — `waitForLaneEmpty` (lane-drain subscription,
     subscribes before the initial read; resolves on cancellation) and
     `emitControlProgress` (the single `step-control-progress` WS shaper).
@@ -333,6 +363,13 @@ error the run. Covered by `__tests__/workflowRunTestsStep.test.ts`.
 - `recoveryReadiness.ts` gates HTTP workflow lifecycle requests while boot loads
   the registry; timed-out requests receive 503 + Retry-After, unknown callbacks
   receive 404. Do not acknowledge an unknown run during recovery.
+  `isWorkflowRecoveryDone()` / `whenWorkflowRecoveryDone()` serve the same
+  gate to `/ws/workflow-runs` (`ws/endpoints/workflowRuns.ts`): until the
+  registry is ready its `hello` carries `recovering: true` (the frontend merges
+  it additively and never reads a missing run as finished), and each such
+  connection gets a follow-up authoritative `hello` once recovery lands. An
+  empty authoritative hello during the restart window was what made a queued
+  workflow read its run as errored and stop.
 
 - **A run must survive the backend process.** The registry in `state.ts` is
   in-memory, and the backend restarts routinely (`tsc -w` + the dev runner on
@@ -347,6 +384,11 @@ error the run. Covered by `__tests__/workflowRunTestsStep.test.ts`.
   remaining step never runs. `persistence.ts` + `../recovery/workflowRunResume.ts`
   close that hole; keep the mirror current whenever run state changes, and keep
   `restoreWorkflowRun` idempotent (a restore must never clobber a live run).
+  Every dev-runner restart is also preceded by a drain (`../restartDrain/`):
+  `startWorkflowRun` and each `completeWorkflowStep` advance are tracked
+  transitions it waits out, a step spawn waits in the (held) spawn queue with
+  its phase `pending`, a control step's lock acquire waits, and `POST
+  /api/workflows/:id/run` answers 503 `backend-restarting` meanwhile.
 - Mirror writes and deletions are serialized per project; atomic rename alone
   does not prevent a delayed running-state write from resurrecting a finished
   run after a newer deletion. Flushing must await writes already in flight.

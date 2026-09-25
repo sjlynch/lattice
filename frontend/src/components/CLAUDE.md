@@ -3,6 +3,8 @@
 ## Top-level files
 
 - `TopAppBar.tsx` — folder picker + workflow/taskboard launchers.
+- `BackendConnectionIndicator.tsx` — quiet navbar pill ("Backend restarting — reconnecting…") shown while any live `subscribeWs` channel is down for more than 1.5 s (`api/ws.ts` `subscribeBackendConnection`), i.e. a backend restart. Informational only: feeds re-sync on their own and start actions retry (`api/retry.ts`).
+- `TerminalServerChip.tsx` — navbar chip shown only while the detached terminal-server runs an older build than the backend (update deferred until it has zero ptys). Polls `GET /api/terminal-server/status` every 60 s while visible; copy in `terminalServerChipDerive.ts` (tested in `__tests__/terminalServerChipDerive.test.ts`).
 - `Sidebar.tsx` + `sidebar/` — terminal tabs/panels + new-shell tray; `Sidebar.tsx` composes the split components/hooks and reads `useTerminals()`.
 - `TerminalPane.tsx` + `terminal/` — xterm.js + WS to `/ws/terminal` (backend `:5184`, bridged to the detached terminal-server on `:5185`); the pane is just `useRef`s wired into the three `terminal/` hooks (lifecycle / connection / active-WebGL). The WebglAddon is attached only while `active=true` and disposed on deactivate so each tab doesn't permanently hold a WebGL context (Chrome's ~16-per-page cap).
 - `Legend.tsx` — composition layer for per-extension toggles. Row derivation lives in `legend/useLegendRows.ts`, rendering in `legend/LegendRow.tsx`, and shapes/colors still source from `extensionStyles.ts`.
@@ -56,7 +58,7 @@ modules after.
 | `base.css` | Element resets (`*`, `html`/`body`/`#root`, `button`, `input`, `::selection`, scrollbar) |
 | `layout.css` | App shell: `.app-shell`, `.app-body`, `.app-sidebar`, `.app-resizer`, `.app-graph` |
 | `controls.css` | Shared low-level controls: `.icon-btn`, `.btn-primary`, `.btn-ghost`, `.text-input`, `.error-msg`, `.spinner` (+ `@keyframes spin`), `.popover` / `.popover-item` |
-| `appbar.css` | `.appbar*` (incl. the git slot: `.appbar-branch`, its `-action` button variant for "Set up Git" and its `-warning` tint for `nested`), `.fab` (taskboard launcher), `.wf-run-chip*` (workflow status chip) |
+| `appbar.css` | `.appbar*` (incl. the git slot: `.appbar-branch`, its `-action` button variant for "Set up Git" and its `-warning` tint for `nested`), `.fab` (taskboard launcher), `.wf-run-chip*` (workflow status chip), `.appbar-term-update*` (terminal-server update-pending chip), `.appbar-conn*` (backend-reconnecting pill) |
 | `sidebar.css` | `.sidebar-*` — panel tabs, terminal tab strip, empty state, search, new-menu |
 | `modal.css` | `.modal-backdrop`, `.modal`, `.modal-header/body/footer` (+ `@keyframes modal-fade`) |
 | `confirm-dialog.css` | `.confirm-dialog-message`, `.btn-danger` (`shared/ConfirmDialog`) |

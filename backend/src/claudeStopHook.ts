@@ -1,13 +1,22 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { atomicWriteFile } from './claudeTrust/configFile.js';
+import {
+  CALLBACK_HOOK_TIMEOUT_S,
+  claudeCallbackCommand,
+  ensureCallbackScript,
+} from './callbackOutbox/script.js';
 
 // Render a Stop-hook config that runs an arbitrary shell command. Most
-// call-sites use the bare `curl -s -m 5 -X POST <url>` form via
-// renderClaudeStopHookConfig — the prompt-customization site needs a
-// different command (`node <backstop script>`) because its callback expects
-// a JSON body, so the renderer is generalised to take a command string.
-export function renderClaudeStopHookConfigForCommand(command: string): string {
+// call-sites deliver a plain completion POST via renderClaudeStopHookConfig
+// (the durable callback script — see callbackOutbox/script.ts); the
+// prompt-customization site needs a different command (`node <backstop
+// script>`) because its callback expects a JSON body, so the renderer is
+// generalised to take a command string.
+export function renderClaudeStopHookConfigForCommand(
+  command: string,
+  timeoutS?: number,
+): string {
   const hookConfig = {
     hooks: {
       Stop: [
@@ -17,6 +26,7 @@ export function renderClaudeStopHookConfigForCommand(command: string): string {
             {
               type: 'command',
               command,
+              ...(timeoutS ? { timeout: timeoutS } : {}),
             },
           ],
         },
@@ -28,7 +38,8 @@ export function renderClaudeStopHookConfigForCommand(command: string): string {
 
 export function renderClaudeStopHookConfig(callbackUrl: string): string {
   return renderClaudeStopHookConfigForCommand(
-    `curl -s -m 5 -X POST ${callbackUrl}`,
+    claudeCallbackCommand(callbackUrl),
+    CALLBACK_HOOK_TIMEOUT_S,
   );
 }
 
@@ -61,7 +72,11 @@ export function renderClaudeHooksConfig(urls: ClaudeHookUrls): string {
       {
         matcher: '',
         hooks: [
-          { type: 'command', command: `curl -s -m 5 -X POST ${urls.completeUrl}` },
+          {
+            type: 'command',
+            command: claudeCallbackCommand(urls.completeUrl),
+            timeout: CALLBACK_HOOK_TIMEOUT_S,
+          },
         ],
       },
     ],
@@ -87,6 +102,9 @@ export function renderClaudeHooksConfig(urls: ClaudeHookUrls): string {
 }
 
 async function writeStopHookFile(dir: string, expected: string): Promise<void> {
+  // The Stop hook runs ~/.lattice/bin/lattice-callback.cjs — make sure it's
+  // there (and current) before any session can fire it.
+  ensureCallbackScript();
   const claudeDir = path.join(dir, '.claude');
   await fs.mkdir(claudeDir, { recursive: true });
   const file = path.join(claudeDir, 'settings.local.json');

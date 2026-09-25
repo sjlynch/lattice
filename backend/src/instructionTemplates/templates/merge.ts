@@ -52,7 +52,7 @@ If for any reason the Stop hook doesn't fire, you can call the API
 directly as a fallback:
 
 \`\`\`
-curl -s -X POST {{backend_origin}}/api/tasks/{{task_id}}/merged
+curl -s --retry 15 --retry-delay 3 --retry-connrefused -X POST {{backend_origin}}/api/tasks/{{task_id}}/merged
 \`\`\`
 
 ## If you cannot resolve
@@ -61,7 +61,7 @@ If the conflicts cannot be reasonably resolved, abort and report:
 
 \`\`\`
 git merge --abort
-curl -s -X POST {{backend_origin}}/api/tasks/{{task_id}}/merge-aborted \\
+curl -s --retry 15 --retry-delay 3 --retry-connrefused -X POST {{backend_origin}}/api/tasks/{{task_id}}/merge-aborted \\
   -H "Content-Type: application/json" \\
   -d '{"reason":"<short reason>"}'
 \`\`\`

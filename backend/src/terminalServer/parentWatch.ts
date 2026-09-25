@@ -9,10 +9,13 @@
 // boot will detect and shutdownStale, but the orphan eats RAM and a
 // port until then.
 //
-// `BACKEND_PARENT_PID` is the PID of the long-lived dev orchestrator
-// (`scripts/dev.mjs` / `scripts/orchestrate.mjs` in dev, or `node
+// `BACKEND_PARENT_PID` is the parent of the backend that spawned this server
+// (`backend/scripts/dev.mjs` in dev, or whatever launched `node
 // dist/index.js` in prod). It stays the same across backend dist
-// restarts, so we don't terminate during normal tsc-w respawns.
+// restarts, so we don't terminate during normal tsc-w respawns. It does NOT
+// survive a dev soft restart (`r` in the `npm run dev` console), which replaces
+// the dev runner while this server — and its agents — live on; from then on the
+// parent is simply "gone" and only the contact/idle rule below applies.
 //
 // Parent gone is NOT enough on its own (2026-09-22): stopping the dev runner
 // while a workflow was mid-flight made this watch shut the server down five
@@ -38,7 +41,11 @@ export function watchParentProcess(
 
   let reported = false;
   const timer = setInterval(() => {
-    if (isAlive(parentPid)) return;
+    // Sticky once gone: after a dev soft restart (or any runner replacement)
+    // the parent pid is dead for good, and Windows recycles pids quickly — a
+    // later unrelated process on the same pid must not read as "parent back",
+    // or an idle, unowned server would never exit.
+    if (!reported && isAlive(parentPid)) return;
     if (!reported) {
       reported = true;
       console.warn(

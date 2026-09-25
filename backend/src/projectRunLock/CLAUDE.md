@@ -55,7 +55,10 @@ concurrently with this protocol is unsupported; upgrade all backends together.
 
 `acquire → (steal if stale) → release`, almost always via the
 `withProjectRunLock(projectPath, label, fn)` wrapper (acquire, run `fn`,
-release in `finally`). `acquireProjectRunLock` tries the atomic `wx` write;
+release in `finally`). `acquireProjectRunLock` first **waits while a restart
+drain is active** (`../restartDrain/gate.ts` — the dev runner is about to kill
+this process; the drain always ends by TTL if no restart follows), then tries
+the atomic `wx` write;
 on `EEXIST` it calls `clearStaleLockOrThrow` once and retries — exactly two
 attempts, then it surfaces the error rather than spinning. `release` deletes
 the file **only if it still holds our exact body** (`sameLockBody`), so a

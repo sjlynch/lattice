@@ -14,5 +14,8 @@ export function createCompilerLifecycle(options: {
 }): {
   start(): void;
   stop(signal?: NodeJS.Signals): void;
+  // Replace the running (or paused) compiler with a fresh one; false if stopped
+  // or the old one could not be killed.
+  restart(reason: string): boolean;
   canRestartBackend(): boolean;
 };

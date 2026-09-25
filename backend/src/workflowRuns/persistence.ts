@@ -120,7 +120,18 @@ export function deserializeWorkflowRun(raw: unknown, owningProject?: string): Wo
   if (summaries) run.stepSummaries = summaries;
   const testStep = readTestStepCheckpoint(r.testStep);
   if (testStep) run.testStep = testStep;
+  const stopReceived = readStopReceived(r.stopReceived);
+  if (stopReceived) run.stopReceived = stopReceived;
   return run;
+}
+
+function readStopReceived(raw: unknown): WorkflowRun['stopReceived'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const s = raw as Record<string, unknown>;
+  const stepIndex = num(s.stepIndex);
+  const at = num(s.at);
+  if (stepIndex === undefined || !Number.isInteger(stepIndex) || stepIndex < 0 || at === undefined) return undefined;
+  return { stepIndex, at };
 }
 
 // Per-step summaries (Run tests). Display text only — keep string values under

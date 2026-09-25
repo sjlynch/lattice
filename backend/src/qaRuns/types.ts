@@ -18,6 +18,9 @@ export type QaRun = {
   status: 'running' | 'done';
   createdAt: number;
   doneAt?: number;
+  // The pty running the session (terminal-server id). Persisted so boot
+  // recovery can re-attach a session that survived a backend restart.
+  serverId?: string;
   // The agent's reported verdict (if it called /verdict before stopping).
   verdict?: QaVerdict;
   // Set once a confident pass promoted the task to the Done lane.

@@ -409,7 +409,7 @@ test('Run tests brief renders every token for each harness; Pi/Codex get the exp
     assert.match(md, /3 path\(s\)/);
     assert.match(md, /TEST_SUMMARY\.md/);
     if (harness === 'claude') assert.doesNotMatch(md, /curl/);
-    else assert.match(md, /curl -s -m 5 -X POST "http:\/\/x\/api\/workflow-runs\/r\/steps\/2\/complete\?source=model-explicit-curl"/);
+    else assert.match(md, /curl -s -m 20 --retry 15 --retry-delay 3 --retry-connrefused -X POST "http:\/\/x\/api\/workflow-runs\/r\/steps\/2\/complete\?source=model-explicit-curl"/);
   }
   assert.ok(getInstructionTemplateDef('run-tests'), 'registered in the Agent prompts catalog');
 });

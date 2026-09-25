@@ -8,16 +8,13 @@ import { normalizeWorkflowRunHarnessOverride } from '../../workflows.js';
 import {
   getActiveRunsForProject as getActiveWorkflowRunsForProject,
   startWorkflowRun,
-  completeWorkflowStep,
   cancelWorkflowRun,
   WorkflowRunConflictError,
   getRun,
+  workflowStepCompletionAdvance,
 } from '../../workflowRuns.js';
-import { workflowStepAgentId } from '../../workflowRuns/stepSpawner.js';
 import { waitForWorkflowRecovery } from '../../workflowRuns/recoveryReadiness.js';
-import { requestStopHookStepComplete } from '../../workflowRuns/stopHookGate.js';
-import { unregisterAgentSession } from '../../agentSessions.js';
-import { forgetAgentQuiescence } from '../../agentQuiescence.js';
+import { recordStopReceived, requestStopHookStepComplete } from '../../workflowRuns/stopHookGate.js';
 import { readProjectParam, requireOwnedByRequestedProject } from '../projectParam.js';
 
 export function buildWorkflowRunsRouter(backendOrigin: string): Router {
@@ -73,7 +70,6 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
       `[workflow-step-complete] run=${runId} step=${stepIndex} source=${source}`,
     );
 
-    const agentId = workflowStepAgentId(runId, stepIndex);
     // The actual advance: drop this step's graph node + quiescence state, KILL
     // its pty, then advance the run. Runs when the completion is genuine —
     // immediately for a model/extension-sourced curl, or once the session goes
@@ -82,11 +78,7 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
     // interactive Codex session and prevents step N running alongside step N+1
     // (see killWorkflowStepSession). It's awaited so the teardown completes
     // before the next step spawns; harmless no-op for an already-exited session.
-    const advance = async (): Promise<void> => {
-      await completeWorkflowStep(runId, stepIndex, backendOrigin);
-      unregisterAgentSession(agentId);
-      forgetAgentQuiescence(agentId);
-    };
+    const advance = workflowStepCompletionAdvance(runId, stepIndex, backendOrigin);
 
     // Claude's `Stop` hook fires early and repeatedly when the step agent uses
     // subagents (Task tool), so a Stop-sourced completion advanced the run while
@@ -96,6 +88,11 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
     // deliberate end-of-work signals and advance immediately; control steps
     // never reach this route.
     if (source.startsWith('claude-stop-hook')) {
+      // Record the Stop durably BEFORE answering: the gate is an in-memory
+      // timer, the hook stops retrying once it has its 200, and the agent is
+      // idle — a restart inside the settle window would otherwise lose this
+      // completion for good. Boot recovery re-arms the gate from the record.
+      await recordStopReceived(runId, stepIndex);
       requestStopHookStepComplete(runId, stepIndex, advance);
       return res.json({ ok: true, gated: true });
     }
@@ -118,6 +115,19 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
     const project = readProjectParam(req, res, { source: 'query' });
     if (project === null) return;
     res.json(getActiveWorkflowRunsForProject(project));
+  });
+
+  // One run by id, including a recently FINISHED one (the registry keeps the
+  // last MAX_FINISHED_RUNS_PER_PROJECT per project, never across a restart).
+  // The frontend queue asks this when a run leaves its active set without a
+  // terminal WS event (missed while its socket was down), so it can tell
+  // "completed while I was disconnected" from "lost". 404 = unknown to this
+  // process. Registered after `/active` so that path isn't read as an id.
+  r.get('/api/workflow-runs/:runId', (req, res) => {
+    const run = getRun(req.params.runId);
+    if (!run) return res.status(404).json({ error: 'workflow run not found' });
+    if (!requireOwnedByRequestedProject(run.projectPath, `workflow run ${run.id}`, req, res)) return;
+    res.json({ run });
   });
 
   return r;

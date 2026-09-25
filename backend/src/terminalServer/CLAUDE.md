@@ -28,6 +28,11 @@ The two sides of the wire:
   `proxyListSessions`/`Count`/`…OrNull`, `proxyKillSession[sByCwd]`,
   `proxyShutdown`. `../terminalServerLifecycle.ts` owns spawn/respawn/health
   (`BASE`, `ensureTerminalServer`) and the fingerprint check.
+  `../terminalServerStatus.ts` reports it read-only (`GET
+  /api/terminal-server/status` → `current`/`stale`/`absent`/`unavailable` +
+  the session count a `stale` update is waiting on) for the navbar's
+  "Terminal server update pending" chip — a deferred update is otherwise only
+  one console line, and with the user's terminals open it can last forever.
 - **Server side (this folder):** the routes that serve those calls.
 
 Anything new this process loads at runtime must be added to
@@ -97,7 +102,12 @@ close admission. Unknown/unhealthy listeners are never force-killed.
   mismatch is already "update deferred" while sessions are live). An idle
   orphan still exits. A graceful `npm run dev` stop is unchanged: `dev.mjs`
   POSTs `/shutdown`, and terminal-tab restore relaunches the agents into their
-  conversations on the next start.
+  conversations on the next start. The dev console's **soft restart / detach**
+  (`r` / `d`, see `scripts/CLAUDE.md`) replaces `dev.mjs` WITHOUT that POST, so
+  `BACKEND_PARENT_PID` names a dead runner from then on and only the
+  contact/idle rule applies — which is why the watch treats "parent gone" as
+  **sticky**: a recycled pid must not read as the parent coming back, or an
+  idle, unowned server would never exit (`__tests__/terminalServerParentWatch.test.ts`).
 
 ## Why detached / why no `&` kill
 
