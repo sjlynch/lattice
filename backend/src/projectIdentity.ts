@@ -1,34 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { createHash, randomUUID } from 'node:crypto';
+import {
+  boundStorage, hashPath, inventories, legacyPath, physicalPaths, remember, reservationKey, storageHashes,
+} from './projectIdentity/caches.js';
+import { addCandidate, inventoryFor } from './projectIdentity/inventory.js';
+import { bindingFile, publishBinding, readBinding } from './projectIdentity/binding.js';
+import { ProjectIdentityConflictError } from './projectIdentity/errors.js';
 
-const MAX_PATHS = 2048;
-const physicalPaths = new Map<string, string>();
-const storageHashes = new Map<string, string>();
-type Candidate = { hash: string; legacyPath: string };
-type Inventory = Map<string, Map<string, Candidate>>;
-const inventories = new Map<string, Inventory>();
-const boundStorage = new Map<string, { physical: string; legacy: string }>();
+export { ProjectIdentityConflictError };
 
-export class ProjectIdentityConflictError extends Error {
-  constructor(message: string) { super(`[projectIdentity] ${message}`); this.name = 'ProjectIdentityConflictError'; }
-}
-
-function remember<T>(cache: Map<string, T>, key: string, value: T): T {
-  if (cache.size >= MAX_PATHS && !cache.has(key)) cache.delete(cache.keys().next().value!);
-  cache.set(key, value);
-  return value;
-}
-
-function legacyPath(input: string): string {
-  const resolved = path.resolve(input);
-  return process.platform === 'win32' && /^[a-z]:/.test(resolved)
-    ? resolved[0].toUpperCase() + resolved.slice(1) : resolved;
-}
-
-function hashPath(value: string): string {
-  return createHash('sha1').update(value).digest('hex').slice(0, 12);
+// Not latticeHomeDir(): projectPath.ts imports this module, so that would be circular.
+function identityHome(): string {
+  return path.join(os.homedir(), '.lattice');
 }
 
 // Existing directories use physical identity, including Windows' on-disk case
@@ -72,173 +56,39 @@ function rememberMissingThisTurn(resolved: string): void {
   });
 }
 
-function exists(file: string): boolean {
-  try { fs.statSync(file); return true; }
-  catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
-    throw err;
-  }
-}
-
-function readDirectory(dir: string, directoriesOnly = false): string[] {
-  try {
-    return directoriesOnly
-      ? fs.readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name)
-      : fs.readdirSync(dir);
-  }
-  catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw err;
-  }
-}
-
-function hasStoredHash(home: string, hash: string): boolean {
-  return ['per-project', 'snapshots', 'worktrees', 'git-backups'].some((kind) => exists(path.join(home, kind, hash)));
-}
-
-function addCandidate(inventory: Inventory, home: string, original: string, hash = hashPath(legacyPath(original))): void {
-  if (!path.isAbsolute(original) || original.includes('\0') || hashPath(legacyPath(original)) !== hash || !hasStoredHash(home, hash)) return;
-  const authority = boundStorage.get(`${home}\0${hash}`);
-  const physical = authority?.physical ?? physicalProjectPath(original);
-  let candidates = inventory.get(physical);
-  if (!candidates) inventory.set(physical, candidates = new Map());
-  candidates.set(hash, { hash, legacyPath: authority?.legacy ?? legacyPath(original) });
-}
-
-// Task/run JSON places projectPath near the start. Read at most 64KB of an
-// unindexed store, avoiding whole mature task databases on the synchronous path.
-function readMetadataPath(file: string, field: 'projectPath' | 'repoRoot'): string | undefined {
-  let fd: number | undefined;
-  try {
-    fd = fs.openSync(file, 'r');
-    const buffer = Buffer.alloc(64 * 1024);
-    const length = fs.readSync(fd, buffer, 0, buffer.length, 0);
-    const match = new RegExp(`"${field}"\\s*:\\s*("(?:[^"\\\\]|\\\\.)*")`).exec(buffer.toString('utf8', 0, length));
-    return match ? JSON.parse(match[1]) as string : undefined;
-  } catch (err) {
-    // Incomplete/corrupt metadata and stray directory entries are not identity
-    // evidence. Permission/I/O errors still refuse discovery rather than infer
-    // that an unreadable candidate has no owner.
-    if (err instanceof SyntaxError || ['ENOENT', 'ENOTDIR', 'EISDIR'].includes((err as NodeJS.ErrnoException).code ?? '')) return undefined;
-    throw err;
-  } finally { if (fd !== undefined) fs.closeSync(fd); }
-}
-
-function inventoryFor(home: string): Inventory {
-  const cached = inventories.get(home);
-  if (cached) return cached;
-  const inventory: Inventory = new Map();
-  // A migrated alias may later be removed or retargeted. Its immutable binding
-  // reserves the old hash for the original physical project; inferring from an
-  // old task's path must never lend that store to the alias's new target.
-  for (const name of readDirectory(path.join(home, 'project-identities'))) {
-    if (!/^[a-f0-9]{12}\.json$/.test(name)) continue;
-    const file = path.join(home, 'project-identities', name);
-    const binding = parseBinding(file);
-    const reservationKey = `${home}\0${binding.storageHash}`;
-    const prior = boundStorage.get(reservationKey);
-    if (prior && prior.physical !== binding.physicalPath) {
-      throw new ProjectIdentityConflictError(`conflicting storage reservations for ${binding.storageHash} at ${file}; preserving all project state`);
-    }
-    boundStorage.set(reservationKey, { physical: binding.physicalPath, legacy: binding.legacyPath });
-    addCandidate(inventory, home, binding.legacyPath, binding.storageHash);
-  }
-  const indexFile = path.join(home, 'projects.json');
-  if (exists(indexFile)) {
-    const projects: unknown = JSON.parse(fs.readFileSync(indexFile, 'utf8'));
-    if (!Array.isArray(projects)) throw new Error(`[projectIdentity] invalid project index at ${indexFile}; preserving existing state`);
-    for (const project of projects) if (typeof project === 'string' && project) addCandidate(inventory, home, project);
-  }
-  for (const hash of readDirectory(path.join(home, 'per-project'), true)) {
-    if (!/^[a-f0-9]{12}$/.test(hash)) continue;
-    const dir = path.join(home, 'per-project', hash);
-    const marker = path.join(dir, '.canonical-path');
-    if (exists(marker) && fs.statSync(marker).isFile()) addCandidate(inventory, home, fs.readFileSync(marker, 'utf8').trim(), hash);
-    for (const file of ['tasks.json', 'tasks.backup.json', 'workflow-runs.json', 'merge-runs.json']) {
-      const original = readMetadataPath(path.join(dir, file), 'projectPath');
-      if (original) { addCandidate(inventory, home, original, hash); break; }
-    }
-  }
-  // Snapshots can outlive both the project index and its task database.
-  for (const hash of readDirectory(path.join(home, 'snapshots'), true)) {
-    if (!/^[a-f0-9]{12}$/.test(hash)) continue;
-    const dir = path.join(home, 'snapshots', hash);
-    for (const name of readDirectory(dir, true)) {
-      const original = readMetadataPath(path.join(dir, name, '_lattice-snapshot.json'), 'repoRoot');
-      if (original) { addCandidate(inventory, home, original, hash); break; }
-    }
-  }
-  return remember(inventories, home, inventory);
-}
-
-type Binding = { version: 1; physicalPath: string; storageHash: string; legacyPath: string };
-
-function parseBinding(file: string): Binding {
-  try {
-    const binding = JSON.parse(fs.readFileSync(file, 'utf8')) as Binding | null;
-    if (!binding || binding.version !== 1 || typeof binding.physicalPath !== 'string' ||
-        !path.isAbsolute(binding.physicalPath) || binding.physicalPath.includes('\0') ||
-        typeof binding.legacyPath !== 'string' || !path.isAbsolute(binding.legacyPath) || binding.legacyPath.includes('\0') ||
-        typeof binding.storageHash !== 'string' || !/^[a-f0-9]{12}$/.test(binding.storageHash) ||
-        hashPath(binding.physicalPath) + '.json' !== path.basename(file) ||
-        hashPath(legacyPath(binding.legacyPath)) !== binding.storageHash) throw new Error('invalid identity binding');
-    return binding;
-  } catch (err) {
-    // The unreadable binding may reserve an old alias for another physical
-    // checkout. Skipping it could lend that checkout's tasks to a new target.
-    throw new ProjectIdentityConflictError(`cannot validate identity binding at ${file}: ${(err as Error).message}; preserving all project state`);
-  }
-}
-
-function readBinding(file: string, physical: string): Binding | undefined {
-  if (!exists(file)) return undefined;
-  const binding = parseBinding(file);
-  if (binding.physicalPath !== physical) throw new ProjectIdentityConflictError(`identity binding at ${file} belongs to another physical path; preserving all project state`);
-  return binding;
-}
-
 // Keep the existing storage hash in place. A durable, exclusively published
 // binding makes every backend select that same hash after projects.json has
 // normalized its spelling. No tasks, snapshots or worktrees are moved/deleted.
 export function projectStorageHash(input: string): string {
   const physical = physicalProjectPath(input);
-  const home = path.join(os.homedir(), '.lattice');
+  const home = identityHome();
   const key = `${home}\0${physical}`;
   const cached = storageHashes.get(key);
   if (cached) return cached;
-  const inventory = inventoryFor(home);
-  addCandidate(inventory, home, input);
-  addCandidate(inventory, home, physical);
+  const inventory = inventoryFor(home, physicalProjectPath);
+  addCandidate(inventory, home, input, physicalProjectPath);
+  addCandidate(inventory, home, physical, physicalProjectPath);
   // Canonicalizing projects.json may already have normalized a legacy spelling.
-  for (const [original, target] of physicalPaths) if (target === physical) addCandidate(inventory, home, original);
+  for (const [original, target] of physicalPaths) {
+    if (target === physical) addCandidate(inventory, home, original, physicalProjectPath);
+  }
   const candidates = new Map(inventory.get(physical));
-  const file = path.join(home, 'project-identities', `${hashPath(physical)}.json`);
+  const file = bindingFile(home, physical);
   const bound = readBinding(file, physical);
   if (bound) candidates.set(bound.storageHash, { hash: bound.storageHash, legacyPath: bound.legacyPath });
   if (candidates.size > 1) {
-    throw new ProjectIdentityConflictError(`${physical} has multiple existing project stores (${[...candidates.keys()].join(', ')}) under ${home}. Lattice has preserved every store and refused to choose one; reconcile the duplicate state with all backends stopped.`);
+    const hashes = [...candidates.keys()].join(', ');
+    throw new ProjectIdentityConflictError(
+      `${physical} has multiple existing project stores (${hashes}) under ${home}. `
+      + 'Lattice has preserved every store and refused to choose one; reconcile the duplicate state with all backends stopped.',
+    );
   }
   const selected = candidates.values().next().value ?? { hash: hashPath(physical), legacyPath: physical };
-  const reserved = boundStorage.get(`${home}\0${selected.hash}`);
+  const reserved = boundStorage.get(reservationKey(home, selected.hash));
   if (reserved && reserved.physical !== physical) {
     throw new ProjectIdentityConflictError(`${selected.hash} belongs to ${reserved.physical}; open that physical project path to access its preserved state`);
   }
-  if (!bound) {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const pending = `${file}.${process.pid}.${randomUUID()}.tmp`;
-    try {
-      fs.writeFileSync(pending, JSON.stringify({ version: 1, physicalPath: physical, storageHash: selected.hash, legacyPath: selected.legacyPath } satisfies Binding), { flag: 'wx' });
-      try { fs.linkSync(pending, file); }
-      catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-        const winner = readBinding(file, physical)!;
-        if (winner.storageHash !== selected.hash) throw new Error(`[projectIdentity] concurrent identity choices disagree at ${file}; no project mutation was admitted`);
-      }
-    } finally {
-      try { fs.unlinkSync(pending); }
-      catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err; }
-    }
-  }
+  if (!bound) publishBinding(file, physical, selected);
   return remember(storageHashes, key, selected.hash);
 }
 
@@ -251,10 +101,12 @@ export function matchesStoredProjectIdentity(storedPath: string, project: string
 }
 
 export function storedProjectRoot(storedPath: string, storageHash: string): string {
-  const home = path.join(os.homedir(), '.lattice');
-  inventoryFor(home);
-  const authority = boundStorage.get(`${home}\0${storageHash}`);
-  if (authority && (hashPath(legacyPath(storedPath)) === storageHash || physicalProjectPath(storedPath) === authority.physical)) return authority.physical;
+  const home = identityHome();
+  inventoryFor(home, physicalProjectPath);
+  const authority = boundStorage.get(reservationKey(home, storageHash));
+  if (!authority) return physicalProjectPath(storedPath);
+  const sameStore = hashPath(legacyPath(storedPath)) === storageHash;
+  if (sameStore || physicalProjectPath(storedPath) === authority.physical) return authority.physical;
   return physicalProjectPath(storedPath);
 }
 
