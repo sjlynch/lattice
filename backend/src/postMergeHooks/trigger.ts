@@ -308,16 +308,13 @@ async function spawnAndRegister(
     }
 
     const updated = deps.patchPostMergeHook(id, { serverId: sess.id, terminalId: sess.terminalId });
-    // Presence: orange Claude node for this non-worktree session. Only for
-    // Claude — a Pi/codex hook isn't a "Claude session" and has no activity
-    // hooks, so it gets no node.
-    if (harness === 'claude') {
-      deps.registerAgentSession({
-        agentId: postMergeHookAgentId(id),
-        projectPath,
-        label: 'post-merge hook',
-      });
-    }
+    // Presence: an orange agent node for this non-worktree session — any
+    // harness (each reports activity through its own hooks; see stopHook.ts).
+    deps.registerAgentSession({
+      agentId: postMergeHookAgentId(id),
+      projectPath,
+      label: 'post-merge hook',
+    });
     return { kind: 'started', run: updated ?? run, serverId: sess.id };
   } catch (err) {
     const message = (err as Error).message;

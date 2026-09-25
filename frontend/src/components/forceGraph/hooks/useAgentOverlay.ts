@@ -13,8 +13,8 @@ import { onFrame } from '../sceneFrameDriver';
 import { AgentOverlay, type AgentDescriptor } from '../agentOverlay';
 
 // Hook half of the **Agent Presence Layer (APL)** — the scene overlay that
-// shows where live Claude agents are working (a hovering "presence node" per
-// agent + TTL "focus beams" to the files it touches). This hook owns the APL's
+// shows where live agents (Claude, Codex, Pi) are working (a hovering
+// "presence node" per agent + TTL "focus beams" to the files it touches). This hook owns the APL's
 // lifecycle and its render-on-demand contract with the idle controller; the
 // drawing lives in `agentOverlay.ts` (+ its `agentOverlay*` siblings).
 //
@@ -27,19 +27,21 @@ import { AgentOverlay, type AgentDescriptor } from '../agentOverlay';
 //
 // Drives the overlay from two sources, unified by the overlay's string
 // agent id:
-//   - in-progress *Claude* tasks → a task-colored node (id = taskId).
-//   - Claude sessions OUTSIDE a worktree (push / workflow step / post-merge
+//   - in-progress tasks → a task-colored node (id = taskId).
+//   - agent sessions OUTSIDE a worktree (push / workflow step / post-merge
 //     hook) → an orange node (id = agentId), from the `/ws/agent-sessions`
 //     presence snapshot.
 // Focus beams for both arrive as `task-activity` (taskId) / `agent-activity`
 // (agentId) events on `/ws/tasks` and just attach to the matching node.
 //
-// Task agents are scoped to `harness === 'claude'`; Codex/Pi have no activity
-// hooks yet (documented follow-up). Non-worktree sessions are Claude-spawned
-// by definition here.
+// Every harness reports activity: Claude through its hooks
+// (`.claude/settings.local.json`), Codex through `.codex/hooks.json` (same hook
+// events, edits via `apply_patch`, reads via the shell), Pi through the
+// `.pi/extensions/lattice-activity.ts` extension — so any in-progress task gets
+// a node, whatever its harness.
 function taskDescriptors(tasks: Task[]): AgentDescriptor[] {
   return tasks
-    .filter((t) => t.status === 'in_progress' && t.harness === 'claude')
+    .filter((t) => t.status === 'in_progress')
     .map((t) => ({ taskId: t.id, color: taskColor(t) }));
 }
 
@@ -137,8 +139,8 @@ export function useAgentOverlay(
         return;
       }
       if (!event.file) return;
-      // Activity for an agent that isn't on screen (e.g. a non-Claude or not-yet-
-      // reconciled session) changes nothing — don't wake a settled scene for it.
+      // Activity for an agent that isn't on screen (e.g. a not-yet-reconciled
+      // session) changes nothing — don't wake a settled scene for it.
       const applied = event.subagentId
         ? ov.addSubagentActivity(
             parentId,
@@ -248,7 +250,7 @@ export function useAgentOverlay(
     };
   }, [activeFolder, applyMerged, routeActivity]);
 
-  // Non-worktree Claude session presence (`/ws/agent-sessions`).
+  // Non-worktree agent session presence (`/ws/agent-sessions`).
   useEffect(() => {
     if (!activeFolder) return;
     const unsub = subscribeAgentSessions(activeFolder, (sessions) => {

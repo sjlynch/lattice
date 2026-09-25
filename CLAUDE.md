@@ -368,27 +368,37 @@ All WS endpoints share the HTTP server via a single `upgrade` dispatcher
   `backend/src/deadCode.ts`); when it returns ≥1 confidently-dead file,
   worktree task setup injects an optional "investigate before deleting"
   note into `LATTICE_TASK.md` (reference-only, gated on count > 0).
-- **Claude agent overlay (graph).** Each in-progress *Claude* task shows a
-  free-floating filled "Claude node"; while its agent reads/modifies files
-  (PreToolUse/PostToolUse hooks → `/activity` → `task-activity` WS) a TTL-
-  fading focus beam links the node to each file node. **Subagents** (Task/Agent
-  tool) the Claude spawns appear as smaller **satellite** nodes that follow the
-  parent, each with its own focus beams and (off by default) an `agent_type`
-  label — toggle the labels on via Graph settings → Sizes → "Subagent labels"
-  (`graphSettings.showSubagentLabels`); the orbs themselves always show. Driven
-  by Claude's `SubagentStart`/`SubagentStop` hooks plus the subagent's own
-  tool-use hooks (which carry `agent_id`). Holding **`W`** outlines every file changed by
-  a not-yet-merged task in that task's color. Claude-only for now (Codex/Pi lack
-  the activity/subagent hooks). See
-  `frontend/src/components/forceGraph/CLAUDE.md`.
-- **Non-worktree Claude sessions** (push runs, workflow steps, post-merge
+- **Agent overlay (graph) — Claude, Codex and Pi alike.** Each in-progress
+  task shows a free-floating filled agent node; while its agent reads/modifies
+  files a TTL-fading focus beam links the node to each file node, and a label
+  beside the node names the file it last touched. **Subagents** appear as
+  smaller **satellite** nodes that follow the parent, each with its own focus
+  beams and **its own current-file label**. Every agent/satellite label is
+  spread in screen space each frame so a busy cluster's text never overlaps
+  (`agentOverlayLabelLayout.ts` — a snap, never an idle-controller hold); a
+  label pushed off its row gets a faint leader line back to its orb. Graph
+  settings → Sizes → "Subagent labels" (`graphSettings.showSubagentLabels`, off
+  by default) prefixes each satellite's label with its `agent_type`. Activity
+  sources, all decoded by the same routes (`backend/src/activityHook.ts` +
+  `hookFiles.ts`) into `task-activity` / `agent-activity` WS events:
+  **Claude** — PreToolUse/PostToolUse/SubagentStart/SubagentStop hooks in
+  `.claude/settings.local.json` (a subagent's tool use carries `agent_id`);
+  **Codex** — the same four events in `.codex/hooks.json` (`codexStopHook.ts`),
+  where edits are `apply_patch` (every patch file header is a beam) and reads
+  are shell commands (candidate paths kept only if they exist); **Pi** — the
+  `.pi/extensions/lattice-activity.ts` extension (`backend/src/piActivity.ts`)
+  posting Claude-shaped bodies from `tool_execution_start/end`, with a
+  pi-subagents subagent (an in-memory session) reported as a satellite.
+  Holding **`W`** outlines every file changed by a not-yet-merged task in that
+  task's color. See `frontend/src/components/forceGraph/CLAUDE.md`.
+- **Non-worktree agent sessions** (push runs, workflow steps, post-merge
   hooks) get the *same* node + beams + subagent satellites, but a fixed
-  Claude-orange (`CLAUDE_ORANGE`) since they have no task color. Presence is registry-
+  orange (`CLAUDE_ORANGE`) since they have no task color. Presence is registry-
   driven (`backend/src/agentSessions.ts` → `/ws/agent-sessions`): a node
   appears at spawn and disappears at the session's completion callback;
   beams come from the `/api/agent-activity/:token` hook
-  (`backend/src/agentActivity.ts`). Claude-only (Pi/codex sessions get no
-  node).
+  (`backend/src/agentActivity.ts`) — installed for every harness (Claude
+  hooks, Codex `hooks.json`, the Pi activity extension).
 - **Any Claude session in an opened project** (even ones Lattice didn't
   launch — a `claude` you start in your own terminal) also gets an orange
   node. On project open Lattice merges `PreToolUse`/`PostToolUse` +

@@ -210,15 +210,14 @@ export const METRIC_LABEL_MODES: ToggleOption<boolean>[] = [
   },
 ];
 
-// Whether each subagent satellite orb draws its type label (e.g. 'Explore') in
-// the Agent Presence Layer. Off by default — the orbs alone convey that an
-// agent spawned subagents; the labels add clutter without much signal. The orbs
-// themselves are always shown either way.
+// Whether each subagent satellite's label carries its type (e.g. 'Explore') in
+// the Agent Presence Layer. Off by default — the type adds clutter without much
+// signal. The orbs and their current-file labels are shown either way.
 export const SUBAGENT_LABEL_MODES: ToggleOption<boolean>[] = [
-  { value: false, label: 'Off', hint: 'satellite orbs only — no type labels (default)' },
+  { value: false, label: 'Off', hint: "satellites show just the file they're on (default)" },
   {
     value: true,
     label: 'On',
-    hint: "show each subagent's type label next to its satellite orb",
+    hint: "prefix each satellite's file label with its subagent type",
   },
 ];

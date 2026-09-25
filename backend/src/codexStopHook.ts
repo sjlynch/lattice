@@ -28,7 +28,31 @@ import {
 // non-managed hook runs without Codex's per-hook trust prompt — consistent with
 // Lattice already running codex `--yolo` (full-auto) for its own sessions.
 
-export function renderCodexStopHookJson(callbackUrl: string): string {
+// Codex tool names whose hooks can name a file (hookFiles.ts decodes them):
+// `apply_patch` (edits — every file is on a patch header) and the shell
+// (reads — Codex has no read tool). The matcher is a regex on `tool_name`.
+export const CODEX_ACTIVITY_TOOL_MATCHER = 'Bash|apply_patch|shell|exec_command';
+
+// Seconds Codex may wait on one activity hook. The curl itself gives up after
+// 2 s; a PreToolUse hook runs before the tool does, so it must stay short.
+const CODEX_ACTIVITY_HOOK_TIMEOUT_S = 5;
+
+// The activity hook command: forward the hook JSON Codex writes to the hook's
+// stdin as the POST body (`--data-binary @-`), exactly like the Claude
+// activity hook. Same no-shell rules as the Stop hook below — no quotes (the
+// header is one whitespace-free token), and `cmd /c` on Windows so curl.exe
+// resolves. The endpoint answers 204 with no body and `-s` silences errors, so
+// the hook prints nothing: Codex parses a PreToolUse hook's stdout as a
+// decision, and empty output is "no opinion". curl never exits 2 (Codex's
+// "block the tool" code) on a failed POST, so a down backend never blocks a
+// tool call.
+export function codexActivityCommands(activityUrl: string): { posix: string; windows: string } {
+  const posix =
+    `curl -s -m 2 -X POST -H Content-Type:application/json --data-binary @- ${activityUrl}`;
+  return { posix, windows: `cmd /c ${posix}` };
+}
+
+export function renderCodexStopHookJson(callbackUrl: string, activityUrl?: string): string {
   // IMPORTANT: Codex runs a hook `command` by whitespace-splitting it and
   // spawning the argv DIRECTLY — no shell (verified against 0.144.1 on Windows).
   // Two consequences shape this renderer:
@@ -49,23 +73,43 @@ export function renderCodexStopHookJson(callbackUrl: string): string {
   // through `cmd /c` on Windows); a script path containing whitespace can't
   // survive the whitespace split, so that case falls back to a retrying curl.
   const { posix, windows } = codexCallbackCommands(callbackUrl);
-  const config = {
-    hooks: {
-      Stop: [
-        {
-          hooks: [
-            {
-              type: 'command',
-              command: posix,
-              commandWindows: windows,
-              timeout: CALLBACK_HOOK_TIMEOUT_S,
-            },
-          ],
-        },
-      ],
-    },
+  const hooks: Record<string, unknown[]> = {
+    Stop: [
+      {
+        hooks: [
+          {
+            type: 'command',
+            command: posix,
+            commandWindows: windows,
+            timeout: CALLBACK_HOOK_TIMEOUT_S,
+          },
+        ],
+      },
+    ],
   };
-  return JSON.stringify(config, null, 2);
+  if (activityUrl) {
+    // Graph activity (the agent node's focus beams + file label), the Codex
+    // analogue of the Claude PreToolUse/PostToolUse/SubagentStart/SubagentStop
+    // hooks in claudeStopHook.ts. Codex (>= 0.15x) fires all four with a
+    // Claude-shaped body (`tool_name`/`tool_input`, and `agent_id`/`agent_type`
+    // from inside a subagent), so the same activity routes decode them.
+    const activity = codexActivityCommands(activityUrl);
+    const command = [
+      {
+        type: 'command',
+        command: activity.posix,
+        commandWindows: activity.windows,
+        timeout: CODEX_ACTIVITY_HOOK_TIMEOUT_S,
+      },
+    ];
+    const toolBlock = [{ matcher: CODEX_ACTIVITY_TOOL_MATCHER, hooks: command }];
+    hooks.PreToolUse = toolBlock;
+    hooks.PostToolUse = toolBlock;
+    const subagentBlock = [{ hooks: command }];
+    hooks.SubagentStart = subagentBlock;
+    hooks.SubagentStop = subagentBlock;
+  }
+  return JSON.stringify({ hooks }, null, 2);
 }
 
 export function codexHooksJsonPath(dir: string): string {
@@ -110,13 +154,18 @@ export function isLatticeGeneratedCodexHooks(contents: string): boolean {
 // Idempotent: an existing file that already matches ours is left untouched
 // (keeps `git status` clean when a worktree is reconciled + recreated against
 // the same task).
+//
+// `activityUrl` (optional) adds the graph-activity hooks alongside the Stop
+// hook — the task `/activity` route or a non-worktree `/api/agent-activity/…`
+// token URL.
 export async function installCodexStopHook(
   dir: string,
   callbackUrl: string,
   policy: CodexHookOverwritePolicy = 'always',
+  activityUrl?: string,
 ): Promise<boolean> {
   const file = codexHooksJsonPath(dir);
-  const expected = renderCodexStopHookJson(callbackUrl);
+  const expected = renderCodexStopHookJson(callbackUrl, activityUrl);
   ensureCallbackScript();
   try {
     const existing = await fs.readFile(file, 'utf8');

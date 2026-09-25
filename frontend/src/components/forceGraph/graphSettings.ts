@@ -65,11 +65,11 @@ export type GraphSettings = {
   // measured file node sprouts its connector + number again. Affects only the
   // metric overlays — the Alt name-label overlay is unrelated.
   metricLabels: boolean;
-  // Show the per-subagent type label (e.g. 'Explore') next to each satellite
-  // orb in the Agent Presence Layer. Off by default — the satellite orbs alone
-  // already convey "this agent spawned N subagents", and the type labels add
-  // visual clutter without much signal. The satellite orbs themselves are
-  // always shown regardless; this only toggles their text labels.
+  // Prefix each satellite's file label with its subagent type (e.g.
+  // 'Explore: api.ts'), and show the bare type before the subagent's first
+  // file, in the Agent Presence Layer. Off by default — the type adds clutter
+  // without much signal. The satellite orbs and their current-file labels are
+  // always shown regardless; this only adds the type text.
   showSubagentLabels: boolean;
   // --- "Spread / layout shape" knobs (the settings panel's Spread tab) ---
   //

@@ -45,7 +45,6 @@ import {
   adoptWorkflowStepSession,
   workflowStepAgentId,
 } from '../workflowRuns/sessionSpawner.js';
-import { effectiveStepHarness } from '../workflowRuns/stepMarkdown.js';
 import { registerAgentSession } from '../agentSessions.js';
 import { forgetAgentQuiescence, markAgentReadopted } from '../agentQuiescence.js';
 import { proxyListSessionsOrNull } from '../terminalServerClient.js';
@@ -247,7 +246,7 @@ export async function resumePersistedRun(
     // the step's timeout from its recorded spawn time.
     await resumeRunTestsStep(wf ?? undefined, run, run.currentStepIndex, backendOrigin, completeWorkflowStep);
   }
-  if (wf && step && effectiveStepHarness(wf, run, run.currentStepIndex) === 'claude') {
+  if (wf && step) {
     registerAgentSession({
       agentId: workflowStepAgentId(run.id, run.currentStepIndex),
       projectPath: run.projectPath,

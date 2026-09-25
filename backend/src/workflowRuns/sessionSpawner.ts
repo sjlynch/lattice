@@ -179,6 +179,7 @@ export function enqueueWorkflowStepSession(opts: {
   projectPath: string;
   stepDir: string;
   command: string;
+  // Informational: every harness now gets a graph presence node.
   harness: Workflow['steps'][number]['harness'];
   deps?: Partial<WorkflowStepSessionDeps>;
   // A Run tests step never errors the run: a failed spawn is handed here
@@ -186,7 +187,7 @@ export function enqueueWorkflowStepSession(opts: {
   // while the step is still the run's current one.
   onSpawnError?: (message: string) => void;
 }): Promise<void> {
-  const { run, stepIndex, projectPath, stepDir, command, harness } = opts;
+  const { run, stepIndex, projectPath, stepDir, command } = opts;
   const deps = { ...productionDeps, ...(opts.deps ?? {}) };
   const dedupeKey = workflowStepDedupeKey(run.id, stepIndex);
   const spawnRecord: WorkflowStepSpawnRecord = {
@@ -259,16 +260,14 @@ export function enqueueWorkflowStepSession(opts: {
         await killWorkflowStepServer(sess.id, deps);
         return;
       }
-      if (harness === 'claude') {
-        // Presence: orange Claude node for this non-worktree session. Claude
-        // only — a Pi/codex step isn't a "Claude session" and never fires the
-        // activity hooks, so it gets no node.
-        registerAgentSession({
-          agentId: workflowStepAgentId(run.id, stepIndex),
-          projectPath,
-          label: `workflow step ${stepIndex + 1}`,
-        });
-      }
+      // Presence: an orange agent node for this non-worktree session. Every
+      // harness reports activity now (Claude hooks, Codex hooks.json, the Pi
+      // activity extension — see stepSpawner.installStepCallbacks).
+      registerAgentSession({
+        agentId: workflowStepAgentId(run.id, stepIndex),
+        projectPath,
+        label: `workflow step ${stepIndex + 1}`,
+      });
 
       notify({
         type: 'step-spawned',

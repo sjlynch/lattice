@@ -16,6 +16,7 @@ import {
 } from './agentOverlayConstants';
 import { accumulateBeams, updateBeamGeometries } from './agentOverlayBeamMath';
 import { clearAgentLabel, updateAgentLabel } from './agentOverlayLabels';
+import { layoutAgentLabels } from './agentOverlayLabelLayout';
 import { hoverMargin } from './agentOverlayPathIndex';
 import { lowPassStep } from './agentOverlayPlacement';
 import { updateSatellites } from './agentOverlaySatellites';
@@ -138,6 +139,10 @@ export function tickOverlay(
   for (const agent of ctx.agents.values()) {
     if (tickAgent(ctx, agent, now, hoverY)) moving = true;
   }
+  // Once every label's text/size is current, spread them in screen space so a
+  // parent's and its subagents' file labels never overlap (a snap, not an
+  // animation — contributes nothing to `moving`).
+  layoutAgentLabels(ctx, graph);
 
   return moving;
 }

@@ -8,6 +8,7 @@ import {
   installPiCompletionExtension as installPiCompletionExtensionShared,
 } from '../piExtension.js';
 import { installCodexStopHook } from '../codexStopHook.js';
+import { installPiActivityExtension } from '../piActivity.js';
 import { exec } from './exec.js';
 import { appendMissingExcludeEntries } from './projectGuards/repoExclude.js';
 
@@ -69,11 +70,16 @@ function taskCompleteUrlForStopHook(taskId: string, backendOrigin: string): stri
 // PreToolUse/PostToolUse activity callback. The worktree agent POSTs the
 // hook JSON here so the graph can draw a focus beam to the file it's
 // touching. `.claude/settings.local.json` is only read by Claude, so this
-// is installed for every worktree (a Pi/Codex primary task simply never
-// fires it; a Claude conflict-resolver in any worktree does). The frontend
-// scopes the visible Claude node to `harness === 'claude'` tasks.
-function taskActivityUrlForHook(taskId: string, backendOrigin: string): string {
-  return `${backendOrigin}/api/tasks/${taskId}/activity?source=claude-tool-hook`;
+// is installed for every worktree (a Claude conflict-resolver in any
+// worktree fires it). Codex and Pi tasks report to the same route through
+// their own hooks (`.codex/hooks.json`, `.pi/extensions/lattice-activity.ts`),
+// tagged with their own `source`.
+function taskActivityUrlForHook(
+  taskId: string,
+  backendOrigin: string,
+  source = 'claude-tool-hook',
+): string {
+  return `${backendOrigin}/api/tasks/${taskId}/activity?source=${source}`;
 }
 
 function hookUrls(taskId: string, backendOrigin: string) {
@@ -128,6 +134,12 @@ export async function installPiCompletionExtension(
     site: 'task-complete',
     respectQuitGate: true,
   });
+  // Graph activity (focus beams, file labels, subagent satellites) — Pi's
+  // analogue of the Claude activity hooks.
+  await installPiActivityExtension({
+    dir: worktreePath,
+    activityUrl: taskActivityUrlForHook(taskId, backendOrigin, 'pi-activity-extension'),
+  });
 }
 
 // Codex Stop hook — the Codex analogue of installStopHook (Claude) /
@@ -151,5 +163,6 @@ export async function installCodexCompletionHook(
     worktreePath,
     `${backendOrigin}/api/tasks/${taskId}/complete?source=codex-stop-hook-task-complete`,
     'if-absent',
+    taskActivityUrlForHook(taskId, backendOrigin, 'codex-tool-hook'),
   );
 }

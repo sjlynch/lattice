@@ -21,6 +21,7 @@ import {
   SATELLITE_LABEL_OFFSET_Y_FACTOR,
   SATELLITE_LABEL_SCALE,
 } from './agentOverlayConstants';
+import { disposeBeam } from './agentOverlayBeams';
 import { baseName } from './agentOverlayPathIndex';
 import type { Agent, LabelHost, Satellite } from './agentOverlayTypes';
 
@@ -103,6 +104,10 @@ export function removeFloatingLabel(group: THREE.Group, host: LabelHost): void {
     group.remove(host.label);
     host.label = undefined;
   }
+  if (host.leader) {
+    disposeBeam(group, host.leader);
+    host.leader = undefined;
+  }
   host.labelText = undefined;
   host.labelSizeAtBuild = undefined;
 }
@@ -147,18 +152,43 @@ export function clearAgentLabel(group: THREE.Group, agent: Agent): void {
   agent.currentFileBase = undefined;
 }
 
-// Build/refresh a satellite's type label (e.g. 'Explore'), reading smaller than
-// the parent's file label and tucked just under the satellite node.
+// The text beside a satellite: the file its subagent most recently read/edited
+// (always shown once there is one — parity with the parent's file label), with
+// the subagent type prefixed when the opt-in "Subagent labels" setting is on.
+// Before its first file the satellite shows the bare type when that setting is
+// on, and nothing otherwise (the orb alone conveys presence). Pure — tested.
+export function satelliteLabelText(
+  satellite: Pick<Satellite, 'currentFile' | 'currentFileBase' | 'subagentType'>,
+  showSubagentLabels: boolean,
+): string | null {
+  const file = satellite.currentFile
+    ? satellite.currentFileBase ?? baseName(satellite.currentFile)
+    : null;
+  if (!showSubagentLabels) return file;
+  const type = satellite.subagentType || 'subagent';
+  return file ? `${type}: ${file}` : type;
+}
+
+// Build/refresh a satellite's label (see satelliteLabelText), reading smaller
+// than the parent's file label and sitting beside the satellite node. Drops a
+// stale label when there is nothing to show. The final placement is the label
+// spreader's (agentOverlayLabelLayout.ts); the offset here is the fallback.
 export function updateSatelliteLabel(
   group: THREE.Group,
   satellite: Satellite,
   labelSize: number,
   nodeSize: number,
+  showSubagentLabels: boolean,
 ): void {
+  const text = satelliteLabelText(satellite, showSubagentLabels);
+  if (!text) {
+    if (satellite.label) removeFloatingLabel(group, satellite);
+    return;
+  }
   applyFloatingLabel(
     group,
     satellite,
-    satellite.subagentType || 'subagent',
+    text,
     satellite.pos,
     labelSize * SATELLITE_LABEL_SCALE,
     nodeSize,
