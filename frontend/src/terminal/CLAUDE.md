@@ -53,6 +53,11 @@ side effect can each be reasoned about (and changed) on their own.
   fetch never leaves pending tabs unmountable. `mergeRegistryTabs` takes the
   ids of registered tabs created while a snapshot was in flight (`keepIds`)
   and keeps them when the older snapshot doesn't list them.
+- `useTerminalRegistrySync.ts` — the React side of the above, called by
+  `TerminalsProvider`: the registry fetch + `/ws/terminal-tabs` subscription
+  effect, the once-per-project auto-restore effect, `runRestore`, and the
+  `lastRestore` / `restorePrompt` state; returns `addedDuringFetchRef` for
+  `addTerminal`. Every race fix described above lives (and is commented) there.
 - `terminalState.ts` — barrel that re-exports the pure functions from the two
   modules below, so `./terminalState` stays the stable import surface for
   `TerminalsContext` and the tests.

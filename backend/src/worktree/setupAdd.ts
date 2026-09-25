@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { projectGit } from './projectGit.js';
+import type { ExecResult } from './exec.js';
 import {
   MAX_PATH_RETRY_SUFFIXES,
   reconcileStaleState,
@@ -12,6 +13,24 @@ import {
 
 export type AddedWorktreeCandidate = WorktreeSetupCandidate;
 
+// `git worktree add` runs the repo's `post-checkout` hook and, in `full` LFS
+// mode, a smudge per LFS file — either can hang on the network or a Git
+// Credential Manager dialog. It runs inside one of the two machine-wide
+// checkout slots (checkoutGate.ts), so two unbounded hangs used to block every
+// task start until the backend restarted. Generous: a multi-GB LFS checkout
+// legitimately takes many minutes.
+export const WORKTREE_ADD_TIMEOUT_MS = 30 * 60_000;
+
+// exec() appends this marker to stderr when it killed the child on timeout.
+export function isExecTimeout(result: ExecResult): boolean {
+  return result.stderr.includes('[exec] killed after');
+}
+
+export type AddWorktreeDeps = {
+  projectGit: typeof projectGit;
+  reconcile: typeof reconcileStaleState;
+};
+
 export async function addWorktreeWithRetries(
   repoRoot: string,
   plan: WorktreeCandidatePlan,
@@ -19,7 +38,9 @@ export async function addWorktreeWithRetries(
   // `GIT_LFS_SKIP_SMUDGE=1` in the default pointer mode (lfsMode.ts), so the
   // checkout writes LFS pointer stubs instead of their content.
   checkoutEnv?: Record<string, string>,
+  overrides: Partial<AddWorktreeDeps> = {},
 ): Promise<AddedWorktreeCandidate> {
+  const deps: AddWorktreeDeps = { projectGit, reconcile: reconcileStaleState, ...overrides };
   // Try the canonical path first; if reconciliation can't free it (Windows
   // file lock from an Explorer window, editor, etc.), fall through to a
   // suffixed path so the user isn't blocked. The branch name follows the
@@ -30,11 +51,11 @@ export async function addWorktreeWithRetries(
   // on an orphan branch whose /complete commit count (`HEAD..branch`) can
   // never be computed. Check up front (exit 1 = no such ref; any other
   // failure falls through to the add, which reports it).
-  const head = await projectGit(repoRoot, ['rev-parse', '--verify', '--quiet', 'HEAD']);
+  const head = await deps.projectGit(repoRoot, ['rev-parse', '--verify', '--quiet', 'HEAD']);
   if (head.code === 1) throw noCommitsError(repoRoot, taskTitle);
   let lastFailure = '';
   for (const candidate of plan.candidates) {
-    const reconciled = await reconcileStaleState(
+    const reconciled = await deps.reconcile(
       repoRoot,
       candidate.candidateBranch,
       candidate.candidatePath,
@@ -48,13 +69,34 @@ export async function addWorktreeWithRetries(
       continue;
     }
 
-    const wt = await projectGit(
+    const wt = await deps.projectGit(
       repoRoot,
       ['worktree', 'add', candidate.candidatePath, '-b', candidate.candidateBranch],
-      checkoutEnv ? { env: checkoutEnv } : undefined,
+      { timeoutMs: WORKTREE_ADD_TIMEOUT_MS, ...(checkoutEnv ? { env: checkoutEnv } : {}) },
     );
     if (wt.code !== 0) {
       const detail = wt.stderr.trim() || wt.stdout.trim() || '(no output)';
+      if (isExecTimeout(wt)) {
+        // A hung hook / smudge would hang the same way on every suffix, so
+        // don't hold the checkout slot for another 30 minutes per suffix —
+        // throw (the caller's `finally` frees the slot). The partial
+        // checkout goes back through reconcile now: its "initializing" lock
+        // is by now older than staleInitLock's threshold, so reconcile clears
+        // it and removes the checkout + branch. If that can't finish (a
+        // grandchild still holds files), the next Run's reconcile of this
+        // same candidate, or the residue sweep, reclaims it.
+        await deps
+          .reconcile(repoRoot, candidate.candidateBranch, candidate.candidatePath)
+          .catch((err) => {
+            console.warn(`[worktree] could not clean up timed-out checkout ${candidate.candidatePath}:`, err);
+            return false;
+          });
+        throw new Error(
+          `Creating the worktree for task "${taskTitle}" at ${candidate.candidatePath} timed out after ` +
+            `${WORKTREE_ADD_TIMEOUT_MS / 60_000} minutes — a git post-checkout hook, a Git LFS download, ` +
+            `or a credential prompt is likely stuck. Last git output: ${detail}`,
+        );
+      }
       // An empty repo (`git init` with no commits) has no HEAD to branch
       // from, so `git worktree add -b` fails with the same deterministic
       // error on every suffix. Retrying 5 times is pointless and the

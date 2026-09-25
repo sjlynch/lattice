@@ -6,8 +6,11 @@ import {
   abortWorktreeMerge,
   assertGitDirIntact,
   isMidMerge,
+  parseWorktreesPorcelain,
   worktreeExists,
 } from '../state.js';
+import { isExecTimeout, WORKTREE_ADD_TIMEOUT_MS } from '../setupAdd.js';
+import { clearStaleInitializingLock } from '../staleInitLock.js';
 import { assertSafeWorktreePath } from '../cleanupSafety.js';
 import { installStopHook, writeWorktreeExclude } from '../stopHook.js';
 import { LATTICE_EXCLUDE_PATTERNS } from '../managedFiles.js';
@@ -80,9 +83,18 @@ async function tryRecreateMissingWorktree(
     await projectGit(repoRoot, ['worktree', 'remove', '--force', worktreePath]);
     // LFS pointer stubs in the default mode, like a fresh run's checkout (lfsMode.ts).
     const env = await taskWorktreeCheckoutEnv(repoRoot);
-    add = await projectGit(repoRoot, ['worktree', 'add', worktreePath, branchName], env ? { env } : undefined);
+    add = await projectGit(repoRoot, ['worktree', 'add', worktreePath, branchName], {
+      timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
+      ...(env ? { env } : {}),
+    });
   } finally {
     disk.release();
+  }
+  if (add.code !== 0 && isExecTimeout(add)) {
+    // A killed add leaves a partial checkout that the next preflight would
+    // otherwise take for a real one and merge into. The branch holds the
+    // work; this checkout was missing anyway — drop it.
+    await discardTimedOutRecreate(repoRoot, worktreePath);
   }
   if (add.code !== 0) {
     console.warn(
@@ -101,6 +113,33 @@ async function tryRecreateMissingWorktree(
     `[merge] worktree directory ${worktreePath} was missing — re-created it from branch ${branchName}`,
   );
   return true;
+}
+
+// Best-effort removal of the partial checkout a timed-out re-create left.
+// git's "initializing" lock (written when the add started, so older than the
+// stale threshold by now) would make `worktree remove --force` refuse, so it
+// is cleared first through the same guarded path reconcile uses. Only this
+// exact managed path is touched; the branch is never deleted.
+async function discardTimedOutRecreate(repoRoot: string, worktreePath: string): Promise<void> {
+  try {
+    const listed = await projectGit(repoRoot, ['worktree', 'list', '--porcelain', '-z'], { timeoutMs: 30_000 });
+    if (listed.code !== 0) return;
+    const key = (p: string) => {
+      const resolved = path.resolve(p);
+      return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+    };
+    const entry = parseWorktreesPorcelain(listed.stdout).find((wt) => key(wt.path) === key(worktreePath));
+    if (entry?.locked && !(await clearStaleInitializingLock(repoRoot, entry))) return;
+    const removed = await projectGit(repoRoot, ['worktree', 'remove', '--force', worktreePath], { timeoutMs: 5 * 60_000 });
+    if (removed.code !== 0) {
+      console.warn(
+        `[merge] could not remove timed-out checkout ${worktreePath} (exit ${removed.code}): ` +
+          `${removed.stderr.trim() || removed.stdout.trim()}`,
+      );
+    }
+  } catch (err) {
+    console.warn(`[merge] could not remove timed-out checkout ${worktreePath}:`, err);
+  }
 }
 
 export async function preflightWorktreeMerge(

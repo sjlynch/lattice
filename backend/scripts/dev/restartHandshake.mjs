@@ -35,6 +35,13 @@ export const PREPARE_TIMEOUT_MS = PREPARE_SETTLE_BUDGET_MS + 20_000;
 // How long the backend stays drained if no restart follows. Covers the settle
 // wait plus the time from "ready" to the kill landing.
 export const DRAIN_TTL_MS = PREPARE_TIMEOUT_MS + 30_000;
+// The dev console's soft stop (`r` / `d`, dev/devShutdown.mjs) drains too, but
+// on a much shorter budget: the orchestrator force-kills the runner's tree once
+// SOFT_STOP_TIMEOUT_MS (scripts/orchestrate/devControl.mjs) passes, and the
+// kill plus dist/index.js's exit still have to fit inside it after the drain.
+export const SOFT_STOP_SETTLE_BUDGET_MS = 10_000;
+export const SOFT_STOP_PREPARE_TIMEOUT_MS = SOFT_STOP_SETTLE_BUDGET_MS + 5_000;
+export const SOFT_STOP_DRAIN_TTL_MS = SOFT_STOP_PREPARE_TIMEOUT_MS + 30_000;
 export const CANCEL_TIMEOUT_MS = 3_000;
 export const LOCK_HOLDERS_TIMEOUT_MS = 8_000;
 
