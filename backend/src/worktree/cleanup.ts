@@ -33,7 +33,7 @@ import { projectGit } from './projectGit.js';
 import { LATTICE_BRANCH_RE } from './projectGit/policy.js';
 import { proxyKillSessionsByCwd } from '../terminalProxy.js';
 import { notifyDiskSpaceFreed, notifySessionsFreed } from '../spawnQueue.js';
-import { assertGitDirIntact, parseWorktreesPorcelain } from './state.js';
+import { assertGitDirIntact, parseWorktreesPorcelain, type ParsedWorktree } from './state.js';
 import { assertNotReparsePoint, assertSafeWorktreePath } from './cleanupSafety.js';
 import { pruneReparsePointsUnder } from './reparsePoints.js';
 import { archiveUncommittedWorktreeChanges } from './discardArchive.js';
@@ -79,10 +79,55 @@ export type KeptBranchInfo = {
   unmergedCommits: number | null;
 };
 
+// Brief pause after killing a worktree's PTYs so the OS has time to release
+// the handles they held (Windows cwd locks) before git removes the checkout.
+const PTY_HANDLE_RELEASE_MS = 300;
+
 function normalizePath(value: string): string {
   const resolved = path.resolve(value);
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
+
+function isSameWorktree(a: string, b: string): boolean {
+  return normalizePath(a) === normalizePath(b);
+}
+
+// A registered worktree strictly inside `worktreePath`: removing the outer
+// checkout would take the nested one with it, so cleanup defers instead.
+function findNestedWorktree(entries: ParsedWorktree[], worktreePath: string): ParsedWorktree | undefined {
+  const prefix = normalizePath(worktreePath) + path.sep;
+  return entries.find((wt) => normalizePath(wt.path).startsWith(prefix));
+}
+
+function hasNestedWorktree(entries: ParsedWorktree[], worktreePath: string): boolean {
+  return findNestedWorktree(entries, worktreePath) !== undefined;
+}
+
+type CleanupGit = (args: string[]) => ReturnType<typeof projectGit>;
+type ReadWorktrees = () => Promise<ParsedWorktree[] | null>;
+
+// What every cleanup phase needs; built once by `cleanupWorktreeForTask`.
+type CleanupContext = {
+  repoRoot: string;
+  worktreePath: string;
+  branchName: string;
+  deps: WorktreeCleanupDeps;
+  opts: WorktreeCleanupOptions;
+  git: CleanupGit;
+  readWorktrees: ReadWorktrees;
+};
+
+type RegistrationPreconditions = {
+  // undefined: git doesn't track the checkout and its directory is already gone.
+  registration: ParsedWorktree | undefined;
+  // The checkout was a half-finished `git worktree add` (its stale lock is cleared).
+  interruptedAdd: boolean;
+};
+
+// 'removed'  — git removed the checkout.
+// 'residue'  — git dropped the registration but left files for the residue sweep.
+// 'deferred' — cleanup stopped and preserved the checkout (already logged).
+type RemoveOutcome = 'removed' | 'residue' | 'deferred';
 
 // `LATTICE_BRANCH_RE` (imported above from projectGit's policy) is the
 // branch-delete guard projectGit would throw on for anything else — we
@@ -101,10 +146,10 @@ export async function cleanupWorktreeForTask(
   assertSafeWorktreePath(repoRoot, worktreePath);
   await assertGitDirIntact(repoRoot);
 
-  const git = (args: string[]) => deps.projectGit(repoRoot, args, {
+  const git: CleanupGit = (args) => deps.projectGit(repoRoot, args, {
     timeoutMs: args[0] === 'worktree' && args[1] === 'remove' ? WORKTREE_REMOVE_TIMEOUT_MS : CLEANUP_GIT_TIMEOUT_MS,
   });
-  const readWorktrees = async () => {
+  const readWorktrees: ReadWorktrees = async () => {
     const result = await git(['worktree', 'list', '--porcelain', '-z']);
     const entries = parseWorktreesPorcelain(result.stdout);
     if (result.code !== 0 || entries.length === 0) {
@@ -114,131 +159,15 @@ export async function cleanupWorktreeForTask(
     }
     return entries;
   };
-  let before = await readWorktrees();
-  if (!before) return false;
-  // An interrupted `git worktree add` leaves git's own "initializing" lock;
-  // honouring it as a user lock stranded the half-written checkout for good.
-  // Such a checkout never finished, so no agent ever ran in it: skip the
-  // archive (every file reads as "untracked" — it would copy the whole tree).
-  const initLocked = before.find((wt) => normalizePath(wt.path) === normalizePath(worktreePath));
-  const interruptedAdd = !!initLocked && await clearStaleInitializingLock(repoRoot, initLocked);
-  if (interruptedAdd) {
-    before = await readWorktrees();
-    if (!before) return false;
-  }
-  const registration = before.find((wt) => normalizePath(wt.path) === normalizePath(worktreePath));
-  const nested = before.find((wt) => normalizePath(wt.path).startsWith(normalizePath(worktreePath) + path.sep));
-  if (nested) {
-    console.warn(`[worktree] cleanup deferred for ${worktreePath}: contains another registered worktree at ${nested.path}.`);
-    return false;
-  }
-  const expectedBranch = branchName ? `refs/heads/${branchName}` : undefined;
-  if (registration?.locked || (registration && registration.branch !== expectedBranch)) {
-    console.warn(`[worktree] cleanup deferred for ${worktreePath}: ` +
-      'the worktree is locked or its branch has changed; preserving the checkout and branch.');
-    return false;
-  }
-  if (!registration && await pathExistsStrict(worktreePath)) {
-    console.warn(`[worktree] cleanup deferred for ${worktreePath}: ` +
-      'directory exists without a matching Git registration; preserving it for inspection.');
-    return false;
-  }
+  const ctx: CleanupContext = { repoRoot, worktreePath, branchName, deps, opts, git, readWorktrees };
 
-  if (registration) {
-    // Validate the physical target before touching terminals or links inside it.
-    await assertNotReparsePoint(worktreePath);
+  const preconditions = await checkRegistrationPreconditions(ctx);
+  if (!preconditions) return false;
 
-    // Kill any terminal sessions running inside the worktree first. On
-    // Windows a process whose cwd is inside a directory holds a lock that
-    // prevents deletion — killing the PTY releases it before git removes.
-    await deps.proxyKillSessionsByCwd(worktreePath);
-    // Killing the worktree's ptys freed slots — let the spawn queue reuse them.
-    deps.notifySessionsFreed();
-    // Brief pause so the OS has time to release handles after PTY exit.
-    await new Promise<void>((r) => setTimeout(r, 300));
-
-    // A user may move, lock or repurpose a checkout while PTY shutdown awaits.
-    const current = await readWorktrees();
-    const same = current?.find((wt) => normalizePath(wt.path) === normalizePath(worktreePath));
-    if (!same || same.locked || same.branch !== registration.branch ||
-        current?.some((wt) => normalizePath(wt.path).startsWith(normalizePath(worktreePath) + path.sep))) {
-      console.warn(`[worktree] cleanup deferred for ${worktreePath}: registrations changed while releasing terminals.`);
-      return false;
-    }
-    await assertNotReparsePoint(worktreePath);
-
-    // `worktree remove --force` silently drops uncommitted edits. Every caller
-    // (post-merge finalize, task delete, a failed run's teardown, …) gets the
-    // same keep-for-the-user archive a fresh Run's reconcile takes — AFTER the
-    // PTY kill, so the agent can't still be writing. A normal finalize leaves
-    // only Lattice-managed files behind, which aren't archived ('clean').
-    // If the archive fails, keep the checkout rather than lose the work.
-    if (!opts.skipArchive && !interruptedAdd) {
-      const archive = deps.archiveUncommitted ?? archiveUncommittedWorktreeChanges;
-      const archived = await archive(repoRoot, worktreePath, branchName);
-      if (archived.status === 'failed') {
-        console.error(
-          `[worktree] cleanup deferred for ${worktreePath}: could not archive its uncommitted ` +
-            `changes (${archived.error}); preserving the checkout and branch.`,
-        );
-        return false;
-      }
-      if (archived.status === 'archived') {
-        console.warn(`[worktree] archived ${archived.files} uncommitted change(s) from ${worktreePath} to ${archived.dir}`);
-      }
-    }
-
-    // Break any reparse-point loops inside the worktree (npm `file:` self-dep
-    // junctions, etc.) before handing it to git — otherwise `git worktree
-    // remove` on Windows fails with "failed to delete ...: Function not
-    // implemented" and orphans the directory. A failure here must not abort
-    // teardown; the worst case is the git call below failing as it did before.
-    try {
-      const pruned = await pruneReparsePointsUnder(worktreePath);
-      if (pruned > 0) {
-        console.log(
-          `[worktree] cleared ${pruned} reparse point(s) inside ${worktreePath} before removal.`,
-        );
-      }
-    } catch (err) {
-      console.warn(`[worktree] pruneReparsePointsUnder(${worktreePath}) failed (continuing):`, err);
-    }
-
-    const rm = await git(['worktree', 'remove', '--force', worktreePath]);
-    let leftAsResidue = false;
-    if (rm.code !== 0) {
-      const detail = rm.stderr.trim() || rm.stdout.trim() || '(no output)';
-      // On Windows git stops at the first locked file ("Invalid argument") but
-      // has ALREADY dropped the registration and `.git` — so no sweep that
-      // walks registrations will ever see this checkout (or its branch) again.
-      const afterRm = await readWorktrees();
-      const stillRegistered = !afterRm ||
-        afterRm.some((wt) => normalizePath(wt.path) === normalizePath(worktreePath));
-      if (stillRegistered) {
-        // Couldn't remove and git still tracks it — leave the directory for the
-        // boot-time orphan sweep to retry. Never escalate to a raw fs.rm here.
-        console.warn(
-          `[worktree] 'git worktree remove --force ${worktreePath}' exit ${rm.code}: ${detail} — ` +
-            'leaving the checkout in place; the boot-time orphan sweep will retry it.',
-        );
-        // Keep the branch and registration together for a later retry. Attempting
-        // branch -D here only adds "branch used by worktree" to the actual error.
-        return false;
-      }
-      // Registration gone: what is left is inert residue (no `.git`, no
-      // registration), which the residue sweep (recovery/worktreeResidueSweep.ts)
-      // reclaims once it unlocks. The branch step below proceeds as normal —
-      // keeping it here would leak it forever.
-      console.warn(
-        `[worktree] 'git worktree remove --force ${worktreePath}' exit ${rm.code}: ${detail} — ` +
-          'git dropped the registration; the remaining files are left for the residue sweep.',
-      );
-      leftAsResidue = true;
-    }
-    // The checkout's disk is back (most of it, for residue): runs deferred for
-    // space retry now instead of sitting out their backoff.
-    deps.notifyDiskSpaceFreed?.();
-    if (leftAsResidue) return deleteTaskBranch(git, readWorktrees, branchName, opts);
+  if (preconditions.registration) {
+    const outcome = await removeRegisteredWorktree(ctx, preconditions.registration, preconditions.interruptedAdd);
+    if (outcome === 'deferred') return false;
+    if (outcome === 'residue') return deleteTaskBranch(git, readWorktrees, branchName, opts);
   }
   if (await pathExistsStrict(worktreePath)) {
     // git reported success but the dir is somehow still there. Don't fs.rm —
@@ -256,12 +185,176 @@ export async function cleanupWorktreeForTask(
   return deleteTaskBranch(git, readWorktrees, branchName, opts);
 }
 
+// Phase 1: read git's registrations and decide whether cleanup may proceed at
+// all. null = defer (the reason has been logged); the caller returns false.
+async function checkRegistrationPreconditions(ctx: CleanupContext): Promise<RegistrationPreconditions | null> {
+  const { repoRoot, worktreePath, branchName, readWorktrees } = ctx;
+  let before = await readWorktrees();
+  if (!before) return null;
+  // An interrupted `git worktree add` leaves git's own "initializing" lock;
+  // honouring it as a user lock stranded the half-written checkout for good.
+  // Such a checkout never finished, so no agent ever ran in it: skip the
+  // archive (every file reads as "untracked" — it would copy the whole tree).
+  const initLocked = before.find((wt) => isSameWorktree(wt.path, worktreePath));
+  const interruptedAdd = !!initLocked && await clearStaleInitializingLock(repoRoot, initLocked);
+  if (interruptedAdd) {
+    before = await readWorktrees();
+    if (!before) return null;
+  }
+  const registration = before.find((wt) => isSameWorktree(wt.path, worktreePath));
+  const nested = findNestedWorktree(before, worktreePath);
+  if (nested) {
+    console.warn(`[worktree] cleanup deferred for ${worktreePath}: contains another registered worktree at ${nested.path}.`);
+    return null;
+  }
+  const expectedBranch = branchName ? `refs/heads/${branchName}` : undefined;
+  if (registration?.locked || (registration && registration.branch !== expectedBranch)) {
+    console.warn(`[worktree] cleanup deferred for ${worktreePath}: ` +
+      'the worktree is locked or its branch has changed; preserving the checkout and branch.');
+    return null;
+  }
+  if (!registration && await pathExistsStrict(worktreePath)) {
+    console.warn(`[worktree] cleanup deferred for ${worktreePath}: ` +
+      'directory exists without a matching Git registration; preserving it for inspection.');
+    return null;
+  }
+  return { registration, interruptedAdd };
+}
+
+// Phase 2: tear down a registered checkout. The order — release terminals →
+// archive → prune reparse points → `git worktree remove` — is part of the
+// `.git`-deletion defences: the archive runs after the PTY kill (nothing is
+// still writing) and a failed archive keeps the checkout.
+async function removeRegisteredWorktree(
+  ctx: CleanupContext,
+  registration: ParsedWorktree,
+  interruptedAdd: boolean,
+): Promise<RemoveOutcome> {
+  const { worktreePath, deps, opts } = ctx;
+  // Validate the physical target before touching terminals or links inside it.
+  await assertNotReparsePoint(worktreePath);
+
+  if (!await releaseWorktreeTerminals(ctx, registration)) return 'deferred';
+  await assertNotReparsePoint(worktreePath);
+
+  if (!opts.skipArchive && !interruptedAdd && !await archiveBeforeRemoval(ctx)) return 'deferred';
+
+  await pruneReparsePointsBeforeRemoval(worktreePath);
+
+  const outcome = await gitRemoveWorktree(ctx);
+  if (outcome === 'deferred') return outcome;
+  // The checkout's disk is back (most of it, for residue): runs deferred for
+  // space retry now instead of sitting out their backoff.
+  deps.notifyDiskSpaceFreed?.();
+  return outcome;
+}
+
+// Kill the worktree's terminals, then re-read the registrations. false (logged)
+// when the checkout was moved, locked or repurposed while PTY shutdown awaited.
+async function releaseWorktreeTerminals(ctx: CleanupContext, registration: ParsedWorktree): Promise<boolean> {
+  const { worktreePath, deps, readWorktrees } = ctx;
+  // Kill any terminal sessions running inside the worktree first. On
+  // Windows a process whose cwd is inside a directory holds a lock that
+  // prevents deletion — killing the PTY releases it before git removes.
+  await deps.proxyKillSessionsByCwd(worktreePath);
+  // Killing the worktree's ptys freed slots — let the spawn queue reuse them.
+  deps.notifySessionsFreed();
+  // Brief pause so the OS has time to release handles after PTY exit.
+  await new Promise<void>((r) => setTimeout(r, PTY_HANDLE_RELEASE_MS));
+
+  // A user may move, lock or repurpose a checkout while PTY shutdown awaits.
+  const current = await readWorktrees();
+  const same = current?.find((wt) => isSameWorktree(wt.path, worktreePath));
+  if (!current || !same || same.locked || same.branch !== registration.branch ||
+      hasNestedWorktree(current, worktreePath)) {
+    console.warn(`[worktree] cleanup deferred for ${worktreePath}: registrations changed while releasing terminals.`);
+    return false;
+  }
+  return true;
+}
+
+// `worktree remove --force` silently drops uncommitted edits. Every caller
+// (post-merge finalize, task delete, a failed run's teardown, …) gets the
+// same keep-for-the-user archive a fresh Run's reconcile takes — AFTER the
+// PTY kill, so the agent can't still be writing. A normal finalize leaves
+// only Lattice-managed files behind, which aren't archived ('clean').
+// If the archive fails, keep the checkout rather than lose the work (false).
+async function archiveBeforeRemoval(ctx: CleanupContext): Promise<boolean> {
+  const { repoRoot, worktreePath, branchName, deps } = ctx;
+  const archive = deps.archiveUncommitted ?? archiveUncommittedWorktreeChanges;
+  const archived = await archive(repoRoot, worktreePath, branchName);
+  if (archived.status === 'failed') {
+    console.error(
+      `[worktree] cleanup deferred for ${worktreePath}: could not archive its uncommitted ` +
+        `changes (${archived.error}); preserving the checkout and branch.`,
+    );
+    return false;
+  }
+  if (archived.status === 'archived') {
+    console.warn(`[worktree] archived ${archived.files} uncommitted change(s) from ${worktreePath} to ${archived.dir}`);
+  }
+  return true;
+}
+
+// Break any reparse-point loops inside the worktree (npm `file:` self-dep
+// junctions, etc.) before handing it to git — otherwise `git worktree
+// remove` on Windows fails with "failed to delete ...: Function not
+// implemented" and orphans the directory. A failure here must not abort
+// teardown; the worst case is the git removal failing as it did before.
+async function pruneReparsePointsBeforeRemoval(worktreePath: string): Promise<void> {
+  try {
+    const pruned = await pruneReparsePointsUnder(worktreePath);
+    if (pruned > 0) {
+      console.log(
+        `[worktree] cleared ${pruned} reparse point(s) inside ${worktreePath} before removal.`,
+      );
+    }
+  } catch (err) {
+    console.warn(`[worktree] pruneReparsePointsUnder(${worktreePath}) failed (continuing):`, err);
+  }
+}
+
+// Exact `git worktree remove --force`; a failure is classified by whether git
+// still has the checkout registered. Never escalates to a raw fs.rm.
+async function gitRemoveWorktree(ctx: CleanupContext): Promise<RemoveOutcome> {
+  const { worktreePath, git, readWorktrees } = ctx;
+  const rm = await git(['worktree', 'remove', '--force', worktreePath]);
+  if (rm.code === 0) return 'removed';
+  const detail = rm.stderr.trim() || rm.stdout.trim() || '(no output)';
+  // On Windows git stops at the first locked file ("Invalid argument") but
+  // has ALREADY dropped the registration and `.git` — so no sweep that
+  // walks registrations will ever see this checkout (or its branch) again.
+  const afterRm = await readWorktrees();
+  const stillRegistered = !afterRm ||
+    afterRm.some((wt) => isSameWorktree(wt.path, worktreePath));
+  if (stillRegistered) {
+    // Couldn't remove and git still tracks it — leave the directory for the
+    // boot-time orphan sweep to retry. Never escalate to a raw fs.rm here.
+    console.warn(
+      `[worktree] 'git worktree remove --force ${worktreePath}' exit ${rm.code}: ${detail} — ` +
+        'leaving the checkout in place; the boot-time orphan sweep will retry it.',
+    );
+    // Keep the branch and registration together for a later retry. Attempting
+    // branch -D here only adds "branch used by worktree" to the actual error.
+    return 'deferred';
+  }
+  // Registration gone: what is left is inert residue (no `.git`, no
+  // registration), which the residue sweep (recovery/worktreeResidueSweep.ts)
+  // reclaims once it unlocks. The branch step still runs — keeping the
+  // branch here would leak it forever.
+  console.warn(
+    `[worktree] 'git worktree remove --force ${worktreePath}' exit ${rm.code}: ${detail} — ` +
+      'git dropped the registration; the remaining files are left for the residue sweep.',
+  );
+  return 'residue';
+}
+
 // Delete the task branch — but only `lattice/*` ones (projectGit enforces
 // this too; pre-checking just turns a stray name into a skip+log instead
 // of a throw that the caller would have to absorb).
 async function deleteTaskBranch(
-  git: (args: string[]) => ReturnType<typeof projectGit>,
-  readWorktrees: () => Promise<ReturnType<typeof parseWorktreesPorcelain> | null>,
+  git: CleanupGit,
+  readWorktrees: ReadWorktrees,
   branchName: string,
   opts: WorktreeCleanupOptions,
 ): Promise<boolean> {

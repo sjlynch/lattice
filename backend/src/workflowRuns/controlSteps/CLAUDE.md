@@ -77,7 +77,14 @@ a `!==` filter would drop our own project's events; re-evaluate on every (rare)
 hook event and let the canonicalizing lookup decide.
 
 `emitControlProgress` is the single shaper for the `step-control-progress` WS
-event so every worker reports progress identically.
+event so every worker reports progress identically (agent steps' pre-run-tool
+note in `../stepSpawner.ts` and the Run tests step's `progress` use it too).
+
+`isRunEndedEvent(ev, runId)` — the "this workflow run was cancelled/errored"
+filter every wait resolves on. `subscribeOnce(install, onSettle)` — the
+subscribe-before-check, settle-once idiom (unsubscribes even when the listener
+fires synchronously during subscription); used by `raceWorkflowRunEnd` and
+`waitForMergeRunFinished`.
 
 ## `start.ts` — `runStartStep`
 
@@ -117,7 +124,8 @@ until Ready-to-Merge is empty, with an **id-set progress guard**: it aborts the
 moment a full merge run leaves the ready_to_merge id-set unchanged (a
 persistently-erroring task is left in the lane by `processTarget`, so comparing
 the lane before/after — not the error *count* — is what stops the infinite
-loop). Covered by `__tests__/workflowMergeStepLoop.test.ts`.
+loop). Covered by `__tests__/workflowMergeStepLoop.test.ts`. The loop is
+`drainReadyToMerge`; its abort message is built by `noProgressError`.
 
 **Phase C — the post-merge hook gate (do not regress).** The step must not
 report `merge complete` while a post-merge hook is running for the project, or
