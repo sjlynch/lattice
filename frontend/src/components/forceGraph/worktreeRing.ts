@@ -9,6 +9,7 @@
 // live task colors, and slots are reused, so the cache stays small).
 
 import * as THREE from 'three';
+import { finishCanvasTexture, newTextureCanvas } from './canvasTexture';
 import { WORKTREE_RING_RENDER_ORDER } from './renderOrders';
 
 const RING_TAG = 'lattice:worktree-ring';
@@ -33,10 +34,7 @@ const textureCache = new Map<string, THREE.CanvasTexture>();
 function ringTexture(color: string): THREE.CanvasTexture {
   let tex = textureCache.get(color);
   if (tex) return tex;
-  const canvas = document.createElement('canvas');
-  canvas.width = SIZE;
-  canvas.height = SIZE;
-  const ctx = canvas.getContext('2d')!;
+  const { canvas, ctx } = newTextureCanvas(SIZE);
   const cx = SIZE / 2;
   const cy = SIZE / 2;
   const col = new THREE.Color(color);
@@ -61,11 +59,7 @@ function ringTexture(color: string): THREE.CanvasTexture {
   ctx.arc(cx, cy, SIZE * 0.35, 0, Math.PI * 2);
   ctx.stroke();
 
-  tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
+  tex = finishCanvasTexture(canvas);
   textureCache.set(color, tex);
   return tex;
 }

@@ -34,6 +34,9 @@ export const FINGERPRINT_FILES = [
   // gets recorded. This process is spawned with stdio:'ignore', so a change to
   // how (or whether) it writes that file changes the only forensic trail it has.
   'crashLog.js',
+  'crashLog/format.js',
+  'crashLog/liveMirror.js',
+  'crashLog/retention.js',
   // The non-blocking console sink crashLog tees through. A stalled reader on
   // this process's stdio must not be able to freeze its event loop.
   'consoleSink.js',

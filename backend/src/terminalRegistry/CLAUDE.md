@@ -27,6 +27,16 @@ from.
   marker) for `cwd-missing` / `restore-failed` so the UI can show why.
   `endWhere()` is what the kill paths (`terminalProxy.ts` wrappers, the
   `/api/terminals/:id` DELETE) and the exit watcher use.
+- `labels.ts` — `shortLabel` (mirrors the frontend's `taskboard/lanes.ts`
+  `shortLabel`: trim, cap at 18 chars with `…`), plus `taskTerminalLabel` /
+  `mergeTerminalLabel`, so a backend-minted record carries the label the UI
+  would have generated and a restored tab reads identically to the original.
+  Keep it in lockstep with the frontend copy.
+- `index.ts` — the barrel: re-exports the store, session identity,
+  `buildRestoreCommand` / `RESTORE_NUDGE`, `restoreProjectTerminals`, the
+  watch, Codex discovery, `detectInterruption` and the label helpers. Some
+  callers (and the tests) import the individual modules directly; every
+  currently exported name must keep working from both paths.
 
 ## Session identity
 
@@ -132,7 +142,24 @@ from.
   "restoring", no pane attaches to a dead id — go through the spawn queue at
   `batch` priority, and land as `restored` / `restore-failed` events. An
   unreachable executor changes nothing. Re-ending a record for the same reason
-  keeps its original `ended.at`.
+  keeps its original `ended.at`. The single-flight is held until the pass's
+  relaunches settle, but never longer than `RELAUNCH_LOCK_MAX_HOLD_MS`
+  (10 min). Step 2's orphan adoption is `tryAdoptOrphan`.
+- `restoreRelaunch.ts` — the relaunch half, split out of `restore.ts` (which
+  still owns the per-record decision and the exports `restoreProjectTerminals`,
+  `RestoreDeps`, `RestoreOptions`, `isRetryableEnd`; this module imports only
+  the `RestoreDeps` TYPE back, so there is no runtime cycle).
+  `enqueueRelaunch` queues the `terminal-restore` thunk (re-checks the record
+  — closed / re-backed meanwhile ⇒ nothing to spawn; one last Codex discovery;
+  `planRelaunch` → `buildRestoreCommand` → `createSession` with
+  `existingId`; kills a pty whose tab closed mid-spawn; a CAP error throws
+  `SpawnCapacityError` so the queue retries). `planRelaunch` = the nudge
+  decision + Claude transcript-exists + a re-learned conversation, from one
+  `detectInterruption` read. Both failure paths (a spawn error, a rejected
+  thunk) go through `markRelaunchFailed`: clear `relaunching` → end
+  `restore-failed` at the FIRST failure's `at` → `emitRestoreFailed`; the
+  rejected-thunk path is best-effort (each registry write's error swallowed).
+  `scheduleDiscoveryIfUnknown` keeps an id-less adopted Codex tab polling.
 - `watch.ts` — `startTerminalRegistryWatch` (boot): every 3 s diff loaded
   records against `/sessions` + `/health.instanceId` (pty missing, same
   instance ⇒ `exit`) and stamp `lastBusy` transitions from the
