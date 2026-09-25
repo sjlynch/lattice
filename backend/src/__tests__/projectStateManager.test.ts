@@ -1,9 +1,10 @@
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { ProjectStateManager } from '../projectStateManager.js';
+import { writeProjectStateToDiskSync } from '../projectState/diskPersistence.js';
 
 // Regression coverage for the "marked loaded before the cache is populated"
 // race. `loadIfNeeded` used to flip its `loaded` flag true *before* awaiting
@@ -48,6 +49,14 @@ class TestStore extends ProjectStateManager<number[]> {
 
   locked<T>(projectPath: string, fn: () => T | Promise<T>): Promise<T> {
     return this.runProjectWrite(projectPath, fn);
+  }
+
+  // A cached mutation with its debounced persist scheduled (what the exit
+  // flush picks up).
+  async mutate(projectPath: string, state: number[]): Promise<void> {
+    const key = await this.loadIfNeeded(projectPath);
+    this.setCached(key, state);
+    this.schedulePersist(key);
   }
 }
 
@@ -211,6 +220,127 @@ test('a truncated/corrupt file is preserved and never silently replaced by the d
   );
 
   await fs.rm(dir, { recursive: true, force: true });
+});
+
+// The two fallbacks behind the sidecar: a rename that fails (the file is
+// locked on Windows / cross-device) falls back to a copy; a copy that ALSO
+// fails leaves no preserved copy at all, so the key is write-protected and
+// every write path refuses rather than put an empty board over the only
+// recoverable bytes.
+
+function corruptSidecars(dir: string): Promise<string[]> {
+  return fs.readdir(dir).then((entries) => entries.filter((e) => e.includes('.corrupt-')));
+}
+
+function failRenameOf(t: TestContext, file: string): void {
+  const rename = fs.rename;
+  t.mock.method(fs, 'rename', async (...args: Parameters<typeof fs.rename>) => {
+    if (args[0] === file) {
+      throw Object.assign(new Error('file is locked'), { code: 'EBUSY' });
+    }
+    return rename(...args);
+  });
+}
+
+test('a corrupt file whose rename-aside fails is copied to a sidecar and stays writable', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-psm-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'state.json');
+  const truncated = '[{"id":"a"},{"id":"b","v';
+  await fs.writeFile(file, truncated, 'utf8');
+  const store = new TestStore(file);
+  const project = path.join(dir, 'project');
+  failRenameOf(t, file);
+  const errors = t.mock.method(console, 'error', (..._args: unknown[]) => {});
+
+  assert.deepEqual(await store.read(project), []);
+
+  const sidecars = await corruptSidecars(dir);
+  assert.equal(sidecars.length, 1, 'the copy fallback must still produce a .corrupt-* sidecar');
+  assert.equal(await fs.readFile(path.join(dir, sidecars[0]!), 'utf8'), truncated);
+  assert.ok(
+    errors.mock.calls.some((c) => String(c.arguments[0]).includes('Preserved the original')),
+    'the preserved-copy path must be the one logged',
+  );
+
+  // Preserved, so not write-protected: the next write lands normally.
+  await store.write(project, [1, 2, 3]);
+  assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')), [1, 2, 3]);
+  assert.equal(await fs.readFile(path.join(dir, sidecars[0]!), 'utf8'), truncated);
+});
+
+test('a corrupt file that can be neither renamed nor copied write-protects the project', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-psm-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'state.json');
+  const truncated = '[{"id":"a"},{"id":"b","v';
+  await fs.writeFile(file, truncated, 'utf8');
+  const store = new TestStore(file);
+  const project = path.join(dir, 'project');
+  failRenameOf(t, file);
+  const writeFile = fs.writeFile;
+  t.mock.method(fs, 'writeFile', async (...args: Parameters<typeof fs.writeFile>) => {
+    if (String(args[0]).startsWith(`${file}.corrupt-`)) {
+      throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+    }
+    return writeFile(...args);
+  });
+  const errors = t.mock.method(console, 'error', (..._args: unknown[]) => {});
+
+  // The load itself still succeeds (empty in memory) ...
+  assert.deepEqual(await store.read(project), []);
+  assert.equal((await corruptSidecars(dir)).length, 0);
+  assert.ok(
+    errors.mock.calls.some((c) => String(c.arguments[0]).includes('could NOT be preserved')),
+    'the unpreservable path must be the one logged',
+  );
+
+  // ... but no write may replace the corrupt bytes.
+  await assert.rejects(store.write(project, [1, 2, 3]), /refusing to overwrite corrupt/);
+  assert.equal(await fs.readFile(file, 'utf8'), truncated);
+
+  // A debounced persist that fires fails the same way (logged, not thrown).
+  await store.mutate(project, [4, 5]);
+  await store.flushPersist(project);
+  assert.equal(await fs.readFile(file, 'utf8'), truncated);
+
+  // The exit flush (sync twin) refuses too, and logs instead of throwing —
+  // an exit handler must never throw.
+  await store.mutate(project, [6, 7]);
+  errors.mock.resetCalls();
+  assert.doesNotThrow(() => store.flushPendingPersistsSync());
+  assert.equal(await fs.readFile(file, 'utf8'), truncated);
+  const exitFlushLog = errors.mock.calls.find((c) =>
+    String(c.arguments[0]).includes('exit flush failed'),
+  );
+  assert.ok(exitFlushLog, 'the refused exit flush must be logged');
+  assert.match(String(exitFlushLog.arguments[2]), /refusing to overwrite corrupt/);
+  assert.equal(
+    (await fs.readdir(dir)).filter((e) => e.endsWith('.tmp')).length,
+    0,
+    'a refused write must not leave a temp file behind',
+  );
+});
+
+test('writeProjectStateToDiskSync refuses a write-protected key before touching the disk', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-psm-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'state.json');
+  await fs.writeFile(file, 'corrupt{', 'utf8');
+
+  assert.throws(
+    () =>
+      writeProjectStateToDiskSync({
+        name: 'test',
+        key: 'k',
+        file,
+        state: [] as number[],
+        isWriteProtected: (key) => key === 'k',
+      }),
+    /refusing to overwrite corrupt/,
+  );
+  assert.equal(await fs.readFile(file, 'utf8'), 'corrupt{');
+  assert.deepEqual(await fs.readdir(dir), ['state.json']);
 });
 
 test('writeStateNow is atomic (temp→rename) and leaves no temp orphan', async () => {
