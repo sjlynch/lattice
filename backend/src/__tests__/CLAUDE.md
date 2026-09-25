@@ -324,6 +324,17 @@ under `helpers/`.
   sibling `since` rule (a re-adopted hook that started after the debt covers
   it — exactly one hook) is in `postMergeHookTrigger.test.ts`, and Phase C's
   cancel race in `workflowMergeStepPostMergeHook.test.ts`.
+- `snapshotFastForwardMerge.test.ts` — a user's uncommitted edit to one hunk
+  of a file a task's fast-forward also changed: `fastForwardMain` and the
+  merge-run teardown restore both edits (three-way merge against the capture's
+  `baseCommit`) instead of overlaying the pre-merge copy over the task's
+  change; an overlapping edit keeps the merged version, saves the user's copy
+  as `.lattice-conflict` and reports it; a file the merge deleted is not
+  resurrected. `snapshotRecoveryPartialResume.test.ts` — a partial restore
+  narrows its manifest (archived when nothing is retryable) so the next boot
+  re-applies neither a deleted restored file nor a reviewed conflict copy, and
+  an interrupted Merge All still resumes (owed hook deferred meanwhile) after
+  boot snapshot recovery stole and retired its dead `merge-run` lock.
 - `workflowRunsWsRecoveryHello.test.ts` — `/ws/workflow-runs` across the
   post-restart recovery window: a connect before recovery gets
   `hello {recovering: true}` then an authoritative hello carrying the restored

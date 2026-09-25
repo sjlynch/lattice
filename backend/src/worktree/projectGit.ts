@@ -34,6 +34,7 @@ import {
 import { assertAllowedBranchArgs } from './projectGit/validators/branch.js';
 import { assertAllowedCheckoutArgs } from './projectGit/validators/checkout.js';
 import { assertAllowedMergeArgs } from './projectGit/validators/merge.js';
+import { assertAllowedMergeFileArgs } from './projectGit/validators/mergeFile.js';
 import { assertAllowedResetArgs } from './projectGit/validators/reset.js';
 import { assertAllowedRmArgs } from './projectGit/validators/rm.js';
 import { assertAllowedWorktreeArgs } from './projectGit/validators/worktree.js';
@@ -46,6 +47,7 @@ const MUTATING_SUBCOMMAND_VALIDATORS = new Map<string, ProjectGitSubcommandValid
   ['worktree', assertAllowedWorktreeArgs],
   ['branch', assertAllowedBranchArgs],
   ['merge', assertAllowedMergeArgs],
+  ['merge-file', assertAllowedMergeFileArgs],
   ['checkout', assertAllowedCheckoutArgs],
   ['reset', assertAllowedResetArgs],
   ['rm', assertAllowedRmArgs],

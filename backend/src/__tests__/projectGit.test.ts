@@ -67,6 +67,11 @@ test('projectGit policy covers each mutating subcommand validator', () => {
 
   allowed(['rm', '--cached', 'src/api.ts']);
   denied(['rm', '--quiet', 'src/api.ts']);
+
+  // Print-only three-way merge for snapshot restore (snapshot/threeWay.ts).
+  allowed(['merge-file', '-p', '-L', 'a', '-L', 'b', '-L', 'c', '/snap/x.ts', '/tmp/base', '/repo/x.ts']);
+  denied(['merge-file', '/repo/x.ts', '/tmp/base', '/snap/x.ts']);
+  denied(['merge-file', '-p', '--object-id', 'aaa', 'bbb', 'ccc']);
 });
 
 test('projectGit policy refuses everything that could damage the repo', () => {

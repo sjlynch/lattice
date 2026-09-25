@@ -18,6 +18,20 @@ export type SnapshotHandle = {
   // content is HEAD's). Capture resurrects them so the FF sees a clean tree;
   // restore deletes them again. Optional: older handles/manifests lack it.
   deleted?: string[];
+  // HEAD commit at capture — the merge base for a path the fast-forward
+  // rewrote after capture (see restore.ts / threeWay.ts). Optional: a clean
+  // tree, an unborn HEAD, and older handles/manifests lack it.
+  baseCommit?: string;
+};
+
+// What happened to a path a partial restore dropped from the pending list —
+// informational only, never acted on (the payload stays in the dir).
+export type RetiredSnapshotPath = {
+  file: string;
+  outcome: 'restored' | 'conflict' | 'failed';
+  backupPath?: string;
+  message?: string;
+  at: number;
 };
 
 export type SnapshotManifest = {
@@ -29,7 +43,19 @@ export type SnapshotManifest = {
   untracked: string[];
   deleted?: string[];
   owner?: LockBody;
+  baseCommit?: string;
+  // A partial restore narrows the lists above to the paths still worth
+  // retrying and records the rest here. When nothing is left to retry the
+  // snapshot is `archived`: kept for the user, never auto-restored again.
+  retired?: RetiredSnapshotPath[];
+  archived?: boolean;
 };
+
+// A full object id (SHA-1 or SHA-256). The manifest's `baseCommit` becomes a
+// `<rev>:<path>` git argument, so nothing else is accepted.
+export function isCommitId(value: unknown): value is string {
+  return typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value);
+}
 
 export const EMPTY_HANDLE: SnapshotHandle = { dir: '', modifiedTracked: [], untracked: [] };
 
@@ -52,7 +78,9 @@ export function isSupportedSnapshotManifest(manifest: unknown): manifest is Snap
     && Array.isArray(value.modifiedTracked) && value.modifiedTracked.every((file) => typeof file === 'string')
     && Array.isArray(value.untracked) && value.untracked.every((file) => typeof file === 'string')
     && (value.deleted === undefined
-      || (Array.isArray(value.deleted) && value.deleted.every((file) => typeof file === 'string')));
+      || (Array.isArray(value.deleted) && value.deleted.every((file) => typeof file === 'string')))
+    && (value.baseCommit === undefined || isCommitId(value.baseCommit))
+    && (value.archived === undefined || typeof value.archived === 'boolean');
 }
 
 export async function readSnapshotManifest(manifestPath: string): Promise<SnapshotManifest | null> {

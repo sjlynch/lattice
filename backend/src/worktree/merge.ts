@@ -14,6 +14,7 @@ import {
 } from './merge/mergeResidue.js';
 import { mergeDiskSpaceShortfall } from './diskFull.js';
 import {
+  describePartialRestore,
   snapshotWorkingTree,
   restoreSnapshot,
   type SnapshotHandle,
@@ -208,9 +209,11 @@ async function performFastForward(
   return { ok: true };
 }
 
-// Phase 3 — restore after a successful FF. Newer dirty edits survive; captured
-// versions overlay only verified clean HEAD content. A partial restore returns
-// a warning that finalize surfaces without retrying the already-landed FF.
+// Phase 3 — restore after a successful FF. Newer dirty edits survive; a
+// captured edit to a file the FF also changed is three-way merged with it
+// (snapshot/threeWay.ts), and one that overlaps it keeps the FF's version with
+// the captured copy saved beside it as `.lattice-conflict`. A partial restore
+// returns a warning that finalize surfaces without retrying the landed FF.
 async function restoreAfterFastForward(
   repoRoot: string,
   snapshot: SnapshotHandle | undefined,
@@ -219,7 +222,7 @@ async function restoreAfterFastForward(
     try {
       const restored = await restoreSnapshot(snapshot, repoRoot);
       if (restored.status === 'restored') return;
-      const warning = `Snapshot partly restored; newer edits preserved, captured versions retained at ${snapshot.dir}`;
+      const warning = describePartialRestore(restored, snapshot.dir);
       console.warn(`[fastForwardMain] ${warning}`);
       return warning;
     } catch (err) {
