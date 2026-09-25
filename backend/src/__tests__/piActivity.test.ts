@@ -37,11 +37,18 @@ test('installPiActivityExtension writes .pi/extensions/lattice-activity.ts and i
   assert.equal((await fs.stat(file)).mtimeMs, before, 'an identical file is not rewritten');
 });
 
+// The extension's in-order post queue (shared on globalThis).
+const postQueue = () =>
+  (globalThis as unknown as Record<string, { tail: Promise<void> } | undefined>)
+    .__latticePiActivityPostQueue;
+
 // Load a rendered extension as a module and drive it with a fake Pi API,
-// capturing what it POSTs.
+// capturing what it POSTs. `delayMsFor` makes the stubbed fetch for a body
+// resolve that much later.
 async function driveExtension(
   src: string,
   run: (emit: (event: string, payload: unknown, ctx: unknown) => void) => void,
+  opts: { delayMsFor?: (body: Record<string, unknown>) => number; log?: string[] } = {},
 ): Promise<Record<string, unknown>[]> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-pi-activity-run-'));
   const file = path.join(dir, 'ext.mjs');
@@ -49,7 +56,12 @@ async function driveExtension(
   const posted: Record<string, unknown>[] = [];
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (_url: string, init: { body: string }) => {
-    posted.push(JSON.parse(init.body));
+    const body = JSON.parse(init.body) as Record<string, unknown>;
+    posted.push(body);
+    opts.log?.push(`start:${String(body.hook_event_name)}`);
+    const delay = opts.delayMsFor?.(body) ?? 0;
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+    opts.log?.push(`settled:${String(body.hook_event_name)}`);
     return new Response(null, { status: 204 });
   }) as unknown as typeof fetch;
   try {
@@ -60,6 +72,7 @@ async function driveExtension(
     mod.default({ on: (e, h) => handlers.set(e, h) });
     run((event, payload, ctx) => handlers.get(event)?.(payload, ctx));
     await new Promise((r) => setTimeout(r, 10));
+    await postQueue()?.tail;
   } finally {
     globalThis.fetch = realFetch;
     await fs.rm(dir, { recursive: true, force: true });
@@ -103,6 +116,29 @@ test('project mode: session lifecycle + session_id on every body; a subagent rep
     ],
   );
   assert.deepEqual(posted[2].tool_input, { file_path: 'a.ts' });
+});
+
+test('posts are serialized: a slow PostToolUse settles before the turn's Stop is sent', async () => {
+  const src = renderPiActivityExtension('http://127.0.0.1:5184/api/project-activity/T', { projectSession: true });
+  const main = ctxFor('main-3', true);
+  const log: string[] = [];
+  const posted = await driveExtension(
+    src,
+    (emit) => {
+      emit('tool_execution_start', { toolCallId: 'c1', toolName: 'read', args: { path: 'a.ts' } }, main);
+      // An interrupted turn: tool_execution_end and agent_settled back to back.
+      emit('tool_execution_end', { toolCallId: 'c1', toolName: 'read' }, main);
+      emit('agent_settled', {}, main);
+    },
+    // The first requests are slower than the Stop that follows them.
+    { log, delayMsFor: (b) => (b.hook_event_name === 'PreToolUse' ? 40 : b.hook_event_name === 'PostToolUse' ? 25 : 0) },
+  );
+  assert.deepEqual(posted.map((b) => b.hook_event_name), ['PreToolUse', 'PostToolUse', 'Stop']);
+  assert.deepEqual(log, [
+    'start:PreToolUse', 'settled:PreToolUse',
+    'start:PostToolUse', 'settled:PostToolUse',
+    'start:Stop', 'settled:Stop',
+  ]);
 });
 
 test('task mode posts no session lifecycle and no session_id (presence is the spawn registry)', async () => {

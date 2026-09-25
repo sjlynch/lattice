@@ -12,8 +12,12 @@
 // mergeLocks.ts, so a manual /merge call landing during a run can't race.
 
 import { listTasks } from './tasks.js';
-import { isRepoMaintenanceRunning, runRepoMaintenance } from './worktree/repoMaintenance.js';
-import { REPO_MAINTENANCE_BUSY_MESSAGE } from './projectRunLock.js';
+import {
+  isRepoMaintenanceRunning,
+  runRepoMaintenance,
+  waitForRepoMaintenance,
+} from './worktree/repoMaintenance.js';
+import { RepoMaintenanceBusyError } from './projectRunLock.js';
 import { processTarget } from './mergeRuns/processTarget.js';
 import { runPreflight } from './mergeRuns/preflight.js';
 import {
@@ -105,7 +109,41 @@ export function signalConflictWaiter(taskId: string): boolean {
 // clears initializeRunState's 409 / cross-process-lock gates instead of being
 // rejected and swallowed here.
 function restartMergeRun(projectPath: string, backendOrigin: string): void {
-  startMergeRun(projectPath, backendOrigin).catch(() => {});
+  startMergeRunAfterMaintenance(projectPath, backendOrigin).catch(() => {});
+}
+
+// Retries allowed after a housekeeping refusal. Another gc can only begin a
+// minute after a merge run ENDS, so more than one retry is already rare; the
+// bound just keeps a misbehaving wait from spinning.
+const MAINTENANCE_RETRY_LIMIT = 3;
+
+// startMergeRun for a callback that restarts the run on behalf of the
+// remaining Ready-to-Merge tasks (/stash-resolved, a resolver's finalize, the
+// mid-run restart above). Those callers swallow a throw as "another run is
+// active and owns the rest" — but a refusal because the post-run `git gc` is in
+// flight means nothing owns the rest, and nothing retries after the gc. So wait
+// for the housekeeping to finish and retry; every other refusal (a run already
+// active, another process's lock) is rethrown unchanged for the caller.
+export async function startMergeRunAfterMaintenance(
+  projectPath: string,
+  backendOrigin: string,
+  options: StartMergeRunOptions = {},
+  deps: {
+    start?: (projectPath: string, backendOrigin: string, options: StartMergeRunOptions) => Promise<MergeRun>;
+    waitForMaintenance?: (projectPath: string) => Promise<boolean>;
+  } = {},
+): Promise<MergeRun> {
+  const start = deps.start ?? ((p, o, opts) => startMergeRun(p, o, opts));
+  const wait = deps.waitForMaintenance ?? ((p) => waitForRepoMaintenance(p));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await start(projectPath, backendOrigin, options);
+    } catch (err) {
+      if (!(err instanceof RepoMaintenanceBusyError) || attempt >= MAINTENANCE_RETRY_LIMIT) throw err;
+      console.log(`[merge-run] ${projectPath}: git housekeeping in flight — restarting the merge run once it finishes`);
+      if (!(await wait(projectPath))) throw err;
+    }
+  }
 }
 
 export async function startMergeRun(
@@ -123,7 +161,7 @@ export async function startMergeRun(
   // refuses for the whole housekeeping with a message that says why. 'inherit'
   // callers (the workflow Merge step) already waited for it before their lock.
   if (lockMode === 'acquire' && isRepoMaintenanceRunning(projectPath)) {
-    throw new Error(REPO_MAINTENANCE_BUSY_MESSAGE);
+    throw new RepoMaintenanceBusyError();
   }
 
   // Lock acquisition + active-run (409) detection. Throws before any run

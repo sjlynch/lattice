@@ -9,6 +9,8 @@
 // recorded with NO stored value (env: resolves from the ambient env; header: a
 // placeholder the user still has to supply). Env keys go to `secretEnvVars`,
 // header names to `secretHeaders`; the resolver re-injects both at spawn.
+// A secret embedded in the `url` or `args` has no such slot: the entry keeps a
+// REDACTED copy and `embeddedSecrets` flags it so applyImport refuses it.
 //
 // The secret classification itself (name/value-shape detection, references)
 // lives in ./secretDetection.ts so the security surface is auditable in one
@@ -16,7 +18,13 @@
 // These rules are security-relevant — see the unit tests in mcp.import.test.ts.
 
 import { type McpServerEntry } from '../catalog.js';
-import { isReference, looksSecret, looksSecretValue } from './secretDetection.js';
+import {
+  isReference,
+  looksSecret,
+  looksSecretValue,
+  scanArgsForSecrets,
+  scanUrlForSecrets,
+} from './secretDetection.js';
 
 // ---- internal normalized form (keeps literal secret values for apply) -------
 
@@ -24,6 +32,11 @@ export type Normalized = {
   entry: McpServerEntry;
   secrets: Record<string, string>; // envVar -> literal value to store
   source: string;
+  // Secrets found embedded in `url` / `args` (descriptions only, never values).
+  // Those have no env/header slot to move into the secrets file, so the entry
+  // carries a REDACTED url/args and applyImport refuses it — the user must move
+  // the key into env / a header in the source config (or add it by hand).
+  embeddedSecrets: string[];
 };
 
 export type RawServer = {
@@ -73,9 +86,14 @@ export function normalizeServer(
   const secrets: Record<string, string> = {};
   const secretEnvVars: string[] = [];
   const secretHeaders: string[] = [];
+  let embeddedSecrets: string[] = [];
 
   if (isHttp) {
-    entry.url = String(raw.url);
+    // Only the redacted URL is kept: a key in its userinfo / query / path must
+    // never reach the scan response, globalSettings.json or a command line.
+    const url = scanUrlForSecrets(String(raw.url));
+    entry.url = url.redacted;
+    embeddedSecrets = url.findings;
     // Headers get the SAME secret classification as stdio env (below): an auth
     // header carrying a literal key (`Authorization: Bearer sk-…`, `X-Api-Key:
     // …`) must not land inline in the (non-0600) globalSettings.json. Detected
@@ -108,7 +126,10 @@ export function normalizeServer(
     }
   } else {
     entry.command = command;
-    entry.args = asStringArray(raw.args);
+    // Same for args (`--api-key sk-…`, `KEY=sk-…`, a credentialed URL arg).
+    const args = scanArgsForSecrets(asStringArray(raw.args));
+    entry.args = args.redacted;
+    embeddedSecrets = args.findings;
     const inlineEnv: Record<string, string> = {};
     if (raw.env && typeof raw.env === 'object') {
       for (const [k, v] of Object.entries(raw.env as Record<string, unknown>)) {
@@ -131,5 +152,5 @@ export function normalizeServer(
 
   if (secretEnvVars.length > 0) entry.secretEnvVars = [...new Set(secretEnvVars)];
   if (secretHeaders.length > 0) entry.secretHeaders = [...new Set(secretHeaders)];
-  return { entry, secrets, source };
+  return { entry, secrets, source, embeddedSecrets: [...new Set(embeddedSecrets)] };
 }

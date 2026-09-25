@@ -95,7 +95,9 @@ export function buildMcpRouter(): Router {
   });
 
   // Scan other tools' MCP configs (Claude Code / Cursor / Codex / VS Code /
-  // Windsurf). Secrets redacted to presence booleans.
+  // Windsurf). Env/header secrets redacted to presence booleans; a secret
+  // embedded in a url/args is redacted in `summary` and listed (by description)
+  // in `embeddedSecrets`.
   r.get('/api/mcp-import/scan', async (req, res) => {
     const project = readProjectParam(req, res, { source: 'query', optional: true });
     if (project === null) return;
@@ -104,7 +106,8 @@ export function buildMcpRouter(): Router {
   });
 
   // Apply selected imports: add custom server defs to the global catalog and
-  // store any literal keys in the secrets file.
+  // store any literal keys in the secrets file. A server with a secret embedded
+  // in its url/args is refused (`refused: [{id, reason}]`), never written inline.
   r.post('/api/mcp-import', async (req, res) => {
     const body = (req.body || {}) as { ids?: unknown; project?: unknown };
     const ids = Array.isArray(body.ids)

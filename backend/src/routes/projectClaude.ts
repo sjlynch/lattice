@@ -6,10 +6,13 @@
 //     Lattice's activity hooks in <project>/.claude/settings.local.json.
 //     Called by the frontend when a project is opened / the toggle changes.
 //   POST /api/project-activity/:token
-//     PreToolUse/PostToolUse/SessionStart/SessionEnd hook callback for those
-//     sessions. Keyed by Claude's session_id (from the body), it drives the
-//     same orange node + focus beams as the Lattice-spawned non-worktree
-//     sessions (reuses agentSessions + agentActivity).
+//     Activity hook callback for those sessions — Claude's settings.local.json
+//     hooks, a user-opened Codex tab's per-launch overrides, the project-root
+//     Pi extension: SessionStart/SessionEnd, UserPromptSubmit/Stop,
+//     Pre/PostToolUse and SubagentStart/SubagentStop. Keyed by the body's
+//     session_id, it drives a node (colored by harness) + focus beams like the
+//     Lattice-spawned non-worktree sessions (reuses agentSessions +
+//     agentActivity); presence follows turns (projectClaude/lifecycle.ts).
 
 import { promises as fs } from 'node:fs';
 import { Router } from 'express';

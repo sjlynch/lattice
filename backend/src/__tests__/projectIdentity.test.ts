@@ -13,6 +13,7 @@ import { TaskCacheManager } from '../taskCache/manager.js';
 import { loadPersistedWorkflowRuns } from '../workflowRuns/persistence.js';
 import { normalizeLoadedRuns } from '../mergeRuns/normalization.js';
 import { recoverPendingSnapshots } from '../worktree/snapshot/recovery.js';
+import { isBindingFileName } from '../projectIdentity/binding.js';
 
 const home = path.join(os.homedir(), '.lattice');
 function oldHash(input: string) {
@@ -160,8 +161,24 @@ test('stray files and incomplete snapshot metadata do not break project identity
   await fs.writeFile(path.join(home, 'snapshots', strayHash, 'README.txt'), 'manual recovery notes');
   await fs.mkdir(path.join(home, 'snapshots', strayHash, 'incomplete', '_lattice-snapshot.json'));
   await fs.writeFile(path.join(home, 'per-project', strayHash), 'not a project directory');
+  // Not `<hash>.json`: inventory must skip it, not parse it and throw a conflict.
+  const strayBinding = path.join(home, 'project-identities', `${strayHash}_json`);
+  await fs.mkdir(path.dirname(strayBinding), { recursive: true });
+  await fs.writeFile(strayBinding, 'not a binding');
+  t.after(() => fs.rm(strayBinding, { force: true }));
   assert.equal(projectHash(repo), oldHash(canonicalProjectPath(repo)));
   assert.equal(await fs.readFile(path.join(home, 'snapshots', strayHash, 'README.txt'), 'utf8'), 'manual recovery notes');
+});
+
+// ac13fa0 moved this regex into a template literal, where `\.` silently became
+// `.` (any character) — so `<hash>Xjson` stray files were parsed as bindings.
+test('isBindingFileName accepts only <12 hex>.json', () => {
+  assert.equal(isBindingFileName('0123456789ab.json'), true);
+  assert.equal(isBindingFileName('0123456789abxjson'), false);
+  assert.equal(isBindingFileName('0123456789ab_json'), false);
+  assert.equal(isBindingFileName('0123456789ab-json'), false);
+  assert.equal(isBindingFileName('0123456789ab.json.1.x.tmp'), false);
+  assert.equal(isBindingFileName('0123456789AB.json'), false);
 });
 
 test('unreadable legacy identity evidence refuses a new binding and preserves the store', async (t) => {

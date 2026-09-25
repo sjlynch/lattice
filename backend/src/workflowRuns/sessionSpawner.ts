@@ -9,7 +9,8 @@ import { cancelSpawn, enqueueSpawn, notifySessionsFreed, SpawnCapacityError } fr
 import { registerAgentSession, unregisterAgentSession } from '../agentSessions.js';
 import { forgetAgentQuiescence } from '../agentQuiescence.js';
 import type { Workflow } from '../workflows.js';
-import { checkpointWorkflowRun, notify, snapshot, type WorkflowRun } from './state.js';
+import { checkpointWorkflowRun, notify, type WorkflowRun } from './state.js';
+import { markRunErrored } from './runErrored.js';
 
 // Stable graph-node id for a workflow-step session. A new id per step, so
 // advancing the run swaps one node for the next.
@@ -69,13 +70,9 @@ function markWorkflowStepSpawnErrored(
   // callback advanced the run. In that case, do not overwrite the terminal
   // state; just make sure any speculative presence node is gone.
   if (!isCurrentRunningStep(run, stepIndex)) return;
-  run.status = 'errored';
-  run.finishedAt = Date.now();
-  run.error = `workflow step ${stepIndex + 1} failed to spawn: ${error}`;
-  notify({ type: 'errored', run: snapshot(run) });
-  // Durable now — `notify` only schedules the debounced mirror (see
-  // cancelWorkflowRun in ../workflowRuns.ts).
-  void checkpointWorkflowRun(run).catch(() => {});
+  // Durable now — markRunErrored checkpoints; `notify` alone only schedules
+  // the debounced mirror (see cancelWorkflowRun in ../workflowRuns.ts).
+  markRunErrored(run, `workflow step ${stepIndex + 1} failed to spawn: ${error}`);
 }
 
 async function killWorkflowStepServer(

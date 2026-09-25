@@ -213,7 +213,8 @@ serverless for now — see `frontend/src/components/sidebar/CLAUDE.md`.)
   `sources.ts` — see `import/CLAUDE.md`). Literal secret-looking **env AND
   HTTP-header** values go to the secrets file, off the entry (`secretEnvVars` /
   `secretHeaders`, re-injected at spawn); references (`${input:…}`, Codex
-  `bearer_token_env_var`) are recorded with no value.
+  `bearer_token_env_var`) are recorded with no value. A secret embedded in a
+  `url` / `args` is redacted in the scan and the server is refused on apply.
 - `../latticeMcp/` — the other half of `lattice`: the stdio server (board tools
   + Opengrep tools; `opengrep_ignore` outside task worktrees only) and
   `entryPath.ts`, which `catalog.ts` calls to bake the

@@ -12,7 +12,7 @@ import { proxyKillSession as rawProxyKillSession } from '../terminalServerClient
 import { getSpawnQueueSnapshot, notifySessionsFreed } from '../spawnQueue.js';
 import { terminalRegistry } from '../terminalRegistry/store.js';
 import { getTerminalServerStatus } from '../terminalServerStatus.js';
-import { endPostMergeHook, getActiveHookForServerId } from '../postMergeHooks.js';
+import { abortPostMergeHookForServerId } from '../postMergeHooks.js';
 
 export function buildTerminalsRouter(): Router {
   const r = Router();
@@ -111,13 +111,9 @@ export function buildTerminalsRouter(): Router {
   // user giving up on it: end the hook `aborted` so the merge run / workflow
   // Merge step waiting on its callback unblocks instead of parking until the
   // wait's deadline. The hook's own kill is skipped — it happens right below.
+  // (The tab-close route in terminalTabs.ts does the same.)
   r.delete('/api/terminals/:id', async (req, res) => {
-    const hook = getActiveHookForServerId(req.params.id);
-    if (hook) {
-      await endPostMergeHook(hook.id, 'aborted', 'terminal closed by user', {
-        killSession: false,
-      });
-    }
+    await abortPostMergeHookForServerId(req.params.id);
     await terminalRegistry
       .endWhere((r) => r.serverId === req.params.id, { reason: 'closed' })
       .catch(() => 0);

@@ -23,14 +23,23 @@
 // missed stop is reaped by the graph's idle TTL.)
 //
 // Every POST is fire-and-forget with a short timeout: a handler never delays a
-// tool call, and a backend that is down or restarting just loses a beam.
+// tool call, and a backend that is down or restarting just loses a beam. The
+// POSTs are SERIALIZED, though (each waits for the previous one to settle), so
+// they reach the route in event order the way Claude's and Codex's hook
+// commands do: concurrent requests could land a turn's last PostToolUse after
+// its Stop, and any non-Stop event cancels the post-Stop removal
+// (projectClaude/lifecycle.ts), leaving the node up until the idle TTL. The
+// queue lives on `globalThis` so a pi-subagents subagent's re-evaluated module
+// (which posts under the parent's session_id) shares it.
 //
 // Project mode (`projectSession`): the same extension at the PROJECT ROOT, for
 // a `pi` the user runs in a sidebar tab — the Pi analogue of the project's
 // `.claude/settings.local.json` hooks (projectClaudeHooks.ts). It posts to
 // `/api/project-activity/:token`, which keys the node by the body's
-// `session_id` and creates it only on `SessionStart`, so every body carries the
-// top-level session's id and its start/shutdown post SessionStart/SessionEnd.
+// `session_id`, so every body carries the top-level session's id. The node
+// follows turns (projectClaude/lifecycle.ts): a turn's start / tool use creates
+// it and its Stop (`agent_settled`) takes it down shortly after, while the
+// session's start/shutdown post SessionStart/SessionEnd.
 // Pi loads extensions with `moduleCache: false`, so a pi-subagents subagent
 // re-evaluates this module: the parent's id is handed over on `globalThis`
 // (same process) rather than a module variable.
@@ -48,7 +57,7 @@ export function renderPiActivityExtension(
   return `// Lattice-managed — do not commit. Reports which files this Pi session (and
 // any pi-subagents subagent it spawns) reads or edits to Lattice, which draws
 // the agent's node, focus beams and file labels on its graph. Fire-and-forget:
-// a handler never delays a tool call.
+// a handler never delays a tool call. Posts are sent one at a time, in order.
 
 const ACTIVITY_URL = ${JSON.stringify(activityUrl)};
 // Project mode, for a pi the user runs at the project root: bodies carry the top-level
@@ -56,21 +65,39 @@ const ACTIVITY_URL = ${JSON.stringify(activityUrl)};
 const PROJECT_SESSION = ${opts.projectSession === true};
 const MAIN_SESSION_KEY = "__latticePiProjectSessionId";
 const POST_TIMEOUT_MS = 1500;
+// The in-order post queue, shared by every instance of this module in the
+// process (a pi-subagents subagent re-evaluates it). Bounded so a hung backend
+// can't grow it without limit: past the cap a post is dropped.
+const POST_QUEUE_KEY = "__latticePiActivityPostQueue";
+const MAX_PENDING_POSTS = 64;
 // Pi tool name -> the Claude tool name the activity route understands.
 const TOOLS = { read: "Read", edit: "Edit", write: "Write", bash: "Bash" };
 
+function send(body) {
+  // The timeout starts when the request does, not when it was queued.
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), POST_TIMEOUT_MS);
+  return fetch(ACTIVITY_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: ac.signal,
+  }).finally(() => clearTimeout(timer));
+}
+
+// Queue a POST behind the previous one, so events arrive in the order they
+// fired (a late PostToolUse must not land after the turn's Stop).
 function post(body) {
   try {
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), POST_TIMEOUT_MS);
-    fetch(ACTIVITY_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: ac.signal,
-    })
+    const q = globalThis[POST_QUEUE_KEY] || (globalThis[POST_QUEUE_KEY] = { tail: Promise.resolve(), pending: 0 });
+    if (q.pending >= MAX_PENDING_POSTS) return;
+    q.pending++;
+    q.tail = q.tail
+      .then(() => send(body))
       .catch(() => {})
-      .finally(() => clearTimeout(timer));
+      .finally(() => {
+        q.pending--;
+      });
   } catch {
     // Reporting must never throw into Pi.
   }

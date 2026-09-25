@@ -13,12 +13,17 @@ import {
   isSpawnDeferral,
   isSpawnDiskSpaceError,
 } from '../../spawnQueue.js';
-import { normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
-import { normalizePiModel } from '../../piModels.js';
-import { getUserSettings } from '../../userSettings.js';
+import type { AgentHarness } from '../../harnesses.js';
 import type { Workflow } from '../../workflows.js';
 import { notify, type WorkflowRun } from '../state.js';
 import { emitControlProgress } from './shared.js';
+import { resolveStartStepHarnessPicker } from './startHarness.js';
+
+export {
+  startStepTaskPiModel,
+  resolveStartStepHarnessPicker,
+  type StartStepTaskHarness,
+} from './startHarness.js';
 
 // Injectable seam (production default below). Mirrors merge.ts's MergeStepDeps:
 // the hard-cap handling (Fix 1) is the subtle part, so the regression test
@@ -58,66 +63,163 @@ function runAlreadyQueued(task: Task, deps: StartStepDeps): boolean {
   return task.runQueued === true || deps.hasQueuedRun?.(task.id) === true;
 }
 
-// The Pi model the Start step's spawned task agents should use FOR A RUN-LEVEL
-// OVERRIDE. Mirrors the run-level harness resolution and `effectiveStepPiModel`
-// for regular workflow steps: the run's `piModelOverride` applies, but only
-// when the run is a Pi run (Claude/codex ignore it, and a non-pi run must not
-// pin a Pi model). Returns undefined otherwise so `startTaskById` falls back to
-// the per-project default Pi model. Without this the Start step silently
-// dropped the override and every spawned task ran on the project/default model.
-// (The no-override case — the per-project DEFAULT harness/model — is resolved by
-// `resolveStartStepHarnessPicker`.)
-export function startStepTaskPiModel(
-  run: Pick<WorkflowRun, 'harnessOverride' | 'piModelOverride'>,
-): string | undefined {
-  return normalizeAgentHarness(run.harnessOverride) === 'pi'
-    ? run.piModelOverride
-    : undefined;
+// Task titles are clipped to this many characters in the step's log lines.
+const LOG_TITLE_CHARS = 60;
+
+function logTitle(task: Task): string {
+  return task.title.slice(0, LOG_TITLE_CHARS);
 }
 
-export type StartStepTaskHarness = {
-  harness: AgentHarness;
-  piModel: string | undefined;
+// Running per-outcome counts for one Start step, reported as progress after
+// every task.
+type StartTally = {
+  started: number;
+  failed: number;
+  // Tasks that hit the terminal-server hard cap: left Open and re-queued on the
+  // spawn queue rather than force-flipped to in_progress with no agent (Fix 1).
+  // They are NOT counted as started (there is no live agent yet) and NOT as
+  // failed (a cap rejection isn't an error — the queue will start them when a
+  // slot frees). Tracked separately so the "no progress" throw below can tell a
+  // genuinely-failed run from one that merely overflowed the cap.
+  deferred: number;
+  firstError: string | null;
 };
 
-// Resolves the harness + Pi model the Start step should spawn each Open task on,
-// mirroring the Task Board "Run All" path this step documents itself as matching:
-//   - A run-level harness override pins EVERY spawned task to that harness (and,
-//     for a Pi override, its `piModelOverride`) — the override case.
-//   - With NO override, the per-project default applies — exactly like Run All,
-//     which sends `UserSettings.harness` / `piModel` on each /run. `interleave`
-//     is expanded the way the UI's `pickRunHarness` does: alternate claude/pi
-//     across consecutive tasks (starting on claude), so a Start step over N Open
-//     tasks produces the same claude/pi mix Run All would. Pi picks carry the
-//     project's default Pi model; claude/codex picks never pin one.
-// Resolving the per-project default ONCE (one settings read) returns a picker
-// `(taskIndex) => {harness, piModel}`; `taskIndex` only matters for interleave.
-//
-// Without this the Start step hardcoded `normalizeAgentHarness(harnessOverride)`,
-// which is `'claude'` whenever the run has no override (the common case) — so a
-// project whose default harness is Pi/Codex got every workflow-started task
-// silently forced onto Claude.
-export async function resolveStartStepHarnessPicker(
-  run: Pick<WorkflowRun, 'harnessOverride' | 'piModelOverride'>,
-  projectPath: string,
-): Promise<(taskIndex: number) => StartStepTaskHarness> {
-  // Run-level override → pin every task to that harness + its Pi model override.
-  if (run.harnessOverride) {
-    const harness = normalizeAgentHarness(run.harnessOverride);
-    const piModel = startStepTaskPiModel(run);
-    return () => ({ harness, piModel });
+function emitStartProgress(
+  run: WorkflowRun,
+  stepIndex: number,
+  tally: StartTally,
+  total: number,
+): void {
+  emitControlProgress(
+    run,
+    stepIndex,
+    'start',
+    tally.started + tally.failed + tally.deferred,
+    total,
+    startProgressMessage(total, tally.started, tally.failed, tally.deferred),
+  );
+}
+
+// What `startOneTask` needs from the surrounding step besides the task itself.
+type StartOneTaskContext = {
+  wf: Workflow;
+  run: WorkflowRun;
+  stepIndex: number;
+  backendOrigin: string;
+  deps: StartStepDeps;
+};
+
+type StartOneTaskResult =
+  | { outcome: 'started' }
+  | { outcome: 'deferred' }
+  | { outcome: 'failed'; error: string };
+
+// One task of the Start step: admission hold → already-queued → startTask →
+// `workflow-task-spawned` notify, classified as started, deferred (left to the
+// spawn queue) or failed (with its error message).
+async function startOneTask(
+  task: Task,
+  harness: AgentHarness,
+  piModel: string | undefined,
+  ctx: StartOneTaskContext,
+): Promise<StartOneTaskResult> {
+  const { wf, run, stepIndex, backendOrigin, deps } = ctx;
+  // Hand the task to the spawn queue, then warn why. `queueFailure` names the
+  // enqueue in its error line; `reason` finishes the warning.
+  const requeue = async (queueFailure: string, reason: string): Promise<void> => {
+    try {
+      await deps.enqueueRun(task.id, backendOrigin, harness, piModel);
+    } catch (enqErr) {
+      console.error(
+        `[workflow-run] ${run.id} start step: failed to ${queueFailure} ${task.id}:`,
+        enqErr,
+      );
+    }
+    console.warn(
+      `[workflow-run] ${run.id} start step: task ${task.id} ("${logTitle(task)}") ${reason}`,
+    );
+  };
+
+  // Starting directly bypasses the spawn queue, and with it the
+  // maxConcurrentAgents cap and the CPU/RAM governor: a 50-task Start step
+  // used to launch 50 agents at once. When the queue would hold a batch
+  // spawn right now, hand the task to it instead (the same deferral a cap
+  // rejection takes below) — it starts as soon as capacity returns.
+  const hold = await deps.admissionHold?.();
+  if (hold) {
+    await requeue('queue task', `queued instead of started — ${hold}`);
+    return { outcome: 'deferred' };
   }
-  // No override → the per-project default, read from UserSettings like Run All.
-  const settings = await getUserSettings(projectPath);
-  const piModel = normalizePiModel(settings.piModel);
-  if (settings.harness === 'interleave') {
-    return (taskIndex) => {
-      const harness: AgentHarness = taskIndex % 2 === 0 ? 'claude' : 'pi';
-      return { harness, piModel: harness === 'pi' ? piModel : undefined };
-    };
+  // Already being started by the spawn queue: leave it to that run. Counted
+  // as deferred — it is queued forward progress, not a failure. Checked after
+  // the admission-hold await, which polls the terminal-server, so a run
+  // enqueued meanwhile is seen too. (A held task goes to enqueueRun above,
+  // which dedupes onto an existing queued run.)
+  if (runAlreadyQueued(task, deps)) {
+    console.log(
+      `[workflow-run] ${run.id} start step: task ${task.id} ("${logTitle(task)}") ` +
+        'already has a queued run — leaving it to the spawn queue',
+    );
+    return { outcome: 'deferred' };
   }
-  const harness = normalizeAgentHarness(settings.harness);
-  return () => ({ harness, piModel: harness === 'pi' ? piModel : undefined });
+  try {
+    // throwOnCapacity: a terminal-server hard-cap rejection must throw
+    // (SpawnCapacityError) instead of being swallowed. Without it startTaskById
+    // still flips the task open → in_progress with NO pty/agent (and we'd count
+    // it as started) — the excess tasks then sit in_progress forever with no
+    // commit, which is exactly what later hangs the Merge control step.
+    const spawned = await deps.startTask(task.id, backendOrigin, {
+      requestedHarness: harness,
+      requestedPiModel: piModel,
+      throwOnCapacity: true,
+    });
+    // Surface the spawned task agent as a terminal tab. Without this,
+    // the pty is pre-warmed but no UI tab is ever attached, so the
+    // user can't watch the agent run or intervene if it stalls.
+    // Frontend useTaskTerminalCleanup auto-closes by taskId on lane
+    // transition (when TaskBoard is mounted).
+    notify({
+      type: 'workflow-task-spawned',
+      runId: run.id,
+      projectPath: wf.projectPath,
+      stepIndex,
+      taskId: spawned.task.id,
+      title: spawned.task.title,
+      command: spawned.command,
+      cwd: spawned.worktreePath,
+      serverId: spawned.serverId,
+      terminalId: spawned.terminalId,
+    });
+    console.log(
+      `[workflow-run] ${run.id} start step: task ${task.id} ("${logTitle(task)}") → in_progress`,
+    );
+    return { outcome: 'started' };
+  } catch (err) {
+    if (isSpawnDeferral(err)) {
+      // Hard cap: startTaskById threw BEFORE flipping status, so the task is
+      // still Open (no phantom in_progress, no orphan pty). Re-enqueue it on
+      // the spawn queue — the same path Run All uses — so it starts when a
+      // slot frees. Don't count it as started or failed.
+      // A disk-space deferral takes the same path: no worktree was created,
+      // the task is still Open, and the queue starts it once there is room.
+      await requeue(
+        're-queue capped task',
+        isSpawnDiskSpaceError(err)
+          ? `is waiting for disk space (${err.message}) — left Open and re-queued on the spawn queue`
+          : 'hit the terminal-server hard cap — left Open and re-queued on the spawn queue',
+      );
+      return { outcome: 'deferred' };
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    // console.error (not warn): a task that can't be started is the whole
+    // point of this step failing — make it loud in the backend log.
+    console.error(
+      `[workflow-run] ${run.id} start step: task ${task.id} ("${logTitle(task)}") failed to start:`,
+      err,
+    );
+    return { outcome: 'failed', error: message };
+  }
 }
 
 export async function runStartStep(
@@ -148,16 +250,7 @@ export async function runStartStep(
   // default harness applies (interleave expands to a claude/pi mix). Resolved
   // once here, applied per task below.
   const pickHarness = await resolveStartStepHarnessPicker(run, wf.projectPath);
-  let started = 0;
-  let failed = 0;
-  // Tasks that hit the terminal-server hard cap: left Open and re-queued on the
-  // spawn queue rather than force-flipped to in_progress with no agent (Fix 1).
-  // They are NOT counted as started (there is no live agent yet) and NOT as
-  // failed (a cap rejection isn't an error — the queue will start them when a
-  // slot frees). Tracked separately so the "no progress" throw below can tell a
-  // genuinely-failed run from one that merely overflowed the cap.
-  let deferred = 0;
-  let firstError: string | null = null;
+  const tally: StartTally = { started: 0, failed: 0, deferred: 0, firstError: null };
   emitControlProgress(
     run,
     stepIndex,
@@ -167,133 +260,22 @@ export async function runStartStep(
     `starting ${open.length} task(s)`,
   );
 
+  const ctx: StartOneTaskContext = { wf, run, stepIndex, backendOrigin, deps };
   for (const [index, task] of open.entries()) {
     if (run.status !== 'running') return;
     const { harness, piModel } = pickHarness(index);
-    // Starting directly bypasses the spawn queue, and with it the
-    // maxConcurrentAgents cap and the CPU/RAM governor: a 50-task Start step
-    // used to launch 50 agents at once. When the queue would hold a batch
-    // spawn right now, hand the task to it instead (the same deferral a cap
-    // rejection takes below) — it starts as soon as capacity returns.
-    const hold = await deps.admissionHold?.();
-    if (hold) {
-      deferred += 1;
-      try {
-        await deps.enqueueRun(task.id, backendOrigin, harness, piModel);
-      } catch (enqErr) {
-        console.error(`[workflow-run] ${run.id} start step: failed to queue task ${task.id}:`, enqErr);
-      }
-      console.warn(
-        `[workflow-run] ${run.id} start step: task ${task.id} ("${task.title.slice(0, 60)}") ` +
-          `queued instead of started — ${hold}`,
-      );
-      emitControlProgress(
-        run,
-        stepIndex,
-        'start',
-        started + failed + deferred,
-        open.length,
-        startProgressMessage(open.length, started, failed, deferred),
-      );
-      continue;
+    const result = await startOneTask(task, harness, piModel, ctx);
+    if (result.outcome === 'started') {
+      tally.started += 1;
+    } else if (result.outcome === 'deferred') {
+      tally.deferred += 1;
+    } else {
+      tally.failed += 1;
+      if (tally.firstError === null) tally.firstError = result.error;
     }
-    // Already being started by the spawn queue: leave it to that run. Counted
-    // as deferred — it is queued forward progress, not a failure. Checked after
-    // the admission-hold await, which polls the terminal-server, so a run
-    // enqueued meanwhile is seen too. (A held task goes to enqueueRun above,
-    // which dedupes onto an existing queued run.)
-    if (runAlreadyQueued(task, deps)) {
-      deferred += 1;
-      console.log(
-        `[workflow-run] ${run.id} start step: task ${task.id} ("${task.title.slice(0, 60)}") ` +
-          'already has a queued run — leaving it to the spawn queue',
-      );
-      emitControlProgress(
-        run,
-        stepIndex,
-        'start',
-        started + failed + deferred,
-        open.length,
-        startProgressMessage(open.length, started, failed, deferred),
-      );
-      continue;
-    }
-    try {
-      // throwOnCapacity: a terminal-server hard-cap rejection must throw
-      // (SpawnCapacityError) instead of being swallowed. Without it startTaskById
-      // still flips the task open → in_progress with NO pty/agent (and we'd count
-      // it as started) — the excess tasks then sit in_progress forever with no
-      // commit, which is exactly what later hangs the Merge control step.
-      const spawned = await deps.startTask(task.id, backendOrigin, {
-        requestedHarness: harness,
-        requestedPiModel: piModel,
-        throwOnCapacity: true,
-      });
-      // Surface the spawned task agent as a terminal tab. Without this,
-      // the pty is pre-warmed but no UI tab is ever attached, so the
-      // user can't watch the agent run or intervene if it stalls.
-      // Frontend useTaskTerminalCleanup auto-closes by taskId on lane
-      // transition (when TaskBoard is mounted).
-      notify({
-        type: 'workflow-task-spawned',
-        runId: run.id,
-        projectPath: wf.projectPath,
-        stepIndex,
-        taskId: spawned.task.id,
-        title: spawned.task.title,
-        command: spawned.command,
-        cwd: spawned.worktreePath,
-        serverId: spawned.serverId,
-        terminalId: spawned.terminalId,
-      });
-      started += 1;
-      console.log(
-        `[workflow-run] ${run.id} start step: task ${task.id} ("${task.title.slice(0, 60)}") → in_progress`,
-      );
-    } catch (err) {
-      if (isSpawnDeferral(err)) {
-        // Hard cap: startTaskById threw BEFORE flipping status, so the task is
-        // still Open (no phantom in_progress, no orphan pty). Re-enqueue it on
-        // the spawn queue — the same path Run All uses — so it starts when a
-        // slot frees. Don't count it as started or failed.
-        deferred += 1;
-        try {
-          await deps.enqueueRun(task.id, backendOrigin, harness, piModel);
-        } catch (enqErr) {
-          console.error(
-            `[workflow-run] ${run.id} start step: failed to re-queue capped task ${task.id}:`,
-            enqErr,
-          );
-        }
-        // A disk-space deferral takes the same path: no worktree was created,
-        // the task is still Open, and the queue starts it once there is room.
-        console.warn(
-          `[workflow-run] ${run.id} start step: task ${task.id} ("${task.title.slice(0, 60)}") ` +
-            (isSpawnDiskSpaceError(err)
-              ? `is waiting for disk space (${err.message}) — left Open and re-queued on the spawn queue`
-              : 'hit the terminal-server hard cap — left Open and re-queued on the spawn queue'),
-        );
-      } else {
-        failed += 1;
-        const message = err instanceof Error ? err.message : String(err);
-        if (firstError === null) firstError = message;
-        // console.error (not warn): a task that can't be started is the whole
-        // point of this step failing — make it loud in the backend log.
-        console.error(
-          `[workflow-run] ${run.id} start step: task ${task.id} ("${task.title.slice(0, 60)}") failed to start:`,
-          err,
-        );
-      }
-    }
-    emitControlProgress(
-      run,
-      stepIndex,
-      'start',
-      started + failed + deferred,
-      open.length,
-      startProgressMessage(open.length, started, failed, deferred),
-    );
+    emitStartProgress(run, stepIndex, tally, open.length);
   }
+  const { started, failed, deferred, firstError } = tally;
 
   // If the step had open tasks but moved NONE of them forward — neither started
   // nor re-queued — and something genuinely failed, it accomplished nothing:

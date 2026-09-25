@@ -62,7 +62,9 @@ Differences from pushRuns:
   merged back into QA while the run went on), and `applyRecordedQaVerdict`
   never re-applies a run already `done` — so a second Stop from a stay-open QA
   terminal, a replayed `/done`, or boot recovery can't ship reworked code on a
-  stale PASS.
+  stale PASS. This relies on every landing in QA stamping a fresh `mergedAt`:
+  `stampTimestamps` clears it when a task moves back to a pre-merge lane, and
+  boot's deleted-branch recovery (`recovery/index.ts`) always re-stamps it.
 - **One QA session per task.** `POST /api/qa-runs` returns **409** while the
   task already has a run starting (the route's in-flight set, since a run is
   only recorded once its pty spawned) or `running` with a live pty

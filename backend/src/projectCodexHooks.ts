@@ -69,7 +69,7 @@ function tomlString(s: string): string {
 // point every activity event of this session at the project-activity route.
 //
 // Only this platform's command variant is emitted (a hooks.json carries both
-// because it can outlive the machine that wrote it; a launch can't): the six
+// because it can outlive the machine that wrote it; a launch can't): the eight
 // overrides are expanded into the pty shell's command line, and cmd.exe caps
 // that at 8191 characters alongside every managed MCP override.
 export function projectCodexHookConfigArgs(

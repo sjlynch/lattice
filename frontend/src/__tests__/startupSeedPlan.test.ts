@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { StartupTerminal, TerminalRecord } from '../api';
 import type { TerminalSpec } from '../terminal/terminalTypes';
 import {
+  planRestart,
   planStartupSeeding,
   settleInFlightStartups,
   startupInFlightKey,
@@ -130,4 +131,22 @@ test('in-flight markers survive unrelated list changes and settle only on commit
   // The spawn's spec commits (in the realpath spelling) → the marker drops.
   settleInFlightStartups(inFlight, P, [spec({ id: 'a', projectPath: 'c:/proj' })]);
   assert.equal(inFlight.size, 0);
+});
+
+test('a second restart click while the first click spawns are pending spawns nothing', () => {
+  // Regression: the restart spawns await their pre-create before the tab
+  // exists, so a double-click found nothing to close and spawned every
+  // startup command twice (two `npm run dev`s fighting for one port).
+  const other: StartupTerminal = { id: 's3', label: 'watch', command: 'npm run watch' };
+  const inFlight = new Set<string>();
+  const first = planRestart([dev, blank, other], inFlight, P);
+  assert.deepEqual(first, [dev, other], 'blank commands are never spawned');
+  for (const cfg of first) inFlight.add(startupInFlightKey(P, cfg.id));
+  assert.deepEqual(planRestart([dev, blank, other], inFlight, P), []);
+  // The marker is keyed on the normalized folder, so another spelling of the
+  // same project is still blocked.
+  assert.deepEqual(planRestart([dev], inFlight, 'c:/proj'), []);
+  // Once the first click's specs commit, a later restart respawns them again.
+  settleInFlightStartups(inFlight, P, [spec({ id: 'a' }), spec({ id: 'b', startupId: 's3' })]);
+  assert.deepEqual(planRestart([dev, blank, other], inFlight, P), [dev, other]);
 });

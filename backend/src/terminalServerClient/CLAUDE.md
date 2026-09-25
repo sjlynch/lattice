@@ -23,7 +23,11 @@ process on `:5185`; see `terminalServer/CLAUDE.md` for that boundary).
   poller); the registry watch must NOT use it (a pre-spawn snapshot reports a
   new pty missing). `resetSessionsSnapshot` clears that memo (test seam).
 - `createSession.ts` — `POST /sessions` (`proxyCreateSession` /
-  `tryCreateSessionOnce`), the heavy path, **30s** cap. `resolveHarnessSpawnBody`
+  `tryCreateSessionOnce`), the heavy path, **30s** cap. It re-exports
+  `resolveHarnessSpawnBody` / `SessionWireBody` / `CreateSessionOptions` from
+  `spawnBody.ts` (per-harness `resolveClaudeSpawn` / `resolveCodexSpawn` /
+  `resolvePiSpawn`); `recordSpawn.ts` writes the terminal-registry record (and
+  ends a re-seeded startup tab's dead predecessor). `resolveHarnessSpawnBody`
   resolves the per-harness spawn config (Claude/Codex managed MCP via
   `mcp/registry.ts` + memory opt-out + system-prompt overrides; Pi writes its
   cwd-local files) in the BACKEND and ships it as DATA in the `SessionWireBody`,

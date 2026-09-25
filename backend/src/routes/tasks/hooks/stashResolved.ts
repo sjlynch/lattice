@@ -5,7 +5,7 @@
 import type { Request, Response } from 'express';
 import { getTask, updateTaskCrashSafe } from '../../../tasks.js';
 import { cleanupWorktreeForTask } from '../../../worktree.js';
-import { startMergeRun } from '../../../mergeRuns.js';
+import { startMergeRunAfterMaintenance } from '../../../mergeRuns.js';
 import { awaitPostMergeHookOutsideRun } from './postMergeHookHelper.js';
 import { requireTaskInRequestedProject } from '../requestUtils.js';
 
@@ -13,6 +13,8 @@ import { requireTaskInRequestedProject } from '../requestUtils.js';
 // status-guard regression test can prove cleanup is never reached.
 export type StashResolvedDeps = {
   cleanupWorktree: typeof cleanupWorktreeForTask;
+  // Restart for the remaining ready_to_merge tasks; waits out a housekeeping gc.
+  startMergeRun?: (projectPath: string, backendOrigin: string) => Promise<{ total: number }>;
 };
 
 const productionDeps: StashResolvedDeps = {
@@ -55,9 +57,15 @@ export function handleTaskStashResolved(
     // not (no remaining work, or a run is already active), fire the hook
     // ourselves so the stash-resolved-driven qa transition blocks the merge
     // step like any other per-task merge does.
+    //
+    // A refusal because the post-run `git gc` is in flight is NOT "a run owns
+    // the rest": nothing would retry after the gc, stranding the remaining
+    // tasks (and the hook would fire alongside the repack). The restart waits
+    // for the housekeeping and retries; only other refusals land in the catch.
+    const startRun = deps.startMergeRun ?? startMergeRunAfterMaintenance;
     let startedRun: { total: number } | null = null;
     try {
-      startedRun = await startMergeRun(task.projectPath, backendOrigin);
+      startedRun = await startRun(task.projectPath, backendOrigin);
     } catch {
       /* throws if a run is already active — that run owns the hook */
     }

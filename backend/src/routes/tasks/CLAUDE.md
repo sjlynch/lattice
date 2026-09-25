@@ -103,7 +103,7 @@ no-op; a `limit`-capped listing carries `truncated=N/M` in its frontmatter.
 - `manualMergeGuards.ts` / `manualMergeLocks.ts` — per-project in-flight set; per-task `mergeLocks` wrapper.
 - `manualMergeTypes.ts` — `MergeReadyTask` (a task with `branch` + `worktreePath`).
 - `_shared.ts` — `requireTaskStatus` (400 on the wrong lane) + `logTaskRouteError`.
-- `requestUtils.ts` — `respondJson`, project resolution/400s, `?project=` pins, status checks, `normalizeBody`.
+- `requestUtils.ts` — `respondJson`, project resolution/400s, project pins (`?project=`, else a JSON body's `project`; non-absolute → 400), status checks, `normalizeBody`.
 - `projectValidation.ts` — `validateProjectForCreate`: creating needs an absolute path to a git repo.
 
 ## Queued spawns (`queuedSpawn.ts` barrel; split by concern)
@@ -165,7 +165,7 @@ Idempotent Stop-hook / resolver callbacks. `hooks/index.ts`'s
   resolver branch uses). A late `/merged` from a resolver abandoned by
   `/merge-aborted` (the Cancel button cleared the flag) is a harmless no-op
   rather than a silent finalize + main fast-forward.
-- `hooks/mergeAborted.ts` — `/merge-aborted`. Honours the `?project=` pin
+- `hooks/mergeAborted.ts` — `/merge-aborted`. Honours the project pin
   (`requireTaskInRequestedProject`: a task from another board is a 404 and
   nothing is aborted); a missing/empty project is unpinned, so the resolver
   agent's give-up curl keeps working. Delegates the abort-mid-merge +
