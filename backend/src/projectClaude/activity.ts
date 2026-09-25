@@ -5,7 +5,7 @@ import {
 } from '../claudeHookBody.js';
 import { notifyAgentActivity } from '../agentActivity.js';
 import { decodeAgentToken } from '../agentActivityTokens.js';
-import { buildAgentActivityEvent } from '../routes/agentActivity.js';
+import { buildAgentActivityEvents } from '../routes/agentActivity.js';
 import { applyProjectActivityEvent } from './lifecycle.js';
 import { isLatticeManagedCwd } from './managedCwd.js';
 
@@ -35,6 +35,7 @@ export function applyProjectActivityHook(token: string, body: unknown): void {
   // Subagent lifecycle (satellite spawn/stop) or tool-use (focus beam) — the
   // same decode as the other two activity routes, keyed on this session's
   // `claude:<sessionId>` agent id rather than the token's.
-  const activity = buildAgentActivityEvent(meta, body, { agentId, cwd });
-  if (activity) notifyAgentActivity(activity);
+  for (const activity of buildAgentActivityEvents(meta, body, { agentId, cwd })) {
+    notifyAgentActivity(activity);
+  }
 }

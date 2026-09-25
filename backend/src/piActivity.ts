@@ -1,0 +1,157 @@
+// Pi's graph-activity reporter — the Pi analogue of the Claude activity hooks
+// (claudeStopHook.ts `renderClaudeHooksConfig`) and the Codex ones
+// (codexStopHook.ts). Pi has no settings-driven command hooks, but it auto-loads
+// any `<cwd>/.pi/extensions/*.ts` (cwd-exact; Lattice spawns Pi with
+// `--approve`, so the project-local extension is trusted), and its extension API
+// emits `tool_execution_start` / `tool_execution_end` with the tool's arguments.
+//
+// The generated `.pi/extensions/lattice-activity.ts` turns those into the SAME
+// Claude-shaped hook body the activity routes already decode
+// (`hook_event_name` PreToolUse/PostToolUse, `tool_name`, `tool_input`,
+// `cwd`), so nothing server-side is Pi-specific:
+//   - read / edit / write → `tool_input.file_path` = the tool's `path`
+//   - bash                → `tool_input.command` (paths guessed + confirmed by
+//                           the route, as for Codex — see hookFiles.ts)
+//
+// Subagents: `@tintinweb/pi-subagents` runs each subagent as its own in-process
+// Pi session that loads the same cwd extensions, on an IN-MEMORY session
+// manager (no session file). Lattice's own Pi sessions are always persisted
+// (pinned `--session-id`), so "no session file" identifies a subagent: the
+// extension then tags its events `agent_id: pi-<sessionId>` — the Claude
+// convention for a subagent's tool use — so its beams hang off a satellite, and
+// posts SubagentStart / SubagentStop on that session's start / shutdown. (A
+// missed stop is reaped by the graph's idle TTL.)
+//
+// Every POST is fire-and-forget with a short timeout: a handler never delays a
+// tool call, and a backend that is down or restarting just loses a beam.
+
+import path from 'node:path';
+import fs from 'node:fs/promises';
+import { atomicWriteFile } from './claudeTrust/configFile.js';
+
+export const PI_ACTIVITY_EXTENSION_FILE = 'lattice-activity.ts';
+
+export function renderPiActivityExtension(activityUrl: string): string {
+  return `// Lattice-managed — do not commit. Reports which files this Pi session (and
+// any pi-subagents subagent it spawns) reads or edits to Lattice, which draws
+// the agent's node, focus beams and file labels on its graph. Fire-and-forget:
+// a handler never delays a tool call.
+
+const ACTIVITY_URL = ${JSON.stringify(activityUrl)};
+const POST_TIMEOUT_MS = 1500;
+// Pi tool name -> the Claude tool name the activity route understands.
+const TOOLS = { read: "Read", edit: "Edit", write: "Write", bash: "Bash" };
+
+function post(body) {
+  try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), POST_TIMEOUT_MS);
+    fetch(ACTIVITY_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ac.signal,
+    })
+      .catch(() => {})
+      .finally(() => clearTimeout(timer));
+  } catch {
+    // Reporting must never throw into Pi.
+  }
+}
+
+// A pi-subagents subagent runs on an in-memory session (no session file); report
+// it as a subagent of this session so the graph draws it as a satellite.
+function subagentFields(ctx) {
+  try {
+    const sm = ctx && ctx.sessionManager;
+    if (!sm || typeof sm.getSessionFile !== "function") return {};
+    if (sm.getSessionFile()) return {};
+    const id = typeof sm.getSessionId === "function" ? sm.getSessionId() : undefined;
+    return id ? { agent_id: "pi-" + id, agent_type: "subagent" } : {};
+  } catch {
+    return {};
+  }
+}
+
+function cwdOf(ctx) {
+  return (ctx && typeof ctx.cwd === "string" && ctx.cwd) || process.cwd();
+}
+
+function toolInput(tool, args) {
+  const a = args && typeof args === "object" ? args : {};
+  if (tool === "Bash") {
+    return typeof a.command === "string" && a.command ? { command: a.command } : null;
+  }
+  const p = typeof a.path === "string" ? a.path : typeof a.file_path === "string" ? a.file_path : "";
+  const file = p.replace(/^@/, "");
+  return file ? { file_path: file } : null;
+}
+
+function report(phase, toolName, args, ctx) {
+  const tool = TOOLS[toolName];
+  if (!tool) return;
+  const input = toolInput(tool, args);
+  if (!input) return;
+  post({
+    hook_event_name: phase,
+    tool_name: tool,
+    tool_input: input,
+    cwd: cwdOf(ctx),
+    ...subagentFields(ctx),
+  });
+}
+
+export default function (pi) {
+  // tool_execution_end carries no args — remember them by call id.
+  const argsByCall = new Map();
+
+  pi.on("tool_execution_start", (event, ctx) => {
+    if (!event) return;
+    argsByCall.set(event.toolCallId, event.args);
+    report("PreToolUse", event.toolName, event.args, ctx);
+  });
+
+  pi.on("tool_execution_end", (event, ctx) => {
+    if (!event) return;
+    const args = argsByCall.get(event.toolCallId);
+    argsByCall.delete(event.toolCallId);
+    report("PostToolUse", event.toolName, args, ctx);
+  });
+
+  pi.on("session_start", (_event, ctx) => {
+    const sub = subagentFields(ctx);
+    if (sub.agent_id) post({ hook_event_name: "SubagentStart", cwd: cwdOf(ctx), ...sub });
+  });
+
+  pi.on("session_shutdown", (_event, ctx) => {
+    argsByCall.clear();
+    const sub = subagentFields(ctx);
+    if (sub.agent_id) post({ hook_event_name: "SubagentStop", cwd: cwdOf(ctx), ...sub });
+  });
+}
+`;
+}
+
+// Write (or refresh) `<dir>/.pi/extensions/lattice-activity.ts`. Skips the
+// write when the file already matches, so reconciling a worktree against the
+// same task doesn't dirty `git status` (the file is excluded anyway — see
+// worktree/managedFiles.ts). Best-effort: activity reporting is cosmetic, so a
+// failure is logged and never fails the spawn.
+export async function installPiActivityExtension(args: {
+  dir: string;
+  activityUrl: string;
+}): Promise<void> {
+  const file = path.join(args.dir, '.pi', 'extensions', PI_ACTIVITY_EXTENSION_FILE);
+  const expected = renderPiActivityExtension(args.activityUrl);
+  try {
+    try {
+      if ((await fs.readFile(file, 'utf8')) === expected) return;
+    } catch {
+      /* absent — write it */
+    }
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await atomicWriteFile(file, expected);
+  } catch (err) {
+    console.warn(`[pi-activity] could not install ${file}:`, err);
+  }
+}

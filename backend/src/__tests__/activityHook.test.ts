@@ -67,7 +67,7 @@ test('decodeActivityHook maps PreToolUse/PostToolUse file activity', () => {
     ),
     {
       kind: 'tool',
-      file: '/project/src/app.ts',
+      files: ['/project/src/app.ts'],
       phase: 'start',
       tool: 'Read',
       subagentId: undefined,
@@ -86,7 +86,7 @@ test('decodeActivityHook maps PreToolUse/PostToolUse file activity', () => {
     ),
     {
       kind: 'tool',
-      file: '/project/src/app.ts',
+      files: ['/project/src/app.ts'],
       phase: 'end',
       tool: 'Edit',
       subagentId: undefined,
@@ -137,7 +137,7 @@ test('decodeActivityHook preserves subagent attribution on tool-use', () => {
     ),
     {
       kind: 'tool',
-      file: '/mapped/src/plan.ts',
+      files: ['/mapped/src/plan.ts'],
       phase: 'start',
       tool: 'Write',
       subagentId: 'sub-2',
@@ -160,11 +160,90 @@ test('decodeActivityHook maps notebook-path tool payloads with subagent attribut
     ),
     {
       kind: 'tool',
-      file: '/repo/notebooks/demo.ipynb',
+      files: ['/repo/notebooks/demo.ipynb'],
       phase: 'end',
       tool: 'NotebookEdit',
       subagentId: 'sub-3',
       subagentType: 'general-purpose',
     },
+  );
+});
+
+test('decodeActivityHook maps every file on a Codex apply_patch', () => {
+  const patch = [
+    '*** Begin Patch',
+    '*** Update File: src/a.ts',
+    '@@',
+    '-x',
+    '+y',
+    '*** Add File: src/b.ts',
+    '+new',
+    '*** Delete File: src/old.ts',
+    '*** End Patch',
+  ].join('\n');
+  const seen: Array<[string, boolean]> = [];
+  assert.deepEqual(
+    decodeActivityHook(
+      {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'apply_patch',
+        agent_id: 'thread-2',
+        agent_type: 'worker',
+        tool_input: { command: patch },
+      },
+      (raw, { mustExist }) => {
+        seen.push([raw, mustExist]);
+        return `/p/${raw}`;
+      },
+    ),
+    {
+      kind: 'tool',
+      files: ['/p/src/a.ts', '/p/src/b.ts', '/p/src/old.ts'],
+      phase: 'start',
+      tool: 'apply_patch',
+      subagentId: 'thread-2',
+      subagentType: 'worker',
+    },
+  );
+  // Patch headers are authoritative — no existence check.
+  assert.ok(seen.every(([, mustExist]) => mustExist === false));
+});
+
+test('decodeActivityHook keeps only confirmed files from a Codex shell command', () => {
+  const seen: Array<[string, boolean]> = [];
+  const result = decodeActivityHook(
+    {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: "sed -n '1,200p' src/app.ts && cat README.md missing.ts" },
+    },
+    (raw, { mustExist }) => {
+      seen.push([raw, mustExist]);
+      return raw === 'missing.ts' ? null : `/p/${raw}`;
+    },
+  );
+  assert.deepEqual(result, {
+    kind: 'tool',
+    files: ['/p/src/app.ts', '/p/README.md'],
+    phase: 'end',
+    tool: 'Bash',
+    subagentId: undefined,
+    subagentType: undefined,
+  });
+  // Shell paths are guesses: every candidate is checked for existence.
+  assert.deepEqual(seen, [
+    ['src/app.ts', true],
+    ['README.md', true],
+    ['missing.ts', true],
+  ]);
+});
+
+test('decodeActivityHook drops a shell command that names no file', () => {
+  assert.equal(
+    decodeActivityHook(
+      { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git status' } },
+      () => '/p/x',
+    ),
+    null,
   );
 });

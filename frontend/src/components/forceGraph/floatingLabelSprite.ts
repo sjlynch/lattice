@@ -59,6 +59,23 @@ const DEFAULT_NODE_ANCHOR_Y = 3;
 // Gap between connector endpoint and label baseline when no override is supplied.
 const DEFAULT_LABEL_GAP = 4;
 
+// The camera-distance-driven height (world units) a floating label is drawn at:
+// `baseH * heightMultiplier` at `refDistance`, growing linearly with distance so
+// it reads at a roughly constant on-screen size, clamped to [minScale,maxScale].
+// Shared by the sprite's own onBeforeRender and by layouts that must know a
+// label's size BEFORE it renders (the agent label spreader, which runs from the
+// scene's onBeforeRender — ahead of the sprite's own scale update).
+export function floatingLabelHeight(
+  distance: number,
+  baseH: number,
+  config: FloatingLabelSpriteConfig,
+): number {
+  const h = baseH * config.heightMultiplier;
+  const minScale = config.minScale ?? DEFAULT_MIN_SCALE;
+  const refDistance = config.refDistance ?? DEFAULT_REF_DISTANCE;
+  return Math.max(minScale, Math.min(config.maxScale, (distance / refDistance) * h));
+}
+
 export function makeFloatingLabelSprite(
   texture: MeasuredLabelTexture,
   baseH: number,
@@ -75,8 +92,6 @@ export function makeFloatingLabelSprite(
   );
   sprite.renderOrder = config.renderOrder ?? FLOATING_LABEL_RENDER_ORDER;
 
-  const minScale = config.minScale ?? DEFAULT_MIN_SCALE;
-  const refDistance = config.refDistance ?? DEFAULT_REF_DISTANCE;
   const _pos = new THREE.Vector3();
   // Memoised camera + label world position from the last scale recompute (NaN
   // until the first render, which always computes). When neither moved beyond
@@ -107,8 +122,7 @@ export function makeFloatingLabelSprite(
     lastWorldX = _pos.x;
     lastWorldY = _pos.y;
     lastWorldZ = _pos.z;
-    const d = camera.position.distanceTo(_pos);
-    const s = Math.max(minScale, Math.min(config.maxScale, (d / refDistance) * h));
+    const s = floatingLabelHeight(camera.position.distanceTo(_pos), baseH, config);
     sprite.scale.set(s * aspect, s, 1);
   };
 

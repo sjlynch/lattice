@@ -93,8 +93,25 @@ export const SATELLITE_IDLE_TTL_MS = 5 * 60 * 1000;
 // Satellite type label offset from its node (multiples of the satellite size).
 export const SATELLITE_LABEL_OFFSET_X_FACTOR = 1.3;
 export const SATELLITE_LABEL_OFFSET_Y_FACTOR = -1.1;
-// Satellite type labels read smaller than the parent's file label.
+// Satellite labels (the subagent's current file, optionally prefixed with its
+// type) read smaller than the parent's file label.
 export const SATELLITE_LABEL_SCALE = 0.78;
+
+// --- Label spreader (agentOverlayLabelLayout.ts) ----------------------------
+// Gap from a node's centre to its label's near edge, in multiples of nodeSize:
+// clear of the parent disc (drawn at NODE_SCALE_MULTIPLIER x nodeSize) and of
+// the smaller satellite orb respectively.
+export const SPREAD_LABEL_GAP_FACTOR = 1.2;
+export const SPREAD_SATELLITE_GAP_FACTOR = 0.8;
+// The parent's file label prefers to sit slightly above the node's centre.
+export const SPREAD_PARENT_DY_FACTOR = 0.9;
+// Minimum clearance between two labels, as a fraction of a label's height.
+export const SPREAD_LABEL_PAD_X = 0.35;
+export const SPREAD_LABEL_PAD_Y = 0.15;
+// A label pushed more than this many label-heights off its preferred row gets
+// a faint leader line back to its node.
+export const LEADER_MIN_SHIFT_FACTOR = 0.6;
+export const LEADER_OPACITY = 0.35;
 
 // File label next to the node (camera-scaled, like the Alt-labels overlay).
 export const LABEL_OPTIONS: LabelTextureOptions = {

@@ -1,7 +1,9 @@
 // Route-neutral decode of a Claude activity hook body into a graph event.
 //
 // Three routes receive the same PreToolUse/PostToolUse/SubagentStart/
-// SubagentStop hook payload and run identical control flow over it:
+// SubagentStop hook payload — from Claude's hooks, Codex's (same shape, fired
+// from `.codex/hooks.json`) or Lattice's Pi activity extension (which posts a
+// Claude-shaped body) — and run identical control flow over it:
 //   - tasks/activity.ts     (worktree task agents)
 //   - agentActivity.ts      (non-worktree Lattice sessions)
 //   - projectClaude.ts      (any project-instrumented Claude session)
@@ -13,21 +15,23 @@
 
 import {
   type ClaudeHookPhase,
-  fileFromHookBody,
   hookEventName,
   phaseFromHookBody,
   subagentIdFromHookBody,
   subagentTypeFromHookBody,
   toolFromHookBody,
 } from './claudeHookBody.js';
+import { filesFromHookBody } from './hookFiles.js';
 
 // What an activity hook means for the graph, independent of which session it
 // came from:
 //   - 'lifecycle' — a SubagentStart/Stop: a satellite node appears/disappears
 //     on the session's Claude node. Names no file. Only emitted when the hook
 //     carries a `subagentId` (otherwise there's nothing to attribute it to).
-//   - 'tool'      — a PreToolUse/PostToolUse on a mappable file: a focus beam
-//     (on the satellite when `subagentId` is set, else the main node).
+//   - 'tool'      — a PreToolUse/PostToolUse on one or more mappable files: a
+//     focus beam each (on the satellite when `subagentId` is set, else the main
+//     node). Claude names one file; a Codex `apply_patch` or shell command can
+//     name several (see hookFiles.ts).
 // `decodeActivityHook` returns null for anything that should be dropped (a
 // lifecycle event with no subagent, or a tool use with no/unmappable file) —
 // the routes ack those with no graph effect.
@@ -40,7 +44,7 @@ export type ActivityHookResult =
     }
   | {
       kind: 'tool';
-      file: string;
+      files: string[];
       phase: ClaudeHookPhase;
       tool: string;
       subagentId: string | undefined;
@@ -51,9 +55,17 @@ export type ActivityHookResult =
 // turns the raw hook path into the project-absolute path the graph expects (or
 // null to drop) — worktree-relative for the task route, cwd/absolute for the
 // non-worktree routes — and is the only behaviour that varies between callers.
+// `mustExist` is set for paths guessed from a shell command: the caller keeps
+// one only if it names an existing file (a guess the graph can't find would
+// otherwise label a file that isn't there).
+export type ActivityFileMapper = (
+  rawFile: string,
+  opts: { mustExist: boolean },
+) => string | null;
+
 export function decodeActivityHook(
   body: unknown,
-  mapFile: (rawFile: string) => string | null,
+  mapFile: ActivityFileMapper,
 ): ActivityHookResult | null {
   const event = hookEventName(body);
   const subagentId = subagentIdFromHookBody(body);
@@ -71,15 +83,18 @@ export function decodeActivityHook(
     };
   }
 
-  // Tool use → focus beam to the mapped file. A subagent's own tool-use carries
-  // `subagentId`, which routes the beam to that satellite instead of the node.
-  const rawFile = fileFromHookBody(body);
-  if (!rawFile) return null;
-  const file = mapFile(rawFile);
-  if (!file) return null;
+  // Tool use → a focus beam per mapped file. A subagent's own tool-use carries
+  // `subagentId`, which routes the beams to that satellite instead of the node.
+  const { files: raw, speculative } = filesFromHookBody(body);
+  const files: string[] = [];
+  for (const r of raw) {
+    const f = mapFile(r, { mustExist: speculative });
+    if (f && !files.includes(f)) files.push(f);
+  }
+  if (files.length === 0) return null;
   return {
     kind: 'tool',
-    file,
+    files,
     phase: phaseFromHookBody(body),
     tool: toolFromHookBody(body),
     subagentId: subagentId ?? undefined,

@@ -70,6 +70,12 @@ export function createTether(color: string): Beam {
   return makeBeam(color, SATELLITE_TETHER_OPACITY, '', 0);
 }
 
+// A label leader (node → a label the spreader pushed aside): same shape as a
+// tether, at its own constant opacity.
+export function createLeader(color: string, opacity: number): Beam {
+  return makeBeam(color, opacity, '', 0);
+}
+
 export function disposeBeam(group: THREE.Group, beam: Beam): void {
   group.remove(beam.line);
   beam.geometry.dispose();

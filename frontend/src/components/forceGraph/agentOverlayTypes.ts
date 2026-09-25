@@ -50,6 +50,11 @@ export type LabelHost = {
   labelPosY?: number;
   labelPosZ?: number;
   labelNodeSize?: number;
+  // Faint line from the host's node to its label, shown only while the label
+  // spreader (agentOverlayLabelLayout.ts) has pushed the label away from the
+  // spot beside its node — so a displaced label still reads as belonging to
+  // its orb. Created lazily; disposed with the label (removeFloatingLabel).
+  leader?: Beam;
 };
 
 // Live state for one subagent (a Task/Agent) shown as a satellite of its
@@ -72,8 +77,11 @@ export type Satellite = LabelHost & {
   // Persistent line from the parent node to this satellite (constant opacity).
   tether: Beam;
   beams: Map<string, Beam>;
-  // The file this subagent most recently touched — drives its beam persistence.
+  // The file this subagent most recently touched — drives its beam persistence
+  // and the file label beside the satellite.
   currentFile?: string;
+  // Basename of `currentFile`, cached at the write site (applyActivity).
+  currentFileBase?: string;
   // Last activity/spawn time (frontend clock), for the idle-reap safety net.
   lastSeen: number;
 };

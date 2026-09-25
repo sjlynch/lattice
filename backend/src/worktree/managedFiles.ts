@@ -26,7 +26,8 @@
 // stopHook.ts); `.pi/extensions/lattice-subagents.ts` is the pi-subagents
 // loader shim (see piSubagents.ts) Lattice drops alongside it (and at the
 // project root for manual terminal-panel `pi` sessions);
-// `.pi/extensions/lattice-mcp.ts` is the pi-mcp-adapter loader shim and
+// `.pi/extensions/lattice-activity.ts` reports file activity to the graph (see
+// piActivity.ts); `.pi/extensions/lattice-mcp.ts` is the pi-mcp-adapter loader shim and
 // `.pi/mcp.json` its per-cwd server config (see piMcp.ts), both dropped only
 // when the project enables ≥1 Pi MCP server. The exact paths (not the whole
 // `.pi/` dir) are listed so a project that legitimately tracks its own `.pi/`
@@ -37,6 +38,7 @@ export const LATTICE_OWNED_FILE_PATHS = [
   '.claude/settings.local.json',
   '.pi/extensions/lattice-complete.ts',
   '.pi/extensions/lattice-subagents.ts',
+  '.pi/extensions/lattice-activity.ts',
   '.pi/extensions/lattice-mcp.ts',
   '.pi/extensions/lattice-system-prompt.ts',
   '.pi/extensions/lattice-system-prompt.json',
@@ -66,6 +68,7 @@ export const LATTICE_EXCLUDE_PATTERNS = [
   '.pi/extensions/lattice-complete.ts',
   '.pi/extensions/lattice-last-shutdown.json',
   '.pi/extensions/lattice-subagents.ts',
+  '.pi/extensions/lattice-activity.ts',
   '.pi/extensions/lattice-mcp.ts',
   '.pi/extensions/lattice-system-prompt.ts',
   '.pi/extensions/lattice-system-prompt.json',
@@ -90,6 +93,7 @@ export const LATTICE_GITIGNORE_ENTRIES = [
   '.pi/extensions/lattice-complete.ts',
   '.pi/extensions/lattice-last-shutdown.json',
   '.pi/extensions/lattice-subagents.ts',
+  '.pi/extensions/lattice-activity.ts',
   '.pi/extensions/lattice-mcp.ts',
   '.pi/extensions/lattice-system-prompt.ts',
   '.pi/extensions/lattice-system-prompt.json',

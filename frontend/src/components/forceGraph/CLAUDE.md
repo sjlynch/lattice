@@ -14,10 +14,11 @@ label physics in `labelPhysics/CLAUDE.md`.
   `agents`/`labelPhysics`/`halo` are the *slow-only* reasons — when they're the
   only thing awake the loop duty-cycles to ~30fps.
 - **Agent Presence Layer (APL)** (`agentOverlay*.ts` + `hooks/useAgentOverlay`)
-  — where live Claude agents work: per agent a free-floating **presence node**,
-  fading **focus beams** to files it touches, a file **label**, and a **satellite**
-  per Task/Agent subagent. Lives in `graph.scene()` (NOT `graphData`), so an agent
-  appearing/finishing never reheats the sim. Worktree (`task-activity`) + orange
+  — where live agents (Claude, Codex, Pi) work: per agent a free-floating
+  **presence node**, fading **focus beams** to files it touches, a file
+  **label**, and a **satellite** per subagent (with its own file label). Lives
+  in `graph.scene()` (NOT `graphData`), so an agent appearing/finishing never
+  reheats the sim. Worktree (`task-activity`) + orange
   non-worktree (`agent-activity`) sessions alike.
 
 ## Module map
@@ -150,7 +151,17 @@ label physics in `labelPhysics/CLAUDE.md`.
 - `agentOverlay.ts` — thin façade over the APL (`setAgents`/`addActivity`/
   `addSubagent*`/`tick`/`setSizes`/`isActive`/`destroy`) delegating to siblings
   `agentOverlay{Context,Constants,Types,PathIndex,Reconcile,Activity,Satellites,
-  Beams,BeamMath,Tick,Labels,Placement}.ts` (pure math tested in `src/__tests__`).
+  Beams,BeamMath,Tick,Labels,LabelLayout,Placement}.ts` (pure math tested in
+  `src/__tests__`). `agentOverlayLabelLayout.ts` is the **label spreader**: at
+  the end of each tick it projects every agent + satellite label onto the
+  camera's image plane (depth-normalised), de-overlaps them with the pure
+  `spreadLabelRects` (labels only slide along their node's side; satellites
+  label outward from the parent), maps back to world space, and draws a faint
+  leader to any label it displaced. It's a snap, not an animation, so it holds
+  no idle reason — an orbit already renders on `interact`. It sizes labels with
+  `floatingLabelHeight` (shared with the sprite's own onBeforeRender, which runs
+  after the scene-level tick) so a zoom's last frame isn't laid out a frame
+  stale.
 
 **Idle / scene / motion drivers**
 - `idleController.ts` + `idleController{Reasons,Loop,Engine,Interact}.ts` — reason
