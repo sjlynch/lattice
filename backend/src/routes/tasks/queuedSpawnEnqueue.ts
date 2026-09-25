@@ -41,6 +41,10 @@ export async function enqueueTaskRun(
         ? requestedHarness
         : undefined,
       runQueuedPiModel: normalizePiModel(requestedPiModel),
+      // A fresh enqueue starts from clean queue state: a disk wait left over
+      // from an earlier run would otherwise pin the card's "waiting for disk"
+      // pill (noteWaitingForDisk never rewrites a set one).
+      runWaitingForDisk: undefined,
     });
   }
 

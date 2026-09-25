@@ -274,6 +274,11 @@ export async function startTaskById(
       selectedHarness.harness,
     );
   } catch (err) {
+    // Cancelled while the checkout ran (it can wait minutes for a checkout
+    // slot before the disk guard even looks): whatever it failed with, the
+    // start is withdrawn. Otherwise a disk deferral would have `runSpawnThunk`
+    // stamp `runWaitingForDisk` on a task whose run the user already cancelled.
+    if (signal?.aborted) throw new TaskStartWithdrawnError(taskId, 'cancelled');
     // No room for another checkout: the task stays Open and the spawn queue
     // retries it. Ask for a merge run so parked Ready-to-Merge worktrees give
     // their space back (gated + throttled — see diskPressureMerge.ts).
