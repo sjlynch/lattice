@@ -231,6 +231,39 @@ test('acquire steals a lock whose PID was recycled by a younger process', async 
   }
 });
 
+test('acquire steals a stale lock carrying our own recycled PID', async () => {
+  const fixture = await createFixture();
+  try {
+    // The Windows dev-restart case: the previous backend left a lock behind
+    // and this process was handed the same PID. pid + hostname match ours, but
+    // the lock predates this process by a day, so it cannot be ours — it must
+    // read as dead and be taken over, not refused as same-process re-entry.
+    await writeLock(
+      fixture.lockFile,
+      holder({
+        pid: process.pid,
+        startedAt: Date.now() - DAY_MS,
+        label: 'own-recycled-pid-holder',
+      }),
+    );
+
+    const inspected = await inspectProjectRunLock(fixture.projectPath);
+    assert.equal(inspected?.holder.pid, process.pid);
+    assert.equal(inspected?.alive, false);
+
+    const handle = await acquireProjectRunLock(fixture.projectPath, 'after-own-recycle');
+    const current = await readLockBody(fixture.lockFile);
+    assert.equal(current?.pid, process.pid);
+    assert.equal(current?.label, 'after-own-recycle');
+    assert.ok(current && current.startedAt > Date.now() - DAY_MS);
+
+    await handle.release();
+    assert.equal(await readLockBody(fixture.lockFile), null);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('acquire refuses same-process re-entry', async () => {
   const fixture = await createFixture();
   try {
