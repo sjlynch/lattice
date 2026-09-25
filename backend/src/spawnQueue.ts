@@ -108,7 +108,7 @@ export async function batchAdmissionHold(): Promise<string | null> {
   if (!s.accounting.canAdmit('batch')) {
     return `the agent cap (maxConcurrentAgents=${s.accounting.getSoftCap()}) is reached`;
   }
-  if (s.governor.holdsBatch(s.accounting.effectiveLive())) return s.governor.state().reason;
+  if (s.governor.holdsBatch(s.accounting.effectiveAgents())) return s.governor.state().reason;
   return null;
 }
 
