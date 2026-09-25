@@ -328,7 +328,8 @@ test('a concurrent /verdict and /done backstop promote the task exactly once', a
       projectPath: task.projectPath,
       cwd: path.join(project, 'scratch'),
       status: 'running',
-      createdAt: 1,
+      // Started after the task landed in QA (its `mergedAt`), like a real run.
+      createdAt: Date.now(),
     });
     recordQaVerdict(id, { passed: true, confident: true, receivedAt: 1 });
     const outcomes = await Promise.all([
@@ -338,6 +339,72 @@ test('a concurrent /verdict and /done backstop promote the task exactly once', a
     assert.equal(outcomes.filter((o) => o.moved).length, 1, JSON.stringify(outcomes));
     assert.equal((await getTask(task.id))?.status, 'done');
     markQaRunDone(id);
+    forgetQaRun(id);
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+// ---------- stale verdicts ----------
+//
+// A verdict is about the build the run tested. If the task was dragged out of
+// QA while the run was going, reworked and merged back in, the recorded PASS
+// describes the OLD code: re-applying it (a later /done, boot recovery's
+// lost-run settlement) must not ship the new build to Done. Nor may a run that
+// was already settled re-apply its verdict at all.
+
+test('applyRecordedQaVerdict: a PASS recorded before the task was re-merged into QA does not promote it', async () => {
+  const project = await mkdtemp(path.join(os.tmpdir(), 'lattice-qa-stale-'));
+  try {
+    const task = await createTask(project, 'QA stale verdict');
+    await updateTask(task.id, { status: 'qa', mergedAt: 1000 });
+    const id = 'qa_stale_remerged';
+    recordQaRun({
+      id,
+      taskId: task.id,
+      projectPath: task.projectPath,
+      cwd: path.join(project, 'scratch'),
+      status: 'running',
+      createdAt: 2000,
+    });
+    // Dragged out of QA for rework; the run's confident PASS lands meanwhile.
+    await updateTask(task.id, { status: 'in_progress' });
+    const early = await applyQaVerdict(id, { passed: true, confident: true });
+    assert.equal(early.moved, false);
+    // Reworked and merged back into QA — a newer build than the run tested.
+    await updateTask(task.id, { status: 'qa', mergedAt: 3000 });
+    const outcome = await applyRecordedQaVerdict(id);
+    assert.equal(outcome.moved, false);
+    assert.equal(outcome.reason, 'task re-merged after the QA run started');
+    assert.equal((await getTask(task.id))?.status, 'qa');
+    markQaRunDone(id);
+    forgetQaRun(id);
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
+test('applyRecordedQaVerdict: a settled run never re-applies its verdict', async () => {
+  const project = await mkdtemp(path.join(os.tmpdir(), 'lattice-qa-settled-'));
+  try {
+    const task = await createTask(project, 'QA settled run');
+    await updateTask(task.id, { status: 'qa', mergedAt: 1000 });
+    const id = 'qa_settled_no_reapply';
+    recordQaRun({
+      id,
+      taskId: task.id,
+      projectPath: task.projectPath,
+      cwd: path.join(project, 'scratch'),
+      status: 'running',
+      createdAt: 2000,
+    });
+    recordQaVerdict(id, { passed: true, confident: true, receivedAt: 2500 });
+    // Closed by an earlier /done (e.g. while the task was out of QA).
+    markQaRunDone(id);
+    const outcome = await applyRecordedQaVerdict(id);
+    assert.equal(outcome.moved, false);
+    assert.equal(outcome.reason, 'run already settled');
+    assert.equal((await getTask(task.id))?.status, 'qa');
     forgetQaRun(id);
   } finally {
     await rm(project, { recursive: true, force: true });

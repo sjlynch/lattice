@@ -31,6 +31,9 @@ export type PostMergeHookRun = {
   // The last time that holding gate saw the session busy (throttled) — a
   // restart re-arms the quiet window from the later of the two.
   stopActiveAt?: number;
+  // Whether the session was busy at that checkpoint — a restart then starts
+  // the quiet window at boot (agentQuiescence.ts markAgentReadopted).
+  stopBusy?: boolean;
 };
 
 export type PostMergeHookSession = {

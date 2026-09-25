@@ -118,7 +118,27 @@ export function listenForRequests(
   });
 }
 
-export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecovery = () => {}): void {
+export type BootRecoveryChainDeps = {
+  resumeWorkflowRuns: typeof resumeInterruptedWorkflowRuns;
+  resumeMergeRuns: typeof resumeInterruptedMergeRuns;
+  fireOwedHooks: typeof fireOwedPostMergeHooks;
+  startOutbox: typeof startCallbackOutboxLoop;
+};
+
+const bootRecoveryChainDeps: BootRecoveryChainDeps = {
+  resumeWorkflowRuns: resumeInterruptedWorkflowRuns,
+  resumeMergeRuns: resumeInterruptedMergeRuns,
+  fireOwedHooks: fireOwedPostMergeHooks,
+  startOutbox: startCallbackOutboxLoop,
+};
+
+// Exported for tests (the deps seam); production reaches it through
+// resumeRunsAfterListen.
+export function runBootRecoveryChain(
+  backendOrigin: string,
+  finishWorkflowRecovery = () => {},
+  deps: BootRecoveryChainDeps = bootRecoveryChainDeps,
+): Promise<void> {
   // Workflow runs first, and awaited before the merge-run resume: a workflow
   // parked on a long AGENT step holds no run.lock, so nothing defers a restart
   // during it and the run would otherwise be lost outright (its still-running
@@ -126,28 +146,36 @@ export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecov
   // Ordering matters — a resumed workflow owns its project's merge pipeline via
   // its own Merge control step, and resumeInterruptedMergeRuns skips a project
   // that has an active workflow run rather than racing it.
-  resumeInterruptedWorkflowRuns(backendOrigin, finishWorkflowRecovery)
+  // The workflow resume settles once every run is re-registered and its
+  // dispatch decision is applied; a re-dispatched agent step's pre-run (an
+  // Opengrep scan, minutes) carries on detached rather than holding up the
+  // merge resume, owed hooks and outbox replay below.
+  return deps.resumeWorkflowRuns(backendOrigin, finishWorkflowRecovery)
     .catch((err) => console.error('[startup] resumeInterruptedWorkflowRuns failed:', err))
     .finally(finishWorkflowRecovery)
     .then(() =>
       // Now that the API is up, resume any merge run a previous process was
       // running when it got restarted (resolver Claudes it may spawn need
       // the API listening to call back).
-      resumeInterruptedMergeRuns(backendOrigin).catch((err) =>
+      deps.resumeMergeRuns(backendOrigin).catch((err) =>
         console.error('[startup] resumeInterruptedMergeRuns failed:', err),
       ),
     )
     .then(() =>
       // Last: a post-merge hook a pre-restart merge still owes, for a project
       // that neither resume above took over (their own paths fire it).
-      fireOwedPostMergeHooks(backendOrigin).catch((err) =>
+      deps.fireOwedHooks(backendOrigin).catch((err) =>
         console.error('[startup] fireOwedPostMergeHooks failed:', err),
       ),
     )
     // Replay undelivered completion callbacks only once the runs above are
     // re-adopted / re-dispatched: a replayed push `/done` that beat the Push
     // step's re-dispatch used to make it push a second time.
-    .finally(() => startCallbackOutboxLoop(backendOrigin));
+    .finally(() => deps.startOutbox(backendOrigin));
+}
+
+export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecovery = () => {}): void {
+  void runBootRecoveryChain(backendOrigin, finishWorkflowRecovery);
   // Re-enqueue task runs that were waiting in the spawn queue when the
   // backend stopped (their `runQueued` flag is persisted on the task).
   // Runs post-listen and after the pre-listen orphan-worktree sweep so a

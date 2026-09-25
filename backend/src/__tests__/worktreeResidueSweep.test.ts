@@ -42,6 +42,8 @@ function sweepDeps(base: string, list: Porcelain, overrides: Partial<ResidueSwee
     now: () => Date.now(),
     worktreesDir: () => base,
     notifyDiskSpaceFreed: () => { freed += 1; },
+    // Unknown common dir: every `.git` marker is kept.
+    commonGitDir: async () => null,
     ...overrides,
   };
   return { deps, removed, freed: () => freed };
@@ -141,6 +143,94 @@ test('registration and .git are re-checked immediately before each delete', asyn
     assert.equal(lists, 4);
     assert.ok((await fs.lstat(becomesRegistered)).isDirectory());
     assert.ok((await fs.lstat(path.join(gainsGit, '.git'))).isFile());
+  });
+});
+
+// A repo's common gitdir with one live admin dir, beside a home worktrees base.
+async function mkCommonDir(root: string) {
+  const common = path.join(root, 'repo', '.git');
+  await writeLayout(common, { HEAD: 'ref: refs/heads/main\n', 'worktrees/live-id/gitdir': 'x' });
+  const base = path.join(root, 'wt');
+  await fs.mkdir(base);
+  return { common, base };
+}
+
+const gitFile = (target: string) => `gitdir: ${target.replace(/\\/g, '/')}\n`;
+
+test('a .git FILE pointing at a removed worktree admin dir is residue; any other .git is kept', async (t) => {
+  resetResidueSweepStateForTests();
+  const lines: string[] = [];
+  t.mock.method(console, 'log', (...args: unknown[]) => lines.push(String(args[0])));
+  await withTempDir('lattice-residue-', async (root) => {
+    const { common, base } = await mkCommonDir(root);
+    const other = path.join(root, 'other-repo', '.git');
+    await writeLayout(other, { HEAD: 'ref: refs/heads/main\n' });
+    // Locked `.claude/` sorted before `.git`, so the `.git` file survived.
+    await mkResidue(base, 'orphaned', {
+      '.claude/settings.local.json': '{}',
+      '.git': gitFile(path.join(common, 'worktrees', 'gone-id')),
+      'src/a.ts': 'x',
+    });
+    const relTarget = path.relative(path.join(base, 'orphaned-relative'), path.join(common, 'worktrees', 'gone-2'));
+    await mkResidue(base, 'orphaned-relative', { '.git': gitFile(relTarget), 'a.ts': 'x' });
+    await mkResidue(base, 'admin-exists', { '.git': gitFile(path.join(common, 'worktrees', 'live-id')), 'a.ts': 'x' });
+    await mkResidue(base, 'other-repo', { '.git': gitFile(path.join(other, 'worktrees', 'gone-id')), 'a.ts': 'x' });
+    await mkResidue(base, 'not-a-worktree-pointer', { '.git': gitFile(path.join(common, 'modules', 'gone')), 'a.ts': 'x' });
+    await mkResidue(base, 'garbage-git-file', { '.git': 'not a pointer', 'a.ts': 'x' });
+    await mkResidue(base, 'git-dir', { '.git/HEAD': 'ref: refs/heads/main', 'a.ts': 'x' });
+    const registered = await mkResidue(base, 'orphaned-but-registered', {
+      '.git': gitFile(path.join(common, 'worktrees', 'gone-3')),
+    });
+    const owned = await mkResidue(base, 'orphaned-but-owned', { '.git': gitFile(path.join(common, 'worktrees', 'gone-4')) });
+    await mkResidue(base, 'orphaned-fresh', { '.git': gitFile(path.join(common, 'worktrees', 'gone-5')) }, new Date());
+
+    const tasks = [{ id: 'a', status: 'in_progress', worktreePath: owned }] as unknown as Task[];
+    const { deps, removed } = sweepDeps(base, () => porcelain(registered), { commonGitDir: async () => common });
+    assert.equal(await sweep(base, deps, tasks), 2);
+    assert.deepEqual(removed.sort(), ['orphaned', 'orphaned-relative']);
+    assert.deepEqual((await fs.readdir(base)).sort(), [
+      'admin-exists', 'garbage-git-file', 'git-dir', 'not-a-worktree-pointer', 'orphaned-but-owned',
+      'orphaned-but-registered', 'orphaned-fresh', 'other-repo',
+    ]);
+    assert.ok(lines.some((l) => /removed .*orphaned \(top-level: .*removed worktree admin dir\)/.test(l)), lines.join('\n'));
+  });
+});
+
+test('a dangling .git pointer is kept when the common dir itself is missing or unknown', async () => {
+  resetResidueSweepStateForTests();
+  await withTempDir('lattice-residue-', async (root) => {
+    const { common, base } = await mkCommonDir(root);
+    await mkResidue(base, 'orphaned', { '.git': gitFile(path.join(common, 'worktrees', 'gone-id')) });
+    // No HEAD: a damaged/vanished `.git` makes every admin dir read as missing.
+    await fs.rm(path.join(common, 'HEAD'));
+    const { deps, removed } = sweepDeps(base, () => porcelain(), { commonGitDir: async () => common });
+    assert.equal(await sweep(base, deps), 0);
+    await fs.writeFile(path.join(common, 'HEAD'), 'ref: refs/heads/main\n');
+    const unknown = sweepDeps(base, () => porcelain(), { commonGitDir: async () => { throw new Error('boom'); } });
+    assert.equal(await sweep(base, unknown.deps), 0);
+    assert.deepEqual([...removed, ...unknown.removed], []);
+  });
+});
+
+test('a dangling .git pointer whose admin dir reappears before the delete is kept', async (t) => {
+  resetResidueSweepStateForTests();
+  t.mock.method(console, 'log', () => undefined);
+  await withTempDir('lattice-residue-', async (root) => {
+    const { common, base } = await mkCommonDir(root);
+    const dir = await mkResidue(base, 'orphaned', { '.git': gitFile(path.join(common, 'worktrees', 'gone-id')) });
+    let lists = 0;
+    const { deps, removed } = sweepDeps(base, () => porcelain(), { commonGitDir: async () => common });
+    const realGit = deps.projectGit;
+    deps.projectGit = (async (...args: Parameters<typeof realGit>) => {
+      lists += 1;
+      // The re-check list: a setup re-created the admin dir meanwhile.
+      if (lists === 2) await fs.mkdir(path.join(common, 'worktrees', 'gone-id'));
+      return realGit(...args);
+    }) as never;
+    assert.equal(await sweep(base, deps), 0);
+    assert.equal(lists, 2);
+    assert.deepEqual(removed, []);
+    assert.ok((await fs.lstat(path.join(dir, '.git'))).isFile());
   });
 });
 

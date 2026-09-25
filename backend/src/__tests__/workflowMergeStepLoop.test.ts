@@ -126,7 +126,8 @@ test('merge step aborts within two rounds when the ready_to_merge lane stops shr
 
   await assert.rejects(
     () => runMergeStep(makeWorkflow(), makeRun(), 0, 'http://localhost', deps),
-    /made no progress[\s\S]*ready-to-merge/,
+    // …and names the first task error, not just a count.
+    /made no progress[\s\S]*ready-to-merge[\s\S]*task B: no worktree/,
   );
 
   // It must abort on the SECOND round (the first made progress, the second

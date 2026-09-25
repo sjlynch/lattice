@@ -67,22 +67,29 @@ function latticeHookGroups(backendOrigin: string, projectRoot: string): HooksMap
   };
 }
 
-function isLatticeGroup(group: HookGroup): boolean {
-  return (
-    Array.isArray(group?.hooks) &&
-    group.hooks.some(
-      (h) => typeof h?.command === 'string' && h.command.includes(URL_MARKER),
-    )
-  );
+function isLatticeHandler(handler: HookHandler): boolean {
+  return typeof handler?.command === 'string' && handler.command.includes(URL_MARKER);
 }
 
-// Remove Lattice's hook groups from a hooks map in place; drop now-empty
-// event arrays. Returns the same object.
+// Remove Lattice's hook handlers from a hooks map in place. Filters per
+// HANDLER, not per group: a group can hold the user's own handler beside ours
+// (hand-edited, or a tool that files hooks by event + matcher), and dropping
+// the whole group silently deleted theirs. A group is dropped only once its
+// `hooks` array is empty, and an event only once it has no groups left.
+// Returns the same object.
 function stripLatticeEntries(hooks: HooksMap): HooksMap {
   for (const event of Object.keys(hooks)) {
     const groups = hooks[event];
     if (!Array.isArray(groups)) continue;
-    const kept = groups.filter((g) => !isLatticeGroup(g));
+    const kept: HookGroup[] = [];
+    for (const group of groups) {
+      if (!Array.isArray(group?.hooks) || !group.hooks.some(isLatticeHandler)) {
+        kept.push(group);
+        continue;
+      }
+      const handlers = group.hooks.filter((h) => !isLatticeHandler(h));
+      if (handlers.length > 0) kept.push({ ...group, hooks: handlers });
+    }
     if (kept.length === 0) delete hooks[event];
     else hooks[event] = kept;
   }

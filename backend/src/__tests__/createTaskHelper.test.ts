@@ -54,11 +54,12 @@ function runHelper(script: string, args: string[]): Promise<RunResult> {
 
 async function withHelper(
   fn: (run: (...args: string[]) => Promise<RunResult>, calls: Recorded[]) => Promise<void>,
+  project: string = PROJECT,
 ): Promise<void> {
   await withFakeApi(async (origin, calls) => {
     await withTempDir('lattice-create-task-', async (dir) => {
       const script = path.join(dir, 'create-task.cjs');
-      await fs.writeFile(script, renderHelperScript(PROJECT, origin), 'utf8');
+      await fs.writeFile(script, renderHelperScript(project, origin), 'utf8');
       await fn((...args) => runHelper(script, args), calls);
     });
   });
@@ -125,4 +126,20 @@ test('a plain "Title" "Description" still creates one task', async () => {
       description: 'It overlaps the graph',
     });
   });
+});
+
+test('a project path with quotes and `$` replacement patterns renders verbatim', async () => {
+  // `'` used to end the single-quoted literal (SyntaxError), and a string
+  // replacement expanded `$$` / `$&` / `$'` into other text.
+  const awkward = "C:\\Users\\O'Brien\\$$x\\$&y\\$'z\\$`w";
+  await withHelper(async (run, calls) => {
+    const r = await run('--help');
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.stdout.includes(awkward), `help names the exact project:\n${r.stdout}`);
+
+    const created = await run('Title', 'Desc');
+    assert.equal(created.code, 0, created.stderr);
+    assert.equal(calls.length, 1);
+    assert.equal(JSON.parse(calls[0].body).project, awkward);
+  }, awkward);
 });

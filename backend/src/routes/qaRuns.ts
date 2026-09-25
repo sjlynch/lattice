@@ -103,6 +103,11 @@ export function buildQaRunsRouter(
       res,
       run,
       onRun: async (tracked) => {
+        // Already settled by an earlier Stop (the stay-open QA terminal can
+        // Stop again before the frontend forgets the run): its verdict was
+        // applied then and must not be re-applied to whatever the task has
+        // become since — e.g. a reworked build merged back into QA.
+        if (tracked.status === 'done') return;
         // Backstop the qa → done transition off the reliable Stop hook, the way
         // in_progress → ready_to_merge fires from the Stop hook / Pi completion
         // extension rather than the model's memory. If the agent's explicit

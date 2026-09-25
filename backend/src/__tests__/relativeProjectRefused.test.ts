@@ -6,10 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { access, mkdtemp, rm } from 'node:fs/promises';
 import { WebSocket } from 'ws';
-import { readProjectParam } from '../routes/projectParam.js';
+import { readProjectParam, relativeProjectError } from '../routes/projectParam.js';
 import { parseProject } from '../ws/projectEndpoint.js';
 import { buildTasksWss } from '../ws/endpoints/tasks.js';
-import { canonicalProjectPath } from '../projectPath.js';
+import { canonicalProjectPath, isRealAbsoluteProjectPath, msysToWindowsPath } from '../projectPath.js';
 
 // Every per-project store resolves its path through canonicalProjectPath ==
 // path.resolve, so a RELATIVE `project` used to land under the backend's own
@@ -196,5 +196,82 @@ test('/ws/tasks?project=<relative> closes the socket and indexes nothing', async
   } finally {
     wss.close();
     await close(server);
+  }
+});
+
+// Windows root-relative paths. `path.win32.isAbsolute('/c/development/lattice')`
+// is true, but path.resolve pins it to the backend's drive
+// (`C:\c\development\lattice`), so a Git-Bash agent's MSYS-style `?project=`
+// used to get a 200 with an EMPTY board, and a phantom project was indexed in
+// ~/.lattice/projects.json.
+test('isRealAbsoluteProjectPath: win32 needs drive-absolute or UNC; POSIX unchanged', () => {
+  for (const ok of ['C:\\development\\lattice', 'c:/dev/proj', 'C:\\', '\\\\server\\share\\proj', '//server/share', '\\\\?\\C:\\proj']) {
+    assert.equal(isRealAbsoluteProjectPath(ok, 'win32'), true, ok);
+  }
+  for (const bad of ['/c/development/lattice', '/c', '\\x', '/x', 'C:developmentproj', 'rel', '\\\\server', '']) {
+    assert.equal(isRealAbsoluteProjectPath(bad, 'win32'), false, bad);
+  }
+  assert.equal(isRealAbsoluteProjectPath('/home/me/proj', 'linux'), true);
+  assert.equal(isRealAbsoluteProjectPath('/c/development/lattice', 'darwin'), true);
+  assert.equal(isRealAbsoluteProjectPath('rel', 'linux'), false);
+});
+
+test('relativeProjectError names the MSYS cause and suggests the C:\\ spelling on win32', () => {
+  assert.equal(msysToWindowsPath('/c/development/lattice'), 'C:\\development\\lattice');
+  assert.equal(msysToWindowsPath('/d'), 'D:\\');
+  assert.equal(msysToWindowsPath('\\foo'), null);
+  assert.equal(msysToWindowsPath('\\x'), null);
+  const msg = relativeProjectError('/c/development/lattice', 'win32');
+  assert.match(msg, /absolute path/);
+  assert.match(msg, /MSYS/);
+  assert.ok(msg.includes(JSON.stringify('C:\\development\\lattice')), msg);
+  const rootRel = relativeProjectError('\\x', 'win32');
+  assert.match(rootRel, /root-relative/);
+  assert.doesNotMatch(rootRel, /MSYS/);
+  // POSIX: the relative message is the unchanged one.
+  assert.match(relativeProjectError('rel', 'linux'), /backslashes/);
+});
+
+test('win32: task reads refuse a root-relative / MSYS project with 400 and index nothing', { skip: process.platform !== 'win32' }, async () => {
+  const tmpHome = await mkdtemp(path.join(os.tmpdir(), 'lattice-msysproj-'));
+  const originalEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = tmpHome;
+  process.env.USERPROFILE = tmpHome;
+  let server: http.Server | null = null;
+  try {
+    const { createBackendApp } = await import('../server/app.js');
+    const app = createBackendApp({ defaultRoot: tmpHome, backendOrigin: 'http://127.0.0.1:5184' });
+    server = http.createServer(app);
+    const port = await listen(server);
+    const base = `http://127.0.0.1:${port}`;
+    const json = { 'Content-Type': 'application/json' };
+    for (const project of ['/c/x', '\\x']) {
+      const q = `project=${encodeURIComponent(project)}`;
+      const calls: Array<[string, RequestInit?]> = [
+        [`/api/tasks?${q}`],
+        [`/api/tasks/summary?${q}`],
+        [`/api/settings?${q}`],
+        [`/api/tasks/transition?${q}`, { method: 'POST', headers: json, body: JSON.stringify({ fromStatus: 'open', status: 'done' }) }],
+        ['/api/tasks', { method: 'POST', headers: json, body: JSON.stringify({ project, title: 't' }) }],
+      ];
+      for (const [p, init] of calls) {
+        const res = await fetch(base + p, init);
+        const body = (await res.json()) as { error?: string };
+        assert.equal(res.status, 400, `${init?.method ?? 'GET'} ${p} → ${res.status} ${JSON.stringify(body)}`);
+        assert.match(String(body.error), /absolute path/, `${p}: ${body.error}`);
+        assert.match(String(body.error), /root-relative/, `${p}: ${body.error}`);
+      }
+      assert.equal(parseProject(`/ws/tasks?${q}`), '');
+    }
+    const { listKnownProjects } = await import('../tasks.js');
+    const known = await listKnownProjects();
+    for (const phantom of [path.resolve('/c/x'), path.resolve('\\x')]) {
+      assert.ok(!known.includes(phantom), `${phantom} must not be indexed`);
+    }
+  } finally {
+    if (server) await close(server);
+    process.env.HOME = originalEnv.HOME;
+    process.env.USERPROFILE = originalEnv.USERPROFILE;
+    await rm(tmpHome, { recursive: true, force: true });
   }
 });
