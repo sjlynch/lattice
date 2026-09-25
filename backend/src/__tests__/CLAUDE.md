@@ -300,6 +300,15 @@ under `helpers/`.
   done). An unprobeable terminal-server re-adopts and never settles. The Push
   step's attach path (no spawn, no drain, adopted pty surfaced; a `lost`
   session fails the step) and the re-adopted quiescence window (mocked clock).
+- `owedPostMergeHooks.test.ts` — boot's owed post-merge hook vs a resumed
+  merge run: with a `startMergeRun` stub that steals the dead lock and
+  registers the run only after a delay, `resumeInterruptedMergeRuns` then
+  `fireOwedPostMergeHooks` must not fire the hook (the resumed run's teardown
+  does). Also the run-lock backstop: a held or stale `merge-run` lock defers the
+  hook; a stale non-resumable (`manual-merge`) lock or none does not. The
+  sibling `since` rule (a re-adopted hook that started after the debt covers
+  it — exactly one hook) is in `postMergeHookTrigger.test.ts`, and Phase C's
+  cancel race in `workflowMergeStepPostMergeHook.test.ts`.
 - `workflowRunsWsRecoveryHello.test.ts` — `/ws/workflow-runs` across the
   post-restart recovery window: a connect before recovery gets
   `hello {recovering: true}` then an authoritative hello carrying the restored
