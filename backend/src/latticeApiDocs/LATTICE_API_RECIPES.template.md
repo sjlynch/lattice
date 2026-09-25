@@ -23,7 +23,7 @@ Before acting on any response, confirm its `canonicalProject` matches
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET    | /api/projects                      | List indexed project roots: `[{ path, hash }, ...]` |
-| GET    | /api/tasks?project=&status=&ids=&fields=&clip=&since=&limit=&format=&confirm_large= | List tasks. `status` — CSV of lanes or `all`; **defaults to the active lanes** (`backlog,open,in_progress,ready_to_merge,qa`), with the skipped `done`/`deleted` counted in `omitted`. An unknown lane is a **400** naming the valid ones. `ids` — CSV of task ids: the expand tier (bypasses `status` and `since`, implies `fields=full` and `clip=0`, reports `missing`). `fields` — `compact` (default: id/title/status/timestamps + `descriptionBytes`/`summaryBytes`) or `full`. `clip` — max chars of `description`/`summary` under `fields=full`; default 500, `0` = unlimited, sets `descriptionTruncated`/`summaryTruncated`. `since` — ISO-8601, epoch ms (13 digits) or seconds (10), or `30d`/`12h`/`45m`, matched on `lastActivityAt` (`omitted` is counted inside the window). `limit` — default 100, `0` = unlimited, max 1000; ordering is `lastActivityAt` desc. `format=markdown` returns a round-trippable doc for `/upsert` (never clipped). The envelope adds `total`, `matched`, `omitted`, `truncated`, `clipped`, `fields`, `bytes`, `approxTokens`, `hint`. Over 256 KB it returns **413** unless `confirm_large=1` |
+| GET    | /api/tasks?project=&status=&ids=&fields=&clip=&since=&limit=&format=&confirm_large= | List tasks. `status` — CSV of lanes or `all`; **defaults to the active lanes** (`backlog,open,in_progress,ready_to_merge,qa`), with the skipped `done`/`deleted` counted in `omitted`. An unknown lane is a **400** naming the valid ones. `ids` — CSV of task ids: the expand tier (bypasses `status` and `since`, implies `fields=full` and `clip=0`, reports `missing`). `fields` — `compact` (default: id/title/status/timestamps + `descriptionBytes`/`summaryBytes`) or `full`. `clip` — max chars of `description`/`summary` under `fields=full`; default 500, `0` = unlimited, sets `descriptionTruncated`/`summaryTruncated`. `since` — ISO-8601, epoch ms (13 digits) or seconds (10), or `30d`/`12h`/`45m`, matched on `lastActivityAt` (`omitted` is counted inside the window). `limit` — default 100, `0` = unlimited, max 1000; ordering is `lastActivityAt` desc. `format=markdown` returns a round-trippable doc for `/upsert` (never clipped; `limit` still applies, and a capped doc carries `truncated=N/M` in its frontmatter). The envelope adds `total`, `matched`, `omitted`, `truncated`, `clipped`, `fields`, `bytes`, `approxTokens`, `hint`. Over 256 KB it returns **413** unless `confirm_large=1` |
 | GET    | /api/tasks/summary?project=        | Counts + cost envelope: `{project, canonicalProject, hash, total, mismatched, byStatus, lanes, boardBytes, boardApproxTokens, hint}`. `lanes[status]` = `{count, bytes, approxTokens, newestActivityAt}` for that lane's FULL records, and `boardBytes` prices the whole board (NOT this response, which is under 1 KB) — this is how you price a query before making it |
 | GET    | /api/tasks/search?project=&q=&status=&limit= | Find tasks without listing the board. `q` required; whitespace-split terms, all of which must appear (case-insensitive substring) in title/description/summary. `status` CSV or `all` — default `all`, since history is what search is for. `limit` default 20, max 200. Results are `{id, title, status, lastActivityAt, score, snippet}` with title matches weighted ×3 |
 | GET    | /api/tasks/:id                     | Fetch one task — the full, never-clipped record |
@@ -227,8 +227,11 @@ curl -s -X POST "{{API_URL}}/api/tasks/bulk-update" \
 **Markdown round-trip** — when you want to refine many long descriptions
 and/or mix in brand-new tasks. `format=markdown` is **never clipped** (a
 clipped round-trip would destroy descriptions on the way back), so it still
-honours the 256 KB ceiling: fetch **one lane at a time**, and add `since=` or
-`limit=` when a lane is huge. The natural flow is:
+honours the 256 KB ceiling: fetch **one lane at a time**. It is still capped
+at the newest 100 tasks by default (`limit=0` for all, or narrow with
+`since=`); a capped doc says so in-band — `truncated=100/250` in the
+`<!-- lattice: … -->` frontmatter plus a `<!-- showing 100 of 250 … -->`
+comment. The natural flow is:
 
 ```bash
 # 1. Fetch the lane as a markdown document. `-f` matters: without it a 413
@@ -252,6 +255,13 @@ curl -s -X POST "{{API_URL}}/api/tasks/upsert?project={{PROJECT_FWD}}" \
 
 The upsert is **additive only** — tasks NOT in the document are left
 untouched. To delete a task, use `DELETE /api/tasks/:id` explicitly.
+
+Description lines that would read as structure are escaped with one leading
+backslash: a `# ` line (else a new task) becomes `\# `, and a code fence with
+no closing fence becomes `` \``` `` (else it swallows every later task). The
+parser strips exactly one backslash from such lines outside a fence, so an
+unedited GET → POST is a no-op — keep the backslash when editing, and write
+`\# ` yourself for a level-1 heading inside a description.
 
 Document shape (what GET emits and POST accepts):
 ```markdown

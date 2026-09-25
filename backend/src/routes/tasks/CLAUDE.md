@@ -77,6 +77,10 @@ EMPTY title, which means "keep the title" on an update (PATCH / an id-bearing
 upsert block) and is a 400 on a create. A markdown PATCH parses in
 `singleTask` mode — only the first `#` heading is the title; later level-1
 headings are description text rather than silently dropped extra tasks.
+`serializeTasksAsMarkdown` backslash-escapes description lines that would read
+as structure (`# ` headings, a fence that never closes) and the parser strips
+one backslash outside fences, so GET `?format=markdown` → POST `/upsert` is a
+no-op; a `limit`-capped listing carries `truncated=N/M` in its frontmatter.
 
 ## Queued spawns (`queuedSpawn.ts` barrel; split by concern)
 

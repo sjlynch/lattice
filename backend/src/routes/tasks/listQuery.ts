@@ -687,6 +687,11 @@ export function buildListOutcome(
         canonicalProject: meta.canonicalProject,
         hash: meta.hash,
         statusFilter: q.statusLabel,
+        // The JSON envelope carries `truncated` + `hint`; the doc must say so
+        // in-band too, or a capped lane reads as the whole lane.
+        truncated: selection.truncated
+          ? { shown: selection.tasks.length, matched: selection.matched }
+          : undefined,
       },
     );
     const bytes = utf8Bytes(markdown);

@@ -21,6 +21,7 @@ import {
   type TooLargeBody,
 } from '../routes/tasks/listQuery.js';
 import { stringParams } from '../routes/tasks/crudList.js';
+import { parseMarkdownDoc } from '../routes/tasks/markdownBatch.js';
 import type { Task, TaskStatus } from '../tasks.js';
 
 // The pure half of GET /api/tasks. The endpoint used to return every task,
@@ -490,6 +491,31 @@ test('format=markdown never clips and records the filter actually applied', () =
   assert.ok(!md.includes('…'));
   assert.match(md, /status=backlog,open,in_progress,ready_to_merge,qa/);
   assert.ok(!md.includes('# {id=c'), 'the default lane filter still applies');
+});
+
+test('a markdown listing capped by limit says so in-band and still parses to exactly the page', () => {
+  // The JSON envelope carries `truncated`; the markdown doc used to carry
+  // nothing, so a 250-task lane came back as its newest 100 with no sign the
+  // rest existed — and an agent triaged / re-upserted believing it had it all.
+  const tasks = Array.from({ length: 150 }, (_, i) =>
+    task(`t${i}`, { status: 'backlog', createdAt: 1_000 + i, description: `d${i}\n\n# Plan\nstep` }),
+  );
+  const outcome = buildListOutcome(META, tasks, parse({ status: 'backlog', format: 'markdown' }));
+  assert.equal(outcome.kind, 'markdown');
+  const md = (outcome as { markdown: string }).markdown;
+  assert.match(md, new RegExp(`truncated=${DEFAULT_LIST_LIMIT}/150`));
+  assert.match(md, new RegExp(`showing ${DEFAULT_LIST_LIMIT} of 150`));
+  const doc = parseMarkdownDoc(md);
+  assert.equal(doc.tasks.length, DEFAULT_LIST_LIMIT, 'no extra tasks from the marker or the # Plan lines');
+  for (const t of doc.tasks) {
+    assert.ok(t.id);
+    assert.match(t.description ?? '', /^d\d+\n\n# Plan\nstep$/);
+  }
+
+  const all = buildListOutcome(META, tasks, parse({ status: 'backlog', format: 'markdown', limit: '0' }));
+  const allMd = (all as { markdown: string }).markdown;
+  assert.ok(!allMd.includes('truncated='), 'an uncapped listing carries no marker');
+  assert.equal(parseMarkdownDoc(allMd).tasks.length, 150);
 });
 
 // ---------------------------------------------------------------- summary --
