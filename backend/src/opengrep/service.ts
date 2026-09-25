@@ -24,6 +24,7 @@ import {
   latestOpengrepScan,
   readOpengrepScan,
   runOpengrepScan,
+  startOpengrepScan,
   type OpengrepScanRecord,
 } from './scan.js';
 import {
@@ -143,10 +144,17 @@ export function digestFor(
   return { digest, markdown };
 }
 
+export type ScanWithDigestOptions = {
+  targets?: string[];
+  timeoutMs?: number;
+  render?: DigestRenderContext;
+  signal?: AbortSignal;
+};
+
 // Scan with the project's effective configuration and render its digest.
 export async function scanProjectWithDigest(
   project: string,
-  opts: { targets?: string[]; timeoutMs?: number; render?: DigestRenderContext; signal?: AbortSignal } = {},
+  opts: ScanWithDigestOptions = {},
 ): Promise<ScanWithDigestResult> {
   const canonical = canonicalProjectPath(project);
   const config = await loadEffectiveConfig(canonical);
@@ -159,10 +167,44 @@ export async function scanProjectWithDigest(
     timeoutMs: opts.timeoutMs,
     signal: opts.signal,
   });
+  return renderScanRecord(canonical, record, config, opts.render);
+}
+
+async function renderScanRecord(
+  canonical: string,
+  record: OpengrepScanRecord,
+  config: EffectiveOpengrepConfig,
+  render: DigestRenderContext | undefined,
+): Promise<ScanWithDigestResult> {
   const stored = await readOpengrepScan(canonical, record.id);
   if (!stored) throw new Error(`scan ${record.id} was not stored`);
-  const { digest, markdown } = digestFor(stored.parsed, record, config, opts.render);
+  const { digest, markdown } = digestFor(stored.parsed, record, config, render);
   return { record, digest, markdown, config };
+}
+
+// Like scanProjectWithDigest, but hands back the scan id as soon as the scan is
+// registered, with the eventual result as `done`. For a caller that must not
+// hold one HTTP request open for the whole scan (the MCP tool: undici's 300 s
+// headers timeout is shorter than the 10 min scan cap) — it returns the id and
+// polls `GET /api/opengrep/scans/:id` (see `opengrepScanRunState`). Throws
+// OpengrepScanBusyError when the project already has a scan running.
+export async function startProjectScanWithDigest(
+  project: string,
+  opts: ScanWithDigestOptions = {},
+): Promise<{ id: string; done: Promise<ScanWithDigestResult> }> {
+  const canonical = canonicalProjectPath(project);
+  const config = await loadEffectiveConfig(canonical);
+  const started = startOpengrepScan({
+    project: canonical,
+    packIds: config.packIds,
+    extraRulePaths: config.extraRulePaths,
+    excludeGlobs: config.excludeGlobs,
+    targets: opts.targets,
+    timeoutMs: opts.timeoutMs,
+    signal: opts.signal,
+  });
+  const done = started.promise.then((record) => renderScanRecord(canonical, record, config, opts.render));
+  return { id: started.id, done };
 }
 
 // Digest of a stored scan (latest when `id` is omitted).

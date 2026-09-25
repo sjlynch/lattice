@@ -23,6 +23,7 @@ import { spawnWithTimeout } from '../spawnWithTimeout.js';
 import { resetOpengrepCache, resolveOpengrep, type OpengrepResolution } from './detect.js';
 import { parseOpengrepJson, type OpengrepSeverity, type ParsedOpengrepOutput } from './digest.js';
 import { projectRulesDir, projectScansDir, rulePackDir, rulesRootDir } from './paths.js';
+import { acquireRulesRead } from './rulesGate.js';
 import { readOpengrepState } from './state.js';
 import { findRulePackDef } from './versions.js';
 
@@ -107,8 +108,40 @@ export type ScanDeps = {
   cpuCount?: number;
 };
 
-type RunningScan = { promise: Promise<OpengrepScanRecord>; abort: AbortController };
+type RunningScan = { id: string; startedAt: number; promise: Promise<OpengrepScanRecord>; abort: AbortController };
 const running = new Map<string, RunningScan>();
+
+// The last few scans that FAILED, by id, so a caller that started one with
+// `startOpengrepScan` and polls for it (the MCP tool, via `GET
+// /api/opengrep/scans/:id`) learns why instead of seeing an unknown id. A
+// successful scan needs no entry: its record is on disk.
+const RECENT_FAILURES_KEPT = 20;
+const recentFailures = new Map<string, { project: string; error: Error }>();
+
+function rememberFailure(id: string, project: string, err: unknown): void {
+  recentFailures.set(id, { project, error: err instanceof Error ? err : new Error(String(err)) });
+  while (recentFailures.size > RECENT_FAILURES_KEPT) {
+    const oldest = recentFailures.keys().next().value;
+    if (oldest === undefined) break;
+    recentFailures.delete(oldest);
+  }
+}
+
+export type OpengrepScanRunState =
+  | { state: 'running'; id: string; startedAt: number }
+  | { state: 'failed'; id: string; error: Error };
+
+// Is scan `id` of `project` still running, or did it fail? `null` when this
+// backend knows nothing about it in memory (finished and stored — read it with
+// readOpengrepScan — or never started here, e.g. before a restart).
+export function opengrepScanRunState(project: string, id: string): OpengrepScanRunState | null {
+  const canonical = canonicalProjectPath(project);
+  const entry = running.get(canonical);
+  if (entry && entry.id === id) return { state: 'running', id, startedAt: entry.startedAt };
+  const failed = recentFailures.get(id);
+  if (failed && failed.project === canonical) return { state: 'failed', id, error: failed.error };
+  return null;
+}
 
 export function isOpengrepScanRunning(project: string): boolean {
   return running.has(canonicalProjectPath(project));
@@ -254,6 +287,7 @@ export function defaultExcludeGlobs(): string[] {
 async function performScan(
   req: OpengrepScanRequest,
   project: string,
+  id: string,
   deps: ScanDeps,
   signal: AbortSignal,
 ): Promise<OpengrepScanRecord> {
@@ -263,13 +297,39 @@ async function performScan(
   if (signal.aborted) throw new OpengrepScanAbortedError();
   const resolved = await (deps.resolve ?? resolveOpengrep)();
   if (!resolved) throw new OpengrepNotInstalledError();
+
+  // Hold a read slot on the rules tree from resolving the packs until the scan
+  // is stored, so a pack install cannot swap (or a removal delete) a tree this
+  // scan's engine is reading — the scan waits out a swap in progress instead
+  // (rulesGate.ts). Waiting is abortable like the rest of the scan.
+  let releaseRules: () => void;
+  try {
+    releaseRules = await acquireRulesRead(signal);
+  } catch {
+    throw new OpengrepScanAbortedError();
+  }
+  try {
+    return await scanWithRules(req, project, id, deps, signal, targets, resolved);
+  } finally {
+    releaseRules();
+  }
+}
+
+async function scanWithRules(
+  req: OpengrepScanRequest,
+  project: string,
+  id: string,
+  deps: ScanDeps,
+  signal: AbortSignal,
+  targets: { abs: string[]; rel: string[] },
+  resolved: OpengrepResolution,
+): Promise<OpengrepScanRecord> {
   const { rulePaths, packIds } = await resolveRuleConfigs(project, req.packIds, req.extraRulePaths ?? []);
   if (rulePaths.length === 0) throw new OpengrepNoRulesError();
 
   const dir = projectScansDir(project);
   await fs.mkdir(dir, { recursive: true });
   await fs.mkdir(rulesRootDir(), { recursive: true });
-  const id = scanId();
   const jsonFile = path.join(dir, `${id}.json`);
   const excludeGlobs = [...new Set([...defaultExcludeGlobs(), ...(req.excludeGlobs ?? [])])];
   const jobs = req.jobs && req.jobs > 0 ? Math.floor(req.jobs) : defaultScanJobs(deps.cpuCount);
@@ -343,22 +403,48 @@ async function performScan(
   return record;
 }
 
-export function runOpengrepScan(req: OpengrepScanRequest, deps: ScanDeps = {}): Promise<OpengrepScanRecord> {
+// Start a scan and return its id at once, with the promise of its record. The
+// id is what the stored record will carry, so a caller can hand it out before
+// the scan finishes and poll `opengrepScanRunState` / `readOpengrepScan`.
+// Throws OpengrepScanBusyError synchronously when the project already has one.
+export function startOpengrepScan(
+  req: OpengrepScanRequest,
+  deps: ScanDeps = {},
+): { id: string; promise: Promise<OpengrepScanRecord> } {
   const project = canonicalProjectPath(req.project);
-  if (running.has(project)) return Promise.reject(new OpengrepScanBusyError(project));
+  if (running.has(project)) throw new OpengrepScanBusyError(project);
   const abort = new AbortController();
   if (req.signal) {
     if (req.signal.aborted) abort.abort();
     else req.signal.addEventListener('abort', () => abort.abort(), { once: true });
   }
-  const entry: RunningScan = { promise: undefined as unknown as Promise<OpengrepScanRecord>, abort };
-  entry.promise = performScan(req, project, deps, abort.signal).finally(() => {
-    // Only clear our own entry: a caller that raced in after this scan's
-    // rejection settled must not have its fresh entry removed.
-    if (running.get(project) === entry) running.delete(project);
-  });
+  const id = scanId();
+  const entry: RunningScan = {
+    id,
+    startedAt: Date.now(),
+    promise: undefined as unknown as Promise<OpengrepScanRecord>,
+    abort,
+  };
+  entry.promise = performScan(req, project, id, deps, abort.signal)
+    .catch((err: unknown) => {
+      rememberFailure(id, project, err);
+      throw err;
+    })
+    .finally(() => {
+      // Only clear our own entry: a caller that raced in after this scan's
+      // rejection settled must not have its fresh entry removed.
+      if (running.get(project) === entry) running.delete(project);
+    });
   running.set(project, entry);
-  return entry.promise;
+  return { id, promise: entry.promise };
+}
+
+export function runOpengrepScan(req: OpengrepScanRequest, deps: ScanDeps = {}): Promise<OpengrepScanRecord> {
+  try {
+    return startOpengrepScan(req, deps).promise;
+  } catch (err) {
+    return Promise.reject(err);
+  }
 }
 
 async function readMeta(file: string): Promise<OpengrepScanRecord | null> {

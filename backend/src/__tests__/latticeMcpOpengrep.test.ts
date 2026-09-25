@@ -27,7 +27,18 @@ async function connect(calls: Recorded[], answer: (url: string) => { status?: nu
       text: async () => (typeof res.body === 'string' ? res.body : JSON.stringify(res.body)),
     };
   };
-  const server = createLatticeMcpServer({ apiUrl: API, project: PROJECT, fetchImpl });
+  return connectFetch(fetchImpl);
+}
+
+// Same, around a raw fetch (to throw transport errors), with an INSTANT sleep so
+// the scan poll loop costs no wall-clock time.
+async function connectFetch(fetchImpl: FetchLike) {
+  const server = createLatticeMcpServer({
+    apiUrl: API,
+    project: PROJECT,
+    fetchImpl,
+    retry: { budgetMs: 0, sleep: async () => {} },
+  });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test', version: '1.0.0' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -54,7 +65,9 @@ test('opengrep_scan POSTs the scan with includeMarkdown and hands the model the 
     assert.equal(calls.length, 1);
     assert.equal(calls[0].method, 'POST');
     assert.match(calls[0].url, /\/api\/opengrep\/scan\?project=/);
-    assert.deepEqual(JSON.parse(calls[0].body ?? '{}'), { targets: ['backend/src'], includeMarkdown: true });
+    // `async: true` — a long scan answers 202 + id and is polled (see below);
+    // this one finished inside the accept window, so one round trip.
+    assert.deepEqual(JSON.parse(calls[0].body ?? '{}'), { targets: ['backend/src'], includeMarkdown: true, async: true });
     assert.equal(textOf(r), ENVELOPE.markdown, 'the markdown, not the envelope, is the tool result');
     assert.notEqual((r as { isError?: boolean }).isError, true);
   } finally {
@@ -132,6 +145,105 @@ test('a 409 from the scan route (busy / not installed / no rules) is an error re
     assert.equal((r as { isError?: boolean }).isError, true);
     assert.match(textOf(r), /HTTP 409/);
     assert.match(textOf(r), /not installed/);
+  } finally {
+    await close();
+  }
+});
+
+// ---- long scans: 202 + poll, and the undici response timeout ----------------
+
+const RUNNING = { canonicalProject: PROJECT, scanId: 'og_long', status: 'running' };
+
+test('a scan that outlives the accept window answers 202 + id; the tool polls the scan until the digest is ready', async () => {
+  const calls: Recorded[] = [];
+  let polls = 0;
+  const { client, close } = await connect(calls, (url) => {
+    if (url.includes('/api/opengrep/scan?')) return { status: 202, body: RUNNING };
+    polls += 1;
+    return polls < 3 ? { status: 202, body: RUNNING } : { body: ENVELOPE };
+  });
+  try {
+    const r = await client.callTool({ name: 'opengrep_scan', arguments: {} });
+    assert.equal(textOf(r), ENVELOPE.markdown);
+    assert.notEqual((r as { isError?: boolean }).isError, true);
+    assert.equal(calls[0].method, 'POST');
+    assert.equal(calls.length, 4, 'one POST, then GETs until the scan was no longer running');
+    for (const c of calls.slice(1)) {
+      const u = new URL(c.url);
+      assert.equal(c.method, 'GET');
+      assert.equal(u.pathname, '/api/opengrep/scans/og_long');
+      assert.equal(u.searchParams.get('include'), 'markdown');
+    }
+  } finally {
+    await close();
+  }
+});
+
+test('a polled scan that failed, or that the backend no longer knows, is an error result saying so', async () => {
+  {
+    const { client, close } = await connect([], (url) =>
+      url.includes('/api/opengrep/scan?')
+        ? { status: 202, body: RUNNING }
+        : { status: 500, body: { error: 'opengrep scan timed out after 600s and was killed', code: 'scan-failed' } },
+    );
+    try {
+      const r = await client.callTool({ name: 'opengrep_scan', arguments: {} });
+      assert.equal((r as { isError?: boolean }).isError, true);
+      assert.match(textOf(r), /HTTP 500/);
+      assert.match(textOf(r), /timed out after 600s/);
+    } finally {
+      await close();
+    }
+  }
+  {
+    const { client, close } = await connect([], (url) =>
+      url.includes('/api/opengrep/scan?')
+        ? { status: 202, body: RUNNING }
+        : { status: 404, body: { error: 'no Opengrep scan og_long for this project' } },
+    );
+    try {
+      const r = await client.callTool({ name: 'opengrep_scan', arguments: {} });
+      assert.equal((r as { isError?: boolean }).isError, true);
+      assert.match(textOf(r), /no longer known/);
+      assert.match(textOf(r), /opengrep_scan again/);
+    } finally {
+      await close();
+    }
+  }
+});
+
+test('an undici headers timeout on the scan POST says the scan is still running and points at opengrep_findings — not "Is Lattice running?"', async () => {
+  const calls: Recorded[] = [];
+  const fetchImpl: FetchLike = async (url, init) => {
+    calls.push({ url, method: init?.method ?? 'GET', body: init?.body });
+    if (url.includes('/api/opengrep/scan?')) {
+      const err = new TypeError('fetch failed') as TypeError & { cause?: unknown };
+      err.cause = Object.assign(new Error('Headers Timeout Error'), { code: 'UND_ERR_HEADERS_TIMEOUT' });
+      throw err;
+    }
+    return { ok: true, status: 200, text: async () => JSON.stringify(ENVELOPE) };
+  };
+  const { client, close } = await connectFetch(fetchImpl);
+  try {
+    const r = await client.callTool({ name: 'opengrep_scan', arguments: {} });
+    const text = textOf(r);
+    assert.doesNotMatch(text, /Is Lattice running\?/);
+    assert.doesNotMatch(text, /Could not reach/);
+    assert.match(text, /still running/);
+    assert.match(text, /opengrep_findings/);
+    assert.match(text, /latest/);
+    assert.equal(calls.length, 1, 'the POST is not re-sent (it may have been acted on)');
+  } finally {
+    await close();
+  }
+});
+
+test('opengrep_findings on the id of a scan still running says so instead of returning the 202 body', async () => {
+  const { client, close } = await connect([], () => ({ status: 202, body: RUNNING }));
+  try {
+    const r = await client.callTool({ name: 'opengrep_findings', arguments: { scan: 'og_long' } });
+    assert.notEqual((r as { isError?: boolean }).isError, true);
+    assert.match(textOf(r), /og_long is still running/);
   } finally {
     await close();
   }

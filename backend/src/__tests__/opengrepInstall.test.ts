@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { awaitOpengrepInstall, downloadToFile, startOpengrepInstall } from '../opengrep/install.js';
+import { downloadsDir } from '../opengrep/paths.js';
 import { readOpengrepState } from '../opengrep/state.js';
 import { OPENGREP_VERSION } from '../opengrep/versions.js';
 
@@ -158,4 +159,87 @@ test('startOpengrepInstall: an unsupported platform is refused before anything i
     /no Opengrep build exists/,
   );
   assert.equal(fetched, 0);
+});
+
+async function partFiles(): Promise<string[]> {
+  return (await fs.readdir(downloadsDir()).catch(() => [] as string[])).filter((n) => n.endsWith('.part'));
+}
+
+test('startOpengrepInstall: a rename that fails AFTER verification leaves no verified .part behind in downloads/', async () => {
+  await withTmp(async (dir) => {
+    const body = Buffer.from('verified-engine-'.repeat(100));
+    // A non-empty DIRECTORY where the binary goes: the best-effort rm of the
+    // old target cannot remove it, so the rename onto it fails (EISDIR /
+    // EPERM) — the stand-in for Windows AV / a running opengrep.exe.
+    const target = path.join(dir, 'bin', 'opengrep.exe');
+    await fs.mkdir(target, { recursive: true });
+    await fs.writeFile(path.join(target, 'occupied'), 'x');
+    await startOpengrepInstall({
+      fetchImpl: fakeFetch(body),
+      chooseAsset: async () => ({ asset: 'opengrep_windows_x86.exe' }),
+      assets: { 'opengrep_windows_x86.exe': { sha256: sha256(body), bytes: body.length } },
+      targetPath: target,
+      releaseBaseUrl: 'https://fake/release',
+      probeVersion: async () => OPENGREP_VERSION,
+    });
+    const done = await awaitOpengrepInstall();
+    assert.equal(done?.status, 'failed');
+    assert.deepEqual(await partFiles(), [], 'the ~50 MB verified download was removed');
+  });
+});
+
+test('startOpengrepInstall: stale .part files a killed transfer left in downloads/ are swept when the next install starts', async () => {
+  await withTmp(async (dir) => {
+    await fs.mkdir(downloadsDir(), { recursive: true });
+    const stale = path.join(downloadsDir(), 'opengrep_windows_x86.exe.99999.1.part');
+    await fs.writeFile(stale, 'half a download');
+    const body = Buffer.from('engine-bytes-'.repeat(100));
+    await startOpengrepInstall({
+      fetchImpl: fakeFetch(body),
+      chooseAsset: async () => ({ asset: 'opengrep_windows_x86.exe' }),
+      assets: { 'opengrep_windows_x86.exe': { sha256: sha256(body), bytes: body.length } },
+      targetPath: path.join(dir, 'bin', 'opengrep.exe'),
+      releaseBaseUrl: 'https://fake/release',
+      probeVersion: async () => OPENGREP_VERSION,
+    });
+    const done = await awaitOpengrepInstall();
+    assert.equal(done?.status, 'done', done?.error);
+    assert.deepEqual(await partFiles(), []);
+  });
+});
+
+test('startOpengrepInstall: two quick starts share ONE install even while the asset choice is still pending', async () => {
+  await withTmp(async (dir) => {
+    const body = Buffer.from('single-flight-'.repeat(100));
+    let releaseChoice!: () => void;
+    const choicePending = new Promise<void>((r) => {
+      releaseChoice = r;
+    });
+    let downloads = 0;
+    const fetchOnce = fakeFetch(body);
+    const deps = {
+      fetchImpl: ((...args: Parameters<typeof fetch>) => {
+        downloads += 1;
+        return fetchOnce(...args);
+      }) as typeof fetch,
+      // Deferred: the real one does file I/O (musl detection) on Linux, and the
+      // second POST used to slip past the running-job check during that await.
+      chooseAsset: async () => {
+        await choicePending;
+        return { asset: 'opengrep_windows_x86.exe' as const };
+      },
+      assets: { 'opengrep_windows_x86.exe': { sha256: sha256(body), bytes: body.length } },
+      targetPath: path.join(dir, 'bin', 'opengrep.exe'),
+      releaseBaseUrl: 'https://fake/release',
+      probeVersion: async () => OPENGREP_VERSION,
+    };
+    const first = startOpengrepInstall(deps);
+    const second = startOpengrepInstall(deps);
+    releaseChoice();
+    const [a, b] = await Promise.all([first, second]);
+    assert.equal(a, b, 'both callers get the same job');
+    const done = await awaitOpengrepInstall();
+    assert.equal(done?.status, 'done', done?.error);
+    assert.equal(downloads, 1, 'only one download started');
+  });
 });

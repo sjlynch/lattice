@@ -74,7 +74,14 @@ licence text + a source pointer) — keep it a runtime download.
   while hashing → byte count vs pin → digest vs pin → atomic rename into
   `bin/<version>/` → `--version` once (a vanished file reads as "your
   antivirus quarantined it") → state.json. Single-flight job snapshot for the
-  Settings card. **Never at boot** — the user clicks Install.
+  Settings card — the pending start is cached SYNCHRONOUSLY, before the
+  `chooseAsset` await (file I/O on Linux), so two quick POSTs share one
+  download instead of racing `rm(target)` / `rename` and failing the loser's
+  `--version` with a bogus "quarantined" message. The verified `.part` is
+  removed when the mkdir / rename that should consume it throws (Windows
+  EPERM/EBUSY), and every OTHER `downloads/*.part` (a transfer a restart killed)
+  is swept when the next install starts. **Never at boot** — the user clicks
+  Install.
 - `rules.ts` — `installRulePack(id)`: `git init` + `fetch --depth 1 origin
   <commit>` + `checkout FETCH_HEAD` (content-addressed, so the pin verifies the
   tree by construction; tarball bytes are not stable) → `prunePackTree` (keep
@@ -86,7 +93,24 @@ licence text + a source pointer) — keep it a runtime download.
   `.tmp-<id>-*` / `.old-<id>-*` siblings from a killed install are swept at the
   start of the next install of THE SAME pack (never another pack's: installs of
   different packs may overlap). `git` runs with `GIT_TERMINAL_PROMPT=0` so a credential prompt
-  fails fast instead of parking the job until its timeout.
+  fails fast instead of parking the job until its timeout. The swap + state
+  write run under `withRulesMutation` (see `rulesGate.ts`), waiting for running
+  scans first. In-flight installs are tracked per pack (`isRulePackInstalling`;
+  the DELETE route answers 409 `installing`), and `removeRulePack` — itself a
+  gated mutation that refuses (busy) while a scan runs — cancels a
+  still-running install of that pack, which then discards its tree instead of
+  swapping it in: a removal is never silently undone.
+- `rulesGate.ts` — reader/writer exclusion between engine runs and rule-pack
+  tree mutations. A scan holds a read slot (`acquireRulesRead`, abortable) from
+  resolving its packs until its record is stored; a mutation
+  (`withRulesMutation`) blocks NEW reads at once, then waits for running ones to
+  drain (`wait: true`, the install swap, bounded by `RULES_MUTATION_WAIT_MS`)
+  or refuses with `OpengrepRulesBusyError` (`wait: false`, removal). Writer-
+  preferring and serialized, so a scan arriving mid-swap waits a moment rather
+  than reading half a pack, and the swap cannot starve. The routes' request-time
+  `isAnyOpengrepScanRunning()` check stays as the fast path only — it could
+  never cover an install whose swap lands minutes after its request, or scans
+  started by the workflow hook / MCP.
 - `scan.ts` — `runOpengrepScan()`: `opengrep scan --json --quiet --jobs N
   --timeout 30 --timeout-threshold 3 --max-target-bytes 1000000 --exclude …
   -f <pack> … -o <raw.json> <project>` with **cwd = the rules root** and packs
@@ -99,13 +123,19 @@ licence text + a source pointer) — keep it a runtime download.
   `OpengrepBadTargetError` for `../…` / an absolute path elsewhere — the
   caller is scoped to one project and the stored record must be too). One
   scan per project (`OpengrepScanBusyError`; `isAnyOpengrepScanRunning` is
-  what the pack routes consult), `--jobs = max(1, cores-2)`, hard wall-clock
+  what the pack routes consult; the rules read slot is what actually excludes
+  a swap), `--jobs = max(1, cores-2)`, hard wall-clock
   timeout (kill), last 10 scans kept as `<id>.json` + `<id>.meta.json`.
   Cancellable: a request `signal` or `abortOpengrepScan(project)` kills the
   engine, stores nothing, rejects with `OpengrepScanAbortedError` and frees
   the slot at once (a cancelled workflow run uses this); a `process` `exit`
   handler aborts every running scan so a backend restart never leaves an
   orphaned engine writing an unrecorded `-o` file.
+  `startOpengrepScan` returns the scan id synchronously (the id is minted
+  before the scan runs and is the stored record's id) plus the record promise;
+  `runOpengrepScan` is that promise. `opengrepScanRunState(project, id)` says
+  whether an id is still running or failed (the last 20 failures are kept in
+  memory with their error) — what the poll route reads.
   Rules under `<project>/.opengrep/rules/` and `extraRulePaths` are passed as
   ABSOLUTE `-f` paths, so their check ids (and fingerprints) embed the local
   path — stable on one machine, not across machines; only the packs get the
@@ -138,6 +168,8 @@ licence text + a source pointer) — keep it a runtime download.
   default WARNING, `ignoreRuleIds`, `ignoreFingerprints`, `digestBudgetKb`
   default 60). Sanitized on READ; `effectiveOpengrepConfig` is the merge.
 - `service.ts` — the facade: `getOpengrepStatus`, `scanProjectWithDigest`,
+  `startProjectScanWithDigest` (the id at once + the digest result as `done`;
+  its caller MUST observe `done`, or a failing scan is an unhandled rejection),
   `digestOfStoredScan` (with `rule` / `file` / `severity` / budget overrides
   for drill-down). Routes, MCP tools and the workflow pre-run hook call only
   this.
@@ -146,12 +178,24 @@ licence text + a source pointer) — keep it a runtime download.
 
 - `routes/opengrep.ts` — `/api/opengrep/{status,install,rules/install,
   rules/:packId,scan,scans,scans/:id}`; 409 codes `busy` / `not-installed` /
-  `no-rules`.
+  `no-rules` / `installing` (DELETE of a pack mid-install). `POST /scan` with
+  `async: true` waits at most `ASYNC_SCAN_ACCEPT_WINDOW_MS` (15 s): a scan done
+  by then answers like the synchronous form, a longer one `202 {scanId,
+  status: 'running'}`. `GET /scans/:id` answers a still-running id with 202 and
+  a failed one with the status/code its POST would have had; after a backend
+  restart the id is unknown (404 — the restart killed the engine). The
+  synchronous form (the Settings button) is unchanged; one scan per project
+  either way.
 - `latticeMcp/createServer.ts` — `opengrep_scan`, `opengrep_findings` (every
-  session; both return the digest markdown, never raw JSON) and
+  session; both return the digest markdown, never raw JSON — `opengrep_scan`
+  uses the async form and polls, because Node's fetch drops a response after
+  300 s, well under the 10 min scan cap) and, **outside task worktrees only**,
   `opengrep_ignore` → `POST /api/opengrep/ignore` → `service.ts
   addOpengrepIgnores`: append rule ids / fingerprints to the project's ignore
-  lists. This is the ONE Lattice-settings write a planning agent may make —
+  lists (a worktree agent's brief is untrusted input; letting it silence the
+  findings its own change introduced would hide them from every later
+  security-review digest). This is the ONE Lattice-settings write a planning
+  agent may make —
   rule noise is a per-project setting, not a ticket for a human — additive
   and deduplicated, merged inside the settings file's own lock on a strict read
   (`userSettings` `updateUserSettings`) so neither a burst of calls nor a
@@ -171,6 +215,11 @@ licence text + a source pointer) — keep it a runtime download.
 `opengrepDigest` (fixture = a trimmed real scan of Lattice), `opengrepScan`
 (fake engine at the spawn seam: cwd, args, storage, busy, error classes),
 `opengrepInstall` (fake fetch + pin table: size → digest → runs, quarantine
-message), `opengrepRulesPrune` (the licence boundary on a fixture tree),
+message, `.part` cleanup + sweep, single-flight across a pending asset choice),
+`opengrepPackConcurrency` (fake git fetch + blocking fake engine: removal
+mid-install stays removed, DELETE mid-install is 409, a swap waits for a
+running scan and a scan waits for a pending swap, removal refused mid-scan),
+`latticeMcpOpengrep` (202 + poll, headers timeout → "still running"),
+`opengrepRulesPrune` (the licence boundary on a fixture tree),
 `opengrepPlatformSettings` (asset table, pin presence, settings sanitizing),
 `opengrepNoVendoredAssets` (no binary / pack in `git ls-files`).

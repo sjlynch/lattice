@@ -20,12 +20,17 @@ export {
   removeRulePack,
   listRulePacks,
   getRulePackJob,
+  isRulePackInstalling,
   RulePackError,
   type RulePackStatus,
   type RulePackJob,
 } from './rules.js';
+export { OpengrepRulesBusyError } from './rulesGate.js';
 export {
   runOpengrepScan,
+  startOpengrepScan,
+  opengrepScanRunState,
+  type OpengrepScanRunState,
   listOpengrepScans,
   readOpengrepScan,
   latestOpengrepScan,
@@ -67,6 +72,7 @@ export {
 export {
   getOpengrepStatus,
   scanProjectWithDigest,
+  startProjectScanWithDigest,
   digestOfStoredScan,
   loadEffectiveConfig,
   addOpengrepIgnores,
