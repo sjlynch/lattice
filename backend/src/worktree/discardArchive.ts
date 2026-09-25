@@ -27,7 +27,8 @@
 //      older backend that predates this module sees no manifest either.
 //
 // Retention: the newest `DISCARDED_WORKTREE_ARCHIVE_KEEP` archives per project
-// are kept; older ones are removed after each new archive (guarded: strictly
+// are kept; older ones are removed after each new archive, but ONLY once they
+// are older than `DISCARDED_WORKTREE_ARCHIVE_MIN_AGE_MS` (guarded: strictly
 // inside the project's snapshot dir, not a reparse point, links stripped
 // first). Pending merge snapshots are never touched by that pruning.
 
@@ -48,6 +49,12 @@ import { pruneReparsePointsUnder } from './reparsePoints.js';
 export const DISCARDED_WORKTREE_MANIFEST_FILENAME = '_lattice-discarded-worktree.json';
 export const DISCARDED_WORKTREE_LABEL_PREFIX = 'discarded-worktree-';
 export const DISCARDED_WORKTREE_ARCHIVE_KEEP = 20;
+// An archive younger than this is never pruned, however many exist. A burst of
+// discards (the boot orphan sweep over hundreds of orphans, a merge run's
+// residue clears) writes far more than `KEEP` archives in minutes; a bare
+// count would delete most of them seconds after their checkout was removed —
+// and each was the ONLY copy of those edits.
+export const DISCARDED_WORKTREE_ARCHIVE_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const ARCHIVE_PAYLOAD_DIR = 'files';
 const GIT_TIMEOUT_MS = 30_000;
 
@@ -159,12 +166,15 @@ export async function readDiscardedWorktreeManifest(dir: string): Promise<Discar
   }
 }
 
-// Keep the newest `keep` discarded-worktree archives for this project. Only
-// directories carrying a valid discarded-worktree manifest are candidates, so
-// pending merge snapshots (and anything unrecognised) are never removed here.
+// Keep the newest `keep` discarded-worktree archives for this project, plus
+// every archive younger than `minAgeMs`. Only directories carrying a valid
+// discarded-worktree manifest are candidates, so pending merge snapshots (and
+// anything unrecognised) are never removed here.
 export async function pruneDiscardedWorktreeArchives(
   repoRoot: string,
   keep = DISCARDED_WORKTREE_ARCHIVE_KEEP,
+  minAgeMs = DISCARDED_WORKTREE_ARCHIVE_MIN_AGE_MS,
+  now = Date.now(),
 ): Promise<number> {
   const root = projectArchivesRoot(repoRoot);
   let names: string[];
@@ -183,7 +193,8 @@ export async function pruneDiscardedWorktreeArchives(
   }
   archives.sort((a, b) => b.createdAt - a.createdAt || b.dir.localeCompare(a.dir));
   let removed = 0;
-  for (const { dir } of archives.slice(Math.max(0, keep))) {
+  for (const { dir, createdAt } of archives.slice(Math.max(0, keep))) {
+    if (now - createdAt <= minAgeMs) continue;
     try {
       await removeArchiveDir(repoRoot, dir);
       removed += 1;
