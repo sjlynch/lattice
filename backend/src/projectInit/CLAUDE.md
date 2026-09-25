@@ -56,6 +56,23 @@ stopped vanishing for these: `gitBranch.ts` names the branch with
 `symbolic-ref --short HEAD`, which works on an unborn HEAD, where
 `rev-parse --abbrev-ref HEAD` does not.
 
+## Slow first commits
+
+The folder being adopted is often a large existing project, so `add -A` and the
+first `commit` run under `GIT_SLOW_TIMEOUT_MS` (20 min) rather than the 30 s
+quick-call bound (`init`, `diff --cached`, `rev-parse`). A few GB / tens of
+thousands of files overran 30 s on Windows (Defender scans every new loose
+object), and a signed commit can sit on a passphrase prompt. On a timeout kill
+(`runSlowGit`) the `index.lock` the killed git left — absent before the call,
+present after it; we hold the per-project `runExclusive` lock — is unlinked, and
+the user gets a "took longer than N minutes" message instead of exec's raw kill
+marker. The unborn "finish setup" path also runs `clearStaleGitLocks(root)`
+first and refuses with a readable message while a lock is still held or fresh.
+Before this, the first timeout left `index.lock` behind and every retry failed
+at once with "File exists" — the folder could never be initialized
+(`__tests__/projectInit.test.ts` stubs a timed-out `add` via the
+`InitProjectGitDeps` seam).
+
 ## Invariants
 
 1. **Walk-up detection, always.** `'nested'` (a repo exists ABOVE this folder)
@@ -73,5 +90,6 @@ stopped vanishing for these: `gitBranch.ts` names the branch with
 
 Other standing rules this module inherits: `init` stays OFF the `projectGit`
 whitelist (the pre-`.git` `init`/`rev-parse` calls use plain `exec`, everything
-after goes through `projectGit`), and nothing here deletes anything —
+after goes through `projectGit`), and nothing here deletes anything except
+the single-file `index.lock` unlink above (and `clearStaleGitLocks`'s own) —
 `fs.rm` never appears, recursively or otherwise.

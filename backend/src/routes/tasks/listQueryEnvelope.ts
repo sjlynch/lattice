@@ -39,6 +39,8 @@ export interface ListHintInput {
   clipped: number;
   clip: number;
   fields: 'compact' | 'full';
+  /** `ids=` mode: the page is in request order and only an explicit `limit=` cut it. */
+  byIds?: boolean;
 }
 
 // Each sentence names exactly one knob and the information it unlocks.
@@ -55,7 +57,12 @@ export function composeListHint(args: ListHintInput): string | undefined {
         '(add since=30d or limit= to bound it).',
     );
   }
-  if (args.truncated) {
+  if (args.truncated && args.byIds) {
+    sentences.push(
+      `Showing the first ${args.count} of ${args.matched} requested tasks (request order) — ` +
+        'drop limit= to get them all.',
+    );
+  } else if (args.truncated) {
     sentences.push(
       `Showing ${args.count} of ${args.matched} matching tasks (newest first) — ` +
         `raise limit= (max ${MAX_LIST_LIMIT}, 0 = unlimited) or narrow with since=/status=.`,
@@ -104,6 +111,7 @@ export function buildListEnvelopeJson(
     clipped,
     clip: q.clip,
     fields: q.fields,
+    byIds: q.ids !== null,
   });
 
   // Key insertion order is the wire order, so `bytes`/`approxTokens` are seeded

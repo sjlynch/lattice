@@ -1,4 +1,4 @@
-// Request validation + task-ownership + status guards for POST /api/qa-runs,
+// Request validation + task-ownership + status + duplicate-run guards for POST /api/qa-runs,
 // kept out of the route body so the handler is just "resolve → spawn → shape".
 // Returns a discriminated result the route maps straight onto a status/JSON:
 // an `ok:false` carries the exact status code + error string the route must
@@ -8,6 +8,8 @@ import { canonicalProjectPath, isRealAbsoluteProjectPath } from '../../projectPa
 import { relativeProjectError } from '../projectParam.js';
 import { getTask } from '../../tasks.js';
 import type { Task } from '../../tasks.js';
+import type { QaRun } from '../../qaRuns.js';
+import { findStepSessionId, type ProbedSession } from '../../workflowRuns/resumeDecision.js';
 
 export type QaRunStartResolution =
   | { ok: false; status: number; error: string }
@@ -52,4 +54,41 @@ export async function resolveQaRunStart(
   }
 
   return { ok: true, project, task };
+}
+
+// Where the duplicate check reads the tracked runs and the live ptys. Injected
+// by the route-level regression test; production uses the real registry and
+// terminal-server probe.
+export type ActiveQaRunDeps = {
+  listRunningRuns: () => readonly QaRun[];
+  listSessions: () => Promise<readonly unknown[] | null>;
+};
+
+// The still-running QA run already testing this task, if any. A second session
+// for the same task would drive the browser against the same dev server beside
+// the first and post its own verdict — either confident PASS promotes the task
+// — so the route refuses the start while one is found.
+//
+// A run whose pty is definitively gone (the user closed its tab, so no /done
+// ever came) stays `running` in the registry until boot recovery settles it;
+// it must not block a re-test forever, so it doesn't count. When the
+// terminal-server can't be probed, a tracked run is assumed alive: refusing a
+// maybe-duplicate beats spawning a second session.
+export async function findActiveQaRunForTask(
+  project: string,
+  taskId: string,
+  deps: ActiveQaRunDeps,
+): Promise<QaRun | null> {
+  const candidates = deps.listRunningRuns().filter((r) => {
+    if (r.taskId !== taskId) return false;
+    try {
+      return canonicalProjectPath(r.projectPath) === project;
+    } catch {
+      return false;
+    }
+  });
+  if (candidates.length === 0) return null;
+  const sessions = (await deps.listSessions()) as readonly ProbedSession[] | null;
+  if (sessions === null) return candidates[0];
+  return candidates.find((r) => findStepSessionId(sessions, r.cwd) !== null) ?? null;
 }

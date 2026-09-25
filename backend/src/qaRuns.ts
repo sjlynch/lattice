@@ -8,6 +8,7 @@ export type { QaRun, QaSession, QaVerdict } from './qaRuns/types.js';
 export {
   forgetQaRun,
   getQaRun,
+  listRunningQaRuns,
   markQaRunDone,
   markQaRunMovedToDone,
   qaRunStore,

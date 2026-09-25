@@ -9,6 +9,7 @@ import type { TerminalSpec } from '../../../TerminalsContext';
 type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
 type CloseTerminal = (id: string) => void;
 type CloseTerminalsForTask = (taskId: string, keep?: { id?: string; serverId?: string }) => void;
+type QaRunTerminals = Parameters<typeof useQaRuns>[4];
 
 // Run controllers for task-board adjunct workflows. This keeps long-lived run
 // orchestration (merge-all, push, QA e2e, post-merge hook, and harness/model
@@ -19,6 +20,7 @@ export function useTaskBoardRunControllers(
   closeTerminal: CloseTerminal,
   closeTerminalsForTask: CloseTerminalsForTask,
   showError: (msg: string) => void,
+  qaRunTerminals?: QaRunTerminals,
 ) {
   const merge = useMergeRunSync(
     activeFolder,
@@ -34,7 +36,13 @@ export function useTaskBoardRunControllers(
   );
   const harness = useHarnessSelector(activeFolder);
   const qaPlaywright = useQaPlaywright(activeFolder);
-  const qaRuns = useQaRuns(activeFolder, addTerminal, closeTerminal, showError);
+  const qaRuns = useQaRuns(
+    activeFolder,
+    addTerminal,
+    closeTerminal,
+    showError,
+    qaRunTerminals,
+  );
   const postMergeHook = usePostMergeHook(activeFolder, addTerminal, showError);
 
   return {

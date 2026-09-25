@@ -30,6 +30,7 @@ export function Lane({
   onResume,
   onMerge,
   onQaRun,
+  runningQaTaskIds,
   getFocusTerminal,
   onRunAll,
   onQaRunAll,
@@ -62,6 +63,8 @@ export function Lane({
   onMerge: (task: Task) => Promise<boolean>;
   // QA-lane per-task "run e2e test"; passed only when the Playwright MCP is on.
   onQaRun?: (task: Task) => void;
+  // QA tasks whose e2e session is already running.
+  runningQaTaskIds?: ReadonlySet<string>;
   getFocusTerminal?: (task: Task) => (() => void) | null;
   onRunAll?: () => void;
   // QA-lane "run all e2e tests"; passed only when the Playwright MCP is on.
@@ -174,6 +177,7 @@ export function Lane({
                   onResume={onResume}
                   onMerge={onMerge}
                   onQaRun={onQaRun}
+                  qaRunning={runningQaTaskIds?.has(t.id) ?? false}
                   onView={onView}
                   onToggleSelect={handleToggleSelect}
                   onRangeSelect={handleRangeSelect}

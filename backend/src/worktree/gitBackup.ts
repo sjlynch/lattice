@@ -20,11 +20,21 @@
 // count, old bundles are pruned BEFORE the new one is written (never N+1 on
 // disk), a bundle is skipped when the volume can't hold it above the
 // worktree free-space reserve, and back-to-back runs share one bundle.
+//
+// `git bundle create <file>` writes through `<file>.lock` and renames it on
+// success. A timeout kill (or a backend death mid-bundle) skips git's lockfile
+// cleanup, and on Windows the orphaned `pack-objects` child can keep writing
+// the whole pack into it — a multi-GB `<ts>.bundle.lock` per failed run that
+// the `.bundle`-only retention never saw (2026-09-25). So a failed bundle
+// removes its `.lock` too, every backup first sweeps stale leftovers, and a
+// leftover that can't be deleted yet counts toward the byte budget while it
+// is on disk.
 
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import { projectGit } from './projectGit.js';
+import type { ExecOptions, ExecResult } from './exec.js';
 import { projectHash } from '../projectPath.js';
 import { freeBytesAt, formatBytes } from './diskSpace.js';
 import { DEFAULT_MIN_FREE_DISK_GB, getGlobalSettings } from '../globalSettings.js';
@@ -40,11 +50,42 @@ const MAX_BYTES_PER_PROJECT = 8 * GiB;
 // A bundle younger than this already captures the pre-run state closely
 // enough; don't write another multi-GB copy for the next run in a burst.
 const MIN_INTERVAL_MS = 10 * 60_000;
-// `git bundle create --all` on a large repo can take a few seconds — cap it
-// so a pathological case doesn't stall the start of a merge run forever.
-const BUNDLE_TIMEOUT_MS = 60_000;
+// `git bundle create --all` copies every pack, so its time scales with the
+// repo: a flat 60 s killed every backup of a multi-GB repo (and leaked its
+// `.lock`). Base + per-GiB of the expected bundle, capped so a pathological
+// case doesn't stall the start of a merge run forever.
+const BUNDLE_TIMEOUT_BASE_MS = 60_000;
+const BUNDLE_TIMEOUT_PER_GIB_MS = 60_000;
+const BUNDLE_TIMEOUT_MAX_MS = 20 * 60_000;
+// A non-`.bundle` file untouched for longer than any bundle may run is debris
+// from a killed/crashed `git bundle create`, never a live write.
+export const LEFTOVER_STALE_MS = BUNDLE_TIMEOUT_MAX_MS + 60_000;
+
+export function bundleTimeoutMs(expectedBytes: number): number {
+  const scaled = BUNDLE_TIMEOUT_BASE_MS + Math.ceil((expectedBytes / GiB) * BUNDLE_TIMEOUT_PER_GIB_MS);
+  return Math.min(BUNDLE_TIMEOUT_MAX_MS, scaled);
+}
 
 export type BundleFile = { name: string; bytes: number; mtimeMs: number };
+
+// Seams for the regression test; production uses the defaults.
+export type GitBackupDeps = {
+  backupsDir: (repoRoot: string) => string;
+  git: (repoRoot: string, args: string[], opts: ExecOptions) => Promise<ExecResult>;
+  freeBytesAt: (dir: string) => Promise<number | null>;
+  minFreeBytes: () => Promise<number>;
+  now: () => number;
+  maxBytesPerProject: number;
+};
+
+const defaultDeps: GitBackupDeps = {
+  backupsDir: projectBackupsDir,
+  git: projectGit,
+  freeBytesAt,
+  minFreeBytes,
+  now: () => Date.now(),
+  maxBytesPerProject: MAX_BYTES_PER_PROJECT,
+};
 
 function projectBackupsDir(repoRoot: string): string {
   return path.join(BACKUPS_BASE, projectHash(repoRoot));
@@ -54,24 +95,32 @@ function projectBackupsDir(repoRoot: string): string {
 // throws are the caller's to swallow (a failed backup must never block a
 // merge run). Returns the bundle path on success, null if nothing was
 // written.
-export async function backupProjectGitBundle(repoRoot: string): Promise<string | null> {
-  const dir = projectBackupsDir(repoRoot);
+export async function backupProjectGitBundle(
+  repoRoot: string,
+  depsOverride?: Partial<GitBackupDeps>,
+): Promise<string | null> {
+  const deps: GitBackupDeps = { ...defaultDeps, ...depsOverride };
+  const dir = deps.backupsDir(repoRoot);
   await fs.mkdir(dir, { recursive: true });
+
+  // Leftovers of a killed/crashed bundle that can't be deleted yet still
+  // occupy the disk, so they eat into the byte budget.
+  const leftoverBytes = await sweepLeftovers(dir, deps.now());
 
   const existing = await listBundles(dir);
   const newest = existing[existing.length - 1];
-  if (newest && Date.now() - newest.mtimeMs < MIN_INTERVAL_MS) {
+  if (newest && deps.now() - newest.mtimeMs < MIN_INTERVAL_MS) {
     console.log(`[git-backup] reusing ${newest.name} (under ${MIN_INTERVAL_MS / 60_000} min old)`);
     return null;
   }
   // The next bundle will be about as big as the last one (or the packs).
   const expected = newest?.bytes ?? (await packBytes(repoRoot));
-  // Make room first: after pruning, the old bundles plus the new one must fit
-  // the count and byte budgets.
-  await pruneBundles(dir, existing, KEEP_PER_PROJECT - 1, MAX_BYTES_PER_PROJECT - expected);
+  // Make room first: after pruning, the old bundles plus the new one (and any
+  // leftovers) must fit the count and byte budgets.
+  await pruneBundles(dir, existing, KEEP_PER_PROJECT - 1, deps.maxBytesPerProject - expected - leftoverBytes);
 
-  const free = await freeBytesAt(dir);
-  const reserve = await minFreeBytes();
+  const free = await deps.freeBytesAt(dir);
+  const reserve = await deps.minFreeBytes();
   if (free !== null && free - expected < reserve) {
     console.warn(
       `[git-backup] skipping the pre-run bundle for ${repoRoot}: it needs ~${formatBytes(expected)}, ` +
@@ -80,22 +129,74 @@ export async function backupProjectGitBundle(repoRoot: string): Promise<string |
     return null;
   }
 
-  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const ts = new Date(deps.now()).toISOString().replace(/[:.]/g, '-');
   const bundlePath = path.join(dir, `${ts}.bundle`);
   // `git bundle create <file> --all` packs every ref (branches, tags,
   // remotes, HEAD) and their reachable objects. Read-only w.r.t. the repo.
-  const r = await projectGit(repoRoot, ['bundle', 'create', bundlePath, '--all'], {
-    timeoutMs: BUNDLE_TIMEOUT_MS,
-  });
+  let r: ExecResult;
+  try {
+    r = await deps.git(repoRoot, ['bundle', 'create', bundlePath, '--all'], {
+      timeoutMs: bundleTimeoutMs(expected),
+    });
+  } catch (err) {
+    await removePartialBundle(bundlePath);
+    throw err;
+  }
   if (r.code !== 0) {
-    // Clean up a partial/empty file so it doesn't masquerade as a backup.
-    await fs.rm(bundlePath, { force: true }).catch(() => undefined);
+    await removePartialBundle(bundlePath);
     throw new Error(
       `git bundle create failed (exit ${r.code}): ${r.stderr.trim() || r.stdout.trim() || 'unknown'}`,
     );
   }
-  await pruneBundles(dir, await listBundles(dir), KEEP_PER_PROJECT, MAX_BYTES_PER_PROJECT);
+  const stillLeft = await sweepLeftovers(dir, deps.now());
+  await pruneBundles(dir, await listBundles(dir), KEEP_PER_PROJECT, deps.maxBytesPerProject - stillLeft);
   return bundlePath;
+}
+
+// Remove a failed bundle so it doesn't masquerade as a backup, and the
+// `.lock` git was writing through: a killed git never renames or removes it.
+// If an orphaned pack-objects still holds the `.lock` open (Windows) the rm
+// fails; the next backup's sweep reclaims it once it goes stale.
+async function removePartialBundle(bundlePath: string): Promise<void> {
+  await fs.rm(bundlePath, { force: true }).catch(() => undefined);
+  await fs.rm(`${bundlePath}.lock`, { force: true }).catch(() => undefined);
+}
+
+// Delete non-`.bundle` files in the backups dir (`<ts>.bundle.lock` from a
+// killed `git bundle create`, or anything else a crash left) untouched for
+// longer than any bundle may run. Returns the bytes of those still on disk —
+// too young to be provably dead, or undeletable because a process holds them
+// — so the caller can count them against the budget. Plain files only;
+// nothing is recursed into.
+async function sweepLeftovers(dir: string, now: number): Promise<number> {
+  let names: string[];
+  try {
+    names = (await fs.readdir(dir)).filter((f) => !f.endsWith('.bundle'));
+  } catch {
+    return 0;
+  }
+  let remaining = 0;
+  for (const name of names) {
+    const p = path.join(dir, name);
+    let st;
+    try {
+      st = await fs.lstat(p);
+    } catch {
+      continue; // vanished
+    }
+    if (!st.isFile()) continue;
+    if (now - st.mtimeMs >= LEFTOVER_STALE_MS) {
+      try {
+        await fs.rm(p, { force: true });
+        console.log(`[git-backup] removed stale leftover ${name} (${formatBytes(st.size)})`);
+        continue;
+      } catch (err) {
+        console.warn(`[git-backup] could not remove stale leftover ${name}:`, err);
+      }
+    }
+    remaining += st.size;
+  }
+  return remaining;
 }
 
 // Bundles oldest → newest. Names are ISO timestamps with `:`/`.` replaced by
