@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   AGGREGATOR_MODEL_COUNT,
+  addHeaderEntry,
   applyDetectedModels,
   alwaysShownPatterns,
   dropEndpointKey,
@@ -9,8 +10,13 @@ import {
   formatContextWindow,
   isAggregatorEndpoint,
   nextEndpointId,
+  nextHeaderKey,
   piProvidersPatch,
+  removeHeaderEntry,
   sanitizeProvidersForSave,
+  setCompatKey,
+  setHeaderKey,
+  setHeaderValue,
   shownEndpointModels,
 } from '../components/settings/piTabUtils.ts';
 import { isValidPiModel } from '../harnesses.ts';
@@ -228,4 +234,57 @@ test('piProvidersPatch writes nothing until the saved list loaded', () => {
     piProvidersPatch(draft, { loaded: true, touched: true }),
     sanitizeProvidersForSave(draft),
   );
+});
+
+// Regression: "add header" named the new row `header-${rowCount + 1}`. After
+// add, add, fill in header-2, remove header-1, the next add re-minted
+// `header-2`; headers are a record, so the blank row replaced the filled-in
+// one and the header reached models.json without its value.
+test('add → add → set value → remove first → add keeps both rows and the value', () => {
+  let h = addHeaderEntry(undefined);
+  h = addHeaderEntry(h);
+  assert.deepEqual(Object.keys(h), ['header-1', 'header-2']);
+  h = setHeaderValue(h, 1, 'Bearer secret');
+  h = removeHeaderEntry(h, 0);
+  assert.deepEqual(h, { 'header-2': 'Bearer secret' });
+  h = addHeaderEntry(h);
+  assert.deepEqual(Object.entries(h), [
+    ['header-2', 'Bearer secret'],
+    ['header-1', ''],
+  ]);
+});
+
+test('nextHeaderKey picks the lowest header-N not already in use', () => {
+  assert.equal(nextHeaderKey([]), 'header-1');
+  assert.equal(nextHeaderKey([['header-1', ''], ['header-3', '']]), 'header-2');
+  assert.equal(nextHeaderKey([['Authorization', 'x'], ['header-1', '']]), 'header-2');
+});
+
+test('header key/value edits keep row order and ignore an out-of-range row', () => {
+  const h = { a: '1', b: '2' };
+  assert.deepEqual(Object.entries(setHeaderKey(h, 0, 'X-Key')), [
+    ['X-Key', '1'],
+    ['b', '2'],
+  ]);
+  assert.deepEqual(setHeaderValue(h, 1, 'v'), { a: '1', b: 'v' });
+  assert.deepEqual(setHeaderValue(h, 5, 'v'), h);
+  assert.deepEqual(removeHeaderEntry(h, 5), h);
+});
+
+test('setCompatKey sets, clears, and drops an emptied compat object', () => {
+  const base = ep('box');
+  const set = setCompatKey(base, 'maxTokensField', 'max_tokens');
+  assert.deepEqual(set.compat, { maxTokensField: 'max_tokens' });
+  const both = setCompatKey(set, 'supportsStore', false);
+  assert.deepEqual(both.compat, { maxTokensField: 'max_tokens', supportsStore: false });
+  // Clearing one key keeps the rest.
+  assert.deepEqual(setCompatKey(both, 'supportsStore', undefined).compat, {
+    maxTokensField: 'max_tokens',
+  });
+  // Clearing the last key drops `compat` entirely rather than writing `{}`.
+  const cleared = setCompatKey(set, 'maxTokensField', '');
+  assert.equal('compat' in cleared, false);
+  assert.equal(setCompatKey(base, 'x', undefined).compat, undefined);
+  // The input provider is never mutated.
+  assert.deepEqual(set.compat, { maxTokensField: 'max_tokens' });
 });

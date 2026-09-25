@@ -26,6 +26,77 @@ export function entriesToHeaders(
   return Object.fromEntries(entries);
 }
 
+// The lowest `header-N` placeholder key not already used by a row. Deriving it
+// from the row COUNT re-minted a key still in use once an earlier row was
+// removed (add, add, remove the first, add → a second `header-2`), and since
+// headers are a record the blank new row then replaced the filled-in one — an
+// auth header reconciled into models.json without its value.
+export function nextHeaderKey(entries: [string, string][]): string {
+  const used = new Set(entries.map(([k]) => k));
+  let n = 1;
+  while (used.has(`header-${n}`)) n++;
+  return `header-${n}`;
+}
+
+// The header-row editors, as pure `headers → headers` updaters over the rows in
+// insertion order. An out-of-range row index is a no-op.
+export function addHeaderEntry(
+  headers: Record<string, string> | undefined,
+): Record<string, string> {
+  const entries = Object.entries(headers ?? {});
+  return entriesToHeaders([...entries, [nextHeaderKey(entries), '']]);
+}
+
+export function removeHeaderEntry(
+  headers: Record<string, string> | undefined,
+  rowIdx: number,
+): Record<string, string> {
+  return entriesToHeaders(
+    Object.entries(headers ?? {}).filter((_, i) => i !== rowIdx),
+  );
+}
+
+export function setHeaderKey(
+  headers: Record<string, string> | undefined,
+  rowIdx: number,
+  key: string,
+): Record<string, string> {
+  return entriesToHeaders(
+    Object.entries(headers ?? {}).map(([k, v], i): [string, string] =>
+      i === rowIdx ? [key, v] : [k, v],
+    ),
+  );
+}
+
+export function setHeaderValue(
+  headers: Record<string, string> | undefined,
+  rowIdx: number,
+  value: string,
+): Record<string, string> {
+  return entriesToHeaders(
+    Object.entries(headers ?? {}).map(([k, v], i): [string, string] =>
+      i === rowIdx ? [k, value] : [k, v],
+    ),
+  );
+}
+
+// Set/clear a single `compat` key on a provider (empty/undefined removes it;
+// the whole compat object is dropped once it's empty so we never write
+// `compat: {}`).
+export function setCompatKey(
+  provider: PiProvider,
+  key: string,
+  value: string | boolean | undefined,
+): PiProvider {
+  const compat: Record<string, unknown> = { ...(provider.compat ?? {}) };
+  if (value === undefined || value === '') delete compat[key];
+  else compat[key] = value;
+  const next = { ...provider };
+  if (Object.keys(compat).length) next.compat = compat;
+  else delete next.compat;
+  return next;
+}
+
 // Read a string-valued compat key for an input value.
 export function compatString(
   compat: Record<string, unknown> | undefined,

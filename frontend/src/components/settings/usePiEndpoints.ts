@@ -1,10 +1,14 @@
 import { useState } from 'react';
 import { probePiEndpoint, type PiProbeModel, type PiProvider } from '../../api';
 import {
+  addHeaderEntry,
   applyDetectedModels,
   dropEndpointKey,
-  entriesToHeaders,
   nextEndpointId,
+  removeHeaderEntry,
+  setCompatKey,
+  setHeaderKey,
+  setHeaderValue,
 } from './piTabUtils';
 
 // A blank provider row with a stable, non-colliding generated id. New endpoints
@@ -151,67 +155,39 @@ export function usePiEndpointEditors(
   probe: ReturnType<typeof useProbeDetection>,
   providers: PiProvider[],
 ) {
-  // Set/clear a single `compat` key (empty/undefined removes it; the whole
-  // compat object is dropped once it's empty so we don't write `compat: {}`).
+  // Set/clear a single `compat` key — see setCompatKey.
   const updateCompat = (
     idx: number,
     key: string,
     value: string | boolean | undefined,
   ) => {
     endpoints.mutate((cur) =>
-      cur.map((p, i) => {
-        if (i !== idx) return p;
-        const compat: Record<string, unknown> = { ...(p.compat ?? {}) };
-        if (value === undefined || value === '') delete compat[key];
-        else compat[key] = value;
-        const next = { ...p };
-        if (Object.keys(compat).length) next.compat = compat;
-        else delete next.compat;
-        return next;
-      }),
+      cur.map((p, i) => (i === idx ? setCompatKey(p, key, value) : p)),
     );
   };
 
-  const setHeaderEntries = (idx: number, entries: [string, string][]) => {
-    endpoints.mutate((cur) =>
-      cur.map((p, i) =>
-        i === idx ? { ...p, headers: entriesToHeaders(entries) } : p,
-      ),
-    );
-  };
-
-  // Read endpoint `idx`'s header rows as ordered entries, let `fn` mutate them
-  // in place, then write the result back — the shared body of the four header
-  // mutators below.
-  const mutateHeaderEntries = (
+  // Apply a pure header-record updater to endpoint `idx` — the shared body of
+  // the four header mutators below. Reads the CURRENT draft inside the updater
+  // rather than the render-time `providers`, so back-to-back edits compose.
+  const mutateHeaders = (
     idx: number,
-    fn: (entries: [string, string][]) => void,
+    fn: (headers: Record<string, string> | undefined) => Record<string, string>,
   ) => {
-    const entries = Object.entries(providers[idx]?.headers ?? {});
-    fn(entries);
-    setHeaderEntries(idx, entries);
+    endpoints.mutate((cur) =>
+      cur.map((p, i) => (i === idx ? { ...p, headers: fn(p.headers) } : p)),
+    );
   };
 
   const updateHeaderKey = (idx: number, rowIdx: number, key: string) =>
-    mutateHeaderEntries(idx, (entries) => {
-      if (entries[rowIdx]) entries[rowIdx] = [key, entries[rowIdx][1]];
-    });
+    mutateHeaders(idx, (h) => setHeaderKey(h, rowIdx, key));
 
   const updateHeaderValue = (idx: number, rowIdx: number, value: string) =>
-    mutateHeaderEntries(idx, (entries) => {
-      if (entries[rowIdx]) entries[rowIdx] = [entries[rowIdx][0], value];
-    });
+    mutateHeaders(idx, (h) => setHeaderValue(h, rowIdx, value));
 
-  const addHeader = (idx: number) =>
-    mutateHeaderEntries(idx, (entries) => {
-      // Unique placeholder key so a second "add" never collides with a blank one.
-      entries.push([`header-${entries.length + 1}`, '']);
-    });
+  const addHeader = (idx: number) => mutateHeaders(idx, addHeaderEntry);
 
   const removeHeader = (idx: number, rowIdx: number) =>
-    mutateHeaderEntries(idx, (entries) => {
-      entries.splice(rowIdx, 1);
-    });
+    mutateHeaders(idx, (h) => removeHeaderEntry(h, rowIdx));
 
   const toggleEndpointModel = (idx: number, modelId: string) => {
     endpoints.mutate((cur) =>
