@@ -86,6 +86,11 @@ export const FINGERPRINT_FILES = [
   'ids.js',
   'projectPath.js',
   'projectIdentity.js',
+  'projectIdentity/binding.js',
+  'projectIdentity/caches.js',
+  'projectIdentity/errors.js',
+  'projectIdentity/fsProbe.js',
+  'projectIdentity/inventory.js',
   'processTree.js',
   // What the terminal-server emits per pty: the human-facing banner (imported
   // by sessionLifecycle), which names the project's `.lattice/LATTICE_API.md`

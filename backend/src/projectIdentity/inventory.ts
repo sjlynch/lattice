@@ -45,7 +45,7 @@ function readMetadataPath(file: string, field: 'projectPath' | 'repoRoot'): stri
     fd = fs.openSync(file, 'r');
     const buffer = Buffer.alloc(METADATA_SCAN_BYTES);
     const length = fs.readSync(fd, buffer, 0, buffer.length, 0);
-    const match = new RegExp(`"${field}"\s*:\s*("(?:[^"\\]|\\.)*")`).exec(buffer.toString('utf8', 0, length));
+    const match = new RegExp(`"${field}"\\s*:\\s*("(?:[^"\\\\]|\\\\.)*")`).exec(buffer.toString('utf8', 0, length));
     return match ? JSON.parse(match[1]) as string : undefined;
   } catch (err) {
     // Incomplete/corrupt metadata and stray directory entries are not identity
