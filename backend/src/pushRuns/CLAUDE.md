@@ -66,7 +66,11 @@ guard, which is part of the repo's `.git`-deletion defence layer (see the root
   outbox. A run records its `serverId` and, when a workflow Push step spawned
   it, `workflowRunId` + `workflowStepIndex`: `findRunningPushRunForWorkflowStep`
   is how a Push step re-dispatched after a restart attaches to that session
-  instead of pushing a second time (a `lost` run is never attachable).
+  instead of pushing a second time (a `lost` run is never attachable). A push
+  whose genuine `/done` lands after it was settled `lost` is corrected to
+  completed (`markPushRunCompleted`), and a re-dispatched Push step whose push
+  already FINISHED (its `/done` replayed before the re-dispatch) completes
+  without pushing again (`findCompletedPushRunForWorkflowStep`).
   `forgetPushRun` evicts a finished run.
 - `types.ts` — `PushRun` / `PushSession`.
 

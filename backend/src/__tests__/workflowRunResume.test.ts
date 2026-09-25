@@ -515,7 +515,7 @@ test('a Stop the gate was holding when the backend died still advances the re-ad
 test('markAgentReadopted counts a held Stop\'s quiet window from the Stop, and is idempotent', async () => {
   const q = await import('../agentQuiescence.js');
   const old = Date.now() - q.READOPTED_SETTLE_MS - 1_000;
-  q.markAgentReadopted('wf:test-readopt:0', old);
+  q.markAgentReadopted('wf:test-readopt:0', { stopAt: old });
   assert.equal(q.isAgentQuiescent('wf:test-readopt:0', 4_000), true, 'quiet since the Stop, long enough');
   // The resume pass marks again without a time — it must not reset the clock.
   q.markAgentReadopted('wf:test-readopt:0');
@@ -523,6 +523,46 @@ test('markAgentReadopted counts a held Stop\'s quiet window from the Stop, and i
   // A fresh re-adopt with no held Stop starts the long window now.
   q.markAgentReadopted('wf:test-readopt:1');
   assert.equal(q.isAgentQuiescent('wf:test-readopt:1', 4_000), false);
+  // The old gate was HOLDING that Stop because the session was busy (live
+  // subagents) right up to the restart: the window counts from that, not the
+  // Stop, so the step is not advanced — and its pty killed — at boot.
+  q.markAgentReadopted('wf:test-readopt:2', { stopAt: old, activeAt: Date.now() - 5_000 });
+  assert.equal(q.isAgentQuiescent('wf:test-readopt:2', 4_000), false, 'busy at the restart → the full window again');
   q.forgetAgentQuiescence('wf:test-readopt:0');
   q.forgetAgentQuiescence('wf:test-readopt:1');
+  q.forgetAgentQuiescence('wf:test-readopt:2');
+});
+
+test('a gate holding a Stop for live subagents persists when it last saw them busy', async () => {
+  const { recordStopReceived, requestStopHookStepComplete } = await import('../workflowRuns/stopHookGate.js');
+  const q = await import('../agentQuiescence.js');
+  const { workflowStepAgentId } = await import('../workflowRuns/sessionSpawner.js');
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-wfheld-'));
+  let canonical = '';
+  try {
+    const wf = await createWorkflow(project, 'Held', [
+      { id: 's1', title: 'Plan', prompt: 'a', mode: 'sequential', harness: 'claude' },
+    ]);
+    canonical = wf.projectPath;
+    const live = fakeRun({ id: 'wfrun_held_busy', workflowId: wf.id, projectPath: wf.projectPath, totalSteps: 1, currentStepIndex: 0, stepPhase: 'running' });
+    assert.equal(restoreWorkflowRun(live), true);
+    const agentId = workflowStepAgentId(live.id, 0);
+    q.noteSubagentStart(agentId, 'explore-1');
+    await recordStopReceived(live.id, 0);
+    const at = runs.get(live.id)!.stopReceived!.at;
+    let advanced = 0;
+    requestStopHookStepComplete(live.id, 0, () => void advanced++, { settleMs: 50, pollMs: 10 });
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(advanced, 0, 'a live subagent holds the gate');
+    const held = runs.get(live.id)!.stopReceived!;
+    assert.ok((held.activeAt ?? 0) >= at, 'the busy observation is recorded on the run');
+    await flushWorkflowRunPersist(wf.projectPath);
+    const [fromDisk] = await loadPersistedWorkflowRuns(wf.projectPath);
+    assert.equal(fromDisk?.stopReceived?.activeAt, held.activeAt, 'and persisted for a restart');
+    q.forgetAgentQuiescence(agentId);
+  } finally {
+    for (const [id, r] of [...runs.entries()]) if (r.projectPath === canonical) runs.delete(id);
+    await new Promise((r) => setTimeout(r, 200));
+    await fs.rm(project, { recursive: true, force: true });
+  }
 });

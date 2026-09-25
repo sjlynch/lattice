@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchQaRunStatus,
   forgetQaRun as apiForgetQaRun,
+  mayHaveBeenApplied,
+  retryTransient,
   startQaRun as apiStartQaRun,
   type Task,
 } from '../../../api';
@@ -97,7 +99,10 @@ export function useQaRuns(
       if (startingRef.current.has(task.id)) return;
       startingRef.current.add(task.id);
       try {
-        const res = await apiStartQaRun(activeFolder, task.id);
+        // As a push start: ride out a restart, never risk a second session.
+        const res = await retryTransient(() => apiStartQaRun(activeFolder, task.id), {
+          retryIf: (err) => !mayHaveBeenApplied(err),
+        });
         const terminalId = addTerminal(
           {
             id: res.terminalId,

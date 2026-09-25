@@ -122,11 +122,16 @@ export async function triggerPostMergeHookWithDeps(
     const outcome = prepared.kind === 'skip'
       ? prepared.outcome
       : await spawnAndRegister(options, deps, prepared);
-    // The owed marker (owed.ts) is settled once the trigger has DECIDED: a
-    // hook started, one was already running (it covers these merges), it was
-    // aborted by the user, or none is configured. A spawn error keeps it, so
-    // the next merge / boot retries rather than silently dropping the hook.
-    if (outcome.kind !== 'error') await clearPostMergeHookOwed(options.projectPath);
+    // The owed marker (owed.ts) is settled once a hook for these merges is
+    // decided: one started, the user aborted it, or none is configured. Kept
+    // on a spawn error (the next merge / boot retries) and on
+    // `already-running`: that hook may predate these merges — or be a dead
+    // record boot restored as running for its lost-grace window — so
+    // `runPostMergeHookGate` waits it out and then fires a fresh one if the
+    // debt is still there.
+    if (outcome.kind !== 'error' && !(outcome.kind === 'skipped' && outcome.reason === 'already-running')) {
+      await clearPostMergeHookOwed(options.projectPath);
+    }
     return outcome;
   } finally {
     endPending();

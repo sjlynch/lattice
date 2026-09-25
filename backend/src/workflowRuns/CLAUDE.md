@@ -168,10 +168,15 @@ explicit-curl callbacks — never by polling task state.
   by the self-hosting soak). The route therefore awaits `recordStopReceived`
   (persists `WorkflowRun.stopReceived = {stepIndex, at}`) BEFORE answering, and
   the re-adopting backend re-arms the gate with `{ rearm: true }` (not a new
-  Stop) while `markAgentReadopted(agentId, at)` counts the re-adopted quiet
-  window from that Stop — not from boot, or restarts closer together than
-  `READOPTED_SETTLE_MS` would hold a finished step forever. The post-merge
-  hook has the same pair (`PostMergeHookRun.stopReceivedAt`,
+  Stop) while `markAgentReadopted(agentId, {stopAt, activeAt})` counts the
+  re-adopted quiet window from that Stop — not from boot, or restarts closer
+  together than `READOPTED_SETTLE_MS` would hold a finished step forever. A
+  gate that is HOLDING the Stop because the session is still busy (live
+  subagents, a follow-up turn owed) persists when it last saw it busy
+  (`stopReceived.activeAt`, throttled to every 15 s), and the window counts
+  from the later of the two — otherwise a restart would re-arm from the old
+  Stop and advance past subagents that were still working. The post-merge
+  hook has the same pair (`PostMergeHookRun.stopReceivedAt` / `stopActiveAt`,
   `postMergeHookStopFinish`). The shared advance is
   `workflowStepCompletionAdvance` (facade).
   Failed asynchronous completion checkpoints rearm the quiescence gate up to

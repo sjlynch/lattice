@@ -56,6 +56,11 @@ export type RetryTransientOptions = {
   isCancelled?: () => boolean;
   // Called with each transient failure before the wait that follows it.
   onRetry?: (err: unknown, attempt: number) => void;
+  // Narrow which transient failures are retried. A start that must never run
+  // twice (a push / QA session, a single merge) passes
+  // `(err) => !mayHaveBeenApplied(err)`, so only a failure the backend
+  // provably never acted on is retried.
+  retryIf?: (err: unknown) => boolean;
   maxElapsedMs?: number;
   // Injectable for tests.
   sleep?: (ms: number) => Promise<void>;
@@ -79,6 +84,7 @@ export async function retryTransient<T>(
       return await fn();
     } catch (err) {
       if (!isTransientRequestError(err)) throw err;
+      if (options.retryIf && !options.retryIf(err)) throw err;
       if (options.isCancelled?.()) throw err;
       const delay = retryDelayMs(attempt);
       if (now() - startedAt + delay > maxElapsed) throw err;

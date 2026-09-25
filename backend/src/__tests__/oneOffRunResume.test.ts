@@ -400,6 +400,36 @@ test('an attached push whose terminal is lost fails the step instead of reportin
   await assert.rejects(step, /exited without reporting completion/);
 });
 
+test('a re-dispatched Push step whose push already FINISHED (its /done beat the re-dispatch) completes without pushing again', async () => {
+  const run = pushStepRun();
+  const progress: string[] = [];
+  const forgotten: string[] = [];
+  const unsub = subscribe((ev: WorkflowRunEvent) => {
+    if (ev.type === 'step-control-progress' && ev.message) progress.push(ev.message);
+  });
+  try {
+    await runPushStep({ projectPath: '/project' } as Workflow, run, 0, 'http://x', attachDeps({
+      findCompletedPushRun: () => ({ id: 'push_1_aa' }),
+      findLivePushSession: () => undefined,
+      forgetPushRun: (id) => void forgotten.push(id),
+    }, {}));
+  } finally {
+    unsub();
+  }
+  assert.ok(progress.includes('push complete'));
+  assert.deepEqual(forgotten, ['push_1_aa']);
+});
+
+test('a push restored as lost whose real /done then arrives is completed, not lost', async () => {
+  const { markPushRunCompleted, restorePushRun, getPushRun, forgetPushRun } = await import('../pushRuns.js');
+  const id = 'push_1700000000000_abcdef';
+  restorePushRun({ id, projectPath: '/project-lost', cwd: '/scratch', status: 'running', startedAt: 1, lost: true } as unknown as PushRun);
+  assert.equal(markPushRunCompleted(id), true);
+  assert.equal(getPushRun(id)?.status, 'done');
+  assert.equal(getPushRun(id)?.lost, false, 'the push succeeded — a re-dispatched Push step must not redo it');
+  forgetPushRun(id);
+});
+
 // ---------- quiescence after re-adopt ----------
 
 test('a re-adopted session needs the longer settle window before a Stop may finish it', () => {

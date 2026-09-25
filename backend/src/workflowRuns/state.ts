@@ -50,7 +50,8 @@ export type WorkflowRun = {
   // the step hung until its timeout — or forever for an agent step. A
   // re-adopting backend re-arms the gate from here. Only meaningful while
   // `stepIndex === currentStepIndex`.
-  stopReceived?: { stepIndex: number; at: number };
+  // `activeAt`: the last time the holding gate saw the session busy (throttled).
+  stopReceived?: { stepIndex: number; at: number; activeAt?: number };
 };
 
 export type RunTestsCheckpoint = {

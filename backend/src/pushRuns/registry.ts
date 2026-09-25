@@ -78,6 +78,16 @@ export function markPushRunDone(id: string): boolean {
   return registry.markDone(id);
 }
 
+// The push AGENT reported completion (its `/done`). A run boot recovery
+// restored as `lost` (pty gone at boot, awaiting its grace window) whose real
+// `/done` is then replayed by the callback outbox did finish: clear the flag,
+// or a re-dispatched Push step would read the successful push as failed and
+// push again.
+export function markPushRunCompleted(id: string): boolean {
+  if (registry.get(id)?.status === 'running') registry.update(id, { lost: false });
+  return registry.markDone(id);
+}
+
 // Settle a run whose terminal died without calling `/done`: flag it `lost`
 // (so a waiting workflow Push step fails instead of reporting success), then
 // mark it done — which fans out the 'done' event that unblocks that waiter.
@@ -105,6 +115,25 @@ export function findRunningPushRunForWorkflowStep(
     .find(
       (r) =>
         r.status === 'running' &&
+        !r.lost &&
+        r.workflowRunId === workflowRunId &&
+        r.workflowStepIndex === stepIndex,
+    );
+}
+
+// A push session a workflow's Push step spawned that already FINISHED — its
+// agent's `/done` landed (not settled `lost`) — e.g. the callback outbox
+// replayed it after a restart before the step was re-dispatched. The step is
+// then simply done; spawning another push would push twice.
+export function findCompletedPushRunForWorkflowStep(
+  workflowRunId: string,
+  stepIndex: number,
+): PushRun | undefined {
+  return registry
+    .list()
+    .find(
+      (r) =>
+        r.status === 'done' &&
         !r.lost &&
         r.workflowRunId === workflowRunId &&
         r.workflowStepIndex === stepIndex,

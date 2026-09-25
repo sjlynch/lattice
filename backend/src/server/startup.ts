@@ -143,7 +143,11 @@ export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecov
       fireOwedPostMergeHooks(backendOrigin).catch((err) =>
         console.error('[startup] fireOwedPostMergeHooks failed:', err),
       ),
-    );
+    )
+    // Replay undelivered completion callbacks only once the runs above are
+    // re-adopted / re-dispatched: a replayed push `/done` that beat the Push
+    // step's re-dispatch used to make it push a second time.
+    .finally(() => startCallbackOutboxLoop(backendOrigin));
   // Re-enqueue task runs that were waiting in the spawn queue when the
   // backend stopped (their `runQueued` flag is persisted on the task).
   // Runs post-listen and after the pre-listen orphan-worktree sweep so a
@@ -174,10 +178,8 @@ export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecov
   // (exited ptys are ended so restore never relaunches them; busy transitions
   // are stamped for the interruption detector). See terminalRegistry/watch.ts.
   startTerminalRegistryWatch();
-  // Replay completion callbacks a Stop hook / Pi extension couldn't deliver
-  // while this backend was down (restarting after a merge, say). Rewrite the
-  // hook's delivery script first so every hook installed from here on runs
-  // the current one. See callbackOutbox/.
+  // Rewrite the Stop hooks' delivery script so every hook installed from here
+  // on runs the current one. The outbox replay itself starts at the end of the
+  // recovery chain above. See callbackOutbox/.
   ensureCallbackScript();
-  startCallbackOutboxLoop(backendOrigin);
 }

@@ -26,10 +26,15 @@
 // lastSignalAt this reads; the agent-activity route feeds it from the same
 // hooks that already drive the graph (extended to the `pmh:` agent id).
 
-import { finishPostMergeHook, getPostMergeHook } from './registry.js';
+import { finishPostMergeHook, getPostMergeHook, patchPostMergeHook } from './registry.js';
 import { postMergeHookAgentId } from './stopHook.js';
 import { cleanupPostMergeHookSession } from './cleanup.js';
-import { forgetAgentQuiescence, isAgentQuiescent, noteAgentStop } from '../agentQuiescence.js';
+import {
+  agentLastActiveAt,
+  forgetAgentQuiescence,
+  isAgentQuiescent,
+  noteAgentStop,
+} from '../agentQuiescence.js';
 import { unregisterAgentSession } from '../agentSessions.js';
 
 // Finish only after the session has been fully quiet (no subagents live, no
@@ -44,6 +49,7 @@ type GateTiming = { settleMs: number; pollMs: number };
 const pending = new Map<string, ReturnType<typeof setTimeout>>();
 
 function clearGate(id: string): void {
+  heldActivityPersistedAt.delete(id);
   const timer = pending.get(id);
   if (timer) {
     clearTimeout(timer);
@@ -94,7 +100,10 @@ export function requestPostMergeHookStopComplete(
       finish();
       return;
     }
-    schedule(); // still working (subagent live or recent signal) — keep waiting
+    // Still working: persist when it was last seen busy, so a restart re-arms
+    // this gate from that rather than from the Stop (markAgentReadopted).
+    noteHeldStopActivity(id, agentId);
+    schedule(); // keep waiting
   };
 
   const schedule = (): void => {
@@ -106,6 +115,22 @@ export function requestPostMergeHookStopComplete(
   // Replace any stale gate (defensive) and start the poll loop.
   clearGate(id);
   schedule();
+}
+
+// Throttled persistence of a holding gate's last-busy time (see the workflow
+// gate's HELD_STOP_ACTIVITY_PERSIST_MS).
+const HELD_ACTIVITY_PERSIST_MS = 15_000;
+const heldActivityPersistedAt = new Map<string, number>();
+
+function noteHeldStopActivity(id: string, agentId: string): void {
+  const run = getPostMergeHook(id);
+  if (!run || run.stopReceivedAt === undefined) return;
+  const now = Date.now();
+  if (now - (heldActivityPersistedAt.get(id) ?? 0) < HELD_ACTIVITY_PERSIST_MS) return;
+  const activeAt = agentLastActiveAt(agentId);
+  if (activeAt <= (run.stopActiveAt ?? run.stopReceivedAt)) return;
+  heldActivityPersistedAt.set(id, now);
+  patchPostMergeHook(id, { stopActiveAt: activeAt });
 }
 
 // The finish a gated (Stop-sourced, non-error) completion performs: drop the

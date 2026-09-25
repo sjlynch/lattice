@@ -142,7 +142,7 @@ test('a held Stop survives the mirror and a re-armed gate finishes the re-adopte
 
   seedRunningHook(id);
   // What boot recovery does for a re-adopted Claude hook with a held Stop.
-  markAgentReadopted(postMergeHookAgentId(id), stopAt);
+  markAgentReadopted(postMergeHookAgentId(id), { stopAt });
   let finished = 0;
   requestPostMergeHookStopComplete(id, () => void finished++, { settleMs: 4000, pollMs: 10 }, { rearm: true });
   await new Promise((r) => setTimeout(r, 150));

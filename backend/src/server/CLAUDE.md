@@ -47,6 +47,8 @@ Named backend bootstrap helpers used by `index.ts` after process guards are inst
      `workflow-recovering` until the workflow resume settles;
   7. start the periodic in-progress sweep (`startInProgressSweepLoop()`), the
      terminal-tab registry watch (`startTerminalRegistryWatch()`), and the
-     completion-callback outbox replay (`ensureCallbackScript()` +
-     `startCallbackOutboxLoop()` — callbacks a Stop hook couldn't deliver
-     while this process was down; see `../callbackOutbox/CLAUDE.md`).
+     completion-callback outbox replay (`ensureCallbackScript()` right away;
+     `startCallbackOutboxLoop()` only once the step-6 chain has settled, so a
+     replayed callback never beats the run it belongs to being re-adopted /
+     re-dispatched — callbacks a Stop hook couldn't deliver while this process
+     was down; see `../callbackOutbox/CLAUDE.md`).

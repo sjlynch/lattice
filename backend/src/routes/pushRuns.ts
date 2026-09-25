@@ -12,7 +12,7 @@ import {
   cleanupPushSession,
   forgetPushRun,
   getPushRun,
-  markPushRunDone,
+  markPushRunCompleted,
   startPushSession,
 } from '../pushRuns.js';
 import { pushAgentId } from '../pushRuns/stopHook.js';
@@ -98,7 +98,7 @@ export function buildPushRunsRouter(backendOrigin: string): Router {
       res,
       run,
       onRun: (tracked) => {
-        markPushRunDone(tracked.id);
+        markPushRunCompleted(tracked.id);
         // Cleanup the home-scoped scratch dir off the response path so a slow
         // Windows fs.rm doesn't keep the curl call open past its 5s timeout.
         void cleanupPushSession(tracked.projectPath, tracked.id);

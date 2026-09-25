@@ -364,7 +364,7 @@ test('an abort while scratch setup is pending skips the spawn entirely', async (
 // "A post-merge hook is owed" (postMergeHooks/owed.ts): a merge that landed
 // before a backend restart whose hook never fired must still get it. The
 // trigger settles the debt once it has decided — and only then.
-test('the trigger settles an owed hook once it decides, and keeps it after a spawn error', async () => {
+test('the trigger settles an owed hook once it decides; a spawn error or an already-running hook keeps it', async () => {
   const fs = await import('node:fs/promises');
   const os = await import('node:os');
   const path = await import('node:path');
@@ -398,6 +398,18 @@ test('the trigger settles an owed hook once it decides, and keeps it after a spa
     );
     assert.equal(started.kind, 'started');
     assert.equal(await isPostMergeHookOwed(project), false);
+
+    // A merge lands while that hook is still running: the next trigger reports
+    // already-running, and the debt must SURVIVE it — that hook may predate the
+    // merge (or be a dead record restored at boot). runPostMergeHookGate waits
+    // it out and fires a fresh one.
+    await markPostMergeHookOwed(project);
+    const again = await triggerPostMergeHookWithDeps(
+      { projectPath: project, backendOrigin: ORIGIN, trigger: 'merge-run' },
+      ok.deps,
+    );
+    assert.equal(again.kind === 'skipped' && again.reason, 'already-running');
+    assert.equal(await isPostMergeHookOwed(project), true);
   } finally {
     await fs.rm(project, { recursive: true, force: true });
   }

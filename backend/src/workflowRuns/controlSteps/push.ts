@@ -10,6 +10,7 @@
 import {
   attachedPushSession,
   cleanupPushSession,
+  findCompletedPushRunForWorkflowStep,
   findRunningPushRunForWorkflowStep,
   forgetPushRun,
   getPushRun,
@@ -66,6 +67,10 @@ export type PushStepDeps = {
   // The still-live push session this step already spawned, if any (see the
   // re-dispatch note in runPushStep). Optional so test doubles can omit it.
   findLivePushSession?: (runId: string, stepIndex: number) => StartedPushSession | undefined;
+  // A push session this step spawned that already FINISHED successfully (its
+  // `/done` landed — e.g. replayed after a restart before this re-dispatch).
+  // Optional so test doubles can omit it.
+  findCompletedPushRun?: (runId: string, stepIndex: number) => { id: string } | undefined;
 };
 
 function describeTimeout(ms: number): string {
@@ -101,6 +106,7 @@ const productionDeps: PushStepDeps = {
   abandonPushRun,
   forgetPushRun,
   findLivePushSession,
+  findCompletedPushRun: findCompletedPushRunForWorkflowStep,
 };
 
 export async function runPushStep(
@@ -115,6 +121,16 @@ export async function runPushStep(
   // in the detached terminal-server and may still be pushing. Boot recovery
   // re-adopted its persisted record, so wait for THAT session instead of
   // spawning a second push alongside it. (Its drain already happened.)
+  // Its push may even have FINISHED already: the agent's `/done` can land (the
+  // hook still retrying, or the callback outbox replaying it) after listen but
+  // before this re-dispatch. Then the step is done — never push a second time.
+  const completed = deps.findCompletedPushRun?.(run.id, stepIndex);
+  if (completed) {
+    console.log(`[workflow-run] ${run.id} push step: its push session ${completed.id} already finished before the restart — push complete`);
+    deps.forgetPushRun?.(completed.id);
+    emitControlProgress(run, stepIndex, 'push', 1, 1, 'push complete');
+    return;
+  }
   const adopted = deps.findLivePushSession?.(run.id, stepIndex);
   if (adopted) {
     console.log(`[workflow-run] ${run.id} push step re-attached to live push session ${adopted.id}`);

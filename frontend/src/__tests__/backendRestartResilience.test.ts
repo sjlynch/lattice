@@ -96,6 +96,27 @@ test('retryTransient throws a real answer (4xx / 500) immediately', async () => 
   }
 });
 
+test('retryTransient with retryIf retries only failures the backend never acted on', async () => {
+  // A single merge / push / QA start: a 503 drain or a refused connection is
+  // retried, a lost response (504 / network error) is not — it may have
+  // started a session a retry would duplicate.
+  const retryIf = (err: unknown) => !mayHaveBeenApplied(err);
+  let calls = 0;
+  const value = await retryTransient(async () => {
+    calls++;
+    if (calls === 1) throw new HttpError(503, 'backend-restarting');
+    if (calls === 2) throw new HttpError(502, '[api-proxy]: ECONNREFUSED');
+    return 'ok';
+  }, { sleep: noSleep, retryIf });
+  assert.equal(value, 'ok');
+  assert.equal(calls, 3);
+  for (const err of [new HttpError(504, 'gateway timeout'), new TypeError('Failed to fetch')]) {
+    let n = 0;
+    await assert.rejects(retryTransient(async () => { n++; throw err; }, { sleep: noSleep, retryIf }));
+    assert.equal(n, 1);
+  }
+});
+
 test('retryTransient stops when cancelled and when the time budget runs out', async () => {
   let calls = 0;
   let cancel = false;

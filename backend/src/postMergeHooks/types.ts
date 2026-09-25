@@ -28,6 +28,9 @@ export type PostMergeHookRun = {
   // "running" until its bounded wait expired and errored it). A re-adopting
   // backend re-arms the gate from here (recovery/oneOffRunResume.ts).
   stopReceivedAt?: number;
+  // The last time that holding gate saw the session busy (throttled) — a
+  // restart re-arms the quiet window from the later of the two.
+  stopActiveAt?: number;
 };
 
 export type PostMergeHookSession = {

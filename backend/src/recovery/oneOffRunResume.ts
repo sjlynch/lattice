@@ -167,7 +167,12 @@ const postMergeHookAdapter: Adapter<PostMergeHookRun> = {
       // must not finish the hook while a pre-restart subagent still works.
       // A Stop the old process was already holding starts the quiet window
       // from that Stop rather than from this boot.
-      markAgentReadopted(agentId, run.stopReceivedAt);
+      markAgentReadopted(
+        agentId,
+        run.stopReceivedAt !== undefined
+          ? { stopAt: run.stopReceivedAt, activeAt: run.stopActiveAt }
+          : undefined,
+      );
     }
     // The previous process had received this hook's Stop and was only waiting
     // out the quiescence gate. The hook got its 200 and the agent is idle —

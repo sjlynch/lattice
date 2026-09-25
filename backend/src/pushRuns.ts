@@ -4,9 +4,11 @@
 
 export type { PushRun, PushSession } from './pushRuns/types.js';
 export {
+  findCompletedPushRunForWorkflowStep,
   findRunningPushRunForWorkflowStep,
   forgetPushRun,
   getPushRun,
+  markPushRunCompleted,
   markPushRunDone,
   markPushRunLost,
   pushRunStore,

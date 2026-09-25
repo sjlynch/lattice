@@ -10,6 +10,7 @@ import {
 import { postMergeHookAgentId } from './stopHook.js';
 import { cancelPostMergeHookStopGate } from './stopHookGate.js';
 import { cleanupPostMergeHookSession } from './cleanup.js';
+import { isPostMergeHookOwed } from './owed.js';
 import { unregisterAgentSession } from '../agentSessions.js';
 import { forgetAgentQuiescence } from '../agentQuiescence.js';
 import { proxyKillSession } from '../terminalProxy.js';
@@ -68,23 +69,42 @@ export async function runPostMergeHookGate(
   options: TriggerPostMergeHookOptions,
   maxWaitMs: number = POST_MERGE_HOOK_MAX_WAIT_MS,
 ): Promise<PostMergeHookRun | null> {
+  // An `already-running` hook may predate the merges this call is for (or be a
+  // dead record boot restored as running for its lost-grace window), so the
+  // trigger leaves the owed marker set (owed.ts): wait that hook out, and if
+  // the debt is still there, fire a fresh one for these merges. Bounded — a
+  // project whose hooks keep overlapping new merges must not loop forever.
+  let last: PostMergeHookRun | null = null;
+  for (let round = 0; round < 3; round++) {
+    const { run, waitedOnExisting } = await runPostMergeHookGateOnce(options, maxWaitMs);
+    last = run ?? last;
+    if (!waitedOnExisting || !(await isPostMergeHookOwed(options.projectPath))) break;
+  }
+  return last;
+}
+
+async function runPostMergeHookGateOnce(
+  options: TriggerPostMergeHookOptions,
+  maxWaitMs: number,
+): Promise<{ run: PostMergeHookRun | null; waitedOnExisting: boolean }> {
   const outcome = await triggerPostMergeHook(options);
+  const done = (run: PostMergeHookRun | null) => ({ run, waitedOnExisting: false });
   // 'no-prompt' (nothing to run) and 'disabled' (master toggle off) are both
   // no-ops — the merge completes without gating on a hook.
   if (
     outcome.kind === 'skipped' &&
     (outcome.reason === 'no-prompt' || outcome.reason === 'disabled')
   ) {
-    return null;
+    return done(null);
   }
   if (outcome.kind === 'skipped' && outcome.reason === 'aborted') {
     // Aborted while its session was still being set up / queued: the trigger
     // already tore the session down and the run is terminal.
-    return outcome.run;
+    return done(outcome.run);
   }
   if (outcome.kind === 'error') {
     // Don't block forever on a failed spawn — surface and return.
-    return null;
+    return done(null);
   }
   // 'already-running': another caller started a hook for this project; await
   // it exactly as we would our own.
@@ -95,5 +115,5 @@ export async function runPostMergeHookGate(
     // hung agent doesn't linger in the terminal-server.
     await endPostMergeHook(run.id, 'errored', 'timed out', { killSession: true });
   }
-  return getPostMergeHook(run.id) ?? run;
+  return { run: getPostMergeHook(run.id) ?? run, waitedOnExisting: outcome.kind === 'skipped' };
 }

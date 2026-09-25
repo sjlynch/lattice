@@ -34,7 +34,7 @@ import {
 import { loadPersistedWorkflowRuns } from '../workflowRuns/persistence.js';
 import { requestStopHookStepComplete } from '../workflowRuns/stopHookGate.js';
 import { getActiveHookForProject } from '../postMergeHooks.js';
-import { findRunningPushRunForWorkflowStep } from '../pushRuns.js';
+import { findCompletedPushRunForWorkflowStep, findRunningPushRunForWorkflowStep } from '../pushRuns.js';
 import {
   classifyWorkflowRunResume,
   findStepSessionId,
@@ -108,7 +108,7 @@ export function registerPersistedWorkflowRuns(persisted: WorkflowRun[], sessions
     // arriving right after the registry is ready is already gated
     // conservatively (see agentQuiescence.ts `markAgentReadopted`).
     if (id || (sessions === null && run.stepPhase !== 'pending')) {
-      markAgentReadopted(workflowStepAgentId(run.id, run.currentStepIndex), pendingStopAt(run));
+      markAgentReadopted(workflowStepAgentId(run.id, run.currentStepIndex), heldStop(run));
     }
   }
   return registered;
@@ -207,7 +207,8 @@ export async function resumePersistedRun(
           getActiveHookForProject(run.projectPath) !== null) ||
         (step?.kind === 'push' &&
           !pending.some((t) => t.status === 'ready_to_merge') &&
-          findRunningPushRunForWorkflowStep(run.id, run.currentStepIndex) !== undefined);
+          (findRunningPushRunForWorkflowStep(run.id, run.currentStepIndex) !== undefined ||
+            findCompletedPushRunForWorkflowStep(run.id, run.currentStepIndex) !== undefined));
       if (!waitingOnLiveSession) {
         const checkpoint = JSON.stringify([run.currentStepIndex, step?.id, pending
           .map((t) => [t.id, t.status, !!t.runQueued]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))]);
@@ -256,9 +257,10 @@ export async function resumePersistedRun(
   // The previous process had already received this step's Stop and was only
   // waiting out the quiescence gate when it died. The hook got its answer and
   // the agent is idle, so no second Stop is coming: re-arm the gate here or
-  // the step never advances. Its quiet window counts from that Stop
-  // (registration passed its time to markAgentReadopted).
-  if (pendingStopAt(run) !== undefined) {
+  // the step never advances. Its quiet window counts from that Stop, or from
+  // when the old gate last saw the session busy if later (registration passed
+  // both to markAgentReadopted).
+  if (heldStop(run)) {
     console.log(`[startup] workflow run ${label}: re-arming the completion gate for the Stop received before the restart.`);
     requestStopHookStepComplete(
       run.id,
@@ -270,9 +272,9 @@ export async function resumePersistedRun(
   }
 }
 
-// The time of a Stop the gate was holding for the run's CURRENT step when the
-// previous process went down (WorkflowRun.stopReceived), else undefined.
-function pendingStopAt(run: WorkflowRun): number | undefined {
+// The Stop the gate was holding for the run's CURRENT step when the previous
+// process went down (WorkflowRun.stopReceived), else undefined.
+function heldStop(run: WorkflowRun): { stopAt: number; activeAt?: number } | undefined {
   const s = run.stopReceived;
-  return s && s.stepIndex === run.currentStepIndex ? s.at : undefined;
+  return s && s.stepIndex === run.currentStepIndex ? { stopAt: s.at, activeAt: s.activeAt } : undefined;
 }

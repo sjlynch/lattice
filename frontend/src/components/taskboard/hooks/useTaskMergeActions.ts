@@ -40,7 +40,12 @@ export function useTaskMergeActions({
   const mergeTaskAction = useCallback(
     async (task: Task): Promise<boolean> => {
       try {
-        const res = await apiMergeTask(activeFolder, task.id);
+        // Waits out a backend restart (a 503 drain, or the backend down) —
+        // but only failures the backend never acted on: a retried merge whose
+        // first attempt did land would start a second conflict resolver.
+        const res = await retryTransient(() => apiMergeTask(activeFolder, task.id), {
+          retryIf: (err) => !mayHaveBeenApplied(err),
+        });
         if (res.merged) return true;
         // Either a worktree merge conflict or a stash-pop conflict in main —
         // both are handled by a resolver Claude the BACKEND pre-spawned. With

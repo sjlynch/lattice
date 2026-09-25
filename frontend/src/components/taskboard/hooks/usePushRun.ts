@@ -3,6 +3,8 @@ import {
   checkGit,
   fetchPushRunStatus,
   forgetPushRun as apiForgetPushRun,
+  mayHaveBeenApplied,
+  retryTransient,
   startPushRun,
   type PushRunStatus,
 } from '../../../api';
@@ -145,7 +147,11 @@ export function usePushRun(
     if (!activeFolder || activePush || startingRef.current) return;
     startingRef.current = true;
     try {
-      const res = await startPushRun(activeFolder);
+      // Waits out a backend restart, retrying only failures the backend never
+      // acted on — a second start would spawn a second push session.
+      const res = await retryTransient(() => startPushRun(activeFolder), {
+        retryIf: (err) => !mayHaveBeenApplied(err),
+      });
       const terminalId = addTerminal({
         id: res.terminalId,
         label: 'push',

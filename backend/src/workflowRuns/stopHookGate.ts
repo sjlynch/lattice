@@ -23,7 +23,7 @@
 
 import { checkpointWorkflowRun, getRun, notify, runs, snapshot } from './state.js';
 import { workflowStepAgentId } from './sessionSpawner.js';
-import { isAgentQuiescent, noteAgentSignal, noteAgentStop } from '../agentQuiescence.js';
+import { agentLastActiveAt, isAgentQuiescent, noteAgentSignal, noteAgentStop } from '../agentQuiescence.js';
 import { isRunTestsStep, noteRunTestsStep } from './testStep/runTestsStep.js';
 
 // Advance only after the session has been fully quiet (no subagents live, no
@@ -50,6 +50,7 @@ type PendingGate = {
 const pending = new Map<string, PendingGate>();
 
 function clearGate(runId: string): void {
+  heldActivityPersistedAt.delete(runId);
   const g = pending.get(runId);
   if (g) {
     clearTimeout(g.timer);
@@ -132,7 +133,11 @@ export function requestStopHookStepComplete(
       });
       return;
     }
-    schedule(); // still working (subagent live or recent signal) — keep waiting
+    // Still working (subagent live, turn owed, or a recent signal). Persist
+    // when it was last seen busy, so a restart re-arms this gate from THAT
+    // rather than from the Stop (see agentQuiescence.ts markAgentReadopted).
+    noteHeldStopActivity(runId, stepIndex, agentId);
+    schedule(); // keep waiting
   };
 
   const schedule = (delayMs: number = timing.pollMs): void => {
@@ -161,6 +166,24 @@ export async function recordStopReceived(runId: string, stepIndex: number): Prom
   await checkpointWorkflowRun(run).catch((err) =>
     console.warn(`[workflow-run] ${runId} could not record the Stop for step ${stepIndex}:`, err),
   );
+}
+
+// Throttle for persisting a holding gate's last-busy time: a restart re-arms
+// from a value at most this stale, well inside READOPTED_SETTLE_MS.
+export const HELD_STOP_ACTIVITY_PERSIST_MS = 15_000;
+const heldActivityPersistedAt = new Map<string, number>();
+
+function noteHeldStopActivity(runId: string, stepIndex: number, agentId: string): void {
+  const run = runs.get(runId);
+  const held = run?.stopReceived;
+  if (!run || !held || held.stepIndex !== stepIndex) return;
+  const now = Date.now();
+  if (now - (heldActivityPersistedAt.get(runId) ?? 0) < HELD_STOP_ACTIVITY_PERSIST_MS) return;
+  const activeAt = agentLastActiveAt(agentId);
+  if (activeAt <= (held.activeAt ?? held.at)) return;
+  heldActivityPersistedAt.set(runId, now);
+  held.activeAt = activeAt;
+  void checkpointWorkflowRun(run).catch(() => {});
 }
 
 // Cancel a pending gate (run cancelled). No-op if none is pending.

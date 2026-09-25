@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import type { RequestHandler } from 'express';
 import { callbackOutboxDir, callbackOutboxEntryPath } from './paths.js';
+import { isFinalStatus } from './drain.js';
 
 // Backend-side acknowledgement: once a completion callback has been ANSWERED,
 // remove its outbox entry here instead of relying on the hook to do it.
@@ -25,8 +26,7 @@ export function buildCallbackOutboxAck(backendOrigin: string, dir = callbackOutb
     if (req.method !== 'POST' || !CALLBACK_PATH_RE.test(req.path)) return next();
     const url = `${backendOrigin}${req.originalUrl}`;
     res.on('finish', () => {
-      const status = res.statusCode;
-      if (status >= 500 || status === 408 || status === 429) return;
+      if (!isFinalStatus(res.statusCode)) return;
       fs.unlink(callbackOutboxEntryPath(url, dir)).catch(() => {});
     });
     next();

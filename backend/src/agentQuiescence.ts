@@ -120,7 +120,7 @@ export function noteAgentSignal(agentId: string): void {
 // signal: we don't know when the session last did anything. Sticky until the
 // entry is forgotten (the step advances / the hook finishes).
 //
-// `lastStopAt`: the session's last Stop as the previous process recorded it
+// `held.stopAt`: the session's last Stop as the previous process recorded it
 // (a Stop that was waiting on the gate when the backend went down — see
 // WorkflowRun.stopReceived). The quiet window then counts from that Stop, not
 // from this boot: otherwise every restart would push a finished step's advance
@@ -131,17 +131,37 @@ export function noteAgentSignal(agentId: string): void {
 // Idempotent: boot registration marks a session before callbacks are released,
 // and the later resume pass marks it again — the second call must not reset the
 // clock the first one set.
-export function markAgentReadopted(agentId: string, lastStopAt?: number): void {
+//
+// `held.activeAt`: the last moment the previous process's gate saw the session
+// BUSY while holding that Stop (live subagents, a turn still owed, or recent
+// signals — persisted, throttled, by the gate). The window counts from the
+// later of the two: a gate that was holding for two background subagents when
+// the backend died must NOT treat the time since the Stop as silence, or the
+// step would advance (and its pty be killed) a second after boot while the
+// subagents still work.
+export function markAgentReadopted(
+  agentId: string,
+  held?: { stopAt: number; activeAt?: number },
+): void {
   const now = Date.now();
   const s = ensure(agentId, now);
   if (s.readopted) return;
   s.readopted = true;
-  if (lastStopAt !== undefined) {
-    s.lastSignalAt = Math.min(now, lastStopAt);
-    s.lastStopAt = Math.min(now, lastStopAt);
+  if (held) {
+    s.lastSignalAt = Math.min(now, Math.max(held.stopAt, held.activeAt ?? 0));
+    s.lastStopAt = Math.min(now, held.stopAt);
   } else {
     s.lastSignalAt = now;
   }
+}
+
+// When the session was last seen busy, for a gate holding a Stop to persist:
+// "now" while subagents are live or a turn is still owed, else its last signal.
+export function agentLastActiveAt(agentId: string): number {
+  const q = agentQuiescence(agentId);
+  const now = Date.now();
+  if (q.liveSubagents > 0 || q.awaitingTurnEnd) return now;
+  return Number.isFinite(q.quietForMs) ? now - q.quietForMs : 0;
 }
 
 // Snapshot for a completion gate. An unknown agent (never emitted a signal) is

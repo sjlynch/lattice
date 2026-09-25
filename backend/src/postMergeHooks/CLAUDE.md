@@ -44,8 +44,11 @@ workflow Merge step (Ready-to-Merge empty) both skipped the hook, silently
 (found by the self-hosting soak). So `worktree/finalize.ts` records a durable
 debt (`~/.lattice/per-project/<hash>/post-merge-hook-owed.json`, only when a
 hook is configured) the moment a task lands in QA; the trigger settles it once
-it has decided (started / already running / aborted / not configured — a spawn
-error keeps it); and every path that could have fired the hook honours it:
+it has decided (started / aborted / not configured — a spawn error keeps it).
+**`already-running` keeps it too**: that hook may predate these merges, or be a
+dead record boot restored as running for its lost-grace window — so
+`runPostMergeHookGate` waits it out and, if the debt is still there, fires a
+fresh hook (at most 3 rounds). Every path that could have fired the hook honours it:
 merge-run teardown (`merged.length > 0 || owed`; a cancelled/halted run clears
 it instead, keeping "no hook on cancel"), the workflow Merge step's Phase C
 (`fireOwedPostMergeHook` before waiting), and boot

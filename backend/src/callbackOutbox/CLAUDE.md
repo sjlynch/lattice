@@ -30,7 +30,9 @@ that says "I'm done" was lost.
    harness. The Pi extension (`piExtension/template.ts`) writes and clears the
    same entry around its own retry loop.
 2. **Backend side** — `drain.ts` `startCallbackOutboxLoop` (started post-listen
-   in `server/startup.ts`, every 10 s) replays each entry by POSTing it back to
+   in `server/startup.ts`, at the END of the recovery chain — after the
+   workflow / merge-run resumes and owed post-merge hooks — so a replayed push
+   `/done` can't beat the Push step's re-dispatch; then every 10 s) replays each entry by POSTing it back to
    this backend's own origin, so it goes through the same route, validation
    and idempotency guards as a live callback. 5xx / network → kept with
    exponential backoff (≤ 60 s); definitive → removed.

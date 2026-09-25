@@ -90,18 +90,31 @@ function isFinal(status) {
   return status < 500 && status !== 408 && status !== 429;
 }
 
-async function attempt() {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), ATTEMPT_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { method: 'POST', signal: ac.signal });
-    try { await res.arrayBuffer(); } catch {}
-    return res.status;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+// node:http rather than global fetch: this runs under whatever \`node\` the
+// pty's PATH resolves, and fetch only exists from Node 18 — on an older node
+// every attempt would fail and each callback would wait for the drain.
+function attempt() {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (status) => { if (!settled) { settled = true; resolve(status); } };
+    let req;
+    try {
+      const u = new URL(url);
+      const client = require(u.protocol === 'https:' ? 'https' : 'http');
+      req = client.request(u, { method: 'POST', headers: { 'content-length': 0 } }, (res) => {
+        res.resume();
+        res.on('end', () => done(res.statusCode ?? null));
+        res.on('error', () => done(res.statusCode ?? null));
+        res.on('close', () => done(res.statusCode ?? null));
+      });
+    } catch {
+      done(null);
+      return;
+    }
+    req.setTimeout(ATTEMPT_TIMEOUT_MS, () => req.destroy());
+    req.on('error', () => done(null));
+    req.end();
+  });
 }
 
 async function main() {
