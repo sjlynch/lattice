@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  fetchUserSettings,
+  fetchUserSettingsStrict,
   patchUserSettings,
   type PiMenuEntry,
 } from '../../../api';
@@ -11,7 +11,7 @@ import {
   type AgentHarness,
   type HarnessChoice,
 } from '../../../harnesses';
-import { loadHarnessForFolder } from './harnessSelectorLoad';
+import { DEFAULT_HARNESS, loadHarnessForFolder } from './harnessSelectorLoad';
 
 export type { HarnessChoice };
 export type ResolvedHarness = AgentHarness;
@@ -26,7 +26,7 @@ export type { PiMenuEntry };
 // (`useHarnessAvailability` / `usePiModelMenu`); this hook keeps only the
 // selection/persistence that's specific to the task board.
 export function useHarnessSelector(activeFolder: string) {
-  const [harness, setHarnessState] = useState<HarnessChoice>('claude');
+  const [harness, setHarnessState] = useState<HarnessChoice>(DEFAULT_HARNESS);
   // Selected Pi model ("provider/model"); undefined = Pi's own default.
   const [piModel, setPiModelState] = useState<string | undefined>(undefined);
   const interleaveNextRef = useRef<AgentHarness>('claude');
@@ -35,6 +35,15 @@ export function useHarnessSelector(activeFolder: string) {
   // Monotonic load id: each folder-change load claims the next id; a resolved
   // fetch only applies if it's still the latest (the fast-project-switch guard).
   const loadSeqRef = useRef(0);
+
+  // A folder switch starts from the defaults, so nothing from the previous
+  // project (its harness, Pi model, or interleave cursor) is used here while the
+  // new project's settings load — or if that load never resolves.
+  useEffect(() => {
+    setHarnessState(DEFAULT_HARNESS);
+    setPiModelState(undefined);
+    interleaveNextRef.current = 'claude';
+  }, [activeFolder]);
 
   // Load persisted harness + piModel when the active folder changes. If the
   // saved harness CLI isn't installed, coerce back to `claude`. A load that
@@ -45,7 +54,9 @@ export function useHarnessSelector(activeFolder: string) {
     if (!harnessAvailLoaded) return;
     const seq = ++loadSeqRef.current;
     void loadHarnessForFolder(activeFolder, harnessAvail, {
-      fetchUserSettings,
+      // Strict: a failed GET throws (→ reset to `claude`) instead of reading as
+      // `{}` and silently looking like "no saved harness".
+      fetchUserSettings: fetchUserSettingsStrict,
       patchUserSettings,
       isStale: () => loadSeqRef.current !== seq,
       setHarness: setHarnessState,

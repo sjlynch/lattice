@@ -4,8 +4,11 @@ import {
   CPU_BLOCK_PCT,
   MIN_LIVE_AGENTS,
   ResourceGovernor,
+  countAgentSessions,
+  isAgentSessionCwd,
   type GovernorSampler,
 } from '../spawnQueue/resourceGovernor.js';
+import { SpawnAccounting } from '../spawnQueue/accounting.js';
 import { withCheckoutSlot } from '../worktree/checkoutGate.js';
 import { watchParentProcess } from '../terminalServer/parentWatch.js';
 
@@ -73,6 +76,48 @@ test('the floor: with fewer than MIN_LIVE_AGENTS sessions nothing is held', () =
   runAt(g, s, 100, 60);
   assert.equal(g.holdsBatch(MIN_LIVE_AGENTS - 1), false, 'outside load cannot starve Lattice to zero');
   assert.equal(g.holdsBatch(MIN_LIVE_AGENTS), true);
+});
+
+// The floor used to count every pty on the terminal-server, so two sidebar
+// shells on a low-RAM machine held every Run All forever with zero agents
+// running. It counts Lattice agent sessions (+ the queue's reservations) now.
+test('the floor counts Lattice agents, not shells / startup terminals / other tabs', () => {
+  const s = fakeSampler(1 * GB);
+  const g = new ResourceGovernor(s);
+  g.sample();
+  runAt(g, s, 10, 5);
+  const a = new SpawnAccounting(24, 4);
+  const nonAgents = [
+    { cwd: 'C:\\development\\lattice' }, // sidebar shell
+    { cwd: 'C:\\development\\lattice\\frontend', initialCommand: 'npm run dev' }, // startup terminal
+    { cwd: '/home/me/other-project' }, // another project's claude tab
+  ];
+  a.reconcile(nonAgents.length, Date.now(), countAgentSessions(nonAgents));
+  assert.equal(a.effectiveAgents(), 0);
+  assert.equal(g.holdsBatch(a.effectiveAgents()), false, 'low RAM, 3 non-agent sessions, 0 agents: not held');
+
+  const agents = [
+    { cwd: 'C:\\Users\\me\\.lattice\\worktrees\\fcbaf5039fd9\\fix-bug-_abc12' }, // task agent
+    { cwd: 'C:\\development\\lattice\\.lattice\\workflow-steps\\wr_1\\step-2' }, // workflow step
+  ];
+  const all = [...nonAgents, ...agents];
+  a.reconcile(all.length, Date.now(), countAgentSessions(all));
+  assert.equal(a.effectiveAgents(), 2);
+  assert.equal(g.holdsBatch(a.effectiveAgents()), true, 'low RAM with 2 agent sessions: held');
+
+  // An admitted-but-not-yet-polled spawn is an agent on its way.
+  a.reconcile(nonAgents.length + 1, Date.now(), countAgentSessions([...nonAgents, agents[0]]));
+  a.reserve(Date.now());
+  assert.equal(g.holdsBatch(a.effectiveAgents()), true, 'a reservation counts toward the floor');
+});
+
+test('agent-session classification reads the cwd', () => {
+  assert.equal(isAgentSessionCwd('C:\\Users\\me\\.lattice\\per-project\\abc\\push\\p1'), true);
+  assert.equal(isAgentSessionCwd('/home/me/.Lattice/worktrees/abc/t-1'), true);
+  assert.equal(isAgentSessionCwd('C:\\development\\lattice'), false);
+  assert.equal(isAgentSessionCwd('C:\\development\\lattice-latticeish'), false);
+  assert.equal(isAgentSessionCwd(undefined), false);
+  assert.equal(countAgentSessions([null, 'x', { cwd: 42 }, { cwd: '/p/.lattice/workflow-steps/r/step-1' }]), 1);
 });
 
 test('low free RAM holds batch spawns; disabling the governor lifts every hold', () => {

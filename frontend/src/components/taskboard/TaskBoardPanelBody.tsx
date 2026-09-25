@@ -75,6 +75,7 @@ export function TaskBoardPanelBody({ board }: Props) {
               qaPlaywright={board.qaPlaywright}
               onQaRun={board.startQaRun}
               onQaRunAll={board.startAllQaRuns}
+              runningQaTaskIds={board.runningQaTaskIds}
               mergeRun={board.mergeRun}
               recentRunSummary={board.recentRunSummary}
               onCancelActiveRun={board.cancelActiveRun}
