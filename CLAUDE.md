@@ -317,7 +317,10 @@ therefore stay safely re-runnable.
 
 Every project-scoped route refuses a relative or drive-relative `project`
 (or `path` / `cwd`) with a **400** naming the likely cause (shell-stripped
-backslashes: `C:developmentproj`). The stores resolve paths via
+backslashes: `C:developmentproj`) — and on Windows a root-relative one too
+(`\foo`, MSYS `/c/development/proj`, which `path.isAbsolute` accepts but
+`path.resolve` pins to `C:\c\development\proj`); the check is
+`isRealAbsoluteProjectPath` in `backend/src/projectPath.ts`. The stores resolve paths via
 `canonicalProjectPath` = `path.resolve`, so such a value would land under the
 backend's own cwd — `backend/src/routes/projectParam.ts` (non-task routes) and
 `routes/tasks/requestUtils.ts` (task routes) are the guards.

@@ -1,6 +1,5 @@
-import path from 'node:path';
 import { generateTaskId } from '../ids.js';
-import { canonicalProjectPath } from '../projectPath.js';
+import { canonicalProjectPath, isRealAbsoluteProjectPath } from '../projectPath.js';
 import { ProjectIdentityConflictError, matchesStoredProjectIdentity } from '../projectIdentity.js';
 import { ProjectStateManager } from '../projectStateManager.js';
 import { applyCrashSafeTaskUpdate } from './crashSafeUpdate.js';
@@ -49,14 +48,15 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
     await this.projectsIndex.loadKnownProjects();
     await this.migrations.runLegacyOnce();
     // Read-path pollution guard: only REGISTER a project in the persistent
-    // index when the caller's path was absolute. A relative/drive-relative
-    // input is shell-escaping damage that canonicalProjectPath just resolved
+    // index when the caller's path was really absolute. A relative/drive-relative
+    // input (or, on Windows, a root-relative / MSYS `/c/dev/proj` one) is
+    // shell-escaping damage that canonicalProjectPath just resolved
     // into a plausible-but-bogus absolute path; registering it would leak a
     // phantom entry (the create routes reject these outright, but a bare read
     // still reaches here). Tasks for the resolved key still load, so an
     // already-known project is unaffected — we simply never index a new one
     // that only ever arrived via a mangled read.
-    if (!this.projectsIndex.has(key) && path.isAbsolute(projectPath)) {
+    if (!this.projectsIndex.has(key) && isRealAbsoluteProjectPath(projectPath)) {
       this.projectsIndex.add(key);
       await this.projectsIndex.persistKnownProjects();
     }
