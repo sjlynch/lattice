@@ -1,8 +1,9 @@
 # frontend/src/__tests__
 
-Frontend tests also use Node's built-in `node:test` runner with `tsx`
-(`npm test` from `frontend/`). They are mostly pure TS/React-state tests, not a
-browser/Vite integration suite.
+Frontend tests also use Node's built-in `node:test` runner with `tsx`.
+They are mostly pure TS/React-state tests, not a browser/Vite integration suite.
+Commands from `frontend/` (reference only): `npm test` (tests), `npx tsc -b`
+(type-check), `npm run build` (build).
 
 ## Conventions
 
@@ -34,14 +35,13 @@ Pure-helper suites pinning a single source of truth (not exhaustive):
   uncurated Pi model must never silently vanish), and the 28-char label
   truncation that keeps the full `provider/model` in `title`.
 - `gitSetupDerive.test.ts` — the pure core of Git Setup
-  (`components/gitSetup/gitSetupDerive.ts`). `deriveGitChipState` IS the
-  contract's navbar-chip table, so the assertions mirror it row for row: a
-  missing probe degrades to the pre-feature branch chip (never guesses "No
-  Git"), `none` + `initable` is the only clickable state and is labelled with a
-  verb, and `nested` renders an inert warning chip naming the ancestor repo —
-  init must never be offered there. Also pins `formatBytes` / `formatFileCount`
-  (a `truncated` walk renders `20,000+`, a floor rather than a count) and
-  `describeProbeBlocker`'s refusal copy.
+  (`components/gitSetup/gitSetupDerive.ts`). `deriveGitChipState` has two
+  actionable cases: `none` + `initable=true` ("Set up Git") and `repo` +
+  `unborn=true` + `initable=true` ("finish setup"). A missing probe falls back
+  to the pre-feature branch chip, or nothing (never guesses "No Git").
+  `nested` renders an inert warning naming the ancestor repo — init must never
+  be offered there. Also pins `formatBytes` / `formatFileCount` (truncated
+  counts are floors) and `describeProbeBlocker`'s refusal copy.
 - `ghostLinkSync.test.ts` — `applyChangeRingDelta`'s ghost handling
   (`components/forceGraph/changeRingSync.ts`). The delta deliberately skips the
   library digest, so it owns ghost visibility across BOTH link renderers: pins
