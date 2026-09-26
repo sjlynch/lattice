@@ -1,8 +1,8 @@
-// 'merge' control step — drain In Progress, then drain Ready-to-Merge, then
-// wait out the post-merge hook.
+// 'merge' control step — drain admitted task runs and their Ready-to-Merge
+// work, then wait out the post-merge hook and re-check the combined drain.
 //
-// Phase A waits for In Progress to drain; Phase B triggers merge runs until
-// Ready-to-Merge is empty; Phase C blocks until no post-merge hook is running.
+// Merge ready work while queued/running tasks settle, including when freeing
+// those worktrees is what lets disk-held starts proceed.
 // Inner merge runs inherit this step's project run-lock (`lockMode: 'inherit'`)
 // so they don't deadlock against the lock the control-step worker already
 // holds.
@@ -23,24 +23,17 @@ import {
   emitControlProgress,
   isRunEndedEvent,
   subscribeOnce,
-  waitForLaneEmpty,
+  waitForMergeWork,
   waitForPostMergeHookIdle,
 } from './shared.js';
 
-// Backstop for Phase A. An in_progress task whose agent died without committing
-// is never auto-completed (the in-progress sweep skips no-commit tasks), so the
-// lane never drains on its own. Bound the wait so a stuck agent can't hang the
-// worker forever holding the cross-process project run-lock. This is a
-// NO-PROGRESS window (see waitForLaneEmpty): it trips only after 30 min with NOT
-// A SINGLE task leaving the lane — every drain re-arms it. That distinction is
-// load-bearing: the Start step spawns N task agents that then run for tens of
-// minutes each, and a *total* 30-min cap raced them — it fired ~5s before the
-// last of 29 codex tasks finished, erroring the run so Phase B never merged and
-// all 29 completed tasks were stranded at ready_to_merge. As long as tasks keep
-// finishing, the wait now continues however long the whole batch takes.
-const PHASE_A_DRAIN_TIMEOUT_MS = 30 * 60 * 1000;
+// A no-progress window, not a total batch deadline. Queued starts can stall on
+// capacity/disk and an agent can die without committing. Either must eventually
+// error the worker and release its project lock, while forward task transitions
+// keep a productive batch alive however long it takes overall.
+const TASK_DRAIN_TIMEOUT_MS = 30 * 60 * 1000;
 
-// Backstop for Phase C. Same reasoning as Phase A: the hook agent can die
+// Backstop for Phase C. Same reasoning as the task drain: the hook agent can die
 // without ever calling /complete, and an unbounded wait would hang the worker
 // and leak the project run-lock. The hook prompt is a full agent task, so give
 // it the same 30 min.
@@ -59,7 +52,7 @@ export type MergeStepDeps = {
   cancelMergeRun: typeof cancelMergeRun;
   subscribeMergeRuns: typeof subscribeMergeRuns;
   subscribeWorkflowRuns: typeof subscribe;
-  waitForLaneEmpty: typeof waitForLaneEmpty;
+  waitForMergeWork: typeof waitForMergeWork;
   waitForPostMergeHookIdle: typeof waitForPostMergeHookIdle;
   // Fire a post-merge hook a pre-restart merge still owes (postMergeHooks/
   // owed.ts) and wait it out. Optional so test doubles can omit it.
@@ -80,7 +73,7 @@ const productionDeps: MergeStepDeps = {
   cancelMergeRun,
   subscribeMergeRuns,
   subscribeWorkflowRuns: subscribe,
-  waitForLaneEmpty,
+  waitForMergeWork,
   waitForPostMergeHookIdle,
   fireOwedPostMergeHook,
 };
@@ -135,7 +128,17 @@ export function raceWorkflowRunEnd(
 // subscriber so a workflow cancel can abort it.
 type ActiveMergeRun = { id: string | null };
 
-// Phase B: drain Ready-to-Merge. Loop until the lane is empty — a single
+async function waitForTaskWork(wf: Workflow, run: WorkflowRun, stepIndex: number, deps: MergeStepDeps) {
+  let hadPending = false;
+  const tasks = await deps.waitForMergeWork(wf.projectPath, run, (count, total) => {
+    if (count > 0) hadPending = true;
+    emitControlProgress(run, stepIndex, 'merge', Math.max(0, total - count), total,
+      `waiting for queued/In Progress tasks: ${count} remaining`);
+  }, TASK_DRAIN_TIMEOUT_MS);
+  return { tasks, hadPending };
+}
+
+// Drain queued/In Progress and Ready-to-Merge together. A single
 // merge run resolves conflicts in-process (it blocks on each resolver Stop
 // hook), so by the time it finishes, every task it touched has either left
 // the lane (merged → qa) or been re-queued at ready_to_merge. We re-run to
@@ -163,7 +166,7 @@ async function drainReadyToMerge(
   activeMergeRun: ActiveMergeRun,
 ): Promise<void> {
   while (run.status === 'running') {
-    const cur = await deps.listTasks(wf.projectPath);
+    const { tasks: cur } = await waitForTaskWork(wf, run, stepIndex, deps);
     if (run.status !== 'running') return;
     const ready = cur.filter((t) => t.status === 'ready_to_merge');
     if (ready.length === 0) break;
@@ -254,86 +257,55 @@ export async function runMergeStep(
   });
 
   try {
-    // Phase A: wait for In Progress to drain.
-    emitControlProgress(
-      run,
-      stepIndex,
-      'merge',
-      0,
-      1,
-      'waiting for In Progress tasks to finish',
-    );
-    await deps.waitForLaneEmpty(
-      wf.projectPath,
-      run,
-      'in_progress',
-      (count, total) => {
-        const finished = Math.max(0, total - count);
-        emitControlProgress(
+    while (run.status === 'running') {
+      // Re-evaluate queued/in-flight/running work after EVERY merge round. Ready
+      // work must be merged even while another task is waiting for disk space.
+      await drainReadyToMerge(wf, run, stepIndex, backendOrigin, deps, activeMergeRun);
+
+      // Phase C: wait out the post-merge hook. A hook fired BY a merge run is
+      // covered by waitForMergeRunFinished. This also gates hooks fired OUTSIDE
+      // a run (resolver callbacks) and hooks still owed after a backend restart.
+      // The frontend workflow queue observes workflow runs, not hook agents, so
+      // completing here with a live hook would let the next workflow overlap it.
+      // Race the owed-hook wait against cancellation so run.lock is released
+      // promptly even if that hook never calls back.
+      if (run.status !== 'running') return;
+      if (deps.fireOwedPostMergeHook) {
+        const isStopped = () => run.status !== 'running';
+        await raceWorkflowRunEnd(
           run,
-          stepIndex,
-          'merge',
-          finished,
-          total,
-          `In Progress draining: ${count} remaining`,
+          deps.subscribeWorkflowRuns,
+          deps.fireOwedPostMergeHook(wf.projectPath, backendOrigin, isStopped),
         );
-      },
-      PHASE_A_DRAIN_TIMEOUT_MS,
-    );
-    if (run.status !== 'running') return;
-
-    // Phase B: drain Ready-to-Merge (returns early on cancel — the status
-    // check below then ends the step).
-    await drainReadyToMerge(wf, run, stepIndex, backendOrigin, deps, activeMergeRun);
-
-    // Phase C: wait out the post-merge hook.
-    //
-    // A hook fired BY a merge run is already covered — mergeRuns.ts awaits
-    // runPostMergeHook before finishRun, so Phase B's waitForMergeRunFinished
-    // transitively waited for it and this resolves immediately. What this
-    // catches is a hook fired OUTSIDE a run by `awaitPostMergeHookOutsideRun`
-    // (routes/tasks/hooks/: the resolver `/complete` branch, `/merged`,
-    // `/stash-resolved`) — those fire precisely when no merge run is active, so
-    // nothing else gates them. Completing the step with one of those in flight
-    // lets the workflow run finish, and the frontend queue's only sequential
-    // gate (`assertNoActiveWorkflowRun`) counts workflow runs, not hooks — so it
-    // would start the next queued workflow's step 1 on top of a still-running
-    // post-merge agent, exactly the overlap this phase exists to prevent.
-    //
-    // First, though: a merge that landed before a backend restart may still
-    // OWE its hook — the restarted Phase B found Ready-to-Merge empty and ran
-    // no merge run, so nothing fired it. Fire it here (and wait it out).
-    //
-    // Raced against the workflow run ending: a cancel during this wait must
-    // free the worker (and its run.lock) now, not when the hook finishes.
-    if (run.status !== 'running') return;
-    if (deps.fireOwedPostMergeHook) {
-      const isStopped = () => run.status !== 'running';
-      await raceWorkflowRunEnd(
+      }
+      if (run.status !== 'running') return;
+      await deps.waitForPostMergeHookIdle(
+        wf.projectPath,
         run,
-        deps.subscribeWorkflowRuns,
-        deps.fireOwedPostMergeHook(wf.projectPath, backendOrigin, isStopped),
+        (hook) => {
+          emitControlProgress(
+            run,
+            stepIndex,
+            'merge',
+            0,
+            1,
+            `waiting for the post-merge hook (${hook.harness}) to finish`,
+          );
+        },
+        PHASE_C_HOOK_TIMEOUT_MS,
       );
-    }
-    if (run.status !== 'running') return;
-    await deps.waitForPostMergeHookIdle(
-      wf.projectPath,
-      run,
-      (hook) => {
-        emitControlProgress(
-          run,
-          stepIndex,
-          'merge',
-          0,
-          1,
-          `waiting for the post-merge hook (${hook.harness}) to finish`,
-        );
-      },
-      PHASE_C_HOOK_TIMEOUT_MS,
-    );
-    if (run.status !== 'running') return;
+      if (run.status !== 'running') return;
 
-    emitControlProgress(run, stepIndex, 'merge', 1, 1, 'merge complete');
+      // A task may have been admitted or finished while the hook gate was active.
+      // Drain its work too, then pass the hook gate after the actual final merge.
+      const { tasks: remaining, hadPending } = await waitForTaskWork(wf, run, stepIndex, deps);
+      if (run.status !== 'running') return;
+      // Pending work can settle via an outside resolver too. Re-run the hook
+      // gate even when that work already reached QA during this last wait.
+      if (hadPending || remaining.some((task) => task.status === 'ready_to_merge')) continue;
+      emitControlProgress(run, stepIndex, 'merge', 1, 1, 'merge complete');
+      return;
+    }
   } finally {
     wfUnsub();
   }

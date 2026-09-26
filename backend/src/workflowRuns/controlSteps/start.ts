@@ -127,7 +127,7 @@ async function startOneTask(
   const { wf, run, stepIndex, backendOrigin, deps } = ctx;
   // Hand the task to the spawn queue, then warn why. `queueFailure` names the
   // enqueue in its error line; `reason` finishes the warning.
-  const requeue = async (queueFailure: string, reason: string): Promise<void> => {
+  const requeue = async (queueFailure: string, reason: string): Promise<StartOneTaskResult> => {
     try {
       await deps.enqueueRun(task.id, backendOrigin, harness, piModel);
     } catch (enqErr) {
@@ -135,10 +135,12 @@ async function startOneTask(
         `[workflow-run] ${run.id} start step: failed to ${queueFailure} ${task.id}:`,
         enqErr,
       );
+      return { outcome: 'failed', error: enqErr instanceof Error ? enqErr.message : String(enqErr) };
     }
     console.warn(
       `[workflow-run] ${run.id} start step: task ${task.id} ("${logTitle(task)}") ${reason}`,
     );
+    return { outcome: 'deferred' };
   };
 
   // Starting directly bypasses the spawn queue, and with it the
@@ -147,21 +149,19 @@ async function startOneTask(
   // spawn right now, hand the task to it instead (the same deferral a cap
   // rejection takes below) — it starts as soon as capacity returns.
   const hold = await deps.admissionHold?.();
-  if (hold) {
-    await requeue('queue task', `queued instead of started — ${hold}`);
-    return { outcome: 'deferred' };
-  }
   // Already being started by the spawn queue: leave it to that run. Counted
   // as deferred — it is queued forward progress, not a failure. Checked after
   // the admission-hold await, which polls the terminal-server, so a run
-  // enqueued meanwhile is seen too. (A held task goes to enqueueRun above,
-  // which dedupes onto an existing queued run.)
+  // enqueued meanwhile is seen too, even if admission is now held.
   if (runAlreadyQueued(task, deps)) {
     console.log(
       `[workflow-run] ${run.id} start step: task ${task.id} ("${logTitle(task)}") ` +
         'already has a queued run — leaving it to the spawn queue',
     );
     return { outcome: 'deferred' };
+  }
+  if (hold) {
+    return requeue('queue task', `queued instead of started — ${hold}`);
   }
   try {
     // throwOnCapacity: a terminal-server hard-cap rejection must throw
@@ -203,13 +203,12 @@ async function startOneTask(
       // slot frees. Don't count it as started or failed.
       // A disk-space deferral takes the same path: no worktree was created,
       // the task is still Open, and the queue starts it once there is room.
-      await requeue(
+      return requeue(
         're-queue capped task',
         isSpawnDiskSpaceError(err)
           ? `is waiting for disk space (${err.message}) — left Open and re-queued on the spawn queue`
           : 'hit the terminal-server hard cap — left Open and re-queued on the spawn queue',
       );
-      return { outcome: 'deferred' };
     }
     const message = err instanceof Error ? err.message : String(err);
     // console.error (not warn): a task that can't be started is the whole

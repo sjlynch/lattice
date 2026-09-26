@@ -11,7 +11,7 @@ easy-to-break timing/lock invariants; read this before touching them.
 | Step | Drains (waits until empty) | Fills / advances |
 |------|----------------------------|------------------|
 | `start` | — (reads the **Open** lane) | Open → In Progress (spawns each) |
-| `merge` | In Progress (Phase A), then Ready-to-Merge (Phase B loop), then the post-merge hook (Phase C) | Ready-to-Merge → QA (via inner merge runs) |
+| `merge` | Queued/in-flight runs, In Progress and Ready-to-Merge together, then the post-merge hook (Phase C) and a final task re-check | Ready-to-Merge → QA (via inner merge runs) |
 | `push`  | Ready-to-Merge | pushes `main`'s existing commits to the remote (no lane change, no commit) |
 
 The Run tests step (`test`) is NOT a control step — it spawns an agent through
@@ -35,10 +35,22 @@ session wait both have timeouts. `runControlStepWorker` takes injectable deps
 (`acquireLock` + the three runners) so the release-on-throw path is unit-tested
 (`__tests__/workflowLaneWaitTimeout.test.ts`).
 
-## `shared.ts` — `waitForLaneEmpty` / `emitControlProgress`
+## `shared.ts` — task waits / `emitControlProgress`
+
+`waitForMergeWork(project, run, onProgress, maxWaitMs, deps?)` resolves with a
+task snapshot when ready work exists **or** no admitted/running task remains.
+It considers `in_progress`, persisted `runQueued`, and live `task-run:<id>`
+requests (pending or in flight). Ordinary Open/Backlog tasks without either
+admission marker do not block. It subscribes before reading and polls as a
+fallback because queue settlement itself has no task-store notification (a
+failed spawn clears its flag before its live request disappears). Newer store
+events supersede an outstanding read. Cancellation resolves promptly; errors
+and the no-progress timeout reject and clean up all subscriptions and timers.
+The deadline re-arms on forward per-task transitions, including queued →
+running even with unchanged counts; metadata updates cannot extend it.
 
 `waitForLaneEmpty(project, run, laneStatus, onProgress, maxWaitMs?, deps?)` —
-the lane-drain used by both merge Phase A and push:
+the lane-drain used by push:
 
 - Resolves when the lane count hits **0** OR the run leaves `'running'`
   (cancellation). Subscribes to the task store **before** the initial
@@ -54,9 +66,9 @@ the lane-drain used by both merge Phase A and push:
   a lane that keeps draining, however slowly and however long in total, must
   never trip: a *total* cap here fired ~5s before the last of 29 codex tasks
   finished and stranded the whole batch at ready_to_merge (Phase B never ran).
-  Merge Phase A passes `PHASE_A_DRAIN_TIMEOUT_MS` (30 min); push passes
-  `PUSH_DRAIN_TIMEOUT_MS` (15 min) — now both mean "30/15 min with zero
-  progress". Covered by `__tests__/workflowLaneWaitTimeout.test.ts`. `deps` is
+  Push passes `PUSH_DRAIN_TIMEOUT_MS` (15 min). Merge now uses the combined
+  waiter above with `TASK_DRAIN_TIMEOUT_MS` (30 min); both measure time with zero
+  progress. Covered by `__tests__/workflowLaneWaitTimeout.test.ts`. `deps` is
   injectable only for the tests.
 - Task-read and progress-callback failures reject the lane waiter and release
   its subscriptions; they must never become detached promise rejections that
@@ -116,6 +128,11 @@ path), emitting one `workflow-task-spawned` terminal tab per task.
   `enqueueTaskRun` and counted as deferred — the same path a cap rejection
   takes — so it starts as soon as capacity returns. A disk-space deferral
   (`SpawnDiskSpaceError`, `isSpawnDeferral`) is handled the same way.
+- **Only successful admission counts as deferred.** Both requeue paths return
+  a per-task failed outcome if enqueue rejects, preserving the enqueue error
+  for the all-failed guard. Later tasks still get their chance; partial success
+  advances, but zero started/queued tasks rejects. A known queued run remains
+  deferred without another enqueue, including while admission is held.
 - **Never start a task the queue is already starting (do not regress)**: a
   queued run (Run All, a manual ▶, boot re-enqueue) keeps its task `open` until
   the pty spawns — minutes on a big repo waiting on the checkout gate — so it
@@ -128,14 +145,21 @@ path), emitting one `workflow-task-spawned` terminal tab per task.
 
 ## `merge.ts` — `runMergeStep`
 
-Phase A drains In Progress (bounded, above). Phase B loops merge runs
-(`lockMode: 'inherit'` so they don't deadlock on the lock this worker holds)
-until Ready-to-Merge is empty, with an **id-set progress guard**: it aborts the
+`drainReadyToMerge` waits on `waitForMergeWork` before **every** merge round,
+so a zero-count In Progress gap or a task spawning during a merge cannot end
+the step prematurely. It merges ready tasks even while other runs remain
+queued/running: `diskPressureMerge` refuses a separate merge during a workflow,
+so these inherited-lock merges must be able to free disk for deferred starts.
+It loops merge runs (`lockMode: 'inherit'` so they don't deadlock on the lock
+this worker holds), with an **id-set progress guard**: it aborts the
 moment a full merge run leaves the ready_to_merge id-set unchanged (a
 persistently-erroring task is left in the lane by `processTarget`, so comparing
 the lane before/after — not the error *count* — is what stops the infinite
-loop). Covered by `__tests__/workflowMergeStepLoop.test.ts`. The loop is
-`drainReadyToMerge`; its abort message is built by `noProgressError`.
+loop). Covered by `__tests__/workflowMergeStepLoop.test.ts`; its abort message
+is built by `noProgressError`. After Phase C it re-checks the combined task
+condition; newly observed work returns to the drain and then the hook gate
+after the actual final merge. Queued lifecycle, disk progress, cancellation,
+timeout and lock-release coverage: `__tests__/workflowMergeQueuedRuns.test.ts`.
 
 **Phase C — the post-merge hook gate (do not regress).** The step must not
 report `merge complete` while a post-merge hook is running for the project, or

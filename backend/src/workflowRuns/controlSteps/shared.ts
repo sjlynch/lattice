@@ -1,7 +1,7 @@
 // Shared helpers for the control-step workers (start / merge / push).
 //
-// `waitForLaneEmpty` is the lane-drain subscription used by both the merge
-// and push steps; `waitForPostMergeHookIdle` is the merge step's post-merge
+// `waitForLaneEmpty` drains the push step's lane; `waitForMergeWork` watches
+// admitted runs and ready work; `waitForPostMergeHookIdle` is the post-merge
 // hook gate; `emitControlProgress` is the single place that shapes the
 // `step-control-progress` WS payload so every worker reports progress the
 // same way. `subscribeOnce` / `isRunEndedEvent` are the small subscription
@@ -9,6 +9,8 @@
 
 import { listTasks, subscribe as subscribeTasks } from '../../tasks.js';
 import type { Task, TaskStatus } from '../../tasks.js';
+import { hasSpawnRequest } from '../../spawnQueue.js';
+import { taskRunDedupeKey } from '../../routes/tasks/queuedSpawnAdmission.js';
 import {
   getActiveHookForProject,
   hasPendingPostMergeHookTrigger,
@@ -201,6 +203,136 @@ export function waitForLaneEmpty(
         if (settled) return;
         if (evaluate(initial)) finish();
       }).catch(fail);
+    } catch (err) {
+      fail(err);
+    }
+  });
+}
+
+export type MergeWorkWaitDeps = LaneWaitDeps & {
+  hasQueuedRun: (taskId: string) => boolean;
+};
+
+const productionMergeWorkWaitDeps: MergeWorkWaitDeps = {
+  ...productionLaneWaitDeps,
+  hasQueuedRun: (id) => hasSpawnRequest(taskRunDedupeKey(id)),
+};
+
+// Wake when there is work to merge OR no admitted task runs remain. Waiting
+// for every queued start before merging would deadlock disk-held starts:
+// diskPressureMerge leaves active workflows to free their own worktrees.
+// Ordinary Open/Backlog tasks have neither admission marker and do not block.
+export function waitForMergeWork(
+  projectPath: string,
+  run: WorkflowRun,
+  onProgress: (count: number, total: number) => void,
+  maxWaitMs: number,
+  deps: MergeWorkWaitDeps = productionMergeWorkWaitDeps,
+): Promise<Task[]> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let lastCount = 0;
+    let total = 0;
+    let revision = 0;
+    let reading = false;
+    // Track forward transitions by task, not just a count: queued -> running
+    // is progress even when the combined count stays the same. Keep the highest
+    // phase seen so repeated metadata updates / backwards flips cannot extend
+    // a stalled wait indefinitely.
+    const phases = new Map<string, number>();
+    let unsubTasks: (() => void) | undefined;
+    let unsubRun: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let poll: ReturnType<typeof setInterval> | undefined;
+
+    const cleanup = () => {
+      unsubTasks?.();
+      unsubTasks = undefined;
+      unsubRun?.();
+      unsubRun = undefined;
+      if (timer) clearTimeout(timer);
+      if (poll) clearInterval(poll);
+    };
+    const finish = (tasks: Task[]) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(tasks);
+    };
+    const fail = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
+    const armTimer = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => fail(new Error(
+        `waitForMergeWork: queued/In Progress tasks made no progress for ${maxWaitMs}ms ` +
+        `(${lastCount} task(s) still pending) — aborting so the project run-lock is released`,
+      )), maxWaitMs);
+      timer.unref?.();
+    };
+    const evaluate = (tasks: Task[]) => {
+      if (settled) return;
+      if (run.status !== 'running') { finish([]); return; }
+      const pending = new Map<string, number>();
+      for (const task of tasks) {
+        if (task.status === 'in_progress') pending.set(task.id, 2);
+        else if (task.runQueued === true || deps.hasQueuedRun(task.id)) pending.set(task.id, 1);
+      }
+      let progressed = false;
+      for (const [id, phase] of pending) {
+        const previous = phases.get(id);
+        if (previous !== undefined && phase > previous) progressed = true;
+        phases.set(id, Math.max(previous ?? 0, phase));
+      }
+      for (const [id, phase] of phases) {
+        if (!pending.has(id) && phase < 3) {
+          phases.set(id, 3);
+          progressed = true;
+        }
+      }
+      lastCount = pending.size;
+      total = Math.max(total, phases.size, 1);
+      if (progressed) armTimer();
+      onProgress(lastCount, total);
+      if (tasks.some((t) => t.status === 'ready_to_merge') || lastCount === 0) finish(tasks);
+    };
+    const read = () => {
+      if (settled || reading) return;
+      reading = true;
+      const readRevision = revision;
+      try {
+        void deps.listTasks(projectPath).then((tasks) => {
+          // A store notification received during this read is more recent.
+          if (readRevision === revision) evaluate(tasks);
+        }).catch(fail).finally(() => { reading = false; });
+      } catch (err) {
+        reading = false;
+        fail(err);
+      }
+    };
+
+    // Bound the initial read too, and subscribe before reading. Queue settlement
+    // has no task-store event of its own (the failure flag may clear BEFORE the
+    // live request disappears), so poll as a fallback for live-request changes.
+    armTimer();
+    try {
+      unsubTasks = deps.subscribeTasks((project, tasks) => {
+        if (settled || project !== projectPath) return;
+        revision += 1;
+        try { evaluate(tasks); } catch (err) { fail(err); }
+      });
+      if (settled) { cleanup(); return; }
+      unsubRun = deps.subscribeRun((ev) => {
+        if (isRunEndedEvent(ev, run.id)) finish([]);
+      });
+      if (settled) { cleanup(); return; }
+      if (run.status !== 'running') { finish([]); return; }
+      poll = setInterval(read, 1000);
+      poll.unref?.();
+      read();
     } catch (err) {
       fail(err);
     }

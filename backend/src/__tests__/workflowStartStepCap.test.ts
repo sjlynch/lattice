@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runStartStep, type StartStepDeps } from '../workflowRuns/controlSteps/start.js';
-import { SpawnCapacityError } from '../spawnQueue.js';
+import { SpawnCapacityError, SpawnDiskSpaceError } from '../spawnQueue.js';
 import { subscribe, type WorkflowRun, type WorkflowRunEvent } from '../workflowRuns/state.js';
 import type { Task } from '../tasks.js';
 import type { Workflow } from '../workflows.js';
@@ -233,4 +233,117 @@ test('Start step does not throw when every open task is already queued', async (
   };
   // Counted as deferred (queued forward progress), not failed.
   await runStartStep(makeWorkflow(), makeRun(), 0, 'http://x', deps);
+});
+
+// Admission failures are NOT deferrals. Both queue call sites used to swallow
+// the enqueue error, defeating the all-failed guard and advancing with no run.
+for (const scenario of ['hold', 'capacity', 'disk'] as const) {
+  test(`Start step reports a rejected ${scenario} enqueue as failed, preserving its error`, async () => {
+    const task = makeTask({ id: 'rejected' });
+    const progress: string[] = [];
+    const spawned: string[] = [];
+    const unsub = subscribe((ev) => {
+      if (ev.type === 'step-control-progress') progress.push(ev.message ?? '');
+      if (ev.type === 'workflow-task-spawned') spawned.push(ev.taskId);
+    });
+    try {
+      await assert.rejects(runStartStep(makeWorkflow(), makeRun(), 0, 'http://unused', {
+        listTasks: async () => [task],
+        admissionHold: async () => scenario === 'hold' ? 'agent cap' : null,
+        startTask: async () => {
+          assert.notEqual(scenario, 'hold', 'held tasks must never start directly');
+          if (scenario === 'disk') throw new SpawnDiskSpaceError('disk reserve', 1000);
+          throw new SpawnCapacityError('hard cap');
+        },
+        enqueueRun: async () => { throw new Error('task store update rejected'); },
+      }), /all 1 task\(s\) failed[\s\S]*First failure: task store update rejected/);
+      assert.equal(progress.at(-1), '0/1 started, 1 failed');
+      assert.deepEqual(spawned, []);
+      assert.equal(task.status, 'open');
+      assert.notEqual(task.runQueued, true);
+    } finally {
+      unsub();
+    }
+  });
+}
+
+test('Start step attempts every task when all enqueues fail and reports the first enqueue error', async () => {
+  const tasks = ['a', 'b', 'c'].map((id, i) => makeTask({ id, createdAt: i }));
+  const attempts: string[] = [];
+  await assert.rejects(runStartStep(makeWorkflow(), makeRun(), 0, 'http://unused', {
+    listTasks: async () => tasks,
+    admissionHold: async () => 'CPU hold',
+    startTask: async () => { throw new Error('must not start'); },
+    enqueueRun: async (id) => { attempts.push(id); throw new Error(`enqueue ${id} failed`); },
+  }), /all 3 task\(s\) failed[\s\S]*First failure: enqueue a failed/);
+  assert.deepEqual(attempts, ['a', 'b', 'c']);
+});
+
+test('Start step continues past both enqueue failures to later queued and started tasks', async () => {
+  const tasks = ['held', 'capped', 'queued', 'started'].map((id, i) => makeTask({ id, createdAt: i }));
+  const holds = ['agent cap', null, 'CPU hold', null];
+  const attempts: string[] = [];
+  const starts: string[] = [];
+  const progress: string[] = [];
+  const unsub = subscribe((ev) => {
+    if (ev.type === 'step-control-progress') progress.push(ev.message ?? '');
+  });
+  try {
+    await runStartStep(makeWorkflow(), makeRun(), 0, 'http://unused', {
+      listTasks: async () => tasks,
+      admissionHold: async () => holds.shift() ?? null,
+      startTask: async (id) => {
+        starts.push(id);
+        if (id === 'capped') throw new SpawnCapacityError('cap');
+        return spawnResult(tasks.find((t) => t.id === id)!);
+      },
+      enqueueRun: async (id) => {
+        attempts.push(id);
+        if (id !== 'queued') throw new Error(`enqueue ${id} failed`);
+        return { queued: true };
+      },
+    });
+    assert.deepEqual(starts, ['capped', 'started']);
+    assert.deepEqual(attempts, ['held', 'capped', 'queued']);
+    assert.equal(progress.at(-1), '1/4 started, 2 failed, 1 queued');
+  } finally {
+    unsub();
+  }
+});
+
+test('Start step advances a mixed failed/queued batch even when nothing starts directly', async () => {
+  const tasks = [makeTask({ id: 'failed', createdAt: 1 }), makeTask({ id: 'queued', createdAt: 2 })];
+  const attempted: string[] = [];
+  await runStartStep(makeWorkflow(), makeRun(), 0, 'http://unused', {
+    listTasks: async () => tasks,
+    admissionHold: async () => 'agent cap',
+    startTask: async () => { throw new Error('must not start'); },
+    enqueueRun: async (id) => {
+      attempted.push(id);
+      if (id === 'failed') throw new Error('admission failed');
+      return { queued: true };
+    },
+  });
+  assert.deepEqual(attempted, ['failed', 'queued']);
+});
+
+for (const queued of [true, false]) {
+  test(`Start step accepts disk deferral after successful admission (queued=${queued})`, async () => {
+    await runStartStep(makeWorkflow(), makeRun(), 0, 'http://unused', {
+      listTasks: async () => [makeTask({})],
+      startTask: async () => { throw new SpawnDiskSpaceError('disk reserve', 1000); },
+      // queued=false means the admitted thunk is already in flight, not rejected.
+      enqueueRun: async () => ({ queued }),
+    });
+  });
+}
+
+test('Start step leaves known queued runs alone even while admission is held', async () => {
+  await runStartStep(makeWorkflow(), makeRun(), 0, 'http://unused', {
+    listTasks: async () => [makeTask({ runQueued: true }), makeTask({ id: 'inflight' })],
+    admissionHold: async () => 'CPU hold',
+    hasQueuedRun: (id) => id === 'inflight',
+    startTask: async () => { throw new Error('must not start'); },
+    enqueueRun: async () => { throw new Error('must not re-enqueue'); },
+  });
 });

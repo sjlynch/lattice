@@ -105,7 +105,7 @@ function makeMergeDeps(
     cancelMergeRun: () => false,
     subscribeMergeRuns: () => () => undefined,
     subscribeWorkflowRuns: () => () => undefined,
-    waitForLaneEmpty: async () => undefined,
+    waitForMergeWork: async () => tasks,
     waitForPostMergeHookIdle: waitForPostMergeHookIdleFn,
   };
 }

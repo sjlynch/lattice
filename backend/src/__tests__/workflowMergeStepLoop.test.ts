@@ -97,7 +97,7 @@ function makeDeps(
     cancelMergeRun: () => false,
     subscribeMergeRuns: () => () => undefined,
     subscribeWorkflowRuns: () => () => undefined,
-    waitForLaneEmpty: async () => undefined, // Phase A: In Progress already empty
+    waitForMergeWork: async () => tasks, // No queued/running tasks in this fixture
     waitForPostMergeHookIdle: async () => undefined, // Phase C: no hook configured
   };
 
