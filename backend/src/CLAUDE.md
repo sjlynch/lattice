@@ -23,7 +23,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 ### Project identity & state
 
 - `projectPath.ts` — single source of truth for per-project paths under `~/.lattice/` (`canonicalProjectPath`, `projectHash`, `homeProjectDir`, …) + the `isRealAbsoluteProjectPath` route guard.
-- `projectIdentity.ts` — realpath identity + durable legacy-hash bindings behind `projectPath.ts`, so path aliases share one store. See `PROJECT_IDENTITY.md`.
+- `projectIdentity.ts` — realpath identity + durable legacy-hash bindings behind `projectPath.ts`, so path aliases share one store. Submodules in `projectIdentity/` (see `projectIdentity/CLAUDE.md`); rationale in `PROJECT_IDENTITY.md`.
 - `projectStateManager.ts` / `projectState/` — generic per-project cached, debounced-persisted state store (tasks, workflows, merge runs, terminal registry). See `projectState/CLAUDE.md`.
 - `projectInit/` — "Set up Git": `git init` a non-repo folder into a usable project. See `projectInit/CLAUDE.md` (two invariants).
 - `ids.ts` — task / workflow / terminal-session id generators.
