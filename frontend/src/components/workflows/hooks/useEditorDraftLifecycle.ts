@@ -25,10 +25,10 @@ export function useEditorDraftLifecycle({ editor, setEditor, workflows, activeFo
   // Only a workflow seen in THIS project's list can be considered deleted.
   // A create response can arrive before its first list/WS entry.
   const seen = useRef({ folder: activeFolder, ids: new Set<string>() });
-  if (seen.current.folder !== activeFolder) {
-    seen.current = { folder: activeFolder, ids: new Set<string>() };
-  }
   useEffect(() => {
+    if (seen.current.folder !== activeFolder) {
+      seen.current = { folder: activeFolder, ids: new Set<string>() };
+    }
     for (const w of workflows) seen.current.ids.add(w.id);
     if (!editor.workflowId) return;
     const fresh = workflows.find((w) => w.id === editor.workflowId);
@@ -40,7 +40,7 @@ export function useEditorDraftLifecycle({ editor, setEditor, workflows, activeFo
       if (!fresh) return emptyEditor();
       return cur.dirty ? cur : fromWorkflow(fresh, cur.identity);
     });
-  }, [workflows, editor.workflowId, editor.dirty, editor.identity, setEditor]);
+  }, [activeFolder, workflows, editor.workflowId, editor.dirty, editor.identity, setEditor]);
 
   // A carried-over draft is flushed to its original folder; genuine edits are
   // debounced. Identity is in-memory only and is renewed when a draft restores.

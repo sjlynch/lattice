@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, test } from 'node:test';
+import { afterEach, beforeEach, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
-import React, { type ReactNode } from 'react';
+import React, { useLayoutEffect, type ReactNode } from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import type { Workflow, WorkflowStep, WorkflowVariable } from '../api';
 import { TerminalsProvider } from '../TerminalsContext.tsx';
@@ -30,6 +30,7 @@ let confirmations: Array<(choice: UnsavedChoice) => void>;
 let restores: Array<() => void>;
 let renderer: ReturnType<typeof TestRenderer.create> | undefined;
 let latest!: ReturnType<typeof useWorkflowManager>;
+let confirmationApi!: ReturnType<typeof useConfirm>;
 let workflows: Workflow[];
 
 function workflow(id: string, projectPath = A): Workflow {
@@ -46,20 +47,22 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 // actual manager, editor, saved-list actions, persistence, and API calls wired.
 const confirmUnsaved = () => new Promise<UnsavedChoice>((resolve) => confirmations.push(resolve));
 function ConfirmStub({ children }: { children: ReactNode }) {
-  useConfirm().confirmUnsaved = confirmUnsaved;
+  const api = useConfirm();
+  useLayoutEffect(() => { confirmationApi = api; });
   return children;
 }
 function Harness({ folder }: { folder: string }) {
-  latest = useWorkflowManager(folder, null);
-  const wf = latest.sortedWorkflows[0];
+  const manager = useWorkflowManager(folder, null);
+  useLayoutEffect(() => { latest = manager; });
+  const wf = manager.sortedWorkflows[0];
   return wf ? React.createElement(WorkflowsSavedItem, {
-    workflow: wf, isSelected: latest.editor.workflowId === wf.id,
+    workflow: wf, isSelected: manager.editor.workflowId === wf.id,
     starting: false, queuedCount: 0, harnessOverride: null, harnessOptions: [],
-    onSelect: latest.actions.selectWorkflow,
-    onSetHarnessOverride: latest.actions.setWorkflowHarnessOverride,
-    onEnqueue: latest.actions.enqueueWorkflow,
-    onRun: latest.actions.runWorkflow,
-    onStopRun: latest.actions.stopRun,
+    onSelect: manager.actions.selectWorkflow,
+    onSetHarnessOverride: manager.actions.setWorkflowHarnessOverride,
+    onEnqueue: manager.actions.enqueueWorkflow,
+    onRun: manager.actions.runWorkflow,
+    onStopRun: manager.actions.stopRun,
   }) : null;
 }
 function tree(folder: string) {
@@ -74,6 +77,8 @@ function tree(folder: string) {
 }
 async function mount(folder = A) {
   await act(async () => { renderer = TestRenderer.create(tree(folder)); await flush(); });
+  mock.method(confirmationApi, 'confirmUnsaved', confirmUnsaved);
+  await act(async () => { renderer!.update(tree(folder)); await flush(); });
 }
 async function switchProject(folder: string) {
   await act(async () => { renderer!.update(tree(folder)); await flush(); });
@@ -152,6 +157,7 @@ beforeEach(() => {
 afterEach(() => {
   if (renderer) act(() => renderer!.unmount());
   renderer = undefined;
+  mock.restoreAll();
   for (const restore of restores.reverse()) restore();
 });
 
