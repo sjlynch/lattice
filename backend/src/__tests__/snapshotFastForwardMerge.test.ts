@@ -8,6 +8,8 @@ import { existsSync, readdirSync } from 'node:fs';
 import { fastForwardMain } from '../worktree/merge.js';
 import { snapshotWorkingTree } from '../worktree/snapshot/capture.js';
 import { SNAPSHOTS_BASE, readSnapshotManifest, snapshotManifestPath } from '../worktree/snapshot/manifest.js';
+import { restoreSnapshot } from '../worktree/snapshot/restore.js';
+import { MAX_THREE_WAY_MERGE_BYTES, reconcileWithCommittedChange } from '../worktree/snapshot/threeWay.js';
 import { canonicalProjectPath, projectHash } from '../projectPath.js';
 import { projectRunLockFilePath } from '../projectRunLock/paths.js';
 import { runTeardown } from '../mergeRuns/teardown.js';
@@ -21,10 +23,12 @@ import type { MergeRun } from '../mergeRuns/state.js';
 // "clean against the new HEAD" and overlaid the user's PRE-merge copy — HEAD
 // had the task's change, the working tree silently reverted it, reported as
 // `restored`. Now the captured copy is three-way merged with what landed.
+// Non-text/oversized inputs must instead keep both versions byte-for-byte:
+// decoding invalid UTF-8 or overlaying the copy would corrupt one side.
 
 const BASE = 'A\nB\nC\n';
 
-async function repoFixture(t: { after: (fn: () => Promise<unknown>) => void }) {
+async function repoFixture(t: { after: (fn: () => Promise<unknown>) => void }, base: string | Buffer = BASE) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-ff-merge-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const repo = path.join(root, 'repo');
@@ -34,12 +38,12 @@ async function repoFixture(t: { after: (fn: () => Promise<unknown>) => void }) {
   git('init', '-b', 'main');
   // Byte-exact fixtures: no CRLF conversion under a global core.autocrlf.
   git('config', 'core.autocrlf', 'false');
-  await fs.writeFile(path.join(repo, 'tracked.txt'), BASE);
+  await fs.writeFile(path.join(repo, 'tracked.txt'), base);
   git('add', '--', 'tracked.txt');
   git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'base');
   await fs.appendFile(path.join(repo, '.git', 'info', 'exclude'), '\n.lattice/\nnode_modules/\n');
   // A task branch that changes tracked.txt (or deletes it, with null).
-  const taskBranch = async (branch: string, content: string | null) => {
+  const taskBranch = async (branch: string, content: string | Buffer | null) => {
     git('checkout', '-b', branch);
     if (content === null) git('rm', '--quiet', '--', 'tracked.txt');
     else {
@@ -79,6 +83,111 @@ function makeRun(projectPath: string): MergeRun {
     errored: [],
     cancelRequested: false,
   };
+}
+
+// The first three cases edit opposite ends of the file. In the last case
+// both sides made the same valid-text edit to an invalid base. None can be
+// refused merely because text hunks overlap: assert the refusal category.
+const refusalCases: {
+  name: string;
+  base: Buffer;
+  captured: Buffer;
+  committed: Buffer;
+  reason: RegExp;
+  oversized?: boolean;
+  restore?: boolean;
+}[] = [
+  {
+    name: 'a captured source containing NUL',
+    base: Buffer.from(BASE),
+    captured: Buffer.from('A\nB\nC user\0\n'),
+    committed: Buffer.from('A task\nB\nC\n'),
+    reason: /not mergeable as text/,
+  },
+  {
+    name: 'a committed destination containing invalid UTF-8 without NUL',
+    base: Buffer.from(BASE),
+    captured: Buffer.from('A\nB\nC caf\u00e9 user\r\n'),
+    committed: Buffer.concat([Buffer.from('A task '), Buffer.from([0xff]), Buffer.from('\nB\nC\n')]),
+    reason: /not mergeable as text/,
+    restore: true,
+  },
+  {
+    name: 'a captured source one byte over the merge limit before reading it',
+    base: Buffer.from(BASE),
+    captured: Buffer.concat([
+      Buffer.from('A\nB\n'), Buffer.alloc(MAX_THREE_WAY_MERGE_BYTES - 4, 'x'), Buffer.from('\n'),
+    ]),
+    committed: Buffer.from('A task\nB\nC\n'),
+    reason: /not mergeable as text/,
+    oversized: true,
+  },
+  {
+    name: 'an invalid UTF-8 base even when both current inputs are valid text',
+    base: Buffer.concat([Buffer.from('A '), Buffer.from([0xff]), Buffer.from('\nB\nC\n')]),
+    captured: Buffer.from('A caf\u00e9\nB\nC\n'),
+    committed: Buffer.from('A caf\u00e9\nB\nC\n'),
+    reason: /pre-merge version could not be read as text/,
+  },
+];
+
+for (const fixture of refusalCases) {
+  test(`three-way reconciliation refuses ${fixture.name}`, async (t) => {
+    const { root, repo, git, taskBranch, tracked } = await repoFixture(t, fixture.base);
+    const baseCommit = git('rev-parse', 'HEAD');
+    await taskBranch('lattice/refusal', fixture.committed);
+    git('checkout', 'lattice/refusal');
+    assert.notEqual(
+      git('rev-parse', `${baseCommit}:tracked.txt`), git('rev-parse', 'HEAD:tracked.txt'),
+      'different blobs force reconciliation instead of the overlay shortcut',
+    );
+    assert.equal(git('status', '--porcelain'), '', 'the destination is clean tracked HEAD');
+    assert.deepEqual(
+      execFileSync('git', ['cat-file', 'blob', `${baseCommit}:tracked.txt`], { cwd: repo, windowsHide: true }),
+      fixture.base,
+    );
+    // A local captured copy and real base commit suffice; no FF/workflow.
+    const dir = path.join(root, 'snapshot');
+    await fs.mkdir(dir);
+    const source = path.join(dir, 'tracked.txt');
+    await fs.writeFile(source, fixture.captured);
+    if (fixture.oversized) assert.equal((await fs.stat(source)).size, MAX_THREE_WAY_MERGE_BYTES + 1);
+
+    // Limit the read spy to reconciliation so the byte-preservation checks
+    // below cannot count as reads of the oversized input.
+    const read = fixture.oversized ? t.mock.method(fs, 'readFile') : undefined;
+    try {
+      const outcome = await reconcileWithCommittedChange(repo, baseCommit, 'tracked.txt', source, tracked);
+      if (outcome.kind !== 'conflict') assert.fail(`expected refusal: ${outcome.kind}`);
+      assert.match(outcome.reason, fixture.reason);
+      if (read) {
+        assert.ok(read.mock.calls.some(({ arguments: args }) => args[0] === tracked), 'the spy observes destination reads');
+        assert.ok(
+          !read.mock.calls.some(({ arguments: args }) => args[0] === source),
+          'the size guard must refuse before reading source contents',
+        );
+      }
+    } finally {
+      read?.mock.restore();
+    }
+    assert.deepEqual(await fs.readFile(source), fixture.captured, 'reconciliation preserves the captured bytes');
+    assert.deepEqual(await fs.readFile(tracked), fixture.committed, 'reconciliation preserves the committed bytes');
+
+    if (fixture.restore) {
+      // Reuse the invalid-destination case to cover the normal in-session
+      // restore and its conflict-copy handoff, with no stale-overwrite flag.
+      const result = await restoreSnapshot({ dir, modifiedTracked: ['tracked.txt'], untracked: [], baseCommit }, repo);
+      assert.deepEqual(result, {
+        status: 'partial', restored: [], failed: [], retained: true,
+        conflicts: [{ file: 'tracked.txt', backupPath: `${tracked}.lattice-conflict` }],
+      });
+      assert.ok((await fs.stat(dir)).isDirectory(), 'the snapshot is retained');
+      assert.deepEqual(await fs.readFile(source), fixture.captured, 'the retained snapshot is byte-exact');
+      assert.deepEqual(await fs.readFile(tracked), fixture.committed, 'restore keeps the committed destination byte-exact');
+      assert.deepEqual(await fs.readFile(result.conflicts[0].backupPath), fixture.captured, 'the reported conflict copy is byte-exact');
+      git('diff', '--exit-code', 'HEAD', '--', 'tracked.txt');
+    }
+  });
 }
 
 test('fastForwardMain keeps both the merged change and the user\'s edit to another hunk of the same file', async (t) => {
