@@ -11,11 +11,14 @@ for existing imports.
 ├── projects.json                         # global index of project roots
 ├── tasks.json                            # legacy global tasks (pre-2026-05-09)
 └── per-project/
-    └── <sha1(canonicalPath)[:12]>/
+    └── <projectHash(project)>/
         ├── .canonical-path               # human-readable hint
         ├── tasks.json                    # the live task DB
         └── tasks.backup.json             # snapshot taken before each merge run
 ```
+
+`projectHash(project)` comes from `../projectPath.ts`; a durable identity
+binding may preserve a legacy hash (see [project identity](../PROJECT_IDENTITY.md)).
 
 `tasks.json` was moved out of `<project>/.lattice/tasks.json` (legacy) into
 `~/.lattice/per-project/<hash>/tasks.json` after the 2026-05-09 incident —
@@ -54,9 +57,9 @@ losing tasks.
   binds `writeStateNow`/`cancelPendingPersist`/`getCached`/`setCached` to the
   live instance so subclass overrides still dispatch. MUST run under the
   manager's per-project write lock.
-- `paths.ts` — single source of truth for `~/.lattice/` and per-project
-  paths (`projectTasksFile`, `projectTasksBackupFile`, `homeProjectDir`,
-  `LEGACY_GLOBAL_TASKS`).
+- `paths.ts` — task paths (`projectTasksFile`, `projectTasksBackupFile`,
+  `LEGACY_GLOBAL_TASKS`); delegates the home root and `homeProjectDir` to the
+  shared `../projectPath.ts` helpers.
 - `projectsIndex.ts` — `ProjectsIndex`: in-memory `Set<projectPath>` backed
   by `~/.lattice/projects.json`. On load it canonicalises + de-dups (collapses
   case-different duplicates on Windows) and prunes junk entries via
@@ -110,11 +113,11 @@ losing tasks.
 
 ## Ordering invariant
 
-Physical identity and legacy storage bindings are documented in
-`../PROJECT_IDENTITY.md`. Loading a store normalizes only task paths that match
-the physical project or its verified legacy storage hash. Multiple legacy
-stores for one physical root are refused and preserved; global load/backup
-sweeps continue past that project's identity conflict.
+Derive state paths through the shared `../projectPath.ts` helpers; never
+recompute SHA-1 from a display or canonical path. Loading a store normalizes
+only task paths that match the physical project or its verified legacy storage
+hash. Multiple legacy stores for one physical root are refused and preserved;
+global load/backup sweeps continue past that project's identity conflict.
 
 Load/canonicalize the projects index and run legacy global migration before
 the first project cache read; then copy legacy
@@ -181,3 +184,9 @@ read so the cache sees restored disk state.
 - Storage lives under `~/.lattice/`, never inside the project tree — a
   project-side catastrophe (`rm -rf .lattice`, accidental `git clean -fdx`,
   the 2026-05-08 `.git`-deletion incident) cannot reach it.
+
+## Command reference
+
+From `backend/`: `npm run build` (build), `npm test` (suite),
+`npx tsc --noEmit` (type-check). For a HOME-isolated single-file test invocation,
+see [the test guide](../__tests__/CLAUDE.md).
