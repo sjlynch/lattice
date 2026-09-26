@@ -46,7 +46,7 @@ Before acting on any response, confirm its `canonicalProject` matches
 | GET    | /api/merge-runs/:id                | Snapshot one merge run by id (404 once it's been forgotten) |
 | POST   | /api/merge-runs/:id/cancel         | Cancel a merge run |
 | GET    | /api/workflows?project=            | List workflow definitions — this is how you get the `:id` for the run call below |
-| POST   | /api/workflows/:id/run             | Start a workflow run; optional `{harnessOverride}`. One run per project: **409** `active-run-exists` while another is active |
+| POST   | /api/workflows/:id/run             | Start a workflow run; optional `{harnessOverride, piModelOverride}` (Pi model applies only with `harnessOverride: "pi"`). One run per project: **409** `active-run-exists` while another is active; transient **503** `workflow-recovering` with `Retry-After: 2` while recovery is loading |
 | GET    | /api/workflow-runs/active?project= | Active workflow runs |
 | GET    | /api/workflow-runs/:runId?project= | `{run}` — one run by id, incl. a recently finished one (404 once forgotten / after a restart) |
 | POST   | /api/workflow-runs/:runId/cancel   | Cancel an active workflow run |
@@ -60,8 +60,14 @@ Before acting on any response, confirm its `canonicalProject` matches
 | POST   | /api/opengrep/ignore               | `{project, ruleIds?, fingerprints?}` — add rule ids (full id or dot-suffix) / finding fingerprints (`opengrep:<fp>` spelling accepted) to this project's Opengrep ignore list so future digests skip them. Additive + deduplicated. Use it for rule noise instead of filing a "please ignore X" task (MCP: `opengrep_ignore`) |
 
 Statuses: `backlog | open | in_progress | ready_to_merge | qa | done | deleted`.
-Pipeline: `open → in_progress → ready_to_merge → qa → done` (drag-and-drop
-in the UI moves `qa → done`; everything else is automated).
+Typical pipeline: `backlog → open → in_progress → ready_to_merge → qa → done`.
+Move actionable tasks to Open manually; task run and merge starts are explicit
+UI/API actions (or workflow Start/Merge steps). An admitted run enters
+`in_progress` when the agent starts; its completion callback moves committed
+work to `ready_to_merge`, and a successful merge moves it to `qa`. Manual lane
+actions also include Move to Backlog/Open and Mark QA/Done where available;
+drag-and-drop and API status updates can move tasks too. A confident QA PASS
+can automatically move a still-QA task to `done`; otherwise completion is manual.
 
 > ⚠️ **`/run` and `/resume` are asynchronous.** They put the task on Lattice's
 > spawn queue and return `{"accepted":true,"queued":<bool>}` immediately — that
@@ -313,6 +319,14 @@ Workflows are the same shape — `GET /api/workflows?project=` for the ids,
 `POST /api/workflows/:id/run` to start one, and
 `GET /api/workflow-runs/active?project=` to watch it.
 
+To override the run's harness and Pi model, send
+`{"harnessOverride":"pi","piModelOverride":"provider/model"}`. The model override
+is ignored without the Pi harness override; omit both to keep step selections.
+On **503** `workflow-recovering`, honor `Retry-After: 2` before retrying. If a
+start's outcome is ambiguous (for example, the response was lost), first inspect
+`GET /api/workflow-runs/active?project=` before retrying the POST; the original
+run may already exist. **409** `active-run-exists` means the project is busy.
+
 ## Finding dead / unreachable code
 
 Lattice's health analyzer computes reachability from detected entry points.
@@ -365,7 +379,10 @@ curl -sG "{{API_URL}}/api/opengrep/scans/$scanId" \
   criterion, and don't tell the task agent to run the suite: task agents
   don't run tests, a workflow's Run tests step verifies merged work.
 - Pass the project path above (or its forward-slash form) verbatim as the
-  `project` field. Lattice canonicalizes drive-letter casing.
+  `project` field. Lattice normalizes drive-letter casing and resolves existing
+  physical aliases (such as symlinks/junctions). The response's `canonicalProject`
+  and `hash` are authoritative; don't derive the storage hash yourself — an
+  existing storage binding can preserve a legacy hash.
 - Read before you write: `GET /api/tasks/search?q=` is far cheaper than
   listing a lane just to check whether a task already exists.
 
