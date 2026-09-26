@@ -10,6 +10,18 @@ architecture, the full HTTP/WS surface, the task pipeline, and agent-facing
 conventions, see the root [`CLAUDE.md`](./CLAUDE.md) and the per-directory
 `CLAUDE.md` / `AGENTS.md` files rather than duplicating them here.
 
+## Prerequisites
+
+- Node.js matching `^20.19.0 || ^22.13.0 || >=24` (20.19+ within 20.x,
+  22.13+ within 22.x, or 24+), with its bundled npm on `PATH`. This range
+  comes from the committed `package-lock.json` files: ESLint 10 is stricter
+  than Vite's Node 22.12 minimum. Locked Rollup also requires npm >=8.
+- Git installed and on `PATH` for project repositories and task worktrees.
+- For agent work, at least one supported harness installed and on `PATH`:
+  Claude Code (`claude`), Codex (`codex`), or Pi (`pi`). Authenticate it with
+  your chosen provider and verify it works in your terminal before using it
+  in Lattice; `install:all` does not install or authenticate these CLIs.
+
 ## Install
 
 First time (installs the root, backend, and frontend workspaces):
@@ -43,6 +55,19 @@ the full stop that ends every agent.
 Ports are offset +10 from the typical Vite default (5173) to avoid collisions
 with other local dev servers.
 
+## Build
+
+From the repository root (there is no root `npm run build` script):
+
+```
+npm --prefix backend run build
+npm --prefix frontend run build
+```
+
+These generate `backend/dist` (compiled server code and copied runtime assets)
+and `frontend/dist` (the frontend bundle). Both are generated outputs; edit
+the source files and rebuild instead of editing `dist`.
+
 ## Type-check
 
 ```
@@ -59,7 +84,16 @@ npm --prefix backend test
 npm --prefix frontend test
 ```
 
-End-to-end (Playwright):
+End-to-end (Playwright) uses the `chromium` project in
+[`playwright.config.ts`](./playwright.config.ts). After `install:all`,
+[install its browser](https://playwright.dev/docs/browsers#install-browsers)
+before the first run; npm installation alone does not download Chromium:
+
+```
+npx playwright install chromium
+```
+
+Then run the suite:
 
 ```
 npm run test:e2e
