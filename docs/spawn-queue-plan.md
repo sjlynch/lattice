@@ -1,3 +1,7 @@
+> **Historical design note (May 2026).** Superseded by the code and
+> `backend/src/spawnQueue/CLAUDE.md` (the queue now also has a resource governor);
+> details below (e.g. the `softCap` default) may be stale. Do not treat this as current behaviour.
+
 # Spawn Queue — Implementation Plan
 
 > Status: **COMPLETE** — all three phases shipped (2026-05-21). Backend +
