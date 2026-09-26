@@ -33,7 +33,7 @@ export function loadWorkflowDraft(projectPath: string): EditorState | null {
       Array.isArray(parsed.variables) ? parsed.variables : [],
     );
     // A restored draft is, by definition, unsaved.
-    return { ...parsed, variables, dirty: true };
+    return { ...parsed, identity: Symbol(), variables, dirty: true };
   } catch {
     return null;
   }

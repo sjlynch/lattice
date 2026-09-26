@@ -111,65 +111,10 @@ Halstead token counts and a Maintainability Index, and folded into a composite
 - `score.ts` + `constants.ts` — final score calculation over the score model; shared thresholds
 - `scoreMath.ts` — the shared `clamp01`/`norm` primitives both `score.ts` and
   `scoreModel.ts` use; single source so the two scorers can't silently diverge
-- `watcher.ts` + `watcher/` — `watcher.ts` is a thin facade owning the
-  singleton `watchers` map (`ensureWatcher` promise memoization) plus the
-  shutdown-flush lifecycle hooks (`flushWatcherCaches`, the once-only
-  process-exit handlers) and the public surface (`subscribeHealth`,
-  `beginWatcherScan`, `watcherScanRevision`, test helpers, `HealthUpdate` type). `watcher/` holds the
-  extracted helpers: `setup.ts` (`createWatcher` — per-root construction plus
-  the tree-watcher creation (`../../watchTree.ts`: recursive `fs.watch` on
-  win32, chokidar elsewhere) + event-wiring; takes the facade's shutdown-flush
-  registrar as a callback), `cacheHydration.ts` (cache → in-memory graph
-  mirror), `fileAnalysis.ts` (read/LOC count/cache-or-analyze — the read +
-  analyzer hand-off of one file runs under a machine-wide 8-slot gate,
-  `../../concurrencyLimit.ts`, because the watcher's handlers are
-  fire-and-forget and a 5,000-file checkout otherwise started 5,000
-  overlapping `fs.readFile`s with every body buffered ahead of the single
-  serial analyzer; the (mtime,size) cache check stays outside the gate),
-  `handlers.ts` (add/change/remove event handlers), `subscribers.ts`
-  (broadcast-safe subscriber fan-out), `isolatedAnalyze.ts`, and `types.ts`.
-  Directory add/remove events invalidate the scan revision synchronously but
-  broadcast ONE coalesced `rescan` per 100 ms burst (`setup.ts`
-  `createDirectoryRescanCoalescer`) — a checkout creating forty directories
-  used to push forty frames, each of which made every client re-issue
-  `/api/scan`.
-  `revision.ts` stamps events before config/read/analysis awaits. Only the
-  newest event for a path may publish maps or cache entries, so an older
-  analysis cannot resurrect an unlinked file or overwrite a newer edit.
-  Config reloads separately fence ignore/alias assignment across async reads.
-  `scanPublication.ts` captures the watcher identity/revision before a scan's
-  first await, copies the live cache (including pending debounced saves — a
-  targeted copy of the one mutated object, `metrics` + its `smells`, and the
-  `imports` array, not a `structuredClone` per entry, which cost tens of ms of
-  uninterruptible main-thread time at the front of every scan), and
-  seeds maps/cache only if no event, newer scan, or watcher creation intervened.
-  A committed scan also hands the watcher its freshly-resolved dead-code
-  root inputs (package.json entry targets + entry globs) via
-  `CrossFileAnalyzer.setRootInputs` — the watcher resolves those once at
-  creation against the on-disk cache, which is EMPTY for a fresh project, so
-  without the hand-over its first recompute after any keystroke flipped every
-  package.json entry target (and the subtree only it reaches) to `dead`.
-  Scans never share mutable metrics with the watcher during analysis. Cache I/O
-  is ordered across cache instances, including reads during a pending flush.
-  `isolatedAnalyze.ts` runs each changed file's analysis in a **warm persistent
-  worker thread** (`IsolatedAnalyzer` singleton, serial single-in-flight queue,
-  per-file stall watchdog) so a pathological changed file can only pin the worker
-  thread, never freeze the backend event loop — the watcher analogue of the
-  scan's `scanner/healthWorkerRunner.ts`. It reuses ONE warm worker (tree-sitter
-  WASM init amortized: ~117 ms first file, ~1 ms after) to avoid a per-event
-  spawn storm on a checkout/format-all. `analyzeContentIsolated` throws
-  `WorkerUnavailableError` when the worker can't be used (e.g. `src` under tsx);
-  `fileAnalysis.ts` then falls back to in-thread `analyzeFile` (a `null` result,
-  by contrast, is a watchdog/analysis skip and is NOT retried in-thread). That
-  fallback is the one path with the isolation switched off — it runs the same
-  tree-sitter WASM analyzer on the backend's MAIN thread, where a hang freezes
-  the event loop and a fault in the WASM runtime kills the process outright
-  (with no chance to log it — see `crashLog.ts`). So giving up is deliberately
-  **temporary**: three worker deaths write it off for `UNAVAILABLE_COOLDOWN_MS`
-  (60s), not for the life of the process as it once did. An *init* failure
-  (no compiled `analyze.js`) stays permanent, since retrying can never help. The
-  worker is `unref()`'d and disposed on graceful shutdown (`watcher.ts`
-  `flushThenExit`).
+- `watcher.ts` + `watcher/` — shared per-project health watcher: the facade
+  owns singleton creation, public API, and shutdown flush; the folder owns
+  event analysis and guarded scan publication. See [watcher/CLAUDE.md](./watcher/CLAUDE.md)
+  for the module map, event flow, and concurrency/worker contracts.
 - `analysisWorker.ts` — the eval-worker primitives shared by
   `watcher/isolatedAnalyze.ts` and `../scanner/healthWorkerRunner.ts`
   (`DEFAULT_ANALYSIS_STALL_MS`, `spawnEvalWorker`, `terminateQuietly`,

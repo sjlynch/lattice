@@ -38,7 +38,6 @@ export function reconcileDraftPersist(
   nextEditor: EditorState;
 } {
   const persistable =
-    !!activeFolder &&
     editor.dirty &&
     editor.workflowId === null &&
     (editor.steps.length > 0 || editor.name.trim() !== '');
@@ -52,6 +51,9 @@ export function reconcileDraftPersist(
       nextFolder,
       nextEditor: editor,
     };
+  }
+  if (!activeFolder) {
+    return { decision: { kind: 'idle' }, nextFolder, nextEditor: editor };
   }
   return {
     decision: { kind: 'persist', folder: activeFolder },
