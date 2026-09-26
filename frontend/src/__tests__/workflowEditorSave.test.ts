@@ -83,6 +83,21 @@ test('a fresh server echo replaces an unedited editor by value', () => {
   assert.equal(editor.dirty, false);
 });
 
+test('a create cannot adopt its id onto a replacement draft', () => {
+  const atSaveStart = editorFor(workflow(), { workflowId: null });
+  const replacement = editorFor(workflow(), { workflowId: null, name: 'Draft B' });
+  const result = nextEditorAfterSave(atSaveStart, replacement, workflow({ id: 'created-A' }));
+  assert.equal(result.editor, replacement);
+  assert.equal(result.editor.workflowId, null);
+});
+
+test('reopening the same workflow starts a different editor lifetime', () => {
+  const wf = workflow();
+  const atSaveStart = editorFor(wf);
+  const reopened = editorFor(wf, { name: 'Reopened edits' });
+  assert.equal(nextEditorAfterSave(atSaveStart, reopened, wf).editor, reopened);
+});
+
 test('a mid-save NAME edit supersedes (the mid-save edit is kept)', () => {
   const w = workflow();
   const atSaveStart = editorFor(w);

@@ -354,6 +354,7 @@ test('a customization that completes while still mounted patches the edited step
 
   // The updater patches the matching step by id and marks the editor dirty.
   const editor: EditorState = {
+    identity: Symbol(),
     workflowId: null,
     name: 'W',
     steps: [{ ...makeStep(), prompt: 'OLD' }],

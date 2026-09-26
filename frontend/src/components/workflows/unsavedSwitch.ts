@@ -9,20 +9,24 @@ export type UnsavedSwitchDeps = {
   save: () => Promise<unknown | null>;
   // Drop the unsaved edits (reload the saved copy / clear the draft).
   discardEdits: () => void;
+  // Invalidates a confirmation/save when its editor or project was replaced.
+  isCurrent?: () => boolean;
 };
 
 // Gate for any action that would REPLACE the editor's contents (select another
-// saved workflow, start a blank one). Mirrors the panel-close guard in
+// saved workflow, start a blank one, choose a template). Mirrors the panel-close guard in
 // `WorkflowsLauncher`: with unsaved edits, ask first — Save then proceed,
 // Discard then proceed, Cancel leaves the editor exactly as it was. Resolves
 // true when the caller may go ahead and replace the editor.
 export async function guardUnsavedSwitch(deps: UnsavedSwitchDeps): Promise<boolean> {
+  if (deps.isCurrent?.() === false) return false;
   if (!deps.dirty) return true;
   const choice = await deps.confirmUnsaved();
+  if (deps.isCurrent?.() === false) return false;
   if (choice === 'cancel') return false;
   if (choice === 'save') {
     // A failed save keeps the editor (the error toast is already showing).
-    return (await deps.save()) !== null;
+    return (await deps.save()) !== null && deps.isCurrent?.() !== false;
   }
   deps.discardEdits();
   return true;

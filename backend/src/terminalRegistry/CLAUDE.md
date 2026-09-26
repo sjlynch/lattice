@@ -84,6 +84,12 @@ from.
   (`listRolloutFilesShared`), and a parsed `session_meta` is cached for the
   process lifetime (line 1 never changes), so later ticks stat but never
   re-read. Ten restored Codex tabs used to cost ~600k stats over two minutes.
+  Orphan adoption overrides these defaults with persisted `codexDiscovery`
+  bounds from the adopted PTY's `createdAt`: a fresh command gets that process's
+  start window; `resume --last` scans the bounded history by recent writes,
+  since its thread may predate the tab. A later relaunch retains that creation
+  floor and advances the write bound. An in-flight scan must discard evidence
+  if the record changed PTYs / discovery provenance while it read the files.
 - `harnessPaths.ts` — where each harness keeps transcripts (verified on
   Windows): Claude `~/.claude/projects/<cwd, non-alnum → '-'>/<id>.jsonl`, Pi
   `~/.pi/agent/sessions/--<cwd, [/\:] → '-'>--/<ts>_<id>.jsonl`, Codex rollouts.
@@ -138,7 +144,11 @@ from.
   adopt; unclaimed live AGENT pty in the same cwd + harness → adopt (plain
   shells and startup commands never adopt — with no harness to match on they
   would claim any pty in the folder; a retried record adopts too, so a relaunch
-  whose pty landed but whose bookkeeping failed is never spawned beside); pty
+  whose pty landed but whose bookkeeping failed is never spawned beside).
+  Adoption clears `ended` / `relaunching` before emitting `restored`, including
+  when the record already names its live PTY. An orphan replaces the dead
+  PTY's identity even when unknown, clears its busy evidence, and restarts
+  discovery using the adopted process's provenance; pty
   gone while the executor INSTANCE is unchanged → it exited → end; otherwise
   relaunch if the owner allows (`user` — cwd must exist; `task` — still
   `in_progress` with its worktree; `merge` — NEVER relaunched: a dead resolver

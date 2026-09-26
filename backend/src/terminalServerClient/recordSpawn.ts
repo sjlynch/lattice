@@ -35,12 +35,18 @@ export async function recordSpawnedTerminal(
       // `resume <id>`, …) is derived from it every time and must never
       // replace it, or the next restore would try to resume a resume.
       const prev = await terminalRegistry.get(hint.existingId, projectPath);
+      const restoredAt = Date.now();
       return await terminalRegistry.update(hint.existingId, {
         serverId,
         serverInstanceId,
         ...(session ? { agentSession: session } : {}),
         ended: undefined,
-        restoredAt: Date.now(),
+        restoredAt,
+        // Keep an adopted Codex tab's thread-creation floor, but a later
+        // resume --last must look for the file being written by THIS spawn.
+        ...(prev?.codexDiscovery ? {
+          codexDiscovery: session ? undefined : { ...prev.codexDiscovery, writtenSince: restoredAt, mode: 'resumed' },
+        } : {}),
         restoreCount: (prev?.restoreCount ?? 0) + 1,
         lastBusy: undefined,
         relaunching: undefined,

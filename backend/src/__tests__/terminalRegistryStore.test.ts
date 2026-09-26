@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   TerminalRegistryStore,
+  deserializeTerminalRecord,
   deserializeTerminalRecords,
 } from '../terminalRegistry/store.js';
 import type { TerminalRecord, TerminalRegistryEvent } from '../terminalRegistry/types.js';
@@ -120,6 +121,20 @@ test('get() without a project falls back to loading every known project', async 
   await store.flushPersist(project);
   const found = await store2.get(a.id);
   assert.equal(found?.id, a.id);
+});
+
+test('adopted Codex discovery bounds are validated when loading persisted records', () => {
+  const record = { id: 'tab', ...base('project'), createdAt: 100, updatedAt: 200 };
+  const valid = { createdSince: 0, writtenSince: 200, mode: 'resumed' };
+  assert.deepEqual(deserializeTerminalRecord({ ...record, codexDiscovery: valid })?.codexDiscovery, valid);
+  for (const bad of [
+    null, 'unknown', {},
+    { ...valid, createdSince: -1 }, { ...valid, createdSince: NaN },
+    { ...valid, writtenSince: Infinity }, { ...valid, writtenSince: '200' },
+    { ...valid, mode: 'unknown' },
+  ]) {
+    assert.equal(deserializeTerminalRecord({ ...record, codexDiscovery: bad })?.codexDiscovery, undefined);
+  }
 });
 
 // Small helper so the test above can reach the temp file path through the

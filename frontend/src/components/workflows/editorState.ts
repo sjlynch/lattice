@@ -17,6 +17,9 @@ import {
 } from './promptVariables';
 
 export type EditorState = {
+  // In-memory editor lifetime, retained by edits but renewed by replacements.
+  // A symbol is deliberately omitted from the persisted draft JSON.
+  identity: symbol;
   workflowId: string | null;
   name: string;
   steps: WorkflowStep[];
@@ -26,6 +29,7 @@ export type EditorState = {
 
 export function emptyEditor(): EditorState {
   return {
+    identity: Symbol(),
     workflowId: null,
     name: '',
     steps: [],
@@ -96,6 +100,7 @@ export function collapsibleStepIds(steps: WorkflowStep[]): string[] {
 
 export function fromTemplate(t: WorkflowTemplate): EditorState {
   return {
+    identity: Symbol(),
     workflowId: null,
     name: t.name,
     steps: t.steps.map((s) => {
@@ -115,8 +120,9 @@ export function fromTemplate(t: WorkflowTemplate): EditorState {
   };
 }
 
-export function fromWorkflow(w: Workflow): EditorState {
+export function fromWorkflow(w: Workflow, identity = Symbol()): EditorState {
   return {
+    identity,
     workflowId: w.id,
     name: w.name,
     steps: w.steps.map((s) => ({
@@ -131,9 +137,10 @@ export function fromWorkflow(w: Workflow): EditorState {
 
 // Decide the editor's next state once a save's request resolves. `atSaveStart`
 // is the editor object as it stood when the save began; `current` is the
-// committed state now (read inside a functional `setEditor` updater). Every
+// live state now. Replacements have a different lifetime identity; every
 // edit produces a fresh editor object, so reference-identity tells us whether
 // the user typed during the in-flight request:
+//   - replaced   → leave the new editor untouched, including its workflow id.
 //   - unchanged  → adopt the server echo (`fromWorkflow`), clearing `dirty`.
 //   - superseded → keep `current` so the mid-save edit (and its `dirty` flag)
 //     survives instead of being silently overwritten by the stale echo. On the
@@ -145,11 +152,14 @@ export function nextEditorAfterSave(
   current: EditorState,
   saved: Workflow,
 ): { editor: EditorState; superseded: boolean } {
+  if (current.identity !== atSaveStart.identity) {
+    return { editor: current, superseded: true };
+  }
   if (current !== atSaveStart) {
-    if (current.workflowId === null) {
+    if (atSaveStart.workflowId === null && current.workflowId === null) {
       return { editor: { ...current, workflowId: saved.id, dirty: true }, superseded: true };
     }
     return { editor: current, superseded: true };
   }
-  return { editor: fromWorkflow(saved), superseded: false };
+  return { editor: fromWorkflow(saved, current.identity), superseded: false };
 }

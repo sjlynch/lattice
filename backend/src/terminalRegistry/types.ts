@@ -90,6 +90,10 @@ export type TerminalRecord = {
   owner: TerminalOwner;
   launch: TerminalLaunch;
   agentSession?: AgentSessionRef;
+  // An orphan's Codex process has its own discovery window, independent of
+  // this tab's creation / previous relaunch. A resumed orphan may be writing
+  // a thread older than the tab (createdSince = 0; scan remains bounded).
+  codexDiscovery?: { createdSince: number; writtenSince: number; mode: 'fresh' | 'resumed' };
   // The pty currently (or last) backing this tab, plus the terminal-server
   // instance that owns it. A serverId missing from a live listing while the
   // instance is unchanged means the pty exited; a different instance means

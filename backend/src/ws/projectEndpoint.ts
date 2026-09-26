@@ -1,48 +1,23 @@
-import { WebSocketServer, type WebSocket } from 'ws';
+import { WebSocketServer } from 'ws';
 import { canonicalProjectPath, isRealAbsoluteProjectPath } from '../projectPath.js';
+import { handleProjectConnection } from './projectConnection.js';
+import type {
+  MaybePromise,
+  ProjectRunEvent,
+  ProjectWsOptions,
+  Unsubscribe,
+} from './projectEndpointContracts.js';
 
-export type Unsubscribe = () => void;
-export type MaybePromise<T> = T | Promise<T>;
-export type ProjectEventListener<TEvent> = (event: TEvent) => void;
-export type ProjectRunEvent =
-  | { run: { projectPath: string } }
-  | { projectPath: string };
-
-export type ProjectWsOptions<TEvent> = {
-  initial?: (project: string) => MaybePromise<unknown | void>;
-  initialError?: 'close' | 'ignore';
-  subscribe: (
-    listener: ProjectEventListener<TEvent>,
-    project: string,
-  ) => MaybePromise<Unsubscribe>;
-  projectFromEvent?: (event: TEvent) => string;
-  payloadFromEvent?: (event: TEvent) => unknown;
-  // Classifies a live event that arrives WHILE the `initial` snapshot is
-  // loading (see the connect handshake in `buildProjectWss`):
-  //   - true  ⇒ a FULL snapshot of the same state `initial` loads. It is
-  //     dropped and marks the in-flight load stale, so the snapshot is
-  //     re-loaded (a fresh load covers it; forwarding the event itself could
-  //     put an OLDER snapshot on the wire after a newer one).
-  //   - false / absent ⇒ a delta or transient event (task-spawned,
-  //     task-activity, registry upserts, run lifecycle, …). It is buffered and
-  //     flushed, in order, right after the snapshot — never dropped, since a
-  //     snapshot need not contain it.
-  // Events after the handshake are always forwarded as they come.
-  isSnapshotEvent?: (event: TEvent) => boolean;
-};
-
-// How many times the connect handshake loads the `initial` snapshot when
-// snapshot events keep landing during the load. After the cap the latest
-// loaded snapshot is sent as-is (a busy project converges on its next event).
-export const MAX_INITIAL_SNAPSHOT_LOADS = 3;
-
-// Slow-client safety net. A browser that stops reading (a throttled background
-// tab, a closed laptop lid, a wedged renderer) makes `ws.send` queue in the
-// backend's heap, and whole-board snapshots (/ws/tasks, the snapshot WSSs)
-// are large — so past this much unsent data the connection is terminated
-// instead of queuing more. The frontend reconnects and gets a fresh snapshot,
-// so nothing is lost. Deliberately high: a healthy client never gets near it.
-export const PROJECT_WS_HIGH_WATER_BYTES = 16 * 1024 * 1024;
+export { sendJson } from './projectConnection.js';
+export {
+  MAX_INITIAL_SNAPSHOT_LOADS,
+  PROJECT_WS_HIGH_WATER_BYTES,
+  type MaybePromise,
+  type ProjectEventListener,
+  type ProjectRunEvent,
+  type ProjectWsOptions,
+  type Unsubscribe,
+} from './projectEndpointContracts.js';
 
 // A relative `project` is refused (empty ⇒ the connection handler closes the
 // socket), matching the HTTP routes' rule. Canonicalising it first defeated
@@ -59,11 +34,6 @@ export function parseProject(reqUrl: string | undefined): string {
     return '';
   }
   return raw && isRealAbsoluteProjectPath(raw) ? canonicalProjectPath(raw) : '';
-}
-
-export function sendJson(ws: WebSocket, payload: unknown): void {
-  if (ws.readyState !== ws.OPEN) return;
-  ws.send(JSON.stringify(payload));
 }
 
 export function projectFromRunEvent(ev: ProjectRunEvent): string {
@@ -106,124 +76,7 @@ export function buildProjectWss<TEvent>(
       return;
     }
 
-    // ws v8 re-throws a socket 'error' as an uncaughtException when no listener
-    // is registered. An abrupt client disconnect (ECONNRESET/EPIPE from a killed
-    // tab, network partition, OS sleep, or a vite-proxy hard-drop) is routine,
-    // not fatal — log-and-ignore so it can't masquerade as a backend crash. The
-    // 'close' handler below still runs and tears down the subscription. Covers
-    // every project-scoped WS (/ws/tasks, /ws/health, /ws/merge-runs, …) since
-    // they all share this connection body.
-    ws.on('error', () => { /* routine client disconnect — ignore */ });
-
-    let unsub: Unsubscribe | null = null;
-    let closed = false;
-    ws.on('close', () => {
-      closed = true;
-      if (unsub) {
-        unsub();
-        unsub = null;
-      }
-    });
-
-    const forward = (event: TEvent) => {
-      if (ws.readyState !== ws.OPEN) return;
-      if (ws.bufferedAmount > PROJECT_WS_HIGH_WATER_BYTES) {
-        // terminate() moves readyState off OPEN at once, so this logs once
-        // per connection; 'close' then tears the subscription down.
-        console.warn(
-          `[ws] dropping slow client for ${project}: ${ws.bufferedAmount} bytes unsent ` +
-            `(> ${PROJECT_WS_HIGH_WATER_BYTES}); it will reconnect for a fresh snapshot`,
-        );
-        try {
-          ws.terminate();
-        } catch {
-          /* ignore */
-        }
-        return;
-      }
-      ws.send(serialize(event));
-    };
-
-    // Connect handshake: SUBSCRIBE FIRST, then load the initial snapshot.
-    // Loading first (the old order) lost any event fired during the await —
-    // e.g. a task change while `listTasks` ran — until the next change. While
-    // `loading`, live events are held back per `isSnapshotEvent`: snapshot
-    // events mark the load `dirty` (→ re-load), deltas queue in `pending` and
-    // are flushed after the snapshot. Nothing is sent before the snapshot, and
-    // a snapshot event is never sent after a newer loaded snapshot.
-    let loading = options.initial !== undefined;
-    let dirty = false;
-    let lastSnapshotEvent: { event: TEvent } | null = null;
-    const pending: TEvent[] = [];
-
-    const onEvent = (event: TEvent) => {
-      if (options.projectFromEvent && options.projectFromEvent(event) !== project) {
-        return;
-      }
-      if (loading) {
-        if (options.isSnapshotEvent?.(event)) {
-          dirty = true;
-          lastSnapshotEvent = { event };
-        } else {
-          pending.push(event);
-        }
-        return;
-      }
-      forward(event);
-    };
-
-    const attach = async () => {
-      let nextUnsub: Unsubscribe;
-      try {
-        nextUnsub = await options.subscribe(onEvent, project);
-      } catch {
-        ws.close();
-        return;
-      }
-      if (closed || ws.readyState !== ws.OPEN) {
-        nextUnsub();
-        return;
-      }
-      // From here the 'close' handler owns teardown, so a socket that closes
-      // mid-load unsubscribes (no leaked listener).
-      unsub = nextUnsub;
-      if (!options.initial) return;
-
-      let payload: unknown;
-      let loaded = false;
-      for (let attempt = 0; attempt < MAX_INITIAL_SNAPSHOT_LOADS; attempt++) {
-        dirty = false;
-        lastSnapshotEvent = null;
-        try {
-          payload = await options.initial(project);
-          loaded = true;
-        } catch {
-          if (options.initialError !== 'ignore') {
-            ws.close();
-            return;
-          }
-          // Keep the last good load (if any) rather than nothing.
-          break;
-        }
-        if (closed) return;
-        if (!dirty) break;
-      }
-
-      loading = false;
-      if (loaded) {
-        if (payload !== undefined) sendJson(ws, payload);
-      } else if (lastSnapshotEvent) {
-        // No snapshot could be loaded ('ignore'), so nothing newer is on the
-        // wire: the latest live snapshot is the best the client can get.
-        forward((lastSnapshotEvent as { event: TEvent }).event);
-      }
-      lastSnapshotEvent = null;
-      for (const event of pending.splice(0)) forward(event);
-    };
-
-    attach().catch(() => {
-      ws.close();
-    });
+    handleProjectConnection(ws, project, options, serialize);
   });
   return wss;
 }
